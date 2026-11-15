@@ -31,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -189,9 +190,35 @@ public class AgentTemplateService {
         return new TemplateListView(scope.layer(), scope.workspaceId(), templates);
     }
 
+    /**
+     * task-207 / D-1587: what one {@code agent-templates} write did. {@code changedKeys} is the
+     * pre-existing return value; {@code removedCount}/{@code removedIds} name the list items the
+     * caller omitted and therefore erased. <b>Ids only — prompts never leave the service.</b>
+     */
+    public record WriteReport(int changedKeys, int removedCount, List<String> removedIds) {}
+
     @Transactional
     public int putConfigLayer(String actorUserId, String layer, UUID userId, UUID workspaceId,
                               Map<String, String> entries) {
+        return putConfigLayerReport(actorUserId, layer, userId, workspaceId, entries).changedKeys();
+    }
+
+    /**
+     * task-207 / D-1587: the same write, plus a receipt for whole-list replacement.
+     *
+     * <p>{@code roles} and {@code templates} are whole-list keys: a write replaces the list it
+     * names, so every id the caller left out disappears from that layer with no other trace (the
+     * {@code config_audit} row for this domain stores only {@code present:<sha256>}). The receipt
+     * exists so a caller can say "this removes N" instead of quoting prose nobody sees — the same
+     * shape {@code ConfigService.ClearedKey} and {@code ConfigService#cleanupProfiles} already use.</p>
+     *
+     * <p>It is a receipt, never a gate: nothing here refuses a write. The read happens before the
+     * write, while the advisory lock is taken by the write, so a concurrent writer can make the
+     * reported count stale; that is acceptable for a report and would not be for an authorization.</p>
+     */
+    @Transactional
+    public WriteReport putConfigLayerReport(String actorUserId, String layer, UUID userId,
+                                            UUID workspaceId, Map<String, String> entries) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         User actor = loadActor(actorId);
         requireLayerWrite(actor, layer, userId, workspaceId);
@@ -210,7 +237,12 @@ public class AgentTemplateService {
             configService.putLayer(layer, DOMAIN, changed, actorId.toString(), userId, workspaceId);
         }
         auditConfigChange(actorId, layer, userId, workspaceId, before, merged, changed.keySet());
-        return changed.size();
+        List<String> removedIds = removedListIds(before, entries);
+        if (!removedIds.isEmpty()) {
+            logger.warn("Agent template write replaces a whole list and drops {} item(s): "
+                    + "layer={}, removedIds={}", removedIds.size(), layer, removedIds);
+        }
+        return new WriteReport(changed.size(), removedIds.size(), removedIds);
     }
 
     @Transactional
@@ -429,6 +461,60 @@ public class AgentTemplateService {
             }
         });
         return changed;
+    }
+
+    /** task-207: the whole-list keys of this domain — a write replaces the list it names. */
+    private static final List<String> TEMPLATE_LIST_KEYS = List.of("roles", "templates");
+
+    /**
+     * task-207: the ids this write is about to erase — {@code before(key) − proposed(key)} for each
+     * whole-list key the caller actually sent. A key missing from {@code proposed} was not replaced,
+     * so its items cannot disappear through this write.
+     */
+    private List<String> removedListIds(Map<String, String> before, Map<String, String> proposed) {
+        List<String> removed = new ArrayList<>();
+        for (String key : TEMPLATE_LIST_KEYS) {
+            if (!proposed.containsKey(key)) {
+                continue;
+            }
+            LinkedHashSet<String> oldIds = listIds(before.get(key));
+            if (oldIds.isEmpty()) {
+                continue;
+            }
+            oldIds.removeAll(listIds(proposed.get(key)));
+            removed.addAll(oldIds);
+        }
+        return List.copyOf(removed);
+    }
+
+    /**
+     * task-207: lenient id reader. A value that is not a JSON array of objects with textual ids
+     * contributes nothing — {@link #parseLayer} stays the single place that turns malformed stored
+     * JSON into a 409, and a receipt must never turn an error into silence.
+     */
+    private LinkedHashSet<String> listIds(String raw) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        if (raw == null || raw.isBlank()) {
+            return ids;
+        }
+        JsonNode node;
+        try {
+            node = objectMapper.readTree(raw);
+        } catch (JsonProcessingException e) {
+            logger.debug("Agent template removal scan skipped an unparsable stored value: "
+                    + "errorType={}", e.getClass().getSimpleName());
+            return ids;
+        }
+        if (node == null || !node.isArray()) {
+            return ids;
+        }
+        for (JsonNode item : node) {
+            JsonNode id = item.get("id");
+            if (id != null && id.isTextual() && !id.asText().isBlank()) {
+                ids.add(id.asText());
+            }
+        }
+        return ids;
     }
 
     private void auditConfigChange(UUID actorId, String layer, UUID userId, UUID workspaceId,

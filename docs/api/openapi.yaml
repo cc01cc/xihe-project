@@ -6852,6 +6852,14 @@ components:
       properties:
         status: { type: string, enum: [ok] }
         keys: { type: integer, minimum: 0, description: 'Number of top-level keys written.' }
+        removedCount:
+          type: integer
+          minimum: 0
+          description: 'agent-templates only (task-207 / D-1587): how many whole-list items (`roles`/`templates` ids) this write erased. A write replaces the list it names, so omitted ids disappear silently; this is the receipt. Absent for other domains.'
+        removedIds:
+          type: array
+          items: { type: string }
+          description: 'agent-templates only: the ids counted by removedCount, in previous-list order. Ids only - template prompt text is never returned. Absent for other domains.'
     ConfigImportReport:
       type: object
       required: [status, imported, skipped, warnings]

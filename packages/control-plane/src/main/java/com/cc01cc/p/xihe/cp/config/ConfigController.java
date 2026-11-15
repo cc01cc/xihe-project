@@ -514,6 +514,24 @@ public class ConfigController {
         return writeLayer("workspace", domain, body, "user", null, parseUuid(wsId), DOOR_H1);
     }
 
+    /**
+     * task-207 / D-1587: the 200 body of a layer write. {@code status} and {@code keys} are unchanged;
+     * for the {@code agent-templates} domain it also carries the whole-list removal receipt
+     * ({@code removedCount} + {@code removedIds}: ids only, never prompt text) that
+     * {@code AgentTemplateService#putConfigLayerReport} computed from the pre-write layer. Nothing
+     * here is a gate — the same write that answered 200 before still answers 200.
+     */
+    private Map<String, Object> written(AgentTemplateService.WriteReport report, int keys) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "ok");
+        response.put("keys", keys);
+        if (report != null) {
+            response.put("removedCount", report.removedCount());
+            response.put("removedIds", report.removedIds());
+        }
+        return response;
+    }
+
     private ResponseEntity<Map<String, Object>> writeLayer(
             String layer, String domain, Map<String, String> body, String changedBy,
         UUID userId, UUID workspaceId, String atomSource) {
@@ -529,12 +547,14 @@ public class ConfigController {
                         HttpStatus.BAD_REQUEST, "DOMAIN_NOT_WORKSPACE_WRITABLE",
                         "Domain is not writable at the " + layer + " layer: " + domain);
             }
+            AgentTemplateService.WriteReport templateReport = null;
             if ("agent-templates".equals(domain)) {
                 UUID actorId = currentUserId();
                 if (actorId == null) {
                     return ProblemDetailsHandler.missingPrincipal("User context is required");
                 }
-                agentTemplateService.putConfigLayer(actorId.toString(), layer, userId, workspaceId, body);
+                templateReport = agentTemplateService.putConfigLayerReport(
+                        actorId.toString(), layer, userId, workspaceId, body);
             } else if ("context-templates".equals(domain)) {
                 UUID actorId = currentUserId();
                 if (actorId == null) {
@@ -545,7 +565,7 @@ public class ConfigController {
                 configService.putLayer(layer, domain, body, changedBy, userId, workspaceId, atomSource);
             }
             log.info("Config updated: layer={}, domain={}, keys={}", layer, domain, body.size());
-            return ResponseEntity.ok(Map.of("status", "ok", "keys", body.size()));
+            return ResponseEntity.ok(written(templateReport, body.size()));
         } catch (ConfigService.ConfigOwnershipException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN,
