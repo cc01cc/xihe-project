@@ -109,10 +109,35 @@ const REPOS: NestedRepo[] = [
 
 beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     wsStub.workspaceRoots = [];
     authStub.canWriteWorkspace = true;
     apiStub.listWorkspaceNestedRepos.mockResolvedValue([...REPOS]);
     apiStub.addWorkspaceRoot.mockResolvedValue({ id: "root-1", alias: null, position: 1 });
+});
+
+describe("task-188 nested-repos 的工作区上下文来源", () => {
+    it("逐 tab 上下文优先于滞后的 auth.currentWorkspaceId（A→B 后不许再带 A）", async () => {
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({ id: "22222222-2222-4222-8222-bbbbbbbbbbbb" }),
+        );
+        authStub.currentWorkspaceId = "11111111-1111-4111-8111-aaaaaaaaaaaa";
+        mountPanel();
+        await flushPromises();
+        expect(apiStub.listWorkspaceNestedRepos).toHaveBeenCalledTimes(1);
+        expect(apiStub.listWorkspaceNestedRepos.mock.calls[0]![0]).toBe(
+            "22222222-2222-4222-8222-bbbbbbbbbbbb",
+        );
+    });
+
+    it("逐 tab 为空 ⇒ 回落 auth（修来源不是把空上下文变成不发请求）", async () => {
+        authStub.currentWorkspaceId = "workspace-a";
+        mountPanel();
+        await flushPromises();
+        expect(apiStub.listWorkspaceNestedRepos).toHaveBeenCalledTimes(1);
+        expect(apiStub.listWorkspaceNestedRepos.mock.calls[0]![0]).toBe("workspace-a");
+    });
 });
 
 describe("nested repos panel", () => {

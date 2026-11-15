@@ -19,6 +19,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import type { ApiNestedRepoItem, ApiWorkspaceRoot } from "../../../composables/api";
 import { api } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
+import { readTabWorkspaceId } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import FileTree from "./FileTree.vue";
 
@@ -81,7 +82,9 @@ const canDeclareNestedRepo = computed(
 );
 
 async function loadNestedRepos() {
-    const id = auth.currentWorkspaceId;
+    // task-188：同 store 口径 —— 逐 tab 上下文优先，登录态只作回落（`auth.currentWorkspaceId`
+    // 在 A→B 切换后会滞后到 `/auth/me` 回来，实测这条请求就带了 A 头）。
+    const id = readTabWorkspaceId() ?? auth.currentWorkspaceId;
     if (!id) return;
     try {
         nestedRepos.value = await api.listWorkspaceNestedRepos(id);
@@ -120,7 +123,7 @@ function nestedRepoDeclareError(code: string | null): string {
 }
 
 async function confirmDeclareNestedRepo(repo: ApiNestedRepoItem) {
-    const id = auth.currentWorkspaceId;
+    const id = readTabWorkspaceId() ?? auth.currentWorkspaceId;
     if (!id || !canDeclareNestedRepo.value || declaringNestedRepo.value) return;
     declaringNestedRepo.value = true;
     try {

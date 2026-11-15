@@ -5,6 +5,7 @@ import { useAuthStore } from "../../../stores/auth";
 import { api, apiPost, ApiError } from "../../../composables/api";
 import type { ApiWorkspaceRoot } from "../../../composables/api";
 import { readFilePreview } from "../composables/fileService";
+import { readTabWorkspaceId, tabWorkspaceRevisionRef } from "../../../lib/workspaceContext";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
 import type { FileNode, OpenFile, UploadItem, WorkspaceEvent } from "../../../types";
@@ -153,7 +154,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         sessionAttachments = computed(() => sessionStore.currentSessionAttachments),
         sessionFileContext = computed(() => sessionStore.currentSessionFileContext),
         sessionAgents = computed(() => sessionStore.currentAgentIds),
-        workspaceId = computed(() => authStore.currentWorkspaceId);
+        // task-188：工作区来源 = **逐 tab 上下文**（`lib/workspaceContext.ts`，路由在导航**之前**写入），
+        // 回落登录态。`authStore.currentWorkspaceId` 由登录态 hydrate，**切工作区后要到 `/auth/me`
+        // 回来才变** ⇒ 在此之前的文件树请求会带旧工作区头（真栈实测 A→B 后 2 条 A 头：MCP 往返与
+        // nested-repos 都由本 store 的 id 派生）。不在这里加「请求时再读一次」兜底 —— 那只是把竞态
+        // 窗口缩小；这里换的是**上下文来源**，与 `apiAuthHeaders()` 取 `X-Workspace-Id` 同一入口。
+        //
+        // **`tabWorkspaceRevisionRef()` 这行不是装饰**（`D-1565`）：`readTabWorkspaceId()` 读的是
+        // `sessionStorage`，**不是响应式依赖** ⇒ 没有它，本 computed 只在 `authStore` 变化时才重算，
+        // 于是「写 ctx=B」不触发重算 ⇒ 树请求仍带 A 头、切工作区不重载、两处陈旧丢弃守卫退化成空操作。
+        // 计数器只做**失效信号**，值仍然逐次从 storage 读（镜像会与直接写 storage 的调用方分叉）。
+        workspaceId = computed(() => {
+            void tabWorkspaceRevisionRef().value;
+            return readTabWorkspaceId() ?? authStore.currentWorkspaceId;
+        });
 
     function requireWorkspaceId(): string {
         if (!workspaceId.value) {
