@@ -181,6 +181,16 @@ mise run test:mock:smoke
 # test:mock (full mock lane, same config, all spec files) ALREADY EXISTS and was NOT measured in this
 # round — TODO: record wall time / test counts / red count from a real run before quoting numbers.
 mise run test:mock
+# preview-chain lane (task-249 B, D-1649): runs ONLY the 2 preview specs
+# (task25-preview-sessions + task449-workspace-agents, 11 cases) with XIHE_E2E_EXPECT_CHAIN=preview;
+# the config injects the mock-login preview-real.html entry. In the default mock lane these 11
+# cases are skipped with a reason — this lane is what actually runs them (skip-rot prevention).
+# Measured 2026-11-16, single run, port 28642: 11 passed, 24.7 s test-time, --workers=1 --retries=0,
+# headless. No backend needed. XIHE_UI_PORT is REQUIRED (unset or in 12630-12633 exits 2).
+# The effective chain is asserted to be preview before running (all-skip would be a false green).
+# A cold vite deps cache may fail the first run with env(stale-deps) — rerun once (warm steady state).
+# Writes no JSON report (never touches the full-lane baseline). NOT part of validate.
+mise run test:mock:preview
 
 # read-only ledger (BL/PLAN) validation, run from the ONE workspace root; report-only (not part of `validate`)
 mise run ledger:validate

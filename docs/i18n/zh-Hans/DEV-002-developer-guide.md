@@ -171,6 +171,7 @@ sequenceDiagram
 | `mise run test:e2e:host:real` | 运行指定真实 MiMo 用例 |
 | `mise run test:e2e:fixtures` | e2e 夹具自测（fake LLM `mode=chain` 状态机；不起栈、秒级；已并入 `validate`） |
 | `mise run test:mock:smoke` | Mock S1 浏览器快车道（31 个 spec；[实测 2026-11-15 单次，端口 28640] 107 passed + 0 flaky + 27 skipped + 0 failed、墙钟 77 s、`--workers=4`、headless；不需要后端 —— Playwright 自起 Vite）。**`XIHE_UI_PORT` 必须显式设置**：`playwright.config.ts` 默认 12630 落在窗口禁用段 12630-12633，未设置或设入该段直接 exit 2 |
+| `mise run test:mock:preview` | Preview 链路车道（task-249 B，D-1649）：只跑 2 个 preview spec（task25-preview-sessions / task449-workspace-agents，11 用例），config 据 `XIHE_E2E_EXPECT_CHAIN=preview` 注入 mock 登录态入口（preview-real.html）。默认车道里这 11 条是 skip（带原因），本车道才真跑它们（防 skip 腐烂成「报表上像通过」）。[实测 2026-11-16 单次，端口 28642] 11 passed、test-time 24.7 s、`--workers=1 --retries=0`、headless；不需要后端 —— Playwright 自起 Vite。**`XIHE_UI_PORT` 必须显式设置**（未设置或落禁段 12630-12633 ⇒ exit 2）；run 前断言生效链路=preview（防全 skip 假绿）；vite deps 冷缓存首撞 env(stale-deps) 再跑一次即稳态；不写 JSON 报告（不碰全量基线）。**不接 validate** |
 | `mise run test:mock` | **已存在，本次未实测** —— 全量 mock lane（同一 config，不限定 spec 文件）。**待补**：耗时/用例数/红点数均未在本轮实测，勿引用二手数字 |
 | `mise run test:cp:baseline` | BL-368 CP 已知基线判定：读 `test:cp` 刚写的 surefire 报告，失败 ⊆ `scripts/cp-known-baseline.json` 才 exit 0；转绿只 WARN、`reviewBy` 过期失败；**不接 `validate`** |
 | `mise run test:runtime:lib:gate` | BL-262 竞态复验门：串行 1 + 并行 3 连跑（里程碑/竞态修复后跑；**不进 `validate`**） |

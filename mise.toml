@@ -181,6 +181,26 @@ description = "Mock-lane S1 smoke (31 spec files, 实测 77 s〔2026-11-15 单�
 dir = "packages/ui"
 env = { XIHE_E2E_PROFILE = "mock", XIHE_E2E_BROWSER_CHANNEL = "chrome-beta", XIHE_MOCK_REPORT = "1" }
 alias = "test:mock:smoke"
+
+# task-249 B（D-1649，2026-11-16）：preview 链路车道上线。A 段（方案 D，D-1625）已给两个 preview spec
+# 加了跑法守卫（XIHE_E2E_EXPECT_CHAIN !== "preview" ⇒ skip 带原因）；本任务把 preview 车道从一次性
+# 命令变成可复跑的 mise 入口，防 skip 腐烂成「报表上像通过」（D-1610 同族）。
+# 只钉这 2 个文件（11 用例）：EXPECT_CHAIN=preview 会把 /workspace/** 入口改写成 preview-real.html
+# （注入 mock 登录态），e2e/mock 的其他 spec 不按该链路设计，不得整目录跑。
+# 不写 JSON 报告（不设 XIHE_MOCK_REPORT）⇒ 不碰全量基线报告 .mock-report.json 与 smoke 的子集报告。
+# 端口与 smoke 同口径：显式 XIHE_UI_PORT 必填、禁段 12630-12633。
+# 链路守卫：实测 mise 2026.7.15 的 task env **覆盖**父进程同名变量（父进程带 EXPECT_CHAIN=index
+# 仍跑 preview，11 passed，2026-11-16 实测）。守卫是 fail-fast 断言：生效 env 若不是 preview
+# （未来 mise 语义变化 / 绕过 task 直跑内层命令），exit 2 —— 防 11 条全 skip 且 exit 0 的假绿。
+# stale-deps：vite deps 冷缓存首跑可能 env(stale-deps) 红，再跑一次即预热稳态（spec 头注释同口径）。
+[tasks."test:mock:preview"]
+run = '''
+node -e "const p=Number(process.env.XIHE_UI_PORT||0);if(!p){console.error('[test:mock:preview] XIHE_UI_PORT 未设置：请显式给一个空闲端口（如 28642），避免与并行车道/验证窗口静默撞端口。');process.exit(2)}if(p>=12630&&p<=12633){console.error('[test:mock:preview] XIHE_UI_PORT='+p+' 落在窗口禁用段 12630-12633，请换一个（如 28642）。');process.exit(2)}if(process.env.XIHE_E2E_EXPECT_CHAIN!=='preview'){console.error('[test:mock:preview] 生效 XIHE_E2E_EXPECT_CHAIN='+JSON.stringify(process.env.XIHE_E2E_EXPECT_CHAIN)+' 不是 preview（task env 本应注入 preview；见到此说明 env 语义变化或在直跑内层命令），11 条会全 skip 成假绿，拒绝跑。');process.exit(2)}" && pnpm exec playwright test --config e2e/playwright.config.ts --workers=1 --retries=0 e2e/mock/task25-preview-sessions.spec.ts e2e/mock/task449-workspace-agents.spec.ts
+'''
+description = "Preview-chain lane (task-249 B, D-1649): runs ONLY the 2 preview specs (task25-preview-sessions + task449-workspace-agents, 11 cases) with XIHE_E2E_EXPECT_CHAIN=preview — config injects XIHE_UI_MOCK_API=1 and rewrites /workspace/** entries to preview-real.html (mock login). In the default mock lane these 11 cases are skipped with a reason; this lane is what actually runs them (skip-rot prevention, D-1610 family). No backend needed (Playwright starts its own Vite dev server). XIHE_UI_PORT is REQUIRED (unset or in 12630-12633 exits 2); the effective XIHE_E2E_EXPECT_CHAIN is asserted to be preview before running (all-skip with exit 0 would be a false green; measured mise 2026.7.15 task env overrides parent env). --workers=1 --retries=0. A cold vite deps cache can fail the first run with env(stale-deps) — rerun once for the warm steady state. Writes no JSON report (never touches .mock-report.json / mock-baseline). NOT part of validate."
+dir = "packages/ui"
+env = { XIHE_E2E_PROFILE = "mock", XIHE_E2E_BROWSER_CHANNEL = "chrome-beta", XIHE_E2E_EXPECT_CHAIN = "preview" }
+alias = "test:mock:preview"
 # PLAN-0735 / BL-164: mock-lane baseline gate. Reads packages/ui/e2e/.mock-report.json
 # (written by test:mock above via the playwright config JSON reporter) and compares counts
 # + skip titles against packages/ui/e2e/mock-baseline.json. The report is a runtime artifact
