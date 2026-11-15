@@ -1,6 +1,8 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
+// task-264 / D-1654：补回批2(4c3d90c0c)误删的 Page 类型——下方函数签名仍用它作类型标注。
+import type { Page } from "@playwright/test";
 
 /**
  * task-401 / `D-1248`：实例智能体**创建面**的模型意图（provider＞连接＞模型）真指针链路。
