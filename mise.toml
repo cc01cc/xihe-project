@@ -449,7 +449,7 @@ alias = "check:config-schema"
 # 实测成本（2026-11-15 本机）：冷启 1,560 ms（944 + 360）；在 lint 聚合内热跑整条 = 300.6 ms（子门 98 + 123 ms）⇒ 每次 lint 多 ~0.3 s。
 # 接线后两个子门默认用法不变（不带 --enforce 的一门仍 report-only ⇒ 不新增阻断语义）；
 # 成员行可见性按 D-1457 验证；若成员行缺失，先分清"没接线"与"被并行 depends 首个失败掐掉"（D-1457-S1）。
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e"]
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings"]
 description = "Run all linters"
 alias = "lint"
 
@@ -472,16 +472,18 @@ description = "Run UI lint (oxlint)"
 dir = "packages/ui"
 alias = "lint:ui"
 
-# task-171 ②（D-1532 ③「逐步规范化减少 warning」）：warnings ratchet 门。
-# 判据 = oxlint warnings 总数不得超过 packages/ui/oxlint-warning-baseline.json 的 total；
-# 超出时打印「新增了哪些族、各几条」，errors 恒为硬失败。
-# **默认 report-only（exit 0）**，只有显式 `-- --enforce` 才在超出基线时 exit 1 ——
-# 接进 lint/validate 属 Lead 裁定（本卡只提供可跑的门与读数，不自行接线）。
-# 基线只许变小：`node packages/ui/scripts/check-lint-warnings.mjs --write-baseline` 收账。
+# task-171 ②（D-1532 ③「逐步规范化减少 warning」）建门，**task-219（2026-11-15）改为按族拦并接线**。
+# 判据 = **任一 rule 族**的计数不得超过 packages/ui/oxlint-warning-baseline.json 的 `byRule`；errors 恒为硬失败。
+# **总数只打印、不拦**：总数会被「A 族 +2、B 族 −2」互相抵消而掩盖漂移 —— 2026-11-15 实测
+# `consistent-type-imports` +3 的当天，若只看总数就会被别的族抹平；这条是 task-217 盘点漏过 3 条新警告的根因。
+# 红点会点名「族 + 现值/基线 + 新增 file:line（基线存了 locations 时）」，并给出自愈单命令。
+# 本门只读 oxlint 输出，**不要求工作树 clean**（不红在他人中间态）；自检 7 例：`--selftest`。
+# 基线只许变小：`node packages/ui/scripts/check-lint-warnings.mjs --write-baseline` 收账（新增而变大须在卡面写原因）。
 # 配套登记门：`node packages/ui/scripts/check-lint-rule-registry.mjs`（off 规则必须有登记行，exit 1 = 缺行）。
+# 实测成本（2026-11-15 本机）：mise 包装冷启 2,720 ms（含一次全包 oxlint：709 文件 / 43 族）；二次连跑读数一致。
 [tasks."check:lint-warnings"]
-run = "node packages/ui/scripts/check-lint-warnings.mjs"
-description = "UI oxlint warnings ratchet (report-only; --enforce to fail past baseline). Pair gate: node packages/ui/scripts/check-lint-rule-registry.mjs"
+run = "node packages/ui/scripts/check-lint-warnings.mjs --enforce"
+description = "UI oxlint warnings ratchet, per-rule (any rule above baseline ⇒ exit 1; total not gated; --write-baseline to re-baseline). Pair gate: node packages/ui/scripts/check-lint-rule-registry.mjs"
 
 [tasks."lint:agent"]
 run = "uv run ruff check && uv run mypy src/"
