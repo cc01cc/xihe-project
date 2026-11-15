@@ -348,8 +348,17 @@ public class ToolFaceRegistry {
      * atom with a {@code credential:}-prefixed resource keeps the legacy rule (the
      * namespace is bound to the credential atoms, not to the string prefix alone).
      * In the credential namespace the wide {@code credential:*} ceiling covers any
-     * {@code credential:<id>} and exact ids are equal-only; every other atom keeps
-     * the exact-or-bare-'*' rule unchanged.
+     * {@code credential:<id>} and exact ids are equal-only.
+     *
+     * <p><b>D-1561 (task-194): every other family delegates to the runtime evaluator.</b> The
+     * authorization semantics SSOT is {@link LayeredPolicyResolver#matches}; this method used to
+     * answer the exact-or-bare-{@code *} rule only, so a {@code <kind>:*} ceiling such as
+     * {@code skill:*} reported a legitimate {@code skill:<id>} candidate as uncovered while the
+     * runtime allowed it (over-strict => false rejects in template-to-principal derivation and in
+     * the role-editor precheck). The credential family keeps its own stricter rule on purpose (a
+     * partial glob such as {@code credential:ab*} is not part of that namespace); everything else
+     * must agree with the evaluator, and {@code ResourceCoverageParityTest} fails with the
+     * offending row whenever the two disagree.</p>
      */
     public static boolean resourceCovers(String actionClass, String ceilingResource, String candidateResource) {
         if (isCredentialActionClass(actionClass) && candidateResource != null
@@ -357,6 +366,6 @@ public class ToolFaceRegistry {
             return CREDENTIAL_RESOURCE_WILDCARD.equals(ceilingResource)
                     || ceilingResource.equals(candidateResource);
         }
-        return "*".equals(ceilingResource) || ceilingResource.equals(candidateResource);
+        return LayeredPolicyResolver.matches(ceilingResource, candidateResource, ToolShape.STRUCTURED);
     }
 }
