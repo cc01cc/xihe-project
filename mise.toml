@@ -183,8 +183,13 @@ env = { XIHE_E2E_PROFILE = "mock", XIHE_E2E_BROWSER_CHANNEL = "chrome-beta", XIH
 alias = "test:mock:smoke"
 # PLAN-0735 / BL-164: mock-lane baseline gate. Reads packages/ui/e2e/.mock-report.json
 # (written by test:mock above via the playwright config JSON reporter) and compares counts
-# + skip titles against packages/ui/e2e/mock-baseline.json. Drift ⇒ exit 1 unless
-# --allow-drift is passed explicitly. The report is a runtime artifact and stays untracked.
+# + skip titles against packages/ui/e2e/mock-baseline.json. The report is a runtime artifact
+# and stays untracked.
+# task-250 model "C": counts.expected/skipped AUTO-FOLLOW the actual collected numbers by default
+# (written only when failed=0; with failed≠0 nothing is written and the run still fails). Count
+# drift is therefore no longer a red on its own. What still reds: unregistered/retired skip titles
+# (--allow-drift accepts those deliberately), a non-zero baseline flaky, a stale or subset report.
+# Semantics live in DEV-020 zh §3.6.2 / en §3.3.2 — do not restate them here.
 #
 # task-179 (Lead ruling 2026-11-13): `expected`/`skipped`/`failed` stay exact; `flaky` is NOT
 # compared exactly (concurrent lanes made that cycle-false-red). Instead four orthogonal rules:
@@ -198,8 +203,10 @@ alias = "test:mock:smoke"
 # shared artifact directory across concurrent Playwright processes makes `retries` absorb the
 # noise into `flaky`; the hint names `XIHE_MOCK_OUTPUT_DIR` (task-224) as the isolation knob.
 # It is a hint only: it never changes the verdict or the exit code.
-# Self-test: `node scripts/check-mock-baseline.mjs --selftest` (10 fixtures incl. the
-# negative-control pair: inside the change surface ⇒ exit 1, same report moved out ⇒ exit 0).
+# Self-test: `node scripts/check-mock-baseline.mjs --selftest` — the fixture count is whatever
+# that command prints (`OK: N case(s)`); **do not pin a number here**. It already went stale once:
+# task-227 wrote 10, task-250 (e2b489152) raised it to 16 and nobody updated this line (task-260).
+# Includes the negative-control pair: inside the change surface ⇒ exit 1, same report moved out ⇒ exit 0.
 [tasks."check:mock-baseline"]
 run = "node scripts/check-mock-baseline.mjs"
 dir = "."
