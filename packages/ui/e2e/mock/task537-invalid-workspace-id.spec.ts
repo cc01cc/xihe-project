@@ -1,11 +1,12 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
+import { isUuid } from "../../src/lib/uuid";
 
 /**
  * task-537（Lead 2026-11-14 派；来自 task-397 真栈读数）：**非 UUID 的工作区路径不许渲染成空壳**。
  *
- * <p>真栈修前读数：`/workspace/11111111-1111-4111-8111-111111111111` ⇒ CP `400 X-Workspace-Id must be a UUID`（两条），
+ * <p>真栈修前读数：`/workspace/workspace-1` ⇒ CP `400 X-Workspace-Id must be a UUID`（两条），
  * 左栏「还没有工作区」、页面无任何错误文案 —— 用户看到的是「空」而不是「错」。</p>
  *
  * <p>修法（前端一行守卫）：**先验形状再写 tab 上下文**，形状不对就清上下文回工作区列表，
@@ -13,7 +14,11 @@ import { setupMockAuth } from "./helpers/auth";
  * ① 明确错误态（不是空态）② 非法 id 一次都不发给后端 ③ 合法 UUID 不被误伤（负向对照）。</p>
  */
 
-const INVALID_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111"; // 真栈上撞 400 的那个 slug
+// task-239（2026-11-15）：这里**必须**是形状非法的值 —— 守卫 `router/index.ts:610` 只在 `!isUuid(id)` 时
+// 才清上下文回列表页。此前 `0cc0faeb9`（task-546）机械替换 249 处 `workspace-1` → `11111111-1111-4111-8111-111111111111`，
+// 把本行也换成了**形状合法的固定 UUID**（那个值是 mock 夹具的正常工作区 id）⇒ 守卫不触发 ⇒ 渲染工作区壳
+// ⇒ 负向对照自我失效（测试红，但产品是对的）。形状判定只看 `UUID_PATTERN`、不验版本位，所以"看起来像 v4"也是合法。
+const INVALID_WORKSPACE_ID = "workspace-1"; // 非 UUID：真栈上撞 400 的那类 slug
 const VALID_WORKSPACE_ID = "19e1c21c-9b93-40d8-94e6-0b371f3c7f19";
 
 async function stubWorkspaceApis(page: Page): Promise<string[]> {
@@ -42,6 +47,12 @@ async function stubWorkspaceApis(page: Page): Promise<string[]> {
 test("task-537 非 UUID 工作区路径：回列表页 + 明确错误态 + 不把非法 id 发出去", async ({
     page,
 }) => {
+    // 自检（task-239）：**负向对照的输入必须真的形状非法**。这条断言存在的理由就是防重犯 ——
+    // `0cc0faeb9` 的机械替换曾把这个常量换成合法 UUID，用例于是从"验证守卫"退化成"验证正常路径"，
+    // 红得看起来像产品坏了。形状判定与产品同一个函数（`lib/uuid.ts#isUuid`），避免两处口径漂移。
+    expect(isUuid(INVALID_WORKSPACE_ID), "INVALID_WORKSPACE_ID 必须是非 UUID").toBe(false);
+    expect(isUuid(VALID_WORKSPACE_ID), "VALID_WORKSPACE_ID 必须是 UUID").toBe(true);
+
     const sent = await stubWorkspaceApis(page);
 
     await page.goto(`/workspace/${INVALID_WORKSPACE_ID}`);

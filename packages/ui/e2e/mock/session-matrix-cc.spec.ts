@@ -157,12 +157,18 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         await expandCc(page);
         await pickCc(page, "Member");
         await pickCc(page, "Viewer");
-        // 第三人：owner 默认在「发送」栏（被互斥排除），把发送栏换掉后再选 owner 进 CC。
+        // 第三人：先占住「发送」栏（TO/CC 互斥会把它从抄送候选里排除），再用 **Agent Alpha** 凑第三枚。
+        // task-239（2026-11-15）：原来这里选的是 "Owner"，而 `MATRIX_OWNER` 就是**当前登录用户自己**
+        // （`helpers/session-matrix.ts:40-52`，`principalId: "user-1"`）。`f898696c5`（task-102，按用户裁定）
+        // 已把调用者自己的真人行从 TO/CC 候选剔除（选中自己必撞 CP 400 `PARTICIPANT_SELF_TARGET`）
+        // ⇒ 打 "Owner" 得空候选、而 `cc-menu` 是 `v-if="open && filtered.length > 0"` 的条件渲染
+        // ⇒ 元素根本不渲染，报的是 `element(s) not found` 而不是"不可见"。
+        // 本用例要钉的是「客户端不设 chip 上限」，与目标是谁无关 ⇒ 换成非自己、非 speak-as 的 Agent Alpha。
         const toField = page.getByTestId("speak-as-input");
         await toField.fill("Agent Beta");
         await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await toField.press("Enter");
-        await pickCc(page, "Owner");
+        await pickCc(page, "Agent Alpha");
         await expect(page.getByTestId("cc-chip"), "three chips allowed client-side").toHaveCount(
             3,
             {
