@@ -72,6 +72,21 @@ export interface MockAuthOptions {
      */
     rootsFromWire?: boolean;
     /**
+     * task-140：`GET /api/v1/workspaces`（**列表**）的响应体，默认 = 与 seed 同源的单工作区。
+     *
+     * <p>为什么必须有它：左栏自 task-352 / D-1206 起按**工作区分组**，页面要的是列表；本夹具原先只桩了
+     * 详情 `GET /api/v1/workspaces/{id}`（见上面 `rootsFromWire` 的注释），列表请求就落到通配
+     * `/api/v1/**` 那条兜底 ⇒ 拿到 `200 {}` ⇒ 左栏渲染成「还没有工作区」⇒ 会话列与正文永不挂载。</p>
+     *
+     * <p><b>不要把它写成「修复了 N 条红」</b>：它与那批红的因果关系**尚未确认** —— `ui-1` 在含 `task-64`
+     * 404 兜底的树上看到「无列表桩 ⇒ 11 条红」，`ui-2` 在撤掉 404 后测同一批 spec 为全绿，两读冲突。
+     * 本夹具的证据只有一条：**列表端点此前没有桩**（`git grep` 可核）。因果裁定见后续 2×2 探针。</p>
+     *
+     * <p>多工作区用例传数组（条数 = 期望的分组数）；**不要**写成「数组或 `{items:[]}` 都收」的宽松桩 ——
+     * 生产返回的就是裸数组（`ApiWorkspace[]`，`src/composables/api.ts` 的 `listWorkspaces()`）。</p>
+     */
+    workspaceList?: Array<Record<string, unknown>>;
+    /**
      * BL-318：四类会话投影默认挂（形状照抄真实 CP 响应）。传 `false` 关掉，用于极少数要断言
      * "投影不可用"降级路径的用例；传对象可覆盖参与者花名册 / capabilities。
      */
@@ -763,6 +778,35 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // 形状来源同 `session-projections.ts` 头注释（2026-11-05 对 stack-1 真实 CP 记录）：
     //   GET /api/v1/workspaces/{id}/agents → { agents: [{ principalId, name, templateId,
     //        templateName, createdAt, permissionsSnapshot[], bound, hooks, contextPolicy, disabled }] }
+    // task-140：`GET /api/v1/workspaces`（列表）。注册位置在兜底 `**/api/v1/**` **之后** ——
+    // Playwright route 是 LIFO，后注册优先（本文件无此说明时按官方文档：后注册的 handler 先匹配），
+    // 所以这条赢兜底。
+    // 默认体与 seed 同源（同一 id/name/角色），保证「列表里点进工作区」与「tab 上下文」是同一个工作区；
+    // 多工作区由 `options.workspaceList` 覆盖。
+    const workspaceListFixture = options.workspaceList ?? [
+        {
+            id: MOCK_WORKSPACE_ID,
+            name: "Mock Workspace",
+            ownerId: "user-1",
+            workspaceRole: "OWNER",
+            canWrite: true,
+            createdAt: "2026-11-05T00:00:00.000Z",
+            updatedAt: "2026-11-05T00:00:00.000Z",
+        },
+    ];
+    await page.route("**/api/v1/workspaces", async (route) => {
+        if (route.request().method() !== "GET") {
+            // 非 GET（如 `POST /api/v1/workspaces` 新建工作区）保持既有行为：交回后面的处理器/兜底。
+            await route.fallback();
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(workspaceListFixture),
+        });
+    });
+
     await page.route("**/api/v1/workspaces/*/agents", async (route) => {
         if (route.request().method() !== "GET") {
             await route.fallback();
