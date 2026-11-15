@@ -286,7 +286,9 @@ watch(
                 </div>
             </header>
 
-            <main class="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-6 py-6">
+            <!-- task-22（task-34 改白残项）：内容列自己带白底（bg-card）。此前无背景类 ⇒ 透出
+                 root 的 --background oklch(0.97 0 0) 浅灰；与 SettingsLayout.vue:227 同形态。 -->
+            <main class="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto bg-card px-6 py-6">
                 <router-view />
             </main>
         </div>

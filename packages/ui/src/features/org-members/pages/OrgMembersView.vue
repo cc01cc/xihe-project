@@ -37,7 +37,9 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
 </script>
 
 <template>
-    <section class="min-h-full" data-testid="org-members-page">
+    <!-- task-22（task-34 改白残项）：本页没有 <main>（全局模块直挂 ModuleStage），根 section
+         即内容容器 ⇒ 白底挂这里（bg-card），与 SettingsLayout/ResourcesLayout 同形态，不改结构与 IA。 -->
+    <section class="min-h-full bg-card" data-testid="org-members-page">
         <header class="border-b">
             <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
                 <h1
