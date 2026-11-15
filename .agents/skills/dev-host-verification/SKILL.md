@@ -61,3 +61,41 @@ mise run test:e2e:host
    env：`XIHE_E2E_PROFILE=host`、`XIHE_E2E_EXTERNAL_SERVER=1`、`XIHE_UI_PORT`、`XIHE_CP_PORT`、`XIHE_E2E_LLM_MODE`、`XIHE_E2E_BROWSER_CHANNEL=chrome-beta`。
 3. 冒烟脚本复用账号：首跑 `SMOKE_REGISTER_EMAIL=<email>`，后续用 `SMOKE_EMAIL=<email>`（Agent 单 workspace 绑定，换 workspace 会被拒）；fake LLM 模式对内容标记有要求（如 `XIHE-E2E-WRITE <path> <content>`）。
 4. 收尾 `node scripts/e2e-host.mjs --teardown`；三跳结果在 `logs/{agent,cp}.log`（JSONL，按 `toolCallId` 过滤）。
+
+## 探针代码的 lint 规则夹逼（2026-11-15 实证）
+
+E2E 探针经常要**在浏览器侧挂钩平台对象**（例：记录 `writeTabWorkspace()` 的落盘时刻，只需给 `sessionStorage` 的写入打时间戳）。这类代码会同时踩到两条 oxlint 规则，**单看一条会以为另一条是错的** —— 这是「规则夹逼」：两条都满足才算修好。
+
+**两条规则各自的诉求**
+
+| 规则 | 诉求 | 对钩子代码的影响 |
+| --- | --- | --- |
+| `eslint/func-names` | 函数表达式**必须有名字**（调用栈里能看出是谁） | `= function (key, value) {…}` 被点名 2 次 |
+| `eslint/func-name-matching` | 赋给属性/变量的函数名**必须与目标同名** | 改成 `= function xhSetItem(…)` 后反而被点名 2 次（`0 → 2`） |
+
+**最小可复现片段（唯一正确解就是最后一行的写法）**
+
+```js
+const original = Storage.prototype.setItem;
+
+// ❌ eslint/func-names ×2：函数表达式没有名字
+Storage.prototype.setItem = function (key, value) { /* … */ };
+
+// ❌ 改成有名字了，但 eslint/func-name-matching ×2：名字与赋值目标 `setItem` 不同
+Storage.prototype.setItem = function xhSetItem(key, value) { /* … */ };
+
+// ✅ 两条同时满足：有名字，且名字 === 赋值目标
+Storage.prototype.setItem = function setItem(key, value) { /* … */ };
+```
+
+**实测顺序（先看到哪条错、改了又被哪条拦）**
+
+1. 首版匿名函数 ⇒ `check-lint-warnings --enforce` 报 **`+2 eslint(func-names)`**（该族 `1 → 3`）。
+2. 改名 `xhSetItem` / `xhRemoveItem` ⇒ `func-names` 绿，但同一门改报 **`+2 eslint(func-name-matching)`（`0 → 2`）** —— **红点只是换了名字、总数没变**，这一步最容易误判成「上一步的修复没生效」。
+3. 改名成与赋值目标**完全同名**（`function setItem` / `function removeItem`）⇒ 两条同时绿，回到 `warnings 711 / 基线 711（Δ+0）/ errors 0`。
+
+**判据与规则**
+
+- 钩子/包装代码写完后**一次跑完** `node scripts/check-lint-warnings.mjs --enforce`（在 `packages/ui`）看**族名**，不要只看条数：`errors` 是硬失败、`warnings` 有 ratchet 基线，**族名才是「哪条规则」**。
+- 连续两次红、**条数相等而族名不同** ⇒ 先怀疑规则夹逼，把两条规则名一起查；不要在两颗红之间来回改。
+- 这类截面结论写进卡面时**两条规则都要写**（只写一条会让下一个人重踩另一半）。
