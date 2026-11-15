@@ -618,7 +618,11 @@ test("inspectBaselineCounts：两处一致 ⇒ ok（静默）", () => {
         sourceRun: "task-174：expected 291 / skipped 68 / failed 0 / flaky 0",
     });
     assert.equal(verdict.status, "ok");
-    assert.deepEqual(verdict.lines, []);
+    // 通过也要留一行（否则日志里「静默」会被读成「没判」）；且措辞必须与「未评估」不同。
+    const text = verdict.lines.join("\n");
+    assert.match(text, /MOCK_BASELINE_COUNTS_CONSISTENT/);
+    assert.match(text, /自洽轴通过/);
+    assert.doesNotMatch(text, /自洽轴未评估/);
 });
 
 test("inspectBaselineCounts：不一致且有 $countsDerivation ⇒ warn 并引用推导", () => {
@@ -648,7 +652,11 @@ test("inspectBaselineCounts：不一致且无 derivation ⇒ error（点名两�
 test("inspectBaselineCounts：没有 sourceRun ⇒ 只 warn（历史夹具不得因此变红）", () => {
     const verdict = inspectBaselineCounts({ counts: { expected: 283 } });
     assert.equal(verdict.status, "warn");
-    assert.match(verdict.lines.join("\n"), /MOCK_BASELINE_NO_SOURCE_RUN/);
+    const text = verdict.lines.join("\n");
+    assert.match(text, /MOCK_BASELINE_COUNTS_NOT_EVALUATED/);
+    assert.match(text, /自洽轴未评估/);
+    assert.match(text, /不等于一致/);
+    assert.doesNotMatch(text, /自洽轴通过/);
 });
 
 test("inspectBaselineCounts：缺 counts.expected ⇒ error（比对会退化成什么都不比）", () => {

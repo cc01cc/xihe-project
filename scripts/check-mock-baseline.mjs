@@ -153,15 +153,26 @@ export function inspectBaselineCounts(baseline, baselinePath = "(baseline)") {
         return {
             status: "warn",
             lines: [
-                "[check-mock-baseline] MOCK_BASELINE_NO_SOURCE_RUN: " +
+                "[check-mock-baseline] MOCK_BASELINE_COUNTS_NOT_EVALUATED: 自洽轴未评估（不等于一致）：" +
                     baselinePath +
-                    " 的 sourceRun 里没有可解析的 expected ⇒ 无法交叉核对（counts.expected=" +
+                    " 的 sourceRun 无法交叉核对（counts.expected=" +
                     declared +
                     "）",
             ],
         };
     }
-    if (fromSource === declared) return { status: "ok", lines: [] };
+    if (fromSource === declared) {
+        // Lead 2026-11-15：日志里「没判」与「判了且一致」**绝不能被读成同一件事**（`空转=不判` ≠ `空转 0`）。
+        // 所以通过也要留一行明确写着「自洽轴通过」，而不是静默。
+        return {
+            status: "ok",
+            lines: [
+                "[check-mock-baseline] MOCK_BASELINE_COUNTS_CONSISTENT: 自洽轴通过：counts.expected=" +
+                    declared +
+                    " 与 sourceRun 里的 expected 一致",
+            ],
+        };
+    }
     if (derivation) {
         return {
             status: "warn",
@@ -864,7 +875,7 @@ function runSelftest() {
             "⑧",
         );
         // ⑨ 阴性对照：两处一致 ⇒ 不得出现任何一致性告警
-        const consistent = run("⑨ 两处一致 ⇒ 静默 exit 0", {
+        const consistent = run("⑨ 两处一致 ⇒ 明确「自洽轴通过」+ exit 0", {
             report: baseReport([], "e2e/mock/chat.spec.ts", {
                 expected: 283,
                 skipped: 1,
@@ -878,6 +889,9 @@ function runSelftest() {
         });
         assertCase(
             consistent.exit === 0 &&
+                /MOCK_BASELINE_COUNTS_CONSISTENT/.test(consistent.output) &&
+                /自洽轴通过/.test(consistent.output) &&
+                !/自洽轴未评估/.test(consistent.output) &&
                 !/SELF_INCONSISTENT/.test(consistent.output) &&
                 !/MOCK_BASELINE_COUNTS_DERIVED/.test(consistent.output),
             "⑨",
@@ -892,7 +906,15 @@ function runSelftest() {
             }),
             baseline: cleanBaseline,
         });
-        assertCase(noSource.exit === 0 && /MOCK_BASELINE_NO_SOURCE_RUN/.test(noSource.output), "⑩");
+        // Lead 2026-11-15：日志里「没判」与「判了且一致」必须是两句不同的话 ——
+        // ⑨ 与 ⑩ 互为阴性对照：⑨ 必含「自洽轴通过」且不含「未评估」，⑩ 反之。
+        assertCase(
+            noSource.exit === 0 &&
+                /MOCK_BASELINE_COUNTS_NOT_EVALUATED/.test(noSource.output) &&
+                /自洽轴未评估/.test(noSource.output) &&
+                !/自洽轴通过/.test(noSource.output),
+            "⑩",
+        );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -957,9 +979,8 @@ function main() {
         for (const line of baselineConsistency.lines) console.error(line);
         return 1;
     }
-    if (baselineConsistency.status === "warn") {
-        for (const line of baselineConsistency.lines) console.log(line);
-    }
+    // ok 态也要打印（`MOCK_BASELINE_COUNTS_CONSISTENT: 自洽轴通过`）——静默会被读成「没判」。
+    for (const line of baselineConsistency.lines) console.log(line);
     const subsetProblem = rejectSubsetReport(options.report, summary, baseline);
     if (subsetProblem) {
         console.error(`E_MOCK_REPORT_SCOPE: ${subsetProblem}`);
