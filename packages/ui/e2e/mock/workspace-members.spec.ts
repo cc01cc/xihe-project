@@ -2,6 +2,7 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import { selectByTestId } from "../helpers/select";
 import type { Page } from "@playwright/test";
+import { formatWarmUp, warmUpViteDeps } from "./helpers/vite-deps";
 
 // BL-318：本文件有两条**故意**制造成员写失败（409 已存在 / 404 未知用户名）以验裁定 #6 文案，
 // 逐条放行成员端点的失败信号。
@@ -34,6 +35,24 @@ let seq = 0;
  * 那样 EDITOR/VIEWER 的「表单隐藏」就**不携带角色判别力**（把 OWNER 改成 VIEWER 照样绿）。
  * 判别力来自**同一投影面下的差异** —— 四条都 present，只差 `workspaceAdmin`。</p>
  */
+
+/**
+ * task-222：起跑前热身 Vite 依赖（**按需显式调用**，不接成全局）。
+ *
+ * <p>为什么不在夹具里自动预热：那会把 **291 个 mock spec** 的首屏时序一起改掉，去修个位数 spec 的
+ * 幻影红；而「时序变了」正是过去假红的来源（`D-1588`）。归因是全局的（`page-failures` 对所有 spec
+ * 生效），预热只给历史上真的出现过动导/504 的这两处。判据：reload 之后仍命中陈旧依赖 ⇒ **按环境失败
+ * 报出来**（可执行提示），绝不退化成「业务断言红」。</p>
+ */
+async function warmUpDepsOrFail(page: Page, url: string): Promise<void> {
+    const warm = await warmUpViteDeps(page, url);
+    console.log(formatWarmUp(warm));
+    expect(
+        warm.staleAfterReload,
+        "[env] 依赖预打包陈旧（reload 后仍命中 504 / 动态导入失败）⇒ 先删 node_modules/.vite/deps 或重启 dev server，再判产品；这不是产品缺陷",
+    ).toBe(0);
+}
+
 async function serveProjection(
     page: Page,
     options: { role: string; workspaceAdmin: boolean },
@@ -250,6 +269,8 @@ test.describe("PLAN-0565 workspace members tab", () => {
                 body: "retry: 5000\n\n",
             }),
         );
+        // task-222：热身就在**本 spec 自己的落点页**上做（不是随便挑一页）——要预热的正是它接下来要加载的模块图。
+        await warmUpDepsOrFail(page, `/workspace/${WORKSPACE_ID}/members`);
     });
 
     test("OWNER sees the tab, adds a member by username and removes one via confirm", async ({

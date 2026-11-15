@@ -18,6 +18,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { isLeakRow } from "./helpers/headerAuditVerdict";
+import { formatWarmUp, warmUpViteDeps } from "./helpers/vite-deps";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const WS_ID = "11111111-1111-4111-8111-111111111111";
@@ -33,6 +34,26 @@ type Row = {
     workspaceHeader: string;
     explicitWorkspaceParam: boolean;
 };
+
+/**
+ * task-222：起跑前热身 Vite 依赖（**按需显式调用**，不接成全局）。
+ *
+ * <p>为什么不在夹具里自动预热：那会把 **291 个 mock spec** 的首屏时序一起改掉，去修个位数 spec 的
+ * 幻影红；而「时序变了」正是过去假红的来源（`D-1588`）。归因是全局的（`page-failures` 对所有 spec
+ * 生效），预热只给历史上真的出现过动导/504 的两处。判据：reload 之后仍命中陈旧依赖 ⇒ **按环境失败
+ * 报出来**（可执行提示），绝不退化成「业务断言红」。</p>
+ *
+ * <p>本文件额外一条：预热必须发生在 `page.on("request")` **之前**，否则预热自身那次导航拉起的
+ * 壳层接口会被审计当成第一条记录，`boundary` 读数就不可信了。</p>
+ */
+async function warmUpDepsOrFail(page: Page, url: string): Promise<void> {
+    const warm = await warmUpViteDeps(page, url);
+    console.log(formatWarmUp(warm));
+    expect(
+        warm.staleAfterReload,
+        "[env] 依赖预打包陈旧（reload 后仍命中 504 / 动态导入失败）⇒ 先删 node_modules/.vite/deps 或重启 dev server，再判产品；这不是产品缺陷",
+    ).toBe(0);
+}
 
 async function stubWorkspaces(page: Page): Promise<void> {
     await page.route(
@@ -50,6 +71,17 @@ async function stubWorkspaces(page: Page): Promise<void> {
 }
 
 test("ws-less 上下文请求头审计（task-585 余项）", async ({ page }) => {
+    await setupMockAuth(page);
+    await stubWorkspaces(page);
+    await setupMockSessions(page, {
+        sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_ID }],
+        workspacelessSessions: [{ id: STANDALONE, title: "独立会话甲" }],
+    });
+
+    // task-222：预热在本 spec 的落点页上做（要预热的正是它接下来要加载的模块图）；
+    // 必须在 `page.on("request")` 之前，否则预热那次导航会被审计记录污染 boundary。
+    await warmUpDepsOrFail(page, "/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+
     const rows: Row[] = [];
     page.on("request", (request) => {
         const url = new URL(request.url());
@@ -61,13 +93,6 @@ test("ws-less 上下文请求头审计（task-585 余项）", async ({ page }) =
             workspaceHeader: headers["x-workspace-id"] ?? "",
             explicitWorkspaceParam: url.searchParams.has("workspaceId"),
         });
-    });
-
-    await setupMockAuth(page);
-    await stubWorkspaces(page);
-    await setupMockSessions(page, {
-        sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_ID }],
-        workspacelessSessions: [{ id: STANDALONE, title: "独立会话甲" }],
     });
 
     // 从工作区会话页进入（上下文里有工作区），再点开独立会话 —— 与 task-585 的真实路径一致。
