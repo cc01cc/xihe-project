@@ -31,6 +31,7 @@ from xihe_agent.context.skill_catalog import (
     STATUS_TRUNCATED,
     TRUNCATION_NOTE,
     TRUNCATION_NOTE_KEY,
+    _line_key,
     render_from_component_sources,
     render_skill_catalog,
 )
@@ -149,3 +150,50 @@ def test_a_pool_driven_cut_still_pays_for_the_sentence() -> None:
     assert TRUNCATION_NOTE_KEY in ledger.charged_keys("skills")
     assert ledger.by_source["skills"] == block.charged
     assert ledger.used() <= ledger.limits.total
+
+def test_the_skill_id_suffix_does_not_change_the_ledger_key() -> None:
+    """task-258 / D-1277: the ``[skillId=<uuid>]`` suffix must not re-key the ledger.
+
+    CP appends the suffix so the model can address ``skill_read`` by uuid (F-11). The suffix sits
+    *after* the name/description separator, so the ledger key — the display name in front of the
+    separator — is unchanged. If it changed, the same skill listed with and without a suffix would
+    be booked twice in one run, quietly spending the shared pool.
+    """
+    plain = "alpha — desc of alpha"
+    suffixed = plain + " [skillId=2a5b96c3-0000-4000-8000-000000000001]"
+
+    assert _line_key(plain) == _line_key(suffixed)
+
+    # …and the same holds through the real charging seam, not just the key function.
+    context = _RunContext()
+    _content, first = render_from_component_sources(context, {SLOT: _source([suffixed])})
+    charged_once = ledger_for_context(context).by_source["skills"]
+    assert first["charged"] == charged_once > 0
+
+    _plain_content, second = render_from_component_sources(context, {SLOT: _source([plain])})
+
+    assert second["charged"] == 0
+    assert ledger_for_context(context).by_source["skills"] == charged_once
+
+
+def test_different_skill_names_still_get_different_ledger_keys() -> None:
+    """task-258: the guard above must not be satisfiable by a constant key.
+
+    A ``_line_key`` that always returned the same string would pass the suffix test while making
+    every skill after the first one free. Two different names must therefore stay two keys, and
+    the second name must still be paid for when it joins a run that already booked the first.
+    """
+    alpha = "alpha — desc of alpha [skillId=2a5b96c3-0000-4000-8000-000000000001]"
+    beta = "beta — desc of beta [skillId=2a5b96c3-0000-4000-8000-000000000002]"
+
+    assert _line_key(alpha) != _line_key(beta)
+
+    context = _RunContext()
+    render_from_component_sources(context, {SLOT: _source([alpha])})
+    charged_once = ledger_for_context(context).by_source["skills"]
+
+    _content, second = render_from_component_sources(context, {SLOT: _source([alpha, beta])})
+
+    assert second["charged"] > 0
+    assert ledger_for_context(context).by_source["skills"] > charged_once
+
