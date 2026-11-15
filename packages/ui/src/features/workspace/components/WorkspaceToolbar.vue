@@ -5,7 +5,6 @@ import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import {
     Activity,
-    Bot,
     Code,
     FileDiff,
     GitBranch,
@@ -142,14 +141,6 @@ function overflowNav(navigate: () => void) {
                 class="absolute left-0 top-full mt-1 z-50 w-44 rounded-md border bg-popover p-1 shadow-md text-sm"
                 data-testid="workspace-toolbar-more-menu"
             >
-                <button
-                    type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
-                    data-testid="workspace-toolbar-more-agents"
-                    @click="overflowNav(() => emit('agents'))"
-                >
-                    {{ t("workspace.agentManagement") }}
-                </button>
                 <button
                     type="button"
                     class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
@@ -337,16 +328,6 @@ function overflowNav(navigate: () => void) {
                 @click="emit('toggleDelegation')"
             >
                 <GitBranch class="size-3.5" />
-            </button>
-            <button
-                type="button"
-                data-testid="workspace-toolbar-agents"
-                class="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
-                :title="t('workspace.agentManagement')"
-                @click="emit('agents')"
-            >
-                <Bot class="size-3.5" aria-hidden="true" />
-                {{ t("workspace.agentManagement") }}
             </button>
         </div>
     </div>

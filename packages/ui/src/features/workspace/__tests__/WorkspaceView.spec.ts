@@ -410,12 +410,21 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 disabled: false,
             },
         ]);
+        // task-174 A1（`D-1538`）：工具栏 `Bot` 入口已退役，智能体面板改由 dock 页签 /
+        // 成员页「智能体」tab 打开 ⇒ 这里直接以布局预置打开该面板（原本靠点工具栏图标）。
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                dockCollapsed: false,
+                dockFocus: false,
+                dockTabs: ["agents"],
+                activeDockTab: "agents",
+            }),
+        );
         const wrapper = mountView();
-
-        await wrapper.find('[data-testid="workspace-toolbar-agents"]').trigger("click");
         await flushPromises();
 
-        // PLAN-0626 M3 (D26-05): the toolbar opens the dock's `agents` tab; the panel body
+        // PLAN-0626 M3 (D26-05): 打开的是 dock 的 `agents` 页签；面板体只存在一次
         // exists exactly once and the mobile modal host is not mounted on desktop at all.
         expect(wrapper.get('[data-testid="dock-tab-agents"]').attributes("aria-selected")).toBe(
             "true",
@@ -428,9 +437,18 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
     });
 
     it("creates a principal from the selected persisted template snapshot", async () => {
+        // task-174 A1（`D-1538`）：工具栏 `Bot` 入口已退役，智能体面板改由 dock 页签 /
+        // 成员页「智能体」tab 打开 ⇒ 这里直接以布局预置打开该面板（原本靠点工具栏图标）。
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                dockCollapsed: false,
+                dockFocus: false,
+                dockTabs: ["agents"],
+                activeDockTab: "agents",
+            }),
+        );
         const wrapper = mountView();
-
-        await wrapper.find('[data-testid="workspace-toolbar-agents"]').trigger("click");
         await flushPromises();
         // 2026-11-04 五裁（主体名规范）：名字只允许字母/中文/数字且不能以数字开头 ——
         // 原 "Template-backed" 带连字符，现在会被实时校验拦下（createBlocked ⇒ submit 不发）。

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
+import WorkspaceAgentsPanel from "../components/WorkspaceAgentsPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 
 /**
@@ -24,6 +26,14 @@ const route = useRoute(),
 const { t } = useI18n();
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
+
+/**
+ * task-174 A1（`D-1538`）：工具栏 `Bot` 入口退役后，智能体管理的入口归到成员页 ——
+ * 成员页承载两个一级 tab：**成员**（默认，既有面板不动）与**智能体**（`WorkspaceAgentsPanel`，
+ * 与此前 dock 面板 `agents` 分支同一组件、同一份逻辑，不复制状态）。
+ * 默认 tab 固定为「成员」：刷新/直连的行为与本次改动前一致，深链参数不新增。
+ */
+const activeTab = ref<"members" | "agents">("members");
 
 // 与设置页 tab 时代完全同一份 readonly 推导：角色未解析 = undefined（面板首帧禁用表单），
 // 解析后 EDITOR 只读、OWNER 可管理。
@@ -58,11 +68,27 @@ onMounted(() => {
             </div>
         </header>
         <div class="mx-auto w-full max-w-6xl px-6 py-6">
-            <WorkspaceMembersPanel
-                v-if="auth.canViewMembers !== false"
-                :workspace-id="workspaceId"
-                :readonly="panelReadonly"
-            />
+            <Tabs v-model="activeTab" :aria-label="t('workspace.membersTabLabel')">
+                <TabsList variant="line">
+                    <TabsTrigger data-testid="members-tab-members" value="members">
+                        {{ t("workspace.membersTabMembers") }}
+                    </TabsTrigger>
+                    <TabsTrigger data-testid="members-tab-agents" value="agents">
+                        {{ t("workspace.membersTabAgents") }}
+                    </TabsTrigger>
+                </TabsList>
+                <TabsContent value="members" class="mt-4">
+                    <WorkspaceMembersPanel
+                        v-if="auth.canViewMembers !== false"
+                        :workspace-id="workspaceId"
+                        :readonly="panelReadonly"
+                    />
+                </TabsContent>
+                <TabsContent value="agents" class="mt-4">
+                    <!-- 同一组件、同一逻辑：不复制智能体状态。 -->
+                    <WorkspaceAgentsPanel :key="workspaceId" :workspace-id="workspaceId" />
+                </TabsContent>
+            </Tabs>
         </div>
     </section>
 </template>

@@ -518,6 +518,10 @@ const messages = {
             containerTree: "文件树",
             containerMain: "内容",
             containerEmpty: "此容器暂无页签",
+            // task-174 A1（D-1538）：成员页一级 tab —— 成员 / 智能体（工具栏 Bot 入口移除后归这里）。
+            membersTabMembers: "成员",
+            membersTabAgents: "智能体",
+            membersTabLabel: "成员页分组",
             createFile: "新建文件",
             createFilePlaceholder: "输入文件名后回车",
             uploadFile: "上传文件",
@@ -4292,6 +4296,10 @@ const messages = {
             containerTree: "Files",
             containerMain: "Content",
             containerEmpty: "No tabs in this container",
+            // task-174 A1 (D-1538): members-page tabs — members / agents.
+            membersTabMembers: "Members",
+            membersTabAgents: "Agents",
+            membersTabLabel: "Members page sections",
             createFile: "New file",
             createFilePlaceholder: "Type a file name and press Enter",
             uploadFile: "Upload file",
