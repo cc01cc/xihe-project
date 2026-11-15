@@ -1,4 +1,9 @@
-import type { ContainerId } from "./containers";
+import {
+    visibleContainers,
+    type ActiveColumn,
+    type ContainerId,
+    type ContainerMode,
+} from "./containers";
 
 /**
  * task-184（`BL-561` 扩展 / `D-1600`）：**容器页签行的键盘契约**。
@@ -143,4 +148,24 @@ export function resolveMoveKey(direction: MoveDirection, context: MoveContext): 
     const rows = focusableRows(context.rows);
     if (rows.length <= 1) return { kind: "blocked", reason: "no-neighbor", preventDefault: false };
     return { kind: "blocked", reason: "layout-model-cannot-move", preventDefault: false };
+}
+
+/**
+ * task-174 / `D-1545`：**按形态筛出要渲染的行**（可见性只影响渲染，不影响归属）。
+ *
+ * <p>用户裁定原文：「两栏仍然是两栏，只是同时间只能显示单栏，可以进行切换」。所以：
+ * 桌面 ⇒ 全部行；窄屏 ⇒ 恰一个（`activeColumn` 指向的那一栏），而**归属不变** ——
+ * 这条与 `containerOf` 的纯函数性是一对：`containerOf` 保证「页签不搬家」，
+ * 本函数保证「不渲染 ≠ 不存在」。</p>
+ *
+ * <p>为什么要成一个函数而不是在模板里 `filter`：`D-1544` 第 3 条禁止模板自己判宽度/形态，
+ * 且这里有「空行不参与键盘遍历」的既有语义（`focusableRows`）——两件事分开测才不会互相掩盖。</p>
+ */
+export function rowsForMode<T extends ContainerRow>(
+    rows: readonly T[],
+    mode: ContainerMode,
+    activeColumn: ActiveColumn,
+): readonly T[] {
+    const visible = visibleContainers(mode, activeColumn);
+    return rows.filter((row) => visible.includes(row.container));
 }

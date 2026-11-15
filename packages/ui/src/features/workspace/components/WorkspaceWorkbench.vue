@@ -43,15 +43,22 @@ import SashGrip from "../../../components/shared/SashGrip.vue";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
 import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
+import WorkspaceContainerSwitcher from "./WorkspaceContainerSwitcher.vue";
 import {
     closeWorkspaceTab,
     selectWorkspaceTab,
     workspaceTabBarState,
 } from "./workspaceTabBarContext";
-import { containerOf, type ContainerId } from "../lib/containers";
+import {
+    containerOf,
+    type ActiveColumn,
+    type ContainerId,
+    type ContainerMode,
+} from "../lib/containers";
 import {
     resolveMoveKey,
     resolveNavKey,
+    rowsForMode,
     type ContainerRow,
     type ContainerRowKeyPayload,
 } from "../lib/containerTabNav";
@@ -335,10 +342,27 @@ const mainContainerActiveId = computed(() => tabBarContext.activeId.value);
  * <p>空行在这里自然被 `resolveNavKey`/`focusableRows` 过滤掉（`mainContainerTabs` 为空时中栏不画行），
  * 所以「DOM 顺序 vs 容器常量表」的分叉不会传到键盘判定里。</p>
  */
-const containerRows = computed<ContainerRow[]>(() => [
-    { container: "tree", tabs: treeContainerTabs.value, activeId: "tree" },
-    { container: "main", tabs: mainContainerTabs.value, activeId: mainContainerActiveId.value },
-]);
+const containerRows = computed<ContainerRow[]>(() => {
+    const rows: ContainerRow[] = [
+        { container: "tree", tabs: treeContainerTabs.value, activeId: "tree" },
+        { container: "main", tabs: mainContainerTabs.value, activeId: mainContainerActiveId.value },
+    ];
+    return [...rowsForMode(rows, containerMode.value, layout.value.activeColumn)];
+});
+
+/**
+ * task-174 / `D-1545`：**形态只决定看得见哪一栏**，不改归属。
+ *
+ * <p>今天 `single` 只在移动壳（`isMobile`）成立，而移动壳现在渲染的是 `<FileEditor />`
+ * （`D-1544` 遗留：真正的窄屏渲染由移动壳卡接通）⇒ 这一层现在是**形状就位、产品面不触发**，
+ * 由单测钉住。桌面形态下 `visibleContainers` 返回全部 ⇒ 行为与本卡之前完全一致。</p>
+ */
+const containerMode = computed<ContainerMode>(() => (props.isMobile ? "single" : "desktop"));
+
+/** 窄屏切换当前显示哪一栏（与布局同源落盘：写的是同一个 `xihe-layout-ws:<id>`）。 */
+function setActiveColumn(value: ActiveColumn): void {
+    layout.value.activeColumn = value;
+}
 
 /**
  * task-184（`D-1600` ③）：键盘命令的**无障碍播报**出口。
@@ -1093,7 +1117,16 @@ defineExpose({ openDockTab });
                     </template>
                 </WorkspaceShellDockview>
             </div>
-            <div v-else data-testid="workspace-center" class="flex min-h-0 min-w-0 flex-1">
+            <div v-else data-testid="workspace-center" class="flex min-h-0 min-w-0 flex-1 flex-col">
+                <!--
+                    task-174 / D-1545：窄屏「两栏仍然是两栏，同时只显示单栏、可以切换」的切换控件。
+                    只在 single 形态渲染（今天即移动壳）；桌面形态不出现，不影响现有布局。
+                -->
+                <WorkspaceContainerSwitcher
+                    v-if="containerMode === 'single'"
+                    :active-column="layout.activeColumn"
+                    @update:active-column="setActiveColumn"
+                />
                 <SplitterGroup
                     ref="centerGroupRef"
                     direction="horizontal"

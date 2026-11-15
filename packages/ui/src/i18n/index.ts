@@ -520,6 +520,9 @@ const messages = {
             containerEmpty: "此容器暂无页签",
             // task-184（BL-561 扩展 / D-1600 ③）：跨组移动做不了时的播报。**不做静默 no-op**。
             containerMoveNoNeighbor: "没有可移入的相邻容器",
+            // task-174 / D-1545：窄屏切换「显示哪一栏」与右栏容器名。
+            containerRight: "右栏",
+            containerSwitcherLabel: "显示哪一栏",
             containerMoveModelPending: "当前布局不支持把面板移到其它容器（等容器化布局启用）",
             // task-174 A1（D-1538）：成员页一级 tab —— 成员 / 智能体（工具栏 Bot 入口移除后归这里）。
             membersTabMembers: "成员",
@@ -4301,6 +4304,9 @@ const messages = {
             containerEmpty: "No tabs in this container",
             // task-184 (BL-561 extension / D-1600 ③): announced when a cross-container move cannot run.
             containerMoveNoNeighbor: "No adjacent container to move into",
+            // task-174 / D-1545: narrow-screen column switcher and the right column name.
+            containerRight: "Right panel",
+            containerSwitcherLabel: "Which column to show",
             containerMoveModelPending: "This layout cannot move panels between containers yet",
             // task-174 A1 (D-1538): members-page tabs — members / agents.
             membersTabMembers: "Members",
