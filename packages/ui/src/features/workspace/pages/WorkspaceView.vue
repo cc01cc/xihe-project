@@ -509,11 +509,12 @@ watch(isMobileViewport, (mobile) => {
                         role="note"
                         class="line-clamp-2 shrink-0 border-b px-3 py-1 text-xs text-muted-foreground bg-muted/5"
                     >
+                        <!-- task-16（自审批01 W-2）：原第二句 sandboxEnforcementSnapshot
+                             （「决策快照照冻，仅标注 enforcement=none」）是内部决策快照 / enforcement
+                             调试态，不该泄露到用户面 ⇒ 移除内部段，只保留面向用户的安全说明。
+                             对应 i18n 键暂留（src/i18n 不在本卡写面），不再被任何 t() 引用。 -->
                         <span class="font-medium text-foreground/80">{{
                             t("workspace.sandboxEnforcement")
-                        }}</span>
-                        <span class="ml-2 text-muted-foreground/80">{{
-                            t("workspace.sandboxEnforcementSnapshot")
                         }}</span>
                     </div>
                     <div
