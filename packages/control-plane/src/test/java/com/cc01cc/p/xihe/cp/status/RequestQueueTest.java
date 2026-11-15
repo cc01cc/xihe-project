@@ -172,6 +172,33 @@ class RequestQueueTest {
         assertEquals(0, queue.size());
     }
 
+    /**
+     * task-134 A2 / T2 (constraint 1): TTL expiry has one owner — the reconciler. A drain that meets
+     * an already-expired entry must <b>not</b> hand it to the drop consumer, or two writers race for
+     * the same run's terminal state and the code the user sees depends on who ran first.
+     */
+    @Test
+    void anExpiredEntryIsNeverHandedToTheDropConsumer() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        RequestQueue queue = new RequestQueue(clock);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = captureQueueLog();
+        assertTrue(queue.enqueue("s1", "hello", "run-model", "user1", "ws1", "request-1", "run-1"));
+        clock.advanceSeconds(RequestQueue.TTL_SECONDS + 1);
+
+        List<RequestQueue.QueuedRequest> handedToDropConsumer = new ArrayList<>();
+        assertEquals(0, queue.drain(ignored -> true, handedToDropConsumer::add));
+
+        assertEquals(0, handedToDropConsumer.size(),
+                "TTL expiry belongs to reconciliation; the drain must not terminalize it");
+        String line = drainedLine(appender);
+        assertTrue(line.contains("expired=1"), line);
+        String expiredLine = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("event=requestQueueExpired"))
+                .findFirst().orElseThrow();
+        assertTrue(expiredLine.contains("runId=run-1"), "the expiry must be traceable to the run: " + expiredLine);
+    }
+
     /** task-136: with three exclusive counters the line is self-checking: their sum is the scan size. */
     @Test
     void theThreeCountersAddUpToWhatTheDrainScanned() {

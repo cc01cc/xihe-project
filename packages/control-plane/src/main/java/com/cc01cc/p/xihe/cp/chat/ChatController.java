@@ -251,6 +251,43 @@ public class ChatController {
     }
 
     /**
+     * task-134 A1/132: hands one parked request to the transport.
+     *
+     * @return {@code true} only when it was actually handed to {@code execAsync}; {@code false} when
+     *         this process refused it (the refusal path owns its own terminal state)
+     */
+    private boolean deliverQueuedRequest(RequestQueue.QueuedRequest req) {
+        String requestId = nonBlankOrGenerated(req.requestId());
+        String runId = nonBlankOrGenerated(req.runId());
+        // task-131: this run was parked by this process, so the local claim it still holds is a
+        // handoff, not a duplicate dispatch. resumeHandedOff() takes back only parked runs; a run
+        // that is genuinely ACTIVE still answers false here.
+        if (!activeRunRegistry.resumeHandedOff(req.sessionId(), runId)
+                || !acquireLeaseForExistingRun(runId)) {
+            logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
+                    requestId, req.sessionId(), runId);
+            markQueuedRequestFailed(req, requestId, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
+            return false;
+        }
+        logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
+                requestId, req.sessionId(), runId);
+        execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(),
+                req.toolTimeouts(), req.attachments(),
+                req.userId(), req.workspaceId(), requestId, runId, null);
+        return true;
+    }
+
+    /**
+     * task-134 A2 (constraint 1): TTL expiry is owned by the reconciler, so this callback is
+     * reserved for a <b>delivery attempt that threw</b> — a failure of the attempt, not of the wait.
+     * The expired branch in {@link RequestQueue} deliberately does not reach here.
+     */
+    private void markQueuedRequestUnavailable(RequestQueue.QueuedRequest req) {
+        markQueuedRequestFailed(req, nonBlankOrGenerated(req.requestId()), "AGENT_UNAVAILABLE",
+                "Queued chat request could not be delivered");
+    }
+
+    /**
      * task-134 A1: the single place that hands parked requests to the transport.
      *
      * <p>Two callers, and both are needed: the agent's down→up transition ({@code task-131} path),
@@ -260,32 +297,7 @@ public class ChatController {
      * request to exactly one caller, so a request is dispatched at most once.</p>
      */
     private void drainQueuedRequests() {
-        requestQueue.drain(req -> {
-                    String requestId = nonBlankOrGenerated(req.requestId());
-                    String runId = nonBlankOrGenerated(req.runId());
-                    // task-131: this run was parked by this process, so the local claim it still
-                    // holds is a handoff, not a duplicate dispatch. resumeHandedOff() takes back only
-                    // parked runs; a run that is genuinely ACTIVE still answers false here.
-                    if (!activeRunRegistry.resumeHandedOff(req.sessionId(), runId)
-                            || !acquireLeaseForExistingRun(runId)) {
-                        logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
-                                requestId, req.sessionId(), runId);
-                        markQueuedRequestFailed(req, requestId, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
-                        // task-132: this request was NOT delivered; saying so keeps the drain
-                        // line's "delivered" counter honest.
-                        return false;
-                    }
-                    logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
-                            requestId, req.sessionId(), runId);
-                    execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(),
-                            req.toolTimeouts(), req.attachments(),
-                            req.userId(), req.workspaceId(), requestId, runId, null);
-                    return true;
-                }, req -> markQueuedRequestFailed(
-                        req,
-                        nonBlankOrGenerated(req.requestId()),
-                        "AGENT_UNAVAILABLE",
-                        "Queued chat request could not be delivered"));
+        requestQueue.drain(this::deliverQueuedRequest, this::markQueuedRequestUnavailable);
     }
 
     @PreAuthorize("isAuthenticated()")

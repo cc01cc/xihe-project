@@ -17,7 +17,11 @@ public class RequestQueue {
 
     private static final Logger logger = LoggerFactory.getLogger(RequestQueue.class);
     private static final int MAX_SIZE = 100;
-    private static final long TTL_SECONDS = 60;
+    /**
+     * task-134 A2: parked requests live this long. Reconciliation reads the same constant, because
+     * TTL expiry has exactly one owner — the periodic reconciler — so the two sides cannot drift.
+     */
+    public static final long TTL_SECONDS = 60;
 
     private final ConcurrentLinkedQueue<QueuedRequest> queue = new ConcurrentLinkedQueue<>();
     /** task-136: the TTL is 60 s of wall clock, so expiry can only be tested with an injected clock. */
@@ -27,7 +31,12 @@ public class RequestQueue {
         this(Clock.systemUTC());
     }
 
-    RequestQueue(Clock clock) {
+    /**
+     * Test seam only: production code uses {@link #RequestQueue()} with system UTC. A collision test
+     * has to age an entry past the 60 s TTL without sleeping, and duplicating the TTL rule inside a
+     * test would re-implement the very semantics under test.
+     */
+    public RequestQueue(Clock clock) {
         this.clock = clock;
     }
 
@@ -106,9 +115,14 @@ public class RequestQueue {
             }
 
             if (Instant.now(clock).getEpochSecond() - req.createdAt().getEpochSecond() > TTL_SECONDS) {
+                // task-134 A2 (constraint 1): TTL expiry has ONE owner — the periodic reconciler,
+                // which is the only observer that is guaranteed to run (the drain only fires on a
+                // down→up edge and does not run at all for a wedged request). Emitting a terminal
+                // here would race the reconciler for the same run and make the user-visible code
+                // depend on timing, so the drain only counts it and points at the run.
                 expired++;
-                logger.info("[LIFECYCLE] service=cp event=requestQueueExpired sessionId={} ttlSeconds={}", req.sessionId(), TTL_SECONDS);
-                notifyDropped(onDropped, req);
+                logger.info("[LIFECYCLE] service=cp event=requestQueueExpired sessionId={} runId={} requestId={} ttlSeconds={} owner=reconciliation",
+                        req.sessionId(), req.runId(), req.requestId(), TTL_SECONDS);
                 continue;
             }
 

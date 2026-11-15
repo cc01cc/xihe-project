@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.status.RequestQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -74,14 +75,22 @@ public class ChatRunReconciliationService {
         int cancelled = 0;
         int ambiguous = 0;
         int skippedActive = 0;
+        // task-134 A2: a parked (handed-off) run is only "still ours to deliver" while the queue can
+        // still deliver it. Past the queue's own TTL the parked entry is dead, and skipping the run
+        // because it is "locally registered" would skip it forever (D-1485: registered ≠ owned).
+        Instant queueCutoff = now.minus(Duration.ofSeconds(RequestQueue.TTL_SECONDS));
         for (ChatRun run : stale) {
             String runId = run.getId().toString();
             if (activeRunRegistry.isRunActiveLocally(runId)) {
-                skippedActive++;
-                // task-134 A3: the batch total cannot say *which* run was skipped, and a skipped
-                // run is exactly what "wedged forever" looks like from the outside.
-                logger.info("[LIFECYCLE] service=cp event=chat_run_reconcile_skipped runId={} sessionId={} status={} reason=locally_registered",
-                        runId, run.getSessionId(), run.getStatus());
+                if (!activeRunRegistry.isHandedOffBefore(runId, queueCutoff)) {
+                    skippedActive++;
+                    // task-134 A3: the batch total cannot say *which* run was skipped, and a skipped
+                    // run is exactly what "wedged forever" looks like from the outside.
+                    logger.info("[LIFECYCLE] service=cp event=chat_run_reconcile_skipped runId={} sessionId={} status={} reason=locally_registered",
+                            runId, run.getSessionId(), run.getStatus());
+                    continue;
+                }
+                rejectExpiredQueueEntry(run, queueCutoff);
                 continue;
             }
             try {
@@ -109,5 +118,43 @@ public class ChatRunReconciliationService {
         }
         logger.info("[LIFECYCLE] service=cp event=chat_run_reconcile_completed cancelled={} ambiguous={} skipped_active={}",
                 cancelled, ambiguous, skippedActive);
+    }
+
+    /**
+     * task-134 A2: the run was parked for transport recovery and the queue's TTL has passed, so the
+     * parked entry can never be delivered. Terminalize it as its <b>own</b> outcome instead of
+     * "unknown": the request never left CP, so {@code QUEUE_EXPIRED} says more than a generic stale
+     * reconciliation would.
+     *
+     * <p>Missing-handoff policy (explicit, not an accident): when the parked instant is unknown —
+     * an old row, or the registry was rebuilt by a restart — {@code isHandedOffBefore} answers
+     * {@code false}, so reconciliation keeps skipping. Conservative on purpose: taking over a run we
+     * cannot prove is expired would terminalize a request that the drain may still deliver (a
+     * second instance of the "terminal but never delivered" defect), whereas skipping keeps it
+     * visible through {@code xihe.chat.queue.depth} and the skip log, and a restart settles it as
+     * {@code CP_RESTARTED} anyway.</p>
+     *
+     * <p>Constraint: the transition must go through {@link ChatRunTerminalService#terminalize}, which
+     * owns the CAS on {@code expectedStatuses}, the row lock and the "already terminal ⇒ no second
+     * frame" rule. The expected status is narrowed to {@code queued} on purpose: a run that is
+     * genuinely {@code running} must never be swept up by this branch.</p>
+     */
+    private void rejectExpiredQueueEntry(ChatRun run, Instant queueCutoff) {
+        String runId = run.getId().toString();
+        try {
+            ChatRunTerminalService.TerminalResult result = terminalService.terminalize(
+                    new ChatRunTerminalService.TerminalRequest(runId, List.of("queued"), "ambiguous",
+                            "ambiguous", "QUEUE_EXPIRED",
+                            "The queued chat request expired before the agent recovered",
+                            run.getTokenCount(), run.getAssistantChars(),
+                            ChatRunTerminalService.TerminalSource.RECONCILIATION, null, null));
+            if (result.committed()) {
+                logger.info("[LIFECYCLE] service=cp event=chat_run_queue_expired runId={} sessionId={} status={} parkedSince=before={}",
+                        runId, run.getSessionId(), result.currentStatus(), queueCutoff);
+            }
+        } catch (Exception e) {
+            logger.error("[LIFECYCLE] service=cp event=chat_run_queue_expire_failed runId={} sessionId={}",
+                    runId, run.getSessionId(), e);
+        }
     }
 }
