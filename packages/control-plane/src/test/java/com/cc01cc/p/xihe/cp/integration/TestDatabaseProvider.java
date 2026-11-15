@@ -97,6 +97,23 @@ public final class TestDatabaseProvider {
     }
 
     /**
+     * 克隆**模板库**：迁到 head、但**没有**启动期写入 —— 负例夹具专用（task-200）。
+     *
+     * <p>为什么不能用 {@link #migratedDatabase(String)} 代替：那个方法在快照就绪后会**改从快照库克隆**
+     * （{@code snapshotSource != null}），于是「迁过但没种子」的库会变成「迁过且有种子」——
+     * 断言的前提随**之前跑过哪个上下文**漂移（task-200 全量首跑实测：负例在 Spring 类之后跑就假红）。
+     * 负例夹具必须**自己指定克隆源**，这就是 {@code D-1566}/{@code R2}「用例的断言前提必须由用例自己建立」。</p>
+     */
+    public static DatabaseRef templateClone(String label) {
+        ensureStarted();
+        ensureTemplate();
+        String databaseName = databaseName(label);
+        createDatabase(databaseName, TEMPLATE_DATABASE, false, label);
+        lastDatabaseName = databaseName;
+        return new DatabaseRef(databaseName, jdbcUrl(databaseName), USERNAME, PASSWORD);
+    }
+
+    /**
      * 分配一个**空**数据库（不克隆模板）：给"迁移重放"类用——它们要自己把 Flyway 跑到目标版本。
      *
      * @param label 用途标签（只进库名）

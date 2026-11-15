@@ -98,7 +98,10 @@ class SeedSnapshotGuardTest {
     /** 内容校验负例②：迁到 head 但**没有启动期写入**的库（模板克隆就是这种）也不许复用。 */
     @Test
     void contentVerificationRefusesAMigratedButUnseededDatabase() {
-        String migrated = TestDatabaseProvider.migratedDatabase("guard-unseeded").databaseName();
+        // 前提必须自建（R2）：不能用 migratedDatabase(...) —— 快照就绪后它会改从**快照库**克隆，
+        // 于是这个「迁过但没种子」的库实际带种子，断言会随"之前跑过哪个上下文"漂移
+        // （task-200 全量首跑实测：本用例在 Spring 类之后跑假红）。
+        String migrated = TestDatabaseProvider.templateClone("guard-unseeded").databaseName();
         IllegalStateException failure = assertThrows(IllegalStateException.class,
                 () -> TestDatabaseProvider.verifySeedSnapshotContent(migrated));
         assertTrue(failure.getMessage().contains("lacks the startup seeds"),
