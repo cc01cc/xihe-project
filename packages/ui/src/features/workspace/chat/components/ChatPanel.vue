@@ -935,7 +935,20 @@ async function handleSend(
     });
 }
 
-async function handleFollowUpQueue(content: string, attachments?: AttachmentFile[]) {
+/**
+ * task-129：`draftRevision` 由 composer 随 emit 上行，用来区分「同一份稿」与「改过又改回」。
+ * 它是**第 6 个**参数，前 5 个的语义未动。
+ */
+async function handleFollowUpQueue(
+    content: string,
+    attachments?: AttachmentFile[],
+    // 入队路径今天不带 as / cc / to（那是 task-49 的另一条链路），但**位置必须占住**：
+    // draftRevision 是 emit 的第 6 个实参，参数表错位一位就会静默拿到 undefined（已踩）。
+    _asParticipantId?: string,
+    _cc?: string[],
+    _toParticipantIds?: string[],
+    draftRevision?: number,
+) {
     const sessionId = props.sessionId;
     if (
         !sessionId ||
@@ -971,6 +984,9 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
     const signature = JSON.stringify([
         branchId,
         content,
+        // task-129：稿代次进签名 ⇒ 「改稿 → 改回」也是新签名 ⇒ 不复用旧键；
+        // 未改稿重发 ⇒ 同一代次 ⇒ 仍复用（真重试语义不变）。
+        draftRevision ?? 0,
         fileIds,
         props.toolMode,
         binding?.provider ?? null,

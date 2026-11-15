@@ -148,6 +148,29 @@ describe("InputArea", () => {
         expect(wrapper.find('[data-testid="chat-stop-button"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="chat-queue-button"]').exists()).toBe(true);
     });
+    /**
+     * task-129：稿代次（第 6 个 emit 参数）**只增不减**，「改回原样」也前进。
+     *
+     * <p>幂等键槽用它区分「同一份稿重发」与「改过又改回的新动作」：只比内容会把后者误判成重放。</p>
+     */
+    it("task-129: 稿代次随内容变化递增，改回原样也递增", async () => {
+        const wrapper = mountInputArea({ isStreaming: true, queueMode: true }),
+            textarea = wrapper.find('[data-testid="chat-input"]');
+        await textarea.setValue("A");
+        await textarea.trigger("keydown", { key: "Enter", shiftKey: false, isComposing: false });
+        await textarea.setValue("B");
+        await textarea.setValue("A");
+        await textarea.trigger("keydown", { key: "Enter", shiftKey: false, isComposing: false });
+
+        const queue = wrapper.emitted("queue");
+        expect(queue).toHaveLength(2);
+        const first = queue?.[0]?.[5] as number | undefined;
+        const second = queue?.[1]?.[5] as number | undefined;
+        expect(typeof first).toBe("number");
+        expect(second).toBeGreaterThan(first!);
+        // 内容回到原样，代次仍前进 ⇒ 下游不会把它当成同一份稿。
+        expect(queue?.[1]?.[0]).toBe(queue?.[0]?.[0]);
+    });
 
     it("BL-391: failed/cancelled run (isStreaming=false) restores the send button", async () => {
         const wrapper = mountInputArea({ isStreaming: true });

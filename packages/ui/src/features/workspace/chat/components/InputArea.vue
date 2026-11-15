@@ -82,6 +82,8 @@ const emit = defineEmits<{
         asParticipantId?: string,
         cc?: string[],
         toParticipantIds?: string[],
+        /** task-129：草稿代次（内容一变就 +1，含清空）——幂等键槽据此判断「这是不是同一份稿」。 */
+        draftRevision?: number,
     ];
     queue: [
         content: string,
@@ -89,6 +91,8 @@ const emit = defineEmits<{
         asParticipantId?: string,
         cc?: string[],
         toParticipantIds?: string[],
+        /** task-129：草稿代次，见 send 的同名字段。 */
+        draftRevision?: number,
     ];
     stop: [];
 }>();
@@ -596,6 +600,19 @@ const input = ref(""),
     attachments = ref<File[]>([]);
 
 /**
+ * task-129：**草稿代次**。
+ *
+ * <p>幂等键的语义是「同一份未改动草稿的上一次尝试」；只比内容不够 —— 用户「改稿 → 再改回原样」
+ * 后内容与旧稿相同，但那已经是**新动作**（若首请求其实已落地，复用键会被 CP 判成重放，
+ * 这条新消息就静默消失了）。代次只增不减，任何内容变化（含清空、程序化预填）都会 +1，
+ * 所以「改回原样」也会得到新代次。</p>
+ */
+const draftRevision = ref(0);
+watch(input, () => {
+    draftRevision.value += 1;
+});
+
+/**
  * PLAN-0670 M2d.4：本地图片预览的 object URL 必须**创建必配对释放**。
  * 之前模板里 `attachmentObjectUrl(file)` 每次渲染都 `URL.createObjectURL`，从不 revoke ——
  * 选过图后整个 Blob 常驻内存。这里按 File 缓存（同一文件只建一次），移除/清空/卸载时 revoke。
@@ -980,6 +997,7 @@ async function handleSend() {
             effectiveSpeakAsId.value || undefined,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
             toTargetsPayload.value,
+            draftRevision.value,
         );
     else
         emit(
@@ -989,6 +1007,7 @@ async function handleSend() {
             effectiveSpeakAsId.value || undefined,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
             toTargetsPayload.value,
+            draftRevision.value,
         );
 }
 

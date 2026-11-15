@@ -1086,6 +1086,33 @@ describe("ChatPanel Follow-up queue", () => {
         // 没有新建 ⇒ 不能清稿，否则等于替用户丢掉这条内容。
         expect(clearDraft).not.toHaveBeenCalled();
     });
+
+    /**
+     * task-129：**「改稿 → 改回」也是新动作**。
+     *
+     * <p>只比内容不够：用户把稿改成 B 再改回 A，内容与旧稿相同，但中途稿变了 ⇒ 代次变了 ⇒
+     * 这是新动作。若复用旧键，CP 会把它当重放（首请求其实已落地时），这条新消息就静默消失。</p>
+     */
+    it("改稿后再改回原样，60 s 内发送也必须换新键", async () => {
+        vi.mocked(api.enqueueFollowUpDetailed).mockRejectedValue(new Error("connection lost"));
+        const wrapper = mountPanel();
+        await flushPromises();
+        const input = wrapper.findComponent(InputArea);
+
+        // 同一代次：这是「同一份稿的连续两次尝试」，第二次必须复用（真重试语义）。
+        input.vm.$emit("queue", "edited back", [], undefined, undefined, undefined, 0);
+        await flushPromises();
+        input.vm.$emit("queue", "edited back", [], undefined, undefined, undefined, 0);
+        await flushPromises();
+        // 改稿再改回：内容相同但代次前进 ⇒ 必须是新键。
+        input.vm.$emit("queue", "edited back", [], undefined, undefined, undefined, 2);
+        await flushPromises();
+
+        const calls = vi.mocked(api.enqueueFollowUpDetailed).mock.calls;
+        expect(calls).toHaveLength(3);
+        expect(calls[1]?.[2]).toBe(calls[0]?.[2]);
+        expect(calls[2]?.[2]).not.toBe(calls[0]?.[2]);
+    });
 });
 
 // ── PLAN-0631 M1 (D31-04) ──────────────────────────────────────────────────
