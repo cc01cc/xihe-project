@@ -59,8 +59,11 @@ class UserPreferenceLayoutSchemaTest {
         layout.put("treeWidth", 240);
         layout.put("dockWidth", 360);
         layout.put("dockMode", "pinned");
-        layout.put("dockTabs", List.of("files", "memory", "jobs"));
-        layout.put("activeDockTab", "files");
+        // task-265: real DOCK_TAB_IDS (useWorkspaceLayout.ts:92-100). The old fixture used
+        // "files"/"memory"/"jobs", which no panel implements — it passed only because the schema
+        // had no inner shape at all.
+        layout.put("dockTabs", List.of("code", "changes", "monitor"));
+        layout.put("activeDockTab", "code");
         return layout;
     }
 
@@ -88,13 +91,13 @@ class UserPreferenceLayoutSchemaTest {
 
     @Test
     void acceptsBothLayoutKeyFamiliesAsParsedObjects() throws JsonProcessingException {
-        String layoutText = MAPPER.writeValueAsString(realLayout());
-        Map<String, String> wire = new LinkedHashMap<>();
-        wire.put("layout.global", layoutText);
-        wire.put("layout.ws." + WS, layoutText);
-        // 直接按预解析后的形状断言（对象），证明 additionalProperties:false 下两个键族都合法。
+        // task-265 tightened this: the two families are NOT interchangeable. Before the semantic
+        // shape existed both keys were bare objects, so this test wrote the *workspace* layout into
+        // layout.global as well. Now each family carries its own shape (GlobalLayoutState vs
+        // WorkspaceLayoutState) — a stronger assertion, not a weaker one; the refusal side is pinned
+        // by keepsTheTwoKeyFamiliesNonInterchangeable below.
         JsonNode body = MAPPER.valueToTree(Map.of(
-                "layout.global", realLayout(),
+                "layout.global", Map.of("navOpen", true, "navWidth", 280),
                 "layout.ws." + WS, realLayout()));
         assertEquals(List.of(), schema.validate(DOMAIN, body),
                 "layout.global (literal) and layout.ws.<uuid> (pattern) must both be legal objects");
@@ -103,8 +106,8 @@ class UserPreferenceLayoutSchemaTest {
     @Test
     void aRealLayoutPayloadSurvivesTheWireRoundTrip() throws IOException {
         String layoutText = MAPPER.writeValueAsString(realLayout());
-        assertEquals(List.of(), validateWire(Map.of("layout.global", layoutText)),
-                "a real layout serialized to JSON text must pass the parsed-shape validation");
+        assertEquals(List.of(), validateWire(Map.of("layout.global", "{\"navOpen\":true,\"navWidth\":280}")),
+                "the global layout serialized to JSON text must pass the parsed-shape validation");
         assertEquals(List.of(), validateWire(Map.of("layout.ws." + WS, layoutText)),
                 "same for the per-workspace family");
     }
@@ -145,5 +148,114 @@ class UserPreferenceLayoutSchemaTest {
                 "additionalProperties:false must stay closed: the literal key 'layout' is not declared");
         assertFalse(validateWire(Map.of("layout.workspace", "{}")).isEmpty(),
                 "near-miss key layout.workspace must stay rejected");
+    }
+
+    /** task-265: the semantic panel model of design §3.4.2 (groups + activeGroup, no snapshot). */
+    private static Map<String, Object> semanticLayout() {
+        Map<String, Object> layout = new LinkedHashMap<>(realLayout());
+        layout.put("dockFocus", false);
+        layout.put("activeColumn", "main");
+        layout.put("panels", Map.of(
+                "groups", List.of(
+                        Map.of("id", "center", "panels", List.of("page:sessions"),
+                                "active", "page:sessions", "size", 0.7),
+                        Map.of("id", "right", "panels", List.of("code", "changes"),
+                                "active", "code", "size", 0.3)),
+                "activeGroup", "center"));
+        return layout;
+    }
+
+    /**
+     * A dockview {@code toJSON()} snapshot: {@code grid} + a {@code panels} *record* + {@code
+     * activeGroup}. Design §7-6 forbids persisting it; this is the shape the schema must refuse.
+     */
+    private static Map<String, Object> dockviewSnapshot() {
+        return Map.of(
+                "grid", Map.of("root", Map.of("type", "branch", "data", List.of()), "width", 1600,
+                        "height", 900, "orientation", "HORIZONTAL"),
+                "panels", Map.of("code", Map.of("id", "code", "title", "Code",
+                        "renderer", "onlyWhenVisible", "params", Map.of())),
+                "activeGroup", "group-1");
+    }
+
+    @Test
+    void acceptsTheSemanticPanelModelOnBothKeyFamilies() throws IOException {
+        String text = MAPPER.writeValueAsString(semanticLayout());
+        assertEquals(List.of(), validateWire(Map.of("layout.ws." + WS, text)),
+                "the semantic groups model must be writable on the per-workspace family");
+        assertEquals(List.of(), validateWire(Map.of("layout.global", "{\"navOpen\":true,\"navWidth\":280}")),
+                "the global family carries GlobalLayoutState (navOpen/navWidth)");
+    }
+
+    @Test
+    void rejectsASerializedDockviewSnapshotOnBothKeyFamilies() throws IOException {
+        String snapshot = MAPPER.writeValueAsString(dockviewSnapshot());
+        assertFalse(validateWire(Map.of("layout.ws." + WS, snapshot)).isEmpty(),
+                "design §7-6: a SerializedDockview snapshot must not be persistable");
+        assertFalse(validateWire(Map.of("layout.global", snapshot)).isEmpty(),
+                "same refusal on the global family");
+        // Strip `grid` so the refusal cannot be satisfied by a one-word blacklist: the panels
+        // *record* alone still fails, because our panels is {groups[], activeGroup}.
+        Map<String, Object> withoutGrid = new LinkedHashMap<>(dockviewSnapshot());
+        withoutGrid.remove("grid");
+        assertFalse(validateWire(Map.of("layout.ws." + WS, MAPPER.writeValueAsString(withoutGrid))).isEmpty(),
+                "a snapshot without grid must still be refused: panels is a record, not the group model");
+    }
+
+    @Test
+    void rejectsTheRetiredOpenTabsFieldAndUnknownNeighbours() throws IOException {
+        Map<String, Object> withOpenTabs = new LinkedHashMap<>(realLayout());
+        withOpenTabs.put("openTabs", List.of("session:11111111-1111-4111-8111-111111111111"));
+        assertFalse(validateWire(Map.of("layout.ws." + WS, MAPPER.writeValueAsString(withOpenTabs))).isEmpty(),
+                "design §5 retires openTabs with the tab bar; the DB shape must not carry it");
+        Map<String, Object> withGridOnly = new LinkedHashMap<>(realLayout());
+        withGridOnly.put("grid", Map.of("root", Map.of()));
+        assertFalse(validateWire(Map.of("layout.ws." + WS, MAPPER.writeValueAsString(withGridOnly))).isEmpty(),
+                "unknown geometry fields must stay refused (additionalProperties:false)");
+    }
+
+    @Test
+    void rejectsGroupShapesThatBreakTheRestoreInvariants() throws IOException {
+        // Each case is the semantic layout with exactly one invariant broken, so a green run
+        // cannot come from "everything is rejected" — the control above accepts the same base.
+        Map<String, Object> emptyGroup = Map.of("groups",
+                List.of(Map.of("id", "center", "panels", List.of(), "active", "page:sessions", "size", 0.5)),
+                "activeGroup", "center");
+        Map<String, Object> zeroSize = Map.of("groups",
+                List.of(Map.of("id", "center", "panels", List.of("code"), "active", "code", "size", 0)),
+                "activeGroup", "center");
+        Map<String, Object> pixelSize = Map.of("groups",
+                List.of(Map.of("id", "center", "panels", List.of("code"), "active", "code", "size", 960)),
+                "activeGroup", "center");
+        Map<String, Object> missingActiveGroup = Map.of("groups",
+                List.of(Map.of("id", "center", "panels", List.of("code"), "active", "code", "size", 0.5)));
+        Map<String, Object> duplicatePanels = Map.of("groups",
+                List.of(Map.of("id", "center", "panels", List.of("code", "code"), "active", "code",
+                        "size", 0.5)),
+                "activeGroup", "center");
+        for (Map<String, Object> broken : List.of(emptyGroup, zeroSize, pixelSize, missingActiveGroup,
+                duplicatePanels)) {
+            Map<String, Object> layout = new LinkedHashMap<>(realLayout());
+            layout.put("panels", broken);
+            assertFalse(validateWire(Map.of("layout.ws." + WS, MAPPER.writeValueAsString(layout))).isEmpty(),
+                    "broken group model must be refused: " + broken);
+        }
+    }
+
+    @Test
+    void rejectsMoreDockTabsThanTheUiMaximum() throws IOException {
+        Map<String, Object> layout = new LinkedHashMap<>(realLayout());
+        layout.put("dockTabs", List.of("code", "changes", "monitor", "members", "context", "agents",
+                "delegation"));
+        assertFalse(validateWire(Map.of("layout.ws." + WS, MAPPER.writeValueAsString(layout))).isEmpty(),
+                "DOCK_MAX_TABS is 6 (useWorkspaceLayout.ts:74); a seventh tab must be refused");
+    }
+
+    @Test
+    void keepsTheTwoKeyFamiliesNonInterchangeable() throws IOException {
+        assertFalse(validateWire(Map.of("layout.global", MAPPER.writeValueAsString(semanticLayout()))).isEmpty(),
+                "workspace fields must not be writable into the global key");
+        assertFalse(validateWire(Map.of("layout.ws." + WS, "{\"navOpen\":true,\"navWidth\":280}")).isEmpty(),
+                "global fields must not be writable into a workspace key");
     }
 }

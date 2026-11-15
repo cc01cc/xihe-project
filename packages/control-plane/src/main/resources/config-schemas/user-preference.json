@@ -1,14 +1,171 @@
 {
   "type": "object",
   "properties": {
-    "theme": { "type": "string", "enum": ["dark", "light", "system"] },
-    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z][a-z]+)?$" },
-    "layout.global": { "type": "object" }
+    "theme": {
+      "type": "string",
+      "enum": [
+        "dark",
+        "light",
+        "system"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z][a-z]+)?$"
+    },
+    "layout.global": {
+      "type": "object",
+      "$ref": "#/$defs/globalLayout"
+    }
   },
   "patternProperties": {
     "^layout\\.ws\\.[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$": {
-      "type": "object"
+      "type": "object",
+      "$ref": "#/$defs/workspaceLayout"
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "panelId": {
+      "type": "string",
+      "pattern": "^(page:)?[a-z][a-z0-9-]{0,31}$"
+    },
+    "nullablePanelId": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/panelId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "groupId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "globalLayout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "navOpen": {
+          "type": "boolean"
+        },
+        "navWidth": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "workspaceLayout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "treeCollapsed": {
+          "type": "boolean"
+        },
+        "treeWidth": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dockCollapsed": {
+          "type": "boolean"
+        },
+        "dockWidth": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dockTabs": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/panelId"
+          }
+        },
+        "activeDockTab": {
+          "$ref": "#/$defs/nullablePanelId"
+        },
+        "dockMode": {
+          "type": "string",
+          "enum": [
+            "pinned",
+            "floating"
+          ]
+        },
+        "dockModeManual": {
+          "type": "boolean"
+        },
+        "dockFocus": {
+          "type": "boolean"
+        },
+        "activeColumn": {
+          "type": "string",
+          "enum": [
+            "main",
+            "right"
+          ]
+        },
+        "panels": {
+          "$ref": "#/$defs/panelGroups"
+        }
+      }
+    },
+    "panelGroups": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groups",
+        "activeGroup"
+      ],
+      "properties": {
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "panels",
+              "active",
+              "size"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/groupId"
+              },
+              "panels": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/panelId"
+                }
+              },
+              "active": {
+                "$ref": "#/$defs/nullablePanelId"
+              },
+              "size": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        },
+        "activeGroup": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/groupId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
 }

@@ -3423,6 +3423,19 @@ paths:
       description: >-
         Same body, unit-value and whole-unit clear rules as putInstanceConfig; the row is owned by
         the authenticated caller. imageProfile is rejected on this layer (400 INVALID_REQUEST).
+        Writes are per-key upserts (D-1587): keys absent from the body keep their stored value, and
+        the same key written twice is last-write-wins with no revision token.
+
+        user-preference layout keys (task-265 / D-1640 #5): `layout.global` carries GlobalLayoutState
+        (UserPreferenceGlobalLayout) and `layout.ws.<workspaceUuid>` carries WorkspaceLayoutState plus
+        the semantic panel model (UserPreferenceWorkspaceLayout). Both values are JSON *text* - the
+        body is a string map - and CP parses that text before schema validation, so the shapes below
+        describe the parsed value, not the wire type. Unknown fields are refused (400): a dockview
+        SerializedDockview snapshot (`grid` + a `panels` record) is NOT a storage format, and the
+        retired `openTabs` field is refused too. Panel ids are namespaced strings (`page:<routePage>`
+        for container pages, bare ids for dock panels); the page-id list stays owned by the UI router,
+        so CP does not freeze it as an enum. Group `size` is a share in (0, 1], not pixels. These keys
+        are never lockable (see lockConfigKey).
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: domain, required: true, schema: { type: string } }]
       requestBody:
@@ -3430,6 +3443,16 @@ paths:
         content:
           application/json:
             schema: { type: object, additionalProperties: { type: string } }
+            examples:
+              semanticLayout:
+                summary: 'user-preference layout keys: JSON text of the semantic model (accepted)'
+                value:
+                  layout.global: '{"navOpen":true,"navWidth":280}'
+                  layout.ws.3f2504e0-4f89-41d3-9a0c-0305e82c3301: '{"treeCollapsed":false,"treeWidth":240,"dockWidth":360,"dockTabs":["code","changes"],"activeDockTab":"code","dockMode":"pinned","panels":{"groups":[{"id":"center","panels":["page:sessions"],"active":"page:sessions","size":0.7},{"id":"right","panels":["code","changes"],"active":"code","size":0.3}],"activeGroup":"center"}}'
+              dockviewSnapshotRejected:
+                summary: 'REFUSED 400: a SerializedDockview snapshot must never be persisted'
+                value:
+                  layout.ws.3f2504e0-4f89-41d3-9a0c-0305e82c3301: '{"grid":{"root":{"type":"branch","data":[]}},"panels":{"code":{"id":"code"}},"activeGroup":"group-1"}'
       responses:
         '200':
           description: Written
@@ -3454,7 +3477,7 @@ paths:
       tags: [config]
       operationId: lockConfigKey
       summary: Lock one config key and pin its instance value (PLAN-0556)
-      description: 'ADMIN only. Writes the enforced value to the instance layer and the lock row in one transaction (A2). Body: {mode?, reason, value?, revision}. reason is mandatory (max 200 chars, shown to users); value is required unless the instance row already has one. revision is the row revision from the catalog (0 for a new lock); a stale value returns 409 CONFIG_LOCK_CONFLICT. Only enforce_value is accepted in v1 (UNSUPPORTED_MODE otherwise). Not-lockable keys return 400 NOT_LOCKABLE.'
+      description: 'ADMIN only. Writes the enforced value to the instance layer and the lock row in one transaction (A2). Body: {mode?, reason, value?, revision}. reason is mandatory (max 200 chars, shown to users); value is required unless the instance row already has one. revision is the row revision from the catalog (0 for a new lock); a stale value returns 409 CONFIG_LOCK_CONFLICT. Only enforce_value is accepted in v1 (UNSUPPORTED_MODE otherwise). Not-lockable keys return 400 NOT_LOCKABLE. The user-preference layout keys (layout.global and layout.ws.<uuid>, task-265 / design 10.2 item 6) are never lockable: a layout is a personal interface preference, not a policy, so locking them answers 400 NOT_LOCKABLE (reason WHOLE_UNIT) and per-workspace pattern keys never appear as lock candidates.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
@@ -6846,6 +6869,72 @@ components:
         overridable: { type: boolean, description: 'Instance layer only: false => the key is INSTANCE_ONLY (ceiling) or the domain is instance-only, so the user/workspace layer cannot override it.' }
         adminLocked: { type: boolean, description: 'PLAN-0556 administrator lock.' }
         lockReason: { type: [string, 'null'] }
+    UserPreferenceGlobalLayout:
+      type: object
+      additionalProperties: false
+      description: >-
+        Parsed shape of the user-preference key `layout.global` (task-265). The stored value is the
+        JSON text of this object; CP parses before validating, so a bare string is refused.
+      properties:
+        navOpen: { type: boolean }
+        navWidth: { type: number, minimum: 0, description: 'Navigation panel width in px.' }
+    UserPreferenceWorkspaceLayout:
+      type: object
+      additionalProperties: false
+      description: >-
+        Parsed shape of `layout.ws.<workspaceUuid>` (task-265). Semantic fields only: a dockview
+        SerializedDockview snapshot is refused, and `openTabs` is retired with the workspace tab bar.
+        Every field is optional - a write may carry a subset - but unknown fields are refused.
+      properties:
+        treeCollapsed: { type: boolean }
+        treeWidth: { type: number, minimum: 0 }
+        dockCollapsed: { type: boolean }
+        dockWidth: { type: number, minimum: 0 }
+        dockTabs:
+          type: array
+          maxItems: 6
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/UserPreferencePanelId' }
+        activeDockTab:
+          oneOf: [{ $ref: '#/components/schemas/UserPreferencePanelId' }, { type: 'null' }]
+        dockMode: { type: string, enum: [pinned, floating] }
+        dockModeManual: { type: boolean }
+        dockFocus: { type: boolean }
+        activeColumn: { type: string, enum: [main, right], description: 'Narrow-screen visibility only.' }
+        panels: { $ref: '#/components/schemas/UserPreferencePanelGroups' }
+    UserPreferencePanelId:
+      type: string
+      pattern: '^(page:)?[a-z][a-z0-9-]{0,31}$'
+      description: >-
+        Container page panels use the `page:` namespace (ids derived from the UI router's
+        meta.workspacePage); dock panels use bare ids. CP constrains the namespace, not the list.
+    UserPreferencePanelGroups:
+      type: object
+      additionalProperties: false
+      required: [groups, activeGroup]
+      description: >-
+        Panel-to-group membership plus group order and size. No inverted index and no framework
+        snapshot: the current page is decided by the URL, so it is not stored here.
+      properties:
+        groups:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, panels, active, size]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 64 }
+              panels:
+                type: array
+                minItems: 1
+                uniqueItems: true
+                items: { $ref: '#/components/schemas/UserPreferencePanelId' }
+              active:
+                oneOf: [{ $ref: '#/components/schemas/UserPreferencePanelId' }, { type: 'null' }]
+              size: { type: number, exclusiveMinimum: 0, maximum: 1, description: 'Group share, not px.' }
+        activeGroup:
+          oneOf: [{ type: string, minLength: 1, maxLength: 64 }, { type: 'null' }]
     ConfigWriteResult:
       type: object
       required: [status, keys]
