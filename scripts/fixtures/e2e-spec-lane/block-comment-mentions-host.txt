@@ -1,0 +1,12 @@
+/**
+ * 文件头块注释里写了 test("x @host") 这种示例文本，也没有真正的标记与 lane 注释 ——
+ * 块注释整段覆盖的行不得作为标记判据（T-2318 防自证，词法用 task-66 的 lex）。
+ */
+import { test, expect } from "@playwright/test";
+
+test.describe("Auth — Real Backend", () => {
+    test("login page loads", async ({ page }) => {
+        await page.goto("/login");
+        await expect(page.locator("h1")).toBeVisible();
+    });
+});

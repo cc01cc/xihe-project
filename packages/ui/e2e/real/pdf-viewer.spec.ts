@@ -1,3 +1,4 @@
+// lane: 无产品断言 —— 用例 2 注入自造 DOM（innerHTML 伪 PdfViewer）再截图，不触产品组件；用例 1 仅断言 #app attached。不进 host 车道（T-2318 分类表）。
 import { generateE2EPassword } from "./helpers/password";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";

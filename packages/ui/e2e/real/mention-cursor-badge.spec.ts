@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// lane: 手动取证脚本 —— XIHE_E2E_MENTION_CURSOR=1 门控（默认 skip）+ XIHE_DEMO_STATE_FILE 状态文件，发送 1 条真实消息（token 预算，retries=0）；PLAN-0660 T5.6 取证（T-2318 分类表）。
 /**
  * PLAN-0660 T5.6 浏览器证据：@ 提及产生未读徽标 ⇒ 推进游标（PATCH cursor）后徽标消失。
  *

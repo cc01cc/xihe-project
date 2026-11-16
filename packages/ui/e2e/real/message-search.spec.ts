@@ -1,3 +1,4 @@
+// lane: 待重写 —— 断言仅 "#app" attached（任何页面恒真），与用例名「shows search placeholder」不符，无回归价值；重写断言后再定 lane（T-2318 分类表）。
 import { generateE2EPassword } from "./helpers/password";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";

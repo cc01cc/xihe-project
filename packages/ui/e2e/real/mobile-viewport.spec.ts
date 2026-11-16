@@ -1,3 +1,7 @@
+// lane 说明（T-2318 逐测试标注，先例 ui-health.spec.ts:112）：「settings config page」「dialogs
+// remain closable」两条纯行为用例带 profile 标记（MCP 路由经 f743b1b1a 迁移后未真栈复跑，档2）；
+// 前两条用例内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip）故不标注。
+// 分类证据：internal/A03-xihe/evidence/2026-11-16-host-spec-lane/classification.md
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
@@ -64,7 +68,7 @@ test.describe("Mobile Viewport (390x844)", () => {
         await expectPlatformScreenshot(page, "mobile-chat.png");
     });
 
-    test("settings config page renders within mobile viewport", async ({ page }) => {
+    test("@host settings config page renders within mobile viewport", async ({ page }) => {
         await page.addInitScript(
             ({ token, workspaceId }) => {
                 localStorage.setItem("xihe-token", token);
@@ -92,7 +96,7 @@ test.describe("Mobile Viewport (390x844)", () => {
         });
     });
 
-    test("mobile chat dialogs remain closable", async ({ page }) => {
+    test("@host mobile chat dialogs remain closable", async ({ page }) => {
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
         await page.goto("/workspace", { waitUntil: "load" });
         const fab = page.getByTestId("mobile-chat-open");

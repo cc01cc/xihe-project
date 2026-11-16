@@ -1,3 +1,4 @@
+// lane: 非 host —— 两条用例体内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip，host 车道 BL-421 fail-on-skip）；夹具重种已由 a4d30b0ca 真栈实测（all-profile external stack-2）。原 compose 车道已冻结（2026-10-07），现仅 profile=all 直跑可达（T-2318 分类表）。
 import { randomUUID } from "node:crypto";
 import { agentName } from "./helpers/agent-name";
 import { generateE2EPassword } from "./helpers/password";

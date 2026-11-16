@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// lane: 非 host —— 四条用例均内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip，host 车道 BL-421 fail-on-skip）；scroll-anchor / markdown-overflow 的行为断言拆出视觉调用后可进 host 车道。原 compose 车道已冻结（2026-10-07），现仅 profile=all 直跑可达（T-2318 分类表）。
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
 import {

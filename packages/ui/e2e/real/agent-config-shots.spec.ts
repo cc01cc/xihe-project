@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// lane: 手动取证脚本 —— XIHE_E2E_AGENT_CONFIG=1 门控（默认 skip）+ XIHE_DEMO_STATE_FILE / OUT 出图目录；PLAN-0667 M3 真栈取证，不是车道回归（T-2318 分类表）。
 /**
  * PLAN-0667 M3 联调取证：真实 stack-1 上渲染「记忆 / 角色 / 技能」三块，出 zh/en 两张截图。
  *

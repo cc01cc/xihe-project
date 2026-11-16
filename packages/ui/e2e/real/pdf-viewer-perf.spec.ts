@@ -1,3 +1,4 @@
+// lane: 性能基准 —— page.evaluate 直用 pdfjs 渲染 canvas（不触产品 viewer），计时断言（<750ms/<300ms）受机器负载影响，不适合并行车道（T-2318 分类表）。
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import fs from "fs";

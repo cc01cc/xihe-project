@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// lane: 视觉基线 lane（linux 侧维护）—— 9 条路由 toHaveScreenshot 基线采集 + readiness 就绪门；host 车道（Windows）全用例 skip（helpers/visual.ts 非 linux 平台 skip，T-2318 分类表）。
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";

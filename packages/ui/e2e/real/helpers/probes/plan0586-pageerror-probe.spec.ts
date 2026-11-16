@@ -1,3 +1,5 @@
+// lane: 未收集的一次性探针（T-2318）—— playwright.config.ts testMatch 只收 e2e/real/*.spec.ts
+// 顶层，probes/ 子目录不进任何车道；要跑就按文件头 run 说明临时拷到顶层，跑完移出（不提交）。
 // PLAN-0586 one-shot negative probe (review round-1 #2 / round-2 P1).
 //
 // Proves that the ui-health guard still catches a page error thrown ~500 ms AFTER the

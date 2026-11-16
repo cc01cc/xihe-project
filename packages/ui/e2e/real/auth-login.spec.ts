@@ -1,3 +1,7 @@
+// lane 说明（T-2318 逐测试标注，先例 ui-health.spec.ts:112）：四条纯行为用例带 profile 标记
+// （765281fb5 真栈 stack-2 实测 4 passed / 2 skipped，all-profile）；前两条页面加载用例内嵌视觉断言
+// （helpers/visual.ts 非 linux 平台 skip）故不标注。
+// 分类证据：internal/A03-xihe/evidence/2026-11-16-host-spec-lane/classification.md
 import { generateE2EPassword } from "./helpers/password";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";
@@ -36,7 +40,7 @@ test.describe("Auth — Real Backend", () => {
         await expectPlatformScreenshot(page, "real-register-page.png");
     });
 
-    test("navigates to chat after successful login", async ({ page }) => {
+    test("@host navigates to chat after successful login", async ({ page }) => {
         const email = `real-login-${Date.now()}@test.com`;
         // Register first
         const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
@@ -56,7 +60,7 @@ test.describe("Auth — Real Backend", () => {
         await expect(page.locator("#app")).toBeAttached();
     });
 
-    test("double submit during the login transition sends one request", async ({ page }) => {
+    test("@host double submit during the login transition sends one request", async ({ page }) => {
         const email = `real-once-${Date.now()}@test.com`;
         const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
             method: "POST",
@@ -94,7 +98,7 @@ test.describe("Auth — Real Backend", () => {
         expect(loginRequests).toBe(1);
     });
 
-    test("token present redirects /login without a second login POST", async ({ page }) => {
+    test("@host token present redirects /login without a second login POST", async ({ page }) => {
         const email = `real-redirect-${Date.now()}@test.com`;
         const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
             method: "POST",
@@ -122,7 +126,7 @@ test.describe("Auth — Real Backend", () => {
         expect(loginRequests).toBe(0);
     });
 
-    test("login page fits a 390x844 mobile viewport", async ({ page }) => {
+    test("@host login page fits a 390x844 mobile viewport", async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.goto("/login");
         await expect(page.locator("h1")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

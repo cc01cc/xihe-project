@@ -1,0 +1,15 @@
+// lane 说明（逐测试标注形态，先例 ui-health.spec.ts:112）：一条带标记、一条不带 ——
+// 文件级判据只要有标记就过。
+import { test, expect } from "@playwright/test";
+
+test.describe("Auth — Real Backend", () => {
+    test("@host token present redirects /login", async ({ page }) => {
+        await page.goto("/login");
+        await expect(page.locator("h1")).toBeVisible();
+    });
+
+    test("wrong password shows error", async ({ page }) => {
+        await page.goto("/login");
+        await expect(page.locator("p")).toBeVisible();
+    });
+});

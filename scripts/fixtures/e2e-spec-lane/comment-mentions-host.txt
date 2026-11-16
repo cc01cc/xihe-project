@@ -1,0 +1,11 @@
+// 这个文件的历史注释提到过 @host 车道，但标题里从来没有标记，也没有 lane 注释 ——
+// 若这也能过门，删掉真标记后门照样绿，门就废了（T-2318 防自证）。
+import { test, expect } from "@playwright/test";
+
+// 说明：本文件本来应标 @host（见注释），历史原因没标。
+test.describe("Auth — Real Backend", () => {
+    test("login page loads", async ({ page }) => {
+        await page.goto("/login");
+        await expect(page.locator("h1")).toBeVisible();
+    });
+});

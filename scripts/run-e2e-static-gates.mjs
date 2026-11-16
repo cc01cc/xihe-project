@@ -34,6 +34,14 @@ export const GATES = [
         script: "scripts/check-e2e-fixture-diagnostics.mjs",
         summary: "夹具失败诊断可读性（task-118）",
     },
+    {
+        // T-2318：real 车道孤儿 spec 门 —— e2e/real 每 spec 必须有 profile 标记（标题里的
+        // @host 等）或 "// lane:" 注释，否则 host/compose 车道都无法说明其归属
+        //（host grep /@host/ 不选它，compose 车道已冻结 2026-10-07 ⇒ 只剩 profile=all 直跑可达）。
+        name: "spec-lane",
+        script: "scripts/check-e2e-spec-lane.mjs",
+        summary: "real spec 车道归属声明（T-2318）",
+    },
 ];
 
 /** 聚合规则：环境/用法错误压过判定失败，判定失败压过全绿。 */

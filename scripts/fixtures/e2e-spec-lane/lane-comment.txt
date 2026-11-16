@@ -1,0 +1,9 @@
+// lane: 非 host —— 用例内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip）。
+import { test, expect } from "@playwright/test";
+
+test.describe("Visual capture", () => {
+    test("register page renders", async ({ page }) => {
+        await page.goto("/register");
+        await expect(page.locator("h1")).toBeVisible();
+    });
+});

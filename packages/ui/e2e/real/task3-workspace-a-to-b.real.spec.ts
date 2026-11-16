@@ -51,7 +51,7 @@ function recordAll(page: Page): Row[] {
 
 test.describe.configure({ retries: 0 });
 
-test("A→B（真栈 · 同 tab 深链）：边界后带 A 的 workspace 头/参数 = 0", async ({
+test("@host A→B（真栈 · 同 tab 深链）：边界后带 A 的 workspace 头/参数 = 0", async ({
     page,
     request,
 }) => {

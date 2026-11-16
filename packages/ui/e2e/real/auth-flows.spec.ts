@@ -1,4 +1,9 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// lane 说明（T-2318 逐测试标注，先例 ui-health.spec.ts:112）：两条纯行为用例带 profile 标记
+// （88bdefd3a 真栈实测绿 956ms / 1.5s，all-profile）；「register → logout → login」在 HEAD 已知红
+// （Sidebar.vue:350 v-if="isMobile"，桌面视口 logout 不渲染，待定性另立卡）故不标注；
+// 「wrong password」内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip）故不标注。
+// 分类证据：internal/A03-xihe/evidence/2026-11-16-host-spec-lane/classification.md
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspaceChat } from "./helpers/chat";
 import { test, expect } from "@playwright/test";
@@ -60,7 +65,7 @@ test.describe("Auth — UI Flows & Error States", () => {
         await expectPlatformScreenshot(page, "auth-login-error.png");
     });
 
-    test("authenticated user visiting /login does not flash login form", async ({
+    test("@host authenticated user visiting /login does not flash login form", async ({
         page,
         request,
     }) => {
@@ -84,7 +89,7 @@ test.describe("Auth — UI Flows & Error States", () => {
         expect(page.url()).toContain("/workbench");
     });
 
-    test("session persists across page refresh without sidebar flicker", async ({
+    test("@host session persists across page refresh without sidebar flicker", async ({
         page,
         request,
     }) => {

@@ -24,10 +24,15 @@ async function register(request: APIRequestContext, label: string) {
 
 async function login(page: Page, email: string, password: string) {
     await page.goto("/login");
-    await page.fill('input[name="email"]', email);
+    // 765281fb5（task-79 #5 预告）：产品 LoginView.vue:86 用 name="identifier"，name="email"
+    // 的 input 根本不存在 ⇒ page.fill 永远等到超时（B 类，与本 helper 同源同形态）。
+    await page.fill('input[name="identifier"]', email);
     await page.fill('input[type="password"]', password);
     await page.click('button[type="submit"]');
-    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
+    // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+    // （router/index.ts:94、:613）。同形修复 477e138f2 / 765281fb5 均有真栈运行证据；
+    // 本处为档2：静态同源可判、本卡无栈窗口未实跑，不声称已修绿（T-2318 分类表 §3）。
+    await page.waitForURL(/\/workbench/, { timeout: LONG_TIMEOUT_MS });
 }
 
 function workspaceHeaders(page: Page): string[] {
@@ -51,7 +56,7 @@ function eventHeaders(page: Page): string[] {
     return headers;
 }
 
-test.describe("PLAN-0559 workspace tabs", () => {
+test.describe("@host PLAN-0559 workspace tabs", () => {
     test("two tabs keep independent workspaces across refresh and share logout", async ({
         page,
         request,

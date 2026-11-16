@@ -1,3 +1,4 @@
+// lane: 非 host —— 唯一用例内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip），且用例名「creates new session and navigates to chat」与行为不符（未建会话）；重写后再定 lane（T-2318 分类表）。
 import { generateE2EPassword } from "./helpers/password";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";

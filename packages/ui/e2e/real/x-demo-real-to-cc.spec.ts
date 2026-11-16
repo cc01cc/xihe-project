@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// lane: 推广素材拍摄管线 —— XIHE_E2E_DEMO_REAL=1 门控（默认 skip）+ demo 账号状态文件 + token 预算（≤2 条正式消息，serial）；runbook e2e/DEMO-CHANNEL.md（T-2318 分类表）。
 /**
  * X 图文「真实数据」版（task-15 用户追加；mock 版定构图后一次性真实运行）。
  *

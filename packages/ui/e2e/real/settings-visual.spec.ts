@@ -1,3 +1,8 @@
+// lane 说明（T-2318 逐测试标注，先例 ui-health.spec.ts:112）：「settings domain page renders」
+// 纯行为（landmark 断言 + 裸截图到 outputPath，Windows 不 skip）带 profile 标记；「settings data /
+// monitoring」两条内嵌视觉断言（helpers/visual.ts 非 linux 平台 skip）不标注。本文件历史上在注释里
+// 提过 host 车道但标题无标记（卡面 grep 口径误计为已标记）—— 真正的第 19 个孤儿，被 T-2318 门禁
+// 上线当天抓到。分类证据：internal/A03-xihe/evidence/2026-11-16-host-spec-lane/classification.md §7
 import { generateE2EPassword } from "./helpers/password";
 import { ACTION_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";
@@ -33,7 +38,7 @@ test.beforeEach(async ({ page }) => {
     await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
 });
 
-test("settings domain page renders", async ({ page }) => {
+test("@host settings domain page renders", async ({ page }) => {
     await expect(page.locator('[data-testid="settings-domain-title"]')).toBeVisible({
         timeout: ACTION_TIMEOUT_MS,
     });

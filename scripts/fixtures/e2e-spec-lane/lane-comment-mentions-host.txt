@@ -1,0 +1,9 @@
+// lane: 非 host —— 本文件不进 host 车道（没有 @host 标记是**有意的**，lane 注释就是归属声明）。
+import { test, expect } from "@playwright/test";
+
+test.describe("Visual capture", () => {
+    test("register page renders", async ({ page }) => {
+        await page.goto("/register");
+        await expect(page.locator("h1")).toBeVisible();
+    });
+});
