@@ -15,6 +15,7 @@ import { reactiveOmit } from "@vueuse/core";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import SheetOverlay from "./SheetOverlay.vue";
+import { useAriaModal } from "@/components/ui/dialog/useAriaModal";
 
 interface SheetContentProps extends DialogContentProps {
     class?: HTMLAttributes["class"];
@@ -36,6 +37,8 @@ const delegatedProps = reactiveOmit(props, "class", "side", "showCloseButton");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 const { t } = useI18n();
+// task-49：Sheet 也是 reka Dialog 原语 ⇒ 同一条条件产出（modal=false 不输出）。
+const ariaModal = useAriaModal();
 </script>
 
 <template>
@@ -51,6 +54,7 @@ const { t } = useI18n();
                 )
             "
             v-bind="{ ...$attrs, ...forwarded }"
+            :aria-modal="ariaModal"
         >
             <slot />
 

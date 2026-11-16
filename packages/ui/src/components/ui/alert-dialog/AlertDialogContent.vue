@@ -10,6 +10,7 @@ import {
 import type { HTMLAttributes } from "vue";
 import { reactiveOmit } from "@vueuse/core";
 import { cn } from "@/lib/utils";
+import { useAriaModal } from "@/components/ui/dialog/useAriaModal";
 
 defineOptions({
     inheritAttrs: false,
@@ -31,6 +32,10 @@ const emits = defineEmits<AlertDialogContentEmits>();
 const delegatedProps = reactiveOmit(props, "class", "size");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
+// task-49：AlertDialogRoot 转发给 DialogRoot 时硬编码 `modal: true`
+// （dist/AlertDialog/AlertDialogRoot.js）⇒ 这里读到的永远是 true；仍走同一条条件判据，
+// 不写特例，将来 reka 若放开非模态 AlertDialog 自动正确。
+const ariaModal = useAriaModal();
 </script>
 
 <template>
@@ -43,6 +48,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
             data-slot="alert-dialog-content"
             :data-size="size"
             v-bind="{ ...$attrs, ...forwarded }"
+            :aria-modal="ariaModal"
             :class="
                 cn(
                     'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 bg-popover text-popover-foreground ring-foreground/10 gap-4 rounded-xl p-4 ring-1 duration-100 data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 outline-none',

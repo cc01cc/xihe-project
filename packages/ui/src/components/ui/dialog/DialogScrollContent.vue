@@ -14,6 +14,7 @@ import type { HTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
 import { reactiveOmit } from "@vueuse/core";
 import { cn } from "@/lib/utils";
+import { useAriaModal } from "./useAriaModal";
 
 defineOptions({
     inheritAttrs: false,
@@ -26,6 +27,8 @@ const delegatedProps = reactiveOmit(props, "class");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 const { t } = useI18n();
+// task-49：条件产出 aria-modal（与 DialogContent 同一条判据）。
+const ariaModal = useAriaModal();
 </script>
 
 <template>
@@ -41,6 +44,7 @@ const { t } = useI18n();
                     )
                 "
                 v-bind="{ ...$attrs, ...forwarded }"
+                :aria-modal="ariaModal"
                 @pointer-down-outside="
                     (event) => {
                         const originalEvent = event.detail.originalEvent;
