@@ -5,6 +5,7 @@ import { useAuthStore } from "../../../stores/auth";
 import { api, apiPost, ApiError } from "../../../composables/api";
 import type { ApiWorkspaceRoot } from "../../../composables/api";
 import { readFilePreview } from "../composables/fileService";
+import { classifyOpenOutcome, isOpenFailure, type OpenOutcome } from "../lib/openOutcome";
 import {
     classifyFileOpReason,
     classifyTreeErrorCode,
@@ -208,6 +209,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
          */
         errorScope = ref<ErrorScope | null>(null),
         fileOpError = ref<FileOpError | null>(null),
+        /**
+         * task-78（Q-1116-21）：**这次打开到底给了用户什么**。
+         *
+         * <p>与 `fileOpError` 是两个问题：那个回答「哪一次动作失败了」，这个回答
+         * 「打开之后有东西可看吗、给了多少」。三分流（不可解析 / 太大 / 读不到）的
+         * 判据集中在 `lib/openOutcome.ts` 的纯函数里，这里只存结论 —— 组件不各自写 if。
+         *
+         * <p>按 path 存，因为 `OpenFile` 是每文件一份；面板要显示哪个文件的元信息，
+         * 就取该 path 的 outcome。切换文件不影响别的文件的结论。</p>
+         */
+        openOutcomes = ref<Map<string, OpenOutcome>>(new Map()),
+        /**
+         * 文件树快照的取数时刻（毫秒）。元信息面板靠它标「X 秒前」，
+         * 把「不是我读的」与「就是这个值」区分开（P1-1 假断线同族）。
+         * null = 还没加载过树。
+         */
+        treeLoadedAt = ref<number | null>(null),
         loadedWorkspaceId = ref<string | null>(null);
 
     /**
@@ -445,6 +463,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     const seed = localStorage.getItem("xihe-mock-filetree");
                     if (seed) {
                         fileTree.value = JSON.parse(seed) as FileNode[];
+                        treeLoadedAt.value = Date.now();
                         loadedWorkspaceId.value = currentWorkspaceId;
                         return;
                     }
@@ -457,6 +476,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             // result must be dropped instead of painting workspace A's tree under B.
             if (workspaceId.value !== currentWorkspaceId) return;
             fileTree.value = nodes;
+            treeLoadedAt.value = Date.now();
             loadedWorkspaceId.value = currentWorkspaceId;
         } catch (e) {
             // PLAN-0557/BL-109: route load failures through the stable-code mapping so a
@@ -488,6 +508,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     const nodes = await fetchDirectoryTree("");
                     if (workspaceId.value !== targetId) continue;
                     fileTree.value = nodes;
+                    treeLoadedAt.value = Date.now();
                     loadedWorkspaceId.value = targetId;
                 } catch (e) {
                     setTreeError(
@@ -700,14 +721,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         }
         // 新的打开尝试开始 ⇒ 上一条文件级红条是陈旧的，先收掉（成功时更不该留着）。
         clearFileOpError();
+        // task-78：打开尝试开始 ⇒ 该 path 上一条结论也陈旧了（旧结论会带着「读不到」标到
+        // 新一次尝试上，用户会看到「没权限」而其实这次读到了）。
+        openOutcomes.value.delete(path);
         const owningRootId = rootId ?? rootIdOf(path),
             preview = (size: number | undefined) =>
                 owningRootId
                     ? readFilePreview(path, size, requireWorkspaceId(), owningRootId)
                     : readFilePreview(path, size, requireWorkspaceId());
+        // task-78：`size` 提到 try 之外 —— catch 里的三态判定（①/③ 的分叉）需要它。
+        // 它只是 `findFileSize` 在树里的读数（可能 undefined），不是权威。
+        const size = findFileSize(path);
         try {
-            const size = findFileSize(path),
-                name = path.split("/").pop() || path,
+            const name = path.split("/").pop() || path,
                 ext = name.split(".").pop()?.toLowerCase() || "";
             // PLAN-292 T6: images land as data URLs so FileEditor's ImagePreview
             // branch is reachable. svg is text — read via the guarded text path and
@@ -726,6 +752,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     };
                 openFiles.value.set(path, svg);
                 activeFilePath.value = path;
+                openOutcomes.value.set(path, classifyOpenOutcome(size, null, res.truncated));
                 return;
             }
             if (IMAGE_PREVIEW_EXTENSIONS.has(ext)) {
@@ -753,6 +780,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 };
                 openFiles.value.set(path, image);
                 activeFilePath.value = path;
+                // 图片走二进制读取，永远不截断 ⇒ content（拿到了完整内容）。
+                openOutcomes.value.set(path, classifyOpenOutcome(size, null, false));
                 return;
             }
             const res = await preview(size),
@@ -768,14 +797,48 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 };
             openFiles.value.set(path, file);
             activeFilePath.value = path;
+            // task-78：三态判据的唯一落点。`res.truncated` 是**实际给了多少**的证据，
+            // 比用 size 猜区间权威（小文件也可能被预算截住）。
+            openOutcomes.value.set(path, classifyOpenOutcome(size, null, res.truncated));
         } catch (e) {
             // task-59：打开**单个**文件失败不是「文件树加载失败」—— 树还在，别的文件照常能开。
             // 点名对象（文件名）+ 原因，走文件级通道。
             const { reason, code } = classifyFileOpReason(e);
-            setFileOpError(
-                { kind: "open", path, reason, code },
-                `Failed to open ${path}: ${messageOf(e)}`,
-            );
+            // task-78（Q-1116-21）：**先判这次打开给了用户什么**，再决定怎么呈现。
+            // ① 不可解析 ⇒ 元信息页 + 「此格式不能预览」（不是错误）；
+            // ② 太大 ⇒ 元信息 + 前 N 字节（不是错误）；
+            // ③ 读不到 ⇒ **保持错误态**，元信息标「不可信」。
+            // 这里是 ①/③ 的分叉点：`classifyFileOpReason` 已把二进制判成 `binary`，
+            // 所以 ① 不是「分类缺失」而是「此前一律渲染成红条」——本卡改的是呈现。
+            const outcome = classifyOpenOutcome(size, { reason, code });
+            openOutcomes.value.set(path, outcome);
+            if (outcome.state === "unparsable") {
+                // ① 不可解析：**真的把它打开**，只是正文为空。
+                // 此前这里直接落到 catch 的红条（`Failed to open`）⇒ 用户读到的是「打不开」，
+                // 而事实是「文件在那儿，只是不能按文本预览」。开一个空壳条目，编辑器才能把
+                // 元信息页渲染出来（这正是本卡①要改的「呈现错，不是分类缺失」）。
+                const stub: OpenFile = {
+                    path,
+                    name: path.split("/").pop() || path,
+                    content: "",
+                    originalContent: "",
+                    language: detectLanguage(path),
+                    modified: false,
+                    loading: false,
+                    truncated: false,
+                };
+                openFiles.value.set(path, stub);
+                activeFilePath.value = path;
+            } else {
+                // ③ 读不到：**没有东西可给** ⇒ 停在错误态（红条），别开空壳（那是假装有文件）。
+                // `isOpenFailure` 是唯一判据点；此处不重新推导条件。
+                if (isOpenFailure(outcome)) {
+                    setFileOpError(
+                        { kind: "open", path, reason, code },
+                        `Failed to open ${path}: ${messageOf(e)}`,
+                    );
+                }
+            }
         }
     }
 
@@ -1310,6 +1373,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         expandedPaths.value = new Set();
         setTreeError(null);
         fileOpError.value = null;
+        openOutcomes.value = new Map();
         loadedWorkspaceId.value = null;
         // PLAN-0639 M2: root grouping is workspace-scoped too — a stale secondary root
         // tree must not leak into the next workspace's groups.
@@ -1332,6 +1396,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         treeErrorKind,
         errorScope,
         fileOpError,
+        openOutcomes,
+        treeLoadedAt,
         clearFileOpError,
         workspaceRoots,
         isMultiRoot,

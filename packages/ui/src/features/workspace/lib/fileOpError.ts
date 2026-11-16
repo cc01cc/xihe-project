@@ -154,7 +154,23 @@ export function visibleErrorSlot(
 const NOT_FOUND_DETAIL = /not\s*found|no such file|enoent|does not exist/i;
 const PERMISSION_DETAIL = /permission denied|access denied/i;
 const PERMISSION_CODE = /(^|_)ACCESS_DENIED$|^FORBIDDEN$|^UNAUTHORIZED$|PERMISSION|READ_?ONLY/;
-const BINARY_MESSAGE = /binary|not a binary file|无法作为文本/i;
+/**
+ * task-78：**两条意思相反的抛错曾被同一条正则吃掉**。
+ *
+ * <p>`fileService.ts:48` 抛 `"Binary files cannot be opened as text previews"`（意思是「它**是**二进制，
+ * 没法当文本预览」⇒ 属 ① 不可解析，**不是失败**）；
+ * `workspace.ts:763` 抛 `"not a binary file"`（意思是「按图片扩展名去读二进制，服务端却回了非二进制」
+ * ⇒ 是**响应不自洽的真故障**，必须报错）。</p>
+ *
+ * <p>旧正则 `/binary|not a binary file|无法作为文本/i` 对两条**都**命中（`"Binary files…"` 里也含
+ * `binary`），于是这桩真故障被贴上了 ① 的标签。task-78 把 ① 从「红条」改成「元信息页」后，
+ * 这个错就**升级成静默**：一个 .png 被服务端返回文本时，用户看不到任何错误，只会看到一张空图 ——
+ * 正是本卡要防的「同一结论掩盖不同原因」的反向版本（这次是**假阴性**）。</p>
+ *
+ * <p>⇒ 必须先判"响应不自洽"这一支，再判"确实是二进制"那一支。顺序反了就会被子串吃掉。</p>
+ */
+const NOT_BINARY_ANOMALY = /not a binary file/i;
+const BINARY_MESSAGE = /binary|无法作为文本/i;
 
 /**
  * 把异常折成「用户能懂的原因」+ 支撑码。**原始 detail 只用于分类**，不直接当文案
@@ -164,6 +180,9 @@ export function classifyFileOpReason(e: unknown): { reason: FileOpReason; code: 
     if (!(e instanceof ApiError)) {
         // 非 ApiError 也尽量说清原因：`fileService` 拒绝二进制预览时抛的就是裸 Error。
         const raw = e instanceof Error ? e.message : String(e ?? "");
+        // 顺序不能反：`"not a binary file"` 也含子串 `binary`，先判它才不会掉进 ①。
+        // 这条是「期望二进制却回了文本」的响应不自洽 ⇒ 真故障，按 `other` 报错（保留原始消息）。
+        if (NOT_BINARY_ANOMALY.test(raw)) return { reason: "other", code: null };
         if (BINARY_MESSAGE.test(raw)) return { reason: "binary", code: null };
         if (NOT_FOUND_DETAIL.test(raw)) return { reason: "notFound", code: null };
         if (PERMISSION_DETAIL.test(raw)) return { reason: "permission", code: null };

@@ -506,6 +506,29 @@ const messages = {
             editorSaved: "已保存",
             editorTruncated: "内容已截断，仅显示文件的一部分。",
             editorLoadFull: "加载完整内容",
+            // ── task-78（Q-1116-21）：文件元信息面板 + 不可读三档 ─────────────────────
+            // 三句话**必须不同** —— 今天三档共用 `editorTruncated` 那一句，而 oversized-empty
+            // 一个字都没显示 ⇒ 那句话在撒谎（Lead 2026-11-16 抬成判据）。
+            fileMetaTitle: "文件信息",
+            fileMetaClose: "关闭文件信息",
+            fileMetaUnparsable: "这是二进制或无法按文本解析的文件，只显示文件信息。",
+            fileMetaOversizedPartial: "文件较大，只加载了开头的一部分。",
+            // **不许**说「已截断」：一个字都没给，说「截断」会让人以为看到的是不完整的正文。
+            fileMetaOversizedEmpty: "文件超出读取上限，正文未加载，只显示文件信息。",
+            fileMetaPreviewBytes: "已加载前 {shown}，共 {total}。",
+            fileMetaName: "名称",
+            fileMetaPath: "路径",
+            fileMetaType: "类型",
+            fileMetaFile: "文件",
+            fileMetaDir: "目录",
+            fileMetaSize: "大小",
+            fileMetaModified: "修改时间",
+            fileMetaSymlink: "符号链接",
+            fileMetaCreated: "创建时间",
+            fileMetaUnknown: "未知",
+            fileMetaFreshnessAge: "来自文件树快照，{seconds} 秒前读取，可能不是最新。",
+            fileMetaFreshnessUnknown: "来自文件树快照，读取时间未知，可能不是最新。",
+
             editorEdit: "编辑",
             editorDiff: "差异",
             tabBarLabel: "工作台页签",
@@ -4384,6 +4407,29 @@ const messages = {
             editorSaved: "Saved",
             editorTruncated: "Content truncated: only part of the file is shown.",
             editorLoadFull: "Load the full content",
+            fileMetaTitle: "File information",
+            fileMetaClose: "Close file information",
+            fileMetaUnparsable:
+                "That file is binary or not text-parsable; only its information is shown.",
+            fileMetaOversizedPartial: "The file is large; only the beginning was loaded.",
+            fileMetaOversizedEmpty:
+                "The file exceeds the read limit, so the body was not loaded; only its information is shown.",
+            fileMetaPreviewBytes: "Loaded the first {shown} of {total}.",
+            fileMetaName: "Name",
+            fileMetaPath: "Path",
+            fileMetaType: "Type",
+            fileMetaFile: "File",
+            fileMetaDir: "Directory",
+            fileMetaSize: "Size",
+            fileMetaModified: "Modified",
+            fileMetaSymlink: "Symlink",
+            fileMetaCreated: "Created",
+            fileMetaUnknown: "Unknown",
+            fileMetaFreshnessAge:
+                "From the file-tree snapshot read {seconds} seconds ago; it may be out of date.",
+            fileMetaFreshnessUnknown:
+                "From the file-tree snapshot (read time unknown); it may be out of date.",
+
             editorEdit: "Edit",
             editorDiff: "Diff",
             tabBarLabel: "Workbench tabs",
