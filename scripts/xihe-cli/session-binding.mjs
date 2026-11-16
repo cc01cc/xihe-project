@@ -59,18 +59,46 @@ export function pickChatConnection(connections) {
   return keyed ?? candidates[0] ?? null;
 }
 
+// task-32: a chat binding must never pin an ASR/TTS/embedding/image model. Prefer the
+// catalog's capability flags when present; for bare string ids fall back to a conservative
+// name screen (asr/tts/embedding/image/audio/speech). Unknown names stay usable — CP itself
+// validates the model at admission, so this screen only rejects clearly non-chat families.
+const NON_CHAT_NAME = /(^|[^a-z])(asr|tts|embedding|embeddings|image|audio|speech|whisper)([^a-z]|$)/i;
+function isChatModel(model) {
+  if (model && typeof model === 'object') {
+    if (model.capabilities && typeof model.capabilities.chat === 'boolean') return model.capabilities.chat;
+    const name = typeof model.name === 'string' ? model.name : typeof model.id === 'string' ? model.id : '';
+    return name !== '' && !NON_CHAT_NAME.test(name);
+  }
+  return typeof model === 'string' && model !== '' && !NON_CHAT_NAME.test(model);
+}
+
 export function pickModelName(connection, models) {
   const fromConnection = Array.isArray(connection?.manualModels)
-    ? connection.manualModels.find((model) => typeof model === 'string' && model !== '')
+    ? connection.manualModels.find(isChatModel)
     : undefined;
   if (fromConnection) return fromConnection;
   const fromConnectionList = Array.isArray(connection?.models)
-    ? connection.models.map((model) => (typeof model === 'string' ? model : model?.id)).find(Boolean)
+    ? connection.models.filter(isChatModel).map((model) => (typeof model === 'string' ? model : model?.name ?? model?.id)).find(Boolean)
     : undefined;
   if (fromConnectionList) return fromConnectionList;
-  const fromCatalog = Array.isArray(models)
-    ? models.map((model) => (typeof model === 'string' ? model : model?.id)).find(Boolean)
-    : undefined;
+  // task-32: CP `/api/v1/models` is contracted as a connectionId-keyed object
+  // (ProviderModelCatalog.models, openapi.yaml:8436); verify.mjs:countModels already accepts both
+  // that shape and the legacy array. Keep one definition of the wire shape — reuse countModels's
+  // compatibility口径 here via the same normalization (array or plain object), never a
+  // second bespoke parser.
+  const catalog = Array.isArray(models) ? models : models && typeof models === 'object' ? models : null;
+  // Prefer the pinned connection's own bucket: the object is keyed by connectionId and a
+  // foreign connection's models are not usable on this binding. Fall back to the first
+  // non-empty bucket only when the pinned key has no entry (legacy instance-fallback shape).
+  const entries = catalog
+    ? (connection?.id && Array.isArray(catalog[connection.id]) && catalog[connection.id].length > 0
+      ? [catalog[connection.id]]
+      : Object.values(catalog))
+    : [];
+  const fromCatalog = entries.flatMap((entry) => (Array.isArray(entry) ? entry : [entry]))
+    .filter(isChatModel)
+    .map((model) => (typeof model === 'string' ? model : model?.name ?? model?.id)).find(Boolean);
   return fromCatalog ?? null;
 }
 
@@ -139,8 +167,11 @@ export async function resolveSessionBinding({ client, stack = 'unknown', fetchMo
   let models = [];
   if (fetchModels) {
     const modelResponse = await client.call('GET', '/api/v1/models');
-    if (modelResponse.status === 200 && Array.isArray(modelResponse.body?.models)) {
-      models = modelResponse.body.models;
+    // task-32: the fetch gate must accept the same shapes as pickModelName/countModels —
+    // CP returns ProviderModelCatalog.models as a connectionId-keyed object, not an array.
+    const rawModels = modelResponse.body?.models;
+    if (modelResponse.status === 200 && (Array.isArray(rawModels) || (rawModels && typeof rawModels === 'object'))) {
+      models = rawModels;
     }
   }
   const modelName = pickModelName(connection, models);
@@ -148,7 +179,7 @@ export async function resolveSessionBinding({ client, stack = 'unknown', fetchMo
     return {
       error: {
         code: 'VERIFY_MODEL_MISSING',
-        message: `Connection ${connection.id} exposes no chat model; register or discover a model for it, then re-run \`xihe verify\`.`,
+        message: `Connection ${connection.id} exposes no usable chat model (catalog empty or only non-chat models such as ASR/TTS/embedding/image); register or discover a chat model for it, then re-run \`xihe verify\`.`,
       },
     };
   }
