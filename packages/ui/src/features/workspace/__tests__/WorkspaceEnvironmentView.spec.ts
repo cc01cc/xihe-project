@@ -1142,3 +1142,77 @@ describe("WorkspaceEnvironmentView 其余枚举字段人话化（task-59）", ()
         }
     });
 });
+
+/**
+ * task-53 item 1/2/3（批次02 P2）—— 环境页三条体验细节的钉住用例。
+ *
+ * 为什么这三条值得各钉一条：它们都不是"好看不好看"，各自会造成**误读**：
+ * - item 1：长摘要在字符串中间硬折 ⇒ 一个值看起来像两个；
+ * - item 2：executionSpec.status 复用 workspace 状态词表 ⇒ 恒显示「未知状态」，
+ *           与同页「能力探测：稳定/可用」自相矛盾（用户不知道该信哪个）；
+ * - item 3：可逆动作配 destructive 视觉 ⇒ 用户以为「释放 = 删文件」而不敢点。
+ */
+describe("WorkspaceEnvironmentView 执行配置细节（task-53 item 1/2/3）", () => {
+    function envWithSpec(overrides: Record<string, unknown> = {}) {
+        return {
+            ...environment("windows-host"),
+            executionSpec: {
+                status: "assigned",
+                generation: 1,
+                sandboxSpecHash: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            },
+            ...overrides,
+        };
+    }
+
+    it("item2: executionSpec.status=assigned 必须显示人话，不能落到「未知状态」", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(envWithSpec() as never);
+        const wrapper = await mountView();
+
+        // 执行配置卡片里的状态值（不是左侧 environment.status 那一处）。
+        const execCard = wrapper
+            .findAll("article")
+            .find((a) => a.text().includes(i18n.global.t("workspace.environmentExecutionTitle")));
+        expect(execCard, "执行配置卡片必须存在").toBeTruthy();
+        expect(execCard!.text()).not.toContain(i18n.global.t("workspace.environmentStatusUnknown"));
+        expect(execCard!.text()).toContain(i18n.global.t("workspace.environmentStatus.assigned"));
+    });
+
+    it("item2: unassigned 同样走人话（不是未知）", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(
+            envWithSpec({
+                executionSpec: { status: "unassigned", generation: 0, sandboxSpecHash: "" },
+            }) as never,
+        );
+        const wrapper = await mountView();
+        const execCard = wrapper
+            .findAll("article")
+            .find((a) => a.text().includes(i18n.global.t("workspace.environmentExecutionTitle")));
+        expect(execCard!.text()).toContain(i18n.global.t("workspace.environmentStatus.unassigned"));
+        expect(execCard!.text()).not.toContain(i18n.global.t("workspace.environmentStatusUnknown"));
+    });
+
+    it("item1: 摘要截断显示且完整值留在 title，并提供复制入口", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(envWithSpec() as never);
+        const wrapper = await mountView();
+
+        const digest = wrapper.find('[data-testid="workspace-spec-digest"]');
+        expect(digest.exists()).toBe(true);
+        // 完整值必须在 title 里 —— 「截断显示」不等于「丢失信息」。
+        expect(digest.attributes("title")).toBe(
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        );
+        // 可见文本走 truncate 类（CSS 截断），不再 break-all（后者会在字符串中间折断）。
+        expect(digest.classes()).toContain("truncate");
+        expect(digest.classes()).not.toContain("break-all");
+        expect(wrapper.find('[data-testid="workspace-spec-digest-copy"]').exists()).toBe(true);
+    });
+
+    it("item3: 释放运行资源是中性按钮，不是 destructive 描红", async () => {
+        const wrapper = await mountView();
+        const release = wrapper.get('[data-testid="workspace-runtime-release"]');
+        // destructive 的视觉语言（text-destructive / border-destructive）不得出现在这里：
+        // 该动作可逆（不删文件，下次自动重建），红色应留给真正不可逆的动作。
+        expect(release.classes().join(" ")).not.toMatch(/destructive/);
+    });
+});

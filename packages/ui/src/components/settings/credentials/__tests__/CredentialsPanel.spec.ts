@@ -326,3 +326,34 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
         expect(bodyEl('[data-testid="credentials-detail-reveal"]')).toBeNull();
     });
 });
+
+/**
+ * task-53 item 4/5（批次02 P2）—— 这两条都是"同屏重复/中英混排"这类**读起来才看得出**的问题，
+ * 单测原本一条都没钉（变异腿实测 gate-blind：把两处改回去，12 条用例全绿）。
+ * 因此补两条判据，让"改回去"必然变红。
+ */
+describe("CredentialsPanel 设置页文案细节（task-53 item 4/5）", () => {
+    it("item4: 页面标题与卡片标题不得复用同一个键（否则同屏出现两次「凭据管理」）", async () => {
+        mockedApi.listCredentials.mockResolvedValue({ credentials: [], count: 0 });
+        const wrapper = await mountPanel();
+
+        const pageTitle = wrapper.get('[data-testid="settings-page-title"]').text().trim();
+        const listHeading = wrapper.get('[data-testid="credentials-list-heading"]').text().trim();
+
+        // 两条判据：① 两个标题必须互不相同（同键复用正是原缺陷）；② 卡片标题必须是本地化后的人话，
+        // 不是裸键（裸键说明用了不存在的键）。
+        expect(listHeading, "卡片标题与页面标题重名 = 同屏两个「凭据管理」").not.toBe(pageTitle);
+        expect(listHeading).not.toBe("credentials.listHeading");
+        expect(listHeading.length).toBeGreaterThan(0);
+    });
+
+    it("item5: 说明文案里的 Provider 必须本地化为「提供商」，不得中英混排", async () => {
+        mockedApi.listCredentials.mockResolvedValue({ credentials: [], count: 0 });
+        await mountPanel();
+
+        const desc = i18n.global.t("credentials.desc") as string;
+        // 中文正文里出现裸英文 Provider 就是本条的缺陷；「提供商」才是本地化形态。
+        expect(desc).not.toContain("Provider");
+        expect(desc).toContain("提供商");
+    });
+});

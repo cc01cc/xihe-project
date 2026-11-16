@@ -232,8 +232,16 @@ onMounted(async () => {
 
         <section v-if="!store.scopeMissing" class="min-w-0 rounded-lg border border-border bg-card">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
+                <!--
+                    task-53 item 4：这里原先是**页面标题那个键**（与上方 :158 的
+                    settings-page-title 复用同一个 i18n 键），于是同一屏出现两个「凭据管理」
+                    （b02-tab-资源.png 实测：h2 标题 + 卡片标题）。
+                    本区真正表达的是"列表分区"，不是第二个页名 ⇒ 换用列表语义的键。
+                    注意：注释里不要写裸键名 —— wrapper.html() 连注释一起被 i18n 裸键扫描，
+                    会把注释里的键报成"渲染出裸键"（本文件已因此红过一次）。
+                -->
                 <h2 class="text-sm font-medium" data-testid="credentials-list-heading">
-                    {{ t("credentials.heading") }}
+                    {{ t("credentials.listHeading") }}
                 </h2>
                 <span class="text-xs text-muted-foreground">{{ store.credentials.length }}</span>
             </div>

@@ -1290,8 +1290,16 @@ const messages = {
                 stale: "状态过期",
                 unbound: "尚未物化",
                 pending: "等待中",
+                // task-53 item 2：executionSpec.status 的二元闭集（CP :128 assigned/unassigned）。
+                // 原先缺这两项 ⇒ 执行配置卡片只能显示「未知状态」，与同页「能力探测：稳定/可用」矛盾。
+                assigned: "已分配执行配置",
+                unassigned: "尚未分配执行配置",
             },
             environmentStatusUnknown: "未知状态",
+            // task-53 item 1：长摘要改为「截断 + 一键复制」后的按钮与反馈文案。
+            environmentCopyDigest: "复制",
+            environmentDigestCopied: "已复制摘要",
+            environmentDigestCopyFailed: "复制失败，请手动选取文本",
             environmentExecutionMode: {
                 docker: "Docker 容器",
                 windowsMxc: "Windows MXC 沙箱",
@@ -3721,7 +3729,10 @@ const messages = {
         credentials: {
             title: "凭据",
             heading: "凭据管理",
-            desc: "Provider 连接的密钥由连接维护；本页管理独立凭据。密钥仅加密存储，界面不回显。",
+            // task-53 item 4：列表分区标题。与 heading 分开是必要的 —— 同一屏既有页面标题
+            // 又有列表卡片，两者都用 heading 会让「凭据管理」出现两次（实测见 b02-tab-资源.png）。
+            listHeading: "本工作区凭据",
+            desc: "提供商连接的密钥由连接维护；本页管理独立凭据。密钥仅加密存储，界面不回显。",
             create: "新建凭据",
             refresh: "刷新",
             loadFailed: "无法加载凭据列表，请重试",
@@ -5172,8 +5183,13 @@ const messages = {
                 stale: "Stale",
                 unbound: "Not materialized",
                 pending: "Pending",
+                assigned: "Execution spec assigned",
+                unassigned: "No execution spec assigned",
             },
             environmentStatusUnknown: "Unknown status",
+            environmentCopyDigest: "Copy",
+            environmentDigestCopied: "Digest copied",
+            environmentDigestCopyFailed: "Copy failed — select the text manually",
             environmentExecutionMode: {
                 docker: "Docker container",
                 windowsMxc: "Windows MXC sandbox",
@@ -7676,6 +7692,7 @@ const messages = {
         credentials: {
             title: "Credentials",
             heading: "Credentials",
+            listHeading: "Credentials in this workspace",
             desc: "Provider connection keys are managed on the connection; manage standalone credentials here. Secrets are stored encrypted and never echoed.",
             create: "New credential",
             refresh: "Refresh",

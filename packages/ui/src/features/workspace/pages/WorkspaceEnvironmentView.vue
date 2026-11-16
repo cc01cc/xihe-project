@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { api, ApiError, isExecutionModeSwitchProbeFailure } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
+import { Button } from "../../../components/ui/button";
 import { discloseHostPath, type HostPathPrincipal } from "../lib/hostPathDisclosure";
 import { logger } from "../../../lib/logger";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
@@ -389,10 +390,49 @@ const STATUS_LABEL_KEY: Record<string, string> = {
     stale: "workspace.environmentStatus.stale",
     unbound: "workspace.environmentStatus.unbound",
     pending: "workspace.environmentStatus.pending",
+    // task-53 item 2：executionSpec.status 与上面 10 个**不是同一个值域** —— 它由 CP
+    // WorkspaceEnvironmentController:128 给出，闭集只有 assigned / unassigned。
+    // 原先它复用同一条 statusLabel() ⇒ 两个值都不在表里 ⇒ 一律落到「未知状态」，
+    // 于是同页出现「执行配置：未知状态」与「能力探测：稳定/可用」两个矛盾结论。
+    // 这不是「真未知」（CP 明明给了值），是**映射缺口**；补上这两个值即消解矛盾。
+    assigned: "workspace.environmentStatus.assigned",
+    unassigned: "workspace.environmentStatus.unassigned",
 };
 function statusLabel(value: string): string {
     const key = STATUS_LABEL_KEY[value.trim().toLowerCase()];
     return key ? t(key) : t("workspace.environmentStatusUnknown");
+}
+
+/**
+ * task-53 item 1：执行配置摘要（41 位 hex）。**不折行**是判据的一部分 —— 原先是
+ * `break-all` 让它在字符串中间折断（`…e83b10` / `c060f61caaff8a`），一个值看起来像两个。
+ * 这里只在可见层截断（CSS `truncate`，完整值留在 `title` 与复制按钮里），
+ * 所以「缩短显示」不等于「丢失信息」。
+ */
+const specDigest = computed(() => {
+    const raw = (environment.value?.executionSpec ?? environment.value?.assignment)
+        ?.sandboxSpecHash;
+    return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
+});
+
+const digestCopied = ref(false);
+function copySpecDigest(): void {
+    const value = specDigest.value;
+    if (!value) return;
+    void navigator.clipboard
+        .writeText(value)
+        .then(() => {
+            digestCopied.value = true;
+            toast.success(t("workspace.environmentDigestCopied"));
+            globalThis.setTimeout(() => {
+                digestCopied.value = false;
+            }, 2000);
+        })
+        .catch((cause: unknown) => {
+            // 复制失败必须可感知：静默失败会让用户以为已复制（exception-audit 同口径）。
+            logger.warn("Failed to copy spec digest", cause);
+            toast.error(t("workspace.environmentDigestCopyFailed"));
+        });
 }
 
 /** 执行模式闭集（`openapi.yaml:8740` 的 enum）—— 连字符值不是蛇形，光靠蛇形正则抓不到。 */
@@ -709,8 +749,15 @@ onBeforeUnmount(stopPolling);
                             {{ releaseError }}
                         </p>
                     </div>
+                    <!--
+                        task-53 item 3：本动作是**低频且可逆**的（只回收 watcher / 内存 / Job 进程树，
+                        不删文件，下次使用自动重建），原先却用 `border-destructive/60 text-destructive`
+                        —— 那是「危险且难以撤销」的视觉语言。按既有裁定 PLAN-0631 反馈②「低频可逆不配
+                        主按钮层级」，改为中性 ghost：红色留给真正不可逆的动作（本页的「删除工作区」）。
+                        判据不是「红色不好看」，而是**注意力预算**（DEV-011 §10）：会误操作才值得上色。
+                    -->
                     <button
-                        class="px-4 py-2 text-sm rounded border border-destructive/60 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                        class="px-4 py-2 text-sm rounded border border-border text-foreground hover:bg-muted disabled:opacity-50"
                         :disabled="releasing || activeJobCount > 0"
                         data-testid="workspace-runtime-release"
                         @click="releaseConfirmOpen = true"
@@ -828,10 +875,19 @@ onBeforeUnmount(stopPolling);
                                     "
                                 >
                                     {{
-                                        statusLabel(
-                                            (environment.executionSpec ?? environment.assignment)
-                                                ?.status ?? "",
-                                        )
+                                        // task-53 item 2 第二层：整个 executionSpec 缺失（CP 未给 / 未探测）
+                                        // 与「值不认识」是两件事 —— 前者应说「未探测」，后者才是「未知状态」。
+                                        // 把两者合并会让"还没探测"看起来像"探测结论异常"。
+                                        (
+                                            environment.executionSpec ?? environment.assignment
+                                        )?.status
+                                            ? statusLabel(
+                                                  (
+                                                      environment.executionSpec ??
+                                                      environment.assignment
+                                                  )?.status ?? "",
+                                              )
+                                            : t("workspace.environmentStatusUnprobed")
                                     }}
                                 </dd>
                             </div>
@@ -959,14 +1015,38 @@ onBeforeUnmount(stopPolling);
                                 </dd>
                             </div>
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldSpecHash") }}
                                 </dt>
-                                <dd class="break-all font-mono text-right">
-                                    {{
-                                        (environment.executionSpec ?? environment.assignment)
-                                            ?.sandboxSpecHash || t("workspace.environmentValueNone")
-                                    }}
+                                <!--
+                                    task-53 item 1：摘要是个长 hex（41 位），原先 `break-all` 把它
+                                    **在字符串中间硬折**（b02-tab-环境.png 里断成 `…e83b10` / `c060f61caaff8a`，
+                                    读起来像两个不同的值 —— 这是比"难看"更实质的问题：一个值被伪装成两个）。
+                                    改为「截断 + 一键复制」：可见部分短到不折行，完整值仍在 title 里、
+                                    且可整串复制，救回了排障需要的完整信息。
+                                -->
+                                <dd
+                                    v-if="specDigest"
+                                    class="flex min-w-0 items-center justify-end gap-2"
+                                >
+                                    <span
+                                        class="truncate font-mono text-right"
+                                        :title="specDigest"
+                                        data-testid="workspace-spec-digest"
+                                        >{{ specDigest }}</span
+                                    >
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        class="shrink-0 px-1 text-xs"
+                                        data-testid="workspace-spec-digest-copy"
+                                        @click="copySpecDigest"
+                                    >
+                                        {{ t("workspace.environmentCopyDigest") }}
+                                    </Button>
+                                </dd>
+                                <dd v-else class="font-mono text-right">
+                                    {{ t("workspace.environmentValueNone") }}
                                 </dd>
                             </div>
                         </dl>
