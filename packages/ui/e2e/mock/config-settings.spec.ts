@@ -914,10 +914,30 @@ test.describe("Config Settings (three layers)", () => {
         await expect(dismiss).toHaveAttribute("data-slot", "button");
         await expect(dismiss).toBeVisible();
 
-        const textBox = await notice.locator('[data-slot="alert-description"]').boundingBox();
-        const actionBox = await dismiss.boundingBox();
-        expect(textBox).not.toBeNull();
-        expect(actionBox).not.toBeNull();
+        // 盒子可能为 null 是 `boundingBox(): Promise<null|{…}>` 的**上游真实返回类型**
+        // （playwright-core types.d.ts:12958），不是本仓写法问题；而 `expect(x).not.toBeNull()`
+        // **只断言、不窄化类型**（[实测] Playwright 1.64.1：expect 不带 asserts 谓词 ⇒ 后续仍报
+        // TS18047）。所以用一次显式守卫把控制流也断下来：既保住「必须拿得到盒子」这条断言
+        // （null 时抛出并点名是哪个盒子），又让类型真的收窄。
+        // 不用 `!`（静默掉类型检查）、不用 `as`（等于自欺）：:914/:915 已断言元素可见，
+        // 走到这里仍拿不到盒子是**真异常**，该失败而不是被压掉。
+        const requireBox = (
+            box: { x: number; y: number; width: number; height: number } | null,
+            label: string,
+        ): { x: number; y: number; width: number; height: number } => {
+            if (box === null) {
+                throw new Error(`boundingBox is null for ${label}（元素可见但拿不到盒子）`);
+            }
+            return box;
+        };
+        const textBox = requireBox(
+            await notice.locator('[data-slot="alert-description"]').boundingBox(),
+            "alert-description（正文盒子）",
+        );
+        const actionBox = requireBox(
+            await dismiss.boundingBox(),
+            "settings-layer-block-dismiss（关闭键）",
+        );
         const horizontalOverlap =
             actionBox.x < textBox.x + textBox.width && textBox.x < actionBox.x + actionBox.width;
         const verticalOverlap =
