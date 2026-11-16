@@ -1860,7 +1860,7 @@ onMounted(() => {
                     <template v-else-if="deleteImpact">
                         <div
                             v-if="deleteImpact.blocked"
-                            class="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5"
+                            class="rounded-lg border border-destructive/40 bg-background px-3 py-2.5"
                             data-testid="provider-delete-blocked"
                         >
                             <p class="font-semibold text-destructive">

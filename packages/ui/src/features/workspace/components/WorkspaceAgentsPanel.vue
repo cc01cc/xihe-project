@@ -2234,7 +2234,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </div>
                                 <div
                                     v-if="memoryPendingArchiveId === memory.id"
-                                    class="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1 text-xs"
+                                    class="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-background px-2 py-1 text-xs"
                                     :data-testid="`agent-memory-archive-confirm-${memory.id}`"
                                 >
                                     <span>{{ t("workspace.agentMemoryArchiveConfirm") }}</span>
