@@ -254,6 +254,29 @@ function isOpsActive(path: string): boolean {
 }
 
 /**
+ * task-35：组标签 id 与菜单可访问名。
+ *
+ * <p>三层都有同名「域」列表（实例 / 用户 / 默认），只把组标签挂上去会让三层可访问名全是「域」——
+ * 读屏仍然不知道该念的是哪一层的列表（卡面点名的就是这条）。所以 `aria-labelledby` 用**两个 id**
+ * 拼名：层标题（`CollapsibleTrigger` 上已有的 `settings-nav-<layer>`）+ 本组标签。
+ * 关联靠 vendor 现成能力：`SidebarGroupLabel` 是 reka `Primitive`（可挂 `id`）、
+ * `SidebarMenu` 是单根 `<ul>`（属性自动透传）—— 不新造组件、不改结构、不硬写中文
+ * `aria-label`（会绕开 i18n）。</p>
+ *
+ * <p>标签 id 前缀刻意**不用** `settings-nav-`：既有用例「层组次序 = 高 → 低」靠
+ * `[id^="settings-nav-"]` 的 DOM 顺序读层序，混入同前缀的组标签会把它读成组名。</p>
+ */
+type NavLayerKey = "instance" | "user" | "workspace-default";
+
+function groupLabelId(layer: NavLayerKey, group: string): string {
+    return `settings-group-label-${layer}-${group}`;
+}
+
+function menuLabelledBy(layer: NavLayerKey, group: string): string {
+    return `settings-nav-${layer} ${groupLabelId(layer, group)}`;
+}
+
+/**
  * 组标题就是折叠开关。刻意**不**在 CollapsibleTrigger 上再绑 click —— reka 的 trigger 自带
  * 切换行为，绑第二次会双重翻转（packages/ui/AGENTS.md「Reka UI 交互陷阱」）。
  * task-175：层组标题 14px semibold（原 11px uppercase），与 12px 组标签、14px 条目形成阶差。
@@ -345,11 +368,16 @@ const layerHeaderClass =
                                 <SidebarGroupLabel
                                     as="p"
                                     data-testid="settings-nav-group-domains-instance"
+                                    :id="groupLabelId('instance', 'domains')"
                                     :class="sectionLabelClass"
                                 >
                                     {{ t("settings.ia.groupDomains") }}
                                 </SidebarGroupLabel>
-                                <SidebarMenu data-testid="settings-nav-group-items" class="gap-0.5">
+                                <SidebarMenu
+                                    data-testid="settings-nav-group-items"
+                                    :aria-labelledby="menuLabelledBy('instance', 'domains')"
+                                    class="gap-0.5"
+                                >
                                     <SidebarMenuItem v-for="item in instanceDomains" :key="item.id">
                                         <SidebarMenuButton
                                             as-child
@@ -389,11 +417,17 @@ const layerHeaderClass =
                                     <SidebarGroupLabel
                                         as="p"
                                         :data-testid="'settings-nav-group-ops-' + group.id"
+                                        :id="groupLabelId('instance', 'ops-' + group.id)"
                                         :class="sectionLabelClass"
                                     >
                                         {{ t(group.labelKey) }}
                                     </SidebarGroupLabel>
-                                    <SidebarMenu class="gap-0.5">
+                                    <SidebarMenu
+                                        :aria-labelledby="
+                                            menuLabelledBy('instance', 'ops-' + group.id)
+                                        "
+                                        class="gap-0.5"
+                                    >
                                         <SidebarMenuItem v-for="item in group.items" :key="item.id">
                                             <SidebarMenuButton
                                                 as-child
@@ -462,11 +496,16 @@ const layerHeaderClass =
                             <SidebarGroupLabel
                                 as="p"
                                 data-testid="settings-nav-group-domains-user"
+                                :id="groupLabelId('user', 'domains')"
                                 :class="sectionLabelClass"
                             >
                                 {{ t("settings.ia.groupDomains") }}
                             </SidebarGroupLabel>
-                            <SidebarMenu data-testid="settings-nav-group-items" class="gap-0.5">
+                            <SidebarMenu
+                                data-testid="settings-nav-group-items"
+                                :aria-labelledby="menuLabelledBy('user', 'domains')"
+                                class="gap-0.5"
+                            >
                                 <SidebarMenuItem v-for="item in userDomains" :key="item.id">
                                     <SidebarMenuButton
                                         as-child
@@ -538,11 +577,16 @@ const layerHeaderClass =
                             <SidebarGroupLabel
                                 as="p"
                                 data-testid="settings-nav-group-domains-workspace-default"
+                                :id="groupLabelId('workspace-default', 'domains')"
                                 :class="sectionLabelClass"
                             >
                                 {{ t("settings.ia.groupWorkspaceDefaultDomains") }}
                             </SidebarGroupLabel>
-                            <SidebarMenu data-testid="settings-nav-group-items" class="gap-0.5">
+                            <SidebarMenu
+                                data-testid="settings-nav-group-items"
+                                :aria-labelledby="menuLabelledBy('workspace-default', 'domains')"
+                                class="gap-0.5"
+                            >
                                 <SidebarMenuItem
                                     v-for="item in workspaceDefaultDomains"
                                     :key="item.id"

@@ -396,6 +396,53 @@ describe("SettingsSidebar", () => {
         expect(layerTitle.text()).toBe("实例配置");
         wrapper.unmount();
     });
+
+    /*
+     * task-35（源 task-19 C-3）：左栏每个菜单列表都要有**互不相同**的可访问名。
+     *
+     * 修前实测 `aria-labelledby` = 0 ⇒ 读屏只念「列表 N 项」，且三层都叫「域」，不知道该念哪一层。
+     * 修法不是写死 `aria-label`（会绕开 i18n），而是 `aria-labelledby` 指向两个**已存在的可见文本**：
+     * 层标题（`CollapsibleTrigger` 的 `settings-nav-<layer>`）+ 组标签
+     * （`SidebarGroupLabel` 的 `settings-group-label-<layer>-<group>`；前缀刻意避开
+     * `settings-nav-`，否则会污染既有「层组次序」用例的 `[id^="settings-nav-"]` 选择器）。
+     *
+     * 这里不只断属性在不在，而是**把名字解出来**：属性挂着却指向不存在的 id 是这条修法最容易出的假绿
+     * （读屏拿到的仍是空名），所以每个 id 都要能在 DOM 里找到、且解出的文字非空。
+     */
+    it("task-35: gives every sidebar menu a distinct accessible name", async () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("instance", "rag");
+        // 三层全部展开，否则少渲染一层会让「互不相同」白给。
+        await wrapper.find("#settings-nav-user").trigger("click");
+        await flushPromises();
+        await wrapper.find("#settings-nav-workspace-default").trigger("click");
+        await flushPromises();
+
+        const menus = wrapper.findAll('[data-slot="sidebar-menu"]');
+        expect(menus.length).toBeGreaterThanOrEqual(4);
+
+        const names = menus.map((menu) => {
+            const ids = (menu.attributes("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
+            expect(ids.length).toBeGreaterThan(0);
+            const parts = ids.map((id) => {
+                const target = wrapper.find(`#${id}`);
+                expect(target.exists(), `aria-labelledby 指向的 #${id} 不在 DOM 里`).toBe(true);
+                return target.text().trim();
+            });
+            const name = parts.filter(Boolean).join(" ");
+            expect(name).not.toBe("");
+            return name;
+        });
+
+        // 主判据：互不相同（三层同名「域」正是修前的原始缺陷）。
+        expect(new Set(names).size, `可访问名重复：${names.join(" | ")}`).toBe(names.length);
+        // 三层各至少出现一次，否则「互不相同」可能只是少渲染了一层。
+        expect(names.some((name) => name.includes("实例配置"))).toBe(true);
+        expect(names.some((name) => name.includes("用户配置"))).toBe(true);
+        expect(names.some((name) => name.includes("默认配置"))).toBe(true);
+        wrapper.unmount();
+    });
 });
 
 function clearCookies() {
