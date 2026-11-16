@@ -57,7 +57,7 @@ pnpm run build
 
 <!-- lint-rule-registry:begin -->
 
-**当前登记 132 条`off`** = 主块 56 + 文件级/工具面 5 + 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
+**当前登记 134 条`off`** = 主块 56 + 文件级/工具面 5 + 测试区放宽/关闭档 2（`task-43` 的 `new-cap` 两片）+ 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
 
 #### 主块 56 条
 
@@ -135,6 +135,17 @@ pnpm run build
 | `no-console` | `src/**/__tests__/**`、`*.spec.ts`、`*.test.ts` | 5 | 测试里的 `console.log` 是失败现场诊断（如 `[specdbg]`），不进产品包 | V |
 | `no-console` | `src/test-utils/**` | 1 | 测试夹具的告警（`i18nKeys` 缺键提示），同为诊断面 | V |
 | `unicorn/prefer-dom-node-text-content` | `e2e/real/**`、`e2e/mock/**` | 21 | E2E 断言常比对 `textContent`；该规则要求 `innerText`，与既有断言口径冲突 | S |
+
+#### 测试区三档判据（`task-43` / `D-1692`，2026-11-16）—— 只 1 条 `off`，其余留共享档
+
+规范 SSOT：`one/.agents/skills/test/references/test-lint-area-separation.md`。判据一句话：**这条规则在测试域报的那一条，是不是真的坏**；坏的（`no-shadow`、`no-map-spread`、`prefer-set-has`…）留在**共享档 T-S**，不因「这是测试」变成好事。**「修起来麻烦」不能当关闭理由。**
+
+| 规则 | 作用域（`files`） | 档 | 为什么（不是「麻烦」） |
+| --- | --- | --- | --- |
+| `new-cap` | `src/**/__tests__/**`、`src/**/*.spec.ts`、`src/**/*.test.ts`、`src/test-utils/**` | T-O 关闭 | 规则要求「大写开头的函数只能当构造器用」，而测试里大写名是**API 调用与工厂**（`KEYDOWN()` 造键盘事件、`Mount(...)` 包组件），本来就不是构造 ⇒ **规则语义在测试域不成立** |
+| `new-cap` | `e2e/**` | T-O 关闭 | 同上；e2e 与 src 内测试同为测试区，若只放宽一边就是新的不一致（SSOT §2.1 的 e2e vs `__tests__` 待遇差） |
+
+**产品区不关**（实测 src 有 2 条真命中，`Intl.DateTimeFormat()` 一类，那里语义成立）。另外两条 `T-R` 放宽（`max-params` 测试 8、`unicorn/max-nested-calls` 测试 6）**不是 `off`**，不进本表：它们仍在咬，只是阈值按测试常态拉开（实测默认阈值均为 3，测试侧 76 / 27 条）。
 
 #### 测试块 72 条（`files: ["src/**/__tests__/**", "src/**/*.spec.ts", "src/**/*.test.ts"]`）
 

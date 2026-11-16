@@ -159,10 +159,15 @@ function parseOxlintJson(text, label) {
 export function summarize(diagnostics) {
     const byRule = {};
     const locations = {};
+    // task-43：errors 也要能按区域归属 —— 否则测试区一个半成品语法错就能把产品门顶红，
+    // 那与「测试债不该算产品债」是同一个病。
+    const errorLocations = [];
     let errors = 0;
     for (const d of diagnostics) {
         if (d.severity === "error") {
             errors += 1;
+            const espan = d.labels?.[0]?.span;
+            errorLocations.push(String(d.filename ?? "?") + ":" + (espan?.line ?? "?"));
             continue;
         }
         if (d.severity !== "warning") continue;
@@ -173,8 +178,130 @@ export function summarize(diagnostics) {
         (locations[rule] ??= []).push(at);
     }
     for (const rule of Object.keys(locations)) locations[rule].sort();
+    errorLocations.sort();
     const total = Object.values(byRule).reduce((sum, n) => sum + n, 0);
-    return { total, errors, byRule, locations };
+    return { total, errors, byRule, locations, errorLocations };
+}
+
+// ── 区域（src / tests）───────────────────────────────────────────────────────
+
+/**
+ * task-43 / D-1692：棘轮分区域。规范 SSOT：
+ * .agents/skills/test/references/test-lint-area-separation.md 第 3 节。
+ *
+ * 为什么必须分：同一套门槛同时管测试与产品代码会让测试债被算成产品债 —— 实测（2026-11-16）
+ * 432 条警告里 src 产品区 128 条、src 内测试 90 条、e2e 201 条、工具面 13 条；只要一条测试新增就能把
+ * 产品门顶红，于是「产品债到底多少」这个问题永远答不出来。
+ *
+ * 分区域改的是「基线结构 + 判据分区」，不是收账边界（Lead task-43 硬约束 (1)）：
+ * --write-baseline 的 --scope 语义一字不变，越界仍 exit 3。两者是两件事：
+ * --area 回答「这个门该管谁」，--scope 回答「这次收账我允许吸收谁的新增」。
+ */
+export const AREAS = Object.freeze(["src", "tests"]);
+
+/**
+ * 路径 -> 区域。判据是路径而不是「文件里有没有 test 字样」，因为门要能对任意输入复算。
+ * e2e/** 归 tests（它是测试代码，只是不装 vitest 插件 —— 见规范 SSOT 2.1 的显式坑）。
+ * 工具面（scripts/**、vite.config.ts）归 src：它们不是测试，也不该躲在测试区里被放宽。
+ */
+export function areaOfPath(file) {
+    const p = String(file ?? "")
+        .split(String.fromCharCode(92))
+        .join("/");
+    if (p.startsWith("e2e/")) return "tests";
+    if (p.startsWith("src/")) {
+        if (p.includes("__tests__")) return "tests";
+        if (p.endsWith(".spec.ts") || p.endsWith(".test.ts")) return "tests";
+        if (p.startsWith("src/test-utils/")) return "tests";
+        return "src";
+    }
+    // 其余（scripts/**、vite.config.ts、根配置）算产品侧：宁可让工具面吃产品门的严格度，
+    // 也不让任何非测试代码借「测试区宽」的通道溜走。
+    return "src";
+}
+
+/** file:line -> 区域（只切最后一处冒号，与 fileOf 同口径）。无法解析 => null（不猜）。 */
+export function areaOfLocation(at) {
+    const cut = at.lastIndexOf(":");
+    if (cut <= 0) return null;
+    return areaOfPath(at.slice(0, cut));
+}
+
+/**
+ * 从 byArea 形状或旧基线（只有 byRule+locations）推出两区的 {byRule, total}。
+ *
+ * 旧基线不需要额外迁移文件：它的 locations 天然带路径，按路径分桶即可无损还原
+ * （实测旧基线 417 条 = src 141 + tests 276，完全覆盖 => 迁移零丢失）。这样「旧格式」
+ * 不是第二套判决口径，只是同一口径的另一种存储（Lead 硬约束 (2)）。
+ */
+export function areasOf(baseline) {
+    const out = {};
+    for (const area of AREAS) out[area] = { byRule: {}, total: 0 };
+    const byArea = baseline?.byArea;
+    if (byArea && typeof byArea === "object") {
+        for (const area of AREAS) {
+            const a = byArea[area];
+            if (!a) continue;
+            out[area].byRule = { ...(a.byRule ?? {}) };
+            out[area].total = Number.isFinite(a.total)
+                ? Number(a.total)
+                : Object.values(out[area].byRule).reduce((s, n) => s + n, 0);
+        }
+        return out;
+    }
+    // 旧格式：按 locations 的路径分桶（无 locations 的极旧基线 => 两区都空 => 调用方按「无族数据」处理）。
+    for (const [rule, ats] of Object.entries(baseline?.locations ?? {})) {
+        for (const at of ats) {
+            const area = areaOfLocation(at);
+            if (!area) continue;
+            out[area].byRule[rule] = (out[area].byRule[rule] ?? 0) + 1;
+            out[area].total += 1;
+        }
+    }
+    return out;
+}
+
+/** 把 summarize 的扁平结果按区域再切一份（判据本体仍只有一份：summarize）。 */
+export function splitByArea(now) {
+    const out = {};
+    for (const area of AREAS) out[area] = { byRule: {}, locations: {}, total: 0, errors: 0 };
+    for (const [rule, ats] of Object.entries(now.locations ?? {})) {
+        for (const at of ats) {
+            const area = areaOfLocation(at);
+            if (!area) continue;
+            out[area].byRule[rule] = (out[area].byRule[rule] ?? 0) + 1;
+            (out[area].locations[rule] ??= []).push(at);
+            out[area].total += 1;
+        }
+    }
+    for (const area of AREAS) {
+        for (const rule of Object.keys(out[area].locations)) out[area].locations[rule].sort();
+    }
+    for (const at of now.errorLocations ?? []) {
+        const area = areaOfLocation(at);
+        if (area) out[area].errors += 1;
+    }
+    return out;
+}
+
+/** --area 取值校验：默认 src（产品门），见 Lead 硬约束 (3)。 */
+function resolveArea(raw) {
+    if (raw === undefined) return { areas: ["src"], label: "src（默认）" };
+    if (raw === "all") return { areas: AREAS.slice(), label: "all" };
+    if (AREAS.includes(raw)) return { areas: [raw], label: raw };
+    console.error("FAIL --area 只接受 src|tests|all，收到 " + JSON.stringify(raw));
+    process.exit(2);
+}
+
+/** 按区域比族：grownFamilies 的区域版（判据逻辑复用同一份，不新造一套）。 */
+export function grownFamiliesInArea(nowArea, baseArea) {
+    return Object.entries(nowArea.byRule ?? {})
+        .map(([rule, count]) => {
+            const before = baseArea.byRule?.[rule] ?? 0;
+            return { rule, count, before, diff: count - before };
+        })
+        .filter((entry) => entry.diff > 0)
+        .sort((a, b) => b.diff - a.diff || a.rule.localeCompare(b.rule));
 }
 
 /** `file:line` → `file`（只切最后一处冒号：oxlint 的 filename 是相对路径，无盘符风险，也不依赖平台）。 */
@@ -280,6 +407,61 @@ export function grownFamilies(now, baseline) {
         })
         .filter((entry) => entry.diff > 0)
         .sort((a, b) => b.diff - a.diff || a.rule.localeCompare(b.rule));
+}
+
+/**
+ * task-43：**按区域**渲染报告。与旧 renderReport 并存而不是替换它 ——
+ * 旧函数被 --selftest 的 14 例直接调用（那些例锁的是 task-36 的收账边界语义，
+ * 不能为了分区域去改动它们的调用形状，否则「边界语义有没有被改坏」就不再可证）。
+ */
+function renderReportArea({ now, nowAreas, baseAreas, grownByArea, areaSel, legacyBaseline }) {
+    const sel = areaSel.areas;
+    const nowTotal = sel.reduce((s, a) => s + nowAreas[a].total, 0);
+    const baseTotal = legacyBaseline ? "?" : sel.reduce((s, a) => s + baseAreas[a].total, 0);
+    const delta = legacyBaseline ? "?" : nowTotal - baseTotal;
+    const lines = [
+        "oxlint warnings " +
+            nowTotal +
+            " / 基线 " +
+            baseTotal +
+            (legacyBaseline ? "" : "（Δ " + (delta >= 0 ? "+" : "") + delta + "）") +
+            " | errors " +
+            now.errors +
+            " | 区域 " +
+            sel.map((a) => a + "=" + nowAreas[a].total).join(" ") +
+            " | 判据=按族·按区域",
+    ];
+    // 未选区域要显式报读数：否则读者以为「没提到就是 0」。
+    const other = AREAS.filter((a) => !sel.includes(a));
+    if (other.length) {
+        lines.push(
+            "（本次不判的区域：" +
+                other.map((a) => a + "=" + nowAreas[a].total).join(" ") +
+                " ⇒ 想看就加 --area tests 或 --area all）",
+        );
+    }
+    const grownAll = sel.flatMap((area) => grownByArea[area].map((g) => ({ ...g, area })));
+    if (!grownAll.length) {
+        lines.push("无增长的族（区域 " + areaSel.label + "）。");
+        return lines;
+    }
+    lines.push("超基线的族（" + grownAll.length + "）：");
+    for (const entry of grownAll) {
+        lines.push(
+            "  +" +
+                entry.diff +
+                "  [" +
+                entry.area +
+                "] " +
+                entry.rule +
+                "（" +
+                entry.before +
+                " → " +
+                entry.count +
+                "）",
+        );
+    }
+    return lines;
 }
 
 function renderReport(now, baseline, grown) {
@@ -640,6 +822,116 @@ function selftest() {
         }
     }
 
+    // ⑮–⑱ task-43：棘轮分区域（byArea / --area 三态 / 旧基线无损迁移 / 产品门不放松）。
+    // 这四条与 ⑩–⑭ 是**两件事**：⑩–⑭ 锁「收账边界」（--scope），⑮–⑱ 锁「判据分区」（--area）。
+    {
+        const shapeNow = (locationsByRule) => {
+            const locations = {};
+            const byRule = {};
+            for (const [rule, ats] of Object.entries(locationsByRule)) {
+                locations[rule] = [...ats].sort();
+                byRule[rule] = ats.length;
+            }
+            return {
+                total: Object.values(byRule).reduce((s, n) => s + n, 0),
+                errors: 0,
+                byRule,
+                locations,
+            };
+        };
+        // 样本必须同时覆盖四类边界路径，否则「某一类判错」不会红：
+        // src 产品 / src 内 __tests__ / src 内 .spec.ts / src/test-utils（测试夹具）/ e2e。
+        const nowMixed = shapeNow({
+            "import(first)": ["src/a.ts:1", "src/features/x.ts:2", "src/a.spec.ts:3"],
+            "unicorn(no-null)": ["e2e/mock/y.spec.ts:4", "src/test-utils/fixture.ts:5"],
+        });
+        const split = splitByArea(nowMixed);
+        const legacyBaseline = shapeNow({ "import(first)": ["src/a.ts:1", "src/features/x.ts:2"] });
+
+        const areaCases = [
+            {
+                name: "⑮ 区域归属：src 与 tests 各归各（e2e / src 内 .spec.ts / test-utils 都归 tests）",
+                got: split,
+                want: (s) => s.src.total === 2 && s.tests.total === 3,
+                detail: "src=2 tests=3（含 test-utils 那条）",
+            },
+            {
+                name: "⑯ 旧基线（只有 locations）⇒ 按路径无损推回 byArea（不是第二套口径）",
+                got: areasOf(legacyBaseline),
+                want: (a) =>
+                    a.src.total === 2 && a.tests.total === 0 && a.src.byRule["import(first)"] === 2,
+                detail: "src=2 tests=0",
+            },
+            {
+                name: "⑰ 新基线（byArea）⇒ 原样读出，不被 locations 二次推导",
+                got: areasOf({
+                    byArea: {
+                        src: { total: 7, byRule: { "x(y)": 7 } },
+                        tests: { total: 3, byRule: { "x(y)": 3 } },
+                    },
+                    locations: { "x(y)": ["src/a.ts:1"] },
+                }),
+                want: (a) => a.src.total === 7 && a.tests.total === 3,
+                detail: "src=7 tests=3（以 byArea 为准）",
+            },
+            {
+                name: "⑱ 产品门不放松：正例（src 真增长必须报出）+ 反例（测试新增不进 src 门）",
+                // 只测反例的话「恒返回空」的实现也绿 —— 第一次写这条用例时就假绿过，
+                // 所以必须同时钉正例：src 区真涨 1 条要能报出来。
+                got: {
+                    // 注意取 .src：grownFamiliesInArea 收的是**区域切片**，不是 splitByArea 的整包
+                    // （第一次写成整包时 byRule 不存在 ⇒ 恒空 ⇒ 正例假绿，已修）。
+                    grow: grownFamiliesInArea(
+                        splitByArea(
+                            shapeNow({
+                                "import(first)": [
+                                    "src/a.ts:1",
+                                    "src/features/x.ts:2",
+                                    "src/b.ts:5",
+                                ],
+                            }),
+                        ).src,
+                        areasOf(
+                            shapeNow({ "import(first)": ["src/a.ts:1", "src/features/x.ts:2"] }),
+                        ).src,
+                    ),
+                    quiet: grownFamiliesInArea(
+                        splitByArea(
+                            shapeNow({
+                                "import(first)": [
+                                    "src/a.ts:1",
+                                    "src/features/x.ts:2",
+                                    "src/x.spec.ts:9",
+                                ],
+                            }),
+                        ).src,
+                        areasOf(
+                            shapeNow({ "import(first)": ["src/a.ts:1", "src/features/x.ts:2"] }),
+                        ).src,
+                    ),
+                },
+                want: (g) => g.grow.length === 1 && g.grow[0].diff === 1 && g.quiet.length === 0,
+                detail: "src 新增 1 条 ⇒ 报 1 族；新增落在 .spec.ts ⇒ src 门静默",
+            },
+        ];
+        for (const testCase of areaCases) {
+            checked += 1;
+            if (!testCase.want(testCase.got)) {
+                failed += 1;
+                console.error(
+                    "FAIL " +
+                        testCase.name +
+                        "（期望 " +
+                        testCase.detail +
+                        "，实得 " +
+                        JSON.stringify(testCase.got).slice(0, 160) +
+                        "）",
+                );
+            } else {
+                console.log("PASS " + testCase.name);
+            }
+        }
+    }
     rmSync(dir, { recursive: true, force: true });
     console.log("SELFTEST " + (checked - failed) + "/" + checked + (failed ? " ⇒ FAIL" : " ⇒ OK"));
     process.exit(failed ? 1 : 0);
@@ -661,6 +953,9 @@ function main() {
     now.files = parsed.number_of_files;
 
     if (has("--write-baseline")) {
+        // task-43：收账要按区域记（--scope 前缀落在测试目录 ⇒ 记 tests 区），
+        // 但**边界语义不变**：foreignGrowth 仍只看 (族, 文件) 计数差与 --scope 前缀。
+        const nowAreasForBaseline = splitByArea(now);
         const previous = (() => {
             try {
                 return JSON.parse(readFileSync(BASELINE, "utf8"));
@@ -705,6 +1000,26 @@ function main() {
             total: now.total,
             errors: now.errors,
             files: now.files,
+            // task-43：棘轮分区域 —— 两区各自一份 byRule + total（规范 SSOT §3）。
+            // 顶层 total/byRule 保留：它们是「全量读数」，供人读与旧消费者；门的判据改为按区域。
+            byArea: Object.fromEntries(
+                AREAS.map((area) => [
+                    area,
+                    {
+                        total: nowAreasForBaseline[area].total,
+                        byRule: Object.fromEntries(
+                            Object.entries(nowAreasForBaseline[area].byRule).sort(
+                                (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+                            ),
+                        ),
+                        locations: Object.fromEntries(
+                            Object.entries(nowAreasForBaseline[area].locations).sort((a, b) =>
+                                a[0].localeCompare(b[0]),
+                            ),
+                        ),
+                    },
+                ]),
+            ),
             // 计数降序；同计数按族名升序 —— 否则并列族的先后取决于 oxlint 扫描顺序，
             // 跨机器/跨版本就可能翻序，把「重复生成两次 git diff 为空」这条幂等判据变成偶然成立（task-228）。
             byRule: Object.fromEntries(
@@ -764,39 +1079,90 @@ function main() {
         process.exit(now.errors === 0 ? 0 : 1);
     }
 
-    const grown = grownFamilies(now, baseline);
-    const lines = renderReport(now, baseline, grown);
+    // task-43：按区域判（--area src|tests|all，默认 src = 产品门）
+    const areaSel = resolveArea(optionValue("--area"));
+    const nowAreas = splitByArea(now);
+    const baseAreas = areasOf(baseline);
+    const legacyBaseline = !baseline.byArea && Object.keys(baseline.locations ?? {}).length === 0;
+    const grownByArea = {};
+    for (const area of areaSel.areas) {
+        grownByArea[area] = grownFamiliesInArea(nowAreas[area], baseAreas[area]);
+    }
+    const lines = renderReportArea({
+        now,
+        nowAreas,
+        baseAreas,
+        grownByArea,
+        areaSel,
+        legacyBaseline,
+    });
     for (const line of lines) console.log(line);
 
-    if (now.errors > 0) {
+    // errors 也按 --area 判：产品门的红不该由测试区一个半成品引起（同「测试债≠产品债」的病）。
+    const selErrors = areaSel.areas.reduce((s, a) => s + nowAreas[a].errors, 0);
+    const otherErrors = AREAS.filter((a) => !areaSel.areas.includes(a)).reduce(
+        (s, a) => s + nowAreas[a].errors,
+        0,
+    );
+    if (selErrors > 0) {
         console.error(
-            "FAIL errors=" + now.errors + "（ratchet 只放宽 warnings，errors 恒为硬失败）",
+            "FAIL [" +
+                areaSel.label +
+                "] errors=" +
+                selErrors +
+                "（ratchet 只放宽 warnings，errors 在**被判区域**内恒为硬失败）",
         );
         process.exit(1);
     }
-    if (!baseline.byRule) {
-        console.log("WARN 基线无族数据（旧格式）⇒ 本次不按族阻断；下次 --write-baseline 会补齐");
+    if (otherErrors > 0) {
+        // 不判的区域有 error ⇒ 只说清，不阻断（否则测试区半成品又能顶红产品门）。
+        console.log(
+            "（注意：未判区域有 " + otherErrors + " 个 error，本门不管；要看就加对应 --area）",
+        );
+    }
+    if (legacyBaseline) {
+        console.log(
+            "WARN 基线既无 byArea 也无 locations（极旧格式）⇒ 本次不按族阻断；下次 --write-baseline 会补齐",
+        );
         process.exit(0);
     }
-    if (!grown.length) process.exit(0);
+    // 不用 map 里的对象展开：oxc(no-map-spread) 会报「在 map 里展开改属性效率低」——
+    // 那是对我自己的门里新增的一条警告，按纪律**先修掉而不是收账**。
+    const grownAll = areaSel.areas.flatMap((area) =>
+        grownByArea[area].map((g) => ({
+            area,
+            rule: g.rule,
+            count: g.count,
+            before: g.before,
+            diff: g.diff,
+        })),
+    );
+    if (!grownAll.length) process.exit(0);
 
     const hint = selfHealHint();
     if (has("--enforce")) {
         console.error(
-            "FAIL 有 " +
-                grown.length +
-                " 个族的 warnings 超过基线（按族拦；总数=" +
-                now.total +
-                " 不单独判）：" +
-                grown.map((g) => g.rule + " +" + g.diff).join("、"),
+            "FAIL [" +
+                areaSel.label +
+                "] 有 " +
+                grownAll.length +
+                " 个族的 warnings 超基线（按族+按区域拦；该区读数 " +
+                areaSel.areas.map((a) => a + "=" + nowAreas[a].total).join(" ") +
+                "，不做总数判断）：" +
+                grownAll.map((g) => g.area + "/" + g.rule + " +" + g.diff).join("、"),
         );
         console.error(hint);
         process.exit(1);
     }
     if (has("--enforce-total")) {
-        const delta = now.total - baseline.total;
+        const delta = areaSel.areas.reduce(
+            (sum, a) => sum + (nowAreas[a].total - baseAreas[a].total),
+            0,
+        );
         if (delta > 0) {
-            console.error("FAIL 总数超出基线 " + delta + " 条（--enforce-total 旧语义）");
+            console.error(
+                "FAIL 总数超出基线 " + delta + " 条（--enforce-total 旧语义，按 --area 求和）",
+            );
             console.error(hint);
             process.exit(1);
         }

@@ -95,6 +95,47 @@
             }
         },
         {
+            "files": [
+                "src/**/__tests__/**",
+                "src/**/*.spec.ts",
+                "src/**/*.test.ts",
+                "src/test-utils/**"
+            ],
+            "rules": {
+                "max-params": [
+                    "warn",
+                    {
+                        "max": 8
+                    }
+                ],
+                "unicorn/max-nested-calls": [
+                    "warn",
+                    {
+                        "max": 6
+                    }
+                ],
+                "new-cap": "off"
+            }
+        },
+        {
+            "files": ["e2e/**"],
+            "rules": {
+                "max-params": [
+                    "warn",
+                    {
+                        "max": 8
+                    }
+                ],
+                "unicorn/max-nested-calls": [
+                    "warn",
+                    {
+                        "max": 6
+                    }
+                ],
+                "new-cap": "off"
+            }
+        },
+        {
             "files": ["src/**/__tests__/**", "src/**/*.spec.ts", "src/**/*.test.ts"],
             "plugins": ["typescript", "import", "unicorn", "vitest"],
             "env": {
