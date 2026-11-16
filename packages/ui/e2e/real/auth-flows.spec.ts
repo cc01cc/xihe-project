@@ -17,7 +17,8 @@ test.describe("Auth — UI Flows & Error States", () => {
         await page.locator('input[type="password"]').nth(0).fill(SHARED_PASSWORD);
         await page.locator('input[type="password"]').nth(1).fill(SHARED_PASSWORD);
         await page.locator('button[type="submit"]').click();
-        await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
+        // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: LONG_TIMEOUT_MS });
 
         const logoutBtn = page
             .locator('[data-testid="sidebar"] button')
@@ -30,7 +31,8 @@ test.describe("Auth — UI Flows & Error States", () => {
         await page.locator('input[type="text"]').first().fill(email);
         await page.locator('input[type="password"]').first().fill(SHARED_PASSWORD);
         await page.locator('button[type="submit"]').click();
-        await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
+        // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: LONG_TIMEOUT_MS });
         await ensureWorkspaceChat(page);
     });
 
@@ -98,6 +100,6 @@ test.describe("Auth — UI Flows & Error States", () => {
         await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        expect(page.url()).toContain("/workspace");
+        expect(page.url()).toContain("/workbench");
     });
 });

@@ -111,7 +111,7 @@ async function loginPushes(page: Page): Promise<string[]> {
 }
 
 test.describe("PLAN-0772 — Login entry guard (task-224 档 3)", () => {
-    test("@host 完整会话误访问 /login 仍弹到 /workspace（旧体验不许退化）", async ({
+    test("@host 完整会话误访问 /login 仍弹到模块入口 /workbench（旧体验不许退化）", async ({
         page,
         request,
     }) => {
@@ -123,10 +123,11 @@ test.describe("PLAN-0772 — Login entry guard (task-224 档 3)", () => {
         });
 
         await page.goto("/login");
-        // 只断言最终落点：完整会话（token + 缓存 user）必须让路给 /workspace。
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        // 只断言最终落点：完整会话（token + 缓存 user）必须让路给模块入口 /workbench。
+        // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: ACTION_TIMEOUT_MS });
         const landed = new URL(page.url());
-        expect(landed.pathname.startsWith("/workspace")).toBe(true);
+        expect(landed.pathname.startsWith("/workbench")).toBe(true);
         expect(landed.pathname).not.toContain("/login");
     });
 

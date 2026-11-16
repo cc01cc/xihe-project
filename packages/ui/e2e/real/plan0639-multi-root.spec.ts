@@ -139,7 +139,8 @@ async function loginViaForm(page: Page, email: string): Promise<void> {
     await page.fill('input[name="identifier"]', email);
     await page.fill('input[type="password"]', SHARED_PASSWORD);
     await page.click('button[type="submit"]');
-    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
+    // 登录落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+    await page.waitForURL(/\/workbench/, { timeout: LONG_TIMEOUT_MS });
 }
 
 test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () => {

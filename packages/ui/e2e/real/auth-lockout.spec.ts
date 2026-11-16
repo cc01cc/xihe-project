@@ -79,6 +79,7 @@ test.describe("@host Auth lockout — Real Backend", () => {
                 { timeout: LONG_TIMEOUT_MS, intervals: [1000] },
             )
             .toBe(200);
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: ACTION_TIMEOUT_MS });
     });
 });
