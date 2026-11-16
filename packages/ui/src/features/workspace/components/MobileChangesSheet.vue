@@ -43,11 +43,43 @@ const { t } = useI18n();
 function handleOpenChange(open: boolean) {
     if (!open) emit("close");
 }
+
+/**
+ * task-56（D-1752 / WCAG 2.4.3）：本抽屉的三个入口都在工具条的 **溢出菜单**里
+ * （`workspace-toolbar-more-changes` / `-monitor` / `-members`），而 `overflowNav()`
+ * 选中即关菜单 ⇒ **触发元素被卸载**。reka 默认「关闭时把焦点还给触发器」
+ * （`dist/Dialog/DialogContentModal.js`：`triggerElement.value?.focus()`）对已卸载元素是空操作
+ * ⇒ 焦点落到 `body`，键盘用户失去位置（390×844 light/dark 各复现一次，task-55 batch-4）。
+ *
+ * 修法走**原语自己的钩子** `close-auto-focus`（reka `DialogContentEmits` 成员，
+ * 经 `SheetContent` 的 `useForwardPropsEmits` 透传），不自己造焦点管理：
+ * - `event.preventDefault()` 让 reka 不再抢回焦点 —— 它只在 `!event.defaultPrevented`
+ *   时接管（同文件 `onCloseAutoFocus`），而我们的 handler 在 mergeProps 里排在它前面；
+ * - 焦点显式还给**常驻**的 `workspace-toolbar-more-mobile`（`WorkspaceToolbar.vue:124`，
+ *   抽屉开着时它一直在 DOM 里）。
+ *
+ * 找不到那颗常驻按钮时（桌面视口 / 别的入口）**不 preventDefault**，保留 reka 默认回位 ——
+ * 对照组 `mobile-files-sheet` / `mobile-chat-sheet` 的触发器常驻，本来就回位正确，不能被这条改动带坏。
+ * 禁用 `setTimeout` 抢焦点与 `onUnmounted` 兜底：那是绕过原语语义。
+ */
+function handleCloseAutoFocus(event: Event) {
+    const trigger = document.querySelector<HTMLElement>(
+        '[data-testid="workspace-toolbar-more-mobile"]',
+    );
+    if (!trigger) return;
+    event.preventDefault();
+    trigger.focus();
+}
 </script>
 
 <template>
     <Sheet :open="open" @update:open="handleOpenChange">
-        <SheetContent side="right" class="p-0 gap-0 md:hidden" data-testid="mobile-changes-sheet">
+        <SheetContent
+            side="right"
+            class="p-0 gap-0 md:hidden"
+            data-testid="mobile-changes-sheet"
+            @close-auto-focus="handleCloseAutoFocus"
+        >
             <SheetHeader class="px-4 pt-4 pb-2 text-left">
                 <SheetTitle>
                     {{

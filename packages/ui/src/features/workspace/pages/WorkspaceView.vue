@@ -452,8 +452,15 @@ watch([workspaceId, routeSessionId], () => {
 // ② **状态归位**是这个 watch 的唯一职责（下面几个 `= false`）：防止"回到移动视口后旧 sheet 又自己
 //    弹开"。**它不再是防重复的主力**，删掉它不会产生重复（只会留下关着的旧状态）。
 // 依赖核实（task-124，结构性改造前置）：`showMobileFiles`/`showMobileChanges` 只喂 `:open` 与
-// `WorkspaceWorkbench :mobile-changes-open`/`:mobile-aux-tab`；两台 sheet 内**无** focus 归还、
+// `WorkspaceWorkbench :mobile-changes-open`/`:mobile-aux-tab`；两台 sheet 内**无我们写的** focus 归还、
 // **无** `Teleport`、**无** `onMounted` 副作用（`grep` 见证据）⇒ 结构性移除不会破坏交互。
+//
+// task-56 更正上面那句的**适用范围**（别读成「抽屉没有焦点回位」）：回位是 **reka 原语提供的**
+// （`dist/Dialog/DialogContentModal.js` 关闭时 `triggerElement.value?.focus()`），files/chat 两台
+// 触发器常驻 ⇒ 默认行为就正确。但 changes/monitor 的入口在**溢出菜单**里、选中即卸载触发器
+// ⇒ 默认回位落空到 `body`，故 `MobileChangesSheet` 需要显式 `@close-auto-focus` 把焦点还给常驻的
+// `workspace-toolbar-more-mobile`。「我们的代码里没有显式 focus 归还」这半句在 task-56 之前成立，
+// 现在只对 files/chat 成立。
 watch(isMobileViewport, (mobile) => {
     if (mobile) return;
     showAgentManagementDialog.value = false;
