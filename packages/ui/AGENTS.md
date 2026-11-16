@@ -46,6 +46,15 @@ pnpm run build
 1. **登记条数 == `off` 条数**：在 `packages/ui` 跑 `node scripts/check-lint-rule-registry.mjs` exit 0（不一致会逐条点名「未登记」与「登记已过期」）。**新增 `off` 必须先加登记行**，否则这条门红。
 2. **warnings 只许降不许升**：`node scripts/check-lint-warnings.mjs` 打印「warnings N / 基线 B / Δ」；`--enforce` 时超出基线 exit 1 并点名新增了哪些族。**默认 report-only**（接线由 Lead 裁）。基线 `oxlint-warning-baseline.json` 只由 `--write-baseline` 生成/收缩、勿手改；**基线只许变小**，变大必须在卡面写原因。
 
+**收账边界（`task-36`，`D-1685`）—— `--write-baseline` 不许收「别人在途」的新增**：多人并行时基线会把别人还没合入的新警告一并收进来，那批 WIP 从此变成「合法存量」、门不再响（task-261 分批清账期间已反复踩到）。所以收账默认只吸收**自己写面内**的增长：
+
+- `--scope <前缀>`（可重复）声明本次收账的写面，例 `--scope src/components/settings`；**未给 `--scope` ⇒ 任何族增长都算越界**。
+- 越界 ⇒ **拒写并 exit 3**，逐条打印「族 / 文件 / file:line」，基线保持原样（可复算：跑前后 `sha256sum oxlint-warning-baseline.json` 不变）。
+- `--allow-foreign` 显式放行边界外新增：写盘前先打印 `WARN --allow-foreign 放行 N 处…（留痕）`，并把放行清单写进基线的 `foreignAbsorbed`（**为空则省略该键** ⇒ 「同内容再写一次逐字节不变」这条幂等判据仍成立）。
+- 归属单位是 **(族, 文件)**：按每文件计数差找贡献文件；行号漂移不算新增；「族没长但换了文件」（净零）不拦 —— 净零没有放宽 ratchet 的计数，而计数才是门的判据。
+- 退出码分层：`0` 正常 / `1` 门红 / `2` 环境问题或 `errors>0` 拒写 / **`3` 收账边界拒绝**。
+- 自检：`node scripts/check-lint-warnings.mjs --selftest`（14 例）；改动这两个旗标后必须跑。
+
 <!-- lint-rule-registry:begin -->
 
 **当前登记 132 条`off`** = 主块 56 + 文件级/工具面 5 + 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
