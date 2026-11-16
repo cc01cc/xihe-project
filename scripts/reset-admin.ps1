@@ -1,5 +1,6 @@
 # PLAN-229: XH reset-admin — dev 密码重置（对应 EW reset-admin.ts）
-# 只改密码、不自建账号（用户行不存在 ⇒ 显式失败 exit 3，见 BL-523）；缺省随机生成 24 字节 base64url 并打印。
+# 只改密码、不自建账号（用户行不存在 ⇒ 显式失败 exit 3，见 BL-523）；缺省经 scripts/lib/dev-admin-password.mjs --ensure
+# 按单源链（B′：OS env > 持久文件 > .env 链仅首种 > 生成落盘）解析，值只经 env 传给 java、不打印。
 # 用法: pwsh -File scripts/reset-admin.ps1 [-Email <email>] [-StackId stack-N] [-DryRun] [-WriteBack]
 #   BL-523/安全: 密码只走 **stdin 或 env XIHE_RESET_ADMIN_PASSWORD**。
 #   D-1753 ③（task-62）: `-Password` argv 入口**已删除** —— secret 不进 argv / 进程表 / shell 历史
@@ -18,7 +19,8 @@ param(
     # PLAN-0770 M4：成功后把生效值写回 `.local/dev/admin-password`。
     # **默认关闭**，只有操作员显式重置（`mise run reset-admin`）才打开 —— 因为 `dev-stack`
     # 起栈时的 upsert 也走这个 wrapper，若默认开启就等于在**每次 start** 里把 env 值
-    # 材料化进文件（"哪份是真相"被静默改写），这件事仍待用户裁定（PLAN-0770 INV-1 选项 A）。
+    # 材料化进文件（"哪份是真相"被静默改写）。已裁定（D-1753 / PLAN-0770 B′）：
+    # 文件即真相、env 链只做种子、起栈路径不 materialize ⇒ 起栈不写回，仅显式 -WriteBack 写回。
     [switch]$WriteBack
 )
 

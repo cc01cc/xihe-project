@@ -113,7 +113,7 @@ async function main() {
     console.error(
       "[dev-host:import-config] admin 登录失败"
       + ` (HTTP ${login.status})：存量库可能是旧随机密码种子。`
-      + " 请先执行 `mise run reset-admin` 把同一密码写入库后重试（reset-admin 支持 -Password 显式指定）。",
+      + " 请先执行 `mise run reset-admin` 把同一密码写入库后重试（密码通道：XIHE_RESET_ADMIN_PASSWORD env 或 stdin；-Password 已删除，传入即被拒）。",
     );
     process.exitCode = 1;
     return;

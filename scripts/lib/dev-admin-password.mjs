@@ -314,6 +314,47 @@ export function formatDevAdminPassword(result) {
     return `[dev-stack] dev admin password: ${parts.join(" ")}`;
 }
 
+/**
+ * D-1753 ①（task-42 抽纯函数）：upsert **结论行**的唯一格式化出口。
+ * 原来 ok/FAILED/skipped 三类行是 dev-stack.mjs 里的内联模板串，「每条结论行都带
+ * source=/persisted=」这条可答性契约没有常驻守卫（task-62 的验证 harness 随 .tmp 清了）。
+ * 抽到这里与 formatDevAdminPassword 同址：零 I/O、只格式化**非密元数据**，
+ * 任何新增字段先回答「它能不能反推密码」（长度也不行 —— PLAN-0770 D4）。
+ *
+ * @param {object} info
+ * @param {'ok'|'failed'|'skipped'} info.outcome
+ * @param {string} info.source   resolveDevAdminPassword 的层名（env|file|env-file|generated|unavailable…）
+ * @param {string} info.persisted none|reused|created（解析失败时报 none）
+ * @param {string} [info.stackId] ok 行专用
+ * @param {number} [info.elapsedMs] ok/failed 行专用
+ * @param {number|null} [info.exitStatus] failed 行：子进程退出码（null ⇒ spawn-error）
+ * @param {string} [info.errorCode] failed 行：spawn error.code（如 ENOENT）
+ * @param {string} [info.reason] skipped 行：non-windows|no-password|stack-not-ready
+ * @returns {string} 整行（不含换行）；调用方决定 log/warn 通道
+ */
+export function formatDevAdminUpsertLine({ outcome, source, persisted, stackId, elapsedMs, exitStatus, errorCode, reason }) {
+    const meta = ` source=${source} persisted=${persisted}`;
+    if (outcome === 'skipped') {
+        if (reason === 'non-windows') {
+            return '[dev-stack] dev admin upsert: skipped (scripts/reset-admin.ps1 is Windows-only); run `mise run reset-admin` manually' + meta;
+        }
+        if (reason === 'no-password') {
+            return `[dev-stack] dev admin upsert: skipped (no injected password; see the WARN above)${meta}`;
+        }
+        // stack-not-ready
+        return `[dev-stack] dev admin upsert: skipped (stack is not ready)${meta}`;
+    }
+    if (outcome === 'ok') {
+        return `[dev-stack] dev admin upsert: ok stack=${stackId}${meta} (value not logged, ${elapsedMs}ms)`;
+    }
+    // failed：exit 3 = ResetAdmin 显式报告「用户行不存在」（BL-523），指向建行路径。
+    const userMissing = exitStatus === 3;
+    return `[dev-stack] dev admin upsert: FAILED${meta} (exit ${exitStatus ?? 'spawn-error'}${errorCode ? `, ${errorCode}` : ''}, ${elapsedMs}ms) — `
+        + (userMissing
+            ? 'the admin user row does not exist in this database; run `mise run dev:reset` or restart the stack so CP DataSeeder creates it, then re-run `start`.'
+            : 'the stack is up, but the injected password may not match this database yet; run `mise run reset-admin` (or re-run `start`) to repair.');
+}
+
 /* ------------------------------------------------------------------ CLI */
 
 // PLAN-0770 M4：`reset-admin.ps1` 成功后要把同一把钥匙写回持久文件（单源不漂），
@@ -341,9 +382,9 @@ function main(argv = process.argv.slice(2)) {
             process.stderr.write("[dev-admin] 无法解析 dev 管理员密码（生成失败）\n");
             process.exit(1);
         }
-        // **不在 --ensure 里 materialize**（PLAN-0770 INV-1 选项 A 仍待用户裁定）：
-        // 命中 env/env-file 时只回报值，不把 env 值写进持久文件 —— 那会改变"哪份是真相"，
-        // 属于 B 类语义变更。真正的写回只发生在 `reset-admin` 成功后（M4，显式动作）。
+        // **不在 --ensure 里 materialize**（已裁定：D-1753 / PLAN-0770 B′）：
+        // 命中 env/env-file 时只回报值，不把 env 值写进持久文件 —— 文件即真相、env 链只做种子。
+        // 真正的写回只发生在 `reset-admin` 成功后（M4，显式 -WriteBack 动作）。
         process.stderr.write(`[dev-admin] resolved source=${resolved.source} (not materialized)\n`);
         process.stdout.write(`${resolved.password}\n`);
         process.exit(0);

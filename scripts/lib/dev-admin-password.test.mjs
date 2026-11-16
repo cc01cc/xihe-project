@@ -17,6 +17,7 @@ import {
     describeDevAdminSource,
     devAdminEmail,
     formatDevAdminPassword,
+    formatDevAdminUpsertLine,
     generateDevAdminPassword,
     readDevAdminPasswordFile,
     resetAdminWrapperPath,
@@ -359,5 +360,104 @@ describe("resolveDevAdminPassword({persist:false})（只读解析）", () => {
         const wet = resolveDevAdminPassword({ projectRoot: root, env: {} });
         assert.equal(wet.source, "generated");
         assert.equal(existsSync(devAdminPasswordFile(root)), true);
+    });
+});
+
+// D-1753 ①（task-42）：upsert **结论行**的常驻守卫。task-62 落地时「每条 ok/FAILED/skipped
+// 都带 source=/persisted=」只有一次性 harness 验证（随 .tmp 清掉）；这里把逐字节 golden、
+// 可答性字段必在、值/长度零外泄三件事钉成常驻测试。golden 与抽取前的内联模板串逐字节等值
+// （2026-11-17 八路对照实测），改文案必须同批改这里 —— 单边漂移即红。
+describe("formatDevAdminUpsertLine（D-1753 ① 结论行守卫，task-42 抽纯函数）", () => {
+    const OK_LINE = "[dev-stack] dev admin upsert: ok stack=stack-2 source=env persisted=none (value not logged, 1234ms)";
+    const FAILED_EXIT3 = "[dev-stack] dev admin upsert: FAILED source=generated persisted=created (exit 3, 500ms) — "
+        + "the admin user row does not exist in this database; run `mise run dev:reset` or restart the stack so CP DataSeeder creates it, then re-run `start`.";
+    const FAILED_EXIT1 = "[dev-stack] dev admin upsert: FAILED source=file persisted=reused (exit 1, 80ms) — "
+        + "the stack is up, but the injected password may not match this database yet; run `mise run reset-admin` (or re-run `start`) to repair.";
+    const FAILED_SPAWN = "[dev-stack] dev admin upsert: FAILED source=unavailable persisted=none (exit spawn-error, ENOENT, 5ms) — "
+        + "the stack is up, but the injected password may not match this database yet; run `mise run reset-admin` (or re-run `start`) to repair.";
+    const SKIP_NON_WINDOWS = "[dev-stack] dev admin upsert: skipped (scripts/reset-admin.ps1 is Windows-only); run `mise run reset-admin` manually source=file persisted=reused";
+    const SKIP_NO_PASSWORD = "[dev-stack] dev admin upsert: skipped (no injected password; see the WARN above) source=unavailable persisted=none";
+    const SKIP_NOT_READY = "[dev-stack] dev admin upsert: skipped (stack is not ready) source=file persisted=reused";
+
+    const ALL_CASES = [
+        { outcome: "ok", stackId: "stack-2", source: "env", persisted: "none", elapsedMs: 1234 },
+        { outcome: "failed", source: "generated", persisted: "created", exitStatus: 3, elapsedMs: 500 },
+        { outcome: "failed", source: "file", persisted: "reused", exitStatus: 1, elapsedMs: 80 },
+        { outcome: "failed", source: "unavailable", persisted: "none", exitStatus: null, errorCode: "ENOENT", elapsedMs: 5 },
+        { outcome: "skipped", reason: "non-windows", source: "file", persisted: "reused" },
+        { outcome: "skipped", reason: "no-password", source: "unavailable", persisted: "none" },
+        { outcome: "skipped", reason: "stack-not-ready", source: "file", persisted: "reused" },
+    ];
+
+    test("golden：ok 行逐字节（含 meta 前导空格与 value not logged）", () => {
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[0]), OK_LINE);
+    });
+
+    test("golden：FAILED 三分叉逐字节（exit 3 建行指引 / 其他退出码修复指引 / spawn-error+code）", () => {
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[1]), FAILED_EXIT3);
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[2]), FAILED_EXIT1);
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[3]), FAILED_SPAWN);
+    });
+
+    test("golden：skipped 三原因逐字节（non-windows / no-password / stack-not-ready）", () => {
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[4]), SKIP_NON_WINDOWS);
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[5]), SKIP_NO_PASSWORD);
+        assert.equal(formatDevAdminUpsertLine(ALL_CASES[6]), SKIP_NOT_READY);
+    });
+
+    test("可答性本体：**每条**结论行都带 source= 与 persisted=（D-1753 ① 的存在理由）", () => {
+        for (const info of ALL_CASES) {
+            const line = formatDevAdminUpsertLine(info);
+            assert.match(line, /source=/, `缺 source=（401 时只能猜哪层生效）: ${line}`);
+            assert.match(line, /persisted=/, `缺 persisted=: ${line}`);
+            assert.ok(line.includes(`source=${info.source}`), `source 值不对: ${line}`);
+            assert.ok(line.includes(`persisted=${info.persisted}`), `persisted 值不对: ${line}`);
+        }
+    });
+
+    test("值卫生：任何结论行不含密码值、不含 length=（PLAN-0770 D4：长度也是派生量）", () => {
+        const SENTINEL = "sentinel-pw-3f9a2b7c4d5e6f80";
+        for (const info of ALL_CASES) {
+            // 哨兵值从任何字段都不该被回显 —— 格式化器只认元数据字段，多余的键一律忽略。
+            const line = formatDevAdminUpsertLine({ ...info, password: SENTINEL, value: SENTINEL });
+            assert.ok(!line.includes(SENTINEL), `结论行泄露了值: ${line}`);
+            assert.ok(!line.includes(SENTINEL.slice(0, 8)), "前缀也不行");
+            assert.ok(!/length=/.test(line), `结论行不得报长度: ${line}`);
+        }
+        assert.ok(!/length=/.test(OK_LINE) && /value not logged/.test(OK_LINE));
+    });
+
+    test("failed 分叉语义：exit 3 指向建行（dev:reset/DataSeeder），其余指向修密（reset-admin）", () => {
+        const missing = formatDevAdminUpsertLine(ALL_CASES[1]);
+        assert.match(missing, /mise run dev:reset/);
+        assert.match(missing, /DataSeeder/);
+        assert.ok(!missing.includes("may not match"), "exit 3 不是密码不匹配，别给错补救方向");
+        const mismatch = formatDevAdminUpsertLine(ALL_CASES[2]);
+        assert.match(mismatch, /mise run reset-admin/);
+        assert.ok(!mismatch.includes("dev:reset"), "非 exit 3 不该引导清库");
+    });
+});
+
+// 接线守卫：dev-stack.mjs 的六处结论行必须**经由**这个纯函数，而不是回退成内联模板串
+// （回退 = golden 还在但测不到真实输出，正是 task-62 harness 消失后的原缺陷形态）。
+// 静态读源码的先例：stack-run.test.mjs 对 childEnv 的接线断言（CLI 无调用 seam）。
+describe("dev-stack.mjs 结论行接线（防回退内联串）", () => {
+    const source = readFileSync(new URL("../dev-stack.mjs", import.meta.url), "utf8");
+
+    test("六处调用点都在：ok×1 + failed×1 + skipped×3（non-windows/no-password/stack-not-ready）+ import", () => {
+        assert.match(source, /formatDevAdminUpsertLine,/, "import 列表必须带上它");
+        const calls = source.match(/formatDevAdminUpsertLine\(\{/g) ?? [];
+        assert.equal(calls.length, 5, `调用点数应为 5（ok/failed/skipped×3），实得 ${calls.length}`);
+        for (const reason of ["non-windows", "no-password", "stack-not-ready"]) {
+            assert.ok(source.includes(`reason: '${reason}'`), `缺 skipped 分支 ${reason}`);
+        }
+        assert.match(source, /outcome: 'ok'/);
+        assert.match(source, /outcome: 'failed'/);
+    });
+
+    test("旧内联结论串已清零：源码里不得再出现手写的 upsert: ok/FAILED/skipped 模板", () => {
+        assert.ok(!/dev admin upsert: ok stack=/.test(source), "ok 行回退成了内联串");
+        assert.ok(!/dev admin upsert: FAILED/.test(source), "FAILED 行回退成了内联串");
+        assert.ok(!/dev admin upsert: skipped \(/.test(source), "skipped 行回退成了内联串");
     });
 });
