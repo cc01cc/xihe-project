@@ -86,7 +86,9 @@ describe("usePolicyAdminStore", () => {
 
         await store.loadDomains();
 
-        expect(store.domainsError).toContain("backend down");
+        // task-45：底层英文 message 不再直出（改前 `toContain("backend down")` 钉的是缺陷）
+        expect(store.domainsError).not.toContain("backend down");
+        expect(store.domainsError).toContain("请求失败");
     });
 
     it("marks a layer as forbidden when the server rejects the authenticated user", async () => {
@@ -98,7 +100,9 @@ describe("usePolicyAdminStore", () => {
         await store.loadRules("workspace");
 
         expect(store.rulesForbidden.workspace).toBe(true);
-        expect(store.rulesError.workspace).toContain("FORBIDDEN");
+        // task-45：码与 CP 英文 detail 都不进用户文案
+        expect(store.rulesError.workspace).not.toContain("FORBIDDEN");
+        expect(store.rulesError.workspace).not.toContain("workspace-layer rules require");
     });
 
     it("creates a rule and refreshes the layer, conflicts and domains", async () => {
@@ -204,7 +208,9 @@ describe("usePolicyAdminStore", () => {
         ).rejects.toThrow("built-in face cannot be overridden");
 
         expect(store.toolFacesForbidden).toBe(true);
-        expect(store.toolFacesError).toContain("FORBIDDEN");
+        // task-45：工具面有屏面消费者 ⇒ 原文落在诊断字段（页面折叠区），不进主文案
+        expect(store.toolFacesError).not.toContain("FORBIDDEN");
+        expect(store.toolFacesErrorDetail).toContain("built-in face cannot be overridden");
     });
 
     it("marks the conflict summary unavailable instead of reporting none", async () => {
@@ -216,7 +222,8 @@ describe("usePolicyAdminStore", () => {
         await store.loadConflicts("workspace");
 
         expect(store.conflictsByLayer.workspace).toEqual([]);
-        expect(store.conflictsError.workspace).toContain("conflict endpoint down");
+        expect(store.conflictsError.workspace).not.toContain("conflict endpoint down");
+        expect(store.conflictsError.workspace).toContain("请求失败");
     });
 
     it("resets catalog state between identity switches", async () => {

@@ -3,7 +3,7 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
-import { api, apiRaw } from "../../../composables/api";
+import { api, apiRaw, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import ImportPreview from "../../../components/settings/ImportPreview.vue";
 
@@ -55,6 +55,12 @@ const mockedApi = vi.mocked(api, true),
     WORKSPACE_ID = "66666666-6666-4666-8666-666666666666",
     messages = {
         "zh-CN": {
+            // task-45：错误面统一入口的兜底文案（真实 i18n 的 errors.* 同值）。
+            errors: {
+                requestFailed: "请求失败，请稍后重试；若多次失败请联系管理员。",
+                unknownCode: "请求失败，请稍后重试；若持续失败请联系管理员并提供错误码。",
+                technicalDetail: "技术详情",
+            },
             settings: {
                 dataControls: "数据控制",
                 exportSettings: "导出设置",
@@ -441,6 +447,47 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         await wrapper.find('[data-testid="settings-checkpoint-retry"]').trigger("click");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-checkpoint-current-runs"]').text()).toBe("1");
+    });
+
+    /**
+     * task-45（batch-2 实拍形态）：**未知码 + 客户端兜底英文 detail 都不许直出**。
+     *
+     * <p>复现口径与实拍一致：码是后端没有的假码（`AUDIT_ERROR`），detail 是客户端兜底
+     * （`api.ts:2550` 的 `API error <status>`）。改前本页渲染出 `AUDIT_ERROR: API error 500`；
+     * 现在主文案是本地化句子，原始 detail 收进**默认折叠**的技术详情（可展开、原文不丢）。</p>
+     */
+    it("task-45：未知码与英文 detail 不直出，原文收进默认折叠的技术详情", async () => {
+        mockedApi.getWorkspaceCheckpointRetention.mockRejectedValueOnce(
+            new ApiError({
+                status: 500,
+                code: "AUDIT_ERROR",
+                detail: "API error 500",
+                requestId: "t",
+            }),
+        );
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+        await flushPromises();
+
+        const copy = wrapper.get('[data-testid="settings-checkpoint-error-copy"]');
+        expect(copy.text()).not.toMatch(/API error \d+/);
+        expect(copy.text()).not.toContain("AUDIT_ERROR");
+        expect(copy.text()).toBe(messages["zh-CN"].errors.unknownCode);
+
+        // 默认折叠：触发器在，正文不挂载（不渲染空/隐藏的空折叠区）。
+        const toggle = wrapper.get('[data-testid="settings-checkpoint-error-detail-toggle"]');
+        expect(toggle.text()).toBe(messages["zh-CN"].errors.technicalDetail);
+        expect(wrapper.find('[data-testid="settings-checkpoint-error-detail-body"]').exists()).toBe(
+            false,
+        );
+
+        // 可展开且原文不丢（可诊断性不是被删掉，只是收起来）。
+        await toggle.trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="settings-checkpoint-error-detail-body"]').text()).toBe(
+            "API error 500",
+        );
     });
 });
 

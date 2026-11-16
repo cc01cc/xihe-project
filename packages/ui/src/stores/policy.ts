@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { ApiError, api } from "../composables/api";
+import { api } from "../composables/api";
+import { i18n } from "../i18n";
+import { presentCauseError } from "../lib/errorMessages";
 import { logger } from "../lib/logger";
 import type { SessionPolicyMode, SessionPolicyModeState } from "../types";
 
@@ -9,7 +11,11 @@ export interface SessionPolicyState {
     loading: boolean;
     changing: boolean;
     loaded: boolean;
-    /** Raw diagnostic (logs / tooltip only — never rendered as user copy). */
+    /**
+     * task-45：**可读文案**（不再是 `CODE: english detail`）。原始 detail 只留在
+     * `logger.warn` 的 cause 里；本字段当前没有渲染消费者（`SessionPolicyControls` 只判空、
+     * 用自己的本地化文案），所以不额外存 detail —— 无消费者的字段会漂移。
+     */
     error: string | null;
 }
 
@@ -40,11 +46,8 @@ export const usePolicyStore = defineStore("policy", () => {
         return states.value[sessionId]!;
     }
 
-    function errorMessage(cause: unknown, fallback: string): string {
-        if (cause instanceof ApiError) {
-            return `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`;
-        }
-        return cause instanceof Error ? cause.message : fallback;
+    function errorCopy(cause: unknown, fallback: string): string {
+        return presentCauseError(i18n.global.t, cause, fallback).copy;
     }
 
     async function load(sessionId: string): Promise<void> {
@@ -66,7 +69,7 @@ export const usePolicyStore = defineStore("policy", () => {
                 }
             } catch (cause) {
                 if ((mutationGenerations.get(sessionId) ?? 0) === mutationGeneration) {
-                    state.error = errorMessage(cause, "Failed to load approval mode");
+                    state.error = errorCopy(cause, i18n.global.t("errors.requestFailed"));
                     logger.warn("Failed to load session policy mode", cause);
                 }
             } finally {
@@ -96,7 +99,7 @@ export const usePolicyStore = defineStore("policy", () => {
             return result;
         } catch (cause) {
             if (mutationGenerations.get(sessionId) === generation) {
-                state.error = errorMessage(cause, "Failed to change approval mode");
+                state.error = errorCopy(cause, i18n.global.t("errors.requestFailed"));
                 logger.warn("Failed to change session policy mode", cause);
             }
             throw cause;

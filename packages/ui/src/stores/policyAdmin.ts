@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { ApiError, api } from "../composables/api";
+import { i18n } from "../i18n";
+import { presentCauseError } from "../lib/errorMessages";
 import { logger } from "../lib/logger";
 import type {
     ApprovalPolicyEffect,
@@ -32,11 +34,18 @@ function createLayerRecord<T>(create: () => T): Record<PolicyRuleLayer, T> {
     return { instance: create(), user: create(), workspace: create() };
 }
 
-function errorMessage(cause: unknown, fallback: string): string {
-    if (cause instanceof ApiError) {
-        return `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`;
-    }
-    return cause instanceof Error ? cause.message : fallback;
+/**
+ * task-45：只产出**可读文案**（改前拼 `CODE: english detail` 直出）。
+ * 其中 `toolFacesError` 有屏面消费者（工具面页），所以那一路同时落
+ * `toolFacesErrorDetail`（原始 detail，诊断面折叠显示）；其余四个错误位
+ * （domains/rules/conflicts）当前没有渲染消费者，只留文案 —— 无消费者的字段会漂移。
+ */
+function errorCopy(cause: unknown, fallback: string): string {
+    return presentCauseError(i18n.global.t, cause, fallback).copy;
+}
+
+function errorDetailOf(cause: unknown): string | null {
+    return presentCauseError(i18n.global.t, cause, "").technicalDetail;
 }
 
 /** 403 means the authenticated user lacks the layer's write authority (server is authoritative). */
@@ -62,6 +71,8 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         toolFacesScope = ref<PolicyToolFaceQueryScope>("workspace"),
         toolFacesLoading = ref(false),
         toolFacesError = ref<string | null>(null),
+        /** task-45：原始 detail（仅工具面页的诊断折叠区使用；默认不渲染）。 */
+        toolFacesErrorDetail = ref<string | null>(null),
         toolFacesForbidden = ref(false),
         classifyingTool = ref(false);
 
@@ -71,7 +82,7 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         try {
             domains.value = await api.listPolicyDomains();
         } catch (cause) {
-            domainsError.value = errorMessage(cause, "Failed to load policy domains");
+            domainsError.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
             logger.warn("Failed to load policy domains", cause);
         } finally {
             domainsLoading.value = false;
@@ -85,7 +96,7 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         try {
             rulesByLayer.value[layer] = await api.listPolicyRules(layer);
         } catch (cause) {
-            rulesError.value[layer] = errorMessage(cause, "Failed to load policy rules");
+            rulesError.value[layer] = errorCopy(cause, i18n.global.t("errors.requestFailed"));
             rulesForbidden.value[layer] = isForbidden(cause);
             logger.warn(`Failed to load ${layer}-layer policy rules`, cause);
         } finally {
@@ -101,7 +112,7 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
             // The per-row `conflict` field from the list response remains authoritative for display;
             // a failed summary request must not be presented as "no conflicts found".
             conflictsByLayer.value[layer] = [];
-            conflictsError.value[layer] = errorMessage(cause, "Failed to load policy conflicts");
+            conflictsError.value[layer] = errorCopy(cause, i18n.global.t("errors.requestFailed"));
             logger.warn(`Failed to load ${layer}-layer policy conflicts`, cause);
         }
     }
@@ -150,11 +161,13 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         toolFacesScope.value = scope;
         toolFacesLoading.value = true;
         toolFacesError.value = null;
+        toolFacesErrorDetail.value = null;
         toolFacesForbidden.value = false;
         try {
             toolFaces.value = await api.listPolicyToolFaces(scope);
         } catch (cause) {
-            toolFacesError.value = errorMessage(cause, "Failed to load tool faces");
+            toolFacesError.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
+            toolFacesErrorDetail.value = errorDetailOf(cause);
             toolFacesForbidden.value = isForbidden(cause);
             logger.warn(`Failed to load ${scope}-scope tool faces`, cause);
         } finally {
@@ -165,13 +178,15 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
     async function classifyTool(draft: ToolFaceClassificationDraft): Promise<PolicyToolFaceView> {
         classifyingTool.value = true;
         toolFacesError.value = null;
+        toolFacesErrorDetail.value = null;
         toolFacesForbidden.value = false;
         try {
             const face = await api.upsertPolicyToolFace(draft);
             await loadToolFaces(draft.scope);
             return face;
         } catch (cause) {
-            toolFacesError.value = errorMessage(cause, "Failed to classify tool");
+            toolFacesError.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
+            toolFacesErrorDetail.value = errorDetailOf(cause);
             toolFacesForbidden.value = isForbidden(cause);
             throw cause;
         } finally {
@@ -189,6 +204,7 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         conflictsError.value = createLayerRecord(() => null);
         toolFaces.value = [];
         toolFacesError.value = null;
+        toolFacesErrorDetail.value = null;
         toolFacesForbidden.value = false;
     }
 
@@ -208,6 +224,7 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         toolFacesScope,
         toolFacesLoading,
         toolFacesError,
+        toolFacesErrorDetail,
         toolFacesForbidden,
         classifyingTool,
         loadDomains,

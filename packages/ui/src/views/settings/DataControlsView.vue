@@ -3,8 +3,14 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
 import ImportPreview, { type ImportData } from "../../components/settings/ImportPreview.vue";
-import { apiRaw, api, ApiError } from "../../composables/api";
+import { apiRaw, api } from "../../composables/api";
 import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../components/ui/collapsible";
+import { presentCauseError, type ErrorPresentation } from "../../lib/errorMessages";
 import { useAuthStore } from "../../stores/auth";
 import { useCheckpointStore } from "../../stores/checkpoint";
 import type { CheckpointRetention } from "../../types";
@@ -62,15 +68,20 @@ const dataDenied = computed(() => permissionsChecked.value && !canImport.value &
 const workspaceId = computed(() => authStore.currentWorkspaceId),
     retention = ref<CheckpointRetention | null>(null),
     retentionLoading = ref(false),
-    retentionError = ref<string | null>(null),
+    retentionError = ref<ErrorPresentation | null>(null),
     cleanupConfirming = ref(false),
     cleanupBusy = ref(false),
     cleanupResult = ref<string | null>(null);
 
-function errorText(cause: unknown, fallback: string): string {
-    return cause instanceof ApiError
-        ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-        : fallback;
+/**
+ * task-45：**单一入口**取错误呈现（不再本地拼 `<code>: <detail>`）。
+ *
+ * <p>改前的 `errorText` 会渲染出 `AUDIT_ERROR: API error 500` 这种「英文码 + 英文兜底」，
+ * 违反 DEV-011。现在三件事由 `presentError` 拆开：本页是**诊断面**（设置区），所以原始
+ * detail 允许出现在 vendor `Collapsible` 里（默认折叠）；非 ApiError 仍回落到本页文案。</p>
+ */
+function errorPresentation(cause: unknown, fallback: string): ErrorPresentation {
+    return presentCauseError(t, cause, fallback);
 }
 
 async function loadRetention() {
@@ -84,7 +95,7 @@ async function loadRetention() {
     try {
         retention.value = await api.getWorkspaceCheckpointRetention(wsId);
     } catch (cause) {
-        retentionError.value = errorText(cause, t("settings.checkpointLoadFailed"));
+        retentionError.value = errorPresentation(cause, t("settings.checkpointLoadFailed"));
         logger.warn("Failed to load checkpoint retention", cause);
     } finally {
         retentionLoading.value = false;
@@ -105,7 +116,8 @@ async function cleanupCheckpoints() {
         cleanupConfirming.value = false;
         await loadRetention();
     } catch (cause) {
-        cleanupResult.value = `${t("settings.checkpointCleanupFailed")}: ${errorText(cause, "")}`;
+        // 瞬时结果行：只给可读文案，原始 detail 已在下一行 logger.warn 留痕（不在结果行里塞折叠控件）。
+        cleanupResult.value = `${t("settings.checkpointCleanupFailed")}: ${errorPresentation(cause, "").copy}`;
         logger.warn("Failed to clean workspace checkpoints", cause);
     } finally {
         cleanupBusy.value = false;
@@ -312,7 +324,35 @@ function downloadBlob(blob: Blob, filename: string) {
                     data-testid="settings-checkpoint-error"
                     class="space-y-1"
                 >
-                    <p class="text-xs text-destructive" role="alert">{{ retentionError }}</p>
+                    <p
+                        data-testid="settings-checkpoint-error-copy"
+                        class="text-xs text-destructive"
+                        role="alert"
+                    >
+                        {{ retentionError.copy }}
+                    </p>
+                    <!--
+                        task-45：原始 detail 是**诊断信息**，不是主文案 —— 本页属诊断面（设置区），
+                        所以收进 vendor Collapsible 默认折叠；toast 面（聊天/变更面板）不放折叠控件，
+                        那些地方只 logger.warn 留痕。没有 detail 时不渲染空折叠区。
+                    -->
+                    <Collapsible v-if="retentionError.technicalDetail">
+                        <CollapsibleTrigger as-child>
+                            <button
+                                type="button"
+                                data-testid="settings-checkpoint-error-detail-toggle"
+                                class="rounded text-xs text-muted-foreground underline underline-offset-2"
+                            >
+                                {{ t("errors.technicalDetail") }}
+                            </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                            <pre
+                                data-testid="settings-checkpoint-error-detail-body"
+                                class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                                >{{ retentionError.technicalDetail }}</pre>
+                        </CollapsibleContent>
+                    </Collapsible>
                     <button
                         type="button"
                         data-testid="settings-checkpoint-retry"

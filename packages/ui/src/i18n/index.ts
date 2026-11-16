@@ -3,6 +3,15 @@ import { createI18n } from "vue-i18n";
 const messages = {
     "zh-CN": {
         // TODO(i18n): 中文措辞待 B-7 落位定稿后统一打磨（PLAN-0660 T5.21）；键名已按 design 冻结。
+        // task-45：错误面统一入口（lib/errorMessages.ts#presentError）的兜底文案。
+        // 为什么放顶层：这个入口同时服务设置区 / 工作区 / 聊天三条面，塞进 settings.* 会让
+        // 工作区面去引设置区的键。判据：说清「发生了什么 + 下一步做什么」，**不含**英文 detail
+        // 与错误码（码与原文进 technicalDetail：诊断屏折叠显示，toast 面只 logger.warn）。
+        errors: {
+            requestFailed: "请求失败，请稍后重试；若多次失败请联系管理员。",
+            unknownCode: "请求失败，请稍后重试；若持续失败请联系管理员并提供错误码。",
+            technicalDetail: "技术详情",
+        },
         userQuestions: {
             title: "待你回答",
             pendingCount: "{count} 条待答",
@@ -3919,6 +3928,17 @@ const messages = {
         },
     },
     "en-US": {
+        // task-45: fallback copy for the single error-presentation entry
+        // (lib/errorMessages.ts#presentError). Top-level on purpose: it serves settings,
+        // workspace and chat surfaces alike. States what happened and what to do next;
+        // never carries the raw English detail or the code (those go to technicalDetail).
+        errors: {
+            requestFailed:
+                "Request failed. Retry in a moment; contact your administrator if it keeps failing.",
+            unknownCode:
+                "Request failed. Retry in a moment; if it persists, contact your administrator with the error code.",
+            technicalDetail: "Technical details",
+        },
         userQuestions: {
             title: "Waiting for your answer",
             pendingCount: "{count} pending",

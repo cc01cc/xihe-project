@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { ApiError, api } from "../composables/api";
+import { api } from "../composables/api";
+import { i18n } from "../i18n";
+import { presentCauseError, type ErrorPresentation } from "../lib/errorMessages";
 import { logger } from "../lib/logger";
 import type { WorkspaceCheckpoint, WorkspaceCheckpointEvent } from "../types";
 
@@ -12,17 +14,11 @@ export interface WorkspaceCheckpointRecord extends WorkspaceCheckpoint {
     updatedAt: number;
 }
 
-function errorMessage(cause: unknown, fallback: string): string {
-    if (cause instanceof ApiError) {
-        return `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`;
-    }
-    return cause instanceof Error ? cause.message : fallback;
-}
-
 export const useCheckpointStore = defineStore("checkpoint", () => {
     const records = ref<Record<string, WorkspaceCheckpointRecord>>({}),
         eventRecords = ref<Record<string, WorkspaceCheckpointEvent>>({}),
-        workspaceErrors = ref<Record<string, string>>({}),
+        /** task-45：存**呈现对象**（可读文案 + 可选技术详情），供变更面板的持久错误条折叠显示。 */
+        workspaceErrors = ref<Record<string, ErrorPresentation>>({}),
         inFlight = new Map<string, Promise<WorkspaceCheckpointRecord[] | null>>(),
         loadedWorkspaces = new Set<string>();
     let storeGeneration = 0;
@@ -89,12 +85,16 @@ export const useCheckpointStore = defineStore("checkpoint", () => {
                     return merged;
                 } catch (cause) {
                     if (requestGeneration !== storeGeneration) return null;
-                    const message = errorMessage(cause, "Failed to load workspace checkpoints");
-                    workspaceErrors.value[workspaceId] = message;
+                    const presentation = presentCauseError(
+                        i18n.global.t,
+                        cause,
+                        i18n.global.t("errors.requestFailed"),
+                    );
+                    workspaceErrors.value[workspaceId] = presentation;
                     const current = getForWorkspace(workspaceId);
                     for (const record of current) {
                         record.loading = false;
-                        record.error = message;
+                        record.error = presentation.copy;
                     }
                     logger.warn("Failed to load workspace checkpoints", cause);
                     return current;

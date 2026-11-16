@@ -166,6 +166,79 @@ export function humanizeErrorCode(code: string | undefined | null, detail?: stri
     return key ? `操作失败，请稍后重试（${key}）` : "操作失败，请稍后重试";
 }
 
+/**
+ * task-45：错误面**单一入口** —— 把「一个错误」拆成三件互不越界的东西。
+ *
+ * <p>缺陷不是某个具体码，而是**形态**：任何后端没登记的码都会走到
+ * `api.ts:2549-2550` 的 `code ?? "API_ERROR"` / `detail || 'API error <status>'`，而此前
+ * 21 处渲染点各自拼 `<code>: <detail>` ⇒ 用户看到 `AUDIT_ERROR: API error 500` 这种
+ * 「英文码 + 英文兜底」（违反 DEV-011「不得直显 CP 英文 detail」）。</p>
+ *
+ * <p>三件事分开：`copy` 是本地化文案且带下一步动作；`code` 是稳定码（供支持引用）；
+ * `technicalDetail` 是原始 detail（单行化 + 截断）—— **只允许诊断面**渲染（设置类屏用
+ * vendor `Collapsible` 默认折叠；toast 面只 `logger.warn`，不在瞬时面塞折叠控件）。</p>
+ *
+ * <p>解析顺序刻意复用既有设施、不新造第二套：`errorCopyKey`（码 → i18n key；本批只补
+ * `API_ERROR` 兜底）→ `mappedErrorCopy`（既有中文表，BL-563 债不动）→
+ * `errors.unknownCode`（未知码）/ `errors.requestFailed`（无码）/ 调用方本面文案（`fallback`）。</p>
+ *
+ * <p>调用点请用 `presentCauseError`（同样的解析，只是替你从 cause 里取 code/detail）。</p>
+ */
+export interface ErrorPresentation {
+    /** 可直接给用户看的文案（已本地化、含下一步动作；**不含**原始 detail 与码）。 */
+    copy: string;
+    /** 稳定错误码（trim 后非空才有值），供支持引用；不拼进 copy。 */
+    code: string | null;
+    /** 原始 detail 的单行化/截断版本；null = 没有可展示的技术详情（别渲染空折叠区）。 */
+    technicalDetail: string | null;
+}
+
+export interface ErrorInput {
+    code?: string | null;
+    detail?: string | null;
+    /** 无码时的**本面文案**（已本地化）；不传则用 `errors.requestFailed`。 */
+    fallback?: string;
+}
+
+export function presentError(
+    t: (key: string) => string,
+    { code, detail, fallback }: ErrorInput = {},
+): ErrorPresentation {
+    const normalized = (code ?? "").trim();
+    const technicalDetail = problemDetailText({ problem: { detail } }, "") || null;
+    const keyed = errorCopyKey(normalized);
+    const mapped = keyed ? null : mappedErrorCopy(normalized);
+    // 无码且调用方给了本面文案（本地化过的）⇒ 用它；这不是第四个分叉，仍走本入口解析。
+    const copy = keyed
+        ? t(keyed)
+        : mapped !== null
+          ? mapped
+          : normalized
+            ? t("errors.unknownCode")
+            : (fallback ?? t("errors.requestFailed"));
+    return { copy, code: normalized || null, technicalDetail };
+}
+
+/** 前端**自产**文案（校验提示、本面兜底）的归口：包成同一形状，调用方不用手写对象字面量。 */
+export function presentLocalError(copy: string): ErrorPresentation {
+    return { copy, code: null, technicalDetail: null };
+}
+
+/**
+ * 调用点用的**唯一**取法：拿一个 catch 到的 cause 直接换呈现。
+ *
+ * <p>刻意用**结构化判断**（`cause.problem.code`）而不是 `instanceof ApiError`：lib 层不 import
+ * `composables/api`（避免 lib ←→ api 的循环），且任何带 `problem` 形状的错误都能正确降级。</p>
+ */
+export function presentCauseError(
+    t: (key: string) => string,
+    cause: unknown,
+    fallback: string,
+): ErrorPresentation {
+    const problem = (cause as { problem?: { code?: string; detail?: string } } | null)?.problem;
+    return presentError(t, { code: problem?.code, detail: problem?.detail, fallback });
+}
+
 export function chatErrorToastText(code: string | undefined, detail?: string | null): string {
     const mapped = humanizeErrorCode(code, detail);
     // When we have a dedicated mapping without embedding raw detail, still show code for support.
@@ -209,6 +282,12 @@ export function errorCopyKey(code: string | undefined | null): string | null {
         // on a code name instead of telling them which field to change.
         case "AS_SELF_WITHOUT_TARGET":
             return "chat.asSelfWithoutTargetToast";
+        // task-45：客户端**兜底码**（`api.ts:2549`：响应体没有 code 时由客户端合成
+        // `API_ERROR`）。它必然出现在「后端没登记」的路径上 ⇒ 给它一句带下一步动作的文案，
+        // 而不是让 21 处调用点各自拼 `API_ERROR: API error 500`。
+        // 只补这一码：把 mappedErrorCopy 的 ~40 码全量搬进 i18n 是独立工作量（BL-563）。
+        case "API_ERROR":
+            return "errors.requestFailed";
         default:
             return null;
     }

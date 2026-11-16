@@ -6,6 +6,9 @@ import {
     humanizeErrorCode,
     mappedErrorCopy,
     normalizeRefusalCode,
+    presentCauseError,
+    presentError,
+    presentLocalError,
     problemDetailText,
     PROBLEM_DETAIL_MAX_LENGTH,
     toolRefusalCopyKey,
@@ -269,5 +272,101 @@ describe("provider binding errors (C1 / BL-204)", () => {
         const text = chatErrorToastText("PROVIDER_REQUIRED", "some detail");
         expect(text).toContain("PROVIDER_REQUIRED");
         expect(text).toContain("尚未绑定");
+    });
+});
+
+/**
+ * task-45：错误面**单一入口** `presentError`。
+ *
+ * <p>缺陷形态（不是某个具体码）：任何**后端没登记**的码都会走到
+ * `api.ts:2549-2550` 的 `code ?? "API_ERROR"` / `detail || 'API error <status>'`，
+ * 而 21 处渲染点各自拼 `<code>: <detail>` ⇒ 用户看到 `AUDIT_ERROR: API error 500`
+ * 这种「英文码 + 英文兜底」。本入口把三件事分开：可读文案（本地化、含下一步动作）、
+ * 供支持引用的稳定码、**只给诊断面**用的原始 detail（toast 面只 console.warn）。</p>
+ */
+describe("presentError（task-45：错误面单一入口）", () => {
+    const t = (key: string) => i18n.global.t(key) as string;
+
+    it("未知码 + 客户端兜底 detail ⇒ 文案不含英文 detail、也不含英文码", () => {
+        const p = presentError(t, { code: "AUDIT_ERROR", detail: "API error 500" });
+        expect(p.code).toBe("AUDIT_ERROR");
+        expect(p.copy).not.toMatch(/API error \d+/);
+        expect(p.copy).not.toContain("AUDIT_ERROR");
+        expect(p.copy).toBe(t("errors.unknownCode"));
+        // 可诊断性不丢：原文留在技术详情里（默认折叠由渲染面负责）
+        expect(p.technicalDetail).toBe("API error 500");
+    });
+
+    it("API_ERROR 兜底码走同一句可读文案（形状修复，不是逐码糊）", () => {
+        const p = presentError(t, { code: "API_ERROR", detail: "API error 500" });
+        expect(p.copy).toBe(t("errors.requestFailed"));
+        expect(p.copy).not.toMatch(/API error \d+/);
+    });
+
+    it("已有 mappedErrorCopy 的码沿用旧文案（不新造第二套）", () => {
+        const p = presentError(t, { code: "AGENT_TIMEOUT", detail: "API error 504" });
+        expect(p.copy).toBe(mappedErrorCopy("AGENT_TIMEOUT"));
+        expect(p.copy).not.toMatch(/API error \d+/);
+    });
+
+    it("无 detail ⇒ technicalDetail 为 null（不渲染空折叠区）", () => {
+        expect(presentError(t, { code: "AUDIT_ERROR", detail: "" }).technicalDetail).toBeNull();
+        expect(presentError(t, { code: "AUDIT_ERROR" }).technicalDetail).toBeNull();
+    });
+
+    it("detail 单行化并按既有上限截断（复用 PROBLEM_DETAIL_MAX_LENGTH）", () => {
+        const p = presentError(t, { code: "AUDIT_ERROR", detail: "line1\nline2   line3" });
+        expect(p.technicalDetail).toBe("line1 line2 line3");
+        const long = presentError(t, {
+            code: "AUDIT_ERROR",
+            detail: "x".repeat(PROBLEM_DETAIL_MAX_LENGTH + 50),
+        });
+        expect(Array.from(long.technicalDetail ?? "").length).toBe(PROBLEM_DETAIL_MAX_LENGTH);
+    });
+
+    it("码为空（非 ApiError 调用方）⇒ requestFailed，且码不外泄", () => {
+        const p = presentError(t, { detail: "API error 500" });
+        expect(p.code).toBeNull();
+        expect(p.copy).toBe(t("errors.requestFailed"));
+        expect(p.technicalDetail).toBe("API error 500");
+    });
+
+    it("无码 + 本面文案 ⇒ 用本面文案（fallback 不是第四个分叉，仍走本入口）", () => {
+        const p = presentError(t, { fallback: "本页自己的失败文案" });
+        expect(p.copy).toBe("本页自己的失败文案");
+        expect(p.code).toBeNull();
+        expect(p.technicalDetail).toBeNull();
+    });
+
+    it("presentCauseError 按 cause.problem 结构取码（不依赖 instanceof ApiError）", () => {
+        const p = presentCauseError(
+            t,
+            { problem: { code: "AUDIT_ERROR", detail: "API error 500" } },
+            "兜底",
+        );
+        expect(p.code).toBe("AUDIT_ERROR");
+        expect(p.copy).toBe(t("errors.unknownCode"));
+        expect(p.technicalDetail).toBe("API error 500");
+        // 没有 problem 形状的普通错误 ⇒ 本面文案，不泄露英文
+        const plain = presentCauseError(t, new Error("boom: socket hang up"), "本面文案");
+        expect(plain.copy).toBe("本面文案");
+        expect(plain.technicalDetail).toBeNull();
+    });
+
+    it("presentLocalError 只包形状，不改文案", () => {
+        const p = presentLocalError("请填写动作类");
+        expect(p).toEqual({ copy: "请填写动作类", code: null, technicalDetail: null });
+    });
+
+    it("文案键两侧都可解析（静态 i18n 扫描看不见拼出来的键）", () => {
+        for (const locale of ["zh-CN", "en-US"]) {
+            for (const key of [
+                "errors.requestFailed",
+                "errors.unknownCode",
+                "errors.technicalDetail",
+            ]) {
+                expect(i18n.global.te(key, locale), locale + " 缺 " + key).toBe(true);
+            }
+        }
     });
 });

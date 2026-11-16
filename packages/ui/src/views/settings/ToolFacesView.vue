@@ -3,8 +3,17 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle, Lock, RefreshCw, TriangleAlert, Wrench } from "@lucide/vue";
-import { ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
+import {
+    presentCauseError,
+    presentLocalError,
+    type ErrorPresentation,
+} from "../../lib/errorMessages";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../components/ui/collapsible";
 import { usePolicyAdminStore } from "../../stores/policyAdmin";
 import {
     Select,
@@ -72,7 +81,7 @@ const activeScope = ref<PolicyToolFaceQueryScope>(props.scopeLock ?? "workspace"
 const classifyTarget = ref<PolicyToolFaceView | null>(null),
     classifyActionClass = ref(""),
     classifyShape = ref<ApprovalPolicyShape>("opaque"),
-    classifyValidation = ref<string | null>(null);
+    classifyValidation = ref<ErrorPresentation | null>(null);
 
 const scopeLabels: Record<PolicyToolFaceQueryScope, string> = {
         workspace: "settings.toolFacesScopeWorkspace",
@@ -108,10 +117,9 @@ function canOpenClassifyForm(face: PolicyToolFaceView): boolean {
     return canClassify.value && isUnclassified(face);
 }
 
-function errorText(cause: unknown, fallback: string): string {
-    if (cause instanceof ApiError)
-        return `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`;
-    return cause instanceof Error ? cause.message : fallback;
+/** task-45：工具面页是**诊断面** ⇒ 走统一入口拿「可读文案 + 可选技术详情」（折叠显示）。 */
+function errorPresentation(cause: unknown, fallback: string): ErrorPresentation {
+    return presentCauseError(t, cause, fallback);
 }
 
 async function selectScope(scope: PolicyToolFaceQueryScope) {
@@ -138,7 +146,7 @@ async function submitClassify() {
     if (!target) return;
     const actionClass = classifyActionClass.value.trim();
     if (!actionClass) {
-        classifyValidation.value = t("settings.toolFacesClassifyRequired");
+        classifyValidation.value = presentLocalError(t("settings.toolFacesClassifyRequired"));
         return;
     }
     classifyValidation.value = null;
@@ -153,7 +161,7 @@ async function submitClassify() {
         closeClassify();
     } catch (cause) {
         toast.error(t("settings.toolFacesClassifyFailed"));
-        classifyValidation.value = errorText(cause, t("settings.toolFacesClassifyFailed"));
+        classifyValidation.value = errorPresentation(cause, t("settings.toolFacesClassifyFailed"));
     }
 }
 
@@ -244,14 +252,32 @@ onMounted(() => {
         >
             {{ t("settings.toolFacesForbidden") }}
         </div>
-        <p
-            v-if="policyAdmin.toolFacesError"
-            data-testid="settings-tool-faces-error"
-            class="mb-4 text-sm text-destructive"
-            role="alert"
-        >
-            {{ policyAdmin.toolFacesError }}
-        </p>
+        <div v-if="policyAdmin.toolFacesError" class="mb-4 space-y-1">
+            <p
+                data-testid="settings-tool-faces-error"
+                class="text-sm text-destructive"
+                role="alert"
+            >
+                {{ policyAdmin.toolFacesError }}
+            </p>
+            <Collapsible v-if="policyAdmin.toolFacesErrorDetail">
+                <CollapsibleTrigger as-child>
+                    <button
+                        type="button"
+                        data-testid="settings-tool-faces-error-detail-toggle"
+                        class="mt-1 text-xs text-muted-foreground underline underline-offset-2"
+                    >
+                        {{ t("errors.technicalDetail") }}
+                    </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <pre
+                        data-testid="settings-tool-faces-error-detail-body"
+                        class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                        >{{ policyAdmin.toolFacesErrorDetail }}</pre>
+                </CollapsibleContent>
+            </Collapsible>
+        </div>
 
         <section
             class="rounded-lg border border-border bg-card"
@@ -409,14 +435,32 @@ onMounted(() => {
                         <p class="text-xs text-muted-foreground">
                             {{ t("settings.toolFacesForbidden") }}
                         </p>
-                        <p
-                            v-if="classifyValidation"
-                            :data-testid="`settings-tool-face-classify-validation-${face.tool}`"
-                            class="text-sm text-destructive"
-                            role="alert"
-                        >
-                            {{ classifyValidation }}
-                        </p>
+                        <div v-if="classifyValidation" class="space-y-1">
+                            <p
+                                :data-testid="`settings-tool-face-classify-validation-${face.tool}`"
+                                class="text-sm text-destructive"
+                                role="alert"
+                            >
+                                {{ classifyValidation.copy }}
+                            </p>
+                            <Collapsible v-if="classifyValidation.technicalDetail">
+                                <CollapsibleTrigger as-child>
+                                    <button
+                                        type="button"
+                                        data-testid="settings-tool-face-classify-validation-detail-toggle"
+                                        class="mt-1 text-xs text-muted-foreground underline underline-offset-2"
+                                    >
+                                        {{ t("errors.technicalDetail") }}
+                                    </button>
+                                </CollapsibleTrigger>
+                                <CollapsibleContent>
+                                    <pre
+                                        data-testid="settings-tool-face-classify-validation-detail-body"
+                                        class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                                        >{{ classifyValidation.technicalDetail }}</pre>
+                                </CollapsibleContent>
+                            </Collapsible>
+                        </div>
                         <div class="flex flex-wrap justify-end gap-2">
                             <button
                                 type="button"

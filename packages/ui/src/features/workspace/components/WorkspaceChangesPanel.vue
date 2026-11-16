@@ -3,8 +3,14 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CircleAlert, FileDiff, LoaderCircle, RefreshCw, X } from "@lucide/vue";
-import { ApiError, api } from "../../../composables/api";
+import { api } from "../../../composables/api";
+import { presentCauseError, type ErrorPresentation } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 import { useCheckpointStore } from "../../../stores/checkpoint";
 import { checkpointReasonKey, checkpointReasonTitle } from "../checkpoint-reason";
 import type { CheckpointResult, WorkspaceGitStatus } from "../../../types";
@@ -35,7 +41,8 @@ const checkpointStore = useCheckpointStore();
 type DiffTab = "timeline" | "pending";
 const activeTab = ref<DiffTab>("timeline"),
     timelineLoading = ref(false),
-    timelineError = ref<string | null>(null);
+    /** task-45：持久在屏的错误条 ⇒ 存呈现对象，原始 detail 走折叠区（不是 toast）。 */
+    timelineError = ref<ErrorPresentation | null>(null);
 const selectedCheckpointId = ref<string | null>(null);
 const timeline = computed(() => checkpointStore.getForWorkspace(props.workspaceId));
 let timelineGeneration = 0;
@@ -58,10 +65,7 @@ async function loadTimeline(force = false) {
         }
     } catch (cause) {
         if (generation !== timelineGeneration || props.workspaceId !== workspaceId) return;
-        timelineError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : "Failed to load workspace checkpoint timeline";
+        timelineError.value = presentCauseError(t, cause, t("errors.requestFailed"));
         logger.warn("Failed to load workspace checkpoint timeline", cause);
     } finally {
         if (generation === timelineGeneration) timelineLoading.value = false;
@@ -74,7 +78,7 @@ function selectCheckpoint(id: string) {
 
 const restorePreviewSliceRef = ref<string | null>(null),
     restoreBusy = ref(false);
-const restoreError = ref<string | null>(null),
+const restoreError = ref<ErrorPresentation | null>(null),
     restoreResult = ref<CheckpointResult | null>(null);
 
 function openRestore(sliceRef: string) {
@@ -109,10 +113,8 @@ async function confirmRestore(acknowledgeTypeChanges: string[]) {
         else toast.success(t("chat.checkpointRevertDone"));
     } catch (cause) {
         if (props.workspaceId !== workspaceId) return;
-        restoreError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.checkpointRevertFailed");
+        // 弹窗内的失败提示：只给可读文案；原始 detail 由下面那行 logger.warn 留痕。
+        restoreError.value = presentCauseError(t, cause, t("chat.checkpointRevertFailed"));
         logger.warn("Failed to execute workspace checkpoint restore", cause);
     } finally {
         restoreBusy.value = false;
@@ -143,7 +145,7 @@ watch(
 
 const pendingStatus = ref<WorkspaceGitStatus | null>(null),
     pendingLoading = ref(false);
-const pendingError = ref<string | null>(null);
+const pendingError = ref<ErrorPresentation | null>(null);
 let pendingGeneration = 0;
 
 async function loadGitStatus() {
@@ -158,10 +160,7 @@ async function loadGitStatus() {
         pendingStatus.value = status;
     } catch (cause) {
         if (generation !== pendingGeneration || props.workspaceId !== workspaceId) return;
-        pendingError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("workspace.diffPendingLoadFailed");
+        pendingError.value = presentCauseError(t, cause, t("workspace.diffPendingLoadFailed"));
         logger.warn("Failed to load workspace git status", cause);
     } finally {
         if (generation === pendingGeneration) pendingLoading.value = false;
@@ -256,7 +255,30 @@ watch(
                     data-testid="workspace-checkpoint-timeline-error"
                     class="space-y-1"
                 >
-                    <p class="text-xs text-destructive" role="alert">{{ timelineError }}</p>
+                    <p
+                        data-testid="workspace-checkpoint-timeline-error-copy"
+                        class="text-xs text-destructive"
+                        role="alert"
+                    >
+                        {{ timelineError.copy }}
+                    </p>
+                    <Collapsible v-if="timelineError.technicalDetail">
+                        <CollapsibleTrigger as-child>
+                            <button
+                                type="button"
+                                data-testid="workspace-checkpoint-timeline-error-detail-toggle"
+                                class="rounded text-xs text-muted-foreground underline underline-offset-2"
+                            >
+                                {{ t("errors.technicalDetail") }}
+                            </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                            <pre
+                                data-testid="workspace-checkpoint-timeline-error-detail-body"
+                                class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                                >{{ timelineError.technicalDetail }}</pre>
+                        </CollapsibleContent>
+                    </Collapsible>
                     <button
                         type="button"
                         data-testid="workspace-checkpoint-timeline-retry"
@@ -410,8 +432,27 @@ watch(
                 >
                     <p class="flex items-start gap-1.5 text-xs text-destructive" role="alert">
                         <CircleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                        <span>{{ pendingError }}</span>
+                        <span data-testid="workspace-diff-pending-error-copy">{{
+                            pendingError.copy
+                        }}</span>
                     </p>
+                    <Collapsible v-if="pendingError.technicalDetail">
+                        <CollapsibleTrigger as-child>
+                            <button
+                                type="button"
+                                data-testid="workspace-diff-pending-error-detail-toggle"
+                                class="rounded text-xs text-muted-foreground underline underline-offset-2"
+                            >
+                                {{ t("errors.technicalDetail") }}
+                            </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                            <pre
+                                data-testid="workspace-diff-pending-error-detail-body"
+                                class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                                >{{ pendingError.technicalDetail }}</pre>
+                        </CollapsibleContent>
+                    </Collapsible>
                     <button
                         type="button"
                         data-testid="workspace-diff-pending-retry"
@@ -474,7 +515,7 @@ watch(
             :workspace-id="workspaceId"
             :slice-ref="restorePreviewSliceRef ?? ''"
             :busy="restoreBusy"
-            :error="restoreError"
+            :error="restoreError?.copy ?? null"
             @confirm="confirmRestore"
             @close="closeRestorePreview"
         />

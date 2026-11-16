@@ -146,7 +146,11 @@ describe("workspace checkpoint list fetch", () => {
             new ApiError({ status: 503, code: "CHECKPOINT_UNAVAILABLE", requestId: "req-1" }),
         );
         const list = await store.fetchWorkspaceCheckpoints(WORKSPACE_ID, { force: true });
-        expect(list?.[0].error).toContain("CHECKPOINT_UNAVAILABLE");
+        // task-45：错误条只放**可读文案**，码与原始 detail 走诊断通道（呈现对象 / 折叠区）。
+        // 改前这里断言 `CODE` 直出，等于把缺陷钉成契约。
+        expect(list?.[0].error).not.toContain("CHECKPOINT_UNAVAILABLE");
+        expect(list?.[0].error).toContain("请求失败");
+        expect(store.workspaceErrors[WORKSPACE_ID]?.code).toBe("CHECKPOINT_UNAVAILABLE");
     });
 
     it("ignores a response that finishes after user switch", async () => {

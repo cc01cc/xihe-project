@@ -300,12 +300,13 @@ describe("ToolFacesView", () => {
             .trigger("submit");
         await flushPromises();
 
-        expect(
-            wrapper
-                .find('[data-testid="settings-tool-face-classify-validation-mcp__third_party__do"]')
-                .text(),
-        ).toContain("FORBIDDEN");
-        expect(wrapper.find('[data-testid="settings-tool-faces-error"]').text()).toContain(
+        // task-45：分类失败的提示只放可读文案，CP 英文码/detail 不进用户面（原文进折叠区）。
+        const validationText = wrapper
+            .find('[data-testid="settings-tool-face-classify-validation-mcp__third_party__do"]')
+            .text();
+        expect(validationText).not.toContain("FORBIDDEN");
+        expect(validationText).not.toContain("workspace-scope faces require");
+        expect(wrapper.find('[data-testid="settings-tool-faces-error"]').text()).not.toContain(
             "FORBIDDEN",
         );
     });
