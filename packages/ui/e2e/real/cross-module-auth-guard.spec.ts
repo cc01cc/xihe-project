@@ -1,6 +1,7 @@
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
 import { ACTION_TIMEOUT_MS } from "../timeouts";
+import { seedSession } from "../helpers/session-seed";
 import { test, expect } from "@playwright/test";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -17,9 +18,8 @@ test.describe("Cross-Module — Auth Guard", () => {
         });
         const { accessToken } = await reg.json();
 
-        await page.addInitScript((token) => {
-            localStorage.setItem("xihe-token", token);
-        }, accessToken);
+        // 只种 token = **有意**造半个会话（本用例之后的路径不依赖 user）⇒ 显式声明。
+        await seedSession(page, { token: accessToken, halfSession: true });
 
         await gotoWorkspaceWithChat(page);
     });

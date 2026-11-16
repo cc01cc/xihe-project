@@ -3,6 +3,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspaceChat } from "./helpers/chat";
 import { test, expect } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { seedSession } from "../helpers/session-seed";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -75,13 +76,7 @@ test.describe("Auth — UI Flows & Error States", () => {
         // （token + 缓存 user 都在）时才弹走；只有 token 的残会话会**停在登录页**。
         // 本用例验的是「完整会话访问 /login 不闪登录表单」⇒ 必须把 user 一并写入，
         // 否则测到的是残 token 情形（那条路径的正确行为是停在登录页，与本用例名相反）。
-        await page.addInitScript(
-            ([t, u]) => {
-                localStorage.setItem("xihe-token", t);
-                localStorage.setItem("xihe-user", u);
-            },
-            [body.accessToken, JSON.stringify(body.user ?? {})],
-        );
+        await seedSession(page, { token: body.accessToken, user: body.user ?? {} });
 
         await page.goto("/login");
         // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
@@ -101,7 +96,8 @@ test.describe("Auth — UI Flows & Error States", () => {
             },
         });
         const body = await reg.json();
-        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), body.accessToken);
+        // 只种 token = **有意**造半个会话（/workspace 不是入口路由，token 即可进入）。
+        await seedSession(page, { token: body.accessToken, halfSession: true });
 
         await page.goto("/workspace");
         await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({
