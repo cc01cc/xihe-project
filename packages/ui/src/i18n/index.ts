@@ -452,6 +452,10 @@ const messages = {
         workspace: {
             panelCode: "代码",
             panelChanges: "变更",
+            gitReadfaceTitle: "仓库状态（待提交）",
+            gitReadfaceHeadHint: "HEAD 见变更面板/checkpoint timeline",
+            gitReadfaceNoRepo: "当前工作区不是 Git 仓库",
+            gitReadfaceLoadFailed: "仓库状态加载失败",
             // task-550 / Q-i 第二半（用户裁定）：会话头常显。**两半都要在** ——
             // 只写「无文件系统授权限制」会让人以为完全没有边界，而 host 模式下 cwd 仍受 grants 约束
             // （runtime-1 实测 job_engine/mod.rs:1106-1140）。
@@ -4385,6 +4389,10 @@ const messages = {
         workspace: {
             panelCode: "Code",
             panelChanges: "Changes",
+            gitReadfaceTitle: "Repository status (pending commit)",
+            gitReadfaceHeadHint: "HEAD: see Changes panel / checkpoint timeline",
+            gitReadfaceNoRepo: "Current workspace is not a Git repository",
+            gitReadfaceLoadFailed: "Failed to load repository status",
             // task-550: session-header annotation; both halves are mandatory (see zh comment).
             // task-7 (2026-11-15, Lead ruled option A): the old parenthetical "workspace path
             // boundary still applies" reads as "files are confined to the workspace", but the engine

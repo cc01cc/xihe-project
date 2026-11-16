@@ -30,6 +30,7 @@ import { useAuthStore } from "../../../stores/auth";
 import { readTabWorkspaceId } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import FileTree from "./FileTree.vue";
+import { useWorkspaceGitReadState } from "../composables/useWorkspaceGitReadState";
 
 /**
  * PLAN-0582 S3a: the file tree moved inside the workbench's left column, so it
@@ -61,6 +62,16 @@ const nestedRepos = ref<ApiNestedRepoItem[]>([]),
     confirmingNestedRepo = ref<string | null>(null),
     declaringNestedRepo = ref(false);
 const workspaceName = computed(() => auth.workspace?.name ?? t("sidebar.workspace"));
+
+/**
+ * task-36 / RSI 缺口1：树面板自己就有只读仓库状态，不必先打开 dock 的「变更」tab。
+ * 只做派生展示，权威数据仍是共享的 git-status GET（与 MCP git_status 同源）。
+ */
+const gitRead = useWorkspaceGitReadState(
+    () => readTabWorkspaceId() ?? auth.currentWorkspaceId ?? null,
+    (key) => t(key),
+);
+const gitEntries = computed(() => gitRead.status.value?.entries.slice(0, 5) ?? []);
 
 /**
  * task-365 E（D-1220 邻域）：**当前打开文件的路径**从 workbench 顶部工具栏搬进本面板头。
@@ -346,6 +357,52 @@ function upload() {
             >
                 <PanelLeftClose class="size-3.5" aria-hidden="true" />
             </button>
+        </div>
+
+        <!-- task-36: read-state probe on the file-tree panel itself (no second state source). -->
+        <div
+            data-testid="workspace-git-readface"
+            class="shrink-0 border-b border-border px-2 py-1.5 text-xs"
+        >
+            <p data-testid="workspace-git-readface-head-hint" class="text-muted-foreground">
+                {{ t("workspace.gitReadfaceTitle") }} · {{ t("workspace.gitReadfaceHeadHint") }}
+            </p>
+            <p
+                v-if="gitRead.loading.value"
+                data-testid="workspace-git-readface-loading"
+                class="text-muted-foreground"
+            >
+                {{ t("workspace.diffPendingLoading") }}
+            </p>
+            <p
+                v-else-if="gitRead.error.value"
+                data-testid="workspace-git-readface-error"
+                class="text-destructive"
+            >
+                {{ gitRead.error.value.copy }}
+            </p>
+            <p
+                v-else-if="gitRead.status.value && !gitRead.status.value.isRepository"
+                data-testid="workspace-git-readface-no-repo"
+                class="text-muted-foreground"
+            >
+                {{ t("workspace.gitReadfaceNoRepo") }}
+            </p>
+            <template v-else-if="gitRead.status.value">
+                <p data-testid="workspace-git-readface-count" class="font-medium">
+                    {{ gitRead.status.value.entries.length }}
+                    {{ t("workspace.diffPendingCountUnit") }}
+                </p>
+                <ul
+                    v-if="gitEntries.length > 0"
+                    data-testid="workspace-git-readface-entries"
+                    class="mt-0.5 space-y-0.5 font-mono"
+                >
+                    <li v-for="entry in gitEntries" :key="`${entry.status}:${entry.path}`">
+                        {{ entry.status }} {{ entry.path }}
+                    </li>
+                </ul>
+            </template>
         </div>
 
         <!-- task-365 E：当前文件路径（只读；无文件时整行不渲染）。 -->
