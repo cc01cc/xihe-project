@@ -172,15 +172,48 @@ async function createWorkspace(
     return { ok: false, status: created.status(), code, detail };
 }
 
-/** 本轮隔离根下的工作区目录（`.tmp/e2e-host/<runId>/e2e-ws-<ts>`），供 Runtime 真实读取。 */
+/**
+ * 进程内单调递增序号 —— 外部栈车道的隔离根唯一性由它和随机后缀共同保证。
+ *
+ * 为什么需要它：Playwright 的 worker 会复用同一个 pid，所以单靠 `<pid>-<Date.now()>`
+ * 在同毫秒内两次调用会拿到同一个根（`plan0639-multi-root.spec.ts:63` 已警告过这条）。
+ * 两个工作区静默共用一个宿主目录**比直接失败更隐蔽** —— 跑完没人会知道文件写到哪了，
+ * 而且计划里"增根"会变成重复路径、被 DB 唯一键拒绝。序号 + 随机后缀把碰撞概率压到 0，
+ * 并由 `e2e/fixtures/__tests__/workspace-host-path.test.mjs` 钉住"连续两次不同"。
+ */
+let externalLaneSequence = 0;
+
+function nextExternalLaneRoot(): string {
+    externalLaneSequence += 1;
+    const nonce = Math.floor(Math.random() * 0x10000)
+        .toString(16)
+        .padStart(4, "0");
+    return `external-${process.pid}-${Date.now()}-${externalLaneSequence}-${nonce}`;
+}
+
+/**
+ * 本轮隔离根下的工作区目录（`.tmp/e2e-host/<root>/e2e-ws-<ts>`），供 Runtime 真实读取。
+ *
+ * 两条车道（`XIHE_E2E_RUN_ID` 是「**隔离根标识**」，由 `scripts/e2e-host.mjs` 注入，
+ * 见该脚本 `:2163` 传给 Playwright 的 env）：
+ * ① **run-id 车道**（有 RUN_ID）：根 = `.tmp/e2e-host/<RUN_ID>` —— 行为与历史逐字节一致，
+ *    60 个调用方依赖它（按轮隔离：round 2 看不到 round 1 的产物）。
+ * ② **external 车道**（无 RUN_ID，即 `XIHE_E2E_EXTERNAL_SERVER=1` 复用已有栈）：
+ *    没有任何 runner 注入 RUN_ID，但**「绝不写共享目录」这条原意必须保留** ⇒ 回落到
+ *    进程级隔离根 `.tmp/e2e-host/external-<pid>-<ts>-<seq>-<rand>`，而不是直接失败
+ *    （旧实现在这里硬断言 RUN_ID 非空 ⇒ 60 个 spec 在外部栈车道全跑不起来，task-65/D-1717）。
+ *
+ * 每次返回都**打印实际使用的根与车道**：碰撞是静默的，不打印就等于「跑完没人知道东西
+ * 写哪了」，而这条正是在 task-49 里被实测打回的那条判据。
+ */
 export function isolatedWorkspaceHostPath(): string {
     const runId = process.env.XIHE_E2E_RUN_ID ?? "";
-    expect(runId, "ensureWorkspace needs the isolated e2e-host runner (XIHE_E2E_RUN_ID)").not.toBe(
-        "",
-    );
-    const hostRoot = path.resolve(process.cwd(), "../../.tmp/e2e-host", runId);
+    const lane = runId ? "run-id" : "external";
+    const root = runId || nextExternalLaneRoot();
+    const hostRoot = path.resolve(process.cwd(), "../../.tmp/e2e-host", root);
     const hostPath = path.join(hostRoot, `e2e-ws-${Date.now()}`);
     mkdirSync(hostPath, { recursive: true });
+    console.log(`[e2e] workspace isolated at ${hostPath} (${lane} lane, root ${root})`);
     return hostPath;
 }
 
