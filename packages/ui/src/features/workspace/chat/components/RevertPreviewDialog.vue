@@ -2,7 +2,8 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ChevronDown, ChevronUp, LoaderCircle } from "@lucide/vue";
-import { ApiError, api } from "../../../../composables/api";
+import { api } from "../../../../composables/api";
+import { presentCauseError } from "../../../../lib/errorMessages";
 import { logger } from "../../../../lib/logger";
 import type { CheckpointPreview, CheckpointPreviewEntry } from "../../../../types";
 import CheckpointDialogShell from "./CheckpointDialogShell.vue";
@@ -119,10 +120,7 @@ async function loadPreview() {
             props.sliceRef !== sliceRef
         )
             return;
-        loadError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.checkpointPreviewFailed");
+        loadError.value = presentCauseError(t, cause, t("chat.checkpointPreviewFailed")).copy;
         logger.warn("Failed to load workspace slice restore preview", cause);
     } finally {
         if (generation === loadGeneration) {

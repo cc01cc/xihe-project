@@ -46,7 +46,12 @@ import {
     type ProviderBindingGuideReason,
 } from "../composables/ensureProviderBinding";
 import ProviderBindingGuideDialog from "./ProviderBindingGuideDialog.vue";
-import { chatErrorToastText, errorCopyKey, problemDetailText } from "../../../../lib/errorMessages";
+import {
+    chatErrorToastText,
+    errorCopyKey,
+    presentCauseError,
+    problemDetailText,
+} from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Clock, ShieldAlert } from "@lucide/vue";
@@ -646,10 +651,12 @@ async function refreshFollowUpQueue(sessionId: string) {
         }
     } catch (cause) {
         if (props.sessionId !== sessionId || requestId !== followUpQueueRequestId) return;
-        followUpQueueError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.followUpQueueLoadFailed");
+        // task-45：瞬时面（错误条 + toast）只给可读文案；原始 detail 由下方 logger 留痕。
+        followUpQueueError.value = presentCauseError(
+            t,
+            cause,
+            t("chat.followUpQueueLoadFailed"),
+        ).copy;
         logger.error("Failed to load Session Follow-up queue", cause);
     }
 }
@@ -1038,10 +1045,8 @@ async function handleFollowUpQueue(
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration)
             return;
-        const message =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.followUpQueueFailed");
+        // task-45：可读文案进错误条 + toast，原始 detail 只进日志（瞬时面不塞折叠控件）。
+        const message = presentCauseError(t, cause, t("chat.followUpQueueFailed")).copy;
         followUpQueueError.value = message;
         logger.error("Failed to enqueue Session Follow-up", cause);
         toast.error(message);
@@ -1068,10 +1073,8 @@ async function withdrawFollowUp(queueItemId: string) {
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
             return;
-        const message =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.followUpQueueFailed");
+        // task-45：可读文案进错误条 + toast，原始 detail 只进日志（瞬时面不塞折叠控件）。
+        const message = presentCauseError(t, cause, t("chat.followUpQueueFailed")).copy;
         followUpQueueError.value = message;
         logger.error("Failed to withdraw Session Follow-up", cause);
         toast.error(message);
@@ -1097,10 +1100,8 @@ async function continueFollowUpQueue() {
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
             return;
-        const message =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.followUpQueueFailed");
+        // task-45：可读文案进错误条 + toast，原始 detail 只进日志（瞬时面不塞折叠控件）。
+        const message = presentCauseError(t, cause, t("chat.followUpQueueFailed")).copy;
         followUpQueueError.value = message;
         logger.error("Failed to continue Session Follow-up queue", cause);
         toast.error(message);
@@ -1246,10 +1247,7 @@ async function handleCreateBranch(anchorMessageId: string) {
         pendingBranchKeys.delete(keyScope);
         toast.success(t("chat.branchCreated"));
     } catch (cause) {
-        const message =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.branchCreateFailed");
+        const message = presentCauseError(t, cause, t("chat.branchCreateFailed")).copy;
         logger.error("Failed to create Session branch", cause);
         toast.error(message);
     } finally {
@@ -1295,10 +1293,8 @@ async function decideApproval(submission: ApprovalDecisionEnvelope) {
             chatStore.invalidateRunRecovery(approval.sessionId, approval.runId);
         }
     } catch (err) {
-        const message =
-            err instanceof ApiError
-                ? `${err.problem.code}: ${err.problem.detail ?? err.message}`
-                : "Approval decision failed";
+        // task-45：兜底从英文硬编码改为本地化文案（这一处原本会漏出英文）。
+        const message = presentCauseError(t, err, t("errors.requestFailed")).copy;
         if (err instanceof ApiError && err.problem.code === "APPROVAL_EXPIRED") {
             // PLAN-0663 M2/T2.1: the store already retired the expired request (terminal state), so
             // the modal is gone — explain it with a NON-modal notice instead of leaving a dead
@@ -1413,10 +1409,7 @@ async function confirmRevert(
         }
     } catch (cause) {
         if (props.sessionId !== sessionId || authStore.currentWorkspaceId !== workspaceId) return;
-        revertError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.checkpointRevertFailed");
+        revertError.value = presentCauseError(t, cause, t("chat.checkpointRevertFailed")).copy;
         logger.warn("Failed to execute workspace checkpoint restore", cause);
     } finally {
         revertBusy.value = false;

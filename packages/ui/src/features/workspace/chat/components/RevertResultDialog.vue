@@ -2,7 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { FileDiff, LoaderCircle, X } from "@lucide/vue";
-import { ApiError, api } from "../../../../composables/api";
+import { api } from "../../../../composables/api";
+import { presentCauseError } from "../../../../lib/errorMessages";
 import { logger } from "../../../../lib/logger";
 import { computeLineDiff, type LineDiffRow } from "../../../../lib/lineDiff";
 import type { CheckpointResult, CheckpointResultEntry } from "../../../../types";
@@ -101,10 +102,7 @@ async function openDiff(entry: CheckpointResultEntry) {
         diffRef.value = "slice";
     } catch (cause) {
         if (generation !== diffGeneration) return;
-        diffError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.checkpointResultDiffFailed");
+        diffError.value = presentCauseError(t, cause, t("chat.checkpointResultDiffFailed")).copy;
         logger.warn("Failed to load checkpoint slice diff", cause);
     } finally {
         if (generation === diffGeneration) diffLoading.value = false;

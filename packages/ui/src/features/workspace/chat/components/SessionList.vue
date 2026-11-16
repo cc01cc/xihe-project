@@ -7,6 +7,7 @@ import { useChatStore } from "../stores/chat.ts";
 import { useAgentStore } from "../../../../stores/agent";
 import { useAuthStore } from "../../../../stores/auth";
 import { ApiError, api, type DelegationUsageView } from "../../../../composables/api";
+import { presentCauseError } from "../../../../lib/errorMessages";
 import type { Session } from "../../../../types";
 import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
@@ -250,12 +251,8 @@ async function handleFork(id: string) {
         pendingForkKeys.delete(keyScope);
         toast.success(t("sidebar.forkCreated"));
     } catch (cause) {
-        const message =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : cause instanceof Error
-                  ? cause.message
-                  : t("sidebar.forkFailed");
+        // task-45：toast 面只给可读文案（改前会直出 `CODE: english detail`）。原有 logger 保留。
+        const message = presentCauseError(t, cause, t("sidebar.forkFailed")).copy;
         logger.error("Fork Session failed", cause);
         toast.error(message);
     } finally {

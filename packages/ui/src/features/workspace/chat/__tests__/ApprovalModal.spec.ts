@@ -730,9 +730,11 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
         await flushPromises();
 
         expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="approval-classify-error"]').text()).toContain(
-            "FORBIDDEN",
-        );
+        // task-45：分类失败提示只放可读文案；码与 CP 英文 detail 不再直出（改前 `toContain("FORBIDDEN")`
+        // 把缺陷钉成了契约）。
+        const classifyErrorText = wrapper.find('[data-testid="approval-classify-error"]').text();
+        expect(classifyErrorText).not.toContain("FORBIDDEN");
+        expect(classifyErrorText).not.toContain("classification requires");
         expect(wrapper.emitted("approve")).toBeUndefined();
 
         // The failure releases the submit guard and the same request can be classified again.

@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { ApiError, api } from "../../../composables/api";
+import { i18n } from "../../../i18n";
+import { presentCauseError } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
 import type {
     ScheduledTask,
@@ -9,11 +11,9 @@ import type {
     WorkspaceEvent,
 } from "../../../types";
 
-function errorMessage(cause: unknown, fallback: string): string {
-    if (cause instanceof ApiError) {
-        return `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`;
-    }
-    return cause instanceof Error ? cause.message : fallback;
+/** task-45：store 只存可读文案；原始 detail 由调用点 `logger.warn` 的 cause 留痕。 */
+function errorCopy(cause: unknown, fallback: string): string {
+    return presentCauseError(i18n.global.t, cause, fallback).copy;
 }
 
 /**
@@ -40,13 +40,11 @@ const SCHEDULED_TASK_ERROR_KEYS: Record<string, string> = {
 };
 
 export function scheduledTaskErrorText(t: (key: string) => string, cause: unknown): string {
-    if (cause instanceof ApiError) {
-        const key = SCHEDULED_TASK_ERROR_KEYS[cause.problem.code];
-        if (key) return t(`workspace.scheduledTasks.${key}`);
-        return `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`;
-    }
-    if (cause instanceof Error && cause.message) return cause.message;
-    return t("workspace.scheduledTasks.actionFailed");
+    const code = cause instanceof ApiError ? cause.problem.code : undefined;
+    const key = code === undefined ? undefined : SCHEDULED_TASK_ERROR_KEYS[code];
+    if (key) return t(`workspace.scheduledTasks.${key}`);
+    // task-45：码表之外的码不再拼 `CODE: english detail`，统一走可读文案入口。
+    return presentCauseError(t, cause, t("workspace.scheduledTasks.actionFailed")).copy;
 }
 
 /**
@@ -105,7 +103,7 @@ export const useScheduledTasksStore = defineStore("scheduledTasks", () => {
                 return tasks.value;
             } catch (cause) {
                 if (requestGeneration === storeGeneration) {
-                    error.value = errorMessage(cause, "Failed to load scheduled tasks");
+                    error.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
                     logger.warn("Failed to load scheduled tasks", cause);
                 }
                 return null;

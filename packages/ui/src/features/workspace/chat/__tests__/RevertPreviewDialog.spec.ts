@@ -24,6 +24,13 @@ const i18n = createI18n({
     locale: "en-US",
     messages: {
         "en-US": {
+            // task-45：错误面统一入口的兜底文案（真实 i18n 同键；这里按 en-US 给词）。
+            errors: {
+                requestFailed: "Request failed. Retry in a moment.",
+                unknownCode:
+                    "Request failed. Retry in a moment; if it persists, contact your administrator.",
+                technicalDetail: "Technical details",
+            },
             common: { cancel: "Cancel", close: "Close" },
             chat: {
                 checkpointPreviewTitle: "Restore to this slice",
@@ -192,9 +199,10 @@ describe("RevertPreviewDialog", () => {
         );
         const wrapper = mountDialog();
         await settle();
-        expect(wrapper.find('[data-testid="revert-preview-error"]').text()).toContain(
-            "CHECKPOINT_UNAVAILABLE",
-        );
+        // task-45：入口态错误只放可读文案（改前断言的是码直出）
+        const previewErrorText = wrapper.find('[data-testid="revert-preview-error"]').text();
+        expect(previewErrorText).not.toContain("CHECKPOINT_UNAVAILABLE");
+        expect(previewErrorText).toContain("Request failed");
         mockedApi.previewWorkspaceCheckpointRevert.mockResolvedValueOnce(
             preview({ entries: [{ path: "a.ts", action: "restore", state: "noop" }] }),
         );

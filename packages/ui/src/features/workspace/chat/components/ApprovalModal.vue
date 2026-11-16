@@ -3,7 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useI18n } from "vue-i18n";
 import { getActivePinia } from "pinia";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
-import { ApiError, api } from "../../../../composables/api";
+import { api } from "../../../../composables/api";
+import { presentCauseError } from "../../../../lib/errorMessages";
 import { useAuthStore } from "../../../../stores/auth";
 import { logger } from "../../../../lib/logger";
 import type {
@@ -413,10 +414,7 @@ async function submitClassification() {
             logger.warn("Discarded a stale failed tool classification", cause);
             return;
         }
-        classifyError.value =
-            cause instanceof ApiError
-                ? `${cause.problem.code}: ${cause.problem.detail ?? cause.message}`
-                : t("chat.approvalClassifyFailed");
+        classifyError.value = presentCauseError(t, cause, t("chat.approvalClassifyFailed")).copy;
         logger.warn("Failed to classify tool before approval", cause);
     } finally {
         if (classifyGeneration === generation) classifySubmitting.value = false;

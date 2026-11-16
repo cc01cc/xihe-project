@@ -187,9 +187,11 @@ describe("SessionList current-session fork action", () => {
         };
 
         await clickFork();
-        expect(toastError).toHaveBeenCalledWith(
-            "IDEMPOTENCY_REQUEST_IN_PROGRESS: Retry this request",
-        );
+        // task-45：toast 只给可读文案（改前 `toHaveBeenCalledWith("CODE: english detail")`
+        // 把「英文码 + 英文兜底」钉成了契约）。
+        const forkErrorText = String(toastError.mock.calls[0]?.[0] ?? "");
+        expect(forkErrorText).not.toContain("IDEMPOTENCY_REQUEST_IN_PROGRESS");
+        expect(forkErrorText).not.toContain("Retry this request");
         await clickFork();
 
         expect(api.getMessages).toHaveBeenCalledWith(SESSION_ID, BRANCH_ID);
