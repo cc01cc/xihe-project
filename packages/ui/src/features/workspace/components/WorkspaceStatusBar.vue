@@ -44,6 +44,7 @@ import {
 } from "../../../components/ui/breadcrumb";
 import { useAgentStore } from "../../../stores/agent";
 import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection";
+import { useWorkspaceEventStatus } from "../composables/useWorkspaceEventStatus";
 import { useWorkspaceNav } from "../composables/useWorkspaceNav";
 
 const { t } = useI18n();
@@ -62,36 +63,12 @@ const containerLabel = computed(() => t("workspaceNav.workspaceContainer"));
 const pendingApprovalTotal = computed(() => agentStore.pendingApprovalTotal);
 
 /**
- * 四态派生。**顺序有语义**，两层都要保持：
- *
- * <p>① `subscribed` 判在最前（task-81 P1-1）：本页没有订阅方时，`connected/connecting`
- * 恒为默认 false —— 那是「没订阅」不是「断了」。若把本页未订阅读成 disconnected，
- * 用户会去查网络，而事实是这页不订阅文件事件。</p>
- *
- * <p>② 订阅页内部 `connecting` 优先于 `connected`：重连过程中 `isConnected` 可能仍是
- * 上一轮的 true，先判 connecting 才不会把「正在重连」读成「已连接」。（原注释，未改）</p>
+ * 四态派生**已收敛到 `composables/useWorkspaceEventStatus`**（task-10 item 3 / batch-2 #3）：
+ * 原先这里与聊天页徽标 `WorkspaceView.vue` 各写一套（此处四态、那里二态），同一屏会出现
+ * 「文件事件重连中」与「本页未订阅文件事件」互相矛盾的两句。派生顺序与文案的唯一实现
+ * 见该 composable；本组件只负责视觉（文字 + 状态点颜色）。
  */
-const connectionState = computed<"unsubscribed" | "connecting" | "connected" | "disconnected">(
-    () => {
-        if (!connection.subscribed) return "unsubscribed";
-        if (connection.connecting) return "connecting";
-        if (connection.connected) return "connected";
-        return "disconnected";
-    },
-);
-
-const connectionLabel = computed(() => {
-    switch (connectionState.value) {
-        case "unsubscribed":
-            return t("workspace.eventsUnsubscribed");
-        case "connecting":
-            return t("workspace.eventsConnecting");
-        case "connected":
-            return t("workspace.eventsConnected");
-        default:
-            return t("workspace.eventsDisconnected");
-    }
-});
+const { state: connectionState, label: connectionLabel } = useWorkspaceEventStatus();
 
 /**
  * 状态点颜色。**不用品牌色**（注意力预算：状态点不是 CTA）：

@@ -8,6 +8,7 @@ import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection
 import { useAuthStore } from "../../../stores/auth";
 import { useChatStore } from "../chat/stores/chat";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../../composables/api";
+import { useWorkspaceEventStatus } from "../composables/useWorkspaceEventStatus";
 import { useWorkspaceSSE } from "../composables/useWorkspaceSSE";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace } from "../../../lib/workspaceContext";
@@ -248,6 +249,16 @@ const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspa
 const workspaceEvents = useWorkspaceSSE(workspaceId, {
     onEvent: (event) => ws.applyWorkspaceEvent(event),
 });
+
+/**
+ * 文件事件连接态**与底部状态栏同一实现**（task-10 item 3 / batch-2 #3）。
+ *
+ * <p>原先这里是二态（isConnected ? 已连接 : 重连中），状态栏是四态 ⇒ 未订阅页同一屏出现
+ * 「文件事件重连中」与「本页未订阅文件事件」两句互相矛盾的话：同一个 connected=false，
+ * 页面徽标判成「断了」，状态栏判成「没订阅」。现在派生链只有一条
+ * （composables/useWorkspaceEventStatus），两处只差视觉。</p>
+ */
+const { state: eventState, label: eventLabel } = useWorkspaceEventStatus();
 
 /**
  * PLAN-0676 T2：`limit` 态由壳级横幅（`AppLayout` 里的 `<SseSubscriberLimitNotice />`，读模块级
@@ -579,18 +590,23 @@ watch(isMobileViewport, (mobile) => {
                         <span
                             data-testid="workspace-event-status"
                             class="text-xs"
-                            :class="
+                            :class="[
                                 // task-89：emerald-600 对浅底实测 3.62:1（<4.5）⇒ 降一档到 700（深色主题仍用 400）。
-                                workspaceEvents.isConnected.value
+                                eventState === 'connected'
                                     ? 'text-emerald-700 dark:text-emerald-400'
-                                    : 'text-muted-foreground'
-                            "
+                                    : '',
+                                // 连接中占「进行中」色（与状态栏圆点同语义）；未订阅/未连接保持中性 ——
+                                // 未订阅不是故障，不该占用警示色（task-81 裁定，见 useWorkspaceEventStatus）。
+                                eventState === 'connecting'
+                                    ? 'text-amber-700 dark:text-amber-300'
+                                    : '',
+                                eventState === 'unsubscribed' || eventState === 'disconnected'
+                                    ? 'text-muted-foreground'
+                                    : '',
+                            ]"
+                            :data-event-state="eventState"
                         >
-                            {{
-                                workspaceEvents.isConnected.value
-                                    ? t("workspace.eventsConnected")
-                                    : t("workspace.eventsReconnecting")
-                            }}
+                            {{ eventLabel }}
                         </span>
                         <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
                         <div
