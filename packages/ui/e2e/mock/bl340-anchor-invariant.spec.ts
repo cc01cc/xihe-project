@@ -24,9 +24,257 @@ import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl340-anchor-session";
 const TOTAL = 240;
+// task-37：End 跳到底的阈值取自 **1200 条消息**的读数（`.tmp/xh/task31b/jump1200-summary.json`，187 样本），
+// 因此必须跑在同规模夹具上。240 条夹具上同一协议实测库写尾部到 21 次（36 样本，`.tmp/xh/task31b/quiet12.log`）
+// 且在 20 次上限上直接假红 —— 规模不同，读数不可互换。
+const JUMP_SESSION_ID = "bl340-anchor-jump";
+const JUMP_TOTAL = 1200;
 /** 容差：锚定/亚像素抖动允许 8px，超过即视为"被拽回底部"。 */
 const TOLERANCE_PX = 8;
 
+/** task-37 / D-1689：「End 跳到底」的三项判据阈值（来源见对应测试注释）。 */
+const JUMP_SETTLE_MAX_MS = 300;
+const JUMP_LIBRARY_WRITES_MAX = 30;
+const JUMP_SAMPLES = 3;
+const JUMP_POST_SETTLE_WRITES_MAX = 0;
+const JUMP_STABLE_FRAMES = 10;
+const JUMP_SAMPLE_MS = 2000;
+const JUMP_START_RATIO = 0.4;
+const JUMP_VIEWPORT_SELECTOR = '[data-testid="message-scroller-viewport"]';
+
+type JumpFrame = { t: number; top: number };
+type JumpWrite = { kind: string; target: number; library: boolean; at: number };
+type JumpSample = {
+    settleMs: number;
+    writes: JumpWrite[];
+    /** 收敛之后仍发生的库写次数 —— 「追尾」的确定性判据（一条都不该有）。 */
+    postSettleWrites: number;
+    maxSingleCompensation: number;
+    targets: number[];
+};
+
+/**
+ * 写桩：只记录视口上的 `scrollTo`/`scrollBy`/`scrollTop=` 写入，并用栈区分「库的补偿写」（virtual-core
+ * `scrollWithAdjustments`）与产品写。必须在首次导航前 `addInitScript` 安装。
+ */
+async function installJumpWriteStub(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        const w = window as unknown as { __jumpWrites?: unknown[] };
+        const writes: unknown[] = [];
+        w.__jumpWrites = writes;
+        const isViewport = (element: Element): boolean =>
+            element.getAttribute?.("data-testid") === "message-scroller-viewport";
+        const record = (kind: string, target: number, element: Element) => {
+            if (!isViewport(element)) return;
+            const stack = new Error().stack || "";
+            writes.push({
+                kind: kind,
+                target: target,
+                library: stack.includes("scrollWithAdjustments"),
+                at: performance.now(),
+            });
+        };
+        const proto = Element.prototype as unknown as Record<string, unknown>;
+        const originalScrollTo = proto.scrollTo as (...args: unknown[]) => void;
+        proto.scrollTo = function (this: HTMLElement, ...args: unknown[]) {
+            const first = args[0];
+            const target =
+                typeof first === "object" && first !== null
+                    ? Number((first as ScrollToOptions).top)
+                    : Number(args[1]);
+            record("scrollTo", Number.isFinite(target) ? target : this.scrollTop, this);
+            return originalScrollTo.apply(this, args);
+        };
+        const originalScrollBy = proto.scrollBy as (...args: unknown[]) => void;
+        proto.scrollBy = function (this: HTMLElement, ...args: unknown[]) {
+            const first = args[0];
+            const delta =
+                typeof first === "object" && first !== null
+                    ? Number((first as ScrollToOptions).top)
+                    : Number(args[1]);
+            record("scrollBy", this.scrollTop + (Number.isFinite(delta) ? delta : 0), this);
+            return originalScrollBy.apply(this, args);
+        };
+        const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+        if (descriptor?.get && descriptor.set) {
+            const originalGet = descriptor.get;
+            const originalSet = descriptor.set;
+            Object.defineProperty(Element.prototype, "scrollTop", {
+                configurable: true,
+                enumerable: descriptor.enumerable,
+                get: function (this: Element) {
+                    return originalGet.call(this);
+                },
+                set: function (this: Element, value: number) {
+                    record("scrollTop=", Number(value), this);
+                    originalSet.call(this, value);
+                },
+            });
+        }
+    });
+}
+
+/** 从 40% 处按一次真实 End，逐帧采 `scrollTop`，返回收敛时间/库写/最大单次补偿。 */
+async function measureEndJump(page: Page, chat: ChatPage): Promise<JumpSample> {
+    await chat.goto(JUMP_SESSION_ID);
+    await page
+        .locator('[data-testid="virtual-top-spacer"]')
+        .first()
+        .waitFor({ timeout: LONG_TIMEOUT_MS });
+    // 起点 40%：先派真实滚轮意图（否则 following-bottom 会把程序性写回弹到底部），再写位置。
+    // 落位必须**验证再开测**：布局尚未稳定时写 40% 可能落到别的偏移（实测出现 28k vs 49k 两种起点，
+    // 后者的一次性补差高达 21299px ⇒ 会把「最大单次补偿」判据拖成重尾/假红）。
+    const placed = await page.evaluate(
+        async (args: { ratio: number; selector: string }) => {
+            const viewport = document.querySelector(args.selector) as HTMLElement;
+            const frame = async (): Promise<void> =>
+                await new Promise<void>((done) => requestAnimationFrame(() => done()));
+            // 落位判据按**当时的**滚动范围算，不能拿一开始算出的 target 当绝对值：
+            // 虚拟窗口在等待期间持续实测行高、`scrollHeight` 会变，用旧 target 复写会把位置
+            // 拽到窗口预期之外 ⇒ 触发跨页补偿（实测 240 条夹具上 maxComp 从 ≤502 px 涨到 10k+）。
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const max = viewport.scrollHeight - viewport.clientHeight;
+                const target = Math.round(max * args.ratio);
+                viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1200 }));
+                viewport.scrollTop = target;
+                viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+                let previous = Number.NaN;
+                let same = 0;
+                for (let tick = 0; tick < 90; tick += 1) {
+                    await frame();
+                    const now = Math.round(viewport.scrollTop);
+                    same = now === previous ? same + 1 : 0;
+                    previous = now;
+                    if (same >= 3) break;
+                }
+                const landed = Math.round(viewport.scrollTop);
+                const currentMax = viewport.scrollHeight - viewport.clientHeight;
+                const inBand = landed >= currentMax * 0.25 && landed <= currentMax * 0.6;
+                if (inBand) return { landed: landed, max: currentMax };
+            }
+            return {
+                landed: Math.round(viewport.scrollTop),
+                max: viewport.scrollHeight - viewport.clientHeight,
+            };
+        },
+        { ratio: JUMP_START_RATIO, selector: JUMP_VIEWPORT_SELECTOR },
+    );
+    if (!(placed.landed >= placed.max * 0.25 && placed.landed <= placed.max * 0.6)) {
+        throw new Error(
+            `起点落位失败：${placed.landed} 不在当前范围 ${placed.max} 的 25%-60%（D-1689）`,
+        );
+    }
+    // 落位本身会触发窗口换页，换页的**库补偿写可能落在采样窗口内** —— 那是「落位」的尾巴，
+    // 不是 End 的行为。实测（240 条夹具、93 样本）不静默时库写尾部到 19 次（阈值 20 只剩 1 次余量）；
+    // 静默后再开测，才能让读数只属于 End。判据：连续 6 帧没有新的库写，最多等 60 帧（≈1 s）。
+    await page.evaluate(async () => {
+        const wWindow = window as unknown as { __jumpWrites?: { library: boolean }[] };
+        const frame = async (): Promise<void> =>
+            await new Promise<void>((done) => requestAnimationFrame(() => done()));
+        let quiet = 0;
+        let previous = (wWindow.__jumpWrites ?? []).filter((write) => write.library).length;
+        for (let tick = 0; tick < 60; tick += 1) {
+            await frame();
+            const current = (wWindow.__jumpWrites ?? []).filter((write) => write.library).length;
+            quiet = current === previous ? quiet + 1 : 0;
+            previous = current;
+            if (quiet >= 6) return;
+        }
+    });
+    const inputAt = await page.evaluate((sampleMs: number) => {
+        const w = window as unknown as {
+            __jumpFrames?: JumpFrame[];
+            __jumpSamplerDone?: boolean;
+        };
+        const frames: JumpFrame[] = [];
+        w.__jumpFrames = frames;
+        w.__jumpSamplerDone = false;
+        const viewport = document.querySelector(
+            '[data-testid="message-scroller-viewport"]',
+        ) as HTMLElement;
+        const startedAt = performance.now();
+        const tick = () => {
+            const now = performance.now();
+            frames.push({ t: now, top: viewport.scrollTop });
+            if (now - startedAt >= sampleMs) {
+                w.__jumpSamplerDone = true;
+                return;
+            }
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        return performance.now();
+    }, JUMP_SAMPLE_MS);
+    await page.locator(JUMP_VIEWPORT_SELECTOR).focus();
+    await page.keyboard.press("End");
+    await expect
+        .poll(
+            async () =>
+                await page.evaluate(
+                    () =>
+                        (window as unknown as { __jumpSamplerDone?: boolean }).__jumpSamplerDone ===
+                        true,
+                ),
+            { message: "End 跳到底的采样窗口应结束", timeout: ACTION_TIMEOUT_MS, intervals: [100] },
+        )
+        .toBe(true);
+    const raw = await page.evaluate(() => {
+        const w = window as unknown as { __jumpFrames?: JumpFrame[]; __jumpWrites?: JumpWrite[] };
+        return { frames: w.__jumpFrames ?? [], writes: w.__jumpWrites ?? [] };
+    });
+    const frames = raw.frames;
+    const writes = raw.writes.filter((write) => write.at >= inputAt);
+    let firstMoveIndex = -1;
+    for (let index = 1; index < frames.length; index += 1) {
+        if (Math.abs(frames[index].top - frames[0].top) > 0.5) {
+            firstMoveIndex = index;
+            break;
+        }
+    }
+    if (firstMoveIndex < 0) {
+        throw new Error(`End 未产生任何滚动（${JUMP_SAMPLE_MS}ms 内 top 恒为 ${frames[0]?.top}）`);
+    }
+    // 收敛 = 动了之后连续 JUMP_STABLE_FRAMES 帧同值（task-31 同口径，约 166ms 分辨率）。
+    let settleMs = -1;
+    for (let index = firstMoveIndex + 1; index + JUMP_STABLE_FRAMES <= frames.length; index += 1) {
+        let stable = true;
+        for (let offset = 1; offset <= JUMP_STABLE_FRAMES; offset += 1) {
+            if (Math.abs(frames[index + offset - 1].top - frames[index - 1].top) > 0.5) {
+                stable = false;
+                break;
+            }
+        }
+        if (stable) {
+            settleMs = Math.round(frames[index].t - inputAt);
+            break;
+        }
+    }
+    if (settleMs < 0) {
+        throw new Error(`End 跳到底在 ${JUMP_SAMPLE_MS}ms 采样窗口内未收敛（D-1689 判据不成立）`);
+    }
+    // 只统计**库**的补偿写（栈里带 `scrollWithAdjustments`）：产品的 prepend/贴底写不属于这条判据。
+    const libraryWrites = writes.filter((write) => write.library);
+    // 「追尾」的确定性形态 = 已经收敛（连续 10 帧不动）之后**又**有库写。
+    // 这一条是 0/1 判据，不依赖分布尾部（单次补偿是重尾量，见测试注释）。
+    const settledAt = inputAt + settleMs;
+    const postSettleWrites = libraryWrites.filter((write) => write.at > settledAt + 16).length;
+
+    const targets = libraryWrites.map((write) => Math.round(write.target));
+    let maxSingleCompensation = 0;
+    for (let index = 1; index < targets.length; index += 1) {
+        maxSingleCompensation = Math.max(
+            maxSingleCompensation,
+            Math.abs(targets[index] - targets[index - 1]),
+        );
+    }
+    return {
+        settleMs: settleMs,
+        writes: libraryWrites,
+        postSettleWrites: postSettleWrites,
+        maxSingleCompensation: maxSingleCompensation,
+        targets: targets,
+    };
+}
 test.describe("BL-340：上滚时窗口换页不得回跳", () => {
     let failures: PageFailures;
 
@@ -34,7 +282,10 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
         failures = collectPageFailures(page);
         await setupMockAuth(page);
         await setupMockSessions(page, {
-            sessions: [{ id: SESSION_ID, title: "BL-340 Anchor Invariant" }],
+            sessions: [
+                { id: SESSION_ID, title: "BL-340 Anchor Invariant" },
+                { id: JUMP_SESSION_ID, title: "BL-340 End Jump" },
+            ],
             messages: {
                 [SESSION_ID]: Array.from({ length: TOTAL }, (_, index) => ({
                     id: `bl340-msg-${index}`,
@@ -43,19 +294,33 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
                     content: `bl340-row-${index}`,
                     createdAt: new Date(Date.now() - (TOTAL - index) * 60_000).toISOString(),
                 })),
+                [JUMP_SESSION_ID]: Array.from({ length: JUMP_TOTAL }, (_, index) => ({
+                    id: `bl340-jump-msg-${index}`,
+                    sessionId: JUMP_SESSION_ID,
+                    role: index % 2 === 0 ? "USER" : "ASSISTANT",
+                    content: `bl340-jump-row-${index}`,
+                    createdAt: new Date(Date.now() - (JUMP_TOTAL - index) * 60_000).toISOString(),
+                })),
             },
         });
-        await stubSessionProjections(page, SESSION_ID);
-        await page.route(`**/api/v1/sessions/${SESSION_ID}/participants`, async (route) => {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    participants: [],
-                    capabilities: { view: false, manage: false, mention: false, speakAs: false },
-                }),
+        for (const sessionId of [SESSION_ID, JUMP_SESSION_ID]) {
+            await stubSessionProjections(page, sessionId);
+            await page.route(`**/api/v1/sessions/${sessionId}/participants`, async (route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        participants: [],
+                        capabilities: {
+                            view: false,
+                            manage: false,
+                            mention: false,
+                            speakAs: false,
+                        },
+                    }),
+                });
             });
-        });
+        }
     });
 
     test.afterEach(() => {
@@ -272,5 +537,59 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
             sequence[sequence.length - 1],
             `40×2000px 上滚后应到顶：${sequence.join(" → ")}`,
         ).toBeLessThanOrEqual(TOLERANCE_PX);
+    });
+    /**
+     * task-37 / D-1689 —— **End 跳到底**不得产生「追尾」式多次补偿写（判据增补，2026-11-16）。
+     *
+     * 背景（task-31 / D-1684 自查更正）：task-31 报的「大跳跃 0.5s 内 32-37 次库写」来自探针里
+     * **合成滚动条拖拽**（mousedown 落点 + 16 步 mouse.move）的干扰，不是 End 的真实行为。
+     * 真 End 实测（HEAD 4d7296c8a、1200 条消息、40% 处起跳、5 样本）：settle 184-240ms、
+     * 库写 0-9 次、最大单次补偿 0-2104px；产品自己的 `scrollToEnd()`（「回到最新」按钮）
+     * 同样 210-220ms / 9 次 / 2316px ⇒ D（End 改走 scrollToEnd）与 B（scrollToIndex(last)）**均无收益**。
+     * 本卡交付 = 把三项读数钉成判据，防止将来退化回「逐批首测」的追尾形态。
+     *
+     * 判据（只增不减，不放宽本文件任何既有断言）：
+     *  1. `settleMs ≤ 300ms`（39 样本实测 187-272ms，留 10% 余量）；
+     *  2. 窗口内库写次数 `≤ 30`（187 样本实测：p50=9 / p90=15 / p99=19 / **上界 22**）。
+     *     上限的作用是**区分「换页有界」与「追尾失控」**：D-1684 假设的追尾形态是 32-37 次，
+     *     30 这条线把它挡住（实测 22 ⇒ 留 36% 余量，同时不留到 32）。
+     *  3. **收敛之后不得再有库写**（`postSettleWrites === 0`）—— 这才是「追尾」的可判定形态：
+     *     追尾 = 已经停住了又被补偿写推动。它是 0/1 判据，不受分布尾部影响。
+     *
+     * 关于「最大单次补偿」：**不作为阈值**，只作为读数打印。实测（`.tmp/xh/task31b/final-dist12.log`
+     * 39 样本）它是重尾量 —— 常规样本 502/579/805px，但换页那一步会一次写跨一页（3847 / 5127 /
+     * 8253 / 8458px），出现频率约 10%，且**哪个样本撞上取决于当次窗口换页落在哪里**；
+     * 3 样本中位实测上界 5127px（13 组里 2 组中位 >2400）⇒ 任何固定阈值都会周期性假红。
+     * 拿它当门 = 造一个会假红的判据，而假红的判据一定会被绕过。因此只用它报读数（便于比对
+     * 历史值），断言留给前两条 + postSettleWrites。
+     * 阈值来源：`.tmp/xh/task31b/{end-final.log,end-base5.log,button-final.log,final-dist12.log}`。
+     */
+    test("task-37：End 跳到底的收敛时间/库写次数/追尾判定", async ({ page }) => {
+        test.setTimeout(LONG_TIMEOUT_MS);
+        await installJumpWriteStub(page);
+        const chat = new ChatPage(page);
+        const samples: JumpSample[] = [];
+        for (let index = 0; index < JUMP_SAMPLES; index += 1) {
+            samples.push(await measureEndJump(page, chat));
+        }
+        for (const [index, sample] of samples.entries()) {
+            console.log(
+                `[task-37] #${index + 1} settle=${sample.settleMs}ms writes=${sample.writes.length} ` +
+                    `postSettle=${sample.postSettleWrites} maxComp=${sample.maxSingleCompensation}px ` +
+                    `libTargets=${sample.targets.slice(0, 10).join(",")}`,
+            );
+            expect(
+                sample.settleMs,
+                `第 ${index + 1} 次 End 跳到底应在 ${JUMP_SETTLE_MAX_MS}ms 内收敛（实测 ${sample.settleMs}ms）`,
+            ).toBeLessThanOrEqual(JUMP_SETTLE_MAX_MS);
+            expect(
+                sample.writes.length,
+                `第 ${index + 1} 次 End 窗口内库写应 ≤ ${JUMP_LIBRARY_WRITES_MAX} 次`,
+            ).toBeLessThanOrEqual(JUMP_LIBRARY_WRITES_MAX);
+            expect(
+                sample.postSettleWrites,
+                `第 ${index + 1} 次 End 收敛后不得再被库写推动（追尾判定）：库写=${sample.writes.length} 次、收敛=${sample.settleMs}ms、目标=${sample.targets.join(",")}`,
+            ).toBeLessThanOrEqual(JUMP_POST_SETTLE_WRITES_MAX);
+        }
     });
 });
