@@ -30,7 +30,9 @@ describe("ResourcePaneLoading", () => {
 
     it("骨架块 aria-hidden（装饰，不念给读屏）且不含文本", () => {
         const wrapper = mountLoading();
-        const skeleton = wrapper.findAll('[data-testid="resource-pane-loading"] div[aria-hidden="true"]');
+        const skeleton = wrapper.findAll(
+            '[data-testid="resource-pane-loading"] div[aria-hidden="true"]',
+        );
         expect(skeleton).toHaveLength(1);
         expect(skeleton[0]?.text()).toBe("");
     });
