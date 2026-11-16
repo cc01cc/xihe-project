@@ -5,9 +5,10 @@ import { createI18n } from "vue-i18n";
 import { createPinia } from "pinia";
 import { describe, expect, it, vi } from "vitest";
 import WorkspaceToolbar from "../features/workspace/components/WorkspaceToolbar.vue";
+import type * as vueRouterModule from "vue-router";
 
 vi.mock("vue-router", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("vue-router")>()),
+    ...(await importOriginal<typeof vueRouterModule>()),
     useRouter: () => ({ push: vi.fn<() => void>() }),
 }));
 

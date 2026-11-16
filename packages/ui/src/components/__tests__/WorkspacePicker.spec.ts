@@ -11,6 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import WorkspacePicker from "../WorkspacePicker.vue";
+import type * as vueRouterModule from "vue-router";
+import type * as apiModule from "../../composables/api";
+import type * as workspaceContextModule from "../../lib/workspaceContext";
+import type * as vueI18nModule from "vue-i18n";
 
 const mocks = vi.hoisted(() => ({
     replace: vi.fn<(to: unknown) => Promise<void>>(),
@@ -40,19 +44,18 @@ vi.mock(
                 currentRoute: { value: {} },
             }),
             createWebHistory: () => ({}),
-        }) as unknown as typeof import("vue-router"),
+        }) as unknown as typeof vueRouterModule,
 );
 
 vi.mock("../../composables/api", async () => {
-    const actual =
-        await vi.importActual<typeof import("../../composables/api")>("../../composables/api");
+    const actual = await vi.importActual<typeof apiModule>("../../composables/api");
     return {
         ...actual,
         api: { listWorkspaces: () => mocks.listWorkspaces() },
     };
 });
 
-vi.mock<typeof import("../../lib/workspaceContext")>("../../lib/workspaceContext", () => ({
+vi.mock<typeof workspaceContextModule>("../../lib/workspaceContext", () => ({
     readTabWorkspaceId: () => mocks.tabWorkspaceId.value,
     readTabWorkspace: () =>
         mocks.tabWorkspaceId.value ? { id: mocks.tabWorkspaceId.value, name: "Chosen" } : null,
@@ -60,7 +63,7 @@ vi.mock<typeof import("../../lib/workspaceContext")>("../../lib/workspaceContext
     clearTabWorkspace: () => mocks.clearTabWorkspace(),
 }));
 
-vi.mock<typeof import("vue-i18n")>("vue-i18n", () => ({
+vi.mock<typeof vueI18nModule>("vue-i18n", () => ({
     useI18n: () => ({ t: (key: string) => key }),
 }));
 

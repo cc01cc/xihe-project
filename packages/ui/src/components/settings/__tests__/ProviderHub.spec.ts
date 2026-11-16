@@ -24,12 +24,15 @@ import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiR
 import { useConfigStore } from "../../../stores/config";
 import { i18n } from "../../../i18n";
 import { formatApiType } from "../../../lib/apiTypeLabels";
+import type * as apiRequestTemplatesModule from "../../../services/apiRequestTemplates";
+import type * as providerConnectionServiceModule from "../../../services/providerConnectionService";
+import type * as apiModule from "../../../composables/api";
 
 // PLAN-0523 T3.4: install the real i18n plugin so template strings resolve.
 (config.global.plugins ??= []).push(i18n);
 
 vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/apiRequestTemplates")>()),
+    ...(await importOriginal<typeof apiRequestTemplatesModule>()),
     listVisibleTemplates: vi.fn<typeof listVisibleTemplates>(),
     readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
 }));
@@ -39,34 +42,22 @@ vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
 // 函数 ⇒ 组件一旦用到未列出的导出就是 undefined，渲染直接抛（本次迁移实测 8 条红）。与
 // InstanceAgentsPanel.spec.ts 同口径：只换需要断言的网络面，纯函数留真。
 vi.mock("../../../services/providerConnectionService", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/providerConnectionService")>()),
-    listProviderCatalog:
-        vi.fn<typeof import("../../../services/providerConnectionService").listProviderCatalog>(),
+    ...(await importOriginal<typeof providerConnectionServiceModule>()),
+    listProviderCatalog: vi.fn<typeof providerConnectionServiceModule.listProviderCatalog>(),
     listProviderConnections:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").listProviderConnections
-        >(),
+        vi.fn<typeof providerConnectionServiceModule.listProviderConnections>(),
     createProviderConnection:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").createProviderConnection
-        >(),
+        vi.fn<typeof providerConnectionServiceModule.createProviderConnection>(),
     updateProviderConnection:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").updateProviderConnection
-        >(),
+        vi.fn<typeof providerConnectionServiceModule.updateProviderConnection>(),
     verifyProviderConnection:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").verifyProviderConnection
-        >(),
+        vi.fn<typeof providerConnectionServiceModule.verifyProviderConnection>(),
     deleteProviderConnection:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").deleteProviderConnection
-        >(),
-    getDeleteImpact:
-        vi.fn<typeof import("../../../services/providerConnectionService").getDeleteImpact>(),
+        vi.fn<typeof providerConnectionServiceModule.deleteProviderConnection>(),
+    getDeleteImpact: vi.fn<typeof providerConnectionServiceModule.getDeleteImpact>(),
 }));
 vi.mock("../../../composables/api", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../composables/api")>()),
+    ...(await importOriginal<typeof apiModule>()),
     request: vi.fn<typeof request>(),
 }));
 vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn<(...args: unknown[]) => void>() } }));

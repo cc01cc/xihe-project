@@ -1,4 +1,5 @@
 import { logger } from "@/lib/logger";
+import type * as shikiModule from "shiki";
 
 /**
  * PLAN-0753 M1 (F1/F2/F3, task-167 render matrix): one lazy shiki singleton for the whole app.
@@ -35,7 +36,7 @@ const PRELOADED_LANGS = [
 const LIGHT_THEME = "github-light";
 const DARK_THEME = "github-dark";
 
-type ShikiHighlighter = Awaited<ReturnType<(typeof import("shiki"))["createHighlighter"]>>;
+type ShikiHighlighter = Awaited<ReturnType<(typeof shikiModule)["createHighlighter"]>>;
 
 let singleton: Promise<ShikiHighlighter> | null = null;
 const loadedLangs = new Set<string>(PRELOADED_LANGS);

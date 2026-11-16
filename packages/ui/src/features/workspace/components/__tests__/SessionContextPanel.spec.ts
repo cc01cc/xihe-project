@@ -5,6 +5,7 @@ import { createI18n } from "vue-i18n";
 import { defineComponent, h } from "vue";
 import SessionContextPanel from "../SessionContextPanel.vue";
 import { setOnlySelectValue } from "../../../../test-utils/select";
+import type * as chatModule from "../../chat/stores/chat";
 
 // Ids live in the hoisted block: the module factory below runs during the import phase,
 // i.e. before the module body's `const` declarations are initialised.
@@ -16,7 +17,7 @@ const { selectBranch, SESSION_ID, ROOT_BRANCH_ID, CHILD_BRANCH_ID } = vi.hoisted
 }));
 
 vi.mock("../../chat/stores/chat", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../chat/stores/chat")>();
+    const actual = await importOriginal<typeof chatModule>();
     return {
         ...actual,
         useChatStore: () => ({

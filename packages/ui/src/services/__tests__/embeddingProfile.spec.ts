@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "../../composables/api";
 import type { EmbeddingProfileInput } from "../embeddingProfile";
 import { saveEmbeddingProfile } from "../embeddingProfile";
+import type * as apiModule from "../../composables/api";
 
 vi.mock("../../composables/api", () => ({
-    request: vi.fn<typeof import("../../composables/api").request>(),
+    request: vi.fn<typeof apiModule.request>(),
 }));
 
 /**

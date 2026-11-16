@@ -17,21 +17,22 @@ import {
     setOnlySelectValue,
 } from "../../../test-utils/select";
 import { toast } from "vue-sonner";
+import type * as providerConnectionServiceModule from "../../../services/providerConnectionService";
+import type * as embeddingProfileModule from "../../../services/embeddingProfile";
+import type * as apiModule from "../../../composables/api";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderConnections:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").listProviderConnections
-        >(),
+        vi.fn<typeof providerConnectionServiceModule.listProviderConnections>(),
 }));
 vi.mock("../../../services/embeddingProfile", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/embeddingProfile")>()),
+    ...(await importOriginal<typeof embeddingProfileModule>()),
     fetchEmbeddingEffective: vi.fn<typeof fetchEmbeddingEffective>(),
     saveEmbeddingProfile: vi.fn<typeof saveEmbeddingProfile>(),
     testEmbedding: vi.fn<typeof testEmbedding>(),
 }));
 vi.mock("../../../composables/api", () => ({
-    request: vi.fn<typeof import("../../../composables/api").request>(),
+    request: vi.fn<typeof apiModule.request>(),
 }));
 vi.mock("../../../lib/logger", () => ({
     logger: { warn: vi.fn<(...args: unknown[]) => void>() },

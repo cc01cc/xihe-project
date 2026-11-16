@@ -3,9 +3,10 @@ import { createPinia, setActivePinia } from "pinia";
 import type { UserQuestionListResponse, UserQuestionView } from "../../../../types/userQuestion";
 import { ApiError, api } from "../../../../composables/api";
 import { useUserQuestionsStore } from "../userQuestions";
+import type * as apiModule from "../../../../composables/api";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

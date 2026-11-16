@@ -5,6 +5,7 @@ import { nextTick } from "vue";
 import { i18n } from "../../../i18n";
 import PersonalSkillsPanel from "../PersonalSkillsPanel.vue";
 import type { SkillDefinitionSummary, SkillImportResultPayload } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * `T2b.3` · 「我的技能」面板（个人技能库）。
@@ -36,7 +37,7 @@ vi.mock("../../../stores/auth", () => ({
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

@@ -18,6 +18,7 @@ import InputArea from "../components/InputArea.vue";
 
 /** 被测组件从 `inject(routeLocationKey)` 取路由（不是 `useRoute()`）⇒ 直接注入即可，不需要 mock 整个 vue-router。 */
 import { routeLocationKey } from "vue-router";
+import type * as apiModule from "../../../../composables/api";
 
 type FakeRoute = { path: string; params: Record<string, string>; query: Record<string, string> };
 function standaloneRoute(): FakeRoute {
@@ -52,7 +53,7 @@ vi.mock("vue-sonner", () => ({
  * 工作区会话下四类控件都会渲染（负向对照证明表没有空转），独立会话下一个都不许有。
  */
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     const agent = (participantId: string, displayName: string) => ({
         participantId,
         principalKind: "AGENT" as const,

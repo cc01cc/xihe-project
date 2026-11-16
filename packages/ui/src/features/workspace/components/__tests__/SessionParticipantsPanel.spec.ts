@@ -13,9 +13,11 @@ import type {
     SessionParticipantView,
 } from "../../../../types/participant";
 import { ApiError, api, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST } from "../../../../composables/api";
+import type * as apiModule from "../../../../composables/api";
+import type * as workspaceContextModule from "../../../../lib/workspaceContext";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {
@@ -32,7 +34,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
 });
 
 vi.mock("../../../../lib/workspaceContext", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../lib/workspaceContext")>();
+    const actual = await importOriginal<typeof workspaceContextModule>();
     // 只覆盖读当前工作区，其余导出保持真实（整模块替换会打断 migrateLegacyWorkspace 等消费方）
     return { ...actual, readTabWorkspaceId: () => "ws-1" };
 });

@@ -11,16 +11,13 @@ import {
 import { useConfigStore } from "../../../stores/config";
 import { setOnlySelectValue } from "../../../test-utils/select";
 import { toast } from "vue-sonner";
+import type * as providerConnectionServiceModule from "../../../services/providerConnectionService";
 
 vi.mock("../../../services/providerConnectionService", () => ({
-    listProviderCatalog:
-        vi.fn<typeof import("../../../services/providerConnectionService").listProviderCatalog>(),
-    listApiInputTypes:
-        vi.fn<typeof import("../../../services/providerConnectionService").listApiInputTypes>(),
+    listProviderCatalog: vi.fn<typeof providerConnectionServiceModule.listProviderCatalog>(),
+    listApiInputTypes: vi.fn<typeof providerConnectionServiceModule.listApiInputTypes>(),
     listProviderConnections:
-        vi.fn<
-            typeof import("../../../services/providerConnectionService").listProviderConnections
-        >(),
+        vi.fn<typeof providerConnectionServiceModule.listProviderConnections>(),
 }));
 vi.mock("../../../lib/logger", () => ({
     logger: { warn: vi.fn<(...args: unknown[]) => void>() },

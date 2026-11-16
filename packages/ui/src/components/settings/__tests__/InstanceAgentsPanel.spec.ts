@@ -15,6 +15,9 @@ import { i18n } from "../../../i18n";
 import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import InstanceAgentsPanel from "../InstanceAgentsPanel.vue";
 import InstanceAgentSkillsDialog from "../../resources/InstanceAgentSkillsDialog.vue";
+import type * as providerConnectionServiceModule from "../../../services/providerConnectionService";
+import type * as instanceResourcesModule from "../../../services/instanceResources";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * task-165：实例层「平台智能体」面板。判据同凭据面板 —— 真列表 / 403 卡片 / 空态出口。
@@ -63,8 +66,7 @@ vi.mock("../../../stores/config", () => ({
 }));
 
 vi.mock("../../../services/providerConnectionService", async (importOriginal) => {
-    const actual =
-        await importOriginal<typeof import("../../../services/providerConnectionService")>();
+    const actual = await importOriginal<typeof providerConnectionServiceModule>();
     return {
         ...actual,
         listProviderCatalog: vi.fn<typeof actual.listProviderCatalog>(),
@@ -79,7 +81,7 @@ vi.mock("vue-sonner", () => ({
 }));
 
 vi.mock("../../../services/instanceResources", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../services/instanceResources")>();
+    const actual = await importOriginal<typeof instanceResourcesModule>();
     return {
         ...actual,
         listInstanceAgents: vi.fn<typeof actual.listInstanceAgents>(),
@@ -100,7 +102,7 @@ const skillReads = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return { ...actual, api: { ...actual.api, ...skillReads } };
 });
 

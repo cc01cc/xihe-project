@@ -11,6 +11,9 @@ import { request } from "../../../composables/api";
 import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../stores/config";
 import { i18n } from "../../../i18n";
+import type * as apiRequestTemplatesModule from "../../../services/apiRequestTemplates";
+import type * as providerConnectionServiceModule from "../../../services/providerConnectionService";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * task-385（D-1233）：实例层保存 profile 时连接未就绪 / ghost ⇒ **inline 警示，不阻断保存**。
@@ -22,17 +25,17 @@ import { i18n } from "../../../i18n";
 (config.global.plugins ??= []).push(i18n);
 
 vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/apiRequestTemplates")>()),
+    ...(await importOriginal<typeof apiRequestTemplatesModule>()),
     listVisibleTemplates: vi.fn<typeof listVisibleTemplates>(),
     readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
 }));
 vi.mock("../../../services/providerConnectionService", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/providerConnectionService")>()),
+    ...(await importOriginal<typeof providerConnectionServiceModule>()),
     listProviderCatalog: vi.fn<typeof listProviderCatalog>(),
     listProviderConnections: vi.fn<typeof listProviderConnections>(),
 }));
 vi.mock("../../../composables/api", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../composables/api")>()),
+    ...(await importOriginal<typeof apiModule>()),
     request: vi.fn<typeof request>(),
 }));
 vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn<(...args: unknown[]) => void>() } }));

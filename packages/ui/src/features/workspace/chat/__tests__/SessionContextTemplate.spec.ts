@@ -7,6 +7,7 @@ import { request, type ApiSession } from "../../../../composables/api";
 import { listVisibleTemplates } from "../../../../services/apiRequestTemplates";
 import { listProviderConnections } from "../../../../services/providerConnectionService";
 import { setSelectValue } from "../../../../test-utils/select";
+import type * as apiRequestTemplatesModule from "../../../../services/apiRequestTemplates";
 
 const state = reactive({
     sessions: [
@@ -17,7 +18,7 @@ const state = reactive({
 vi.mock("../../../../stores/session", () => ({ useSessionStore: () => state }));
 vi.mock("../../../../composables/api", () => ({ request: vi.fn<typeof request>() }));
 vi.mock("../../../../services/apiRequestTemplates", async (original) => ({
-    ...(await original<typeof import("../../../../services/apiRequestTemplates")>()),
+    ...(await original<typeof apiRequestTemplatesModule>()),
     listVisibleTemplates: vi.fn<typeof listVisibleTemplates>(),
 }));
 vi.mock("../../../../services/providerConnectionService", () => ({

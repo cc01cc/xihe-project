@@ -4,6 +4,7 @@ import { ApiError } from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import { Select } from "../../ui/select";
 import InstanceAgentSkillsDialog from "../InstanceAgentSkillsDialog.vue";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * task-402 / `D-1243 G2`：实例档技能绑定面。
@@ -44,7 +45,7 @@ const { getAgentSkills, getSkills, bindAgentSkill, unbindAgentSkill, toastSucces
 );
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: { ...actual.api, getAgentSkills, getSkills, bindAgentSkill, unbindAgentSkill },

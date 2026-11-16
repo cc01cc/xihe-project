@@ -8,6 +8,7 @@ import { api } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
 import { usePolicyStore } from "../../../../stores/policy";
 import { useSessionStore } from "../../../../stores/session";
+import type * as chatModule from "../stores/chat";
 
 /**
  * task-90 · 重复 testid 第 2 组的机器判据。
@@ -49,7 +50,7 @@ vi.mock("vue-sonner", () => ({
 // The real SessionContextPanel reads the branch projection from the chat store; the
 // projection itself is not under test here, only the DOM shape it renders into.
 vi.mock("../stores/chat", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../stores/chat")>();
+    const actual = await importOriginal<typeof chatModule>();
     return {
         ...actual,
         useChatStore: () => ({

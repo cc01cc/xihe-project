@@ -9,6 +9,7 @@ import {
 import { i18n } from "../../../i18n";
 import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import InstanceCredentialsPanel from "../InstanceCredentialsPanel.vue";
+import type * as instanceResourcesModule from "../../../services/instanceResources";
 
 /**
  * task-165：实例层「凭据」面板。
@@ -41,7 +42,7 @@ vi.mock("vue-sonner", () => ({
 }));
 
 vi.mock("../../../services/instanceResources", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../services/instanceResources")>();
+    const actual = await importOriginal<typeof instanceResourcesModule>();
     return {
         ...actual,
         listInstanceCredentials: vi.fn<typeof actual.listInstanceCredentials>(),

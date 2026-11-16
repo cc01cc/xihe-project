@@ -4,6 +4,7 @@ import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import SettingsDomainView from "../SettingsDomainView.vue";
 import { LAYER_DOMAINS, useConfigStore } from "../../../stores/config";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * task-122：把 task-121 的**推理**变成测试。
@@ -21,9 +22,7 @@ const { requestMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../composables/api", async () => {
-    const actual = await vi.importActual<typeof import("../../../composables/api")>(
-        "../../../composables/api",
-    );
+    const actual = await vi.importActual<typeof apiModule>("../../../composables/api");
     return { ...actual, request: requestMock };
 });
 vi.mock("vue-router", () => ({

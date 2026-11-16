@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { ref } from "vue";
 import SettingsDomainView from "../SettingsDomainView.vue";
+import type * as configModule from "../../../stores/config";
 
 /**
  * PLAN-0752 M1 的域页三分支（verify.md「入口分层」）与 V26 拦截：
@@ -60,8 +61,7 @@ vi.mock("../../../stores/auth", () => ({
 }));
 
 vi.mock("../../../stores/config", async () => {
-    const actual =
-        await vi.importActual<typeof import("../../../stores/config")>("../../../stores/config");
+    const actual = await vi.importActual<typeof configModule>("../../../stores/config");
     return {
         ...actual,
         useConfigStore: () => ({

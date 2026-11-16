@@ -5,6 +5,7 @@ import { nextTick } from "vue";
 import { i18n } from "../../../i18n";
 import WorkspaceSkillsPanel from "../WorkspaceSkillsPanel.vue";
 import type { AgentSkillSummary } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * `T2b.3` · 「本工作区技能」面板**不画来源列**（Lead 2026-11-12 裁定 ①，负断言）。
@@ -23,7 +24,7 @@ import type { AgentSkillSummary } from "../../../composables/api";
 const getWorkspaceSkills = vi.fn<(workspaceId: string) => Promise<AgentSkillSummary[]>>();
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

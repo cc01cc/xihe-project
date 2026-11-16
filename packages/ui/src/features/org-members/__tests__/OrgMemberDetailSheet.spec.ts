@@ -4,6 +4,7 @@ import { i18n } from "../../../i18n";
 import { expectNoInternalFacts } from "../../../test-utils/copyAsserts";
 import { setSelectValue } from "../../../test-utils/select";
 import OrgMemberDetailSheet from "../components/OrgMemberDetailSheet.vue";
+import type * as apiModule from "../../../composables/api";
 
 /** task-44：智能体分支要 `router.push` 到工作区；这里只钉"推到哪"，真实导航由 E2E 覆盖。 */
 const routerPush = vi.hoisted(() => vi.fn<(location: unknown) => Promise<void>>());
@@ -40,7 +41,7 @@ const apiState = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

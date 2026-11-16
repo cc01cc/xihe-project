@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import type * as apiModule from "../../composables/api";
 
 /**
  * task-601：ws-less（独立会话）上下文里的 approvals 身份泄漏。
@@ -17,7 +18,7 @@ import { createPinia, setActivePinia } from "pinia";
 const apiMock = vi.hoisted(() => ({ getWorkspace: vi.fn<(id: string) => Promise<unknown>>() }));
 
 vi.mock("../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return { ...actual, api: { ...actual.api, getWorkspace: apiMock.getWorkspace } };
 });
 

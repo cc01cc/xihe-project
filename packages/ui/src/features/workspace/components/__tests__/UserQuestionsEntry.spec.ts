@@ -7,6 +7,7 @@ import { api } from "../../../../composables/api";
 import type { UserQuestionListResponse, UserQuestionView } from "../../../../types/userQuestion";
 import { useUserQuestionsStore } from "../../stores/userQuestions";
 import UserQuestionsEntry from "../UserQuestionsEntry.vue";
+import type * as apiModule from "../../../../composables/api";
 
 /**
  * PLAN-0660 T5.21/T5.22 —— B-7「全局导航入口」的接线事实。
@@ -16,7 +17,7 @@ import UserQuestionsEntry from "../UserQuestionsEntry.vue";
  * `stores/__tests__/userQuestions.spec.ts` 覆盖，这里不重复。
  */
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

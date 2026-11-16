@@ -7,9 +7,10 @@ import type {
 } from "../../../../types/participant";
 import { api } from "../../../../composables/api";
 import { useSessionParticipantsStore } from "../sessionParticipants";
+import type * as apiModule from "../../../../composables/api";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

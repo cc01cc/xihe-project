@@ -4,6 +4,7 @@ import Panel from "../ContextTemplatesPanel.vue";
 import { i18n } from "../../../i18n";
 import { listApiInputTypes } from "../../../services/providerConnectionService";
 import { readTemplateConfig, validateTemplate } from "../../../services/apiRequestTemplates";
+import type * as apiRequestTemplatesModule from "../../../services/apiRequestTemplates";
 
 /**
  * task-23 / P2-2：**文案与状态词**的断言单独成文件 —— 生命周期 spec
@@ -16,7 +17,7 @@ vi.mock("../../../services/providerConnectionService", () => ({
     listApiInputTypes: vi.fn<typeof listApiInputTypes>(),
 }));
 vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/apiRequestTemplates")>()),
+    ...(await importOriginal<typeof apiRequestTemplatesModule>()),
     readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
     validateTemplate: vi.fn<typeof validateTemplate>(),
 }));

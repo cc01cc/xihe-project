@@ -10,12 +10,13 @@ import Panel from "../ContextTemplatesPanel.vue";
 import { listApiInputTypes } from "../../../services/providerConnectionService";
 import { readTemplateConfig, validateTemplate } from "../../../services/apiRequestTemplates";
 import { jsonDocText, jsonEditorView, setJsonDoc } from "./jsonEditorAsserts";
+import type * as apiRequestTemplatesModule from "../../../services/apiRequestTemplates";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listApiInputTypes: vi.fn<typeof listApiInputTypes>(),
 }));
 vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../../services/apiRequestTemplates")>()),
+    ...(await importOriginal<typeof apiRequestTemplatesModule>()),
     readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
     validateTemplate: vi.fn<typeof validateTemplate>(),
 }));

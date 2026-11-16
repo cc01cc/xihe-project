@@ -9,6 +9,7 @@ import {
 import { i18n } from "../../../i18n";
 import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import InstanceMcpPanel from "../InstanceMcpPanel.vue";
+import type * as instanceResourcesModule from "../../../services/instanceResources";
 
 /**
  * task-165：实例层「MCP 注册表」面板。判据同凭据面板 —— 真列表 / 403 卡片 / 空态出口。
@@ -39,7 +40,7 @@ vi.mock("vue-sonner", () => ({
 }));
 
 vi.mock("../../../services/instanceResources", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../services/instanceResources")>();
+    const actual = await importOriginal<typeof instanceResourcesModule>();
     return {
         ...actual,
         listInstanceMcpServers: vi.fn<typeof actual.listInstanceMcpServers>(),

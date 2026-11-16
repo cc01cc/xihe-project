@@ -6,6 +6,7 @@ import { i18n } from "../../../i18n";
 import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import SkillsPanel from "../SkillsPanel.vue";
 import type { SkillDefinitionSummary } from "../../../composables/api";
+import type * as apiModule from "../../../composables/api";
 
 /**
  * task-167 · 「导入技能」入口的**可见性与门**（不是"对话框好不好看"）。
@@ -43,7 +44,7 @@ vi.mock("../../../stores/auth", () => ({
 // 只替换 `api` 的三个方法，其余（尤其 `ApiError`）保留真实实现 —— 对话框的
 // `mapSkillImportError` 里 `instanceof ApiError` 需要真类，mock 掉会让失败路径抛 TypeError。
 vi.mock("../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: {

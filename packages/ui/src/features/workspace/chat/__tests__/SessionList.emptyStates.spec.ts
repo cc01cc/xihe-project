@@ -6,6 +6,8 @@ import { i18n as appI18n } from "../../../../i18n";
 import { useAuthStore } from "../../../../stores/auth";
 import { useSessionStore } from "../../../../stores/session";
 import WorkspaceSessionGroups from "../components/WorkspaceSessionGroups.vue";
+import type * as vueRouterModule from "vue-router";
+import type * as apiModule from "../../../../composables/api";
 
 /**
  * task-352 / `D-1206`：左栏 = 工作区分组 + 会话项（懒加载）。
@@ -38,7 +40,7 @@ const { pushSpy, listWorkspaces, getSessions, getWorkspacelessSessions } = vi.ho
 }));
 
 vi.mock("vue-router", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("vue-router")>();
+    const actual = await importOriginal<typeof vueRouterModule>();
     return {
         ...actual,
         useRouter: () => ({ push: pushSpy }),
@@ -49,7 +51,7 @@ vi.mock("vue-router", async (importOriginal) => {
 // 只替换两个取数面，其余（ApiError / workspaceHeaders / 归一化）保持真实现 ——
 // 把整个模块换成手搓对象会让「两套归一化」从这个 spec 里开始。
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: { ...actual.api, listWorkspaces, getSessions, getWorkspacelessSessions },
