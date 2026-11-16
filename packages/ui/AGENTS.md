@@ -288,6 +288,19 @@ node ../../../internal/A03-xihe/evidence/2026-11-13-async-stub-convention/stub-s
 - 工作区选择面（PLAN-0608 C′）：`/workspace` 在**无 tab 上下文**时渲染 `components/WorkspacePicker.vue`（角色取 `GET /workspaces` 权威值）；`WorkspaceView` 收到 `400 WORKSPACE_CONTEXT_CONFLICT` / `409 WORKSPACE_CONTEXT_REQUIRED` 时**回选择面**，不得只弹 toast 成死路。**I6：登录响应里的 workspace 只是 fallback**，绝不写进 tab 上下文——`stores/auth.ts` 的 `hydrateWorkspace` 不再用 `/workspaces/current` 回填（与上文「工作区上下文逐 tab 存取、`workspaceContext` 为唯一 SSOT」同源）；新建会话走路径形式 `POST /api/v1/workspaces/{workspaceId}/sessions`。
   - ~~**I6 例外（2026-11-01 裁定，BL-169）**~~ **已随 PLAN-0758（D-787）移除**：本地模式免密自动登录分支删除后，I6 无例外——登录响应消费方一律不得回填 tab 上下文。
 
+### 错误面：错误码 → 文案（`task-45`，2026-11-16）
+
+**唯一入口**：`src/lib/errorMessages.ts#presentCauseError(t, cause, fallback)` —— 返回 `{ copy, code, technicalDetail }`。新增或修改任何错误面**不得**手拼 `` `${code}: ${detail}` ``，也**不得**把 `ApiError.message` 当文案用（它就是 CP `detail`：可能是英文，或客户端兜底的 `API error 500`）—— 那正是 `AUDIT_ERROR: API error 500` 的来路。DEV-011「不得直显 CP 英文 detail」在代码侧就靠这一条收紧。
+
+**两种面两种处置**（不要一律塞折叠控件）：
+
+| 面 | 怎么判 | 处置 |
+| --- | --- | --- |
+| **诊断面** | 设置/配置类页面里**持久在屏**的错误条（数据控制、工具面、变更面板） | 渲染 `copy`；`technicalDetail` 收进 vendor `Collapsible`（**默认折叠**；为空时 `v-if` 不渲染空壳） |
+| **瞬时面** | toast、弹窗内提示、聊天气泡（ChatPanel / SessionList / ApprovalModal / SSE 错误帧） | 只渲染 `copy`；原文交给同处 `logger.warn/error` 的 cause **留痕** |
+
+**断言判据**：新错误面的单测三件事齐判 —— 可读文案在 + 不含错误码 + 不含 `API error \d+`。改既有断言同理：把「记录缺陷」的 `toContain("CODE")` 换成这一套，**不许只删不加**（删掉正向判据就是放宽）。
+
 ### Reka UI 交互陷阱
 
 - `ComboboxContent position="popper"` 的触发器必须由 `ComboboxAnchor` 包裹，否则内容可能定位到视口外且没有报错。
