@@ -2,6 +2,12 @@
 import { computed, defineAsyncComponent, markRaw, ref, watch, type Component } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { Button } from "../../../components/ui/button";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 import {
     RESOURCE_DEFS,
     resourceDef,
@@ -79,6 +85,14 @@ const router = useRouter();
 const { t } = useI18n();
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
+
+/**
+ * task-52 / batch-02 ③：顶部说明默认**折叠**。
+ *
+ * <p>默认关而不是默认开：用户来这页要做的是管凭据，不是读迁移公告；两条说明的完整内容
+ * （含直链）在展开后仍然齐全，所以「折叠」不等于「藏起来」—— 摘要行常驻可见，随时可点开。</p>
+ */
+const hintsOpen = ref(false);
 
 /** `?resource=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function resourceFromQuery(q: unknown): ResourceId {
@@ -172,40 +186,79 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
         <!--
             D-1432 / task-41：已迁到工作区设置的资源在这页**不再开页签**，
             但仍要「就地说明 + 直链」—— 否则用户只看到页签少了两个，无处可问。
-        -->
-        <div
-            v-if="MOVED_RESOURCE_IDS.length > 0"
-            data-testid="ws-resources-moved-hint"
-            class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-xs text-muted-foreground"
-        >
-            <span>{{ t("resources.workspaceLayerMovedInlineHint") }}</span>
-            <RouterLink
-                v-for="id in MOVED_RESOURCE_IDS"
-                :key="id"
-                :to="movedHref(id)"
-                :data-testid="`ws-resources-moved-link-${id}`"
-                class="text-foreground underline-offset-2 hover:underline"
-            >
-                {{ t(resourceDef(id).labelKey) }}
-            </RouterLink>
-        </div>
 
-        <!-- 平台 / 用户层：只读引用（不在这里编辑，也不给层切换入口）。 -->
-        <div
-            v-if="referenceLayers.length > 0"
-            class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-xs text-muted-foreground"
+            task-52 / batch-02 ③（P1，截图 `.tmp/xh/b02-tab-资源.png`）：上面那句说明与下面的
+            「平台 / 个人层只读引用」**各自占一整行**，两条内部说明条压在页头主位，而用户来这页
+            要做的事（凭据管理面板）被挤到下面且是空态 —— 信息层级倒置。
+
+            改法（选项之一，理由写在这里而不是卡面）：**并成一条可折叠摘要**，默认只留一行
+            低权重摘要 + 一个「?」触发器，展开才看到两份明细与直链。为什么不直接删掉：
+            直链是用户点回设置页的**唯一**入口（页签里已经没有 mcp/skills 了），删掉等于
+            把「搬去哪了」变成无处可问 —— 那正是 task-41 当初要解决的问题。为什么不并成
+            两行不可折叠的短句：两条说明的**类型不同**（一条是「搬走了」、一条是「只读」），
+            并成一行会让「只读」听起来也像「搬走了」。
+        -->
+        <Collapsible
+            v-if="MOVED_RESOURCE_IDS.length > 0 || referenceLayers.length > 0"
+            :open="hintsOpen"
+            class="shrink-0 border-b border-border"
+            data-testid="ws-resources-hints"
+            @update:open="(value: boolean) => (hintsOpen = value)"
         >
-            <span>{{ t("workspace.resourcesRefHint") }}</span>
-            <RouterLink
-                v-for="layer in referenceLayers"
-                :key="layer"
-                :to="referenceHref(activeResource, layer)"
-                :data-testid="`ws-resources-ref-layer-${layer}`"
-                class="text-foreground underline-offset-2 hover:underline"
-            >
-                {{ layerLabel(activeResource, layer) }}
-            </RouterLink>
-        </div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs">
+                <span class="text-muted-foreground">{{ t("resources.resourcesHintSummary") }}</span>
+                <CollapsibleTrigger as-child>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid="ws-resources-hints-toggle"
+                        class="h-6 gap-1 px-1.5 text-xs text-muted-foreground"
+                        :aria-expanded="hintsOpen"
+                    >
+                        <span aria-hidden="true">?</span>
+                        <span>{{
+                            hintsOpen
+                                ? t("resources.resourcesHintHide")
+                                : t("resources.resourcesHintShow")
+                        }}</span>
+                    </Button>
+                </CollapsibleTrigger>
+            </div>
+            <CollapsibleContent>
+                <div
+                    v-if="MOVED_RESOURCE_IDS.length > 0"
+                    data-testid="ws-resources-moved-hint"
+                    class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
+                >
+                    <span>{{ t("resources.workspaceLayerMovedInlineHint") }}</span>
+                    <RouterLink
+                        v-for="id in MOVED_RESOURCE_IDS"
+                        :key="id"
+                        :to="movedHref(id)"
+                        :data-testid="`ws-resources-moved-link-${id}`"
+                        class="text-foreground underline-offset-2 hover:underline"
+                    >
+                        {{ t(resourceDef(id).labelKey) }}
+                    </RouterLink>
+                </div>
+                <!-- 平台 / 用户层：只读引用（不在这里编辑，也不给层切换入口）。 -->
+                <div
+                    v-if="referenceLayers.length > 0"
+                    class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
+                >
+                    <span>{{ t("workspace.resourcesRefHint") }}</span>
+                    <RouterLink
+                        v-for="layer in referenceLayers"
+                        :key="layer"
+                        :to="referenceHref(activeResource, layer)"
+                        :data-testid="`ws-resources-ref-layer-${layer}`"
+                        class="text-foreground underline-offset-2 hover:underline"
+                    >
+                        {{ layerLabel(activeResource, layer) }}
+                    </RouterLink>
+                </div>
+            </CollapsibleContent>
+        </Collapsible>
 
         <div class="min-h-0 flex-1 overflow-y-auto">
             <component

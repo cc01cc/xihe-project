@@ -33,6 +33,10 @@ const messages = {
             workspaceLayerMovedAction: "打开工作区设置",
             workspaceLayerMovedNoWorkspace: "先在左侧选择一个工作区。",
             workspaceLayerMovedInlineHint: "以下资源的「本工作区」层已迁到工作区设置：",
+            // task-52 / batch-02 ③：两条说明合并成可折叠摘要（默认收起）。
+            resourcesHintSummary: "关于本页资源的层级与去处",
+            resourcesHintShow: "查看说明",
+            resourcesHintHide: "收起说明",
             layerTab: {
                 credentials: { USER: "个人", WORKSPACE: "本工作区", INSTANCE: "平台" },
                 mcp: { WORKSPACE: "本工作区", INSTANCE: "平台" },
@@ -114,11 +118,28 @@ const DERIVED_IDS = RESOURCE_DEFS.filter((def) =>
 const MOVED_IDS = ["mcp", "skills"] as const;
 const TAB_IDS = DERIVED_IDS.filter((id) => !(MOVED_IDS as readonly string[]).includes(id));
 
-async function mountPage(): Promise<ReturnType<typeof mount>> {
+/**
+ * task-52 / batch-02 ③：顶部说明默认**折叠**（`hintsOpen = false`）。
+ *
+ * <p>所以「读直链」类断言必须先展开 —— 展开动作走**真实触发器点击**（不是改组件内部
+ * state 的捷径），这样「折叠默认 + 可展开」这件事本身也被这些既有用例盯着：谁把
+ * `CollapsibleTrigger` 拆了或把默认值改成 always-open，既有断言不会给出别的绿灯。</p>
+ */
+async function mountPage(
+    options: { expandHints?: boolean } = {},
+): Promise<ReturnType<typeof mount>> {
     const { default: WorkspaceResourcesView } = await import("../pages/WorkspaceResourcesView.vue");
     const wrapper = mount(WorkspaceResourcesView, {
         global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
     });
+    if (options.expandHints !== false) {
+        await flushPromises();
+        const toggle = wrapper.find('[data-testid="ws-resources-hints-toggle"]');
+        if (toggle.exists()) {
+            await toggle.trigger("click");
+            await flushPromises();
+        }
+    }
     // `defineAsyncComponent` 是「加载 → 状态切换 → 再渲染」三段：一次 flush 只把加载完成，
     // 面板要到下一个 tick 才挂上。循环到面板出现为止（有界，不用固定 sleep）。
     for (let i = 0; i < 10; i += 1) {
@@ -233,5 +254,47 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         expect(mcpRefs.map((node) => node.attributes("href"))).toEqual([
             "/resources/mcp?layer=INSTANCE",
         ]);
+    });
+
+    /**
+     * task-52 / batch-02 ③（P1-4，D-1703）：**默认折叠**，展开才给明细与直链。
+     *
+     * 现象（Lead 截图 b02-tab-资源.png）：两条迁移说明各占一整行压在页头主位，
+     * 真正的功能（凭据管理）被挤到下面且是空态 ⇒ 导航说明压过功能主体。
+     *
+     * 判据分两半，合起来才是「折叠」的意思：
+     * ① 默认态：摘要行在、明细不在（不是删掉）；
+     * ② 展开后：两段明细与全部直链一个不少（信息没丢，只是收起来）。
+     *
+     * 承重点（变异）：把 hintsOpen 初值改 ref(true) ⇒ ① 红；把 CollapsibleContent 里的
+     * 直链删掉 ⇒ ② 红。**「默认收起」和「内容还在」必须同时成立** —— 只测前者会把「删掉说明」
+     * 误判成修好了。
+     */
+    it("顶部说明默认折叠：摘要行常驻、明细与直链收在展开里（内容不丢）", async () => {
+        routeState.query = { resource: "credentials" };
+        const wrapper = await mountPage({ expandHints: false });
+
+        const hints = wrapper.get('[data-testid="ws-resources-hints"]');
+        // ① 摘要行在（可点开）。
+        expect(wrapper.find('[data-testid="ws-resources-hints-toggle"]').exists()).toBe(true);
+        // ② 明细不在默认态。
+        expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid^="ws-resources-ref-layer-"]').exists()).toBe(false);
+        // ③ 展开后两段明细 + 全部直链都在。
+        await wrapper.get('[data-testid="ws-resources-hints-toggle"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-mcp"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-skills"]').exists()).toBe(true);
+        expect(
+            wrapper
+                .findAll('[data-testid^="ws-resources-ref-layer-"]')
+                .map((n) => n.attributes("href")),
+        ).toEqual(["/resources/credentials?layer=USER", "/resources/credentials?layer=INSTANCE"]);
+        // 折叠状态如实反映在 ARIA 上（读屏用户也能知道现在是哪种）。
+        expect(
+            wrapper.get('[data-testid="ws-resources-hints-toggle"]').attributes("aria-expanded"),
+        ).toBe("true");
+        expect(hints.text()).toContain("收起说明");
     });
 });

@@ -56,7 +56,8 @@ export const handlers = [
         return HttpResponse.json(
             {
                 id: String(Date.now()),
-                title: (body.title as string) || "New Chat",
+                // task-52 / batch-02 ②：同 e2e helper —— 默认标题已本地化，这里只兜「没传 title」的调用方。
+                title: (body.title as string) || "未命名会话",
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
             },

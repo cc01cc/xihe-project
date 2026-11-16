@@ -66,16 +66,53 @@ watch(
     },
     { immediate: true },
 );
+/**
+ * task-52 / batch-02（P1）：用量行里的 `未映射` 与 `real` 曾是**裸字面量**。
+ *
+ * <p>现象（截图 `.tmp/xh/b02-10-chat-full.png`）：中文界面底部读出
+ * `in 3591 · out 8 未映射 real` —— 前两段是英文 wire 值。而`未映射`本身是
+ * **设计行为**（CP `UsageCostMapper.withCost` 在没有 token 计数或模型不在定价表时
+ * 返回 `cost=null` + `costSource="unmapped"`），不是缺陷；因此这里**只改文案**，
+ * 不动 CP、也不凭空写出 `$0`（那会把"没有定价"说成"这次免费"）。</p>
+ *
+ * <p>口径沿用 `WorkspaceEnvironmentView` 的枚举处理先例（task-59 / D-1442）：
+ * **可见文本走 i18n，wire 原值只进 `title`** —— 人看人话、排障看属性，两边都不丢。</p>
+ */
+const USAGE_SOURCE_KEY: Record<string, string> = {
+    real: "workspace.usageSourceReal",
+    estimated: "workspace.usageSourceEstimated",
+    fallback: "workspace.usageSourceFallback",
+};
+
+/** CP `costNote` 的原值是英文（`UsageCostMapper`），映射层放在前端，不改后端。 */
+const USAGE_COST_NOTE_KEY: Record<string, string> = {
+    "no token counts": "workspace.usageCostNoteNoTokenCounts",
+    "model not in pricing config": "workspace.usageCostNoteNoPricing",
+    "no pricing entry": "workspace.usageCostNoteNoPricing",
+};
+
 const usageCost = computed(() => {
     const usage = lastUsage.value;
     if (!usage) return null;
-    if (usage.cost == null) return usage.source === "fallback" ? "—" : "未映射";
+    if (usage.cost == null) {
+        // `fallback` = 这一轮根本没有 token 计数（CP 明说 `no token counts`）⇒ 用破折号而不是
+        // 「未映射」：前者是「没有这个读数」，后者是「有数但没定价」，两件事不该同一个词。
+        return usage.source === "fallback" ? "—" : t("workspace.usageCostUnmapped");
+    }
     return `$${usage.cost}`;
 });
 const usageCostTitle = computed(() => {
     const usage = lastUsage.value;
     if (!usage || usage.cost != null) return "";
-    return usage.costNote ?? "no pricing entry";
+    const mapped = usage.costNote ? USAGE_COST_NOTE_KEY[usage.costNote] : undefined;
+    // 未登记的新 note 回落通用句，原值仍留在下方 `usage-cost-raw` 属性里可查。
+    return t(mapped ?? "workspace.usageCostNoteUnknown");
+});
+const usageSourceLabel = computed(() => {
+    const source = usageSource.value;
+    if (!source) return "";
+    const key = USAGE_SOURCE_KEY[source];
+    return key ? t(key) : source;
 });
 
 const routeWorkspaceId = computed(() => {
@@ -561,6 +598,9 @@ watch(isMobileViewport, (mobile) => {
                         >
                             <span>in {{ usageInput }} · out {{ usageOutput ?? 0 }}</span>
                             <span
+                                data-testid="workspace-usage-cost"
+                                :data-cost-source="lastUsage.costSource ?? ''"
+                                :data-cost-note="lastUsage.costNote ?? ''"
                                 :title="usageCostTitle"
                                 :class="
                                     lastUsage.cost == null && usageCost !== '—'
@@ -572,6 +612,8 @@ watch(isMobileViewport, (mobile) => {
                             </span>
                             <span
                                 v-if="usageSource"
+                                data-testid="workspace-usage-source"
+                                :data-source="usageSource"
                                 class="rounded border px-1 py-0.5 text-xs leading-none"
                                 :class="
                                     usageSource === 'real'
@@ -579,7 +621,7 @@ watch(isMobileViewport, (mobile) => {
                                         : 'border-amber-500/40 text-amber-600'
                                 "
                             >
-                                {{ usageSource }}
+                                {{ usageSourceLabel }}
                             </span>
                         </div>
                     </div>

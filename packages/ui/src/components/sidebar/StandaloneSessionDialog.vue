@@ -56,7 +56,16 @@ async function create(): Promise<void> {
     if (!principalId || creating.value) return;
     creating.value = true;
     try {
-        const record = await api.createStandaloneSession(principalId);
+        // task-52 / batch-02 ②：**默认标题走 i18n**，与工作区会话同一条口径。
+        //
+        // 原先这里不传 title ⇒ 标题由 CP 兜底 `"Untitled"`（`SessionService.normalizeTitle`）
+        // ⇒ 独立会话也是「中文界面里出现英文默认名」，与本卡要修的侧栏 `New Chat` 同一个病、
+        // 只是兜底在后端。改在调用点传值：CP 的兜底保持不动（它还要服务其它不传 title 的客户端），
+        // 前端不再把「未命名」这件事交给别人的语言环境决定。
+        const record = await api.createStandaloneSession(
+            principalId,
+            t("workspace.sessionDefaultTitle"),
+        );
         sessionStore.addWorkspacelessSession(record);
         emit("created", record.id);
         emit("close");

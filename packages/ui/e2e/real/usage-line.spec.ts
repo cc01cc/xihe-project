@@ -103,10 +103,15 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
         const lineText = (await usageLine.textContent()) ?? "";
         // tokens segment (in <n> · out <n>)
         expect(lineText).toMatch(/in \d+ · out \d+/);
-        // cost segment: $number, 未映射, or — (fallback)
-        expect(lineText).toMatch(/(\$\d|未映射|—)/);
-        // source badge: real | estimated | fallback
-        expect(lineText).toMatch(/real|estimated|fallback/);
+        // cost segment: $number, 未定价（无价目表条目）, or —（无 token 计数时的用量兜底）
+        //
+        // task-52 / batch-02 ①：原断言钉的是内部术语 `未映射`（CP `UsageCostMapper` 的
+        // `"unmapped"` 原始标记）。用户看不出「未映射」= 「这个模型没有价目表条目」⇒ 前端改成
+        // 「未定价」。**CP 的 wire 值没动**（`costNote` 仍是英文原样，进 `:data-cost-note`），
+        // 改的只是展示层 —— 所以这条断言现在钉的是**用户能读到的那句话**。
+        expect(lineText).toMatch(/(\$\d|未定价|—)/);
+        // source badge: 真实计费 | 估算 | 用量兜底（原 real/estimated/fallback 三个内部标记）
+        expect(lineText).toMatch(/真实计费|估算|用量兜底/);
 
         await page.screenshot({ scale: "css", path: "usage-line-header.png", fullPage: false });
 

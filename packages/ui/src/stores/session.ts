@@ -9,6 +9,7 @@ import type {
     FileContext,
     AttachmentFile,
 } from "../types";
+import { i18n } from "../i18n";
 import { useAgentStore } from "./agent";
 import { useCheckpointStore } from "./checkpoint";
 
@@ -257,7 +258,23 @@ export const useSessionStore = defineStore("session", () => {
         else sessions.value.unshift(session);
     }
 
-    async function createSession(agentPrincipalId: string, title = "New Chat"): Promise<Session> {
+    /**
+     * task-52 / batch-02（P1）：默认名 **不再用英文 `"New Chat"`**。
+     *
+     * <p>现象（截图 `.tmp/xh/b02-10-chat-full.png`）：中文界面上新建的会话在侧栏与顶栏都叫
+     * `New Chat`，旁边其它会话是中文名 —— 中文界面里出现英文默认名。真因就在这一行：
+     * **默认标题是前端硬编码**，CP 只在标题为空时兜底 `"Untitled"`（`SessionService.normalizeTitle`），
+     * 而前端永远先填了 `"New Chat"` ⇒ 那个兜底根本没机会生效。所以修在**前端 i18n 层**，
+     * 不动 CP（改 CP 的兜底值只会影响没走这条路径的创建者）。</p>
+     *
+     * <p>为什么用 `i18n.global.t` 而不是 `useI18n()`：store 是 setup 之外的单例，没有组件实例；
+     * 语言的切换由 `applyLocale` 写进 `i18n.global.locale`，所以这里读到的**永远是当前语言**
+     *（不是 store 初始化时那一版）。</p>
+     */
+    async function createSession(
+        agentPrincipalId: string,
+        title = i18n.global.t("workspace.sessionDefaultTitle"),
+    ): Promise<Session> {
         if (createPromise) return createPromise;
         createPromise = (async () => {
             const response = await api.createSession(agentPrincipalId, title),

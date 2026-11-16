@@ -93,7 +93,10 @@ describe("StandaloneSessionDialog (task-373)", () => {
             .mockResolvedValue(createdRow() as never);
         const wrapper = await mountDialog();
 
-        expect(create).toHaveBeenCalledWith("p-1");
+        // task-52 / batch-02 ②：现在**显式传**本地化默认标题（原来不传 ⇒ 由 CP 兜底英文
+        // `"Untitled"`，中文界面里就露出英文）。断言走真实全局 i18n，不写死译文 ——
+        // 改回「不传 title」⇒ 实收 `("p-1")` 与本行不符，会红。
+        expect(create).toHaveBeenCalledWith("p-1", i18n.global.t("workspace.sessionDefaultTitle"));
         expect(wrapper.emitted("created")?.[0]).toEqual([SESSION_ID]);
         expect(wrapper.emitted("close")).toHaveLength(1);
         expect(useSessionStore().workspacelessSessions.map((item) => item.id)).toEqual([
@@ -117,7 +120,7 @@ describe("StandaloneSessionDialog (task-373)", () => {
         await wrapper.get('[data-testid="standalone-dialog-agent-p-2"]').trigger("click");
         await wrapper.get('[data-testid="standalone-dialog-confirm"]').trigger("click");
         await flushPromises();
-        expect(create).toHaveBeenCalledWith("p-2");
+        expect(create).toHaveBeenCalledWith("p-2", i18n.global.t("workspace.sessionDefaultTitle"));
         wrapper.unmount();
     });
 

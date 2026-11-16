@@ -148,6 +148,40 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
             "Session title",
         );
     });
+
+    /**
+     * task-52 / batch-02（P1-3，D-1703）：**同名不同物**必须能看出来。
+     *
+     * <p>现象：侧栏会话行与顶栏页签都渲染同一个 `title`，两者外观要素（圆角、字号相邻、
+     * 无图标差异）不足以让人分清「这行是会话项」还是「这是页签」。修法是给页签加**窗口图标**
+     * （身份差异，与侧栏的对话气泡图标区分），本用例钉的就是这个差异存在。</p>
+     *
+     * <p>承重点（变异）：把 `WorkspaceTabBar` 里那个 `AppWindow` 图标删掉 / 换成与侧栏同款
+     * `MessageSquareText` ⇒ 本行红（找不到 `workspace-tab-identity`，或它与侧栏图标同名）。
+     * 另钉一条**语义**承重：页签的角色是 `tab`（与侧栏会话行的 button/link 不同），
+     * 所以「视觉差异」不是唯一区分手段 —— 读屏用户靠角色区分，两者都要在。</p>
+     */
+    it("keeps the tab visually distinct from the sidebar session row (same title, different object)", async () => {
+        useSessionStore().sessions = [
+            {
+                id: "session-1",
+                title: "Session title",
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                workspaceId: "workspace-1",
+                context: { agents: [] },
+            } as never,
+        ];
+        useSessionStore().currentSessionId = "session-1";
+        const wrapper = mountBar();
+        await flushPromises();
+
+        const trigger = wrapper.get('[data-testid="workspace-tab-session-session-1"]');
+        // ① 身份图标在页签里（不在侧栏会话行里）。
+        expect(trigger.find('[data-testid="workspace-tab-identity"]').exists()).toBe(true);
+        // ② 页签的可访问角色是 tab —— 与侧栏会话行（可激活的列表项）不是同一个角色。
+        expect(trigger.attributes("role")).toBe("tab");
+    });
 });
 
 describe("WorkspaceTabBar storage hygiene (PLAN-0582 S3a audit P1-1)", () => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from "vue";
 import { useI18n } from "vue-i18n";
-import { X } from "@lucide/vue";
+import { AppWindow, X } from "@lucide/vue";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import type { ContainerId } from "../lib/containers";
 import type { ContainerRowKeyPayload, MoveDirection } from "../lib/containerTabNav";
@@ -139,6 +139,19 @@ const activeTab = computed<string>({
                         :class="tab.id === activeId ? 'font-medium' : ''"
                         @click="emit('select', tab.id)"
                     >
+                        <!--
+                            task-52 / batch-02 ②（P1-3，`D-1703`）：**同名不同物**要能在视觉上分开。
+                            侧栏会话行与本页签行渲染的是**同一个 title**，原先两者外观要素几乎一致
+                            ⇒ 用户分不清「这一行是会话（点进去换会话）」还是「这是页签（换容器内视图）」。
+                            这里加一个「窗口」图标（`AppWindow`）作为**页签身份**：
+                            与侧栏会话行的对话气泡（`MessageSquareText`）语义相对 —— 页签=窗口、
+                            会话=对话。图标走 `aria-hidden`，读屏靠 `role="tab"` 区分，不依赖图标。
+                        -->
+                        <AppWindow
+                            data-testid="workspace-tab-identity"
+                            class="mr-1 size-3 shrink-0 opacity-60"
+                            aria-hidden="true"
+                        />
                         <span class="truncate">{{ tab.label }}</span>
                     </TabsTrigger>
                     <button

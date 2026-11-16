@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { X } from "@lucide/vue";
+import { AppWindow, X } from "@lucide/vue";
 // BL-476 L1 pilot: the hand-rolled `role="tablist"` markup is replaced by the
 // vendored reka `Tabs` primitives (see src/components/ui/VENDOR.md); reka owns
 // role/aria-selected/roving-focus, the bar keeps owning navigation + persistence.
@@ -304,6 +304,20 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
                             @click="selectTab(tab)"
                             @keydown="onTabKeydown($event, tab)"
                         >
+                            <!--
+                                task-52 / batch-02 ②（P1，截图 `.tmp/xh/b02-10-chat-full.png`）：
+                                侧栏会话行与顶栏页签原本长一个样（同样的圆角+同样的文字），
+                                而它们是**两个不同的东西**（一行是会话项、一个是页签），
+                                同名不同物 ⇒ 用户点错。这里给页签加一个「窗口」图标做**身份差异**，
+                                与侧栏会话行的 `MessageSquareText`（对话气泡）区分开：
+                                图标语义即位置语义（页签=窗口、会话=对话）。
+                                不改成大写字/加粗：那会与 side-bar 行的字重打架，也让页签看起来像标题。
+                            -->
+                            <AppWindow
+                                data-testid="workspace-tab-identity"
+                                class="size-3.5 shrink-0 opacity-60"
+                                aria-hidden="true"
+                            />
                             <span class="truncate">{{ tab.label }}</span>
                         </TabsTrigger>
                         <button
