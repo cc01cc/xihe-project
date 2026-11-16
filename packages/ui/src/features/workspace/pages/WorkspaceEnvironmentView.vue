@@ -5,6 +5,14 @@ import { useI18n } from "vue-i18n";
 import { api, ApiError, isExecutionModeSwitchProbeFailure } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
 import { Button } from "../../../components/ui/button";
+// task-31：确认层换 vendor AlertDialog（与同页「删除工作区」、成员移除、任务移除同族）。
+import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
+import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCancel.vue";
+import AlertDialogContent from "../../../components/ui/alert-dialog/AlertDialogContent.vue";
+import AlertDialogDescription from "../../../components/ui/alert-dialog/AlertDialogDescription.vue";
+import AlertDialogFooter from "../../../components/ui/alert-dialog/AlertDialogFooter.vue";
+import AlertDialogHeader from "../../../components/ui/alert-dialog/AlertDialogHeader.vue";
+import AlertDialogTitle from "../../../components/ui/alert-dialog/AlertDialogTitle.vue";
 import { discloseHostPath, type HostPathPrincipal } from "../lib/hostPathDisclosure";
 import { logger } from "../../../lib/logger";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
@@ -786,38 +794,55 @@ onBeforeUnmount(stopPolling);
                     </button>
                 </div>
 
-                <div
-                    v-if="releaseConfirmOpen"
-                    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-                    data-testid="workspace-release-confirm"
+                <!--
+                    task-31（ui-2 自审 batch-1 A/B 维，读数 `readings/verify4.json releaseOverlay`）：
+                    改前这里是**自绘遮罩**（`div` + `fixed inset-0 bg-black/40`），实测
+                    `role=null` / `aria-modal=null` / `focusInside=false` / `escClosed=false`；
+                    而同页「删除工作区」用的是 vendor `AlertDialog`（role / Esc / 焦点都正常）
+                    ⇒ 同一页两套确认交互。按「控件优先用栈内 UI 库」换成 `AlertDialog`
+                    （与成员移除、自动化任务移除同一个原语）。
+
+                    两条实现要点：
+                    ① 确认按钮是**普通 `Button`**，不是 `AlertDialogAction` —— 后者点击后
+                       无条件关窗（reka 的 DialogClose 包装），而本动作有副作用、还要在框内
+                       显示 `releasing` 与 `releaseError` ⇒ 顺序必须是「先取 payload → 请求 →
+                       成功才关」（packages/ui/AGENTS.md §Reka UI 交互陷阱 / task-312）。
+                    ② `aria-modal="true"` 由我们显式给：reka-ui 的 `AlertDialogContent`
+                       **不产**这个属性（`dist/Dialog/DialogContentImpl.js` 只设
+                       aria-labelledby/describedby），而本仓既有弹窗一律显式补
+                       （BaseModal / AttachmentPreviewDialog / ResourcesLayout / SessionList）。
+                -->
+                <AlertDialog
+                    :open="releaseConfirmOpen"
+                    @update:open="(value: boolean) => (releaseConfirmOpen = value)"
                 >
-                    <div class="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
-                        <p class="text-sm font-medium">{{ t("workspace.releaseConfirmTitle") }}</p>
-                        <p class="mt-2 text-xs text-muted-foreground">
-                            {{ t("workspace.releaseConfirmBody") }}
-                        </p>
-                        <p v-if="releaseError" class="mt-2 text-xs text-destructive">
+                    <AlertDialogContent data-testid="workspace-release-confirm" aria-modal="true">
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>{{
+                                t("workspace.releaseConfirmTitle")
+                            }}</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                {{ t("workspace.releaseConfirmBody") }}
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <p v-if="releaseError" class="text-sm text-destructive">
                             {{ releaseError }}
                         </p>
-                        <div class="mt-4 flex justify-end gap-2">
-                            <button
-                                class="px-3 py-1.5 text-sm rounded border hover:bg-muted"
-                                data-testid="workspace-release-cancel"
-                                @click="releaseConfirmOpen = false"
-                            >
+                        <AlertDialogFooter>
+                            <AlertDialogCancel data-testid="workspace-release-cancel">
                                 {{ t("workspace.cancel") }}
-                            </button>
-                            <button
-                                class="px-3 py-1.5 text-sm rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                            </AlertDialogCancel>
+                            <Button
+                                variant="destructive"
                                 :disabled="releasing"
                                 data-testid="workspace-release-confirm-button"
-                                @click="handleRelease"
+                                @click="() => void handleRelease()"
                             >
                                 {{ t("workspace.releaseConfirmAction") }}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                            </Button>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
 
                 <div class="grid gap-5 md:grid-cols-2">
                     <article class="rounded-lg border p-5">

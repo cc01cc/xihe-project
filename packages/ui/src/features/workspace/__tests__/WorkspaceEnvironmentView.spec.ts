@@ -120,12 +120,32 @@ function job(overrides: Record<string, unknown>) {
     };
 }
 
-async function mountView(): Promise<VueWrapper> {
+async function mountView(options: { attachTo?: boolean } = {}): Promise<VueWrapper> {
     const wrapper = mount(WorkspaceEnvironmentView, {
+        // task-31：确认层换成 vendor AlertDialog 后，焦点断言需要真实挂到 document 上。
+        ...(options.attachTo ? { attachTo: document.body } : {}),
         global: { plugins: [i18n] },
     });
     await flushPromises();
     return wrapper;
+}
+
+/**
+ * task-31：确认层是 vendor `AlertDialog` —— 内容 teleport 到 `document.body`，且 Portal 在
+ * nextTick 之后才挂上 ⇒ 断言不能再走 `wrapper.find`，统一 body 查询 + 轮询。
+ */
+/** 关闭确认层（Esc 等价路径）—— 先关再 unmount，避免焦点恢复打到已卸载的触发按钮上。 */
+function closeDialog(): void {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+}
+
+async function waitForDialog(): Promise<HTMLElement> {
+    let dialog: HTMLElement | null = null;
+    await vi.waitFor(() => {
+        dialog = document.body.querySelector('[data-testid="workspace-release-confirm"]');
+        expect(dialog).toBeTruthy();
+    });
+    return dialog!;
 }
 
 beforeEach(() => {
@@ -548,10 +568,16 @@ describe("WorkspaceEnvironmentView runtime release (PLAN-0391)", () => {
     });
 
     it("confirms then calls the release API with a non-empty idempotency key", async () => {
-        const wrapper = await mountView();
+        const wrapper = await mountView({ attachTo: true });
         await wrapper.get('[data-testid="workspace-runtime-release"]').trigger("click");
-        expect(wrapper.find('[data-testid="workspace-release-confirm"]').exists()).toBe(true);
-        await wrapper.get('[data-testid="workspace-release-confirm-button"]').trigger("click");
+        // task-31 后确认层是 vendor AlertDialog ⇒ 内容 teleport 到 body，断言走 document。
+        const dialog = await waitForDialog();
+        expect(dialog).toBeTruthy();
+        (
+            document.body.querySelector(
+                '[data-testid="workspace-release-confirm-button"]',
+            ) as HTMLButtonElement
+        ).click();
         await flushPromises();
 
         expect(mockedApi.releaseWorkspaceRuntime).toHaveBeenCalledTimes(1);
@@ -1297,5 +1323,80 @@ describe("WorkspaceEnvironmentView 不把 i18n key 当文字渲染（task-91）"
         ).toBe(false);
         const cell = wrapper.get('[data-testid="workspace-execution-spec-status"]');
         expect(cell.text()).toBe(messageIn("zh-CN", "workspace.environmentStatus.assigned"));
+    });
+});
+
+/**
+ * task-31（ui-2 自审 batch-1 的 S/I 趟）：改前「释放运行资源」的确认层是**自绘遮罩**，
+ * 读数 `readings/verify4.json releaseOverlay` = `role:null / ariaModal:null /
+ * focusInside:false / escClosed:false`；而同页其它确认用的是 vendor `AlertDialog`
+ * （role=alertdialog、Esc 可关、焦点进框）⇒ 同一页两套确认交互。
+ *
+ * <p>下面四条逐条对卡面验收：①role+aria-modal（+ 名字来自标题）②焦点在弹层内
+ * ③Esc 关闭 ④关闭后焦点回触发按钮；⑤补一条「取消不触发副作用」。</p>
+ */
+describe("WorkspaceEnvironmentView 释放确认层的对话框语义（task-31）", () => {
+    it("① 是模态对话框：role=alertdialog + aria-modal + 可访问名来自标题", async () => {
+        const wrapper = await mountView({ attachTo: true });
+        await wrapper.get('[data-testid="workspace-runtime-release"]').trigger("click");
+        const dialog = await waitForDialog();
+
+        expect(dialog.getAttribute("role")).toBe("alertdialog");
+        // reka 不产 aria-modal（源码只设 labelledby/describedby）⇒ 本仓既有做法是显式补，
+        // 五个弹窗同一写法（BaseModal / AttachmentPreviewDialog / ResourcesLayout / SessionList）。
+        expect(dialog.getAttribute("aria-modal")).toBe("true");
+        const labelledBy = dialog.getAttribute("aria-labelledby");
+        expect(labelledBy).toBeTruthy();
+        expect(document.getElementById(labelledBy!)?.textContent).toContain("确认释放运行资源？");
+        closeDialog();
+        await flushPromises();
+        wrapper.unmount();
+    });
+
+    it("② 打开后焦点进入弹层（落在「取消」上，安全默认）", async () => {
+        const wrapper = await mountView({ attachTo: true });
+        await wrapper.get('[data-testid="workspace-runtime-release"]').trigger("click");
+        const dialog = await waitForDialog();
+
+        await vi.waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+        expect((document.activeElement as HTMLElement).textContent?.trim()).toBe("取消");
+        closeDialog();
+        await flushPromises();
+        wrapper.unmount();
+    });
+
+    it("③ Esc 关闭 ④ 关闭后焦点回到触发按钮", async () => {
+        const wrapper = await mountView({ attachTo: true });
+        const trigger = wrapper.get('[data-testid="workspace-runtime-release"]');
+        (trigger.element as HTMLElement).focus();
+        await trigger.trigger("click");
+        const dialog = await waitForDialog();
+        await vi.waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await flushPromises();
+        await vi.waitFor(() =>
+            expect(
+                document.body.querySelector('[data-testid="workspace-release-confirm"]'),
+            ).toBeNull(),
+        );
+        await vi.waitFor(() => expect(document.activeElement).toBe(trigger.element));
+        wrapper.unmount();
+    });
+
+    it("⑤ 取消关闭且不触发释放副作用", async () => {
+        const wrapper = await mountView({ attachTo: true });
+        await wrapper.get('[data-testid="workspace-runtime-release"]').trigger("click");
+        await waitForDialog();
+
+        (
+            document.body.querySelector(
+                '[data-testid="workspace-release-cancel"]',
+            ) as HTMLButtonElement
+        ).click();
+        await flushPromises();
+
+        expect(mockedApi.releaseWorkspaceRuntime).not.toHaveBeenCalled();
+        wrapper.unmount();
     });
 });
