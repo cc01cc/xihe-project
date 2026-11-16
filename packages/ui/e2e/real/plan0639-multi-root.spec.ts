@@ -266,8 +266,13 @@ test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () =
         // M2 已实现分组渲染（FileTreePanel rootGroups，PLAN-0639 M2）；但**第二根默认收起是设计**
         // （stores/workspace.ts:551-555 isRootExpanded：只有 primaryRoot 自动展开，其余等用户选择；
         //   单测 fileTreeRoots.spec.ts:112「expansion gates loading」已钉住）。
-        // 注意：这条断言红**不再**代表产品缺口 —— 旧注释「M1 若未实现树分组渲染」已过期，
-        // 分组渲染早已实现；此处「找不到 beta 文件」的真实含义是该组未展开（补前置见后续提交）。
+        // ⇒ 旧注释「M1 若未实现树分组渲染，此断言红 = 产品缺口如实呈现」已过期（组头能渲染）。
+        // ⇒ 但**这条断言红仍是产品缺陷，不是 spec 缺前置**：已实测把「点开第二根组头」前置补上、
+        //   aria-expanded=true 断言通过后，beta 文件**依然不可见**（该前置因依赖 task-85 修复，
+        //   暂未随本笔提交）⇒ 真因是 runtime 的 MCP executor 路径不读 rootId、静默回退主根
+        //   （task-85；D39-5「serving the wrong root would be a boundary lie」明确禁止此行为）。
+        // ⇒ 修这条红要改 runtime 的 executor，不是改本 spec、也不是再补前置。
+
         const betaEntry = page.getByRole("button", { name: BETA_FILE, exact: true });
         await expect(
             betaEntry,

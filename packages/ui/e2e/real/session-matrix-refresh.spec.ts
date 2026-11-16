@@ -168,10 +168,23 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
                 defaultModelName: FAKE_LLM_MODEL,
             },
         );
+        // task-174：显式钉定建会话用的连接与模型身份，不依赖隐式解析。
+        // 动机（这条不是防御性编码，是实测出来的）：隐式解析让「重跑」本身不可信 ——
+        // 同一栈上若已有别的 READY 连接，重跑会拿到 400 PROVIDER_CONNECTION_AMBIGUOUS（
+        // G2 创建门把「多条 READY 候选」显式化），于是「重跑验证红是否还在」这件事
+        // 变成不可判：你无法区分「问题还在」与「这次撞了歧义」。显式传 id 后重跑才有意义。
+        // providerConnectionId 指向本 spec 自己刚建的连接 ⇒ 断言什么就绑什么。
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: owner.token, workspaceId: owner.workspaceId },
-            { principalId, title: `r8-refresh-${NONCE}`, workspaceId: owner.workspaceId },
+            {
+                principalId,
+                title: `r8-refresh-${NONCE}`,
+                workspaceId: owner.workspaceId,
+                providerConnectionId: connectionId,
+                modelProvider: "openai",
+                modelName: FAKE_LLM_MODEL,
+            },
         );
         rootBranchId = await getRootBranchId(request, sessionId, ownerHeaders);
 
