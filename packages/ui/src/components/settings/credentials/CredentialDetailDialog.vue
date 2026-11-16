@@ -252,7 +252,7 @@ function formatTime(value?: string | null): string {
                     <div
                         v-if="confirmingDelete"
                         data-testid="credentials-delete-confirm"
-                        class="space-y-3 rounded-md border border-destructive/30 bg-destructive/10 p-3"
+                        class="space-y-3 rounded-md border border-destructive/30 bg-background p-3"
                     >
                         <p class="text-sm text-destructive">{{ t("credentials.deleteDesc") }}</p>
                         <div v-if="referencesLoading" class="text-xs text-muted-foreground">

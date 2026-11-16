@@ -47,7 +47,7 @@ function badgeClass(state: string): string {
         case "restarting":
             return "border-amber-500/50 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
         case "failed":
-            return "border-destructive/50 bg-destructive/10 text-destructive";
+            return "border-destructive/50 bg-background text-destructive";
         case "stopped":
             return "border-border bg-muted text-muted-foreground";
         default:
@@ -169,7 +169,7 @@ defineExpose({ load, showStale });
                 }}</span>
                 <span
                     v-if="reasonText(row)"
-                    class="max-w-[20rem] truncate rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-xs text-destructive"
+                    class="max-w-[20rem] truncate rounded border border-destructive/40 bg-background px-2 py-0.5 text-xs text-destructive"
                     :title="reasonText(row)"
                     data-testid="mcp-server-reason"
                     >{{ reasonText(row) }}</span

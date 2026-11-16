@@ -580,7 +580,7 @@ function cancelRoleEdit() {
             <div
                 v-if="ceilingUncovered.length > 0"
                 data-testid="agent-role-ceiling-warning"
-                class="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive"
+                class="rounded-md border border-destructive/30 bg-background p-2 text-xs text-destructive"
             >
                 <p>{{ t("credentials.roleCeilingBlocked") }}</p>
                 <ul class="mt-1 list-disc pl-4">

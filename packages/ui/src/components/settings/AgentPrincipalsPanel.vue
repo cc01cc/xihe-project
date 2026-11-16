@@ -344,7 +344,7 @@ onMounted(refresh);
             <p
                 v-if="formError"
                 data-testid="agent-principals-create-error"
-                class="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive"
+                class="rounded-md border border-destructive/30 bg-background p-2 text-sm text-destructive"
             >
                 {{ formError }}
             </p>
@@ -372,7 +372,7 @@ onMounted(refresh);
         <div
             v-if="loadError"
             data-testid="agent-principals-error"
-            class="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+            class="mb-4 rounded-md border border-destructive/30 bg-background p-3 text-sm text-destructive"
         >
             {{ loadError }}
         </div>
@@ -504,7 +504,7 @@ onMounted(refresh);
                     <p
                         v-if="bindError"
                         data-testid="agent-principals-bind-error"
-                        class="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive"
+                        class="rounded-md border border-destructive/30 bg-background p-2 text-sm text-destructive"
                     >
                         {{ bindError }}
                     </p>

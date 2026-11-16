@@ -309,7 +309,7 @@ async function submitReveal(): Promise<void> {
             <p
                 v-if="actionError"
                 data-testid="instance-credentials-action-error"
-                class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                class="rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive"
             >
                 {{ actionError }}
             </p>

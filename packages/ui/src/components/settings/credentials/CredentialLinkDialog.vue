@@ -88,7 +88,7 @@ async function link(connection: ProviderConnection) {
             <div
                 v-if="error"
                 data-testid="credentials-link-error"
-                class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+                class="rounded-md border border-destructive/30 bg-background p-3 text-sm text-destructive"
             >
                 {{ error }}
             </div>

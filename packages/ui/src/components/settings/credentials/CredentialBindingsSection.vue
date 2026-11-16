@@ -239,7 +239,7 @@ void loadWorkspaces();
         <p
             v-if="error"
             data-testid="credential-bind-error"
-            class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            class="rounded-md border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive"
         >
             {{ error }}
         </p>

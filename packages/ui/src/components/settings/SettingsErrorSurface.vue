@@ -112,7 +112,7 @@ const { t } = useI18n(),
         v-else-if="cause"
         data-testid="settings-error-panel"
         role="alert"
-        class="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+        class="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-background px-3 py-2.5 text-sm text-destructive"
     >
         <span class="min-w-0">{{ errorCopy }}</span>
         <Button

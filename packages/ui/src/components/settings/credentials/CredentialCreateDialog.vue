@@ -420,7 +420,7 @@ async function submit() {
                 <p
                     v-if="serverErrors.__form"
                     data-testid="credentials-create-error"
-                    class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    class="rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm text-destructive"
                 >
                     {{ serverErrors.__form }}
                 </p>
