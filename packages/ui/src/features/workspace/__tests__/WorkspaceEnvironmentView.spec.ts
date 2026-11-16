@@ -783,6 +783,10 @@ const ENVIRONMENT_MESSAGE_KEYS = [
     "environmentValueUnknown",
     "environmentValueNone",
     "environmentValueNotObserved",
+    // task-91：executionSpec/assignment 整个缺失时的「未探测」态文案（含提示句）。
+    // 这两个键此前两侧都缺 ⇒ 该状态把裸 key 当文字渲染出去。
+    "environmentStatusUnprobed",
+    "environmentStatusUnprobedHint",
     "environmentCapabilityAvailable",
     "environmentCapabilityUnavailable",
     "environmentCapabilityReasonUnknown",
@@ -1214,5 +1218,84 @@ describe("WorkspaceEnvironmentView 执行配置细节（task-53 item 1/2/3）", 
         // destructive 的视觉语言（text-destructive / border-destructive）不得出现在这里：
         // 该动作可逆（不删文件，下次自动重建），红色应留给真正不可逆的动作。
         expect(release.classes().join(" ")).not.toMatch(/destructive/);
+    });
+});
+
+/**
+ * task-91：**渲染层**裸键判据。
+ *
+ * <p>为什么单测要钉这一条：裸键是「看起来有字、实际没话说」—— 页面不报错、类型不报、
+ * 单测不崩，只有人眼能发现（与 aria-label 挂在无 role 根上同族）。此前
+ * executionSpec / assignment 整个缺失时走 t("workspace.environmentStatusUnprobed")，
+ * 而 zh-CN / en-US **两侧都没有这个键** ⇒ 用户直接看到一串 key。
+ * 静态侧已有 scripts/i18n-scan.mjs（mise lint:i18n）覆盖全仓，本组补的是**真的跑一遍渲染**
+ * 这一层：它连「键存在但运行时没取到」这类静态扫描看不见的情况也能抓到。</p>
+ *
+ * <p>断言刻意写窄：**只查 workspace. 前缀**。放宽成任意 a.b 会误伤版本号（1.2.3）、
+ * 路径（src/views/AuditView.vue）这类正常文本 —— 一条会假红的判据最终会被绕过，宁可窄。</p>
+ */
+describe("WorkspaceEnvironmentView 不把 i18n key 当文字渲染（task-91）", () => {
+    /** 形如 workspace.xxx 的裸键（窄判据：仅本页命名空间）。 */
+    const BARE_WORKSPACE_KEY = /\bworkspace\.[a-zA-Z][a-zA-Z0-9]*/;
+
+    function bareKeys(wrapper: VueWrapper): string[] {
+        return wrapper.text().match(BARE_WORKSPACE_KEY) ?? [];
+    }
+
+    it("未探测态（executionSpec / assignment 都缺）不渲染裸键，且说清「是什么 + 能做什么」", async () => {
+        applyLocale("zh-CN");
+        // environment() 夹具本身不带 executionSpec / assignment ⇒ 正是「未探测」这一支。
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("windows-host") as never);
+
+        const wrapper = await mountView();
+
+        // 判据④：整页不得出现任何 workspace.xxx 裸键。
+        expect(bareKeys(wrapper), "未探测态渲染出了裸 i18n key").toEqual([]);
+
+        const cell = wrapper.get('[data-testid="workspace-execution-spec-status"]');
+        expect(cell.text()).toContain(messageIn("zh-CN", "workspace.environmentStatusUnprobed"));
+
+        // 判据②：不是「未探测」三个字了事 —— 提示句必须在场（说清状态与可做的动作）。
+        const hint = wrapper.get('[data-testid="workspace-execution-spec-unprobed-hint"]');
+        expect(hint.text()).toBe(messageIn("zh-CN", "workspace.environmentStatusUnprobedHint"));
+        expect(hint.text().length).toBeGreaterThan(10);
+
+        // 正例锚：两个键真的两侧都有词条（删掉任一 ⇒ 上面的 toBe/toContain 立刻红）。
+        expect(messageIn("zh-CN", "workspace.environmentStatusUnprobed")).not.toBe("");
+        expect(messageIn("zh-CN", "workspace.environmentStatusUnprobedHint")).not.toBe("");
+    });
+
+    it("en-US 未探测态同样不渲染裸键（两侧都缺才叫键漏）", async () => {
+        applyLocale("en-US");
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("windows-host") as never);
+
+        const wrapper = await mountView();
+
+        expect(bareKeys(wrapper), "en-US 未探测态渲染出了裸 i18n key").toEqual([]);
+        const hint = wrapper.get('[data-testid="workspace-execution-spec-unprobed-hint"]');
+        expect(hint.text()).toBe(messageIn("en-US", "workspace.environmentStatusUnprobedHint"));
+        // 两侧必须真的不同（同一串复制两份不算翻译）。
+        expect(messageIn("en-US", "workspace.environmentStatusUnprobedHint")).not.toBe(
+            messageIn("zh-CN", "workspace.environmentStatusUnprobedHint"),
+        );
+        // 复原全局 locale，避免影响后续用例（applyLocale 是全局态）。
+        applyLocale("zh-CN");
+    });
+
+    it("已探测态不出现「未探测」提示（提示只属于缺快照那一支）", async () => {
+        applyLocale("zh-CN");
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            executionSpec: { status: "assigned", generation: 1, sandboxSpecHash: "a".repeat(41) },
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(bareKeys(wrapper)).toEqual([]);
+        expect(
+            wrapper.find('[data-testid="workspace-execution-spec-unprobed-hint"]').exists(),
+        ).toBe(false);
+        const cell = wrapper.get('[data-testid="workspace-execution-spec-status"]');
+        expect(cell.text()).toBe(messageIn("zh-CN", "workspace.environmentStatus.assigned"));
     });
 });

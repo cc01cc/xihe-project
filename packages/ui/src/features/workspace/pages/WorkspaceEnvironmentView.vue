@@ -404,14 +404,25 @@ function statusLabel(value: string): string {
 }
 
 /**
+ * task-91：执行配置快照 —— `executionSpec` 优先，旧的 `assignment` 兜底。
+ *
+ * <p>**两者都缺 ≠ status 值不认识**：前者是「服务端还没探测到这一层」，后者是「有快照但值不在词表里」。
+ * 原先模板在同一处重复三遍这个取值表达式，且「未探测」分支用了两侧都不存在的
+ * `workspace.environmentStatusUnprobed` ⇒ 用户看到的是裸 key。这里收敛成一个 computed，
+ * 让「未探测」只剩一个判断点。</p>
+ */
+const executionSpecSnapshot = computed(
+    () => environment.value?.executionSpec ?? environment.value?.assignment ?? null,
+);
+
+/**
  * task-53 item 1：执行配置摘要（41 位 hex）。**不折行**是判据的一部分 —— 原先是
  * `break-all` 让它在字符串中间折断（`…e83b10` / `c060f61caaff8a`），一个值看起来像两个。
  * 这里只在可见层截断（CSS `truncate`，完整值留在 `title` 与复制按钮里），
  * 所以「缩短显示」不等于「丢失信息」。
  */
 const specDigest = computed(() => {
-    const raw = (environment.value?.executionSpec ?? environment.value?.assignment)
-        ?.sandboxSpecHash;
+    const raw = executionSpecSnapshot.value?.sandboxSpecHash;
     return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
 });
 
@@ -865,30 +876,27 @@ onBeforeUnmount(stopPolling);
                                     {{ t("workspace.environmentFieldStatus") }}
                                 </dt>
                                 <dd
-                                    :title="
-                                        (environment.executionSpec ?? environment.assignment)
-                                            ?.status ?? ''
-                                    "
-                                    :data-value="
-                                        (environment.executionSpec ?? environment.assignment)
-                                            ?.status ?? ''
-                                    "
+                                    data-testid="workspace-execution-spec-status"
+                                    :title="executionSpecSnapshot?.status ?? ''"
+                                    :data-value="executionSpecSnapshot?.status ?? ''"
                                 >
                                     {{
                                         // task-53 item 2 第二层：整个 executionSpec 缺失（CP 未给 / 未探测）
                                         // 与「值不认识」是两件事 —— 前者应说「未探测」，后者才是「未知状态」。
                                         // 把两者合并会让"还没探测"看起来像"探测结论异常"。
-                                        (
-                                            environment.executionSpec ?? environment.assignment
-                                        )?.status
-                                            ? statusLabel(
-                                                  (
-                                                      environment.executionSpec ??
-                                                      environment.assignment
-                                                  )?.status ?? "",
-                                              )
+                                        executionSpecSnapshot?.status
+                                            ? statusLabel(executionSpecSnapshot.status ?? "")
                                             : t("workspace.environmentStatusUnprobed")
                                     }}
+                                    <!-- task-91：只给状态词等于没话说，这里补一句「是什么 + 能做什么」。
+                                         形态与同卡 storageModeFrozen 的提示一致。 -->
+                                    <p
+                                        v-if="!executionSpecSnapshot?.status"
+                                        data-testid="workspace-execution-spec-unprobed-hint"
+                                        class="mt-1 text-xs text-muted-foreground"
+                                    >
+                                        {{ t("workspace.environmentStatusUnprobedHint") }}
+                                    </p>
                                 </dd>
                             </div>
                             <div class="space-y-1">
@@ -1008,10 +1016,7 @@ onBeforeUnmount(stopPolling);
                                     {{ t("workspace.environmentFieldGeneration") }}
                                 </dt>
                                 <dd>
-                                    {{
-                                        (environment.executionSpec ?? environment.assignment)
-                                            ?.generation ?? "—"
-                                    }}
+                                    {{ executionSpecSnapshot?.generation ?? "—" }}
                                 </dd>
                             </div>
                             <div class="flex justify-between gap-4">

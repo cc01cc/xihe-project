@@ -1333,6 +1333,13 @@ const messages = {
                 unassigned: "尚未分配执行配置",
             },
             environmentStatusUnknown: "未知状态",
+            // task-91：executionSpec / assignment 整个缺失 = 「还没探测」，与「值不认识」（未知状态）
+            // 是两件事。原先前者直接 t("…Unprobed") 而两侧都没有这个键 ⇒ 页面渲染裸 key。
+            // 文案要说清「是什么状态」+「能做什么」，只写「未探测」等于没话说（与 aria-label 挂在
+            // 无 role 根上同族）。
+            environmentStatusUnprobed: "尚未探测",
+            environmentStatusUnprobedHint:
+                "服务端还没有返回这一层的执行配置，因此无法判断是否已分配；可点上方「刷新」重试。",
             // task-53 item 1：长摘要改为「截断 + 一键复制」后的按钮与反馈文案。
             environmentCopyDigest: "复制",
             environmentDigestCopied: "已复制摘要",
@@ -5258,6 +5265,12 @@ const messages = {
                 unassigned: "No execution spec assigned",
             },
             environmentStatusUnknown: "Unknown status",
+            // task-91: an absent executionSpec/assignment means "not probed yet" — a different
+            // thing from "the value is unrecognised" (Unknown status). The copy states both the
+            // situation and the action; "not probed" alone tells the user nothing.
+            environmentStatusUnprobed: "Not probed yet",
+            environmentStatusUnprobedHint:
+                "The server has not returned this layer's execution config yet, so whether a spec is assigned is unknown. Use Refresh above to retry.",
             environmentCopyDigest: "Copy",
             environmentDigestCopied: "Digest copied",
             environmentDigestCopyFailed: "Copy failed — select the text manually",
