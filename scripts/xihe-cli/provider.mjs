@@ -667,6 +667,9 @@ export function safeConnection(view) {
   return {
     id: view.id,
     providerId: view.providerId,
+    // The key is connection identity, not a secret: bindings, profiles and model selection all
+    // resolve against it, so list/verify must show it or the user cannot tell connections apart.
+    connectionKey: typeof view.connectionKey === 'string' ? view.connectionKey : undefined,
     label: view.label,
     scope: view.scope,
     hasKey: Boolean(view.hasKey),
@@ -717,6 +720,23 @@ export function findMatchingConnections(connections, providerId, scope) {
   return connections.filter((connection) => connection.providerId === providerId && connection.scope === scope);
 }
 
+// PLAN/task-47: CP requires a connection key on create (ProviderConnectionService.requireConnectionKey)
+// and the UI always sends one ("default", ProviderHub.vue). The CLI did not send it at all, so every
+// `provider add`/dev init create was rejected with PROVIDER_CONNECTION_KEY_INVALID. Validate locally first
+// so an illegal slug exits 2 as a usage error instead of costing a round trip to a 400.
+export const CONNECTION_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const DEFAULT_CONNECTION_KEY = 'default';
+
+export function validateConnectionKey(value) {
+  if (value === undefined) return;
+  if (typeof value !== 'string' || value === '' || value.length > 64 || !CONNECTION_KEY_PATTERN.test(value)) {
+    throw new CliError(
+      'INVALID_ARGUMENT',
+      '--connection-key must be a 1-64 character lowercase slug (a-z, 0-9, single hyphens between groups).',
+    );
+  }
+}
+
 export function validateBaseUrl(value) {
   if (value === undefined) return;
   let url;
@@ -754,7 +774,7 @@ function validateProviderBaseUrl(catalog, value) {
   }
 }
 
-export async function createConnection({ apiBase, fetchImpl, token, providerId, scope, label, apiKey, baseUrl, catalog, manualModels }) {
+export async function createConnection({ apiBase, fetchImpl, token, providerId, scope, label, apiKey, baseUrl, catalog, manualModels, connectionKey = DEFAULT_CONNECTION_KEY }) {
   const required = catalog.credential?.required !== false;
   if (required && (typeof apiKey !== 'string' || apiKey.trim() === '')) {
     throw new CliError('API_KEY_REQUIRED', 'This provider requires an API key.');
@@ -768,8 +788,10 @@ export async function createConnection({ apiBase, fetchImpl, token, providerId, 
     throw new CliError('INVALID_ARGUMENT', 'Manual model IDs require manual model discovery.');
   }
   validateProviderBaseUrl(catalog, baseUrl);
+  validateConnectionKey(connectionKey);
   const body = {
     providerId,
+    connectionKey,
     label,
     scope,
     manualModels: models,
@@ -800,6 +822,10 @@ export async function addProvider({ apiBase, fetchImpl, env, options, positional
   const providerId = positionals[0];
   const scope = normalizeScope(options['--scope']);
   const label = requireOption(options, '--label');
+  // Validated before the catalog fetch on purpose: an illegal slug is a usage error (exit 2) and
+  // must not cost a round trip, so the user learns about it without any request being sent.
+  const connectionKey = options['--connection-key'] ?? DEFAULT_CONNECTION_KEY;
+  validateConnectionKey(connectionKey);
   const catalogEntries = await getProviderCatalog({ apiBase, fetchImpl, token });
   const catalog = catalogEntries.find((entry) => entry?.id === providerId);
   if (!catalog) throw new CliError('UNSUPPORTED_PROVIDER', 'Provider ID is not present in the CP catalog.');
@@ -811,7 +837,7 @@ export async function addProvider({ apiBase, fetchImpl, env, options, positional
 
   let created;
   try {
-    created = await createConnection({ apiBase, fetchImpl, token, providerId, scope, label, apiKey, baseUrl: options['--base-url'], catalog, ...modelSettings });
+    created = await createConnection({ apiBase, fetchImpl, token, providerId, scope, label, apiKey, baseUrl: options['--base-url'], catalog, connectionKey, ...modelSettings });
   } catch (error) {
     if (error.code === 'OPERATION_OUTCOME_UNKNOWN') {
       let matches = [];
@@ -823,6 +849,17 @@ export async function addProvider({ apiBase, fetchImpl, env, options, positional
         'PROVIDER_CONNECTION_LABEL_CONFLICT',
         'Another connection for this provider already uses this label; choose a different --label.',
         { field: 'label' },
+      );
+    }
+    if (error.code === 'PROVIDER_CONNECTION_KEY_CONFLICT') {
+      // Never silently rename: the key is the identity other surfaces (bindings, profiles, model
+      // selection) resolve against, so a quiet substitution would leave the user with a connection
+      // that does not match what they asked for. Name the next step instead.
+      throw new CliError(
+        'PROVIDER_CONNECTION_KEY_CONFLICT',
+        `A connection for this provider already uses connection key "${connectionKey}". `
+        + 'Pass --connection-key <slug> to create an additional connection under a different key.',
+        { field: 'connectionKey', connectionKey },
       );
     }
     if (error.status === 400 || error.code === 'PROVIDER_CONNECTION_INVALID') {
@@ -919,11 +956,15 @@ export async function initProvider({ apiBase, fetchImpl, env, options, positiona
   if (positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'Use --provider and --scope with dev init.');
   const providerId = requireOption(options, '--provider');
   const scope = normalizeScope(options['--scope']);
+  const connectionKey = options['--connection-key'] ?? DEFAULT_CONNECTION_KEY;
+  validateConnectionKey(connectionKey);
   const matches = findMatchingConnections(await listConnections({ apiBase, fetchImpl, token }), providerId, scope);
   if (matches.length > 1) throw new CliError('CONNECTION_MATCH_AMBIGUOUS', 'More than one visible connection matched provider and scope.');
   if (matches.length === 1) {
-    const warnings = options['--api-key-env'] || options['--label'] || options['--base-url'] || options['--models']
-      ? ['Existing connection was reused unchanged; use provider update <id> to change it.']
+    const warnings = options['--api-key-env'] || options['--label'] || options['--base-url']
+      || options['--models'] || options['--connection-key']
+      ? ['Existing connection was reused unchanged; use provider update <id> to change it.'
+        + ' A connection key is immutable identity, so a different key needs provider add --connection-key <slug>.']
       : [];
     return connectionResult(await verifyConnection({ apiBase, fetchImpl, token, id: matches[0].id }), 'reused-and-verified', warnings);
   }
@@ -940,9 +981,13 @@ export async function initProvider({ apiBase, fetchImpl, env, options, positiona
 
   let created;
   try {
-    created = await createConnection({ apiBase, fetchImpl, token, providerId, scope, label, apiKey, baseUrl: options['--base-url'], catalog, ...modelSettings });
+    created = await createConnection({ apiBase, fetchImpl, token, providerId, scope, label, apiKey, baseUrl: options['--base-url'], catalog, connectionKey, ...modelSettings });
   } catch (error) {
-    if (error.code === 'OPERATION_OUTCOME_UNKNOWN' || error.status === 400 || error.code === 'PROVIDER_CONNECTION_INVALID') {
+    // dev init is the idempotent bootstrap, so a 409 key conflict usually means a concurrent init
+    // won the race: reconcile by reuse instead of failing. provider add is create-only and reports
+    // the conflict instead (see addProvider), which is why the two paths answer differently.
+    if (error.code === 'OPERATION_OUTCOME_UNKNOWN' || error.status === 400 || error.status === 409
+      || error.code === 'PROVIDER_CONNECTION_KEY_CONFLICT' || error.code === 'PROVIDER_CONNECTION_INVALID') {
       let concurrent = [];
       try { concurrent = findMatchingConnections(await listConnections({ apiBase, fetchImpl, token }), providerId, scope); } catch { /* preserve create failure */ }
       if (concurrent.length === 1) {
@@ -952,6 +997,14 @@ export async function initProvider({ apiBase, fetchImpl, env, options, positiona
       }
       if (error.code === 'OPERATION_OUTCOME_UNKNOWN') {
         throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'Create response was lost and no matching connection could be confirmed; inspect provider list before retrying.', { matches: concurrent.map((item) => item.id) });
+      }
+      if (error.code === 'PROVIDER_CONNECTION_KEY_CONFLICT' && concurrent.length === 0) {
+        throw new CliError(
+          'PROVIDER_CONNECTION_KEY_CONFLICT',
+          `Connection key "${connectionKey}" is already taken by a connection that is not visible for reuse for this scope. `
+          + 'Run provider add --connection-key <slug> to create one under a different key.',
+          { field: 'connectionKey', connectionKey },
+        );
       }
     }
     throw error;

@@ -37,6 +37,7 @@ function createView(id, patch = {}) {
     scope: 'USER',
     ownerId: 'user-1',
     baseUrl: 'https://api.xiaomimimo.com/v1',
+    connectionKey: 'default',
     hasKey: true,
     maskedKey: '****alue',
     enabled: true,
@@ -127,8 +128,16 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
     if (url.pathname === '/api/v1/provider-connections' && request.method === 'POST') {
       state.createRequests += 1;
       const body = await requestBody(request);
-      if (state.connections.some((item) => item.providerId === body.providerId && item.scope === body.scope)) {
-        json(response, 400, { code: 'PROVIDER_CONNECTION_INVALID', detail: 'A connection already exists; must not be printed' });
+      // Mirrors CP: ProviderConnectionService.requireConnectionKey rejects a missing or malformed
+      // key with this exact code. Keeping the mock faithful is what makes the CLI tests able to
+      // catch the defect this fix removes -- a lenient mock would have stayed green.
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(body.connectionKey ?? '')) {
+        json(response, 400, { code: 'PROVIDER_CONNECTION_KEY_INVALID', detail: 'invalid key; must not be printed' });
+        return;
+      }
+      if (state.connections.some((item) => item.providerId === body.providerId
+        && item.scope === body.scope && item.connectionKey === body.connectionKey)) {
+        json(response, 409, { code: 'PROVIDER_CONNECTION_KEY_CONFLICT', detail: 'duplicate key; must not be printed' });
         return;
       }
       if (body.apiKey !== TEST_KEY) {
@@ -138,6 +147,7 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
       const catalogDefaults = { xiaomi: 'remote-models', 'volcengine-ark': 'manual' };
       state.lastCreateBody = body;
       const connection = createView('connection-1', {
+        connectionKey: body.connectionKey,
         providerId: body.providerId,
         label: body.label,
         modelDiscovery: body.modelDiscovery ?? catalogDefaults[body.providerId],
@@ -280,6 +290,108 @@ test('provider add creates through CP, verifies, and never returns the key', asy
   assert.equal(verified.exitCode, 0);
   assert.equal(verified.data.connection.status, 'ready');
   assert.equal(cp.state.verifyRequests, 2);
+});
+
+test('provider add sends the default connection key so CP accepts the create', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo', '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: cp.env, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.action, 'created-and-verified');
+  // The regression this pins: the body used to omit connectionKey entirely, so CP answered 400
+  // PROVIDER_CONNECTION_KEY_INVALID for every provider and no CLI create could ever succeed.
+  assert.equal(cp.state.lastCreateBody.connectionKey, 'default');
+  assert.equal(cp.state.connections[0].connectionKey, 'default');
+});
+
+test('provider add sends an explicit connection key and lists it', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo',
+    '--api-key-env', 'XIHE_XIAOMI_API_KEY', '--connection-key', 'my-key',
+  ], { env: cp.env, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(cp.state.lastCreateBody.connectionKey, 'my-key');
+  const listed = await runCommand(['provider', 'list', '--scope', 'USER'], { env: cp.env, promptSecret: noPrompt });
+  assert.equal(listed.exitCode, 0);
+  assert.equal(listed.data.connections[0].connectionKey, 'my-key');
+});
+
+test('provider add rejects an illegal connection key locally, before sending any request', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  for (const bad of ['My-Key', 'has space', '', 'key_', '-lead']) {
+    const args = [
+      'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo',
+      '--api-key-env', 'XIHE_XIAOMI_API_KEY', '--connection-key', bad,
+    ];
+    const result = await runCommand(args, { env: cp.env, promptSecret: noPrompt });
+    assert.equal(result.exitCode, 2, `expected usage exit for ${JSON.stringify(bad)}`);
+    assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  }
+  // Usage errors must not touch the network at all: no catalog, no create, no list.
+  assert.equal(cp.state.createRequests, 0);
+  assert.equal(cp.state.catalogRequests, 0);
+  assert.equal(cp.state.listRequests, 0);
+});
+
+test('provider add surfaces a duplicate connection key as its own error and suggests the flag', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const first = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo', '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: cp.env, promptSecret: noPrompt });
+  assert.equal(first.exitCode, 0);
+
+  const duplicate = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'Second MiMo', '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: cp.env, promptSecret: noPrompt });
+  assert.equal(duplicate.exitCode, 1);
+  assert.equal(duplicate.error.code, 'PROVIDER_CONNECTION_KEY_CONFLICT');
+  // Never silently rename: the message must name the flag, and the key must be unchanged on the record.
+  assert.equal(duplicate.error.message.includes('--connection-key'), true);
+  assert.equal(cp.state.connections.length, 1);
+  assert.equal(cp.state.connections[0].connectionKey, 'default');
+
+  const distinct = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'Second MiMo',
+    '--api-key-env', 'XIHE_XIAOMI_API_KEY', '--connection-key', 'second',
+  ], { env: cp.env, promptSecret: noPrompt });
+  assert.equal(distinct.exitCode, 0);
+  assert.equal(cp.state.connections.length, 2);
+});
+
+test('provider update refuses to change the connection key and says why', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  cp.state.connections.push(createView('connection-1'));
+  const result = await runCommand([
+    'provider', 'update', 'connection-1', '--label', 'Renamed', '--connection-key', 'other',
+  ], { env: cp.env, promptSecret: noPrompt });
+
+  // CP answers KeyImmutableException for any key change, so the CLI must refuse locally rather
+  // than send a PATCH that can only fail.
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  assert.equal(result.error.message.includes('immutable'), true);
+  assert.equal(cp.state.patchRequests, 0);
+});
+
+test('dev init sends the default connection key too', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const result = await runCommand([
+    'dev', 'init', '--provider', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo', '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: cp.env, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.data.action, 'created-and-verified');
+  assert.equal(cp.state.lastCreateBody.connectionKey, 'default');
 });
 
 test('dev init reuses an existing connection and does not update its key', async (t) => {
@@ -496,7 +608,9 @@ test('create-only add does not silently reuse an existing connection', async (t)
   const duplicate = await runCommand(addArgs, { env: cp.env, promptSecret: noPrompt });
 
   assert.equal(duplicate.exitCode, 1);
-  assert.equal(duplicate.error.code, 'PROVIDER_CONNECTION_CREATE_REJECTED');
+  // The mock now answers like CP: a second create on the same provider+scope+key is a 409
+  // KEY_CONFLICT (not a generic 400), so the CLI names that conflict and points at the flag.
+  assert.equal(duplicate.error.code, 'PROVIDER_CONNECTION_KEY_CONFLICT');
   assert.equal(cp.state.connections.length, 1);
   assert.equal(cp.state.patchRequests, 0);
 });

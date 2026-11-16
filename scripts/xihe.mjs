@@ -713,7 +713,7 @@ export async function runCommand(argv, dependencies = {}) {
     }
 
     if (group === 'dev' && command === 'init') {
-      const parsed = parseCommandOptions(rest, ['--provider', '--scope', '--label', '--api-key-env', '--base-url', '--models', '--email']);
+      const parsed = parseCommandOptions(rest, ['--provider', '--scope', '--label', '--api-key-env', '--base-url', '--models', '--connection-key', '--email']);
       if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'Use --provider and --scope with dev init.');
       requireOption(parsed.values, '--provider');
       normalizeScope(parsed.values['--scope']);
@@ -923,9 +923,9 @@ export async function runCommand(argv, dependencies = {}) {
       const apiBase = getApiBase(env);
       let parsed;
       if (command === 'add') {
-        parsed = parseCommandOptions(rest, ['--scope', '--label', '--api-key-env', '--base-url', '--models', '--email']);
+        parsed = parseCommandOptions(rest, ['--scope', '--label', '--api-key-env', '--base-url', '--models', '--connection-key', '--email']);
       } else if (command === 'update') {
-        parsed = parseCommandOptions(rest, ['--label', '--api-key-env', '--base-url', '--models', '--email']);
+        parsed = parseCommandOptions(rest, ['--label', '--api-key-env', '--base-url', '--models', '--connection-key', '--email']);
       } else if (command === 'list') {
         parsed = parseCommandOptions(rest, ['--scope', '--email']);
       } else if (command === 'catalog') {
@@ -948,6 +948,16 @@ export async function runCommand(argv, dependencies = {}) {
         requireOption(parsed.values, '--label');
       } else if (command === 'update') {
         if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'provider update requires one connection ID.');
+        // The key is connection identity, not a mutable field: CP rejects any change with
+        // KeyImmutableException (ProviderConnectionService.update). Accept the flag here only to
+        // answer it with the real reason, instead of an opaque "unknown option".
+        if (parsed.values['--connection-key'] !== undefined) {
+          throw new CliError(
+            'INVALID_ARGUMENT',
+            'provider update cannot change --connection-key: the connection key is immutable identity. '
+            + 'Create a new connection with provider add --connection-key <slug> instead.',
+          );
+        }
         if (!['--label', '--base-url', '--models', '--api-key-env'].some((key) => parsed.values[key] !== undefined)) {
           throw new CliError('INVALID_ARGUMENT', 'Provide at least one explicit field to update the connection.');
         }

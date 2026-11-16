@@ -127,7 +127,7 @@ export const HELP_GROUPS = Object.freeze([
     summary: 'Developer environment checks and bootstrap',
     commands: Object.freeze([
       cmd('dev check', '[--json]', 'Check the developer environment'),
-      cmd('dev init', '--provider <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]', 'Bootstrap a provider connection'),
+      cmd('dev init', '--provider <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>] [--connection-key <slug>]', 'Bootstrap a provider connection'),
     ]),
   },
   {
@@ -164,7 +164,7 @@ export const HELP_GROUPS = Object.freeze([
     name: 'provider',
     summary: 'Provider connections and rate limits',
     commands: Object.freeze([
-      cmd('provider add', '<id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]', 'Add a provider connection'),
+      cmd('provider add', '<id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>] [--connection-key <slug>]', 'Add a provider connection'),
       cmd('provider catalog', '', 'List non-secret provider definitions'),
       cmd('provider delete', '<id> [--yes]', 'Delete a provider connection'),
       cmd('provider limit set', '--connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]', 'Set connection rate limits'),
