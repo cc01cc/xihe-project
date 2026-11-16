@@ -245,6 +245,28 @@ export function toolRefusalCopyKey(code: string | undefined | null): string | nu
             return "chat.toolRefusalSpawnFailed";
         case "ACQUIRE_EXECUTION_FAILED":
             return "chat.toolRefusalAcquireFailed";
+        // task-54: TOOL_GRANT_DENIED means "you are not allowed to do this — ask for the
+        // permission" (CP ToolRefusalCodes:52-62). It had no copy, so the user saw only the
+        // generic line; the grant-denial was the one refusal a user can actually act on.
+        case "TOOL_GRANT_DENIED":
+            return "chat.toolRefusalGrantDenied";
+        default:
+            return null;
+    }
+}
+
+/**
+ * task-54: the *actionable* half of a refusal code, kept separate from the cause line.
+ *
+ * <p>Only the grant denial has an actionable entry today. It must name the correct place
+ * ("编辑工作区角色" / Edit workspace role) <b>and</b> its real blast radius: the Session
+ * carries a frozen `agent_permissions_snapshot` (D-54 / DEV-017 §1.1), so a cap edit
+ * applies to Sessions created afterwards, not to the one that just refused.</p>
+ */
+export function toolRefusalHintKey(code: string | undefined | null): string | null {
+    switch ((code ?? "").trim()) {
+        case "TOOL_GRANT_DENIED":
+            return "chat.toolRefusalGrantDeniedHint";
         default:
             return null;
     }

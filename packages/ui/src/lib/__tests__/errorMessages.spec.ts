@@ -9,6 +9,7 @@ import {
     problemDetailText,
     PROBLEM_DETAIL_MAX_LENGTH,
     toolRefusalCopyKey,
+    toolRefusalHintKey,
 } from "../errorMessages";
 
 /**
@@ -187,12 +188,27 @@ describe("toolRefusalCopyKey (PLAN-0649 M3 / B5)", () => {
         expect(toolRefusalCopyKey("ACQUIRE_EXECUTION_FAILED")).toBe(
             "chat.toolRefusalAcquireFailed",
         );
+        // task-54: the grant denial is the one refusal a user can act on, so it must not
+        // fall through to the generic line.
+        expect(toolRefusalCopyKey("TOOL_GRANT_DENIED")).toBe("chat.toolRefusalGrantDenied");
     });
 
     it("returns null for an unmapped code so the caller shows generic copy plus the code", () => {
         expect(toolRefusalCopyKey("SOME_FUTURE_CODE")).toBeNull();
         expect(toolRefusalCopyKey("")).toBeNull();
         expect(toolRefusalCopyKey(undefined)).toBeNull();
+    });
+});
+
+describe("toolRefusalHintKey (task-54)", () => {
+    it("gives the grant denial an actionable exit naming the real UI entry", () => {
+        expect(toolRefusalHintKey("TOOL_GRANT_DENIED")).toBe("chat.toolRefusalGrantDeniedHint");
+    });
+
+    it("returns null for codes with no actionable entry, so the generic hint stays", () => {
+        expect(toolRefusalHintKey("DELEGATION_LIMIT_EXCEEDED")).toBeNull();
+        expect(toolRefusalHintKey("SOME_FUTURE_CODE")).toBeNull();
+        expect(toolRefusalHintKey(undefined)).toBeNull();
     });
 });
 

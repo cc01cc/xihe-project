@@ -3,7 +3,7 @@ import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Diagnostic, ToolCall } from "../../../../types";
 import { ApiError, api } from "../../../../composables/api";
-import { toolRefusalCopyKey } from "../../../../lib/errorMessages";
+import { toolRefusalCopyKey, toolRefusalHintKey } from "../../../../lib/errorMessages";
 import { ChevronDown } from "@lucide/vue";
 import ProcessRow from "./ProcessRow.vue";
 import type { ProcessRowActor } from "./ProcessRow.vue";
@@ -116,11 +116,23 @@ const refusalReason = computed(() => {
     // B5 ruling: an unmapped code still renders the generic line plus the raw code.
     return key ? t(key) : t("chat.toolRefusedGeneric");
 });
-const statusLabel = computed(() =>
-    refusalCode.value
-        ? t("chat.toolStatus.refused")
-        : t(`chat.toolStatus.${props.toolCall.status}`),
-);
+// task-54: an actionable code gets a code-specific exit instead of the generic
+// "adjust the task or retry later" line, which is actively wrong advice for a
+// grant denial (retrying verbatim cannot help — the permission itself is missing).
+const refusalHint = computed(() => {
+    const key = toolRefusalHintKey(refusalCode.value);
+    return key ? t(key) : t("chat.toolRefusedHint");
+});
+const statusLabel = computed(() => {
+    if (!refusalCode.value) return t(`chat.toolStatus.${props.toolCall.status}`);
+    // task-54 / D-1708: "no permission" and "waiting for your approval" are two different
+    // conclusions and must not both read as a bare "refused". A pending approval never
+    // carries a refusalCode (it surfaces as the approval modal), so this badge is the
+    // place the two can be told apart in the collapsed row.
+    return refusalCode.value === "TOOL_GRANT_DENIED"
+        ? t("chat.toolStatus.noGrant")
+        : t("chat.toolStatus.refused");
+});
 // A refusal reads as a failure even when the wire status is still `completed`
 // (older Agent, or a durable snapshot written before M2 lands).
 const statusIcon = computed(() =>
@@ -292,7 +304,7 @@ async function loadJobOutput(reset: boolean) {
             >
                 <div class="font-medium text-destructive">{{ t("chat.toolRefusedTitle") }}</div>
                 <p class="mt-0.5 text-foreground">{{ refusalReason }}</p>
-                <p class="mt-0.5 text-muted-foreground">{{ t("chat.toolRefusedHint") }}</p>
+                <p class="mt-0.5 text-muted-foreground">{{ refusalHint }}</p>
                 <p class="mt-0.5 text-muted-foreground">
                     {{ t("chat.toolRefusedCodeLabel") }}
                     <span class="font-mono" data-testid="tool-refusal-code">{{ refusalCode }}</span>

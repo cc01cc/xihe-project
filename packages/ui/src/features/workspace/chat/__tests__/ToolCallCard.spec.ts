@@ -34,6 +34,7 @@ const i18n = createI18n({
                     approved: "Approved",
                     rejected: "Rejected",
                     refused: "Refused",
+                    noGrant: "No permission",
                 },
                 // PLAN-0649 M3: refusal presentation keys.
                 toolRefusedTitle: "This call was refused and never ran",
@@ -42,6 +43,9 @@ const i18n = createI18n({
                 toolRefusedHint: "Adjust the task or retry later",
                 toolRefusalDelegationLimit: "The delegation budget is exhausted",
                 toolRefusalSpawnFailed: "Spawning the child task failed",
+                // task-54: grant-denial copy + its actionable exit.
+                toolRefusalGrantDenied: "This run was not granted the capability this tool needs",
+                toolRefusalGrantDeniedHint: "Grant the capability, then start a new session",
                 approve: "Approve",
                 reject: "Reject",
                 toolDiagnosticsTitle: "Diagnostics",
@@ -562,6 +566,26 @@ describe("ToolCallCard refusal presentation (PLAN-0649 M3)", () => {
         const block = wrapper.get('[data-testid="tool-refusal"]');
         expect(block.text()).toContain("The tool call was refused");
         expect(wrapper.get('[data-testid="tool-refusal-code"]').text()).toBe("SOME_FUTURE_CODE");
+    });
+
+    it("gives TOOL_GRANT_DENIED its own reason and an actionable exit (task-54)", async () => {
+        // The defect this pins: TOOL_GRANT_DENIED had no entry in the code→copy map, so
+        // the user got the generic "adjust the task or retry later" line — advice that
+        // cannot work, because the permission itself is missing.
+        const wrapper = mountCard({
+            toolCall: refusedCall({ refusalCode: "TOOL_GRANT_DENIED" }),
+        });
+        await wrapper.get('[data-testid="tool-card-toggle"]').trigger("click");
+
+        const block = wrapper.get('[data-testid="tool-refusal"]');
+        expect(block.text()).toContain("not granted the capability");
+        expect(block.text()).toContain("then start a new session");
+        // The generic hint must be gone: it would tell the user to do something impossible.
+        expect(block.text()).not.toContain("Adjust the task or retry later");
+        expect(wrapper.get('[data-testid="tool-refusal-code"]').text()).toBe("TOOL_GRANT_DENIED");
+        // D-1708: "no permission" must not read as the same conclusion as "awaiting approval".
+        expect(wrapper.get('[data-testid="tool-card-toggle"]').text()).toContain("No permission");
+        expect(wrapper.get('[data-testid="tool-card-toggle"]').text()).not.toContain("Refused");
     });
 
     it("treats a refusal as failed even when the wire status is still completed", () => {

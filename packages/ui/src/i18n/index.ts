@@ -1535,6 +1535,12 @@ const messages = {
                 cancelled: "已取消",
                 /** PLAN-0649：被策略/预算拒绝（不是执行报错），折叠态状态行专用。 */
                 refused: "被拒绝",
+                /**
+                 * task-54 / D-1708：权限不足 ≠ 等待审批。两者在用户眼里都是「没做成」，
+                 * 但只有前者要用户去改角色——状态行必须能分开，否则用户不知道下一步做什么。
+                 * 「等待审批」不进这里：审批是弹窗 + pending 列表，不是折叠行的终态。
+                 */
+                noGrant: "权限不足",
             },
             /*
              * PLAN-0631 D31-04/07：Run 状态的**可见语言**。文案刻意沿用 `toolStatus`/`followUpStatus`
@@ -1583,6 +1589,12 @@ const messages = {
             toolRefusalDelegationPolicy: "委托策略当前不可用，本次没有派子任务",
             toolRefusalSpawnFailed: "派发子任务时出错，本次没有产生子任务",
             toolRefusalAcquireFailed: "获取凭据时出错，本次没有取到凭据",
+            // task-54：给「被拒绝」一个能照着做的出口。两段分开——先讲本会话为何被拒，
+            // 再讲去哪改以及改完为什么这次仍不生效（快照在会话创建时冻结）。
+            toolRefusalGrantDenied:
+                "本次运行没有被授予该工具所需的能力（读取/执行等），因此 CP 拒绝了这次调用",
+            toolRefusalGrantDeniedHint:
+                "到「工作区 → 智能体 → 编辑工作区角色」为这个智能体勾上对应能力后，新建一个会话再试；当前会话的权限在创建时已冻结，改角色不会追溯生效",
             jobOutputTitle: "后台任务输出",
             jobOutputLoad: "查看输出",
             jobOutputReload: "重新加载",
@@ -5358,6 +5370,8 @@ const messages = {
                 cancelled: "Cancelled",
                 /** PLAN-0649: refused by policy/budget (not an execution error). */
                 refused: "Refused",
+                // task-54 / D-1708: no-permission is not the same conclusion as awaiting approval.
+                noGrant: "No permission",
             },
             /* PLAN-0631 D31-04/07: visible language for a Run's state (see the zh block note). */
             runState: {
@@ -5403,6 +5417,10 @@ const messages = {
             toolRefusalSpawnFailed: "Spawning the child task failed, so no child task was created",
             toolRefusalAcquireFailed:
                 "Fetching the credential failed, so no credential was delivered",
+            toolRefusalGrantDenied:
+                "This run was not granted the capability this tool needs (read/exec), so CP refused the call",
+            toolRefusalGrantDeniedHint:
+                'Grant the capability under "Workspace → Agents → Edit workspace role", then start a new session and retry; the current session\'s permissions were frozen at creation, so a role edit does not apply retroactively',
             jobOutputTitle: "Background job output",
             jobOutputLoad: "View output",
             jobOutputReload: "Reload",
