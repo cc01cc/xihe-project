@@ -48,10 +48,11 @@ test.describe("Auth — Real Backend", () => {
 
         // Login via UI
         await page.goto("/login");
-        await page.fill('input[name="email"]', email);
+        await page.fill('input[name="identifier"]', email);
         await page.fill('input[type="password"]', SHARED_PASSWORD);
         await page.click('button[type="submit"]');
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        // 登录落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: ACTION_TIMEOUT_MS });
         await expect(page.locator("#app")).toBeAttached();
     });
 
@@ -77,7 +78,7 @@ test.describe("Auth — Real Backend", () => {
         });
 
         await page.goto("/login");
-        await page.fill('input[name="email"]', email);
+        await page.fill('input[name="identifier"]', email);
         await page.fill('input[type="password"]', SHARED_PASSWORD);
         await page.evaluate(() => {
             const form = document.querySelector("form");
@@ -86,9 +87,10 @@ test.describe("Auth — Real Backend", () => {
         });
 
         await expect(page.locator('form[aria-busy="true"]')).toBeVisible();
-        await expect(page.locator('input[name="email"]')).toBeDisabled();
+        await expect(page.locator('input[name="identifier"]')).toBeDisabled();
         await expect(page.locator('input[name="password"]')).toBeDisabled();
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        // 登录落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: ACTION_TIMEOUT_MS });
         expect(loginRequests).toBe(1);
     });
 
@@ -102,10 +104,11 @@ test.describe("Auth — Real Backend", () => {
         expect(reg.ok).toBeTruthy();
 
         await page.goto("/login");
-        await page.fill('input[name="email"]', email);
+        await page.fill('input[name="identifier"]', email);
         await page.fill('input[type="password"]', SHARED_PASSWORD);
         await page.click('button[type="submit"]');
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        // 登录落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: ACTION_TIMEOUT_MS });
 
         let loginRequests = 0;
         page.on("request", (request) => {
@@ -114,7 +117,8 @@ test.describe("Auth — Real Backend", () => {
             }
         });
         await page.goto("/login");
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        // 登录落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+        await page.waitForURL(/\/workbench/, { timeout: ACTION_TIMEOUT_MS });
         expect(loginRequests).toBe(0);
     });
 
