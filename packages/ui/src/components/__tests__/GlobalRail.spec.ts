@@ -384,6 +384,45 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
             wrapper2.get('[data-testid="global-rail-module-settings"]').attributes("data-active"),
         ).toBeUndefined();
     });
+
+    /**
+     * task-30（ui-2 自审 batch-1 的 S/D 维，四页复现的 P0）：折叠态（`collapsible=icon`）下
+     * 模块标签的 `<span>` 是 `display:none` ⇒ 这一排 icon-only 按钮**没有可访问名**
+     * （`readings/verify.json` 里 `ariaSnapshot` 五个全是 `- button`），违反 WCAG 4.1.2。
+     *
+     * <p>判据落在 **DOM 属性**上（不是 class、不是截图）：`aria-label` 必须等于该控件可见文本
+     * 的 i18n 值，且**折叠/展开两态同值**。两态都要测的理由：折叠态是唯一"需要它"的态，
+     * 而展开态若写成别的值就会和可见文本打架（读屏念两遍/念错）。`tooltip` 不算名字 ——
+     * 退出登录按钮在改前一直带 `tooltip`，`ariaSnapshot` 仍是 `- button`，这就是反例。</p>
+     */
+    it("折叠态五个 icon-only 按钮都有可访问名，展开态不变（task-30 / WCAG 4.1.2）", async () => {
+        patchAuth();
+        const wrapper = await mountRail();
+        expect(railState(wrapper)).toBe("collapsed");
+        // 名字与可见标签同源（`module.labelKey` / `sidebar.logout`），不新增 i18n 裸键。
+        const expected: Record<string, string> = {
+            "global-rail-module-workbench": "工作台",
+            "global-rail-module-org-members": "组织成员",
+            "global-rail-module-resources": "资源",
+            "global-rail-module-settings": "设置",
+            "global-rail-logout": "退出登录",
+        };
+        const labels = () =>
+            Object.fromEntries(
+                Object.keys(expected).map((testid) => [
+                    testid,
+                    wrapper.get('[data-testid="' + testid + '"]').attributes("aria-label"),
+                ]),
+            );
+        expect(labels()).toEqual(expected);
+
+        // 展开态：标签 `<span>` 重新可见，名字**仍是同一个**（不会变成"两个名字"或空）。
+        await wrapper.get('[data-testid="global-rail-toggle"]').trigger("click");
+        await flushPromises();
+        expect(railState(wrapper)).toBe("expanded");
+        expect(labels()).toEqual(expected);
+        wrapper.unmount();
+    });
 });
 
 /**

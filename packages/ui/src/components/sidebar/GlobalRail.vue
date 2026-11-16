@@ -308,9 +308,15 @@ function isPanelActive(name: string) {
                         @update:open="(open: boolean) => onMenuOpenChange(module.id, open)"
                     />
                     <SidebarMenuItem>
+                        <!--
+                            task-30：折叠态下标签 span 是 `display:none` ⇒ 退出登录也是 icon-only，
+                            而 `:tooltip` **不构成可访问名**（实测 `ariaSnapshot` 仍是 `- button`）；
+                            名字只能由 `aria-label` 给，与可见文本同值（不新增 i18n 键）。
+                        -->
                         <SidebarMenuButton
                             data-testid="global-rail-logout"
                             class="h-9 py-1.5"
+                            :aria-label="t('sidebar.logout')"
                             :tooltip="t('sidebar.logout')"
                             @click="handleLogout"
                         >

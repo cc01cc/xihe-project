@@ -56,10 +56,20 @@ function isItemActive(path: string) {
 <template>
     <SidebarMenuItem>
         <div class="relative">
+            <!--
+                task-30（ui-2 自审 batch-1，四页复现的 P0）：折叠态（`collapsible=icon`）下标签
+                `<span>` 是 `display:none` ⇒ 这一排 28×28 的 icon-only 按钮**没有可访问名**
+                （`readings/verify.json` 的 `ariaSnapshot` 五个全是 `- button`，WCAG 4.1.2
+                Name/Role/Value 判红）。修法对齐同组件既有做法：下方二级菜单触发器已有
+                aria-label（复用 sidebar 命名空间里的 moduleMenu 键）。按钮名字直接复用
+                `module.labelKey`（与可见标签同源，**不新增 i18n 键**）；折叠/展开两态同值 ——
+                展开态不会重复朗读（`aria-label` 覆盖子树文本，只出一个名字）。
+            -->
             <SidebarMenuButton
                 :data-testid="`global-rail-module-${module.id}`"
                 :is-active="active"
                 :aria-current="active ? 'page' : undefined"
+                :aria-label="t(module.labelKey)"
                 class="h-9 py-1.5 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
                 @click="emit('navigate', module.path)"
             >
