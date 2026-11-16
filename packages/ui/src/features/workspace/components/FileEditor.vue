@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { FileText } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useAuthStore } from "../../../stores/auth";
-import type { OpenFile } from "../../../types";
+import type { FileNode, OpenFile } from "../../../types";
 import EditorTabBar from "./EditorTabBar.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import CodeEditor from "./CodeEditor.vue";
@@ -15,7 +15,6 @@ import UnknownFileNotice from "./UnknownFileNotice.vue";
 import FileMetadataPanel from "./FileMetadataPanel.vue";
 import DirectoryDetailPanel from "./DirectoryDetailPanel.vue";
 import { showsMetadata, type OpenOutcome } from "../lib/openOutcome";
-import type { FileNode } from "../../../types";
 
 const ws = useWorkspaceStore();
 const authStore = useAuthStore();
