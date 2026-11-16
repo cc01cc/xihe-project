@@ -26,10 +26,10 @@ test.describe("Auth — UI Flows & Error States", () => {
         // 登录/进站落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
         await page.waitForURL(/\/workbench/, { timeout: LONG_TIMEOUT_MS });
 
-        const logoutBtn = page
-            .locator('[data-testid="sidebar"] button')
-            .filter({ hasText: /logout|退出/i })
-            .first();
+        // task-47: 桌面登出入口已收敛到 App.vue 常驻的 GlobalRail（PLAN-0762 T2.1），
+        // testid 见 components/sidebar/GlobalRail.vue:317（global-rail-logout）；
+        // Sidebar.vue:349-376 的用户/设置/退出块仅移动端抽屉渲染（v-if="isMobile"）。
+        const logoutBtn = page.getByTestId("global-rail-logout");
         await expect(logoutBtn).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await logoutBtn.click();
         await page.waitForURL(/\/login/, { timeout: ACTION_TIMEOUT_MS });
