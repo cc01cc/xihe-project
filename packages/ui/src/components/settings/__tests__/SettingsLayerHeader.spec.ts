@@ -95,6 +95,22 @@ describe("SettingsLayerHeader (PLAN-0752 T1.1b)", () => {
         expect(withDomain.findAll('[data-slot="breadcrumb-separator"]')).toHaveLength(2);
         expect(withDomain.text()).not.toContain("›");
     });
+
+    // task-29（L-1 / 旧 G-02）：vendor 件对了但颜色仍是 text-border ⇒ 浅色下实测 1.17:1，
+    // 分隔符肉眼不可见。判据钉 class 而不是像素（对比度读数走 mock 车道 computed 探针，
+    // 见 evidence/2026-11-17-ui-light-fixes-p1/）：每个分隔符必须带 text-muted-foreground、
+    // 不得回退 text-border —— 两个方向都咬，改回旧 class 即红。
+    it("L-1: every separator uses text-muted-foreground, never text-border", () => {
+        for (const props of [{ layer: "instance" }, { layer: "user", domain: "RAG" }]) {
+            const wrapper = mountHeader(props);
+            const seps = wrapper.findAll('[data-slot="breadcrumb-separator"]');
+            expect(seps.length).toBeGreaterThan(0);
+            for (const sep of seps) {
+                expect(sep.classes()).toContain("text-muted-foreground");
+                expect(sep.classes()).not.toContain("text-border");
+            }
+        }
+    });
 });
 
 function navText(wrapper: ReturnType<typeof mount>): string {

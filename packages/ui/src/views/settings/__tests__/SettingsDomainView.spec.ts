@@ -91,7 +91,7 @@ const messages = {
             ia: {
                 instanceReadonlyTitle: "只读：缺少 {atom} 权限",
                 instanceReadonlyDetail: "写入需要 {atom}（{label}）。",
-                domainKeysCount: "本域已设置 {count} 项",
+                domainKeysCount: "本层存有 {count} 个配置值（含只读）",
                 domainEditableCount: "可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
@@ -386,7 +386,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         // task-121：面板**不卸载**（v-show 隐藏），只在视觉上让位给加载面 —— 卸载会诱发 mount 循环。
         expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(false);
-        expect(wrapper.text()).not.toContain("本域已设置 0 项");
+        expect(wrapper.text()).not.toContain("本层存有 0 个配置值");
     });
 
     it("renders the summary and the panel once the layer resolves", async () => {
@@ -399,7 +399,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
 
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
         const summary = wrapper.find('[data-testid="settings-domain-summary"]').text();
-        expect(summary).toContain("本域已设置 1 项");
+        expect(summary).toContain("本层存有 1 个配置值（含只读）");
         // task-18（源 = task-6 候选 C-2）：主文案不得回退成数据模型词「配置键」。
         expect(summary).not.toContain("配置键");
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
@@ -416,7 +416,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
 
         // 默认桩不上报 ⇒ 只显示主文案（键数 2），徽标不出现。
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域已设置 2 项",
+            "本层存有 2 个配置值（含只读）",
         );
         expect(wrapper.find('[data-testid="settings-domain-editable-count"]').exists()).toBe(false);
 
@@ -447,7 +447,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域已设置 1 项",
+            "本层存有 1 个配置值（含只读）",
         );
     });
     // 循环回归（dev-3 trace）：子组件在挂载/重载时回写全局 `layerLoading`。判据是**面板子树不被重建** ——

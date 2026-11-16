@@ -17,9 +17,10 @@ import {
  * task-253：**工作区层不再是设置区的一层**（全局设置只有实例/用户，工作区设置在各工作区内、
  * 且不再复用本组件）—— 所以这里只认两层，第三分支随该口径一起删除，不留死代码。
  *
- * <p>视觉重量是**可判定**的（design.md §5.2）：层标题 <code>text-2xl font-semibold</code>
- * （24px/600）、sticky 固定；域标题在域页是 18px，条目 14px——所以「层 > 域 > 条目」不靠
- * 审美判断，靠这三条阈值。改这里的字号前先读 V20。</p>
+ * <p>视觉重量原按 design.md §5.2 / V20 的三阈值（层 24px > 域 18px > 条目 14px）。
+ * task-29（L-3，Lead 2026-11-17 裁定）把同屏孤档 15/18/20px 归并到既有 12/14/24 token：
+ * 域标题降为 14px（text-sm），与条目同字号、靠字重区分；层标题仍 <code>text-2xl
+ * font-semibold</code>（24px/600）、sticky 固定。V20 的「域 18px」表述由 Lead 另行收口。</p>
  *
  * <p>PLAN-0762 T1.2 + T3.3：面包屑从 `" › "` 文本拼接换成 vendor 的 `Breadcrumb` 组件族
  * （`src/components/ui/breadcrumb`，分隔符由 `BreadcrumbSeparator` 的 `ChevronRight` 提供，
@@ -79,7 +80,7 @@ const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
                             }}</router-link>
                         </BreadcrumbLink>
                     </BreadcrumbItem>
-                    <BreadcrumbSeparator class="text-border [&>svg]:size-3" />
+                    <BreadcrumbSeparator class="text-muted-foreground [&>svg]:size-3" />
                     <!-- 层首页：层段即当前页（aria-current 由 BreadcrumbPage 提供）。 -->
                     <BreadcrumbItem v-if="!domain">
                         <BreadcrumbPage class="font-medium">{{ layerCrumb }}</BreadcrumbPage>
@@ -89,7 +90,7 @@ const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
                         <BreadcrumbItem>
                             <span class="font-medium text-foreground">{{ layerCrumb }}</span>
                         </BreadcrumbItem>
-                        <BreadcrumbSeparator class="text-border [&>svg]:size-3" />
+                        <BreadcrumbSeparator class="text-muted-foreground [&>svg]:size-3" />
                         <BreadcrumbItem>
                             <BreadcrumbPage class="font-medium">{{ domain }}</BreadcrumbPage>
                         </BreadcrumbItem>

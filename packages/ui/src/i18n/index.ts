@@ -2367,8 +2367,11 @@ const messages = {
                 // 实测该页 1504 ms 里只有灰块、一个字都没有 ⇒ 用户分不清是在加载还是坏了。
                 domainLoading: "正在加载配置…",
                 // task-18（源 = task-6 候选 C-2）：**不用数据模型词**。`keyCount` 数的是本层已存在的
-                // config key 数，但用户读到的是"这页有多少项已设置"——「配置键」是内部量纲，读不懂也不需要懂。
-                domainKeysCount: "本域已设置 {count} 项",
+                // config key 数，但用户读到的是"这页存了多少配置值"——「配置键」是内部量纲，读不懂也不需要懂。
+                // task-29（L-2 / 旧 T-01）：原「本域已设置 N 项」与「可编辑 N 项」同屏双量纲、
+                // 数字相等时读成同一件事 ⇒ 改量词为「N 个配置值（含只读）」，与徽标的「项」（字段数）
+                // 可区分；keyCount 语义不动（仍是本层 entries 键数）。门见 settingsCopyRules.spec.ts。
+                domainKeysCount: "本层存有 {count} 个配置值（含只读）",
                 domainEditableCount: "可编辑 {count} 项",
                 // task-285：计数只数静态可枚举字段；`context-policy` 的按模型覆盖子表行数另计，
                 // 不写这句读者会以为「13 项」就是全部（Lead 2026-11-13 裁定：计数不完整须自述口径）。
@@ -6322,7 +6325,9 @@ const messages = {
                 domainLoadFailed: "Failed to load this configuration; retry.",
                 domainLoading: "Loading configuration…",
                 // task-18 (source: task-6 candidate C-2): no data-model vocabulary.
-                domainKeysCount: "{count} items set in this domain",
+                // task-29 (L-2): distinct measure word from the editable-fields badge ("{count} editable");
+                // keyCount semantics unchanged (entries stored at this layer).
+                domainKeysCount: "{count} stored values in this layer (incl. read-only)",
                 domainEditableCount: "{count} editable",
                 domainEditableCountNote: "(plus {rows} per-model override rows)",
                 domainEditableCountNoteEmpty: "(plus the per-model override table)",

@@ -258,7 +258,10 @@ watch(projectionPending, (pending) => {
     <SettingsForbiddenView v-else-if="forbidden" />
     <section v-else data-testid="settings-domain-view">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <h2 data-testid="settings-domain-title" class="text-lg font-medium">
+            <!-- task-29（L-3，Lead 2026-11-17 裁定）：域标题 18px 孤档归并到既有 sm(14) token，
+                 与条目同字号、靠字重/语义标签区分；同屏字阶收敛 {12,14,24}。原 V20「层24>域18>条目14」
+                 阈值由 Lead 另行收口，见 evidence/2026-11-17-ui-light-fixes-p1/。 -->
+            <h2 data-testid="settings-domain-title" class="text-sm font-medium">
                 {{ domainLabel }}
             </h2>
             <!--

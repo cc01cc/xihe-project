@@ -57,7 +57,13 @@ function scannedCopy(locale: (typeof LOCALES)[number]): Flat {
     return SCANNED_NAMESPACES.flatMap((ns) => flatten(message[ns], ns));
 }
 
-const RULES: Array<{ name: string; test: (value: string) => boolean; sample: string }> = [
+const RULES: Array<{
+    name: string;
+    test: (value: string) => boolean;
+    sample: string;
+    /** 限定作用键路径（缺省 = 扫描面全集）。用于「只咬这一个键」的文案钉（task-29 L-2）。 */
+    onlyPaths?: string[];
+}> = [
     { name: "缺口编号 G1…G9", test: (v) => /\bG\d\b/.test(v), sample: "后端缺口 G4" },
     {
         name: "snake_case 标识符（表名/列名/枚举值）",
@@ -98,6 +104,21 @@ const RULES: Array<{ name: string; test: (value: string) => boolean; sample: str
         test: (v) => /用户层/.test(v) || /\buser layers?\b/i.test(v),
         sample: "实例层与用户层都不提供",
     },
+    // task-29（L-2 / 旧 T-01）：域页标题行同屏两枚计数（键数 summary + 可编辑字段徽标）。
+    // 「本域已设置 N 项」与「可编辑 N 项」共用裸量词「项」且数字可相等 ⇒ 读成同一件事。
+    // 修法取审计 §3 第一候选：summary 改量词为「N 个配置值（含只读）」。本条钉**新文案唯一来源**：
+    // domainKeysCount 不得回退「…{count} 项 / items set」，且必须自带口径括注（含只读 / incl. read-only）。
+    // 作用域限这一个键（onlyPaths）：其他语境「项」合法（如 configCardFieldCount 单一量纲无歧义），
+    // 不做全树禁「项」——那是把判据写宽到必然误伤。
+    {
+        name: "domainKeysCount 回退裸「项/items set」量词或丢口径括注（task-29 L-2）",
+        test: (v) =>
+            /\{count\}\s*项/.test(v) ||
+            /\bitems set\b/i.test(v) ||
+            !(/含只读/.test(v) || /incl\. read-only/i.test(v)),
+        sample: "本域已设置 {count} 项",
+        onlyPaths: ["settings.ia.domainKeysCount"],
+    },
 ];
 
 describe("设置区 + 资源区用户可见文案：不得出现内部编号与实现标识（task-509 / task-26）", () => {
@@ -117,13 +138,42 @@ describe("设置区 + 资源区用户可见文案：不得出现内部编号与�
             });
             for (const rule of RULES) {
                 it(`不含${rule.name}`, () => {
-                    const offenders = copy
+                    const scoped = rule.onlyPaths
+                        ? copy.filter((entry) => rule.onlyPaths!.includes(entry.path))
+                        : copy;
+                    // onlyPaths 规则必须真的扫到目标键，否则改名/删键会让门静默空转。
+                    if (rule.onlyPaths) {
+                        expect(
+                            scoped.length,
+                            `onlyPaths 未命中任何键：${rule.onlyPaths.join(",")}`,
+                        ).toBe(rule.onlyPaths.length);
+                    }
+                    const offenders = scoped
                         .filter((entry) => rule.test(entry.value))
                         .map((entry) => entry.path + " = " + JSON.stringify(entry.value));
                     // 失败信息给「键路径 + 原文」，不写"有违规" —— 否则还得自己 grep 一遍。
                     expect(offenders, `示例违规形态：${rule.sample}`).toEqual([]);
                 });
             }
+        });
+    }
+});
+
+// task-29（L-2）：正向等值钉「新文案唯一来源」——负向规则（上）咬回退形态，这里咬**内容本身**：
+// 两键必须逐字等于裁定文案。改词必须同时改这里与 SettingsDomainView 侧断言，防止第三份口径悄悄长出来。
+describe("domainKeysCount 新文案唯一来源（task-29 L-2）", () => {
+    const EXPECTED: Record<(typeof LOCALES)[number], string> = {
+        "zh-CN": "本层存有 {count} 个配置值（含只读）",
+        "en-US": "{count} stored values in this layer (incl. read-only)",
+    };
+    for (const locale of LOCALES) {
+        it(`${locale}: settings.ia.domainKeysCount 逐字等于裁定文案`, () => {
+            const message = i18n.global.getLocaleMessage(locale) as Record<string, any>;
+            expect(message.settings.ia.domainKeysCount).toBe(EXPECTED[locale]);
+            // 徽标量词保持「项 / editable」不变（本次只改 summary 一侧）。
+            expect(message.settings.ia.domainEditableCount).toBe(
+                locale === "zh-CN" ? "可编辑 {count} 项" : "{count} editable",
+            );
         });
     }
 });

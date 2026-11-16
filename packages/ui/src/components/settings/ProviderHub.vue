@@ -1059,7 +1059,8 @@ onMounted(() => {
             <div class="text-xs font-semibold tracking-widest text-primary">
                 {{ t("settings.providerHub.kicker") }}
             </div>
-            <h3 class="mt-1 text-xl font-semibold tracking-tight">
+            <!-- task-29（L-3）：20px 孤档落既有 sm(14)，小节标题角色内唯一尺寸（ui-type-scale-decision §4.5 倾向2）。 -->
+            <h3 class="mt-1 text-sm font-semibold tracking-tight">
                 {{ t("settings.providerHub.title") }}
             </h3>
             <p class="mt-1.5 text-sm text-muted-foreground">{{ t("settings.providerHub.desc") }}</p>
@@ -1353,7 +1354,8 @@ onMounted(() => {
                     class="min-w-0 space-y-5 rounded-lg border bg-background p-4"
                 >
                     <header>
-                        <h4 class="break-all text-base font-semibold">
+                        <!-- task-29（L-3）：连接详情标题 15px 孤档同批落 sm(14)（before 探针钉出的第 4 处）。 -->
+                        <h4 class="break-all text-sm font-semibold">
                             {{ providerName(activeConnection.providerId) }} ·
                             {{ activeConnection.connectionKey }}
                         </h4>

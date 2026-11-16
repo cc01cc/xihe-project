@@ -844,10 +844,8 @@ async function handleReset(domain: string, key: string) {
                         {{ t("settings.providerPartitionKicker") }}
                     </div>
                     <CardTitle>
-                        <h3
-                            class="text-base font-semibold"
-                            data-testid="provider-hub-section-title"
-                        >
+                        <!-- task-29（L-3）：15px 孤档落既有 sm(14)；h3 语义与 testid 不动（H-04 门）。 -->
+                        <h3 class="text-sm font-semibold" data-testid="provider-hub-section-title">
                             {{ t("settings.providerPartitionTitle") }}
                         </h3>
                     </CardTitle>
