@@ -11,11 +11,19 @@
  * <p>而 behind=0 只保证「<b>那一刻</b>同源」，不代表「自审期间一直同源」—— 2026-11-16 HEAD 在 40 分钟里
  * 动过两次（d24b153ba → 0cfd5304d）。所以本门是<b>前置门</b>：每次拍图前重跑，receipt 跟着图一起交。</p>
  *
- * <h3>三条检查（缺一条 = 未检查 = error，不是 pass）</h3>
+ * <h3>四条检查（缺一条 = 未检查 = error，不是 pass）</h3>
+ * <p><b>报码顺序钉死（T-2327）：②CP → ③服务 → ④脏树</b> —— problems 按此序追加，
+ * receipt.code 取第一条；②内部再按「伪造戳 → dirty → 子树 → head 同源」排。
+ * 用例「报码顺序」腿钉住这个次序，改序必红。</p>
  * <ol>
  *   <li><b>CP 子树</b>：目标栈的 cpBuild → cpVerdictsOf() 现算 treeVerdict；!= equal ⇒ E_CP_NOT_AT_HEAD。
  *       <b>本门从不采信输入里自带的 verdict 戳</b>：带了戳就与现算值比对，不符 ⇒ E_FORGED_STAMP
- *       （「读一个伪造的 equal 戳」必须报错）。</li>
+ *       （「读一个伪造的 equal 戳」必须报错）。<b>T-2327 加两条</b>：
+ *       (a) cpBuild.verdict=dirty ⇒ E_CP_DIRTY（BL-325：dirty=「commit 对但构建时树脏」，
+ *       按<b>非 fresh</b> 处理——构建内容不可复现，拍到的图可能含已消失的改动；绝不按 stale 归类）；
+ *       (b) <b>仅 liveStatus=true</b> 时校验 numbers.head == git rev-parse HEAD（实时读数必须与现场同源；
+ *       不等或 HEAD 读不出 ⇒ E_HEAD_MISMATCH）。夹具腿（--stack-status）豁免比对，
+ *       但必须写 <b>headVerified:false</b> 留痕——豁免≠验过。</li>
  *   <li><b>4 服务</b>：cp / runtime / agent / ui 每个都要 listening 且 ready 且 httpStatus===200。
  *       任一不满足，或<b>服务行根本不存在</b> ⇒ E_STACK_NOT_READY（行缺失同样是「没检查」）。</li>
  *   <li><b>脏树 × 所审页面</b>：git status --porcelain -uall 全清单 + 与 --pages 的交集。
@@ -69,14 +77,20 @@ const STATUS_TIMEOUT_MS = 120000;
  *
  * <p>--stack-status 是<b>显式</b>夹具入口（变异腿/用例用）：默认不带，带了会原样写进 receipt 的
  * command 字段，谁读 receipt 都看得见判据输入不是实时现场。</p>
+ *
+ * <p>T-2327：opts.liveStatus 是<b>测试注入口</b>（仅 evaluate() 直调可达，CLI 不暴露）——
+ * 让「live 判定」的变异腿不必起真栈。注入值原样生效并追加进 command 留痕，
+ * 谁读 receipt 都看得见 live 语义是被注入的，不是实跑 dev-stack 得来的。</p>
  */
-function readStackStatus({ stackStatus, timeoutMs = STATUS_TIMEOUT_MS }) {
+function readStackStatus({ stackStatus, timeoutMs = STATUS_TIMEOUT_MS, liveStatus = undefined }) {
   const live = "node scripts/dev-stack.mjs status --all --json   (cwd=A03-xihe)";
+  const injected = typeof liveStatus === "boolean" ? liveStatus : null;
+  const mark = injected === null ? "" : "  [liveStatus 注入=" + injected + "]";
   if (stackStatus) {
     const p = resolve(stackStatus);
-    const cmd = live + "  [夹具 " + p + "]";
+    const cmd = live + "  [夹具 " + p + "]" + mark;
     try {
-      return { data: JSON.parse(readFileSync(p, "utf8")), command: cmd, live: false };
+      return { data: JSON.parse(readFileSync(p, "utf8")), command: cmd, live: injected ?? false };
     } catch (e) {
       return { error: "读不出夹具 " + p + "：" + String(e?.message ?? e), command: cmd };
     }
@@ -98,7 +112,7 @@ function readStackStatus({ stackStatus, timeoutMs = STATUS_TIMEOUT_MS }) {
     };
   }
   try {
-    return { data: JSON.parse(raw), command: live, live: true };
+    return { data: JSON.parse(raw), command: live + mark, live: injected ?? true };
   } catch (e) {
     return {
       error: "dev-stack status stdout 非 JSON（" + exitInfo + "；" + e.message + "；前 160 字=" + raw.slice(0, 160) + "）",
@@ -134,6 +148,16 @@ function isAncestor(a, b) {
   if (r.status === 0) return true;
   if (r.status === 1) return false;
   return null;
+}
+
+/** 现场 HEAD（git rev-parse HEAD）。读不出 ⇒ null（fail-closed：判不了不猜，T-2327）。 */
+function gitHeadNow() {
+  try {
+    const s = gitRaw(["rev-parse", "HEAD"]).toString("utf8").trim();
+    return /^[0-9a-f]{40}$/i.test(s) ? s : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 判据本体在 internal/A03-xihe/scripts/cp-verdict.mjs（唯一一份，此处不复刻）。 */
@@ -252,6 +276,16 @@ async function evaluate(opts) {
           );
         }
       }
+      // T-2327①：源词表 dirty ⇒ error（BL-325：按非 fresh 处理，绝不按 stale）。
+      // 只看**源 verdict**（dev-stack 的原始声明），不用现算 cpv.verdict 反推——两维不可互推。
+      // 排在 E_CP_NOT_AT_HEAD 之前：dirty 是更具体的成因（构建身份不可复现），先点名它。
+      if (cpBuild?.verdict === "dirty") {
+        add(
+          CODES.E_CP_DIRTY,
+          "cpBuild.verdict=dirty（commit 对但构建时工作树脏）⇒ 构建内容不可复现，"
+            + "拍到的图可能含已消失的改动（BL-325：dirty 按非 fresh 处理，绝不按 stale）；重建后再拍",
+        );
+      }
       if (cpv.treeVerdict !== "equal") {
         add(
           CODES.E_CP_NOT_AT_HEAD,
@@ -260,6 +294,23 @@ async function evaluate(opts) {
             + "；verdict=" + cpv.verdict + (cpv.behind != null ? " behind=" + cpv.behind : "") + "）"
             + " ⇒ 拍到的图不是你审的 HEAD 的 CP 代码",
         );
+      }
+      // T-2327②：head 同源校验。**仅 liveStatus=true 判**；夹具腿豁免比对但必须写 headVerified:false。
+      numbers.headVerified = false;
+      if (numbers.liveStatus === true) {
+        const nowHead = gitHeadNow();
+        numbers.gitHead = nowHead;
+        if (!nowHead) {
+          add(CODES.E_HEAD_MISMATCH, "git rev-parse HEAD 读不出 ⇒ 「读数与现场同源」判不了（fail-closed，不许当验过）");
+        } else if (numbers.head !== nowHead) {
+          add(
+            CODES.E_HEAD_MISMATCH,
+            "numbers.head=" + (numbers.head ?? "null") + " != 现场 git rev-parse HEAD=" + nowHead
+              + " ⇒ 实时读数与现场不同源（读 status 与拍图之间 HEAD 动过，或状态行来自别的检出）",
+          );
+        } else {
+          numbers.headVerified = true;
+        }
       }
     }
   }
@@ -429,6 +480,7 @@ async function main() {
       + "  treeVerdict=" + (n.treeVerdict ?? "unverified")
       + " behind=" + (n.behind ?? "?")
       + " head=" + (n.head ? String(n.head).slice(0, 9) : "?")
+      + " headVerified=" + (n.headVerified === true ? "true" : n.headVerified === false ? "false" : "?")
       + " builtAt=" + (n.builtAt ?? "?")
       + "  services=" + (n.servicesReady ?? "?")
       + "  dirty=" + (n.dirtyCount ?? "?")

@@ -81,6 +81,11 @@ export const CODES = Object.freeze({
     E_NO_PAGES: "E_NO_PAGES",
     /** cp-verdict.mjs（双 verdict 判据唯一实现）不可用 ⇒ 子树维度判不了。 */
     E_VERIFIER_MISSING: "E_VERIFIER_MISSING",
+    /* ── T-2327（截拍门判据加固）新增；**additive，不改既有语义** ── */
+    /** cpBuild.verdict=dirty ⇒ 构建含未提交改动、内容不可复现（BL-325：dirty 按非 fresh 处理，绝不按 stale）。 */
+    E_CP_DIRTY: "E_CP_DIRTY",
+    /** liveStatus=true 时 numbers.head != git rev-parse HEAD（读数与现场不同源），或 HEAD 读不出 ⇒ 判不了。 */
+    E_HEAD_MISMATCH: "E_HEAD_MISMATCH",
 });
 
 /**
