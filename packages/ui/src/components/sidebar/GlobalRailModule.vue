@@ -105,7 +105,7 @@ function isItemActive(path: string) {
                         type="button"
                         :data-testid="`global-rail-menu-${module.id}`"
                         :aria-label="t('sidebar.moduleMenu')"
-                        class="absolute top-1/2 right-1 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:sr-only"
+                        class="rail-module-menu absolute top-1/2 right-1 flex min-h-7 min-w-7 -translate-y-1/2 items-center justify-center rounded-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:sr-only"
                     >
                         <ChevronRight class="size-3.5" aria-hidden="true" />
                     </button>
@@ -137,3 +137,34 @@ function isItemActive(path: string) {
         </div>
     </SidebarMenuItem>
 </template>
+
+<style scoped>
+/*
+ * task-10 / batch-3（触控，裁定 D）：折叠态（`collapsible=icon`）下这个二级菜单触发器被
+ * `sr-only` 接管 —— 布局上让位是对的（折叠态没有横向空间放 chevron），但它**仍然可聚焦**，
+ * 于是键盘用户 Tab 到的就是一个 1×1、被 `clip` 掉、看不见的按钮（ui-2 rect 表四页一致 1×1）。
+ *
+ * 修法：不拆触发器、不加 `tabindex="-1"`（那是收回能力）、不复制第二份菜单 ——
+ * 只让它在**获得键盘焦点时现形**：撤销 `sr-only` 的 `clip`/`overflow`/1px 限制，给出
+ * ≥24×24 的命中盒（`focus-visible:ring-2` 已在 class 上，焦点环随之可见）。
+ *
+ * 为什么不用 Tailwind 的 `focus-visible:not-sr-only`：`not-sr-only` 会把 `position` 重置成
+ * `static`，而这里必须是 `absolute`（`top-1/2 right-1`）—— 否则焦点一出现就参与流式布局、
+ * 把整行顶歪。所以只撤销「视觉隐藏」相关的属性，位置语义保持不变。
+ *
+ * 数值：本仓 `--spacing` = 3.5px（`styles/main.css`）⇒ 24 档 = 7 步 = **24.5px**；
+ * `h-6`/`size-6` 只有 21px，不是 24 档（这才是「改了还违例」的那条坑）。
+ */
+[data-collapsible="icon"] .rail-module-menu:focus-visible {
+    position: absolute;
+    width: 24.5px;
+    height: 24.5px;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    z-index: 20;
+}
+</style>

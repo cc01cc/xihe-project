@@ -954,9 +954,15 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
             <div v-if="!readonly" class="flex justify-end pt-1">
                 <!-- H-05：手搓 primary 按钮（自带 disabled:opacity-50 与 hover:opacity-90）换 vendor `Button`；
                      尺寸取 `xs` 是为了贴住原形状（h-6 px-2 + text-xs），不改变这一行的视觉重量。 -->
+                <!--
+                    task-10 / batch-3（触控）：`size="xs"` = h-6 = **21px**（`--spacing` 3.5px × 6 步），
+                    低于 WCAG 2.2 SC 2.5.8 的 24×24（ui-2 rect 表实测 `config-save-context-policy` = 47×21）。
+                    只顶命中盒、**不动 `size` 档位**（改档位会连带一串按钮的形状）；
+                    24 档在 3.5px 步进下 = 7 步 ⇒ `min-h-7` = 24.5px（`min-h-6` 仍只有 21，不算数）。
+                -->
                 <Button
                     size="xs"
-                    class="px-3"
+                    class="min-h-7 px-3"
                     :data-testid="`config-save-${domain}`"
                     :disabled="
                         !schema.some((field) => isWritable(field.key) && !isLocked(field.key))

@@ -89,6 +89,12 @@ describe("GlobalRailModule（task-259 回退 D-899）", () => {
         const trigger = wrapper.get('[data-testid="global-rail-menu-resources"]');
         // 触发器是原生 <button>：Tab 可达、Enter/Space 可开由它保证（无需额外 keydown 绑定）。
         expect(trigger.element.tagName).toBe("BUTTON");
+        // task-10 / batch-3（触控，裁定 D）：命中盒必须 ≥24×24 —— 本仓 `--spacing` 3.5px
+        // ⇒ 7 步 = 24.5（原 `size-5` = 17.5）。折叠态的「焦点现形」由 scoped CSS 承担
+        // （撤销 sr-only 的 clip/overflow，但保持 absolute），jsdom 不求值 CSS ⇒ 这里只钉类名钩子。
+        expect(trigger.classes()).toEqual(
+            expect.arrayContaining(["rail-module-menu", "min-h-7", "min-w-7"]),
+        );
         await trigger.trigger("click");
         await flushPromises();
         expect(wrapper.findComponent(GlobalRailModule).emitted("update:open")?.at(-1)).toEqual([

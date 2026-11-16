@@ -302,7 +302,7 @@ watch(projectionPending, (pending) => {
                     variant="ghost"
                     size="xs"
                     data-testid="settings-switch-layer"
-                    class="h-auto border-0 px-1 text-xs font-normal text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    class="h-auto min-h-7 border-0 px-1 text-xs font-normal text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                     @click="blocked = true"
                 >
                     {{ t("settings.ia.switchToUserLayer") }}
@@ -343,11 +343,17 @@ watch(projectionPending, (pending) => {
                 </p>
             </AlertDescription>
             <AlertAction>
+                <!--
+                    task-10 / batch-3（触控）：`size="xs"` + `h-auto` ⇒ 高度只有 text-xs 行盒（≈18.6px），
+                    比 21 还矮，低于 SC 2.5.8 的 24×24。只补 `min-h-7`（3.5px × 7 = 24.5），
+                    **不动 `size` 档位、不动 `h-auto`** —— 这是行内逃生入口，视觉重量要保持中性；
+                    高度变大 5.9px 属可接受（行内 flex 行随之高一点），真实布局需浏览器复核。
+                -->
                 <Button
                     variant="ghost"
                     size="xs"
                     data-testid="settings-layer-block-dismiss"
-                    class="h-auto px-1 text-xs font-normal text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    class="h-auto min-h-7 px-1 text-xs font-normal text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                     @click="blocked = false"
                 >
                     {{ t("settings.ia.dismiss") }}
