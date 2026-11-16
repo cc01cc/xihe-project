@@ -256,10 +256,13 @@ onMounted(() => {
                     <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2">
                             <span class="font-medium truncate">{{ member.username }}</span>
-                            <span
-                                class="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
-                                >{{ roleLabel(member.role) }}</span
-                            >
+                            <!-- task-34：muted 字压 --muted 底 4.29:1 < 4.5（ui-2 探针与 internal 复算器两个来源同值）。
+                                 badge 底比页面底深一档，靠提亮底（--muted/60）仍只有 4.49（叠 --background）/
+                                 4.66（叠 --card），余量不足 ⇒ 改字色为 --foreground（16.16 light / 14.50 dark）。
+                                 其余 badge 不动：这是本文件里唯一坐在 --muted 实底上的 muted 文本。 -->
+                            <span class="text-xs px-1.5 py-0.5 rounded bg-muted text-foreground">{{
+                                roleLabel(member.role)
+                            }}</span>
                         </div>
                         <div class="text-xs text-muted-foreground truncate">
                             {{ member.name || "—" }} · {{ member.email }} ·
