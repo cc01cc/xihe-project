@@ -101,6 +101,26 @@ const connectionLabel = computed(() => {
  * <p>task-81：新增的「本页未订阅」走 `default` ⇒ **灰**，与「未连接」同色而非另立一种颜色。
  * 理由（裁定原文）：别让新态引入第三种颜色语义 —— 未订阅不是故障，不该占用琥珀/红。
  * 两态靠**文案**区分（「本页未订阅文件事件」vs「文件事件未连接」），不靠颜色。</p>
+ *
+ * <p>**task-83：不透明度从 `/40` 提到实心 —— 存量无障碍违例的修复。**
+ * 实测（WCAG 2.2 SC 1.4.11 非文本 UI 3:1；颜色探针 `e2e/helpers/color.ts` 的
+ * `contrastRatio`，走 computed → oklab/oklch → sRGB → WCAG，前景 alpha 合成到**已全链合成**
+ * 的背景上，不是停在半透明层）：</p>
+ *
+ * ```text
+ *   bg-muted-foreground/40   light 1.72 : 1   dark 2.16 : 1   ← 两个主题都不达标（违例）
+ *   bg-muted-foreground      light 5.05 : 1   dark 6.74 : 1   ← task-83 修复后，双双 ≥3:1
+ *   （实测口径：环境页状态栏 / chrome-beta；读数取 getComputedStyle 全链合成后再算 WCAG）
+ * ```
+ *
+ * <p>**归属：存量缺陷，非 task-81/83 引入。** `bg-muted-foreground/40` 由 task-312
+ * (`9c9042d76`) 引入，task-81 只是复用了 `default` 分支。task-81 之前它只有
+ * disconnected 一个主人，task-81 之后 unsubscribed 也落进来 ⇒ 违例的**暴露面**变大了，
+ * 但颜色本身没动。</p>
+ *
+ * <p>为什么不按「装饰性」豁免：点带 `aria-hidden="true"` ⇒ 它对屏幕阅读器隐形 ⇒
+ * 它恰恰是视觉用户的线索 ⇒ 豁免的前提（「还有别的线索」）在颜色通道上不成立
+ * （1.72:1 连「这点颜色有变化」都可能看不出）。裁定：(a) 按状态线索判 3:1，无豁免。</p>
  */
 const dotClass = computed(() => {
     switch (connectionState.value) {
@@ -110,7 +130,7 @@ const dotClass = computed(() => {
             return "bg-emerald-600";
         // unsubscribed 与 disconnected 都落 default（灰）：靠文案区分，不靠颜色（见上）。
         default:
-            return "bg-muted-foreground/40";
+            return "bg-muted-foreground";
     }
 });
 
