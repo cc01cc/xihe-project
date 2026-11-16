@@ -1901,9 +1901,12 @@ mod tests {
         let dir = search_fixture();
         let ws = dir.path().to_str().unwrap();
         let matches = glob_files("*.md", ".", ws).unwrap();
+        // `glob_files` returns host-separated relative paths, so on Windows the
+        // separator is a backslash: split on both or the "basename" silently
+        // stays the whole path and this guard asserts the wrong thing.
         let mut names: Vec<String> = matches
             .iter()
-            .filter_map(|p| p.rsplit('/').next().map(|n| n.to_string()))
+            .filter_map(|p| p.rsplit(['/', '\\']).next().map(|n| n.to_string()))
             .collect();
         names.sort();
         assert_eq!(names, vec!["alpha-report.md", "report-2026.md"]);
