@@ -213,11 +213,14 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         // session-only now); "会话" is the identity marker of the workspace page.
         await expect(page.getByTestId("workspace-nav-sessions")).toBeVisible();
 
-        // 选择器用 testid 而不是 `getByRole(name)`（**归属：`task-116` 族的既有红**，不是本批迁移引入）：
-        // 全局条默认是**折叠态**（`xihe-global-rail-open` 默认 false），折叠时模块标签的 `<span>` 被
-        // `group-data-[collapsible=icon]:hidden` 隐藏（display:none）⇒ 按钮**没有可读的 a11y 名**，
-        // 记 `getByRole("button", { name: "设置" })` 实测命中 0。testid 指向同一个按钮、同一个点击语义，
-        // 在展开态与折叠态都成立 ⇒ 这个改法比按名字**更强**（名字只在展开态存在）。
+        // 选择器用 testid 而不是 `getByRole(name)`。
+        // **这段注释在 task-30 后已过期并改写**（改前：折叠态下模块标签的 `<span>` 被
+        // `group-data-[collapsible=icon]:hidden` 隐藏 ⇒ 按钮没有可读的 a11y 名，
+        // `getByRole("button", { name: "设置" })` 实测命中 0）。
+        // 现状：五个 icon-only 按钮都有了 `aria-label`（`d9c2edaa8`），按名字在**两态都命中 1**。
+        // 仍用 testid 的理由换成了**稳定性**：testid 与"哪个模块"一一对应，不随文案语言（zh/en）
+        // 与 i18n 改词而漂移 ⇒ 比按名字更强；按名字的断言留在单测里
+        // （`src/components/__tests__/GlobalRail.spec.ts` 的 task-30 用例）。
         await page.getByTestId("global-rail-module-settings").click();
         await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
         await expect(page.getByTestId("settings-domain-view")).toBeVisible();

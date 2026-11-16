@@ -291,6 +291,22 @@ const confirmDeleteOpen = ref(false),
     deleting = ref(false),
     deleteError = ref("");
 
+/**
+ * task-32（ui-2 自审 batch-1 D1）：destructive 确认按钮的 `disabled` 必须**由输入派生**，
+ * 不能只在 `handleDelete()` 里拦。改前实测（`readings/verify4.json deleteGuard`）：
+ * `confirmDisabled=false` ⇒ 空名也能点，点下去才由 handler 报「请输入完整的工作区名称以确认删除」
+ * —— 键盘/读屏用户拿不到"还不能点"的先行信号（`disabled` 是 AT 与键盘都能读到的状态），
+ * 指针用户则多一次无效点击。
+ *
+ * <p>判据与 handler **同一条**（`trim()` 后逐字相等）+ 额外要求工作区名非空 ⇒ 语义是
+ * "**可点 ⇒ handler 必过**"，两处不会各说各话。handler 里的判断**保留**（双保险：
+ * 程序化触发、或将来有人把按钮换成别的形态时不至于裸奔）。</p>
+ */
+const deleteNameConfirmed = computed(() => {
+    const expected = auth.workspace?.name ?? "";
+    return expected.trim().length > 0 && deleteConfirmName.value.trim() === expected;
+});
+
 async function handleDelete() {
     const ws = auth.workspace;
     if (!ws || deleting.value) return;
@@ -688,7 +704,7 @@ onMounted(async () => {
                     <AlertDialogCancel>{{ t("common.cancel") }}</AlertDialogCancel>
                     <Button
                         variant="destructive"
-                        :disabled="deleting"
+                        :disabled="deleting || !deleteNameConfirmed"
                         data-testid="ws-delete-confirm-btn"
                         @click="() => void handleDelete()"
                     >

@@ -367,6 +367,51 @@ describe("WorkspaceSettingsView OWNER 编辑与删除 (PLAN-0560 T2.6/T3.3 迁�
         expect(routerSpies.replace).toHaveBeenCalledWith({ name: "workspace-home" });
         wrapper.unmount();
     });
+
+    /**
+     * task-32（ui-2 自审 batch-1 D1，读数 `readings/verify4.json deleteGuard`）：destructive
+     * 确认按钮的 `disabled` 必须**由输入派生** —— 空名 / 写错的名称都不可点，逐字完整的名称
+     * 才可点。改前实测 `confirmDisabled=false`（空名也可点），限制只在 handler 里 ⇒ 用户点下去
+     * 才知道不行，而 `disabled` 是键盘与读屏都能先读到的状态。
+     *
+     * <p>第 ④ 段守的是卡面「保留 handler 兜底」：`disabled` 只挡**用户激活**（HTML 规范：
+     * disabled 控件的 `click()` 直接 return），挡不住程序化派发事件 ⇒ 用 `dispatchEvent` 绕过
+     * disabled，看 handler 自己拦不拦。删掉 handler 里的判断这段就红（会发出 DELETE）。</p>
+     */
+    it("确认删除按钮的 disabled 由名称输入派生，handler 兜底仍在（task-32）", async () => {
+        const wrapper = await mountOwner();
+        await wrapper.find('[data-testid="ws-settings-delete"]').trigger("click");
+        const confirmBtn = () =>
+            document.body.querySelector(
+                '[data-testid="ws-delete-confirm-btn"]',
+            ) as HTMLButtonElement | null;
+        await vi.waitFor(() => expect(confirmBtn()).toBeTruthy());
+
+        // ① 空名 ⇒ disabled（改前这里是 false：按钮看着能点）
+        expect(confirmBtn()!.disabled).toBe(true);
+
+        // ② 写错的名称 ⇒ 仍 disabled
+        await setBodyInput("ws-delete-confirm-input", "Wrong Name");
+        await vi.waitFor(() => expect(confirmBtn()!.disabled).toBe(true));
+
+        // ③ 逐字完整的名称 ⇒ 可点（判据与 handler 同一条：trim() 后相等）
+        await setBodyInput("ws-delete-confirm-input", "Workspace");
+        await vi.waitFor(() => expect(confirmBtn()!.disabled).toBe(false));
+
+        // ④ handler 兜底：绕过 disabled 直接派发 click，既不发出 DELETE，也要给出原因文案。
+        await setBodyInput("ws-delete-confirm-input", "Wrong Name");
+        await vi.waitFor(() => expect(confirmBtn()!.disabled).toBe(true));
+        confirmBtn()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await flushPromises();
+
+        const deleteCalls = () =>
+            vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE");
+        expect(deleteCalls().length).toBe(0);
+        expect(document.body.textContent).toContain("请输入完整的工作区名称以确认删除");
+        // 门失败时对话框保持打开（不静默关掉、也不静默放行）。
+        expect(document.body.querySelector("#ws-delete-confirm-input")).toBeTruthy();
+        wrapper.unmount();
+    });
 });
 
 describe("WorkspaceSettingsView 权限一致性 (PLAN-0560 T3.6)", () => {
