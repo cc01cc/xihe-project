@@ -91,6 +91,19 @@ export interface ProviderCatalog {
      * is the provider id for that shape.
      */
     providerId?: string;
+    /**
+     * Live probe result of the /api/v1/models catalog (agent-side, per request,
+     * never persisted). NOT the connection lifecycle state: that one is
+     * ProviderConnectionStatus (uppercase, DB-persisted, written by the CP).
+     * The two are separate domains; the CP only forwards connections whose
+     * lifecycle status is READY, so lifecycle values (UNVERIFIED/VERIFYING/
+     * DISABLED) can never appear here (task-58 / D-1709).
+     *
+     * Known mismatch, deliberately not fixed here: "model_unavailable" is an
+     * agent READINESS value (app_state.py _derive_llm_ready), not a catalog
+     * probe value — the catalog producer never emits it. Narrowing this union
+     * touches the model-routing path; tracked separately.
+     */
     status:
         | "ready"
         | "missing_credentials"

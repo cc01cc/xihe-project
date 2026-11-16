@@ -6,8 +6,13 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -796,6 +801,189 @@ class OpenApiYamlContractTest {
                             + description);
             assertTrue(description.contains("X-Workspace-Id"),
                     "G3=(b): the workspace context stays a header carrier, never a body field");
+        }
+    }
+
+    /**
+     * task-58 (D-1709): the /api/v1/models catalog entry vocabulary must equal the vocabulary the
+     * <b>producer actually emits</b> — not a hand-copied literal.
+     *
+     * <p>Why this test exists: task-55 measured that {@code validate-openapi.mjs} passes the enum
+     * changed to six invented values ({@code [totally, bogus, ...]}) with {@code EXIT=0} — a gate that
+     * cannot go red makes "green" indistinguishable from "never ran". The shipped enum had also
+     * drifted from its own producer: it declared {@code unverified}/{@code verifying}/{@code disabled}
+     * (unreachable by construction — the CP only forwards connections whose DB lifecycle status is
+     * READY, see {@code ProviderModelDescriptorService}) while omitting {@code invalid_response},
+     * which the producer really emits. The document was wrong even for its own semantics.</p>
+     *
+     * <p><b>Expected values are computed from the producer source</b> (D-1409: never hardcode what
+     * can be derived). A mutation on either side fails here: edit the YAML enum away from the
+     * producer, or teach the producer a new literal without contracting it, and this test goes red.</p>
+     *
+     * <p>The catalog is two <b>disjoint</b> shapes on one endpoint (scoped POST when the caller has
+     * visible connections, legacy GET fallback when it has none); the producer's own literal scan
+     * covers both, and each shape's required keys are asserted separately below.</p>
+     */
+    @Test
+    void openApiCatalogStatusVocabularyIsDerivedFromTheProducer() throws Exception {
+        Map<?, ?> document = parseContract();
+        Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+        Map<?, ?> scoped = (Map<?, ?>) schemas.get("ScopedProviderModelProvider");
+        Map<?, ?> legacy = (Map<?, ?>) schemas.get("LegacyProviderModelProvider");
+        assertInstanceOf(Map.class, scoped,
+                "the scoped catalog shape must be contracted by name, not inlined");
+        assertInstanceOf(Map.class, legacy,
+                "the legacy catalog shape must be contracted by name, not inlined");
+
+        Set<String> probeVocabulary = producerStatusLiterals();
+        assertFalse(probeVocabulary.isEmpty(),
+                "the producer vocabulary must be discoverable from xihe_agent/llm/models.py");
+
+        for (Map.Entry<String, Map<?, ?>> shape : Map.of(
+                "ScopedProviderModelProvider", scoped,
+                "LegacyProviderModelProvider", legacy).entrySet()) {
+            Set<String> documented = enumValuesOf(
+                    ((Map<?, ?>) ((Map<?, ?>) shape.getValue()).get("properties")).get("status"));
+            assertFalse(documented.isEmpty(),
+                    shape.getKey() + ".status must carry a readable enum (empty set would make every "
+                            + "assertion below vacuously true)");
+            assertTrue(probeVocabulary.containsAll(documented),
+                    shape.getKey() + ".status documents values the producer never emits: "
+                            + minus(documented, probeVocabulary) + " (producer emits " + probeVocabulary + ")");
+        }
+
+        // The scoped shape is the narrower one: the CP only forwards READY connections, so the
+        // connection-lifecycle values are unreachable there and must not be documented.
+        Set<String> scopedDocumented = enumValuesOf(
+                ((Map<?, ?>) scoped.get("properties")).get("status"));
+        assertFalse(scopedDocumented.isEmpty(),
+                "the scoped enum must be readable, not an empty set — an unreadable enum would make "
+                        + "every vocabulary assertion below vacuously true (the task-55 failure mode)");
+        for (String unreachable : List.of("unverified", "verifying", "disabled")) {
+            assertFalse(scopedDocumented.contains(unreachable),
+                    "task-58: '" + unreachable + "' is unreachable on the scoped catalog (the CP forwards "
+                            + "only DB-READY connections), so it must not be documented: " + scopedDocumented);
+        }
+
+        // Both shapes must actually close their key set: the twin-key era survived precisely
+        // because an extra key was accepted silently (no additionalProperties, task-55).
+        for (Map.Entry<String, Map<?, ?>> shape : Map.of(
+                "ScopedProviderModelProvider", scoped,
+                "LegacyProviderModelProvider", legacy).entrySet()) {
+            assertEquals(false, ((Map<?, ?>) shape.getValue()).get("additionalProperties"),
+                    shape.getKey() + " must declare additionalProperties: false, otherwise extra keys "
+                            + "(like the removed connectionStatus twin) pass silently");
+        }
+
+        // Required keys must match each shape's real producer output, so neither shape can inherit
+        // the other's required fields.
+        assertEquals(Set.of("connectionId", "connectionKey", "providerId", "apiTypeId", "apiTypeVersion",
+                        "operation", "scope", "displayName", "status", "reasonCode", "models", "verifiedAt",
+                        "connectionRevision", "configRevision"),
+                requiredOf(scoped), "scoped catalog required keys drifted from the producer");
+        assertEquals(Set.of("status", "reasonCode", "models", "verifiedAt", "configRevision"),
+                requiredOf(legacy), "legacy catalog required keys drifted from the producer");
+
+        // One status key per shape, and it is not the uppercase lifecycle face.
+        for (Map.Entry<String, Map<?, ?>> shape : Map.of(
+                "ScopedProviderModelProvider", scoped,
+                "LegacyProviderModelProvider", legacy).entrySet()) {
+            Set<String> properties = ((Map<?, ?>) shape.getValue()).get("properties") instanceof Map
+                    ? ((Map<?, ?>) ((Map<?, ?>) shape.getValue()).get("properties")).keySet().stream()
+                            .map(String::valueOf).collect(Collectors.toSet())
+                    : Set.of();
+            for (String key : properties) {
+                assertFalse(key.toLowerCase().contains("connectionstatus"),
+                        shape.getKey() + " must not reintroduce the removed connectionStatus twin, got " + key);
+            }
+            assertTrue(properties.contains("status"),
+                    shape.getKey() + " must name the probe result 'status', got " + properties);
+        }
+    }
+
+    /** The producer source is the only acceptable source of truth (D-1409). */
+    private static Set<String> producerStatusLiterals() throws Exception {
+        Path producer = Path.of("..", "..", "packages", "agent", "src", "xihe_agent", "llm", "models.py");
+        String source = Files.readString(producer);
+        Set<String> literals = new HashSet<>();
+        for (String line : source.split("\\R")) {
+            Matcher assignment =
+                    Pattern.compile("status\\s*=\\s*\"([a-z_]+)\"").matcher(line);
+            if (assignment.find()) {
+                literals.add(assignment.group(1));
+            }
+            Matcher dictionary =
+                    Pattern.compile("\"status\":\\s*\"([a-z_]+)\"").matcher(line);
+            if (dictionary.find()) {
+                literals.add(dictionary.group(1));
+            }
+        }
+        return literals;
+    }
+
+    /**
+     * Reads the status enum from the parsed Schema object. SnakeYAML parses an inline
+     * {@code enum: [a, b]} into a {@code Map} of properties whose {@code enum} key is already a
+     * {@code List} — stringifying the Map would yield "{...}" and silently match nothing, which is
+     * exactly the kind of gate that "passes" because it never looked. Accept a List, and fall back
+     * to a quoted/literal string so the helper cannot silently read nothing.
+     */
+    private static Set<String> enumValuesOf(Object schemaProperty) {
+        Set<String> values = new HashSet<>();
+        if (schemaProperty instanceof Map<?, ?> property) {
+            Object declared = property.get("enum");
+            if (declared instanceof List<?> list) {
+                for (Object value : list) {
+                    String text = String.valueOf(value).trim().replace("'", "").replace("\"", "");
+                    if (!text.isEmpty() && !"null".equals(text)) {
+                        values.add(text);
+                    }
+                }
+                return values;
+            }
+            if (declared != null) {
+                return enumValuesOfFromText(String.valueOf(declared));
+            }
+        } else if (schemaProperty != null) {
+            return enumValuesOfFromText(String.valueOf(schemaProperty));
+        }
+        return values;
+    }
+
+    private static Set<String> enumValuesOfFromText(String enumText) {
+        Matcher matcher = Pattern.compile("enum:\\s*(?:\\[|\u007b)([^\\]}]*)(?:\\]|\\u007d)").matcher(enumText);
+        Set<String> values = new HashSet<>();
+        if (matcher.find()) {
+            for (String value : matcher.group(1).split(",")) {
+                String trimmed = value.trim().replace("'", "").replace("\"", "");
+                if (!trimmed.isEmpty() && !"null".equals(trimmed)) {
+                    values.add(trimmed);
+                }
+            }
+        }
+        return values;
+    }
+
+    private static Set<String> requiredOf(Map<?, ?> schema) {
+        Object declared = schema.get("required");
+        assertInstanceOf(List.class, declared, "schema must declare required[]");
+        return new HashSet<>(((List<?>) declared).stream().map(String::valueOf)
+                .collect(Collectors.toSet()));
+    }
+
+    private static Set<String> minus(Set<String> left, Set<String> right) {
+        Set<String> residual = new HashSet<>(left);
+        residual.removeAll(right);
+        return residual;
+    }
+
+    private static Map<?, ?> parseContract() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> components = (Map<?, ?>) document.get("components");
+            assertInstanceOf(Map.class, components, "components must be contracted");
+            return document;
         }
     }
 }

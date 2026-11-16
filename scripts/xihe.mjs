@@ -1582,7 +1582,7 @@ export function printResult(result) {
     const providers = result.data.providers ?? {};
     out.write(`models: ${Object.keys(providers).length} connection(s), configRevision=${result.data.configRevision ?? '?'}\n`);
     for (const [key, value] of Object.entries(providers)) {
-      out.write(`${key}  ${value?.providerId ?? ''}  ${value?.connectionStatus ?? ''}  models=${(value?.models ?? []).length}\n`);
+      out.write(`${key}  ${value?.providerId ?? ''}  ${value?.status ?? ''}  models=${(value?.models ?? []).length}\n`);
     }
     for (const [provider, list] of Object.entries(result.data.models ?? {})) {
       out.write(`${provider}: ${list.join(', ')}\n`);

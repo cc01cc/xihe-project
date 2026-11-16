@@ -96,6 +96,12 @@ public class ModelsProxyController {
                 return failure;
             }
 
+            // task-58 / D-1709 invariant: this adapter MUST stay a pure pass-through. The
+            // catalog entry vocabulary (status) is the Agent's live probe result; the DB
+            // lifecycle column (ProviderConnection.status, uppercase) is a different domain
+            // and must never be merged into this body here. Re-mapping fields at this hop is
+            // how the twin-key era survived: the contract could not describe what actually
+            // left the building. Shape and vocabulary are pinned by OpenApiYamlContractTest.
             Object body = objectMapper.readValue(response.body(), Object.class);
             return ResponseEntity.ok(body);
         } catch (InterruptedException e) {

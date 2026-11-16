@@ -8431,21 +8431,42 @@ components:
          models: { type: object, additionalProperties: { type: array, items: { type: string } } }
          configRevision: { type: string }
     ProviderModelProvider:
+       description: "One entry under ProviderModelCatalog.providers. The /api/v1/models proxy returns TWO DISJOINT shapes from the same endpoint: scoped (POST /internal/v1/agent/models, when the caller has visible provider connections) and legacy instance-fallback (GET /internal/v1/agent/models, when it has none). Both are contracted explicitly so neither shape can silently inherit the required fields of the other. status is the live probe result (lowercase), distinct in meaning from ProviderConnection.status (DB lifecycle, uppercase)."
+       oneOf:
+         - $ref: '#/components/schemas/ScopedProviderModelProvider'
+         - $ref: '#/components/schemas/LegacyProviderModelProvider'
+    ScopedProviderModelProvider:
+       description: 'Scoped catalog entry produced by xihe_agent/llm/models.py fetch_connection_catalog. Keyed by connectionId. The field is named status (not probeStatus, D-1709 defers that rename); its vocabulary is the live probe result, which is a narrower set than the legacy shape.'
        type: object
-       required: [connectionId, scope, displayName, connectionStatus, models]
+       additionalProperties: false
+       required: [connectionId, connectionKey, providerId, apiTypeId, apiTypeVersion, operation, scope, displayName, status, reasonCode, models, verifiedAt, connectionRevision, configRevision]
        properties:
          connectionId: { type: string, format: uuid }
          connectionKey: { type: string }
          providerId: { type: string }
          apiTypeId: { type: string }
-         apiTypeVersion: { type: integer, minimum: 1 }
+         apiTypeVersion: { type: integer, minimum: 0 }
          operation: { type: string, enum: [chat, embedding] }
          scope: { type: string, enum: [USER, WORKSPACE, INSTANCE, SYSTEM] }
          displayName: { type: string }
-         connectionStatus: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
+         status: { type: string, enum: [ready, invalid_response, invalid_credentials, unreachable], description: 'Live probe result of the credential-lease run. Never the DB lifecycle state: the CP only forwards connections whose DB status is READY (ProviderModelDescriptorService).' }
          reasonCode: { type: [string, 'null'] }
-         verifiedAt: { type: [string, 'null'], format: date-time }
          models: { type: array, items: { $ref: '#/components/schemas/ProviderModel' } }
+         verifiedAt: { type: [string, 'null'], format: date-time }
+         connectionRevision: { type: [integer, 'null'] }
+         configRevision: { type: string }
+    LegacyProviderModelProvider:
+       description: 'Legacy instance-fallback catalog entry produced by xihe_agent/llm/models.py fetch_model_catalog. Keyed by providerId, carries no connection identity.'
+       type: object
+       additionalProperties: false
+       required: [status, reasonCode, models, verifiedAt, configRevision]
+       properties:
+         status: { type: string, enum: [ready, missing_credentials, invalid_credentials, unreachable, invalid_response], description: 'Live probe result of the instance-level fallback credentials. missing_credentials is reachable only on this shape.' }
+         reasonCode: { type: [string, 'null'] }
+         models: { type: array, items: { $ref: '#/components/schemas/ProviderModel' } }
+         verifiedAt: { type: [string, 'null'], format: date-time }
+         configRevision: { type: string }
+
     ProviderModel:
        type: object
        required: [name, capabilities]

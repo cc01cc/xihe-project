@@ -6515,7 +6515,7 @@ async function startM63Mock() {
     if (url.pathname === '/api/v1/models' && request.method === 'GET') {
       record(request, url, body);
       json(response, 200, {
-        providers: { 'conn-1': { connectionId: 'conn-1', providerId: 'xiaomi', connectionStatus: 'ready', models: ['model-a', 'model-b'] } },
+        providers: { 'conn-1': { connectionId: 'conn-1', providerId: 'xiaomi', status: 'ready', models: ['model-a', 'model-b'] } },
         models: { xiaomi: ['model-a', 'model-b'] },
         configRevision: 'rev-7',
       });
