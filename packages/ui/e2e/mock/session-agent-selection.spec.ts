@@ -120,8 +120,12 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
         expect(hitTest.targetIsInput, JSON.stringify(hitTest)).toBe(true);
         expect(hitTest.sheetOpacity, JSON.stringify(hitTest)).toBe("1");
     }
+    // task-52 / batch-02 ②：默认标题不再是前端硬编码的英文 `New Chat`，而是 i18n 键
+    // `workspace.sessionDefaultTitle`（本 spec 未覆盖 `xihe-language` ⇒ 默认 zh-CN ⇒「未命名会话」）。
+    // 钉**请求体**而不是渲染文案：这条要证明的是「发出去的 title 已本地化」，
+    // 光看侧栏显示会被任何一层 fallback 蒙过去。
     expect(createRequest.postDataJSON()).toEqual({
-        title: "New Chat",
+        title: "未命名会话",
         agentPrincipalId: "agent-1",
     });
     await page.screenshot({

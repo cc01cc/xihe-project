@@ -181,7 +181,9 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
             timeout: EXPECT_TIMEOUT_MS,
         });
         // 新建的会话立刻出现在独立会话分组里（不必刷新）。
-        await expect(page.getByTestId("sidebar-standalone-group")).toContainText("New Chat", {
+        // task-52 / batch-02 ②：默认标题已本地化（`workspace.sessionDefaultTitle` = 「未命名会话」），
+        // 不再在中文界面里露出英文 `New Chat`。
+        await expect(page.getByTestId("sidebar-standalone-group")).toContainText("未命名会话", {
             timeout: EXPECT_TIMEOUT_MS,
         });
     });

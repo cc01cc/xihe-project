@@ -63,7 +63,18 @@ vi.mock<typeof workspaceContextModule>("../../lib/workspaceContext", () => ({
     clearTabWorkspace: () => mocks.clearTabWorkspace(),
 }));
 
-vi.mock<typeof vueI18nModule>("vue-i18n", () => ({
+/**
+ * 只替 `useI18n`（组件取词那一处），**其余保持真实**（`importOriginal`）。
+ *
+ * <p>task-52 起 `stores/session.ts` 从 `../i18n` 取 `i18n.global.t` 作默认会话标题
+ * （默认参数在 store 里，没有组件实例可注入），而 `../i18n` 模块初始化会调用
+ * `createI18n` —— 整块 mock 掉 `vue-i18n` 就把它也换成 undefined，报
+ * `No "createI18n" export is defined on the "vue-i18n" mock`，**整份 spec 收集失败**
+ * （不是某条用例红，是 "no tests"）。这也正是 vitest 提示用 `importOriginal` 的场景：
+ * 要替一个导出、不是要重造整个模块。</p>
+ */
+vi.mock<typeof vueI18nModule>("vue-i18n", async (importOriginal) => ({
+    ...(await importOriginal()),
     useI18n: () => ({ t: (key: string) => key }),
 }));
 

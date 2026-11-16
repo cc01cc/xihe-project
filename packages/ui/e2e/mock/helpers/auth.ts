@@ -1980,7 +1980,10 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             const isWorkspaceless = new URL(route.request().url()).pathname === "/api/v1/sessions";
             const created = {
                 id: `mock-session-${Date.now()}`,
-                title: body?.title ?? "New Chat",
+                // task-52 / batch-02 ②：默认标题已本地化（`workspace.sessionDefaultTitle`）。
+                // mock 侧沿用同一句中文文案：客户端现在**总是**显式传 title，这个 fallback 只在
+                // 别处直接 POST 而没有 title 时兜底（与 CP 的 `"Untitled"` 同为后端兜底角色）。
+                title: body?.title ?? "未命名会话",
                 agentPrincipalId: body?.agentPrincipalId ?? null,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
