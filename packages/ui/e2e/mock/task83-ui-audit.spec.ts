@@ -25,6 +25,7 @@
 import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { contrastRatio } from "../helpers/color";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 // task-89（加法前置）：只复用既有种子函数，不引入第二套登录逻辑。
 import { setupMockAuth } from "./helpers/auth";
 // 复用 src 的预览夹具（auth.ts:32 同源做法）：手抄一份环境 body 必然漂移。
@@ -237,9 +238,17 @@ async function measureTargets(page: Page, min: number) {
     }, min);
 }
 
-/** 等 SPA 真的渲染完：domcontentloaded 后 #app 还要一会儿才出内容（实测 appLen 1219 → 71122）。 */
+/**
+ * 等 SPA 真的渲染完：domcontentloaded 后 #app 还要一会儿才出内容（实测 appLen 1219 → 71122）。
+ *
+ * task-37（2026-11-17）：原裸字面量 15000 无 exempt，被 check-e2e-timeouts 判红。定性为可缩：
+ * mock 车道全桩、无外部进程，本 spec 全部用例整测 ≤6.9 s（含 8 页循环），settle 实际亚秒级；
+ * 姊妹 spec task90-members-tablist-name.spec.ts:32 同一 settle 用 EXPECT_TIMEOUT_MS 常绿。
+ * ⇒ 引用 SSOT 常量（默认 10 s，E2E_EXPECT_TIMEOUT_MS 可覆盖），与预算文档「值动态可配」一致。
+ * 证据：one/internal/A03-xihe/evidence/2026-11-17-task83-timeout-triage/README.md。
+ */
 async function settle(page: Page): Promise<void> {
-    await page.waitForSelector("main", { state: "visible", timeout: 15000 });
+    await page.waitForSelector("main", { state: "visible", timeout: EXPECT_TIMEOUT_MS });
 }
 
 /** 普通导航。 */
