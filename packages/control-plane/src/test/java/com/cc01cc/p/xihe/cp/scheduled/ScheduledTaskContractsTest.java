@@ -13,8 +13,8 @@ import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -65,6 +65,7 @@ class ScheduledTaskContractsTest {
     private static final String USER_ID = "22222222-2222-4222-8222-222222222222";
     private static final String SESSION_ID = "33333333-3333-4333-8333-333333333333";
 
+    /** Jackson 3: the wire type Spring Boot 4 binds request bodies with (task-67 / D-1720). */
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private ScheduledTaskRepository repository;
@@ -118,13 +119,13 @@ class ScheduledTaskContractsTest {
     private static ScheduledTaskApiService.CreateRequest jobRequest(String triggerKind,
                                                                    String at,
                                                                    Integer intervalSeconds) {
-        ObjectNode payload = new ObjectMapper().createObjectNode().put("command", "echo probe");
+        JsonNode payload = new ObjectMapper().createObjectNode().put("command", "echo probe");
         return new ScheduledTaskApiService.CreateRequest(triggerKind, null, "UTC",
                 ScheduledTask.TARGET_JOB_DISPATCH, null, null, payload, at, null, intervalSeconds);
     }
 
     private static ScheduledTaskApiService.CreateRequest jobRequestWithTargetSession() {
-        ObjectNode payload = new ObjectMapper().createObjectNode().put("command", "echo probe");
+        JsonNode payload = new ObjectMapper().createObjectNode().put("command", "echo probe");
         return new ScheduledTaskApiService.CreateRequest("cron", "* * * * *", "UTC",
                 ScheduledTask.TARGET_JOB_DISPATCH, SESSION_ID, null, payload, null, null, null);
     }

@@ -21,6 +21,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -146,7 +147,7 @@ public class ScheduledTaskApiService {
      */
     public record CreateRequest(String triggerKind, String cronExpr, String timezone,
                                 String targetKind, String targetSessionId, String prompt,
-                                JsonNode payload, String at, String agentPrincipalId,
+                                tools.jackson.databind.JsonNode payload, String at, String agentPrincipalId,
                                 Integer intervalSeconds) {}
 
     /** 处置请求：agentPrincipalId 可选——agent 执行的处置显式标记进 audit（0486 #10）。 */
@@ -220,7 +221,7 @@ public class ScheduledTaskApiService {
                 new ScheduledTaskContracts.TriggerInput(request.cronExpr(), timezone, request.at(),
                         request.intervalSeconds(), now));
         ScheduledTaskContracts.TargetResolution action = target.action().resolve(
-                new ScheduledTaskContracts.TargetContext(request.payload(), request.targetSessionId(),
+                new ScheduledTaskContracts.TargetContext(domainPayload(request.payload()), request.targetSessionId(),
                         request.prompt(), targetSessionGate(creator, userId, workspaceId)));
 
         requireQuota(workspaceUuid, userUuid);
@@ -478,6 +479,41 @@ public class ScheduledTaskApiService {
     private static boolean isPresent(String value) {
         return value != null && !value.isBlank();
     }
+
+    /**
+     * Boundary bridge for the one request field whose wire type and domain type are different
+     * versions of the same abstraction (task-67 / D-1720, the inbound twin of PLAN-0633 C1).
+     *
+     * <p>Boot 4 binds request bodies with <b>Jackson 3</b>, so {@link CreateRequest#payload()} is a
+     * {@code tools.jackson} node; the domain (entity, contract table, dispatcher) reads
+     * {@code com.fasterxml} nodes. A Jackson-3 node handed straight to the contract table would
+     * not compile, and typing the record component as a Jackson-2 node made Spring fail with
+     * "Cannot construct instance of ... JsonNode (no Creators)" — a 500 on every request that
+     * carried a payload. Converting at the boundary (rather than teaching Jackson to build a
+     * node it cannot build) keeps the type difference explicit and in one place.
+     *
+     * <p>The conversion goes through <em>plain JSON values</em> ({@code Map}/{@code List}/scalars)
+     * so it cannot depend on either mapper's feature configuration: the tree is written out as
+     * bytes by the Jackson-3 mapper and re-read by the Jackson-2 mapper. {@code null} stays
+     * {@code null}, and a non-object payload keeps whatever shape the caller sent so the contract
+     * table can answer its declared parameter code instead of a DB CHECK failure.
+     */
+    private static JsonNode domainPayload(tools.jackson.databind.JsonNode wire) {
+        if (wire == null) {
+            return null;
+        }
+        try {
+            return new ObjectMapper().readTree(new tools.jackson.databind.ObjectMapper()
+                    .writeValueAsBytes(wire));
+        } catch (java.io.IOException e) {
+            // Unreachable in practice: the bytes come from a live in-memory tree, not a stream.
+            // Surfaced as the same 400 shape a malformed wire body gets, never a 500.
+            throw new CpApiException(HttpStatus.BAD_REQUEST,
+                    ScheduledTaskContracts.CODE_PAYLOAD_REQUIRED,
+                    "payload could not be re-read as a JSON document");
+        }
+    }
+
 
     /**
      * The behaviour a {@code session_wakeup} row needs from the service: resolve the target session

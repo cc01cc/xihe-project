@@ -106,7 +106,8 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         // positive control can assert a real success instead of "failed for another reason".
         ScheduledTaskApiService.CreateRequest request = new ScheduledTaskApiService.CreateRequest(
                 "delay_once", null, "UTC", "job_dispatch", null, null,
-                objectMapper.createObjectNode().put("command", "echo gate-positive-control"),
+                new tools.jackson.databind.ObjectMapper().createObjectNode()
+                        .put("command", "echo gate-positive-control"),
                 java.time.Instant.now().plusSeconds(600).toString(), null, null);
 
         // Positive control (round-4 P2-4): A holds CREATE_SCHEDULED_TASK and the task is created.
