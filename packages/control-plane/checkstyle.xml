@@ -45,9 +45,13 @@
 
     <!-- Conventional logger names plus the remaining deliberate lowercase
          constants are allow-listed exactly; every other constant must stay
-         UPPER_SNAKE (108 baseline findings: 101 loggers + 7 named below). -->
+         UPPER_SNAKE (108 baseline findings: 101 loggers + 6 named below).
+         task-45: `wireMock` was removed from this allow-list on purpose. It was
+         only ever a *test fixture field* (2 declarations, both under src/test);
+         keeping it here let a test-only naming concession constrain product code.
+         It now lives in checkstyle-test.xml, where it belongs. -->
     <module name="ConstantName">
-      <property name="format" value="^([A-Z][A-Z0-9_]*|logger|log|telemetryLogger|auditLog|wireMock|currentUserId|currentWorkspaceId|currentWorkspacePath|currentUserRole|currentWorkspaceRole|currentWorkspaceSource)$"/>
+      <property name="format" value="^([A-Z][A-Z0-9_]*|logger|log|telemetryLogger|auditLog|currentUserId|currentWorkspaceId|currentWorkspacePath|currentUserRole|currentWorkspaceRole|currentWorkspaceSource)$"/>
     </module>
     <module name="LocalFinalVariableName">
       <property name="severity" value="error"/>
@@ -58,11 +62,15 @@
     <module name="MemberName">
       <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
     </module>
-    <!-- Project convention: test method names use method_behavior segments
-         (325 of 327 baseline findings) and JSON-bound accessors keep snake
-         components (getDevice_id). Lowercase-start is still required. -->
+    <!-- Product-side method names carry NO underscores (task-45). Production
+         code declares 0 underscore methods, so this costs nothing to enforce.
+         The underscore allowance existed only for *test* method names, which
+         use method_behavior segments (325 of 327 baseline findings) - that is
+         a test-domain convention and now lives in checkstyle-test.xml. A test
+         concession must not price product code (measured: the shared rule let
+         `cp1_leak_probe()` through src/main silently). -->
     <module name="MethodName">
-      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+      <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
     </module>
     <module name="PackageName">
       <property name="severity" value="error"/>

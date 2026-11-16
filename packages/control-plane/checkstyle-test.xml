@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+  "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+  "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<module name="Checker">
+  <property name="charset" value="UTF-8"/>
+  <!-- task-45 / BL-306: TEST-SOURCE ruleset. Applied to src/test/java ONLY,
+       through its own pom execution (id = checkstyle-test-early, bound to
+       test-compile). Product sources remain under checkstyle.xml, which is
+       stricter than this file in exactly two places - see the T-R entries below.
+       Why a separate FILE instead of a suppression list: the split has to
+       happen at the CONFIGURATION layer (skill test-lint-area-separation §0).
+       A suppression list is an exemption list - it has to be maintained per
+       path and it silently rots. A separate ruleset states the test domain
+       contract once and every test file inherits it. -->
+  <property name="severity" value="error"/>
+  <property name="fileExtensions" value="java"/>
+
+  <module name="TreeWalker">
+    <!-- ================= T-S: shared with product, unchanged =================
+         These bite tests exactly as hard as product code. A test that star-imports,
+         drops a brace, hides an empty branch or nests a second top-level class is
+         genuinely worse off - the defect is the same defect in either domain. -->
+    <module name="UnusedImports"/>
+    <module name="RedundantImport"/>
+    <module name="AvoidStarImport"/>
+    <!-- EmptyBlock option=text: a documented empty branch is allowed, truly empty
+         braces are not. In a test an undocumented empty catch is *worse* than in
+         product code - it swallows the very failure the test exists to observe. -->
+    <module name="EmptyBlock">
+      <property name="option" value="text"/>
+    </module>
+    <module name="LeftCurly">
+      <property name="tokens" value="LITERAL_ELSE, LITERAL_CATCH, LITERAL_FINALLY, LITERAL_DO, LITERAL_FOR, LITERAL_IF, LITERAL_SWITCH, LITERAL_SYNCHRONIZED, LITERAL_TRY, LITERAL_WHILE, STATIC_INIT"/>
+    </module>
+    <module name="NeedBraces"/>
+    <module name="RightCurly"/>
+    <module name="OneTopLevelClass"/>
+    <!-- HideUtilityClassConstructor / InterfaceIsType: both stay at full strength.
+         A test helper holding only static fixture factories still must not be
+         instantiable (a `new Fixtures()` in a test is just as wrong as in product),
+         and an interface-with-only-fields is a mis-modelled declaration anywhere. -->
+    <module name="HideUtilityClassConstructor"/>
+    <module name="InterfaceIsType"/>
+
+    <!-- ================= T-R: relaxed, same rule / wider shape =================
+         Only these two differ from checkstyle.xml. Both are RELAXATIONS of a
+         shape that the test domain legitimately needs; neither removes a rule.
+
+         T-R 1/2 ConstantName - the test allow-list ADDS `wireMock` on top of the
+         product list. Reason the relaxation holds: a WireMock server field is a
+         per-test *fixture handle*, not a constant. Its lowercase name mirrors the
+         `wireMock` extension field name the library itself uses, and 2 of the 2
+         declarations in this repo are under src/test. In product code that field
+         does not exist, which is why checkstyle.xml does NOT allow it (task-45
+         removed it there: a test-only concession must not price product code).
+
+         T-R 2/2 MethodName - underscores allowed. Reason: test method names encode
+         the scenario, not a callable API: `method_behavior_state` reads as a
+         sentence and is the naming idiom of 325 of 327 baseline findings. The
+         rule still holds (lowercase start, no leading underscore); only the
+         segment separator is widened. Production code declares ZERO underscore
+         methods, so nothing is being accommodated here beyond the test domain. -->
+    <module name="ConstantName">
+      <property name="format" value="^([A-Z][A-Z0-9_]*|logger|log|telemetryLogger|auditLog|wireMock|currentUserId|currentWorkspaceId|currentWorkspacePath|currentUserRole|currentWorkspaceRole|currentWorkspaceSource)$"/>
+    </module>
+    <module name="MethodName">
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+    </module>
+
+    <!-- ================= T-S: remaining naming rules, unchanged ==============
+         Test code declares locals, members, parameters, types and packages too;
+         a `Int` local or a `foo` record name is equally unreadable in a test. -->
+    <module name="LocalFinalVariableName"/>
+    <module name="LocalVariableName"/>
+    <module name="MemberName">
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+    </module>
+    <module name="PackageName"/>
+    <module name="ParameterName">
+      <property name="format" value="^[a-z][a-zA-Z0-9_]*$"/>
+    </module>
+    <module name="StaticVariableName"/>
+    <module name="TypeName"/>
+  </module>
+</module>

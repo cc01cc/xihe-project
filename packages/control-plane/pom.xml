@@ -331,15 +331,35 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
                 <version>3.6.0</version>
+                <!-- task-45: severity/blocking are shared by BOTH executions (product and
+                     test); only the ruleset and the scanned directory differ per execution.
+                     `-Dcheckstyle.skip=true` still disables both (plugin-level `skip`). -->
+                <!-- 插件级配置 = 单独 `mvn -o checkstyle:check`（生命周期外调用，default-cli）
+                     时的口径：产品域脚本 + 产品目录。**这一层不能省 configLocation**：
+                     省了 default-cli 会回落到插件内置的 sun_checks.xml，实测报出 56918 条
+                     违规（与真正的门无关的噪声）。各 execution 只覆盖自己需要的两项
+                     （configLocation / sourceDirectories），阻断强度仍共用这里。 -->
                 <configuration>
                     <configLocation>checkstyle.xml</configLocation>
+                    <sourceDirectories>
+                        <sourceDirectory>${project.basedir}/src/main/java</sourceDirectory>
+                    </sourceDirectories>
                     <violationSeverity>error</violationSeverity>
                     <failOnViolation>true</failOnViolation>
-                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
+                    <includeTestSourceDirectory>false</includeTestSourceDirectory>
                 </configuration>
                 <executions>
+                    <!-- ===== 产品域（src/main/java），规则集 = checkstyle.xml =====
+                         task-45：这里只扫产品源码。测试源码走下面独立的第二个 execution，
+                         两者共用 violationSeverity=error + failOnViolation=true（阻断强度不降）。 -->
                     <execution>
                         <id>checkstyle-check-early</id>
+                        <configuration>
+                            <configLocation>checkstyle.xml</configLocation>
+                            <sourceDirectories>
+                                <sourceDirectory>${project.basedir}/src/main/java</sourceDirectory>
+                            </sourceDirectories>
+                        </configuration>
                         <!-- task-583（Lead 2026-11-14 派；cp-1 查实 33bd1786e1 带未用 import 进主干）：
                              这道门原来**没有显式 phase**，而 checkstyle:check 的 Mojo 默认相位是 verify
                              （maven-checkstyle-plugin 3.6.0 的 plugin.xml: <phase>verify</phase>）。
@@ -353,6 +373,28 @@
                         <goals>
                             <goal>check</goal>
                         </goals>
+                    </execution>
+
+                    <!-- ===== 测试域（src/test/java），规则集 = checkstyle-test.xml =====
+                         task-45 / BL-306：绑到 test-compile —— 该相位第一件事就是"测试源码要能编译"，
+                         所以测试规则在这里红最便宜（编译之前，不是测试跑完之后）。
+                         为什么 validate 不扫测试：validate 早于 test-compile，那时 test 源还没有
+                         被任何东西需要；把测试规则也钉在 validate 会让"只跑了部分生命周期"的
+                         命令（例如 mvn validate 只想起个编译检查）假性变慢、也让职责不清。
+                         两个 execution 是**并列**关系，各自独立判定 failOnViolation；
+                         validate 阶段的 checkstyle-check-early 不依赖 test-compile，不会被跳过。 -->
+                    <execution>
+                        <id>checkstyle-test-early</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <configLocation>checkstyle-test.xml</configLocation>
+                            <sourceDirectories>
+                                <sourceDirectory>${project.basedir}/src/test/java</sourceDirectory>
+                            </sourceDirectories>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
