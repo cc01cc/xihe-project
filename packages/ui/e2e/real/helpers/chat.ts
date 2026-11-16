@@ -30,7 +30,12 @@ export async function ensureWorkspaceChat(page: Page): Promise<void> {
 
     if (ready === "chat") return;
     if (ready === "cta") {
-        await emptyStateCta.click();
+        // A workspace that already has Sessions auto-selects one on mount
+        // (`WorkspaceView.selectSessionForWorkspace`), and the empty-state CTA only renders
+        // while *no* Session is current — so it can win the race above and then unmount
+        // mid-click, hanging until the test timeout (task-49). Only click it when it is still
+        // the live affordance; the mandatory `textarea` wait below stays the real assertion.
+        if (await emptyStateCta.isVisible()) await emptyStateCta.click();
     } else if (ready === "fab") {
         await chatFab.click();
     } else {
