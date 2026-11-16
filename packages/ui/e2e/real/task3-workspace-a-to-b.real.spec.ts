@@ -121,6 +121,7 @@ test("@host A→B（真栈 · 同 tab 深链）：边界后带 A 的 workspace �
     const rowsBeforeProbe = rows.length;
 
     // ③ 仪器自证：页面内人为注入一条带 A 头的请求，钩子必须抓到。
+    // read-only: 仪器自证（只读 GET）
     const probeStatus = await page.evaluate(async (workspaceId: string) => {
         const response = await fetch(`/api/v1/workspaces/${workspaceId}`, {
             headers: { "X-Workspace-Id": workspaceId },

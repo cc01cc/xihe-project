@@ -617,6 +617,7 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         /* 仪器自证（Lead 裁定①）：在**边界之后**故意发一条带 A 头的请求 —— 相机必须看得见它。
          * 看不见 ⇒ 下面「0 条」不成立。这是「仪器自证」，与「变异证明」是两件事。 */
         const probeAt = rows.length;
+        // fixture-only: 仪器自证探针（桩端点，非产品路由）
         await page.evaluate(
             (probe) => {
                 void fetch(probe.path, { headers: { "X-Workspace-Id": probe.header } }).catch(
@@ -922,6 +923,7 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         /* 仪器自证（边界后）：故意发一条带 A 头的请求，相机必须看见它。
          * 看不见 ⇒ 下面的「0 条」不成立。 */
         const probeAt = rows.length;
+        // fixture-only: 仪器自证探针（桩端点，非产品路由）
         await page.evaluate(
             (probe) => {
                 void fetch(probe.path, { headers: { "X-Workspace-Id": probe.header } }).catch(
