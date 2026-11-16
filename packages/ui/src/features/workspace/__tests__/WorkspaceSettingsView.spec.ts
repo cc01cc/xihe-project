@@ -190,6 +190,35 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         wrapper.unmount();
     });
 
+    // ---- task-81 P1-2：页签组的可访问结构与选中语义 ----
+    it("四个页签由 vendor `role=tablist` 承载，组名在 tablist 上，当前项只有一个", async () => {
+        // 改前实测（同一 URL）：四个 tab 的 `role` / `aria-selected` / `aria-current` /
+        // `tabindex` **全为 null**，祖先四层无 nav/tablist/aria-label ⇒ 屏幕阅读器读到
+        // 四个无状态按钮，不知道当前在哪个 tab；选中态只由 `border-b-2` 的颜色表达。
+        //
+        // 判据是**结构**（role / 属性 / 关联），不猜 CSS —— 与 task-484 落 data 属性同一口径。
+        const wrapper = await mountView();
+        const lists = wrapper.findAll('[role="tablist"]');
+        expect(lists.length, "必须有且只有一个 tablist").toBe(1);
+        expect(
+            lists[0].attributes("aria-label"),
+            "组名必须在 tablist 自身（放 Tabs 根上会挂到无 role 的外层 div ⇒ 念不到组名）",
+        ).toBe("工作区设置页签");
+        const tabs = wrapper.findAll('[role="tab"]');
+        expect(tabs.length, "四个页签都是 role=tab").toBe(4);
+        const selected = wrapper.findAll('[role="tab"][aria-selected="true"]');
+        expect(selected.length, "当前项只能有一个（不能一个都没有、也不能多个）").toBe(1);
+        for (const tab of tabs)
+            expect(tab.attributes("aria-selected"), "每个页签都要有选中状态").toMatch(
+                /^(true|false)$/,
+            );
+        // 键盘可达性由 vendor 提供（roving tabindex）。**不钉具体 tabindex 数值** ——
+        // 实测 tablist 是 "0"、页签在组内由 roving focus 决定谁可聚焦；钉死某个数会把
+        // vendor 的内部实现细节变成我们的契约（升级就会假红）。判据只要求「tablist 可聚焦」。
+        expect(lists[0].attributes("tabindex"), "tablist 必须可聚焦").toBeDefined();
+        wrapper.unmount();
+    });
+
     it.each([
         ["credentials", "credentials", "凭据"],
         ["knowledge", "knowledge", "知识库"],
@@ -523,7 +552,22 @@ describe("WorkspaceSettingsView — 搬回来的 mcp / skills 页签（D-1432）
         routeState.query = { tab: "config" };
         const wrapper = await mountView();
 
-        await wrapper.find('[data-testid="ws-settings-tab-mcp"]').trigger("click");
+        // task-81 P1-2：改用 vendor `Tabs` 后，**触发事件从 click 改为 mousedown**。
+        //
+        // **这是对 vendor 激活机制的依赖，不是行为判据** —— 老实说清，不假装它中性：
+        //   reka `TabsTrigger` 的激活事件是 `mousedown`（`TabsTrigger.js:57` 的 `onMousedown`，
+        //   配 `withModifiers(..., ["left"])` ⇒ 左键才生效），此外还有 `keydown` 的
+        //   enter/space 与 `focus`（activationMode !== manual 时聚焦即切）。**没有 `click`**。
+        //
+        // 「若上游改成 click/pointerdown」的后果（实测，不是推测）：把本行换回 `trigger("click")`
+        // 后本用例**红在下一行的 routerSpies 断言**（`expected "vi.fn()" to be called with
+        // arguments: [ { query: { tab: 'mcp' } } ]`），即症状会指向「切页没发生」而不是
+        // 「事件名过期」—— 所以 vendor 升级时**必须回来看这一行**，别去查 switchTab 逻辑。
+        //
+        // **被断言的判据一字未改**：改前 `expect(routerSpies.push).toHaveBeenCalledWith({ query:
+        // { tab: "mcp" } })`，改后同一句、同一对象、同一期望值（`git diff` 里那一行是上下文行，
+        // 不在 `-`/`+` 两侧）。
+        await wrapper.find('[data-testid="ws-settings-tab-mcp"]').trigger("mousedown");
         expect(routerSpies.push).toHaveBeenCalledWith({ query: { tab: "mcp" } });
         wrapper.unmount();
     });

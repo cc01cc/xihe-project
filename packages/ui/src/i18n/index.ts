@@ -534,6 +534,9 @@ const messages = {
             membersTabMembers: "成员",
             membersTabAgents: "智能体",
             membersTabLabel: "成员页分组",
+            // task-81 P1-2：工作区设置页四个 tab 的组名。**不复用 membersTabLabel** ——
+            // 两个页面的 tab 组是不同控件，读同一个 label 会让「同一名字指两处」再次出现。
+            settingsTabsLabel: "工作区设置页签",
             createFile: "新建文件",
             createFilePlaceholder: "输入文件名后回车",
             uploadFile: "上传文件",
@@ -836,6 +839,10 @@ const messages = {
             // 否则状态栏会把「正在连」读成「断线重连」，判据也就分不出三态。
             eventsConnecting: "文件事件连接中",
             eventsDisconnected: "文件事件未连接",
+            // task-81 P1-1：第四态。此前环境/资源/成员/设置这类**本页不订阅**文件事件的页面，
+            // 状态栏也显示「文件事件未连接」⇒ 用户会去查网络，而事实是这页没有订阅方。
+            // 文案要读出「本页没订阅」这个中性事实，不能读成故障。
+            eventsUnsubscribed: "本页未订阅文件事件",
             statusBarUsage: "in {input} · out {output}",
             // task-52 / batch-02（P1）：用量行三段文案。原先 `未映射` 与 `real` 是裸字面量，
             // 中文界面直接读出英文 wire 值（截图 `.tmp/xh/b02-10-chat-full.png`）。
@@ -4397,6 +4404,7 @@ const messages = {
             membersTabMembers: "Members",
             membersTabAgents: "Agents",
             membersTabLabel: "Members page sections",
+            settingsTabsLabel: "Workspace settings tabs",
             createFile: "New file",
             createFilePlaceholder: "Type a file name and press Enter",
             uploadFile: "Upload file",
@@ -4710,6 +4718,7 @@ const messages = {
             eventsReconnecting: "Reconnecting file events",
             eventsConnecting: "Connecting file events",
             eventsDisconnected: "File events disconnected",
+            eventsUnsubscribed: "This page does not subscribe to file events",
             statusBarUsage: "in {input} · out {output}",
             usageCostUnmapped: "Not priced",
             usageCostNoteNoTokenCounts:

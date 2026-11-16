@@ -62,18 +62,28 @@ const containerLabel = computed(() => t("workspaceNav.workspaceContainer"));
 const pendingApprovalTotal = computed(() => agentStore.pendingApprovalTotal);
 
 /**
- * 三态派生。**顺序有语义**：`connecting` 优先于 `connected` ——
- * 重连过程中 `isConnected` 可能仍是上一轮的 true，先判 connecting 才不会把
- * 「正在重连」读成「已连接」。
+ * 四态派生。**顺序有语义**，两层都要保持：
+ *
+ * <p>① `subscribed` 判在最前（task-81 P1-1）：本页没有订阅方时，`connected/connecting`
+ * 恒为默认 false —— 那是「没订阅」不是「断了」。若把本页未订阅读成 disconnected，
+ * 用户会去查网络，而事实是这页不订阅文件事件。</p>
+ *
+ * <p>② 订阅页内部 `connecting` 优先于 `connected`：重连过程中 `isConnected` 可能仍是
+ * 上一轮的 true，先判 connecting 才不会把「正在重连」读成「已连接」。（原注释，未改）</p>
  */
-const connectionState = computed<"connecting" | "connected" | "disconnected">(() => {
-    if (connection.connecting) return "connecting";
-    if (connection.connected) return "connected";
-    return "disconnected";
-});
+const connectionState = computed<"unsubscribed" | "connecting" | "connected" | "disconnected">(
+    () => {
+        if (!connection.subscribed) return "unsubscribed";
+        if (connection.connecting) return "connecting";
+        if (connection.connected) return "connected";
+        return "disconnected";
+    },
+);
 
 const connectionLabel = computed(() => {
     switch (connectionState.value) {
+        case "unsubscribed":
+            return t("workspace.eventsUnsubscribed");
         case "connecting":
             return t("workspace.eventsConnecting");
         case "connected":
@@ -87,6 +97,10 @@ const connectionLabel = computed(() => {
  * 状态点颜色。**不用品牌色**（注意力预算：状态点不是 CTA）：
  * 已连接 = 绿（成功语义）、连接中 = 琥珀（进行中）、未连接 = 灰（中性，不是错误红 ——
  * 断线会由页面横幅点名，状态点只负责「一眼看出在不在」）。
+ *
+ * <p>task-81：新增的「本页未订阅」走 `default` ⇒ **灰**，与「未连接」同色而非另立一种颜色。
+ * 理由（裁定原文）：别让新态引入第三种颜色语义 —— 未订阅不是故障，不该占用琥珀/红。
+ * 两态靠**文案**区分（「本页未订阅文件事件」vs「文件事件未连接」），不靠颜色。</p>
  */
 const dotClass = computed(() => {
     switch (connectionState.value) {
@@ -94,6 +108,7 @@ const dotClass = computed(() => {
             return "bg-amber-500";
         case "connected":
             return "bg-emerald-600";
+        // unsubscribed 与 disconnected 都落 default（灰）：靠文案区分，不靠颜色（见上）。
         default:
             return "bg-muted-foreground/40";
     }

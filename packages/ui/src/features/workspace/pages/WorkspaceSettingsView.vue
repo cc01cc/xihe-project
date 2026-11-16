@@ -27,6 +27,8 @@ import AlertDialogTitle from "../../../components/ui/alert-dialog/AlertDialogTit
 import AlertDialogDescription from "../../../components/ui/alert-dialog/AlertDialogDescription.vue";
 import AlertDialogFooter from "../../../components/ui/alert-dialog/AlertDialogFooter.vue";
 import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCancel.vue";
+// task-81 P1-2：vendor Tabs（同包 WorkspaceMembersView.vue 已是这个用法）。
+import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 
 // PLAN-0560：每工作区设置页（常规/成员）。
 // PLAN-0565：「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
@@ -412,22 +414,52 @@ onMounted(async () => {
                 </div>
 
                 <template v-else>
-                    <div class="flex gap-1 border-b mb-4">
-                        <button
-                            v-for="tab in tabs"
-                            :key="tab.key"
-                            :data-testid="`ws-settings-tab-${tab.key}`"
-                            class="px-4 py-2 text-sm border-b-2 transition-colors"
-                            :class="
-                                activeTab === tab.key
-                                    ? 'border-primary text-foreground font-medium'
-                                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                            "
-                            @click="switchTab(tab.key)"
+                    <!--
+                        task-81 P1-2（与 task-53 item 8 同一件事）：改用 vendor `Tabs`，不再手写 div+button。
+
+                        改前实测（`/workspace/<id>/settings`）：四个 tab 的 `role` / `aria-selected` /
+                        `aria-current` / `tabindex` **全为 null**，向上四层祖先链无 `nav` / `tablist` /
+                        `aria-label` ⇒ 屏幕阅读器读到四个**无状态的按钮**，不知道当前在哪个 tab；
+                        选中态只由 `border-b-2` 的颜色表达（纯视觉）。
+
+                        为什么用 vendor 而不是手搓 `<nav>`：同包 `WorkspaceMembersView.vue:71` 已是正确
+                        样板。vendor 自带 `role=tablist`（`TabsList`）、`role=tab` + `aria-selected`
+                        + `aria-controls` + roving tabindex + **方向键切换**；手搓补 `aria-selected`
+                        只是补了一半，还会丢掉键盘语义 —— 补一半的无障碍比完全没有更危险（会让人
+                        以为已合规）。
+
+                        `aria-label` 必须落在 `role=tablist` 的那个元素上（即 `TabsList`）：实测放在
+                        `Tabs` 根上会挂到无 role 的外层 div，`tablist` 自身名字仍为空 ⇒ 关联不上。
+                        `data-testid` 原样保留（`config-settings.spec.ts` / `WorkspaceSettingsView.spec.ts`
+                        依赖 `ws-settings-tab-*`）。
+                    -->
+                    <Tabs
+                        :model-value="activeTab"
+                        class="mb-4"
+                        @update:model-value="(v) => switchTab(v as SettingsTab)"
+                    >
+                        <!--
+                            `aria-label` 必须落在**有 `role=tablist` 的那个元素**上（即 `TabsList`）。
+                            实测（本 spec 的 tablist 名字断言）：放在 `Tabs` 根上时，label 会挂到
+                            无 role 的外层 div，`tablist` 自身名字仍是空 ⇒ 屏幕阅读器念不到组名，
+                            「有 aria-label」看起来满足了却没说上话。
+                        -->
+                        <TabsList
+                            variant="line"
+                            :aria-label="t('workspace.settingsTabsLabel')"
+                            class="w-full justify-start gap-1 border-b"
                         >
-                            {{ tab.label }}
-                        </button>
-                    </div>
+                            <TabsTrigger
+                                v-for="tab in tabs"
+                                :key="tab.key"
+                                :value="tab.key"
+                                :data-testid="`ws-settings-tab-${tab.key}`"
+                                class="px-4 py-2 text-sm"
+                            >
+                                {{ tab.label }}
+                            </TabsTrigger>
+                        </TabsList>
+                    </Tabs>
 
                     <!--
                         D-1019 / task-209：旧 `?tab=mcp|credentials|knowledge` 的落点。

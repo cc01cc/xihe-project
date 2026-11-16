@@ -156,8 +156,13 @@ describe("WorkspaceStatusBar 三态（task-312）", () => {
     it("读数来自 store 而不是 props：组件不声明任何 props（状态栏在壳层，壳层没有页面读数）", async () => {
         const store = await connectionStore();
         const wrapper = await mountBar();
-        // 未发布 = 未连接（默认值），这条能抓住「读 props 默认 false」之外的其它形态
-        expect(stateOf(wrapper)).toBe("disconnected");
+        // task-81 P1-1 改断言：**原断言锁的是已废弃的语义**。
+        // 改前「未发布 ⇒ disconnected」把两种不同原因压成同一个像是故障的读数：
+        //   ①订阅了但断了（真故障）②本页根本没订阅（环境/资源/成员/设置页）。
+        // 现在未发布 ⇒ **unsubscribed**（中性），这是修 P1-1 的**目的本身**，不是迁就新代码。
+        // 这条断言仍然保留它的原判据「读数来自 store 而非 props」——下面 publishConnection 后
+        // 变 connected 就是对那条判据的证明。
+        expect(stateOf(wrapper)).toBe("unsubscribed");
         store.publishConnection({ connected: true, connecting: false, error: null });
         await flushPromises();
         expect(stateOf(wrapper)).toBe("connected");

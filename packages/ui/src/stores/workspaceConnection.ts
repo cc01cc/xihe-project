@@ -24,6 +24,21 @@ import { ref } from "vue";
  * （可见回归）。所以与连接态同一通道发布，语义仍是一条：**页面读数 → 壳层展示**。</p>
  */
 export const useWorkspaceConnectionStore = defineStore("workspaceConnection", () => {
+    /**
+     * **本页有没有订阅文件事件**（task-81 P1-1）。
+     *
+     * <p><b>为什么需要它</b>：`connected=false` 有**两种完全不同的原因** —— ①订阅了但断了
+     * （真故障）②本页根本没订阅（环境/资源/成员/设置等页）。状态栏把它们压成同一句
+     * 「文件事件未连接」，用户会去查网络，而事实是这页不订阅。**把不同原因读成同一个像是
+     * 故障的读数**，正是本轮要修的语义错误。</p>
+     *
+     * <p><b>谁来填</b>：发布方自己声明 —— `useWorkspaceSSE` 一挂载即置 true、卸载置 false。
+     * 显示侧**不猜路由**（按路由写「哪些页面订阅」的白名单必然随新页面漂）。</p>
+     *
+     * <p><b>初始值必须是 false</b>：首帧若先读成 true 会闪一下「连接中」再回落；
+     * 而从「未订阅页」进入时若默认 true，首帧会显示错误的态。改动见单测。</p>
+     */
+    const subscribed = ref(false);
     /** SSE 是否已连上（页面 `workspaceEvents.isConnected` 的只读副本）。 */
     const connected = ref(false);
     /** SSE 是否正在连接/重连（页面 `isConnecting` 的只读副本）。 */
@@ -35,12 +50,15 @@ export const useWorkspaceConnectionStore = defineStore("workspaceConnection", ()
     /** 本次 run 的输出 tokens（无 run 时 `null`）。 */
     const usageOutput = ref<number | null>(null);
 
-    /** 页面侧发布连接读数（唯一 writer = `WorkspaceView`）。 */
+    /** 页面侧发布连接读数（唯一 writer = `useWorkspaceSSE` 的 watch）。 */
     function publishConnection(next: {
         connected: boolean;
         connecting: boolean;
         error: string | null;
     }): void {
+        // 能发布连接读数这件事本身就证明本页有发布方 ⇒ 订阅态置 true。
+        // 不额外收一个 `subscribed` 入参：那样调用方可能传 false 却同时传读数，自相矛盾。
+        subscribed.value = true;
         connected.value = next.connected;
         connecting.value = next.connecting;
         error.value = next.error;
@@ -53,10 +71,15 @@ export const useWorkspaceConnectionStore = defineStore("workspaceConnection", ()
     }
 
     /**
-     * 页面卸载时清空：切到「环境 / 设置」这类不订阅 SSE 的页时，状态栏必须读成
-     * **未连接**而不是上一页的旧值（旧值会让人以为当前页也在收事件）。
+     * 页面卸载时清空：切到「环境 / 设置」这类不订阅 SSE 的页时，不能留着上一页的旧读数
+     * （旧值会让人以为当前页也在收事件）。**这个意图不变。**
+     *
+     * <p>task-81 P1-1 的关键修正：原来这里把 `connected` 置 false 后，状态栏读成「未连接」
+     * —— 与「订阅了但断了」不可区分。现在同时把 `subscribed` 置 false，让显示侧能读出
+     * 「**本页未订阅**」这个中性事实，而不是一个看起来像故障的读数。</p>
      */
     function reset(): void {
+        subscribed.value = false;
         connected.value = false;
         connecting.value = false;
         error.value = null;
@@ -65,6 +88,7 @@ export const useWorkspaceConnectionStore = defineStore("workspaceConnection", ()
     }
 
     return {
+        subscribed,
         connected,
         connecting,
         error,
