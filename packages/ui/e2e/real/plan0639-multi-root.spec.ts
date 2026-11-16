@@ -273,6 +273,17 @@ test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () =
         //   （task-85；D39-5「serving the wrong root would be a boundary lie」明确禁止此行为）。
         // ⇒ 修这条红要改 runtime 的 executor，不是改本 spec、也不是再补前置。
 
+        // 第二根（alias=beta，position=1）默认收起；点组头展开并懒加载它的目录树。
+        // 用真实 UI 组头（workspace-tree-root-header），不直调 store —— 直调就不是 E2E 了。
+        const secondRootHeader = page.getByTestId("workspace-tree-root-header").nth(1);
+        await expect(secondRootHeader).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        if ((await secondRootHeader.getAttribute("aria-expanded")) !== "true") {
+            await secondRootHeader.click();
+        }
+        await expect(secondRootHeader).toHaveAttribute("aria-expanded", "true", {
+            timeout: LONG_TIMEOUT_MS,
+        });
+
         const betaEntry = page.getByRole("button", { name: BETA_FILE, exact: true });
         await expect(
             betaEntry,
