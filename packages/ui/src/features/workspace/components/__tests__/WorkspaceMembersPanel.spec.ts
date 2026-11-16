@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { setSelectValueAt } from "../../../../test-utils/select";
 import { i18n } from "../../../../i18n";
+import { expectModalDialog } from "../../../../test-utils/modalDialog";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 
@@ -212,6 +213,8 @@ describe("WorkspaceMembersPanel", () => {
         expect(
             document.body.querySelector('[data-testid="ws-members-remove-confirm"]'),
         ).not.toBeNull();
+        // task-49：模态语义三件套（role / aria-modal / 名字来自标题）。
+        expectModalDialog("ws-members-remove-confirm", "alertdialog", "移除成员？");
         const confirm = document.body.querySelector(
             '[data-testid="ws-members-remove-btn"]',
         ) as HTMLButtonElement | null;

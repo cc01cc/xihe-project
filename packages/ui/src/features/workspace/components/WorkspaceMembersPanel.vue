@@ -391,7 +391,7 @@ onMounted(() => {
                 }
             "
         >
-            <AlertDialogContent data-testid="ws-members-remove-confirm">
+            <AlertDialogContent data-testid="ws-members-remove-confirm" aria-modal="true">
                 <AlertDialogHeader>
                     <AlertDialogTitle class="text-destructive">
                         {{ t("workspace.membersRemoveTitle") }}

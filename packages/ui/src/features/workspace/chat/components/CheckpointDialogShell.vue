@@ -44,6 +44,7 @@ function handleOpenAutoFocus(event: Event) {
 <template>
     <Dialog :open="open" @update:open="open = $event">
         <DialogContent
+            aria-modal="true"
             v-if="!isMobileViewport"
             data-testid="checkpoint-dialog"
             class="max-w-lg"
@@ -55,8 +56,13 @@ function handleOpenAutoFocus(event: Event) {
             </DialogHeader>
             <slot />
         </DialogContent>
+        <!--
+            task-49：移动端这一支是 vendor `SheetContent` —— reka 的 Sheet 也是 Dialog 原语、
+            同样不产 `aria-modal` ⇒ 与 desktop 支同批显式补（先例 `MobileMembersSheet.vue:91`）。
+        -->
         <SheetContent
             v-else
+            aria-modal="true"
             data-testid="checkpoint-dialog-mobile"
             side="bottom"
             class="max-h-[90vh] overflow-y-auto p-4"

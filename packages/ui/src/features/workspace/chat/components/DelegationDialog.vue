@@ -95,7 +95,7 @@ function submit() {
 
 <template>
     <Dialog :open="open" @update:open="(value: boolean) => emit('update:open', value)">
-        <DialogContent class="sm:max-w-md" data-testid="delegation-dialog">
+        <DialogContent class="sm:max-w-md" data-testid="delegation-dialog" aria-modal="true">
             <DialogHeader>
                 <DialogTitle>{{ t("chat.delegation.title") }}</DialogTitle>
                 <DialogDescription>{{ t("chat.delegation.description") }}</DialogDescription>

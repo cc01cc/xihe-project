@@ -7,6 +7,7 @@ import type * as apiModule from "../../../composables/api";
 import type { WorkspaceDirectAttachExecutionMode } from "../../../types";
 import WorkspaceCreateDialog from "../components/WorkspaceCreateDialog.vue";
 import { i18n } from "../../../i18n";
+import { expectModalDialog } from "../../../test-utils/modalDialog";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -289,5 +290,16 @@ describe("WorkspaceCreateDialog (PLAN-0384)", () => {
             '[data-testid="workspace-execution-next"]',
         ) as HTMLButtonElement;
         expect(next.disabled).toBe(true);
+    });
+
+    /**
+     * task-49：本弹窗是 vendor `DialogContent`（reka 只设 aria-labelledby/describedby，
+     * 不产 `aria-modal`）⇒ 调用点显式补。缺了它读屏器仍能浏览到背景里的工作区列表与
+     * 顶部导航（视觉被遮罩挡住，AT 不受遮罩影响）。
+     */
+    it("是真正的模态对话框：role/aria-modal/名字来自标题（task-49）", async () => {
+        await mountCreateDialog(wrappers);
+
+        expectModalDialog("workspace-create-dialog", "dialog", "添加 Workspace");
     });
 });

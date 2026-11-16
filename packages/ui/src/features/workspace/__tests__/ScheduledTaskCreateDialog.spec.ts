@@ -6,6 +6,7 @@ import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import { setSelectValue } from "../../../test-utils/select";
+import { expectModalDialog } from "../../../test-utils/modalDialog";
 import type { ScheduledTask, ScheduledTaskCreateRequest } from "../../../types";
 
 vi.mock("vue-sonner", () => ({
@@ -285,5 +286,15 @@ describe("ScheduledTaskCreateDialog", () => {
         // distinguishing the codes.
         const error = bodyEl('[data-testid="st-create-interval-error"]');
         expect(error?.textContent).toContain("60");
+    });
+
+    /**
+     * task-49：vendor `DialogContent` 不产 `aria-modal`（reka 只设 labelledby/describedby）
+     * ⇒ 调用点显式补。三件套一起钉：role=dialog、aria-modal=true、名字来自标题。
+     */
+    it("是真正的模态对话框：role/aria-modal/名字来自标题（task-49）", async () => {
+        await mountDialog();
+
+        expectModalDialog("scheduled-task-create-dialog", "dialog", "新建自动化任务");
     });
 });

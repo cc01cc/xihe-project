@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
+import { expectModalDialog } from "../../../test-utils/modalDialog";
 import { makeWorkspace } from "../../../tests/workspaceFixture";
 
 const routeState = vi.hoisted(() => ({
@@ -386,6 +387,9 @@ describe("WorkspaceSettingsView OWNER 编辑与删除 (PLAN-0560 T2.6/T3.3 迁�
                 '[data-testid="ws-delete-confirm-btn"]',
             ) as HTMLButtonElement | null;
         await vi.waitFor(() => expect(confirmBtn()).toBeTruthy());
+
+        // task-49：同页另一个确认层（本卡补的那条）——role/aria-modal/名字来自标题。
+        expectModalDialog("workspace-delete-confirm", "alertdialog", "删除工作区？");
 
         // ① 空名 ⇒ disabled（改前这里是 false：按钮看着能点）
         expect(confirmBtn()!.disabled).toBe(true);

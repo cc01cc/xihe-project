@@ -254,6 +254,7 @@ function handleOpenChange(open: boolean) {
 <template>
     <Dialog :open="open" @update:open="handleOpenChange">
         <DialogContent
+            aria-modal="true"
             class="max-h-[85vh] overflow-y-auto sm:max-w-lg"
             data-testid="scheduled-task-create-dialog"
         >

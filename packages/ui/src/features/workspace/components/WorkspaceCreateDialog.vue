@@ -386,6 +386,7 @@ watch(
 <template>
     <Dialog :open="open" @update:open="handleOpenChange">
         <DialogContent
+            aria-modal="true"
             data-testid="workspace-create-dialog"
             class="max-h-[85vh] overflow-y-auto sm:max-w-lg"
         >

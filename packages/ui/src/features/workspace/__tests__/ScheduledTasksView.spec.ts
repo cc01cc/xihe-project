@@ -8,6 +8,7 @@ import type * as apiModule from "../../../composables/api";
 import { chatTransport } from "@/services/chatTransport";
 import { i18n } from "../../../i18n";
 import type { ScheduledTask } from "../../../types";
+import { expectModalDialog } from "../../../test-utils/modalDialog";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -202,7 +203,10 @@ describe("ScheduledTasksView list rendering", () => {
 
         const wrapper = await mountView();
 
-        expect(wrapper.get('[data-testid="scheduled-tasks-error"]').text()).toContain("INTERNAL");
+        // task-45：列表错误只放可读文案（改前断言的是 CP 码直出 `INTERNAL: boom`）
+        const listErrorText = wrapper.get('[data-testid="scheduled-tasks-error"]').text();
+        expect(listErrorText).not.toContain("INTERNAL");
+        expect(listErrorText).not.toContain("boom");
         expect(wrapper.get('[data-testid="scheduled-tasks-retry"]').exists()).toBe(true);
     });
 
@@ -368,6 +372,7 @@ describe("ScheduledTasksView disposition", () => {
         expect(
             document.body.querySelector('[data-testid="scheduled-task-remove-confirm"]'),
         ).toBeTruthy();
+        expectModalDialog("scheduled-task-remove-confirm", "alertdialog", "移除自动化任务？");
 
         (
             document.body.querySelector(
@@ -394,6 +399,7 @@ describe("ScheduledTasksView disposition", () => {
         await wrapper.get('[data-testid="scheduled-task-cancel-row"]').trigger("click");
         await nextTick();
 
+        expectModalDialog("scheduled-task-cancel-confirm", "alertdialog", "取消自动化任务？");
         (
             document.body.querySelector(
                 '[data-testid="scheduled-task-cancel-confirm-btn"]',
@@ -416,6 +422,7 @@ describe("ScheduledTasksView disposition", () => {
         await wrapper.get('[data-testid="scheduled-task-postpone-row"]').trigger("click");
         await nextTick();
 
+        expectModalDialog("scheduled-task-postpone-dialog", "dialog", "推迟触发");
         const input = document.body.querySelector(
             '[data-testid="st-postpone-at"]',
         ) as HTMLInputElement;

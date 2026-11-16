@@ -6,6 +6,7 @@ import { i18n } from "../../../i18n";
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import RolesView from "../RolesView.vue";
+import { expectModalDialog } from "../../../test-utils/modalDialog";
 import { roleErrorKey, roleErrorMessage } from "../../../components/settings/roleErrorMessages";
 import { openSelect, selectItemComponents, setSelectValue } from "../../../test-utils/select";
 
@@ -387,6 +388,8 @@ describe("RolesView delete flow", () => {
         await mountView();
 
         await clickBody('[data-testid="role-delete-AUDITOR"]');
+        // task-49：删除角色的 AlertDialog 也要能读出「这是模态弹层 + 名字来自标题」。
+        expectModalDialog("role-delete-dialog", "alertdialog", "删除角色？");
         await clickBody('[data-testid="role-delete-confirm"]');
 
         await vi.waitFor(() => expect(mockedApi.deleteRole).toHaveBeenCalledWith("role-1"));

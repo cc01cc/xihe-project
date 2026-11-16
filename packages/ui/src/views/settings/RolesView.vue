@@ -450,7 +450,7 @@ watch(
                     :open="deleteTarget !== null"
                     @update:open="(value: boolean) => !value && (deleteTarget = null)"
                 >
-                    <AlertDialogContent data-testid="role-delete-dialog">
+                    <AlertDialogContent data-testid="role-delete-dialog" aria-modal="true">
                         <AlertDialogHeader>
                             <AlertDialogTitle>{{
                                 t("settings.rolesDeleteTitle")

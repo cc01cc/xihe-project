@@ -127,7 +127,7 @@ function handleOpenChange(open: boolean) {
 
 <template>
     <Dialog :open="open" @update:open="handleOpenChange">
-        <DialogContent data-testid="scheduled-task-postpone-dialog">
+        <DialogContent data-testid="scheduled-task-postpone-dialog" aria-modal="true">
             <FormRoot :errors="serverErrors" @form-submit="handleSubmit">
                 <DialogHeader>
                     <DialogTitle>{{ t("workspace.scheduledTasks.postponeTitle") }}</DialogTitle>

@@ -3,6 +3,7 @@ import { mount, flushPromises, type VueWrapper } from "@vue/test-utils";
 import { defineComponent, h } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../../i18n";
+import { expectModalDialog } from "../../../../test-utils/modalDialog";
 import { api } from "../../../../composables/api";
 import { useSessionStore } from "../../../../stores/session";
 import type { Session, SessionDerivedStateResponse } from "../../../../types";
@@ -135,6 +136,9 @@ describe("delegation budget testid 同屏唯一性 (task-101)", () => {
         // ① 两个容器都在（证明是"真挂两个"，不是只挂一个然后数 1）
         expect(countTestId("delegation-dag"), "DAG 面板容器").toBe(1);
         expect(countTestId("delegation-dialog"), "委派弹窗容器").toBe(1);
+        // task-49：委派弹窗的模态语义（role / aria-modal / 名字来自标题）——它也是
+        // vendor DialogContent，reka 不产 aria-modal，必须调用点补。
+        expectModalDialog("delegation-dialog", "dialog", "创建委派（新子会话）");
 
         // ② 两个预算 testid 各 1 次（改名前的双挂状态在这里 count 会是 2/0）
         expect(countTestId("delegation-dag-budget"), "面板预算").toBe(1);

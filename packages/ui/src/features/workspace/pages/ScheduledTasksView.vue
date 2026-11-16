@@ -749,7 +749,7 @@ function openCreate() {
             :open="removeTarget !== null"
             @update:open="(v) => !v && (removeTarget = null)"
         >
-            <AlertDialogContent data-testid="scheduled-task-remove-confirm">
+            <AlertDialogContent data-testid="scheduled-task-remove-confirm" aria-modal="true">
                 <AlertDialogHeader>
                     <AlertDialogTitle class="text-destructive">
                         {{ t("workspace.scheduledTasks.removeConfirmTitle") }}
@@ -783,7 +783,7 @@ function openCreate() {
             :open="cancelTarget !== null"
             @update:open="(v) => !v && (cancelTarget = null)"
         >
-            <AlertDialogContent data-testid="scheduled-task-cancel-confirm">
+            <AlertDialogContent data-testid="scheduled-task-cancel-confirm" aria-modal="true">
                 <AlertDialogHeader>
                     <AlertDialogTitle>
                         {{ t("workspace.scheduledTasks.cancelConfirmTitle") }}

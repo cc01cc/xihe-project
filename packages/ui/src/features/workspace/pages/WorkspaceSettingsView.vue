@@ -670,7 +670,7 @@ onMounted(async () => {
         </div>
 
         <AlertDialog :open="confirmDeleteOpen" @update:open="(v) => (confirmDeleteOpen = v)">
-            <AlertDialogContent data-testid="workspace-delete-confirm">
+            <AlertDialogContent data-testid="workspace-delete-confirm" aria-modal="true">
                 <AlertDialogHeader>
                     <AlertDialogTitle class="text-destructive">
                         {{ t("workspace.settingsDeleteConfirmTitle") }}
