@@ -41,7 +41,9 @@ function createView(id, patch = {}) {
     hasKey: true,
     maskedKey: '****alue',
     enabled: true,
-    status: 'verifying',
+    // task-50: the mock mirrors CP's uppercase enum (ProviderConnection.STATUS_VERIFYING).
+    // It used to say 'verifying', which made the fixtures agree with the CLI's lowercase bug.
+    status: 'VERIFYING',
     lastVerifiedAt: null,
     lastErrorCode: null,
     revision: 1,
@@ -152,7 +154,7 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
         label: body.label,
         modelDiscovery: body.modelDiscovery ?? catalogDefaults[body.providerId],
         manualModels: body.manualModels,
-        status: 'verifying',
+        status: 'VERIFYING',
       });
       state.connections.push(connection);
       if (state.dropCreateResponse) {
@@ -175,7 +177,7 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
         json(response, 400, { code: 'PROVIDER_CONNECTION_INVALID', detail: 'Invalid key; must not be printed' });
         return;
       }
-      Object.assign(connection, body, { revision: connection.revision + 1, status: 'verifying' });
+      Object.assign(connection, body, { revision: connection.revision + 1, status: 'VERIFYING' });
       if (state.dropPatchResponse) {
         response.socket.destroy();
         return;
@@ -191,11 +193,13 @@ async function startCpMock({ barrierFirstTwoLists = false, dropCreateResponse = 
         return;
       }
       if (connection.modelDiscovery === 'manual' && (!connection.manualModels || connection.manualModels.length === 0)) {
-        Object.assign(connection, { status: 'failed', lastErrorCode: 'LLM_MODEL_CATALOG_INVALID' });
+        // CP maps any non-CREDENTIALS_INVALID verify failure to UNREACHABLE (markVerificationFailure),
+        // never to 'failed' - another fixture value the real CP does not use.
+        Object.assign(connection, { status: 'UNREACHABLE', lastErrorCode: 'LLM_MODEL_CATALOG_INVALID' });
         json(response, 200, { connection, models: [] });
         return;
       }
-      Object.assign(connection, { status: 'ready', lastErrorCode: null, lastVerifiedAt: '2026-10-02T00:00:00Z' });
+      Object.assign(connection, { status: 'READY', lastErrorCode: null, lastVerifiedAt: '2026-10-02T00:00:00Z' });
       if (state.dropVerifyResponse) {
         response.socket.destroy();
         return;
@@ -276,7 +280,7 @@ test('provider add creates through CP, verifies, and never returns the key', asy
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.data.action, 'created-and-verified');
-  assert.equal(result.data.connection.status, 'ready');
+  assert.equal(result.data.connection.status, 'READY');
   assert.equal(cp.state.createRequests, 1);
   assert.equal(cp.state.verifyRequests, 1);
   assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
@@ -288,7 +292,7 @@ test('provider add creates through CP, verifies, and never returns the key', asy
 
   const verified = await runCommand(['provider', 'verify', 'connection-1'], { env: cp.env, promptSecret: noPrompt });
   assert.equal(verified.exitCode, 0);
-  assert.equal(verified.data.connection.status, 'ready');
+  assert.equal(verified.data.connection.status, 'READY');
   assert.equal(cp.state.verifyRequests, 2);
 });
 
@@ -527,7 +531,7 @@ test('provider verify reconciles a lost response without replaying POST', async 
 
   assert.equal(result.error.code, 'OPERATION_OUTCOME_UNKNOWN');
   assert.equal(cp.state.verifyRequests, 2);
-  assert.equal(cp.state.connections[0].status, 'ready');
+  assert.equal(cp.state.connections[0].status, 'READY');
 });
 
 test('provider update requires an explicit field before login or prompting', async () => {
@@ -594,7 +598,7 @@ test('provider update changes only the explicit connection and verifies it', asy
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.data.connection.label, 'XH updated MiMo');
-  assert.equal(result.data.connection.status, 'ready');
+  assert.equal(result.data.connection.status, 'READY');
   assert.equal(cp.state.patchRequests, 1);
   assert.equal(cp.state.connections.length, 1);
   assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
@@ -1021,7 +1025,7 @@ test('provider verification reports provider credential and reachability failure
     const fetchImpl = async (url, options) => {
       if (String(url).endsWith('/connection-1/verify') && options.method === 'POST') {
         return new Response(JSON.stringify({
-          connection: createView('connection-1', { status: 'failed', lastErrorCode: providerErrorCode }),
+          connection: createView('connection-1', { status: 'UNREACHABLE', lastErrorCode: providerErrorCode }),
           models: [],
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
@@ -1031,6 +1035,111 @@ test('provider verification reports provider credential and reachability failure
     assert.equal(result.error.code, 'PROVIDER_VERIFY_FAILED');
     assert.equal(result.error.details.providerErrorCode, providerErrorCode);
   }
+});
+
+// task-50: the defect this pins was a casing bug, not a missing key. CP answers `status: READY`
+// (ProviderConnection.STATUS_READY, openapi ProviderConnectionView enum) while this module
+// compared against lowercase 'ready', so every successful verify was reported as a failure and
+// `provider list` disagreed with `provider verify` about the same record. These tests state the
+// contract's uppercase values directly; the fixtures used to mirror the CLI's mistake, which is
+// precisely why the whole suite stayed green while the bug shipped.
+test('provider verify accepts the contract READY status (uppercase), so list and verify agree', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  const added = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo', '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: cp.env, promptSecret: noPrompt });
+
+  // create+verify already succeeded; the point is that the CLI must report it as success.
+  assert.equal(added.exitCode, 0);
+  assert.equal(added.data.connection.status, 'READY');
+
+  const verified = await runCommand(['provider', 'verify', 'connection-1'], { env: cp.env, promptSecret: noPrompt });
+  assert.equal(verified.exitCode, 0);
+  assert.equal(verified.data.connection.status, 'READY');
+
+  // Criterion 4: both readings of the same connection must agree.
+  const listed = await runCommand(['provider', 'list', '--scope', 'USER'], { env: cp.env, promptSecret: noPrompt });
+  assert.equal(listed.exitCode, 0);
+  assert.equal(listed.data.connections[0].status, verified.data.connection.status);
+});
+
+test('provider verify fails on every non-READY status in the contract enum, naming the status', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo', '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: cp.env, promptSecret: noPrompt });
+
+  // Closed enumeration of CP's non-READY states. VERIFYING is the one that matters most: it is a
+  // non-terminal state, and a comparator written as `status !== 'ready' && status !== 'verifying'`
+  // (or any future allow-list) would silently swallow it. Equivalence must be exact.
+  const failures = [
+    { status: 'UNVERIFIED', lastErrorCode: null },
+    { status: 'VERIFYING', lastErrorCode: null },
+    { status: 'INVALID_CREDENTIALS', lastErrorCode: 'LLM_CREDENTIALS_INVALID' },
+    { status: 'UNREACHABLE', lastErrorCode: 'LLM_PROVIDER_UNREACHABLE' },
+    { status: 'DISABLED', lastErrorCode: null },
+  ];
+  for (const failure of failures) {
+    const fetchImpl = async (url, options) => {
+      if (String(url).endsWith('/connection-1/verify') && options.method === 'POST') {
+        return new Response(JSON.stringify({
+          connection: createView('connection-1', failure),
+          models: [],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return fetch(url, options);
+    };
+    const result = await runCommand(['provider', 'verify', 'connection-1'], { env: cp.env, fetchImpl, promptSecret: noPrompt });
+    assert.equal(result.exitCode, 1, `${failure.status} must be reported as a failure`);
+    assert.equal(result.error.code, 'PROVIDER_VERIFY_FAILED', `${failure.status} must fail on the verify step`);
+    // The message has to name the status; otherwise a user cannot tell which state it stopped in.
+    assert.equal(result.error.message.includes(`status=${failure.status}`), true,
+      `message must name the observed status, got: ${result.error.message}`);
+    assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
+  }
+});
+
+test('provider add fails with the credential status when CP rejects the key at verify time', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+  // Wrong-key leg, modelled on the real chain: CP stores whatever key it is given and only
+  // discovers the key is bad when /verify calls the provider's /models endpoint and gets 401,
+  // which maps to INVALID_CREDENTIALS + LLM_CREDENTIALS_INVALID (ProviderConnectionService
+  // .markVerificationFailure). The create itself still returns 201, so the CLI must fail on the
+  // verify step - and it must never degrade into 'created-and-verified'.
+  const badKey = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const fetchImpl = async (url, options) => {
+    if (String(url).endsWith('/api/v1/provider-connections') && options.method === 'POST') {
+      const created = createView('connection-1', { status: 'VERIFYING' });
+      cp.state.connections.push(created);
+      return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (String(url).endsWith('/connection-1/verify') && options.method === 'POST') {
+      const failed = { ...cp.state.connections[0], status: 'INVALID_CREDENTIALS', lastErrorCode: 'LLM_CREDENTIALS_INVALID' };
+      return new Response(JSON.stringify({ connection: failed, models: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return fetch(url, options);
+  };
+  const result = await runCommand([
+    'provider', 'add', 'xiaomi', '--scope', 'USER', '--label', 'XH local MiMo',
+    '--api-key-env', 'XIHE_XIAOMI_API_KEY',
+  ], { env: { ...cp.env, XIHE_XIAOMI_API_KEY: badKey }, fetchImpl, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 1);
+  assert.notEqual(result.data?.action, 'created-and-verified');
+  assert.equal(result.error.code, 'PROVIDER_VERIFY_FAILED');
+  assert.equal(result.error.details.providerErrorCode, 'LLM_CREDENTIALS_INVALID');
+  // Criterion 2: the credential-class status must be named, not swallowed into a generic failure.
+  assert.equal(result.error.message.includes('status=INVALID_CREDENTIALS'), true,
+    `message must name INVALID_CREDENTIALS, got: ${result.error.message}`);
+  assert.equal(result.error.message.includes('lastErrorCode=LLM_CREDENTIALS_INVALID'), true,
+    `message must name the provider error code, got: ${result.error.message}`);
+  // Credential hygiene: neither the bad key nor the real one may reach the output.
+  assert.equal(JSON.stringify(result).includes(badKey), false);
+  assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
 });
 
 test('invalid CP JSON is reported without exposing the response body', async (t) => {

@@ -6,6 +6,15 @@ const DEFAULT_CP_PORT = '12631';
 const CP_REQUEST_TIMEOUT_MS = 10_000;
 const CP_VERIFY_TIMEOUT_MS = 15_000;
 
+// task-50: CP's provider-connection status vocabulary is UPPERCASE and lives in one place
+// (ProviderConnection.STATUS_*), mirrored by OpenAPI ProviderConnectionView.status
+// (openapi.yaml enum: UNVERIFIED|VERIFYING|READY|INVALID_CREDENTIALS|UNREACHABLE|DISABLED)
+// and by the UI's ProviderConnectionStatus. This module used to compare against a
+// lowercase 'ready', so a connection CP had verified to READY was reported as a failure -
+// while `provider list` (which passes status through untouched) showed the same record as
+// READY. Two readings of one field disagreed purely because of the CLI's own casing bug.
+export const PROVIDER_CONNECTION_STATUS_READY = 'READY';
+
 // BL-396: `Retry-After` is honoured but bounded. A hostile/oversized value must not
 // turn one CLI command into a several-minute wait; the login retry loop caps what
 // it sleeps anyway, this cap keeps the surfaced `retryAfterMs` honest.
@@ -707,13 +716,39 @@ export async function verifyConnection({ apiBase, fetchImpl, token, id }) {
       connection: current ?? { id },
     });
   }
-  if (connection.status !== 'ready') {
-    throw new CliError('PROVIDER_VERIFY_FAILED', 'Provider verification did not reach ready state.', {
-      connection,
-      providerErrorCode: connection.lastErrorCode,
-    });
+  // task-50: compare against the contract's uppercase READY. The message names the observed
+  // status (and the provider's own error code when CP recorded one) because 'did not reach
+  // ready state' alone left the user unable to tell INVALID_CREDENTIALS from VERIFYING.
+  if (connection.status !== PROVIDER_CONNECTION_STATUS_READY) {
+    const observed = [
+      `status=${connection.status ?? 'unknown'}`,
+      connection.lastErrorCode ? `lastErrorCode=${connection.lastErrorCode}` : null,
+    ].filter(Boolean).join(' ');
+    throw new CliError(
+      'PROVIDER_VERIFY_FAILED',
+      `Provider verification did not reach ${PROVIDER_CONNECTION_STATUS_READY} state (${observed}).`,
+      {
+        connection,
+        providerErrorCode: connection.lastErrorCode,
+      },
+    );
   }
   return connection;
+}
+
+/**
+ * task-50: one place that turns a verification failure into the suffix every caller appends,
+ * so create/update/dev-init report the same `status=` / `lastErrorCode=` facts that
+ * verifyConnection already observed instead of a bare 'it did not verify'.
+ */
+function verificationFailureSuffix(error, fallbackConnection) {
+  const connection = error?.details?.connection ?? fallbackConnection;
+  const providerErrorCode = error?.details?.providerErrorCode;
+  const parts = [
+    connection?.status ? `status=${connection.status}` : null,
+    providerErrorCode ? `lastErrorCode=${providerErrorCode}` : null,
+  ].filter(Boolean);
+  return parts.length ? ` (${parts.join(' ')})` : '';
 }
 
 export function findMatchingConnections(connections, providerId, scope) {
@@ -871,10 +906,15 @@ export async function addProvider({ apiBase, fetchImpl, env, options, positional
   try {
     return connectionResult(await verifyConnection({ apiBase, fetchImpl, token, id: created.id }), 'created-and-verified');
   } catch (error) {
-    throw new CliError('PROVIDER_VERIFY_FAILED', 'Connection was created but did not verify; it was kept for explicit recovery.', {
-      connection: created,
-      providerErrorCode: error.details?.providerErrorCode ?? error.code,
-    });
+    throw new CliError(
+      'PROVIDER_VERIFY_FAILED',
+      `Connection was created but did not verify${verificationFailureSuffix(error, created)}; `
+      + 'it was kept for explicit recovery.',
+      {
+        connection: created,
+        providerErrorCode: error.details?.providerErrorCode ?? error.code,
+      },
+    );
   }
 }
 
@@ -936,10 +976,15 @@ export async function updateProvider({ apiBase, fetchImpl, env, options, positio
   try {
     return connectionResult(await verifyConnection({ apiBase, fetchImpl, token, id }), 'updated-and-verified');
   } catch (error) {
-    throw new CliError('PROVIDER_VERIFY_FAILED', 'Connection was updated but did not verify; it was kept for explicit recovery.', {
-      connection: updated,
-      providerErrorCode: error.details?.providerErrorCode ?? error.code,
-    });
+    throw new CliError(
+      'PROVIDER_VERIFY_FAILED',
+      `Connection was updated but did not verify${verificationFailureSuffix(error, updated)}; `
+      + 'it was kept for explicit recovery.',
+      {
+        connection: updated,
+        providerErrorCode: error.details?.providerErrorCode ?? error.code,
+      },
+    );
   }
 }
 
@@ -1012,10 +1057,15 @@ export async function initProvider({ apiBase, fetchImpl, env, options, positiona
   try {
     return connectionResult(await verifyConnection({ apiBase, fetchImpl, token, id: created.id }), 'created-and-verified');
   } catch (error) {
-    throw new CliError('PROVIDER_VERIFY_FAILED', 'Connection was created but did not verify; rerun dev init or use provider verify.', {
-      connection: created,
-      providerErrorCode: error.details?.providerErrorCode ?? error.code,
-    });
+    throw new CliError(
+      'PROVIDER_VERIFY_FAILED',
+      `Connection was created but did not verify${verificationFailureSuffix(error, created)}; `
+      + 'rerun dev init or use provider verify.',
+      {
+        connection: created,
+        providerErrorCode: error.details?.providerErrorCode ?? error.code,
+      },
+    );
   }
 }
 
