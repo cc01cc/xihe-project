@@ -199,14 +199,27 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     /**
-     * Disclose the seeded admin's password <b>only</b> when this boot generated it — never when it
-     * came from {@code XIHE_DEV_ADMIN_PASSWORD} (that is the operator's own secret).
+     * Report <b>where</b> the seeded admin's password came from — never the value itself.
      *
-     * @param created {@code true} when this boot inserted the row, i.e. the value below is the one
-     *                that is actually in the database; {@code false} when an existing row was
-     *                reused, where this boot's generated value was never applied.
+     * <p>D-1753 ② (task-62): the generated branch used to WARN the value "printed exactly once"
+     * into {@code cp.out.log}. That log is a <b>permanent-retention</b> surface, so a one-time
+     * disclosure there outlives the 0600 note file it was meant to complement. No branch logs the
+     * value any more.</p>
+     *
+     * <p><b>Consequence, stated rather than hidden:</b> a boot that generates a password now reveals
+     * it nowhere, so the recovery path is a command — {@code mise run reset-admin} resolves the
+     * single-source chain and writes {@code .local/dev/admin-password} — or pinning
+     * {@code XIHE_DEV_ADMIN_PASSWORD}. This class does <b>not</b> write that file (it has no file
+     * I/O at all); the write belongs to {@code scripts/lib/dev-admin-password.mjs}. Saying "already
+     * persisted" here would be a false signal.</p>
+     *
+     * <p>Package-visible so {@code DataSeederPasswordResolutionTest} can capture the emitted log
+     * events and assert the value is absent.</p>
+     *
+     * @param created {@code true} when this boot inserted the row; {@code false} when an existing
+     *                row was reused, where this boot's value was never applied.
      */
-    private void logSeededPasswordDisclosure(boolean created) {
+    void logSeededPasswordDisclosure(boolean created) {
         if (!ADMIN_PASSWORD_GENERATED) {
             log.info("Seeded admin password: from XIHE_DEV_ADMIN_PASSWORD (env or .env chain);"
                     + " the value is not logged.");
@@ -214,15 +227,15 @@ public class DataSeeder implements CommandLineRunner {
         }
         if (created) {
             log.warn("Seeded admin password was GENERATED for this boot (XIHE_DEV_ADMIN_PASSWORD was"
-                    + " not set) and is printed exactly once: admin@xihe.local / {}. Set"
-                    + " XIHE_DEV_ADMIN_PASSWORD to pin it across restarts; this line will not repeat.",
-                    ADMIN_PASSWORD);
+                    + " not set); the value is not logged and this class does not persist it. Run"
+                    + " `mise run reset-admin` to set a known one (it resolves the single-source"
+                    + " chain and writes .local/dev/admin-password), or set"
+                    + " XIHE_DEV_ADMIN_PASSWORD to pin it across restarts.");
             return;
         }
         log.warn("admin@xihe.local already existed, so this boot's GENERATED password was not applied"
-                + " and that row's password is unknown to this process. Set a known one with"
-                + " `mise run reset-admin` (XIHE_RESET_ADMIN_PASSWORD) or log in with the password"
-                + " printed when the row was created.");
+                + " and that row's password is unknown to this process (it is not logged either)."
+                + " Set a known one with `mise run reset-admin` (XIHE_RESET_ADMIN_PASSWORD).");
     }
 
     /**

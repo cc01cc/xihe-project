@@ -117,13 +117,18 @@ describe("ResetAdmin 只改密码（BL-523 静态契约，无运行时依赖）"
 describe("reset-admin.ps1 包装层（BL-523：-Password 不再进 argv）", () => {
     const wrapper = readFileSync(join(REPO_ROOT, "scripts", "reset-admin.ps1"), "utf8");
 
-    test("java 参数里没有 --password；-Password 转成 env 并 WARN", () => {
+    test("java 参数里没有 --password；wrapper 的 -Password 入口整条删除（D-1753 ③）", () => {
         assert.ok(!wrapper.includes('"--password"'), "no --password may reach java argv any more");
-        // PLAN-0770 M4 起，-Password 先落到 $resolvedPassword，再由末尾统一注入 env（同一语义、单一注入点）。
-        // 旧断言直接匹配 `$env:... = $Password`，从 31e76497 起已不成立（本轮补测才发现一直红）。
-        assert.match(wrapper, /\$resolvedPassword = \$Password/);
+        // D-1753 ③（task-62）：不是「接受后悄悄转 env」，而是**参数绑定就拒绝** —— 只要
+        // param 块还声明 -Password，明文就仍然会进 shell 历史，转 env 也救不回来。
+        assert.ok(!/\[string\]\$Password/.test(wrapper), "param 块不得再声明 -Password");
+        assert.ok(!/\$Password\b/.test(wrapper), "脚本体内不得再引用 $Password");
+        // 单一注入点不变：解析出来的值仍然只在末尾一处进 env。
         assert.match(wrapper, /\$env:XIHE_RESET_ADMIN_PASSWORD = \$resolvedPassword/);
-        assert.match(wrapper, /已废弃/);
+        assert.match(wrapper, /D-1753/);
+        // 拒绝靠的是 CmdletBinding：简单脚本会把未知命名参数静默塞进 $args（实测 exit 0），
+        // 删掉这一行 = 把「显式拒绝」换回「静默忽略」，所以它必须被钉住。
+        assert.match(wrapper, /\[CmdletBinding\(\)\]/);
     });
 
     test("支持 -DryRun 透传（用于输入通道核对）", () => {
@@ -141,5 +146,25 @@ describe("reset-admin.ps1 包装层（BL-523：-Password 不再进 argv）", () 
         const java = readFileSync(SOURCE, "utf8");
         assert.match(java, /"not-provided/u, "java 侧必须仍产出 not-provided —— wrapper 的文案指向它");
         assert.ok(!/password-source = generated/u.test(java), "java 侧不得再产出 password-source = generated");
+    });
+});
+
+// D-1753 ③（task-62）：静态断言只能证明「源码里没有」，这条证明**真进程**会拒绝 ——
+// 参数绑定失败必须发生在任何副作用之前（不导出 maven classpath、不调 java、不回显值）。
+const HAS_PWSH = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" }).status === 0;
+
+describe("reset-admin.ps1 真进程：-Password 已被拒绝", { skip: HAS_PWSH ? false : "需要 pwsh" }, () => {
+    test("传 -Password ⇒ 非 0 退出，且脚本体一步都没跑", () => {
+        const r = spawnSync(
+            "pwsh",
+            ["-NoProfile", "-File", join(REPO_ROOT, "scripts", "reset-admin.ps1"), "-Password", SECRET, "-DryRun"],
+            { encoding: "utf8", timeout: 60_000 },
+        );
+        const out = (r.stdout ?? "") + (r.stderr ?? "");
+        assert.notEqual(r.status, 0, "-Password 必须被参数绑定拒绝");
+        assert.match(out, /Password/);
+        assert.ok(!out.includes("导出 maven classpath"), "拒绝必须早于任何副作用");
+        assert.ok(!out.includes("password-source"), "拒绝必须早于 java 调用");
+        assert.ok(!out.includes(SECRET), "值不得被回显");
     });
 });

@@ -891,12 +891,17 @@ async function stopPg() {
  * 失败**不阻塞起栈**：四端口就绪才是 `start` 的既有契约。失败给 WARN + 显式补救命令，
  * 让操作者能修，而不是把一次 upsert 失败升级成「栈起不来」。
  */
-function applyDevAdminPassword(adminPassword) {
+function applyDevAdminPassword(adminPassword, { source = 'unknown', persisted = 'none' } = {}) {
   // BL-527 护栏 A：这一层只接受**字符串**密码。事故就是解析结果对象从这里漏进 env 的，
   // 所以入口再断言一次（调用方已用 devAdminPasswordFrom() 取值，这里是第二道闸）。
   const password = assertPasswordString(adminPassword, "applyDevAdminPassword(adminPassword)");
+  // D-1753 ①（task-62）：upsert 的**每条结论行**都带来源元数据。原来 `source=`/`persisted=`
+  // 只在 spawn 之前那一行打过，upsert 的 ok/FAILED/skipped 行看不到 ⇒ 库里到底是哪一层的值
+  // 生效，401 时只能猜（2026-11-16 三方猜谜的根因是**可答性**，不是模型错误）。
+  // 两个字段都来自 resolveDevAdminPassword 的返回结构（非密元数据）；**值一律不打**。
+  const meta = ` source=${source} persisted=${persisted}`;
   if (!isWindows) {
-    console.log('[dev-stack] dev admin upsert: skipped (scripts/reset-admin.ps1 is Windows-only); run `mise run reset-admin` manually');
+    console.log('[dev-stack] dev admin upsert: skipped (scripts/reset-admin.ps1 is Windows-only); run `mise run reset-admin` manually' + meta);
     return { ok: false, skipped: 'non-windows' };
   }
   const wrapper = resetAdminWrapperPath(projectRoot);
@@ -936,14 +941,14 @@ function applyDevAdminPassword(adminPassword) {
       .find((line) => line.startsWith("[reset-admin]") && /source=/.test(line) && !line.includes("XIHE_RESET_ADMIN_PASSWORD"));
     if (javaLine) console.log(`[dev-stack] ${javaLine}`);
     console.log(
-      `[dev-stack] dev admin upsert: ok stack=${derived.stackId} (value not logged, ${elapsed}ms)`,
+      `[dev-stack] dev admin upsert: ok stack=${derived.stackId}${meta} (value not logged, ${elapsed}ms)`,
     );
     return { ok: true };
   }
   // exit 3 = ResetAdmin 显式报告「用户行不存在」（BL-523：不再自建 admin 行），指向建行路径。
   const userMissing = result.status === 3;
   console.warn(
-    `[dev-stack] dev admin upsert: FAILED (exit ${result.status ?? 'spawn-error'}${result.error ? `, ${result.error.code}` : ''}, ${elapsed}ms) — `
+    `[dev-stack] dev admin upsert: FAILED${meta} (exit ${result.status ?? 'spawn-error'}${result.error ? `, ${result.error.code}` : ''}, ${elapsed}ms) — `
       + (userMissing
         ? 'the admin user row does not exist in this database; run `mise run dev:reset` or restart the stack so CP DataSeeder creates it, then re-run `start`.'
         : 'the stack is up, but the injected password may not match this database yet; run `mise run reset-admin` (or re-run `start`) to repair.'),
@@ -1174,15 +1179,18 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   // 这里补的是**结果可观测** —— 三种跳过原因与成败都落 state 文件，`status` 直接读，
   // 不再需要翻起栈日志才知道「上次对齐到底做没做」。
   const devAdminSource = devAdmin.ok ? devAdmin.source : 'unavailable';
+  // D-1753 ①：解析失败时没有 persisted 字段 ⇒ 报 none（不是「不知道」，而是本轮确实没落盘）。
+  const devAdminPersisted = devAdmin.ok ? devAdmin.persisted : 'none';
+  const devAdminMeta = { source: devAdminSource, persisted: devAdminPersisted };
   let devAdminUpsert;
   if (!devAdminPassword) {
-    console.log('[dev-stack] dev admin upsert: skipped (no injected password; see the WARN above)');
+    console.log(`[dev-stack] dev admin upsert: skipped (no injected password; see the WARN above) source=${devAdminSource} persisted=${devAdminPersisted}`);
     devAdminUpsert = { upsert: 'skipped', reason: 'no-password' };
   } else if (!ready) {
-    console.log('[dev-stack] dev admin upsert: skipped (stack is not ready)');
+    console.log(`[dev-stack] dev admin upsert: skipped (stack is not ready) source=${devAdminSource} persisted=${devAdminPersisted}`);
     devAdminUpsert = { upsert: 'skipped', reason: 'stack-not-ready' };
   } else {
-    const applied = applyDevAdminPassword(devAdminPassword);
+    const applied = applyDevAdminPassword(devAdminPassword, devAdminMeta);
     devAdminUpsert = applied.ok
       ? { upsert: 'ok' }
       : { upsert: 'failed', reason: applied.skipped ?? 'upsert-failed' };

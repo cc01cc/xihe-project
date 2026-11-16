@@ -1,12 +1,17 @@
 # PLAN-229: XH reset-admin — dev 密码重置（对应 EW reset-admin.ts）
 # 只改密码、不自建账号（用户行不存在 ⇒ 显式失败 exit 3，见 BL-523）；缺省随机生成 24 字节 base64url 并打印。
-# 用法: pwsh -File scripts/reset-admin.ps1 [-Password <pw>] [-Email <email>] [-StackId stack-N] [-DryRun]
-#   BL-523/安全: 密码改走 **stdin 或 env XIHE_RESET_ADMIN_PASSWORD**（优先级高于 -Password）；
-#   -Password 保留但废弃（wrapper 也会把它转成 env，不再进 argv）。
+# 用法: pwsh -File scripts/reset-admin.ps1 [-Email <email>] [-StackId stack-N] [-DryRun] [-WriteBack]
+#   BL-523/安全: 密码只走 **stdin 或 env XIHE_RESET_ADMIN_PASSWORD**。
+#   D-1753 ③（task-62）: `-Password` argv 入口**已删除** —— secret 不进 argv / 进程表 / shell 历史
+#   （与 docker `--password-stdin` 同理由）。仍传 `-Password` 会被参数绑定直接拒绝（非 0 退出），
+#   不再静默接受后转 env —— 「悄悄换个通道」正是它一直留在 shell 历史里的原因。
 #   PLAN-0547/BL-103: -StackId 参数优先；缺省回退 XIHE_STACK_ID env，再缺省 stack-1。
 #   非缺省栈经 node scripts/stack-run.mjs env-json 派生 DSN（只填空缺，不覆盖 --url/env）。
+# D-1753 ③：`[CmdletBinding()]` 是「拒绝」的一半，不是装饰 —— **简单脚本会把未知命名参数静默塞进
+# `$args`**（本轮实测：只删 param 里的 -Password 时，`-Password <pw> -DryRun` 仍 exit 0 并照常走
+# 单源链，操作员以为设了密码、其实被忽略）。加上它才变成参数绑定即报错 + 非 0 退出。
+[CmdletBinding()]
 param(
-    [string]$Password,
     [string]$Email = "admin@xihe.local",
     [string]$StackId,
     [switch]$DryRun,
@@ -52,8 +57,9 @@ if (-not (Test-Path $cpCache) -or (Get-Item $cpCache).LastWriteTime -lt (Get-Ite
 $classpath = (Get-Content $cpCache -Raw).Trim()
 
 $javaArgs = @("--class-path=$classpath", (Join-Path $cpDir "scripts/ResetAdmin.java"), "--email", $Email)
-# BL-523: 密码不进 argv（进程表/shell 历史可见）。-Password 仅为兼容保留，改为经 env 传给 java；
-# 优先级与 java 侧一致：stdin > env > --password（后者已废弃、wrapper 不再使用）。
+# BL-523: 密码不进 argv（进程表/shell 历史可见）。wrapper 只经 env 把值传给 java；
+# java 侧优先级仍是 stdin > env > --password，最后一条已废弃且 wrapper 不使用
+# （D-1753 ③：wrapper 自己的 `-Password` 入口也已删除，见文件头）。
 #
 # PLAN-0770 M4：**没有显式密码时**，不再让 java 自己随机生成（那样这把钥匙只存在于一次输出里，
 # 下一次 reset 就漂了）——改由 `lib/dev-admin-password.mjs --ensure` 按单一优先级链解析
@@ -61,11 +67,8 @@ $javaArgs = @("--class-path=$classpath", (Join-Path $cpDir "scripts/ResetAdmin.j
 # （只有最后一层「生成」会写盘；`.env` 链命中时**不**材料化 —— 用户裁定，见 PLAN-0770 D3）。
 $resolvedPassword = $null
 $passwordSource = "unknown"
-if ($Password) {
-    Write-Warning "[reset-admin] -Password 已废弃（明文进 shell 历史）；已改为经 env 传递，请改用 stdin 或 XIHE_RESET_ADMIN_PASSWORD"
-    $resolvedPassword = $Password
-    $passwordSource = "argv"
-} elseif ($env:XIHE_RESET_ADMIN_PASSWORD) {
+# D-1753 ③：第一条通道就是 env（argv 通道已删除）；stdin 由 java 侧 `--password-stdin` 承担。
+if ($env:XIHE_RESET_ADMIN_PASSWORD) {
     $resolvedPassword = $env:XIHE_RESET_ADMIN_PASSWORD.Trim()
     $passwordSource = "env"
 } elseif ($DryRun) {
