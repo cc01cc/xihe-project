@@ -310,6 +310,23 @@ pub struct ReadFileRestRequest {
 /// (list / delete / mkdir / stat). `rootId` selects the declared root; absent
 /// = primary root (legacy callers). These are the REST twins of the MCP tool
 /// request structs in `main.rs`, extended with the optional rootId.
+/// task-77: request body for `POST .../files/search`.
+///
+/// `query` is a case-insensitive substring on the entry NAME. There is
+/// deliberately no glob parameter: glob has its own endpoint (`glob_files` /
+/// the Agent `glob` tool), and mixing the two would leave callers guessing
+/// which to use.
+#[derive(Debug, Deserialize)]
+pub struct SearchFilesRequest {
+    pub query: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RootFileRequest {
     pub path: String,
@@ -726,6 +743,42 @@ pub async fn handle_stat(
     Ok(Json(info))
 }
 
+/// task-77: one-shot filename search over a workspace subtree.
+///
+/// Runs the traversal on the Runtime host (same as `glob` / `grep`, which have
+/// no file-service socket branch either), so the search sees the host-resolved
+/// root boundary rather than a container view. The traversal itself lives in
+/// `fs::search_files` and reuses the `ignore` walker, so `.gitignore` semantics
+/// are identical to the Agent `glob` tool.
+pub async fn handle_search_files(
+    State(app): State<Arc<AppState>>,
+    Path(ws_id): Path<String>,
+    Json(req): Json<SearchFilesRequest>,
+) -> Result<Json<fs::FileSearchResult>, (StatusCode, Json<Value>)> {
+    app.ensure_workspace(&ws_id).await.map_err(map_error)?;
+    ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
+    let boundary =
+        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
+    let path = req.path.as_deref().unwrap_or(".");
+    preflight_read_path(path, &boundary)?;
+    // A filename search walks a whole subtree. Blocking the async runtime for
+    // a multi-hundred-ms traversal would stall unrelated requests, so it runs
+    // on a blocking thread.
+    let host_path = boundary.host_path.to_string_lossy().to_string();
+    let query = req.query;
+    let limit = req.limit;
+    let path_owned = path.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        fs::search_files(&query, &path_owned, &host_path, limit)
+    })
+    .await
+    .map_err(|error| RuntimeError::Command(format!("search task: {error}")))
+    .map_err(map_error)?
+    .map_err(map_error)?;
+    Ok(Json(result))
+}
+
 // ---- Tests ----
 
 #[cfg(test)]
@@ -888,6 +941,168 @@ mod tests {
             workspace_event_watchers: crate::workspace_events::WorkspaceEventWatchers::default(),
         });
         (app, ws_id, dir, TestCp { task })
+    }
+
+    // ---- task-77: filename search over REST ----
+
+    async fn search_http(
+        app: Arc<AppState>,
+        ws_id: String,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(format!(
+                "/internal/v1/runtime/workspaces/{ws_id}/files/search"
+            ))
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer dev-token-not-secure",
+            )
+            .body(Body::from(body.to_string()))
+            .expect("search request");
+        let response = tower::ServiceExt::oneshot(crate::build_app_router(&app), request)
+            .await
+            .expect("infallible router");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, json)
+    }
+
+    /// The endpoint must exist on the REAL router (not just as a handler fn):
+    /// a registered route answers 200 with the documented shape.
+    #[tokio::test]
+    async fn test_files_search_endpoint_is_routed_and_answers_shape() {
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
+        let ws = app.registry.get(&ws_id).await.unwrap();
+        let root = std::path::PathBuf::from(&ws.workspace_path);
+        fs::write_file_binary("alpha-report.md", b"a", &ws.workspace_path)
+            .await
+            .unwrap();
+        std::fs::write(root.join("Beta-Report.TXT"), "b").unwrap();
+        std::fs::write(root.join("unrelated.log"), "c").unwrap();
+
+        let (status, body) = search_http(
+            app.clone(),
+            ws_id.clone(),
+            serde_json::json!({"query": "report"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body = {body}");
+        assert!(body["items"].is_array(), "items must be an array");
+        assert_eq!(body["truncated"], false);
+        assert!(body["ignoredSkipped"].is_number());
+        assert!(body["ignoredRules"].is_array());
+        assert!(body["scannedFiles"].is_number());
+        assert!(
+            body["elapsedMs"].is_number(),
+            "elapsedMs must be measured, not omitted"
+        );
+        let names: Vec<&str> = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"alpha-report.md"), "names = {names:?}");
+        assert!(
+            names.contains(&"Beta-Report.TXT"),
+            "case-insensitive: {names:?}"
+        );
+        assert!(!names.contains(&"unrelated.log"));
+        for item in body["items"].as_array().unwrap() {
+            assert!(item["path"].is_string(), "each item needs a path");
+            assert!(item["isDir"].is_boolean(), "each item needs isDir");
+        }
+    }
+
+    /// Card criterion ③, over real HTTP: a file that EXISTS on disk but sits
+    /// inside a `.gitignore`d area is not returned, and the response names the
+    /// rule responsible — so "not found" is explainable rather than data loss.
+    #[tokio::test]
+    async fn test_files_search_reports_ignored_file_over_http() {
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
+        let ws = app.registry.get(&ws_id).await.unwrap();
+        let root = std::path::PathBuf::from(&ws.workspace_path);
+        std::fs::write(root.join(".gitignore"), "ignored-area/\n").unwrap();
+        std::fs::create_dir(root.join("ignored-area")).unwrap();
+        std::fs::write(root.join("ignored-area").join("report-hidden.md"), "h").unwrap();
+        std::fs::write(root.join("report-visible.md"), "v").unwrap();
+        // The hidden file really exists:
+        assert!(root.join("ignored-area").join("report-hidden.md").exists());
+
+        let (status, body) = search_http(app, ws_id, serde_json::json!({"query": "report"})).await;
+        assert_eq!(status, StatusCode::OK, "body = {body}");
+        let names: Vec<&str> = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"report-visible.md"), "names = {names:?}");
+        assert!(
+            !names.contains(&"report-hidden.md"),
+            "a gitignored file must not be returned: {names:?}"
+        );
+        assert!(
+            body["ignoredSkipped"].as_u64().unwrap() > 0,
+            "the ignore surface must be visible over HTTP: {body}"
+        );
+        assert!(
+            body["ignoredRules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["pattern"] == "ignored-area/"),
+            "the rule that hid the file must be named: {body}"
+        );
+    }
+
+    /// Card criterion ④, over real HTTP: the limit must surface `truncated`.
+    #[tokio::test]
+    async fn test_files_search_truncation_over_http() {
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
+        let ws = app.registry.get(&ws_id).await.unwrap();
+        let root = std::path::PathBuf::from(&ws.workspace_path);
+        for n in 0..5 {
+            std::fs::write(root.join(format!("report-{n}.md")), "x").unwrap();
+        }
+
+        let (status, body) = search_http(
+            app,
+            ws_id,
+            serde_json::json!({"query": "report", "limit": 2}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body = {body}");
+        assert_eq!(body["items"].as_array().unwrap().len(), 2);
+        assert_eq!(body["truncated"], true, "limit hit must be visible: {body}");
+        assert!(
+            body["elapsedMs"].is_number(),
+            "elapsedMs must be reported even when truncated: {body}"
+        );
+    }
+
+    /// Card criterion ⑥: the endpoint must reject an empty query instead of
+    /// returning the entire tree (which would look like a working search).
+    #[tokio::test]
+    async fn test_files_search_rejects_non_directory_start() {
+        let (app, ws_id, _dir, _cp) = setup_ws().await;
+        let ws = app.registry.get(&ws_id).await.unwrap();
+        fs::write_file_binary("plain.txt", b"p", &ws.workspace_path)
+            .await
+            .unwrap();
+        let (status, body) = search_http(
+            app,
+            ws_id,
+            serde_json::json!({"query": "plain", "path": "plain.txt"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body = {body}");
     }
 
     #[tokio::test]

@@ -3693,7 +3693,7 @@ fn runtime_checkpoint_nested_repo_policy() -> NestedRepoPolicy {
 
 /// Internal HTTP surface (frozen routes). Kept as one function so the route
 /// table is exercised by handler tests without starting a listener.
-fn build_app_router(app_state: &Arc<AppState>) -> Router {
+pub(crate) fn build_app_router(app_state: &Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -3869,6 +3869,10 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/files/stat",
             post(ws_file_handler::handle_stat),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/files/search",
+            post(ws_file_handler::handle_search_files),
         )
         .layer(middleware::from_fn(internal_auth_middleware))
         .layer(middleware::from_fn(request_id_middleware))

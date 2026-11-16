@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use chrono::{DateTime, Utc};
 use globset::Glob;
 use ignore::Walk;
+use ignore::WalkBuilder;
 use notify::Watcher;
 use regex::Regex;
 use rmcp::schemars;
@@ -57,6 +58,45 @@ pub struct DirectoryListing {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GlobResults {
     pub matches: Vec<String>,
+}
+/// task-77: one hit of a filename search. `isDir` is carried because users
+/// search by name and a matching directory is a legitimate result.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FileSearchItem {
+    pub path: String,
+    pub name: String,
+    #[serde(rename = "isDir")]
+    pub is_dir: bool,
+}
+
+/// task-77: which ignore rule pruned part of the tree and where it came from.
+/// A bare `ignoredSkipped` count is unactionable: the user learns that files
+/// were skipped but not WHICH declaration skipped them.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FileSearchIgnoredRule {
+    pub pattern: String,
+    pub source: String,
+}
+
+/// task-77: one-shot filename search result.
+///
+/// `truncated` means the hit limit was reached and `items` is a PREFIX, never
+/// a silently shortened complete answer. `ignoredSkipped` / `ignoredRules`
+/// explain the ignore surface (a file that exists but is not found).
+/// `scannedFiles` / `elapsedMs` report the work actually done so a fast
+/// truncated answer is not mistaken for a full scan.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FileSearchResult {
+    pub items: Vec<FileSearchItem>,
+    pub truncated: bool,
+    #[serde(rename = "ignoredSkipped")]
+    pub ignored_skipped: usize,
+    #[serde(rename = "ignoredRules")]
+    pub ignored_rules: Vec<FileSearchIgnoredRule>,
+    #[serde(rename = "scannedFiles")]
+    pub scanned_files: usize,
+    #[serde(rename = "elapsedMs")]
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1001,6 +1041,195 @@ pub fn glob_files(pattern: &str, path: &str, workspace: &str) -> Result<Vec<Stri
     Ok(matches)
 }
 
+/// task-77: one-shot filename search over a workspace subtree.
+///
+/// This is the REST twin of the Agent-facing `glob` tool: it answers "which
+/// names contain this substring", which `glob_files` cannot do without turning
+/// into a glob-pattern matcher — and it must not, because that is the existing
+/// tool contract. `glob_files` is left byte-identical on purpose.
+///
+/// Traversal reuses the SAME engine as [`glob_files`] (`ignore::Walk`, i.e.
+/// ripgrep walker) so `.gitignore` / global excludes / `.git/info/exclude`
+/// semantics are identical; a bare `walkdir` would drag `node_modules`, build
+/// output and `.git` into the result set.
+///
+/// `query` is a case-insensitive substring on the entry NAME. There is
+/// deliberately no glob parameter: glob has its own endpoint.
+pub fn search_files(
+    query: &str,
+    path: &str,
+    workspace: &str,
+    limit: Option<usize>,
+) -> Result<FileSearchResult> {
+    let full_path = resolve_read_path(path, workspace)?;
+
+    if !full_path.is_dir() {
+        return Err(RuntimeError::InvalidPath(format!(
+            "Not a directory: {path}"
+        )));
+    }
+
+    let needle = query.to_lowercase();
+    let ws_str = workspace.to_string();
+    let cap = limit.filter(|n| *n > 0);
+
+    let mut items: Vec<FileSearchItem> = Vec::new();
+    let mut scanned = 0usize;
+    let mut truncated = false;
+    let mut seek_more = false;
+    let started = std::time::Instant::now();
+
+    let walker = WalkBuilder::new(&full_path)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .require_git(false)
+        .build();
+
+    for entry in walker.filter_map(|e| e.ok()) {
+        let file_type = match entry.file_type() {
+            Some(t) => t,
+            None => continue,
+        };
+        // Directories are hits too: a folder whose name matches is a result the
+        // caller asked for (hence `isDir` on the wire).
+        if !file_type.is_file() && !file_type.is_dir() {
+            continue;
+        }
+        if entry.depth() == 0 {
+            continue; // the searched directory itself is never a hit
+        }
+        scanned += 1;
+        let name = match entry.file_name().to_str() {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.to_lowercase().contains(&needle) {
+            continue;
+        }
+        if seek_more {
+            // One hit beyond the cap proves the answer is a prefix.
+            truncated = true;
+            break;
+        }
+        items.push(FileSearchItem {
+            path: strip_workspace(entry.path(), &ws_str)
+                .to_string_lossy()
+                .to_string(),
+            name: name.to_string(),
+            is_dir: file_type.is_dir(),
+        });
+        if let Some(cap) = cap
+            && items.len() >= cap
+        {
+            seek_more = true;
+        }
+    }
+    // `truncated` means "there are MORE hits than returned". Breaking the
+    // instant the cap is reached cannot tell that apart from "the cap happens
+    // to equal the total" — that would claim truncation on an exact fit and
+    // send the user hunting for results that do not exist. So the cap stops
+    // the COLLECTION but the scan continues until one more hit is actually
+    // observed (or the tree ends).
+
+    let (ignored_skipped, ignored_rules) = count_ignored_surface(&full_path, &ws_str);
+
+    Ok(FileSearchResult {
+        items,
+        truncated,
+        ignored_skipped,
+        ignored_rules,
+        scanned_files: scanned,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// task-77: exact ignore-surface accounting.
+///
+/// Why a second pass instead of reading it off the search walk: `ignore` prunes
+/// an ignored directory BEFORE yielding it (`Walk::filter_entry` sees 21,382
+/// calls for 21,383 yielded entries — ratio 1.00 over the `one` workspace), so
+/// the search walk can never report what it skipped. This pass disables the
+/// built-in rules and drives the same `Gitignore` matcher by hand, counting
+/// nodes that match and NOT descending there — so its cost stays proportional
+/// to the visible tree (measured 133 ms) instead of the ignored one (4.4 s for
+/// a full descent).
+///
+/// The matcher is built from exactly `.gitignore` + `.git/info/exclude` of the
+/// searched root. Nested per-directory `.gitignore` files below the root are
+/// NOT loaded here: the root-level rules are what explain "my file is inside an
+/// ignored area" for the common case, and claiming per-nested-file fidelity
+/// would require a matcher stack the walker does not expose. This is a known,
+/// stated approximation — it can under-report, never over-report.
+fn count_ignored_surface(full_path: &Path, ws_str: &str) -> (usize, Vec<FileSearchIgnoredRule>) {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(full_path);
+    let mut loaded = false;
+    for candidate in [
+        full_path.join(".gitignore"),
+        full_path.join(".git").join("info").join("exclude"),
+    ] {
+        if candidate.exists() && builder.add(&candidate).is_none() {
+            loaded = true;
+        }
+    }
+    if !loaded {
+        return (0, Vec::new());
+    }
+    let matcher = match builder.build() {
+        Ok(m) => std::sync::Arc::new(m),
+        Err(_) => return (0, Vec::new()),
+    };
+
+    // `filter_entry` is a shared `Fn`, so the counters and the collected rules
+    // live behind mutexes. Contention is irrelevant here: the walker calls
+    // them from its own thread(s) and each visit is a handful of nanoseconds.
+    let state = std::sync::Arc::new(std::sync::Mutex::new((
+        0usize,
+        Vec::<FileSearchIgnoredRule>::new(),
+    )));
+    let prune = {
+        let matcher = std::sync::Arc::clone(&matcher);
+        let state = std::sync::Arc::clone(&state);
+        let ws_owned = ws_str.to_string();
+        WalkBuilder::new(full_path)
+            .hidden(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .require_git(false)
+            .filter_entry(move |entry| {
+                if entry.depth() == 0 {
+                    return true;
+                }
+                let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
+                match matcher.matched_path_or_any_parents(entry.path(), is_dir) {
+                    ignore::Match::Ignore(glob) => {
+                        let pattern = glob.original().to_string();
+                        let source = glob
+                            .from()
+                            .map(|p| strip_workspace(p, &ws_owned).to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        if let Ok(mut guard) = state.lock() {
+                            guard.0 += 1;
+                            if !guard.1.iter().any(|r| r.pattern == pattern) {
+                                guard.1.push(FileSearchIgnoredRule { pattern, source });
+                            }
+                        }
+                        false
+                    }
+                    _ => true,
+                }
+            })
+            .build()
+    };
+    for _ in prune.filter_map(|e| e.ok()) {}
+
+    let mut state = state.lock().map(|g| g.clone()).unwrap_or((0, Vec::new()));
+    state.1.sort_by(|a, b| a.pattern.cmp(&b.pattern));
+    (state.0, state.1)
+}
+
 pub fn grep_files(pattern: &str, path: &str, workspace: &str) -> Result<Vec<MatchResult>> {
     let full_path = resolve_read_path(path, workspace)?;
     let re = Regex::new(pattern)?;
@@ -1504,6 +1733,180 @@ mod tests {
         assert!(!result.is_binary);
         assert_eq!(result.total_lines, 3);
         assert_eq!(result.content, "2 | beta");
+    }
+
+    // ---- task-77: filename search ----------------
+
+    fn search_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("alpha-report.md"), "a").unwrap();
+        std::fs::write(dir.path().join("Beta-Report.TXT"), "b").unwrap();
+        std::fs::write(dir.path().join("unrelated.log"), "c").unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("nested").join("report-2026.md"), "d").unwrap();
+        std::fs::create_dir(dir.path().join("report-dir")).unwrap();
+        dir
+    }
+
+    /// Substring match is case-insensitive and covers BOTH files and
+    /// directories (`isDir` is what lets the UI render a folder hit).
+    #[test]
+    fn test_search_files_matches_names_case_insensitively() {
+        let dir = search_fixture();
+        let ws = dir.path().to_str().unwrap();
+        let result = search_files("report", ".", ws, None).unwrap();
+        assert!(!result.truncated);
+        let mut names: Vec<&str> = result.items.iter().map(|i| i.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                "Beta-Report.TXT",
+                "alpha-report.md",
+                "report-2026.md",
+                "report-dir"
+            ],
+            "case-insensitive substring must hit files and directories alike"
+        );
+        let dir_hit = result
+            .items
+            .iter()
+            .find(|i| i.name == "report-dir")
+            .unwrap();
+        assert!(dir_hit.is_dir, "a matching directory must be flagged isDir");
+        let file_hit = result
+            .items
+            .iter()
+            .find(|i| i.name == "alpha-report.md")
+            .unwrap();
+        assert!(!file_hit.is_dir);
+    }
+
+    /// A file inside an ignored area exists on disk but must NOT be returned —
+    /// and the response must say which rule hid it. This is the exact scenario
+    /// from the card: "file is there, search does not find it".
+    #[test]
+    fn test_search_files_skips_gitignored_area_and_names_the_rule() {
+        let dir = search_fixture();
+        std::fs::write(dir.path().join(".gitignore"), "ignored-area/\n").unwrap();
+        std::fs::create_dir(dir.path().join("ignored-area")).unwrap();
+        std::fs::write(
+            dir.path().join("ignored-area").join("report-hidden.md"),
+            "h",
+        )
+        .unwrap();
+
+        // The file IS on disk:
+        assert!(
+            dir.path()
+                .join("ignored-area")
+                .join("report-hidden.md")
+                .exists()
+        );
+
+        let ws = dir.path().to_str().unwrap();
+        let result = search_files("report", ".", ws, None).unwrap();
+        assert!(
+            !result.items.iter().any(|i| i.name == "report-hidden.md"),
+            "a gitignored file must not appear in results"
+        );
+        assert!(
+            result.ignored_skipped > 0,
+            "the ignore surface must be reported, not silent"
+        );
+        assert_eq!(
+            result
+                .ignored_rules
+                .iter()
+                .map(|r| r.pattern.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ignored-area/"],
+            "the response must name the rule that hid the file"
+        );
+    }
+
+    /// Hitting the limit must be visible (`truncated`), never a silent prefix.
+    #[test]
+    fn test_search_files_reports_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 0..6 {
+            std::fs::write(dir.path().join(format!("report-{n}.md")), "x").unwrap();
+        }
+        let ws = dir.path().to_str().unwrap();
+
+        let capped = search_files("report", ".", ws, Some(3)).unwrap();
+        assert_eq!(capped.items.len(), 3);
+        assert!(
+            capped.truncated,
+            "limit reached must be reported as truncated"
+        );
+
+        let full = search_files("report", ".", ws, None).unwrap();
+        assert_eq!(full.items.len(), 6);
+        assert!(!full.truncated, "an uncapped search is not truncated");
+
+        // A limit at or above the hit count is NOT truncation.
+        let exact = search_files("report", ".", ws, Some(6)).unwrap();
+        assert_eq!(exact.items.len(), 6);
+        assert!(!exact.truncated, "reaching the last hit is not truncation");
+    }
+
+    /// `scannedFiles` / `elapsedMs` are the work actually done: a truncated fast
+    /// answer must not look like a full scan.
+    #[test]
+    fn test_search_files_reports_scan_cost() {
+        let dir = search_fixture();
+        let ws = dir.path().to_str().unwrap();
+        let result = search_files("unrelated", ".", ws, None).unwrap();
+        assert_eq!(result.items.len(), 1);
+        assert!(
+            result.scanned_files >= result.items.len(),
+            "scannedFiles counts entries visited, not hits"
+        );
+    }
+
+    /// Search must reject a non-directory start path instead of silently
+    /// returning an empty list (which would read as "no such file").
+    #[test]
+    fn test_search_files_rejects_non_directory_root() {
+        let dir = search_fixture();
+        let ws = dir.path().to_str().unwrap();
+        let err = search_files("report", "alpha-report.md", ws, None).unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::InvalidPath(_)),
+            "expected InvalidPath, got {err}"
+        );
+    }
+
+    /// Zero-match is an empty list plus an intact ignore surface — not an error
+    /// and not an `ignoredSkipped` that pretends to explain a miss.
+    #[test]
+    fn test_search_files_empty_query_result_is_not_an_error() {
+        let dir = search_fixture();
+        let ws = dir.path().to_str().unwrap();
+        let result = search_files("zzz-no-such-name", ".", ws, None).unwrap();
+        assert!(result.items.is_empty());
+        assert!(!result.truncated);
+        assert_eq!(
+            result.ignored_skipped, 0,
+            "no .gitignore here means nothing is skipped"
+        );
+        assert!(result.ignored_rules.is_empty());
+    }
+
+    /// task-77 guard: `glob_files` semantics must stay byte-identical — the card
+    /// forbids turning it into a search function.
+    #[test]
+    fn test_glob_files_semantics_unchanged_by_search_feature() {
+        let dir = search_fixture();
+        let ws = dir.path().to_str().unwrap();
+        let matches = glob_files("*.md", ".", ws).unwrap();
+        let mut names: Vec<String> = matches
+            .iter()
+            .filter_map(|p| p.rsplit('/').next().map(|n| n.to_string()))
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["alpha-report.md", "report-2026.md"]);
     }
 
     #[test]
