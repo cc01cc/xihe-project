@@ -96,6 +96,28 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
             Number.parseFloat((element as HTMLElement).style.height || "0"),
         );
         expect(topSpacerHeight, "顶部占位必须为正").toBeGreaterThan(0);
+
+        /**
+         * task-238 / D-1631 —— **入口即贴底的直接读数**（此前只有上面两条间接证据：最早行不在 DOM、
+         * 顶部占位为正）。首次进入长会话若被虚拟器的首次 attach 写回打成 0（修前实测：产品侧
+         * `scrollToEnd` 写 44390，30 ms 后被库写回 0，而 `defaultScrollPositionAppliedRef` 是一次性
+         * latch ⇒ 不再重试），窗口就永久停在顶部：`rows 1..13 / topSpacer=0 / bottomSpacer=42676`。
+         * 间接证据对「停在顶部」的判别力来自排他 —— topSpacer>0 只说明窗口切过，不说明停在底部。
+         * 8 px 容差与 BL-340 `TOLERANCE_PX` 同口径，吸收 spacer 取整与亚像素。
+         */
+        await expect
+            .poll(
+                async () =>
+                    await chat.scrollerViewport.evaluate((element) => {
+                        const viewport = element as HTMLElement;
+                        return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+                    }),
+                {
+                    message: "入口必须贴底（scrollHeight − clientHeight − scrollTop ≤ 8）",
+                    timeout: LONG_TIMEOUT_MS,
+                },
+            )
+            .toBeLessThanOrEqual(8);
     });
 
     /**
