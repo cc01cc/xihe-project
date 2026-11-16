@@ -1,7 +1,8 @@
 <script setup lang="ts">
-const { t } = useI18n();
-import { useI18n } from "vue-i18n";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const model = defineModel<string>("modelValue", { required: true }),
     emit = defineEmits<{ close: [] }>();

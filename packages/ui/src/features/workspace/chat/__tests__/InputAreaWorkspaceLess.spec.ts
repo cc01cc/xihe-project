@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
+import InputArea from "../components/InputArea.vue";
 
 /**
  * task-555：**独立会话分支**的附件入口。
@@ -130,8 +131,6 @@ const stubs = {
     Mic: { template: "<span />" },
     Send: { template: "<span />" },
 };
-
-import InputArea from "../components/InputArea.vue";
 
 function mountComposer(route: FakeRoute) {
     return mount(InputArea, {
