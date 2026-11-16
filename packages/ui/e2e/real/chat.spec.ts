@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
 import { agentName } from "./helpers/agent-name";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
+import { isolatedWorkspaceHostPath } from "./helpers/workspace";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { test, expect, type APIRequestContext } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
@@ -18,28 +17,6 @@ type ChatFixture = {
     workspaceId: string;
     sessionId: string;
 };
-
-/**
- * Isolation root for the seeded workspace host directory (task-49).
- *
- * `helpers/workspace.ts#ensureWorkspace` asserts that `XIHE_E2E_RUN_ID` is set, i.e. that
- * `scripts/e2e-host.mjs` owns the run. This spec also runs against an **already-started** stack
- * (`XIHE_E2E_EXTERNAL_SERVER=1` — the lane this card was measured on), where no runner injected a
- * run id. That guard exists so no run writes into a shared host directory, so instead of switching
- * it off we keep the same isolation: the runner's run id when present, otherwise a unique
- * per-process root under the same `.tmp/e2e-host` tree.
- */
-function workspaceHostPath(): string {
-    const runId = process.env.XIHE_E2E_RUN_ID || `external-${process.pid}-${Date.now()}`;
-    const hostPath = path.resolve(
-        process.cwd(),
-        "../../.tmp/e2e-host",
-        runId,
-        `e2e-ws-${Date.now()}`,
-    );
-    mkdirSync(hostPath, { recursive: true });
-    return hostPath;
-}
 
 /**
  * Seed a `direct_attach` workspace (PLAN-0614: `POST /auth/register` no longer creates one).
@@ -59,7 +36,13 @@ async function seedWorkspace(request: APIRequestContext, authToken: string): Pro
     const first = Array.isArray(existing) ? existing[0]?.id : undefined;
     if (first) return first;
 
-    const hostPath = workspaceHostPath();
+    // task-49 的隔离根去重后只剩一处实现（task-71）。本文件原先自带一份手写拷贝：叶子名只由
+    // 「时间戳」拼成，而 Date.now() 在同一同步块内连续调用返回同一毫秒 ⇒ 两个 seed 出来的工作区
+    // 会**静默**共用同一个宿主目录；它还自己重算根目录、绕开 helper 的序号 + 随机 nonce，即 task-68
+    // 修掉的那条缺陷在这里原封不动（D-1722）。
+    // 现在两条车道都走 isolatedWorkspaceHostPath()（有 RUN_ID 用 run-id、否则进程级隔离根），并由它
+    // 打印实际使用的根与车道 —— 碰撞原本是静默的，不打印等于跑完没人知道文件写到了哪。
+    const hostPath = isolatedWorkspaceHostPath();
     const preflight = async (executionMode: "windows-mxc" | "windows-host") => {
         const response = await request.post(`${CP_URL}/api/v1/workspaces/capabilities/preflight`, {
             headers,
