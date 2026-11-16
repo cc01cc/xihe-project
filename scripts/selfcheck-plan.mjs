@@ -82,7 +82,8 @@ const SCOPES = {
         dir: "packages/ui",
         cmd: "pnpm exec vitest run",
         verdict: '末段 "Test Files  <N> passed (<N>)" + "Tests  <N> passed"；有红即 exit 1',
-        evidence: "AGENTS.md:133（全量 ~150s）；mise run test:ui = mise.toml [tasks.\"test:ui\"]",
+        evidence:
+          "AGENTS.md [合并前必跑 UI 单测] !150；即「全量 ~150 s」原话所在行；mise run test:ui = mise.toml [tasks.\"test:ui\"] !test:unit",
       },
       {
         level: "S1",
@@ -143,12 +144,13 @@ const SCOPES = {
       },
       {
         level: "S0",
-        title: "迁移号（改 src/main/resources/db/migration/V*.sql 时；另按 AGENTS.md:112 定号三查）",
+        title:
+          "迁移号（改 src/main/resources/db/migration/V*.sql 时；另按 packages/control-plane/AGENTS.md「迁移号按合并顺序分配」定号）",
         dir: "packages/control-plane",
         cmd: "mvn -o -q test -Dtest=DomainSchemaMigrationTest",
         verdict: '末行 "Tests run: X, Failures: 0, Errors: 0" + exit 0（+ 人工核「最高号 +1」）',
         evidence:
-          "测试类 src/test/java/com/cc01cc/p/xihe/cp/migration/DomainSchemaMigrationTest.java；定号规则 packages/control-plane/AGENTS.md:114 !迁移号",
+          "测试类 src/test/java/com/cc01cc/p/xihe/cp/migration/DomainSchemaMigrationTest.java；定号规则 packages/control-plane/AGENTS.md [迁移号按合并顺序分配] !迁移号",
       },
       {
         level: "S1",
@@ -423,13 +425,15 @@ function pad(s, n) {
 /* ────────────────────────── 指针锚点自检（task-593） ──────────────────────────
  * 为什么要有这个：evidence 原先全是 `file:LINE` 行号锚点。2026-11-14 task-583 往
  * packages/control-plane/AGENTS.md 插了 2 行，同文件 3 处指针当场错位；抽样 34 条里 10 条
- * 指向了无关内容（其中 1 条指向空行）。**行号锚点必然漂** ⇒ 首选键名/符号锚点，行号只作兜底，
- * 两种形态都由本自检覆盖。
+ * 指向了无关内容（其中 1 条指向空行）。**行号锚点必然漂** ⇒ 首选键名/符号锚点，行号只作兜底。
+ * 2026-11-16 task-37 又复现同一条定律：`A03-xihe/AGENTS.md` 体量收敛后 `:133`（ui 全量单测）
+ * 与 `:112`（cp 定号规则）双双变成空行 ⇒ 这两条已改成**正文片段锚点**，不再用行号。
  *
  * 支持的指针形态（`!kw` 可选 = 该处必须出现关键词，专挡「行号对、内容换了」）：
  *   mise.toml [tasks."lint:cp"] !checkstyle   键名锚点：该任务 block 内必须含关键词
- *   AGENTS.md:133 !150                        兜底行锚点：该行必须非空且含关键词
+ *   AGENTS.md [合并前必跑 UI 单测] !150        正文片段锚点：文件内必须含该片段（首选，不随插行漂移）
  *   module-selfcheck-matrix.md §5             章节锚点：文件内必须有该节标题
+ *   AGENTS.md:119 !150                        兜底行锚点：该行必须非空且含关键词
  */
 const ANCHOR_RE =
   /((?:[\w.-]+\/)*[\w.-]+\.(?:toml|mjs|json|md|ya?ml))(?::(\d+)(?:-\d+)?|\s*\[([^\]]+)\]|\s*§([^\s（(]+))(?:\s*!([^\s；、，。)）]+))?/g;
