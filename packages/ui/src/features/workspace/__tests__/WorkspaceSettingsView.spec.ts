@@ -191,6 +191,36 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         wrapper.unmount();
     });
 
+    it("task-60：移动页签与 go-environment 命中盒 ≥24（min-h-7 锁定）", async () => {
+        // ui-2 batch-4 开抽屉复测：页签 20.8 高（×4）、go-environment 48×19.2 ⇒ 均 <24 违例。
+        // `min-h-7` = 3.5px × 7 = 24.5；jsdom 不求值 Tailwind ⇒ 钉类名，真 rect 归复测。
+        // go-environment 在 `v-if=auth.canManageWorkspace` 块内 ⇒ 必须给 workspace:admin 能力位
+        // （同 OWNER describe 的 mountOwner 夹具；默认登录态无此能力，元素不渲染）。
+        localStorage.setItem(
+            "xihe-user",
+            JSON.stringify({
+                id: "u1",
+                email: "owner@test.com",
+                capabilities: {
+                    isInstanceAdmin: false,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [WORKSPACE_ID],
+                },
+            }),
+        );
+        const wrapper = await mountView();
+        for (const key of ["config", "mcp", "skills", "general"]) {
+            const tab = wrapper.get(`[data-testid="ws-settings-tab-${key}"]`);
+            expect(tab.classes(), `ws-settings-tab-${key}`).toContain("min-h-7");
+        }
+        const goEnv = wrapper.get('[data-testid="ws-settings-go-environment"]');
+        // RouterLink 是 <a>（inline）⇒ 没有 inline-flex 时 min-h 不生效，两个断言必须成对。
+        expect(goEnv.classes()).toEqual(
+            expect.arrayContaining(["min-h-7", "inline-flex", "items-center"]),
+        );
+        wrapper.unmount();
+    });
+
     // ---- task-81 P1-2：页签组的可访问结构与选中语义 ----
     it("四个页签由 vendor `role=tablist` 承载，组名在 tablist 上，当前项只有一个", async () => {
         // 改前实测（同一 URL）：四个 tab 的 `role` / `aria-selected` / `aria-current` /
