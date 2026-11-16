@@ -130,6 +130,10 @@ test.describe("Auth — Real Backend", () => {
             () => document.documentElement.scrollWidth > window.innerWidth,
         );
         expect(overflows).toBe(false);
-        await page.screenshot({ scale: "css", path: "plan-0558-login-mobile.png", fullPage: true });
+        // 不在此出图（task-79，2026-11-16）：原 L133 的 page.screenshot 把 PNG 写进包根
+        // （packages/ui/plan-0558-login-mobile.png），是未跟踪的运行产物，且**不参与任何断言**
+        // —— 本条判据就是上面的 expect(overflows).toBe(false)。该图已于 PLAN-0558 归档期
+        // 复制到 plans/.../evidence/screenshots/login-mobile-390x844.png，PLAN-0558 自己的
+        // P2 记录也写着「运行产物不提交」⇒ 交付图一律走 ui-mock-shot.mjs（带 manifest/指纹）。
     });
 });
