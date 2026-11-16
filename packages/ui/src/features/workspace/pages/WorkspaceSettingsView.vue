@@ -10,6 +10,10 @@ import { api, ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
+import {
+    discloseHostPath as discloseHostPathFor,
+    type HostPathPrincipal,
+} from "../lib/hostPathDisclosure";
 import WorkspaceConfigPanel from "../components/WorkspaceConfigPanel.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceSkillsPanel from "../../../components/resources/WorkspaceSkillsPanel.vue";
@@ -72,6 +76,32 @@ const route = useRoute(),
     { t } = useI18n();
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
+
+/**
+ * task-51 / batch-02（P1）：本页「物理目录」行原先把 `storageRef`（= 工作区 UUID，
+ * 见 `WorkspaceService:529`）当成物理目录显示 —— 用户在设置页看到 `e005df0b-…`，
+ * 环境页同一个工作区却写着 `h:/zeotmp/task-7/ws`（两张截图见
+ * `.tmp/xh/b02-tab-设置.png` / `b02-tab-环境.png`）。
+ *
+ * <p>真因是**绑错字段**而不是后端缺字段：`GET /workspaces/{id}` 早已返回 `hostPath`
+ * （`WorkspaceController#toMap`，仅 owner/admin 给值，其余人 null），前端也解析进了
+ * `ApiWorkspace.hostPath`（`normalizeWorkspace`）。所以这里改读 `hostPath`，
+ * **且必须与「环境」页同一套披露规则**（`lib/hostPathDisclosure`）—— 否则就是把
+ * 环境页刻意对普通成员隐藏的宿主机路径从这里漏出去。</p>
+ *
+ * <p>`auth.workspace` 的缓存形态（sessionStorage `xihe-workspace`）只有 id/name/role，
+ * 不带 `hostPath`；本页 `loadWorkspace()` 会 await `auth.selectWorkspace()` 真实拉一次
+ * 工作区，所以 `hostPath` 在本页是可靠的。拿不到（null 安全投影 / 无权限）⇒ 整行不渲染，
+ * **绝不留 `—` 让人以为是"路径暂时为空"**，更不在前端拼路径。</p>
+ */
+const hostPathPrincipal = computed<HostPathPrincipal>(() => ({
+    userId: auth.user?.id,
+    isInstanceAdmin: auth.isAdmin,
+    ownerId: auth.workspace?.ownerId,
+}));
+const disclosedHostPath = computed(() =>
+    discloseHostPathFor(auth.workspace?.hostPath, hostPathPrincipal.value),
+);
 
 /** `?tab=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function tabFromQuery(q: unknown): SettingsTab {
@@ -191,6 +221,12 @@ async function loadWorkspace() {
     loadError.value = "";
     try {
         await auth.selectWorkspace(workspaceId.value);
+        // task-51：`selectWorkspace` 命中逐 tab 缓存时会**短路**（auth.ts:578-583），而缓存对象
+        // 可能来自 `WorkspacePicker`（`GET /workspaces` 的列表项，不含特权 `hostPath`）⇒
+        // 直接读 `auth.workspace.hostPath` 会对 owner 也恒 `undefined`，本页那一行就永远不出现。
+        // 只在「缓存里根本没有这个字段」时补一次真实读取：有值 / 明确 `null`（CP 的安全投影）
+        // 都不重复请求，也绝不用本地缓存去填服务端刻意抹掉的路径。
+        if (auth.workspace?.hostPath === undefined) await auth.refreshWorkspace();
     } catch (cause) {
         const code = cause instanceof ApiError ? cause.problem.code : "";
         if (code === "WORKSPACE_FORBIDDEN" || code === "WORKSPACE_NOT_FOUND") {
@@ -485,12 +521,17 @@ onMounted(async () => {
                                     <span class="font-mono text-xs break-all">{{
                                         workspaceId
                                     }}</span>
-                                    <span class="text-muted-foreground">{{
-                                        t("workspace.settingsStorageRef")
-                                    }}</span>
-                                    <span class="font-mono text-xs break-all">
-                                        {{ auth.workspace?.storageRef || "—" }}
-                                    </span>
+                                    <template v-if="disclosedHostPath">
+                                        <span class="text-muted-foreground">{{
+                                            t("workspace.settingsHostPath")
+                                        }}</span>
+                                        <span
+                                            data-testid="ws-settings-host-path"
+                                            class="font-mono text-xs break-all"
+                                        >
+                                            {{ disclosedHostPath }}
+                                        </span>
+                                    </template>
                                     <span class="text-muted-foreground">{{
                                         t("workspace.settingsExecutionMode")
                                     }}</span>
@@ -556,13 +597,16 @@ onMounted(async () => {
                                         workspaceId
                                     }}</span>
                                 </div>
-                                <div class="flex justify-between gap-3">
+                                <div v-if="disclosedHostPath" class="flex justify-between gap-3">
                                     <span class="text-muted-foreground">{{
-                                        t("workspace.settingsStorageRef")
+                                        t("workspace.settingsHostPath")
                                     }}</span>
-                                    <span class="font-mono text-xs break-all">{{
-                                        auth.workspace?.storageRef || "—"
-                                    }}</span>
+                                    <span
+                                        data-testid="ws-settings-host-path"
+                                        class="font-mono text-xs break-all"
+                                    >
+                                        {{ disclosedHostPath }}
+                                    </span>
                                 </div>
                                 <div class="flex justify-between gap-3">
                                     <span class="text-muted-foreground">{{

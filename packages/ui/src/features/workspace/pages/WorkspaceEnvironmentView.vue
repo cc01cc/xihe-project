@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { api, ApiError, isExecutionModeSwitchProbeFailure } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
+import { discloseHostPath, type HostPathPrincipal } from "../lib/hostPathDisclosure";
 import { logger } from "../../../lib/logger";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { toast } from "vue-sonner";
@@ -283,16 +284,17 @@ const jobStartReason = computed(() => {
 
 // `hostPath` is a privileged projection. A null/safe projection must never be
 // replaced with a locally cached path, and a raw path is only shown to an
-// instance admin or the workspace owner.
-const canViewRawHostPath = computed(() => {
-    if (!auth.user) return false;
-    if (auth.isAdmin) return true;
-    return Boolean(auth.workspace?.ownerId && auth.workspace.ownerId === auth.user.id);
-});
-const disclosedHostPath = computed(() => {
-    const path = environment.value?.hostPath;
-    return canViewRawHostPath.value && typeof path === "string" && path.length > 0 ? path : null;
-});
+// instance admin or the workspace owner. The rule itself lives in
+// `lib/hostPathDisclosure` so the workspace settings page ("物理目录" row) reads
+// exactly the same thing as this page — task-51 / batch-02.
+const hostPathPrincipal = computed<HostPathPrincipal>(() => ({
+    userId: auth.user?.id,
+    isInstanceAdmin: auth.isAdmin,
+    ownerId: auth.workspace?.ownerId,
+}));
+const disclosedHostPath = computed(() =>
+    discloseHostPath(environment.value?.hostPath, hostPathPrincipal.value),
+);
 
 // PLAN-0551: managed_import is docker-only and direct_attach only switches between
 // MXC and host. The page must never offer a combination CP rejects with 400.

@@ -7,9 +7,13 @@ import type { Router } from "vue-router";
 import WorkspaceView from "../pages/WorkspaceView.vue";
 import WorkspaceAgentManagementDialog from "../components/WorkspaceAgentManagementDialog.vue";
 import { useSessionStore } from "../../../stores/session";
+import { useChatStore } from "../chat/stores/chat";
 import { api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { openSelect, selectItemValues, setSelectValue } from "../../../test-utils/select";
+// task-52 / batch-02 ②：**真实全局 i18n** —— `stores/session.ts#createSession` 的默认标题读
+// 的是 `i18n.global`（store 没有组件实例），本文件下方那个局部 `createI18n` 不参与求值。
+import { i18n as globalI18n } from "../../../i18n";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -67,6 +71,15 @@ const i18n = createI18n({
                 chatHeader: "Workspace chat",
                 noSession: "No active session",
                 createSession: "New chat",
+                // task-52：新建会话的默认标题（`stores/session.ts#createSession` 的默认参数）。
+                sessionDefaultTitle: "Untitled session",
+                usageCostUnmapped: "Not priced",
+                usageCostNoteNoTokenCounts: "no token counts",
+                usageCostNoteNoPricing: "model not in pricing config",
+                usageCostNoteUnknown: "No cost explanation",
+                usageSourceReal: "Real billing",
+                usageSourceEstimated: "Estimated",
+                usageSourceFallback: "Usage fallback",
                 chooseAgentTitle: "Choose an Agent",
                 chooseAgentLabel: "Choose Agent",
                 chooseAgentPlaceholder: "Select Agent",
@@ -394,7 +407,17 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         // 由 `POST /sessions` 的 `agentPrincipalId` 请求参数钉住（下一行断言），workbench chrome
         // 不再复述它；无对象的断言 = 「该元素不存在」。
         expect(wrapper.find('[data-testid="workspace-active-agent"]').exists()).toBe(false);
-        expect(mockedApi.createSession).toHaveBeenCalledWith("agent-1", "New Chat");
+        // task-52 / batch-02 ②：默认标题从前端硬编码 `"New Chat"` 改为 i18n 键
+        // `workspace.sessionDefaultTitle`（`stores/session.ts#createSession` 的默认参数）。
+        //
+        // 期望值取**真实全局 i18n**（`src/i18n`）而不是本文件那套局部 `messages`：store 是
+        // setup 之外的单例，它读的是 `i18n.global`，局部实例在这里不参与求值 —— 写死局部
+        // 夹具的值会让这条断言永远测不到产品取值路径（正是 `check-i18n-fixture-copies` 记的假绿形态）。
+        // 承重点：把 store 改回硬编码 `"New Chat"` ⇒ 本行红（实收 `"New Chat"`）。
+        expect(mockedApi.createSession).toHaveBeenCalledWith(
+            "agent-1",
+            globalI18n.global.t("workspace.sessionDefaultTitle"),
+        );
     });
 
     it("opens the Workspace Agent management panel from the toolbar", async () => {
@@ -560,4 +583,89 @@ it("explains that the bound agents are disabled instead of claiming nothing is b
         wrapper.find('[data-testid="workspace-agent-principal-select"]').exists(),
         "no selector when nothing is selectable",
     ).toBe(false);
+});
+
+/**
+ * task-52 / batch-02 ①（P1，`D-1703`）：用量行**渲染出来的那段话**不能是内部标记。
+ *
+ * <p>前面的 `i18n/__tests__/usageCopyRules.spec.ts` 扫 locale 树，钉的是「文案库里没有 wire 词」；
+ * 这条钉**页面真的把它渲染成人话**：CP 的 `costSource="unmapped"` / `source="real"` 原值
+ * 只准进 `:data-cost-source` / `:data-source`（排障用），可见文本必须是译文。</p>
+ *
+ * <p>承重点（变异）：把 `usageCost` 那行改回字面量 `"未映射"` / 把徽标改回 `{{ usage.source }}`
+ * ⇒ 本用例红（可见文本里出现 `unmapped`/`real`）。**只断言可见文本，不断言 data-* 属性为空** ——
+ * wire 原值留在属性里是有意设计（人看人话、排障看属性）。</p>
+ */
+describe("WorkspaceView usage line copy (task-52 ①)", () => {
+    async function mountWithUsage(usage: {
+        inputTokens?: number;
+        outputTokens?: number;
+        source?: "real" | "estimated" | "fallback";
+        cost?: number | null;
+        costSource?: "price_table" | "provider_reported" | "unmapped";
+        costNote?: string | null;
+    }): Promise<VueWrapper> {
+        useSessionStore().currentSessionId = SESSION_A;
+        useChatStore().setSessionLastUsage(SESSION_A, usage);
+        const wrapper = mountView();
+        await settle();
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("renders the un-priced case as readable copy, not the wire marker", async () => {
+        const wrapper = await mountWithUsage({
+            inputTokens: 3591,
+            outputTokens: 8,
+            source: "real",
+            cost: null,
+            costSource: "unmapped",
+            costNote: "no token counts",
+        });
+
+        const cost = wrapper.get('[data-testid="workspace-usage-cost"]');
+        // 本地夹具（locale=en）已登记 usageCostUnmapped ⇒ 可见文本是译文。
+        expect(cost.text()).toBe("Not priced");
+        expect(cost.text()).not.toMatch(/unmapped/i);
+        // wire 原值仍在属性里（排障面没丢）。
+        expect(cost.attributes("data-cost-source")).toBe("unmapped");
+        expect(cost.attributes("data-cost-note")).toBe("no token counts");
+        // 悬停说明把 CP 的英文 costNote 翻成人话，而不是原样透出。
+        expect(cost.attributes("title")).toBe("no token counts");
+    });
+
+    it("renders the source badge as a localized label, not the raw enum", async () => {
+        const wrapper = await mountWithUsage({
+            inputTokens: 3591,
+            outputTokens: 8,
+            source: "real",
+            cost: 0.12,
+            costSource: "price_table",
+            costNote: null,
+        });
+
+        const badge = wrapper.get('[data-testid="workspace-usage-source"]');
+        expect(badge.text()).toBe("Real billing");
+        expect(badge.text()).not.toBe("real");
+        expect(badge.attributes("data-source")).toBe("real");
+    });
+
+    it("keeps the em dash for the fallback source (no token counts reported)", async () => {
+        // **必须给 inputTokens**：用量行整行是 `v-if="lastUsage && usageInput !== undefined"`，
+        // 不给 token 数这一行根本不渲染（第一版用例就是这么红的 —— `get()` 找不到节点）。
+        // 但「有 token 数、却没有费用」正是 fallback 的真实形态：CP 只能数出 token，报不出钱。
+        const wrapper = await mountWithUsage({
+            inputTokens: 120,
+            outputTokens: 0,
+            source: "fallback",
+            cost: null,
+            costSource: "unmapped",
+            costNote: "no token counts",
+        });
+
+        // fallback = 这一轮根本没有 token 计数 ⇒「—」是「没有这个读数」，不是「未定价」。
+        // 两者混成同一个词，就是 D-1703 说的「用户读不懂」的另一半。
+        const cost = wrapper.get('[data-testid="workspace-usage-cost"]');
+        expect(cost.text()).toBe("—");
+    });
 });
