@@ -211,4 +211,79 @@ describe("ScheduledTaskCreateDialog", () => {
         expect(mockedApi.createScheduledTask).not.toHaveBeenCalled();
         expect(bodyEl('[data-testid="st-create-field-error"]')?.textContent).toContain("TTL");
     });
+
+    it("creates an interval task and sends the period in seconds", async () => {
+        mockedApi.createScheduledTask.mockResolvedValue(task() as never);
+
+        const wrapper = await mountDialog();
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
+        await clickBody('[data-testid="st-create-mode-interval"]');
+        await setBodyValue('[data-testid="st-create-interval-amount"]', "15");
+        await setBodyValue('[data-testid="st-create-prompt"]', "Interval report");
+        await clickBody('[data-testid="st-create-submit"]');
+        await flushPromises();
+
+        const body = mockedApi.createScheduledTask.mock.calls[0]![1] as ScheduledTaskCreateRequest;
+        expect(body.triggerKind).toBe("interval");
+        // D-1706 ②: the wire value is a whole number of seconds; CP and the DB CHECK floor it at 60.
+        expect(body.intervalSeconds).toBe(15 * 60);
+        expect(body.at).toBeUndefined();
+        expect(body.cronExpr).toBeUndefined();
+        expect(wrapper.emitted("created")).toBeTruthy();
+    });
+
+    it("upgrades the interval unit to hours", async () => {
+        mockedApi.createScheduledTask.mockResolvedValue(task() as never);
+
+        const wrapper = await mountDialog();
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
+        await clickBody('[data-testid="st-create-mode-interval"]');
+        await setBodyValue('[data-testid="st-create-interval-amount"]', "2");
+        await setSelectValue(wrapper, '[data-testid="st-create-interval-unit"]', "hours");
+        await flushPromises();
+        await setBodyValue('[data-testid="st-create-prompt"]', "p");
+        await clickBody('[data-testid="st-create-submit"]');
+        await flushPromises();
+
+        const body = mockedApi.createScheduledTask.mock.calls[0]![1] as ScheduledTaskCreateRequest;
+        expect(body.intervalSeconds).toBe(2 * 3_600);
+    });
+
+    it("blocks an interval below the 60-second floor before calling the API", async () => {
+        const wrapper = await mountDialog();
+        await clickBody('[data-testid="st-create-mode-interval"]');
+        // Sub-minute reachable only in hours mode with a fractional amount; 0.01 h = 36 s.
+        await setBodyValue('[data-testid="st-create-interval-amount"]', "0.01");
+        await setSelectValue(wrapper, '[data-testid="st-create-interval-unit"]', "hours");
+        await flushPromises();
+        await setBodyValue('[data-testid="st-create-prompt"]', "p");
+        await clickBody('[data-testid="st-create-submit"]');
+        await flushPromises();
+
+        expect(mockedApi.createScheduledTask).not.toHaveBeenCalled();
+        expect(bodyEl('[data-testid="st-create-interval-error"]')?.textContent).toContain("60");
+    });
+
+    it("lands INVALID_INTERVAL on the interval field", async () => {
+        mockedApi.createScheduledTask.mockRejectedValue(
+            new ApiError({
+                status: 400,
+                code: "INVALID_INTERVAL",
+                detail: "intervalSeconds must be at least 60",
+                requestId: "r",
+            }),
+        );
+
+        const wrapper = await mountDialog();
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
+        await clickBody('[data-testid="st-create-mode-interval"]');
+        await setBodyValue('[data-testid="st-create-prompt"]', "p");
+        await clickBody('[data-testid="st-create-submit"]');
+        await flushPromises();
+
+        // The per-parameter code must reach the field, not the form: that is the whole point of
+        // distinguishing the codes.
+        const error = bodyEl('[data-testid="st-create-interval-error"]');
+        expect(error?.textContent).toContain("60");
+    });
 });

@@ -4828,13 +4828,18 @@ paths:
       summary: Create a scheduled task (human or agent principal, PLAN-0489 T1.4)
       description: |
         PLAN-0489 T1.4 (contract PLAN-0486 spec §4, decisions #9/#10): creates one
-        `delay_once` or `cron` task. Requires the `CREATE_SCHEDULED_TASK` grant
+        `delay_once`, `cron` or `interval` task. Requires the `CREATE_SCHEDULED_TASK` grant
         (user grants for humans; agent-principal grants when `agentPrincipalId`
         is supplied — agent `session_wakeup` targets are limited to Sessions of
         the creating principal). `delay_once` schedules beyond the 7d TTL
         (`expires_at = created_at + 7d`) are rejected at creation. Quotas: 50
         active tasks per Workspace, 10 per principal (counted by `user_id`).
-        Creation is audited (`scheduled_task_created`).
+        Validation is declared per kind (D-1706 contract table,
+        `ScheduledTaskContracts`): every required parameter answers its own problem
+        code (`SCHEDULED_TASK_AT_REQUIRED` / `INVALID_INTERVAL` /
+        `SCHEDULED_TASK_TARGET_SESSION_REQUIRED` / `SCHEDULED_TASK_PROMPT_REQUIRED` /
+        `SCHEDULED_TASK_PAYLOAD_REQUIRED`), so a client can tell which parameter is
+        missing. Creation is audited (`scheduled_task_created`).
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
@@ -4846,7 +4851,7 @@ paths:
           description: Created scheduled task (full-prompt read DTO)
           content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTask' } } }
         '400':
-          description: 'INVALID_REQUEST (shape/at), INVALID_CRON_EXPR (field count, syntax, no future occurrence), or INVALID_TIMEZONE'
+          description: 'INVALID_REQUEST (shape/unknown kind/at not future/TTL exceeded), INVALID_CRON_EXPR (field count, syntax, no future occurrence), INVALID_TIMEZONE, or a per-parameter code: SCHEDULED_TASK_AT_REQUIRED, INVALID_INTERVAL (missing or below 60), SCHEDULED_TASK_TARGET_SESSION_REQUIRED, SCHEDULED_TASK_PROMPT_REQUIRED, SCHEDULED_TASK_PAYLOAD_REQUIRED (each naming the offending field in the problem param member)'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — missing CREATE_SCHEDULED_TASK grant, disabled/unbound agent principal, or agent wakeup target outside the creating principal', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -8993,18 +8998,18 @@ components:
         full text. `createdBy` is projected from the creating principal
         (`agent_principal_id` when set → type `agent` + `agent_principals.name`,
         else `user_id` → type `human`; a deleted principal degrades to `human`).
-      required: [id, triggerKind, timezone, targetKind, status, nextFireAt, missedCount, createdBy, createdAt, updatedAt]
+      required: [id, triggerKind, timezone, targetKind, status, missedCount, createdBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
-        triggerKind: { type: string, enum: [delay_once, cron] }
-        cronExpr: { type: [string, 'null'], description: 'cron only (5 fields, minute grain); always null for delay_once.' }
+        triggerKind: { type: string, enum: [delay_once, cron, interval] }
+        cronExpr: { type: [string, 'null'], description: 'cron only (5 fields, minute grain); always null for delay_once and interval.' }
         timezone: { type: string, description: 'Creation-time snapshot (D3-A); never editable.' }
         targetKind: { type: string, enum: [session_wakeup, job_dispatch] }
         targetSessionId: { type: [string, 'null'], format: uuid, description: 'session_wakeup only; null after a hard session delete (target_gone).' }
         prompt: { type: [string, 'null'], description: 'session_wakeup payload; truncated to 120 chars in list items.' }
         status: { type: string, enum: [scheduled, firing, missed, expired, cancelled, completed] }
-        nextFireAt: { type: string, format: date-time }
-        expiresAt: { type: [string, 'null'], format: date-time, description: 'delay_once only: created_at + 7d TTL; cron is always null.' }
+        nextFireAt: { type: [string, 'null'], format: date-time, description: 'Next scheduled fire instant (UTC). null = no scheduled instant (event-triggered rows, D-1706 ③); a null row is invisible to the due scan and unclaimable by claimToFiring.' }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'delay_once only: created_at + 7d TTL; cron and interval are always null.' }
         missedCount: { type: integer, minimum: 0, description: 'Consecutive missed rounds (E1); cleared on user disposition.' }
         lastMissedAt: { type: [string, 'null'], format: date-time }
         missedReason: { type: [string, 'null'], enum: [target_gone, dispatch_failed, overdue_grace, null] }
@@ -9017,7 +9022,7 @@ components:
       additionalProperties: false
       required: [triggerKind, targetKind]
       properties:
-        triggerKind: { type: string, enum: [delay_once, cron] }
+        triggerKind: { type: string, enum: [delay_once, cron, interval] }
         cronExpr: { type: string, description: 'Required for cron; exactly 5 fields (minute grain, no seconds).' }
         timezone: { type: string, default: UTC, description: 'IANA zone snapshot; invalid zones answer 400 INVALID_TIMEZONE.' }
         targetKind: { type: string, enum: [session_wakeup, job_dispatch] }
@@ -9025,6 +9030,7 @@ components:
         prompt: { type: string, description: 'Required for session_wakeup.' }
         payload: { type: object, additionalProperties: true, description: 'Required for job_dispatch: {command, args?, cwd?, timeoutSecs?}; dispatched with scope=workspace and source=scheduled.' }
         at: { type: string, format: date-time, description: 'Required for delay_once: future ISO-8601 UTC instant within the 7d TTL.' }
+        intervalSeconds: { type: integer, minimum: 60, description: 'Required for interval: period in seconds, at least 60 (D24-09; the DB CHECK holds the same bound). The first fire is now + intervalSeconds; forbidden for other trigger kinds.' }
         agentPrincipalId: { type: string, format: uuid, description: 'Optional agent creator (0486 #9): grants are read from agent_principal and session_wakeup targets are limited to this principal.' }
     ScheduledTaskDisposeRequest: { type: object, additionalProperties: false, properties: { agentPrincipalId: { type: string, format: uuid, description: 'Optional agent actor marker; agent dispositions are explicitly marked in the audit record (0486 #10).' } } }
     ScheduledTaskPostponeRequest: { type: object, additionalProperties: false, required: [at], properties: { at: { type: string, format: date-time, description: 'Future ISO-8601 UTC instant; delay_once may not pass expiresAt.' }, agentPrincipalId: { type: string, format: uuid } } }

@@ -33,7 +33,7 @@ const messages = {
         // task-365 C-1：rail 的工作区面板组复用工作区页的 labelKey（路由 meta 的 SSOT），
         // 所以夹具要带 workspaceNav 分支，否则渲染出裸键。
         workspaceNav: {
-            scheduledTasks: "定时任务",
+            scheduledTasks: "自动化任务",
             environment: "环境",
         },
     },
@@ -404,7 +404,7 @@ describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
         const wrapper = await mountRail();
 
         const panel = wrapper.get('[data-testid="global-rail-panel-scheduled-tasks"]');
-        expect(panel.text()).toContain("定时任务");
+        expect(panel.text()).toContain("自动化任务");
         // ④ 面板不是模块：模块行数不受影响。
         expect(wrapper.findAll('[data-testid^="global-rail-module-"]')).toHaveLength(4);
         await panel.trigger("click");

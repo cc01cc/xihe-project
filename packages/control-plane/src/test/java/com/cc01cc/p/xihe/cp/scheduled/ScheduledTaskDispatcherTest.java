@@ -73,8 +73,11 @@ class ScheduledTaskDispatcherTest {
         task.setNextFireAt(FIRE_AT);
         if (ScheduledTask.TRIGGER_CRON.equals(triggerKind)) {
             task.setCronExpr("*/5 * * * *");
-        } else {
+        } else if (ScheduledTask.TRIGGER_DELAY_ONCE.equals(triggerKind)) {
+            // V94: only delay_once carries an expiry; cron and interval must leave it null.
             task.setExpiresAt(FIRE_AT.plusSeconds(3600));
+        } else if (ScheduledTask.TRIGGER_INTERVAL.equals(triggerKind)) {
+            task.setIntervalSeconds(600);
         }
         if (ScheduledTask.TARGET_SESSION_WAKEUP.equals(targetKind)) {
             task.setTargetSessionId(UUID.randomUUID());
@@ -115,6 +118,78 @@ class ScheduledTaskDispatcherTest {
 
         assertEquals(ScheduledTaskDispatcher.DispatchOutcome.DISPATCHED, outcome);
         verify(repository).completeFromFiringWithRun(task.getId(), runId);
+    }
+
+
+    // ── interval settle path (D-1706 ②) ───────────────────────────────────
+
+    /**
+     * interval used to be reachable only by the system wake projection, so this settle branch had no
+     * test against a user-created row. Opening the API whitelist without this assert would mean
+     * "created" was verified but "fires again" was not (the exact failure task-50 was judged red for).
+     */
+    @Test
+    void wakeup_started_on_interval_rearms_at_the_next_interval() {
+        ScheduledTask task = task(ScheduledTask.TRIGGER_INTERVAL, ScheduledTask.TARGET_SESSION_WAKEUP);
+        task.setIntervalSeconds(600);
+        UUID runId = UUID.randomUUID();
+        when(sessionWakeupService.wakeup(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionWakeupService.WakeupResult.started(runId));
+        Instant beforeDispatch = Instant.now();
+
+        ScheduledTaskDispatcher.DispatchOutcome outcome = dispatcher.dispatch(task);
+
+        assertEquals(ScheduledTaskDispatcher.DispatchOutcome.DISPATCHED, outcome);
+        ArgumentCaptor<Instant> next = ArgumentCaptor.forClass(Instant.class);
+        // The interval branch re-arms through the run-less statement: the mechanism is trigger-agnostic
+        // (firing -> scheduled with a new next_fire_at, CAS-guarded), so no run carrier is recorded here.
+        verify(repository).rescheduleCronFromFiring(eq(task.getId()), next.capture());
+        Instant rearmed = next.getValue();
+        // Base is NOW (D24-08 catch-up-once), plus the interval, plus at most the interval/10 jitter
+        // bound when the payload carries no explicit jitterSeconds.
+        assertTrue(rearmed.isAfter(beforeDispatch.plusSeconds(600 - 1)),
+                "next fire must be at least one interval after dispatch: " + rearmed);
+        assertTrue(rearmed.isBefore(Instant.now().plusSeconds(600 + 61)),
+                "next fire must not drift beyond interval + jitter bound: " + rearmed);
+        assertNull(task.getExpiresAt(), "interval rows expire never (V94 CHECK)");
+    }
+
+    /** An explicit jitterSeconds in the payload is what the wake projection writes; it must be honoured. */
+    @Test
+    void interval_settle_honours_the_payload_jitter_bound() {
+        ScheduledTask task = task(ScheduledTask.TRIGGER_INTERVAL, ScheduledTask.TARGET_SESSION_WAKEUP);
+        task.setIntervalSeconds(600);
+        ObjectNode payload = JsonNodeFactory.instance.objectNode();
+        payload.put("jitterSeconds", 5);
+        task.setPayload(payload);
+        UUID runId = UUID.randomUUID();
+        when(sessionWakeupService.wakeup(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionWakeupService.WakeupResult.started(runId));
+        Instant beforeDispatch = Instant.now();
+
+        dispatcher.dispatch(task);
+
+        ArgumentCaptor<Instant> next = ArgumentCaptor.forClass(Instant.class);
+        verify(repository).rescheduleCronFromFiring(eq(task.getId()), next.capture());
+        Instant rearmed = next.getValue();
+        assertTrue(rearmed.isAfter(beforeDispatch.plusSeconds(600 - 1)));
+        assertTrue(rearmed.isBefore(Instant.now().plusSeconds(600 + 5 + 1)),
+                "payload jitterSeconds=5 must bound the spread, not the interval/10 default: " + rearmed);
+    }
+
+    /** A lost CAS on the interval re-arm must surface as ALREADY_EXECUTED, not as a silent success. */
+    @Test
+    void interval_settle_without_a_row_to_update_reports_already_executed() {
+        ScheduledTask task = task(ScheduledTask.TRIGGER_INTERVAL, ScheduledTask.TARGET_SESSION_WAKEUP);
+        task.setIntervalSeconds(600);
+        when(sessionWakeupService.wakeup(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionWakeupService.WakeupResult.started(UUID.randomUUID()));
+        when(repository.rescheduleCronFromFiring(any(), any())).thenReturn(0);
+
+        ScheduledTaskDispatcher.DispatchOutcome outcome = dispatcher.dispatch(task);
+
+        assertEquals(ScheduledTaskDispatcher.DispatchOutcome.ALREADY_EXECUTED, outcome,
+                "0 rows = the firing was settled by another path; do not pretend it was dispatched");
     }
 
     @Test

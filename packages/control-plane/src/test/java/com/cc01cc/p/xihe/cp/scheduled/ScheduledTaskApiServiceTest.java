@@ -94,7 +94,8 @@ class ScheduledTaskApiServiceTest {
         service = new ScheduledTaskApiService(repository, dispatcher, workspaceService, sessionService,
                 evaluator, grantRepository, agentPrincipalRepository, workspaceAgentRepository,
                 userRepository, auditLogger, eventManager, sessionParticipantRepository,
-                com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows());
+                com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows(),
+                new ScheduledTaskContracts());
         when(repository.countByWorkspaceIdAndStatusIn(any(), anyCollection())).thenReturn(0L);
         when(repository.countByWorkspaceIdAndUserIdAndStatusIn(any(), any(), anyCollection()))
                 .thenReturn(0L);
@@ -224,7 +225,7 @@ class ScheduledTaskApiServiceTest {
                 new GrantIntersectionEvaluator(), grantRepository, agentPrincipalRepository,
                 workspaceAgentRepository, userRepository, auditLogger, eventManager,
                 sessionParticipantRepository,
-                new OrgUnitGrants(new OrgUnitGrantExpander(), source));
+                new OrgUnitGrants(new OrgUnitGrantExpander(), source), new ScheduledTaskContracts());
     }
 
     // ── create 权限与 agent 边界 ───────────────────────────────────────────
@@ -654,16 +655,16 @@ class ScheduledTaskApiServiceTest {
 
     private static ScheduledTaskApiService.CreateRequest cronRequest(String cronExpr, String timezone) {
         return new ScheduledTaskApiService.CreateRequest("cron", cronExpr, timezone,
-                "session_wakeup", SESSION_ID, "wake up", null, null, null);
+                "session_wakeup", SESSION_ID, "wake up", null, null, null, null);
     }
 
     private static ScheduledTaskApiService.CreateRequest agentCronRequest() {
         return new ScheduledTaskApiService.CreateRequest("cron", "* * * * *", "UTC",
-                "session_wakeup", SESSION_ID, "wake up", null, null, PRINCIPAL_ID);
+                "session_wakeup", SESSION_ID, "wake up", null, null, PRINCIPAL_ID, null);
     }
 
     private static ScheduledTaskApiService.CreateRequest delayRequest(Instant at) {
         return new ScheduledTaskApiService.CreateRequest("delay_once", null, "UTC",
-                "session_wakeup", SESSION_ID, "wake up", null, at.toString(), null);
+                "session_wakeup", SESSION_ID, "wake up", null, at.toString(), null, null);
     }
 }

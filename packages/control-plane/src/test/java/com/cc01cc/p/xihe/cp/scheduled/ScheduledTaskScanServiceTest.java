@@ -78,6 +78,29 @@ class ScheduledTaskScanServiceTest {
         return task;
     }
 
+
+    /**
+     * D-1706 ②: an interval row created through the API must be discovered by the same due scan and
+     * claimed by the same CAS as any other time-triggered row. The whitelist change is only real if the
+     * existing scan reaches it — this asserts the scanner does no kind-specific filtering.
+     */
+    @Test
+    void scan_claims_an_interval_row_through_the_unchanged_cas() {
+        ScheduledTask task = dueTask(Instant.now().minusSeconds(5));
+        task.setTriggerKind(ScheduledTask.TRIGGER_INTERVAL);
+        task.setIntervalSeconds(600);
+        task.setExpiresAt(null);
+        task.setNextFireAt(Instant.now().minusSeconds(5));
+        when(repository.claimToFiring(eq(task.getId()), any())).thenReturn(1);
+        when(repository.findByStatusAndNextFireAtBeforeOrderByNextFireAtAsc(anyString(), any()))
+                .thenReturn(List.of(task));
+
+        scanService.scanScheduledTasks();
+
+        verify(repository).claimToFiring(task.getId(), task.getNextFireAt());
+        verify(dispatcher).dispatch(task);
+    }
+
     @Test
     void scan_expires_before_overdue_and_before_firing_timeout() {
         ScheduledTask task = dueTask(Instant.now().minusSeconds(5));

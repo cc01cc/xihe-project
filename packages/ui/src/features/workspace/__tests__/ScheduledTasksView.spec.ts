@@ -190,7 +190,7 @@ describe("ScheduledTasksView list rendering", () => {
         const wrapper = await mountView();
 
         expect(wrapper.get('[data-testid="scheduled-tasks-empty"]').text()).toContain(
-            "还没有定时任务",
+            "还没有自动化任务",
         );
         expect(wrapper.get('[data-testid="scheduled-tasks-empty-create"]').exists()).toBe(true);
     });

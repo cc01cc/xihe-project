@@ -16,10 +16,21 @@ function errorMessage(cause: unknown, fallback: string): string {
     return cause instanceof Error ? cause.message : fallback;
 }
 
-/** RFC 9457 `code` → i18n key（openapi scheduled-tasks 错误表）。 */
+/**
+ * RFC 9457 `code` → i18n key（openapi scheduled-tasks 错误表）。
+ *
+ * D-1706: CP declares one code per trigger/action parameter, so each missing parameter has its own
+ * sentence instead of the shared "triggerKind and targetKind are required". An unmapped code still
+ * degrades to `code: detail` (below), so a brand-new server code is visible rather than silent.
+ */
 const SCHEDULED_TASK_ERROR_KEYS: Record<string, string> = {
     INVALID_CRON_EXPR: "errInvalidCronExpr",
     INVALID_TIMEZONE: "errInvalidTimezone",
+    INVALID_INTERVAL: "errInvalidInterval",
+    SCHEDULED_TASK_AT_REQUIRED: "errAtRequired",
+    SCHEDULED_TASK_TARGET_SESSION_REQUIRED: "errTargetSessionRequired",
+    SCHEDULED_TASK_PROMPT_REQUIRED: "errPromptRequired",
+    SCHEDULED_TASK_PAYLOAD_REQUIRED: "errPayloadRequired",
     SCHEDULED_TASK_LIMIT: "errLimit",
     SCHEDULED_TASK_PRINCIPAL_LIMIT: "errPrincipalLimit",
     SCHEDULED_TASK_STATE: "errState",

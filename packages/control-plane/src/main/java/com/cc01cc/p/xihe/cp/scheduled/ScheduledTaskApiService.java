@@ -31,8 +31,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -71,10 +69,6 @@ public class ScheduledTaskApiService {
             ScheduledTask.STATUS_MISSED, ScheduledTask.STATUS_EXPIRED, ScheduledTask.STATUS_SCHEDULED);
     private static final List<String> REMOVE_STATUSES = List.of(
             ScheduledTask.STATUS_MISSED, ScheduledTask.STATUS_EXPIRED);
-    private static final Set<String> TRIGGER_KINDS = Set.of(
-            ScheduledTask.TRIGGER_DELAY_ONCE, ScheduledTask.TRIGGER_CRON);
-    private static final Set<String> TARGET_KINDS = Set.of(
-            ScheduledTask.TARGET_SESSION_WAKEUP, ScheduledTask.TARGET_JOB_DISPATCH);
     private static final String POLICY_TOOL_CREATE = "scheduled_task.create";
     private static final String POLICY_TOOL_DISPOSE = "scheduled_task.dispose";
     private static final String ACTOR_HUMAN = "human";
@@ -95,6 +89,8 @@ public class ScheduledTaskApiService {
     private final SessionParticipantRepository sessionParticipants;
     /** PLAN-0773 M2-8b: org-unit governance grants join the scheduled-task action gate. */
     private final com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants;
+    /** D-1706 stage one: the trigger+action contract table (one row per accepted kind). */
+    private final ScheduledTaskContracts contracts;
 
     public ScheduledTaskApiService(ScheduledTaskRepository scheduledTaskRepository,
                                    ScheduledTaskDispatcher dispatcher,
@@ -108,7 +104,8 @@ public class ScheduledTaskApiService {
                                    AuditLogger auditLogger,
                                    WorkspaceEventManager workspaceEventManager,
                                    SessionParticipantRepository sessionParticipants,
-                                   com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants) {
+                                   com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants,
+                                   ScheduledTaskContracts contracts) {
         this.scheduledTaskRepository = scheduledTaskRepository;
         this.dispatcher = dispatcher;
         this.workspaceService = workspaceService;
@@ -122,6 +119,7 @@ public class ScheduledTaskApiService {
         this.workspaceEventManager = workspaceEventManager;
         this.sessionParticipants = sessionParticipants;
         this.orgUnitGrants = orgUnitGrants;
+        this.contracts = contracts;
     }
 
     /** 读 DTO createdBy（0486 #9：principal 名 + 类型 human/agent）。 */
@@ -141,10 +139,15 @@ public class ScheduledTaskApiService {
 
     public record DisposeResult(String taskId, String status, boolean changed, TaskView task) {}
 
-    /** 创建请求（human/agent 同一 API，0486 #9；agentPrincipalId 缺省 = human 创建）。 */
+    /**
+     * 创建请求（human/agent 同一 API，0486 #9；agentPrincipalId 缺省 = human 创建）。
+     * {@code intervalSeconds} 是 D-1706 ② 转正的 interval 触发器参数（与 {@link
+     * ScheduledTaskContracts} 的 interval 行一一对应；其它 triggerKind 不得携带）。
+     */
     public record CreateRequest(String triggerKind, String cronExpr, String timezone,
                                 String targetKind, String targetSessionId, String prompt,
-                                JsonNode payload, String at, String agentPrincipalId) {}
+                                JsonNode payload, String at, String agentPrincipalId,
+                                Integer intervalSeconds) {}
 
     /** 处置请求：agentPrincipalId 可选——agent 执行的处置显式标记进 audit（0486 #10）。 */
     public record DisposeRequest(String agentPrincipalId) {}
@@ -175,18 +178,26 @@ public class ScheduledTaskApiService {
 
     // ── 创建 ──────────────────────────────────────────────────────────────
 
+    /**
+     * D-1706 stage one: creation runs <b>one</b> generic path over the contract table
+     * ({@link ScheduledTaskContracts}). Nothing below branches on the concrete kind — the trigger row
+     * resolves the schedule, the action row resolves the target, and both are looked up by name from
+     * the table. Adding a trigger or an action is one row there, not an edit here.
+     *
+     * <p>Cross-cutting steps stay stepwise: workspace reachability, creator/permission, timezone,
+     * quota, event, audit. They apply identically to every kind, so putting them in the table would
+     * reintroduce the per-kind branching this refactor exists to remove.</p>
+     */
     public TaskView create(String workspaceId, String userId, CreateRequest request) {
         workspaceService.requireAccessibleWorkspace(workspaceId, userId);
         if (request == null || request.triggerKind() == null || request.targetKind() == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "triggerKind and targetKind are required");
         }
-        String triggerKind = request.triggerKind().trim().toLowerCase(Locale.ROOT);
-        String targetKind = request.targetKind().trim().toLowerCase(Locale.ROOT);
-        if (!TRIGGER_KINDS.contains(triggerKind) || !TARGET_KINDS.contains(targetKind)) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "triggerKind must be delay_once|cron and targetKind must be session_wakeup|job_dispatch");
-        }
+        String triggerKind = ScheduledTaskContracts.normalize(request.triggerKind());
+        String targetKind = ScheduledTaskContracts.normalize(request.targetKind());
+        ScheduledTaskContracts.TriggerRow trigger = contracts.requireTrigger(triggerKind);
+        ScheduledTaskContracts.TargetRow target = contracts.requireTarget(targetKind);
         UUID userUuid = parseUuid(userId, "INVALID_ACTOR");
         UUID workspaceUuid = parseUuid(workspaceId, "INVALID_WORKSPACE");
         Creator creator = resolveCreator(userUuid, workspaceUuid, request.agentPrincipalId());
@@ -195,68 +206,22 @@ public class ScheduledTaskApiService {
 
         String timezone = request.timezone() == null || request.timezone().isBlank()
                 ? DEFAULT_TIMEZONE : request.timezone().trim();
-        Instant now = Instant.now();
-        Instant nextFireAt;
-        String cronExpr = null;
-        Instant expiresAt = null;
-        if (ScheduledTask.TRIGGER_CRON.equals(triggerKind)) {
-            cronExpr = requireCronExpression(request.cronExpr());
-            requireTimezone(timezone);
-            try {
-                nextFireAt = CronExpressions.nextUtcInstant(cronExpr, timezone, now);
-            } catch (IllegalArgumentException e) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CRON_EXPR",
-                        "cron expression is not evaluable: " + e.getMessage());
-            }
-            if (nextFireAt == null) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CRON_EXPR",
-                        "cron expression has no future occurrence");
-            }
-        } else {
-            requireTimezone(timezone);
-            nextFireAt = parseInstant(request.at(), "at is required for delay_once (ISO-8601 UTC)");
-            if (!nextFireAt.isAfter(now)) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "delay_once at must be a future instant");
-            }
-            expiresAt = now.plus(DELAY_TTL);
-            if (nextFireAt.isAfter(expiresAt)) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "delay_once schedule exceeds the " + DELAY_TTL.toDays() + "d TTL");
-            }
-        }
+        ScheduledTaskContracts.requireTimezone(timezone);
 
-        String targetSessionId = null;
-        String prompt = null;
-        JsonNode payload = null;
-        if (ScheduledTask.TARGET_SESSION_WAKEUP.equals(targetKind)) {
-            if (request.targetSessionId() == null || request.targetSessionId().isBlank()
-                    || request.prompt() == null || request.prompt().isBlank()) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "session_wakeup requires targetSessionId and prompt");
-            }
-            UUID sessionId = parseUuid(request.targetSessionId(), "INVALID_REQUEST");
-            Session session = sessionService.requireCurrent(sessionId.toString(), userId, workspaceId);
-            // PLAN-0689 A2c: an agent-created wakeup target must be a Session of the creating
-            // principal, read off the target's PRIMARY participant row. A missing PRIMARY matches
-            // no creator and therefore rejects (gate class: fail-closed, never a column fallback).
-            // Human creators carry no principal, so the check (and the read) stays skipped for them.
-            if (creator.agentPrincipalId() != null) {
-                UUID targetPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
-                if (!creator.agentPrincipalId().equals(targetPrincipalId)) {
-                    throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                            "session_wakeup target must be a Session of the creating agent principal");
-                }
-            }
-            targetSessionId = sessionId.toString();
-            prompt = request.prompt();
-        } else {
-            if (request.targetSessionId() != null && !request.targetSessionId().isBlank()) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "job_dispatch must not reference a target session");
-            }
-            payload = requireJobPayload(request.payload());
-        }
+        // The declaration check runs before any resolver: a row's resolver may unbox a declared
+        // parameter (intervalSeconds), so presence must be enforced generically first.
+        ScheduledTaskContracts.requireParams(trigger.requiredParams(), wirePresence(request));
+        ScheduledTaskContracts.forbidParams(trigger.forbiddenParams(), wirePresence(request));
+        ScheduledTaskContracts.requireParams(target.requiredParams(), wirePresence(request));
+        ScheduledTaskContracts.forbidParams(target.forbiddenParams(), wirePresence(request));
+
+        Instant now = Instant.now();
+        ScheduledTaskContracts.TriggerResolution schedule = trigger.schedule().resolve(
+                new ScheduledTaskContracts.TriggerInput(request.cronExpr(), timezone, request.at(),
+                        request.intervalSeconds(), now));
+        ScheduledTaskContracts.TargetResolution action = target.action().resolve(
+                new ScheduledTaskContracts.TargetContext(request.payload(), request.targetSessionId(),
+                        request.prompt(), targetSessionGate(creator, userId, workspaceId)));
 
         requireQuota(workspaceUuid, userUuid);
 
@@ -265,15 +230,16 @@ public class ScheduledTaskApiService {
         task.setUserId(userUuid);
         task.setAgentPrincipalId(creator.agentPrincipalId());
         task.setTriggerKind(triggerKind);
-        task.setCronExpr(cronExpr);
+        task.setCronExpr(schedule.cronExpr());
+        task.setIntervalSeconds(schedule.intervalSeconds());
         task.setTimezone(timezone);
         task.setTargetKind(targetKind);
-        task.setTargetSessionId(targetSessionId == null ? null : UUID.fromString(targetSessionId));
-        task.setPrompt(prompt);
-        task.setPayload(payload);
+        task.setTargetSessionId(action.targetSessionId());
+        task.setPrompt(action.prompt());
+        task.setPayload(action.payload());
         task.setStatus(ScheduledTask.STATUS_SCHEDULED);
-        task.setNextFireAt(nextFireAt);
-        task.setExpiresAt(expiresAt);
+        task.setNextFireAt(schedule.nextFireAt());
+        task.setExpiresAt(schedule.expiresAt());
         ScheduledTask saved = scheduledTaskRepository.save(task);
         workspaceEventManager.publishScheduledTasksChanged(workspaceId);
         audit(userId, workspaceId, "scheduled_task_created", saved, creator,
@@ -490,33 +456,51 @@ public class ScheduledTaskApiService {
         }
     }
 
-    private String requireCronExpression(String cronExpr) {
-        if (cronExpr == null || cronExpr.isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CRON_EXPR",
-                    "cronExpr is required for cron tasks");
-        }
-        String trimmed = cronExpr.trim();
-        String[] fields = trimmed.split("\\s+");
-        if (fields.length != 5) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CRON_EXPR",
-                    "cron expression must have 5 fields (minute grain); got " + fields.length);
-        }
-        try {
-            org.springframework.scheduling.support.CronExpression.parse("0 " + trimmed);
-        } catch (IllegalArgumentException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CRON_EXPR",
-                    "cron expression is invalid: " + e.getMessage());
-        }
-        return trimmed;
+    /**
+     * Wire presence for the contract table's declaration checks. Text fields count as absent when
+     * blank (unchanged pre-D-1706 behaviour); {@code payload} and {@code intervalSeconds} are checked
+     * by shape, so a non-object payload still answers the declared parameter code rather than a DB
+     * CHECK failure.
+     */
+    private static ScheduledTaskContracts.ParamPresence wirePresence(CreateRequest request) {
+        return field -> switch (field) {
+            case "cronExpr" -> isPresent(request.cronExpr());
+            case "at" -> isPresent(request.at());
+            case "timezone" -> isPresent(request.timezone());
+            case "targetSessionId" -> isPresent(request.targetSessionId());
+            case "prompt" -> isPresent(request.prompt());
+            case "intervalSeconds" -> request.intervalSeconds() != null;
+            case "payload" -> request.payload() != null && request.payload().isObject();
+            default -> throw new IllegalStateException("undeclared wire field: " + field);
+        };
     }
 
-    private static void requireTimezone(String timezone) {
-        try {
-            java.time.ZoneId.of(timezone);
-        } catch (java.time.zone.ZoneRulesException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_TIMEZONE",
-                    "unknown timezone: " + timezone);
-        }
+    private static boolean isPresent(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /**
+     * The behaviour a {@code session_wakeup} row needs from the service: resolve the target session
+     * in this Workspace, and (PLAN-0689 A2c) require an agent-created wakeup target to be a Session
+     * of the creating principal, read off the target's PRIMARY participant row. A missing PRIMARY
+     * matches no creator and therefore rejects (fail-closed, never a column fallback). Human
+     * creators carry no principal, so the check — and the read — stays skipped for them.
+     */
+    private ScheduledTaskContracts.SessionGate targetSessionGate(Creator creator, String userId,
+                                                                String workspaceId) {
+        return targetSessionId -> {
+            UUID sessionId = parseUuid(targetSessionId, "INVALID_REQUEST");
+            Session session = sessionService.requireCurrent(sessionId.toString(), userId, workspaceId);
+            if (creator.agentPrincipalId() != null) {
+                UUID targetPrincipalId = sessionParticipants.primaryPrincipalId(session.getId())
+                        .orElse(null);
+                if (!creator.agentPrincipalId().equals(targetPrincipalId)) {
+                    throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                            "session_wakeup target must be a Session of the creating agent principal");
+                }
+            }
+            return sessionId;
+        };
     }
 
     private static Instant parseInstant(String value, String detail) {
@@ -529,19 +513,6 @@ public class ScheduledTaskApiService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "at must be an ISO-8601 UTC instant, got: " + value);
         }
-    }
-
-    private static JsonNode requireJobPayload(JsonNode payload) {
-        if (payload == null || !payload.isObject()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "job_dispatch requires a payload object");
-        }
-        JsonNode command = payload.get("command");
-        if (command == null || !command.isTextual() || command.asText().isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "job_dispatch payload requires a textual command");
-        }
-        return payload;
     }
 
     private ScheduledTask requireTask(String workspaceId, String taskId) {

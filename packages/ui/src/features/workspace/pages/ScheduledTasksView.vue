@@ -148,6 +148,12 @@ function triggerText(task: ScheduledTask): string {
         const prefix = t("workspace.scheduledTasks.triggerCron");
         return task.cronExpr ? `${prefix} · ${task.cronExpr}` : prefix;
     }
+    // D-1706 ②: interval is a first-class kind. The read DTO is the frozen 17-field contract and
+    // therefore carries no intervalSeconds, so the period itself is not rendered here — only the
+    // kind. (The create form is where the period is chosen.)
+    if (task.triggerKind === "interval") {
+        return t("workspace.scheduledTasks.triggerInterval");
+    }
     const remaining = delayRemainingText(task);
     const prefix = t("workspace.scheduledTasks.triggerDelay");
     return remaining

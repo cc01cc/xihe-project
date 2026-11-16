@@ -1436,7 +1436,8 @@ export type ScheduledTaskStatus =
     | "cancelled"
     | "completed";
 
-export type ScheduledTaskTriggerKind = "delay_once" | "cron";
+/** D-1706 ②: interval is a first-class kind (it was system-only before the contract table). */
+export type ScheduledTaskTriggerKind = "delay_once" | "cron" | "interval";
 
 export type ScheduledTaskTargetKind = "session_wakeup" | "job_dispatch";
 
@@ -1457,6 +1458,10 @@ export interface ScheduledTask {
     /** Truncated to 120 characters in list items; the detail route returns the full text. */
     prompt: string | null;
     status: ScheduledTaskStatus;
+    /**
+     * D-1706 ③: null = no scheduled instant (event-triggered rows in stage two). A null row is
+     * invisible to the due scan, so the UI must not present it as pending/scheduled-with-a-time.
+     */
     nextFireAt: string | null;
     expiresAt: string | null;
     missedCount: number;
@@ -1478,6 +1483,8 @@ export interface ScheduledTaskCreateRequest {
     payload?: { command: string; args?: string[]; cwd?: string; timeoutSecs?: number };
     /** delay_once only: future ISO-8601 UTC instant within the 7d TTL. */
     at?: string;
+    /** interval only: period in seconds, at least 60 (D24-09; CP and the DB CHECK hold the same bound). */
+    intervalSeconds?: number;
 }
 
 export interface ScheduledTaskListPage {

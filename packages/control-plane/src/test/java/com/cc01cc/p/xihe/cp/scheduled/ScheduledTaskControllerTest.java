@@ -65,7 +65,7 @@ class ScheduledTaskControllerTest {
 
         ResponseEntity<?> response = controller.create(WORKSPACE_ID, new ScheduledTaskApiService.CreateRequest(
                 "cron", "* * * * *", "UTC", "session_wakeup",
-                "44444444-4444-4444-8444-444444444444", "wake up", null, null, null));
+                "44444444-4444-4444-8444-444444444444", "wake up", null, null, null, null));
 
         assertEquals(HttpStatus.CREATED, response.getStatusCode());
         assertEquals(view, response.getBody());
@@ -78,7 +78,7 @@ class ScheduledTaskControllerTest {
 
         ResponseEntity<?> response = controller.create(WORKSPACE_ID, new ScheduledTaskApiService.CreateRequest(
                 "cron", "bad", "UTC", "session_wakeup",
-                "44444444-4444-4444-8444-444444444444", "wake up", null, null, null));
+                "44444444-4444-4444-8444-444444444444", "wake up", null, null, null, null));
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         Map<?, ?> body = (Map<?, ?>) response.getBody();

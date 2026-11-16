@@ -50,14 +50,19 @@ const { t } = useI18n(),
     store = useScheduledTasksStore(),
     sessionStore = useSessionStore();
 
-type TriggerMode = "cron" | "delay";
+type TriggerMode = "cron" | "delay" | "interval";
+/** interval only offers minute/hour units: the CP floor is 60 s, and days belongs to delay_once. */
 type DelayUnit = "minutes" | "hours" | "days";
+type IntervalUnit = "minutes" | "hours";
 
 const mode = ref<TriggerMode>("cron"),
     cronExpr = ref(""),
     timezone = ref(""),
     delayAmount = ref(5),
     delayUnit = ref<DelayUnit>("minutes"),
+    /** D-1706 ②: the interval trigger's period; CP refuses anything below 60 s. */
+    intervalAmount = ref(10),
+    intervalUnit = ref<IntervalUnit>("minutes"),
     targetKind = ref<ScheduledTaskTargetKind>("session_wakeup"),
     targetSessionId = ref(""),
     prompt = ref(""),
@@ -76,6 +81,9 @@ const DELAY_UNIT_MS: Record<DelayUnit, number> = {
 
 const TTL_MS = 7 * 86_400_000;
 
+/** CP's floor (ScheduledTaskContracts.MIN_INTERVAL_SECONDS); the DB CHECK holds the same bound. */
+const MIN_INTERVAL_SECONDS = 60;
+
 const sessions = computed(() =>
     sessionStore.sessions.filter(
         (session) => !session.workspaceId || session.workspaceId === props.workspaceId,
@@ -91,6 +99,8 @@ watch(
         timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
         delayAmount.value = 5;
         delayUnit.value = "minutes";
+        intervalAmount.value = 10;
+        intervalUnit.value = "minutes";
         targetKind.value = "session_wakeup";
         targetSessionId.value = sessionStore.currentSessionId ?? "";
         prompt.value = "";
@@ -130,6 +140,25 @@ function validateDelayAmount(value: unknown): string | null {
     }
     return null;
 }
+/**
+ * intervalSeconds computed from the amount + unit. Rounded to whole seconds so the wire value is
+ * deterministic the way CP stores it (an integer column).
+ */
+const intervalSeconds = computed(() =>
+    Math.round(intervalAmount.value * (intervalUnit.value === "minutes" ? 60 : 3_600)),
+);
+
+function validateIntervalAmount(value: unknown): string | null {
+    const num = typeof value === "number" ? value : Number(String(value ?? "").trim());
+    if (!Number.isFinite(num) || num <= 0) {
+        return t("workspace.scheduledTasks.delayAmountInvalid");
+    }
+    if (intervalSeconds.value < MIN_INTERVAL_SECONDS) {
+        return t("workspace.scheduledTasks.intervalTooShort");
+    }
+    return null;
+}
+
 function validateSession(value: unknown): string | null {
     const raw = typeof value === "string" ? value : "";
     return raw ? null : t("workspace.scheduledTasks.sessionRequired");
@@ -144,22 +173,33 @@ function validateCommand(value: unknown): string | null {
 }
 
 function buildRequest(): ScheduledTaskCreateRequest {
-    const base: ScheduledTaskCreateRequest =
-        mode.value === "cron"
-            ? {
-                  triggerKind: "cron",
-                  cronExpr: cronExpr.value.trim(),
-                  timezone: timezone.value.trim(),
-                  targetKind: targetKind.value,
-              }
-            : {
-                  triggerKind: "delay_once",
-                  timezone: timezone.value.trim() || "UTC",
-                  targetKind: targetKind.value,
-                  at: new Date(
-                      Date.now() + delayAmount.value * DELAY_UNIT_MS[delayUnit.value],
-                  ).toISOString(),
-              };
+    const trigger = ((): ScheduledTaskCreateRequest => {
+        if (mode.value === "cron") {
+            return {
+                triggerKind: "cron",
+                cronExpr: cronExpr.value.trim(),
+                timezone: timezone.value.trim(),
+                targetKind: targetKind.value,
+            };
+        }
+        if (mode.value === "interval") {
+            return {
+                triggerKind: "interval",
+                timezone: timezone.value.trim() || "UTC",
+                targetKind: targetKind.value,
+                intervalSeconds: intervalSeconds.value,
+            };
+        }
+        return {
+            triggerKind: "delay_once",
+            timezone: timezone.value.trim() || "UTC",
+            targetKind: targetKind.value,
+            at: new Date(
+                Date.now() + delayAmount.value * DELAY_UNIT_MS[delayUnit.value],
+            ).toISOString(),
+        };
+    })();
+    const base: ScheduledTaskCreateRequest = trigger;
     if (targetKind.value === "session_wakeup") {
         base.targetSessionId = targetSessionId.value;
         base.prompt = prompt.value;
@@ -191,8 +231,15 @@ async function handleSubmit() {
         const code = cause instanceof ApiError ? cause.problem.code : null;
         const text = scheduledTaskErrorText(t, cause);
         // Field-shaped codes land on the field node; everything else is a form-level error.
+        // D-1706: each declared parameter answers its own code, so the error lands on the field
+        // that caused it instead of on the whole form.
         if (code === "INVALID_CRON_EXPR") serverErrors.value = { cronExpr: text };
         else if (code === "INVALID_TIMEZONE") serverErrors.value = { timezone: text };
+        else if (code === "INVALID_INTERVAL") serverErrors.value = { intervalAmount: text };
+        else if (code === "SCHEDULED_TASK_AT_REQUIRED") serverErrors.value = { delayAmount: text };
+        else if (code === "SCHEDULED_TASK_TARGET_SESSION_REQUIRED")
+            serverErrors.value = { targetSessionId: text };
+        else if (code === "SCHEDULED_TASK_PROMPT_REQUIRED") serverErrors.value = { prompt: text };
         else serverErrors.value = { __form: text };
     } finally {
         submitting.value = false;
@@ -245,6 +292,19 @@ function handleOpenChange(open: boolean) {
                     >
                         {{ t("workspace.scheduledTasks.modeDelay") }}
                     </button>
+                    <button
+                        type="button"
+                        class="flex-1 rounded px-3 py-1.5 text-sm"
+                        :class="
+                            mode === 'interval'
+                                ? 'bg-accent font-medium'
+                                : 'text-muted-foreground hover:bg-accent/50'
+                        "
+                        data-testid="st-create-mode-interval"
+                        @click="mode = 'interval'"
+                    >
+                        {{ t("workspace.scheduledTasks.modeInterval") }}
+                    </button>
                 </div>
 
                 <template v-if="mode === 'cron'">
@@ -285,6 +345,62 @@ function handleOpenChange(open: boolean) {
                         <FieldError
                             class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
                             data-testid="st-create-timezone-error"
+                        />
+                    </FieldRoot>
+                </template>
+
+                <template v-else-if="mode === 'interval'">
+                    <FieldRoot
+                        name="intervalAmount"
+                        class="grid gap-2"
+                        :validate="validateIntervalAmount"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("workspace.scheduledTasks.intervalAmountLabel") }}
+                        </FieldLabel>
+                        <div class="flex gap-2">
+                            <FieldControl
+                                v-model="intervalAmount"
+                                as="input"
+                                type="number"
+                                min="1"
+                                class="h-8 w-28 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                                data-testid="st-create-interval-amount"
+                            />
+                            <FieldRoot name="intervalUnit" class="contents">
+                                <Select v-model="intervalUnit">
+                                    <SelectTrigger
+                                        class="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                        data-testid="st-create-interval-unit"
+                                    >
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="minutes">{{
+                                            t("workspace.scheduledTasks.delayUnitMinutes")
+                                        }}</SelectItem>
+                                        <SelectItem value="hours">{{
+                                            t("workspace.scheduledTasks.delayUnitHours")
+                                        }}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </FieldRoot>
+                            <FieldRoot name="intervalTimezone" class="contents">
+                                <Input
+                                    v-model="timezone"
+                                    class="h-8 w-40"
+                                    data-testid="st-create-interval-timezone"
+                                    :placeholder="t('workspace.scheduledTasks.timezoneLabel')"
+                                />
+                            </FieldRoot>
+                        </div>
+                        <FieldDescription class="text-xs text-muted-foreground">
+                            {{ t("workspace.scheduledTasks.intervalHint") }}
+                        </FieldDescription>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-interval-error"
                         />
                     </FieldRoot>
                 </template>

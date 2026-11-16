@@ -89,7 +89,27 @@ public class ScheduledTask {
     @Column(nullable = false, length = 16)
     private String status = STATUS_SCHEDULED;
 
-    @Column(name = "next_fire_at", nullable = false)
+    /**
+     * D-1706 ③ / stage-two prerequisite: nullable. A time-triggered row always carries a fire
+     * instant; an <b>event-triggered</b> row has none (the event decides when it fires), and a
+     * {@code NULL} here is the honest representation rather than a placeholder instant that would
+     * look schedulable. Two consequences are load-bearing, and both are pinned by tests rather than
+     * left to convention:
+     *
+     * <ul>
+     *   <li>Every scan predicate compares with {@code <} / {@code =} ({@code
+     *       ScheduledTaskRepository}), and SQL three-valued logic makes both UNKNOWN for a NULL
+     *       operand ⇒ null rows are never discovered, never claimed and never marked overdue. That
+     *       is "quietly never fires" for the claim path ({@code
+     *       ScheduledTaskRepository#claimToFiring}), not an error — so
+     *       {@code ScheduledTaskNullabilityTest} asserts the claim returns 0 rows instead of letting
+     *       stage two discover it.</li>
+     *   <li>Quota counting is status-based ({@code countByWorkspaceIdAnd…StatusIn}), so null rows
+     *       still occupy an active slot — asserted by the same test class so a future rewrite to a
+     *       fire-time-based count cannot silently hand out extra rows.</li>
+     * </ul>
+     */
+    @Column(name = "next_fire_at")
     private Instant nextFireAt;
 
     @Column(name = "expires_at")

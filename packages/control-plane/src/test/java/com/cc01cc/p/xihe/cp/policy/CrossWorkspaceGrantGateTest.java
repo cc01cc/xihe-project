@@ -107,7 +107,7 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         ScheduledTaskApiService.CreateRequest request = new ScheduledTaskApiService.CreateRequest(
                 "delay_once", null, "UTC", "job_dispatch", null, null,
                 objectMapper.createObjectNode().put("command", "echo gate-positive-control"),
-                java.time.Instant.now().plusSeconds(600).toString(), null);
+                java.time.Instant.now().plusSeconds(600).toString(), null, null);
 
         // Positive control (round-4 P2-4): A holds CREATE_SCHEDULED_TASK and the task is created.
         ScheduledTaskApiService.TaskView created = scheduledTaskApiService.create(

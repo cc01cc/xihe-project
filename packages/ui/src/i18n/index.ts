@@ -170,7 +170,7 @@ const messages = {
             // 「工作台」只允许出现在**模块层**（全局 rail + 落地页，`sidebar.workbench` 仍是「工作台」，D-924 不变）。
             sessions: "会话",
             environment: "环境",
-            scheduledTasks: "定时任务",
+            scheduledTasks: "自动化任务",
             // PLAN-0773 M4-2（task-210）：本工作区资源页（`/workspace/:id/resources`）。
             resources: "资源",
             settings: "设置",
@@ -509,6 +509,15 @@ const messages = {
             editorEdit: "编辑",
             editorDiff: "差异",
             tabBarLabel: "工作台页签",
+            // task-52 / batch-02（P1）：新建会话的**默认标题**（原先是前端硬编码英文
+            // `"New Chat"`，见 `stores/session.ts#createSession`）。
+            //
+            // 为什么是「未命名会话」而不是「新会话」/「新建会话」：侧栏那个**动作按钮**已经叫
+            // 「新建会话」（`sidebar.newChat`），若会话项也叫「新建会话」，用户分不清"这一行是
+            // 我能点的动作还是一段历史"—— D-1703 P1-3 说的「同名不同物」正是这个形态。
+            // 语义上与 CP 的空标题兜底 `"Untitled"`（`SessionService.normalizeTitle`）对齐，
+            // 中文侧沿用既有「未命名」口径（`singleChat.untitled` / `standaloneChat.untitled`）。
+            sessionDefaultTitle: "未命名会话",
             tabChatFallback: "对话",
             tabClose: "关闭页签",
             // task-174（S2b）：容器内页签行的容器名（每个容器一行页签）。
@@ -559,6 +568,29 @@ const messages = {
             treeLoadFailedRuntime:
                 "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员",
             treeLoadFailedTool: "工具不存在或未启用，请刷新工作区后重试",
+            // task-59（D-1708 缺陷 B）：**文件级**故障的专属文案。
+            // 与上面 treeLoadFailed* 分开成组：树级 = 整棵树拉不起来；文件级 = 某个文件/目录
+            // 的动作失败（树仍可用）。标题点名**对象**（{name}），原因单独成句；两者拼起来
+            // 恰好是判据要求的「这个文件打不开 + 原因 + 文件名」，不再是「文件树加载失败」。
+            fileOpOpenFailed: "无法打开「{name}」",
+            fileOpSaveFailed: "无法保存「{name}」",
+            fileOpDeleteFailed: "无法删除「{name}」",
+            fileOpCreateFailed: "无法创建「{name}」",
+            fileOpRenameFailed: "无法重命名「{name}」",
+            fileOpMoveFailed: "无法移动「{name}」",
+            fileOpDuplicateFailed: "无法复制「{name}」",
+            fileOpMkdirFailed: "无法创建目录「{name}」",
+            fileOpReadFailed: "无法读取「{name}」的完整内容",
+            fileOpSplitPdfFailed: "无法拆分「{name}」",
+            fileOpReasonNotFound: "文件或目录不存在，可能已被移动或删除。",
+            fileOpReasonPermission: "当前账号没有权限访问它。",
+            fileOpReasonRuntime: "工作区运行时未就绪，请确认服务已启动后重试。",
+            fileOpReasonTool: "所需的文件工具不存在或未启用。",
+            fileOpReasonInvalidName: "名称不合规：不能为空，也不能包含路径分隔符。",
+            fileOpReasonUnavailable: "这个功能暂时不可用：后端接口尚未部署。",
+            fileOpReasonBinary: "这是二进制文件，编辑器无法以文本方式打开它。",
+            fileOpReasonOther: "服务端拒绝了这次操作，细节见下方码。",
+            fileOpReasonUnknown: "失败原因未能识别。",
             noActiveFile: "未选择文件",
             importSource: "导入工作区目录",
             expandFiles: "展开文件树",
@@ -802,6 +834,17 @@ const messages = {
             eventsConnecting: "文件事件连接中",
             eventsDisconnected: "文件事件未连接",
             statusBarUsage: "in {input} · out {output}",
+            // task-52 / batch-02（P1）：用量行三段文案。原先 `未映射` 与 `real` 是裸字面量，
+            // 中文界面直接读出英文 wire 值（截图 `.tmp/xh/b02-10-chat-full.png`）。
+            // 口径：**只改文案，不改 CP** —— `cost=null` 是 CP `UsageCostMapper` 的设计行为
+            //（无 token 计数 / 模型不在定价表），不能凭空补一个 `$0` 把「没定价」说成「免费」。
+            usageCostUnmapped: "未定价",
+            usageCostNoteNoTokenCounts: "这一轮没有上报 token 数量，因此无法按定价表计费。",
+            usageCostNoteNoPricing: "当前配置里没有这个模型的价格，因此无法换算费用。",
+            usageCostNoteUnknown: "这笔用量暂时没有可用的费用说明。",
+            usageSourceReal: "真实计费",
+            usageSourceEstimated: "估算",
+            usageSourceFallback: "用量兜底",
             externalChange: "文件已被外部修改，本地内容尚未覆盖。",
             reloadExternalChange: "重新加载",
             checkpointTimelineLoading: "正在加载切片时间线…",
@@ -945,18 +988,17 @@ const messages = {
             importCancelFailed: "取消导入失败",
             importSourceFailed: "目录不可读取",
             scheduledTasks: {
-                nav: "定时任务",
-                title: "定时任务",
+                nav: "自动化任务",
+                title: "自动化任务",
                 subtitle:
                     "到点自动唤醒会话或执行任务；错过的任务不会自动补跑，会停在这里等你处理。",
-                create: "新建定时任务",
+                create: "新建自动化任务",
                 refresh: "刷新",
-                loading: "正在加载定时任务…",
-                loadFailed: "定时任务加载失败",
+                loading: "正在加载自动化任务…",
+                loadFailed: "自动化任务加载失败",
                 retry: "重试",
-                emptyTitle: "还没有定时任务",
-                emptyDescription:
-                    "创建定时任务，让会话在指定时间自动开始，或按 cron 周期执行任务。",
+                emptyTitle: "还没有自动化任务",
+                emptyDescription: "创建自动化任务：按触发条件自动唤醒会话、或按周期执行任务。",
                 filterAll: "全部",
                 filterActive: "调度中",
                 filterPending: "待处理",
@@ -975,6 +1017,7 @@ const messages = {
                 statusCompleted: "已完成",
                 statusCancelled: "已取消",
                 triggerCron: "cron 周期",
+                triggerInterval: "固定间隔",
                 triggerDelay: "延迟一次",
                 delayRemaining: "剩余",
                 targetSession: "会话唤醒",
@@ -1002,22 +1045,26 @@ const messages = {
                 postponeInvalidFuture: "请选择将来的时刻",
                 postponeExceedsTtl: "超过该任务的 TTL（7 天）",
                 postponeDone: "已推迟：下次触发时间已更新，任务恢复调度。",
-                removeConfirmTitle: "移除定时任务？",
+                removeConfirmTitle: "移除自动化任务？",
                 removeConfirmDescription: "任务将被取消；该操作会写入审计。",
                 removeConfirm: "确认移除",
                 removeDone: "已移除：任务状态已取消。",
                 removeUnchanged: "该任务已是取消状态，无需重复移除。",
-                cancelConfirmTitle: "取消定时任务？",
+                cancelConfirmTitle: "取消自动化任务？",
                 cancelConfirmDescription: "任务将停止调度；会话本身不会被删除。",
                 cancelConfirm: "确认取消",
                 cancelDone: "任务已取消。",
                 rerunStarted: "已补跑：手动触发一次。",
                 actionForbidden: "无权处置该任务：需要创建者身份或 MANAGE_SCHEDULED_TASK 授权",
                 actionFailed: "操作失败",
-                createTitle: "新建定时任务",
+                createTitle: "新建自动化任务",
                 createSubtitle: "两种触发方式：按 cron 周期触发，或延迟一次触发。",
                 modeCron: "cron 周期触发",
                 modeDelay: "延迟一次触发",
+                modeInterval: "固定间隔重复",
+                intervalAmountLabel: "每隔多久触发",
+                intervalHint:
+                    "按固定间隔重复触发，最小 1 分钟（60 秒）；时区只影响展示，间隔按 UTC 精确计时。",
                 cronLabel: "cron 表达式",
                 cronHint:
                     "5 段格式（分 时 日 月 周），最小粒度 1 分钟。例：每工作日 09:00 写作 0 9 * * 1-5",
@@ -1044,7 +1091,7 @@ const messages = {
                 submitCreate: "创建任务",
                 creating: "创建中…",
                 created: "已创建：任务进入调度中",
-                createFailed: "创建定时任务失败",
+                createFailed: "创建自动化任务失败",
                 cronRequired: "请填写 cron 表达式",
                 timezoneRequired: "请填写时区",
                 delayAmountInvalid: "请输入大于 0 的触发时长",
@@ -1052,8 +1099,14 @@ const messages = {
                 promptRequired: "请填写提示词",
                 commandRequired: "请填写命令",
                 delayExceedsTtl: "触发时间超过 7 天 TTL，请缩短时长",
+                intervalTooShort: "间隔不能小于 1 分钟（60 秒）",
                 errInvalidCronExpr: "cron 表达式无效：检查字段数量与取值范围",
                 errInvalidTimezone: "时区无效：请使用 IANA 时区名，例如 Asia/Shanghai",
+                errInvalidInterval: "间隔无效：必须是大于等于 60 秒的整数",
+                errAtRequired: "缺少触发时间：请填写延迟时长",
+                errTargetSessionRequired: "缺少目标会话：唤醒型任务必须指定会话",
+                errPromptRequired: "缺少提示词：唤醒型任务必须给出到点发送的内容",
+                errPayloadRequired: "缺少任务参数：执行型任务必须给出要运行的命令",
                 errLimit: "当前 workspace 已达 50 个任务上限，先移除部分任务",
                 errPrincipalLimit: "当前用户已达 10 个任务上限，先移除部分任务",
                 errState: "任务当前状态不支持该操作，请刷新后重试",
@@ -1089,7 +1142,10 @@ const messages = {
             settingsName: "名称",
             settingsDescription: "描述",
             settingsId: "工作区 ID",
-            settingsStorageRef: "物理目录",
+            // task-51：本页原先这行叫「物理目录」却绑 `storageRef`（= 工作区 UUID）。改成真读
+            // `hostPath` 后，标签与「环境」页的 `environmentFieldHostPath` 统一为「宿主机目录」
+            // —— 同一个值在两页用两个名字，本身就是「同名不同物」的翻版。
+            settingsHostPath: "宿主机目录",
             settingsExecutionMode: "执行后端",
             settingsLoadFailed: "加载工作区失败",
             settingsRetry: "重试",
@@ -1251,7 +1307,7 @@ const messages = {
                 runtime: "运行时",
                 system: "系统",
                 mcp: "MCP",
-                scheduled: "定时任务",
+                scheduled: "自动化任务",
             },
             environmentJobSourceUnknown: "未知发起方",
             environmentJobScope: {
@@ -1860,6 +1916,11 @@ const messages = {
             workspaceLayerMovedAction: "打开工作区设置",
             workspaceLayerMovedNoWorkspace: "先在左侧选择一个工作区，再从该工作区的设置页进入。",
             workspaceLayerMovedInlineHint: "以下资源的「本工作区」层已迁到工作区设置：",
+            // task-52 / batch-02 ③：把两条说明压成一条**可折叠摘要**（默认收起）。
+            // 摘要行说明「这里有说明」，展开才给明细与直链 —— 导航说明不该压过功能主体。
+            resourcesHintSummary: "关于本页资源的层级与去处",
+            resourcesHintShow: "查看说明",
+            resourcesHintHide: "收起说明",
             // 技能「本工作区」层只读面板（Lead 裁定一：读面补上，写面如实写明未接线）。
             workspaceSkillsTitle: "本工作区技能",
             workspaceSkillsCount: "{count} 个",
@@ -3969,7 +4030,7 @@ const messages = {
             workspaceContainer: "Workspace",
             sessions: "Sessions",
             environment: "Environment",
-            scheduledTasks: "Scheduled tasks",
+            scheduledTasks: "Automations",
             resources: "Resources",
             settings: "Settings",
             members: "Members",
@@ -4305,6 +4366,7 @@ const messages = {
             editorEdit: "Edit",
             editorDiff: "Diff",
             tabBarLabel: "Workbench tabs",
+            sessionDefaultTitle: "Untitled session",
             tabChatFallback: "Chat",
             tabClose: "Close tab",
             // task-174 (S2b): container names for the per-container tab rows.
@@ -4334,6 +4396,29 @@ const messages = {
             rootGroupFallback: "Root {position}",
             rootEmpty: "No files in this root",
             rootLoadFailed: "Failed to load this root's files",
+            // task-59 (D-1708 defect B): file-level copy, kept apart from the tree-level
+            // treeLoadFailed* group above. The title names the object; the reason is its own line.
+            fileOpOpenFailed: 'Cannot open "{name}"',
+            fileOpSaveFailed: 'Cannot save "{name}"',
+            fileOpDeleteFailed: 'Cannot delete "{name}"',
+            fileOpCreateFailed: 'Cannot create "{name}"',
+            fileOpRenameFailed: 'Cannot rename "{name}"',
+            fileOpMoveFailed: 'Cannot move "{name}"',
+            fileOpDuplicateFailed: 'Cannot copy "{name}"',
+            fileOpMkdirFailed: 'Cannot create folder "{name}"',
+            fileOpReadFailed: 'Cannot read the full content of "{name}"',
+            fileOpSplitPdfFailed: 'Cannot split "{name}"',
+            fileOpReasonNotFound:
+                "That file or folder does not exist; it may have been moved or deleted.",
+            fileOpReasonPermission: "Your account is not allowed to access it.",
+            fileOpReasonRuntime:
+                "The workspace runtime is not ready. Confirm the service is running, then retry.",
+            fileOpReasonTool: "The file tool this needs is missing or disabled.",
+            fileOpReasonInvalidName: "Invalid name: it cannot be empty or contain path separators.",
+            fileOpReasonUnavailable: "Unavailable: the backend endpoint is not deployed yet.",
+            fileOpReasonBinary: "That is a binary file; the editor cannot open it as text.",
+            fileOpReasonOther: "The server rejected this operation; see the code below.",
+            fileOpReasonUnknown: "The reason for the failure is not known.",
             // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
             nestedReposTitle: "Undeclared nested git repositories",
             nestedRepoDeclare: "Declare as root",
@@ -4612,6 +4697,15 @@ const messages = {
             eventsConnecting: "Connecting file events",
             eventsDisconnected: "File events disconnected",
             statusBarUsage: "in {input} · out {output}",
+            usageCostUnmapped: "Not priced",
+            usageCostNoteNoTokenCounts:
+                "This run reported no token counts, so it cannot be priced from the rate table.",
+            usageCostNoteNoPricing:
+                "The configured pricing table has no entry for this model, so no cost can be derived.",
+            usageCostNoteUnknown: "No cost explanation is available for this usage yet.",
+            usageSourceReal: "Real billing",
+            usageSourceEstimated: "Estimated",
+            usageSourceFallback: "Usage fallback",
             externalChange: "The file changed outside this editor; local content was kept.",
             reloadExternalChange: "Reload file",
             checkpointTimelineLoading: "Loading slice timeline…",
@@ -4761,18 +4855,18 @@ const messages = {
             importCancelFailed: "Failed to cancel the import",
             importSourceFailed: "Directory is not readable",
             scheduledTasks: {
-                nav: "Scheduled tasks",
-                title: "Scheduled tasks",
+                nav: "Automations",
+                title: "Automations",
                 subtitle:
                     "Wake a session or run a job at a set time; missed tasks never rerun automatically and wait here for your decision.",
-                create: "New scheduled task",
+                create: "New automation",
                 refresh: "Refresh",
-                loading: "Loading scheduled tasks…",
-                loadFailed: "Failed to load scheduled tasks",
+                loading: "Loading automations…",
+                loadFailed: "Failed to load automations",
                 retry: "Retry",
-                emptyTitle: "No scheduled tasks yet",
+                emptyTitle: "No automations yet",
                 emptyDescription:
-                    "Create one so a session starts at a set time, or a job runs on a cron schedule.",
+                    "Create one so a trigger fires on its own: wake a session, or run a job on a schedule.",
                 filterAll: "All",
                 filterActive: "Scheduled",
                 filterPending: "Pending",
@@ -4791,6 +4885,7 @@ const messages = {
                 statusCompleted: "Completed",
                 statusCancelled: "Cancelled",
                 triggerCron: "cron",
+                triggerInterval: "At a fixed interval",
                 triggerDelay: "One-shot delay",
                 delayRemaining: "remaining",
                 targetSession: "Session wakeup",
@@ -4819,12 +4914,12 @@ const messages = {
                 postponeInvalidFuture: "Pick a future instant",
                 postponeExceedsTtl: "Beyond this task's TTL (7 days)",
                 postponeDone: "Postponed: next fire updated and scheduling resumed.",
-                removeConfirmTitle: "Remove this scheduled task?",
+                removeConfirmTitle: "Remove this automation?",
                 removeConfirmDescription: "The task will be cancelled; the action is audited.",
                 removeConfirm: "Confirm remove",
                 removeDone: "Removed: the task is now cancelled.",
                 removeUnchanged: "This task is already cancelled; nothing to remove.",
-                cancelConfirmTitle: "Cancel this scheduled task?",
+                cancelConfirmTitle: "Cancel this automation?",
                 cancelConfirmDescription: "Scheduling stops; the session itself is not deleted.",
                 cancelConfirm: "Confirm cancel",
                 cancelDone: "Task cancelled.",
@@ -4832,11 +4927,15 @@ const messages = {
                 actionForbidden:
                     "You cannot dispose this task: creator rights or the MANAGE_SCHEDULED_TASK grant is required",
                 actionFailed: "Action failed",
-                createTitle: "New scheduled task",
+                createTitle: "New automation",
                 createSubtitle:
-                    "Two trigger modes: repeat on a cron schedule, or fire once after a delay.",
+                    "Three trigger modes: repeat on a cron schedule, fire once after a delay, or repeat at a fixed interval.",
                 modeCron: "Repeat on cron",
                 modeDelay: "Fire once after a delay",
+                modeInterval: "Repeat at a fixed interval",
+                intervalAmountLabel: "Repeat every",
+                intervalHint:
+                    "Repeats at a fixed interval, minimum 1 minute (60 s). The time zone affects display only; the interval is measured in UTC exactly.",
                 cronLabel: "Cron expression",
                 cronHint:
                     "Five fields (minute hour day month weekday), one-minute granularity. Every weekday 09:00 is 0 9 * * 1-5.",
@@ -4865,7 +4964,7 @@ const messages = {
                 submitCreate: "Create task",
                 creating: "Creating…",
                 created: "Created: the task is now scheduled",
-                createFailed: "Failed to create the scheduled task",
+                createFailed: "Failed to create the automation",
                 cronRequired: "Enter a cron expression",
                 timezoneRequired: "Enter a time zone",
                 delayAmountInvalid: "Enter a positive delay",
@@ -4873,8 +4972,16 @@ const messages = {
                 promptRequired: "Enter a prompt",
                 commandRequired: "Enter a command",
                 delayExceedsTtl: "Trigger time is beyond the 7-day TTL; shorten the delay",
+                intervalTooShort: "The interval cannot be shorter than 1 minute (60 s)",
                 errInvalidCronExpr: "Invalid cron expression: check field count and value ranges",
                 errInvalidTimezone: "Invalid time zone: use an IANA name such as Asia/Shanghai",
+                errInvalidInterval: "Invalid interval: must be an integer of at least 60 seconds",
+                errAtRequired: "Trigger time missing: enter a delay",
+                errTargetSessionRequired:
+                    "Target session missing: a wake task must name the session to wake",
+                errPromptRequired:
+                    "Prompt missing: a wake task must say what to send when it fires",
+                errPayloadRequired: "Task payload missing: a job task must say what command to run",
                 errLimit:
                     "This workspace already has the maximum of 50 active tasks; remove some first",
                 errPrincipalLimit:
@@ -4910,7 +5017,7 @@ const messages = {
             settingsName: "Name",
             settingsDescription: "Description",
             settingsId: "Workspace ID",
-            settingsStorageRef: "Storage path",
+            settingsHostPath: "Host directory",
             settingsExecutionMode: "Execution backend",
             settingsLoadFailed: "Failed to load the workspace",
             settingsRetry: "Retry",
@@ -5703,6 +5810,9 @@ const messages = {
                 "Pick a workspace on the left, then open that workspace's settings.",
             workspaceLayerMovedInlineHint:
                 "The workspace layer of these resources moved to workspace settings:",
+            resourcesHintSummary: "Where this page's resources live",
+            resourcesHintShow: "Show details",
+            resourcesHintHide: "Hide details",
             workspaceSkillsTitle: "Workspace skills",
             workspaceSkillsCount: "{count} total",
             workspaceSkillsSubtitle:

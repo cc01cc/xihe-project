@@ -1093,7 +1093,7 @@ describe("WorkspaceEnvironmentView 其余枚举字段人话化（task-59）", ()
         const wrapper = await mountView();
         const text = wrapper.text();
 
-        expect(text).toContain("定时任务");
+        expect(text).toContain("自动化任务");
         expect(text).toContain("工作区");
         expect(text).toContain("未知发起方");
         expect(text).toContain("未知作用域");

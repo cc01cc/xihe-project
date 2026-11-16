@@ -64,9 +64,13 @@ class ScheduledTaskMigrationIntegrationTest {
         assertEquals("jsonb", scalarString(
                 "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
                         + "AND table_name = 'scheduled_tasks' AND column_name = 'payload'"));
-        assertEquals("NO", scalarString(
+        // V58 originally created this NOT NULL; V171 (D-1706 ③) relaxed it to allow event-triggered
+        // rows with no scheduled instant. Asserted here at HEAD (this class migrates to HEAD), with
+        // the V171 test below pinning which migration is responsible.
+        assertEquals("YES", scalarString(
                 "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
-                        + "AND table_name = 'scheduled_tasks' AND column_name = 'next_fire_at'"));
+                        + "AND table_name = 'scheduled_tasks' AND column_name = 'next_fire_at'"),
+                "next_fire_at is nullable at HEAD (V171 relaxed V58's NOT NULL)");
         assertEquals(7, scalarInt(
                 "SELECT count(*) FROM pg_constraint WHERE conname IN ('ck_scheduled_tasks_trigger_kind', "
                         + "'ck_scheduled_tasks_target_kind', 'ck_scheduled_tasks_status', "
@@ -233,6 +237,49 @@ class ScheduledTaskMigrationIntegrationTest {
         assertEquals(1, scalarInt("SELECT count(*) FROM scheduled_tasks WHERE id = '" + taskId
                 + "'::uuid AND agent_principal_id IS NULL"),
                 "principal deletion must SET NULL on the creator column and keep the task row");
+    }
+
+    /**
+     * D-1706 ③ / task-56: V171 relaxes {@code next_fire_at} to nullable, and the nullable shape is
+     * actually insertable for a row that is otherwise a legal scheduled task. The insert is the real
+     * assertion: a CHECK that accidentally forbade NULL here would make stage two's event rows
+     * unrepresentable, and this is the only place a NOT NULL/CHECK mistake shows up as a DB error
+     * rather than as a quietly-skipped row in the scan.
+     */
+    @Test
+    void v171_next_fire_at_is_nullable_and_accepts_a_null_row() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '171' AND success = true"),
+                "V171 must be recorded as applied");
+        assertEquals("YES", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'scheduled_tasks' AND column_name = 'next_fire_at'"),
+                "V171 must DROP the V58 NOT NULL on next_fire_at");
+        // No CHECK may tie next_fire_at to a non-null value: that would forbid the null rows this
+        // migration exists to allow (and would make the null-path tests below impossible to write).
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_constraint conf "
+                        + "JOIN pg_attribute att ON att.attrelid = conf.conrelid "
+                        + "AND att.attnum = ANY (conf.conkey) "
+                        + "WHERE conf.contype = 'c' "
+                        + "AND conf.conrelid = 'scheduled_tasks'::regclass "
+                        + "AND att.attname = 'next_fire_at'"),
+                "no CHECK constraint may constrain next_fire_at on its own");
+
+        UUID nullTaskId = UUID.randomUUID();
+        // interval is the shape that is legal without a cron_expr and without an expires_at,
+        // so it isolates "next_fire_at IS NULL" as the only unusual column.
+        execute("INSERT INTO scheduled_tasks (id, workspace_id, user_id, trigger_kind, "
+                + "interval_seconds, timezone, target_kind, target_session_id, prompt, status) "
+                + "VALUES ('" + nullTaskId + "'::uuid, '" + workspaceId + "'::uuid, '"
+                + userId + "'::uuid, 'interval', 60, 'UTC', 'session_wakeup', '" + sessionId
+                + "'::uuid, 'no scheduled instant', 'scheduled')");
+        assertEquals(0, scalarInt("SELECT count(*) FROM scheduled_tasks WHERE id = '" + nullTaskId
+                + "'::uuid AND next_fire_at IS NOT NULL"),
+                "the nullable row really carries NULL next_fire_at");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM scheduled_tasks WHERE id = '" + nullTaskId + "'::uuid"),
+                "a NULL next_fire_at row is insertable");
     }
 
     private static void execute(String sql) throws SQLException {
