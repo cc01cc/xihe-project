@@ -13,6 +13,7 @@ import PdfViewer from "../chat/components/PdfViewer.vue";
 import DiffViewer from "./DiffViewer.vue";
 import UnknownFileNotice from "./UnknownFileNotice.vue";
 import FileMetadataPanel from "./FileMetadataPanel.vue";
+import DirectoryDetailPanel from "./DirectoryDetailPanel.vue";
 import { showsMetadata, type OpenOutcome } from "../lib/openOutcome";
 import type { FileNode } from "../../../types";
 
@@ -46,6 +47,32 @@ const showMeta = computed(() => showsMetadata(openOutcome.value) || metaPinned.v
 const bodyMissing = computed(() => openOutcome.value?.state === "oversized-empty");
 /** ① 不可解析：正文位显示「不能预览 + 下载/复制路径」，与 ② 的「太大」分开。 */
 const bodyUnparsable = computed(() => openOutcome.value?.state === "unparsable");
+
+/**
+ * task-78 ①：选中的**目录**节点（读 `ws.fileTree`，零请求）。
+ *
+ * <p>`openDirectory` 会清 `activeFilePath` ⇒ 目录被选中时 `activeFile` 恰好为 null，
+ * 本文件原本的「从文件树选择文件」空态就是目录详情页的落点。</p>
+ *
+ * <p><b>零请求的前提</b>：该目录**已在树里**。`fetchDirectoryTree` 是全递归的（一次载入全树），
+ * 所以只要树加载过，任何已挂载的目录都在；只有「树还没加载完」时才没有节点可查 ——
+ * 那时详情页不渲染（退回原空态），而**不是**发一次请求去补。</p>
+ */
+const activeDirNode = computed<FileNode | null>(() => {
+    const dirPath = ws.activeDirPath;
+    if (!dirPath) return null;
+    const find = (nodes: FileNode[]): FileNode | null => {
+        for (const n of nodes) {
+            if (n.path === dirPath) return n;
+            if (n.children) {
+                const hit = find(n.children);
+                if (hit) return hit;
+            }
+        }
+        return null;
+    };
+    return find(ws.fileTree);
+});
 
 /** 面板要显示的那一条树节点（读已有数据，零请求）。 */
 const metaNode = computed<FileNode | null>(() => {
@@ -199,7 +226,15 @@ function handleLoadFullContent() {
             :snapshot-at="ws.treeLoadedAt"
         />
 
-        <div v-if="!activeFile" class="flex-1 flex items-center justify-center">
+        <!-- task-78 ①：选中目录时显示目录详情（读树快照，零请求）。 -->
+        <DirectoryDetailPanel
+            v-if="!activeFile && activeDirNode"
+            :node="activeDirNode"
+            :path="ws.activeDirPath ?? ''"
+            :snapshot-at="ws.treeLoadedAt"
+        />
+
+        <div v-else-if="!activeFile" class="flex-1 flex items-center justify-center">
             <div class="text-center">
                 <FileText class="mx-auto size-12 text-muted-foreground/30" aria-hidden="true" />
                 <p class="mt-2 text-sm text-muted-foreground">

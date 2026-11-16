@@ -528,6 +528,13 @@ const messages = {
             fileMetaUnknown: "未知",
             fileMetaFreshnessAge: "来自文件树快照，{seconds} 秒前读取，可能不是最新。",
             fileMetaFreshnessUnknown: "来自文件树快照，读取时间未知，可能不是最新。",
+            // ── task-78 ① 目录详情页 v1 ─────────────────────────────────────────
+            dirDetailTitle: "目录信息",
+            dirDetailChildren: "子项",
+            dirDetailCounts: "共 {total} 项（{dirs} 个目录，{files} 个文件）",
+            dirDetailScope: "计数口径：文件树中可见的子项；隐藏文件与空的运行产物目录不计入。",
+            dirDetailFreshnessAge: "来自文件树快照，{seconds} 秒前读取，可能不是最新。",
+            dirDetailFreshnessUnknown: "来自文件树快照，读取时间未知，可能不是最新。",
 
             editorEdit: "编辑",
             editorDiff: "差异",
@@ -4428,6 +4435,15 @@ const messages = {
             fileMetaFreshnessAge:
                 "From the file-tree snapshot read {seconds} seconds ago; it may be out of date.",
             fileMetaFreshnessUnknown:
+                "From the file-tree snapshot (read time unknown); it may be out of date.",
+            dirDetailTitle: "Directory information",
+            dirDetailChildren: "Children",
+            dirDetailCounts: "{total} in total ({dirs} directories, {files} files)",
+            dirDetailScope:
+                "Counted over children visible in the file tree; hidden files and empty runtime-artifact directories are excluded.",
+            dirDetailFreshnessAge:
+                "From the file-tree snapshot read {seconds} seconds ago; it may be out of date.",
+            dirDetailFreshnessUnknown:
                 "From the file-tree snapshot (read time unknown); it may be out of date.",
 
             editorEdit: "Edit",
