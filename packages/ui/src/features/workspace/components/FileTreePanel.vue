@@ -549,7 +549,7 @@ function upload() {
             v-else-if="showTreeBanner"
             data-testid="workspace-tree-error"
             role="alert"
-            class="mx-2 mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+            class="mx-2 mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-background px-2 py-1.5 text-xs text-destructive"
         >
             <div class="min-w-0 flex-1">
                 <p
@@ -652,7 +652,7 @@ function upload() {
                         v-else-if="!group.isPrimary && group.state.error"
                         data-testid="workspace-tree-root-error"
                         role="alert"
-                        class="mx-1 mt-1 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+                        class="mx-1 mt-1 flex items-start gap-2 rounded-md border border-destructive/40 bg-background px-2 py-1.5 text-xs text-destructive"
                     >
                         <p class="min-w-0 flex-1 line-clamp-2">{{ group.state.error }}</p>
                         <button
