@@ -119,9 +119,17 @@ unused_imports = "deny"
 dead_code = "deny"
 
 [lints.clippy]
-all = "warn"
-correctness = "deny"
-suspicious = "deny"
+# priority 见下：lint 组的隐式优先级是 0，与同表内的单条 lint 相同 ⇒ clippy 报
+# lint_groups_priority。把组降到 -1 才能让下面的单条 lint 覆盖组设置。
+all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+# task-46（D-1667）：测试域/产品域分口径。dbg_macro 属 T-O（调试残留），
+# 产品域基线 0 命中 ⇒ 可以安全打开；测试域由 clippy.toml 的 allow-dbg-in-tests 豁免。
+# unwrap_used / expect_used / print_* 同样是 T-O，但产品域存量 88 条（见本卡报告），
+# 打开会让 `-D warnings` 门变红 ⇒ 本卡不动产品代码，故暂不打开；开关已在
+# clippy.toml 就位，产品清理完成后加一行即可生效（不需要在各 cfg(test) 块抄 allow）。
+dbg_macro = "deny"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

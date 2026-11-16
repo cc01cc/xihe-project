@@ -1,0 +1,40 @@
+# Xihe Runtime — clippy 测试域 / 产品域分口径（task-46 / D-1667）
+#
+# 规范 SSOT：.agents/skills/test/references/test-lint-area-separation.md §2.4
+#   Rust 没有「按路径换 ruleset」的能力 ⇒ 官方给的是 *-in-tests 系列开关（优先级最高）。
+#   本文件只放这四个官方开关；T-S 档的规则仍在 [lints.*] 里对全仓生效。
+#
+# 档位（三档，逐条理由见 internal/A03-xihe/evidence/2026-11-16-test-lint-separation/README.md）
+#   T-S 共享档：unsafe_code / unused_imports / unused_must_use / dead_code /
+#              correctness / suspicious —— 测试与产品同规则同阈值（测试不是盲区）
+#   T-R 放宽档：当前无生效项（runtime 未启用 pedantic / restriction 族阈值型规则）
+#   T-O 关闭档：unwrap_used / expect_used / print_stdout / print_stderr / dbg_macro
+#              —— 在测试域语义不成立（unwrap/expect 是断言，print 是失败现场诊断，
+#              dbg 是排障残留），由下面四个开关豁免
+#
+# 【实测边界，2026-11-16 本机 rustc/clippy 1.97.1 — 与 SSOT §2.4 的表述有出入，以实测为准】
+#   开关覆盖「#[test] / #[tokio::test] 函数体」这一层，**两种测试形态都覆盖**：
+#     · src 内 #[cfg(test)] mod tests  → 覆盖（证明：src/log_redact.rs:88 变异，开关在位 0 命中，
+#       移走本文件后 1 命中）
+#     · tests/*.rs 独立 crate          → 同样覆盖（证明：tests/escape_test.rs:176 变异，在位 0 命中，
+#       移走本文件后 1 命中）—— 独立 crate 不在 cfg(test) 下，但 clippy 按「测试编译的 target
+#       里的 #[test] 函数」判定，故不必在 tests/ 顶部抄 #![allow]
+#   **未覆盖的是测试文件里的辅助函数（非 #[test]）**：同一 crate 里
+#   fn helper() { dbg!(x); } ⇒ 开关在位仍然报（证明：tests/escape_test.rs:174，rc=101）。
+#   这类残留的兜底手法才是 tests/ 每文件顶部 #![allow(clippy::<lint>)];
+#   当前 runtime 的残留助手命中数见上述证据档（这是后续要不要逐文件抄 allow 的判据）。
+#
+# 【产品域零放松】
+#   以下开关**只作用于测试域**；产品代码（lib/bins 的非测试编译）不受影响：
+#   产品域的 unwrap_used=10 / expect_used=71 / print_stdout=4 / print_stderr=3 共 88 条存量
+#   仍然照报（实测：--lib --bins 不带 cfg(test) 编译）。故本卡只把 dbg_macro 提为 deny
+#   （产品域基线 0 命中，安全）；其余五条待产品存量清理后再打开，届时无需改动测试代码。
+
+# —— 测试专属开关（官方 *-in-tests 系列）——
+# unwrap/expect 在测试里就是断言手段，不是生产代码里那个「会 panic 的坏味道」
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# 测试打印是诊断面：失败现场需要 stdout/stderr
+allow-print-in-tests = true
+# dbg! 在测试里同样是排障诊断；产品域仍由 [lints.clippy] 的 dbg_macro=deny 拦
+allow-dbg-in-tests = true
