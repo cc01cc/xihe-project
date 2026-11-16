@@ -267,9 +267,18 @@ onMounted(() => {
                         </div>
                     </div>
                     <template v-if="!props.readonly">
+                        <!--
+                            只有 EDITOR / VIEWER 可以改角色（`MemberAssignableRole` 就是这两个），
+                            而 OWNER 行的 model-value 是 "OWNER" —— 若照样渲染这个 Select，它的
+                            item 列表里没有 OWNER 项 ⇒ **触发器渲染成一个空框**（b02 截图里所有者
+                            右侧那个空下拉就是它）：用户看到「一个能点/不能点的空白控件」，不知道
+                            它想让他做什么。角色本身已经由上面的 chip 呈现，所以锁定行**不再渲染
+                            选择器**，而不是渲染一个禁用却空白的控件（判定依据见卡片 item 6）。
+                        -->
                         <Select
+                            v-if="!isRoleLocked(member)"
                             :model-value="member.role"
-                            :disabled="isRoleLocked(member) || roleBusyUserIds.has(member.userId)"
+                            :disabled="roleBusyUserIds.has(member.userId)"
                             @update:model-value="
                                 (value) =>
                                     handleRoleChange(member, String(value) as MemberAssignableRole)
@@ -297,6 +306,11 @@ onMounted(() => {
                             :data-testid="`ws-members-remove-${member.userId}`"
                             :disabled="
                                 isRemovalLocked(member) || roleBusyUserIds.has(member.userId)
+                            "
+                            :title="
+                                isRemovalLocked(member)
+                                    ? t('workspace.membersLastOwner')
+                                    : undefined
                             "
                             @click="askRemove(member)"
                         >

@@ -156,16 +156,33 @@ describe("WorkspaceMembersPanel", () => {
         expect(wrapper.text()).toContain("该用户已是工作区成员");
 
         apiMock.updateWorkspaceMemberRole.mockRejectedValue(new ApiError("LAST_OWNER"));
-        await setSelectValueAt(wrapper, 1, "VIEWER");
+        // task-53 item 6：OWNER 行不再渲染角色选择器（item 列表里没有 OWNER 项 ⇒ 原先是个
+        // 空框），所以「可改角色的行」只剩 editor 那一行 ⇒ 索引从 1 变 0。
+        await setSelectValueAt(wrapper, 0, "VIEWER");
         await flushPromises();
         expect(wrapper.text()).toContain("不能移除或降级唯一所有者");
     });
 
-    it("locks owner-row role select and hides write affordances in readonly mode", async () => {
+    it("owner row has no empty role select; remove is disabled with a reason", async () => {
+        // task-53 item 6（改前是"锁定所有者行的选择器"）：OWNER 行的 model-value 是 "OWNER"，
+        // 而可选值只有 EDITOR/VIEWER ⇒ 那个 Select **没有对应 item**，触发器渲染成一个**空框**
+        // （b02-tab-成员.png 所有者右侧那个空白下拉就是它）。空框既不可用也不解释自己，
+        // 所以锁定行**不再渲染**选择器；角色由上面的 chip 呈现。
         const wrapper = await mountPanel();
-        expect(
-            wrapper.findAll('[data-slot="select-trigger"]')[0]!.attributes("disabled"),
-        ).toBeDefined();
+        const ownerRow = wrapper.findAll('[data-testid="ws-members-row"]')[0]!;
+
+        // 判据 1：所有者行**没有任何**角色选择器（不是"有但禁用"，而是根本不渲染空控件）。
+        expect(ownerRow.findAll('[data-slot="select-trigger"]')).toHaveLength(0);
+        // 判据 2：非锁定的 editor 行仍有选择器 ⇒ 上面那条不是因为整块被藏了才成立。
+        // 注意这里有**两个**触发器：加人表单里的角色选择器 + editor 行的角色选择器
+        // （所有者行的已按判据 1 消失），所以期望值是 2 而不是 1。
+        expect(wrapper.findAll('[data-slot="select-trigger"]')).toHaveLength(2);
+        expect(wrapper.findAll('[data-testid^="ws-members-role-"]')).toHaveLength(1);
+
+        // 判据 3：唯一所有者不可移除，且**给出原因**（item 7：不能是可点却无反应的淡红按钮）。
+        const removeBtn = ownerRow.get('[data-testid^="ws-members-remove-"]');
+        expect(removeBtn.attributes("disabled")).toBeDefined();
+        expect(removeBtn.attributes("title")).toBe("不能移除或降级唯一所有者");
         wrapper.unmount();
 
         const readonlyWrapper = await mountPanel(true);
