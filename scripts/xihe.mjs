@@ -94,6 +94,8 @@ import {
   runWorkspaceList,
 } from './xihe-cli/readonly.mjs';
 import { runVerify } from './xihe-cli/verify.mjs';
+// task-95 ②：驱动面（建会话 → 发消息 → 等终态 → receipt）。不进 GATES，见 drive.mjs 文件头。
+import { runDriveCommand } from './xihe-cli/drive.mjs';
 import { groupHelpText, helpText } from './xihe-cli/help.mjs';
 import { runVersion } from './xihe-cli/version.mjs';
 import { loadEnvFileChain } from './lib/env-file.mjs';
@@ -307,6 +309,24 @@ export async function runCommand(argv, dependencies = {}) {
         root: dependencies.projectRoot,
       });
       return { exitCode: verifyResult.exitCode, json, data: verifyResult.data };
+    }
+
+    if (group === 'drive') {
+      // task-95 ②: one command drives a chat to a terminal state and answers with a
+      // receipt. Single-command group like `verify`: the flags live in args.slice(1),
+      // not in `rest` (`rest` holds the token after the group, which is a flag here).
+      // NOT a gate: drive pushes the system to a state, it does not judge production
+      // code — so it is absent from GATES by design (Lead ruling ③ option b).
+      const driveResult = await runDriveCommand({
+        rest: args.slice(1),
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+        root: dependencies.projectRoot,
+        dependencies,
+      });
+      return { exitCode: driveResult.exitCode, json, data: driveResult.data };
     }
 
     if (group === 'status') {

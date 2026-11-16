@@ -14,6 +14,16 @@ import { HELP_GROUPS } from './xihe-cli/help.mjs';
 import { login, promptSecret, readResponseText } from './xihe-cli/provider.mjs';
 import { clearToken, readStore } from './xihe-cli/token-store.mjs';
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
+import { createReceipt, validateReceipt } from './lib/gate-receipt.mjs';
+import {
+  DRIVE_GATE,
+  buildDriveReceipt,
+  driveReceiptDir,
+  isDriveFakeGreen,
+  pollRunToTerminal,
+  validateDriveReceipt,
+  writeDriveReceipt,
+} from './xihe-cli/drive.mjs';
 
 const TEST_KEY = 'test-provider-secret-value';
 const TEST_PASSWORD = 'test-admin-password';
@@ -7273,4 +7283,277 @@ test('BL-414: status rejects a stray sub-command instead of dropping it silently
   assert.equal(envelope.error.code, 'INVALID_ARGUMENT');
 });
 
+// ── task-95 ②「建会话 → 发消息 → 等终态」一条命令（drive）────────────────────────────
+// 卡面判据：一条命令给回「会话 id / 事件数 / 终态 / 耗时 / 是否报错」的**机读**结果，
+// 且是 receipt 形态（task-93 同一份契约）。三条硬要求由用例钉着：
+//   ① 白名单只减「未知门」这一类，且只在 gate === 'drive-chat' 时减（别的未注册 gate 必须仍报错）；
+//   ② receipt 落盘目录与 gate 批次分离（否则 gate-receipt-read 读到未知门 ⇒ 整批判 ERROR）；
+//   ③ 0 事件 / 超时 / 未受理 ⇒ error，不许 pass（假绿判据）。
 
+// 用真 createReceipt 造（不手写对象）：字段集与 schemaVersion 跟着契约走，
+// 有人改契约时这里会跟着变，而不是留下一份自造的平行形状。
+function baseDriveReceipt({ verdict, code, events, drive = {}, reason = null }) {
+  return {
+    ...createReceipt({
+      gate: DRIVE_GATE,
+      verdict,
+      code,
+      numbers: { events, waitedMs: 12, polls: 1 },
+      command: 'node scripts/xihe.mjs drive --workspace ws-1 --content <4 chars> --timeout 5',
+      durationMs: 12,
+      executed: { events },
+      reason,
+      at: '2026-11-16T12:00:00.000Z',
+    }),
+    drive: { sessionId: 's-1', runId: 'run-1', events, ...drive },
+  };
+}
+
+test('task-95 ② drive: receipt 契约只白名单减「未知门」，落盘目录与门批次隔离', async () => {
+  // ① 正向：drive receipt 结构合法（说明共享校验器 + 白名单这条缝只差成员资格一项）。
+  const ok = baseDriveReceipt({ verdict: 'pass', code: 'OK', events: 3 });
+  assert.deepEqual(validateDriveReceipt(ok), { ok: true, problems: [] });
+
+  // ② 反过来钉住耦合：共享校验器对同一条 receipt 只报一条 problem，且它就是「未知门」那一类。
+  //    哪天 task-93 改了这句文案，这条断言会红 —— 那正是必须有人重看白名单的时刻。
+  const shared = validateReceipt(ok);
+  assert.equal(shared.ok, false);
+  assert.equal(shared.problems.length, 1, shared.problems.join('; '));
+  assert.match(shared.problems[0], /^未知门 /);
+
+  // ③ 负例（Lead 裁定② 条件 1）：塞一个**别的**未注册 gate ⇒ 必须仍然报错，
+  //    白名单不许退化成「凡未知门都放行」的后门。
+  const otherGate = validateDriveReceipt({ ...ok, gate: 'drive-other' });
+  assert.equal(otherGate.ok, false);
+  assert.ok(otherGate.problems.some((problem) => problem.startsWith('未知门 ')), otherGate.problems.join('; '));
+  assert.ok(otherGate.problems.some((problem) => problem.startsWith('gate 必须是 "drive-chat"')), otherGate.problems.join('; '));
+
+  // ④ 结构问题一个都不许被白名单吞掉。
+  const noDrive = validateDriveReceipt({ ...ok, drive: undefined });
+  assert.equal(noDrive.ok, false);
+  assert.ok(noDrive.problems.includes('drive 缺失：receipt 必须说清「哪个会话、哪个 run、多少个事件」'));
+  const badCommand = validateDriveReceipt({ ...ok, command: '  ' });
+  assert.equal(badCommand.ok, false);
+  assert.ok(badCommand.problems.some((problem) => problem.includes('command 为空')), badCommand.problems.join('; '));
+
+  // ⑤ 假绿判据（裁定③ 硬要求）：pass + 0 事件 ⇒ 假绿；fail/error 不算假绿。
+  assert.equal(isDriveFakeGreen(baseDriveReceipt({ verdict: 'pass', code: 'OK', events: 0 })), true);
+  assert.equal(isDriveFakeGreen(baseDriveReceipt({ verdict: 'pass', code: 'OK', events: 2 })), false);
+  assert.equal(isDriveFakeGreen(baseDriveReceipt({ verdict: 'fail', code: 'E_GATE_FAILED', events: 0 })), false);
+
+  // ⑥ 词表复用：不在 VERDICTS 里的状态词直接拒绝（不许自造第五态）。
+  assert.throws(() => buildDriveReceipt({
+    verdict: 'green', code: 'OK', command: 'x', durationMs: 1, executed: { events: 1 }, drive: { sessionId: 's', runId: null },
+  }), /verdict 必须是/);
+
+  // ⑦ 落盘目录分离（裁定③ 条件 2）：默认目录必须是 .tmp/xh/receipts/drive，且不在 gate 目录下。
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-receipt-'));
+  try {
+    const dir = driveReceiptDir(root);
+    assert.equal(dir, path.join(root, '.tmp', 'xh', 'receipts', 'drive'));
+    assert.equal(/[\\/]receipts[\\/]gate([\\/]|$)/.test(dir), false, 'drive receipt 不能落进 gate 批次目录');
+    const written = writeDriveReceipt({ receipt: ok, root, now: () => Date.parse('2026-11-16T12:00:00.000Z') });
+    assert.equal(path.dirname(written), dir);
+    assert.deepEqual(JSON.parse(fs.readFileSync(written, 'utf8')), ok);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('task-95 ② drive: 轮询 run 的四态（终态/超时/审批/HTTP 错误）互不混淆', async () => {
+  const makeClient = (statuses) => {
+    let index = 0;
+    return {
+      async call() {
+        const body = statuses[Math.min(index, statuses.length - 1)];
+        index += 1;
+        return body === null
+          ? { status: 500, body: null, code: 'INTERNAL_ERROR' }
+          : { status: 200, body, code: null };
+      },
+    };
+  };
+  const noSleep = async () => {};
+  let clock = 0;
+  const now = () => { clock += 10; return clock; };
+
+  const terminal = await pollRunToTerminal({
+    client: makeClient([{ status: 'running' }, { status: 'succeeded', terminalOutcome: 'success' }]),
+    runId: 'r-1', waitMs: 5_000, sleep: noSleep, now,
+  });
+  assert.equal(terminal.outcome, 'TERMINAL');
+  assert.equal(terminal.status, 'succeeded');
+  assert.equal(terminal.polls, 2);
+
+  clock = 0;
+  const awaiting = await pollRunToTerminal({
+    client: makeClient([{ status: 'awaiting_approval' }]), runId: 'r-1', waitMs: 5_000, sleep: noSleep, now,
+  });
+  assert.equal(awaiting.outcome, 'AWAITING_APPROVAL');
+
+  clock = 0;
+  const httpError = await pollRunToTerminal({
+    client: makeClient([null]), runId: 'r-1', waitMs: 5_000, sleep: noSleep, now,
+  });
+  assert.equal(httpError.outcome, 'HTTP_ERROR');
+
+  // 超时必须自己成一个 outcome（= 无法判定 ⇒ error），不能落成「终态」，更不许 pass。
+  clock = 0;
+  const timedOut = await pollRunToTerminal({
+    client: makeClient([{ status: 'running' }]), runId: 'r-1', waitMs: 200, sleep: noSleep, now,
+  });
+  assert.equal(timedOut.outcome, 'TIMEOUT');
+  assert.equal(timedOut.status, 'running');
+});
+
+test('task-95 ② drive: 假 CP 上跑通一条消息到终态；四种失败一律不判 pass', async () => {
+  const encoder = new TextEncoder();
+  const sseStream = (frames) => new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode('event: connected\ndata: {"type":"connected"}\n\n'));
+      for (const name of frames) controller.enqueue(encoder.encode(`event: ${name}\ndata: {"type":"${name}"}\n\n`));
+      // 故意不 close：真 CP 的流也活到客户端 abort（drive 的 stop() 负责关）。
+    },
+  });
+
+  const startCp = ({ events = ['agent_delta', 'agent_done'], sseStatus = 200, runStatus = 'succeeded' } = {}) => {
+    const state = { sessions: 0, deleted: 0, chats: 0, polls: 0 };
+    const fetchImpl = async (url, init = {}) => {
+      const target = new URL(url);
+      const method = init.method ?? 'GET';
+      const respond = (status, payload) => new Response(JSON.stringify(payload), {
+        status, headers: { 'Content-Type': 'application/json' },
+      });
+      if (target.pathname === '/api/v1/provider-connections') {
+        return respond(200, {
+          connections: [{
+            id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1',
+            apiTypeId: 'openai-chat-completions', apiTypeVersion: 1, manualModels: ['gpt-5'],
+          }],
+        });
+      }
+      if (target.pathname === '/api/v1/config/api-request-templates') {
+        return respond(200, {
+          templates: [{ id: 't-1', status: 'published', version: 1, apiTypeId: 'openai-chat-completions', apiTypeVersion: 1 }],
+        });
+      }
+      if (target.pathname === '/api/v1/models') return respond(200, { models: [{ id: 'gpt-5' }] });
+      if (target.pathname === '/api/v1/sessions' && method === 'POST') {
+        state.sessions += 1;
+        return respond(201, { id: 's-9' });
+      }
+      if (target.pathname === '/api/v1/sessions/s-9/branches') return respond(200, { items: [{ branchId: 'b-9' }] });
+      if (target.pathname === '/api/v1/sessions/s-9' && method === 'DELETE') {
+        state.deleted += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (target.pathname === '/api/v1/events') {
+        if (sseStatus !== 200) return respond(sseStatus, { code: 'SSE_DENIED' });
+        return new Response(sseStream(events), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (target.pathname === '/api/v1/chat' && method === 'POST') {
+        state.chats += 1;
+        return respond(202, { runId: 'r-9' });
+      }
+      if (target.pathname === '/api/v1/chat/runs/r-9') {
+        state.polls += 1;
+        return respond(200, {
+          status: runStatus,
+          terminalOutcome: runStatus === 'succeeded' ? 'success' : 'error',
+          errorCode: runStatus === 'failed' ? 'AGENT_STREAM_FAILED' : null,
+        });
+      }
+      return respond(404, { code: 'NOT_FOUND' });
+    };
+    return { fetchImpl, state };
+  };
+
+  // sleepImpl 注入「让出宏任务」的 sleep：既不写死真实 500 ms 轮询间隔，也不空转。
+  const runDrive = async ({ cp, path: outPath }) => runCommand(
+    ['drive', '--workspace', 'ws-1', '--content', 'ping', '--timeout', '5', '--out', outPath, '--json'],
+    {
+      env: { XIHE_TOKEN: 'drive-token' },
+      fetchImpl: cp.fetchImpl,
+      promptSecret: noPrompt,
+      sleepImpl: () => new Promise((resolve) => setTimeout(resolve, 0)),
+    },
+  );
+
+  const tmp = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-run-'));
+  try {
+    // ① 正常路径：pass，receipt 里有会话 id / 事件数 / 终态 / 耗时 / 无错。
+    const okCp = startCp();
+    const okRun = await runDrive({ cp: okCp, path: path.join(tmp, 'ok.json') });
+    assert.equal(okRun.exitCode, 0, JSON.stringify(okRun.error ?? okRun.data));
+    const okReceipt = okRun.data;
+    assert.equal(okReceipt.gate, DRIVE_GATE);
+    assert.equal(okReceipt.verdict, 'pass');
+    assert.equal(okReceipt.code, 'OK');
+    assert.equal(okReceipt.drive.sessionId, 's-9');
+    assert.equal(okReceipt.drive.runId, 'r-9');
+    assert.equal(okReceipt.drive.terminalStatus, 'succeeded');
+    assert.equal(okReceipt.drive.events, 2, 'connected 合成事件不计入事件数');
+    assert.deepEqual(okReceipt.drive.eventNames, ['agent_delta', 'agent_done']);
+    assert.equal(okReceipt.executed.events, 2);
+    assert.equal(typeof okReceipt.durationMs, 'number');
+    assert.equal(okReceipt.drive.sessionDeleted, true, '默认删掉本次建的会话');
+    assert.equal(okCp.state.deleted, 1);
+    assert.equal(validateDriveReceipt(okReceipt).ok, true);
+    // 落盘与输出同一份（落盘的是纯 receipt；receiptPath 只在 CLI 输出里，指向 --out）。
+    const { receiptPath, ...persisted } = okReceipt;
+    assert.equal(receiptPath, path.join(tmp, 'ok.json'));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'ok.json'), 'utf8')), persisted);
+
+    // ② 0 事件但 run 报成功 ⇒ 假绿，必须 error（不许 pass）。
+    const quietRun = await runDrive({ cp: startCp({ events: [] }), path: path.join(tmp, 'quiet.json') });
+    assert.equal(quietRun.exitCode, 1);
+    assert.equal(quietRun.data.verdict, 'error');
+    assert.equal(quietRun.data.code, 'E_FAKE_GREEN');
+    assert.equal(quietRun.data.drive.reason, 'NO_EVENTS');
+
+    // ③ SSE 订阅不上 ⇒ 没有 run 可等，error（CP 无订阅必 409 SSE_SUBSCRIPTION_REQUIRED）。
+    const noSse = startCp({ sseStatus: 409 });
+    const noSseRun = await runDrive({ cp: noSse, path: path.join(tmp, 'nosse.json') });
+    assert.equal(noSseRun.exitCode, 1);
+    assert.equal(noSseRun.data.verdict, 'error');
+    assert.equal(noSseRun.data.code, 'E_UNPARSABLE');
+    assert.match(noSseRun.data.drive.reason, /^SSE_/);
+    assert.equal(noSse.state.chats, 0, '连不上订阅就不该发消息');
+
+    // ④ 终态失败 ⇒ fail（跑通了但判据不满足），与 error 分开。
+    const failedRun = await runDrive({ cp: startCp({ runStatus: 'failed' }), path: path.join(tmp, 'failed.json') });
+    assert.equal(failedRun.exitCode, 1);
+    assert.equal(failedRun.data.verdict, 'fail');
+    assert.equal(failedRun.data.code, 'E_GATE_FAILED');
+    assert.equal(failedRun.data.drive.terminalStatus, 'failed');
+    assert.equal(failedRun.data.drive.errorCode, 'AGENT_STREAM_FAILED');
+
+    // ⑤ 复用既有会话 + --keep-session：不建会话、不删会话，但仍要出 receipt。
+    const reuseCp = startCp();
+    const reuseRun = await runCommand(
+      ['drive', '--workspace', 'ws-1', '--content', 'ping', '--session', 's-9', '--keep-session',
+        '--timeout', '5', '--out', path.join(tmp, 'reuse.json'), '--json'],
+      {
+        env: { XIHE_TOKEN: 'drive-token' },
+        fetchImpl: reuseCp.fetchImpl,
+        promptSecret: noPrompt,
+        sleepImpl: () => new Promise((resolve) => setTimeout(resolve, 0)),
+      },
+    );
+    assert.equal(reuseRun.exitCode, 0, JSON.stringify(reuseRun.error ?? reuseRun.data));
+    assert.equal(reuseRun.data.drive.created, false, '给了 --session 就不该建会话');
+    assert.equal(reuseRun.data.drive.sessionDeleted, false, '--keep-session 不许删会话');
+    assert.equal(reuseCp.state.sessions, 0);
+    assert.equal(reuseCp.state.deleted, 0);
+
+    // ⑥ 用法：缺 --content / 缺 workspace 都是 exit 2（用法错不是业务失败）。
+    const noContent = await runCommand(['drive', '--workspace', 'ws-1', '--json'], { env: { XIHE_TOKEN: 't' }, promptSecret: noPrompt });
+    assert.equal(noContent.exitCode, 2);
+    assert.equal(noContent.error.code, 'INVALID_ARGUMENT');
+    const noWorkspace = await runCommand(['drive', '--content', 'ping', '--json'], { env: { XIHE_TOKEN: 't' }, promptSecret: noPrompt });
+    assert.equal(noWorkspace.exitCode, 2);
+    assert.equal(noWorkspace.error.code, 'INVALID_ARGUMENT');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

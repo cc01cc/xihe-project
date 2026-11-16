@@ -131,6 +131,15 @@ export const HELP_GROUPS = Object.freeze([
     ]),
   },
   {
+    // task-95 ②：一条命令把「建会话 → 发消息 → 等终态」跑成机读 receipt。
+    // 它是「把系统推到某状态」的驱动面，因此**不在 GATES 里**（裁定③ 方案 b）。
+    name: 'drive',
+    summary: 'Drive one chat to a terminal state and emit a receipt',
+    commands: Object.freeze([
+      cmd('drive', '--workspace <wsId> --content <text> [--timeout <seconds>] [--session <id>] [--branch <id>] [--keep-session] [--out <file>] [--email <account>]', 'Create a session, send one message, wait for the terminal state, write a drive receipt'),
+    ]),
+  },
+  {
     name: 'events',
     summary: 'Server-sent event tailing',
     commands: Object.freeze([
