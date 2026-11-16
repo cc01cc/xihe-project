@@ -102,9 +102,27 @@ public class McpProxyController {
     private static final int GIT_LOG_MIN_LIMIT = 1;
     private static final int GIT_LOG_MAX_LIMIT = 200;
     private static final int GIT_LOG_DEFAULT_LIMIT = 20;
+    /**
+     * task-86: the tools a USER token may call directly on a workspace (the file panel surface).
+     *
+     * <p>`get_file_info` belongs here for the same reason `read_file` does: it is a read-only
+     * metadata probe, and it was already classified read-only on BOTH other axes —
+     * {@link #VIEWER_READ_ONLY_TOOLS} below admits it, and the runtime gateway
+     * (`GATEWAY_PUBLIC_TOOLS`, PLAN-290 M0.2) carries it. Only this user-facing gate omitted it,
+     * so a UI metadata read came back 403 "Tool execution is not permitted" while
+     * `list_directory` on the very same token and envelope returned 200 (measured on a real
+     * stack, ui-7 task-78 ④). The three lists disagreeing is the defect; this closes it.</p>
+     *
+     * <p>Scope is deliberately one tool. `glob`, `grep`, `watch_directory` and
+     * `extract_pdf_text` are read-only as well and are NOT added: `glob`/`grep` can walk a whole
+     * workspace tree, `watch_directory` holds a long-lived subscription, and each needs its own
+     * security adjudication rather than riding along with a metadata probe. The frozen set
+     * below is asserted exactly by `McpProxyTest`, so any future addition fails a test and has
+     * to be argued for on the card instead of slipping in.</p>
+     */
     private static final Set<String> USER_WORKSPACE_FILE_TOOLS = Set.of(
-            "list_directory", "read_file", "read_file_range", "write_file", "delete_file",
-            "move_file", "copy_file", "mkdir");
+            "list_directory", "read_file", "read_file_range", "get_file_info", "write_file",
+            "delete_file", "move_file", "copy_file", "mkdir");
     /** An invocation without a ChatRun is a direct-user MCP call. */
     private static final Set<String> AGENT_EXECUTION_CONTEXT_HEADERS = Set.of(
             "X-Chat-Run-Id", "X-Tool-Call-Id", "X-Mcp-Invocation-Id");

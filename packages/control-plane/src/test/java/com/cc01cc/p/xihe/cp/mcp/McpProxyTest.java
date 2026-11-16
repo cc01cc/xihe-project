@@ -383,6 +383,89 @@ class McpProxyTest {
                 eq("caller_tool_denied"), anyString());
     }
 
+    /**
+     * task-86 ② + ④: a USER token must get PAST the user-token gate for `get_file_info`.
+     *
+     * <p>The proof is that the grant/policy path runs at all: before the fix the call was
+     * rejected at the allow-list check (`caller_tool_denied`) and neither `allowsByGrant` nor
+     * any audit row naming `request` was ever reached. The verdict is stubbed DENY so the test
+     * stops before dispatch — reaching policy with ALLOW would really call the Runtime.
+     * {@code request} is the allow-side trace the card asks to confirm (④): it is written for
+     * every call that clears the gate, in addition to the `deny` row that follows a DENY.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCallUserBearerCanInvokeGetFileInfoPastTheUserGate() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"get_file_info\",\"arguments\":{\"path\":\"a.md\"}},\"id\":41}";
+        when(requestRewriter.rewrite(anyString(), eq(body), anyString())).thenReturn(body);
+        seedToolCache("get_file_info", "__system__");
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("get_file_info"), anyString(),
+                anyString(), any(), any(), any()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.DENY, "task-86-test-deny",
+                        PolicyLayer.BUILTIN, "manual", "denied by test"));
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), "mcp-init",
+                accessContext(TEST_WS_UUID, "u-1"));
+
+        // The call cleared the user-token gate and travelled the real user-direct path.
+        verify(policyEngine).allowsByGrant(any(PolicyContext.class), eq("get_file_info"), eq(body),
+                eq("mcp-init"), eq("u-1"), eq(TEST_WS_UUID), eq(true));
+        assertNotNull(response.getBody());
+        // ④ allow-side trace: every gated call records `request` before the verdict runs.
+        verify(auditLogger).record(eq("mcp-init"), eq("get_file_info"), eq("request"), eq(body));
+        verify(auditLogger).record(eq("mcp-init"), eq("get_file_info"), eq("deny"), anyString());
+        // The gate denial must be gone; if the allow-list loses get_file_info again this flips.
+        verify(auditLogger, never()).record(anyString(), eq("get_file_info"),
+                eq("caller_tool_denied"), anyString());
+    }
+
+    /**
+     * task-86 ③: a read-only tool that is NOT on the user-token allow-list stays denied.
+     *
+     * <p>`glob` is the sharpest witness: it is read-only and `VIEWER_READ_ONLY_TOOLS` admits it,
+     * yet it can walk a whole workspace tree, so it must not be user-direct callable. This pins
+     * that "read-only" alone is not sufficient — the user-token surface is its own decision.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsCallUserBearerCannotInvokeReadOnlyToolOutsideWorkspaceAllowList() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"glob\",\"arguments\":{\"pattern\":\"**/*.md\"}},\"id\":42}";
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), "mcp-init",
+                accessContext(TEST_WS_UUID, "u-1"));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verifyNoInteractions(policyEngine, mcpServerRepository, approvalService);
+        verify(auditLogger).record(eq("mcp-init"), eq("glob"),
+                eq("caller_tool_denied"), anyString());
+    }
+
+    /**
+     * task-86 ③ (inventory half): the user-direct workspace tool surface is a SECURITY boundary,
+     * so it is asserted as an exact set rather than "contains get_file_info".
+     *
+     * <p>RATIONALE FOR THE BRITTLENESS: this is deliberately a change-detector. `get_file_info`
+     * came to be missing here precisely because the three lists (this one, VIEWER_READ_ONLY_TOOLS,
+     * GATEWAY_PUBLIC_TOOLS) drifted apart with nobody comparing them. Adding `glob`, `grep` or
+     * `watch_directory` must cost a failing test and an explicit argument on a card, not a silent
+     * one-word diff inside an unrelated change.
+     */
+    @Test
+    void userWorkspaceFileToolAllowListIsExactlyTheReviewedSet() {
+        Object raw = ReflectionTestUtils.getField(controller, "USER_WORKSPACE_FILE_TOOLS");
+        assertNotNull(raw, "USER_WORKSPACE_FILE_TOOLS must exist");
+        assertEquals(
+                Set.of("list_directory", "read_file", "read_file_range", "get_file_info",
+                        "write_file", "delete_file", "move_file", "copy_file", "mkdir"),
+                raw,
+                "the user-token workspace tool surface changed; every addition is a separate"
+                        + " security decision (task-86) and must be argued on the card");
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void handleToolsCallAgentWithoutApplicationSessionIsRejectedBeforeGrantEvaluation() throws Exception {
