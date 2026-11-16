@@ -1609,6 +1609,46 @@ impl WorkspaceExecutionRouter {
             .await
     }
 
+    /// task-85: resolve the declared-root boundary for one MCP tool call.
+    ///
+    /// Composes the SAME two steps the HTTP file path composes: read the root
+    /// declarations from the ExecutionSpec, then let [fs::select_root_boundary]
+    /// do the selection. Parsing stays single-sourced there; this method only
+    /// puts the two calls in one place for the MCP side.
+    ///
+    /// Why this is a second composition of the same pair instead of a shared
+    /// helper: the HTTP twin (ws_file_handler::resolve_request_root,
+    /// ws_file_handler.rs:385-394) also owns the RootAccess policy and the
+    /// 400/501 Problem+JSON mapping, so its composition cannot be reused verbatim.
+    /// Do NOT deduplicate the two by hand — a THIRD composition is where a shared
+    /// helper starts to pay for itself; two is not.
+    ///
+    /// The instance is taken from the registry when it is already materialized
+    /// (the common case: the UI has been browsing this workspace), and materialized
+    /// on demand otherwise. A registry miss is NOT an error here: the very first
+    /// tool call of a session reaches this before [`Self::exec_oneshot`] has ever
+    /// run, so requiring a pre-materialized instance would turn the first
+    /// root-scoped read into a spurious "workspace not materialized".
+    ///
+    /// root_id = None returns the primary-root boundary and loads no declarations,
+    /// keeping legacy callers byte-identical to pre-0639 behavior.
+    pub async fn resolve_root_boundary(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+    ) -> Result<fs::RootBoundary> {
+        let instance = match self.registry.get(workspace_id).await {
+            Some(instance) => instance,
+            None => self.ensure(workspace_id).await?,
+        };
+        let roots = if root_id.is_none() {
+            Vec::new()
+        } else {
+            self.ensurer.declared_roots(workspace_id).await?
+        };
+        fs::select_root_boundary(&instance.workspace_path, &roots, root_id)
+    }
+
     /// PLAN-0639 M7 (VM12): declared-root-aware directory listing.
     pub async fn list_directory_in_root(
         &self,
@@ -1624,6 +1664,45 @@ impl WorkspaceExecutionRouter {
     pub async fn glob(&self, workspace_id: &str, pattern: &str, path: &str) -> Result<Value> {
         let payload = serde_json::json!({"pattern": pattern, "path": path});
         self.exec_oneshot(workspace_id, "glob", payload).await
+    }
+    /// task-85: declared-root-aware glob (mirrors glob / glob_in_root pairing).
+    pub async fn glob_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        pattern: &str,
+        path: &str,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({"pattern": pattern, "path": path});
+        self.exec_oneshot_in_root(workspace_id, boundary, "glob", payload)
+            .await
+    }
+
+    /// task-85: declared-root-aware grep.
+    pub async fn grep_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        pattern: &str,
+        path: &str,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({"pattern": pattern, "path": path});
+        self.exec_oneshot_in_root(workspace_id, boundary, "grep", payload)
+            .await
+    }
+
+    /// task-85: declared-root-aware ranged read.
+    pub async fn read_file_range_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({"path": path, "offset": offset, "limit": limit});
+        self.exec_oneshot_in_root(workspace_id, boundary, "read_file_range", payload)
+            .await
     }
 
     pub async fn grep(&self, workspace_id: &str, pattern: &str, path: &str) -> Result<Value> {

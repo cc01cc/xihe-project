@@ -221,6 +221,11 @@ static MCP_SERVICE: OnceLock<StreamableHttpService<XiheRuntime, LocalSessionMana
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadFileRequest {
     pub path: String,
+    /// task-85: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId), i.e. byte-identical to the pre-0639 wire.
+    /// Same shape as PLAN-0639 M7 VM11 (CaptureCheckpointRequest).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -232,18 +237,33 @@ pub struct WriteFileRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListDirectoryRequest {
     pub path: String,
+    /// task-85: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId), i.e. byte-identical to the pre-0639 wire.
+    /// Same shape as PLAN-0639 M7 VM11 (CaptureCheckpointRequest).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GlobRequest {
     pub pattern: String,
     pub path: String,
+    /// task-85: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId), i.e. byte-identical to the pre-0639 wire.
+    /// Same shape as PLAN-0639 M7 VM11 (CaptureCheckpointRequest).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GrepRequest {
     pub pattern: String,
     pub path: String,
+    /// task-85: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId), i.e. byte-identical to the pre-0639 wire.
+    /// Same shape as PLAN-0639 M7 VM11 (CaptureCheckpointRequest).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
 }
 
 fn deserialize_args<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -329,6 +349,11 @@ pub struct ReadCommandOutputRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetFileInfoRequest {
     pub path: String,
+    /// task-85: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId), i.e. byte-identical to the pre-0639 wire.
+    /// Same shape as PLAN-0639 M7 VM11 (CaptureCheckpointRequest).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
 }
 
 /// Background-process tool parameter: the caller-facing key is `jobId`
@@ -418,6 +443,11 @@ pub struct ReadFileRangeRequest {
     pub path: String,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
+    /// task-85: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId), i.e. byte-identical to the pre-0639 wire.
+    /// Same shape as PLAN-0639 M7 VM11 (CaptureCheckpointRequest).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -453,11 +483,32 @@ impl XiheRuntime {
         }
     }
 
+    /// task-85: resolve the root boundary for a file tool call.
+    ///
+    /// Every rootId-aware file tool goes through here so the policy lives in ONE
+    /// place: a `rootId` is resolved against the declared roots (unknown ids fail
+    /// closed inside fs::select_root_boundary), and an absent one yields the
+    /// primary-root boundary, which the executor then serves exactly as before.
+    async fn root_boundary_for(&self, root_id: Option<&str>) -> Result<fs::RootBoundary, String> {
+        self.router
+            .resolve_root_boundary(&self.ws_id, root_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     #[tool(description = "Read file content from the workspace")]
     async fn read_file(
         &self,
-        Parameters(ReadFileRequest { path }): Parameters<ReadFileRequest>,
+        Parameters(ReadFileRequest { path, root_id }): Parameters<ReadFileRequest>,
     ) -> Result<String, String> {
+        if root_id.is_some() {
+            let boundary = self.root_boundary_for(root_id.as_deref()).await?;
+            return self
+                .router
+                .read_file_in_root(&self.ws_id, &boundary, &path)
+                .await
+                .map_err(|e| e.to_string());
+        }
         self.router
             .read_file(&self.ws_id, &path)
             .await
@@ -473,16 +524,24 @@ impl XiheRuntime {
             path,
             offset,
             limit,
+            root_id,
         }): Parameters<ReadFileRangeRequest>,
     ) -> Result<Json<ReadFileRangeResult>, String> {
         // PLAN-292 T6: wire the tool to the sandbox's binary-safe
         // fs::read_file_range instead of the text-only duplicate that
         // hardcoded is_binary=false and failed on binary content.
-        let val = self
-            .router
-            .read_file_range(&self.ws_id, &path, offset, limit)
-            .await
-            .map_err(|e| e.to_string())?;
+        let val = if root_id.is_some() {
+            let boundary = self.root_boundary_for(root_id.as_deref()).await?;
+            self.router
+                .read_file_range_in_root(&self.ws_id, &boundary, &path, offset, limit)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            self.router
+                .read_file_range(&self.ws_id, &path, offset, limit)
+                .await
+                .map_err(|e| e.to_string())?
+        };
         let result: ReadFileRangeResult = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(result))
     }
@@ -501,13 +560,20 @@ impl XiheRuntime {
     #[tool(description = "List directory contents with file metadata")]
     async fn list_directory(
         &self,
-        Parameters(ListDirectoryRequest { path }): Parameters<ListDirectoryRequest>,
+        Parameters(ListDirectoryRequest { path, root_id }): Parameters<ListDirectoryRequest>,
     ) -> Result<Json<fs::DirectoryListing>, String> {
-        let val = self
-            .router
-            .list_directory(&self.ws_id, &path)
-            .await
-            .map_err(|e| e.to_string())?;
+        let val = if root_id.is_some() {
+            let boundary = self.root_boundary_for(root_id.as_deref()).await?;
+            self.router
+                .list_directory_in_root(&self.ws_id, &boundary, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            self.router
+                .list_directory(&self.ws_id, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        };
         let entries: Vec<fs::FileInfo> =
             serde_json::from_value(val.get("entries").cloned().unwrap_or(val))
                 .map_err(|e| format!("deserialize list: {e}"))?;
@@ -517,13 +583,24 @@ impl XiheRuntime {
     #[tool(description = "Match files using glob pattern")]
     async fn glob(
         &self,
-        Parameters(GlobRequest { pattern, path }): Parameters<GlobRequest>,
+        Parameters(GlobRequest {
+            pattern,
+            path,
+            root_id,
+        }): Parameters<GlobRequest>,
     ) -> Result<Json<fs::GlobResults>, String> {
-        let val = self
-            .router
-            .glob(&self.ws_id, &pattern, &path)
-            .await
-            .map_err(|e| e.to_string())?;
+        let val = if root_id.is_some() {
+            let boundary = self.root_boundary_for(root_id.as_deref()).await?;
+            self.router
+                .glob_in_root(&self.ws_id, &boundary, &pattern, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            self.router
+                .glob(&self.ws_id, &pattern, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        };
         let matches: Vec<String> =
             serde_json::from_value(val.get("matches").cloned().unwrap_or(val))
                 .map_err(|e| format!("deserialize glob: {e}"))?;
@@ -533,13 +610,24 @@ impl XiheRuntime {
     #[tool(description = "Search files using regular expression")]
     async fn grep(
         &self,
-        Parameters(GrepRequest { pattern, path }): Parameters<GrepRequest>,
+        Parameters(GrepRequest {
+            pattern,
+            path,
+            root_id,
+        }): Parameters<GrepRequest>,
     ) -> Result<Json<fs::GrepResults>, String> {
-        let val = self
-            .router
-            .grep(&self.ws_id, &pattern, &path)
-            .await
-            .map_err(|e| e.to_string())?;
+        let val = if root_id.is_some() {
+            let boundary = self.root_boundary_for(root_id.as_deref()).await?;
+            self.router
+                .grep_in_root(&self.ws_id, &boundary, &pattern, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            self.router
+                .grep(&self.ws_id, &pattern, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        };
         let matches: Vec<fs::MatchResult> =
             serde_json::from_value(val.get("matches").cloned().unwrap_or(val))
                 .map_err(|e| format!("deserialize grep: {e}"))?;
@@ -592,13 +680,20 @@ impl XiheRuntime {
     #[tool(description = "Get file or directory metadata")]
     async fn get_file_info(
         &self,
-        Parameters(GetFileInfoRequest { path }): Parameters<GetFileInfoRequest>,
+        Parameters(GetFileInfoRequest { path, root_id }): Parameters<GetFileInfoRequest>,
     ) -> Result<Json<FileInfo>, String> {
-        let val = self
-            .router
-            .get_file_info(&self.ws_id, &path)
-            .await
-            .map_err(|e| e.to_string())?;
+        let val = if root_id.is_some() {
+            let boundary = self.root_boundary_for(root_id.as_deref()).await?;
+            self.router
+                .get_file_info_in_root(&self.ws_id, &boundary, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            self.router
+                .get_file_info(&self.ws_id, &path)
+                .await
+                .map_err(|e| e.to_string())?
+        };
         let info: FileInfo = serde_json::from_value(val).map_err(|e| e.to_string())?;
         Ok(Json(info))
     }
@@ -7498,14 +7593,17 @@ mod tool_router_regression_tests {
 #[cfg(test)]
 mod job_engine_route_tests {
     use super::{
-        AppState, JobStartRequest, JobStatusRequest, job_engine_problem, job_output_projection,
-        job_snapshot_projection, workspace_job_cancel_handler, workspace_job_capabilities_handler,
+        AppState, GetFileInfoRequest, GlobRequest, GrepRequest, JobStartRequest, JobStatusRequest,
+        ListDirectoryRequest, ReadFileRangeRequest, ReadFileRequest, XiheRuntime,
+        job_engine_problem, job_output_projection, job_snapshot_projection,
+        workspace_job_cancel_handler, workspace_job_capabilities_handler,
         workspace_job_cleanup_handler, workspace_job_output_handler, workspace_job_start_handler,
         workspace_job_status_handler,
     };
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use rmcp::handler::server::wrapper::Parameters;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
@@ -7514,6 +7612,7 @@ mod job_engine_route_tests {
     use xihe_runtime::hydrate::{ExecutionSpecClient, WorkspaceEnsurer};
     use xihe_runtime::job_engine::{JobEngine, JobStatus};
     use xihe_runtime::lifecycle::Lifecycle;
+    use xihe_runtime::sandbox::SecurityProfile;
     use xihe_runtime::workspace::WorkspaceManager;
 
     struct DirectAttachApp {
@@ -7614,6 +7713,442 @@ mod job_engine_route_tests {
             dir,
             _server: server,
         }
+    }
+
+    struct RootedApp {
+        app: Arc<AppState>,
+        ws_id: String,
+        _dir: tempfile::TempDir,
+    }
+
+    /// task-85: boots a direct-attach (`windows-host`) workspace whose spec
+    /// declares MULTIPLE roots, so MCP file tools have a non-primary root to
+    /// resolve. `windows-host` is deliberate: it is the only execution mode with
+    /// a per-root read surface, so a routed non-primary read actually executes
+    /// instead of failing the mode gate.
+    async fn rooted_app(primary: &str, second: Option<&str>) -> RootedApp {
+        let dir = tempfile::tempdir().expect("workspace dir");
+        let ws_id = uuid::Uuid::new_v4().to_string();
+        let hash = "c".repeat(64);
+        let route_path = format!("/internal/v1/runtime/workspaces/{ws_id}/execution-spec");
+        let mut roots = vec![serde_json::json!({"rootId": ws_id, "hostPath": primary})];
+        if let Some(second) = second {
+            roots.push(serde_json::json!({"rootId": "root-b", "hostPath": second}));
+        }
+        let spec_body = serde_json::json!({
+            "workspaceId": ws_id,
+            "generation": 1,
+            "sandboxSpecHash": hash,
+            "sandboxSpec": {"profile": "strict"},
+            "storageBackend": "host_directory",
+            "storageRef": ws_id,
+            "storageMode": "direct_attach",
+            "hostPath": primary,
+            "executionMode": "windows-host",
+            "roots": roots,
+        });
+        let route_body = spec_body.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stub CP");
+        let address = listener.local_addr().expect("stub CP address");
+        let _server = tokio::spawn(async move {
+            let router = axum::Router::new().route(
+                &route_path,
+                axum::routing::get(move || {
+                    let body = route_body.clone();
+                    async move { axum::Json(body) }
+                }),
+            );
+            let _ = axum::serve(listener, router).await;
+        });
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let manager = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let lifecycle = Arc::new(Lifecycle::new(
+            registry.clone(),
+            Arc::new(xihe_runtime::lifecycle::WorkspaceOperationLock::new()),
+        ));
+        let ensurer = Arc::new(WorkspaceEnsurer::new(
+            lifecycle.clone(),
+            manager.clone(),
+            ExecutionSpecClient::new(&format!("http://{address}"), "test-token"),
+            None,
+        ));
+        let router = Arc::new(xihe_runtime::executor::WorkspaceExecutionRouter::new(
+            ensurer.clone(),
+            manager.clone(),
+            registry.clone(),
+            Arc::new(JobEngine::new(
+                "test-boot",
+                std::env::temp_dir().join("xihe-runtime-rooted-job-output"),
+            )),
+        ));
+        let app = Arc::new(AppState {
+            registry: registry.clone(),
+            manager: manager.clone(),
+            device_id: "test-device".to_string(),
+            boot_id: "test-boot".to_string(),
+            workspace_ensurer: ensurer.clone(),
+            router: router.clone(),
+            job_engine: Arc::new(JobEngine::new("test-boot", dir.path().join("job-output"))),
+            mcp_sessions: Arc::new(
+                xihe_runtime::mcp_session::McpSessionManager::new()
+                    .expect("session manager for tests"),
+            ),
+            sandbox_backend: Arc::new(xihe_runtime::backend::DockerBackend::new(
+                ensurer.clone(),
+                manager.clone(),
+                router.clone(),
+            )),
+            lifecycle,
+            checkpoints: Arc::new(xihe_runtime::checkpoint_api::CheckpointService::new(
+                dir.path(),
+            )),
+            ready: Arc::new(AtomicBool::new(true)),
+            imports: Arc::new(crate::import_job::ImportManager::new()),
+            workspace_event_watchers: crate::workspace_events::WorkspaceEventWatchers::default(),
+        });
+        RootedApp {
+            app,
+            ws_id,
+            _dir: dir,
+        }
+    }
+
+    // ---- task-85: MCP file tools must honour rootId (D39-5 boundary) ----
+
+    /// State ①: no rootId → primary root, byte-identical to the pre-0639 wire.
+    #[tokio::test]
+    async fn test_mcp_list_directory_without_root_id_reads_primary_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("primary-only.txt"), "p").unwrap();
+        std::fs::write(second.path().join("second-only.txt"), "s").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let listing = tool
+            .list_directory(Parameters(ListDirectoryRequest {
+                path: ".".into(),
+                root_id: None,
+            }))
+            .await
+            .expect("primary listing must succeed");
+        let names: Vec<&str> = listing.0.entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"primary-only.txt"), "names = {names:?}");
+        assert!(
+            !names.contains(&"second-only.txt"),
+            "no rootId means primary: {names:?}"
+        );
+    }
+
+    /// State ②: an UNKNOWN rootId must FAIL, never degrade to the primary root.
+    /// This is the regression that made the ui-10 e2e red: silently serving the
+    /// primary root under a second-root tab is a boundary lie (D39-5).
+    #[tokio::test]
+    async fn test_mcp_list_directory_unknown_root_id_fails_closed() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let rooted = rooted_app(&primary.path().to_string_lossy(), None).await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        // match, not expect_err: the Ok side (Json<DirectoryListing>) has no Debug,
+        // and adding a production derive purely for a test assertion would make the
+        // production type fit the test instead of the other way around.
+        match tool
+            .list_directory(Parameters(ListDirectoryRequest {
+                path: ".".into(),
+                root_id: Some("root-does-not-exist".into()),
+            }))
+            .await
+        {
+            Err(error) => assert!(
+                !error.is_empty(),
+                "the failure must carry a message, got an empty one"
+            ),
+            Ok(_) => panic!("unknown rootId must fail closed, not fall back to the primary root"),
+        }
+    }
+
+    /// State ③: a declared non-primary root is actually READ from its own
+    /// host path — the file that only exists under root B must be listed.
+    #[tokio::test]
+    async fn test_mcp_list_directory_known_second_root_reads_that_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("primary-only.txt"), "p").unwrap();
+        std::fs::write(second.path().join("second-only.txt"), "s").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let listing = tool
+            .list_directory(Parameters(ListDirectoryRequest {
+                path: ".".into(),
+                root_id: Some("root-b".into()),
+            }))
+            .await
+            .expect("root-b must be served, not ignored");
+        let names: Vec<&str> = listing.0.entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(
+            names.contains(&"second-only.txt"),
+            "root-b contents must be listed for rootId=root-b: {names:?}"
+        );
+        assert!(
+            !names.contains(&"primary-only.txt"),
+            "root-b must not be served from the primary root (D39-5): {names:?}"
+        );
+    }
+
+    /// The read twin of state ③, over a file tool rather than a listing tool.
+    #[tokio::test]
+    async fn test_mcp_read_file_known_second_root_reads_that_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("shared.txt"), "from-primary").unwrap();
+        std::fs::write(second.path().join("shared.txt"), "from-second").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let content = tool
+            .read_file(Parameters(ReadFileRequest {
+                path: "shared.txt".into(),
+                root_id: Some("root-b".into()),
+            }))
+            .await
+            .expect("root-b read must succeed");
+        assert_eq!(
+            content, "from-second",
+            "rootId=root-b must read root B, not the primary root"
+        );
+    }
+
+    /// Guard: every rootId-aware wire struct must actually expose the field.
+    /// A tool added later without it would silently drop the caller root hint,
+    /// which is exactly the defect task-85 fixed.
+    #[test]
+    fn test_every_file_tool_request_accepts_root_id() {
+        let samples = [serde_json::json!({"path": "p", "rootId": "r"})];
+        let parsed: ReadFileRequest = serde_json::from_value(samples[0].clone()).unwrap();
+        assert_eq!(
+            parsed.root_id.as_deref(),
+            Some("r"),
+            "read_file must accept rootId"
+        );
+        let parsed: ListDirectoryRequest = serde_json::from_value(samples[0].clone()).unwrap();
+        assert_eq!(
+            parsed.root_id.as_deref(),
+            Some("r"),
+            "list_directory must accept rootId"
+        );
+        let parsed: GetFileInfoRequest = serde_json::from_value(samples[0].clone()).unwrap();
+        assert_eq!(
+            parsed.root_id.as_deref(),
+            Some("r"),
+            "get_file_info must accept rootId"
+        );
+        let with_pattern = serde_json::json!({"pattern": "x", "path": "p", "rootId": "r"});
+        let parsed: GlobRequest = serde_json::from_value(with_pattern.clone()).unwrap();
+        assert_eq!(
+            parsed.root_id.as_deref(),
+            Some("r"),
+            "glob must accept rootId"
+        );
+        let parsed: GrepRequest = serde_json::from_value(with_pattern.clone()).unwrap();
+        assert_eq!(
+            parsed.root_id.as_deref(),
+            Some("r"),
+            "grep must accept rootId"
+        );
+        let ranged = serde_json::json!({"path": "p", "offset": 0, "limit": 1, "rootId": "r"});
+        let parsed: ReadFileRangeRequest = serde_json::from_value(ranged).unwrap();
+        assert_eq!(
+            parsed.root_id.as_deref(),
+            Some("r"),
+            "read_file_range must accept rootId"
+        );
+    }
+
+    /// Backward compatibility: the field is optional on the wire.
+    #[test]
+    fn test_file_tool_requests_still_parse_without_root_id() {
+        let parsed: ListDirectoryRequest = serde_json::from_value(serde_json::json!({"path": "p"}))
+            .expect("a legacy caller sends no rootId and must keep working");
+        assert!(parsed.root_id.is_none());
+        let parsed: ReadFileRangeRequest =
+            serde_json::from_value(serde_json::json!({"path": "p", "offset": null, "limit": null}))
+                .expect("legacy ranged read");
+        assert!(parsed.root_id.is_none());
+    }
+
+    /// Behavioral coverage for the remaining rootId-aware tools. Each asserts the
+    /// ROOT-SELECTION effect (root B content, never the primary root), so a future
+    /// edit that drops the rootId branch in that specific tool turns that tool's
+    /// own test red.
+    #[tokio::test]
+    async fn test_mcp_get_file_info_known_second_root_reads_that_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("only-primary.txt"), "p").unwrap();
+        std::fs::write(second.path().join("only-second.txt"), "s").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let info = tool
+            .get_file_info(Parameters(GetFileInfoRequest {
+                path: "only-second.txt".into(),
+                root_id: Some("root-b".into()),
+            }))
+            .await
+            .expect("root-b stat must succeed");
+        assert_eq!(info.0.name, "only-second.txt");
+        assert!(!info.0.is_dir);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_glob_known_second_root_matches_that_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("alpha-primary.md"), "p").unwrap();
+        std::fs::write(second.path().join("beta-second.md"), "s").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let results = tool
+            .glob(Parameters(GlobRequest {
+                pattern: "**/*.md".into(),
+                path: ".".into(),
+                root_id: Some("root-b".into()),
+            }))
+            .await
+            .expect("root-b glob must succeed");
+        let joined = results.0.matches.join(",");
+        assert!(
+            joined.contains("beta-second.md"),
+            "root-b glob must see root B: {joined}"
+        );
+        assert!(
+            !joined.contains("alpha-primary.md"),
+            "root-b glob must not be served from the primary root: {joined}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_grep_known_second_root_searches_that_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("p.txt"), "needle-in-primary").unwrap();
+        std::fs::write(second.path().join("s.txt"), "needle-in-second").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let results = tool
+            .grep(Parameters(GrepRequest {
+                pattern: "needle-in-second".into(),
+                path: ".".into(),
+                root_id: Some("root-b".into()),
+            }))
+            .await
+            .expect("root-b grep must succeed");
+        assert!(
+            results
+                .0
+                .matches
+                .iter()
+                .any(|m| m.content.contains("needle-in-second")),
+            "root-b grep must search root B: {:?}",
+            results.0.matches
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_read_file_range_known_second_root_reads_that_root() {
+        let primary = tempfile::tempdir().expect("primary root");
+        let second = tempfile::tempdir().expect("second root");
+        std::fs::write(primary.path().join("ranged.txt"), "primary-line\n").unwrap();
+        std::fs::write(second.path().join("ranged.txt"), "second-line\n").unwrap();
+        let rooted = rooted_app(
+            &primary.path().to_string_lossy(),
+            Some(&second.path().to_string_lossy()),
+        )
+        .await;
+        let tool = XiheRuntime::new(
+            &rooted.ws_id,
+            "",
+            SecurityProfile::Strict,
+            rooted.app.router.clone(),
+        );
+        let read = tool
+            .read_file_range(Parameters(ReadFileRangeRequest {
+                path: "ranged.txt".into(),
+                offset: None,
+                limit: None,
+                root_id: Some("root-b".into()),
+            }))
+            .await
+            .expect("root-b ranged read must succeed");
+        // read_file_range renders line numbers ("1 | second-line"), so assert on
+        // the selected root's CONTENT rather than on the exact wire rendering.
+        assert!(
+            read.0.content.contains("second-line"),
+            "rootId=root-b must read root B for ranged reads too: {:?}",
+            read.0.content
+        );
+        assert!(
+            !read.0.content.contains("primary-line"),
+            "ranged read must not be served from the primary root: {:?}",
+            read.0.content
+        );
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
