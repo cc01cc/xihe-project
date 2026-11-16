@@ -354,6 +354,39 @@ async function stubWorkspace(page: Page): Promise<void> {
             body: JSON.stringify({ servers: [], servers_json: "[]" }),
         });
     });
+    // task-39（2026-11-17）：D-1432/task-41 把 MCP 的 WORKSPACE 层搬回设置页后，
+    // `WorkspaceMcpPanel` 挂载即读两条新端点（composables/api.ts getStdioServers /
+    // getMcpServerStatus），旧 mcp-config 桩覆盖不到 ⇒ 两 404 被公共门禁判红
+    // （vendor Tabs 方向键用例的业务断言本身全过；task-37 基线同红，见
+    // one/internal/A03-xihe/evidence/2026-11-17-task83-timeout-triage/README.md §5）。
+    // 标准空集形状照 full-ui-acceptance.spec.ts:460-473（task-141）：
+    // stdio = {generation, hash, servers}、status = {servers, count}；不放宽 console/404 门。
+    await page.route(`**/api/v1/workspaces/${WS}/stdio-servers`, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ generation: 1, hash: "e2e-empty", servers: {} }),
+        }),
+    );
+    await page.route(`**/api/v1/workspaces/${WS}/mcp/servers`, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ servers: [], count: 0 }),
+        }),
+    );
+    // task-39 追加（同卡实测）：ui-3 lane 的 task-36 WIP（FileTreePanel.vue +
+    // useWorkspaceGitReadState.ts，未提交）让文件树挂载即读 GET /workspaces/{id}/git-status，
+    // 本 spec 的 workbench/environment 页因此多出一条 404（dark 背景与对比度扫描两用例被门禁判红）。
+    // 空态信封照 types/index.ts WorkspaceGitStatus（isRepository:false + entries:[]，
+    // normalizeWorkspaceGitStatus 原样接受）；非 git 工作区是合法状态，不放宽门禁。
+    await page.route(`**/api/v1/workspaces/${WS}/git-status`, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ isRepository: false, entries: [] }),
+        }),
+    );
 }
 
 const CONN_SEL = '[data-testid="workspace-status-connection"]';
