@@ -178,4 +178,74 @@ describe("logger telemetry (PLAN-0522)", () => {
         expect(third).toMatch(/^[A-Za-z0-9_-]{22,64}$/);
         expect(third).not.toBe(second);
     });
+
+    // task-25（原 task-148 / 用户裁定 P-18）：错误遥测去重 + 每会话上限。
+    // 旧实现 recordEvent 只做 `slice(-MAX_BATCH_QUEUE)`（保留最新 200、丢最旧）⇒ 错误风暴下
+    // 首因（第一条）被挤掉。以下三条用例分别钉：①去重保首因 ②会话上限保留最早前 N ③计数可见。
+    it("folds repeated (eventType,errorCode) into the first and reports deduped (task-25 / P-18)", async () => {
+        const fetchSpy = okFetch();
+        vi.stubGlobal("fetch", fetchSpy);
+        const { logger } = await import("../logger");
+
+        // 错误风暴：同 (eventType,errorCode) 连续 500 次，其间夹 1 条不同错误。
+        for (let i = 0; i < 500; i += 1) {
+            logger.recordEvent("ui.unhandled_error", "error", "TypeError");
+        }
+        logger.recordEvent("ui.unhandled_error", "error", "RangeError");
+        await logger.flush();
+
+        const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+        const codes: string[] = body.entries.map(
+            (entry: { errorCode?: string }) => entry.errorCode,
+        );
+        // 首因不被挤掉：夹在风暴里的那条不同错误必须在批次里。
+        expect(codes).toContain("RangeError");
+        // 同类重复折叠为 1。
+        expect(codes.filter((code) => code === "TypeError")).toHaveLength(1);
+        // 折叠计数随批上报（挂到队尾条目的 data 维度上）。
+        const folded = body.entries.find(
+            (entry: { data?: { deduped?: number } }) => entry.data?.deduped !== undefined,
+        );
+        expect(folded?.data).toMatchObject({ deduped: 499, dropped: 0 });
+    });
+
+    it("caps the session at the earliest N and reports dropped (task-25 / P-18)", async () => {
+        const fetchSpy = okFetch();
+        vi.stubGlobal("fetch", fetchSpy);
+        const { logger } = await import("../logger");
+
+        const total = 60;
+        for (let i = 0; i < total; i += 1) {
+            logger.recordEvent("ui.unhandled_error", "error", `E${i}`);
+        }
+        await logger.flush();
+
+        const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+        // 会话上限 = 50：保留最早前 50 条（E0..E49），不保最新。
+        expect(body.entries).toHaveLength(50);
+        expect(body.entries.map((entry: { errorCode?: string }) => entry.errorCode)).toEqual(
+            Array.from({ length: 50 }, (_, index) => `E${index}`),
+        );
+        const folded = body.entries.find(
+            (entry: { data?: { dropped?: number } }) => entry.data?.dropped !== undefined,
+        );
+        expect(folded?.data).toMatchObject({ deduped: 0, dropped: 10 });
+    });
+
+    it("surfaces folded counts on one logger.debug line (task-25 / P-18)", async () => {
+        const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+        const fetchSpy = okFetch();
+        vi.stubGlobal("fetch", fetchSpy);
+        const { logger } = await import("../logger");
+
+        for (let i = 0; i < 3; i += 1) {
+            logger.recordEvent("ui.unhandled_error", "error", "TypeError");
+        }
+        await logger.flush();
+
+        const foldedLine = debugSpy.mock.calls.find((call) => call[1] === "telemetry folded");
+        expect(foldedLine).toBeTruthy();
+        expect(foldedLine?.[2]).toMatchObject({ deduped: 2, dropped: 0 });
+        debugSpy.mockRestore();
+    });
 });

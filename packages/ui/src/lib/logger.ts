@@ -2,7 +2,8 @@ import Dexie, { type Table } from "dexie";
 
 const MAX_BATCH = 50,
     MAX_BATCH_BYTES = 64 * 1024,
-    MAX_BATCH_QUEUE = MAX_BATCH * 4,
+    // 每会话上限（task-25 / P-18）：保留最早前 N 条，超出丢最新并计入 dropped（与旧 slice(-N) 丢最旧相反）。
+    MAX_SESSION_EVENTS = 50,
     FLUSH_INTERVAL = 5000,
     TELEMETRY_ENDPOINT = "/api/v1/telemetry/logs";
 
@@ -257,6 +258,12 @@ class Logger {
     private batchTimer: ReturnType<typeof setTimeout> | null = null;
     private rateLimitedUntil = 0;
     private inFlight = false;
+    /** 本会话已上报过的 (eventType,errorCode)；anonSessionId 轮换（登录 / 登出）时清空 ⇒ 去重是每会话语义。 */
+    private seenKeys = new Set<string>();
+    private seenSessionId: string | null = null;
+    /** 自上次 flush 起折叠掉的重复数 / 因会话上限丢弃数：随批上报并打一行 debug，绝不静默。 */
+    private deduped = 0;
+    private dropped = 0;
 
     constructor() {
         this.startFlushTimer();
@@ -329,16 +336,14 @@ class Logger {
      */
     async flush(): Promise<void> {
         if (this.batch.length === 0 || this.inFlight) return;
-        if (this.rateLimitedUntil > Date.now()) {
-            if (this.batch.length > MAX_BATCH_QUEUE)
-                this.batch = this.batch.slice(-MAX_BATCH_QUEUE);
-            return;
-        }
+        // 限流窗口内不发。队列已由 enqueue 按会话上限封顶，无需再截断。
+        if (this.rateLimitedUntil > Date.now()) return;
 
         this.inFlight = true;
         try {
-            const entries = this.batch.splice(0, MAX_BATCH),
-                deviceId = (this.context.deviceId as string) || "unknown",
+            const entries = this.batch.splice(0, MAX_BATCH);
+            this.reportFoldCounts(entries);
+            const deviceId = (this.context.deviceId as string) || "unknown",
                 batchId = randomId(),
                 serialize = (list: TelemetryEntry[]) =>
                     JSON.stringify({ batchId, deviceId, entries: list }),
@@ -404,19 +409,72 @@ class Logger {
     }
 
     /**
+     * 入队 + 每会话上限（task-25 / P-18）：同 (eventType,errorCode) 只留首次上下文（timestamp /
+     * eventId 取首次，后续折叠计入 deduped）；超出 MAX_SESSION_EVENTS 时丢弃**最新**、保留最早前
+     * N 条（与旧 slice(-N) 丢最旧相反 ⇒ 首因不会再被错误风暴挤掉），并计入 dropped。
+     */
+    private enqueue(entry: TelemetryEntry, dedupKey?: string): void {
+        if (dedupKey !== undefined && this.seenKeys.has(dedupKey)) {
+            this.deduped += 1;
+            return;
+        }
+        this.batch.push(entry);
+        if (this.batch.length > MAX_SESSION_EVENTS) {
+            this.batch.pop();
+            this.dropped += 1;
+            return;
+        }
+        if (dedupKey !== undefined) this.seenKeys.add(dedupKey);
+    }
+
+    /**
+     * 折叠计数可见（task-25 / P-18，不许静默丢弃）：打一行 debug（本地可见）+ 随批上报 ——
+     * 挂到**队尾**条目的 data 维度上（前端 64 KiB 截断只丢队首，队尾的计数不会被截走）。
+     * 计数每批归零：每条链路只随它自己那批报一次。
+     */
+    private reportFoldCounts(entries: TelemetryEntry[]): void {
+        const deduped = this.deduped,
+            dropped = this.dropped;
+        this.deduped = 0;
+        this.dropped = 0;
+        if (deduped === 0 && dropped === 0) return;
+        const ts = new Date().toLocaleTimeString("zh-CN");
+        // 一行本地可见（logger 实现层允许落 console）；不与本批混淆 ⇒ 不推入 telemetry batch。
+        // oxlint-disable-next-line no-console
+        console.debug(`[${ts}] [DEBUG]`, "telemetry folded", { deduped, dropped });
+        const target = entries[entries.length - 1];
+        if (!target) return;
+        const base =
+            target.data && typeof target.data === "object" && !Array.isArray(target.data)
+                ? (target.data as Record<string, unknown>)
+                : {};
+        target.data = { ...base, deduped, dropped };
+    }
+
+    /**
      * Records an explicitly-typed structured event (closed enum). The eventId
      * is assigned here and reused for every retry/re-batch of the same event.
      */
     recordEvent(eventType: TelemetryEventType, level: LogLevel, errorCode: string): void {
-        this.batch.push({
-            timestamp: Date.now(),
-            level,
-            eventId: randomId(),
-            eventType,
-            errorCode: errorCode.slice(0, 128),
-            ...buildTelemetryDimensions(),
-        });
-        if (this.batch.length > MAX_BATCH_QUEUE) this.batch = this.batch.slice(-MAX_BATCH_QUEUE);
+        const dimensions = buildTelemetryDimensions(),
+            code = errorCode.slice(0, 128),
+            sessionId = dimensions.anonSessionId ?? null;
+        // 会话切换（登录轮换 / 登出清空 anonSessionId）后重开一轮：去重与上限都是"每会话"语义。
+        if (sessionId !== this.seenSessionId) {
+            this.seenSessionId = sessionId;
+            this.seenKeys.clear();
+        }
+        this.enqueue(
+            {
+                timestamp: Date.now(),
+                level,
+                eventId: randomId(),
+                eventType,
+                errorCode: code,
+                ...dimensions,
+            },
+            `${eventType}|${code}`,
+        );
     }
 
     private emit(level: LogLevel, message: string, data?: unknown) {
@@ -452,7 +510,7 @@ class Logger {
         // Telemetry batch: info+ in prod, debug+ in dev
         const shouldTelemetry = import.meta.env.DEV ? true : level !== "debug";
         if (shouldTelemetry) {
-            this.batch.push({
+            this.enqueue({
                 timestamp: entry.timestamp,
                 level,
                 message: this.sanitizeMessage(message),
