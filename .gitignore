@@ -118,3 +118,5 @@ packages/ui/usage-line-*.png
 /Temp/
 # PLAN-0702 运行时截图（正式副本在 one/plans/archive/PLAN-0702-XH-ux-dark-safearea/evidence/screenshots）
 packages/ui/e2e/evidence/0702/
+# 门禁 receipt 探针的运行产物（样本已归档到 one/internal/A03-xihe/evidence/2026-11-16-gate-receipt-sample/）
+.tmp-probe/
