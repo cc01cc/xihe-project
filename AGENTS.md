@@ -18,6 +18,7 @@
 ## Setup
 
 - 工具链与依赖安装、前置条件 → **DEV-002 §2「环境与安装」**（`mise install` / `mise run setup`）。
+- **长驻服务（cp/agent/runtime/ui/watch）只能走 `dev-stack.mjs` 受管起停**：`dev-stack start --stack <n>` 把 stdout/stderr 重定向进 `.xihe-stacks/<n>/logs/*.{out,err}.log` 并 detach 进程树，`status`/`stop` 才有据可依。直调 `node scripts/stack-run.mjs <target>` 只适合**终端前台**调试——它按设计不自己开日志文件，且进程随调用方退出被回收；被一次性调用方（后台 job／agent 工具调用／`| tee`）经管道捕获时会打 WARNING 点名正确命令，症状是「日志停在启动前 + pid 记录在而进程已死 + 租约仍 `started`」（task-64 / D-1715）。
 - 日常起栈 `dev:host`、并行栈 `dev:stack --stack <n>`、`--stack` 两义陷阱，以及 `dev:host` 之后 `orphan` + `lease-pid-dead` 属正常（`dev-stack.mjs acquire --stack <n>` 认领即 `healthy`）→ **DEV-002 §3「模式 A：dev:host」** 与 **§4.10「`dev-stack` 状态与租约契约」**。
 - **docker 冻结（产品面 / 测试面 / 默认值三面一起冻）**：工作区 docker 后端不可用，默认 `direct_attach`，`managed_import` ⇒ 409、既有 docker 工作区 ⇒ 503 且 fail-closed 不回退宿主；**禁止误启** `dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` → **DEV-018「docker 后端冻结范围」**。
 - Runtime target 缓存：`XH_CARGO_TARGET_ROOT` 定家族位置、worktree 保持独立 target、本机值在 gitignored `mise.local.toml` → **DEV-002 §6「Rust 构建缓存策略」**。

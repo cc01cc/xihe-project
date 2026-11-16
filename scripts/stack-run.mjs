@@ -14,6 +14,7 @@
  * deriveStack()（PLAN-0612：端口事实源归 A03，不再向上查找 one 工作区）。
  */
 import { spawn, spawnSync } from "node:child_process";
+import { fstatSync } from "node:fs";
 import net from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -682,6 +683,57 @@ if (cpBuildCommitState !== null) {
       : "injected";
   console.error(
     `[stack] ${BUILD_COMMIT_ENV} ${note} — ${describeBuildCommit(cpBuildCommitState)}`,
+  );
+}
+
+// task-64 (D-1715): a service started from a **captured** pipe dies with its caller.
+//
+// This script is a first-class entry — the `dev:host:start:*` mise tasks and PLAN-0656 R5's
+// "any direct `stack-run <service>`" both run it — and by design it never opens a log file:
+// the destination is the CALLER's stdout/stderr (see `launch()`: `stdio: "inherit"` unless a
+// guard demands pipes). `dev-stack.mjs` is therefore what owns the log files: it redirects our
+// stdout/stderr into `.xihe-stacks/<n>/logs/*.{out,err}.log` *before* spawning us (Windows:
+// `cmd 1> file 2> file`; POSIX: `openSync` fds) and detaches the whole tree.
+//
+// The trap this warns about: a one-shot caller that captures us through a **pipe** (a background
+// job, an agent tool call, `| tee`) gets neither — nothing lands on disk, and the tree is reaped
+// the moment the caller returns, so the service exits SILENTLY while the pid record / lease still
+// claim it is up (ui-5 hit exactly this: log frozen *before* the start line, agent pid recorded
+// but dead, lease still `phase: started`).
+// We cannot detect "my caller will reap me"; "my output is captured by a pipe" IS measurable and
+// is precisely the shape that cannot survive — so say it out loud instead of starting a doomed
+// process quietly. Warn only (never refuse): a pipe is not proof of a bad caller, and refusing
+// here would break `mise run dev:host:start:*` under any harness that captures task output.
+const SERVING_TARGETS = ["cp", "runtime", "agent", "ui", "watch"];
+
+function outputIsCaptured() {
+  // A terminal (foreground debugging) and a regular file (dev-stack's redirection) both keep us
+  // observable; only a pipe/socket means "another process owns this tree and is reading my output".
+  if (process.stdout.isTTY || process.stderr.isTTY) return false;
+  try {
+    return !(fstatSync(1).isFile() || fstatSync(2).isFile());
+  } catch {
+    // fstat unavailable (fd closed/replaced) — stay silent rather than invent a warning.
+    return false;
+  }
+}
+
+if (SERVING_TARGETS.includes(target) && outputIsCaptured()) {
+  console.error(
+    [
+      `[stack] WARNING: ${target} is a long-running service, but this process was NOT started in a`,
+      "        way that can keep it alive: stdout/stderr are captured by a pipe (neither a terminal",
+      "        nor a log file).",
+      "        Consequence: the caller owns this process tree. When it returns (job/command ends),",
+      "        the tree is reaped and the service exits SILENTLY — no log file on disk, while the",
+      "        pid record / lease may still report it as up.",
+      "        Do this instead (managed: logs land in .xihe-stacks/<n>/logs/, status/stop work):",
+      "          node scripts/dev-stack.mjs start --stack <n>",
+      "          mise run dev:stack -- start",
+      "        Foreground debugging in a terminal is fine — a TTY is not captured.",
+      "        After-the-fact check: node scripts/dev-stack.mjs status --all --json",
+      "        (task-64 / D-1715; see AGENTS.md \"长驻服务只能走 dev-stack\")",
+    ].join("\n"),
   );
 }
 
