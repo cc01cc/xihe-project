@@ -26,7 +26,10 @@ import {
     type WorkspaceStreamScenario,
 } from "./context-events";
 import { fulfillWorkspaceDetail } from "./workspace-fixture";
-import { mockWorkspaceJobs } from "../../../src/preview/mock/data/workspaceEnvironment";
+import {
+    mockWorkspaceEnvironment,
+    mockWorkspaceJobs,
+} from "../../../src/preview/mock/data/workspaceEnvironment";
 import {
     CHAT_RUN_NOT_FOUND,
     chatRunCancelProjection,
@@ -1423,6 +1426,22 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             status: 200,
             contentType: "application/json",
             body: JSON.stringify(mockWorkspaceJobs(workspaceId)),
+        });
+    });
+
+    // ②e 工作区环境投影（task-149 B）：`GET /api/v1/workspaces/{id}/environment` → `WorkspaceEnvironment`。
+    //     `composables/api.ts:5086` 的 `getWorkspaceEnvironment` 会发这条（环境页 / 状态栏壳），
+    //     此前没有桩 ⇒ 落 404 兜底 warn（实测 task264-s2a-statusbar-connection.spec.ts 每次命中）。
+    //     形状复用预览 mock 的同一工厂（`src/preview/mock/data/workspaceEnvironment.ts:149`
+    //     `mockWorkspaceEnvironment`）：与上面 `/jobs` 同源，**不手抄一份**，否则两处形状必然漂移。
+    await page.route("**/api/v1/workspaces/*/environment", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        const workspaceId = url.pathname.split("/")[4] ?? MOCK_WORKSPACE_ID;
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(mockWorkspaceEnvironment(workspaceId)),
         });
     });
 
