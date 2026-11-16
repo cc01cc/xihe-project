@@ -22,7 +22,7 @@ Session/ChatRun、Workspace Job、MCP invocation、Agent 可见状态及 UI 交�
 在本目录执行聚焦验证：
 
 ```bash
-pnpm run test:unit -- src/features/workspace/chat/__tests__/ChatPanel.spec.ts
+pnpm run test:unit src/features/workspace/chat/__tests__/ChatPanel.spec.ts
 pnpm run typecheck
 pnpm run typecheck:e2e
 pnpm run lint
@@ -35,7 +35,7 @@ pnpm run build
 
 `pnpm run lint` = `oxfmt --check . && oxlint .`。**判据：oxfmt 全绿 + oxlint `0 error`（基线就是 0，不设基线）**；warnings 允许但必须看完整输出（`[实测]` **11808** 条 / oxlint **1.83.0** / **1234** 个文件 —— `pnpm exec oxlint .` 2026-11-13 21:57；**这是基线不是门**（门的判据只有 `0 error`，warnings 不设阈值、不因涨落判红）；该数随文件增删与规则集变化漂移，引用前先现跑一次 —— 模糊的"约 N"永远不会被判过期，故一律写带命令与时刻的实测值）。Oxlint 启用 `typescript`、`import`、`unicorn`、`oxc`；Vitest 插件作用于 `src/**/__tests__/**`、`src/**/*.spec.ts` 和 `src/**/*.test.ts`，并阻断 `require-mock-type-parameters` 与 `require-to-throw-message`，其他 Vitest 规则保持关闭。Vue 插件和 template lint 不属于当前门禁，TypeScript/SFC 类型检查由 `pnpm run typecheck`（`vue-tsc --noEmit`）负责。Vue template lint 为**已知限制**（现状仅 `<script>` 被 lint）：等待 oxlint 原生支持，跟踪 oxc language-plugins umbrella #23207 / Phase-1 #24597 与 [oxc compatibility 页](https://oxc.rs/compatibility.html)；复查触发条件为 oxlint 版本升级或出现真实 template 结构缺陷（`v-for` 缺 key、重复属性等）；裁定见 PLAN-0479 决策 #4。Oxfmt 版本固定为 0.68.0；`.oxfmtrc.jsonc` 显式设置 `tabWidth: 4`、`printWidth: 100`，忽略 Markdown 与 `AGENTS.md`，`proseWrap` 保持未设置以维持原有零漂移行为。全包格式已在 formatter 波次全量应用（419 个历史漂移文件清零），新增/修改文件必须保持已格式化，禁止整包随意 `--write` 后不经 diff 复核入库。
 
-`test:unit -- ...` 后接实际测试文件或 Vitest 参数。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。
+`pnpm run test:unit <spec…>` —— 脚本名后**直接**跟 spec 路径与/或 Vitest 参数（`-t`、`--reporter=dot` 实测透传）。**禁止写 `--`**（`task-25`，2026-11-16 实测 pnpm **10.34.5** / vitest **4.1.11**）：pnpm 把 `--` 原样拼进命令 ⇒ 实际执行 `vitest run "--" <spec>`，而 vitest 收到裸 `--` 会**丢掉过滤条件跑全量**且**零告警**（`timeout 25` 未跑完；25 s 内已跑到 `src/i18n/__tests__/terminology.spec.ts`、`chat/__tests__/ApprovalModal.spec.ts`、`monitor/__tests__/SessionMonitorPanel.spec.ts` 等 **11 个**无关 spec）。单 spec 正确形态实测 **1 file / 5 tests / 2.58 s**；等价写法 `pnpm exec vitest run <spec>`（3.17 s）。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。**读旧文档时注意**：`plans/archive/`、`internal/**/evidence/` 里的 `test:unit -- <spec>` 是历史记录（当时确实那样跑），不是可复制的现行用法。
 
 ### lint 规则豁免登记 + warnings ratchet（`task-171`，2026-11-15；裁定 `D-1532 ③`）
 

@@ -106,7 +106,7 @@ PLAN-0472 按独立批次迁移代码：(1) Workspace pages 与 router lazy impo
 
 | 验收点 | 必需证据 |
 |---|---|
-| Workspace/Chat 专属单测仍通过 | 从 `packages/ui` 运行 `pnpm run test:unit -- src/features/workspace`；并运行 `pnpm run test:unit -- src/stores/__tests__/authStore.spec.ts` 验证 Auth lifecycle integration |
+| Workspace/Chat 专属单测仍通过 | 从 `packages/ui` 运行 `pnpm run test:unit src/features/workspace`；并运行 `pnpm run test:unit src/stores/__tests__/authStore.spec.ts` 验证 Auth lifecycle integration（**不要写 `--`**：pnpm 原样透传 ⇒ vitest 丢弃过滤并跑全量，`task-25`） |
 | 路径和类型有效 | 从 A03 根运行 `mise run typecheck:ui`、`mise run lint:ui`；每个迁移批次检查受影响单测 |
 | Workspace 页真实 host 页面可用 | 从 A03 根运行 `node scripts/e2e-host.mjs e2e/real/environment.spec.ts e2e/real/workspace-import.spec.ts --retries=0`；environment.spec 标记 `@host`，截图写入 Playwright `test-results/` |
 | Workspace Chat tool chain 真实链路保持 | 从 A03 根运行 `node scripts/e2e-host.mjs --llm-mode=write_file e2e/real/journey-a.spec.ts --retries=0`；断言浏览器可见 tool result、Workspace tree sync、FS/API 结果和操作后截图 |

@@ -44,7 +44,9 @@ const SCOPES = {
         level: "S0",
         title: "单 spec（改哪个跑哪个）",
         dir: "packages/ui",
-        cmd: "pnpm run test:unit -- <spec 路径>",
+        // 禁写 `pnpm run test:unit -- <spec>`：pnpm 把 `--` 原样拼进命令，vitest 收到裸 `--`
+        // 会丢弃过滤条件、**静默跑全量**（task-25，2026-11-16 实测 pnpm 10.34.5 / vitest 4.1.11）。
+        cmd: "pnpm run test:unit <spec 路径>",
         verdict: '输出含 "Test Files  1 passed (1)" 且 exit 0（有红即 exit 1）',
         evidence:
           "packages/ui/package.json scripts.test:unit=vitest run；packages/ui/AGENTS.md:25；mise.toml [tasks.\"test:ui\"]",
