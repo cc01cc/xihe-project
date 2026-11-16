@@ -1,6 +1,6 @@
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
-import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -30,26 +30,17 @@ test.describe("Cross-Module — Auth Guard", () => {
         expect(page.url()).toContain("/login");
     });
 
-    test("legacy chat route recovers to workspace landing", async ({ page }) => {
-        const reg = await fetch(`${CP_URL}/api/v1/auth/register`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: `legacy-${Date.now()}@test.com`,
-                password: SHARED_PASSWORD,
-                name: "Legacy",
-            }),
-        });
-        const { accessToken } = await reg.json();
-
-        await page.addInitScript((token) => {
-            localStorage.setItem("xihe-token", token);
-        }, accessToken);
-
+    // task-373 / D-1228 + D-1236（router/index.ts:546-558）：/chat/:sessionId 自 f36c85895
+    // 起是**真实产品路由**（StandaloneChatView，meta.requiresAuth: true），不再 redirect 到
+    // workspace landing。原用例「legacy chat route recovers to workspace landing」的前提被
+    // 这两条决策取消（该 spec 末次实质修改 0d57f664c / 2026-09-23，前提失效约 7.5 周）。
+    // ⇒ E 类处置：按新契约**重写**，而不是把断言改到另一个 URL 蒙过去 —— 本文件是
+    //   「Cross-Module — Auth Guard」，/chat 这条路线在守卫面要验的本来就是「需要登录」。
+    test("standalone chat route is guarded: unauthenticated access lands on login", async ({
+        page,
+    }) => {
         await page.goto("/chat/legacy-session");
-        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
-        await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({
-            timeout: EXPECT_TIMEOUT_MS,
-        });
+        await page.waitForURL(/\/login/, { timeout: ACTION_TIMEOUT_MS });
+        expect(page.url()).toContain("/login");
     });
 });
