@@ -235,11 +235,17 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs">
                 <span class="text-muted-foreground">{{ t("resources.resourcesHintSummary") }}</span>
                 <CollapsibleTrigger as-child>
+                    <!--
+                        task-10 / batch-2 ④（触控）：原写 `h-6` = 21px（--spacing 3.5px × 6 步），
+                        低于 WCAG 2.2 SC 2.5.8 的 24×24。删掉这个高度覆盖即回落到 vendor
+                        `size="sm"` 的 `h-7` = 24.5px —— 视觉几乎不变，命中区达标。
+                        注意别用 `h-6`/`size-6` 当 24 档：本仓 6 步是 21px。
+                    -->
                     <Button
                         variant="ghost"
                         size="sm"
                         data-testid="ws-resources-hints-toggle"
-                        class="h-6 gap-1 px-1.5 text-xs text-muted-foreground"
+                        class="gap-1 px-1.5 text-xs text-muted-foreground"
                         :aria-expanded="hintsOpen"
                     >
                         <span aria-hidden="true">?</span>

@@ -365,6 +365,19 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         expect(levelOf("d-root")).toBe("1");
         expect(levelOf("d-child")).toBe("2");
         expect(levelOf("d-grand")).toBe("3");
+
+        // task-10 / batch-2 ④（触控）：展开 chevron 的命中区必须 ≥24×24（SC 2.5.8）。
+        // 本仓 `--spacing` = 3.5px（main.css:339）⇒ 24 档 = **7 步 = 24.5px**；
+        // `h-6`/`size-6` 只有 21px，是「改了还违例」。jsdom 不求值 Tailwind ⇒ 钉类名，
+        // 真实 rect 由浏览器侧 rect 导出（task-51）复核。
+        const toggles = wrapper.findAll('[data-testid^="org-tree-toggle-"]');
+        expect(toggles.length).toBeGreaterThan(0);
+        for (const toggle of toggles) {
+            expect(toggle.classes()).toEqual(expect.arrayContaining(["min-h-7", "min-w-7"]));
+            expect(toggle.classes()).not.toContain("h-6");
+        }
+        // 叶子行没有 chevron，但仍占同宽（否则父子行文字起点差 10.5px）。
+        expect(wrapper.get('[data-testid="org-tree-node-d-root"]').html()).toContain("min-w-7");
         wrapper.unmount();
     });
 });

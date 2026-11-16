@@ -231,6 +231,14 @@ function retryChildren(item: OrgTreeItem) {
                             </button>
                         </span>
                         <template v-else>
+                            <!--
+                                task-10 / batch-2 ④（触控）：WCAG 2.2 SC 2.5.8 要求 24×24 CSS px。
+                                原先 `p-0.5` + `size-4` 图标 ⇒ 1.75×2 + 14 = **17.5px**，低于门槛。
+                                改为 `min-h-7 min-w-7`：**本仓 `--spacing` = 3.5px**（main.css:339）
+                                ⇒ 7 步 = **24.5px** 才是 24 档；`h-6`/`size-6` 只有 21px，别当 24 用。
+                                图标不上放大（仍 size-4），只把命中区顶到门槛以上；叶子行占位同步宽到 w-7，
+                                否则父行与叶子行的 label 会错开 10.5px。
+                            -->
                             <button
                                 v-if="fi.hasChildren"
                                 type="button"
@@ -238,13 +246,14 @@ function retryChildren(item: OrgTreeItem) {
                                     isExpanded ? t('orgMembers.collapse') : t('orgMembers.expand')
                                 "
                                 :data-testid="'org-tree-toggle-' + fi.value.key"
-                                class="rounded p-0.5 hover:bg-accent"
+                                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded hover:bg-accent"
                                 @click.stop="handleToggle"
                             >
                                 <ChevronDown v-if="isExpanded" class="size-4" />
                                 <ChevronRight v-else class="size-4" />
                             </button>
-                            <span v-else class="size-4" />
+                            <!-- 与上面的 min-w-7 对齐（叶子行没有 chevron，但仍占同宽） -->
+                            <span v-else class="min-w-7 shrink-0" />
                             <!--
                                 task-33：正常行的层级缩进挂在 label 上（内联），**不包一层容器** ——
                                 行容器已有 \`px-2\`，包容器会让"整行 hover/选中底色"的起点（行首）

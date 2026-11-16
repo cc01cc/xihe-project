@@ -326,3 +326,14 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         expect(hints.text()).toContain("收起说明");
     });
 });
+
+describe("资源页触控目标（task-10 / batch-2 ④）", () => {
+    it("说明折叠按钮不再用 h-6 覆盖（h-6 = 21px < SC 2.5.8 的 24）", async () => {
+        // vendor `size="sm"` 已是 h-7 = 24.5px；覆盖成 h-6 是 21px。
+        // jsdom 不求值 Tailwind ⇒ 钉类名；真实 rect 见 task-51 的浏览器 rect 导出。
+        const wrapper = await mountPage();
+        const toggle = wrapper.get('[data-testid="ws-resources-hints-toggle"]');
+        expect(toggle.classes()).not.toContain("h-6");
+        wrapper.unmount();
+    });
+});
