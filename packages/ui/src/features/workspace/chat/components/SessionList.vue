@@ -6,7 +6,7 @@ import { useSessionStore } from "../../../../stores/session";
 import { useChatStore } from "../stores/chat.ts";
 import { useAgentStore } from "../../../../stores/agent";
 import { useAuthStore } from "../../../../stores/auth";
-import { ApiError, api, type DelegationUsageView } from "../../../../composables/api";
+import { api, type DelegationUsageView } from "../../../../composables/api";
 import { presentCauseError } from "../../../../lib/errorMessages";
 import type { Session } from "../../../../types";
 import { logger } from "../../../../lib/logger";
@@ -103,7 +103,9 @@ function handleSelect(id: string) {
 
 function handleRename(id: string, title: string) {
     sessionStore.renameSession(id, title).catch((cause) => {
-        const message = cause instanceof ApiError ? cause.message : "Failed to rename session";
+        // task-45：`ApiError.message` 就是 CP detail（或 `API error <status>`），直接当文案用
+        // 等于英文 detail 直出 ⇒ 走统一入口取可读文案，原文交给下面那行 logger。
+        const message = presentCauseError(t, cause, t("sidebar.renameFailed")).copy;
         logger.error("Rename session failed", cause);
         toast.error(message);
     });
@@ -274,7 +276,7 @@ async function confirmDelete() {
         chatStore.clearSession(id);
         pendingDeleteSessionId.value = null;
     } catch (cause) {
-        const message = cause instanceof ApiError ? cause.message : t("sidebar.deleteFailed");
+        const message = presentCauseError(t, cause, t("sidebar.deleteFailed")).copy;
         logger.error("Delete session failed", cause);
         toast.error(message);
     } finally {

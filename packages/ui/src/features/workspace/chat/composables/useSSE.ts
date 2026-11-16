@@ -5,7 +5,7 @@ import { useAgentStore } from "../../../../stores/agent";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
 import { useChatStore } from "../stores/chat.ts";
 import { logger } from "../../../../lib/logger";
-import { normalizeRefusalCode } from "../../../../lib/errorMessages";
+import { normalizeRefusalCode, presentError } from "../../../../lib/errorMessages";
 import { chatTransport } from "../../../../services/chatTransport";
 import { notifySessionConnection, notifySessionEvent } from "../sessionEvents";
 import { applyTransportAttempt, applyTransportProgress } from "../transportLive";
@@ -338,8 +338,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         return errorText(payload);
     }
 
+    /**
+     * task-45：SSE 错误帧走**统一入口** —— 主文案只给可读句子（聊天气泡里不塞折叠控件），
+     * `code` 与 CP 原始 detail 由调用点的 `logger` 留痕（改前直接渲染 `CODE: english detail`）。
+     */
     function errorText(error: SSEErrorPayload): string {
-        return error.detail ? `${error.code}: ${error.detail}` : error.code;
+        return presentError(i18n.global.t, { code: error.code, detail: error.detail }).copy;
     }
 
     function resetStreamTimeout() {
@@ -694,6 +698,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     // PLAN-0645 M2: close only the failing run's scope; a sibling run that is
                     // still streaming keeps its bubble and the session keeps streaming.
                     endRunScope(payload.runId);
+                    logger.warn("SSE error event", payload);
                     error.value = errorText(payload);
                     currentCallbacks.onError?.(payload);
                 } catch {
@@ -948,7 +953,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             )
                 return null;
             const payload = asErrorPayload(err);
-            logger.error("Failed to send message via SSE: " + errorText(payload));
+            logger.error("Failed to send message via SSE", payload);
             error.value = sendErrorMessage(payload);
             isStreaming.value = false;
             currentCallbacks.onError?.(payload);

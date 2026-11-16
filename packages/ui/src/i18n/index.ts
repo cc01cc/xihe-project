@@ -226,6 +226,8 @@ const messages = {
                 "删除当前会话只会清除自身及收件箱通知；由它派生的子会话和运行会保留，并可继续独立运行。",
             deletePending: "删除中…",
             deleteFailed: "删除会话失败",
+            // task-45：改名失败原先用的是英文硬编码兜底（"Failed to rename session"）。
+            renameFailed: "重命名会话失败",
             empty: "暂无会话",
             // task-352 / `D-1206`：左栏是「工作区分组 + 会话项」。两个空态只在各自状态渲染，
             // **不得合并成一块**（合并 = 两态又变回同一块）；出口也不同（建工作区 / 建会话）。
@@ -1165,8 +1167,11 @@ const messages = {
             },
             settingsKicker: "工作区",
             settingsTitle: "工作区设置",
+            // task-53（batch-01 D3）：原先写「常规信息**与成员**」，但成员自 task-236 起
+            // 已是一级页（/workspace/:id/members，自带 membersPageDesc）⇒ 描述许诺了本页
+            // 没有的能力。只删不实的那半句，不改成指路句（左栏已有成员入口，指两次是重复）。
             settingsDesc:
-                "本工作区的常规信息与成员。配置统一在设置区按 实例 / 工作区默认 / 个人 管理；资源（MCP / 凭据 / 技能 / 智能体 / 知识库）统一在资源区按层管理。",
+                "本工作区的常规信息。配置统一在设置区按 实例 / 工作区默认 / 个人 管理；资源（MCP / 凭据 / 技能 / 智能体 / 知识库）统一在资源区按层管理。",
             settingsTabGeneral: "常规",
             // task-236（M4-3）：成员页（/workspace/:id/members）的描述文案。
             membersPageDesc: "管理本工作区的成员：按用户名添加、调整角色或移除。",
@@ -4158,6 +4163,8 @@ const messages = {
                 "Deleting this session clears only itself and its Inbox notices. Spawned child sessions and runs remain and can continue independently.",
             deletePending: "Deleting…",
             deleteFailed: "Failed to delete the session",
+            // task-45: replaces the hard-coded English fallback ("Failed to rename session").
+            renameFailed: "Failed to rename the session",
             empty: "No sessions",
             // task-352 / `D-1206`: the rail is "workspace groups + session rows". The two empty
             // states render only in their own state and must never be merged into one block
@@ -5109,8 +5116,10 @@ const messages = {
             },
             settingsKicker: "Workspace",
             settingsTitle: "Workspace Settings",
+            // task-53: the members half-sentence was untrue (members is a first-class page
+            // since task-236), so it is dropped rather than turned into a pointer.
             settingsDesc:
-                "General info and members for this workspace. Configuration lives in Settings per instance / workspace default / personal layer; resources (MCP / credentials / skills / agents / knowledge) live in the resources module, managed per layer.",
+                "General info for this workspace. Configuration lives in Settings per instance / workspace default / personal layer; resources (MCP / credentials / skills / agents / knowledge) live in the resources module, managed per layer.",
             settingsTabGeneral: "General",
             membersPageDesc:
                 "Manage this workspace's members: add by username, change roles, or remove.",

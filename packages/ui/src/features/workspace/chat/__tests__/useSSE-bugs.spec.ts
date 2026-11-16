@@ -5,6 +5,7 @@
  * 修复后这些测试应该通过。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { i18n } from "../../../../i18n";
 import { chatTransport } from "@/services/chatTransport";
 import type { ChatTransportState } from "@/services/chatTransport";
 import { useSSE } from "../composables/useSSE.ts";
@@ -154,7 +155,11 @@ describe("BUG-5: /chat 502 error handling", () => {
         const { sendMessage, error } = useSSE("test-session");
         await sendMessage({ content: "Hello", branchId: BRANCH_ID });
 
-        expect(error.value).toContain("502");
+        // task-45：状态码不再拼进文案（改前断言 `toContain("502")` 钉的是 `API_ERROR: API error 502`）。
+        const upstreamCopy = String(error.value ?? "");
+        expect(upstreamCopy).toBe(i18n.global.t("errors.requestFailed"));
+        expect(upstreamCopy).not.toContain("API_ERROR");
+        expect(upstreamCopy).not.toMatch(/API error \d+/);
     });
 });
 
@@ -178,7 +183,13 @@ describe("BUG-6: /chat 409 when SSE subscription is missing", () => {
 
         // PLAN-247: errors carry a stable code plus safe detail, delivered as a
         // structured payload (not a bare string).
-        expect(error.value).toBe("API_ERROR: API error 409");
+        //
+        // task-45：气泡里的文案只给**可读句子** —— 改前这里断言的是 `"API_ERROR: API error 409"`，
+        // 等于把「英文码 + 客户端英文兜底」钉成契约。三件事一起判：可读文案在 / 不含码 / 不含英文 detail。
+        const errorCopy = String(error.value ?? "");
+        expect(errorCopy).toBe(i18n.global.t("errors.requestFailed"));
+        expect(errorCopy).not.toContain("API_ERROR");
+        expect(errorCopy).not.toMatch(/API error \d+/);
         expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "API_ERROR" }));
     });
 
