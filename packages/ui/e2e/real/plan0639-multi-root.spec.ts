@@ -263,7 +263,11 @@ test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () =
         await page.screenshot({ path: "test-results/plan0639-multi-root-file-open.png" });
 
         // 分组根验收（design §5 候选①）：第二根的文件必须在树中可到达/可见。
-        // M1 若未实现树分组渲染，此断言红 = 产品缺口如实呈现。
+        // M2 已实现分组渲染（FileTreePanel rootGroups，PLAN-0639 M2）；但**第二根默认收起是设计**
+        // （stores/workspace.ts:551-555 isRootExpanded：只有 primaryRoot 自动展开，其余等用户选择；
+        //   单测 fileTreeRoots.spec.ts:112「expansion gates loading」已钉住）。
+        // 注意：这条断言红**不再**代表产品缺口 —— 旧注释「M1 若未实现树分组渲染」已过期，
+        // 分组渲染早已实现；此处「找不到 beta 文件」的真实含义是该组未展开（补前置见后续提交）。
         const betaEntry = page.getByRole("button", { name: BETA_FILE, exact: true });
         await expect(
             betaEntry,

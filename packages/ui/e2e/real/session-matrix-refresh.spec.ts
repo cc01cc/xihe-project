@@ -115,7 +115,8 @@ async function loginMemberInBrowser(page: Page): Promise<void> {
         .locator("form")
         .first()
         .evaluate((form) => (form as HTMLFormElement).requestSubmit());
-    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
+    // 登录落模块入口 /workbench（task-34 / D-1122）：/workspace 已是 redirect 入口
+    await page.waitForURL(/\/workbench/, { timeout: LONG_TIMEOUT_MS });
 }
 test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
     test.beforeAll(async ({ request }) => {
