@@ -239,7 +239,7 @@ export const HELP_GROUPS = Object.freeze([
     name: 'verify',
     summary: 'Smoke verification against a stack',
     commands: Object.freeze([
-      cmd('verify', '--stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]', 'Verify a stack end to end'),
+      cmd('verify', '--stack <n> --email <account> --workspace <wsId> [--principal <agentPrincipalId>] [--wait-seconds <n>] [--yes]', 'Verify a stack end to end'),
     ]),
   },
   {

@@ -286,7 +286,7 @@ export async function runCommand(argv, dependencies = {}) {
     if (group === 'verify') {
       const parsed = parseCommandOptions(
         args.slice(1),
-        ['--stack', '--email', '--workspace', '--wait-seconds'],
+        ['--stack', '--email', '--workspace', '--wait-seconds', '--principal'],
         ['--yes'],
       );
       if (parsed.positionals.length !== 0) {
@@ -1354,12 +1354,7 @@ export function printResult(result) {
     if (verify.cleanup.session.status === 'unknown') {
       process.stdout.write('residual: session create outcome is unknown; check the target stack manually\n');
     }
-    if (verify.cleanup.principal.status === 'retained') {
-      process.stdout.write(`residual: agent principal ${verify.cleanup.principal.principalId} retained (no principal delete API)\n`);
-    }
-    if (verify.cleanup.principal.status === 'unknown') {
-      process.stdout.write('residual: agent principal create outcome is unknown; check the target stack manually\n');
-    }
+    // task-38（Q1=b）：verify 只复用显式/只读发现的 principal，不再创建 ⇒ 无 principal 残留可报。
     return;
   }
   if (result.data?.action === 'deleted' && result.data?.connectionId) {

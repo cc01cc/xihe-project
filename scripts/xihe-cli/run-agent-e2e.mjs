@@ -4,7 +4,7 @@
  * (connection limit 429) evidence, against a live CP.
  *
  *   node scripts/xihe-cli/run-agent-e2e.mjs --cp <url> [--ui-workspace <ws>] [--json]
- *        [--email <account>] [--password-env <ENV_NAME>]
+ *        [--principal <agentPrincipalId>] [--email <account>] [--password-env <ENV_NAME>]
  *
  * Exit codes: 0 pass · 1 verification failure · 2 usage error ·
  *             3 SCOPE_UNSUPPORTED (CP M1.2 missing) · 4 LIMIT_UNSUPPORTED (CP M1.5 missing).
@@ -12,8 +12,13 @@
  */
 import { pathToFileURL } from 'node:url';
 import { CliError, parseOptions } from './provider.mjs';
+import { discoverDrivePrincipal } from './drive.mjs';
 import { bindingRequestBody, resolveSessionBinding } from './session-binding.mjs';
 import { runPersonalLifecycleProbe, runResourceLimitProbe, runWorkspaceLifecycleProbe } from './verify.mjs';
+
+// task-38（PLAN-0689 B3）：复用 drive.mjs 已落地的 --principal + discoverDrivePrincipal 口径。
+// OpenAPI SessionCreateRequest.agentPrincipalId 是 format:uuid；用法层先拦非法形状（exit 2）。
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usageError(message) {
   return new CliError('INVALID_ARGUMENT', message, {}, 2);
@@ -165,6 +170,12 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   if (typeof password !== 'string' || password === '') {
     throw usageError(`Set the CP password via --password-env (default ${passwordEnv}); it is never read from argv.`);
   }
+  // task-38（PLAN-0689 B3）：--principal 可选；给了就必须是 UUID 形状（OpenAPI format:uuid），空串按未给。
+  const principalRaw = String(options['--principal'] ?? '').trim();
+  if (principalRaw !== '' && !UUID_SHAPE.test(principalRaw)) {
+    throw usageError('--principal must be an agent principal UUID (see xihe agent list).');
+  }
+  const explicitPrincipal = principalRaw !== '' ? principalRaw : null;
 
   const steps = [];
   const step = (name, rawStatus, detail = null, evidence = null) => {
@@ -240,13 +251,28 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   }
 
   // A6 needs a bound principal + session + branch on a direct_attach workspace.
-  const bound = await client.call('PUT', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(personal.principalId)}`, {
+  // task-38（PLAN-0689 B3，复用 drive 口径）：A6 建会话的 principal = 显式 --principal 优先，
+  // 否则 discoverDrivePrincipal 只读发现（workspace-agents bound 面优先，agent-principals 回落）；
+  // 发现失败即 fail-closed，不伪造 id、不自动建。A5a/A5b 探针仍各建自己的行（不动）。
+  let agentPrincipalId = explicitPrincipal;
+  let principalSource = explicitPrincipal ? 'explicit' : null;
+  if (!agentPrincipalId) {
+    const found = await discoverDrivePrincipal({ client, workspaceId });
+    if (found.error) {
+      throw new CliError(found.error.code, `无法确定 agentPrincipalId：${found.error.message}`, { step: 'A6-prep' }, 1);
+    }
+    agentPrincipalId = found.principalId;
+    principalSource = found.source;
+  }
+  step('A6 prep principal', 'PASS', `principal=${agentPrincipalId} source=${principalSource}`);
+
+  const bound = await client.call('PUT', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentPrincipalId)}`, {
     body: { permissions: [] },
   });
   if (![200, 201, 204, 409].includes(bound.status)) {
-    throw new CliError(codeOf(bound, 'PERSONAL_REBIND_FAILED'), `Re-binding the PERSONAL principal failed (HTTP ${bound.status}).`, { step: 'A6-prep' }, 1);
+    throw new CliError(codeOf(bound, 'PERSONAL_REBIND_FAILED'), `Re-binding the A6 principal failed (HTTP ${bound.status}).`, { step: 'A6-prep' }, 1);
   }
-  step('A6 prep bind', 'PASS', `principal=${personal.principalId}`);
+  step('A6 prep bind', 'PASS', `principal=${agentPrincipalId}`);
 
   const resolved = await resolveSessionBinding({ client, stack: 'agent-e2e' });
   if (resolved.error) {
@@ -255,13 +281,15 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   const session = await client.call('POST', '/api/v1/sessions', {
     body: bindingRequestBody(resolved.binding, {
       title: 'xihe-agent-e2e',
-      agentPrincipalId: personal.principalId,
+      agentPrincipalId,
     }),
   });
   const sessionId = typeof session.body?.id === 'string' ? session.body.id
     : typeof session.body?.sessionId === 'string' ? session.body.sessionId : null;
   if (![200, 201].includes(session.status) || !sessionId) {
-    throw new CliError(codeOf(session, 'SESSION_CREATE_FAILED'), `Creating the A6 session failed (HTTP ${session.status}).`, { step: 'A6-prep' }, 1);
+    throw new CliError(codeOf(session, 'SESSION_CREATE_FAILED'),
+      `Creating the A6 session failed (HTTP ${session.status}${session.code ? ` ${session.code}` : ''})（principal=${agentPrincipalId} source=${principalSource}）.`,
+      { step: 'A6-prep' }, 1);
   }
   step('A6 prep session', 'PASS', `session=${sessionId}`);
 
@@ -277,7 +305,7 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
 
     // 跨 session 并发（同一 connection）：会话级互斥是既有两层设计，不能靠 governor 取代。
     const extraSession = await client.call('POST', '/api/v1/sessions', {
-      body: bindingRequestBody(resolved.binding, { title: 'xihe-agent-e2e-b', agentPrincipalId: personal.principalId }),
+      body: bindingRequestBody(resolved.binding, { title: 'xihe-agent-e2e-b', agentPrincipalId }),
     });
     extraSessionId = typeof extraSession.body?.id === 'string' ? extraSession.body.id : null;
     let extraBranchId = null;
@@ -314,6 +342,8 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
           gate: limit.code ?? 'LIMIT_UNSUPPORTED',
           personal,
           workspacePrincipal,
+          agentPrincipalId,
+          principalSource,
           session: { id: sessionId, branchId },
           limit,
         },
@@ -325,7 +355,9 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
         kind: 'agent-e2e',
         steps,
         personal,
-          workspacePrincipal,
+        workspacePrincipal,
+        agentPrincipalId,
+        principalSource,
         session: { id: sessionId, branchId },
         binding: resolved.binding,
         limit,
@@ -348,7 +380,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
       '',
       'Usage:',
       '  node scripts/xihe-cli/run-agent-e2e.mjs --cp <url> --ui-workspace <wsId> [--json]',
-      '       [--email <account>] [--password-env <ENV_NAME>]',
+      '       [--principal <agentPrincipalId>] [--email <account>] [--password-env <ENV_NAME>]',
       '',
       'Exit codes: 0 pass · 1 verification failure · 2 usage error ·',
       '            3 SCOPE_UNSUPPORTED (CP M1.2 missing) · 4 LIMIT_UNSUPPORTED (CP M1.5 missing).',
@@ -365,7 +397,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
   let apiBase = '';
   let workspaceId = '';
   try {
-    const parsed = parseOptions(args, ['--cp', '--ui-workspace', '--email', '--password-env'], []);
+    const parsed = parseOptions(args, ['--cp', '--ui-workspace', '--email', '--password-env', '--principal'], []);
     if (parsed.positionals.length !== 0) throw usageError('run-agent-e2e takes no positional arguments.');
     apiBase = String(parsed.values['--cp'] ?? '').trim().replace(/\/$/, '');
     workspaceId = String(parsed.values['--ui-workspace'] ?? '').trim();

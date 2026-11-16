@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CliError, confirmAction } from './provider.mjs';
+import { discoverDrivePrincipal } from './drive.mjs';
 import {
   bindingRequestBody,
   describeBinding,
@@ -21,6 +22,20 @@ const SSE_BUFFER_LIMIT = 64 * 1024;
 // terminal = succeeded, failed, partial, ambiguous, cancelled
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'partial', 'ambiguous', 'cancelled']);
 const TERMINAL_SUCCESS = 'succeeded';
+
+// task-38（PLAN-0689 B3）：复用 drive.mjs 已落地的 --principal + discoverDrivePrincipal 口径。
+// OpenAPI SessionCreateRequest.agentPrincipalId 是 format:uuid；用法层先拦非法形状（exit 2）。
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 显式 principal（--principal 或 XIHE_VERIFY_AGENT_PRINCIPAL_ID）必须是 UUID 形状；空串按未给。 */
+function parseExplicitPrincipal(raw) {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (value === '') return null;
+  if (!UUID_SHAPE.test(value)) {
+    throw new CliError('INVALID_ARGUMENT', '--principal must be an agent principal UUID (see xihe agent list).', {}, 2);
+  }
+  return value;
+}
 
 class VerifyFailure extends Error {
   constructor(code, message) {
@@ -116,6 +131,8 @@ function createClient({ apiBase, fetchImpl, auth, workspaceId }) {
         code: typeof parsed?.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(parsed.code) ? parsed.code : null,
         requestId: typeof parsed?.requestId === 'string' ? parsed.requestId : null,
         retryAfter: response.headers?.get?.('retry-after') ?? null,
+        // task-38: RFC 9457 problem detail（有界快照）——principal 绑定校验失败时要给出可读原因。
+        detail: typeof parsed?.detail === 'string' ? parsed.detail.slice(0, 200) : null,
       };
     } catch (error) {
       const aborted = error?.name === 'AbortError' || error?.name === 'TimeoutError';
@@ -568,6 +585,9 @@ export async function runVerify({
   const email = requireTargetOption(options, '--email');
   const workspaceId = requireTargetOption(options, '--workspace');
   const waitSeconds = parseWaitSeconds(options['--wait-seconds']);
+  // task-38（PLAN-0689 B3）：显式 --principal 优先，其次 XIHE_VERIFY_AGENT_PRINCIPAL_ID；都未给走只读发现。
+  const explicitPrincipal = parseExplicitPrincipal(options['--principal'])
+    ?? parseExplicitPrincipal(env.XIHE_VERIFY_AGENT_PRINCIPAL_ID);
 
   let password = env.XIHE_VERIFY_PASSWORD || env.XIHE_DEV_ADMIN_PASSWORD || '';
   if (!password) {
@@ -602,11 +622,9 @@ export async function runVerify({
   const auth = { token: '' };
   const client = createClient({ apiBase, fetchImpl, auth, workspaceId });
   const state = {
-    principalId: env.XIHE_VERIFY_AGENT_PRINCIPAL_ID || null,
-    principalSource: env.XIHE_VERIFY_AGENT_PRINCIPAL_ID ? 'pre_existing' : 'unresolved',
-    principalOutcome: 'not_created',
-    bindingCreated: false,
-    bindingOutcome: null,
+    principalId: explicitPrincipal,
+    // task-38: 来源口径与 drive 一致——explicit / discovered:workspace-agents / discovered:agent-principals。
+    principalSource: explicitPrincipal ? 'explicit' : 'unresolved',
     sessionId: null,
     sessionOutcome: 'not_created',
     runId: null,
@@ -683,44 +701,23 @@ export async function runVerify({
     }
     step('A3 workspace access', 'PASS');
 
-    if (!state.principalId) {
-      const bound = await client.call('GET', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents`);
-      if (bound.status === 200 && Array.isArray(bound.body) && bound.body.length > 0
-        && typeof bound.body[0]?.principalId === 'string') {
-        state.principalId = bound.body[0].principalId;
-        state.principalSource = 'pre_existing';
-      }
-    }
-    if (!state.principalId) {
-      // PLAN-0750 M1 workspace-tier door: the context is the header (client.call defaults
-      // workspace:true → X-Workspace-Id); D-174 removed the scope body field (400 if sent).
-      const created = await client.call('POST', '/api/v1/agent-principals', {
-        body: { name: 'xihe-verify' },
-      });
-      if (![200, 201].includes(created.status) || typeof created.body?.principalId !== 'string') {
-        state.principalOutcome = created.status === 0 || created.status >= 500 || [200, 201].includes(created.status)
-          ? 'unknown'
-          : 'failed';
-        failA('A4 agent principal', 'AGENT_PRINCIPAL_CREATE_FAILED', `Creating an agent principal failed (HTTP ${created.status}${created.code ? ` ${created.code}` : ''}).`);
-      }
-      state.principalId = created.body.principalId;
-      state.principalSource = 'created_this_run';
-      state.principalOutcome = 'created';
-      const bind = await client.call(
-        'PUT',
-        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(state.principalId)}`,
-        { body: { permissions: [] } },
-      );
-      if (bind.status !== 200) {
-        state.bindingOutcome = bind.status === 0 || bind.status >= 500 ? 'unknown' : 'failed';
-        failA('A4 agent principal', 'AGENT_PRINCIPAL_BIND_FAILED', `Binding the new principal failed (HTTP ${bind.status}${bind.code ? ` ${bind.code}` : ''}).`);
-      }
-      state.bindingCreated = true;
-      state.bindingOutcome = 'created';
-      step('A4 agent principal', 'PASS', 'created and bound by this run');
+    // task-38（PLAN-0689 B3，Lead 裁定 Q1=b）：复用 drive.mjs#discoverDrivePrincipal 的只读发现口径。
+    // 显式 --principal/env 优先；否则只 GET 发现（workspace-agents bound 面优先，agent-principals 回落），
+    // 发现失败即 fail-closed——**不再 create+bind 兜底**：真 CP 回 {agents:[WorkspaceAgentView]}（含
+    // bound/disabled 旗标），旧「裸数组取首行 + 自动建」在该契约下恒失败且制造假绿（lead 裁定移除）。
+    if (state.principalId) {
+      step('A4 agent principal', 'PASS', `explicit principal=${state.principalId} reused unchanged`);
     } else {
-      step('A4 agent principal', 'PASS', 'pre-existing principal reused unchanged');
+      const found = await discoverDrivePrincipal({ client, workspaceId });
+      if (found.error) {
+        failA('A4 agent principal', found.error.code, `无法确定 agentPrincipalId：${found.error.message}`);
+      }
+      state.principalId = found.principalId;
+      state.principalSource = found.source;
+      step('A4 agent principal', 'PASS', `discovered principal=${state.principalId} source=${state.principalSource}`);
     }
+    data.agentPrincipalId = state.principalId;
+    data.principalSource = state.principalSource;
 
     // PLAN-0601: CP rejects chat on Sessions without an explicit template + connection binding
     // (409 API_TYPE_REBIND_REQUIRED), so resolve that binding before creating the Session.
@@ -755,7 +752,11 @@ export async function runVerify({
       state.sessionOutcome = session.status === 0 || session.status >= 500 || [200, 201].includes(session.status)
         ? 'unknown'
         : 'failed';
-      failA('A5 session', 'SESSION_CREATE_FAILED', `Creating the verification session failed (HTTP ${session.status}${session.code ? ` ${session.code}` : ''}).`);
+      // task-38: 绑定校验失败要可读——CP problem 的 code+detail 原样带出，并点名 principal/source。
+      failA('A5 session', 'SESSION_CREATE_FAILED',
+        `Creating the verification session failed (HTTP ${session.status}${session.code ? ` ${session.code}` : ''})`
+        + `${session.detail ? `：${session.detail}` : ''}`
+        + `（principal=${state.principalId} source=${state.principalSource}）.`);
     }
     state.sessionOutcome = 'created';
     step('A5 session', 'PASS', `session=${state.sessionId}`);
@@ -916,19 +917,10 @@ export async function runVerify({
     } else if (state.sessionOutcome === 'unknown') {
       data.cleanup.session = { status: 'unknown', reason: 'CREATE_OUTCOME_UNKNOWN' };
     }
-    data.cleanup.principal = state.principalSource === 'created_this_run'
-      ? {
-        status: 'retained',
-        principalId: state.principalId,
-        bindingCreated: state.bindingCreated,
-        bindingOutcome: state.bindingOutcome,
-        reason: 'NO_PRINCIPAL_DELETE_API',
-      }
-      : state.principalSource === 'pre_existing'
-        ? { status: 'pre_existing', principalId: state.principalId, modified: false }
-        : state.principalOutcome === 'unknown'
-          ? { status: 'unknown', reason: 'CREATE_OUTCOME_UNKNOWN' }
-          : { status: 'not_created' };
+    // task-38（Q1=b）：verify 不再 create+bind principal，只复用显式/只读发现的行 ⇒ 无残留可清理。
+    data.cleanup.principal = state.principalId
+      ? { status: 'reused', principalId: state.principalId, source: state.principalSource, modified: false }
+      : { status: 'not_resolved' };
   }
 
   if (failure) {
