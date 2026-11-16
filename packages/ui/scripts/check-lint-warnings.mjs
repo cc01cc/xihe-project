@@ -16,6 +16,10 @@
  *   node scripts/check-lint-warnings.mjs --enforce           # 任一族超基线即 exit 1（新语义）
  *   node scripts/check-lint-warnings.mjs --enforce-total     # 旧语义（总数超基线即 exit 1），仅供对照
  *   node scripts/check-lint-warnings.mjs --write-baseline    # 生成/收缩基线（脚本写，勿手改；errors>0 时拒绝写盘）
+ *   node scripts/check-lint-warnings.mjs --write-baseline --scope <前缀> [--scope …]
+ *                                                            # task-36 收账边界：只吸收 scope 内的新增
+ *   node scripts/check-lint-warnings.mjs --write-baseline --allow-foreign
+ *                                                            # 明确放行边界外新增（打印 + 基线留痕）
  *   node scripts/check-lint-warnings.mjs --list <rule>       # 打印该族当前所有 file:line
  *   node scripts/check-lint-warnings.mjs --from-json <path>  # 用已存盘的 oxlint JSON 代替现跑
  *   node scripts/check-lint-warnings.mjs --selftest          # 九例自检（退出码 0 = 全部与预期一致）
@@ -37,6 +41,17 @@ const has = (flag) => args.includes(flag);
 function optionValue(flag) {
     const at = args.indexOf(flag);
     return at >= 0 ? args[at + 1] : undefined;
+}
+
+/** 可重复选项（task-36 的 `--scope` 要能传多个写面前缀）。 */
+function optionValues(flag) {
+    const out = [];
+    for (let i = 0; i < args.length; i += 1) {
+        if (args[i] === flag && typeof args[i + 1] === "string" && args[i + 1].length > 0) {
+            out.push(args[i + 1]);
+        }
+    }
+    return out;
 }
 
 // ── 读数 ─────────────────────────────────────────────────────────────────────
@@ -169,6 +184,69 @@ function fileOf(at) {
 }
 
 /**
+ * task-36：`--write-baseline` 的**收账边界** —— 只许把「自己写面内」的新增写进基线。
+ *
+ * <p>为什么需要：ratchet 的基线一旦把**别人在途**的新警告收进去，那批 WIP 就永久变成"合法存量"，
+ * 等它真正合入时门不会再响，等它被放弃时基线又白涨一次。task-261 分批清账期间已反复踩到
+ * （A 批在修、B 批新增，谁跑一次 `--write-baseline` 就把 B 批的账收了）。</p>
+ *
+ * <p>判据单位是 **(族, 文件)** 而不是单条 file:line —— 与「行号漂移不算新增」的既有口径一致：
+ * 只加注释让整族行号平移，不应把整族坐标都判成"别人的新增"。归属用**每文件计数差**：
+ * 某文件在该族的条数比基线多 ⇒ 它是这族增长的贡献者；贡献者不在任何 `--scope` 前缀下 ⇒ 越界。</p>
+ *
+ * <p>为什么不管「族没长但换了文件」（A 文件修掉、B 文件新增，净零）：净零没有放宽 ratchet 的计数，
+ * 而计数才是门的判据；这条边界只负责「别把增长收账」。</p>
+ */
+export function foreignGrowth(now, baseline, scopes) {
+    const baseByRule = baseline?.byRule ?? {};
+    const baseLocations = baseline?.locations ?? {};
+    const hasLocations = Object.keys(baseLocations).length > 0;
+    const inScope = (file) => scopes.some((prefix) => file.startsWith(prefix));
+    const out = [];
+    for (const rule of Object.keys(now.locations ?? {})) {
+        const before = baseByRule[rule] ?? 0;
+        const after = now.byRule?.[rule] ?? 0;
+        if (after <= before) continue;
+        if (!hasLocations) {
+            // 旧格式基线没有坐标 ⇒ 无法归属任何人；宁可拒写，让调用方显式 --allow-foreign。
+            out.push({ rule, file: "(基线无坐标，无法归属)", from: before, to: after, at: [] });
+            continue;
+        }
+        const baseCountByFile = new Map();
+        for (const at of baseLocations[rule] ?? []) {
+            const key = fileOf(at);
+            baseCountByFile.set(key, (baseCountByFile.get(key) ?? 0) + 1);
+        }
+        const nowCountByFile = new Map();
+        for (const at of now.locations[rule] ?? []) {
+            const key = fileOf(at);
+            nowCountByFile.set(key, (nowCountByFile.get(key) ?? 0) + 1);
+        }
+        for (const [file, count] of nowCountByFile) {
+            const from = baseCountByFile.get(file) ?? 0;
+            if (count <= from) continue;
+            if (inScope(file)) continue;
+            out.push({
+                rule,
+                file,
+                from,
+                to: count,
+                at: (now.locations[rule] ?? []).filter((at) => fileOf(at) === file),
+            });
+        }
+    }
+    return out.sort((a, b) => a.rule.localeCompare(b.rule) || a.file.localeCompare(b.file));
+}
+
+function foreignHint(scopes) {
+    return (
+        "放行：确认是**你自己的**新增 ⇒ 加 `--scope <前缀>`（可重复，例 `--scope src/components/settings`）；" +
+        "确属他人在途且必须收账 ⇒ `--allow-foreign`（会打印并在基线的 `foreignAbsorbed` 里留痕）。" +
+        (scopes.length ? "" : "当前未给 --scope ⇒ 任何新增都算越界。")
+    );
+}
+
+/**
  * 按族比较当前读数与基线：返回增长族（含**新文件**清单）。
  *
  * 判据量只有 `diff`（计数）；`added` 仅供打印，**从不参与 exit code**。
@@ -258,7 +336,8 @@ function selfHealHint() {
     return (
         "自愈：若新增系正当（例：新测试文件引入了同族新写法），先修掉；确属可接受则" +
         " `node packages/ui/scripts/check-lint-warnings.mjs --write-baseline` 收账" +
-        "（基线只许因**已修**而变小，因新增而变大须在卡面写原因）。"
+        "（基线只许因**已修**而变小，因新增而变大须在卡面写原因）。" +
+        " 注意 task-36 起 `--write-baseline` 只吸收 `--scope` 内的新增，边界外会拒写（exit 3）。"
     );
 }
 
@@ -467,6 +546,100 @@ function selftest() {
         }
     }
 
+    // ⑩–⑭ task-36：`--write-baseline` 的收账边界（scope 外的他人新增不得被吸收）。
+    {
+        const shaOf = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+        /** 按 `locations` 造一份 now/base 形状（byRule/total 由它派生，避免两处手写不一致）。 */
+        const shape = (locationsByRule) => {
+            const locations = {};
+            const byRule = {};
+            for (const [rule, ats] of Object.entries(locationsByRule)) {
+                locations[rule] = [...ats].sort();
+                byRule[rule] = ats.length;
+            }
+            return {
+                total: Object.values(byRule).reduce((sum, n) => sum + n, 0),
+                errors: 0,
+                byRule,
+                locations,
+            };
+        };
+        const baseCase = shape({ "import(first)": ["a.ts:1", "b.ts:1"] });
+        const mine = shape({ "import(first)": ["a.ts:1", "b.ts:1", "src/mine/x.ts:3"] });
+        const theirs = shape({ "import(first)": ["a.ts:1", "b.ts:1", "src/other/y.ts:5"] });
+        const flat = shape({ "import(first)": ["a.ts:1", "b.ts:1"] });
+
+        const scopeCases = [
+            ["⑩ scope 覆盖新增 ⇒ 0 处越界（可写）", mine, ["src/mine/"], 0],
+            ["⑪ scope 外新增 ⇒ 1 处越界且点名 rule+file", theirs, ["src/mine/"], 1],
+            ["⑫ 未给 --scope ⇒ 任何新增都越界", mine, [], 1],
+            ["⑬ 无新增 ⇒ 0 处越界（幂等前提）", flat, [], 0],
+        ];
+        for (const [name, nowFixture, scopes, want] of scopeCases) {
+            checked += 1;
+            const got = foreignGrowth(nowFixture, baseCase, scopes);
+            const namedOk =
+                got.length === 0 ||
+                (got[0].rule === "import(first)" && got[0].file.startsWith("src/"));
+            if (got.length !== want || !namedOk) {
+                failed += 1;
+                console.error(
+                    "FAIL " +
+                        name +
+                        " ⇒ 越界 " +
+                        got.length +
+                        "（期望 " +
+                        want +
+                        "）" +
+                        JSON.stringify(got),
+                );
+            } else {
+                console.log("PASS " + name);
+            }
+        }
+
+        // ⑭ 同 payload 连写两次 ⇒ 逐字节不变（--write-baseline 幂等的前提）
+        {
+            const target = join(dir, "idempotent-baseline.json");
+            writeFileSync(target, '{\n    "total": 0\n}\n', "utf8");
+            const payload = {
+                total: 2,
+                errors: 0,
+                files: 1,
+                byRule: { "import(first)": 2 },
+                locations: { "import(first)": ["a.ts:1", "b.ts:1"] },
+            };
+            const firstExit = writeBaseline({
+                baselinePath: target,
+                payload,
+                errors: 0,
+                format: () => {},
+            });
+            const first = shaOf(target);
+            const secondExit = writeBaseline({
+                baselinePath: target,
+                payload,
+                errors: 0,
+                format: () => {},
+            });
+            const second = shaOf(target);
+            checked += 1;
+            if (firstExit !== 0 || secondExit !== 0 || first !== second) {
+                failed += 1;
+                console.error(
+                    "FAIL ⑭ 同 payload 连写两次必须字节不变 ⇒ exit " +
+                        firstExit +
+                        "/" +
+                        secondExit +
+                        "，sha 相同=" +
+                        (first === second),
+                );
+            } else {
+                console.log("PASS ⑭ 同 payload 连写两次 ⇒ 字节不变");
+            }
+        }
+    }
+
     rmSync(dir, { recursive: true, force: true });
     console.log("SELFTEST " + (checked - failed) + "/" + checked + (failed ? " ⇒ FAIL" : " ⇒ OK"));
     process.exit(failed ? 1 : 0);
@@ -488,6 +661,44 @@ function main() {
     now.files = parsed.number_of_files;
 
     if (has("--write-baseline")) {
+        const previous = (() => {
+            try {
+                return JSON.parse(readFileSync(BASELINE, "utf8"));
+            } catch {
+                return null;
+            }
+        })();
+        // task-36：收账边界 —— 不吸收「别人在途」的新增（判据与边界说明见 foreignGrowth）。
+        const scopes = optionValues("--scope").map((scope) => scope.replace(/\\/g, "/"));
+        const foreign = foreignGrowth(now, previous, scopes);
+        if (foreign.length && !has("--allow-foreign")) {
+            console.error(
+                "FAIL 拒绝收账：有 " +
+                    foreign.length +
+                    " 处新增落在收账边界外" +
+                    (scopes.length ? "（--scope " + scopes.join("、") + "）" : "（未给 --scope）") +
+                    "：",
+            );
+            for (const entry of foreign) {
+                console.error(
+                    "  +" + (entry.to - entry.from) + "  " + entry.rule + "  " + entry.file,
+                );
+                for (const at of entry.at.slice(0, 5)) console.error("        " + at);
+                if (entry.at.length > 5)
+                    console.error("        …另 " + (entry.at.length - 5) + " 处");
+            }
+            console.error("  " + BASELINE + " 保持原样（未写盘）。");
+            console.error(foreignHint(scopes));
+            process.exit(3);
+        }
+        if (foreign.length) {
+            console.log("WARN --allow-foreign 放行 " + foreign.length + " 处边界外新增（留痕）：");
+            for (const entry of foreign) {
+                console.log(
+                    "  +" + (entry.to - entry.from) + "  " + entry.rule + "  " + entry.file,
+                );
+            }
+        }
         let payload = {
             $comment:
                 "oxlint warnings 基线（task-171 ② ratchet 门；task-219 起按族拦）。只能由 node scripts/check-lint-warnings.mjs --write-baseline 生成/收缩，勿手改；基线只许变小，变大须在卡面说明原因。",
@@ -502,18 +713,16 @@ function main() {
             locations: Object.fromEntries(
                 Object.entries(now.locations).sort((a, b) => a[0].localeCompare(b[0])),
             ),
+            // task-36：只有真的用 --allow-foreign 吸收了边界外新增才写这个键（否则省略）——
+            // 既让「谁放行了什么」在 diff 里可复核，也不破坏「同样内容再跑一次逐字节不变」。
+            ...(foreign.length
+                ? { foreignAbsorbed: foreign.map((entry) => entry.rule + " " + entry.file) }
+                : {}),
             generatedAt: new Date().toISOString(),
         };
         // task-228 ①：缩进 4（.oxfmtrc.jsonc 的 tabWidth: 4），随后由 formatBaseline() 交给 oxfmt 收口；
         // ② generatedAt 只在**内容真变**时刷新 —— 同一棵树连跑两次必须逐字节相同，否则
         // 「重复生成两次 git diff 为空」这条幂等判据永远不成立（时间戳每次都变）。
-        const previous = (() => {
-            try {
-                return JSON.parse(readFileSync(BASELINE, "utf8"));
-            } catch {
-                return null;
-            }
-        })();
         const core = Object.fromEntries(
             Object.entries(payload).filter(([key]) => key !== "generatedAt"),
         );
