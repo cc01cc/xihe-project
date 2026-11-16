@@ -48,7 +48,10 @@ test("有一条真红 ⇒ FAIL / exit 1（不是 ERROR）", () => {
 });
 
 test("**假绿** ⇒ ERROR / exit 2：自称 pass 但 executed.tests=0", () => {
-    const sum = summarizeReceipts([pass("oxfmt", { files: 3 }), pass("vitest", { tests: 0, files: 0 })]);
+    const sum = summarizeReceipts([
+        pass("oxfmt", { files: 3 }),
+        pass("vitest", { tests: 0, files: 0 }),
+    ]);
     assert.equal(sum.verdict, "ERROR");
     assert.equal(sum.exitCode, 2);
     assert.equal(sum.problems[0].kind, "fake-green");
@@ -90,7 +93,45 @@ test("schema 不合法的 receipt ⇒ ERROR（不能静默忽略当成没这条�
     const sum = summarizeReceipts([broken]);
     assert.equal(sum.verdict, "ERROR");
     assert.equal(sum.problems[0].kind, "schema");
+    assert.equal(sum.rows[0].code, CODES.E_SCHEMA);
 });
+
+/* ── T-2315 字段级变异矩阵：逐关键字段删掉/写坏，reader 必须报 E_SCHEMA ──
+ * <p>判据（卡面原文）：「组 E 判据经变异验证（删关键字段 reader 报 E_SCHEMA）」。
+ * 单删 executed 只是一条腿；这里把 receipt 的每个关键字段都各删一遍 + 词表外值各试一遍，
+ * 钉死「任何一条关键字段缺失/非法都不许静默当绿」。真实落盘链路的同款矩阵
+ * 实跑于 internal/A03-xihe/evidence/2026-11-16-gate-receipt-zcode/（mutation-verify.mjs）。</p> */
+const VARIANTS = [
+    { id: "del-schemaVersion", m: (r) => delete r.schemaVersion },
+    { id: "del-gate", m: (r) => delete r.gate },
+    { id: "del-verdict", m: (r) => delete r.verdict },
+    { id: "del-code", m: (r) => delete r.code },
+    { id: "del-command", m: (r) => delete r.command },
+    { id: "del-durationMs", m: (r) => delete r.durationMs },
+    {
+        id: "bad-verdict",
+        m: (r) => {
+            r.verdict = "PASSED";
+        },
+    },
+    {
+        id: "bad-code",
+        m: (r) => {
+            r.code = "OK-ISH";
+        },
+    },
+];
+
+for (const v of VARIANTS) {
+    test("变异 " + v.id + " ⇒ ERROR/E_SCHEMA（关键字段缺失/非法不许静默通过）", () => {
+        const broken = pass("oxfmt", { files: 3 });
+        v.m(broken);
+        const sum = summarizeReceipts([broken]);
+        assert.equal(sum.verdict, "ERROR");
+        assert.equal(sum.rows[0].code, CODES.E_SCHEMA);
+        assert.equal(sum.problems[0].kind, "schema");
+    });
+}
 
 test("真红 + 假绿同时存在 ⇒ ERROR 优先（结论取更坏的那个）", () => {
     const fail = createReceipt({
@@ -102,7 +143,11 @@ test("真红 + 假绿同时存在 ⇒ ERROR 优先（结论取更坏的那个）
         executed: { tests: 0 },
         reason: "退出码 1",
     });
-    const sum = summarizeReceipts([pass("typecheck", { files: 1 }), fail, pass("oxfmt", { files: 0 })]);
+    const sum = summarizeReceipts([
+        pass("typecheck", { files: 1 }),
+        fail,
+        pass("oxfmt", { files: 0 }),
+    ]);
     assert.equal(sum.verdict, "ERROR");
 });
 
