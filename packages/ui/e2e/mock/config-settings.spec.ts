@@ -881,4 +881,61 @@ test.describe("Config Settings (three layers)", () => {
             .poll(() => configReads, { timeout: ACTION_TIMEOUT_MS })
             .toBeGreaterThan(readsBeforeRetry);
     });
+
+    /**
+     * task-39（源 task-227 ⑨ 类 H-04 残余 / H-05 残余）：域页这条「本域只在实例层」提示条
+     * 一直是手搓容器 + 裸 button 关闭键，现改走 vendor Alert 族（Alert / AlertDescription /
+     * AlertAction + vendor Button）。单测（SettingsDomainView.spec.ts）已钉 data-slot / role /
+     * 关闭行为；**这里补的是单测测不出来的那一半** —— Alert 基类是
+     * `grid has-[>svg]:grid-cols-[auto_1fr] has-data-[slot=alert-action]:pr-18`，图标列宽与
+     * 右上角动作位的真实几何只有布局引擎给得出，jsdom 不计算 has-[…] / data-[slot] 变体。
+     *
+     * 判据：动作位（右上角绝对定位的关闭键）与正文**不得重叠**；重叠 = pr-18 没兜住，
+     * 表现是正文末尾被关闭键压住（正是换壳最容易引入的回归）。
+     */
+    test("task-39: 层阻断提示条是 vendor Alert，动作位不压正文", async ({ page }) => {
+        await mockConfigAPIs(page);
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
+
+        await expect(page.getByTestId("settings-switch-layer")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await page.getByTestId("settings-switch-layer").click();
+
+        const notice = page.getByTestId("settings-layer-block-notice");
+        await expect(notice).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
+        // 组件身份：class 能仿，data-slot 仿不出来
+        await expect(notice).toHaveAttribute("data-slot", "alert");
+        // 非阻断信息条：不能是 vendor 默认的 role="alert"（那会每次进页抢占播报）
+        await expect(notice).toHaveAttribute("role", "status");
+        await expect(notice).toContainText("该域仅在实例层可配置");
+
+        const dismiss = page.getByTestId("settings-layer-block-dismiss");
+        await expect(dismiss).toHaveAttribute("data-slot", "button");
+        await expect(dismiss).toBeVisible();
+
+        const textBox = await notice.locator('[data-slot="alert-description"]').boundingBox();
+        const actionBox = await dismiss.boundingBox();
+        expect(textBox).not.toBeNull();
+        expect(actionBox).not.toBeNull();
+        const horizontalOverlap =
+            actionBox.x < textBox.x + textBox.width && textBox.x < actionBox.x + actionBox.width;
+        const verticalOverlap =
+            actionBox.y < textBox.y + textBox.height && textBox.y < actionBox.y + actionBox.height;
+        expect(
+            horizontalOverlap && verticalOverlap,
+            "关闭键与正文盒子重叠（AlertAction 的 pr-18 没兜住）",
+        ).toBe(false);
+
+        // 证据图（私有证据区；产品仓不提交截图工件）。path 相对 cwd=packages/ui ⇒
+        // 三级上跳才是 one 根（ui → packages → A03-xihe → one）；Playwright 会自动建父目录。
+        const OUT =
+            "../../../internal/A03-xihe/evidence/2026-11-15-226-next-batch-candidates/task-4-batch1";
+        await notice.screenshot({ path: OUT + "/task39-layer-block-notice.png" });
+        await page.screenshot({ path: OUT + "/task39-layer-block-page.png" });
+
+        // 关闭键真的关掉（不是只换了个组件壳）
+        await dismiss.click();
+        await expect(page.getByTestId("settings-layer-block-notice")).toHaveCount(0);
+    });
 });

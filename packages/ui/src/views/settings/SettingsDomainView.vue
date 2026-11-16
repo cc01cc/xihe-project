@@ -22,6 +22,7 @@ import { Button } from "../../components/ui/button";
 // task-510：页签与加载态改用 vendor 件（reka TabsRoot / Skeleton）。
 import { Skeleton } from "../../components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Alert, AlertAction, AlertDescription } from "../../components/ui/alert";
 import { logger } from "../../lib/logger";
 
 /**
@@ -316,26 +317,43 @@ watch(projectionPending, (pending) => {
             {{ t(domainHintKey) }}
         </p>
 
-        <div
+        <!--
+            task-39（源 task-227 ⑨ 类 H-04 残余 + H-05 残余）：这条「本域只在实例层」提示条
+            与同区 `SettingsPermissionGate.vue:48-59` 是同一个形状，却一直是手搓的
+            （自写 `rounded-md border bg-muted/40` 容器 + 自造标题 + 裸 `<button>` 关闭键）。
+            改走 vendor `Alert` 族：容器 = `Alert`，正文 = `AlertDescription`，
+            右上角动作 = `AlertAction`，关闭键 = vendor `Button`（ghost/xs，中性权重，
+            与 `settings-switch-layer` 同口径 —— 低频逃生入口不许抢主 CTA 的注意力预算）。
+
+            语义不动：仍是**非阻断信息条**，所以把 vendor 默认的 `role="alert"` 显式改成
+            `role="status"`（`alert` 会在每次进页时抢占播报；这里只是对一次点击的温和回应）。
+            `data-testid` 原样保号（`SettingsDomainView.spec.ts` 两处断言依赖它）。
+        -->
+        <Alert
             v-if="blocked && instanceOnly"
             data-testid="settings-layer-block-notice"
-            class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs"
+            role="status"
+            class="mt-3 rounded-md border-border bg-muted/40 px-3 py-2 text-xs leading-5"
         >
-            <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-            <div class="min-w-0 flex-1">
-                <p class="font-medium">{{ t("settings.ia.layerOnlyInstance") }}</p>
-                <p class="mt-0.5 leading-relaxed text-muted-foreground">
+            <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <AlertDescription class="text-pretty text-xs leading-5 [&_p:not(:last-child)]:mb-0.5">
+                <p class="font-medium text-foreground">{{ t("settings.ia.layerOnlyInstance") }}</p>
+                <p class="leading-relaxed text-muted-foreground">
                     {{ t("settings.ia.layerOnlyInstanceDetail", { domain: domainLabel }) }}
                 </p>
-            </div>
-            <button
-                type="button"
-                class="rounded px-1 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                @click="blocked = false"
-            >
-                {{ t("settings.ia.dismiss") }}
-            </button>
-        </div>
+            </AlertDescription>
+            <AlertAction>
+                <Button
+                    variant="ghost"
+                    size="xs"
+                    data-testid="settings-layer-block-dismiss"
+                    class="h-auto px-1 text-xs font-normal text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    @click="blocked = false"
+                >
+                    {{ t("settings.ia.dismiss") }}
+                </Button>
+            </AlertAction>
+        </Alert>
 
         <!-- PLAN-0766 T3.2：四层徽标 + 覆盖顺序说明（存量工作区即时生效）。 -->
         <LayerPrecedenceBadges v-if="resolved.ok" class="mt-3" :layer="layer" />

@@ -315,6 +315,30 @@ describe("SettingsDomainView", () => {
         expect(wrapper.find('[data-testid="settings-layer-block-notice"]').exists()).toBe(true);
     });
 
+    /**
+     * task-39（源 task-227 ⑨ 类 H-04 残余 + H-05 残余）：提示条容器与关闭键此前是手搓的
+     * （自写 `rounded-md border bg-muted/40` 容器 + 裸 `<button>` 关闭键）。
+     * 判据看 `data-slot` 而不是 class —— 形状能用 class 仿，组件身份仿不出来
+     * （同 `:305` 的 H-05 用例口径）。
+     */
+    it("task-39: 层阻断提示条是 vendor Alert，关闭键是 ghost Button 且能关掉", async () => {
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        await wrapper.get('[data-testid="settings-switch-layer"]').trigger("click");
+
+        const notice = wrapper.get('[data-testid="settings-layer-block-notice"]');
+        expect(notice.attributes("data-slot")).toBe("alert");
+        // 非阻断信息条：不能是 vendor 默认的 role="alert"（那会在每次进页时抢占播报）
+        expect(notice.attributes("role")).toBe("status");
+        expect(notice.text()).toContain("该域仅在实例层可配置");
+
+        const dismiss = notice.get('[data-testid="settings-layer-block-dismiss"]');
+        expect(dismiss.attributes("data-slot")).toBe("button");
+        expect(dismiss.attributes("data-variant")).toBe("ghost");
+        await dismiss.trigger("click");
+        expect(wrapper.find('[data-testid="settings-layer-block-notice"]').exists()).toBe(false);
+    });
+
     it("offers no cross-layer switch for a domain the user layer can write", async () => {
         const wrapper = mountView("instance", "rag");
         await flushPromises();
