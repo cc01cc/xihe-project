@@ -354,7 +354,12 @@ function openCreate() {
                     @click="filter = option.key"
                 >
                     {{ option.label }}
-                    <span class="opacity-70">{{ option.count }}</span>
+                    <!-- task-42：计数原先用 opacity-70 压暗淡。opacity 不是背景层，而是把**前景**按 alpha
+                         与背后已合成结果混合 ⇒ 未选中态实测 2.740:1（8-bit 量化 2.748，ui-2 探针 2.75）< 4.5。
+                         改为实色继承（未选中 muted 实色 4.820、选中 accent-foreground 实色 14.630）：
+                         层级由「选中/未选中」的颜色差承担，不再用 opacity 制造不可预测的二次合成。
+                         spec 侧按 chip 结构锁住「这里不得再出现 opacity-*」。 -->
+                    <span>{{ option.count }}</span>
                 </button>
             </div>
 

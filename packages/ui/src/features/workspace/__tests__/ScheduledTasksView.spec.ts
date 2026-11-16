@@ -232,6 +232,34 @@ describe("ScheduledTasksView list rendering", () => {
         await nextTick();
         expect(wrapper.findAll('[data-testid="scheduled-task-row"]')).toHaveLength(3);
     });
+
+    it("筛选计数不用 opacity 表达次要性（task-42：opacity 会把前景压到 2.74:1）", async () => {
+        mockedApi.listScheduledTasks.mockResolvedValue(
+            listPage([task(), task({ id: "task-2", status: "missed", missedCount: 1 })]) as never,
+        );
+
+        const wrapper = await mountView();
+        // 不新增内层 testid：本页两套断点 DOM 同时挂在树里，新增内层名会破坏
+        // 「两套断点里没有同名 testid」的不变式（见上一条）。改用 chip 结构定位计数。
+        const chips = wrapper.findAll('[data-testid^="scheduled-tasks-filter-"]');
+        expect(chips.length).toBeGreaterThanOrEqual(3);
+        let asserted = 0;
+        for (const chip of chips) {
+            const spans = chip.findAll("span");
+            if (spans.length === 0) continue;
+            for (const span of spans) {
+                // opacity 不是背景层：它把前景按 alpha 二次合成，未选中态实测 2.740:1 < 4.5。
+                // 次要性改由实色（muted / accent-foreground）承担 ⇒ 锁死「不得再用 opacity-*」。
+                expect(
+                    span.classes().join(" "),
+                    "计数的次要性由实色承担，禁止 opacity-*",
+                ).not.toMatch(/(^|\s)opacity-\d/);
+                expect(span.text()).toMatch(/^\d+$/);
+                asserted += 1;
+            }
+        }
+        expect(asserted, "确实断言到了计数（防选择器空跑假绿）").toBeGreaterThanOrEqual(3);
+    });
 });
 
 describe("ScheduledTasksView disposition", () => {
