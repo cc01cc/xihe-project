@@ -159,6 +159,20 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
 
 <template>
     <div data-testid="workspace-resources-view" class="flex h-full min-h-0 flex-col">
+        <!--
+            task-44（a11y P0）：本页此前**没有 h1** —— 模板根直接是 tablist，读屏「按标题导航」
+            时这一页没有任何锚点（成员 / 设置 / 环境三页各有自己的 h1）。
+            标题密度按本页体型走：这是占满高度的面板页（不是 6xl 内容页），故用紧凑 header、
+            不加描述行；标题字号与另三页一致（text-2xl），保证四页层级一致。
+        -->
+        <header class="shrink-0 border-b border-border px-6 pt-3 pb-2">
+            <h1
+                data-testid="workspace-resources-title"
+                class="text-2xl leading-tight font-semibold tracking-tight"
+            >
+                {{ t("workspace.resourcesTitle") }}
+            </h1>
+        </header>
         <!-- 资源切换：本页**固定在本工作区层**，所以这里是「资源」而不是「层」的页签。 -->
         <div
             class="flex shrink-0 items-center gap-1 border-b border-border px-2 pt-1"

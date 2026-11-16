@@ -1161,6 +1161,10 @@ const messages = {
             settingsTabGeneral: "常规",
             // task-236（M4-3）：成员页（/workspace/:id/members）的描述文案。
             membersPageDesc: "管理本工作区的成员：按用户名添加、调整角色或移除。",
+            // task-44（a11y P0）：工作区资源页（/workspace/:id/resources）的 h1 —— 该页此前没有
+            // 任何 heading，读屏「按标题导航」时整页不可达。文案与另三页同族（成员 / 设置 / 环境），
+            // 并与页签组名（workspaceNav.resources =「资源」）区分开，避免 h1 与 tablist 同名。
+            resourcesTitle: "工作区资源",
             // PLAN-0773 M4-1（task-190）：工作区「配置」tab —— 按**本工作区**的层读写（直连既有端点）。
             settingsTabConfig: "配置",
             // D-1432 / task-41：搬回来的两个资源页签（只承载「本工作区」层）。
@@ -5090,6 +5094,10 @@ const messages = {
             settingsTabGeneral: "General",
             membersPageDesc:
                 "Manage this workspace's members: add by username, change roles, or remove.",
+            // task-44 (a11y P0): h1 for the workspace resources page — the page had no heading at
+            // all, so heading-based navigation could not reach it. Kept distinct from the tablist
+            // group name (workspaceNav.resources = "Resources") so h1 and tablist are not twins.
+            resourcesTitle: "Workspace resources",
             settingsTabConfig: "Configuration",
             settingsTabMcp: "Workspace MCP",
             settingsTabSkills: "Workspace skills",

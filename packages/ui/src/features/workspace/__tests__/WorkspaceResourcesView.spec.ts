@@ -19,7 +19,11 @@ const messages = {
         workspaceNav: { resources: "资源" },
         // task-26（批 1）：夹具跟着 SSOT 走 —— 层名是「个人层」（task-251 / D-1043），
         // 留着旧称会把过期文案锁死在测试里（产品改了、夹具还在替旧名字背书）。
-        workspace: { resourcesRefHint: "平台 / 个人层的同类资源在这里只读引用：" },
+        workspace: {
+            resourcesRefHint: "平台 / 个人层的同类资源在这里只读引用：",
+            // task-44：页面 h1 的文案（与真实 i18n 的 workspace.resourcesTitle 同值）。
+            resourcesTitle: "工作区资源",
+        },
         settings: {
             ia: {
                 resourceCredentials: "凭据",
@@ -157,6 +161,30 @@ beforeEach(() => {
 });
 
 describe("工作区资源页（M4-2 / task-210）", () => {
+    /**
+     * task-44（a11y P0）：页面**必须有 h1**，且文本就是页面标题。
+     *
+     * <p>为什么这条要单独钉：读屏「按标题导航」只认 h1..h6 元素 —— 不认 aria-label、不认
+     * 视觉上的大字。改前本页模板根直接是 role=tablist，整棵树里 **0 个 heading** ⇒ 这一页在
+     * 标题导航里根本不存在（成员 / 设置 / 环境三页各有 h1）。所以判据取「元素 + 层级 + 文本」，
+     * 不取「看起来有标题」。</p>
+     *
+     * <p>同一断言里还钉两件**不能一起坏**的事：h1 不许被塞进 tablist（tablist 的子元素按 ARIA
+     * 只应是 tab），以及 tablist 的组名不许在补 h1 时被弄丢（task-90 同族判据）。</p>
+     */
+    it("有且只有一个 h1，文本是资源页标题；h1 不在 tablist 内、tablist 仍有组名", async () => {
+        const wrapper = await mountPage();
+
+        const headings = wrapper.findAll("h1");
+        expect(headings, "本页必须恰好一个 h1（h1 唯一是四页的一致口径）").toHaveLength(1);
+        expect(headings[0].attributes("data-testid")).toBe("workspace-resources-title");
+        expect(headings[0].text()).toBe(messages["zh-CN"].workspace.resourcesTitle);
+        // 层级核对：h1 是页面级标题，不得落进 tablist（那里按 ARIA 只应有 tab）。
+        expect(headings[0].element.closest('[role="tablist"]')).toBeNull();
+
+        const tablist = wrapper.get('[role="tablist"]');
+        expect(tablist.attributes("aria-label")).toBe(messages["zh-CN"].workspaceNav.resources);
+    });
     it("资源清单 = RESOURCE_DEFS 里「有 WORKSPACE 层」的派生结果（页面不持第二份清单）", async () => {
         const wrapper = await mountPage();
         const tabIds = wrapper
