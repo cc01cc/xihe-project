@@ -24,6 +24,7 @@ import {
   validateDriveReceipt,
   writeDriveReceipt,
 } from './xihe-cli/drive.mjs';
+import { resolveSessionBinding } from './xihe-cli/session-binding.mjs';
 
 const TEST_KEY = 'test-provider-secret-value';
 const TEST_PASSWORD = 'test-admin-password';
@@ -1351,7 +1352,7 @@ async function startVerifyCpMock({
     }],
   },
 } = {}) {
-  const state = { calls: [], runIndex: 0 };
+  const state = { calls: [], runIndex: 0, createdPrincipals: [], boundPrincipals: new Set() };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     const pathname = url.pathname;
@@ -1384,15 +1385,48 @@ async function startVerifyCpMock({
       return;
     }
     if (pathname === '/api/v1/workspaces/ws-1/agents' && request.method === 'GET') {
-      json(response, 200, existingPrincipal ? [{ principalId: existingPrincipal }] : []);
+      // V4 reach semantics (PLAN-0750 M2): the pre-existing row plus lifecycle-probe rows.
+      // A user-door PERSONAL probe row stays visible unbound (source=personal, three-source merge
+      // in this fake); a workspace-door row is visible only while bound (source=workspace).
+      const agents = existingPrincipal ? [{ principalId: existingPrincipal }] : [];
+      for (const row of state.createdPrincipals) {
+        if (row.personal) {
+          agents.push({ principalId: row.principalId, source: 'personal', bound: state.boundPrincipals.has(row.principalId) });
+        } else if (state.boundPrincipals.has(row.principalId)) {
+          agents.push({ principalId: row.principalId, source: 'workspace', bound: true });
+        }
+      }
+      json(response, 200, agents);
       return;
     }
     if (pathname === '/api/v1/agent-principals' && request.method === 'POST') {
-      json(response, 201, { principalId: 'principal-new', name: body?.name });
+      // D-174 strict wire gate mirror: the retired scope key is a 400, like the real CP.
+      if (body && Object.hasOwn(body, 'scope')) {
+        json(response, 400, { code: 'INVALID_REQUEST', detail: 'scope retired (D-174)' });
+        return;
+      }
+      // Door semantics: X-Workspace-Id header ⇒ workspace-tier row; no header ⇒ user-level
+      // (personal) row. The A5 probes rely on this distinction for visibility. The tier-A
+      // create keeps the historical 'principal-new' id; probe rows get suffixed ids.
+      const personal = !request.headers['x-workspace-id'];
+      const isProbe = String(body?.name ?? '').startsWith('xihe-verify-personal-')
+        || String(body?.name ?? '').startsWith('xihe-verify-workspace-');
+      const principalId = isProbe ? `principal-probe-${state.createdPrincipals.length + 1}` : 'principal-new';
+      state.createdPrincipals.push({ principalId, personal });
+      json(response, 201, { principalId, name: body?.name, ownership: 'USER', ownerUserId: null });
       return;
     }
-    if (pathname === '/api/v1/workspaces/ws-1/agents/principal-new' && request.method === 'PUT') {
-      json(response, 200, { principalId: 'principal-new', workspaceId: 'ws-1', permissions: [] });
+    const wsAgentBind = pathname.match(/^\/api\/v1\/workspaces\/ws-1\/agents\/([^/]+)$/);
+    if (wsAgentBind && request.method === 'PUT') {
+      const principalId = decodeURIComponent(wsAgentBind[1]);
+      state.boundPrincipals.add(principalId);
+      json(response, 200, { principalId, workspaceId: 'ws-1', permissions: [] });
+      return;
+    }
+    if (wsAgentBind && request.method === 'DELETE') {
+      state.boundPrincipals.delete(decodeURIComponent(wsAgentBind[1]));
+      response.writeHead(204);
+      response.end();
       return;
     }
     if (pathname === '/api/v1/provider-connections' && request.method === 'GET') {
@@ -1549,8 +1583,9 @@ test('verify runs the full tier-A chain plus run terminal and cleans up its sess
     assert.equal(call.headers['x-workspace-id'], 'ws-1');
   }
   const principalCall = cp.state.calls.find((item) => item.pathname === '/api/v1/agent-principals');
-  // D21：WORKSPACE 档创建必须带显式工作区上下文。
+  // PLAN-0750 M1 workspace-tier door：创建必须带显式工作区上下文（header），body 不带 scope（D-174）。
   assert.equal(principalCall.headers['x-workspace-id'], 'ws-1');
+  assert.equal(Object.hasOwn(principalCall.body ?? {}, 'scope'), false, 'tier-A create body must not carry scope');
 
   // PLAN-0601: the Session must carry the explicit template + connection binding, otherwise CP
   // rejects chat with 409 API_TYPE_REBIND_REQUIRED.
@@ -1708,12 +1743,18 @@ test('verify reuses a pre-existing principal without rebinding it', async (t) =>
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.data.cleanup.principal.status, 'pre_existing');
-  // PLAN-0622 A5: verify additionally probes a PERSONAL principal; this mock does not
-  // echo scope, so the probe must stay provisional instead of pretending to pass.
-  assert.equal(result.data.personal.status, 'SKIP_PROVISIONAL');
+  // task-25 B: the mock now echoes ownership and models door-based visibility, so the A5
+  // probes run to a real verdict instead of stopping at the retired scope-echo check.
+  assert.equal(result.data.personal.status, 'PASS');
   const principalCreates = cp.state.calls.filter((call) => call.pathname === '/api/v1/agent-principals');
   assert.ok(principalCreates.length >= 1, 'A5 probe creates its own PERSONAL principal');
-  assert.equal(cp.state.calls.some((call) => call.method === 'PUT'), false, 'reuses the pre-existing principal without rebinding');
+  // The reuse invariant is about the PRE-EXISTING tier-A principal: it is never rebound.
+  // (The A5 lifecycle probes bind/unbind their own probe rows — that is their job.)
+  assert.equal(
+    cp.state.calls.some((call) => call.method === 'PUT' && call.pathname.endsWith('/agents/principal-existing')),
+    false,
+    'reuses the pre-existing principal without rebinding',
+  );
 });
 
 test('config export defaults to includeSecrets=false and returns the JSONC text', async (t) => {
@@ -3353,8 +3394,10 @@ test('credential commands keep a single parseable --json envelope', async (t) =>
 test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP delivers the contract', async () => {
   const { runPersonalLifecycleProbe, runResourceLimitProbe, runWorkspaceLifecycleProbe } = await import('./xihe-cli/verify.mjs');
   const calls = [];
+  const createCalls = [];
   const fakeClient = (handler) => ({ call: async (method, pathname, options = {}) => {
     calls.push(`${method} ${pathname}`);
+    if (method === 'POST' && pathname === '/api/v1/agent-principals') createCalls.push(options);
     return handler(method, pathname, options);
   } });
 
@@ -3369,7 +3412,8 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   const lifecycle = await runPersonalLifecycleProbe({
     client: fakeClient((method, pathname) => {
       if (method === 'POST' && pathname === '/api/v1/agent-principals') {
-        return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
+        // D-174: no scope on the wire; the create echo carries server-derived ownership.
+        return { status: 201, body: { principalId: 'p-1', ownership: 'USER' }, code: null };
       }
       if (method === 'PUT' && pathname.includes('/agents/p-1')) { bindings.add('p-1'); return { status: 200, body: {}, code: null }; }
       if (method === 'DELETE' && pathname.includes('/agents/p-1')) { bindings.delete('p-1'); return { status: 204, body: null, code: null }; }
@@ -3389,7 +3433,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   const workspaceLifecycle = await runWorkspaceLifecycleProbe({
     client: fakeClient((method, pathname) => {
       if (method === 'POST' && pathname === '/api/v1/agent-principals') {
-        return { status: 201, body: { principalId: 'p-2', scope: 'WORKSPACE' }, code: null };
+        return { status: 201, body: { principalId: 'p-2', ownership: 'USER' }, code: null };
       }
       if (method === 'PUT' && pathname.includes('/agents/p-2')) { boundWorkspace.add('p-2'); return { status: 200, body: {}, code: null }; }
       if (method === 'DELETE' && pathname.includes('/agents/p-2')) { boundWorkspace.delete('p-2'); return { status: 204, body: null, code: null }; }
@@ -3403,9 +3447,20 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(workspaceLifecycle.status, 'PASS', JSON.stringify(workspaceLifecycle));
   assert.equal(workspaceLifecycle.principalId, 'p-2');
 
+  // task-25 B（D-174）：create body 一律不含 scope；门由 workspace 上下文决定 ——
+  // PERSONAL 探活不带工作区上下文（user-level door），WORKSPACE 探活必须带（workspace-tier door）。
+  assert.ok(createCalls.length >= 2, 'both probes created a principal');
+  for (const call of createCalls) {
+    assert.equal(Object.hasOwn(call.body ?? {}, 'scope'), false, 'create body must not carry the retired scope field');
+  }
+  const personalCreate = createCalls.find((call) => String(call.body?.name ?? '').startsWith('xihe-verify-personal-'));
+  const workspaceCreate = createCalls.find((call) => String(call.body?.name ?? '').startsWith('xihe-verify-workspace-'));
+  assert.equal(personalCreate.workspace, false, 'PERSONAL probe uses the user-level door (no X-Workspace-Id)');
+  assert.equal(workspaceCreate.workspace, true, 'WORKSPACE probe uses the workspace-tier door (X-Workspace-Id)');
+
   const workspaceUnboundVisible = await runWorkspaceLifecycleProbe({
     client: fakeClient((method, _pathname) => {
-      if (method === 'POST') return { status: 201, body: { principalId: 'p-2', scope: 'WORKSPACE' }, code: null };
+      if (method === 'POST') return { status: 201, body: { principalId: 'p-2', ownership: 'USER' }, code: null };
       if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-2', source: 'workspace' }] }, code: null };
       return { status: 404, body: {}, code: 'NOT_FOUND' };
     }),
@@ -3415,7 +3470,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(workspaceUnboundVisible.code, 'WORKSPACE_VISIBLE_UNBOUND');
   const wrongSource = await runPersonalLifecycleProbe({
     client: fakeClient((method, _pathname) => {
-      if (method === 'POST') return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
+      if (method === 'POST') return { status: 201, body: { principalId: 'p-1', ownership: 'USER' }, code: null };
       if (method === 'PUT') return { status: 200, body: {}, code: null };
       if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-1', source: 'workspace' }] }, code: null };
       return { status: 404, body: {}, code: 'NOT_FOUND' };
@@ -3500,6 +3555,7 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
     bindings: new Map(),
     connections: [{ id: 'conn-1', providerId: 'openai', label: 'primary' }],
     createRequests: 0,
+    createBodies: [],
     patchBodies: [],
     disabled: new Set(),
   };
@@ -3511,17 +3567,28 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
       return;
     }
     if (url.pathname === '/api/v1/agent-principals' && request.method === 'GET') {
-      const scope = url.searchParams.get('scope');
-      const principals = scope
-        ? state.principals.filter((item) => item.scope === scope)
-        : state.principals;
-      json(response, 200, { principals });
+      // D-174: the only contract query is workspaceId; a scope query would be silently
+      // ignored by the real CP — this fake refuses it outright so the CLI can't regress.
+      if (url.searchParams.has('scope')) {
+        json(response, 400, { code: 'INVALID_REQUEST', detail: 'scope query retired (D-174)' });
+        return;
+      }
+      json(response, 200, { principals: state.principals });
       return;
     }
     if (url.pathname === '/api/v1/agent-principals' && request.method === 'POST') {
       state.createRequests += 1;
       const body = await requestBody(request);
-      const principal = { principalId: `p-${state.principals.length + 1}`, scope: 'WORKSPACE', ...body };
+      // Mirror AgentPrincipalWireBody.CREATE_KEYS (additionalProperties:false): any unknown
+      // key — including the retired scope — is a 400 INVALID_REQUEST, same as the real CP.
+      const CREATE_KEYS = new Set(['name', 'templateId', 'defaultModelProvider', 'defaultModelName', 'allowedModels', 'hooks', 'roleIds']);
+      if (!body || typeof body.name !== 'string' || body.name === '' || Object.keys(body).some((key) => !CREATE_KEYS.has(key))) {
+        json(response, 400, { code: 'INVALID_REQUEST', detail: 'Body must contain name plus optional templateId, defaultModelProvider, defaultModelName, allowedModels, hooks and roleIds only' });
+        return;
+      }
+      state.createBodies.push(body);
+      // Server-derived fields (AgentPrincipalCreateView): user door ⇒ ownership USER, owner stays null.
+      const principal = { principalId: `p-${state.principals.length + 1}`, ownership: 'USER', ownerUserId: null, ...body };
       state.principals.push(principal);
       json(response, 201, principal);
       return;
@@ -3600,14 +3667,17 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
   const noPrompt = async () => { throw new Error('must not prompt'); };
   const run = (argv) => runCommand(argv, { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
   try {
-    const created = await run(['agent', 'create', '--scope', 'personal', '--name', 'cli-agent',
+    // D-174: no --scope on the wire. The strict fake CP above answers 400 for any scope
+    // key, so exit 0 here IS the "request body carries no scope" assertion (mutation leg pins it).
+    const created = await run(['agent', 'create', '--name', 'cli-agent',
       '--template', 'tpl-1', '--default-model', 'openai:gpt-5', '--allow-model', 'openai:gpt-5',
       '--allow-model', 'openai:gpt-5-mini', '--json']);
     assert.equal(created.exitCode, 0);
     assert.equal(created.data.kind, 'agent-created');
     assert.equal(created.data.created, true);
     assert.equal(created.data.principalId, 'p-1');
-    assert.equal(created.data.principal.scope, 'PERSONAL');
+    assert.equal(created.data.principal.ownership, 'USER');
+    assert.equal(Object.hasOwn(state.createBodies[0], 'scope'), false, 'create body must not carry scope');
     assert.deepEqual(created.data.principal.allowedModels, [
       { provider: 'openai', model: 'gpt-5' },
       { provider: 'openai', model: 'gpt-5-mini' },
@@ -3615,7 +3685,7 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
     assert.deepEqual(created.data.principal.defaultModelProvider, 'openai');
     assert.equal(created.data.principal.defaultModelName, 'gpt-5');
 
-    const again = await run(['agent', 'create', '--scope', 'personal', '--name', 'cli-agent',
+    const again = await run(['agent', 'create', '--name', 'cli-agent',
       '--template', 'tpl-1', '--default-model', 'openai:gpt-5', '--allow-model', 'openai:gpt-5',
       '--allow-model', 'openai:gpt-5-mini', '--json']);
     assert.equal(again.exitCode, 0);
@@ -3629,6 +3699,17 @@ test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent
     assert.equal(listed.data.kind, 'agent-list');
     assert.equal(listed.data.principals.length, 1);
     assert.equal(listed.data.principals[0].principalId, 'p-1');
+
+    // --scope survives as a CLI-local filter (ownership/ownerUserId derived), explicitly marked.
+    // Row p-1 has ownerUserId:null ⇒ WORKSPACE view; personal filter yields none.
+    const localWs = await run(['agent', 'list', '--scope', 'workspace', '--json']);
+    assert.equal(localWs.exitCode, 0);
+    assert.equal(localWs.data.principals.length, 1);
+    assert.equal(localWs.data.localFilter.scope, 'WORKSPACE');
+    assert.match(localWs.data.localFilter.basis, /CLI-local/);
+    const localPersonal = await run(['agent', 'list', '--scope', 'personal', '--json']);
+    assert.equal(localPersonal.exitCode, 0);
+    assert.equal(localPersonal.data.principals.length, 0, 'ownerless row is not PERSONAL in the local view');
 
     const bound = await run(['agent', 'bind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
     assert.equal(bound.exitCode, 0);
@@ -3730,13 +3811,19 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
       return respond(200, { accessToken: 'runner-token', tokenType: 'Bearer', expiresIn: 900 });
     }
     if (target.pathname === '/api/v1/agent-principals' && method === 'GET') {
+      // D-174: no scope query; a regressed CLI sending one gets a 400 here (real CP ignores it,
+      // which was the fake-green — this fake is stricter on purpose).
+      if (new URL(url).searchParams.has('scope')) return respond(400, { code: 'INVALID_REQUEST' });
       return scopeMode === 'ok'
         ? respond(200, { principals: [] })
         : respond(404, { code: 'NOT_FOUND' });
     }
     if (target.pathname === '/api/v1/agent-principals' && method === 'POST') {
-      const principalId = body.scope === 'PERSONAL' ? 'p-9' : 'p-10';
-      return respond(201, { principalId, scope: body.scope, name: body.name });
+      // Strict CREATE_KEYS mirror: scope in the body ⇒ 400, exactly like AgentPrincipalWireBody.
+      if (body && Object.hasOwn(body, 'scope')) return respond(400, { code: 'INVALID_REQUEST' });
+      // The two doors are told apart by the probe names (personal vs workspace lifecycle).
+      const principalId = String(body?.name ?? '').startsWith('xihe-verify-personal-') ? 'p-9' : 'p-10';
+      return respond(201, { principalId, ownership: 'USER', ownerUserId: null, name: body.name });
     }
     if (target.pathname === '/api/v1/workspaces/ws-1/agents' && method === 'GET') {
       // V4：PERSONAL 未绑也可见；WORKSPACE 只有绑定才可见。
@@ -4208,10 +4295,30 @@ test('help lists every skill command form', async () => {
 
   assert.equal(result.exitCode, 0);
   for (const form of [
-    'skill list', 'skill show', 'skill import', 'skill bind', 'skill unbind', 'skill delete',
+    'skill list', 'skill show', 'skill import', 'skill bind', 'skill bindings', 'skill unbind', 'skill delete',
   ]) {
     assert.ok(result.data.help.includes(form), `help is missing: ${form}`);
   }
+});
+
+// task-25 C（盘点 P2-1）：五处「已实现未列 help」漂移的静态门 —— 每条 usage 必须列出对应参数。
+test('help documents the five formerly-missing flags (task-25 P2-1)', async () => {
+  const result = await runCommand(['help'], { env: {}, promptSecret: noPrompt });
+  assert.equal(result.exitCode, 0);
+  const text = result.data.help;
+  const expectations = [
+    ['skill bindings', /skill bindings <skillId>/],
+    ['drive --content-file', /drive --workspace <wsId> \(--content <text> \| --content-file <path>\)/],
+    ['auth status --check', /auth status \[--check\]/],
+    ['config-locks set --mode', /config-locks set <domain> <key> --reason <text> \[--value <v>\] \[--mode <m>\]/],
+    ['provider limit --clear-model-limits', /provider limit set --connection <c> .*\[--clear-model-limits\]/],
+  ];
+  for (const [label, pattern] of expectations) {
+    assert.match(text, pattern, `help is missing the implemented flag: ${label}`);
+  }
+  // agent usage lines must advertise the local-filter semantics, not a wire scope.
+  assert.match(text, /agent create --name <n> \[--workspace <wsId>\] \[--scope personal\|workspace\|instance\]/);
+  assert.match(text, /--scope filters locally by ownership\/ownerUserId/);
 });
 
 test('an unknown skill subcommand is refused instead of completing silently', async () => {
@@ -7329,6 +7436,14 @@ test('task-95 ② drive: receipt 契约只白名单减「未知门」，落盘�
   assert.ok(otherGate.problems.some((problem) => problem.startsWith('gate 必须是 "drive-chat"')), otherGate.problems.join('; '));
 
   // ④ 结构问题一个都不许被白名单吞掉。
+  // task-34: 「会话从未存在」的失败 receipt（principal 发现失败/CP 拒绝 create）必须能保留可读原因：
+  // sessionId='' + created:false + runId:null 合法；但已建会话或有 run 时空 sessionId 仍拒收（不放宽假绿缝）。
+  const preSession = validateDriveReceipt({ ...ok, verdict: 'error', code: 'E_UNPARSABLE', reason: '无法确定 agentPrincipalId：列表为空', drive: { sessionId: '', created: false, runId: null, reason: 'PRINCIPAL_DISCOVERY_EMPTY' } });
+  assert.equal(preSession.ok, true, preSession.problems.join('; '));
+  const createdButEmpty = validateDriveReceipt({ ...ok, drive: { sessionId: '', created: true, runId: null } });
+  assert.ok(createdButEmpty.problems.includes('drive.sessionId 为空'), '已建会话却空 id 必须仍拒收');
+  const runButEmpty = validateDriveReceipt({ ...ok, drive: { sessionId: '', created: false, runId: 'r-1' } });
+  assert.ok(runButEmpty.problems.includes('drive.sessionId 为空'), '已有 run 却空 id 必须仍拒收');
   const noDrive = validateDriveReceipt({ ...ok, drive: undefined });
   assert.equal(noDrive.ok, false);
   assert.ok(noDrive.problems.includes('drive 缺失：receipt 必须说清「哪个会话、哪个 run、多少个事件」'));
@@ -7417,7 +7532,9 @@ test('task-95 ② drive: 假 CP 上跑通一条消息到终态；四种失败一
   });
 
   const startCp = ({ events = ['agent_delta', 'agent_done'], sseStatus = 200, runStatus = 'succeeded' } = {}) => {
-    const state = { sessions: 0, deleted: 0, chats: 0, polls: 0 };
+    // task-34: fake CP 镜像 PLAN-0689 B3 —— SessionCreateRequest.required=[agentPrincipalId]，
+    // 缺字段/空串 ⇒ 400 INVALID_REQUEST "agentPrincipalId is required"（SessionService.java:248 同款）。
+    const state = { sessions: 0, deleted: 0, chats: 0, polls: 0, lastSessionBody: null, principalListCalls: 0 };
     const fetchImpl = async (url, init = {}) => {
       const target = new URL(url);
       const method = init.method ?? 'GET';
@@ -7438,8 +7555,24 @@ test('task-95 ② drive: 假 CP 上跑通一条消息到终态；四种失败一
         });
       }
       if (target.pathname === '/api/v1/models') return respond(200, { models: [{ id: 'gpt-5' }] });
+      if (target.pathname === '/api/v1/workspaces/ws-1/agents' && method === 'GET') {
+        // WorkspaceAgentView：bound=true 才是「本工作区可用」；owned 未绑行 bound:false（不能建会话）。
+        return respond(200, { agents: [
+          { principalId: 'p-owned', name: 'owned-unbound', bound: false, disabled: false },
+          { principalId: 'p-bound', name: 'bound-usable', bound: true, disabled: false },
+        ] });
+      }
+      if (target.pathname === '/api/v1/agent-principals' && method === 'GET') {
+        state.principalListCalls += 1;
+        return respond(200, { principals: [{ principalId: 'p-list', name: 'list-row', ownership: 'USER', disabledAt: null }] });
+      }
       if (target.pathname === '/api/v1/sessions' && method === 'POST') {
         state.sessions += 1;
+        const createBody = init.body ? JSON.parse(init.body) : {};
+        state.lastSessionBody = createBody;
+        if (typeof createBody.agentPrincipalId !== 'string' || createBody.agentPrincipalId.trim() === '') {
+          return respond(400, { code: 'INVALID_REQUEST', detail: 'agentPrincipalId is required' });
+        }
         return respond(201, { id: 's-9' });
       }
       if (target.pathname === '/api/v1/sessions/s-9/branches') return respond(200, { items: [{ branchId: 'b-9' }] });
@@ -7498,6 +7631,11 @@ test('task-95 ② drive: 假 CP 上跑通一条消息到终态；四种失败一
     assert.equal(typeof okReceipt.durationMs, 'number');
     assert.equal(okReceipt.drive.sessionDeleted, true, '默认删掉本次建的会话');
     assert.equal(okCp.state.deleted, 1);
+    // task-34: 建会话 body 必须带 agentPrincipalId（PLAN-0689 B3），且来源是只读发现而非伪造。
+    assert.equal(okCp.state.lastSessionBody.agentPrincipalId, 'p-bound', 'body 必须携带已绑定 principal');
+    assert.equal(okReceipt.drive.agentPrincipalId, 'p-bound');
+    assert.equal(okReceipt.drive.principalSource, 'discovered:workspace-agents');
+    assert.equal(okCp.state.principalListCalls, 0, 'workspace-agents 面可读时不该再打 agent-principals');
     assert.equal(validateDriveReceipt(okReceipt).ok, true);
     // 落盘与输出同一份（落盘的是纯 receipt；receiptPath 只在 CLI 输出里，指向 --out）。
     const { receiptPath, ...persisted } = okReceipt;
@@ -7545,6 +7683,30 @@ test('task-95 ② drive: 假 CP 上跑通一条消息到终态；四种失败一
     assert.equal(reuseRun.data.drive.sessionDeleted, false, '--keep-session 不许删会话');
     assert.equal(reuseCp.state.sessions, 0);
     assert.equal(reuseCp.state.deleted, 0);
+    // task-34: 复用会话不建会话 ⇒ 不解析 principal（receipt 两字段保持 null，不冒充来源）。
+    assert.equal(reuseRun.data.drive.agentPrincipalId, null);
+    assert.equal(reuseRun.data.drive.principalSource, null);
+    assert.equal(reuseCp.state.principalListCalls, 0);
+
+    // ⑦ task-32：真 CP 契约形态的 /models（connectionId-keyed object）也必须能建会话跑通。
+    //    旧 Array.isArray 门在这具 body 下 models 恒空 ⇒ VERIFY_MODEL_MISSING；此腿用真实链路
+    //    同款 body（非友好输入），修复前必红、修复后转绿（变异双向见证据 README §7）。
+    const objectModelsCp = startCp();
+    const origFetch = objectModelsCp.fetchImpl;
+    objectModelsCp.fetchImpl = async (url, init) => {
+      if (new URL(url).pathname === '/api/v1/models') {
+        return new Response(JSON.stringify({
+          providers: {}, configRevision: 'rev-1',
+          models: { 'c-1': ['catalog-model-1'], 'c-other': ['foreign-model'] },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return origFetch(url, init);
+    };
+    const objectRun = await runDrive({ cp: objectModelsCp, path: path.join(tmp, 'object-models.json') });
+    assert.equal(objectRun.exitCode, 0, JSON.stringify(objectRun.error ?? objectRun.data));
+    assert.equal(objectRun.data.verdict, 'pass');
+    assert.equal(objectRun.data.drive.sessionId, 's-9');
+    assert.equal(objectModelsCp.state.sessions, 1, 'object catalog 必须真的建出会话');
 
     // ⑥ 用法：缺 --content / 缺 workspace 都是 exit 2（用法错不是业务失败）。
     const noContent = await runCommand(['drive', '--workspace', 'ws-1', '--json'], { env: { XIHE_TOKEN: 't' }, promptSecret: noPrompt });
@@ -7556,4 +7718,357 @@ test('task-95 ② drive: 假 CP 上跑通一条消息到终态；四种失败一
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// ── task-32: /api/v1/models 的 object-keyed 契约（ProviderModelCatalog.models）────────────
+// 根因：session-binding.mjs:142 旧口径只认 Array.isArray，真 CP 返回
+// {providers:{…}, models:{<connectionId>: ["model-a"]}, configRevision} ⇒ models 恒空 ⇒
+// pickModelName 三源全空 ⇒ drive/verify/run-agent-e2e 的建会话链全断（VERIFY_MODEL_MISSING）。
+// 三条腿钉死：object 能选 model / array 旧形态不回归 / 空 object fail-closed 且原因可读。
+function sessionBindingFakeCp(models) {
+  const calls = [];
+  const client = {
+    async call(method, pathname) {
+      calls.push({ method, pathname });
+      if (pathname === '/api/v1/provider-connections') {
+        return { status: 200, body: { connections: [{
+          id: 'c-1', providerId: 'openai-compatible', status: 'READY', enabled: true,
+          apiTypeId: 'openai-chat-completions', apiTypeVersion: 1,
+        }] }, code: null };
+      }
+      if (pathname.startsWith('/api/v1/config/api-request-templates')) {
+        return { status: 200, body: { templates: [{
+          id: 't-1', status: 'published', version: 1,
+          apiTypeId: 'openai-chat-completions', apiTypeVersion: 1,
+        }] }, code: null };
+      }
+      if (pathname === '/api/v1/models') return { status: 200, body: { models }, code: null };
+      throw new Error('unexpected call ' + pathname);
+    },
+  };
+  return { client, calls };
+}
+
+test('task-32 session-binding: object-keyed /models catalog yields a usable model binding', async () => {
+  // 真 CP 契约形态：models 是 connectionId → string[] 的普通对象（openapi.yaml:8436）。
+  const cp = sessionBindingFakeCp({
+    'c-other': ['model-for-other-connection'],
+    'c-1': ['catalog-model-1', 'catalog-model-2'],
+  });
+  const result = await resolveSessionBinding({ client: cp.client, stack: 'stack-2' });
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.equal(result.binding.modelName, 'catalog-model-1');
+  assert.equal(result.binding.connectionId, 'c-1');
+  assert.equal(result.binding.templateId, 't-1');
+  assert.equal(cp.calls.some((call) => call.pathname === '/api/v1/models'), true);
+});
+
+test('task-32 session-binding: legacy array /models catalog keeps working', async () => {
+  const cp = sessionBindingFakeCp([{ id: 'legacy-model-1' }, { id: 'legacy-model-2' }]);
+  const result = await resolveSessionBinding({ client: cp.client, stack: 'stack-2' });
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.equal(result.binding.modelName, 'legacy-model-1');
+});
+
+test('task-32 session-binding: empty object /models catalog fails closed with a readable reason', async () => {
+  const cp = sessionBindingFakeCp({});
+  const result = await resolveSessionBinding({ client: cp.client, stack: 'stack-2' });
+  assert.equal(result.binding, undefined);
+  assert.equal(result.error.code, 'VERIFY_MODEL_MISSING');
+  assert.match(result.error.message, /Connection c-1 exposes no usable chat model/);
+  assert.match(result.error.message, /xihe verify/);
+});
+
+test('task-32 session-binding: catalog first entry ASR, second chat ⇒ must pick the chat model', async () => {
+  // infra-1c 真栈探针：首项 mimo-v2.5-asr 是语音模型，裸取第一项会把非 chat 模型钉进会话。
+  const cp = sessionBindingFakeCp({ 'c-1': ['mimo-v2.5-asr', 'mimo-v2.5-chat'] });
+  const result = await resolveSessionBinding({ client: cp.client, stack: 'stack-2' });
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.equal(result.binding.modelName, 'mimo-v2.5-chat');
+});
+
+test('task-32 session-binding: all-non-chat catalog fails closed with a readable reason', async () => {
+  const cp = sessionBindingFakeCp({ 'c-1': ['mimo-v2.5-asr', 'text-embedding-3-large', 'tts-1'] });
+  const result = await resolveSessionBinding({ client: cp.client, stack: 'stack-2' });
+  assert.equal(result.binding, undefined);
+  assert.equal(result.error.code, 'VERIFY_MODEL_MISSING');
+  assert.match(result.error.message, /no usable chat model/);
+  assert.match(result.error.message, /ASR\/TTS\/embedding\/image/);
+});
+
+test('task-32 session-binding: capability flags override the name screen', async () => {
+  // ProviderModel objects carry capabilities.chat; an explicitly chat:false entry is rejected
+  // even when its name looks neutral, and chat:true wins over a suspicious-looking name.
+  const cp = sessionBindingFakeCp({ 'c-1': [
+    { name: 'neutral-name', capabilities: { chat: false, vision: false, tools: false } },
+    { name: 'weird-asr-sounding-but-chat', capabilities: { chat: true, vision: false, tools: true } },
+  ] });
+  const result = await resolveSessionBinding({ client: cp.client, stack: 'stack-2' });
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.equal(result.binding.modelName, 'weird-asr-sounding-but-chat');
+});
+
+// ── task-34（PLAN-0689 B3）：drive 的 agentPrincipalId 支持 ────────────────────────────────
+// 根因（task-30 窗口 drive 二跑 FAIL）：POST /api/v1/sessions → 400 "agentPrincipalId is required"。
+// SessionCreateRequest.required=[agentPrincipalId]（openapi.yaml），drive/bindingRequestBody 均无该字段。
+// 修法（Lead 裁定）：drive.mjs 侧 spread 补字段，不动 session-binding.mjs；--principal 显式优先，
+// 未指定走只读发现（workspace-agents bound 面优先，agent-principals 回落）；receipt 记来源；禁伪造 id。
+// 本组用例钉死：请求体含 agentPrincipalId × 两来源分支 + 绑定校验可读原因（403/409/404）+ 发现负例 fail-closed。
+const P_UUID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const P_UUID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+function principalDriveFakeCp({
+  wsAgents = { status: 200, body: { agents: [
+    { principalId: 'p-owned', name: 'owned-unbound', bound: false, disabled: false },
+    { principalId: P_UUID_B, name: 'bound-usable', bound: true, disabled: false },
+  ] } },
+  principals = { status: 200, body: { principals: [{ principalId: P_UUID_A, name: 'list-row', ownership: 'USER', disabledAt: null }] } },
+  createReject = null,
+} = {}) {
+  const encoder = new TextEncoder();
+  const state = { sessionBodies: [], calls: [], chats: 0, deleted: 0 };
+  const fetchImpl = async (url, init = {}) => {
+    const target = new URL(url);
+    const method = init.method ?? 'GET';
+    state.calls.push({ method, pathname: target.pathname, search: target.search, headers: init.headers ?? {} });
+    const respond = (status, payload) => new Response(JSON.stringify(payload), {
+      status, headers: { 'Content-Type': 'application/json' },
+    });
+    if (target.pathname === '/api/v1/provider-connections') {
+      return respond(200, { connections: [{
+        id: 'c-1', status: 'READY', enabled: true, connectionKey: 'c-1',
+        apiTypeId: 'openai-chat-completions', apiTypeVersion: 1, manualModels: ['gpt-5'],
+      }] });
+    }
+    if (target.pathname === '/api/v1/config/api-request-templates') {
+      return respond(200, { templates: [{ id: 't-1', status: 'published', version: 1, apiTypeId: 'openai-chat-completions', apiTypeVersion: 1 }] });
+    }
+    if (target.pathname === '/api/v1/models') return respond(200, { models: { 'c-1': ['gpt-5'] } });
+    if (target.pathname === '/api/v1/workspaces/ws-1/agents' && method === 'GET') {
+      return respond(wsAgents.status, wsAgents.body);
+    }
+    if (target.pathname === '/api/v1/agent-principals' && method === 'GET') {
+      // 真 CP 忽略未知 query；这里按 D-174 严格拒绝已废止的 scope（防旧口径复活）。
+      if (target.searchParams.has('scope')) return respond(400, { code: 'INVALID_REQUEST', detail: 'scope is retired' });
+      return respond(principals.status, principals.body);
+    }
+    if (target.pathname === '/api/v1/sessions' && method === 'POST') {
+      const body = init.body ? JSON.parse(init.body) : {};
+      state.sessionBodies.push(body);
+      // B3 契约镜像：缺 principal ⇒ 400（SessionService.java:248 同款 problem）。
+      if (typeof body.agentPrincipalId !== 'string' || body.agentPrincipalId.trim() === '') {
+        return respond(400, { code: 'INVALID_REQUEST', detail: 'agentPrincipalId is required' });
+      }
+      if (createReject) return respond(createReject.status, createReject.body);
+      return respond(201, { id: 's-9' });
+    }
+    if (target.pathname === '/api/v1/sessions/s-9/branches') return respond(200, { items: [{ branchId: 'b-9' }] });
+    if (target.pathname === '/api/v1/sessions/s-9' && method === 'DELETE') {
+      state.deleted += 1;
+      return new Response(null, { status: 204 });
+    }
+    if (target.pathname === '/api/v1/events') {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: connected\ndata: {"type":"connected"}\n\n'));
+          controller.enqueue(encoder.encode('event: agent_done\ndata: {"type":"agent_done"}\n\n'));
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    if (target.pathname === '/api/v1/chat' && method === 'POST') {
+      state.chats += 1;
+      return respond(202, { runId: 'r-9' });
+    }
+    if (target.pathname === '/api/v1/chat/runs/r-9') {
+      return respond(200, { status: 'succeeded', terminalOutcome: 'success', errorCode: null });
+    }
+    return respond(404, { code: 'NOT_FOUND' });
+  };
+  return { fetchImpl, state };
+}
+
+async function runPrincipalDrive(cp, tmp, extraArgs = []) {
+  return runCommand(
+    ['drive', '--workspace', 'ws-1', '--content', 'ping', '--timeout', '5',
+      '--out', path.join(tmp, `drive-${Math.random().toString(36).slice(2)}.json`), '--json', ...extraArgs],
+    {
+      env: { XIHE_TOKEN: 'drive-token' },
+      fetchImpl: cp.fetchImpl,
+      promptSecret: noPrompt,
+      sleepImpl: () => new Promise((resolve) => setTimeout(resolve, 0)),
+    },
+  );
+}
+
+test('task-34 drive: explicit --principal goes into the session body and receipt records source=explicit', async () => {
+  const cp = principalDriveFakeCp();
+  const tmp = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-principal-'));
+  try {
+    const run = await runPrincipalDrive(cp, tmp, ['--principal', P_UUID_A]);
+    assert.equal(run.exitCode, 0, JSON.stringify(run.error ?? run.data));
+    assert.equal(run.data.verdict, 'pass');
+    // 请求体钉死：agentPrincipalId = 显式值，且既有 binding 字段一个不丢（spread 不是替换）。
+    assert.equal(cp.state.sessionBodies.length, 1);
+    const body = cp.state.sessionBodies[0];
+    assert.equal(body.agentPrincipalId, P_UUID_A);
+    assert.equal(body.providerConnectionId, 'c-1');
+    assert.equal(body.modelName, 'gpt-5');
+    assert.equal(body.contextTemplateId, 't-1');
+    assert.equal(body.contextTemplateLayer, 'user');
+    assert.equal(body.contextTemplateVersion, 1);
+    // receipt 来源 = explicit；可复现命令行带 --principal。
+    assert.equal(run.data.drive.agentPrincipalId, P_UUID_A);
+    assert.equal(run.data.drive.principalSource, 'explicit');
+    assert.ok(run.data.command.includes(`--principal ${P_UUID_A}`), run.data.command);
+    // 显式给了就不做发现（两个 GET 面都不该被打）。
+    assert.equal(cp.state.calls.some((c) => c.pathname === '/api/v1/workspaces/ws-1/agents'), false);
+    assert.equal(cp.state.calls.some((c) => c.pathname === '/api/v1/agent-principals'), false);
+    assert.equal(validateDriveReceipt(run.data).ok, true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('task-34 drive: discovery prefers the bound workspace-agents face; fallback face stays untouched', async () => {
+  const cp = principalDriveFakeCp();
+  const tmp = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-principal-'));
+  try {
+    const run = await runPrincipalDrive(cp, tmp);
+    assert.equal(run.exitCode, 0, JSON.stringify(run.error ?? run.data));
+    // bound:false 的 owned 行必须跳过，取 bound:true 行。
+    assert.equal(cp.state.sessionBodies[0].agentPrincipalId, P_UUID_B);
+    assert.equal(run.data.drive.agentPrincipalId, P_UUID_B);
+    assert.equal(run.data.drive.principalSource, 'discovered:workspace-agents');
+    assert.equal(cp.state.calls.some((c) => c.pathname === '/api/v1/agent-principals'), false, '首选面可用就不许打回落面');
+    // 发现是只读的：全程无 POST /agent-principals、无 PUT 绑定（禁伪造/禁自动建）。
+    assert.equal(cp.state.calls.some((c) => c.method !== 'GET' && c.pathname.includes('agent')), false);
+    // 发现来源不冒充显式参数：命令行不带 --principal。
+    assert.equal(run.data.command.includes('--principal'), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('task-34 drive: workspace face unreadable ⇒ falls back to GET /agent-principals?workspaceId (source recorded)', async () => {
+  const cp = principalDriveFakeCp({ wsAgents: { status: 403, body: { code: 'WORKSPACE_FORBIDDEN', detail: 'not a member' } } });
+  const tmp = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-principal-'));
+  try {
+    const run = await runPrincipalDrive(cp, tmp);
+    assert.equal(run.exitCode, 0, JSON.stringify(run.error ?? run.data));
+    assert.equal(cp.state.sessionBodies[0].agentPrincipalId, P_UUID_A);
+    assert.equal(run.data.drive.principalSource, 'discovered:agent-principals');
+    const listCall = cp.state.calls.find((c) => c.pathname === '/api/v1/agent-principals');
+    assert.equal(listCall.search, '?workspaceId=ws-1', '回落面必须带 workspaceId query（reach 语义）');
+    assert.equal(listCall.headers['X-Workspace-Id'], 'ws-1');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('task-34 drive: fallback skips disabled rows; all-disabled or empty lists fail closed with readable reasons', async () => {
+  const tmp = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-principal-'));
+  try {
+    // ① 首行 disabledAt 非空 ⇒ 跳过，取第二行。
+    const skipCp = principalDriveFakeCp({
+      wsAgents: { status: 404, body: { code: 'NOT_FOUND' } },
+      principals: { status: 200, body: { principals: [
+        { principalId: P_UUID_A, disabledAt: '2026-11-16T00:00:00Z' },
+        { principalId: P_UUID_B, disabledAt: null },
+      ] } },
+    });
+    const skipRun = await runPrincipalDrive(skipCp, tmp);
+    assert.equal(skipRun.exitCode, 0, JSON.stringify(skipRun.error ?? skipRun.data));
+    assert.equal(skipCp.state.sessionBodies[0].agentPrincipalId, P_UUID_B);
+
+    // ② 回落面全停用 ⇒ error，不建会话（禁拿停用 principal 硬闯）。
+    const emptyCp = principalDriveFakeCp({
+      wsAgents: { status: 404, body: { code: 'NOT_FOUND' } },
+      principals: { status: 200, body: { principals: [{ principalId: P_UUID_A, disabledAt: '2026-11-16T00:00:00Z' }] } },
+    });
+    const emptyRun = await runPrincipalDrive(emptyCp, tmp);
+    assert.equal(emptyRun.exitCode, 1);
+    assert.equal(emptyRun.data.verdict, 'error');
+    assert.equal(emptyRun.data.drive.reason, 'PRINCIPAL_DISCOVERY_EMPTY');
+    assert.match(emptyRun.data.reason, /--principal/);
+    assert.equal(emptyCp.state.sessionBodies.length, 0, '发现失败绝不建会话');
+    assert.equal(emptyCp.state.chats, 0);
+
+    // ③ workspace 面可读但只有 owned 未绑行 ⇒ PRINCIPAL_NONE_BOUND（不能拿 bound:false 建会话）。
+    const noneCp = principalDriveFakeCp({
+      wsAgents: { status: 200, body: { agents: [{ principalId: 'p-owned', bound: false, disabled: false }] } },
+    });
+    const noneRun = await runPrincipalDrive(noneCp, tmp);
+    assert.equal(noneRun.exitCode, 1);
+    assert.equal(noneRun.data.drive.reason, 'PRINCIPAL_NONE_BOUND');
+    assert.match(noneRun.data.reason, /绑定/);
+    assert.equal(noneCp.state.sessionBodies.length, 0);
+
+    // ④ 两个面都不可读 ⇒ PRINCIPAL_DISCOVERY_FAILED，两面状态都写进原因（fail-closed，不伪造）。
+    const deadCp = principalDriveFakeCp({
+      wsAgents: { status: 500, body: { code: 'INTERNAL_ERROR' } },
+      principals: { status: 403, body: { code: 'FORBIDDEN', detail: 'membership required' } },
+    });
+    const deadRun = await runPrincipalDrive(deadCp, tmp);
+    assert.equal(deadRun.exitCode, 1);
+    assert.equal(deadRun.data.drive.reason, 'PRINCIPAL_DISCOVERY_FAILED');
+    assert.match(deadRun.data.reason, /HTTP 500/);
+    assert.match(deadRun.data.reason, /HTTP 403 FORBIDDEN/);
+    assert.match(deadRun.data.reason, /membership required/);
+    assert.equal(deadCp.state.sessionBodies.length, 0);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('task-34 drive: CP binding rejections (403/409/404) surface readable reasons with the principal identity', async () => {
+  const tmp = fs.mkdtempSync(path.join(tmpdir(), 'xihe-drive-principal-'));
+  try {
+    const cases = [
+      { status: 403, body: { code: 'FORBIDDEN', detail: 'Agent principal holds no role binding for this Workspace' }, hint: /绑定|PUT \/api\/v1\/workspaces/ },
+      { status: 409, body: { code: 'AGENT_PRINCIPAL_DISABLED', detail: 'Agent principal is disabled' }, hint: /停用/ },
+      { status: 404, body: { code: 'AGENT_PRINCIPAL_NOT_FOUND', detail: 'Agent principal not found' }, hint: /agent list/ },
+    ];
+    for (const reject of cases) {
+      const cp = principalDriveFakeCp({ createReject: reject });
+      const run = await runPrincipalDrive(cp, tmp, ['--principal', P_UUID_A]);
+      assert.equal(run.exitCode, 1);
+      assert.equal(run.data.verdict, 'error');
+      assert.equal(run.data.drive.reason, 'SESSION_CREATE_FAILED');
+      // 可读原因三要素：CP code + detail 原文 + 处置指引；并点名是哪个 principal、什么来源。
+      assert.ok(run.data.reason.includes(reject.body.code), run.data.reason);
+      assert.ok(run.data.reason.includes(reject.body.detail), run.data.reason);
+      assert.match(run.data.reason, reject.hint);
+      assert.ok(run.data.reason.includes(`principal=${P_UUID_A}`), run.data.reason);
+      assert.ok(run.data.reason.includes('source=explicit'), run.data.reason);
+      // 被拒后不许发消息、不许删别人的会话。
+      assert.equal(cp.state.chats, 0);
+      assert.equal(cp.state.deleted, 0);
+      assert.equal(run.data.drive.created, false);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('task-34 drive: --principal shape is validated as usage (exit 2); missing flag value is refused', async () => {
+  const notUuid = await runCommand(
+    ['drive', '--workspace', 'ws-1', '--content', 'ping', '--principal', 'not-a-uuid', '--json'],
+    { env: { XIHE_TOKEN: 't' }, promptSecret: noPrompt },
+  );
+  assert.equal(notUuid.exitCode, 2);
+  assert.equal(notUuid.error.code, 'INVALID_ARGUMENT');
+  assert.match(notUuid.error.message, /--principal/);
+  const noValue = await runCommand(
+    ['drive', '--workspace', 'ws-1', '--content', 'ping', '--principal', '--json'],
+    { env: { XIHE_TOKEN: 't' }, promptSecret: noPrompt },
+  );
+  assert.equal(noValue.exitCode, 2);
+  assert.equal(noValue.error.code, 'INVALID_ARGUMENT');
+});
+
+test('task-34 drive: help usage advertises --principal (static drift gate)', async () => {
+  const result = await runCommand(['help'], { env: {}, promptSecret: noPrompt });
+  assert.equal(result.exitCode, 0);
+  assert.match(result.data.help, /drive --workspace <wsId> \(--content <text> \| --content-file <path>\) \[--principal <agentPrincipalId>\]/);
 });

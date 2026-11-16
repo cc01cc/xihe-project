@@ -111,6 +111,80 @@ function positiveSeconds(raw, fallback) {
     return value;
 }
 
+// ── task-34（PLAN-0689 B3）：SessionCreateRequest.required=[agentPrincipalId] ──────────────
+// CP 权威（只读核对，不改产品代码）：SessionService.createAgentSession 缺 principal ⇒ 400
+// INVALID_REQUEST "agentPrincipalId is required"；resolveCapFor → requireActiveWorkspaceBinding：
+//   未绑定 ⇒ 403 FORBIDDEN "Agent principal holds no role binding for this Workspace"
+//   已停用 ⇒ 409 AGENT_PRINCIPAL_DISABLED；不存在 ⇒ 404 AGENT_PRINCIPAL_NOT_FOUND。
+// drive 侧只做「显式指定 or 只读发现」+ 把 CP 的拒绝翻译成可读原因；绝不伪造 id、绝不自动建 principal。
+
+/** OpenAPI SessionCreateRequest.agentPrincipalId 是 format:uuid；用法层先拦非法形状（exit 2）。 */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 绑定/主体类拒绝 ⇒ 人话处置指引。码名以 CP 为准，这里只补「下一步做什么」。 */
+function principalRejectionHint(code) {
+    switch (code) {
+        case 'FORBIDDEN':
+        case 'WORKSPACE_FORBIDDEN':
+            return 'principal 未绑定到该 workspace：先 PUT /api/v1/workspaces/<wsId>/agents/<principalId>（UI：工作区 → Agents → 绑定），或换一个已绑定的 --principal';
+        case 'AGENT_PRINCIPAL_DISABLED':
+            return 'principal 已停用：换一个可用 principal，或由管理员恢复后再跑';
+        case 'AGENT_PRINCIPAL_NOT_FOUND':
+            return 'principal 不存在或不可见：用 xihe agent list 核对 id（注意 workspace door）';
+        default:
+            return null;
+    }
+}
+
+/**
+ * 只读发现一个「当前 workspace 可用」的 principal。**只 GET，不创建**。
+ *
+ * <p>首选 GET /api/v1/workspaces/{wsId}/agents —— 它是唯一带 bound/disabled 旗标的读面
+ * （WorkspaceAgentView），bound=true 才等价于 CP 建会话时的 requireActiveWorkspaceBinding；
+ * owned-but-unbound 行（bound:false）必须跳过，否则第一步就撞 403。该面不可读（非 200）时
+ * 回落 GET /api/v1/agent-principals?workspaceId=…（reach ∪ owned，无 bound 旗标）：跳过
+ * disabledAt 非空行后取首个，绑定与否交给 CP 在建会话时判定（403 会带可读原因回来）。</p>
+ *
+ * @returns {Promise<{principalId: string, source: string}|{error: {code: string, message: string}}>}
+ */
+export async function discoverDrivePrincipal({ client, workspaceId }) {
+    const wsFace = await client.call('GET', `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents`);
+    if (wsFace.status === 200 && Array.isArray(wsFace.body?.agents)) {
+        const usable = wsFace.body.agents.find((row) => row && typeof row.principalId === 'string'
+            && row.principalId !== '' && row.bound === true && row.disabled !== true);
+        if (usable) return { principalId: usable.principalId, source: 'discovered:workspace-agents' };
+        return {
+            error: {
+                code: 'PRINCIPAL_NONE_BOUND',
+                message: `workspace ${workspaceId} 没有已绑定且可用的 agent principal（列表 ${wsFace.body.agents.length} 行，bound=false 的 owned 行不能建会话）。`
+                    + '先绑定（PUT /api/v1/workspaces/<wsId>/agents/<principalId>）或用 --principal <id> 显式指定。',
+            },
+        };
+    }
+    const listFace = await client.call('GET', `/api/v1/agent-principals?workspaceId=${encodeURIComponent(workspaceId)}`);
+    if (listFace.status === 200 && Array.isArray(listFace.body?.principals)) {
+        const usable = listFace.body.principals.find((row) => row && typeof row.principalId === 'string'
+            && row.principalId !== '' && (row.disabledAt === undefined || row.disabledAt === null));
+        if (usable) return { principalId: usable.principalId, source: 'discovered:agent-principals' };
+        return {
+            error: {
+                code: 'PRINCIPAL_DISCOVERY_EMPTY',
+                message: `GET /api/v1/agent-principals?workspaceId=${workspaceId} 没有可用行（空列表或全部已停用）。`
+                    + '先创建/绑定 agent principal，或用 --principal <id> 显式指定。',
+            },
+        };
+    }
+    const hint = principalRejectionHint(listFace.code);
+    return {
+        error: {
+            code: 'PRINCIPAL_DISCOVERY_FAILED',
+            message: `principal 只读发现失败（workspace-agents HTTP ${wsFace.status}${wsFace.code ? ` ${wsFace.code}` : ''}；`
+                + `agent-principals HTTP ${listFace.status}${listFace.code ? ` ${listFace.code}` : ''}）`
+                + `${listFace.detail ? `：${listFace.detail}` : ''}${hint ? `。${hint}` : ''}`,
+        },
+    };
+}
+
 /** 与 run-agent-e2e/verify 同形的瘦客户端：HTTP 失败变成**数据**而不是异常（判据要落进 receipt）。 */
 function createClient({ apiBase, fetchImpl, token, workspaceId }) {
     return {
@@ -128,7 +202,7 @@ function createClient({ apiBase, fetchImpl, token, workspaceId }) {
                 });
             } catch (error) {
                 const aborted = error?.name === 'AbortError' || error?.name === 'TimeoutError';
-                return { status: 0, body: null, code: aborted ? 'REQUEST_TIMEOUT' : 'CONNECTION_FAILED' };
+                return { status: 0, body: null, code: aborted ? 'REQUEST_TIMEOUT' : 'CONNECTION_FAILED', detail: null };
             }
             let text = '';
             try { text = await response.text(); } catch { /* 状态码已经带结论 */ }
@@ -140,6 +214,8 @@ function createClient({ apiBase, fetchImpl, token, workspaceId }) {
                 status: response.status,
                 body: parsed,
                 code: typeof parsed?.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(parsed.code) ? parsed.code : null,
+                // task-34: RFC 9457 problem detail（有界快照）——绑定校验失败时 receipt 要能给出可读原因。
+                detail: typeof parsed?.detail === 'string' ? parsed.detail.slice(0, 200) : null,
             };
         },
     };
@@ -300,7 +376,11 @@ export function validateDriveReceipt(receipt, options = {}) {
     if (!receipt?.drive || typeof receipt.drive !== 'object') {
         problems.push('drive 缺失：receipt 必须说清「哪个会话、哪个 run、多少个事件」');
     } else {
-        if (typeof receipt.drive.sessionId !== 'string' || receipt.drive.sessionId.trim() === '') {
+        // task-34: 建会话**之前**的失败（绑定解析 / principal 发现 / CP 拒绝 create）没有 sessionId，
+        // 但必须保留可读原因 —— 空串 + created:false + runId:null 是「会话从未存在」的合法形状；
+        // 除此之外（已建会话 / 已有 run / 非字符串）仍按旧规则拒收，不放宽假绿缝。
+        const neverCreated = receipt.drive.sessionId === '' && receipt.drive.created === false && receipt.drive.runId === null;
+        if (!neverCreated && (typeof receipt.drive.sessionId !== 'string' || receipt.drive.sessionId.trim() === '')) {
             problems.push('drive.sessionId 为空');
         }
         if (receipt.drive.runId !== null && typeof receipt.drive.runId !== 'string') {
@@ -343,13 +423,15 @@ export async function pollRunToTerminal({ client, runId, waitMs, sleep, pollInte
 }
 
 /** receipt 里要留一条**可复现**的命令（契约要求 command 非空）。正文不落 receipt（可能很长）。 */
-export function commandLine({ workspaceId, content, timeoutSeconds, sessionId, keepSession }) {
+export function commandLine({ workspaceId, content, timeoutSeconds, sessionId, keepSession, principalId = null }) {
     return [
         'node scripts/xihe.mjs drive',
         `--workspace ${workspaceId}`,
         `--content <${content.length} chars>`,
         `--timeout ${timeoutSeconds}`,
         sessionId ? `--session ${sessionId}` : '',
+        // task-34: 显式 principal 才进可复现命令行；发现来源记在 drive.principalSource，不冒充显式参数。
+        principalId ? `--principal ${principalId}` : '',
         keepSession ? '--keep-session' : '',
     ].filter(Boolean).join(' ');
 }
@@ -397,7 +479,7 @@ export function finalizeDriveReceipt({ verdict, code, reason, drive, command, du
  */
 export async function driveChat({
     apiBase, fetchImpl, token, workspaceId, content, timeoutSeconds = DEFAULT_TIMEOUT_SECONDS,
-    sessionId = null, branchId = null, keepSession = false,
+    sessionId = null, branchId = null, keepSession = false, principalId = null,
     now = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
     const started = now();
@@ -405,6 +487,9 @@ export async function driveChat({
     const drive = {
         sessionId: sessionId ?? '',
         branchId: branchId ?? null,
+        // task-34: receipt 必须说清 principal 是谁、从哪来（explicit / discovered:*）；复用会话时为 null。
+        agentPrincipalId: null,
+        principalSource: null,
         runId: null,
         created: false,
         sessionDeleted: false,
@@ -427,15 +512,37 @@ export async function driveChat({
                 drive.reason = resolved.error.code;
                 return ['error', CODES.E_UNPARSABLE, `无法解析会话绑定：${resolved.error.message}`];
             }
+            // task-34（PLAN-0689 B3）：agentPrincipalId 必填。显式 --principal 优先；否则只读发现。
+            // 落点 = drive 侧对 bindingRequestBody 返回值 spread 补字段（Lead 裁定：不动 session-binding.mjs）。
+            if (principalId !== null) {
+                drive.agentPrincipalId = principalId;
+                drive.principalSource = 'explicit';
+            } else {
+                const found = await discoverDrivePrincipal({ client, workspaceId });
+                if (found.error) {
+                    drive.reason = found.error.code;
+                    return ['error', CODES.E_UNPARSABLE, `无法确定 agentPrincipalId：${found.error.message}`];
+                }
+                drive.agentPrincipalId = found.principalId;
+                drive.principalSource = found.source;
+            }
             const created = await client.call('POST', '/api/v1/sessions', {
-                body: bindingRequestBody(resolved.binding, { title: `xihe-drive-${new Date(now()).toISOString()}` }),
+                body: {
+                    ...bindingRequestBody(resolved.binding, { title: `xihe-drive-${new Date(now()).toISOString()}` }),
+                    agentPrincipalId: drive.agentPrincipalId,
+                },
             });
             const newId = typeof created.body?.id === 'string' ? created.body.id
                 : typeof created.body?.sessionId === 'string' ? created.body.sessionId : null;
             if (![200, 201].includes(created.status) || newId === null) {
                 drive.reason = 'SESSION_CREATE_FAILED';
+                // 绑定校验失败要可读：CP problem 的 code+detail 原样带出，再补处置指引（403/409/404）。
+                const hint = principalRejectionHint(created.code);
                 return ['error', CODES.E_UNPARSABLE,
-                    `建会话失败（HTTP ${created.status}${created.code ? ` ${created.code}` : ''}）`];
+                    `建会话失败（HTTP ${created.status}${created.code ? ` ${created.code}` : ''}）`
+                    + `${created.detail ? `：${created.detail}` : ''}`
+                    + `${hint ? `。${hint}` : ''}`
+                    + `（principal=${drive.agentPrincipalId} source=${drive.principalSource}）`];
             }
             drive.sessionId = newId;
             drive.created = true;
@@ -537,7 +644,7 @@ export async function driveChat({
         code,
         reason,
         drive,
-        command: commandLine({ workspaceId, content, timeoutSeconds, sessionId, keepSession }),
+        command: commandLine({ workspaceId, content, timeoutSeconds, sessionId, keepSession, principalId }),
         durationMs: now() - started,
         now,
     });
@@ -555,7 +662,7 @@ export function writeDriveReceipt({ receipt, root = projectRoot, out = null, now
 }
 
 /** 供 help 与用例断言：本命令的用法行。 */
-export const DRIVE_USAGE = 'drive --workspace <wsId> --content <text> [--timeout <seconds>] [--session <id>] [--branch <id>] [--keep-session] [--out <file>] [--email <account>]';
+export const DRIVE_USAGE = 'drive --workspace <wsId> (--content <text> | --content-file <path>) [--principal <agentPrincipalId>] [--timeout <seconds>] [--session <id>] [--branch <id>] [--keep-session] [--out <file>] [--email <account>]';
 
 /**
  * CLI 入口：`xihe drive --workspace <ws> --content <text> …`
@@ -565,7 +672,7 @@ export const DRIVE_USAGE = 'drive --workspace <wsId> --content <text> [--timeout
 export async function runDriveCommand({ rest, env, fetchImpl, apiBase, promptSecret, root = projectRoot, dependencies = {} }) {
     const parsed = parseOptions(
         rest,
-        ['--content', '--content-file', '--session', '--branch', '--timeout', '--out', '--email', '--workspace'],
+        ['--content', '--content-file', '--principal', '--session', '--branch', '--timeout', '--out', '--email', '--workspace'],
         ['--keep-session'],
     );
     if (parsed.positionals.length !== 0) {
@@ -594,6 +701,12 @@ export async function runDriveCommand({ rest, env, fetchImpl, apiBase, promptSec
         throw usageError('drive requires a workspace: pass --workspace <wsId> or set XIHE_WORKSPACE_ID.');
     }
     const timeoutSeconds = positiveSeconds(parsed.values['--timeout'], DEFAULT_TIMEOUT_SECONDS);
+    // task-34: --principal 可选；给了就必须是 UUID 形状（OpenAPI format:uuid），空串按未给处理。
+    const principalRaw = typeof parsed.values['--principal'] === 'string' ? parsed.values['--principal'].trim() : '';
+    if (principalRaw !== '' && !UUID_SHAPE.test(principalRaw)) {
+        throw usageError('--principal must be an agent principal UUID (see xihe agent list).');
+    }
+    const principalId = principalRaw !== '' ? principalRaw : null;
     const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret });
     const result = await driveChat({
         apiBase,
@@ -602,6 +715,7 @@ export async function runDriveCommand({ rest, env, fetchImpl, apiBase, promptSec
         workspaceId,
         content,
         timeoutSeconds,
+        principalId,
         sessionId: typeof parsed.values['--session'] === 'string' ? parsed.values['--session'].trim() || null : null,
         branchId: typeof parsed.values['--branch'] === 'string' ? parsed.values['--branch'].trim() || null : null,
         keepSession: parsed.values['--keep-session'] === true,

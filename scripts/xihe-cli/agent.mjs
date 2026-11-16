@@ -15,12 +15,31 @@ function usageError(message) {
   return new CliError('INVALID_ARGUMENT', message, {}, 2);
 }
 
+/**
+ * D-174 / PLAN-0750 M1: `scope` is gone from the wire (create body AND list query).
+ * `--scope` survives only as a **CLI-local filter** over the rows CP returns; this
+ * normalizer validates that filter value and nothing else.
+ */
 export function normalizeAgentScope(value) {
   const scope = AGENT_SCOPES.get(String(value ?? '').trim());
   if (!scope) {
     throw usageError('Scope must be personal, workspace or instance.');
   }
   return scope;
+}
+
+/**
+ * Derive the legacy scope view of one principal row from what the contract still
+ * carries (AgentPrincipalView): ownership=INSTANCE ⇒ INSTANCE; otherwise the
+ * presence of ownerUserId decides PERSONAL vs WORKSPACE (the same rule the CP
+ * participant view uses: owner ⇒ personal, no owner ⇒ workspace). Rows without
+ * either field yield null and never match a --scope filter.
+ */
+export function principalScopeView(row) {
+  if (row?.ownership === 'INSTANCE') return 'INSTANCE';
+  if (row?.ownerUserId) return 'PERSONAL';
+  if (row && 'ownerUserId' in row && row.ownerUserId === null) return 'WORKSPACE';
+  return null;
 }
 
 /** `provider:model` — the provider half may not contain a colon. */
@@ -49,7 +68,7 @@ function allowedModelRefs(view) {
 
 function samePrincipal(left, right) {
   if ((left?.name ?? '') !== right.name) return false;
-  if ((left?.scope ?? '') !== right.scope) return false;
+  // D-174: scope is no longer part of the wire row or the idempotency key.
   if ((left?.templateId ?? null) !== (right.templateId ?? null)) return false;
   if (modelRefOf(left) !== right.modelRef) return false;
   const leftAllowed = allowedModelRefs(left);
@@ -109,16 +128,27 @@ function expectStatus(response, action, accepted = [200, 201, 204]) {
   }, 1);
 }
 
-function listPrincipals({ apiBase, fetchImpl, token, scope }) {
-  const query = scope ? `?scope=${encodeURIComponent(scope)}` : '';
+function listPrincipals({ apiBase, fetchImpl, token, workspaceId = '' }) {
+  // D-174: the only contract query parameter is workspaceId; `?scope=` is gone.
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
   return callApi({ apiBase, fetchImpl, token, method: 'GET', path: `/api/v1/agent-principals${query}` });
 }
 
-/** `agent create` — idempotent by (name, scope, template, default model, allowed models). */
+/**
+ * `agent create` — idempotent by (name, template, default model, allowed models).
+ *
+ * D-174 / PLAN-0750 M1: the create body carries **no scope** (CP CREATE_KEYS is
+ * additionalProperties:false without it — sending it answers 400 INVALID_REQUEST).
+ * The door is chosen by context, not by a field: no --workspace ⇒ user-level create
+ * (CREATE_OWN_AGENT); --workspace ⇒ workspace-tier create via X-Workspace-Id
+ * (MANAGE_WORKSPACE_AGENTS). `--scope` remains an optional **CLI-local filter**
+ * applied to the idempotency lookup only; it never reaches the wire.
+ */
 export async function createAgent({ apiBase, fetchImpl, token, options }) {
   const name = String(options['--name'] ?? '').trim();
   if (!name) throw usageError('agent create requires --name.');
-  const scope = normalizeAgentScope(options['--scope']);
+  const localScope = options['--scope'] ? normalizeAgentScope(options['--scope']) : null;
+  const workspaceId = options['--workspace']?.trim() || '';
   const templateId = options['--template']?.trim() || null;
   const defaultModel = options['--default-model'] ? parseModelRef(options['--default-model'], '--default-model') : null;
   const allowedModels = Array.isArray(options['--allow-model']) ? options['--allow-model'] : [];
@@ -126,15 +156,16 @@ export async function createAgent({ apiBase, fetchImpl, token, options }) {
 
   const desired = {
     name,
-    scope,
     templateId,
     modelRef: defaultModel ? `${defaultModel.provider}:${defaultModel.model}` : null,
     allowedModelRefs: allowed.map((item) => `${item.provider}:${item.model}`),
   };
+  const matches = (row) => samePrincipal(row, desired)
+    && (localScope === null || principalScopeView(row) === localScope);
 
-  const existing = await listPrincipals({ apiBase, fetchImpl, token, scope });
+  const existing = await listPrincipals({ apiBase, fetchImpl, token, workspaceId });
   if ([200].includes(existing.status) && Array.isArray(existing.body?.principals)) {
-    const match = existing.body.principals.find((item) => samePrincipal(item, desired));
+    const match = existing.body.principals.find(matches);
     if (match) {
       return {
         kind: 'agent-created',
@@ -142,6 +173,7 @@ export async function createAgent({ apiBase, fetchImpl, token, options }) {
         idempotent: true,
         principal: match,
         principalId: match.principalId ?? match.id ?? null,
+        ...(localScope ? { localFilter: { scope: localScope } } : {}),
       };
     }
   } else if (![200, 404, 405].includes(existing.status)) {
@@ -151,22 +183,25 @@ export async function createAgent({ apiBase, fetchImpl, token, options }) {
   const body = {
     name,
     ...(templateId ? { templateId } : {}),
-    ...(scope ? { scope } : {}),
     ...(defaultModel ? {
       defaultModelProvider: defaultModel.provider,
       defaultModelName: defaultModel.model,
     } : {}),
     ...(allowed.length > 0 ? { allowedModels: allowed } : {}),
   };
-  const created = await callApi({ apiBase, fetchImpl, token, method: 'POST', path: '/api/v1/agent-principals', body });
+  const created = await callApi({ apiBase, fetchImpl, token, method: 'POST', path: '/api/v1/agent-principals', body, workspaceId: workspaceId || undefined });
   if (created.status === 409) {
     // Race: another invocation created the same principal between our list and create.
-    const retry = await listPrincipals({ apiBase, fetchImpl, token, scope });
+    const retry = await listPrincipals({ apiBase, fetchImpl, token, workspaceId });
     const match = [200].includes(retry.status) && Array.isArray(retry.body?.principals)
-      ? retry.body.principals.find((item) => samePrincipal(item, desired))
+      ? retry.body.principals.find(matches)
       : null;
     if (match) {
-      return { kind: 'agent-created', created: false, idempotent: true, principal: match, principalId: match.principalId ?? match.id ?? null };
+      return {
+        kind: 'agent-created', created: false, idempotent: true, principal: match,
+        principalId: match.principalId ?? match.id ?? null,
+        ...(localScope ? { localFilter: { scope: localScope } } : {}),
+      };
     }
   }
   expectStatus(created, 'agent principal creation');
@@ -174,16 +209,24 @@ export async function createAgent({ apiBase, fetchImpl, token, options }) {
   if (!principalId) {
     throw new CliError('AGENT_PRINCIPAL_CREATE_INVALID', 'CP accepted the create but returned no principalId.', {}, 1);
   }
-  return { kind: 'agent-created', created: true, idempotent: false, principal: created.body, principalId };
+  return {
+    kind: 'agent-created', created: true, idempotent: false, principal: created.body, principalId,
+    ...(localScope ? { localFilter: { scope: localScope } } : {}),
+  };
 }
 
 /**
  * `agent list [--workspace ws] [--scope s]`.
  *
- * PLAN-0622 contract v1 (CP 13e54cad): the wire envelopes are `{agents:[...]}`
- * (workspace view; items carry `source` + `permissionsSnapshot`) and
- * `{principals:[...]}` (principal view, optional scope/workspaceId filter). Both
- * are passed through as-is — no flattening and no legacy array fallback.
+ * D-174 / PLAN-0750 M2: the principal listing's only query parameter is
+ * `workspaceId`; `?scope=` is gone from the contract (CP ignores unknown query
+ * params, so sending it was a silently-ignored filter — fake green). `--scope`
+ * survives as a **CLI-local filter** over the returned rows, derived from
+ * ownership/ownerUserId (see principalScopeView); the output marks it explicitly
+ * as `localFilter` so nobody reads it as a server-side filter again.
+ *
+ * Envelopes stay verbatim: `{agents:[...]}` for the workspace view (no --scope),
+ * `{principals:[...]}` for the principal view — no flattening, no array fallback.
  */
 export async function listAgents({ apiBase, fetchImpl, token, options }) {
   const workspaceId = options['--workspace']?.trim() || '';
@@ -198,16 +241,22 @@ export async function listAgents({ apiBase, fetchImpl, token, options }) {
     }
     return { kind: 'agent-list', scope: null, workspaceId, agents: response.body.agents };
   }
-  const workspaceQuery = workspaceId ? `&workspaceId=${encodeURIComponent(workspaceId)}` : '';
-  const query = scope
-    ? `?scope=${encodeURIComponent(scope)}${workspaceQuery}`
-    : (workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '');
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
   const response = await callApi({ apiBase, fetchImpl, token, method: 'GET', path: `/api/v1/agent-principals${query}` });
   expectStatus(response, 'agent principal listing');
   if (!Array.isArray(response.body?.principals)) {
     throw new CliError('AGENT_LIST_ENVELOPE_INVALID', 'CP returned no {principals:[...]} envelope for the agent principal listing.', {}, 1);
   }
-  return { kind: 'agent-list', scope, workspaceId: workspaceId || null, principals: response.body.principals };
+  const principals = scope === null
+    ? response.body.principals
+    : response.body.principals.filter((row) => principalScopeView(row) === scope);
+  return {
+    kind: 'agent-list',
+    scope,
+    workspaceId: workspaceId || null,
+    principals,
+    ...(scope !== null ? { localFilter: { scope, basis: 'ownership/ownerUserId (CLI-local; CP has no scope query)' } } : {}),
+  };
 }
 
 function requireWorkspace(options) {

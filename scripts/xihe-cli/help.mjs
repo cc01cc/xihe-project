@@ -28,9 +28,9 @@ export const HELP_GROUPS = Object.freeze([
     summary: 'Agent principals and their workspace bindings',
     commands: Object.freeze([
       cmd('agent bind', '--principal <p> --workspace <wsId>', 'Bind an agent principal to a workspace'),
-      cmd('agent create', '--scope personal|workspace|instance --name <n> [--template <t>] [--default-model <p>:<m>] [--allow-model <p>:<m> ...]', 'Create an agent principal'),
+      cmd('agent create', '--name <n> [--workspace <wsId>] [--scope personal|workspace|instance] [--template <t>] [--default-model <p>:<m>] [--allow-model <p>:<m> ...]', 'Create an agent principal (--workspace picks the workspace-tier door; --scope is a CLI-local filter, never sent)'),
       cmd('agent disable', '--principal <p>', 'Disable an agent principal'),
-      cmd('agent list', '[--workspace <wsId>] [--scope <scope>]', 'List agent principals'),
+      cmd('agent list', '[--workspace <wsId>] [--scope <scope>]', 'List agent principals (--scope filters locally by ownership/ownerUserId; CP has no scope query)'),
       cmd('agent unbind', '--principal <p> --workspace <wsId>', 'Remove a workspace binding'),
     ]),
   },
@@ -61,7 +61,7 @@ export const HELP_GROUPS = Object.freeze([
     commands: Object.freeze([
       cmd('auth login', '[--email <account>] [--force] [--no-cache]', 'Log in and cache the CLI token'),
       cmd('auth logout', '[--force]', 'Drop the cached CLI token'),
-      cmd('auth status', '', 'Show the cached token state'),
+      cmd('auth status', '[--check]', 'Show the cached token state (--check verifies it against CP and drops it on 401)'),
     ]),
   },
   {
@@ -102,7 +102,7 @@ export const HELP_GROUPS = Object.freeze([
     commands: Object.freeze([
       cmd('config-locks delete', '<domain> <key> [--revision <n>] [--clear-value]', 'Delete one configuration lock'),
       cmd('config-locks list', '[<domain>]', 'List configuration locks'),
-      cmd('config-locks set', '<domain> <key> --reason <text> [--value <v>] [--revision <n>]', 'Create or update one configuration lock'),
+      cmd('config-locks set', '<domain> <key> --reason <text> [--value <v>] [--mode <m>] [--revision <n>]', 'Create or update one configuration lock (v1 accepts mode=enforce_value only)'),
     ]),
   },
   {
@@ -136,7 +136,7 @@ export const HELP_GROUPS = Object.freeze([
     name: 'drive',
     summary: 'Drive one chat to a terminal state and emit a receipt',
     commands: Object.freeze([
-      cmd('drive', '--workspace <wsId> --content <text> [--timeout <seconds>] [--session <id>] [--branch <id>] [--keep-session] [--out <file>] [--email <account>]', 'Create a session, send one message, wait for the terminal state, write a drive receipt'),
+      cmd('drive', '--workspace <wsId> (--content <text> | --content-file <path>) [--principal <agentPrincipalId>] [--timeout <seconds>] [--session <id>] [--branch <id>] [--keep-session] [--out <file>] [--email <account>]', 'Create a session, send one message, wait for the terminal state, write a drive receipt'),
     ]),
   },
   {
@@ -176,7 +176,7 @@ export const HELP_GROUPS = Object.freeze([
       cmd('provider add', '<id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>] [--connection-key <slug>]', 'Add a provider connection'),
       cmd('provider catalog', '', 'List non-secret provider definitions'),
       cmd('provider delete', '<id> [--yes]', 'Delete a provider connection'),
-      cmd('provider limit set', '--connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]', 'Set connection rate limits'),
+      cmd('provider limit set', '--connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...] [--clear-model-limits]', 'Set connection rate limits (--clear-model-limits sends modelLimits=[]; none clears one limit)'),
       cmd('provider limit show', '--connection <c>', 'Show connection rate limits'),
       cmd('provider list', '[--scope <USER|WORKSPACE>]', 'List provider connections'),
       cmd('provider update', '<id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]', 'Update a provider connection'),
@@ -213,6 +213,7 @@ export const HELP_GROUPS = Object.freeze([
     summary: 'Skill catalog and bindings',
     commands: Object.freeze([
       cmd('skill bind', '--skill <id> --subject <user|agent_principal> --subject-id <id> [--scope instance|workspace --workspace <wsId>]', 'Bind a skill to a subject'),
+      cmd('skill bindings', '<skillId>', 'List the bindings of one skill'),
       cmd('skill delete', '<skillId> [--yes]', 'Delete a skill'),
       cmd('skill import', '--file <request.json>', 'Import a skill from a request file'),
       cmd('skill list', '[--scope instance|workspace] [--workspace <wsId>]', 'List skills'),

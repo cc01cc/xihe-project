@@ -240,12 +240,15 @@ async function listWorkspaceAgents(client, workspaceId) {
 }
 
 async function createPrincipal(client, body, { workspace = false } = {}) {
+  // D-174 / PLAN-0750 M1: no scope field on the wire (CREATE_KEYS rejects it with 400).
+  // The door is the workspace context: workspace=true ⇒ X-Workspace-Id (workspace-tier),
+  // workspace=false ⇒ user-level create. Provisional code names stay unchanged (task-25 裁定②).
   const created = await client.call('POST', '/api/v1/agent-principals', { body, workspace });
   if (![200, 201].includes(created.status)) {
     if (isProvisionalResponse(created)) {
       return {
         provisional: true,
-        result: provisionalProbe('SCOPE_UNSUPPORTED', `CP 未交付 scope（HTTP ${created.status}${created.code ? ` ${created.code}` : ''}）`),
+        result: provisionalProbe('SCOPE_UNSUPPORTED', `CP 未交付 principal 创建面（HTTP ${created.status}${created.code ? ` ${created.code}` : ''}）`),
       };
     }
     return { provisional: false, result: { status: 'FAIL', code: created.code ?? 'PRINCIPAL_CREATE_FAILED', detail: `HTTP ${created.status}` } };
@@ -254,7 +257,9 @@ async function createPrincipal(client, body, { workspace = false } = {}) {
   if (typeof principalId !== 'string' || principalId === '') {
     return { provisional: false, result: { status: 'FAIL', code: 'PRINCIPAL_CREATE_INVALID', detail: 'CP returned no principalId' } };
   }
-  return { provisional: false, result: { principalId, scope: created.body?.scope ?? null } };
+  // Ownership is server-derived (AgentPrincipalCreateView.ownership); it replaces the retired
+  // scope echo as the "which door wrote this row" evidence. Missing ⇒ provisional, never assumed.
+  return { provisional: false, result: { principalId, ownership: created.body?.ownership ?? null } };
 }
 
 /**
@@ -263,12 +268,14 @@ async function createPrincipal(client, body, { workspace = false } = {}) {
  */
 export async function runPersonalLifecycleProbe({ client, workspaceId }) {
   const name = `xihe-verify-personal-${Date.now()}`;
-  const created = await createPrincipal(client, { name, scope: 'PERSONAL' });
+  // PLAN-0750 M1 user-level door: NO workspace context (workspace:false strips X-Workspace-Id),
+  // no scope field. The server derives ownership=USER; visibility is then judged by the list.
+  const created = await createPrincipal(client, { name }, { workspace: false });
   if (created.result.status) return { ...created.result, principalId: null };
   const { principalId } = created.result;
-  if (created.result.scope !== 'PERSONAL') {
+  if (created.result.ownership !== 'USER') {
     return {
-      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 scope（got ${created.result.scope ?? 'missing'}）`),
+      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 ownership=USER（got ${created.result.ownership ?? 'missing'}）`),
       principalId,
     };
   }
@@ -328,12 +335,15 @@ export async function runPersonalLifecycleProbe({ client, workspaceId }) {
  */
 export async function runWorkspaceLifecycleProbe({ client, workspaceId }) {
   const name = `xihe-verify-workspace-${Date.now()}`;
-  const created = await createPrincipal(client, { name, scope: 'WORKSPACE' }, { workspace: true });
+  // PLAN-0750 M1 workspace-tier door: explicit X-Workspace-Id, no scope field. Ownership is
+  // still USER (server-derived); what makes this the "workspace" lifecycle is binding-gated
+  // visibility below, not a request field.
+  const created = await createPrincipal(client, { name }, { workspace: true });
   if (created.result.status) return { ...created.result, principalId: null };
   const { principalId } = created.result;
-  if (created.result.scope !== 'WORKSPACE') {
+  if (created.result.ownership !== 'USER') {
     return {
-      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 scope（got ${created.result.scope ?? 'missing'}）`),
+      ...provisionalProbe('SCOPE_NOT_ECHOED', `创建成功但未回显 ownership=USER（got ${created.result.ownership ?? 'missing'}）`),
       principalId,
     };
   }
@@ -682,10 +692,10 @@ export async function runVerify({
       }
     }
     if (!state.principalId) {
-      // D21: an omitted scope is WORKSPACE; make it explicit and send the workspace context
-      // (client.call defaults workspace:true → X-Workspace-Id).
+      // PLAN-0750 M1 workspace-tier door: the context is the header (client.call defaults
+      // workspace:true → X-Workspace-Id); D-174 removed the scope body field (400 if sent).
       const created = await client.call('POST', '/api/v1/agent-principals', {
-        body: { name: 'xihe-verify', scope: 'WORKSPACE' },
+        body: { name: 'xihe-verify' },
       });
       if (![200, 201].includes(created.status) || typeof created.body?.principalId !== 'string') {
         state.principalOutcome = created.status === 0 || created.status >= 500 || [200, 201].includes(created.status)

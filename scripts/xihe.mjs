@@ -66,7 +66,6 @@ import {
   createAgent,
   disableAgent,
   listAgents,
-  normalizeAgentScope,
   parseAgentOptions,
   parseLimitArgs,
   setProviderLimits,
@@ -881,7 +880,9 @@ export async function runCommand(argv, dependencies = {}) {
       const apiBase = getApiBase(env);
       let parsed;
       if (command === 'create') {
-        parsed = parseAgentOptions(rest, ['--scope', '--name', '--template', '--default-model', '--allow-model', '--email']);
+        // D-174: --scope is an optional CLI-local filter (never sent); --workspace picks the
+        // workspace-tier create door via X-Workspace-Id (PLAN-0750 M1 two doors).
+        parsed = parseAgentOptions(rest, ['--scope', '--workspace', '--name', '--template', '--default-model', '--allow-model', '--email']);
       } else if (command === 'list') {
         parsed = parseAgentOptions(rest, ['--workspace', '--scope', '--email']);
       } else if (command === 'bind' || command === 'unbind') {
@@ -894,7 +895,7 @@ export async function runCommand(argv, dependencies = {}) {
       if (parsed.positionals.length !== 0) {
         throw new CliError('INVALID_ARGUMENT', `agent ${command} takes no positional arguments.`, {}, 2);
       }
-      if (command === 'create') normalizeAgentScope(parsed.values['--scope']);
+      // --scope validation happens inside createAgent/listAgents only when present (local filter).
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       if (command === 'create') {
         return {

@@ -182,21 +182,30 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   const token = await login({ apiBase, fetchImpl, email, password });
   const client = createClient({ apiBase, fetchImpl, token, workspaceId });
 
-  // Gate 1: CP M1.2 (scope support). A bare 404/400 here means the contract is absent.
-  const scopeProbe = await client.call('GET', '/api/v1/agent-principals?scope=PERSONAL');
+  // Gate 1: the principal listing face exists. D-174 removed ?scope= — CP ignores unknown
+  // query params, so the old ?scope=PERSONAL probe answered 200 even on a CP without the
+  // contract (fake green). Probe the real endpoint and require the {principals:[...]} envelope.
+  const scopeProbe = await client.call('GET', '/api/v1/agent-principals');
   if (scopeProbe.status !== 200) {
     if ([400, 404, 405, 422].includes(scopeProbe.status)) {
-      step('scope support', 'SCOPE_UNSUPPORTED', `GET /agent-principals?scope=PERSONAL → HTTP ${scopeProbe.status}（CP M1.2 未交付）`, {
+      step('scope support', 'SCOPE_UNSUPPORTED', `GET /agent-principals → HTTP ${scopeProbe.status}（principal 读面未交付）`, {
         httpStatus: scopeProbe.status,
-        endpoint: 'GET /agent-principals?scope=PERSONAL',
+        endpoint: 'GET /agent-principals',
       });
       return { exitCode: 3, data: { kind: 'agent-e2e', steps, gate: 'SCOPE_UNSUPPORTED' } };
     }
-    throw new CliError(codeOf(scopeProbe, 'SCOPE_PROBE_FAILED'), `Scope probe failed (HTTP ${scopeProbe.status}).`, {}, 1);
+    throw new CliError(codeOf(scopeProbe, 'SCOPE_PROBE_FAILED'), `Principal listing probe failed (HTTP ${scopeProbe.status}).`, {}, 1);
   }
-  step('scope support', 'PASS', 'GET /agent-principals?scope=PERSONAL → 200', {
+  if (!Array.isArray(scopeProbe.body?.principals)) {
+    step('scope support', 'SCOPE_UNSUPPORTED', 'GET /agent-principals → 200 但无 {principals:[...]} envelope（口径不符，不当 pass）', {
+      httpStatus: 200,
+      endpoint: 'GET /agent-principals',
+    });
+    return { exitCode: 3, data: { kind: 'agent-e2e', steps, gate: 'SCOPE_UNSUPPORTED' } };
+  }
+  step('scope support', 'PASS', 'GET /agent-principals → 200 {principals:[...]}', {
     httpStatus: 200,
-    endpoint: 'GET /agent-principals?scope=PERSONAL',
+    endpoint: 'GET /agent-principals',
   });
 
   // A5a PERSONAL：来源决定可见性（V4 三源合并：未绑也可见、unbind 后仍可见）
