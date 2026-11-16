@@ -597,6 +597,42 @@ describe("WorkspaceSettingsView — 搬回来的 mcp / skills 页签（D-1432）
         wrapper.unmount();
     });
 
+    /**
+     * task-53（P0 收口最后一条文案 P1，批次01 D3）：设置页主描述原先写「本工作区的常规信息**与成员**」，
+     * 但成员自 task-236 起已是一级页（`/workspace/:id/members`，自带 `membersPageDesc`）⇒
+     * 描述许诺了本页没有的能力。
+     *
+     * <p><b>承重方向</b>：把「与成员」/「and members」加回任一语言的 `workspace.settingsDesc` ⇒
+     * 本用例必红；反向把整段描述删空也会红（下面钉了「信息量不许缩水」的三段文本）。
+     * 刻意**不**改成「成员见成员页」这类指路句：该页左侧导航已有成员入口，再指一次是重复。</p>
+     */
+    describe("WorkspaceSettingsView — 描述文案与本页能力一致（task-53）", () => {
+        it("主描述不再许诺「与成员」，且两种语言同时守住", async () => {
+            const wrapper = await mountView();
+            const text = wrapper.text();
+
+            expect(text).not.toContain("与成员");
+            // 信息量不许缩水：配置层与资源层的去处仍在句子里（只删不实的那半句）。
+            expect(text).toContain("本工作区的常规信息");
+            expect(text).toContain("实例 / 工作区默认 / 个人");
+            expect(text).toContain("资源区");
+            wrapper.unmount();
+
+            // en 侧不是"晚一步翻译"：同一循环把每个 locale 都断言一遍，
+            // 只改 zh 会让这条红（这正是 task-53 卡面要求的"两侧都要改"）。
+            for (const locale of i18n.global.availableLocales) {
+                const messages = i18n.global.getLocaleMessage(locale) as {
+                    workspace?: { settingsDesc?: string };
+                };
+                const desc = String(messages.workspace?.settingsDesc ?? "");
+                expect(desc, "settingsDesc 不得再写 与成员 / and members: " + locale).not.toMatch(
+                    /与成员|and members/,
+                );
+                expect(desc.length, "settingsDesc 不得为空: " + locale).toBeGreaterThan(20);
+            }
+        });
+    });
+
     it("点页签把 ?tab= 写进 URL（可分享深链；general 作为默认页签省略）", async () => {
         routeState.query = { tab: "config" };
         const wrapper = await mountView();
