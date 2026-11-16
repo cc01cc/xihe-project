@@ -70,6 +70,29 @@ describe("errorCopyKey 指向的键在 zh/en 两侧都可解析（task-102）", 
         }
     });
 });
+/**
+ * task-52：403 与「越界路径」是两件事，曾共用同一句「路径不合法：仅允许工作区相对路径」。
+ * 拆的时候必须**两边都钉住** —— 只改 FORBIDDEN 会让 PATH_TRAVERSAL 掉进兜底文案，
+ * 那等于用一个错映射换另一个。
+ */
+describe("mappedErrorCopy：403 与越界路径不再共用文案（task-52）", () => {
+    it("FORBIDDEN 说权限，不说路径", () => {
+        const copy = mappedErrorCopy("FORBIDDEN");
+        expect(copy).toContain("没有权限");
+        expect(copy).not.toContain("路径");
+    });
+
+    it("PATH_TRAVERSAL 仍保留路径文案（原主人没被改掉）", () => {
+        const copy = mappedErrorCopy("PATH_TRAVERSAL");
+        expect(copy).toContain("路径不合法");
+        expect(copy).not.toContain("没有权限");
+    });
+
+    it("两者文案不再相同（防止未来又被合并回去）", () => {
+        expect(mappedErrorCopy("FORBIDDEN")).not.toBe(mappedErrorCopy("PATH_TRAVERSAL"));
+    });
+});
+
 describe("mappedErrorCopy", () => {
     it("returns dedicated copy only for codes it actually maps", () => {
         expect(mappedErrorCopy("AGENT_TIMEOUT")).toContain("超时");

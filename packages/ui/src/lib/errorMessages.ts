@@ -50,9 +50,15 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
             return "工具不存在或未启用，请刷新工作区后重试";
         case "AGENT_UNAVAILABLE":
             return "Agent 服务暂不可达，请稍后重试";
+        // 「路径不合法」原本服务的是 **PATH_TRAVERSAL**（Runtime 拒绝越界路径，
+        // `packages/runtime/src/container_runtime.rs` 的 PathTraversal → 码名 PATH_TRAVERSAL）
+        // ⇒ 该串留在这里，不跟着 FORBIDDEN 一起改。
         case "PATH_TRAVERSAL":
-        case "FORBIDDEN":
             return "路径不合法：仅允许工作区相对路径";
+        // task-52：403 授权失败此前被并到上面那条路径文案上 —— 用户被告诉「路径不合法」，
+        // 而真实原因是缺少权限（CP 侧 `CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", …)`）。
+        case "FORBIDDEN":
+            return "没有权限执行该操作，请联系管理员授予权限。";
         case "APPROVAL_REJECTED":
             return "已取消：本次文件修改未执行";
         case "APPROVAL_EXPIRED":
