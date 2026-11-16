@@ -109,7 +109,7 @@ const effectLabels: Record<ApprovalPolicyEffect, string> = {
 };
 
 function effectClass(effect: ApprovalPolicyEffect): string {
-    if (effect === "deny") return "border-destructive/40 bg-destructive/10 text-destructive";
+    if (effect === "deny") return "border-destructive/40 bg-background text-destructive";
     if (effect === "ask") return "border-amber-500/40 bg-amber-500/10 text-foreground";
     return "border-emerald-500/40 bg-emerald-500/10 text-foreground";
 }

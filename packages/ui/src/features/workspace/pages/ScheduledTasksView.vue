@@ -83,7 +83,7 @@ const STATUS_BADGE_CLS: Record<ScheduledTaskStatus, string> = {
     scheduled: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
     firing: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     missed: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    expired: "border-destructive/40 bg-destructive/10 text-destructive",
+    expired: "border-destructive/40 bg-background text-destructive",
     completed: "border-border bg-muted text-muted-foreground",
     cancelled: "border-border bg-transparent text-muted-foreground line-through",
 };
