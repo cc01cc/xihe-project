@@ -1,5 +1,4 @@
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -9,9 +8,9 @@ from xihe_agent.agent.executor import (
 )
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.interfaces.agent_runner import RunnerConfig
-from xihe_agent.interfaces.message import Message, TextMessage
+from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
-from xihe_agent.llm.base import MockChatModel, create_llm
+from xihe_agent.llm.base import create_llm
 
 
 class FakeToolSchema(BaseModel):

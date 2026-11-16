@@ -38,10 +38,7 @@ def test_approval_tool_creation(tool):
 
 @pytest.mark.asyncio
 async def test_approval_pending(tool):
-    request_ids = []
-
     async def track_approval(tool, action, details):
-        rid = tool.pending_requests
         result = await tool._arun(action=action, details=details)
         return result
 
@@ -71,7 +68,6 @@ async def test_approval_resolve(tool):
     import asyncio
 
     async def request_and_resolve():
-        rid = list(tool.pending_requests.keys())
         result = await tool._arun(action="format disk", details="/dev/sda")
         return result
 
@@ -160,7 +156,6 @@ async def test_agent_approval_emits_canonical_event_before_waiting():
 
 @pytest.mark.asyncio
 async def test_agent_approval_expires_fail_closed():
-    import asyncio
 
     tool = ApprovalAgentTool(timeout_seconds=0.01)
     context = AgentContext.empty("session-expired")

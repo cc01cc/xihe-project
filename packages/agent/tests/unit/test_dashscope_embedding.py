@@ -5,7 +5,6 @@ partition store SQL paths use a fake engine with recorded statements; real
 PostgreSQL behaviour is covered by tests/integration/test_vector_store.py.
 """
 
-import asyncio
 import json
 from typing import Any
 

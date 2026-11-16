@@ -15,7 +15,6 @@ import httpx
 import pytest
 from langchain_core.messages import ToolMessage
 
-import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 import xihe_agent.agent_runner.tool_adapter as tool_adapter_module
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.context.event_sourced_provider import EventSourcedContextProvider

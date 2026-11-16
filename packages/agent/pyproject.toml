@@ -42,9 +42,55 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 120
+# Test/src lint separation, three tiers, per .agents/skills/test/references/
+# test-lint-area-separation.md (§1). The area split here is a config-layer decision, and the
+# measurements that produced it are recorded next to it so the next editor can re-check instead
+# of re-deciding from memory.
+#
+# T-S (shared: same rule, same threshold) -- all six selected families, i.e. tests are held to
+# exactly the bar src/ is held to:
+#   E/W -> pycodestyle: whitespace/indent defects are defects in tests too; a badly indented test
+#          body warns about the same thing a badly indented module body does.
+#   F   -> pyflakes: a dead import/local in a test is not "test style", it hides a test that never
+#          reaches the assertion it appears to make (13 dead imports + 6 dead locals were found
+#          this way, see below).
+#   I   -> isort: import ordering is mechanical, identical cost and identical benefit in both areas.
+#   UP  -> pyupgrade: the py312 syntax modernization target does not change because a file is a test.
+#   N   -> pep8-naming: test functions and fixtures still follow naming conventions.
+#   SIM -> flake8-simplify: mechanically simpler code is simpler in tests too; SIM108 (ternary) stays
+#          off globally, for both areas, so this is not a test-area relaxation.
+#
+# T-R (relaxed threshold) -- EMPTY, and deliberately so: no selector in the families above carries
+# a numeric threshold. E501 is the only threshold-bearing rule reachable from this set and it is
+# globally ignored; N/UP/SIM/I/E/W have no counts or limits. If a threshold rule is ever selected
+# (PLR0913 max-args, PLR0912 max-branches, C901 max-complexity, ...), its test-area widening MUST
+# be configured in packages/agent/tests/ruff.toml with `extend = "../pyproject.toml"`, NOT here:
+# per-file-ignores can switch a rule off but cannot move a threshold. Two measured traps for that
+# future file:
+#   1. a nested tests/ruff.toml moves ruff's project root to tests/, which silently reclassifies
+#      every `from xihe_agent...` import as third-party and fires 90 false I001 -- the child config
+#      must pin `src = ["..", "../src"]` to keep first-party detection intact;
+#   2. keys declared in the child replace the parent's key (they do not merge) -- a child
+#      `lint.per-file-ignores` wipes the parent table, and a child `lint.select` replaces the parent
+#      list rather than adding to it.
+#
+# T-O (off: semantics do not hold in the test domain) -- EMPTY. The blanket
+# `lint.per-file-ignores."tests/**" = ["F401", "F811", "F841"]` that used to sit here has been
+# removed rather than re-tiered, because all 21 sites it covered measured as real defects, not as
+# semantics that do not apply:
+#   * F401 x13 -- `ruff check tests --select F401 --fix` reported "13 fixed, 0 remaining": every one
+#     was a dead import, and none was in a conftest (all three conftest modules import only symbols
+#     they use), so the usual "conftest re-exports fixtures" justification had zero instances.
+#   * F811 x2   -- a module-level `import xihe_agent.main as agent_composition` shadowed by a function
+#     local re-import; the module-level alias was simply unused.
+#   * F841 x6   -- assignments whose value is never read (`request_ids = []`, `rid = ...` captured but
+#     unused, `result = asyncio.run(...)` where every assertion reads the fake sender instead).
+# Per §1 "actually broken is T-S" and "T-O must answer why the semantics do not apply -- 'it is
+# annoying to fix' is not an answer", these are fixed as T-S. Consequence, which is the point of
+# this change: `uv run ruff check tests` is clean with NO exemption of any kind, so the test area is
+# no longer a blind spot for the very defects an area-wide exemption would hide.
 lint.select = ["E", "F", "I", "W", "UP", "N", "SIM"]
 lint.ignore = ["E501", "SIM108"]
-lint.per-file-ignores."tests/**" = ["F401", "F811", "F841"]
 
 [tool.mypy]
 python_version = "3.12"

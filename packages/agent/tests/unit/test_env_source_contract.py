@@ -125,9 +125,6 @@ def _messages_for(epoch: ContextEpoch) -> list[str]:
 
 
 def test_l1_fail_closed_family_never_injects():
-    stale_sources = [
-        {"key": "AGENTS.md", "source_type": "agents_md", "content": "STALE RULES", "content_hash": "h"}
-    ]
     stale = [ContextSource(key="AGENTS.md", source_type="agents_md",
                            content="STALE RULES", content_hash="h")]
     for status in ("failed", "unavailable", "missing"):

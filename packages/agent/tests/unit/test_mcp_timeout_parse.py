@@ -28,7 +28,6 @@ def test_parse_timeout_s_fail_closed(raw, expected):
 
 
 def test_default_constant_parsed_from_env(monkeypatch):
-    import os
 
     monkeypatch.setenv("XIHE_MCP_TOOL_TIMEOUT_S", "60")
     from xihe_agent.adapters import mcp_client

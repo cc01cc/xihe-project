@@ -96,7 +96,6 @@ def test_empty_items_is_empty_not_error() -> None:
 
 
 def test_component_max_tokens_only_tightens() -> None:
-    ledger = InjectionLedger.create(128_000)
     lines = _lines(40)
 
     untightened = render_skill_catalog(lines, ledger=InjectionLedger.create(128_000))

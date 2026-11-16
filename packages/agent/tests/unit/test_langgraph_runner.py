@@ -20,7 +20,7 @@ from xihe_agent.interfaces.context import AgentContext, ContextEpoch
 from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
-from xihe_agent.llm.base import MockChatModel, create_llm
+from xihe_agent.llm.base import create_llm
 
 LCToolAdapter = tool_adapter_module.LCToolAdapter
 

@@ -5,7 +5,7 @@ import json
 from contextlib import asynccontextmanager
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from xihe_agent.adapters.api_chat_model import ApiChatModel
 from xihe_agent.llm.api_request import ApiRequestError, chat_type, render_request, strict_json, validate_snapshot

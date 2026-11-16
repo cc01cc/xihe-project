@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 import pytest
 
 from xihe_agent.context.crash_recovery import CrashRecovery
-from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.event import Event
 from xihe_agent.interfaces.event_store import EventStore
 

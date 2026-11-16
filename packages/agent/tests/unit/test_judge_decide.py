@@ -123,7 +123,7 @@ def test_run_judge_builds_native_dashscope_body():
             clock=_clock(),
         )
 
-    result = asyncio.run(scenario())
+    asyncio.run(scenario())
     # D24-04 native shape: model + input.messages + parameters (no top-level messages/max_tokens).
     assert sender.seen_body["model"] == "decision-model-preview"
     assert sender.seen_body["input"]["messages"] == [{"role": "user", "content": "p"}]
