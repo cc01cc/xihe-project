@@ -211,9 +211,54 @@ describe("DataControlsView", () => {
         // task-22 / P2-4：中文权限名与机器码同时在屏
         expect(wrapper.text()).toContain("写入实例内容");
         expect(mockedApi.getWorkspaceCheckpointRetention).not.toHaveBeenCalled();
-        // 主体不挂载：导出/导入按钮与保留区块都不在 DOM
+        // 实例数据主体不挂载：导出 / 导入按钮不在 DOM（403 只守实例数据面）。
         expect(wrapper.text()).not.toContain("导出设置");
-        expect(wrapper.find('[data-testid="settings-checkpoint-retention"]').exists()).toBe(false);
+        // task-20（D-1667）：保留期属 workspace 成员面，已拆出实例原子门 ⇒ 区块仍在 DOM；本用例
+        // 无工作区上下文，走「无工作区」空态，与 403 互不连坐（旧断言「保留区块不在 DOM」正是被修的错层）。
+        expect(wrapper.find('[data-testid="settings-checkpoint-retention"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-checkpoint-no-workspace"]').exists()).toBe(
+            true,
+        );
+    });
+
+    // task-20（D-1667）：保留期清理的判据是 **workspace 成员面**，不是实例原子门。
+    // CP 端点（`RunCheckpointController`）retention:183-198 / cleanup:214-232 都是
+    // `@PreAuthorize("isAuthenticated()")` + `requireWorkspaceAccess` → `WorkspaceService
+    // .requireAccessibleWorkspace`:278-288（`memberships.isMember`）；而 import 是写原子
+    // `WRITE_INSTANCE_CONTENT`（`ConfigController`:572）、export 是能力位 `cap:instance:admin`
+    // （:607-610）⇒ 三者不是同一层。旧实现把清理入口放在整页原子门（dataDenied）里 ⇒
+    // 工作区成员但无实例原子时整页 403、入口被连坐隐藏（错层）。
+    it("shows the checkpoint cleanup entry to a workspace member without instance atoms", async () => {
+        // 有工作区上下文（成员），但无任何实例原子与实例管理员能力位。
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({ id: WORKSPACE_ID, name: "Workspace" }),
+        );
+        seedCapability(false);
+        vi.mocked(api, true).getSelfPermissions.mockResolvedValue(selfPermissions([]) as never);
+        mockedApi.getWorkspaceCheckpointRetention.mockResolvedValue({
+            maxRuns: 50,
+            ttlDays: 30,
+            currentRuns: 2,
+            currentRefs: 3,
+        } as never);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+        await flushPromises();
+
+        // 实例数据面仍按原子门 403（import 缺原子、export 缺能力位）。
+        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(true);
+        // 但清理入口属 workspace 成员面，必须可见且可点（不被实例原子门连坐）。
+        expect(wrapper.find('[data-testid="settings-checkpoint-retention"]').exists()).toBe(true);
+        const cleanup = wrapper.find('[data-testid="settings-checkpoint-cleanup"]');
+        expect(cleanup.exists()).toBe(true);
+        expect(cleanup.attributes("disabled")).toBeUndefined();
+        // 入口真的可用：点击进入二次确认（不是死按钮）。
+        await cleanup.trigger("click");
+        expect(
+            wrapper.find('[data-testid="settings-checkpoint-cleanup-confirm-box"]').exists(),
+        ).toBe(true);
     });
 
     // task-5（D-1521 #3=A）：**按动作分判** —— import 门 = 写原子；export 门 = 能力位。

@@ -53,11 +53,11 @@ const canExport = computed(() => authStore.hasInstanceAdminCapability);
  */
 const permissionsChecked = ref(false);
 /**
- * 整页 403 只在**两个动作都不可用**时出现（否则会连坐另一半：比如把「只有能力位」的账号
- * 挡在导出之外）。403 卡片仍点名 import 那一半的原子，因为它是唯一"可被授予"的机器码。
+ * 403 卡片只在**实例数据面的两个动作都不可用**时出现（否则会连坐另一半：比如把「只有能力位」的
+ * 账号挡在导出之外）。403 卡片仍点名 import 那一半的原子，因为它是唯一"可被授予"的机器码。
+ * task-20（D-1667）：这层门只守 import / export；保留期清理属 workspace 成员面，已拆到门外。
  */
 const dataDenied = computed(() => permissionsChecked.value && !canImport.value && !canExport.value);
-const canUseInstanceData = computed(() => canImport.value || canExport.value);
 
 const workspaceId = computed(() => authStore.currentWorkspaceId),
     retention = ref<CheckpointRetention | null>(null),
@@ -113,15 +113,18 @@ async function cleanupCheckpoints() {
 }
 
 onMounted(async () => {
-    // 先拿原子投影（单飞、失败 fail-closed），再决定取不取数：无权限时不发请求（T4.4 判据②）。
+    // 先拿原子投影（单飞、失败 fail-closed），再决定取不取实例数据：无权限时不发请求（T4.4 判据②）。
     await authStore.ensureSelfPermissions();
     permissionsChecked.value = true;
-    if (canUseInstanceData.value) await loadRetention();
+    // task-20（D-1667）：保留期清理的判据是 **workspace 成员面**（CP 只校验 `isAuthenticated()`
+    // + `requireAccessibleWorkspace` → `memberships.isMember`），与实例原子无关 ⇒ 只要有工作区
+    // 上下文就取保留期，不再被 canImport / canExport 连坐。无工作区时不发请求（走空态）。
+    if (workspaceId.value) await loadRetention();
 });
 watch(workspaceId, () => {
     cleanupConfirming.value = false;
     cleanupResult.value = null;
-    if (canUseInstanceData.value) void loadRetention();
+    if (workspaceId.value) void loadRetention();
 });
 
 async function exportSettings() {
@@ -209,15 +212,16 @@ function downloadBlob(blob: Blob, filename: string) {
             {{ t("settings.dataControls") }}
         </h3>
 
-        <!-- 无授权时只留 403 说明；页面主体不挂载 ⇒ 不会发出无谓请求。 -->
-        <SettingsPermissionGate
-            v-if="dataDenied"
-            variant="atom-denied"
-            atom="WRITE_INSTANCE_CONTENT"
-        />
-
-        <template v-else-if="permissionsChecked">
-            <div class="space-y-2">
+        <template v-if="permissionsChecked">
+            <!-- 实例数据面（import 门 = 写原子 / export 门 = 能力位）：无授权时只留 403 说明；
+                 实例主体不挂载 ⇒ 不会发出无谓请求。task-20（D-1667）：这层门**不再连坐**下面的
+                 工作区切片保留 / 清理（那半条判据是 workspace 成员面，见本段下方）。 -->
+            <SettingsPermissionGate
+                v-if="dataDenied"
+                variant="atom-denied"
+                atom="WRITE_INSTANCE_CONTENT"
+            />
+            <div v-if="!dataDenied" class="space-y-2">
                 <button
                     data-testid="settings-data-export-settings"
                     class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
@@ -248,7 +252,7 @@ function downloadBlob(blob: Blob, filename: string) {
                 </p>
             </div>
 
-            <div class="border-t pt-3 space-y-2">
+            <div v-if="!dataDenied" class="border-t pt-3 space-y-2">
                 <button
                     data-testid="settings-data-import"
                     class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors disabled:pointer-events-none disabled:opacity-50"
@@ -284,6 +288,12 @@ function downloadBlob(blob: Blob, filename: string) {
                 />
             </div>
 
+            <!-- 工作区切片保留 / 清理：判据是 **workspace 成员面**，不是实例原子（task-20 / D-1667）。
+                 CP `RunCheckpointController` 的 retention:183-198 / cleanup:214-232 都是
+                 `@PreAuthorize("isAuthenticated()")` + `requireWorkspaceAccess` →
+                 `WorkspaceService.requireAccessibleWorkspace`:278-288 的 `memberships.isMember`；
+                 而 import 是写原子 `WRITE_INSTANCE_CONTENT`、export 是能力位 `cap:instance:admin`
+                 ⇒ 三者不是同一层。放在实例原子门之外：工作区成员即使无任何实例原子也能看到并点击。 -->
             <div class="border-t pt-3 space-y-2" data-testid="settings-checkpoint-retention">
                 <h4 class="text-xs font-medium">{{ t("settings.checkpointRetention") }}</h4>
                 <p class="text-xs text-muted-foreground">
