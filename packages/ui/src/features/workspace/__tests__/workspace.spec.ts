@@ -60,7 +60,11 @@ describe("workspace store highlightFile", () => {
         store.highlightFile("src/components/Button.tsx");
         expect(store.expandedPaths.has("src")).toBe(true);
         expect(store.expandedPaths.has("src/components")).toBe(true);
-        expect(store.expandedPaths.has("src/components/Button.tsx")).toBe(true);
+        // task-76 改断言：**原断言锁的是错误语义**（`expandedPaths` 名义是「展开的目录集合」，
+        // 而文件永远没有子项 —— `TreeNodeList.vue` 要 `node.children` 存在才渲染子级 ——
+        // 所以把文件路径塞进去是语义污染，不是能力）。改成「祖先都在、文件自身不在」。
+        // 这不是迁就新代码：它一直是错的，只是此前没人问过「文件为什么会在展开集合里」。
+        expect(store.expandedPaths.has("src/components/Button.tsx")).toBe(false);
     });
 
     it("sets activeFilePath if file is already open", () => {
@@ -81,7 +85,10 @@ describe("workspace store highlightFile", () => {
     it("handles single-segment paths", () => {
         const store = useWorkspaceStore();
         store.highlightFile("README.md");
-        expect(store.expandedPaths.has("README.md")).toBe(true);
+        // task-76 改断言：根级文件**没有祖先目录** ⇒ 展开集合应为空（原断言锁的是同一个
+        // 错误语义：单段文件路径被当成「要展开的目录」）。
+        expect(store.expandedPaths.size).toBe(0);
+        expect(store.expandedPaths.has("README.md")).toBe(false);
     });
 });
 

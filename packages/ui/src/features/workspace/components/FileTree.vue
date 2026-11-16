@@ -66,6 +66,48 @@ const displayTree = computed((): FileNode[] => {
     return filter(userTree.value);
 });
 
+/**
+ * task-76 判据④：**把 reka 的 selection 与「当前定位的节点」对齐**。
+ *
+ * <p>为什么不能自己塞 `aria-selected`：`TreeItem.vue:26` 的 `delegatedProps` 合并方向是
+ * `{...rest, ...attrs}` ⇒ 使用方传的 attrs 会**覆盖 vendor 的**，塞进去只会和 vendor 打架。
+ * reka 的 `TreeItem.js:139/144` 已按 `rootContext.selectedKeys` 输出 `aria-selected` +
+ * `data-selected`；正确做法是**喂它同一个值**，让那条属性说的是「当前打开/定位的节点」
+ * 而不是「鼠标点过谁」。</p>
+ *
+ * <p>目录与文件在这里**合流**（reka 只认一个 selection），互斥语义已由 store 保证
+ * （`openFile` 清 `activeDirPath`、`openDirectory` 清 `activeFilePath`）⇒
+ * 任一时刻只有一个是非 null，故 `selected` 恒为「那一个」。</p>
+ */
+// 注意 prop 名是 reka 的 **`modelValue`**（不是 `selected`）：`Tree.vue` 走
+// `useForwardPropsEmits`，未声明的名字会当普通 attr 落到 `<ul>` 上（实测：
+// 传 `:selected` 时 DOM 出现 `selected="[object Object]"`、`aria-selected` 恒 false）。
+// **必须传单个节点对象、不是数组**：reka 的 `selectedKeys`（`TreeRoot.js:2936`）在
+// `multiple` 为假时走 `[getKey(modelValue ?? {})]` —— 传数组会被当成一个整体去 `getKey`，
+// 结果 `undefined` ⇒ `aria-selected` 恒 false（实测两次踩到）。
+// 本树是单选语义（「当前打开的那一个」），故不传数组、也不开 `multiple`。
+const selectedPath = computed<FileNode | undefined>(() => {
+    const active = ws.activeFilePath ?? ws.activeDirPath;
+    if (!active) return undefined;
+    // 必须传**节点对象**而不是路径字符串：reka 的 `selectedKeys` 是
+    // `props.getKey(modelValue)`（`TreeRoot.js:2936`），而这里的 `getKey` 是
+    // `(node) => node.path` ⇒ 传字符串会变成 `getKey("a.ts")` = `undefined`，
+    // `aria-selected` 恒为 false（实测踩过：⑥a 因此红在 `expected "false" to be "true"`）。
+    return findNodesByPath(displayTree.value, active)[0];
+});
+
+/** 按路径在多根/嵌套树里找节点（selection 需要对象，见上）。找不到 ⇒ 空（不猜）。 */
+function findNodesByPath(nodes: FileNode[], path: string): FileNode[] {
+    for (const node of nodes) {
+        if (node.path === path) return [node];
+        if (node.children) {
+            const hit = findNodesByPath(node.children, path);
+            if (hit.length) return hit;
+        }
+    }
+    return [];
+}
+
 const searchExpanded = computed(() => {
     if (!props.searchQuery.trim()) return expandedArray.value;
     const keys = new Set<string>();
@@ -83,6 +125,7 @@ const searchExpanded = computed(() => {
 <template>
     <Tree
         :expanded="searchExpanded"
+        :model-value="selectedPath"
         :items="displayTree"
         :get-key="(node: FileNode) => node.path"
         :get-children="(node: FileNode) => node.children"

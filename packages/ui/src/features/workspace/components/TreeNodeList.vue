@@ -64,9 +64,38 @@ function getIcon(node: FileNode, isExpanded: boolean): Component {
     return map[ext || ""] || File;
 }
 
+/**
+ * task-76（裁定 A）：**目录也要能「打开」**。
+ *
+ * <p>此前这里对目录直接 `return` —— 于是目录既不会被定位、也永远不高亮，而用户原话是
+ * 「打开了某个文件**或目录**时…展开到对应的文件和目录，并进行高亮」。现在：
+ * 目录 ⇒ `openDirectory`（展开到它自己 + 标记，**不展开子项**）；
+ * 文件 ⇒ `openFile`（展开祖先 + 高亮文件）。两者由 store 保证互斥。</p>
+ *
+ * <p>注意目录的**展开/收起**仍由 reka 的 toggle 负责（本函数不碰 `expandedPaths` 的增删），
+ * 只在「定位」这一层补上语义 —— 否则点目录会既 toggle 又 reveal，行为翻倍。</p>
+ */
 function handleSelect(node: FileNode) {
-    if (node.type === "directory") return;
+    if (node.type === "directory") {
+        ws.openDirectory(node.path);
+        return;
+    }
     ws.openFile(node.path, props.rootId);
+}
+
+/**
+ * task-76 判据：选中态**不能只靠颜色**（`ui-review` 六维 D）。
+ *
+ * <p>`aria-selected` / `data-selected` 由 reka 的 `TreeItem` 自带（`TreeItem.js:139/144`），
+ * 但那条来自 reka 自己的 selection model；这里额外落 `data-active` 表达「**当前打开/定位的**
+ * 节点」这一产品语义，两者由 `FileTree.vue` 的 `v-model:selected` 对齐到同一节点。</p>
+ *
+ * <p>落成 data 属性而不是靠 class 猜（沿用本文件 `:76` 的做法）：断言要能点名到行/节点。</p>
+ */
+function isActive(node: FileNode): boolean {
+    return node.type === "directory"
+        ? ws.activeDirPath === node.path
+        : ws.activeFilePath === node.path;
 }
 
 /**
@@ -74,7 +103,8 @@ function handleSelect(node: FileNode) {
  *
  * 判据本体在 store（`isDotfileName` / `isEmptyDirectoryNode`），这里只做渲染映射。
  * 484 当时把它们写在 `FileTreeNode.vue` 上 —— 那个组件自 `abccd7004`（2026-11-03）起
- * 就被本组件取代、产品路径没有任何 import ⇒ 视觉判据在产品上是空的（真页面行既没有
+ * 就被本组件取代、产品路径没有任何 import（**task-76 已删除该死文件**）⇒ 视觉判据在产品
+ * 上是空的（真页面行既没有
  * `data-dotfile` 也没有 muted class）。挪到这里才算真的生效。
  *
  * 同时落成 data 属性：颜色是渲染产物，断言要能点名到行/节点而不是猜 CSS。
@@ -118,8 +148,10 @@ function highlightName(name: string, query?: string): string {
                         class="flex w-full items-center gap-1 py-1 text-sm rounded hover:bg-accent/50 transition-colors select-none text-left"
                         :data-dotfile="isDotfile(node) ? 'true' : undefined"
                         :data-empty-dir="isEmptyDir(node) ? 'true' : undefined"
+                        :data-active="isActive(node) ? 'true' : undefined"
+                        :aria-current="isActive(node) ? 'true' : undefined"
                         :class="{
-                            'bg-accent text-accent-foreground': ws.activeFilePath === node.path,
+                            'bg-accent text-accent-foreground': isActive(node),
                             'opacity-60': isEmptyDir(node),
                         }"
                         :style="{ paddingLeft: `${level * 16 + 8}px` }"

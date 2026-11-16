@@ -14,8 +14,12 @@ const query = ref("");
 const selectedKey = ref<string | null>(null);
 
 /**
- * 层级缩进：**步长 16 + 基准 8**，与工作区文件树同一套（\`FileTreeNode.vue:41\` 的
- * \`depth * 16 + 8\`、\`TreeNodeList.vue:125\` 的 \`level * 16 + 8\`）。
+ * 层级缩进：**步长 16 + 基准 8**，与工作区文件树同一套（\`TreeNodeList.vue\` 的
+ * \`level * 16 + 8\`）。
+ *
+ * <p>task-76：此前这里还并列写着 \`FileTreeNode.vue:41\` 的 \`depth * 16 + 8\` ——
+ * 那个组件是死代码（全仓 0 个 import，自 \`abccd7004\` 起被 \`TreeNodeList\` 取代），已随本卡删除。
+ * 出处改指真实产品路径，否则注释成了悬空引用。</p>
  *
  * <p>task-33（用户截图报障）：本页此前**只有 loading / error 两种占位行**做了缩进
  * （且写的是 \`level * 16\`，缺基准 8），正常行一处都没有 ⇒ depth 0/1/2 的行首 x 完全相同，

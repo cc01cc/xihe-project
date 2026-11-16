@@ -322,7 +322,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     const openFiles = ref<Map<string, OpenFile>>(new Map()),
-        activeFilePath = ref<string | null>(null);
+        activeFilePath = ref<string | null>(null),
+        /**
+         * task-76：目录的「当前定位」路径。
+         *
+         * <p>与 `activeFilePath` **并列而不是合并**：合并成一个 `activePath` 会让
+         * `FileEditor.vue` 等处读 `activeFilePath` 的语义变模糊（它明确指「有内容的打开文件」），
+         * 而目录没有内容、不参与 tab。两者互斥：开文件清目录、开目录清文件 ——
+         * 否则树上会同时亮两行。</p>
+         */
+        activeDirPath = ref<string | null>(null);
 
     const showImportDialog = ref(false),
         uploadQueue = ref<UploadItem[]>([]);
@@ -680,6 +689,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
      * passed as undefined, so single-root traffic is byte-identical to pre-M2.
      */
     async function openFile(path: string, rootId?: string) {
+        // task-76：**用户手动开文件必须定位到树里**。
+        // 此前只有 Agent 读文件（`useWorkspaceAgentSync.ts:30`）会调 `highlightFile`，
+        // 用户点树 / 点 tab 走的是本函数、从不展开祖先 ⇒ 打开深层文件时看不到自己在树里的位置。
+        // 放在**最前面**：连「已经打开、只切 active」这条早退路径也要定位（切 tab 同样需要）。
+        highlightFile(path);
         if (openFiles.value.has(path)) {
             activeFilePath.value = path;
             return;
@@ -924,18 +938,35 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return `${fallback}: ${e instanceof Error ? e.message : String(e)}`;
     }
 
-    /** Expand every ancestor directory of `dir` so a fresh/changed file is visible. */
-    function expandPathDirs(dir: string) {
-        if (!dir) return;
+    /**
+     * 把 `path` 的祖先链逐级加入展开集合（O(路径深度)，不需要任何索引或后端支持）。
+     *
+     * <p><b>task-76：本函数是这个能力的**唯一**实现。</b>此前 `expandPathDirs`（本函数前身）
+     * 与 `highlightFile` 各自抄了一遍同一算法、只差「含不含自身最后一段」—— 两份同形逻辑
+     * 必然漂（本仓 `task-484` 已经吃过一次同样的亏）。合并成一个带 `includeSelf` 的实现。</p>
+     *
+     * <p><b>幂等</b>：只往 Set 里**加**，不重置、不删 —— 重复调用结果不变，也不覆盖用户已经
+     * 手动展开的其它分支（这是与 `refreshTree` 那种「清空重建」的关键区别）。</p>
+     *
+     * @param includeSelf 目录定位 = true（展开到目录本身，不含其子项）；
+     *   为变更刷新准备父目录 = false（最后一段是父目录，本身要展开）。
+     */
+    function expandPathChain(path: string, includeSelf: boolean) {
+        if (!path) return;
         const next = new Set(expandedPaths.value),
-            parts = dir.split("/");
+            parts = path.split("/").filter(Boolean),
+            limit = includeSelf ? parts.length : parts.length - 1;
         let current = "";
-        for (const part of parts) {
-            if (!part) continue;
-            current = current ? `${current}/${part}` : part;
+        for (let i = 0; i < limit; i += 1) {
+            current = current ? `${current}/${parts[i]}` : parts[i];
             next.add(current);
         }
-        expandedPaths.value = next;
+        if (next.size !== expandedPaths.value.size) expandedPaths.value = next;
+    }
+
+    /** 兼容壳：`refreshAfterMutation` 等既有调用点按「展开 dir 及其祖先」语义使用。 */
+    function expandPathDirs(dir: string) {
+        expandPathChain(dir, true);
     }
 
     /** Reload the tree while keeping the current expansion state (M3 task 3.4). */
@@ -1078,19 +1109,37 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         }
     }
 
+    /**
+     * 定位到 `path`（文件）：展开它的**祖先目录链**并（若已打开）设为当前文件。
+     *
+     * <p>task-76 收口：此前这里把**文件路径本身**也加进 `expandedPaths`，而 `expandedPaths`
+     * 名义上是「展开的目录集合」。文件永远没有子项（`TreeNodeList.vue:150` 要求 `node.children`
+     * 存在才渲染子级）⇒ 那条写入对渲染零影响、但错误语义会误导后来人（以为文件也可展开）。
+     * 改为 `includeSelf: false`：只加祖先目录。</p>
+     */
     function highlightFile(path: string) {
-        const parts = path.split("/");
-        let current = "";
-        for (const part of parts) {
-            if (current) current += "/";
-            current += part;
-            const next = new Set(expandedPaths.value);
-            next.add(current);
-            expandedPaths.value = next;
-        }
+        expandPathChain(path, false);
+        activeDirPath.value = null;
         if (openFiles.value.has(path)) {
             activeFilePath.value = path;
         }
+    }
+
+    /**
+     * task-76 裁定 A：**打开目录** = 定位到该目录（展开它自己 + 标记它）。
+     *
+     * <p>产品上原本没有「打开目录」这个动作（`TreeNodeList.vue` 的 `handleSelect` 对目录
+     * 直接 return，只走 reka 的展开/收起），于是目录在树上永远不高亮。用户原话是「打开了某个
+     * 文件**或目录**时…进行高亮」⇒ 目录这半不能记为「不适用」。</p>
+     *
+     * <p><b>不展开其子项</b>：`includeSelf: true` 只到目录本身为止（`limit = parts.length`），
+     * 子项留给详情页。**与 `activeFilePath` 互斥**：开目录清文件、开文件清目录，
+     * 否则树上会同时亮两行。</p>
+     */
+    function openDirectory(path: string) {
+        expandPathChain(path, true);
+        activeFilePath.value = null;
+        activeDirPath.value = path;
     }
 
     function syncActiveFileToSession() {
@@ -1298,6 +1347,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         rootTreeState,
         openFiles,
         activeFilePath,
+        activeDirPath,
         activeFile,
         openFileList,
         showImportDialog,
@@ -1306,6 +1356,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         refreshTree,
         toggleExpand,
         highlightFile,
+        openDirectory,
         openFile,
         closeFile,
         updateFileContent,
