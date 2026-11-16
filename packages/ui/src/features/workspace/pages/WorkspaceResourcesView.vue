@@ -18,6 +18,7 @@ import {
     type WorkspaceSettingsResourceId,
 } from "../../../lib/settingsIa";
 import { RESOURCE_VIEWS } from "../../../lib/resourceViews";
+import ResourcePaneLoading from "../components/ResourcePaneLoading.vue";
 import WorkspaceLayerMovedNotice from "../../../components/settings/WorkspaceLayerMovedNotice.vue";
 
 /**
@@ -77,7 +78,19 @@ const TAB_RESOURCE_IDS: readonly ResourceId[] = WORKSPACE_LAYER_RESOURCE_IDS.fil
  * async 组件会让 Vue 反复重建子树（层切换变成整片重挂）。
  */
 const RESOURCE_VIEW_COMPONENTS = new Map<ResourceId, Component>(
-    TAB_RESOURCE_IDS.map((id) => [id, markRaw(defineAsyncComponent(RESOURCE_VIEWS[id]))]),
+    TAB_RESOURCE_IDS.map((id) => [
+        id,
+        // task-10 / batch-2 ①：异步面板在 chunk 下载期原先**整片空白**（无骨架无提示）⇒
+        // 与「加载失败」「本层没有内容」三种情况在视觉上无法区分。这里补一个占位：
+        // `delay: 150` 让快加载不闪骨架（Vue 默认 200，收紧一点让慢链路更早给出反馈）。
+        markRaw(
+            defineAsyncComponent({
+                loader: RESOURCE_VIEWS[id],
+                loadingComponent: ResourcePaneLoading,
+                delay: 150,
+            }),
+        ),
+    ]),
 );
 
 const route = useRoute();
