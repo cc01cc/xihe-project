@@ -525,7 +525,7 @@ onUnmounted(() => {
 
             <div
                 v-if="message.error && message.role === 'assistant'"
-                class="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive"
+                class="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-background px-2.5 py-2 text-xs text-destructive"
                 data-testid="message-error"
             >
                 <template v-if="budgetExhaustedReason">

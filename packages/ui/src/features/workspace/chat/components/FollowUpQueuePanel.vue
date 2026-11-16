@@ -145,7 +145,7 @@ function pauseMessage(): string {
         </p>
         <p
             v-if="error"
-            class="mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive"
+            class="mb-2 rounded-lg border border-destructive/30 bg-background px-2.5 py-2 text-xs text-destructive"
             role="alert"
         >
             {{ error }}

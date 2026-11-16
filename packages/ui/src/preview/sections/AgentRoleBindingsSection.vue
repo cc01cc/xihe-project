@@ -186,7 +186,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
             <p
                 v-if="error"
                 data-testid="preview-agent-role-bindings-error"
-                class="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive"
+                class="rounded border border-destructive/40 bg-background px-2 py-1 text-xs text-destructive"
             >
                 <span v-if="demo409" class="mr-1 font-medium">演示 409：</span>{{ error }}
             </p>

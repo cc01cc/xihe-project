@@ -223,7 +223,7 @@ watch(
 
         <p
             v-if="error"
-            class="mx-3 mt-2 rounded border border-destructive/40 bg-destructive/5 px-2 py-1 text-xs text-destructive"
+            class="mx-3 mt-2 rounded border border-destructive/40 bg-background px-2 py-1 text-xs text-destructive"
             role="status"
             data-testid="delegation-dag-error"
         >

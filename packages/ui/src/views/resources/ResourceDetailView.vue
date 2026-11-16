@@ -564,7 +564,7 @@ function goBack(): void {
         <div
             v-else-if="phase === 'error'"
             data-testid="resource-detail-error"
-            class="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-6"
+            class="rounded-md border border-destructive/40 bg-background px-4 py-6"
         >
             <h1 class="text-lg font-semibold">{{ t("resources.detail.error.title") }}</h1>
             <p class="mt-1 text-sm leading-relaxed text-muted-foreground">

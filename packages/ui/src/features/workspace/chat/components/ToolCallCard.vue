@@ -212,7 +212,7 @@ function jobStatusClass(status?: string): string {
         return "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300";
     }
     if (status === "failed") {
-        return "bg-destructive/10 text-destructive";
+        return "bg-background text-destructive";
     }
     return "bg-muted text-muted-foreground";
 }
@@ -299,7 +299,7 @@ async function loadJobOutput(reset: boolean) {
             -->
             <div
                 v-if="refusalCode"
-                class="rounded border border-destructive/40 bg-destructive/5 p-2"
+                class="rounded border border-destructive/40 bg-background p-2"
                 data-testid="tool-refusal"
             >
                 <div class="font-medium text-destructive">{{ t("chat.toolRefusedTitle") }}</div>
@@ -525,7 +525,7 @@ async function loadJobOutput(reset: boolean) {
                 <div v-if="toolCall.error" class="font-mono">
                     <div class="mb-1 font-medium text-destructive">Error</div>
                     <pre
-                        class="rounded bg-destructive/10 p-2 whitespace-pre-wrap break-all text-destructive"
+                        class="rounded bg-background p-2 whitespace-pre-wrap break-all text-destructive"
                         >{{ toolCall.error }}</pre>
                 </div>
             </div>

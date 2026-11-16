@@ -92,7 +92,7 @@ defineExpose({ refetch: handleRefetch });
 
         <div
             v-if="bannerError"
-            class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            class="rounded-md border border-destructive/40 bg-background px-3 py-2 text-sm text-destructive"
             role="alert"
             data-testid="guidance-banner-error"
         >
