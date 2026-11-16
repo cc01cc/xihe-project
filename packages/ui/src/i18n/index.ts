@@ -584,7 +584,10 @@ const messages = {
             fileOpSplitPdfFailed: "无法拆分「{name}」",
             fileOpReasonNotFound: "文件或目录不存在，可能已被移动或删除。",
             fileOpReasonPermission: "当前账号没有权限访问它。",
-            fileOpReasonRuntime: "工作区运行时未就绪，请确认服务已启动后重试。",
+            // 与 `lib/errorMessages.ts` 的 RUNTIME_UNAVAILABLE 文案**逐字一致**：同一个故障
+            // 不该因为落在哪个显示位而换说法（用户会以为是两件事）。
+            fileOpReasonRuntime:
+                "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员",
             fileOpReasonTool: "所需的文件工具不存在或未启用。",
             fileOpReasonInvalidName: "名称不合规：不能为空，也不能包含路径分隔符。",
             fileOpReasonUnavailable: "这个功能暂时不可用：后端接口尚未部署。",
@@ -4412,7 +4415,7 @@ const messages = {
                 "That file or folder does not exist; it may have been moved or deleted.",
             fileOpReasonPermission: "Your account is not allowed to access it.",
             fileOpReasonRuntime:
-                "The workspace runtime is not ready. Confirm the service is running, then retry.",
+                "The workspace runtime is not ready (Runtime unreachable). Confirm the service is running, then retry; contact an administrator if it keeps failing.",
             fileOpReasonTool: "The file tool this needs is missing or disabled.",
             fileOpReasonInvalidName: "Invalid name: it cannot be empty or contain path separators.",
             fileOpReasonUnavailable: "Unavailable: the backend endpoint is not deployed yet.",

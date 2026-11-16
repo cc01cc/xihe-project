@@ -16,6 +16,14 @@ import {
     X,
 } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
+// task-59：判据与文案键从 lib 直接取 —— 它们不依赖 store 实例，
+// 这样整块替身 store 的单测（nestedRepos.spec.ts 等）也能正常渲染。
+import {
+    fileOpReasonKey,
+    fileOpShowsRawDetail,
+    fileOpTitleKey,
+    visibleErrorSlot,
+} from "../lib/fileOpError";
 import type { ApiNestedRepoItem, ApiWorkspaceRoot } from "../../../composables/api";
 import { api } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
@@ -215,6 +223,39 @@ const treeErrorHeadline = computed(() => {
 
 const showTreeErrorDetail = computed(() => ws.treeErrorKind === "other");
 
+/**
+ * task-59（D-1708 缺陷 B）：**横幅只属于树级故障**。文件级故障（某个文件打不开/存不了）
+ * 有独立的行内提示 —— 修前它借用这条横幅，于是「一个文件坏了」被读成「整棵树没了」，
+ * 用户去点「重试」而树本来就是好的。
+ *
+ * 兼容口径：`errorScope` 缺失（旧夹具/旧写入方）按树级渲染，与修前逐字节一致。
+ */
+const errorSlot = computed(() => visibleErrorSlot(ws.errorScope, ws.treeError, ws.fileOpError));
+
+const showTreeBanner = computed(() => errorSlot.value === "tree");
+
+// 横幅分支不再以 `ws.treeError` 作真值条件（改由 errorSlot 决定）⇒ 模板里取不到窄化后的 string，
+// 这里显式给出渲染用的字符串副本。
+const treeErrorText = computed(() => ws.treeError ?? "");
+
+const fileOp = computed(() => ws.fileOpError ?? null);
+
+/** 标题：点名是**哪个**对象失败了（文件名 + 动作）。 */
+const fileOpTitle = computed(() => {
+    const op = fileOp.value;
+    if (!op) return "";
+    const name = op.path ? op.path.split("/").pop() || op.path : "";
+    return t(fileOpTitleKey(op.kind), { name });
+});
+
+/** 原因：说清**为什么**失败；未判定的原因才附稳定码（不展示后端英文原文）。 */
+const fileOpReason = computed(() => {
+    const op = fileOp.value;
+    if (!op) return "";
+    const copy = t(fileOpReasonKey(op.reason));
+    return op.code && fileOpShowsRawDetail(op.reason) ? `${copy}（${op.code}）` : copy;
+});
+
 function clearSearch() {
     searchQuery.value = "";
 }
@@ -337,6 +378,42 @@ function upload() {
         >
             {{ t("workspace.nestedReposCostHint") }}
         </p>
+
+        <!-- task-59（D-1708 缺陷 B）：文件级故障的独立提示位。
+            与下面那条树级横幅是**两个位**：这里是「某一个文件/目录的动作失败」，树仍可用，
+            所以不阻断、不提供「重试整棵树」，只报文件名 + 原因，并允许关掉。 -->
+        <div
+            v-if="errorSlot === 'file'"
+            data-testid="workspace-file-op-error"
+            role="status"
+            class="mx-2 mt-2 flex items-start gap-2 rounded-md border border-border bg-muted/60 px-2 py-1.5 text-xs text-foreground"
+        >
+            <div class="min-w-0 flex-1">
+                <p
+                    data-testid="workspace-file-op-error-message"
+                    class="line-clamp-2 break-words font-medium"
+                    :title="fileOpTitle"
+                >
+                    {{ fileOpTitle }}
+                </p>
+                <p
+                    data-testid="workspace-file-op-error-reason"
+                    class="mt-0.5 line-clamp-2 break-words text-muted-foreground"
+                >
+                    {{ fileOpReason }}
+                </p>
+            </div>
+            <button
+                type="button"
+                data-testid="workspace-file-op-error-dismiss"
+                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :aria-label="t('common.close')"
+                :title="t('common.close')"
+                @click="ws.clearFileOpError()"
+            >
+                <X class="size-3.5" aria-hidden="true" />
+            </button>
+        </div>
 
         <!-- Search stays available, but is disabled while the tree is empty (P1-4). -->
         <div v-if="!isEmpty" class="flex shrink-0 items-center gap-1 px-2 py-1.5">
@@ -469,7 +546,7 @@ function upload() {
 
         <!-- One inline error style for the screen (P0-4): i18n copy, max 2 lines, retry. -->
         <div
-            v-else-if="ws.treeError"
+            v-else-if="showTreeBanner"
             data-testid="workspace-tree-error"
             role="alert"
             class="mx-2 mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
@@ -478,7 +555,7 @@ function upload() {
                 <p
                     data-testid="workspace-tree-error-message"
                     class="line-clamp-2"
-                    :title="ws.treeError"
+                    :title="treeErrorText"
                 >
                     {{ treeErrorHeadline }}
                 </p>
@@ -487,7 +564,7 @@ function upload() {
                     data-testid="workspace-tree-error-detail"
                     class="mt-0.5 line-clamp-2 break-words text-xs text-muted-foreground"
                 >
-                    {{ ws.treeError }}
+                    {{ treeErrorText }}
                 </p>
             </div>
             <button

@@ -5,6 +5,13 @@ import { useAuthStore } from "../../../stores/auth";
 import { api, apiPost, ApiError } from "../../../composables/api";
 import type { ApiWorkspaceRoot } from "../../../composables/api";
 import { readFilePreview } from "../composables/fileService";
+import {
+    classifyFileOpReason,
+    classifyTreeErrorCode,
+    type ErrorScope,
+    type FileOpError,
+    type TreeErrorKind,
+} from "../lib/fileOpError";
 import { readTabWorkspaceId, tabWorkspaceRevisionRef } from "../../../lib/workspaceContext";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
@@ -108,27 +115,24 @@ export function compareTreeEntries(left: { name: string }, right: { name: string
     return left.name.localeCompare(right.name);
 }
 
-/**
- * PLAN-0557/BL-109: the file panel must name the cause in *visible* copy, not only
- * in a tooltip. Failures are bucketed into the three causes the contract
- * distinguishes; anything unmapped keeps the generic copy plus the raw detail.
- */
-export type TreeErrorKind = "runtime" | "tool" | "other";
-
-export function classifyTreeErrorCode(code: string | undefined | null): TreeErrorKind {
-    switch ((code ?? "").trim()) {
-        case "RUNTIME_ERROR":
-        case "RUNTIME_UNAVAILABLE":
-        case "MCP_STREAM_UNAVAILABLE":
-        case "MCP_DISCONNECT_UNAVAILABLE":
-        case "CAPABILITY_UNAVAILABLE":
-            return "runtime";
-        case "UNKNOWN_TOOL":
-            return "tool";
-        default:
-            return "other";
-    }
-}
+// task-59（D-1708 缺陷 B）：文件级/树级故障的判据与文案键在 `../lib/fileOpError` —— 纯函数、
+// 可被组件与单测直接使用，不依赖 store 是否被测试替身（`nestedRepos.spec.ts` 等会把整个 store
+// 模块换成桩，组件若仍然从 store 取新符号就会拿到 undefined）。这里 re-export 一次，
+// 保持既有导入路径（`workspace.spec.ts` 与面板用例都从 store 取这些符号）。
+export {
+    classifyFileOpReason,
+    classifyTreeErrorCode,
+    fileOpReasonKey,
+    fileOpShowsRawDetail,
+    fileOpTitleKey,
+    visibleErrorSlot,
+    type ErrorDisplaySlot,
+    type ErrorScope,
+    type FileOpError,
+    type FileOpKind,
+    type FileOpReason,
+    type TreeErrorKind,
+} from "../lib/fileOpError";
 
 /**
  * PLAN-0639 M2 (design §5 candidate ①): per-root lazy tree state for secondary roots
@@ -184,7 +188,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     /** PLAN-0559: VIEWER is read-only; CP remains authoritative. */
     function ensureWritable(): boolean {
         if (authStore.canWriteWorkspace) return true;
-        setTreeError("当前工作区为只读（VIEWER），无法修改内容");
+        // task-59：只读拒绝是**文件级**语义（没有对象、也不是「树加载」）⇒ 走文件通道，
+        // 面板不再把「这个工作区不能改」渲染成「文件树加载失败」。
+        setFileOpError(
+            { kind: "readonly", path: null, reason: "other", code: null },
+            "当前工作区为只读（VIEWER），无法修改内容",
+        );
         return false;
     }
 
@@ -193,6 +202,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         loading = ref(false),
         treeError = ref<string | null>(null),
         treeErrorKind = ref<TreeErrorKind>("other"),
+        /**
+         * task-59：**这次故障属于谁**。横幅只认 `tree`，文件级走独立的行内提示。
+         * 兼容口径：旧夹具没有这个字段（undefined）⇒ 照 `tree` 渲染，与修前一致。
+         */
+        errorScope = ref<ErrorScope | null>(null),
+        fileOpError = ref<FileOpError | null>(null),
         loadedWorkspaceId = ref<string | null>(null);
 
     /**
@@ -243,6 +258,40 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     function setTreeError(message: string | null, kind: TreeErrorKind = "other") {
         treeError.value = message;
         treeErrorKind.value = message ? kind : "other";
+        // `message === null` 是「树级通道变干净」，不是「所有通道都干净」：文件级提示可能
+        // 正挂在屏幕上（`loadTree()` 一进来就会清树级通道）。这里若把 scope 一并置 null，
+        // 一次后台刷新就会让文件级提示位凭空消失（`visibleErrorSlot` 会判成 none）。
+        if (message) errorScope.value = "tree";
+        else if (errorScope.value === "tree") errorScope.value = null;
+        // 树级故障优先：真·树拉不起来时让文件级提示位让路（一屏只留一条红）。
+        // **只在树级故障出现时**收文件级提示，不在「树重新加载成功」时收 ——
+        // `loadTree()` 开头就调 `setTreeError(null)`，若这里无条件清空，一次后台刷新
+        // （文件事件）就会把用户还没看完的「这个文件打不开」悄悄抹掉。文件级提示的清除
+        // 出口只有三个：用户关掉、下一次打开成功、工作区切换。
+        if (message) fileOpError.value = null;
+    }
+
+    /**
+     * 文件级故障的唯一写入口（task-59）。**仍然写 `treeError`** —— 那是 `FileNodeMenu`
+     * 行内错误与既有用例沿用的「最后一次失败的可读消息」通道；本卡拆的是**显示位**，
+     * 不是消息面（否则菜单里的报错会退化成英文兜底句）。
+     */
+    function setFileOpError(op: FileOpError, legacyMessage: string) {
+        treeError.value = legacyMessage;
+        treeErrorKind.value = "other";
+        errorScope.value = "file";
+        fileOpError.value = op;
+    }
+
+    /** 文件级提示的显式清除（用户点「关闭」/ 下一次打开成功 / 工作区切换）。 */
+    function clearFileOpError() {
+        if (!fileOpError.value) return;
+        fileOpError.value = null;
+        if (errorScope.value === "file") {
+            treeError.value = null;
+            treeErrorKind.value = "other";
+            errorScope.value = null;
+        }
     }
     // PLAN-0365 (root cause C): bumped by refresh requests that arrive while a
     // load is in flight; the in-flight load re-runs itself instead of the
@@ -635,6 +684,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             activeFilePath.value = path;
             return;
         }
+        // 新的打开尝试开始 ⇒ 上一条文件级红条是陈旧的，先收掉（成功时更不该留着）。
+        clearFileOpError();
         const owningRootId = rootId ?? rootIdOf(path),
             preview = (size: number | undefined) =>
                 owningRootId
@@ -704,7 +755,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             openFiles.value.set(path, file);
             activeFilePath.value = path;
         } catch (e) {
-            setTreeError(`Failed to open ${path}: ${(e as Error).message}`);
+            // task-59：打开**单个**文件失败不是「文件树加载失败」—— 树还在，别的文件照常能开。
+            // 点名对象（文件名）+ 原因，走文件级通道。
+            const { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "open", path, reason, code },
+                `Failed to open ${path}: ${messageOf(e)}`,
+            );
         }
     }
 
@@ -744,7 +801,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 externalChange: undefined,
             });
         } catch (e) {
-            setTreeError(humanizeFileError(e, `保存 ${path} 失败`));
+            const { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "save", path, reason, code },
+                humanizeFileError(e, `保存 ${path} 失败`),
+            );
         }
     }
 
@@ -821,8 +882,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             await refreshAfterMutation(slash >= 0 ? path.substring(0, slash) : "");
             return true;
         } catch (e) {
-            const message = humanizeFileError(e, "删除失败");
-            setTreeError(message);
+            const message = humanizeFileError(e, "删除失败"),
+                { reason, code } = classifyFileOpReason(e);
+            setFileOpError({ kind: "delete", path, reason, code }, message);
             logger.warn("Delete failed: " + message);
             return false;
         }
@@ -839,11 +901,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             await refreshAfterMutation(parentDir);
             return true;
         } catch (e) {
-            const message = humanizeFileError(e, "创建文件失败");
-            setTreeError(message);
+            const message = humanizeFileError(e, "创建文件失败"),
+                { reason, code } = classifyFileOpReason(e);
+            setFileOpError({ kind: "create", path: fullPath, reason, code }, message);
             logger.warn("Create file failed: " + message);
             return false;
         }
+    }
+
+    /** 安全取消息（`e` 可能是任意 throw 值）。 */
+    function messageOf(e: unknown): string {
+        return e instanceof Error ? e.message : String(e);
     }
 
     function humanizeFileError(e: unknown, fallback: string): string {
@@ -891,7 +959,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function renameNode(oldPath: string, newName: string): Promise<boolean> {
         const trimmed = newName.trim();
         if (!trimmed || trimmed.includes("/")) {
-            setTreeError("Invalid name: must be non-empty and contain no path separators");
+            // task-59：校验拒绝也是「文件级」的（树没事），而且原文是英文硬编码 ⇒ 只给原因枚举。
+            setFileOpError(
+                { kind: "rename", path: oldPath, reason: "invalidName", code: null },
+                "Invalid name: must be non-empty and contain no path separators",
+            );
             return false;
         }
         const slash = oldPath.lastIndexOf("/"),
@@ -915,8 +987,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             await refreshAfterMutation(slash >= 0 ? oldPath.substring(0, slash) : "");
             return true;
         } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            setTreeError(`Failed to rename: ${message}`);
+            const message = messageOf(e),
+                { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "rename", path: oldPath, reason, code },
+                `Failed to rename: ${message}`,
+            );
             logger.warn("Rename failed: " + message);
             return false;
         }
@@ -935,8 +1011,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             await refreshAfterMutation(toDir);
             return true;
         } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            setTreeError(`Failed to move: ${message}`);
+            const message = messageOf(e),
+                { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "move", path: from, reason, code },
+                `Failed to move: ${message}`,
+            );
             logger.warn("Move failed: " + message);
             return false;
         }
@@ -958,8 +1038,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             await refreshAfterMutation(dir);
             return true;
         } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            setTreeError(`Failed to duplicate: ${message}`);
+            const message = messageOf(e),
+                { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "duplicate", path, reason, code },
+                `Failed to duplicate: ${message}`,
+            );
             logger.warn("Duplicate failed: " + message);
             return false;
         }
@@ -968,7 +1052,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function createDirectory(parentDir: string, name: string): Promise<boolean> {
         const trimmed = name.trim();
         if (!trimmed || trimmed.includes("/")) {
-            setTreeError(
+            setFileOpError(
+                { kind: "mkdir", path: parentDir || null, reason: "invalidName", code: null },
                 "Invalid directory name: must be non-empty and contain no path separators",
             );
             return false;
@@ -982,8 +1067,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             await refreshAfterMutation(parentDir);
             return true;
         } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            setTreeError(`Failed to create directory: ${message}`);
+            const message = messageOf(e),
+                { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "mkdir", path: fullPath, reason, code },
+                `Failed to create directory: ${message}`,
+            );
             logger.warn("Create directory failed: " + message);
             return false;
         }
@@ -1130,7 +1219,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function splitPdf(path: string) {
         // B-4 (PLAN-262 decision 17): the CP /api/v1/files/split-pdf route does not
         // exist (openapi drift). Fail closed instead of letting the request 404.
-        setTreeError(
+        setFileOpError(
+            { kind: "splitPdf", path, reason: "unavailable", code: null },
             "PDF splitting is temporarily unavailable: the backend endpoint is not deployed.",
         );
         logger.warn(
@@ -1151,7 +1241,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 file.truncated = false;
             }
         } catch (e) {
-            setTreeError(`Failed to load full content: ${(e as Error).message}`);
+            const { reason, code } = classifyFileOpReason(e);
+            setFileOpError(
+                { kind: "read", path, reason, code },
+                `Failed to load full content: ${messageOf(e)}`,
+            );
         }
     }
 
@@ -1166,6 +1260,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         activeFilePath.value = null;
         expandedPaths.value = new Set();
         setTreeError(null);
+        fileOpError.value = null;
         loadedWorkspaceId.value = null;
         // PLAN-0639 M2: root grouping is workspace-scoped too — a stale secondary root
         // tree must not leak into the next workspace's groups.
@@ -1186,6 +1281,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         loading,
         treeError,
         treeErrorKind,
+        errorScope,
+        fileOpError,
+        clearFileOpError,
         workspaceRoots,
         isMultiRoot,
         primaryRootId,

@@ -417,12 +417,14 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
             expect(problem.code, `problem body: ${JSON.stringify(problem)}`).toBe(
                 "RUNTIME_UNAVAILABLE",
             );
-            // The failed mutation replaces the tree panel with the humanized error and
-            // a Retry affordance (the New File modal unmounts with the tree).
+            // task-59（D-1708 缺陷 B）：**建文件失败是文件级故障**，不再把整棵树报成
+            // 「文件树加载失败」。文案仍逐字钉住 RUNTIME_UNAVAILABLE 的可读化结果；
+            // 出口从「重试整棵树」换成文件级提示的关闭/重试动作（树本身没坏，不该提议重载它）。
             await expect(page.getByText(HUMAN_RUNTIME_DOWN).first()).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });
-            await expect(page.getByTestId("workspace-tree-retry")).toBeVisible();
+            await expect(page.getByTestId("workspace-file-op-error")).toBeVisible();
+            await expect(page.getByTestId("workspace-tree-error")).toHaveCount(0);
             await expect(
                 page.getByRole("button", { name: fileName, exact: true }),
             ).not.toBeVisible();
