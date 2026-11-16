@@ -137,4 +137,16 @@ describe("WorkspaceSessionGroups standalone group (task-373)", () => {
         expect(wrapper.emitted("new-standalone-session")).toHaveLength(1);
         wrapper.unmount();
     });
+
+    it("group-new 触控盒 ≥24（task-57：p-1+size-3.5 只有 19.25px）", async () => {
+        const wrapper = await mountGroups();
+        // `p-1`(7) + `size-3.5`(12.25) = 19.25px（ui-2 batch-4 实测 19.3）⇒ 顶到
+        // `min-h-7 min-w-7` = 24.5px；图标仍 size-3.5 不变。jsdom 不求值 Tailwind ⇒ 钉类名。
+        const newBtn = wrapper.get('[data-testid="sidebar-standalone-group-new"]');
+        expect(newBtn.classes()).toEqual(
+            expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
+        );
+        expect(newBtn.classes()).not.toContain("p-1");
+        wrapper.unmount();
+    });
 });

@@ -229,7 +229,7 @@ function handleLogout() {
                 <button
                     type="button"
                     data-testid="sidebar-import-source"
-                    class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :aria-label="t('workspace.importSource')"
                     :title="t('workspace.importSource')"
                     @click="openImportSource"
@@ -239,7 +239,7 @@ function handleLogout() {
                 <button
                     type="button"
                     data-testid="sidebar-add-workspace"
-                    class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :aria-label="t('workspace.addWorkspace')"
                     :title="t('workspace.addWorkspace')"
                     @click="openAddWorkspace"

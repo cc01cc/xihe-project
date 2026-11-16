@@ -345,7 +345,7 @@ defineExpose({
                         :data-testid="`sidebar-workspace-group-new-${workspace.id}`"
                         :aria-label="t('sidebar.groupNewSession')"
                         :title="t('sidebar.groupNewSession')"
-                        class="shrink-0 rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click="emit('new-session', workspace.id)"
                     >
                         <Plus class="size-3.5" aria-hidden="true" />
@@ -437,7 +437,7 @@ defineExpose({
                         data-testid="sidebar-standalone-group-new"
                         :aria-label="t('sidebar.newChatStandalone')"
                         :title="t('sidebar.newChatStandalone')"
-                        class="shrink-0 rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click="emit('new-standalone-session')"
                     >
                         <Plus class="size-3.5" aria-hidden="true" />

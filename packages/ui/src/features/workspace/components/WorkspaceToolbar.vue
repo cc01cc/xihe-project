@@ -13,6 +13,7 @@ import {
     Plus,
     Users,
 } from "@lucide/vue";
+import { Button } from "../../../components/ui/button";
 import {
     workspacePath,
     workspaceScheduledTasksPath,
@@ -99,42 +100,73 @@ function overflowNav(navigate: () => void) {
         data-testid="workspace-toolbar"
         class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-background/80"
     >
-        <button
-            class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
+        <!--
+            task-57（SC 2.5.8 24×24 AA）：原手搓 `<button class="p-1.5">` + `size-3.5` 图标 =
+            5.25×2 + 12.25 = **22.75px**（ui-2 batch-4 实测 22.8）⇒ 换 vendor Button
+            `variant="ghost" size="icon-sm"` = 24.5px（AGENTS：控件优先栈内 UI 库）。
+            显式保留：`text-muted-foreground` / `hover:bg-accent`（盖过 ghost 默认的 muted 底与
+            hover:text-foreground）、`md:hidden`（仅移动态）；图标仍 `size-3.5` —— vendor 的
+            svg 尺寸规则 `[&_svg:not([class*=size-])]` 对**带 size 类**的图标不生效。
+            接受的视觉变化（Lead 裁定 go）：圆角 `rounded` → token 档；白赚 focus ring 3 与
+            按压 1px 位移。
+        -->
+        <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            class="text-muted-foreground hover:bg-accent md:hidden"
             :title="t('files.titleFiles')"
             :aria-label="t('common.files')"
             data-testid="workspace-toolbar-files-mobile"
             @click="emit('files')"
         >
             <PanelLeft class="size-3.5" />
-        </button>
-        <button
+        </Button>
+        <!-- 同上（task-57）：命中盒 22.75 → 24.5px，vendor 换装；注释见 files 按钮上方。 -->
+        <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
+            class="text-muted-foreground hover:bg-accent md:hidden"
             data-testid="workspace-toolbar-new-chat-mobile"
-            class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
             :title="t('sidebar.newChat')"
             :aria-label="t('sidebar.newChat')"
             @click="newChat"
         >
             <Plus class="size-3.5" />
-        </button>
+        </Button>
         <div class="relative md:hidden">
-            <button
+            <!-- 同上（task-57）：命中盒 22.75 → 24.5px，vendor 换装。
+                 `aria-expanded` 走 fallthrough attrs 落到原生 button 上，不变。 -->
+            <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
+                class="text-muted-foreground hover:bg-accent"
                 data-testid="workspace-toolbar-more-mobile"
-                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
                 :title="t('workspace.toolbarMore')"
                 :aria-label="t('workspace.toolbarMore')"
                 :aria-expanded="overflowOpen"
                 @click="overflowOpen = !overflowOpen"
             >
                 <MoreHorizontal class="size-3.5" />
-            </button>
+            </Button>
             <!--
                 BL-317（390×844 实测）：菜单原先是 `right-0`，但触发按钮在工具条**左侧**簇里，
                 菜单（154px 宽）在 390 下会跑到 x=-61（左侧被裁掉，且页面不产生横向滚动 ⇒
                 菜单项点不到）—— 改锚到 `left-0` 后落在 68..222，完整可见。
                 只影响移动端（外层是 `md:hidden`），桌面零变化。
+            -->
+            <!--
+                task-57（SC 2.5.8 24×24 AA）：菜单 7 项**统一命中盒** `min-h-12`（D-206 裁定）。
+                本仓 `--spacing` = 3.5px ⇒ 12 步 = **42px**（token，不是任意值；24 档是 7 步）。
+                改前是两档：monitor/members 带 `max-md:min-h-[44px]`（任意值），另 5 项只有
+                `py-1.5` ⇒ 内容高 10.5 + 21.7 = 32.2px。**两档都 ≥24 ⇒ 都不违例**，
+                要修的是「同族两档 + 任意值」这件事本身。
+                D-206（Lead 2026-11-16 自裁，可逆）：统一到 **42px** 而非 24.5，四条理由 ——
+                ①避免 44 → 32.2 的手感回归；②`min-h-12` 是 token；③7×42 = 294px 在 844 视口内；
+                ④WCAG 24 是下限不是目标，iOS HIG 44 是推荐 ⇒ 取 42 兼顾两者。
+                用户若要 44 档，改一个 token（`min-h-[12.5]` → 12.5 步 ≈ 43.75，或等 spacing 允许）。
             -->
             <div
                 v-if="overflowOpen"
@@ -143,7 +175,7 @@ function overflowNav(navigate: () => void) {
             >
                 <button
                     type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    class="w-full min-h-12 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-changes"
                     @click="overflowNav(() => emit('toggleChanges'))"
                 >
@@ -151,7 +183,7 @@ function overflowNav(navigate: () => void) {
                 </button>
                 <button
                     type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent max-md:min-h-[44px]"
+                    class="w-full min-h-12 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-monitor"
                     @click="overflowNav(() => emit('toggleMonitor'))"
                 >
@@ -165,7 +197,7 @@ function overflowNav(navigate: () => void) {
                 -->
                 <button
                     type="button"
-                    class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-accent max-md:min-h-[44px]"
+                    class="flex w-full min-h-12 items-center justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-members"
                     :aria-label="
                         membersBadgeCount > 0
@@ -185,7 +217,7 @@ function overflowNav(navigate: () => void) {
                 </button>
                 <button
                     type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    class="w-full min-h-12 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-delegation"
                     @click="overflowNav(() => emit('toggleDelegation'))"
                 >
@@ -200,7 +232,7 @@ function overflowNav(navigate: () => void) {
                 -->
                 <button
                     type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    class="w-full min-h-12 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-environment"
                     @click="overflowNav(openEnvironment)"
                 >
@@ -208,7 +240,7 @@ function overflowNav(navigate: () => void) {
                 </button>
                 <button
                     type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    class="w-full min-h-12 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-scheduled"
                     @click="overflowNav(openScheduledTasks)"
                 >
@@ -216,7 +248,7 @@ function overflowNav(navigate: () => void) {
                 </button>
                 <button
                     type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    class="w-full min-h-12 rounded px-2 py-1.5 text-left hover:bg-accent"
                     data-testid="workspace-toolbar-more-settings"
                     @click="overflowNav(openSettings)"
                 >

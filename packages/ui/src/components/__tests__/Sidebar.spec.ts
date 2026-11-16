@@ -498,6 +498,14 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         const importSource = wrapper.get('[data-testid="sidebar-import-source"]');
         expect(add.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
         expect(importSource.attributes("aria-label")).toBe(zhSource.workspace.importSource);
+        // task-57（SC 2.5.8 24×24 AA）：这两枚原来是 `size-6` = **21×21**（ui-2 batch-4 实测），
+        // 属固定尺寸档漏改（与抽屉宽度无关，开着也是 21）⇒ 顶到 `min-h-7 min-w-7` = 24.5。
+        // 图标仍 `size-3.5`，只长命中盒。jsdom 不求值 Tailwind ⇒ 钉类名，真 rect 归复测。
+        for (const button of [add, importSource]) {
+            expect(button.classes()).toContain("min-h-7");
+            expect(button.classes()).toContain("min-w-7");
+            expect(button.classes()).not.toContain("size-6");
+        }
         // 区头是**列表级**动作：它出现在分组列表之前，不在任何工作区行内。
         expect(wrapper.text()).toContain(zhSource.sidebar.workspacesSection);
     });
