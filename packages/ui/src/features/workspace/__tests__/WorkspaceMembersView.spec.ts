@@ -187,3 +187,19 @@ describe("WorkspaceMembersView（M4-3 / task-236）", () => {
         wrapper.unmount();
     });
 });
+
+describe("成员页页签触控目标（task-10 / batch-2 ④）", () => {
+    it("两个页签触发器不小于 24px 高（实测原为 21.8px：只有文本行盒）", async () => {
+        // 判据：WCAG 2.2 SC 2.5.8 = 24×24 CSS px。读数来自 ui-2 的 batch-3 rect 表：
+        // `members-tab-*` = 40.5 × **21.8**（21.7 是 text-sm 行盒，盒高由内容撑 ——
+        // vendor `TabsTrigger` 的 h-8 挂在 `group-data-horizontal/tabs` 上，line 变体下没落地）。
+        // 本仓 `--spacing` = 3.5px ⇒ 24 档 = 7 步 = 24.5px；`min-h-6` 只有 21px 不算数。
+        // jsdom 不求值 Tailwind ⇒ 这里钉类名；改后真实 rect 由 ui-2 复测。
+        const wrapper = await mountPage();
+        for (const testid of ["members-tab-members", "members-tab-agents"]) {
+            const tab = wrapper.get(`[data-testid="${testid}"]`);
+            expect(tab.classes(), testid).toContain("min-h-7");
+        }
+        wrapper.unmount();
+    });
+});
