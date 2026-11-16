@@ -49,6 +49,7 @@ function createTestRouter() {
                 component: { template: '<div data-testid="route-view" />' },
             },
             { path: "/workspace", component: { template: '<div data-testid="route-view" />' } },
+            { path: "/workbench", component: { template: '<div data-testid="route-view" />' } },
             {
                 path: "/workspace/:workspaceId",
                 component: { template: '<div data-testid="route-view" />' },
@@ -345,7 +346,7 @@ describe("AppLayout pending approval indicators", () => {
                 oldestRequestedAt: "2026-09-14T12:00:00Z",
             },
         ]);
-        const wrapper = await mountLayout(createTestRouter(), "/workspace");
+        const wrapper = await mountLayout(createTestRouter(), "/workbench");
 
         expect(wrapper.find('[data-testid="global-pending-approval-banner"]').exists()).toBe(false);
     });

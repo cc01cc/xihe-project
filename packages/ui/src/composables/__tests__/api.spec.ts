@@ -203,7 +203,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
     }
 
     it("refreshes once, stores new tokens and replays with the new bearer", async () => {
-        mockLocation("/workspace");
+        mockLocation("/workbench");
         localStorage.setItem("xihe-token", "stale-token");
         localStorage.setItem("xihe-refresh-token", "valid-refresh");
 
@@ -233,7 +233,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
     it("collapses concurrent 401s into a single refresh request", async () => {
         localStorage.setItem("xihe-token", "stale-token");
         localStorage.setItem("xihe-refresh-token", "valid-refresh");
-        mockLocation("/workspace");
+        mockLocation("/workbench");
 
         let releaseRefresh: (() => void) | null = null;
         const gate = new Promise<void>((resolve) => {
@@ -279,7 +279,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
         localStorage.setItem("xihe-token", "stale-token");
         localStorage.setItem("xihe-user", "{}");
         localStorage.setItem("xihe-refresh-token", "dead-refresh");
-        mockLocation("/workspace");
+        mockLocation("/workbench");
 
         const logoutSpy = vi.fn<() => void>();
         registerForceLogout(logoutSpy);
@@ -299,7 +299,7 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
     it("logs out without a second refresh when the replayed request is still 401", async () => {
         localStorage.setItem("xihe-token", "stale-token");
         localStorage.setItem("xihe-refresh-token", "valid-refresh");
-        mockLocation("/workspace");
+        mockLocation("/workbench");
 
         const logoutSpy = vi.fn<() => void>();
         registerForceLogout(logoutSpy);

@@ -646,7 +646,7 @@ export const useAuthStore = defineStore("auth", () => {
     // missing workspace, then open the picker — the account keeps its session.
     registerWorkspaceContextRequired(() => {
         clearTabWorkspace();
-        if (window.location.pathname !== "/workspace" && window.location.pathname !== "/login") {
+        if (window.location.pathname !== "/workbench" && window.location.pathname !== "/login") {
             void router.push({ name: "workspace-home" });
         }
     });

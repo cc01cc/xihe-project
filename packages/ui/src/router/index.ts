@@ -84,15 +84,24 @@ const router = createRouter({
     routes: [
         {
             path: "/",
-            redirect: "/workspace",
+            redirect: "/workbench",
         },
         {
+            // task-34（原 task-228）：模块入口 /workspace → /workbench。**容器路由
+            // `/workspace/:workspaceId/**` 不动**（工作区=容器层、工作台=模块层，两层标识符
+            // 不再混用）。旧 URL 走 redirect 保留书签/文档深链，query/hash 原样透传（card ②(a)）。
             path: "/workspace",
+            redirect: (to) => ({ path: "/workbench", query: to.query, hash: to.hash }),
+        },
+        {
+            path: "/workbench",
             component: () => import("../layouts/AppLayout.vue"),
             meta: { requiresAuth: true },
             children: [
                 {
                     path: "",
+                    // 路由 name 保持 `workspace-home`：名字不是 URL，全仓 10+ 处
+                    // `{ name: "workspace-home" }` 导航依赖它；改名的收益只是措辞。
                     name: "workspace-home",
                     // PLAN-0608 (T1.5 / P0-2): with no tab context this is the
                     // explicit workspace picker; the guard below redirects to
@@ -554,7 +563,7 @@ const router = createRouter({
             // blank unmatched-route view. (`/chat/:sessionId` is a real route again
             // since task-373 — it now means a workspace-less Session.)
             path: "/:pathMatch(.*)*",
-            redirect: "/workspace",
+            redirect: "/workbench",
         },
     ],
 });
@@ -601,7 +610,7 @@ router.beforeEach(async (to) => {
         // 一次进站即被踢出的闪烁。
         // 影响面（显式记录）：完整会话下"已登录误访问 /login"的体验**不变**（照旧弹 /workspace）；
         // 变的是残 token 场景 —— 现在停在登录页。登录成功仍由 `LoginView` 消费 `?redirect=`。
-        return { path: "/workspace" };
+        return { path: "/workbench" };
     }
 
     if (token) {

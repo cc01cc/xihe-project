@@ -507,7 +507,7 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         const wrapper = await mountSidebar();
         await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
         await flushPromises();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/workspace", query: { create: "1" } });
+        expect(pushSpy).toHaveBeenCalledWith({ path: "/workbench", query: { create: "1" } });
     });
 
     it("import-source opens the workspace dialog through ?importSource=1", async () => {

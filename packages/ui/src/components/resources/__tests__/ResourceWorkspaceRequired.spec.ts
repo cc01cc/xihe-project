@@ -35,7 +35,7 @@ describe("ResourceWorkspaceRequired — 无工作区上下文的诚实态", () =
         const w = mountGate();
         const link = w.find("a");
         expect(link.exists()).toBe(true);
-        expect(link.attributes("href")).toBe("/workspace");
+        expect(link.attributes("href")).toBe("/workbench");
     });
     it("只渲染这一个诚实态 section，不冒充任何资源面板", () => {
         const w = mountGate();

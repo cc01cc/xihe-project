@@ -507,7 +507,7 @@ function goBack(): void {
         return;
     }
     if (!resourceId.value) {
-        void router.push("/workspace");
+        void router.push("/workbench");
         return;
     }
     void router.push(resourceLayerPath(resourceId.value, layer.value));

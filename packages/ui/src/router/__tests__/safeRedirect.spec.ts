@@ -10,25 +10,25 @@ import { safeRedirect } from "../safeRedirect";
  */
 describe("safeRedirect", () => {
     it("拒入口页自己（/login 开头）", () => {
-        expect(safeRedirect("/login")).toBe("/workspace");
-        expect(safeRedirect("/login?redirect=/workspace")).toBe("/workspace");
-        expect(safeRedirect("/register")).toBe("/workspace");
-        expect(safeRedirect("/onboarding")).toBe("/workspace");
+        expect(safeRedirect("/login")).toBe("/workbench");
+        expect(safeRedirect("/login?redirect=/workspace")).toBe("/workbench");
+        expect(safeRedirect("/register")).toBe("/workbench");
+        expect(safeRedirect("/onboarding")).toBe("/workbench");
         // 前缀相同但不是入口页，必须放行（别把 /loginx 误伤成入口）
         expect(safeRedirect("/loginx")).toBe("/loginx");
     });
 
     it("拒已嵌套 redirect= 的串", () => {
-        expect(safeRedirect("/login?redirect=/login?redirect=/workspace")).toBe("/workspace");
-        expect(safeRedirect("/workspace?redirect=%2Flogin")).toBe("/workspace");
+        expect(safeRedirect("/login?redirect=/login?redirect=/workspace")).toBe("/workbench");
+        expect(safeRedirect("/workspace?redirect=%2Flogin")).toBe("/workbench");
     });
 
     it("拒超长目标", () => {
         const long = `/workspace/${"a".repeat(4096)}`;
         expect(long.length).toBeGreaterThan(2048);
-        expect(safeRedirect(long)).toBe("/workspace");
+        expect(safeRedirect(long)).toBe("/workbench");
         // 恰好在上限内的正常路径要放行
-        expect(safeRedirect(`/workspace/${"b".repeat(100)}`)).not.toBe("/workspace");
+        expect(safeRedirect(`/workspace/${"b".repeat(100)}`)).not.toBe("/workbench");
     });
 
     it("正常站内路径原样返回", () => {
@@ -40,12 +40,12 @@ describe("safeRedirect", () => {
     });
 
     it("拒站外/协议相对/非法入参", () => {
-        expect(safeRedirect("//evil.example.com/")).toBe("/workspace");
-        expect(safeRedirect("https://evil.example.com/")).toBe("/workspace");
-        expect(safeRedirect("javascript:alert(1)")).toBe("/workspace");
-        expect(safeRedirect("")).toBe("/workspace");
-        expect(safeRedirect(undefined)).toBe("/workspace");
-        expect(safeRedirect(null)).toBe("/workspace");
-        expect(safeRedirect(["a", "b"])).toBe("/workspace");
+        expect(safeRedirect("//evil.example.com/")).toBe("/workbench");
+        expect(safeRedirect("https://evil.example.com/")).toBe("/workbench");
+        expect(safeRedirect("javascript:alert(1)")).toBe("/workbench");
+        expect(safeRedirect("")).toBe("/workbench");
+        expect(safeRedirect(undefined)).toBe("/workbench");
+        expect(safeRedirect(null)).toBe("/workbench");
+        expect(safeRedirect(["a", "b"])).toBe("/workbench");
     });
 });

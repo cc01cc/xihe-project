@@ -208,7 +208,7 @@ describe("左栏工作区分组（task-352）", () => {
         expect(noSession.title.includes(noWorkspace.title)).toBe(false);
 
         await box.get('[data-testid="sidebar-empty-no-workspace-action"]').trigger("click");
-        expect(pushSpy).toHaveBeenCalledWith("/workspace");
+        expect(pushSpy).toHaveBeenCalledWith("/workbench");
     });
 
     it("搜索零命中：第三种空态，不冒充「该组暂无会话」", async () => {

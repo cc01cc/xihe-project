@@ -12,7 +12,7 @@
  *  - 拒 `/login` / `/register` / `/onboarding` 本身（否则登录成功后又回到入口页，等于白跳）；
  *  - 长度上限（防超长 URL 撑爆服务端/日志，也给"别再套了"一个硬闸）。
  *
- * 不合格一律回落 `/workspace` —— **不抛错**：回跳是体验优化，不是契约校验，
+ * 不合格一律回落 `/workbench`（工作台模块入口，task-34）—— **不抛错**：回跳是体验优化，不是契约校验，
  * 让一个坏参数把用户挡在登录页外面才是更糟的结果。
  */
 
@@ -26,9 +26,9 @@ const ENTRY_PATH_PREFIXES = ["/login", "/register", "/onboarding"] as const;
  * 规范化登录后的回跳目标。
  *
  * @param raw 未受信任的输入（U 盘：来自 URL 查询参数或 `window.location`）
- * @param fallback 不合格时的落点，默认 `/workspace`
+ * @param fallback 不合格时的落点，默认 `/workbench`
  */
-export function safeRedirect(raw: unknown, fallback = "/workspace"): string {
+export function safeRedirect(raw: unknown, fallback = "/workbench"): string {
     if (typeof raw !== "string") return fallback;
     const candidate = raw.trim();
     if (!candidate) return fallback;

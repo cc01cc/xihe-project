@@ -112,7 +112,7 @@ describe("LoginView submission lock", () => {
         await flushPromises();
 
         // 嵌套/自引用串一律不认：登录成功后不该再被送回登录页
-        expect(pushMock).toHaveBeenCalledWith("/workspace");
+        expect(pushMock).toHaveBeenCalledWith("/workbench");
     });
 
     it("shows the localized retry copy for a 429", async () => {

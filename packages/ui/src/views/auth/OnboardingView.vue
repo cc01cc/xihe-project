@@ -50,7 +50,7 @@ async function handleSubmit() {
     const ok = await auth.register(email.value.trim(), password.value, name.value);
     loading.value = false;
     if (ok) {
-        router.push((route.query.redirect as string) || "/workspace");
+        router.push((route.query.redirect as string) || "/workbench");
     } else {
         errorMsg.value = auth.error ?? t("onboarding.failed");
     }

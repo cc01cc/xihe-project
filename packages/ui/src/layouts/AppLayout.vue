@@ -210,7 +210,7 @@ const workspaceTabBarVisible = computed(
 const currentRouteSessionId = computed(() => {
     const sessionId = route.params.sessionId;
     if (typeof sessionId === "string" && sessionId !== "default") return sessionId;
-    if (route.path === "/workspace" || route.path.startsWith("/workspace/")) {
+    if (route.path === "/workbench" || route.path.startsWith("/workspace/")) {
         return sessionStore.currentSessionId;
     }
     return null;

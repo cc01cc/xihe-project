@@ -287,7 +287,7 @@ defineExpose({
                 type="button"
                 data-testid="sidebar-empty-no-workspace-action"
                 class="mt-3 rounded-md border border-sidebar-border px-2.5 py-1 text-xs hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="router.push('/workspace')"
+                @click="router.push('/workbench')"
             >
                 {{ t("sidebar.emptyNoWorkspace.action") }}
             </button>

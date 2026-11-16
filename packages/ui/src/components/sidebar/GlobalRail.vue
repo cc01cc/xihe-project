@@ -10,7 +10,7 @@ import {
     GLOBAL_RAIL_OPEN_WIDTH_MAX,
     GLOBAL_RAIL_OPEN_WIDTH_MIN,
 } from "../../composables/useWorkspaceLayout";
-import { GLOBAL_MODULES, isModulePathMatch, type GlobalModuleId } from "../../lib/globalModules";
+import { GLOBAL_MODULES, moduleForPath, type GlobalModuleId } from "../../lib/globalModules";
 import {
     Sidebar,
     SidebarContent,
@@ -119,8 +119,15 @@ const railWidthCss = computed(() => {
 /** 二级菜单的打开者（同一时刻只开一个：两个菜单同时开着会互相遮挡）。 */
 const openMenuId = ref<GlobalModuleId | null>(null);
 
-function isModuleActive(basePath: string) {
-    return isModulePathMatch(basePath, route.path ?? "");
+/**
+ * 当前路由归哪个模块 —— **问 `moduleForPath`，不在组件里再比一遍前缀**（task-34）。
+ *
+ * <p>为什么不能比 `module.basePath`：工作台模块的入口搬到 `/workbench` 后，容器页
+ * （`/workspace/:id/**`）的归属由 `moduleForPath` 的容器前缀兜底；组件自己比 basePath 会
+ * 让"进了工作区 rail 一个都不亮"。归属判据只许有一处。</p>
+ */
+function isModuleActive(moduleId: GlobalModuleId) {
+    return moduleForPath(route.path ?? "")?.id === moduleId;
 }
 
 function navigate(path: string) {
@@ -241,7 +248,7 @@ function isPanelActive(name: string) {
                                 :key="module.id"
                                 :module="module"
                                 :open="openMenuId === module.id"
-                                :active="isModuleActive(module.basePath)"
+                                :active="isModuleActive(module.id)"
                                 :active-path="route.path ?? ''"
                                 @navigate="navigate"
                                 @update:open="(open: boolean) => onMenuOpenChange(module.id, open)"
@@ -295,7 +302,7 @@ function isPanelActive(name: string) {
                         :key="module.id"
                         :module="module"
                         :open="openMenuId === module.id"
-                        :active="isModuleActive(module.basePath)"
+                        :active="isModuleActive(module.id)"
                         :active-path="route.path ?? ''"
                         @navigate="navigate"
                         @update:open="(open: boolean) => onMenuOpenChange(module.id, open)"

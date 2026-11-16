@@ -20,10 +20,10 @@ function pushChat() {
     if (id) {
         const workspaceId = sessionStore.currentSession?.workspaceId ?? auth.currentWorkspaceId;
         if (workspaceId) router.push(workspaceChatPath(workspaceId, id));
-        else router.push("/workspace");
+        else router.push("/workbench");
     } else {
         const workspaceId = auth.currentWorkspaceId;
-        router.push(workspaceId ? workspacePath(workspaceId) : "/workspace");
+        router.push(workspaceId ? workspacePath(workspaceId) : "/workbench");
     }
 }
 
@@ -44,7 +44,7 @@ function goBack() {
     const previous = historyState?.back ?? null;
     const cameFromChat =
         typeof previous === "string" &&
-        (previous === "/workspace" || previous.startsWith("/workspace/"));
+        (previous === "/workbench" || previous.startsWith("/workspace/"));
     if (cameFromChat) {
         router.back();
         return;

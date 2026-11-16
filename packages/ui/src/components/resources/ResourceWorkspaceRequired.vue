@@ -25,7 +25,7 @@ const { t } = useI18n();
             {{ t("resources.workspaceMissing.body") }}
         </p>
         <Button as-child variant="outline" size="sm" class="mt-3">
-            <router-link to="/workspace">{{ t("resources.workspaceMissing.action") }}</router-link>
+            <router-link to="/workbench">{{ t("resources.workspaceMissing.action") }}</router-link>
         </Button>
     </section>
 </template>

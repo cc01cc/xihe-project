@@ -315,7 +315,7 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         expect(pushSpy).toHaveBeenLastCalledWith(defaultLayerPath("instance"));
 
         await wrapper.get('[data-testid="global-rail-module-workbench"]').trigger("click");
-        expect(pushSpy).toHaveBeenLastCalledWith("/workspace");
+        expect(pushSpy).toHaveBeenLastCalledWith("/workbench");
 
         // PLAN-0772 M2：第三入口点下去要落到**默认资源子页**。
         // 组件侧落地 = `resourcePath(RESOURCE_DEFS[0].id)`（`globalModules.ts:100`，**不带层**）；

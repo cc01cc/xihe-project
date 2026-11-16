@@ -61,7 +61,7 @@ async function handleSubmit() {
     }
     phase.value = "entering";
     try {
-        const failure = await router.push("/workspace");
+        const failure = await router.push("/workbench");
         if (failure) {
             phase.value = "idle";
             localError.value = t("register.navigationFailed");

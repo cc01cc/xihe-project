@@ -139,7 +139,7 @@ function clearSearch() {
  * query 让它们各自消费，顺带得到可分享深链。
  */
 function openAddWorkspace() {
-    void router.push({ path: "/workspace", query: { create: "1" } });
+    void router.push({ path: "/workbench", query: { create: "1" } });
 }
 
 async function openImportSource() {

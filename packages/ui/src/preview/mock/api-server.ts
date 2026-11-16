@@ -296,7 +296,7 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 // task-240：组织成员页（/members）也是真路由真组件，同一个 dev-only 入口；
                 // 不加这一段它会被 Vite 兜底成 index.html，拿不到 mock 登录态与语言固定。
                 if (
-                    /^\/(settings|workspace|resources|members)(\/|$)/.test(url) &&
+                    /^\/(settings|workspace|workbench|resources|members)(\/|$)/.test(url) &&
                     !url.includes(".")
                 ) {
                     req.url = "/preview-real.html";

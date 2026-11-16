@@ -52,7 +52,17 @@ export interface GlobalModuleDef {
  * 因此它的二级菜单**只有一项**：回到工作台本身。**这一项也不是手写的路径字面量**，
  * 而是与 `GlobalRail` 的落地跳转同源（见 `WORKBENCH_PATH`）。
  */
-export const WORKBENCH_PATH = "/workspace";
+export const WORKBENCH_PATH = "/workbench";
+
+/**
+ * 工作台的**容器前缀**（`/workspace/:id/**`）：模块入口搬到 `/workbench` 后，落在容器页时
+ * rail 仍应点亮「工作台」—— 容器是工作台模块的**内容面**（task-34 前单一 basePath 同时覆盖两者）。
+ *
+ * <p>为什么不从 `lib/workspacePages.ts` 的 `WORKSPACE_ROOT_PREFIX` 导入：那两个文件**互不 import**
+ * 是既有约定（`workspacePages.ts:10-14`：全局模块清单与容器内页清单是两份清单，硬并会让「工作台」
+ * 在两处各出现一次而语义不同）。所以这里只持有**容器根**这一个字面量，不持有任何页面段。</p>
+ */
+const WORKBENCH_CONTAINER_PREFIX = "/workspace";
 
 /**
  * 组织成员模块的落地路径（PLAN-0773 M3 / task-240，Lead 裁 (a)：实例级面进全局模块）。
@@ -134,5 +144,11 @@ export function isModulePathMatch(modulePath: string, routePath: string): boolea
 }
 
 export function moduleForPath(routePath: string): GlobalModuleDef | undefined {
-    return GLOBAL_MODULES.find((def) => isModulePathMatch(def.basePath, routePath));
+    const byBasePath = GLOBAL_MODULES.find((def) => isModulePathMatch(def.basePath, routePath));
+    if (byBasePath) return byBasePath;
+    // task-34：容器页（`/workspace/:id/**`）归「工作台」模块 —— 该模块的入口是 `/workbench`，
+    // 但内容面仍是工作区容器；不补这条，进工作区后 rail 一个模块都不亮（回归）。
+    return isModulePathMatch(WORKBENCH_CONTAINER_PREFIX, routePath)
+        ? globalModule("workbench")
+        : undefined;
 }

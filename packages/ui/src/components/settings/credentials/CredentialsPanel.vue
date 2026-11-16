@@ -223,7 +223,7 @@ onMounted(async () => {
                 {{ t("resources.workspaceMissing.body") }}
             </p>
             <router-link
-                to="/workspace"
+                to="/workbench"
                 class="mt-2 inline-block text-sm underline underline-offset-4"
             >
                 {{ t("resources.workspaceMissing.action") }}

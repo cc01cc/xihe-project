@@ -68,7 +68,7 @@ describe("globalModules：菜单内容由 SSOT 派生", () => {
         expect(globalModule("settings").path).toBe(defaultLayerPath("instance"));
     });
 
-    it("工作台模块子项只有一项且指向 /workspace", () => {
+    it("工作台模块子项只有一项且指向 /workbench（task-34 模块入口改名）", () => {
         expect(globalModule("workbench").items).toHaveLength(1);
         expect(globalModule("workbench").items[0].path).toBe(WORKBENCH_PATH);
     });
@@ -89,14 +89,17 @@ describe("globalModules：菜单内容由 SSOT 派生", () => {
 
 describe("globalModules：模块路径判定", () => {
     it("basePath 前缀判定不吞掉同前缀的另一条路由", () => {
-        expect(isModulePathMatch("/workspace", "/workspace")).toBe(true);
-        expect(isModulePathMatch("/workspace", "/workspace/ws-1")).toBe(true);
-        expect(isModulePathMatch("/workspace", "/workspaces")).toBe(false);
+        expect(isModulePathMatch("/workbench", "/workbench")).toBe(true);
+        expect(isModulePathMatch("/workbench", "/workbench/ws-1")).toBe(true);
+        expect(isModulePathMatch("/workbench", "/workbenches")).toBe(false);
         expect(isModulePathMatch("/settings", "/settings/user/llm-provider")).toBe(true);
     });
 
     it("moduleForPath 按 basePath 归属模块（设置的用户层也归「设置」）", () => {
         expect(moduleForPath("/settings/user/llm-provider")?.id).toBe("settings");
+        // task-34：模块入口 /workbench 与容器页 /workspace/:id/** 都归「工作台」。
+        expect(moduleForPath("/workbench")?.id).toBe("workbench");
+        expect(moduleForPath("/workspace/ws-1")?.id).toBe("workbench");
         expect(moduleForPath("/resources/credentials")?.id).toBe("resources");
         expect(moduleForPath("/chat/abc")?.id).toBeUndefined();
     });
