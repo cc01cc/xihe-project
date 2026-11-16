@@ -313,7 +313,7 @@ watch(
                     v-if="canRetry"
                     type="button"
                     data-testid="revert-result-retry"
-                    class="inline-flex min-h-9 items-center justify-center rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="inline-flex min-h-9 items-center justify-center rounded-lg border border-destructive/40 bg-background px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="retry"
                 >
                     {{ t("chat.checkpointResultRetry") }} ({{ unfinishedCount }})

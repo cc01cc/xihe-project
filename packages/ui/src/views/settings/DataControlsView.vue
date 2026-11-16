@@ -407,7 +407,7 @@ function downloadBlob(blob: Blob, filename: string) {
                         <button
                             type="button"
                             data-testid="settings-checkpoint-cleanup-confirm"
-                            class="px-2 py-1 rounded text-xs border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50"
+                            class="px-2 py-1 rounded text-xs border border-destructive/40 bg-background text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
                             :disabled="cleanupBusy"
                             @click="cleanupCheckpoints"
                         >

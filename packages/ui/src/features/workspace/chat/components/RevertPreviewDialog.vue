@@ -367,7 +367,7 @@ function submit() {
                                 <span class="truncate font-mono">{{ repo.repoPath }}</span>
                                 <span
                                     v-if="repo.dirty"
-                                    class="rounded bg-destructive/10 px-1 py-px text-destructive"
+                                    class="rounded bg-background px-1 py-px text-destructive"
                                 >
                                     {{ t("chat.checkpointNestedRepoDirty") }}
                                 </span>
@@ -429,7 +429,7 @@ function submit() {
                     <button
                         type="button"
                         data-testid="revert-preview-confirm"
-                        class="inline-flex min-h-9 items-center justify-center rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        class="inline-flex min-h-9 items-center justify-center rounded-lg border border-destructive/40 bg-background px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                         :disabled="!canSubmit"
                         @click="submit"
                     >
