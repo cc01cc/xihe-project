@@ -15,8 +15,12 @@ export const buttonVariants = cva(
                 secondary:
                     "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
                 ghost: "border-transparent hover:bg-muted hover:text-foreground dark:hover:bg-muted/50 aria-expanded:bg-muted aria-expanded:text-foreground",
+                /* task-89：软色调危险按钮原为「红 10% 底 + 红字」= 双重染色，实测 4.13–4.3:1（<4.5）。
+                   改为「中性底 + 红色描边 + 红字」：颜色语义不变（仍是危险色 + 仍是非填充软样式，
+                   注意力预算 L4 不变），但底面不再染红 ⇒ 红字对中性底 4.73:1 达标。
+                   判据：一个 token 只有「换视觉」才达标时，先审用法（Lead 2026-11-16 裁定）。 */
                 destructive:
-                    "border-transparent bg-destructive/10 hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/20 text-destructive focus-visible:border-destructive/40 dark:hover:bg-destructive/30",
+                    "border-destructive/40 bg-background hover:bg-destructive/10 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-background dark:hover:bg-destructive/20 text-destructive focus-visible:border-destructive/40",
                 link: "border-transparent text-primary underline-offset-4 hover:underline",
             },
             size: {

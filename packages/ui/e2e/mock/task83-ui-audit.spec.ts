@@ -25,6 +25,8 @@
 import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { contrastRatio } from "../helpers/color";
+// task-89（加法前置）：只复用既有种子函数，不引入第二套登录逻辑。
+import { setupMockAuth } from "./helpers/auth";
 // 复用 src 的预览夹具（auth.ts:32 同源做法）：手抄一份环境 body 必然漂移。
 import { mockWorkspaceEnvironment } from "../../src/preview/mock/data/workspaceEnvironment";
 
@@ -48,6 +50,192 @@ const AA_BODY = 4.5;
 const AA_NON_TEXT = 3;
 /** 移动端手感底线（Apple HIG）；WCAG 2.5.8 合规底线是 24。 */
 const TOUCH_MIN = 44;
+
+/**
+ * task-89（加法前置）：本 spec 交付时**只种了主题、没种登录态**（grep `xihe-token` = 0 处），
+ * 而在 HEAD 上未登录会被守卫弹到 `/login` ⇒ 每条页面用例都红在 `settle()` 的 15s 超时，
+ * 扫到的其实是登录页（task-89 实测失败截图整屏是「登录 / 输入你的账号信息」）。
+ *
+ * 这里只做**加法**：调用 `helpers/auth.ts` 既有的 `setupMockAuth` 种子。
+ * **10 条既有断言一行未动，任何 timeout 未放宽。**
+ */
+test.beforeEach(async ({ page }) => {
+    await setupMockAuth(page);
+});
+
+/**
+ * task-89 状态指纹（Lead 裁：读数必须记「在某状态下」的值，否则两个数字不可比）。
+ *
+ * 为什么必须记：卡面说 4 个目标「到邻居矩形 0px、最近邻居 workspace-nav-sessions」，
+ * 而实测那个 0px 出现在**390×844 且侧栏收起态**——此时 `[data-testid=sidebar]` 只有 1px 宽、
+ * `sidebar-panel` 宽 0，控件**仍有几何但被裁掉**，而 main 列的移动端导航恰好压在它们的坐标上
+ * ⇒ 量到「距离 0」。桌面展开态是另一组数。**两个数都"对"，但不同状态不可比。**
+ */
+async function fingerprint(page: Page, label: string): Promise<void> {
+    const fp = await page.evaluate(() => {
+        const r = (sel: string) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const b = el.getBoundingClientRect();
+            return { w: Math.round(b.width), h: Math.round(b.height) };
+        };
+        return {
+            vw: window.innerWidth,
+            vh: window.innerHeight,
+            theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+            route: location.pathname + location.search,
+            sidebar: r('[data-testid="sidebar"]'),
+            sidebarPanel: r('[data-testid="sidebar-panel"]'),
+        };
+    });
+    console.log(
+        "[fp] " +
+            label +
+            " vw=" +
+            fp.vw +
+            "x" +
+            fp.vh +
+            " theme=" +
+            fp.theme +
+            " route=" +
+            fp.route +
+            " sidebar=" +
+            JSON.stringify(fp.sidebar) +
+            " panel=" +
+            JSON.stringify(fp.sidebarPanel),
+    );
+}
+
+/**
+ * task-89：触控目标测量（**唯一一份**，移动态与桌面态共用）。
+ *
+ * 为什么提到模块级：Lead 2026-11-16 裁定「不许第二套测量」。卡面那 4 条 spacing 是在
+ * **390×844 侧栏收起态**量的；要在桌面展开态复核，若另写一份 collect，两套算式迟早分叉。
+ *
+ * **可感知性过滤**：`getBoundingClientRect` 只回答「有几何」，不回答「可被触摸」。
+ * 被 `overflow:hidden` 裁掉或被遮罩盖住的元素照样有 rect —— 实测收起态
+ * `[data-testid=sidebar]` 只有 1px 宽、`sidebar-panel` 宽 0，里面按钮 rect 仍是 21×21，
+ * 且 `elementFromPoint` 打到的是**后面**的 `a[workspace-nav-sessions]`
+ * ⇒ 对它量「圆心到邻居矩形=0px」没有合规含义（WCAG 2.5.8 的 spacing 例外防的是**误触相邻目标**）。
+ *
+ * **过滤必须留痕**：`excluded` 带 label + 归因（clipped / occluded），由调用方逐个打印。
+ * 「违例消失」与「违例被过滤掉」在输出上必须能区分（Lead：过滤本身不许把证据吃掉）。
+ */
+async function measureTargets(page: Page, min: number) {
+    return page.evaluate((minSize: number) => {
+        type Box = { tag: string; label: string; x: number; y: number; w: number; h: number };
+        type Excluded = { label: string; reason: string };
+        const sel = 'button, a, [role="tab"], input, select, textarea';
+        const boxes: Box[] = [];
+        const excluded: Excluded[] = [];
+        for (const el of Array.from(document.querySelectorAll(sel))) {
+            const elRect = el.getBoundingClientRect();
+            if (elRect.width === 0 || elRect.height === 0) continue;
+            const label =
+                (el.getAttribute("aria-label") ?? "") ||
+                (el.getAttribute("data-testid") ?? "") ||
+                (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 22);
+            const cx = elRect.x + elRect.width / 2;
+            const cy = elRect.y + elRect.height / 2;
+            // 可感知性：中心点必须命中自身或后代，否则它不可被触摸 ⇒ 不是 target。
+            const hit = document.elementFromPoint(cx, cy);
+            const perceivable = !!hit && (hit === el || el.contains(hit));
+            if (!perceivable) {
+                const hitName = hit
+                    ? hit.tagName.toLowerCase() +
+                      (hit.getAttribute("data-testid")
+                          ? "[" + hit.getAttribute("data-testid") + "]"
+                          : "")
+                    : "(nothing)";
+                let reason = "occluded by " + hitName;
+                let cur: Element | null = el.parentElement;
+                while (cur && cur !== document.body) {
+                    const cs = getComputedStyle(cur);
+                    const clips = cs.overflowX !== "visible" || cs.overflowY !== "visible";
+                    if (clips) {
+                        const ar = cur.getBoundingClientRect();
+                        const outside =
+                            cx < ar.x || cx > ar.x + ar.width || cy < ar.y || cy > ar.y + ar.height;
+                        if (outside || ar.width <= 1 || ar.height <= 1) {
+                            const name =
+                                cur.tagName.toLowerCase() +
+                                (cur.getAttribute("data-testid")
+                                    ? "[" + cur.getAttribute("data-testid") + "]"
+                                    : "");
+                            reason =
+                                "clipped by " +
+                                name +
+                                " (" +
+                                Math.round(ar.width) +
+                                "x" +
+                                Math.round(ar.height) +
+                                ", overflow " +
+                                cs.overflowX +
+                                ")";
+                            break;
+                        }
+                    }
+                    cur = cur.parentElement;
+                }
+                excluded.push({ label, reason });
+                continue;
+            }
+            boxes.push({
+                tag: el.tagName.toLowerCase(),
+                label,
+                x: elRect.x,
+                y: elRect.y,
+                w: elRect.width,
+                h: elRect.height,
+            });
+        }
+        /** 点到矩形的最近距离（点在矩形内 = 0）。 */
+        function distPointRect(px: number, py: number, b: Box): number {
+            const dx = Math.max(b.x - px, 0, px - (b.x + b.w));
+            const dy = Math.max(b.y - py, 0, py - (b.y + b.h));
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+        const small = boxes.filter((b) => b.w < minSize || b.h < minSize);
+        const under24 = small.filter((b) => b.w < 24 || b.h < 24);
+        const rows = under24.map((b) => {
+            const cx = b.x + b.w / 2;
+            const cy = b.y + b.h / 2;
+            let minToBox = Number.POSITIVE_INFINITY;
+            let nearest = "";
+            for (const o of boxes) {
+                if (o === b) continue;
+                const d = distPointRect(cx, cy, o);
+                if (d < minToBox) {
+                    minToBox = d;
+                    nearest = o.label;
+                }
+            }
+            let minCenter = Number.POSITIVE_INFINITY;
+            for (const o of under24) {
+                if (o === b) continue;
+                const d = Math.hypot(cx - (o.x + o.w / 2), cy - (o.y + o.h / 2));
+                if (d < minCenter) minCenter = d;
+            }
+            return {
+                tag: b.tag,
+                label: b.label,
+                size: b.w.toFixed(1) + "x" + b.h.toFixed(1),
+                minToBox: Math.round(minToBox * 10) / 10,
+                minCenter: Math.round(minCenter * 10) / 10,
+                nearest,
+                exempt: minToBox >= 12 && minCenter >= 24,
+            };
+        });
+        return {
+            total: small.length,
+            under24: under24.length,
+            ge24: small.length - under24.length,
+            rows,
+            excluded,
+            labels: boxes.map((b) => b.label),
+        };
+    }, min);
+}
 
 /** 等 SPA 真的渲染完：domcontentloaded 后 #app 还要一会儿才出内容（实测 appLen 1219 → 71122）。 */
 async function settle(page: Page): Promise<void> {
@@ -268,70 +456,7 @@ test.describe("task-83 ② 移动端 390×844", () => {
         // ⇒ 必须实测圆心到邻居矩形的最近距离（>=12 才不相交）与圆心距（>=24 才不交叠），
         //   而不是拿「两框轴向间隙」当判据（那是另一个量，会误判）。
         await gotoPage(page, "/workspace/" + WS + "/settings");
-        const data = await page.evaluate((min: number) => {
-            type Box = { tag: string; label: string; x: number; y: number; w: number; h: number };
-            const sel = 'button, a, [role="tab"], input, select, textarea';
-            const boxes: Box[] = [];
-            for (const el of Array.from(document.querySelectorAll(sel))) {
-                const r = el.getBoundingClientRect();
-                if (r.width === 0 || r.height === 0) continue;
-                const label =
-                    (el.getAttribute("aria-label") ?? "") ||
-                    (el.getAttribute("data-testid") ?? "") ||
-                    (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 22);
-                boxes.push({
-                    tag: el.tagName.toLowerCase(),
-                    label,
-                    x: r.x,
-                    y: r.y,
-                    w: r.width,
-                    h: r.height,
-                });
-            }
-            /** 点到矩形的最近距离（点在矩形内 = 0）。 */
-            function distPointRect(px: number, py: number, b: Box): number {
-                const dx = Math.max(b.x - px, 0, px - (b.x + b.w));
-                const dy = Math.max(b.y - py, 0, py - (b.y + b.h));
-                return Math.sqrt(dx * dx + dy * dy);
-            }
-            const small = boxes.filter((b) => b.w < min || b.h < min);
-            const under24 = small.filter((b) => b.w < 24 || b.h < 24);
-            const rows = under24.map((b) => {
-                const cx = b.x + b.w / 2;
-                const cy = b.y + b.h / 2;
-                let minToBox = Number.POSITIVE_INFINITY;
-                let nearest = "";
-                for (const o of boxes) {
-                    if (o === b) continue;
-                    const d = distPointRect(cx, cy, o);
-                    if (d < minToBox) {
-                        minToBox = d;
-                        nearest = o.label;
-                    }
-                }
-                let minCenter = Number.POSITIVE_INFINITY;
-                for (const o of under24) {
-                    if (o === b) continue;
-                    const d = Math.hypot(cx - (o.x + o.w / 2), cy - (o.y + o.h / 2));
-                    if (d < minCenter) minCenter = d;
-                }
-                return {
-                    tag: b.tag,
-                    label: b.label,
-                    size: b.w.toFixed(1) + "x" + b.h.toFixed(1),
-                    minToBox: Math.round(minToBox * 10) / 10,
-                    minCenter: Math.round(minCenter * 10) / 10,
-                    nearest,
-                    exempt: minToBox >= 12 && minCenter >= 24,
-                };
-            });
-            return {
-                total: small.length,
-                under24: under24.length,
-                ge24: small.length - under24.length,
-                rows,
-            };
-        }, TOUCH_MIN);
+        const data = await measureTargets(page, TOUCH_MIN);
 
         const exempt = data.rows.filter((r) => r.exempt);
         const violate = data.rows.filter((r) => !r.exempt);
@@ -387,6 +512,22 @@ test.describe("task-83 ② 移动端 390×844", () => {
                     " " +
                     JSON.stringify(r.label),
             );
+        }
+        // 被过滤掉的必须逐个留痕：**「违例消失」与「违例被过滤掉」在输出上要能区分**（Lead 2026-11-16）。
+        if (data.excluded.length > 0) {
+            const clipped = data.excluded.filter((e) => e.reason.startsWith("clipped")).length;
+            console.log(
+                "[mobile] 排除 " +
+                    data.excluded.length +
+                    " 个不可感知目标（clipped " +
+                    clipped +
+                    " / occluded " +
+                    (data.excluded.length - clipped) +
+                    "）—— 它们有几何但点不到，不构成 touch target：",
+            );
+            for (const e of data.excluded) {
+                console.log("[mobile]   EXCLUDED " + JSON.stringify(e.label) + " ← " + e.reason);
+            }
         }
         // 报告型断言：扫描本身必须有效（否则「0 个」是假绿，见 D-1711）。
         expect(data.total, "至少要扫到触控目标，否则扫描失效").toBeGreaterThan(10);
@@ -684,5 +825,70 @@ test.describe("task-83 ⑤ 点击验证", () => {
             );
         }
         test.skip(count === 0, "该 404 形状没有「回到默认页」按钮");
+    });
+});
+
+/**
+ * task-89 ② 桌面展开态：同一套 `measureTargets`，判「两条 WCAG 2.5.8 量都过」。
+ *
+ * 为什么必须另开一个态：卡面那 4 条 spacing 是在 **390×844 侧栏收起态**量的，而那时
+ * `[data-testid=sidebar]` 只有 1px 宽、`sidebar-panel` 宽 0 —— 控件被裁掉，
+ * `elementFromPoint` 打到的是后面的 `a[workspace-nav-sessions]` ⇒ 量出来的「圆心到邻居矩形=0px」
+ * 是**两个不同 UI 区域的几何重叠**，不是「与邻居贴死」。桌面展开态才是它们真正可交互的地方。
+ *
+ * 这条同时是**变异腿的主判据**：把 `sidebar-workspaces-header` 的 `gap-1` 改 0（或把
+ * `gap` 换成负值）时，`导入工作区目录` / `添加 Workspace` 的「圆心到邻居矩形」会掉到 10.5
+ * ⇒ 本用例必须红。若它不红，说明过滤把真违例一起滤掉了。
+ */
+test.describe("task-89 ② 桌面展开态触控目标", () => {
+    test.use({ viewport: { width: 1440, height: 900 } });
+
+    test("侧栏 4 个目标两条量都过（间距到位，不靠加大尺寸）", async ({ page }) => {
+        await gotoPage(page, "/workspace/" + WS + "/settings");
+        await fingerprint(page, "桌面展开态");
+        const data = await measureTargets(page, TOUCH_MIN);
+        const violate = data.rows.filter((r) => !r.exempt);
+        console.log(
+            "[desktop] 可感知触控目标 " +
+                data.total +
+                " 个：<24 = " +
+                data.under24 +
+                " / >=24 = " +
+                data.ge24,
+        );
+        console.log("[desktop] 不合规 " + violate.length + " 个（必须 0）");
+        for (const r of violate) {
+            console.log(
+                "[desktop]   VIOLATE " +
+                    r.size +
+                    " 到邻居矩形=" +
+                    r.minToBox +
+                    " 圆心距=" +
+                    r.minCenter +
+                    " " +
+                    JSON.stringify(r.label),
+            );
+        }
+        for (const r of data.rows.filter((row) => row.exempt)) {
+            console.log(
+                "[desktop]   PASS    " +
+                    r.size +
+                    " 到邻居矩形=" +
+                    r.minToBox +
+                    " 圆心距=" +
+                    r.minCenter +
+                    " " +
+                    JSON.stringify(r.label),
+            );
+        }
+        for (const e of data.excluded) {
+            console.log("[desktop]   EXCLUDED " + JSON.stringify(e.label) + " ← " + e.reason);
+        }
+        expect(violate, "桌面展开态不得有 spacing 违例").toHaveLength(0);
+        // 这三个目标必须在**被判定**的集合里（而不是被过滤掉的），
+        // 否则上面那句「0 违例」可能只是「一个都没量」。
+        for (const want of ["导入工作区目录", "添加 Workspace", "在此工作区新建会话"]) {
+            expect(data.labels, "目标「" + want + "」必须可感知且被测量").toContain(want);
+        }
     });
 });

@@ -580,9 +580,10 @@ watch(isMobileViewport, (mobile) => {
                             data-testid="workspace-event-status"
                             class="text-xs"
                             :class="
+                                // task-89：emerald-600 对浅底实测 3.62:1（<4.5）⇒ 降一档到 700（深色主题仍用 400）。
                                 workspaceEvents.isConnected.value
-                                    ? 'text-emerald-600'
-                                    : 'text-muted-foreground/60'
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-muted-foreground'
                             "
                         >
                             {{

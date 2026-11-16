@@ -28,7 +28,11 @@ html[data-xh-color="gray"] {
     --muted-foreground: oklch(0.551 0.027 264.364);
     --accent: oklch(0.967 0.003 264.542);
     --accent-foreground: oklch(0.21 0.034 264.665);
-    --destructive: oklch(0.577 0.245 27.325);
+    /* task-89：shadcn 官方值 0.577 落本仓浅底只有 4.38:1（<4.5）。
+       按 WCAG 2.2 SC 1.4.3 正文 4.5 复算后取 0.55 ⇒ 对 --background 4.73、对 --muted 更高。
+       只解 L、不动 C/H：色相仍是同一支红，观感差异在一档以内。
+       读数与复算：一个 token 只有「换视觉」才达标时就该先审用法（D 号见 task-89 回执）。 */
+    --destructive: oklch(0.55 0.245 27.325);
     --border: oklch(0.928 0.006 264.531);
     /* task-310（2026-11-13）：`--input` = 可交互控件的边界，按 WCAG 1.4.11 需 ≥3:1。
        判据底面取【最差的那个】（`--muted`）而不是 `--background` —— 只按浅底算会偏乐观
