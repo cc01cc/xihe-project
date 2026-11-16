@@ -68,8 +68,21 @@ onMounted(() => {
             </div>
         </header>
         <div class="mx-auto w-full max-w-6xl px-6 py-6">
-            <Tabs v-model="activeTab" :aria-label="t('workspace.membersTabLabel')">
-                <TabsList variant="line">
+            <Tabs v-model="activeTab">
+                <!--
+                    task-90（与 task-81 P1-2 同一病因，这里是**漏改的姊妹页**）：
+                    `aria-label` 必须落在**有 `role=tablist` 的那个元素**上（即 `TabsList`）。
+
+                    改前实测：label 挂在 `<Tabs>` 根上。reka 的 `TabsRoot.cjs` **不输出任何
+                    `role`**（源码 `grep -c role` = 0 命中），而 vendor `Tabs.vue` 只是把 attrs
+                    透传给 `TabsRoot` ⇒ label 落到一个**无 role 的外层 div** 上，
+                    `[role="tablist"]` 自身的可访问名仍是空 ⇒ 屏幕阅读器**不会播报这个分组名**。
+                    「有 aria-label」看起来满足了，实际没说话（比完全没有更危险）。
+
+                    为什么不是「两边都挂」：同一个组名挂在两个元素上会让读屏念两遍，且外层那个
+                    无 role 的 label 仍是无意义属性 ⇒ 只保留 tablist 这一处。
+                -->
+                <TabsList variant="line" :aria-label="t('workspace.membersTabLabel')">
                     <TabsTrigger data-testid="members-tab-members" value="members">
                         {{ t("workspace.membersTabMembers") }}
                     </TabsTrigger>
