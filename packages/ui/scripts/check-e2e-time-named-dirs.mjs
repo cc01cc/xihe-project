@@ -19,7 +19,7 @@
  * 判据一宽到「任意 `PREFIX-${Date.now()}`」，`Idempotency-Key`、聊天正文、模型标记载体立刻全部
  * 落网 ⇒ 门在引入当天就是红的，而真正那条缺陷埋在 62 条噪音里。**一条会误伤的判据等于没有判据**。
  * 所以本门只守 `e2e-ws-` 这一族 —— 它既是 helper 的命名家族，也正是本卡判据 ① 原话
- * （`git grep 'e2e-ws-${Date.now}'` 归零）的范围。</p>
+ * （`git grep` 该 `e2e-ws-` 前缀 + 时间戳的写法归零）的范围。</p>
  *
  * <p><b>已知盲区（诚实登记）</b>：① 其它前缀的时间命名目录（如 `xihe-e2e-0384-<ts>`、
  * `plan0470-checkpoint-<ts>`，实测 **12 处**）**不在本门内** —— 它们有同样的同毫秒碰撞风险，
@@ -46,8 +46,8 @@ const ROOT = resolve(import.meta.dirname, "..");
 const SKIP = new Set(["node_modules", "dist", ".tmp", "test-results", "e2e-results", ".git"]);
 const EXT = /\.(ts|tsx|mts|cts|vue|mjs)$/;
 /**
- * 命中形态：`e2e-ws-${Date.now()}` 之后**立刻**收引号/反引号（叶子名没有别的成分）。
- * helper 的 `e2e-ws-${Date.now()}-${nextHostPathSuffix()}` 后面跟的是 `-` ⇒ 不命中。
+ * 命中形态：`e2e-ws-` 后面**只有**时间戳，且**立刻**收引号/反引号（叶子名没有别的成分）。
+ * helper 的写法在时间戳后还有 `-<seq>-<nonce>`（后面跟的是 `-`）⇒ 不命中。
  */
 const PATTERNS = [/e2e-ws-\$\{Date\.now\(\)\}[`'"]/, /"e2e-ws-"\s*\+\s*Date\.now\(\)/];
 /** 白名单：helper 的实现文件本身就是「加后缀」的那一端（将来调整拼接顺序也不该被判红）。 */
