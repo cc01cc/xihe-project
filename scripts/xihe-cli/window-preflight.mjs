@@ -57,9 +57,6 @@ const REPO_ROOT = path.resolve(HERE, '../..');
 /** receipt 的 gate 名。**故意**不在 GATES 里（同 drive-chat 裁定③ 方案 b）。 */
 export const WINDOW_S0_GATE = 'window-s0';
 
-/** 共享校验器「未知门」文案形态；白名单只减这一种且只在 gate === WINDOW_S0_GATE 时减。 */
-const UNKNOWN_GATE_PROBLEM = /^未知门 /;
-
 const TEMPLATE_LAYERS = ['user', 'workspace', 'instance'];
 
 /** dirty 行解析：porcelain -uall → [{code,path}]（rename 取新路径；剥引号）。与 gate-screenshot-preflight.dirtyRows 同语义。 */

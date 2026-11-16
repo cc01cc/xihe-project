@@ -243,7 +243,7 @@ test('S0 receipt borrows the shared shape but stays out of GATES (unknown-gate w
     const e = evaluateS0({ facts: cleanFacts(), options: opts() });
     const receipt = buildS0Receipt({ evaluation: e, command: 'node scripts/xihe-cli/window-preflight.mjs --stack 2', durationMs: 12 });
     const shared = validateReceipt(receipt);
-    const filtered = shared.problems.filter((p) => !(receipt.gate === WINDOW_S0_GATE && /^未知门 /.test(p)));
+    const filtered = shared.problems.filter((p) => !(receipt.gate === WINDOW_S0_GATE && p.startsWith('未知门 ')));
     assert.deepEqual(filtered, []);
     assert.equal(receipt.verdict, 'pass');
     assert.equal(receipt.executed.checks, 5);
@@ -472,7 +472,7 @@ test('main: token value never appears in any output', async () => {
             : jsonResponse(200, { templates: JSON.stringify([{ id: 't1', status: 'published', version: 1 }]) }),
         argv: ['--cp', 'http://cp-fake', '--json'],
     });
-    h.root; // harness fixed login below via override
+    assert.ok(h.root); // harness fixed login below via override
     try {
         const out = [];
         const code = await main(['--cp', 'http://cp-fake', '--json'], {
