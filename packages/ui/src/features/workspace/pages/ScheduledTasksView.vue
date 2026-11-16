@@ -318,6 +318,16 @@ function openCreate() {
                 </div>
             </header>
 
+            <!--
+                task-43（ui-2 batch-2 S 维）：这四颗 chip 是**单选筛选开关**。改前选中态只由
+                class 表达（border-ring + bg-accent），`ariaSnapshot` 里它们全是 `- button "全部 3"`
+                ⇒ 读屏用户听不出当前在哪个筛选（WCAG 4.1.2）。
+
+                形态选 `aria-pressed`，**不选 tablist**：本页筛选不切换 panel，只是过滤同一个
+                列表（没有 `aria-controls` 指向的 tabpanel），与仓内既有的单选按下集合同一写法
+                （`LanguageSwitcher` / `ToolFacesView` 都是 `:aria-pressed="active === x"`）；
+                两套不混用 —— 这里不出现 role=tab / aria-selected。
+            -->
             <div class="mb-4 flex flex-wrap gap-2" data-testid="scheduled-tasks-filters">
                 <button
                     v-for="option in [
@@ -344,6 +354,7 @@ function openCreate() {
                     ] as Array<{ key: StatusFilter; label: string; count: number }>"
                     :key="option.key"
                     type="button"
+                    :aria-pressed="filter === option.key"
                     class="rounded-full border px-3 py-1 text-sm transition-colors"
                     :class="
                         filter === option.key

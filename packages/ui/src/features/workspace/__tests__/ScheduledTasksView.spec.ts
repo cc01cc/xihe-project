@@ -260,6 +260,54 @@ describe("ScheduledTasksView list rendering", () => {
         }
         expect(asserted, "确实断言到了计数（防选择器空跑假绿）").toBeGreaterThanOrEqual(3);
     });
+
+    /**
+     * task-43（ui-2 batch-2 S 维）：筛选 chip 的选中态必须**进可访问树**。改前只有 class
+     * （border-ring + bg-accent），`ariaSnapshot` 里四颗 chip 全是一样的 `- button "全部 3"`
+     * ⇒ 读屏用户听不出当前筛选（WCAG 4.1.2）。
+     *
+     * <p>判据落在 **DOM 属性**上：同一时刻恰好一颗 `aria-pressed="true"`，且它随点击移动。
+     * 形态是 `aria-pressed`（单选按下集合），**不是** tablist ⇒ 这里同时守「不混用」：
+     * chip 上不得出现 `role=tab` / `aria-selected`。</p>
+     */
+    it("筛选 chip 的选中态由 aria-pressed 表达，且同时只有一颗为 true（task-43）", async () => {
+        const wrapper = await mountView();
+        const chips = () =>
+            wrapper.get('[data-testid="scheduled-tasks-filters"]').findAll("button");
+        const pressed = () =>
+            chips()
+                .filter((chip) => chip.attributes("aria-pressed") === "true")
+                .map((chip) => chip.text().replace(/\s+/g, " ").trim());
+
+        // 结构定位 + 计数守卫：本页两套断点 DOM 同时挂树，chip 内层 testid 只有一个（在共享
+        // 头部之外的分支里没有再渲染一份），但断言仍先钉住「确实找到了四颗」（防空跑假绿）。
+        expect(chips().length, "四颗筛选 chip 都要在树里").toBe(4);
+        let asserted = 0;
+        for (const chip of chips()) {
+            expect(chip.attributes("aria-pressed"), "每颗 chip 都要有 aria-pressed").toMatch(
+                /^(true|false)$/,
+            );
+            // 不混用第二套语义。
+            expect(chip.attributes("role")).toBeUndefined();
+            expect(chip.attributes("aria-selected")).toBeUndefined();
+            asserted += 1;
+        }
+        expect(asserted, "确实断言到了 aria-pressed（防选择器空跑假绿）").toBe(4);
+
+        // 初始：只有「全部」按下（filter 默认 all）。
+        expect(pressed()).toEqual([expect.stringContaining("全部")]);
+
+        // 点「待处理」⇒ pressed 移动到它，且仍只有一颗。
+        await wrapper.get('[data-testid="scheduled-tasks-filter-pending"]').trigger("click");
+        await nextTick();
+        expect(pressed()).toEqual([expect.stringContaining("待处理")]);
+
+        // 点回「全部」⇒ 回到初始态（证明是**移动**而不是累积）。
+        await wrapper.get('[data-testid="scheduled-tasks-filter-all"]').trigger("click");
+        await nextTick();
+        expect(pressed()).toEqual([expect.stringContaining("全部")]);
+        wrapper.unmount();
+    });
 });
 
 describe("ScheduledTasksView disposition", () => {
