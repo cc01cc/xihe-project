@@ -173,22 +173,31 @@ async function createWorkspace(
 }
 
 /**
- * 进程内单调递增序号 —— 外部栈车道的隔离根唯一性由它和随机后缀共同保证。
+ * 进程内单调递增序号 —— **两条车道**的目录唯一性都靠它，外加 4 位随机 nonce。
  *
- * 为什么需要它：Playwright 的 worker 会复用同一个 pid，所以单靠 `<pid>-<Date.now()>`
- * 在同毫秒内两次调用会拿到同一个根（`plan0639-multi-root.spec.ts:63` 已警告过这条）。
+ * 为什么需要它：`Date.now()` 在**同一同步块内连续调用会返回同一个毫秒值** —— 实测
+ * run-id 车道 50 次连续调用只得到 3~5 个不同目录（task-68 / D-1722：碰撞率 ≈90%+，
+ * 稳定撞，不是理论风险）。Playwright 的 worker 又会复用同一个 pid，所以
+ * `<pid>-<Date.now()>` / `e2e-ws-<Date.now()>` 这类只靠时间的命名在同毫秒内必然重名。
+ *
  * 两个工作区静默共用一个宿主目录**比直接失败更隐蔽** —— 跑完没人会知道文件写到哪了，
- * 而且计划里"增根"会变成重复路径、被 DB 唯一键拒绝。序号 + 随机后缀把碰撞概率压到 0，
- * 并由 `e2e/fixtures/__tests__/workspace-host-path.test.mjs` 钉住"连续两次不同"。
+ * 而且「增根」会变成重复路径、被 DB 唯一键拒绝。序号 + 随机后缀把碰撞概率压到 0，
+ * 由 `e2e/fixtures/__tests__/workspace-host-path.test.mjs` 在**两条车道各 50 次**钉住。
  */
-let externalLaneSequence = 0;
+let hostPathSequence = 0;
 
-function nextExternalLaneRoot(): string {
-    externalLaneSequence += 1;
+/** 序号 + nonce 后缀：两条车道共用，避免「一条有防碰撞、一条没有」的半吊子防护。 */
+function nextHostPathSuffix(): string {
+    hostPathSequence += 1;
     const nonce = Math.floor(Math.random() * 0x10000)
         .toString(16)
         .padStart(4, "0");
-    return `external-${process.pid}-${Date.now()}-${externalLaneSequence}-${nonce}`;
+    return `${hostPathSequence}-${nonce}`;
+}
+
+/** 外部栈车道的进程级隔离根（无 RUN_ID 时使用）。 */
+function nextExternalLaneRoot(): string {
+    return `external-${process.pid}-${Date.now()}-${nextHostPathSuffix()}`;
 }
 
 /**
@@ -196,8 +205,9 @@ function nextExternalLaneRoot(): string {
  *
  * 两条车道（`XIHE_E2E_RUN_ID` 是「**隔离根标识**」，由 `scripts/e2e-host.mjs` 注入，
  * 见该脚本 `:2163` 传给 Playwright 的 env）：
- * ① **run-id 车道**（有 RUN_ID）：根 = `.tmp/e2e-host/<RUN_ID>` —— 行为与历史逐字节一致，
- *    60 个调用方依赖它（按轮隔离：round 2 看不到 round 1 的产物）。
+ * ① **run-id 车道**（有 RUN_ID）：根 = `.tmp/e2e-host/<RUN_ID>` —— **按轮隔离不变**
+ *    （round 2 看不到 round 1 的产物，60 个调用方依赖这一点）。叶子名由 task-68 起
+ *    加上序号 + nonce（原先只有 `e2e-ws-<Date.now()>` ⇒ 同毫秒必撞，见下）。
  * ② **external 车道**（无 RUN_ID，即 `XIHE_E2E_EXTERNAL_SERVER=1` 复用已有栈）：
  *    没有任何 runner 注入 RUN_ID，但**「绝不写共享目录」这条原意必须保留** ⇒ 回落到
  *    进程级隔离根 `.tmp/e2e-host/external-<pid>-<ts>-<seq>-<rand>`，而不是直接失败
@@ -211,7 +221,7 @@ export function isolatedWorkspaceHostPath(): string {
     const lane = runId ? "run-id" : "external";
     const root = runId || nextExternalLaneRoot();
     const hostRoot = path.resolve(process.cwd(), "../../.tmp/e2e-host", root);
-    const hostPath = path.join(hostRoot, `e2e-ws-${Date.now()}`);
+    const hostPath = path.join(hostRoot, `e2e-ws-${Date.now()}-${nextHostPathSuffix()}`);
     mkdirSync(hostPath, { recursive: true });
     console.log(`[e2e] workspace isolated at ${hostPath} (${lane} lane, root ${root})`);
     return hostPath;

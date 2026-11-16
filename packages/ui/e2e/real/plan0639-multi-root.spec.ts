@@ -60,15 +60,15 @@ function normalizeWinPath(value: string): string {
 
 /**
  * 两个隔离临时根目录（主/次），各放一个指纹文件，供树渲染与分组断言使用。
- * 注意：isolatedWorkspaceHostPath() 以 Date.now() 命名，同一毫秒内两次调用会拿到
- * 同一路径 —— rootB 必须另加随机后缀，否则「增根」会变成重复路径（DB 唯一键拒绝）。
+ *
+ * task-68 / D-1722：这里原先自己加 `-b<rand>` 后缀绕开「同毫秒两次调用拿到同一路径」，
+ * 那是**绕开缺陷而不是修好缺陷**（其余调用方仍在雷区）。helper 已改为两条车道都带
+ * 进程内序号 + nonce，所以绕法已撤 —— 直接两次调用就能拿到两个不同目录。
+ * 若将来有人再看到这里加后缀，说明 helper 的防碰撞失效了，别用绕法掩盖。
  */
 function seedRootPair(): { rootA: string; rootB: string } {
     const rootA = isolatedWorkspaceHostPath(),
-        rootB = path.join(
-            path.dirname(rootA),
-            `${path.basename(rootA)}-b${Math.floor(Math.random() * 1e6)}`,
-        );
+        rootB = isolatedWorkspaceHostPath();
     mkdirSync(rootB, { recursive: true });
     writeFileSync(path.join(rootA, ALPHA_FILE), "# Alpha Root A\n\nSeeded by plan0639 spec.\n");
     writeFileSync(path.join(rootB, BETA_FILE), "# Beta Root B\n\nSeeded by plan0639 spec.\n");
