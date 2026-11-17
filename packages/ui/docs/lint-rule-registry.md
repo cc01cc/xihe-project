@@ -6,9 +6,9 @@
 
 <!-- lint-rule-registry:begin -->
 
-**当前登记 134 条`off`** = 主块 56 + 文件级/工具面 5 + 测试区放宽/关闭档 2（`task-43` 的 `new-cap` 两片）+ 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
+**当前登记 135 条`off`** = 主块 57 + 文件级/工具面 5 + 测试区放宽/关闭档 2（`task-43` 的 `new-cap` 两片）+ 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
 
-#### 主块 56 条
+#### 主块 57 条
 
 | 规则 | 实测命中 | 为什么 off（依据） | 类 |
 | --- | ---: | --- | --- |
@@ -53,6 +53,7 @@
 | `unicorn/no-await-expression-member` | 180 | (await x).y 可读（180 处） | S |
 | `unicorn/no-zero-fractions` | 15 | 1.0 等写法在数值常量里有意义（15 处） | S |
 | `unicorn/numeric-separators-style` | 311 | 长数字分组风格未统一（311 处） | S |
+| `unicorn/number-literal-case` | 6 | 与 oxfmt 方向相反且**零配置无法调和**：oxfmt 强制小写 hex 数字，本规则（schema = RuleNoConfig，无 options）强制大写 A–F ⇒ 含 a–f 的 hex 被 oxfmt 翻小写后复燃（task-184 三层实证：schema / oxfmt 28 属性无 hex 项 / 探针 --allow 双绿）。6 处命中全是 UUID 位掩码 / 哈希 / PRNG magic（logger.ts:98/99、SidebarMenuSkeleton.vue:18、plan-0503 spec:23/24、bl602 spec:97），十进制化毁可读性 ⇒ 数字格式 SSOT 归 oxfmt，关本规则。恢复条件同类 F：上游能配 lowercase 或 oxfmt 保留大小写时再开 | F |
 | `unicorn/prefer-array-find` | 12 | filter(...)[0] 与 find 混用（12 处） | S |
 | `unicorn/prefer-optional-catch-binding` | 0 | 当前 0 命中 | Z |
 | `unicorn/prefer-response-static-json` | 50 | Response.json 与手写 new Response(JSON.stringify(...)) 混用（50 处） | S |

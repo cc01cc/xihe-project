@@ -55,9 +55,9 @@ pnpm run build
 - 退出码分层：`0` 正常 / `1` 门红 / `2` 环境问题或 `errors>0` 拒写 / **`3` 收账边界拒绝**。
 - 自检：`node scripts/check-lint-warnings.mjs --selftest`（14 例）；改动这两个旗标后必须跑。
 
-<!-- lint-rule-registry 已外置（task-178 B1）：完整登记册（主块 56 / 文件级 5 / 三档 2 / 测试块 72 的表与 fence，含 begin/end 标记）在 [`docs/lint-rule-registry.md`](docs/lint-rule-registry.md)。`check-lint-rule-registry.mjs` 读该文件（B4）；本文件只留分类判据与计数哨兵。新增/恢复 off：改 docs 登记册 + 同步下方计数。 -->
+<!-- lint-rule-registry 已外置（task-178 B1）：完整登记册（主块 57 / 文件级 5 / 三档 2 / 测试块 72 的表与 fence，含 begin/end 标记）在 [`docs/lint-rule-registry.md`](docs/lint-rule-registry.md)。`check-lint-rule-registry.mjs` 读该文件（B4）；本文件只留分类判据与计数哨兵。新增/恢复 off：改 docs 登记册 + 同步下方计数。 -->
 
-**登记计数哨兵（task-178）**：主块 **56** + 文件级/工具面 **5** + 测试区三档 **2** + 测试块 **72** = **134** 条 `off`。与 docs 登记册不符 ⇒ 以 `check-lint-rule-registry.mjs` 读数为准并回改本行。
+**登记计数哨兵（task-178）**：主块 **57** + 文件级/工具面 **5** + 测试区三档 **2** + 测试块 **72** = **135** 条 `off`。与 docs 登记册不符 ⇒ 以 `check-lint-rule-registry.mjs` 读数为准并回改本行。
 
 - **类 F · 与格式化器轴冲突**：oxfmt 已接管该面（或规则会让代码变差）。恢复条件 = 先做一次性机械重排并单独提交（diff 全审），且用 2 例样本证明 oxfmt 不会反向改写；在此之前恢复只会把千百处风格翻转塞进每条 diff。
 - **类 S · 风格取向（仓库与规则方向相反，或规则对互斥）**：恢复条件 = 先定仓库口径并写进本指南（含互斥对处理），再一次性重排。互斥对：no-ternary ↔ unicorn/prefer-ternary、import/no-named-export ↔ import/prefer-default-export、**import/no-namespace ↔ typescript/consistent-type-imports**（type-only 命名空间：前者禁、后者要求；已把前者收窄到值形态，见其登记行）—— 任一侧单独打开都会让存量大面积红，须同时定口径。

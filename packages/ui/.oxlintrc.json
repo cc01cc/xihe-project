@@ -52,6 +52,7 @@
         "unicorn/no-await-expression-member": "off",
         "unicorn/no-zero-fractions": "off",
         "unicorn/numeric-separators-style": "off",
+        "unicorn/number-literal-case": "off",
         "unicorn/prefer-array-find": "off",
         "unicorn/prefer-optional-catch-binding": "off",
         "unicorn/prefer-response-static-json": "off",
