@@ -59,7 +59,8 @@ const title = computed(() =>
 );
 
 /**
- * task-416 P1-3（D-1312）：原子目录已有 79 条，平铺找不到东西。
+ * task-416 P1-3（D-1312）：原子目录条目多，平铺找不到东西。条目数以 GET /roles/catalog 返回为准，
+ * 本文件不复制该数（D-1767；旧写「79 条」从未属实——词表规模演进见 PermissionAtomCatalog.java）。
  * **只过滤可见集，不动 selectedAtoms** —— 搜索是视图操作，不是选择操作。
  * 被否决候选：换成 vendor `Command`（CommandItem 是**单选菜单项**语义，会把「多选原子」
  * 变成「单选触发」，a11y 与既有 toggle 交互都要重做）；这里保留多选 checkbox 列表，

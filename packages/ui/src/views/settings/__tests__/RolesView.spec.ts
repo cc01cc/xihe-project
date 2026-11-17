@@ -641,7 +641,8 @@ describe("roleErrorMessages", () => {
 
 /**
  * task-416 P1-3 / P1-4（Lead D-1312 修订裁）。
- * P1-3：79 条原子平铺无搜索 ⇒ 加 **vendor 搜索输入**过滤可见集；
+ * P1-3：原子目录条目多、平铺无搜索 ⇒ 加 **vendor 搜索输入**过滤可见集（条目数以 GET /roles/catalog
+ * 返回为准，不复制该数——D-1767；旧写「79 条」从未属实，演进见 PermissionAtomCatalog.java）；
  * **不换 Command** —— CommandItem 是单选菜单语义，会把「多选原子」变成「单选触发」，
  * a11y 与既有交互都要重做（被否决候选，写进 commit body）。
  * P1-4：角色列表原来只有计数 ⇒ 补前 3 条原子标签 + 余量 + 禁用原子提示。
