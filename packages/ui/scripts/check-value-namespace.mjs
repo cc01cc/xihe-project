@@ -9,7 +9,7 @@
  * NoNamespaceConfig 亦只有 ignore）⇒ 无法按形态豁免。</p>
  *
  * <p><b>本检查器做的事比原规则少</b>：只接管「值命名空间」那一半（import * as X / import def, * as X），
- * 放行 import type * as。不是自研替代 oxlint。登记行见 AGENTS.md 的 lint-rule-registry 区间。</p>
+ * 放行 import type * as。不是自研替代 oxlint。登记行见 packages/ui/docs/lint-rule-registry.md 的 lint-rule-registry 区间（task-178 B1 外置）。</p>
  *
  * <p><b>已知盲区（诚实登记）</b>：① 只看静态 import 声明，动态 import() 不在判据内（它本就是
  * 取运行时模块对象的正规写法）；② 注释里的 import 不算（先剥注释）；③ 不做 AST，跨语句的极端

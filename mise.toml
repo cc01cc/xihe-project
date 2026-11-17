@@ -515,7 +515,8 @@ alias = "lint:ui"
 # 红点会点名「族 + 现值/基线 + 新增 file:line（基线存了 locations 时）」，并给出自愈单命令。
 # 本门只读 oxlint 输出，**不要求工作树 clean**（不红在他人中间态）；自检 7 例：`--selftest`。
 # 基线只许变小：`node packages/ui/scripts/check-lint-warnings.mjs --write-baseline` 收账（新增而变大须在卡面写原因）。
-# 配套登记门：`node packages/ui/scripts/check-lint-rule-registry.mjs`（off 规则必须有登记行，exit 1 = 缺行）。
+# 配套登记门：`node packages/ui/scripts/check-lint-rule-registry.mjs`（off 规则必须有登记行，exit 1 = 缺行；task-178 B4 起登记册在 `packages/ui/docs/lint-rule-registry.md`）。
+# AGENTS.md 注入预算守卫（task-178 B5）：`node packages/ui/scripts/check-agents-md-budget.mjs`，AGENTS.md > 63,488 B（65,536−2 KiB）exit 1；已接进 `pnpm run lint` 尾部（2026-11-17 实测 65,572 B 时注入被截断到 65,200 B）。
 # 实测成本（2026-11-15 本机）：mise 包装冷启 2,720 ms（含一次全包 oxlint：709 文件 / 43 族）；二次连跑读数一致。
 [tasks."check:lint-warnings"]
 run = "node packages/ui/scripts/check-lint-warnings.mjs --enforce"

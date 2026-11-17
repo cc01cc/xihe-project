@@ -2,8 +2,8 @@
 /**
  * lint 规则豁免登记校验（task-171 ①；判据 D-1532 ③「逐步规范化」的前置）。
  *
- * 判据：packages/ui/.oxlintrc.json 里**每一条 off** 都必须在 packages/ui/AGENTS.md
- * 的 `lint-rule-registry:begin` … `lint-rule-registry:end` 区间里有一行登记；
+ * 判据：packages/ui/.oxlintrc.json 里**每一条 off** 都必须在 packages/ui/docs/lint-rule-registry.md
+ * 的 `lint-rule-registry:begin` … `lint-rule-registry:end` 区间里有一行登记（task-178 B1/B4：登记册自 AGENTS.md 外置，标记随表搬）；
  * 反之，登记了但配置里已不是 off ⇒ 也算不一致（登记会腐烂）。
  *
  * 退出码：0 一致 / 1 不一致（逐条点名 missing 与 stale）/ 2 用法或环境错误。
@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const CONFIG = join(ROOT, ".oxlintrc.json");
-const AGENTS = join(ROOT, "AGENTS.md");
+const AGENTS = join(ROOT, "docs", "lint-rule-registry.md");
 const BEGIN = "<!-- lint-rule-registry:begin -->";
 const END = "<!-- lint-rule-registry:end -->";
 
@@ -45,7 +45,11 @@ const offRules = collectOffRules();
 const region = registryRegion();
 if (!region) {
     console.error(
-        "FAIL 找不到登记区间标记 " + BEGIN + " … " + END + "（在 packages/ui/AGENTS.md）",
+        "FAIL 找不到登记区间标记 " +
+            BEGIN +
+            " … " +
+            END +
+            "（在 packages/ui/docs/lint-rule-registry.md）",
     );
     process.exit(2);
 }
