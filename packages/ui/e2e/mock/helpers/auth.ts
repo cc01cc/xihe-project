@@ -1905,9 +1905,13 @@ function diagnoseUndeclaredSessionWorkspaces(options: MockSessionOptions): void 
     console.warn(detail);
 }
 
-export async function setupMockSessions(page: Page, options: MockSessionOptions = {}) {
+/**
+ * task-189 对接（ui-40）：会话投影 wire 构造器导出 —— 分组侧栏扇出桩
+ * （helpers/grouped-sessions.ts）必须产**同一条 wire**，不能自造第二份形状（G4）。
+ */
+export function mockSessionWire(session: MockSessionRecord, workspaceId: string | null) {
     const now = new Date().toISOString();
-    const mapSession = (session: MockSessionRecord, workspaceId: string | null) => ({
+    return {
         id: session.id,
         title: session.title,
         createdAt: session.createdAt ?? now,
@@ -1938,7 +1942,11 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             "agentPrincipalId" in session
                 ? (session.agentPrincipalId ?? null)
                 : MOCK_BOUND_PRINCIPAL_ID,
-    });
+    };
+}
+
+export async function setupMockSessions(page: Page, options: MockSessionOptions = {}) {
+    const now = new Date().toISOString();
     // task-373：两种作用域共用同一条映射（含 agentPrincipalId 的默认值口径），差别只有
     // workspaceId —— 独立会话是显式 null，不是缺字段。
     //
@@ -1946,10 +1954,10 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     const defaultWorkspaceId = options.workspaceId ?? MOCK_DEFAULT_WORKSPACE_ID;
     diagnoseUndeclaredSessionWorkspaces(options);
     const sessions = (options.sessions ?? []).map((session) =>
-        mapSession(session, session.workspaceId ?? defaultWorkspaceId),
+        mockSessionWire(session, session.workspaceId ?? defaultWorkspaceId),
     );
     const workspaceless = (options.workspacelessSessions ?? []).map((session) =>
-        mapSession(session, null),
+        mockSessionWire(session, null),
     );
     const createRootBranch = (createdAt: string): MockBranch[] => [
         {

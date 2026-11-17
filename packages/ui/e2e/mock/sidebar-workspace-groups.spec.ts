@@ -13,25 +13,11 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { stubGroupedWorkspaceSessions, stubWorkspaceList } from "./helpers/grouped-sessions";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const WS_A = "11111111-1111-4111-8111-111111111111";
 const WS_B = "22222222-2222-4222-8222-222222222222";
-
-function sessionWire(id: string, title: string, workspaceId: string) {
-    const now = new Date().toISOString();
-    return {
-        id,
-        title,
-        workspaceId,
-        createdAt: now,
-        updatedAt: now,
-        modelProvider: null,
-        modelName: null,
-        archived: false,
-        agentPrincipalId: null,
-    };
-}
 
 /**
  * 收集「拉某 workspace 会话」的请求：值是该请求带的 `X-Workspace-Id`。
@@ -72,52 +58,6 @@ async function capture(page: Page, name: string) {
     await page.screenshot({ path: `${dir}/${name}.png` });
 }
 
-async function stubTwoWorkspaces(page: Page) {
-    await page.route(
-        (url) => url.pathname === "/api/v1/workspaces",
-        async (route) => {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify([
-                    { id: WS_A, name: "Alpha 工作区", ownerId: "user-1", workspaceRole: "OWNER" },
-                    { id: WS_B, name: "Beta 工作区", ownerId: "user-1", workspaceRole: "OWNER" },
-                ]),
-            });
-        },
-    );
-    // 每个 workspace 拿自己那一份；这条桩就是「按组取数」的替身。
-    await page.route(
-        (url) => url.pathname === "/api/v1/sessions",
-        async (route) => {
-            const url = new URL(route.request().url());
-            // 独立会话读的是 `GET /sessions?scope=workspaceless`（`src/composables/api.ts:3271`），
-            // 与按组读**同一条路径**、只差查询参数。原桩只按 pathname 匹配 ⇒ 同一条会话会同时
-            // 出现在「Alpha 工作区组内」与「独立会话组」两处，`filter({hasText})` 于是命中 2 个
-            // `session-item` ⇒ **strict 冲突**（看起来像「不可见」，报错文本却写着 resolved to 2
-            // elements，2026-11-15 实测）。本 spec 只钉按组扇出 ⇒ 独立会话必须是空。
-            if (url.searchParams.get("scope") === "workspaceless") {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({ sessions: [] }),
-                });
-                return;
-            }
-            const workspaceId = route.request().headers()["x-workspace-id"];
-            const sessions =
-                workspaceId === WS_B
-                    ? [sessionWire("s-b1", "Beta 会话", WS_B)]
-                    : [sessionWire("s-a1", "Alpha 会话", WS_A)];
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ sessions }),
-            });
-        },
-    );
-}
-
 test.describe("左栏工作区分组（task-352 / D-1206）", () => {
     test("首屏只拉当前组；展开第二组 +1；折叠再展开不重拉", async ({ page }) => {
         const ledger = recordSessionGets(page);
@@ -126,7 +66,15 @@ test.describe("左栏工作区分组（task-352 / D-1206）", () => {
         await setupMockSessions(page, {
             sessions: [{ id: "s-a1", title: "Alpha 会话", workspaceId: WS_A }],
         });
-        await stubTwoWorkspaces(page);
+        // task-189 对接：能力已提取到 helpers/grouped-sessions.ts（G4 单一实现）。
+        await stubWorkspaceList(page, [
+            { id: WS_A, name: "Alpha 工作区" },
+            { id: WS_B, name: "Beta 工作区" },
+        ]);
+        await stubGroupedWorkspaceSessions(page, [
+            { id: "s-a1", title: "Alpha 会话", workspaceId: WS_A, agentPrincipalId: null },
+            { id: "s-b1", title: "Beta 会话", workspaceId: WS_B, agentPrincipalId: null },
+        ]);
 
         await page.goto(`/workspace/${WS_A}/chat/s-a1`);
 
