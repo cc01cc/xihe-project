@@ -79,6 +79,7 @@ async function confirmRemoveDoc() {
     const id = pendingDeleteId.value;
     if (!id || deleting.value) return;
     deleting.value = true;
+    deleteError.value = null;
     try {
         await apiDelete(`/rag/documents/${id}`);
         pendingDeleteId.value = null;
@@ -86,6 +87,12 @@ async function confirmRemoveDoc() {
     } catch (e) {
         logger.warn("Document delete failed: " + (e instanceof Error ? e.message : String(e)));
         deleteError.value = e instanceof Error ? e.message : "Delete failed";
+        /**
+         * task-164：失败必须 reject 出去 —— ConfirmModal 把 resolve 当「调用方断言成功」
+         * （task-150 契约）；这里吞错返回会让删除失败也闪现 "Operation completed"。
+         * 错误文案经 :error 留在确认窗内（ConfirmModal 渲染 confirm-error），不再落到窗外。
+         */
+        throw e;
     } finally {
         deleting.value = false;
     }
@@ -184,6 +191,8 @@ async function confirmRemoveDoc() {
             </p>
         </div>
 
+        <!-- task-164：:error 进确认窗 —— 删除失败的原因留在窗内（confirm-error），
+             不再渲染在窗外等 1.5s 自动关窗把它盖掉（旧 data-testid=knowledge-delete-error 段已撤）。 -->
         <ConfirmModal
             :show="pendingDeleteId !== null"
             destructive
@@ -192,12 +201,10 @@ async function confirmRemoveDoc() {
             :confirm-label="t('common.delete')"
             :cancel-label="t('common.cancel')"
             :loading="deleting"
+            :error="deleteError"
             @confirm="confirmRemoveDoc"
             @cancel="cancelRemoveDoc"
             @close="cancelRemoveDoc"
         />
-        <p v-if="deleteError" class="text-xs text-destructive" data-testid="knowledge-delete-error">
-            {{ deleteError }}
-        </p>
     </div>
 </template>

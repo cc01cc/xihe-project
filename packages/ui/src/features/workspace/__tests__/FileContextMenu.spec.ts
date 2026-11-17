@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mount, type VueWrapper } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { toast } from "vue-sonner";
 import FileNodeMenu from "../components/FileNodeMenu.vue";
+import FileContextMenu from "../components/FileContextMenu.vue";
 import type { FileNode } from "../../../types";
 import { i18n } from "../../../i18n";
 
@@ -229,5 +230,84 @@ describe("FileNodeMenu delete toast semantics (B-2)", () => {
 
         expect(storeMock.renameNode).toHaveBeenCalledWith("Makefile", "Makefile.new");
         expect(toast.success).toHaveBeenCalled();
+    });
+});
+
+/**
+ * task-164：FileContextMenu 的删除确认走 ConfirmModal（task-150 契约：resolve = 调用方
+ * 断言成功）。deleteNode 失败返回 false —— 这里必须 reject（文案取它写好的 treeError），
+ * 失败才能留在确认窗内（confirm-error）而不是闪现 "Operation completed"。
+ * FileContextMenu 是纯 DOM 菜单（无 reka 按下序列问题），可直接挂载点穿。
+ * 注：本文件名下的旧用例测的是 FileNodeMenu（reka 菜单，交互用例因 jsdom 限制 skip），
+ * 那两个组件不是同一个；这里补的是 FileContextMenu 自己的覆盖。
+ */
+describe("FileContextMenu 删除失败路径（task-164）", () => {
+    let wrappers: VueWrapper[] = [];
+    beforeEach(() => {
+        vi.clearAllMocks();
+        storeMock.treeError = null;
+    });
+    afterEach(() => {
+        wrappers.forEach((w) => w.unmount());
+        wrappers = [];
+        storeMock.treeError = null;
+    });
+
+    function mountMenuDirect() {
+        const wrapper = mount(FileContextMenu, {
+            props: { path: "Makefile", nodeType: "file", x: 10, y: 10 },
+            attachTo: document.body,
+            global: { plugins: [i18n] },
+        });
+        wrappers.push(wrapper);
+        return wrapper;
+    }
+
+    async function openConfirmModal(wrapper: VueWrapper) {
+        const deleteEntry = wrapper.findAll("button").find((b) => b.text().includes("Delete"));
+        expect(deleteEntry).toBeTruthy();
+        await deleteEntry!.trigger("click");
+        await nextTick();
+        const modal = document.body.querySelector('[data-testid="modal-content"]');
+        expect(modal).toBeTruthy();
+        return modal as HTMLElement;
+    }
+
+    it("deleteNode 返回 false ⇒ 窗内 confirm-error 可见（treeError 文案）、无成功闪现、可重试", async () => {
+        storeMock.deleteNode.mockResolvedValue(false);
+        storeMock.treeError = "删除失败：workspace 锁定";
+        const wrapper = mountMenuDirect();
+        const modal = await openConfirmModal(wrapper);
+
+        const confirmBtn = Array.from(modal.querySelectorAll("button")).find(
+            (b) => b.textContent?.trim() === "Delete",
+        ) as HTMLButtonElement;
+        confirmBtn.click();
+        await flushPromises();
+
+        const errorBox = document.body.querySelector('[data-testid="confirm-error"]');
+        expect(errorBox).toBeTruthy();
+        expect(errorBox!.textContent).toContain("删除失败：workspace 锁定");
+        expect(modal.textContent).not.toContain("Operation completed");
+        // 窗没自动关（组件仍渲染），可以重试：第二次 confirm 真发出去了。
+        confirmBtn.click();
+        await flushPromises();
+        expect(storeMock.deleteNode).toHaveBeenCalledTimes(2);
+    });
+
+    it("deleteNode 成功 ⇒ 闪现 Operation completed 并 toast.success", async () => {
+        storeMock.deleteNode.mockResolvedValue(true);
+        const wrapper = mountMenuDirect();
+        const modal = await openConfirmModal(wrapper);
+
+        const confirmBtn = Array.from(modal.querySelectorAll("button")).find(
+            (b) => b.textContent?.trim() === "Delete",
+        ) as HTMLButtonElement;
+        confirmBtn.click();
+        await flushPromises();
+
+        expect(modal.textContent).toContain("Operation completed");
+        expect(toast.success).toHaveBeenCalledWith('Deleted "Makefile"');
+        expect(document.body.querySelector('[data-testid="confirm-error"]')).toBeNull();
     });
 });

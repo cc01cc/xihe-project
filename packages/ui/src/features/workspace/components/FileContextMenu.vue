@@ -47,12 +47,21 @@ async function confirmDelete() {
     deleteLoading.value = true;
     try {
         const deleted = await ws.deleteNode(props.path);
-        if (deleted) toast.success(`Deleted "${props.path}"`);
-        // deleteNode reports failures via treeError and returns false; no success toast.
+        /**
+         * task-164：deleteNode 失败返回 false（原因已写进 treeError）——但 ConfirmModal
+         * 把 resolve 当「调用方断言成功」（task-150 契约），resolve-false 会让删除失败也
+         * 闪现 "Operation completed"。失败必须 reject，窗才留得住错误（confirm-error，
+         * 文案取 deleteNode 已写好的 treeError，不另造一套）。
+         */
+        if (!deleted) throw new Error(ws.treeError ?? "Delete failed");
+        toast.success(`Deleted "${props.path}"`);
     } finally {
         deleteLoading.value = false;
-        showDeleteModal.value = false;
-        emit("close");
+        /**
+         * task-164：关窗交给 ConfirmModal 自己管 —— 成功 1.5s 闪现后它 emit close
+         * （模板 @close 收拾 showDeleteModal / 菜单）；失败它根本不关窗（等用户重试或取消）。
+         * 这里若在 finally 无条件关窗，失败时会把窗内错误一起盖掉。
+         */
     }
 }
 

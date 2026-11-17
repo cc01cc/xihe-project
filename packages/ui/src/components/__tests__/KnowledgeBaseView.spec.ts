@@ -106,7 +106,8 @@ describe("KnowledgeBaseView 列表 / 删除 / 上传（task-209 从 e2e 降级�
         { id: "d2", filename: "architecture.md", chunks: 7 },
     ];
 
-    function mockRagFetch(): void {
+    function mockRagFetch(opts: { deleteStatus?: number } = {}): void {
+        const deleteStatus = opts.deleteStatus ?? 204;
         vi.mocked(globalThis.fetch).mockImplementation((input, init) => {
             const url = typeof input === "string" ? input : input.url;
             const method = init?.method ?? "GET";
@@ -117,7 +118,7 @@ describe("KnowledgeBaseView 列表 / 删除 / 上传（task-209 从 e2e 降级�
             }
             if (url.includes("/api/v1/rag/documents/")) {
                 if (method !== "DELETE") throw new Error(`unexpected ${method} ${url}`);
-                return Promise.resolve(new Response(null, { status: 204 }));
+                return Promise.resolve(new Response(null, { status: deleteStatus }));
             }
             if (url.includes("/api/v1/rag/ingest")) {
                 return Promise.resolve(
@@ -185,6 +186,43 @@ describe("KnowledgeBaseView 列表 / 删除 / 上传（task-209 从 e2e 降级�
             return url.includes("/api/v1/rag/stats");
         });
         expect(statsCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // task-164：删除 API 500 时失败必须留在确认窗内（confirm-error），不许先闪现
+    // "Operation completed" 再自动关窗（旧行为：错误渲染在窗外，被 1.5s 定时器盖掉）。
+    it("删除 API 500 ⇒ 错误留在确认窗内、不闪现成功、可重试", async () => {
+        mockRagFetch({ deleteStatus: 500 });
+        const wrapper = mountKnowledgeView();
+        await flushPromises();
+
+        const firstDelete = wrapper.findAll("button").find((b) => b.text() === "Delete");
+        await firstDelete!.trigger("click");
+        await flushPromises();
+
+        const modal = wrapper.find('[data-testid="modal-content"]');
+        expect(modal.exists()).toBe(true);
+        const confirmBtn = modal.findAll("button").find((b) => b.text() === "Delete");
+        expect(confirmBtn).toBeTruthy();
+        await confirmBtn!.trigger("click");
+        await flushPromises();
+
+        // 失败可见且**在窗内**：窗没自动关（确认键还在），错误框在 modal-content 里。
+        const errorBox = modal.find('[data-testid="confirm-error"]');
+        expect(errorBox.exists()).toBe(true);
+        expect(errorBox.text()).toContain("500");
+        expect(modal.text()).not.toContain("Operation completed");
+
+        // 可重试：第二次点确认会再发出 DELETE（apiDelete 内部可能自带重试，
+        // 所以不断言绝对次数，只断言重试后调用数确实增加）。
+        const countDeletes = () =>
+            vi
+                .mocked(globalThis.fetch)
+                .mock.calls.filter(([, init]) => (init?.method ?? "GET") === "DELETE").length;
+        const beforeRetry = countDeletes();
+        expect(beforeRetry).toBeGreaterThanOrEqual(1);
+        await confirmBtn!.trigger("click");
+        await flushPromises();
+        expect(countDeletes()).toBeGreaterThan(beforeRetry);
     });
 
     it("uploads the selected file through POST /rag/ingest", async () => {
