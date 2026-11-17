@@ -112,7 +112,7 @@ function formatTime(value?: string | null): string {
 
 <template>
     <Dialog :open="open" @update:open="(value: boolean) => !value && emit('close')">
-        <DialogContent class="max-w-xl" data-testid="credentials-detail-dialog">
+        <DialogContent class="max-w-xl sm:max-w-xl" data-testid="credentials-detail-dialog">
             <DialogHeader>
                 <DialogTitle data-testid="credentials-detail-title">{{
                     credential?.label ?? t("credentials.detailTitle")

@@ -77,7 +77,7 @@ async function link(connection: ProviderConnection) {
 
 <template>
     <Dialog :open="open" @update:open="(value: boolean) => !value && emit('close')">
-        <DialogContent class="max-w-2xl" data-testid="credentials-link-dialog">
+        <DialogContent class="max-w-2xl sm:max-w-2xl" data-testid="credentials-link-dialog">
             <DialogHeader>
                 <DialogTitle>{{ t("credentials.linkTitle") }}</DialogTitle>
                 <DialogDescription>

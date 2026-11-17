@@ -165,7 +165,7 @@ watch(
 
 <template>
     <Dialog :open="open" @update:open="(value: boolean) => emit('update:open', value)">
-        <DialogContent data-testid="instance-agent-skills-dialog" class="max-w-xl">
+        <DialogContent data-testid="instance-agent-skills-dialog" class="max-w-xl sm:max-w-xl">
             <DialogHeader>
                 <DialogTitle>{{ t(K + "skillsTitle") }}</DialogTitle>
                 <DialogDescription>

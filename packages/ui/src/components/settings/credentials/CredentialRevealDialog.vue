@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
 
 <template>
     <Dialog :open="open" @update:open="(next: boolean) => !next && emit('close')">
-        <DialogContent class="max-w-lg" data-testid="credentials-reveal-dialog">
+        <DialogContent class="max-w-lg sm:max-w-lg" data-testid="credentials-reveal-dialog">
             <DialogHeader>
                 <DialogTitle>
                     {{ t("credentials.revealTitle")

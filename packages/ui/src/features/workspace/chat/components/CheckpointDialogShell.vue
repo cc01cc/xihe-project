@@ -47,7 +47,7 @@ function handleOpenAutoFocus(event: Event) {
             aria-modal="true"
             v-if="!isMobileViewport"
             data-testid="checkpoint-dialog"
-            class="max-w-lg"
+            class="max-w-lg sm:max-w-lg"
             @open-auto-focus="handleOpenAutoFocus"
         >
             <DialogHeader>

@@ -142,7 +142,7 @@ async function submit() {
 
 <template>
     <Dialog :open="open" @update:open="(value: boolean) => !value && emit('close')">
-        <DialogContent class="max-w-lg" data-testid="credentials-create-dialog">
+        <DialogContent class="max-w-lg sm:max-w-lg" data-testid="credentials-create-dialog">
             <DialogHeader>
                 <DialogTitle>{{ t("credentials.createTitle") }}</DialogTitle>
                 <DialogDescription>{{ t("credentials.createDesc") }}</DialogDescription>

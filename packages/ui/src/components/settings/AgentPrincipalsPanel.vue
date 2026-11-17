@@ -464,7 +464,7 @@ onMounted(refresh);
             :open="bindTarget !== null"
             @update:open="(value: boolean) => !value && closeBind()"
         >
-            <DialogContent data-testid="agent-principals-bind-dialog" class="max-w-md">
+            <DialogContent data-testid="agent-principals-bind-dialog" class="max-w-md sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle>
                         {{ t("agentPrincipals.bindTitle", { name: bindTarget?.name ?? "" }) }}

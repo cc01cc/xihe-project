@@ -159,7 +159,10 @@ defineExpose({ error });
 
 <template>
     <Dialog :open="open" @update:open="(value) => !value && emit('close')">
-        <DialogContent data-testid="role-editor-dialog" class="max-w-2xl">
+        <DialogContent
+            data-testid="role-editor-dialog"
+            class="max-h-[85vh] overflow-y-auto max-w-2xl sm:max-w-2xl"
+        >
             <DialogHeader>
                 <DialogTitle>{{ title }}</DialogTitle>
                 <DialogDescription>{{ t("settings.rolesEditorSubtitle") }}</DialogDescription>
