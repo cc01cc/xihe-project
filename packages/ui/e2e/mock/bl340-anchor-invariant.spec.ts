@@ -68,8 +68,8 @@ async function installJumpWriteStub(page: Page): Promise<void> {
             if (!isViewport(element)) return;
             const stack = new Error().stack || "";
             writes.push({
-                kind: kind,
-                target: target,
+                kind,
+                target,
                 library: stack.includes("scrollWithAdjustments"),
                 at: performance.now(),
             });
@@ -102,10 +102,10 @@ async function installJumpWriteStub(page: Page): Promise<void> {
             Object.defineProperty(Element.prototype, "scrollTop", {
                 configurable: true,
                 enumerable: descriptor.enumerable,
-                get: function (this: Element) {
+                get(this: Element) {
                     return originalGet.call(this);
                 },
-                set: function (this: Element, value: number) {
+                set(this: Element, value: number) {
                     record("scrollTop=", Number(value), this);
                     originalSet.call(this, value);
                 },
@@ -150,7 +150,7 @@ async function measureEndJump(page: Page, chat: ChatPage): Promise<JumpSample> {
                 const landed = Math.round(viewport.scrollTop);
                 const currentMax = viewport.scrollHeight - viewport.clientHeight;
                 const inBand = landed >= currentMax * 0.25 && landed <= currentMax * 0.6;
-                if (inBand) return { landed: landed, max: currentMax };
+                if (inBand) return { landed, max: currentMax };
             }
             return {
                 landed: Math.round(viewport.scrollTop),
@@ -268,11 +268,11 @@ async function measureEndJump(page: Page, chat: ChatPage): Promise<JumpSample> {
         );
     }
     return {
-        settleMs: settleMs,
+        settleMs,
         writes: libraryWrites,
-        postSettleWrites: postSettleWrites,
-        maxSingleCompensation: maxSingleCompensation,
-        targets: targets,
+        postSettleWrites,
+        maxSingleCompensation,
+        targets,
     };
 }
 test.describe("BL-340：上滚时窗口换页不得回跳", () => {

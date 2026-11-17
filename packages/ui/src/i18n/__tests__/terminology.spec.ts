@@ -178,7 +178,7 @@ describe("Provider 主名词（task-18 / D-1664）：统一 Provider，不译「
 function hasHan(value: string): boolean {
     for (const ch of value) {
         const code = ch.codePointAt(0) ?? 0;
-        if (code >= 0x4e00 && code <= 0x9fff) return true;
+        if (code >= 19968 && code <= 40959) return true; // U+4E00–U+9FFF（CJK 统一表意文字区间）
     }
     return false;
 }

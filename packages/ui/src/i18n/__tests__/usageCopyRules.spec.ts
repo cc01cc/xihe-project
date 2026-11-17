@@ -61,13 +61,13 @@ describe("task-52 ①：用量行文案不出现 wire 内部标记", () => {
     it("zh：来源徽标不含裸 real / estimated / fallback 枚举值", () => {
         // 只查**来源徽标那三个键**：`usageSourceFallback` 的译文里允许出现「兜底」等中文，
         // 但不允许把 wire 值原样当文案（`real` 是 4 个字符的枚举，读者不知道它是什么）。
-        const sourceKeys = [
+        const sourceKeys = new Set([
             "workspace.usageSourceReal",
             "workspace.usageSourceEstimated",
             "workspace.usageSourceFallback",
-        ];
+        ]);
         const offenders = leaves(i18n.global.getLocaleMessage("zh-CN"))
-            .filter((leaf) => sourceKeys.includes(leaf.path))
+            .filter((leaf) => sourceKeys.has(leaf.path))
             .filter((leaf) => /^(real|estimated|fallback)$/i.test(leaf.value.trim()))
             .map((leaf) => `${leaf.path}: ${leaf.value}`);
         expect(offenders).toEqual([]);

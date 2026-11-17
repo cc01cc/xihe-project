@@ -203,7 +203,7 @@ test("task-81：focus 时中栏把份额交给右栏（比值式判据，1920）
 
     await enterFocus(page);
     const focus = await measureStable(page);
-    console.log("[task-81] 1920 ", detailOf(baseline, focus));
+    console.log("[task-81] 1920", detailOf(baseline, focus));
 
     const detail = detailOf(baseline, focus);
 
@@ -265,7 +265,7 @@ test("task-81：退出 focus 后中栏与右栏逐项还原（这条本来就绿
     const restored = await measureStable(page);
 
     const detail = detailOf(baseline, restored);
-    console.log("[task-81] restored ", detail);
+    console.log("[task-81] restored", detail);
     expect(baseline.center !== null && baseline.dock !== null, "基线读数缺失；" + detail).toBe(
         true,
     );
@@ -312,7 +312,7 @@ test("task-81：比值判据与视口无关（1440；工作台不变窄由 task-
     const baseline = await measureStable(page);
     await enterFocus(page);
     const focus = await measureStable(page);
-    console.log("[task-81] 1440 ", detailOf(baseline, focus));
+    console.log("[task-81] 1440", detailOf(baseline, focus));
     const detail = detailOf(baseline, focus);
 
     const share =

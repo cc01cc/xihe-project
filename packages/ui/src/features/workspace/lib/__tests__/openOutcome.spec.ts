@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FileOpReason } from "../fileOpError";
+import type { FileOpReason } from "../fileOpError";
 import {
     OPEN_PREVIEW_BUDGET_BYTES,
     classifyOpenOutcome,

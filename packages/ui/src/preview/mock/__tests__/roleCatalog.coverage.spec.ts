@@ -143,7 +143,7 @@ function topLevelArguments(text: string): string[] {
         const char = text[index];
         if (quoted) {
             current += char;
-            if (char === "\\\\") {
+            if (char === String.raw`\\`) {
                 current += text[index + 1] ?? "";
                 index += 1;
             } else if (char === '"') quoted = false;
@@ -242,7 +242,7 @@ function mountApiHandler(): ApiHandler {
 }
 
 function call(handler: ApiHandler, url: string, method = "GET", body?: unknown): Promise<Captured> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolveCaptured, reject) => {
         const payload = body === undefined ? [] : [JSON.stringify(body)];
         const req = Readable.from(payload) as unknown as Record<string, unknown>;
         req.method = method;
@@ -256,7 +256,7 @@ function call(handler: ApiHandler, url: string, method = "GET", body?: unknown):
             },
             end(text?: string) {
                 try {
-                    resolve({
+                    resolveCaptured({
                         status: (this as unknown as { statusCode: number }).statusCode,
                         body: text ? JSON.parse(text) : null,
                     });
