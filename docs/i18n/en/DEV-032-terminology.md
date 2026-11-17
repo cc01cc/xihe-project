@@ -97,6 +97,20 @@ updated: 2026-11-06
 | message scope | message scope (`conversation_threads.scope_type` in `user` / `agent` / `workspace`, lowercase) | Which layer a thread is **addressed by** (who can read / write); it is **not** an authorization scope. MVP resolves user/agent only and fails closed for workspace | do not confuse it with `agent_principals.scope` (uppercase PERSONAL/WORKSPACE/INSTANCE), `role_bindings.scope_type`, or `policy.AccessScope` (instance/workspace) |
 | participant source | `participant source` (`source` ∈ `workspace` / `personal` / `instance`, **lowercase**) | The ownership source of the participant's subject, derived at read time | agent `scope` (**uppercase** `PERSONAL`/`WORKSPACE`/`INSTANCE`); unifying the casing — different columns, different enums; renaming needs a CP ruling |
 
+**Equivalence surface between HUMAN and AGENT (user ruling 2026-11-17, `D-1780` / `D-1783`)**
+
+"Human and agent are equivalent" is decided **per operation**, not as one universal claim: the equivalence surface = being an **addressable member** (same table, same delivery / cursor / addressing); the non-equivalence surface = being a **self-multiplying subject** (structurally asymmetric). Each row below carries its `file:line` evidence; the fifth row's asymmetry must be visible on the operation surface (landing: `task-130` / `task-134`, not expanded here).
+
+| Operation | HUMAN | AGENT | Equivalent (on which surface) | Evidence |
+| --- | --- | --- | --- | --- |
+| Join `session_participants` as a member | row (`KIND_HUMAN`) | row (`KIND_AGENT`) | Yes — **membership surface**: same table and column, no kind-branched fields | `SessionParticipant.java:28,31-32` |
+| Addressed via @ / receives delivery | yes (`wakePolicy` / `deliveryDefaults` on the same row) | yes (same row, same two fields) | Yes — **delivery-policy surface**: carried on the same participant row, not forked by kind | `SessionParticipant.java:67,83` |
+| Has read cursor / unread count | yes | yes (not branched by kind) | Yes — **cursor surface**: one cursor row per participant, primary key is only `participant_id` | `V92__session_participants.sql:107-113` |
+| Can act as the PRIMARY's responder | yes | yes (branched by kind but both branches legal: the HUMAN branch **clears the agent stamp** rather than "forbidden to respond"; human attribution is carried by PLAN-0669 participant attribution) | Yes — **responder-qualification surface**: equivalent qualification, different notation | `ChatSubmissionService.java:203-207,962-966` |
+| Replicate itself (`spawn`) | **no** | yes (`KIND_SPAWN` child sessions; canonical 「派生会话」 / "spawned child session", never "avatar") | **No** — **multiplication surface**: the only structural asymmetry | `Session.java:21-22`; `ChatSubmissionService.java:583-589` |
+
+Caution: do not read "membership equivalence" as "fully interchangeable" — a human can join the table, be @-addressed, hold a cursor and act as responder, but **cannot spawn**; this is exactly the `D-1780` model (equivalence surface = being addressed; non-equivalence surface = being able to multiply).
+
 ### 1.1b User questions and refresh hints (2026-11-06)
 
 | Term | English / code identifier | One-line definition | **Counter-example: do not use it for** |

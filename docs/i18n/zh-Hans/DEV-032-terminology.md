@@ -111,7 +111,19 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | **run 级归属** | run-level attribution（`chat_runs.agent_principal_id`） | 每条 run 记录**本次回应者**（不是会话级属性）；未带 `asParticipantId` ⇒ PRIMARY 的主体；两者皆无 ⇒ `null` | 会话级主体列已由 V133 删除；不要与 `session_participants` PRIMARY（会话身份）或 `runs.agent_principal_id`（单次归属）混用；不要因 run 为空就回填成 PRIMARY |
 | **对话线** | conversation thread（表 `conversation_threads`；wire/UI 仍叫 thread） | 跨 session 延续的一段对话；`1 thread : N session`，session 仍是工作现场（文件/checkpoint/run 隔离） | 不要当消息表或群组概念；不要说「一个 session 必须/只能有一条线」（至多一条，存量可为 NULL） |
 | **通信作用域** | message scope（`conversation_threads.scope_type` ∈ `user` / `agent` / `workspace`，小写） | 一条对话线按哪一层**寻址**（谁可见/谁可写），**不是**授权 scope；MVP 只解析 user/agent，workspace 档 fail-closed | 不要与 `agent_principals.scope`（大写 PERSONAL/WORKSPACE/INSTANCE）、`role_bindings.scope_type`、`policy.AccessScope`（instance/workspace）混用 |
-| **参与者来源** | `participant source`（`source` ∈ `workspace` / `personal` / `instance`，**小写**） | 该参与者对应主体的归属来源，读时派生 | 不要与 agent 的 `scope`（**大写** `PERSONAL`/`WORKSPACE`/`INSTANCE`）混用或擅自统一大小写——两处是不同列、不同枚举，改名须 CP 裁定 |
+**HUMAN 与 AGENT 的等价面（2026-11-17 用户裁定 `D-1780` / `D-1783`）**
+
+「实人与智能体等价」是**逐操作**判定的，不是一句全称判断：等价面 = 作为一个**被寻址的成员**（同一张表、同一套投递/游标/寻址）；不等价面 = 作为一个**能增殖的主体**（结构性地不对称）。下表每行给依据 `file:line`；第五行的不对称必须在操作面可见（落点 `task-130` / `task-134`，本条不展开）。
+
+| 操作 | 对 HUMAN | 对 AGENT | 等价（在哪个面上） | 依据 |
+| --- | --- | --- | --- | --- |
+| 进 `session_participants` 成为成员 | 行（`KIND_HUMAN`） | 行（`KIND_AGENT`） | 是——**成员资格面**：同表同列，无 kind 分支字段 | `SessionParticipant.java:28,31-32` |
+| 被 @ 寻址 / 收投递 | 是（`wakePolicy` / `deliveryDefaults` 同行） | 是（同一行、同两字段） | 是——**投递策略面**：同一 participant 行承载，不按 kind 分叉 | `SessionParticipant.java:67,83` |
+| 有读游标 / 未读计数 | 是 | 是（不按 kind 分支） | 是——**游标面**：每 participant 一行游标，主键只有 `participant_id` | `V92__session_participants.sql:107-113` |
+| 能被 PRIMARY 认作 responder | 是 | 是（按 kind 分支但两支都合法：HUMAN 分支是**清空 agent 戳**而非「不许当 responder」，人的归属由 PLAN-0669 participant attribution 承载） | 是——**responder 资格面**：资格等价，记法不同 | `ChatSubmissionService.java:203-207,962-966` |
+| 复制出一个自己（`spawn`） | **不能** | 能（`KIND_SPAWN` 子会话；正名「派生会话」，不叫「分身」） | **否**——**增殖面**：唯一结构性不对称 | `Session.java:21-22`；`ChatSubmissionService.java:583-589` |
+
+警示：不要把「成员资格等价」读成「两者完全可替」——人能进表、被 @、持游标、当 responder，但**人不能 spawn**；这正是 `D-1780` 的模型（等价面 = 被寻址；不等价面 = 能增殖）。
 
 不偏离约束与落地入口：workspace internal `xh-backlog-and-debt.md` 的 BL-18「身份与权限模型」（不入库分发）；2026-09-23 G2 已将 BL-18 冻结入 PLAN-0407 承接（执行中，未完成）。
 
