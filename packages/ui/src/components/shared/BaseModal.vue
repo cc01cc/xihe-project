@@ -160,7 +160,7 @@ function preventMountAutoFocus(event: Event) {
                         aria-modal="true"
                         :aria-labelledby="labelledBy"
                         :aria-label="labelFallback"
-                        class="relative z-10 w-full max-w-md rounded-xl border bg-card p-6 shadow-lg"
+                        class="relative z-10 max-h-[85vh] w-full max-w-md overflow-y-auto rounded-xl border bg-card p-6 shadow-lg"
                     >
                         <div v-if="title" class="flex items-center justify-between mb-4">
                             <h2 :id="titleId" class="text-lg font-semibold">{{ title }}</h2>
