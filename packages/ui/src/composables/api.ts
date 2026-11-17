@@ -904,6 +904,66 @@ export interface AgentPrincipalSummary {
     disabled: boolean;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
+    /**
+     * task-191：契约 `AgentPrincipalView` 本就携带（列表投影 required），旧解析器损耗丢弃。
+     * `null` = 不限制可用模型集。
+     */
+    allowedModels?: AgentModelRef[] | null;
+    /** 同上：V96 hook 订阅文档；`null` = 无订阅。 */
+    hooks?: Record<string, unknown> | null;
+    /** 同上：D29-21 记忆策略文档；`null` = 无策略（记忆关）。 */
+    contextPolicy?: Record<string, unknown> | null;
+    /** 同上：V100 委派预算 {maxCount,maxDepth}；`null` = 代码默认（8/3）。 */
+    delegationPolicy?: Record<string, unknown> | null;
+    /** 同上：V170 归属门（本面恒 USER，实例档行不从此面到达）。 */
+    ownership?: "USER" | "INSTANCE";
+}
+
+/**
+ * task-191：`PATCH /api/v1/agent-principals/{id}` 请求体（openapi `AgentPrincipalUpdateRequest`）。
+ * `undefined` = 不触碰该文档；显式 `null` = 清空。模型两半在 CP 侧按 merged 结果做
+ * both-or-neither 校验（单清一半 400 `INVALID_AGENT_PRINCIPAL`），UI 前端先做同款校验。
+ */
+export interface AgentPrincipalUpdateBody {
+    hooks?: Record<string, unknown> | null;
+    contextPolicy?: Record<string, unknown> | null;
+    delegationPolicy?: Record<string, unknown> | null;
+    defaultModelProvider?: string | null;
+    defaultModelName?: string | null;
+    allowedModels?: AgentModelRef[] | null;
+}
+
+/**
+ * PATCH 响应 echo（openapi `AgentPrincipalUpdateView`）：每项都是**持久化后的**值
+ * （未触碰的键报存值，不是 stale null），UI 用它回填本地状态。
+ */
+export interface AgentPrincipalUpdateView {
+    principalId: string;
+    defaultModelProvider: string | null;
+    defaultModelName: string | null;
+    allowedModels: AgentModelRef[] | null;
+    hooks: Record<string, unknown> | null;
+    contextPolicy: Record<string, unknown> | null;
+    delegationPolicy: Record<string, unknown> | null;
+}
+
+/** fail-closed：`{provider,model}` 两半都齐全的条目才保留；非数组/畸形一律 null。 */
+function parseAgentModelRefs(raw: unknown): AgentModelRef[] | null {
+    if (!Array.isArray(raw)) return null;
+    const refs: AgentModelRef[] = [];
+    for (const entry of raw) {
+        if (!isPlainRecord(entry)) return null;
+        const provider = entry.provider;
+        const model = entry.model;
+        if (typeof provider !== "string" || typeof model !== "string") return null;
+        refs.push({ provider, model });
+    }
+    return refs;
+}
+
+/** fail-closed 的 JSON 对象判定（数组不算）。 */
+function isPlainRecord(raw: unknown): raw is Record<string, unknown> {
+    return typeof raw === "object" && raw !== null && !Array.isArray(raw);
 }
 
 export interface AgentTemplateSummary {
@@ -3787,6 +3847,15 @@ export const api = {
                             : null,
                     defaultModelName:
                         typeof row.defaultModelName === "string" ? row.defaultModelName : null,
+                    // task-191：列表视图本就携带的文档字段（fail-closed 解析：非对象/畸形一律 null，
+                    // 与 getWorkspaceAgents 的 hooks 口径一致，不让单行畸形污染整列）。
+                    allowedModels: parseAgentModelRefs(row.allowedModels),
+                    hooks: isPlainRecord(row.hooks) ? row.hooks : null,
+                    contextPolicy: isPlainRecord(row.contextPolicy) ? row.contextPolicy : null,
+                    delegationPolicy: isPlainRecord(row.delegationPolicy)
+                        ? row.delegationPolicy
+                        : null,
+                    ownership: row.ownership === "INSTANCE" ? "INSTANCE" : "USER",
                 },
             ];
         });
@@ -4150,6 +4219,37 @@ export const api = {
         await request<void>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories/${encodeURIComponent(memoryId)}`,
             { method: "DELETE" },
+        );
+    },
+    /**
+     * task-191：`PATCH /api/v1/agent-principals/{id}` 的**通用**写面（openapi
+     * `AgentPrincipalUpdateRequest`）。语义：每个键可选、**至少一键**、absent = 不触碰、
+     * 显式 `null` = 清空该文档；响应 echo 持久化后的文档（`AgentPrincipalUpdateView`），
+     * 绝不是调用方原始入参 —— 调用方必须以响应回填本地状态。
+     *
+     * <p>只发送调用方给出的键（`undefined` 不进 payload），让「分区保存」天然满足
+     * absent 语义；显式 `null` 由调用方负责语义正确（如「清除以用默认」）。</p>
+     */
+    async updateAgentPrincipal(
+        principalId: string,
+        body: AgentPrincipalUpdateBody,
+    ): Promise<AgentPrincipalUpdateView> {
+        const payload: Record<string, unknown> = {};
+        if (body.hooks !== undefined) payload.hooks = body.hooks;
+        if (body.contextPolicy !== undefined) payload.contextPolicy = body.contextPolicy;
+        if (body.delegationPolicy !== undefined) payload.delegationPolicy = body.delegationPolicy;
+        if (body.defaultModelProvider !== undefined) {
+            payload.defaultModelProvider = body.defaultModelProvider;
+        }
+        if (body.defaultModelName !== undefined) payload.defaultModelName = body.defaultModelName;
+        if (body.allowedModels !== undefined) payload.allowedModels = body.allowedModels;
+        return request<AgentPrincipalUpdateView>(
+            `/agent-principals/${encodeURIComponent(principalId)}`,
+            {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            },
         );
     },
     /**

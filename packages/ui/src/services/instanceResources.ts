@@ -270,6 +270,13 @@ export function normalizeModelWhitelist(value: unknown): ModelWhitelist {
     );
 }
 
+/** fail-closed JSON 对象判定（数组不算；非对象一律 null = 无文档）。 */
+function asJsonRecord(raw: unknown): Record<string, unknown> | null {
+    return typeof raw === "object" && raw !== null && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : null;
+}
+
 /** 规范化后逐项比（两侧都先归一，所以 null 与 [] 相等、顺序无关）。 */
 export function sameModelWhitelist(a: ModelWhitelist, b: ModelWhitelist): boolean {
     const left = normalizeModelWhitelist(a);
@@ -299,8 +306,12 @@ export interface InstanceAgent {
     allowedModels: ModelWhitelist;
     createdAt: string | null;
     disabled: boolean;
-    /** 每个展示字段在载荷里到底属于三态中的哪一种（见 `wireStateOf`）。 */
+    /** 每个展示字段在载荷里到底属于三种态中的哪一种（见 `wireStateOf`）。 */
     states: FieldStates<InstanceAgentField>;
+    /** task-191：列表投影（AgentPrincipalView）本就携带的文档字段，fail-closed 解析；null = 无/未设置。 */
+    hooks: Record<string, unknown> | null;
+    contextPolicy: Record<string, unknown> | null;
+    delegationPolicy: Record<string, unknown> | null;
 }
 
 export interface InstanceAgentListResponse {
@@ -338,6 +349,9 @@ function normalizeAgent(value: unknown): InstanceAgent {
         allowedModels: normalizeModelWhitelist(raw.allowedModels),
         createdAt: nullableStr(raw.createdAt),
         disabled: raw.disabled === true,
+        hooks: asJsonRecord(raw.hooks),
+        contextPolicy: asJsonRecord(raw.contextPolicy),
+        delegationPolicy: asJsonRecord(raw.delegationPolicy),
         states: {
             name: wireStateOf(raw, ["name", "displayName"]),
             template: wireStateOf(raw, ["templateName"]),

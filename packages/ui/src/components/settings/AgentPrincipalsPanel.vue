@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Bot, Link2, Plus, RefreshCw } from "@lucide/vue";
+import { Bot, Link2, Plus, RefreshCw, Settings2 } from "@lucide/vue";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
@@ -19,6 +19,9 @@ import { formatDate } from "../../lib/dateFormat";
 import { problemDetailText } from "../../lib/errorMessages";
 import { principalNameError } from "../../lib/principalName";
 import SettingsPermissionGate from "./SettingsPermissionGate.vue";
+import AgentPrincipalDetailDrawer, {
+    type AgentPrincipalDetail,
+} from "./AgentPrincipalDetailDrawer.vue";
 
 /**
  * PLAN-0750 M3 (T3.1 + T3.2)：用户层「智能体主体」。
@@ -255,6 +258,46 @@ function boundLabel(principalId: string): string {
     return t("agentPrincipals.boundTo", { workspaces: names.join(" / ") });
 }
 
+// ---- 详情配置（task-191；Q1 persona 只读、Q2 instance 只读不涉及本层） --------------------
+const detailTarget = ref<AgentPrincipalSummary | null>(null);
+const detailOpen = ref(false);
+
+/** 归一化成抽屉需要的行形状：本层 = AgentPrincipalView（全字段，含 hooks/contextPolicy/delegationPolicy）。 */
+const detailPrincipal = computed<AgentPrincipalDetail | null>(() => {
+    const agent = detailTarget.value;
+    if (!agent) return null;
+    return {
+        principalId: agent.principalId,
+        name: agent.name,
+        ownership: agent.ownership ?? "USER",
+        templateName: agent.templateName,
+        createdAt: agent.createdAt,
+        disabled: agent.disabled,
+        defaultModelProvider: agent.defaultModelProvider ?? null,
+        defaultModelName: agent.defaultModelName ?? null,
+        allowedModels: agent.allowedModels ?? null,
+        hooks: agent.hooks ?? null,
+        contextPolicy: agent.contextPolicy ?? null,
+        delegationPolicy: agent.delegationPolicy ?? null,
+    };
+});
+
+function openDetail(agent: AgentPrincipalSummary) {
+    detailTarget.value = agent;
+    detailOpen.value = true;
+}
+
+/** 持久化回执就地更新列表行（不整表重拉 —— 抽屉响应 echo 的就是持久化值）。 */
+function onDetailChanged(patch: Partial<AgentPrincipalDetail> & { principalId: string }) {
+    const index = agents.value.findIndex((item) => item.principalId === patch.principalId);
+    if (index < 0) return;
+    agents.value[index] = { ...agents.value[index]!, ...patch };
+    // detailTarget 持有的是旧行对象 —— 同步刷新，抽屉内禁用徽标/危险区才即时。
+    if (detailTarget.value?.principalId === patch.principalId) {
+        detailTarget.value = { ...detailTarget.value, ...patch };
+    }
+}
+
 async function refresh() {
     await Promise.all([loadAgents(), loadCapability()]);
 }
@@ -444,18 +487,29 @@ onMounted(refresh);
                             {{ boundLabel(agent.principalId) }}
                         </p>
                     </div>
-                    <Button
-                        v-if="canBind === true"
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        class="shrink-0"
-                        :data-testid="`agent-principals-bind-${agent.principalId}`"
-                        @click="openBind(agent)"
-                    >
-                        <Link2 aria-hidden="true" />
-                        {{ t("agentPrincipals.bind") }}
-                    </Button>
+                    <div class="flex shrink-0 items-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            :data-testid="`agent-principals-configure-${agent.principalId}`"
+                            @click="openDetail(agent)"
+                        >
+                            <Settings2 aria-hidden="true" />
+                            {{ t("agentPrincipalDetail.configure") }}
+                        </Button>
+                        <Button
+                            v-if="canBind === true"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            :data-testid="`agent-principals-bind-${agent.principalId}`"
+                            @click="openBind(agent)"
+                        >
+                            <Link2 aria-hidden="true" />
+                            {{ t("agentPrincipals.bind") }}
+                        </Button>
+                    </div>
                 </li>
             </ul>
         </section>
@@ -530,5 +584,13 @@ onMounted(refresh);
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+
+        <AgentPrincipalDetailDrawer
+            v-model:open="detailOpen"
+            :principal="detailPrincipal"
+            :workspace-id="null"
+            show-danger
+            @changed="onDetailChanged"
+        />
     </div>
 </template>

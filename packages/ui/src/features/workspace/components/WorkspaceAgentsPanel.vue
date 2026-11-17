@@ -22,6 +22,9 @@ import {
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
 import { presentCauseError, problemDetailText } from "../../../lib/errorMessages";
+import AgentPrincipalDetailDrawer, {
+    type AgentPrincipalDetail,
+} from "../../../components/settings/AgentPrincipalDetailDrawer.vue";
 import { type AgentSkillCandidate, selectSkillCandidates } from "./agentSkillCandidates";
 // 用户裁定（2026-11-03）：二态统一用项目 Switch（reka-ui），不混用 checkbox。
 import { Switch } from "../../../components/ui/switch";
@@ -1249,6 +1252,58 @@ async function unbind(agent: WorkspaceAgentBinding) {
         saving.value = false;
     }
 }
+
+// ---- 主体详情抽屉（task-191） ----------------------------------------------------------
+// 本层 wire（WorkspaceAgentView / WorkspaceAgentController.toView）**只携带**
+// hooks / contextPolicy：默认模型与委派预算不在列表投影上 ⇒ 抽屉里这两个分区显示
+// 「到用户层配置」而不是渲染假默认值；memory 开关归本面板（已有），抽屉不再开第二入口。
+const principalDetailTarget = ref<WorkspaceAgentBinding | null>(null);
+const principalDetailOpen = ref(false);
+
+const principalDetail = computed<AgentPrincipalDetail | null>(() => {
+    const agent = principalDetailTarget.value;
+    if (!agent) return null;
+    return {
+        principalId: agent.principalId,
+        name: agent.name,
+        ownership: "USER",
+        templateName: agent.templateName,
+        createdAt: agent.createdAt,
+        disabled: agent.disabled,
+        defaultModelProvider: agent.defaultModelProvider ?? null,
+        defaultModelName: agent.defaultModelName ?? null,
+        allowedModels: agent.allowedModels ?? null,
+        hooks: agent.hooks ?? null,
+        contextPolicy: agent.contextPolicy ?? null,
+        delegationPolicy: null,
+    };
+});
+
+function openPrincipalDetail(agent: WorkspaceAgentBinding) {
+    principalDetailTarget.value = agent;
+    principalDetailOpen.value = true;
+}
+
+function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { principalId: string }) {
+    const index = agents.value.findIndex((item) => item.principalId === patch.principalId);
+    if (index < 0) return;
+    // hooks/contextPolicy 的行类型是窄化的文档形状，而抽屉按宽 Record 回传 —— 同一 wire 文档，
+    // 这里收窄 cast 而不是放宽行类型（行类型的窄形状是列表渲染的既有口径）。
+    const merge = (row: WorkspaceAgentBinding): WorkspaceAgentBinding => ({
+        ...row,
+        ...patch,
+        hooks:
+            patch.hooks === undefined ? row.hooks : (patch.hooks as WorkspaceAgentBinding["hooks"]),
+        contextPolicy:
+            patch.contextPolicy === undefined
+                ? row.contextPolicy
+                : (patch.contextPolicy as WorkspaceAgentBinding["contextPolicy"]),
+    });
+    agents.value[index] = merge(agents.value[index]!);
+    if (principalDetailTarget.value?.principalId === patch.principalId) {
+        principalDetailTarget.value = merge(principalDetailTarget.value);
+    }
+}
 </script>
 
 <template>
@@ -1680,6 +1735,14 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         </p>
                     </div>
                     <div class="flex shrink-0 flex-col items-end gap-1">
+                        <button
+                            type="button"
+                            class="rounded-md border px-2 py-1 text-xs"
+                            :data-testid="`workspace-agent-details-${agent.principalId}`"
+                            @click="openPrincipalDetail(agent)"
+                        >
+                            {{ t("agentPrincipalDetail.details") }}
+                        </button>
                         <!-- 真栈 S2 bug：已有 agent 也必须能在这里绑定到本工作区（幂等 PUT）。 -->
                         <button
                             type="button"
@@ -2861,4 +2924,13 @@ async function unbind(agent: WorkspaceAgentBinding) {
             {{ status }}
         </p>
     </section>
+
+    <AgentPrincipalDetailDrawer
+        v-model:open="principalDetailOpen"
+        :principal="principalDetail"
+        :workspace-id="workspaceId"
+        :editable-sections="['hooks']"
+        :unknown-sections="['model', 'delegation']"
+        @changed="onPrincipalDetailChanged"
+    />
 </template>

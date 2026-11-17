@@ -123,6 +123,10 @@ function agent(
         allowedModels,
         createdAt: "2026-10-21T03:22:00Z",
         disabled: false,
+        // task-191：列表投影本就带 these 文档字段（AgentPrincipalView），夹具同形。
+        hooks: null,
+        contextPolicy: null,
+        delegationPolicy: { maxCount: 8, maxDepth: 3 },
     };
 }
 
@@ -1093,6 +1097,34 @@ describe("InstanceAgentsPanel · task-431 白名单三态比对", () => {
             wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
         ).toBeDefined();
         expect(updateInstanceAgent).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("task-191：行内「详情」打开只读抽屉（instance 层不给任何保存键）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="instance-agent-details-agent-1"]').trigger("click");
+        await flushPromises();
+
+        // 抽屉 Teleport 到 body —— 从 document 取，别让空 wrapper 静默通过。
+        const title = document.body.querySelector('[data-testid="agent-principal-detail-title"]');
+        expect(title?.textContent).toContain("代码评审助手");
+        // Q2：instance 层只读 —— 保存键一个都不许有。
+        expect(document.body.querySelector('[data-testid="apd-model-save"]')).toBeNull();
+        expect(document.body.querySelector('[data-testid="apd-delegation-save"]')).toBeNull();
+        expect(document.body.querySelector('[data-testid="apd-memory-save"]')).toBeNull();
+        expect(document.body.querySelector('[data-testid="apd-hooks-save"]')).toBeNull();
+        // 但现值照实显示（委派预算来自列表投影，不是「未知分区」）。
+        expect(document.body.querySelector('[data-testid="apd-delegation-unknown"]')).toBeNull();
+        expect(
+            (
+                document.body.querySelector(
+                    '[data-testid="delegation-policy-max-count"]',
+                ) as HTMLInputElement | null
+            )?.value,
+        ).toBe("8");
         wrapper.unmount();
     });
 });

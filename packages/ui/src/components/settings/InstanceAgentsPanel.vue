@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Bot, Pencil, Plus, Sparkles, Trash2 } from "@lucide/vue";
+import { Bot, Info, Pencil, Plus, Sparkles, Trash2 } from "@lucide/vue";
 
 import { useAuthStore } from "../../stores/auth";
 import { useInstanceWriteGate } from "../../composables/useInstanceWriteGate";
@@ -53,6 +53,9 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
 import InstanceAgentSkillsDialog from "../resources/InstanceAgentSkillsDialog.vue";
+import AgentPrincipalDetailDrawer, {
+    type AgentPrincipalDetail,
+} from "./AgentPrincipalDetailDrawer.vue";
 import AgentModelBindingFields, {
     type AgentModelBindingDraft,
 } from "./AgentModelBindingFields.vue";
@@ -153,6 +156,34 @@ const createBinding = ref<AgentModelBindingDraft>(emptyBinding());
 const editTarget = ref<InstanceAgent | null>(null);
 /** task-402：技能面目标（与编辑/删除同一形态：一个 ref 表达「选中了哪一行」）。 */
 const skillsTarget = ref<InstanceAgent | null>(null);
+
+// ---- 主体详情（task-191 Q2：instance 层只读 —— 详情抽屉不暴露任何写分区） ----------------
+const detailTarget = ref<InstanceAgent | null>(null);
+const detailOpen = ref(false);
+
+const detailPrincipal = computed<AgentPrincipalDetail | null>(() => {
+    const agent = detailTarget.value;
+    if (!agent) return null;
+    return {
+        principalId: agent.id,
+        name: agent.name,
+        ownership: "INSTANCE",
+        templateName: agent.templateName,
+        createdAt: agent.createdAt ?? "",
+        disabled: agent.disabled,
+        defaultModelProvider: agent.modelProvider,
+        defaultModelName: agent.modelName,
+        allowedModels: agent.allowedModels,
+        hooks: agent.hooks ?? null,
+        contextPolicy: agent.contextPolicy ?? null,
+        delegationPolicy: agent.delegationPolicy ?? null,
+    };
+});
+
+function openDetail(agent: InstanceAgent): void {
+    detailTarget.value = agent;
+    detailOpen.value = true;
+}
 const editBinding = ref<AgentModelBindingDraft>(emptyBinding());
 const editClear = ref(false);
 const editError = ref<string | null>(null);
@@ -533,6 +564,15 @@ async function confirmDelete(): Promise<void> {
                                         <Button
                                             variant="ghost"
                                             size="icon-sm"
+                                            :data-testid="`instance-agent-details-${agent.id}`"
+                                            :title="t('agentPrincipalDetail.details')"
+                                            @click="openDetail(agent)"
+                                        >
+                                            <Info class="size-3.5" aria-hidden="true" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon-sm"
                                             :data-testid="`instance-agent-edit-${agent.id}`"
                                             :disabled="!canWrite"
                                             :title="
@@ -786,4 +826,12 @@ async function confirmDelete(): Promise<void> {
             </AlertDialog>
         </template>
     </section>
+
+    <AgentPrincipalDetailDrawer
+        v-model:open="detailOpen"
+        :principal="detailPrincipal"
+        :workspace-id="null"
+        readonly
+        :editable-sections="[]"
+    />
 </template>
