@@ -33,25 +33,33 @@ console.log(
     "形态 only 证明不了可达性 —— 本门只拦形态，不判主操作可达；可达性由 dialog-reachability-sweep 判（D-1721）。",
 );
 
+// task-201 方案A（Lead 批）：tracked∪未跟踪未忽略 ⇒ 新组件提交前即进形态门视野；干净树 --others 为空 ⇒ 行为不变。
+function gitSrcFiles(args) {
+    return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+        .split(/\r?\n/)
+        .filter(Boolean);
+}
+const UNTRACKED = new Set(gitSrcFiles(["ls-files", "--others", "--exclude-standard", "--", "src"]));
 function listVueFiles() {
-    const out = execFileSync("git", ["ls-files", "--", "src"], {
-        cwd: ROOT,
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-    });
+    const out = gitSrcFiles([
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "src",
+    ]);
     // 只排除四个 vendor 原语包装本体（内容 overflow 是调用方责任；同 task-173 inventory 口径）；
     // ui/ 下其它组合件（CommandDialog 等）仍是使用点，要计入。
     const PRIMITIVE =
         /src\/components\/ui\/(dialog\/(DialogContent|DialogScrollContent)|alert-dialog\/AlertDialogContent|sheet\/SheetContent|drawer\/DrawerContent)\.vue$/;
-    return out
-        .split(/\r?\n/)
-        .filter(
-            (p) =>
-                p.endsWith(".vue") &&
-                !p.includes("__tests__") &&
-                !p.includes("/preview/") &&
-                !PRIMITIVE.test(p),
-        );
+    return out.filter(
+        (p) =>
+            p.endsWith(".vue") &&
+            !p.includes("__tests__") &&
+            !p.includes("/preview/") &&
+            !PRIMITIVE.test(p),
+    );
 }
 
 function* tagSites(file) {
@@ -65,7 +73,14 @@ function* tagSites(file) {
         const line = src.slice(0, m.index).split("\n").length;
         const cls = /class="([^"]*)"/.exec(tag);
         const dcls = /:class=/.test(tag);
-        yield { file, line, tag: m[1], cls: cls ? cls[1] : "", dynamic: dcls };
+        yield {
+            file,
+            line,
+            tag: m[1],
+            cls: cls ? cls[1] : "",
+            dynamic: dcls,
+            untracked: UNTRACKED.has(file),
+        };
     }
 }
 
@@ -101,7 +116,17 @@ for (const v of ["FAIL", "WARN", "UNSURE", "PASS"]) {
     console.log("");
     console.log("== " + v + " (" + groups[v].length + ") ==");
     for (const s of groups[v].slice(0, 80))
-        console.log("  " + s.file + ":" + s.line + " [" + s.tag + "] " + s.why);
+        console.log(
+            "  " +
+                s.file +
+                ":" +
+                s.line +
+                " [" +
+                s.tag +
+                "] " +
+                s.why +
+                (s.untracked ? " [untracked]" : ""),
+        );
     if (groups[v].length > 80) console.log("  … 共 " + groups[v].length + " 处，截断显示");
 }
 
@@ -122,6 +147,11 @@ console.log("");
 console.log(
     "边界重申：自定义 fixed modal 不经标签命中（需 (a) 门实测）；形态 PASS ⇏ 可达；mock 数据量 ≠ 真实内容高度。",
 );
+const untrackedSites = sites.filter((s) => s.untracked).length;
+if (untrackedSites > 0)
+    console.log(
+        "含 untracked 未提交面板站点 " + untrackedSites + " 处（提交前可见，行尾 [untracked] 标）",
+    );
 console.log(
     "summary: total=" +
         sites.length +

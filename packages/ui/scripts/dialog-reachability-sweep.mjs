@@ -243,7 +243,7 @@ const SITES = [
         open: (p) => p.getByTestId("instance-agents-create").click({ timeout: 8000 }),
         panel: '[data-testid="instance-agents-create-dialog"]',
         expect: { text: "创建" },
-        covers: ["src/components/settings/InstanceAgentsPanel.vue:588"],
+        covers: ["src/components/settings/InstanceAgentsPanel.vue:628"], // task-201：task-191 抽屉提交推移 +40 行（原 588）
     },
     {
         id: "instAgentEdit",
@@ -252,7 +252,7 @@ const SITES = [
             p.locator('[data-testid^="instance-agent-edit-"]').first().click({ timeout: 8000 }),
         panel: '[data-testid="instance-agents-edit-dialog"]',
         expect: { text: "保存" },
-        covers: ["src/components/settings/InstanceAgentsPanel.vue:652"],
+        covers: ["src/components/settings/InstanceAgentsPanel.vue:692"], // task-201：原 652，+40
     },
     {
         id: "instAgentDelete",
@@ -261,7 +261,7 @@ const SITES = [
             p.locator('[data-testid^="instance-agent-delete-"]').first().click({ timeout: 8000 }),
         panel: '[data-testid="instance-agent-delete-dialog"]',
         expect: { text: "删除" },
-        covers: ["src/components/settings/InstanceAgentsPanel.vue:755"],
+        covers: ["src/components/settings/InstanceAgentsPanel.vue:795"], // task-201：原 755，+40
     },
     {
         id: "instAgentSkills",
@@ -354,6 +354,40 @@ const SITES = [
         expect: { text: "创建" },
         covers: [],
     },
+    // task-201：task-191 新抽屉 AgentPrincipalDetailDrawer 的三层宿主触发点（各宿主列表行的「详情」键）。
+    // 抽屉主体 DialogContent 自带 max-h-[85vh] overflow-y-auto（shape PASS）；此三站点只判主操作可达。
+    {
+        id: "apdInstance",
+        route: "/settings/instance/agent-principals",
+        open: (p) =>
+            p.locator('[data-testid^="instance-agent-details-"]').first().click({ timeout: 8000 }),
+        panel: '[data-testid="agent-principal-detail-drawer"]',
+        covers: [],
+    },
+    {
+        id: "apdOrg",
+        route: "/members",
+        open: (p) =>
+            p
+                .locator('[data-testid^="agent-principals-configure-"]')
+                .first()
+                .click({ timeout: 8000 }),
+        panel: '[data-testid="agent-principal-detail-drawer"]',
+        covers: [],
+    },
+    {
+        id: "apdWorkspace",
+        route: "/workspace/" + WS + "/members",
+        open: async (p) => {
+            await p.getByTestId("members-tab-agents").click({ timeout: 8000 });
+            await p
+                .locator('[data-testid^="workspace-agent-details-"]')
+                .first()
+                .click({ timeout: 8000 });
+        },
+        panel: '[data-testid="agent-principal-detail-drawer"]',
+        covers: [],
+    },
 ];
 
 // n/a 站点（mock 下不可触发，各有具体门；列在此不许当通过，也不进 UNCOVERED——是已知覆盖缺口）。
@@ -387,12 +421,22 @@ const NA_SITES = [
 
 // ---- 空心绿守卫：静态无约束清单（R1 口径，同 check-dialog-shape）与 SITES/NA 覆盖差集 ----
 const TAG_RE2 = /<(DialogContent|AlertDialogContent|SheetContent|DrawerContent)[\s\S]*?>/g;
-function staticUnconstrained() {
-    const files = execFileSync("git", ["ls-files", "--", "src"], {
+// task-201 方案A（Lead 批）：tracked∪未跟踪未忽略 ⇒ 新组件提交前即进门视野；干净树 --others 为空 ⇒ 行为逐字节不变。
+const UNTRACKED = new Set(
+    execFileSync("git", ["ls-files", "--others", "--exclude-standard", "--", "src"], {
         cwd: ROOT,
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
     })
+        .split(/\r?\n/)
+        .filter(Boolean),
+);
+function staticUnconstrained() {
+    const files = execFileSync(
+        "git",
+        ["ls-files", "--cached", "--others", "--exclude-standard", "--", "src"],
+        { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    )
         .split(/\r?\n/)
         .filter(
             (p) =>
@@ -639,7 +683,14 @@ async function main() {
             " 单元；UNCOVERED（静态无约束但没人量）: " +
             cov.uncovered.length,
     );
-    for (const u of cov.uncovered) console.log("  UNCOVERED " + u);
+    for (const u of cov.uncovered)
+        console.log("  UNCOVERED " + u + (UNTRACKED.has(u.split(":")[0]) ? " [untracked]" : ""));
+    if (UNTRACKED.size > 0)
+        console.log(
+            "  （discovery 含 untracked 未提交 src 文件 " +
+                UNTRACKED.size +
+                " 个 —— 提交前可见，[untracked] 标）",
+        );
     console.log("");
     console.log("== n/a 站点（已知覆盖缺口，不许当通过）== " + NA_SITES.length + " 条");
     for (const n of NA_SITES) console.log("  n/a " + n.site + " —— " + n.why);
