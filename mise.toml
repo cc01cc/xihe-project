@@ -486,7 +486,7 @@ alias = "lint"
 
 [tasks."lint:log-secrets"]
 run = "node scripts/scan-log-secrets.mjs"
-description = "Scan logs/ for credential leakage (PLAN-196 gate)"
+description = "Scan git-TRACKED log-like files for credential leakage (PLAN-196 gate). task-174: face narrowed from logs/ to tracked files — gitignored runtime logs made lint permanently red (D-1005 family); runtime logs are the printer's redaction discipline (DEV-004), not this gate's face. Reverse control + fixtures: node scripts/scan-log-secrets.mjs --selftest (6 cases). Exit 2 when git cannot answer (never green)."
 
 [tasks."lint:scripts"]
 # 仓根 `scripts/**/*.mjs`（183 文件）。此前是唯一零 lint 覆盖的代码面（task-59）：
