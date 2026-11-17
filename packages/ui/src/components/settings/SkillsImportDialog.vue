@@ -180,7 +180,12 @@ const rejectedRows = computed(() =>
 <template>
     <Dialog :open="open" @update:open="(next: boolean) => emit('update:open', next)">
         <!-- 宽度取 4xl：JSON 批是逐行结构，窄框折行会让人以为自己写错（12 号图实测 385px 时几乎每行都折）。 -->
-        <DialogContent data-testid="skills-import-dialog" class="max-w-4xl sm:max-w-4xl">
+        <!-- task-190：JSON 批面板实测 736px 超出 1280×720 视口 16px（臂 A 形态）。补 BaseModal 同款形态约束：
+             max-h-[85vh] + overflow-y-auto（超长批可滚）。形态约束不等于可达性证明（task-173 裁定）。 -->
+        <DialogContent
+            data-testid="skills-import-dialog"
+            class="max-h-[85vh] overflow-y-auto max-w-4xl sm:max-w-4xl"
+        >
             <DialogHeader>
                 <DialogTitle data-testid="skills-import-title">
                     {{ t("settings.skills.import.title") }}
