@@ -25,6 +25,9 @@ import {
 import { handleWorkspaceAgentResource } from "./data/workspaceAgents";
 // task-38：工作区成员面夹具 + dispatch（用户实拍「成员页 API error 404」）。
 import { handleWorkspaceMemberResource } from "./data/workspaceMembers";
+// task-84：角色页的原子目录 —— 从 CP policy 源码派生（43 = 40 action + 3 capability），
+// 不抄第二份清单；派生与边界见 data/roleCatalog.ts 文件头。
+import { mockRoleCatalog } from "./data/roleCatalog";
 import {
     handleProviderConnectionResource,
     mockModelCatalogResponse,
@@ -808,6 +811,37 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 if (path === "/agent-principals" && methodIsGet) {
                     // `api.listMyAgentPrincipals()`：`{principals:[…]}`；个人视图只回 `created_by=self`。
                     return respond(200, { principals: [] });
+                }
+                /**
+                 * task-84：`GET /api/v1/roles/catalog?locale=` —— 角色页（/settings/roles 与
+                 * /settings/principal-grants，后者是前者的 redirect）的**唯一**原子词表来源。
+                 *
+                 * <p>补之前这条面在 mock 车道是 404 `MOCK_ENDPOINT_MISSING`，而 `RolesView` 把
+                 * `Promise.all([rolesCatalog(), listRoles()])` 的失败当**后端缺口**渲染成整页
+                 * 「该页面需要的服务端能力还没提供」（`SettingsErrorSurface` 缺口卡）——
+                 * 结论正好相反：CP 有这条面（`RoleController:68-73`），缺的是这个 mock 夹具。</p>
+                 *
+                 * <p>数据**不是手抄的清单**：`mockRoleCatalog()` 在 Node 侧从 CP policy 源码派生
+                 * 43 个原子（40 action + 3 capability）与 8 条 defaultGrants，派生规则与边界见
+                 * `data/roleCatalog.ts` 文件头。派生失败（CP 源码不在同检出 / 结构变了）⇒ **500 显式**
+                 * 且带原因，不回空清单、不回短清单 —— 后者会让「少 30 个原子」看起来像「本来只有 13 个」。</p>
+                 *
+                 * <p><b>写面仍不补</b>（`POST /roles` / `PATCH|DELETE /roles/{id}` / 绑定写面）：
+                 * CP 侧有配额、`MANAGE_ROLES` 授权、`ROLE_IN_USE` 409 与系统角色不可变，只复刻一半
+                 * 就是「mock 里点得通、真栈 409」的假通过（task-72 的裁定，同样适用这里）。</p>
+                 */
+                if (path === "/roles/catalog" && methodIsGet) {
+                    const locale = url.searchParams.get("locale") ?? "zh-CN";
+                    try {
+                        return respond(200, mockRoleCatalog(locale));
+                    } catch (cause) {
+                        options.log?.(`[mock-api] GET /roles/catalog 派生失败：${String(cause)}`);
+                        return respond(500, {
+                            code: "MOCK_ROLE_CATALOG_DERIVATION_FAILED",
+                            detail: String(cause),
+                            requestId: "mock-request",
+                        });
+                    }
                 }
                 /**
                  * task-449 / D-1287：这里原先回 `{agents:[]}`（task-225 补的合法空集）。空集让
