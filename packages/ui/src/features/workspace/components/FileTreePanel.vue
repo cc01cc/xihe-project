@@ -321,10 +321,18 @@ function upload() {
             >
                 {{ workspaceName }}
             </span>
+            <!--
+                task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：四个头按钮原先是 `p-1` + `size-3.5`
+                ⇒ 3.5×2 + 12.25 = **19.25px**。四个按钮互相矩形距 0、圆心距 22.75 < 24，
+                而两者都欠尺寸 ⇒ 2.5.8 的 **Spacing 例外不成立** ⇒ 真缺陷（不是"看着小"）。
+                补 `min-h-7 min-w-7`：本仓 `--spacing` = 3.5px ⇒ 7 步 = **24.5px** 达标；
+                图标仍 `size-3.5`（12.25px）不放大 ⇒ 视觉档位不变（DEV-011:194 同动作同尺寸）。
+                头栏是 `h-9`(31.5)，24.5 的按钮装得下，不改栏高。
+            -->
             <button
                 type="button"
                 data-testid="workspace-file-create"
-                class="rounded p-1 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :title="t('workspace.createFile')"
                 :aria-label="t('workspace.createFile')"
                 @click="startCreateFile"
@@ -334,7 +342,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-file-upload"
-                class="rounded p-1 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :title="t('workspace.uploadFile')"
                 :aria-label="t('workspace.uploadFile')"
                 @click="upload"
@@ -344,7 +352,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-file-refresh"
-                class="rounded p-1 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :title="t('workspace.refreshFiles')"
                 :aria-label="t('workspace.refreshFiles')"
                 :class="isEmpty ? 'opacity-60' : ''"
@@ -355,7 +363,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-toolbar-toggle-tree"
-                class="rounded p-1 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :aria-label="t('workspace.collapseFiles')"
                 :title="t('workspace.collapseFiles')"
                 :aria-pressed="true"

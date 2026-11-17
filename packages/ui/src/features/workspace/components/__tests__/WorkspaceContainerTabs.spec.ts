@@ -64,6 +64,22 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         expect(wrapper.emitted("close")?.[0]).toEqual(["session:s1"]);
     });
 
+    /**
+     * task-89（WCAG 2.2 SC 2.5.8 ≥24×24）：容器页签的关闭键改前 `p-0.5` + `size-3` ⇒
+     * **14×14**，与左邻 `workspace-container-tab-` 本体矩形距 **7** ⇒ 真缺陷。
+     * `min-h-7 min-w-7` = 7 × 3.5px = **24.5px**（本仓 `--spacing` = 3.5）；`X` 仍 size-3。
+     * jsdom 不求值 Tailwind ⇒ 钉类名，真 rect 归 Playwright。
+     */
+    it("task-89：关闭键命中盒 ≥24×24（min-h-7 min-w-7），图标尺寸不变", () => {
+        const wrapper = mountRow({ containerId: "main", tabs: TABS, activeId: "session:s1" });
+        const closers = wrapper.findAll('[data-testid^="workspace-container-tab-close-"]');
+        expect(closers).toHaveLength(1);
+        expect(closers[0].classes()).toEqual(
+            expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
+        );
+        expect(closers[0].get("svg").classes()).toContain("size-3");
+    });
+
     it("只读面板（closable=false）没有关闭按钮", () => {
         const wrapper = mountRow({
             containerId: "tree",

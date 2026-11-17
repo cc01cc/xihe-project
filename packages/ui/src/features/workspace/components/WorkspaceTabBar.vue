@@ -320,13 +320,18 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
                             />
                             <span class="truncate">{{ tab.label }}</span>
                         </TabsTrigger>
+                        <!--
+                            task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：同 `WorkspaceContainerTabs`
+                            与 `WorkspaceDock` 的页签关闭键 —— 14×14 + 矩形距 7 ⇒ 真缺陷。
+                            `min-h-7 min-w-7` = 24.5px；三个同类关闭键同批改，避免"同动作不同尺寸"。
+                        -->
                         <button
                             v-if="tab.closable"
                             type="button"
                             :data-testid="`workspace-tab-close-${tab.id}`"
                             :aria-label="t('workspace.tabClose')"
                             :title="t('workspace.tabClose')"
-                            class="mr-1 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             @click.stop="closeTab(tab)"
                         >
                             <X class="size-3" aria-hidden="true" />

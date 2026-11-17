@@ -129,6 +129,24 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
         expect(readWorkspaceLayout("workspace-1").openTabs).not.toContain("session:session-2");
     });
 
+    /**
+     * task-89（WCAG 2.2 SC 2.5.8 ≥24×24）：顶栏页签关闭键改前 `p-0.5` + `size-3` ⇒
+     * **14×14**，与同 chip 的 `workspace-tab-` 本体矩形距 **7** ⇒ 真缺陷（24 圆心圆与
+     * 本体矩形相交，Spacing 例外不成立）。`min-h-7 min-w-7` = 7 × **3.5px** = **24.5px**；
+     * `X` 仍 `size-3` 不放大 ⇒ 视觉档位不动。jsdom 不求值 Tailwind ⇒ 钉类名。
+     */
+    it("task-89：关闭键命中盒 ≥24×24（min-h-7 min-w-7），图标尺寸不变", async () => {
+        gotoSession("session-2");
+        const wrapper = mountBar();
+        await flushPromises();
+
+        const closer = wrapper.get('[data-testid="workspace-tab-close-session:session-2"]');
+        expect(closer.classes()).toEqual(
+            expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
+        );
+        expect(closer.get("svg").classes()).toContain("size-3");
+    });
+
     it("keeps the session title on the pinned tab (task-365 D)", async () => {
         useSessionStore().sessions = [
             {

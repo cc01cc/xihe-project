@@ -191,4 +191,30 @@ describe("task-36 文件树面板 git 读面", () => {
         expect(wrapper.find('[data-testid="workspace-git-readface-error"]').exists()).toBe(false);
         expect(wrapper.get('[data-testid="workspace-git-readface-count"]').text()).toContain("1");
     });
+
+    /**
+     * task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：树头四个按钮改前 `p-1` + `size-3.5`
+     * ⇒ **19.25×19.25**；四者互相**矩形距 0**、圆心距 **22.75 < 24**，且都欠尺寸 ⇒ Spacing
+     * 例外不成立 ⇒ 真缺陷。补 `min-h-7 min-w-7` = 7 × **3.5px** = **24.5px** 达标
+     * （本仓 `--spacing` = 3.5，别按 4 算成 28）；图标仍 `size-3.5` 不放大。
+     * jsdom 不求值 Tailwind ⇒ 这里钉类名，真 rect 归 Playwright 复测。
+     */
+    it("task-89：树头四键命中盒 ≥24×24（min-h-7 min-w-7），图标档位不变", () => {
+        const wrapper = mount(FileTreePanel, {
+            global: { plugins: [i18n], stubs: { FileTree: true } },
+        });
+
+        for (const testid of [
+            "workspace-file-create",
+            "workspace-file-upload",
+            "workspace-file-refresh",
+            "workspace-toolbar-toggle-tree",
+        ]) {
+            const button = wrapper.get(`[data-testid="${testid}"]`);
+            expect(button.classes(), testid).toEqual(
+                expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
+            );
+            expect(button.get("svg").classes(), testid).toContain("size-3.5");
+        }
+    });
 });

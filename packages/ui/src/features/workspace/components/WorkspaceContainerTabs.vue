@@ -154,12 +154,17 @@ const activeTab = computed<string>({
                         />
                         <span class="truncate">{{ tab.label }}</span>
                     </TabsTrigger>
+                    <!--
+                        task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：`p-0.5` + `size-3`
+                        ⇒ 14×14，与左邻 `workspace-container-tab-` 本体矩形距 7 ⇒ 是真缺陷。
+                        `min-h-7 min-w-7` = 7 × 3.5px = 24.5px 命中盒；`X` 图标仍 size-3 不放大。
+                    -->
                     <button
                         v-if="tab.closable"
                         type="button"
                         :data-testid="'workspace-container-tab-close-' + containerId + '-' + tab.id"
                         :aria-label="'关闭 ' + tab.label"
-                        class="mr-1 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="emit('close', tab.id)"
                     >
                         <X class="size-3" aria-hidden="true" />

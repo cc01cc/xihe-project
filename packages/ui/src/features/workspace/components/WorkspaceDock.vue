@@ -318,13 +318,20 @@ function handleResizeKeydown(event: KeyboardEvent) {
                     >
                         <span class="max-w-28 truncate">{{ tab.label }}</span>
                     </button>
+                    <!--
+                        task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：原先 `p-0.5` + `size-3` ⇒
+                        1.75×2 + 10.5 = **14px**，且与同 chip 的 `dock-tab-` 本体矩形距只有 7
+                        ⇒ 24 圆心圆必然相交 ⇒ **真缺陷**（不是"看起来小"）。
+                        改为 `min-h-7 min-w-7`：本仓 `--spacing` = 3.5px ⇒ 7 步 = **24.5px**；
+                        `X` 仍 `size-3`（10.5px）不放大 ⇒ chip 只加宽 10.5px，图标视觉档位不动。
+                    -->
                     <button
                         v-if="tab.id === activeTab"
                         type="button"
                         :data-testid="`dock-tab-close-${tab.id}`"
                         :aria-label="t('workspace.dockCloseTab')"
                         :title="t('workspace.dockCloseTab')"
-                        class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        class="mr-0.5 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="closeTab(tab.id)"
                     >
                         <X class="size-3" aria-hidden="true" />
@@ -368,7 +375,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
                             :data-testid="`dock-overflow-close-${tab.id}`"
                             :aria-label="t('workspace.dockCloseTab')"
                             :title="t('workspace.dockCloseTab')"
-                            class="mr-1 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             @click.stop="closeTab(tab.id)"
                         >
                             <X class="size-3" aria-hidden="true" />
@@ -380,7 +387,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
             <button
                 type="button"
                 data-testid="dock-mode-toggle"
-                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :class="isPinned ? 'text-primary' : ''"
                 :aria-pressed="isPinned"
                 :aria-label="modeLabel"
@@ -398,7 +405,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
             <button
                 type="button"
                 data-testid="dock-focus-toggle"
-                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :class="focus ? 'text-primary' : ''"
                 :aria-pressed="focus"
                 :aria-label="focusLabel"
@@ -411,7 +418,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
             <button
                 type="button"
                 data-testid="workspace-aux-close"
-                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :aria-label="t('workspace.closePanel')"
                 :title="t('workspace.closePanel')"
                 @click="emit('close')"

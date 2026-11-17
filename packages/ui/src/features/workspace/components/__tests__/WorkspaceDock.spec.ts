@@ -243,6 +243,37 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(wrapper.emitted("close-tab")).toBeUndefined();
     });
 
+    /**
+     * task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：失败读数不是「看起来小」，是**可复算的几何**。
+     * 改前四个命中盒 —— 页签关闭键 `p-0.5` + `X size-3` ⇒ **14×14**，且与同 chip 的
+     * `dock-tab-` 本体矩形距只有 **7**（24 圆心圆与本体矩形相交 ⇒ Spacing 例外不成立）；
+     * 头部三键 `p-1` + `size-3.5` ⇒ **19.25×19.25**，圆心距 22.75 < 24 且两者都欠尺寸。
+     * `min-h-7 min-w-7` = **7 × 3.5px = 24.5px**（本仓 `--spacing` = 3.5，不是 4）⇒ 达标。
+     * **jsdom 不求值 Tailwind**，所以这里钉类名；真 rect 归 Playwright 复测（证据在
+     * `.tmp/xh/task-89/`）。图标仍 `size-3`/`size-3.5` 不放大 ⇒ 视觉档位不动。
+     */
+    it("task-89：页签关闭键与头部三键的命中盒 ≥24×24（min-h-7 min-w-7 锁死）", async () => {
+        const wrapper = mountDock();
+
+        const closeKeys = wrapper.findAll('[data-testid^="dock-tab-close-"]');
+        expect(closeKeys.length).toBeGreaterThan(0);
+        for (const key of closeKeys) {
+            expect(key.classes()).toEqual(
+                expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
+            );
+            // 图标不跟着放大：同动作同图标同尺寸（DEV-011:194）。
+            expect(key.get("svg").classes()).toContain("size-3");
+        }
+
+        for (const testid of ["dock-mode-toggle", "dock-focus-toggle", "workspace-aux-close"]) {
+            const button = wrapper.get(`[data-testid="${testid}"]`);
+            expect(button.classes()).toEqual(
+                expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
+            );
+            expect(button.get("svg").classes()).toContain("size-3.5");
+        }
+    });
+
     it("derives its layout classes from the dock mode instead of a second breakpoint source", () => {
         // S3b P2-4: `DOCK_INLINE_MIN_VIEWPORT` is the only breakpoint source; the
         // classes are its projection, so the old `min-[1800px]:static` is gone.
