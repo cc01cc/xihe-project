@@ -33,7 +33,7 @@ const { items, active } = useWorkspaceNav();
     <nav
         data-testid="workspace-secondary-nav"
         :aria-label="t('workspaceNav.ariaLabel')"
-        class="flex h-8 shrink-0 items-center gap-1 overflow-x-auto px-4"
+        class="flex h-8 shrink-0 items-center gap-1 overflow-x-auto bg-card px-4"
     >
         <ul class="flex items-center gap-1" role="tablist">
             <li v-for="item in items" :key="item.id" role="none">
