@@ -26,6 +26,10 @@ import { api, ApiError, type ApiWorkspace } from "../../../../composables/api";
 import type { Session } from "../../../../types";
 import { useAuthStore } from "../../../../stores/auth";
 import { useSessionStore } from "../../../../stores/session";
+import {
+    readStandaloneSessionOrder,
+    writeStandaloneSessionOrder,
+} from "../../../../composables/useWorkspaceLayout";
 import { writeTabWorkspace } from "../../../../lib/workspaceContext";
 import { workspaceChatPath } from "../../../../lib/routes";
 import { logger } from "../../../../lib/logger";
@@ -35,6 +39,20 @@ const { t } = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
 const sessionStore = useSessionStore();
+
+/**
+ * task-152 / `D-1221` ④：独立会话（L3）的用户顺序。
+ *
+ * <p>读一次、改一次都走 `xihe-layout-global` 的那两个 accessor（单一 writer 在
+ * `useWorkspaceLayout`，本组件不直接碰 localStorage）。**跨 tab 不同步是已知边界**
+ * （布局状态没有 storage/BroadcastChannel 通道），切 tab / 刷新重读即可。</p>
+ */
+const standaloneOrder = ref<string[]>(readStandaloneSessionOrder());
+
+function persistStandaloneOrder(next: string[]): void {
+    standaloneOrder.value = next;
+    writeStandaloneSessionOrder(next);
+}
 
 const emit = defineEmits<{
     "new-session": [workspaceId: string];
@@ -376,10 +394,18 @@ defineExpose({
                             {{ t("common.retry") }}
                         </button>
                     </div>
+                    <!--
+                        task-152（`D-1221` ④）：独立会话区是**全侧栏唯一**的可拖区域。
+                        搜索态传 `!isSearching` ⇒ 过滤后的子集不参与排序，避免把不可见的行
+                        从顺序里抹掉（`orderPure.moveInList` 的口径）。
+                    -->
                     <SessionList
                         v-else-if="visibleStandalone.length"
                         :sessions="visibleStandalone"
                         standalone
+                        :sortable="!isSearching"
+                        :order="standaloneOrder"
+                        @reorder="persistStandaloneOrder"
                     />
                 </div>
             </section>

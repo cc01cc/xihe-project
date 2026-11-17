@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { useSessionStore } from "../../../../stores/session";
@@ -14,6 +14,8 @@ import { toast } from "vue-sonner";
 import SessionItem from "./SessionItem.vue";
 import { standaloneChatPath, workspaceChatPath } from "../../../../lib/routes";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
+import { VueDraggable } from "vue-draggable-plus";
+import { moveInList, orderIds, type MoveAction } from "../orderPure";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -47,11 +49,32 @@ const props = withDefaults(
         workspaceId?: string | null;
         /** task-373：独立会话分组（无工作区）——只读快照 + 独立会话路由。 */
         standalone?: boolean;
+        /**
+         * task-152 / `D-1221` ④：本列表是否允许**用户排序**（L3 专用）。
+         *
+         * <p>默认 false ⇒ 渲染与改动前**逐字节一致**（不挂 `VueDraggable`、不加
+         * `data-session-id` 包裹层）：L2（工作区组内序）由 `task-153` 另立，
+         * 「同构所以顺手做」是最容易越界的一种理由。</p>
+         *
+         * <p>父层在**搜索态**必须传 false：过滤后的子集不是该分组的全部成员，
+         * 拿它写回会把不可见的行从顺序里抹掉（`orderPure.moveInList` 的口径）。</p>
+         */
+        sortable?: boolean;
+        /**
+         * 用户顺序（顶层 session id）；由**父层**从 `xihe-layout-global` 读出后传入，
+         * 本组件只做投影与交互、不碰持久化（单一 writer 纪律，`D-1222` ⑥）。
+         */
+        order?: string[];
     }>(),
-    { sessions: null, workspaceId: null, standalone: false },
+    { sessions: null, workspaceId: null, standalone: false, sortable: false, order: () => [] },
 );
 
-const emit = defineEmits<{ "new-session": []; "select-foreign-session": [id: string] }>();
+const emit = defineEmits<{
+    "new-session": [];
+    "select-foreign-session": [id: string];
+    /** task-152：拖拽/键盘产生的新顺序（顶层 id）；由父层负责写盘。 */
+    reorder: [next: string[]];
+}>();
 const listSessions = computed<Session[]>(() =>
     props.sessions ? props.sessions : sessionStore.sessions,
 );
@@ -68,6 +91,121 @@ const timeGroups = computed<Record<string, Session[]>>(() => {
     );
     return { foreign: sorted };
 });
+
+/* ------------------------------------------------------------------------- *
+ * task-152 / `D-1221` ④：独立会话（L3）的用户顺序
+ *
+ * 形状三条（卡面判据 3/4/6）：
+ * ① 顺序只存**顶层 session id 数组**、在读侧投影 —— `replaceFromServer` 会整体替换
+ *    `sessionStore.sessions`，把顺序存在组件里每次刷新/SSE 必丢；
+ * ② **未知 id 落最前**（= 最近在上），不追加末尾；
+ * ③ **子行随父移动**：拖拽单元是「父行 + 其 delegated 子行」整块，子行不可单独拖，
+ *    否则 `rowsFor()` 的「子行紧跟父行」不变量被破。
+ *
+ * 已知边界（不是遗漏）：跨 tab 不做同步 —— 布局状态今天没有 storage/BroadcastChannel
+ * 通道（`services/authChannel.ts` 是登出专用先例，不掺入），切 tab / 刷新重读即可。
+ * ------------------------------------------------------------------------- */
+/** `aria-live` 的播报文本；先清空再写，重复按同一个键也要重播。 */
+const orderAnnouncement = ref("");
+
+/** 当前顺序投影：`sortable` 关或 order 为空时**原样返回**（零开销、零行为差）。 */
+function applyOrder(sessions: Session[]): Session[] {
+    if (!props.sortable || props.order.length === 0) return sessions;
+    const byId = new Map(sessions.map((item) => [item.id, item]));
+    return orderIds(
+        sessions.map((item) => item.id),
+        props.order,
+    )
+        .map((id) => byId.get(id))
+        .filter((item): item is Session => Boolean(item));
+}
+
+/**
+ * 「父行 + 子行」的拖拽单元。与 `rowsFor()` 同源判据：父行在本组的子会话才收进来，
+ * 父在别组的子会话仍保留自己的一行（不许从列表里消失）。
+ */
+function unitsFor(sessions: Session[]): Array<{ session: Session; children: Session[] }> {
+    const projected = applyOrder(sessions);
+    const present = new Set(projected.map((item) => item.id));
+    const childIds = new Set<string>();
+    for (const [parentId, children] of childrenByParent.value) {
+        if (!present.has(parentId)) continue;
+        for (const child of children) childIds.add(child.id);
+    }
+    const units: Array<{ session: Session; children: Session[] }> = [];
+    for (const session of projected) {
+        if (childIds.has(session.id)) continue;
+        units.push({ session, children: childrenByParent.value.get(session.id) ?? [] });
+    }
+    return units;
+}
+
+/** 顶层 id（按当前渲染顺序）—— 键盘移动与只认这一层。 */
+function topLevelIds(sessions: Session[]): string[] {
+    return unitsFor(sessions).map((unit) => unit.session.id);
+}
+
+/** 行属性一份，两个渲染分支共用（避免 `SessionItem` 的 props 清单写两遍而漂移）。 */
+function rowProps(session: Session, child: boolean) {
+    return {
+        session,
+        isActive: session.id === sessionStore.currentSessionId,
+        pendingCount: agentStore.pendingApprovalCount(session.id),
+        forkBusy: forkingSessionId.value === session.id,
+        delegated: session.kind === "SPAWN",
+        delegationUsage: delegationUsage(session.id),
+        indent: child,
+        canMutate: canMutate.value,
+    };
+}
+
+function persistOrder(next: string[]): void {
+    emit("reorder", next);
+}
+
+/** 拖拽落点：`model-value` 就是顶层 id 数组，新顺序原样落盘。 */
+function onReorder(next: string[]): void {
+    if (!props.sortable) return;
+    persistOrder(next);
+}
+
+function announcePosition(next: string[], id: string): void {
+    const position = next.indexOf(id);
+    if (position < 0) return;
+    orderAnnouncement.value = "";
+    void nextTick(() => {
+        orderAnnouncement.value = t("sidebar.orderMoved", { position: position + 1 });
+    });
+}
+
+/** 键盘等价（既有 a11y 门）：`Alt+↑/↓` ±1、`Alt+Home/End` 到桶首/尾。 */
+function onUnitKeydown(event: KeyboardEvent, sessions: Session[]): void {
+    if (!props.sortable || !event.altKey) return;
+    const action: MoveAction | null =
+        event.key === "ArrowUp"
+            ? { kind: "delta", delta: -1 }
+            : event.key === "ArrowDown"
+              ? { kind: "delta", delta: 1 }
+              : event.key === "Home"
+                ? { kind: "home" }
+                : event.key === "End"
+                  ? { kind: "end" }
+                  : null;
+    if (!action) return;
+    const unit = (event.target as HTMLElement | null)?.closest?.("[data-session-id]");
+    const id = unit?.getAttribute("data-session-id");
+    if (!id) return;
+    const next = moveInList(props.order, topLevelIds(sessions), id, action);
+    if (!next) return; // 已在边界：什么都不做，也不拦默认行为
+    event.preventDefault();
+    persistOrder(next);
+    announcePosition(next, id);
+    void nextTick(() => {
+        document
+            .querySelector<HTMLElement>(`[data-session-id="${id}"] [data-testid="session-item"]`)
+            ?.focus();
+    });
+}
 
 const pendingDeleteSessionId = ref<string | null>(null);
 const deleteLoading = ref(false);
@@ -293,23 +431,73 @@ async function confirmDelete() {
                     {{ t(timeGroupLabels[group]) }}
                 </span>
             </div>
-            <SessionItem
-                v-for="row in rowsFor(sessions)"
-                :key="row.session.id"
-                :session="row.session"
-                :is-active="row.session.id === sessionStore.currentSessionId"
-                :pending-count="agentStore.pendingApprovalCount(row.session.id)"
-                :fork-busy="forkingSessionId === row.session.id"
-                :delegated="row.session.kind === 'SPAWN'"
-                :delegation-usage="delegationUsage(row.session.id)"
-                :indent="row.child"
-                :can-mutate="canMutate"
-                @select="handleSelect"
-                @rename="handleRename"
-                @delete="handleDelete"
-                @fork="handleFork"
-            />
+            <!--
+                task-152（`D-1221` ④）：只有 `sortable`（独立会话 L3）走拖拽分支。
+                其余两条路径（当前工作区 live / 别组快照）走 `v-else`，DOM 与改动前
+                逐字节一致 —— 判据 1 是用 DOM 比较钉的，不靠自觉。
+                一个时间桶一个实例、不跨组共享 ⇒ 跨桶位置在拖拽时**根本不可达**。
+            -->
+            <VueDraggable
+                v-if="sortable"
+                :model-value="topLevelIds(sessions)"
+                :animation="150"
+                tag="div"
+                class="contents"
+                @update:model-value="onReorder"
+                @keydown="onUnitKeydown($event, sessions)"
+            >
+                <div
+                    v-for="unit in unitsFor(sessions)"
+                    :key="unit.session.id"
+                    :data-session-id="unit.session.id"
+                >
+                    <SessionItem
+                        v-bind="rowProps(unit.session, false)"
+                        @select="handleSelect"
+                        @rename="handleRename"
+                        @delete="handleDelete"
+                        @fork="handleFork"
+                    />
+                    <SessionItem
+                        v-for="child in unit.children"
+                        :key="child.id"
+                        v-bind="rowProps(child, true)"
+                        @select="handleSelect"
+                        @rename="handleRename"
+                        @delete="handleDelete"
+                        @fork="handleFork"
+                    />
+                </div>
+            </VueDraggable>
+            <template v-else>
+                <SessionItem
+                    v-for="row in rowsFor(sessions)"
+                    :key="row.session.id"
+                    :session="row.session"
+                    :is-active="row.session.id === sessionStore.currentSessionId"
+                    :pending-count="agentStore.pendingApprovalCount(row.session.id)"
+                    :fork-busy="forkingSessionId === row.session.id"
+                    :delegated="row.session.kind === 'SPAWN'"
+                    :delegation-usage="delegationUsage(row.session.id)"
+                    :indent="row.child"
+                    :can-mutate="canMutate"
+                    @select="handleSelect"
+                    @rename="handleRename"
+                    @delete="handleDelete"
+                    @fork="handleFork"
+                />
+            </template>
         </div>
+        <!-- 键盘移动的播报位（读屏不抢焦点）；先清空再写 ⇒ 重复按同一个键也会重播。 -->
+        <p
+            v-if="sortable"
+            data-testid="sidebar-session-order-status"
+            role="status"
+            aria-live="polite"
+            class="sr-only"
+        >
+            {{ orderAnnouncement }}
+        </p>
     </div>
 
     <BaseModal :show="pendingDeleteSession !== null" @close="closeDeleteWarning">

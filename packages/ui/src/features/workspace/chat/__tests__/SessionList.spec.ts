@@ -361,3 +361,109 @@ describe("SessionList delegation tree (PLAN-0655 T1.5)", () => {
         wrapper.unmount();
     });
 });
+
+/**
+ * task-152 / `D-1221` ④：独立会话（L3）的可排序能力 —— 卡面判据 1/4/6 的组件侧。
+ *
+ * <p>只钉三件事：① `sortable` 默认关时**不产生任何新 DOM**（判据 1 的形态：L2 零变化）；
+ * ② `order` 投影与「未知 id 落最前」；③ 子行随父（一个拖拽单元 = 父行 + 其子行）。</p>
+ *
+ * <p>真拖拽由 e2e 钉（jsdom 没有布局，Sortable 的落点计算不成立）；这里只验数据与结构。</p>
+ */
+describe("SessionList 独立会话排序（task-152）", () => {
+    function session(id: string, title: string, kind = "CHAT", spawnedFromSessionId?: string) {
+        return {
+            id,
+            title,
+            createdAt: "2026-11-17T00:00:00Z",
+            updatedAt: "2026-11-17T00:00:00Z",
+            workspaceId: null,
+            kind,
+            spawnedFromSessionId,
+            context: { agents: [] },
+        };
+    }
+
+    function mountList(props: Record<string, unknown>) {
+        setActivePinia(createPinia());
+        return mount(SessionList, {
+            props,
+            global: { plugins: [i18n], stubs: { Teleport: true } },
+        });
+    }
+
+    function renderedTitles(wrapper: ReturnType<typeof mountList>): string[] {
+        return wrapper
+            .findAll('[data-testid="session-item"]')
+            .map((row) => row.attributes("aria-label")!);
+    }
+
+    it("sortable 默认关 ⇒ 不产生任何新 DOM（L2 零变化，判据 1）", () => {
+        const wrapper = mountList({ sessions: [session("a", "A"), session("b", "B")] });
+        expect(wrapper.findAll("[data-session-id]")).toHaveLength(0);
+        expect(wrapper.findAll('[data-testid="session-order-status"]')).toHaveLength(0);
+        expect(renderedTitles(wrapper)).toEqual(["A", "B"]);
+    });
+
+    it("sortable 开 ⇒ 每行包一个拖拽单元（子行在同一单元内，不可单独拖）", () => {
+        const wrapper = mountList({
+            sessions: [session("a", "A"), session("b", "B", "SPAWN", "a"), session("c", "C")],
+            sortable: true,
+            order: [],
+        });
+        const units = wrapper.findAll("[data-session-id]");
+        expect(units.map((unit) => unit.attributes("data-session-id"))).toEqual(["a", "c"]);
+        expect(units[0]!.findAll('[data-testid="session-item"]')).toHaveLength(2);
+    });
+
+    it("order 投影：已知按名次、未知落最前（判据 4）", () => {
+        const wrapper = mountList({
+            sessions: [session("a", "A"), session("b", "B"), session("c", "C")],
+            sortable: true,
+            order: ["c", "a", "b"],
+        });
+        expect(renderedTitles(wrapper)).toEqual(["C", "A", "B"]);
+    });
+
+    it("未知 id 落最前而不是追加末尾", () => {
+        const wrapper = mountList({
+            sessions: [session("a", "A"), session("b", "B"), session("c", "C")],
+            sortable: true,
+            order: ["b"],
+        });
+        expect(renderedTitles(wrapper)).toEqual(["A", "C", "B"]);
+    });
+
+    it("Alt+↓ 发出新顺序，Alt+Home 到首位，已在首位时不发", async () => {
+        const wrapper = mountList({
+            sessions: [session("a", "A"), session("b", "B"), session("c", "C")],
+            sortable: true,
+            order: [],
+        });
+        const innerA = wrapper.get('[data-session-id="a"] [data-testid="session-item"]');
+
+        await innerA.trigger("keydown", { key: "ArrowDown", altKey: true });
+        expect(wrapper.emitted("reorder")?.at(-1)).toEqual([["b", "a", "c"]]);
+
+        await innerA.trigger("keydown", { key: "Home", altKey: true });
+        // 已经在首位：不发新顺序（也不 preventDefault）
+        expect(wrapper.emitted("reorder")).toHaveLength(1);
+
+        await wrapper
+            .get('[data-session-id="c"] [data-testid="session-item"]')
+            .trigger("keydown", { key: "Home", altKey: true });
+        expect(wrapper.emitted("reorder")?.at(-1)).toEqual([["c", "a", "b"]]);
+    });
+
+    it("不带 Alt 的方向键不接管（行内导航语义不变）", async () => {
+        const wrapper = mountList({
+            sessions: [session("a", "A"), session("b", "B")],
+            sortable: true,
+            order: [],
+        });
+        await wrapper
+            .get('[data-session-id="a"] [data-testid="session-item"]')
+            .trigger("keydown", { key: "ArrowDown" });
+        expect(wrapper.emitted("reorder")).toBeUndefined();
+    });
+});

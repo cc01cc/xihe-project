@@ -212,6 +212,8 @@ const messages = {
             newChat: "新建会话",
             noWorkspace: "当前没有可用工作区",
             search: "搜索会话...",
+            // task-152（`D-1221` ④）：拖拽/键盘移动后的 a11y 播报（`aria-live`）。
+            orderMoved: "已移到第 {position} 位",
             today: "今天",
             yesterday: "昨天",
             earlier: "更早",
@@ -4199,6 +4201,8 @@ const messages = {
             newChat: "New session",
             noWorkspace: "No workspace available yet",
             search: "Search sessions...",
+            // task-152 (`D-1221` ④): screen-reader announcement after a drag/keyboard move.
+            orderMoved: "Moved to position {position}",
             today: "Today",
             yesterday: "Yesterday",
             earlier: "Earlier",
