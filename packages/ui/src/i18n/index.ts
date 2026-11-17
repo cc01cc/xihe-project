@@ -576,6 +576,8 @@ const messages = {
             containerTree: "文件树",
             containerMain: "内容",
             containerEmpty: "此容器暂无页签",
+            // task-97（D-1754 ②）：右栏页签行「+」= 重开已关闭面板（main 行「+」复用 sidebar.newChat）。
+            containerPlusReopen: "重开已关闭面板",
             // task-184（BL-561 扩展 / D-1600 ③）：跨组移动做不了时的播报。**不做静默 no-op**。
             containerMoveNoNeighbor: "没有可移入的相邻容器",
             // task-174 / D-1545：窄屏切换「显示哪一栏」与右栏容器名。
@@ -4558,6 +4560,8 @@ const messages = {
             containerTree: "Files",
             containerMain: "Content",
             containerEmpty: "No tabs in this container",
+            // task-97 (D-1754 ②): the right-row "+" reopens closed panels (main-row "+" reuses sidebar.newChat).
+            containerPlusReopen: "Reopen a closed panel",
             // task-184 (BL-561 extension / D-1600 ③): announced when a cross-container move cannot run.
             containerMoveNoNeighbor: "No adjacent container to move into",
             // task-174 / D-1545: narrow-screen column switcher and the right column name.

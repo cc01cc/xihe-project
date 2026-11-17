@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, Maximize2, Minimize2, X } from "@lucide/vue";
+import { ChevronDown, Maximize2, Minimize2, Plus, X } from "@lucide/vue";
 import {
+    DOCK_TAB_IDS,
     DOCK_WIDTH_DEFAULT,
     DOCK_WIDTH_KEYBOARD_STEP,
     DOCK_WIDTH_MAX,
@@ -33,9 +34,10 @@ import SashGrip from "../../../components/shared/SashGrip.vue";
 // dockview-capability-demo.md。
 // ─────────────────────────────────────────────────────────────────────────────
 // import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
-import type { DockTab } from "./workspaceDockTabs";
+import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
 import type { ContainerRowKeyPayload } from "../lib/containerTabNav";
+import type { DockTabId } from "../../../composables/useWorkspaceLayout";
 
 /**
  * PLAN-0582 S2: the right dock. Presentation only — the open tab set, the active
@@ -92,10 +94,24 @@ const emit = defineEmits<{
     "update:width": [width: number];
     "toggle-focus": [];
     "row-key": [payload: ContainerRowKeyPayload];
+    /** task-97（D-1754 ②）：「+」重开已关闭面板 —— 布局写入在 workbench 的 `openDockTab`。 */
+    "reopen-tab": [id: DockTabId];
 }>();
 
 const { t } = useI18n();
 const overflowOpen = ref(false);
+/**
+ * task-97（D-1754 ②）：右栏「+」= 重开已关闭面板。候选 = `DOCK_TAB_IDS` 减去已打开集合
+ * （标签复用既有 `DOCK_TAB_LABEL_KEYS`，不新造 IA）；点击只 emit，布局写入在调用方。
+ */
+const reopenOpen = ref(false);
+const closedDockTabs = computed<DockTabId[]>(() =>
+    DOCK_TAB_IDS.filter((id) => !props.tabs.some((tab) => tab.id === id)),
+);
+function reopenTab(id: DockTabId): void {
+    reopenOpen.value = false;
+    emit("reopen-tab", id);
+}
 const panelRef = ref<HTMLElement | null>(null);
 const bubbleRef = ref<HTMLElement | null>(null);
 /**
@@ -307,6 +323,42 @@ function handleResizeKeydown(event: KeyboardEvent) {
             @tab-auxclick="(id, event) => handleTabAuxClick(event, id)"
         >
             <template #actions>
+                <!--
+                    task-97（D-1754 ②）：右栏「+」= 重开已关闭面板，**簇内首项**（紧贴页签右侧、
+                    窗口控件之前；浏览器 tab strip 的 + 语义）。点击走 `reopen-tab` emit，
+                    由 workbench 的 `openDockTab` 统一写布局（上限/激活/单栏揭示不在这里重复）。
+                -->
+                <div class="relative shrink-0">
+                    <button
+                        type="button"
+                        data-testid="workspace-container-plus-right"
+                        class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        :aria-label="t('workspace.containerPlusReopen')"
+                        :title="t('workspace.containerPlusReopen')"
+                        :aria-expanded="reopenOpen"
+                        :disabled="closedDockTabs.length === 0"
+                        @click="reopenOpen = !reopenOpen"
+                    >
+                        <Plus class="size-3.5" aria-hidden="true" />
+                    </button>
+                    <div
+                        v-if="reopenOpen && closedDockTabs.length > 0"
+                        data-testid="dock-reopen-menu"
+                        class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
+                    >
+                        <button
+                            v-for="id in closedDockTabs"
+                            :key="id"
+                            type="button"
+                            :data-testid="`dock-reopen-item-${id}`"
+                            class="flex w-full min-h-7 items-center rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click="reopenTab(id)"
+                        >
+                            {{ t(DOCK_TAB_LABEL_KEYS[id]) }}
+                        </button>
+                    </div>
+                </div>
+
                 <div v-if="hasOverflow" class="relative shrink-0">
                     <button
                         type="button"

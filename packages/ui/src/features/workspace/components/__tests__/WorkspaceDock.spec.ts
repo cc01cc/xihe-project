@@ -25,6 +25,16 @@ const i18n = createI18n({
                 // aria-label 走容器键（不再用 dockTabs 键）。
                 containerRight: "Right container",
                 containerMain: "Main container",
+                // task-97（D-1754 ②）：右栏行「+」= 重开已关闭面板；菜单项走 panel* 键。
+                containerPlusReopen: "Reopen a closed panel",
+                panelFiles: "Files",
+                panelCode: "Code",
+                panelChanges: "Changes",
+                panelMonitor: "Monitor",
+                panelMembers: "Members",
+                panelContext: "Context",
+                panelAgents: "Agents",
+                panelDelegation: "Delegation",
             },
         },
     },
