@@ -2,9 +2,9 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
-import { FolderTree } from "@lucide/vue";
+import { FolderTree, Plus } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
     TREE_COLLAPSED_WIDTH,
@@ -24,6 +24,7 @@ import {
     type WorkbenchSqueezeResult,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
+import { workspacePath } from "../../../lib/routes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
@@ -656,6 +657,14 @@ function openDockTab(id: DockTabId): void {
     revealRightColumn();
 }
 
+/**
+ * task-97（D-1754 ②）：main 行「+」= 新建会话。与工具栏 `WorkspaceToolbar.newChat()` 同一机制
+ * （`?newChat=1` 由 `WorkspaceView` 的 watcher 消费并创建会话），不新造第二条新建路径。
+ */
+function openNewMainTab(): void {
+    router.push({ path: workspacePath(props.workspaceId), query: { newChat: "1" } });
+}
+
 /** Toolbar toggles: pressing the active tab collapses the dock but keeps tabs/width. */
 function toggleDockTab(id: DockTabId): void {
     if (dockOpen.value && activeDockTab.value === id) {
@@ -685,6 +694,7 @@ function setActiveDockTab(id: string): void {
  * 静默 return 是**有意的**：在手机上强行改桌面布局会把用户的页签集合写坏。</p>
  */
 const route = useRoute();
+const router = useRouter();
 const deepLinkAgentId = computed<string | null>(() => {
     const value = route.query.agent;
     return typeof value === "string" && value.length > 0 ? value : null;
@@ -951,7 +961,26 @@ defineExpose({ openDockTab });
                     </template>
                 </WorkspaceShellDockview>
             </div>
-            <div v-else data-testid="workspace-center" class="flex min-h-0 min-w-0 flex-1 flex-col">
+            <!--
+                task-81（D-1796 同族）：focus 时**中栏整列退场**，不只是把里面那一列藏起来。
+
+                原来的写法只给 `workspace-main` 加了 `v-show="!dockFocus"`，而
+                `workspace-center`（它的祖父，两个 `flex-1` 包装层之一）**照样 `flex-grow:1`**
+                ⇒ 一个内容全空的盒子仍跟右栏各拿 50%。实测（1920×1080，focus 态）：
+                `center 758.30 + dock 759.31 = workbench 1517.61`，即 `dock/workbench = 0.5003`
+                —— 用户看到的就是「放大面板只占半页」的 758px 空白。
+                把中栏设成 `display:none`（只改 DOM 的对照实验）⇒ 右栏立刻吃满 100.0%（三档视口全中）。
+
+                **必须是 v-show 不能是 v-if**：D26-04 要求 ChatPanel 保持挂载 —— 卸载它会丢掉
+                SSE 订阅与流式状态（`useSSE.ts:555-557`）。这里只是让整列不参与布局。
+                `workspace-main` 自己那条 `v-show` 保留：单测与 e2e 断的就是它的 `style.display`。
+            -->
+            <div
+                v-else
+                v-show="!dockFocus"
+                data-testid="workspace-center"
+                class="flex min-h-0 min-w-0 flex-1 flex-col"
+            >
                 <!--
                     task-174 / D-1545：窄屏「两栏仍然是两栏，同时只显示单栏、可以切换」的切换控件。
                     只在 single 形态渲染（今天即移动壳）；桌面形态不出现，不影响现有布局。
@@ -982,10 +1011,28 @@ defineExpose({ openDockTab });
                             container-id="main"
                             :tabs="mainContainerTabs"
                             :active-id="mainContainerActiveId"
+                            allow-empty
                             @select="selectWorkspaceTab($event)"
                             @close="closeWorkspaceTab($event)"
                             @row-key="onContainerRowKey"
-                        />
+                        >
+                            <!--
+                                task-97（D-1754 ②）：main 行「+」= 新建会话，落在行尾 actions 槽的
+                                簇内首项（紧贴页签右侧）。0 页签时行仍渲染（allowEmpty，D-1757 裁③ 只给 main）。
+                            -->
+                            <template #actions>
+                                <button
+                                    type="button"
+                                    data-testid="workspace-container-plus-main"
+                                    class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    :aria-label="t('sidebar.newChat')"
+                                    :title="t('sidebar.newChat')"
+                                    @click="openNewMainTab"
+                                >
+                                    <Plus class="size-3.5" aria-hidden="true" />
+                                </button>
+                            </template>
+                        </WorkspaceContainerTabs>
                         <slot name="center" />
                     </div>
                 </div>
@@ -1019,6 +1066,7 @@ defineExpose({ openDockTab });
                 @update:width="setDockWidth"
                 @toggle-focus="toggleDockFocus"
                 @row-key="onContainerRowKey"
+                @reopen-tab="openDockTab"
             >
                 <!--
                     D-1777/D-1778：files = 目录树的面板身份（右栏容器）。树宽 = 右栏 dock 宽；

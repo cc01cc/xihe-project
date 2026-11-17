@@ -395,6 +395,14 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         // The dock is the growing flex child and its resizer is gone.
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').classes()).toContain("flex-1");
         expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(false);
+        // task-81：整个中栏也退场，不只是藏里面那一列。
+        // 只藏 workspace-main 时，它的祖父 workspace-center 仍是 flex-grow:1 的空盒子
+        // ⇒ 跟右栏各拿 50%（实测 dock/workbench = 0.5003，「放大面板」只占半页）。
+        // jsdom 没有布局引擎、量不到宽度（先例见 layouts/__tests__/AppLayout.spec.ts:191-197），
+        // 所以这里只断机制；份额由 e2e/mock/task81-focus-share.spec.ts 断。
+        const centerWrapper = wrapper.get('[data-testid="workspace-center"]');
+        expect(centerWrapper.exists()).toBe(true); // 仍是 v-show：挂载着，只是不参与布局
+        expect((centerWrapper.element as HTMLElement).style.display).toBe("none");
         // Focus is persisted and never reports a forced-floating fallback.
         await expectStored(() => expect(storedLayout().dockFocus).toBe(true));
         expect(toastWarning).not.toHaveBeenCalled();
@@ -420,6 +428,10 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         );
         expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(true);
         expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        // task-81：中栏整列也必须还原回场上（v-show 撤回 ⇒ 不再 display:none）。
+        expect(
+            (wrapper.get('[data-testid="workspace-center"]').element as HTMLElement).style.display,
+        ).not.toBe("none");
         await expectStored(() => expect(storedLayout().dockFocus).toBe(false));
     });
 
