@@ -59,7 +59,15 @@ const searchQuery = computed(() => sessionStore.searchQuery.trim().toLowerCase()
 const isSearching = computed(() => searchQuery.value.length > 0);
 const hasWorkspace = computed(() => workspaces.value.length > 0);
 
-/** 当前工作区排第一 —— `D-1174`：「我在哪」要在列表最上面看得见。 */
+/**
+ * 当前工作区排第一 —— `D-1174`：「我在哪」要在列表最上面看得见。
+ *
+ * <p><b>与「独立会话在最上」是两条正交的轴，不要用一条去消解另一条：</b>
+ * 本函数只管**工作区组之间**的相对顺序（当前组打头）；独立会话分组是独立项，按模板顺序
+ * 排在所有工作区组**之前**（`D-1754` ③）。所以最终顺序 = 独立会话 → 当前工作区 → 其余工作区。
+ * 若把 standalone 挪回 `v-for` 之后，`D-1754` ③ 被推翻；若把当前工作区挪出首位，
+ * `D-1174` 被推翻 —— 两条各有断言 `WorkspaceSessionGroups.standalone.spec.ts` 同时钉。</p>
+ */
 const orderedWorkspaces = computed<ApiWorkspace[]>(() => {
     const current = workspaces.value.find((item) => item.id === currentWorkspaceId.value);
     if (!current) return workspaces.value;
@@ -90,7 +98,8 @@ function visibleSessions(workspaceId: string): Session[] {
 /**
  * task-373 / `D-1228` + `D-1236`：独立会话分组（无工作区）。
  *
- * <p>三条裁定：命名「独立会话」；**为 0 隐藏分组**；位置沉底（`D-1221`）。它不属于任何
+ * <p>三条裁定：命名「独立会话」；**为 0 隐藏分组**；**位置在最上**（`D-1754` ③，用户 2026-11-17
+ * 裁定「上提」，该条明写作废 `D-1221` ①「位置：列表末尾」；其余三条硬约束继续有效）。它不属于任何
  * 工作区，所以不参与按组懒加载 —— 一个用户只有一份，首屏一次请求就够（要知道有没有，
  * 才能决定渲不渲染）。</p>
  *
@@ -311,6 +320,70 @@ defineExpose({
         </div>
 
         <template v-else>
+            <!-- task-373 / `D-1236`：独立会话**在最上** —— `D-1754` ③（用户 2026-11-17 裁定「上提」，
+                 该条明写作废 `D-1221` ①「位置：列表末尾」）。为 0 隐藏；读失败仍渲染 + 重试。 -->
+            <section v-if="showStandalone" data-testid="sidebar-standalone-group" class="mb-1">
+                <div class="flex items-center gap-1">
+                    <button
+                        type="button"
+                        data-testid="sidebar-standalone-group-toggle"
+                        :aria-expanded="standaloneExpanded"
+                        :aria-label="t('sidebar.standaloneGroup')"
+                        class="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click="standaloneExpanded = !standaloneExpanded"
+                    >
+                        <ChevronRight
+                            class="size-3.5 shrink-0 transition-transform"
+                            :class="{ 'rotate-90': standaloneExpanded }"
+                            aria-hidden="true"
+                        />
+                        <MessageSquare class="size-4 shrink-0 opacity-70" aria-hidden="true" />
+                        <span class="truncate">{{ t("sidebar.standaloneGroup") }}</span>
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="sidebar-standalone-group-new"
+                        :aria-label="t('sidebar.newChatStandalone')"
+                        :title="t('sidebar.newChatStandalone')"
+                        class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click="emit('new-standalone-session')"
+                    >
+                        <Plus class="size-3.5" aria-hidden="true" />
+                    </button>
+                </div>
+
+                <div v-if="standaloneExpanded" data-testid="sidebar-standalone-group-body">
+                    <div
+                        v-if="standaloneLoading"
+                        data-testid="sidebar-standalone-loading"
+                        class="flex items-center justify-center gap-2 px-3 py-4 text-xs text-muted-foreground"
+                    >
+                        <Loader2 class="size-3 animate-spin" aria-hidden="true" />
+                        {{ t("sidebar.standaloneLoading") }}
+                    </div>
+                    <div
+                        v-else-if="standaloneError"
+                        data-testid="sidebar-standalone-error"
+                        class="px-3 py-4 text-center"
+                    >
+                        <p class="text-xs text-sidebar-foreground">{{ standaloneError }}</p>
+                        <button
+                            type="button"
+                            data-testid="sidebar-standalone-retry"
+                            class="mt-2 rounded-md border border-sidebar-border px-2 py-0.5 text-xs hover:bg-sidebar-accent"
+                            @click="retryStandalone"
+                        >
+                            {{ t("common.retry") }}
+                        </button>
+                    </div>
+                    <SessionList
+                        v-else-if="visibleStandalone.length"
+                        :sessions="visibleStandalone"
+                        standalone
+                    />
+                </div>
+            </section>
+
             <section
                 v-for="workspace in orderedWorkspaces"
                 :key="workspace.id"
@@ -410,69 +483,6 @@ defineExpose({
                             {{ t("sidebar.newChat") }}
                         </button>
                     </div>
-                </div>
-            </section>
-
-            <!-- task-373 / `D-1236`：独立会话沉底（`D-1221`），为 0 隐藏；读失败仍渲染 + 重试。 -->
-            <section v-if="showStandalone" data-testid="sidebar-standalone-group" class="mb-1">
-                <div class="flex items-center gap-1">
-                    <button
-                        type="button"
-                        data-testid="sidebar-standalone-group-toggle"
-                        :aria-expanded="standaloneExpanded"
-                        :aria-label="t('sidebar.standaloneGroup')"
-                        class="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        @click="standaloneExpanded = !standaloneExpanded"
-                    >
-                        <ChevronRight
-                            class="size-3.5 shrink-0 transition-transform"
-                            :class="{ 'rotate-90': standaloneExpanded }"
-                            aria-hidden="true"
-                        />
-                        <MessageSquare class="size-4 shrink-0 opacity-70" aria-hidden="true" />
-                        <span class="truncate">{{ t("sidebar.standaloneGroup") }}</span>
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="sidebar-standalone-group-new"
-                        :aria-label="t('sidebar.newChatStandalone')"
-                        :title="t('sidebar.newChatStandalone')"
-                        class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        @click="emit('new-standalone-session')"
-                    >
-                        <Plus class="size-3.5" aria-hidden="true" />
-                    </button>
-                </div>
-
-                <div v-if="standaloneExpanded" data-testid="sidebar-standalone-group-body">
-                    <div
-                        v-if="standaloneLoading"
-                        data-testid="sidebar-standalone-loading"
-                        class="flex items-center justify-center gap-2 px-3 py-4 text-xs text-muted-foreground"
-                    >
-                        <Loader2 class="size-3 animate-spin" aria-hidden="true" />
-                        {{ t("sidebar.standaloneLoading") }}
-                    </div>
-                    <div
-                        v-else-if="standaloneError"
-                        data-testid="sidebar-standalone-error"
-                        class="px-3 py-4 text-center"
-                    >
-                        <p class="text-xs text-sidebar-foreground">{{ standaloneError }}</p>
-                        <button
-                            type="button"
-                            data-testid="sidebar-standalone-retry"
-                            class="mt-2 rounded-md border border-sidebar-border px-2 py-0.5 text-xs hover:bg-sidebar-accent"
-                            @click="retryStandalone"
-                        >
-                            {{ t("common.retry") }}
-                        </button>
-                    </div>
-                    <SessionList
-                        v-else-if="visibleStandalone.length"
-                        :sessions="visibleStandalone"
-                        standalone
-                    />
                 </div>
             </section>
         </template>

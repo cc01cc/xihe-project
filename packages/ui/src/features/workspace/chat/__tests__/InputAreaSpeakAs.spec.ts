@@ -39,9 +39,12 @@ const messages = {
             followUpComposerNotice: "当前任务之后执行",
             followUpPausedNotice: "追加到暂停队列末尾",
             followUpFullNotice: "队列已满，草稿保留",
+            input: {
+                // task-114：夹具跟产品走（三栏都有栏外说明）。
+                toLabelHint: "本条以所选身份的账号发出，对方看到的是它，不是你",
+            },
         },
         workspace: {
-            speakAsLabel: "以此身份发言",
             participantUnknownName: "未知用户",
         },
         multimodal: { image: "图片", screenshot: "截图", voice: "语音" },

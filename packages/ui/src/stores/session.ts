@@ -202,7 +202,7 @@ export const useSessionStore = defineStore("session", () => {
      *
      * <p>与 `sessionsByWorkspace` 同三条约束：不覆盖当前工作区的 live 投影、命中缓存不重拉、
      * 归一化只走 `toSession`。差别是它没有 workspace 键 —— 一个用户只有一份，且它**不属于**
-     * 任何工作区分组（左栏沉底渲染，为 0 隐藏）。</p>
+     * 任何工作区分组（左栏**在最上**渲染，为 0 隐藏；`D-1754` ③ 已作废 `D-1221` ①「位置：列表末尾」，位置由 `WorkspaceSessionGroups.vue` 模板钉）。</p>
      */
     const workspacelessSessions = ref<Session[]>([]);
     const workspacelessLoaded = ref(false);

@@ -92,6 +92,8 @@ const messages = {
                 workspaceLessNoTargets: "独立会话不支持附件（仅纯对话）",
                 workspaceLessDropped: "独立会话不支持附件，本条已去掉附件后发送",
                 toLabel: "代发身份",
+                // task-114：夹具跟产品走（三栏都有栏外说明）。
+                toLabelHint: "本条以所选身份的账号发出，对方看到的是它，不是你",
                 toTargetsLabel: "发送",
                 // task-102：与产品同文（两条都回答免打扰问题）。
                 toHint: "相当于 {'@'}，会作为重要通知送达，不会被免打扰屏蔽（可多选）",
@@ -110,7 +112,7 @@ const messages = {
             },
             delegation: { button: "委派", reasonUnknown: "未知原因" },
         },
-        workspace: { speakAsLabel: "以此身份发言", participantUnknownName: "未知用户" },
+        workspace: { participantUnknownName: "未知用户" },
         multimodal: { image: "图片", screenshot: "截取屏幕", voice: "语音输入" },
         common: { cancel: "取消" },
     },

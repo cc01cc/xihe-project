@@ -50,6 +50,8 @@ const messages = {
             followUpFullNotice: "队列已满，草稿保留",
             input: {
                 toLabel: "代发身份",
+                // task-114：夹具跟产品走（三栏都有栏外说明）。
+                toLabelHint: "本条以所选身份的账号发出，对方看到的是它，不是你",
                 toTargetsLabel: "发送",
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
@@ -59,7 +61,6 @@ const messages = {
             },
         },
         workspace: {
-            speakAsLabel: "以此身份发言",
             participantUnknownName: "未知用户",
         },
         multimodal: { image: "图片", screenshot: "截图", voice: "语音" },

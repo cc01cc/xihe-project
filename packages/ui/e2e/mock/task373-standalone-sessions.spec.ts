@@ -8,7 +8,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeou
  * task-373 / `D-1228` + `D-1236` 的硬判据：**一个无工作区的会话能在界面上被找到并打开**。
  *
  * <p>这里全部用真组件 + mock 数据（夹具 `workspacelessSessions` 走 `GET /sessions?scope=workspaceless`，
- * 与工作区作用域是两份数据）。判据覆盖：分组沉底、为 0 隐藏、行可点开独立会话页、新建入口两项菜单、
+ * 与工作区作用域是两份数据）。判据覆盖：分组在最上（D-1754 ③，D-1221 ① 作废）、为 0 隐藏、行可点开独立会话页、新建入口两项菜单、
  * 零工作区用户不落「还没有工作区」空态，以及代表性移动 viewport。</p>
  */
 const WS_ID = "11111111-1111-4111-8111-111111111111";
@@ -52,9 +52,10 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
         const group = page.getByTestId("sidebar-standalone-group");
         await expect(group).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(group).toContainText("独立会话");
-        // 沉底（D-1221）：它是分组容器里的最后一个 section。
+        // 在最上（D-1754 ③，D-1221 ① 作废）：它是分组容器里的第一个 section。
         const sections = page.locator('[data-testid="sidebar-workspace-groups"] section');
-        await expect(sections.last()).toHaveAttribute("data-testid", "sidebar-standalone-group", {
+        // D-1754 ③：独立会话在最上（D-1221 ① 作废）。first 是顺序判据，last 已不代表位置。
+        await expect(sections.first()).toHaveAttribute("data-testid", "sidebar-standalone-group", {
             timeout: EXPECT_TIMEOUT_MS,
         });
 

@@ -45,6 +45,8 @@ const messages = {
             delegation: { button: "委派", reasonUnknown: "未知原因" },
             input: {
                 toLabel: "代发身份",
+                // task-114：夹具跟产品走（三栏都有栏外说明）。
+                toLabelHint: "本条以所选身份的账号发出，对方看到的是它，不是你",
                 toTargetsLabel: "发送",
                 // task-102：夹具跟产品走 —— 两条都回答「会不会被免打扰屏蔽」（旧夹具只有 cc 回答，
                 // 且写的是「可能被」而代码两侧都不吃 muted，等于夹具在替过期文案背书）。
@@ -63,7 +65,7 @@ const messages = {
                 recipientUnknown: "没有找到这个成员",
             },
         },
-        workspace: { speakAsLabel: "以此身份发言", participantUnknownName: "未知用户" },
+        workspace: { participantUnknownName: "未知用户" },
         multimodal: { image: "图片", screenshot: "截屏", voice: "语音" },
         common: { cancel: "取消" },
     },
@@ -191,6 +193,29 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
         expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("普通");
         expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("抄送通知");
         expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("免打扰");
+        wrapper.unmount();
+    });
+
+    it("②b 代发身份也有栏外说明，且与另两条同构（task-114）", async () => {
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        const hint = wrapper.get('[data-testid="composer-speak-as-hint"]');
+        // 同构判据：类名元组必须与 composer-send-hint / composer-cc-hint 逐字相同
+        // （不是「看起来差不多」—— 三栏说明必须是同一种东西，否则就是第四种样式）。
+        expect(hint.classes()).toEqual(wrapper.get('[data-testid="composer-send-hint"]').classes());
+        await wrapper.get('[data-testid="cc-expand"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="composer-speak-as-hint"]').classes()).toEqual(
+            wrapper.get('[data-testid="composer-cc-hint"]').classes(),
+        );
+
+        // 文案判据：回答「本条以谁的账号发出」（读者据此知道该选谁），
+        // **不是**解释「代发身份」这个词是什么意思 —— 后者对要动手选的人毫无帮助。
+        const text = hint.text();
+        expect(text).toContain("所选身份");
+        expect(text).toContain("账号发出");
+        expect(text).toContain("不是你");
         wrapper.unmount();
     });
 

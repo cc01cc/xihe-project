@@ -36,13 +36,14 @@ const messages = {
             stop: "停止",
             input: {
                 toLabel: "收件人",
+                // task-114：夹具跟产品走（三栏都有栏外说明）。
+                toLabelHint: "本条以所选身份的账号发出，对方看到的是它，不是你",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
             },
         },
         workspace: {
-            speakAsLabel: "以此身份发言",
             participantUnknownName: "未知用户",
         },
         multimodal: { image: "图片", screenshot: "截图", voice: "语音" },
