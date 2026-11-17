@@ -361,6 +361,7 @@ export LOCALAPPDATA="$LA"        # data root = <LOCALAPPDATA>/Xihe (PG cluster /
 ```
 
 - **`start` blocks** through the pg→cp→agent→runtime→ui gates, then exits 0 leaving detached children (no Job Object). First-run chain: secrets (7 keys, owner-only ACL) → security env=prod 5/5 → pgvector install → initdb → db-bootstrap (role xihe / db xihe_1 / extension vector / SELECT 1) → CP (Flyway incl. V163) → agent → runtime → ui.
+- **A fresh instance boots with a seeded admin** (task-205/D-1818): the launcher injects `XIHE_SEED_ADMIN=true`, so CP DataSeeder creates **admin@xihe.local** (instance owner, SUPER_ADMIN) with the launcher-generated password disclosed only in **FIRST-RUN.txt (0600)**; the first user logs in with instance:admin — no self-service claim needed.
 - **webui = CP same-origin** (D32-06): `GET http://127.0.0.1:<cpPort>/` = 200; `/actuator/health` = 200.
 - **status**: `... status --install "$S"` prints each service's alive/ready plus "stack is up". **Note the status process exits 1 even when "stack is up" — judge liveness by the text, not the exit code.**
 - **stop**: `... stop --install "$S"` kills the tree in reverse order and rechecks residual ports; success prints `residual=[]` and removes the pid file.

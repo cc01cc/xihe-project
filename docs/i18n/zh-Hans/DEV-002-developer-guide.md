@@ -384,6 +384,7 @@ export LOCALAPPDATA="$LA"        # 数据根 = <LOCALAPPDATA>/Xihe（PG 簇/secr
 ```
 
 - **start 阻塞**过 pg→cp→agent→runtime→ui 门后 exit 0，留 detached 子进程（无 Job Object）。首跑链：secrets 7 keys(owner-only ACL) → security env=prod 5/5 → pgvector 安装 → initdb → db-bootstrap(role xihe/db xihe_1/extension vector/SELECT 1) → CP(Flyway 含 V163) → agent → runtime → ui。
+- **fresh 实例带 seeded admin**（task-205/D-1818）：launcher 注入 `XIHE_SEED_ADMIN=true`，CP DataSeeder 建 **admin@xihe.local**（instance owner，SUPER_ADMIN），密码=launcher 生成、仅见 **FIRST-RUN.txt（0600）**；首用户登录即得 instance:admin，无需自助 claim。
 - **webui = CP 同源**（D32-06）：`GET http://127.0.0.1:<cpPort>/` = 200；`/actuator/health` = 200。
 - **status**：`... status --install "$S"` 输出每服务 alive/ready + 「stack is up」。**注意 status 进程 exit=1 但「stack is up」——判活看文本，不看 exit**。
 - **stop**：`... stop --install "$S"` 逆序树 kill + 残留端口复核；成功输出 `residual=[]` + pid 文件移除。
