@@ -604,11 +604,11 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
             <!--
                 task-138：展开箭头原为 `text-muted-foreground`。**同一个 class 在两种状态下读数不同**，
                 因为 vendor ghost Button 的 `aria-expanded:bg-muted` 把展开态的表头条染成 --muted：
-                折叠态（底 = --card 255）实测浅 5.251 合格，展开态（底 = --muted 232）实测浅 **4.286 < 4.5**。
-                即「名义 token 值 ≠ 实际合成值」——不能拿 muted-foreground 的字面值判。
+                展开态（实测底 = --muted 232）浅 **4.286 < 4.5**；折叠态（实测底 243）浅 4.732 合格。
+                即「名义 token 值 ≠ 实际合成值」—— 不能拿 muted-foreground 的字面值（或假定的 255 底）判。
                 修法用 task-86 已立的用法侧先例（`ScheduledTasksView` 的 bg-muted 徽标）：换
-                `text-foreground/60`，对 --muted 实测浅 4.903 / 深 6.144；折叠态在数值上与原色**同值**
-                （fg .6 落在 255 上 = 108 = muted-foreground），所以这次改动只动展开态。
+                `text-foreground/60` ⇒ 展开态实测浅 **4.903** / 深 6.144（达标）；折叠态 4.732 → 5.098
+                （本来就达标，改后仍达标，浅侧字色 108 → 103，肉眼几乎无差）。
                 可点态/禁用态：箭头在 `config-domain-toggle-*` 原生 button 内、disabled=false ⇒ 可点态 ⇒ 4.5 族。
             -->
             <span class="mt-0.5 shrink-0 text-foreground/60" aria-hidden="true">{{
