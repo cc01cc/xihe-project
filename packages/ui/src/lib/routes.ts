@@ -1,3 +1,14 @@
+/**
+ * 工作台模块的 **picker 入口**（旧模块 URL `/workspace`）：路由表把它声明成 redirect 记录
+ * （⇒ `/workbench` 的 `workspace-home`，无 tab 上下文时渲染 `WorkspacePicker`）。
+ *
+ * <p><b>为什么是一处定义</b>：这个路径有两个互不相邻的消费者 —— ① 路由表的 redirect 记录；
+ * ② `lib/lastLocation.ts#isExplicitPickerEntry`（task-111 / H4-c：**显式进 picker 不是恢复入口**，
+ * 否则上一跳会劫持用户「我要选择面」的显式意图）。两处各写一个字面量时，改名不会有任何红点，
+ * 只会让 H4-c 判据静默失效（`redirectedFrom.path` 再也对不上）。</p>
+ */
+export const WORKSPACE_PICKER_PATH = "/workspace";
+
 export function workspacePath(workspaceId: string): string {
     return `/workspace/${encodeURIComponent(workspaceId)}`;
 }

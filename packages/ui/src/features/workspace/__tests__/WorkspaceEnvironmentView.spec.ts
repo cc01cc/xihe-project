@@ -28,6 +28,8 @@ vi.mock("vue-router", () => ({
     }),
     createRouter: () => ({
         beforeEach: vi.fn<() => void>(),
+        // task-111：router/index.ts 模块级注册 afterEach，替身必须带齐同形方法。
+        afterEach: vi.fn<() => void>(),
         push: vi.fn<() => void>(),
         replace: vi.fn<() => void>(),
     }),

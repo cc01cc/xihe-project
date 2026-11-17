@@ -272,6 +272,41 @@ describe("useAuthStore", () => {
         store.logout();
         expect(sessionStorage.getItem("xihe-workspace")).toBeNull();
     });
+
+    it("logout clears the last-location key（task-111 H3：登出不得跨账号恢复）", () => {
+        const store = useAuthStore();
+        localStorage.setItem(
+            "xihe-last-location",
+            JSON.stringify({
+                kind: "standalone",
+                workspaceId: null,
+                sessionId: SESSION_ID,
+                at: new Date().toISOString(),
+            }),
+        );
+        expect(localStorage.getItem("xihe-last-location")).not.toBeNull();
+        store.logout();
+        expect(localStorage.getItem("xihe-last-location")).toBeNull();
+    });
+
+    it("remote logout clears the last-location key too（同一 clearAuthState 内部清理）", () => {
+        useAuthStore(); // 注册 onRemoteLogout 监听
+        localStorage.setItem(
+            "xihe-last-location",
+            JSON.stringify({
+                kind: "workspace",
+                workspaceId: WORKSPACE_ID,
+                sessionId: null,
+                at: new Date().toISOString(),
+            }),
+        );
+        expect(localStorage.getItem("xihe-last-location")).not.toBeNull();
+        // 经真 channel 的 storage 事件面触发 handleRemoteLogout（onRemoteLogout 注册的入口）
+        window.dispatchEvent(
+            new StorageEvent("storage", { key: "xihe-auth-logout", newValue: "1" }),
+        );
+        expect(localStorage.getItem("xihe-last-location")).toBeNull();
+    });
 });
 
 describe("useAuthStore capabilities (PLAN-0610 W5a)", () => {

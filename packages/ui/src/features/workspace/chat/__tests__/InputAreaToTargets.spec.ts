@@ -343,6 +343,21 @@ describe("InputArea · task-453 发送让位默认代发", () => {
         expect(wrapper.findAll('[data-testid="speak-as-chip"]')).toHaveLength(0);
     });
 
+    /**
+     * task-114 负侧：代发被让位时栏外说明**不渲染** —— 那条路径本条不代发，照常说
+     * 「以所选身份发出」就是假话（InputArea.vue 注释原文）。让位提示（task-453）取而代之，
+     * 两条互斥同屏。正向（未让位时说明在）一并钉住，别只跑负例。
+     */
+    it("task-114：代发被让位 ⇒ composer-speak-as-hint 消失，speak-as-overridden-hint 顶上", async () => {
+        const wrapper = mountWithSpeakAs();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="composer-speak-as-hint"]').exists()).toBe(true);
+
+        await pickTo(wrapper, "Helper");
+        expect(wrapper.find('[data-testid="composer-speak-as-hint"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="speak-as-overridden-hint"]').exists()).toBe(true);
+    });
+
     it("To 首目标 == 默认代发 ⇒ 保留 asParticipantId（CP 允许相等）", async () => {
         const wrapper = mountWithSpeakAs();
         await flushPromises();

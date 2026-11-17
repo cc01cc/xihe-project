@@ -39,6 +39,8 @@ vi.mock(
             // 那里在模块求值时调用 `createRouter`/`createWebHistory`，所以 mock 必须提供最小实现。
             createRouter: () => ({
                 beforeEach: () => undefined,
+                // task-111：router/index.ts 模块级注册 afterEach，替身必须带齐同形方法。
+                afterEach: () => undefined,
                 push: async () => undefined,
                 replace: async () => undefined,
                 currentRoute: { value: {} },

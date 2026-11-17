@@ -17,6 +17,7 @@ import {
     writeTabWorkspace,
     type TabWorkspace,
 } from "../lib/workspaceContext";
+import { clearLastLocation } from "../lib/lastLocation";
 import { broadcastLogout, onRemoteLogout } from "../services/authChannel";
 import { useSessionStore } from "./session";
 import { clearWorkspaceChatForUserSwitch } from "../features/workspace/chat/lifecycle";
@@ -495,6 +496,10 @@ export const useAuthStore = defineStore("auth", () => {
         localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
         clearTabWorkspace();
+        // task-111 / H3：上一跳（跨 tab，localStorage）同批清 —— 登出换账号后绝不能把
+        // 上一个账号的会话恢复回来（跨账号信息泄漏）。清理在 clearAuthState 内部，
+        // logout / handleRemoteLogout / forceLogout 所有路径自动生效。
+        clearLastLocation();
         // Logout: clear the anonymous telemetry session id (PLAN-0527 decision #5).
         clearAnonSessionId();
         clearSessionCaches();

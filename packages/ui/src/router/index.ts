@@ -8,6 +8,14 @@ import {
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
 import { isUuid } from "../lib/uuid";
+import { WORKSPACE_PICKER_PATH } from "../lib/routes";
+import {
+    isExplicitPickerEntry,
+    lastLocationForRoute,
+    readLastLocation,
+    resolveLastLocationTarget,
+    writeLastLocation,
+} from "../lib/lastLocation";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
 import {
@@ -90,7 +98,9 @@ const router = createRouter({
             // task-34（原 task-228）：模块入口 /workspace → /workbench。**容器路由
             // `/workspace/:workspaceId/**` 不动**（工作区=容器层、工作台=模块层，两层标识符
             // 不再混用）。旧 URL 走 redirect 保留书签/文档深链，query/hash 原样透传（card ②(a)）。
-            path: "/workspace",
+            // 路径取 `WORKSPACE_PICKER_PATH`（task-111 / H4-c）：它是「显式进 picker」的唯一锚点，
+            // 与 `isExplicitPickerEntry` 的判据同源 —— 两处各写字面量时改名不会红，只会让判据静默失效。
+            path: WORKSPACE_PICKER_PATH,
             redirect: (to) => ({ path: "/workbench", query: to.query, hash: to.hash }),
         },
         {
@@ -634,10 +644,42 @@ router.beforeEach(async (to) => {
             if (tabWorkspaceId) {
                 return { path: `/workspace/${tabWorkspaceId}`, query: to.query };
             }
+            // task-111 / H4-c（Lead 2026-11-17 裁定）：**显式导航到 picker 路由不是恢复入口**。
+            // `/workspace` 经路由表 redirect 落到本条（`workspace-home`）时，用户要的就是选择面
+            // —— 这时恢复等于劫持他的显式意图（被上一跳拖回某个会话，picker 不出现）。判据用
+            // vue-router 挂的 `to.redirectedFrom`（重定向链上保留最初位置），释义见
+            // `lib/lastLocation.ts#isExplicitPickerEntry`。命中 ⇒ 直接放行到 picker。
+            // 反面**不许跟着废**：`/workbench` 冷启（无 `redirectedFrom`）等仍照旧恢复 —— 本分支
+            // 是函数最后一个判定，`return true` 就是「不恢复」的完整语义。
+            if (isExplicitPickerEntry(to)) return true;
+            // task-111 / H1：**tab 上下文（sessionStorage，逐 tab）优先** —— 只有本 tab
+            // 没有上下文时才读跨 tab 的上一跳（localStorage）。两个 tab 各停一处时，
+            // 本 tab 重载必须回本 tab 的落点，不能被另一 tab 的最后写点拖走。
+            // `resolveLastLocationTarget` 对坏值 fail-closed（非 UUID 不恢复），不会把
+            // 守卫弹进 invalid-workspace 反弹。
+            const restored = resolveLastLocationTarget(readLastLocation());
+            if (restored) {
+                return { path: restored, query: to.query };
+            }
         }
     }
 
     return true;
+});
+
+/**
+ * task-111 / D-1754 ①：上一跳（`xihe-last-location`）的**唯一写点**。
+ *
+ * 写点必须是 `afterEach`（卡面 H2）：导航被守卫 redirect 时（非 UUID 深链、入口
+ * 弹走等），`afterEach` 只对**真正落地**的那次导航触发 —— redirect 目标不会被记成
+ * 上一跳；写点若在 `beforeEach`，被弹走的深链目标会先被写下来，冷启恢复就会撞回
+ * 那个根本到不了的目标。哨兵：`plan-0608-browser.spec.ts`（只读，不许编辑）。
+ */
+router.afterEach((to, _from, failure) => {
+    // 取消/重复（duplicated）的导航没有「到达」新位置，不写。
+    if (failure) return;
+    const entry = lastLocationForRoute(to);
+    if (entry) writeLastLocation(entry);
 });
 
 export default router;
