@@ -23,3 +23,21 @@
     --dv-inactivegroup-hiddenpanel-tab-background-color: var(--muted);
     --dv-tabs-and-actions-container-font-size: 13px;
 }
+
+/*
+ * task-181（BL-561 / task-486 面）：.dv-sash 键盘焦点环。
+ *
+ * dockSashA11y 已给 sash 挂 role/tabindex（键盘可达），但 vendor 无层规则
+ * `.dv-split-view-container .dv-sash-container .dv-sash { outline: none }` 压过 base 层
+ * 全局 `*:focus-visible` outline ⇒ 键盘聚焦时焦点不可见（真浏览器实测 outline-style:none、
+ * box-shadow:none）。照 sidebar/dock 分隔条的环形态（focus-visible:ring-2 ring-ring/50，
+ * Tailwind ring 即 box-shadow）补一个 2px outset 环。
+ *
+ * 为什么用 box-shadow 而不是 outline：vendor 只设了 sash 的 outline:none、不碰 box-shadow，
+ * 故 box-shadow 无竞争规则、不需要拼特异性（.dv-sash:focus-visible 特异性低于 vendor 的
+ * 三类选择器，拼 outline 会输）。颜色走既有 --ring token 的 50%（与 ring-ring/50 同值），
+ * 不新增色阶。outline 仍由 vendor 保持 none，与参照分隔条的 outline-none 一致。
+ */
+.dv-sash:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 50%, transparent);
+}
