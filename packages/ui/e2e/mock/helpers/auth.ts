@@ -1455,6 +1455,11 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // （required `isRepository` / `entries`，entry `{status, path}`）：**非 Git 工作区**的
     // 合法读数就是 `isRepository:false` + 空 entries —— 不虚构脏文件（脏文件数会改文件树徽标，
     // 那属于各 spec 自己的夹具面；spec 内后注册的 `page.route` 照旧覆盖本桩）。
+    //
+    // ⚠️ **新增工作台 spec 的硬规矩**：任何 `goto("/workspace/**")` 的用例都必须经
+    // `setupMockAuth()`（本桩在这里）；自己拼 `page.route` 的，同批补一条 `git-status` 桩。
+    // 缺桩 = 正文断言全过却被三通道门判红（假红），排查入口见 `e2e/README.md`
+    // §「公共桩：工作台任意用例都会打 git-status」。
     await page.route("**/api/v1/workspaces/*/git-status", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         await route.fulfill({

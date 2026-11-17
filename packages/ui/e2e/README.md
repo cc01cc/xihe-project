@@ -55,3 +55,23 @@ node -e "const s=require('./packages/ui/e2e/.mock-report.json').stats;console.lo
 - 门的两级判据（D-1039 ②）：一级 mtime 只标"可疑"（两次都 5 条），**二级定性**才判红（改前 4 / 改后 5）—— 差别就是本卡那个**未提交**的 spec。
 - ⇒ **该门当前走不到 counts / skip 标题比对那一层**（staleness 前置就 exit 2），所以"我只改了非 skip 的标题 ⇒ 门读数不变"这句话**不成立**：读数从 4 条变 5 条，原因是脏树，不是计数。
 - 门绿的通路只有两条：①把改动提交后重跑全量 `mise run test:mock` 再判；②`--allow-stale-report` 显式接受（须写明理由，别当默认）。
+
+## 公共桩：**工作台任意用例都会打 `git-status`**（task-65 收尾段，2026-11-17）
+
+**规则（新增工作台 spec 必须核这条）**：自 `D-1777` / `D-1778` 起，文件树是右栏 `files` 面板，
+宽屏首启就是 active 页签 ⇒ **任何挂到 `/workspace/**` 的用例**一进页面就会发
+`GET /api/v1/workspaces/{id}/git-status`（`FileTreePanel.vue` → `useWorkspaceGitReadState`）。
+
+- 桩在 `e2e/mock/helpers/auth.ts` 的 `setupMockAuth()` 里（`{isRepository:false, entries:[]}`，
+  形状照 `docs/api/openapi.yaml` 的 `GET /workspaces/{workspaceId}/git-status`）。
+- **所以工作台 spec 必须走 `setupMockAuth()`**（自己拼 `page.route` 的用例请同批补这条桩）。
+- 缺桩的症状是**假红**：请求落到 `**/api/v1/**` 的 404 兜底 → `page-failures` 三通道门把整条用例判红，
+  而正文断言往往**全过**（实测 task174/task184/task2/bl576/task353/task369/task497 共 20+ 条）。
+  红点落点离根因最远 —— 排查时先看 `[page-failures]` 那行，再看断言。
+- 同一类「公共桩」还有 `POST` 之外的两处（`mock-test.ts` 的 `auth/bootstrap-status`、`auth.ts` 的
+  `scheduled-tasks` 列表）：**新增工作台端点桩时同步这一节**，否则下一个人还会再踩一次。
+
+**待批的方案（不落实现）**：把「工作台 spec 必有 git-status 桩」做成机器门，候选两条 ——
+①静态检查：扫 `e2e/mock/*.spec.ts` 里 `goto("/workspace` 的用例，文件内必须出现 `setupMockAuth`
+（或显式 `git-status` 桩）；②运行期检查：`page-failures` 门在 404 命中 `git-status` 时把失败信息
+前置一行「缺公共桩」提示。①成本低、②定位准，选哪条要 Lead 拍（先给方案，不动 `mock-test.ts`）。

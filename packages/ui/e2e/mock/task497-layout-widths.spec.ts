@@ -1,22 +1,27 @@
 /**
- * task-497：wokbench 三栏几何 —— **dock 组必须有约束**（mock lane，L0 单 spec）。
+ * task-497：工作台**右栏（dock）宽度有约束** + 主列拿回余量（mock lane，L0 单 spec）。
  *
- * 背景（task-486 接线时的超范围观察，已由 Lead 立项）：dock 组此前**没有任何约束**，
- * 库把剩下的空间全给它 ⇒ 宿主 1158 时实测 tree=240 / main=100 / dock=818。
- * S1 时树宽 min=max=240 把注意力钉在树上，所以没人看见。
+ * ── 迁移（2026-11-17 · task-65 收尾段 · D-1777 / D-1778）────────────────────────────────
+ * 原文件断的是 **dockview 实例里的三栏几何**（`data-dockview-panel="tree"/"main"/"monitor"`）：
+ * 树在 dockview 里是**独立 group**，所以「树宽 200–320」「dock 宽 320–480」是两条独立的量。
+ * 用户 2026-11-17 裁定（`D-1777`）把树搬进右栏 `files` 面板 ⇒ **树宽 = 右栏 dock 宽**，
+ * 「两条独立的量」塌成一条；而 dockview 路径本身还在 S1（`WorkspaceShellDockview.vue`）里
+ * 维护树面板、尚未跟上 `files` 面板身份（task-144 ② 在办）⇒ 本文件原来量的是**未跟上模型的那条路径**。
  *
- * 本卡的边界（Lead 2026-11-14 裁定）：
- *   · 497 = dock 组有约束（不超 480）+ 主列拿到余量（不再出现 main=100）；
- *   · **640 硬底线与 §1.5-C 让位顺序属 task-504**，不在本卡做。
- *     算术依据：`host 1158 − tree_min 200 − dock_min 320 − 两条缝 ≈ 8 = 630 < 640`
- *     ⇒ 三栏全取最小也到不了 640，那不是「修 dock 吃余量」而是布局策略。
+ * **契约仍然有效，所以是迁移不是退场**：本卡要守的是「dock 组有约束（不超 480）+ 主列拿到余量
+ * （不再出现 main=100）」，这两件事在**产品路径（手写 dock）**上同样可判 —— 断对象换成
+ * `[data-testid="workspace-aux-panel"]`，主列仍是 `[data-testid="workspace-main"]`。
+ * 顺带把浮动态的两条用例**退场**（它们断的是 `dockMode: floating` 的存在性，而那是 `D-1754 ④`
+ * 判据 3 要消灭的形态 —— 判据**被推翻**，不是前提退场；接手 = task-94 / 判据 3 的裁定）。
+ *
+ * 本卡的边界（Lead 2026-11-14 裁定）：**640 硬底线与 §1.5-C 让位顺序属 task-504**，不在本卡做。
+ * 算术依据：`host 1158 − tree_min 200 − dock_min 320 − 两条缝 ≈ 8 = 630 < 640`。
  *
  * 判据（含 Lead 裁定①：**pinned 档才断言 dock 夹取**）：
- *   ① pinned（视口 ≥1800 派生）：dock 在实例内，宽度落在 320–480；
- *   ② pinned：主列拿到余量（本卡的中间底线 480，取代原来的 100）；
- *   ③ floating（窄档）：右栏**不在实例内** —— `[data-dockview-panel=monitor]` 计数 0、
- *      `.dv-sash` 仅 1 条（负向断言：对象不存在时，断言它不存在本身就是有判别力的判据）；
- *   ④ 树宽仍在 200–320（折叠态 40）且与持久值一致 —— 不许为救主列把树宽改回钉死。
+ *   ① pinned（1920）：dock 宽落在 320–480；主列拿到余量（本卡中间底线 480，不再是 100）；
+ *   ② 树宽 = dock 宽：`workspace-file-tree` 必须按右栏宽渲染（树不再有自己的 200–320 夹取）；
+ *   ③ 键盘 End 把 dock 夹到上限并落盘（取整/夹取通道不是装饰）；
+ *   ④ 浮动态两条用例：**退场（判据被推翻）**，见文件末墓碑。
  *
  * 跑法：`$env:XIHE_UI_PORT='12737'; pnpm exec playwright test --config e2e/playwright.config.ts
  * e2e/mock/task497-layout-widths.spec.ts`
@@ -26,26 +31,27 @@ import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import {
+    DOCK_WIDTH_KEYBOARD_STEP,
     DOCK_WIDTH_MAX,
     DOCK_WIDTH_MIN,
-    TREE_COLLAPSED_WIDTH,
-    TREE_WIDTH_MAX,
-    TREE_WIDTH_MIN,
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
 } from "../../src/composables/useWorkspaceLayout";
 
 const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
-const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}11111111-1111-4111-8111-111111111111`;
+const LAYOUT_KEY = WORKSPACE_LAYOUT_STORAGE_PREFIX + "11111111-1111-4111-8111-111111111111";
 /** 本卡的中间底线（640 属 task-504）。取 480 = dock 夹取上限，低于它说明主列又被吃回去了。 */
 const MAIN_INTERIM_FLOOR = 480;
 
 interface Geometry {
-    host: number;
-    tree: number;
+    /** 工作台这一行（中栏 + 右栏，不含导航）。 */
+    row: number;
     main: number;
     dock: number;
-    dockPanel: number;
-    sashes: number;
+    /** 目录树面板（右栏 files 的身体）的宽。 */
+    files: number;
+    /** 右栏左缘 / 主列右缘（判「并排不重叠」）。 */
+    dockLeft: number;
+    mainRight: number;
 }
 
 /**
@@ -53,7 +59,7 @@ interface Geometry {
  *
  * 宿主链上有 `transition-[flex-grow] duration-300`，挂载后宽度从 ~410 长到最终值；
  * 300 ms 内取样会读到中间态（实测 1920 视口中途取到 host=1149 / tree=200 / main=100，
- * 稳定值是 host=1158 / tree=240）。把中间态当缺陷读数会假红，把它当"修好了"会假绿。
+ * 稳定值是 host=1158 / tree=240）。把中间态当缺陷读数会假红，把它当「修好了」会假绿。
  */
 async function waitForStableGeometry(page: Page): Promise<void> {
     await page.waitForFunction(
@@ -64,10 +70,9 @@ async function waitForStableGeometry(page: Page): Promise<void> {
                     return el ? Math.round(el.getBoundingClientRect().width) : -1;
                 };
                 return [
-                    w(".dockview-host"),
-                    w('[data-dockview-panel="tree"]'),
-                    w('[data-dockview-panel="main"]'),
-                    w('[data-dockview-panel="monitor"]'),
+                    w('[data-testid="workspace-workbench"]'),
+                    w('[data-testid="workspace-main"]'),
+                    w('[data-testid="workspace-aux-panel"]'),
                 ].join("/");
             };
             const box = globalThis as { __xh497Stable?: { at: number; w: string } };
@@ -84,125 +89,159 @@ async function waitForStableGeometry(page: Page): Promise<void> {
     );
 }
 
-async function openWorkbench(
-    page: Page,
-    viewport: { width: number; height: number },
-): Promise<void> {
+async function openWorkbench(page: Page, viewport = { width: 1920, height: 1080 }): Promise<void> {
     await page.setViewportSize(viewport);
     await page.goto(WORKSPACE_PATH);
     await page.waitForSelector('[data-testid="workspace-main"]', {
         state: "attached",
         timeout: EXPECT_TIMEOUT_MS,
     });
-    await page.waitForSelector('[data-dockview-panel="tree"]', {
-        state: "attached",
+    // 1920 视口 pinned ⇒ 右栏是实例内正常列，且首启默认 active 页签是 files（D-1777）。
+    await page.waitForSelector('[data-testid="workspace-aux-panel"]', {
+        state: "visible",
         timeout: EXPECT_TIMEOUT_MS,
     });
     await waitForStableGeometry(page);
 }
 
-/** 三栏 + 宿主宽度（取 dockview 里真实 group 的几何，不是 store 值）。 */
+/** 两栏 + 行宽（取真实几何，不是 store 值）。 */
 async function geometry(page: Page): Promise<Geometry> {
     return page.evaluate(() => {
-        const groupWidth = (panelId: string): number => {
-            const el = document
-                .querySelector(`[data-dockview-panel="${panelId}"]`)
-                ?.closest(".dv-groupview");
-            return el ? Math.round(el.getBoundingClientRect().width) : -1;
+        const box = (sel: string): DOMRect | null => {
+            const el = document.querySelector(sel);
+            return el ? el.getBoundingClientRect() : null;
         };
+        const row = box('[data-testid="workspace-workbench"]');
+        const main = box('[data-testid="workspace-main"]');
+        const dock = box('[data-testid="workspace-aux-panel"]');
+        const files = box('[data-testid="workspace-file-tree"]');
         return {
-            host: Math.round(
-                document.querySelector(".dockview-host")?.getBoundingClientRect().width ?? -1,
-            ),
-            tree: groupWidth("tree"),
-            main: groupWidth("main"),
-            dock: groupWidth("monitor"),
-            dockPanel: document.querySelectorAll('[data-dockview-panel="monitor"]').length,
-            sashes: document.querySelectorAll(".dv-sash").length,
+            row: row ? Math.round(row.width) : -1,
+            main: main ? Math.round(main.width) : -1,
+            dock: dock ? Math.round(dock.width) : -1,
+            files: files ? Math.round(files.width) : -1,
+            dockLeft: dock ? dock.left : -1,
+            mainRight: main ? main.right : -1,
         };
     });
 }
 
-async function storedTreeWidth(page: Page): Promise<number | null> {
+async function storedDockWidth(page: Page): Promise<number | null> {
     return page.evaluate((key) => {
         const raw = localStorage.getItem(key);
         if (!raw) return null;
-        const parsed = JSON.parse(raw) as { treeWidth?: unknown };
-        return typeof parsed.treeWidth === "number" ? parsed.treeWidth : null;
+        const parsed = JSON.parse(raw) as { dockWidth?: unknown };
+        return typeof parsed.dockWidth === "number" ? parsed.dockWidth : null;
     }, LAYOUT_KEY);
 }
 
 test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-        (globalThis as { __xhUseDockview?: boolean }).__xhUseDockview = true;
-    });
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
 });
 
 test("① pinned（1920）：dock 落进 320–480 夹取区间，主列不再被压到 100", async ({ page }) => {
-    await openWorkbench(page, { width: 1920, height: 1080 });
+    await openWorkbench(page);
     const g = await geometry(page);
-    const reading = `host=${g.host} tree=${g.tree} main=${g.main} dock=${g.dock}`;
+    const reading = "row=" + g.row + " main=" + g.main + " dock=" + g.dock + " files=" + g.files;
+    console.log("[task497/migrated]", JSON.stringify(g));
 
-    // 1920 视口按 `deriveDockMode` 派生 pinned ⇒ 右栏必须在实例内，否则本条判据没有被测对象。
-    expect(g.dockPanel, `pinned 档右栏应在 dockview 实例内（${reading}）`).toBe(1);
-    expect(g.dock, `dock 宽 ${g.dock} 不在 320–480（${reading}）`).toBeGreaterThanOrEqual(
+    // 前提：右栏必须是**正常列**（并排不重叠），否则下面量到的是 overlay 的宽。
+    expect(g.dock, "右栏必须有实际宽度（" + reading + "）").toBeGreaterThan(0);
+    expect(
+        g.dockLeft,
+        "右栏左缘必须 ≥ 主列右缘（右栏是正常列，不是 overlay；" + reading + "）",
+    ).toBeGreaterThanOrEqual(g.mainRight - 1);
+
+    // ① dock 夹取：320–480
+    expect(g.dock, "dock 宽 " + g.dock + " 不在 320–480（" + reading + "）").toBeGreaterThanOrEqual(
         DOCK_WIDTH_MIN,
     );
-    expect(g.dock, `dock 宽 ${g.dock} 超出夹取上限（${reading}）`).toBeLessThanOrEqual(
+    expect(g.dock, "dock 宽 " + g.dock + " 超出夹取上限（" + reading + "）").toBeLessThanOrEqual(
         DOCK_WIDTH_MAX,
     );
+
+    // ② 主列拿回余量（本卡中间底线；640 属 task-504）
     expect(
         g.main,
-        `主列被压到 ${g.main}（本卡底线 ${MAIN_INTERIM_FLOOR}；640 底线属 task-504）—— ${reading}`,
+        "主列被压到 " +
+            g.main +
+            "（本卡底线 " +
+            MAIN_INTERIM_FLOOR +
+            "；640 底线属 task-504）—— " +
+            reading,
     ).toBeGreaterThanOrEqual(MAIN_INTERIM_FLOOR);
-    expect(g.tree, `树宽 ${g.tree} 应仍在 200–320`).toBeGreaterThanOrEqual(TREE_WIDTH_MIN);
-    expect(g.tree, `树宽 ${g.tree} 应仍在 200–320`).toBeLessThanOrEqual(TREE_WIDTH_MAX);
+
+    // ③ 树宽 = dock 宽（**本文件迁移后的新判据**）：树不再有自己独立的 200–320 夹取，
+    //    它就是右栏 files 面板的身体 ⇒ 差超过 4 px 说明「树还是独立一列」的旧结构回来了。
+    expect(g.files, "目录树身体必须存在（" + reading + "）").toBeGreaterThan(0);
+    expect(
+        Math.abs(g.files - g.dock),
+        "树宽应 = 右栏宽（树不再有独立列宽；" + reading + "）",
+    ).toBeLessThanOrEqual(4);
+
+    // ④ 两栏吃掉整行（行宽没被第三方面板吃掉）
+    expect(
+        Math.abs(g.main + g.dock - g.row),
+        "主列 + 右栏应 ≈ 行宽 ±2 px（" + reading + "）",
+    ).toBeLessThanOrEqual(2);
 });
 
-for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 1024, height: 768 },
-]) {
-    test(`③ ${viewport.width}（floating）：右栏不在实例内 + 两栏几何仍成立`, async ({ page }) => {
-        await openWorkbench(page, viewport);
-        const g = await geometry(page);
-        const reading = `host=${g.host} tree=${g.tree} main=${g.main} dock=${g.dock} sashes=${g.sashes}`;
-
-        // 负向判据（Lead 裁定①）：floating 档右栏由手写 dock 承载，**不在** dockview 实例里。
-        // 把 -1 当宽度 0 去比 320–480 是假判据；断言「对象不存在」才有判别力。
-        expect(g.dockPanel, `floating 档右栏不得在实例内（${reading}）`).toBe(0);
-        expect(g.sashes, `floating 档只该有树↔主列一条缝（${reading}）`).toBe(1);
-
-        expect(g.main, `主列被压到 ${g.main}（${reading}）`).toBeGreaterThanOrEqual(
-            MAIN_INTERIM_FLOOR,
-        );
-        // 1024 档树默认折叠成 40px rail（PLAN-0582 §1.5-A），展开档才是 200–320。
-        const treeOk =
-            g.tree === TREE_COLLAPSED_WIDTH ||
-            (g.tree >= TREE_WIDTH_MIN && g.tree <= TREE_WIDTH_MAX);
-        expect(treeOk, `树宽 ${g.tree} 既不是折叠 40 也不在 200–320（${reading}）`).toBe(true);
-    });
-}
-
-test("④ 树宽与持久值一致（不许为救主列把树宽改回钉死）", async ({ page }) => {
-    await openWorkbench(page, { width: 1920, height: 1080 });
-    // 挂载本身不一定写盘（宽度没变就不发）⇒ 先用键盘把宽度改到边界，再核对「几何 == 持久值」。
-    // 这一条同时守「497 不许靠把树宽改回 min=max 来救主列」：锁死时键盘改不动 ⇒ poll 超时即红。
-    const sash = page.locator('.dv-sash[data-dock-sash-a11y="true"]');
-    await sash.focus();
+test("② 键盘 End：dock 夹到上限并落盘（夹取/写盘通道不是装饰）", async ({ page }) => {
+    await openWorkbench(page);
+    const resizer = page.locator('[data-testid="dock-resizer"]');
+    await resizer.focus();
     await page.keyboard.press("End");
     await expect
-        .poll(() => storedTreeWidth(page), { timeout: EXPECT_TIMEOUT_MS })
-        .toBe(TREE_WIDTH_MAX);
+        .poll(() => storedDockWidth(page), { timeout: EXPECT_TIMEOUT_MS })
+        .toBe(DOCK_WIDTH_MAX);
     await expect
-        .poll(() => geometry(page).then((g) => g.tree), { timeout: EXPECT_TIMEOUT_MS })
-        .toBe(TREE_WIDTH_MAX);
+        .poll(() => geometry(page).then((g) => g.dock), { timeout: EXPECT_TIMEOUT_MS })
+        .toBe(DOCK_WIDTH_MAX);
     const g = await geometry(page);
-    expect(g.dock, "树取最大宽后 dock 仍需在夹取区间内").toBeLessThanOrEqual(DOCK_WIDTH_MAX);
+    const reading = "row=" + g.row + " main=" + g.main + " dock=" + g.dock + " files=" + g.files;
+    console.log("[task497/migrated] keyboard-end", JSON.stringify(g));
+    // 树宽跟着 dock 宽走（同一份几何），主列仍不被吃穿。
+    expect(
+        Math.abs(g.files - g.dock),
+        "树宽应随 dock 宽一起变（" + reading + "）",
+    ).toBeLessThanOrEqual(4);
     expect(
         g.main,
-        `主列在树取最大宽时仍需 >= ${MAIN_INTERIM_FLOOR}（实际 ${g.main}）`,
+        "dock 取最大宽后主列仍需 ≥ " + MAIN_INTERIM_FLOOR + "（实际 " + g.main + "）",
     ).toBeGreaterThanOrEqual(MAIN_INTERIM_FLOOR);
+    // 键盘步长常量仍归产品所有：本卡只确认「End 到上限」，方向键步长的判据在 dock 手柄自己的用例里。
+    expect(DOCK_WIDTH_KEYBOARD_STEP, "键盘步长常量必须仍被产品导出（防删）").toBeGreaterThan(0);
+});
+
+/**
+ * ── 墓碑：浮动态（1440 / 1024）两条用例**被推翻**（不是前提退场）────────────────────────
+ *
+ * 原判据（Lead 裁定①的负向那一半）：窄视口派生 `dockMode: floating` ⇒ 右栏**不在 dockview 实例内**、
+ * 全页 `.dv-sash` 仅 1 条。它断的是「浮动态存在且可识别」。
+ *
+ * **推翻依据**：`D-1754 ④` 判据 3（用户 2026-11-17 原话「我们现在没有设计浮窗的」）要求
+ * 「右栏**不得是浮窗/overlay**」⇒ 「浮动态存在」不再是特性，而是待消灭的形态。
+ * 于是这两条不是「对象没了」，是**判据方向被推翻**：它们越绿，说明我们离用户要的越远。
+ * （Lead 明确否定过「保留 floating 仅作兜底、隐藏 toggle」的读法：`D-1754 ④` 原文是「不得是浮窗」，
+ * 不能读成「偷偷留着用」。）
+ *
+ * 接手：`D-1754 ④` 判据 3 的退场方案（`dockMode` / `deriveDockMode` / `dockModeManual`）
+ * 卡在三条不变式冲突上（`PLAN-0582 §1.5-C` 主列硬底线 640 / 「不关 dock」/ 本判据「禁浮窗」），
+ * **待用户裁定**后另开卡；届时窄视口应断「右栏仍是正常列」而不是「右栏不在实例内」。
+ */
+test.describe.skip("已退场：浮动态（被 D-1754 ④ 判据 3 推翻，等用户裁定退场方案）", () => {
+    for (const viewport of [
+        { width: 1440, height: 900 },
+        { width: 1024, height: 768 },
+    ]) {
+        test.skip(
+            viewport.width + "（floating）：右栏不在实例内 + 两栏几何仍成立【被推翻】",
+            () => {
+                // 旧判据：`dockPanel`（data-dockview-panel="monitor" 的计数）=== 0、`.dv-sash` === 1、
+                // 主列 ≥ 480、树宽 ∈ {40} ∪ [200,320]。
+                // 退场依据：它断的是 floating 形态**存在**；而用户要的是 floating **不存在**。
+            },
+        );
+    }
 });

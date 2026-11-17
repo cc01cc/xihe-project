@@ -1,12 +1,29 @@
 /**
- * task-353 / D-1207 甲案：文件树住进中栏容器 —— 判据①（层级）与判据③（折叠可逆）。
+ * ⚠️ **【被推翻 · superseded】本文件的判据①与 `D-1777` 正相反，保留仅为历史。**（2026-11-17）
  *
- * 判据②（宽度守恒）**不在这里**：它的量法归 `bl576-workbench-panel-widths.spec.ts`（同一份量法只留
- * 一处 —— 新写一条并行断言看起来更安全，实际会让旧守卫静默失效）。本文件只补 bl576 不覆盖的两件：
- *   ① 层级：文件树 panel 的祖先里有 `[data-testid="workspace-center"]`，且它与主区同属一个 group；
- *      反向（改造前）：树是工作台的第三列，父链上没有任何 `workspace-center` ⇒ 本断言必红。
- *   ③ 折叠可逆：收起 → 主区吃掉释放的宽度；展开 → 回到原宽（PLAN-0582「折叠态与宽度分开存」）。
- * 顺带出两张 1920×1080 辅助证据图（展开/收起各一张；图不作判据，判据是上面的数字）。
+ * ── 为什么退场：判据**错了**，不是对象没了 ─────────────────────────────────────────────
+ * 本文件是 `task-353` / `D-1207` 甲案的判据：**「文件树住进中栏容器」**（判据①：树 panel 的祖先里
+ * 必须有 `[data-testid="workspace-center"]`，且与主区同属一个 splitter group）。
+ *
+ * 用户 2026-11-17 明确推翻了这个归属：`D-1777` 原话「**右侧容器显示目录树组件**」，点击目录树在
+ * 中间容器打开文件内容 ⇒ **树归右栏、文件内容归中栏**，与 `D-1207` 甲案恰好相反。
+ * ⇒ 这不是「前提退场」（判据对、对象没了，例如 `task2-splitter-pointer-drag` 那种），而是
+ *   **判据被推翻**：今天如果树真的在 `workspace-center` 内，那才是错的。
+ *   两者必须分开写 —— 前者可以「等新对象」重启判据，后者**永远不该再变绿**。
+ *
+ * ── 为什么保留文件而不是删掉 ────────────────────────────────────────────────────────
+ * ① 它记录了一条**已经被用户否掉的归属方案**，删除会让「树该在哪一栏」这个问题重新变成无主状态；
+ * ② `D-1777` 里明写了「我上一轮把『判据没说的部分』读成『维持现状』」这个推理病 —— 本文件就是
+ *    那个错读的落地产物，留作反例。
+ *
+ * ── 接手（不给承接口就是「忘掉」，不是「退场」）────────────────────────────────────────
+ * · 「树在右栏、文件内容在中栏」的判据 → `bl576-workbench-panel-widths.spec.ts`（迁移后的层级判据⑤：
+ *   `workspace-file-tree` 必须在 `workspace-aux-panel` 内、右栏是正常列）；
+ * · 「有且只有两栏 + 右栏不是 overlay」→ `task174-container-tabs.spec.ts` 判据 8；
+ * · 折叠可逆（判据③）→ 折叠本体仍在（`treeRailVisible`），但判据里的「主区吃掉释放的宽度」是
+ *   splitter 语义，随内层 SplitterGroup 一起退场；右栏收起/折叠两态的新判据属 task-65 后续卡。
+ *
+ * 下面保留原始判据与量法（`test.skip`），只为让后来人能读懂「当时判的是什么」。
  */
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
@@ -83,7 +100,9 @@ test.beforeEach(async ({ page }) => {
     await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
 });
 
-test("task-353 判据①③：文件树在中栏容器内，收起与展开的宽度可逆", async ({ page }) => {
+test.skip("【被推翻 / D-1777 正相反】task-353 判据①③：文件树在中栏容器内，收起与展开的宽度可逆", async ({
+    page,
+}) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto(WORKSPACE_PATH);
     await page.waitForSelector(String.raw`[data-testid="workspace-workbench"]`, {
@@ -98,6 +117,8 @@ test("task-353 判据①③：文件树在中栏容器内，收起与展开的�
     const detail = `tree=${expanded.treeWidth.toFixed(1)} main=${expanded.mainWidth.toFixed(1)} center=${expanded.centerWidth.toFixed(1)}`;
 
     // 判据①：层级（不是可见性）。
+    // 【被推翻】D-1777 判的是「树在**右栏**、文件内容在中栏」——本块期望的方向与之正相反，
+    // 保留只为历史（见文件头）。**不要**把这组断言改成绿：今天树真在 center 里才是缺陷。
     expect(expanded.hasCenter, `中栏容器必须存在；${detail}`).toBe(true);
     expect(expanded.treeInCenter, `文件树 panel 必须在 workspace-center 内；${detail}`).toBe(true);
     expect(expanded.railInCenter, `文件树列壳必须在 workspace-center 内；${detail}`).toBe(true);

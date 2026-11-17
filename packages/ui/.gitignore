@@ -1,3 +1,10 @@
 
 # Playwright debug artifacts
 .playwright-cli/
+# e2e lane 的 Playwright 产物目录（XIHE_MOCK_OUTPUT_DIR 相对 e2e/ 解析 ⇒ e2e/.tmp-mock-<lane>/）。
+# task-65 收尾段（2026-11-17）实测：未忽略时包级 pnpm run lint（oxfmt --check .）会连里面的
+# JSON/HTML 一起检查 ⇒ exit 1，红点指向「格式」，根因却是「某人正在跑 e2e」。生产者是每条用例，
+# 所以按模式忽略，而不是逐个路径。
+.tmp-mock-*/
+# 同一批临时日志（跑完即删；忽略只是兜底，避免第二次踩同一个假红）。
+.tmp-*.log
