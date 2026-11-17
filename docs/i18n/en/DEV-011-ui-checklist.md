@@ -207,15 +207,64 @@ CRITERION = {
 ```bash
 node internal/A03-xihe/scripts/check-danger-entry.mjs --selftest   # fixtures + bidirectional mutation; exit 0 means the criterion itself is trustworthy
 node internal/A03-xihe/scripts/check-danger-entry.mjs              # full-repo scan, compares against baseline; exit 1 = new violations
-node internal/A03-xihe/scripts/check-danger-entry.mjs --write-baseline  # accept current state (idempotent: two writes on one tree share a sha)
+node internal/A03-xihe/scripts/check-danger-entry.mjs --raw        # full table of every reading as state × rawState (= --readings)
+node internal/A03-xihe/scripts/check-danger-entry.mjs --json       # baseline document + a raw-shape section (raw never enters the baseline file)
+node internal/A03-xihe/scripts/check-danger-entry.mjs --write-baseline    # accept current state (idempotent: two writes on one tree share a sha)
+node internal/A03-xihe/scripts/check-danger-entry.mjs --migrate-baseline  # rekey a baseline (boundary-checked, see below)
 ```
 
 **The criterion must be able to go red**: `--selftest` runs a **bidirectional mutation** — moving the confirm-surface red onto the entry must flip to `RED`;
 moving the entry red back onto the confirm surface must flip to `GREEN`. A criterion that only verifies one direction is a biased instrument, and the next defect passes through it.
 
-**Known limitation** (state it, or the next reader treats it as a bug): the confirm arm of an inline two-stage confirmation (the second button rendered
-by a `v-if` on the same row) is not inside a confirm container and is reported as `ENTRY_STATIC`; the scan annotates it with the `<v-if condition>` so a human can judge.
-It deliberately does **not** treat every conditional branch as compliant — that would remove the bite from the entire "red at the entry" category.
+#### Two readings: public bucket vs shape reading (`task-142`, 2026-11-17)
+
+Every reading carries two numbers. They have **different jobs and are never merged**:
+
+| Reading | What it is | Used for judgement |
+| --- | --- | --- |
+| `state` | **Compliance verdict.** Container recognition overrides it: anything inside a confirm surface is recorded as `CONFIRM_SURFACE`, no matter whether its own red is static or branch-gated | **Yes** — the only driver of the exit code |
+| `rawState` | **Shape reading.** The classifier's raw verdict on *the red of that element itself* (static / interaction-gated / dynamic branch / disabled segment) | No — never enters the public buckets |
+
+A mismatch between the two is **expected** (a `CONFIRM_SURFACE` entry usually has `rawState = ENTRY_STATIC`; static red inside a confirm surface is legal by definition).
+What you watch is the **change** in shape readings: ① a `rawState` downgrade; ② the number of dangerous readings dropping while no bucket grew — the element became `NONE` (it vanished from the reading table).
+The report prints the shape section by default; `--raw` prints the whole table; `--json` carries a `raw` section.
+
+**Why it has to be printed** (`task-137` measurement): after fixing the bundled foreground literal in `ConfirmModal`, `rawState = STATE_GATED` went 5 → 6,
+while the public buckets only recorded `CONFIRM_SURFACE` 17 → 18 — a reader could see the latter and nothing printed the former.
+
+#### Baseline and keys (`task-143`)
+
+The baseline key is `file:(id||tag)`; `id` is the **verbatim** `data-testid` (template literals keep their interpolation, e.g.
+`provider-connection-delete-${defaultConnection.id}`). When two entries share a key base, `#1/#2` is appended by line order and the collision is printed (never silent).
+
+- **Never key by line number**: 3 of the 8 baseline lines drifted within one working session (1340→1347 / 1921→1928 / 2256→2335+). Inserting one import creates a paired "gone + added" false red.
+- **Accepting and rekeying are separate operations**: `--write-baseline` accepts the current state (no boundary check); `--migrate-baseline` rekeys it and refuses to write unless the content multiset `file+tokens+conditional` still matches the old baseline **entry for entry** (**exit 3**). Rekeying is fine; smuggling in new entries is not.
+
+#### Three ways a confirm surface is recognised (`task-149`, 2026-11-17)
+
+| Source | Rule | Why it is needed |
+| --- | --- | --- |
+| Name allowlist | `BaseModal` / `ConfirmModal` / `AlertDialogContent` / `DialogContent` / `RevertPreviewDialog` | Vendor and in-house confirm shells that already existed |
+| Hand-written semantics | `role="alertdialog"` **and** `aria-modal="true"` | A hand-written confirm box has no component name (case `ProviderHub:1934`). `aria-modal` is required: plenty of always-mounted blocks carry a bare `role`, and whitelisting those would hide real violations |
+| Derived from source (modal shell) | **every** `<slot>` of the component renders inside a modal primitive (`DialogContent`/`SheetContent`/`AlertDialogContent`/`BaseModal`/`ConfirmModal`) | The allowlist is maintained by hand, so its gaps surface as false positives (case `CheckpointDialogShell` ⇒ `RevertPreviewDialog:427`) |
+
+**`role="dialog"` is deliberately excluded**: a generic dialog is not the confirmation stage (navigation sheets and import forms are dialogs too), and none of the four hand-written `role="dialog"` sites contains a dangerous action element (measured 2026-11-17).
+**The derivation rule is "every slot exit is inside a modal", not "the template mentions a modal primitive"**: the latter pulls in `Sidebar.vue` (desktop slot in a plain div, only the mobile branch goes into `SheetContent`) and `FileNodeMenu.vue` (slot in a plain element, the `BaseModal`s are siblings).
+Measured on fixtures (`fixture-m-not-shell` + `fixture-n-not-shell-user`): under the loose rule the host's **entry red reads as `CONFIRM_SURFACE`**, `--selftest` fails both anchors and exits 1 — **a false compliant is worse than a false positive, and it is silent** (the report only shows "fewer violations"). Derived names are printed in the report (`推导出的模态外壳：…`) so they cannot become a second invisible allowlist.
+
+#### The `cn('…')` fallback must gate per token (`task-149` ③)
+
+When a `:class` expression has no object, no ternary and no array (the common vendor form `cn('…default classes…', props.class)`), the old code judged the whole literal "always on",
+so every per-token gate inside the literal was lost: `data-[variant=destructive]:text-destructive` means "red only under the destructive variant" but was read as red at the entry
+(`DropdownMenuItem:27`, a vendor default class — changing it means editing code that is already correct).
+Now each token is gated (variant / interaction / disabled) and the **worst** verdict wins; if any single token is bare, the result is still `ENTRY_STATIC` (counter-fixture `fixture-j2-cn-bare` pins this, so the rule cannot degrade into "always `STATE_GATED`").
+The variant anchor was also widened to `(?:^|[\s:])` because `dark:data-[variant=destructive]:focus:bg-destructive/20` (modifier first) used to read as ungated;
+**only structural variants are widened (`data-`/`aria-`/`has-`/`[&…]`), not `dark:`/`sm:` themselves** — `dark:bg-destructive` is still static red to a dark-mode user.
+
+**Known limitations** (state them, or the next reader treats them as bugs):
+1. The confirm arm of an inline two-stage confirmation (the second button rendered by a `v-if` on the same row) is not inside a confirm container and is reported as `ENTRY_STATIC`;
+   the scan annotates it with the `<v-if condition>` so a human can judge. It deliberately does **not** treat every conditional branch as compliant — that would remove the bite from the entire "red at the entry" category.
+2. A hand-written confirm box using `role="dialog"` is not whitelisted (a generic dialog is not the confirmation stage); use `role="alertdialog"` + `aria-modal` instead.
 ## 11. UI review dimensions (screenshot review, user ruling 2026-11-11, D-926 / D-927)
 
 > The user's words: after UI work is done, review it from screenshots first — "button layout and whether each button means something; fonts, icons, overall interaction and static elements".

@@ -232,15 +232,65 @@ CRITERION = {
 ```bash
 node internal/A03-xihe/scripts/check-danger-entry.mjs --selftest   # 夹具 + 双向变异，exit 0 才算判据本身可信
 node internal/A03-xihe/scripts/check-danger-entry.mjs              # 全仓扫描，与基线比新增；exit 1 = 有新增违规
-node internal/A03-xihe/scripts/check-danger-entry.mjs --write-baseline  # 收账（幂等：同一棵树两次写盘 sha 相同）
+node internal/A03-xihe/scripts/check-danger-entry.mjs --raw        # 全部读数的 state × rawState 全表（= --readings）
+node internal/A03-xihe/scripts/check-danger-entry.mjs --json       # 基线文档 + raw 形态读数节（raw 不进基线文件）
+node internal/A03-xihe/scripts/check-danger-entry.mjs --write-baseline    # 收账（幂等：同一棵树两次写盘 sha 相同）
+node internal/A03-xihe/scripts/check-danger-entry.mjs --migrate-baseline  # 换键迁移（边界校验，见下）
 ```
 
 **判据必须能红**：`--selftest` 含**双向变异** —— 把确认面红搬到入口 ⇒ 必须变 `RED`；把入口红搬回确认面 ⇒ 必须变 `GREEN`。
 只朝一个方向验的判据会把仪器调成偏心版，下一个缺陷照样过。
 
-**已知局限**（照实写，否则下次被当缺陷）：行内两段式确认的**确认臂**（同一行 `v-if` 出来的第二个按钮）
-不在确认面容器内，扫描器读作 `ENTRY_STATIC`，靠输出的 `<v-if 条件>` 标注供人判读。**不把条件分支一律判合规** ——
-那会让「入口红」整类失去咬合力。
+#### 两套读数：公开分档 vs 形态读数（`task-142`，2026-11-17）
+
+每个读数带两个数，**分工不同、不合并成一个数**：
+
+| 读数 | 是什么 | 参与判定 |
+| --- | --- | --- |
+| `state` | **合规定性**。容器识别会覆盖它：元素在确认面内一律记 `CONFIRM_SURFACE`，与它自身是静态红还是分支红无关 | **是**，唯一决定 exit code |
+| `rawState` | **形态读数**。分类器对「元素自身的红以什么形态出现」的原始读数（静态 / 交互门控 / 动态分支 / disabled 段） | 否，不进公开分档 |
+
+两者不一致是**预期**（`CONFIRM_SURFACE` 的 `rawState` 绝大多数是 `ENTRY_STATIC`：确认面里的静态红本就合法）。
+要盯的是形态读数的**变化**：① `rawState` 掉档；② 有危险红的条数下降而分档没涨 —— 元素被判 `NONE`（= 从读数表里消失）。
+报告默认印「形态读数」节，`--raw` 给全表，`--json` 带 `raw` 节。
+
+**为什么必须打印**（`task-137` 实证）：修 `ConfirmModal` 的捆绑前景字面量后，`rawState=STATE_GATED` 涨了 1（5→6），
+而公开分档只把 `CONFIRM_SURFACE` 17→18 记了一笔 —— 读者看得见后者，前者当时在**任何** CLI 输出里都印不出来。
+
+#### 基线与键（`task-143`）
+
+基线键 = `file:(id||tag)`；`id` 取 `data-testid` **原文**（模板字面量保留插值表达式，如
+`provider-connection-delete-${defaultConnection.id}`），同一基座撞车时按行序加 `#1/#2`，且撞车会印出来（不静默）。
+
+- **不用行号做键**：本基线 8 条里有 3 条行号在半天内就漂了（1340→1347 / 1921→1928 / 2256→2335+）—— 插一行 import 就能造出「消失 + 新增」成对假红。
+- **收账与迁移分开**：`--write-baseline` 是收账（不问边界）；`--migrate-baseline` 是迁移（内容多重集 `file+tokens+conditional` 必须与旧基线**逐条相等**，否则 **exit 3 拒写**）—— 换键可以，顺手收新东西不行。
+
+#### 确认面的三种识别（`task-149`，2026-11-17）
+
+| 来源 | 规则 | 为什么需要 |
+| --- | --- | --- |
+| 名字白名单 | `BaseModal` / `ConfirmModal` / `AlertDialogContent` / `DialogContent` / `RevertPreviewDialog` | vendor 与项目内既有确认壳 |
+| 手写语义 | `role="alertdialog"` **且** `aria-modal="true"` | 手写确认框没有组件名（实例 `ProviderHub:1934`）。**要求 `aria-modal`** 才认：只写 `role` 的常驻区块不少，一律白名单化会把真违规藏起来 |
+| 源码推导（模态外壳） | 组件的**每一个** `<slot>` 渲染位置都在模态原语（`DialogContent`/`SheetContent`/`AlertDialogContent`/`BaseModal`/`ConfirmModal`）内 | 白名单是手维护的，缺口以假阳性形式出现（`CheckpointDialogShell` 实例 ⇒ `RevertPreviewDialog:427`） |
+
+**不收 `role="dialog"`**：generic dialog ≠ 确认阶段（导航 sheet / 导入表单都是 dialog），现有 4 处手写 `role="dialog"` 里也没有动作元素红（2026-11-17 实测）。
+**推导判据是「每个 slot 出口都在模态内」，不是「模板里有模态原语」**：后者会把 `Sidebar.vue`（桌面支 slot 在普通 div、只有移动支进 `SheetContent`）与 `FileNodeMenu.vue`（slot 在普通元素、几个 `BaseModal` 是并列兄弟）推导进来。
+夹具实测（`fixture-m-not-shell` + `fixture-n-not-shell-user`）：宽松判据下宿主的**入口红被读成 `CONFIRM_SURFACE`**，`--selftest` 两条 FAIL、exit 1 —— **假合规比假阳性更坏，而且它是静默的**（报告上只表现为「违规少了」）。推导名单会打进报告（`推导出的模态外壳：…`），避免它变成第二份看不见的白名单。
+
+#### `cn('…')` 兜底必须逐 token 判门控（`task-149` ③）
+
+`:class` 里既无对象、无三元、也不是数组时（vendor 常见 `cn('…默认类…', props.class)`），旧实现整条判「始终开着」，
+于是字面量内部的**逐 token 门控全部失效**：`data-[variant=destructive]:text-destructive` 本表示「只在 destructive 变体下红」，
+却被读成入口静态红（`DropdownMenuItem:27`，vendor 默认类 —— 改它等于改本来正确的代码）。
+现行：逐 token 判门控（变体 / 交互段 / disabled）后取**最坏**的一个；只要有任何一个 token 是裸的，仍是 `ENTRY_STATIC`
+（反例夹具 `fixture-j2-cn-bare` 钉住这点，防止被写成「一律 STATE_GATED」这种假修）。
+变体门控的锚点同时放宽到 `(?:^|[\s:])`：`dark:data-[variant=destructive]:focus:bg-destructive/20` 这类「修饰符在前」的写法以前读成无门控；
+**只放宽结构变体（`data-`/`aria-`/`has-`/`[&…]`），不放宽 `dark:`/`sm:` 本身** —— `dark:bg-destructive` 在暗色用户眼里就是入口静态红。
+
+**已知局限**（照实写，否则下次被当缺陷）：
+1. 行内两段式确认的**确认臂**（同一行 `v-if` 出来的第二个按钮）不在确认面容器内，扫描器读作 `ENTRY_STATIC`，
+   靠输出的 `<v-if 条件>` 标注供人判读。**不把条件分支一律判合规** —— 那会让「入口红」整类失去咬合力。
+2. 手写 `role="dialog"` 的确认框不在白名单（generic dialog ≠ 确认阶段）；这类框请改用 `role="alertdialog"` + `aria-modal`。
 ## 11. UI 审阅维度（截图审阅，2026-11-11 用户裁定 D-926 / D-927）
 
 > 用户原话：UI 开发完成后先截图自审 ——「各个按钮的布局 以及是否有意义；字体，图标，整体交互以及静态元素」。
