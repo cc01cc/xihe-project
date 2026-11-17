@@ -239,10 +239,11 @@ Chat SSE and streaming logs follow PLAN-197 Appendix C canonical fields plus the
 ### 6.4 Leak Scan Gate
 
 ```bash
-node scripts/scan-log-secrets.mjs [path ...]   # defaults to logs/
+node scripts/scan-log-secrets.mjs [path ...]   # default roots=logs/, but only git-TRACKED files within
+node scripts/scan-log-secrets.mjs --selftest   # built-in fixtures (6 cases, incl. reverse control)
 ```
 
-Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields; any hit exits 1. An unreadable file or permission failure itself fails the gate (throws instead of silent `continue`). This command is the gate for PLAN-195 M6 and PLAN-230 M4.
+Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields. **Scan face (task-174)**: only **git-tracked** `.log/.jsonl/.txt` files (via `git ls-files`); untracked files are skipped with a printed skip count. It previously scanned `logs/` unconditionally and fired on gitignored runtime logs (`logs/cp.out.log:125`), keeping `mise run lint` permanently red — a standing false signal drowning real ones (D-1005 family). **Runtime logs are not the secrets surface**: a secret printed into a runtime log is a defect of the printer (redaction discipline, `RedactingWriter` etc.), never something this gate should patch. A hit in a tracked file exits 1; an unreadable file or permission failure itself fails the gate (throws instead of silent `continue`). **git cannot answer ⇒ exit 2** (git unavailable / cwd not a repository): a gate that cannot run must never look green. Reverse control + fixtures: `--selftest`. This command is the gate for PLAN-195 M6 and PLAN-230 M4.
 
 ### 6.5 ChatRun and Provider Audit (PLAN-247)
 

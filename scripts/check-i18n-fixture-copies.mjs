@@ -29,8 +29,10 @@
  *   node scripts/check-i18n-fixture-copies.mjs --verbose          逐文件明细
  *   node scripts/check-i18n-fixture-copies.mjs --selftest         反例自检（造临时文件 ⇒ 必须计入 (a)）
  *   node scripts/check-i18n-fixture-copies.mjs --write-baseline   重写基线（只在收账后手工执行）
+ *   node scripts/check-i18n-fixture-copies.mjs --report-only      只报不阻断（task-172 快档默认；命中仍 exit 0）
  *
- * 退出码：0 = 未超出基线；1 = 出现基线外的 (a) 文件；2 = 脚本自身/仓库结构问题
+ * 退出码：0 = 未超出基线（或 --report-only 下命中只报）；1 = 出现基线外的 (a) 文件（阻断态）；
+ *         2 = 脚本自身/仓库结构问题（--report-only 也不吞 2：判不了绝不装绿）
  */
 
 import {
@@ -117,6 +119,7 @@ function parseArgs(argv) {
         verbose: false,
         selftest: false,
         writeBaseline: false,
+        reportOnly: false,
         ruler: DEFAULT_RULER,
         minLen: null,
         uiRoot: DEFAULT_UI_ROOT,
@@ -128,6 +131,7 @@ function parseArgs(argv) {
         else if (a === "--verbose") opts.verbose = true;
         else if (a === "--selftest") opts.selftest = true;
         else if (a === "--write-baseline") opts.writeBaseline = true;
+        else if (a === "--report-only") opts.reportOnly = true;
         else if (a === "--ui-root") opts.uiRoot = resolve(argv[(i += 1)]);
         else if (a === "--min-len") opts.minLen = Number(argv[(i += 1)]);
         else if (a === "--ruler") opts.ruler = argv[(i += 1)];
@@ -602,7 +606,10 @@ function main() {
                 2,
             ) + "\n",
         );
-        process.exit(newBeyondBaseline.length === 0 ? 0 : 1);
+        if (opts.reportOnly && newBeyondBaseline.length > 0) {
+            process.stderr.write("[i18n-copies] mode=report-only：基线外 (a) " + newBeyondBaseline.length + " 个，只报不阻断（转阻断见 check:i18n-fixture-copies:enforce）\n");
+        }
+        process.exit(newBeyondBaseline.length === 0 || opts.reportOnly ? 0 : 1);
     }
 
     const legacyLines = [];
@@ -659,9 +666,12 @@ function main() {
         }
     }
     if (newBeyondBaseline.length > 0) {
-        process.stdout.write("\n[i18n-copies] FAIL：以下文件是基线外的 (a) 真坑（ratchet 只许缩小）\n");
+        const label = opts.reportOnly
+            ? "REPORT（mode=report-only，只报不阻断；转阻断见 check:i18n-fixture-copies:enforce）"
+            : "FAIL";
+        process.stdout.write("\n[i18n-copies] " + label + "：以下文件是基线外的 (a) 真坑（ratchet 只许缩小）\n");
         for (const f of newBeyondBaseline) process.stdout.write("  + " + f + "\n");
-        process.exit(1);
+        process.exit(opts.reportOnly ? 0 : 1);
     }
     if (fixedNotReconciled.length > 0) {
         process.stdout.write("\n[i18n-copies] NOTE：以下基线项已不再是 (a)，可收账（--write-baseline）\n");

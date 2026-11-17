@@ -182,6 +182,9 @@ mise run ledger:validate      # read-only ledger (BL/PLAN) validation; run from 
 mise run check:e2e-bypass     # PLAN-0687: in-page fetch bypass audit in e2e/real (report-only; annotation or allowlist required)
 mise run lint:e2e             # task-252/66: E2E static hygiene — timeout budget + block-comment early close (a glob in a JSDoc breaks the whole lane load)
 mise run lint:i18n            # task-96: zh-CN/en-US key sets, {placeholder} drift, static t("…") refs; read-only, silent when clean (part of mise run lint)
+mise run check:ui-copy        # task-172: UI copy-judgment fast lane (i18n cluster 4 files, report-only; part of mise run lint)
+mise run check:i18n-fixture-copies  # task-318/172: fixture i18n-copy ratchet (report-only; part of mise run lint)
+mise run check:dev-i18n-drift  # task-316/172: zh/en DEV id-set drift (report-only; part of mise run lint)
 mise run check:mise-env       # task-131/273/313: XIHE_* vars used in properties must be registered (fail-closed; first step of validate)
 mise run check:openapi:lint   # task-133/313: Redocly spec-level lint ($ref / operationId / unused); part of validate, errors-only (124 warnings don't block)
 mise run check:docs-gates     # doc gates aggregate (docs-index + doc-bytes + md-tables); run from the ONE workspace root as the monitor's ⑧ question, not by validate

@@ -146,7 +146,7 @@ Workspace 执行事件（PLAN-235 约定，`WorkspaceExecutionRouter` + oneshot 
 | exec 开始 / 成功 / 失败 | `workspaceId`、`profile`、`operation`、`requestId`、`durationMs`、`errorCode` |
 | job start / cancel / cleanup | `workspaceId`、`jobId`、`status` |
 
-`command`/`args`/`stdout` 与 `/tmp/xihe-jobs` 输出内容永不进入明文日志，由 `scan-log-secrets` 门禁覆盖。
+`command`/`args`/`stdout` 与 `/tmp/xihe-jobs` 输出内容永不进入明文日志，由**打印方脱敏纪律**（`RedactingWriter` / `RedactingLogstashEncoder` / `log_redact`）保证。`scan-log-secrets` 门禁（task-174 起）**只扫 git 跟踪的 log 类文件**（仓库卫生面），不再扫 gitignored 运行时日志——运行时日志若混入 secret 是打印方的缺陷，不是靠扫日志文件来补（见 §6.4）。
 
 ### 3.4. UI (TypeScript/Vue) — 输出通道
 
@@ -277,12 +277,16 @@ provider 日志仅 `provider`/`model`/`status`/`durationMs`/`errorCode`。
 ### 6.4 泄露扫描门禁
 
 ```bash
-node scripts/scan-log-secrets.mjs [path ...]   # 默认扫描 logs/
+node scripts/scan-log-secrets.mjs [path ...]   # 默认 roots=logs/，但只扫其中 git 跟踪的文件
+node scripts/scan-log-secrets.mjs --selftest   # 内置夹具 6 例（含反向对照）
 ```
 
 扫描模式：`Bearer` / JWT / PEM / `Authorization:` / JSON 敏感字段。
 
-- 命中即退出码 1；读取失败或权限失败本身也使门禁失败（`throw` 而非静默 `continue`）。
+- **扫描面（task-174）**：只扫 **git 跟踪**的 `.log/.jsonl/.txt`（`git ls-files` 判定）；未跟踪文件跳过并打印跳过数。此前无条件扫 `logs/` 会命中 gitignored 运行时日志（`logs/cp.out.log:125`）使 `mise run lint` 恒红——常态假信号吃掉真信号（D-1005 同族）。**运行时日志不是凭据泄露面**：secret 打进运行时日志归打印方脱敏纪律管（`RedactingWriter` 等），不靠本门补。
+- 跟踪文件里命中即退出码 1；读取失败或权限失败本身也使门禁失败（`throw` 而非静默 `continue`）。
+- **git 判不了 ⇒ exit 2**（git 不可用 / cwd 不在仓内）：不能跑的门绝不装绿。
+- 反向对照与夹具：`--selftest`（跟踪裸 secret 必被抓 / 未跟踪同内容兄弟被跳过 / 干净文件 exit 0 / 脱敏值不命中 / git 坏 exit 2 / 跳过注记含边界）。
 - 该命令是 PLAN-195 M6 与 PLAN-230 M4 的安全门禁。
 
 ### 6.5 ChatRun 与 provider 审计（PLAN-247）

@@ -480,7 +480,12 @@ alias = "check:config-schema"
 # 实测成本（2026-11-15 本机）：冷启 1,560 ms（944 + 360）；在 lint 聚合内热跑整条 = 300.6 ms（子门 98 + 123 ms）⇒ 每次 lint 多 ~0.3 s。
 # 接线后两个子门默认用法不变（不带 --enforce 的一门仍 report-only ⇒ 不新增阻断语义）；
 # 成员行可见性按 D-1457 验证；若成员行缺失，先分清"没接线"与"被并行 depends 首个失败掐掉"（D-1457-S1）。
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings"]
+# task-172（来源 task-101 判定 (b)）：文案判据快档三成员并入 lint —— check:ui-copy（i18n 判据簇
+# 4 文件 42 例 ~4.75 s）/ check:i18n-fixture-copies（夹具副本 ratchet）/ check:dev-i18n-drift（DEV 中英漂移）。
+# **三者默认 report-only（命中恒 exit 0）⇒ 不新增阻断语义**，只把「604 s 全量里才跑到的文案判据」提到高频面。
+# 唯一例外：脚本自身崩溃 exit 2 仍会中止聚合（判不了不许装绿，且崩溃是真问题）。:enforce 兄弟任务已建、**不接线**，
+# 连续两窗 findings=0 再议转阻断。实测增量 ≈6 s（vitest 地板 1.3 s + 簇 4.75 s；脚本门合计 ~1.4 s）。
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings", "check:ui-copy", "check:i18n-fixture-copies", "check:dev-i18n-drift"]
 description = "Run all linters"
 alias = "lint"
 
@@ -845,8 +850,39 @@ alias = "check:e2e-bypass"
 # 盲区（负向陈述 / 运行态 task 卡 / 相对子路由 / 不覆盖组件名与 testid）由脚本在输出里自己打印。
 [tasks."check:dev-i18n-drift"]
 run = "node scripts/check-dev-i18n-drift.mjs"
-description = "Report-only DEV i18n drift: zh/en id-set asymmetry (PLAN/D/task) + registration lookup in plans/ (incl. archive, files and dirs) and decision ledgers; prints scan surface and blind spots; never fails (use --enforce manually); NOT in validate.depends"
+description = "Report-only DEV i18n drift: zh/en id-set asymmetry (PLAN/D/task) + registration lookup in plans/ (incl. archive, files and dirs) and decision ledgers; prints scan surface and blind spots; never fails on hits. task-172: wired into mise run lint as a report-only member (still NOT in validate.depends). Selftest: --selftest (9 cases)."
 alias = "check:dev-i18n-drift"
+
+# task-172：:enforce 兄弟（手工阻断态；**不接任何聚合**，转阻断须连续两窗 findings=0 后另议）。
+[tasks."check:dev-i18n-drift:enforce"]
+run = "node scripts/check-dev-i18n-drift.mjs --enforce"
+description = "Enforce DEV i18n drift gate (hits ⇒ exit 1). Manual only; NOT wired into lint/validate. Promote after two consecutive clean windows."
+alias = "check:dev-i18n-drift:enforce"
+
+# task-172 快档①：UI 文案判据簇（terminology/locale/settingsCopyRules/usageCopyRules，4 文件 42 例）。
+# 薄包装 scripts/check-ui-copy.mjs（vitest 无 --report-only，故包装；禁 || true，崩溃 exit 2 不装绿）。
+# 自测：node scripts/check-ui-copy.mjs --selftest（决策逻辑 6 例 + 真跑冒烟）。
+[tasks."check:ui-copy"]
+run = "node scripts/check-ui-copy.mjs"
+description = "Report-only UI copy-judgment fast lane (task-172): vitest i18n cluster (terminology/locale/copy rules, 4 files 42 cases, ~4.75 s). Hits print but exit 0; crash exit 2 (never green). Wired into mise run lint. Selftest: --selftest."
+alias = "check:ui-copy"
+
+[tasks."check:ui-copy:enforce"]
+run = "node scripts/check-ui-copy.mjs --enforce"
+description = "Enforce UI copy-judgment gate (test failures ⇒ exit 1). Manual only; NOT wired. Promote after two consecutive clean windows."
+alias = "check:ui-copy:enforce"
+
+# task-172 快档②：夹具自带 i18n 副本 ratchet（task-318 脚本，补建任务）。当前基线外 (a) 5 文件 ⇒
+# 必须 report-only 起步（直接阻断会当场搅红全树）；清账或登记后另议转阻断。脚本自带 --selftest（5 例）。
+[tasks."check:i18n-fixture-copies"]
+run = "node scripts/check-i18n-fixture-copies.mjs --report-only"
+description = "Report-only fixture i18n-copy ratchet (task-318 script, task-172 wiring): beyond-baseline (a) files print but exit 0; script/structure error exit 2. Currently 5 files beyond baseline ⇒ report-only first. Wired into mise run lint. Selftest: --selftest."
+alias = "check:i18n-fixture-copies"
+
+[tasks."check:i18n-fixture-copies:enforce"]
+run = "node scripts/check-i18n-fixture-copies.mjs"
+description = "Enforce fixture i18n-copy ratchet (beyond-baseline (a) ⇒ exit 1; default blocking mode of the task-318 script). Manual only; NOT wired. Promote after baseline reconciled to zero beyond-baseline."
+alias = "check:i18n-fixture-copies:enforce"
 
 # task-237（用户 2026-11-10 第四问「openapi 应该有直接从它生成 md 的工具吧」）：生成器 + 落后门。
 # 生成物只覆盖契约能表达的部分（METHOD path / operationId / security / summary / 公开|服务间）；人工叙述版里的
