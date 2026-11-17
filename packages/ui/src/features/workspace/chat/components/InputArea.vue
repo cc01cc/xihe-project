@@ -1531,6 +1531,22 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 data-testid="speak-as-bar"
                 @update:model-value="onSpeakAsFieldChange"
             />
+            <!--
+                task-114：三栏（代发身份 / 发送 / 抄送）里只有「代发身份」没有栏外说明 ——
+                那四个字答不上「本条以谁的账号发出」，读者无从判断该选谁。形态照抄同区
+                composer-send-hint / composer-cc-hint（px-2 text-xs text-muted-foreground），
+                不另造样式；文案说「做什么」（以谁的账号发出），不解释词义。
+                被定向让位时不渲染：那条路径本条不代发，照常说「以所选身份发出」就是假话。
+                testid 用 composer- 前缀：RecipientField 自己会渲染 ${testid}-hint
+                （键盘提示），裸 speak-as-hint 会与它撞名。
+            -->
+            <p
+                v-if="showSpeakAs && !speakAsOverriddenByTo"
+                class="px-2 text-xs text-muted-foreground"
+                data-testid="composer-speak-as-hint"
+            >
+                {{ t("chat.input.toLabelHint") }}
+            </p>
             <!-- task-453：默认代发被定向让位时必须说出来，不能只是 chip 悄悄消失。 -->
             <p
                 v-if="speakAsOverriddenByTo"
@@ -1718,7 +1734,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                         </span>
                     </div>
                     <button
-                        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-muted text-muted-foreground text-xs flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                         data-testid="remove-attachment-button"
                         @click="removeAttachment(i)"
                     >

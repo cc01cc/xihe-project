@@ -455,6 +455,8 @@ const messages = {
         workspace: {
             panelCode: "代码",
             panelChanges: "变更",
+            // D-1777/D-1778：目录树的面板身份（右栏容器），树不再有自己的容器行。
+            panelFiles: "文件",
             gitReadfaceTitle: "仓库状态（待提交）",
             gitReadfaceHeadHint: "HEAD 见变更面板/checkpoint timeline",
             gitReadfaceNoRepo: "当前工作区不是 Git 仓库",
@@ -658,7 +660,6 @@ const messages = {
             participantsEmptyNone: "这个会话还没有参与者。",
             participantPrimaryImmutable: "主智能体（PRIMARY）的策略与成员关系不可修改。",
             participantUnknownName: "未知用户",
-            speakAsLabel: "以此身份发言",
             speakAsSelf: "我本人",
             speakAsCapDenied: "你不能以该成员的身份发言。",
             speakAsDisabled: "该成员已停用，无法代其发言。",
@@ -1486,6 +1487,9 @@ const messages = {
                 // 本键是**代发身份**（单选，wire 上的 asParticipantId），不是收件人 ——
                 // 旧值叫「发送」会让字典里出现两个「发送」，与新裁定自相矛盾。
                 toLabel: "代发身份",
+                // task-114：这一栏原本没有栏外说明（发送/抄送都有）。文案必须回答「本条以谁的
+                // 账号发出」——让读不懂「代发身份」四个字的人看完就知道该选谁；不是解释词义。
+                toLabelHint: "本条以所选身份的账号发出，对方看到的是它，不是你",
                 // task-88：M1 的「只能选智能体」口径已废弃（task-65 起 CP 接受人类 TO ⇒ 真人只收通知、
                 // 不作答）；那条 hint 连同 i18n 键一起删掉，不留一条会骗人的文案。
                 toTargetsLabel: "发送",
@@ -3204,6 +3208,7 @@ const messages = {
             addServer: "添加服务",
             removeServer: "移除",
             knowledgeBase: "知识库",
+            knowledgeDeleteWarning: "删除后该文档的切片会一并移除，无法恢复。",
             skills: {
                 title: "技能",
                 subtitle: "实例层技能定义：对所有已认证调用者可见；列表不含正文，正文按需读取。",
@@ -4412,6 +4417,8 @@ const messages = {
         workspace: {
             panelCode: "Code",
             panelChanges: "Changes",
+            // D-1777/D-1778: the directory tree's panel identity inside the right container.
+            panelFiles: "Files",
             gitReadfaceTitle: "Repository status (pending commit)",
             gitReadfaceHeadHint: "HEAD: see Changes panel / checkpoint timeline",
             gitReadfaceNoRepo: "Current workspace is not a Git repository",
@@ -4612,7 +4619,6 @@ const messages = {
             participantsEmptyNone: "This session has no participants yet.",
             participantPrimaryImmutable: "The PRIMARY agent policies and membership are immutable.",
             participantUnknownName: "Unknown user",
-            speakAsLabel: "Speak as",
             speakAsSelf: "Me",
             speakAsCapDenied: "You cannot speak as this participant.",
             speakAsDisabled: "This participant is disabled and cannot send messages.",
@@ -5459,6 +5465,10 @@ const messages = {
                 // task-50: two-word regime — "Send" (@ = important notification) / "Cc" (ordinary notification).
                 // This key is the speak-as identity (single-select asParticipantId), not a recipient list.
                 toLabel: "Send as",
+                // task-114: this bar had no out-of-field note (Send / Cc both had one). The copy must
+                // answer "whose account this message goes out from" — not define the term.
+                toLabelHint:
+                    "This message goes out from the selected identity's account — recipients see it, not you",
                 toTargetsLabel: "Send",
                 // task-102: BOTH hints answer the same question (do-not-disturb). Only ccHint used to,
                 // which read as "only CC bypasses DND" — both bypass it (see zh block for CP line refs).
@@ -7211,6 +7221,8 @@ const messages = {
             addServer: "Add Server",
             removeServer: "Remove",
             knowledgeBase: "Knowledge Base",
+            knowledgeDeleteWarning:
+                "Deleting this document also removes its chunks; this cannot be undone.",
             skills: {
                 title: "Skills",
                 subtitle:
