@@ -379,3 +379,51 @@ describe("task-30 ① composer 焦点环形态", () => {
         wrapper.unmount();
     });
 });
+
+/**
+ * task-58（用户报障「输入框右下两个按钮看起来没有图标」，P1）：**primary 底色按钮的前景必须是
+ * primary-foreground** —— 底色是 `bg-primary` 时，`text-primary` 与底色是**同一个 token 值**
+ * （当前默认主题 light `--primary` = `--ring` = `oklch(0.205 0 0)`，`--primary-foreground` = `oklch(0.985 0 0)`）
+ * ⇒ 图标与文案被底色完全吃掉，按钮看起来是空的（但点得到）。
+ *
+ * <p>实测读数（mock 车道 5199，`getComputedStyle`）：修前 `chat-delegate-button` 的 `color` 与
+ * `backgroundColor` 都是 `oklch(0.205 0 0)`；`chat-send-button` 是 `color: oklch(0.985 0 0)`
+ * vs `backgroundColor: oklch(0.205 0 0)`（正常）。</p>
+ *
+ * <p>为什么钉**类契约**而不是「有没有颜色」：`text-primary` 本身也是有颜色的（就是背景那个颜色），
+ * 只断言"class 里有 text-*"等于恒真 —— 这正是这处缺陷活下来的原因。判据写成一条**互斥**：
+ * 同一个 class 列表里 `bg-primary` 与 `text-primary` 不得共存（前者只允许配 `text-primary-foreground`）。
+ * **变异自检（已实测）**：把 InputArea.vue 的委派按钮改回 `text-primary`，第一条用例必红。</p>
+ */
+describe("task-58 bg-primary 按钮的前景用 primary-foreground（防同色回归）", () => {
+    /** 类契约判据：任意一串 class 里，`bg-primary` 与 `text-primary` 不得共存。 */
+    function assertPrimaryForegroundOnly(classes: string[], where: string) {
+        const tokens = new Set(classes);
+        expect(tokens.has("bg-primary"), where + "：本用例只对 primary 底色按钮有判别力").toBe(
+            true,
+        );
+        expect(
+            tokens.has("text-primary-foreground"),
+            where + "：前景必须是 primary-foreground",
+        ).toBe(true);
+        // 反向：把前景写回 text-primary 就等于把字/图标刷成底色 —— 这条是本次缺陷的原始形态。
+        expect(
+            tokens.has("text-primary"),
+            where + "：text-primary 与 bg-primary 同色，视觉上等于隐藏",
+        ).toBe(false);
+    }
+
+    it("委派按钮（InputArea.vue:891）：bg-primary 配 text-primary-foreground", () => {
+        const wrapper = mountInputArea();
+        const delegate = wrapper.get('[data-testid="chat-delegate-button"]');
+        assertPrimaryForegroundOnly(delegate.classes(), "chat-delegate-button");
+        wrapper.unmount();
+    });
+
+    it("发送按钮（对照，未受影响的正确写法）：同一条判据照样绿", () => {
+        const wrapper = mountInputArea();
+        const send = wrapper.get('[data-testid="chat-send-button"]');
+        assertPrimaryForegroundOnly(send.classes(), "chat-send-button");
+        wrapper.unmount();
+    });
+});

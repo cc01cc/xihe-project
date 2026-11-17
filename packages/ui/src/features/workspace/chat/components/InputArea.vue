@@ -888,7 +888,7 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         position: "right",
         component: "button",
         props: {
-            class: "shrink-0 h-8 px-2 inline-flex items-center gap-1 rounded-lg border border-primary bg-primary text-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors",
+            class: "shrink-0 h-8 px-2 inline-flex items-center gap-1 rounded-lg border border-primary bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors",
             disabled: !delegationPermission.canDelegate.value,
             title: delegationPermission.reason(),
             "data-testid": "chat-delegate-button",
