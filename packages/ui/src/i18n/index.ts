@@ -3850,7 +3850,10 @@ const messages = {
             // task-53 item 4：列表分区标题。与 heading 分开是必要的 —— 同一屏既有页面标题
             // 又有列表卡片，两者都用 heading 会让「凭据管理」出现两次（实测见 b02-tab-资源.png）。
             listHeading: "本工作区凭据",
-            desc: "提供商连接的密钥由连接维护；本页管理独立凭据。密钥仅加密存储，界面不回显。",
+            // task-101：实体主名词按 D-1664/task-18 统一为 Provider（技术专名未译，如 API/MCP）。
+            // 对照 en 原文 "Provider connection keys are managed on the connection"，
+            // 「由连接自己维护」把 "on the connection" 落成中文，也消掉「…连接的密钥由连接维护」的循环感。
+            desc: "Provider 连接的密钥由连接自己维护；本页管理独立凭据。密钥仅加密存储，界面不回显。",
             create: "新建凭据",
             refresh: "刷新",
             loadFailed: "无法加载凭据列表，请重试",

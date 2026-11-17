@@ -347,13 +347,25 @@ describe("CredentialsPanel 设置页文案细节（task-53 item 4/5）", () => {
         expect(listHeading.length).toBeGreaterThan(0);
     });
 
-    it("item5: 说明文案里的 Provider 必须本地化为「提供商」，不得中英混排", async () => {
+    it("item5: 说明文案的实体主名词按 D-1664 用「Provider」，不得回退成「提供商」", async () => {
         mockedApi.listCredentials.mockResolvedValue({ credentials: [], count: 0 });
         await mountPanel();
 
         const desc = i18n.global.t("credentials.desc") as string;
-        // 中文正文里出现裸英文 Provider 就是本条的缺陷；「提供商」才是本地化形态。
-        expect(desc).not.toContain("Provider");
-        expect(desc).toContain("提供商");
+        /**
+         * task-101：本条原先断言「desc 不得含 Provider、必须含『提供商』」（task-53 的本地化取向，
+         * 引入于 4f74b1db8）。D-1664（task-18，2026-11-16 02:58，早 13 小时）已把实体主名词
+         * 标准化为 Provider（技术专名未译，如 API/MCP），并让 terminology.spec 立了
+         * 「zh 树任何角落不许『提供商』」的禁词扫描 —— 两条判据在同一串上互斥，authority = D-1664
+         * （全树判据 + zh 树既有「Provider 连接 / 删除 Provider 连接」用法）。task-53 改写方向后
+         * 没跑 terminology.spec，于是留下一条方向相反的陈旧判据（task-101）。
+         *
+         * **覆盖不删**：仍钉这一串，只把方向改回现行口径；语义面（独立凭据 + 不回显）另外钉住，
+         * 防止有人为了过词把整句删成空话。
+         */
+        expect(desc).toContain("Provider");
+        expect(desc).not.toContain("提供商");
+        expect(desc).toContain("独立凭据");
+        expect(desc).toContain("不回显");
     });
 });
