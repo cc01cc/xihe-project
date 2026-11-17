@@ -674,8 +674,12 @@ function statusLabel(status: ProviderConnection["status"]): string {
     }[status];
 }
 
+/* READY 用 -700 而非 -600：-600 对 --background 达不到正文 4.5:1（读数见证据包
+   internal/A03-xihe/evidence/2026-11-17-ui-contrast-probe/，本注释不复制读数 D-1767）。
+   本状态值落在纯 --background/--card 面（详情 dd 与其外的卡面 chip 同底），不是自身 tint，
+   故按 WorkspaceView.vue:603 同口径取 -700；深色侧 -400 不变。 */
 function statusClass(status: ProviderConnection["status"]): string {
-    if (status === "READY") return "text-emerald-600 dark:text-emerald-400";
+    if (status === "READY") return "text-emerald-700 dark:text-emerald-400";
     if (status === "VERIFYING") return "text-amber-600 dark:text-amber-400";
     if (status === "INVALID_CREDENTIALS" || status === "UNREACHABLE")
         return "text-red-600 dark:text-red-400";

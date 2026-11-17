@@ -129,6 +129,18 @@ describe("SettingsResourceNav（资源模块左栏）", () => {
         expect(pushed).not.toHaveBeenCalled();
         expect(gap.element.tagName).toBe("DIV");
         expect(gap.attributes("aria-disabled")).toBe("true");
+        // task-106 / DEV-011:165：禁用行要「降对比但仍 ≥3:1」。vendor 的 `aria-disabled:opacity-50`
+        // 会与文字自身的半透明 alpha 叠成两层 ⇒ 有效 alpha 0.3，实测远低于 3:1（读数见
+        // internal/A03-xihe/evidence/2026-11-17-ui-contrast-probe/，此处不复制读数 D-1767）。
+        // jsdom 不算 Tailwind，故这里钉的是「结构契约」：整行透明度必须被顶回 100%，降对比只走
+        // 文字自身的 alpha；且 hover 必须被中和（否则 opacity 撤掉后缺口项比可点条目更亮）。 */
+        const gapClass = gap.attributes("class") ?? "";
+        expect(gapClass).toContain("aria-disabled:opacity-100");
+        expect(gapClass).not.toContain("aria-disabled:opacity-50");
+        expect(gapClass).toContain("text-muted-foreground/85");
+        expect(gapClass).not.toContain("text-muted-foreground/60");
+        expect(gapClass).toContain("hover:bg-transparent");
+        expect(gapClass).toContain("cursor-not-allowed");
         // 说明不再依赖点击：组级可见 hint + 条目 title 带缺口细节。
         expect(wrapper.find('[data-testid="settings-nav-gap-hint"]').text()).toContain(
             "灰显条目暂不可用",

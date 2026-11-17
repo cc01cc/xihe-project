@@ -207,6 +207,17 @@ describe("ProviderHub master-detail", () => {
         expect(detail.text()).toContain(i18n.global.t("settings.providerHub.credentialConfigured"));
         expect(wrapper.text()).not.toContain("个人连接对同一 Provider 优先");
         expect(wrapper.get('[data-testid="provider-master-detail"]').classes()).toContain("grid");
+        // task-106 / DEV-011:196：READY 状态是正文文案（详情 dd 与卡面 chip 同为 14px/12px 正文），
+        // 需 ≥4.5:1。-600 对 --background/-card 不达标，改用 -700（深色侧 -400 不变）。
+        // jsdom 不算 Tailwind/对比度，故钉结构契约：模板里不得再出现 -600。
+        // 读数见 internal/A03-xihe/evidence/2026-11-17-ui-contrast-probe/（本注释不复制读数 D-1767）。
+        const statusDds = detail.findAll("dd").filter((dd) => dd.text().includes("已连接"));
+        expect(statusDds.length).toBeGreaterThan(0);
+        for (const dd of statusDds) {
+            const cls = dd.attributes("class") ?? "";
+            expect(cls).toContain("text-emerald-700");
+            expect(cls).not.toContain("text-emerald-600");
+        }
         wrapper.unmount();
     });
 

@@ -102,7 +102,16 @@ function gapTitle(item: ResourceNavItem): string {
                 <!-- 缺口项：不可点（无 click、aria-disabled），说明分别在组级 hint 与 title。
                      N-09 要求「禁用光标 + title 可达」⇒ 必须把 vendor 的
                      `aria-disabled:pointer-events-none` 顶回 `auto`（twMerge 同一 variant 组后写者胜），
-                     否则 title 提示在缺口项上永远弹不出来。 -->
+                     否则 title 提示在缺口项上永远弹不出来。
+                     **禁用观感不靠整行 `opacity`**：vendor 的 `aria-disabled:opacity-50` 会与文字自身的半透明
+                     alpha 叠成两层，把「降对比」压到 3:1 以下读不了（DEV-011 disabled 行要求 ≥3:1）。这里用
+                     `aria-disabled:opacity-100` 顶掉整行透明度，禁用语义交给行内文字 alpha
+                     `text-muted-foreground/85`（比启用态 link 的实色明显淡、但仍 ≥3:1）、`cursor-not-allowed`、
+                     `aria-disabled`、虚线「暂不可用」徽标与 title 长说明。**同时必须一并顶掉 vendor 的
+                     `hover:bg-sidebar-accent` / `hover:text-sidebar-accent-foreground`**：整行 opacity 撤掉后，这两个
+                     hover 会以全强度出现，缺口项反而比可点条目更「亮」（实测悬停底色 0.94，可点条目 0.93/0.6）。
+                     顶成 `hover:bg-transparent hover:text-muted-foreground/85` ⇒ 悬停外观零变化，反差交给可点条目。
+                     读数见 ProviderHub:677 注释所指证据包。 -->
                 <SidebarMenuButton
                     v-else
                     as="div"
@@ -110,11 +119,14 @@ function gapTitle(item: ResourceNavItem): string {
                     :data-gap-codes="(item.gaps ?? []).join(',')"
                     :title="gapTitle(item)"
                     aria-disabled="true"
-                    class="flex min-h-[32px] w-full cursor-not-allowed select-none items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left text-sm text-muted-foreground/60 aria-disabled:pointer-events-auto"
+                    class="flex min-h-[32px] w-full cursor-not-allowed select-none items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left text-sm text-muted-foreground/85 hover:bg-transparent hover:text-muted-foreground/85 aria-disabled:pointer-events-auto aria-disabled:opacity-100"
                 >
                     <component :is="iconFor(item.id)" class="size-4 shrink-0" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate">{{ t(item.labelKey) }}</span>
-                    <Badge variant="outline" class="shrink-0 border-dashed text-xs">
+                    <Badge
+                        variant="outline"
+                        class="shrink-0 border-dashed text-xs text-muted-foreground"
+                    >
                         {{ t("settings.ia.backendGapBadgeGeneric") }}
                     </Badge>
                 </SidebarMenuButton>
