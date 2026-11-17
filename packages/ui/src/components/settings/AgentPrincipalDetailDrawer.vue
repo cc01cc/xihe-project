@@ -872,7 +872,10 @@ function closeDrawer() {
                 :open="disableConfirmOpen"
                 @update:open="(value: boolean) => !value && (disableConfirmOpen = false)"
             >
-                <AlertDialogContent data-testid="apd-disable-confirm">
+                <AlertDialogContent
+                    data-testid="apd-disable-confirm"
+                    class="max-h-[85vh] overflow-y-auto"
+                >
                     <AlertDialogHeader>
                         <AlertDialogTitle>
                             {{ t(K + "disableConfirmTitle", { name: principal?.name ?? "" }) }}
