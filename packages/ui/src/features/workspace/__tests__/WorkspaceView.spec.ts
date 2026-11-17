@@ -158,6 +158,26 @@ async function settle() {
     await nextTick();
 }
 
+/**
+ * 显式「开右栏 + 断言树本体渲染」的用例必须跑在**宽档视口**。
+ *
+ * <p>jsdom 默认 1024：右栏一开就吃掉 360，主列低于舒适线 ⇒ 挤压模型让树让位（`squeeze.treeYielded`
+ * ⇒ `effectiveTreeCollapsed` 为 true），于是面板体渲染成 rail 而不是树。那是**视口**的决定，
+ * 不是 fold 判据要测的东西；把它们混在一起，判据就成了「当前挤压阈值色不色」的测量仪
+ * （task-94 正在改这层模型，阈值会继续动）。</p>
+ */
+async function withWideViewport(run: () => Promise<void>): Promise<void> {
+    const previousWidth = window.innerWidth;
+    window.innerWidth = 1920;
+    window.dispatchEvent(new Event("resize"));
+    try {
+        await run();
+    } finally {
+        window.innerWidth = previousWidth;
+        window.dispatchEvent(new Event("resize"));
+    }
+}
+
 beforeEach(() => {
     localStorage.clear();
     localStorage.setItem("xihe-token", "mock-token");
@@ -227,7 +247,13 @@ beforeEach(() => {
 });
 
 describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
-    it("renders the conversation as the main column with the file tree visible and the dock closed", async () => {
+    /**
+     * task-65 A 段（D-1777/D-1778）翻转本判据：树**不再**是中栏里的一列，而是右栏容器的一个
+     * 面板（面板 id = files）。因此「树可见」与「dock 关闭」不再能并存 ——
+     * 默认布局（本 spec 的 jsdom 视口 < 1800）右栏收起、且 dockTabs 为空 ⇒ 树无从渲染。
+     * 这与 `WorkspaceWorkbench.spec.ts` 的「C2 已知缺口」是同一条产品事实，不是本测试的遗憾。
+     */
+    it("renders the conversation as the main column with the dock closed（树是右栏面板，故不渲染）", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -240,31 +266,70 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 .find('[data-testid="chat-panel-stub"]')
                 .exists(),
         ).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
 
         // S2 ruling #3: the dock defaults to closed — no panel, no panel content.
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
+        // 树是右栏面板 ⇒ 右栏没渲染时它也不渲染。重开入口在工具栏（不是树上）。
+        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-file-rail"]').exists()).toBe(false);
+        expect(
+            wrapper.get('[data-testid="workspace-toolbar-files"]').attributes("aria-pressed"),
+        ).toBe("false");
     });
 
-    it("collapses the file tree into a narrow rail and expands it again", async () => {
+    /**
+     * task-144 ③（Lead 2026-11-17 批）：折叠 = **files 面板体收成 rail**，右栏与其余页签照常渲染。
+     * 旧判据只断言「树没了 + 展开键在」，因此「整栏一起被换成 rail」也能过；这里补上
+     * **可达性**读数：右栏行、dock 本体、其它页签仍在。
+     */
+    it("collapses the files panel into a 40px rail inside the panel body and expands it again", async () => {
         useSessionStore().currentSessionId = SESSION_A;
-        const wrapper = mountView();
-        await settle();
-        await flushPromises();
+        await withWideViewport(async () => {
+            const wrapper = mountView();
+            await settle();
+            await flushPromises();
 
-        await wrapper.find('[data-testid="workspace-toolbar-toggle-tree"]').trigger("click");
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="workspace-tree-expand"]').exists()).toBe(true);
+            // 宽档首启右栏就开着 files（defaultWorkspaceLayoutForViewport ≥1800），树可见。
+            expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
+            // 再挂上另一个页签，验证折叠后它们仍在行内、仍可达。
+            await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
+            await settle();
+            await wrapper.find('[data-testid="dock-tab-files"]').trigger("click");
+            await settle();
 
-        await wrapper.find('[data-testid="workspace-tree-expand"]').trigger("click");
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-tree-expand"]').exists()).toBe(false);
+            // 折叠控制在同一面板的头部（S3a）。
+            await wrapper.find('[data-testid="workspace-toolbar-toggle-tree"]').trigger("click");
+            await settle();
+            const rail = wrapper.get('[data-testid="workspace-file-rail"]');
+            expect(rail.find('[data-testid="workspace-tree-expand"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+            // 折叠 ≠ 整栏消失：dock 本体与其它页签仍然渲染。
+            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+            expect(
+                wrapper
+                    .find('[data-testid="workspace-container-tabs"][data-container="right"]')
+                    .exists(),
+            ).toBe(true);
+            expect(wrapper.find('[data-testid="dock-tab-code"]').exists()).toBe(true);
+
+            await wrapper.find('[data-testid="workspace-tree-expand"]').trigger("click");
+            await settle();
+            expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="workspace-tree-expand"]').exists()).toBe(false);
+        });
     });
 
     it("opens dock tabs through the toolbar and keeps a single active tab", async () => {
         useSessionStore().currentSessionId = SESSION_A;
+        // task-94 S5/D4：<1800 首启现在自带 files+monitor 两个页签 ⇒ 再开 code+changes 就是 4 个，
+        // 第 4 个会落进 overflow 菜单（`maxVisibleTabs: 3`），本用例就取不到 `dock-tab-changes` 了。
+        // 这条用例测的是**页签切换**，不是首启默认集合 ⇒ 显式种一个空右栏，让它只受自己控制。
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({ dockTabs: [], activeDockTab: null, dockCollapsed: true }),
+        );
         const wrapper = mountView();
         await settle();
         await flushPromises();
@@ -326,37 +391,62 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
     it("keeps the dock and tree state per workspace across session switches", async () => {
         const sessionStore = useSessionStore();
         sessionStore.currentSessionId = SESSION_A;
-        const wrapper = mountView();
-        await settle();
-        await flushPromises();
-
-        await wrapper.find('[data-testid="workspace-toolbar-toggle-tree"]').trigger("click");
-        await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
-
-        // S3b P2-9: writes are coalesced, so poll for the persisted snapshot.
-        await vi.waitFor(
-            () => {
-                const stored = JSON.parse(
-                    localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}",
-                ) as Record<string, unknown>;
-                expect(stored).toMatchObject({
-                    treeCollapsed: true,
-                    dockCollapsed: false,
-                    dockTabs: ["code"],
-                    activeDockTab: "code",
-                });
-            },
-            { timeout: 2000, interval: 20 },
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                treeCollapsed: true,
+                treeWidth: 240,
+                dockCollapsed: false,
+                dockWidth: 360,
+                dockTabs: ["files", "monitor"],
+                activeDockTab: "files",
+                dockMode: "pinned",
+                dockModeManual: true,
+                openTabs: ["session:s1"],
+                activeColumn: "main",
+                openTarget: "right",
+            }),
         );
+        await withWideViewport(async () => {
+            const wrapper = mountView();
+            await settle();
+            await flushPromises();
 
-        // Switching sessions no longer resets the auxiliary panel (S2 semantics).
-        sessionStore.currentSessionId = SESSION_B;
-        await settle();
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
+            // 落盘态**显式**给：折叠 + 右栏开着 files。不靠「挤压自动让位」这类过渡期行为
+            // （task-94 正在删的就是它），否则这条判据会随别人的阈值漂移。
+            expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+            expect(wrapper.find('[data-testid="workspace-file-rail"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+
+            // S3b P2-9: writes are coalesced, so poll for the persisted snapshot.
+            await vi.waitFor(
+                () => {
+                    const stored = JSON.parse(
+                        localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}",
+                    ) as Record<string, unknown>;
+                    expect(stored).toMatchObject({
+                        treeCollapsed: true,
+                        dockCollapsed: false,
+                        dockTabs: ["files", "monitor"],
+                        activeDockTab: "files",
+                    });
+                },
+                { timeout: 2000, interval: 20 },
+            );
+
+            // Switching sessions no longer resets the auxiliary panel (S2 semantics).
+            sessionStore.currentSessionId = SESSION_B;
+            await settle();
+            // 折叠态与右栏都跟着 workspace 走：rail 还在，右栏行/面板仍在（task-144 ③ 的可达性判据）。
+            expect(wrapper.find('[data-testid="workspace-file-rail"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+            expect(
+                wrapper
+                    .find('[data-testid="workspace-container-tabs"][data-container="right"]')
+                    .exists(),
+            ).toBe(true);
+        });
     });
 
     it("keeps the workspace usable without auto-creating a session", async () => {

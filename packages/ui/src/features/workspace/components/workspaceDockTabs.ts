@@ -25,6 +25,14 @@ export function shouldOpenAgentsDockFromDeepLink(
 /** i18n key per dock panel; the workbench localizes them before passing down. */
 export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
     code: "workspace.panelCode",
+    /**
+     * `D-1777`/`D-1778`（task-65 A 段）：`files` = **目录树的面板身份**。
+     *
+     * <p>为什么树要有一个面板 id 而不是留在"固定列"：用户 2026-11-17 明言「两栏各自是一个容器」
+     * 且「中栏有的组件右栏也都有」⇒ 可判形式是「任意面板都能投进任一容器」。树若不做面板，
+     * 它就是唯一投不进去的东西，等价性只有它这一处破口（`D-1778`）。</p>
+     */
+    files: "workspace.panelFiles",
     changes: "workspace.panelChanges",
     monitor: "workspace.panelMonitor",
     members: "workspace.panelMembers",

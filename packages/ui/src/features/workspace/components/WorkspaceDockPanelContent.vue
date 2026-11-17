@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import FileEditor from "./FileEditor.vue";
+import FileTreePanel from "./FileTreePanel.vue";
 import WorkspaceChangesPanel from "./WorkspaceChangesPanel.vue";
 import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
 import SessionParticipantsPanel from "./SessionParticipantsPanel.vue";
@@ -28,13 +29,34 @@ defineProps<{
 const emit = defineEmits<{
     close: [];
     mention: [name: string];
+    /**
+     * task-144 ②：`files` 面板的折叠动作归宿主（`treeCollapsed` 的唯一 writer 在 Workbench）。
+     * 本组件只上报「用户按了树面板的折叠」，不自己写布局 —— 与 `close` / `mention` 同一条纪律。
+     */
+    collapseTree: [];
 }>();
 
 const { t } = useI18n();
 </script>
 
 <template>
-    <FileEditor v-if="id === 'code'" />
+    <!--
+        task-144 ②（P1）：**`files` 必须有分支**。`DOCK_PANEL_IDS = DOCK_TAB_IDS` 已含
+        `files`（`lib/containers.ts:47`：树的面板 id 就是 `files`，D-1777/D-1778），
+        而这里原先没有 `files` 分支 ⇒ dockview 路径把 `files` 面板渲染成**空壳**
+        （真浏览器实测：`[data-dockview-panel="files"]` 的 innerHTML 长度 11、textContent 空），
+        同时手写路径的 `#files` slot 却是真的树 —— 同一条面板契约两处不一致。
+        内容与手写路径 `#files` slot **逐字同形**（wrapper testid / class / `@collapse` 接线），
+        两条路径从此共用这一份。
+    -->
+    <div
+        v-if="id === 'files'"
+        data-testid="workspace-file-tree"
+        class="flex h-full min-h-0 flex-1 flex-col"
+    >
+        <FileTreePanel @collapse="emit('collapseTree')" />
+    </div>
+    <FileEditor v-else-if="id === 'code'" />
     <WorkspaceChangesPanel
         v-else-if="id === 'changes'"
         :session-id="sessionId"

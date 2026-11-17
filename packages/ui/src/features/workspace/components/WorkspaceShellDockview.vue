@@ -9,6 +9,7 @@ import { DOCKVIEW_OPTIONS } from "../../../lib/dockview";
 import "dockview-vue/dist/styles/dockview.css";
 import "../../../styles/dockview-theme.css";
 import DockviewPanelHost from "./DockviewPanelHost.vue";
+import { FILES_PANEL_ID } from "../lib/containers";
 import {
     DOCK_TAB_IDS,
     DOCK_WIDTH_DEFAULT,
@@ -85,7 +86,23 @@ const emit = defineEmits<{
 
 const MAIN_PANEL_ID = "main";
 const TREE_PANEL_ID = "tree";
-const DOCK_PANEL_IDS: readonly string[] = DOCK_TAB_IDS;
+/**
+ * task-144 ②（P1）：**本壳里的树就是 `tree` 面板**，所以 `files` 不在这里再有第二份身份。
+ *
+ * <p>为什么必须去掉它：`DOCK_TAB_IDS` 现在含 `files`（`D-1777`/`D-1778`：树在**手写路径**里是
+ * 右栏的一个普通面板，id = `files`）。而本壳（S1/S2 模型）早就把树做成自己的 `tree` 面板
+ * （可关、可从组头「+」重开、可投任一容器）。两条同时喂进来 = **两棵活 `FileTreePanel`**：
+ * 实测（1920×1080，`__xhUseDockview=true`）`workspace-file-tree` 计数 2，
+ * 并且**破坏 task-369 判据①**（关掉树面板后 `workspace-file-tree` 仍为 1 ⇒ 「面板与 rail 一起消失」红）。
+ * ⇒ 本壳的 dock 面板值域 = `DOCK_TAB_IDS` 去掉 `files`；`props.dockTabs` 里的 `files` 在此被忽略
+ * （它在手写路径仍然生效，见 `WorkspaceWorkbench` 的 `#files` slot）。
+ * 单一身份原则：**同一时刻同一棵树只能有一个面板身份**。
+ */
+const DOCK_PANEL_IDS: readonly string[] = DOCK_TAB_IDS.filter((id) => id !== FILES_PANEL_ID);
+/** 本壳认的 dock 面板（`props.dockTabs` 已剔除 `files` ⇒ 锚点/重建都不会引用不存在的面板）。 */
+function shellDockTabs(): string[] {
+    return props.dockTabs.filter((id) => DOCK_PANEL_IDS.includes(id));
+}
 
 const hostRef = ref<HTMLElement | null>(null);
 const dockApi = ref<DockviewReadyEvent["api"] | null>(null);
@@ -169,7 +186,8 @@ function ensureMain(api: NonNullable<typeof dockApi.value>): void {
  * 不是往同组加 tab ⇒ 并排的树/主列/dock 各自是一个 group，同属一个实例（判据④）。
  */
 function syncDock(api: NonNullable<typeof dockApi.value>): void {
-    const open = props.dockTabs;
+    // task-144 ②：只同步本壳认的面板（`files` 的树身份在本壳归 `tree` 面板，见 DOCK_PANEL_IDS）。
+    const open = shellDockTabs();
     // 右栏锚点 = 第一个目标为右栏的打开面板；投到中栏的面板不能当右栏锚点。
     const anchor = open.find((id) => placementOf(id) === "dock") ?? open[0];
     for (const id of open) {
@@ -224,7 +242,8 @@ function syncTree(api: NonNullable<typeof dockApi.value>): void {
     // 目标容器由 placements 决定（判据③）。syncDock 先跑 ⇒ 右栏锚点此刻已存在；
     // 此前误在 syncDock 之前拿 dockTabs[0]（默认 'monitor'）当 referencePanel ⇒ dockview 抛
     // `referencePanel 'monitor' does not exist` 并中断整个 sync（实测 run1 全红根因）。
-    const dockAnchor = props.dockTabs.find((id) => placementOf(id) === "dock") ?? props.dockTabs[0];
+    const shellTabs = shellDockTabs();
+    const dockAnchor = shellTabs.find((id) => placementOf(id) === "dock") ?? shellTabs[0];
     const position =
         placementOf(TREE_PANEL_ID) === "dock"
             ? { direction: "right" as const, referencePanel: dockAnchor ?? MAIN_PANEL_ID }

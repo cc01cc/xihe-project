@@ -30,6 +30,15 @@ const props = defineProps<{
      * 所以无页签 ⇒ 不渲染（而不是渲染空壳）；只有显式 `allowEmpty` 的调用方才画空行。
      */
     allowEmpty?: boolean;
+    /**
+     * D-1777/D-1778 §8 第 1 步：右栏行页签 testid 沿用既有 dock-tab-* 契约（src+e2e 66+
+     * 消费点，不得改名），故可传前缀覆盖默认的 workspace-container-tab-<container>-<id>。
+     */
+    testidPrefix?: string;
+    /** close 按钮 testid 前缀，默认 workspace-container-tab-close-<container>-。 */
+    closeTestidPrefix?: string;
+    /** true = 只有 active 页签渲染 close 按钮（dock 行语义， today 只给 active 页签）。 */
+    closeActiveOnly?: boolean;
 }>();
 
 // 两个事件签名完全同形 ⇒ 用联合类型一次声明（unified-signatures）。
@@ -37,6 +46,7 @@ const emit = defineEmits<{
     (event: "select" | "close", tabId: string): void;
     /** 判定不在这里做：只有调用方知道「一共有哪些行」，本组件只上报按键事实。 */
     (event: "row-key", payload: ContainerRowKeyPayload): void;
+    (event: "tab-auxclick", tabId: string, event_: MouseEvent): void;
 }>();
 
 const MOVE_KEY_DIRECTIONS: Readonly<Record<string, MoveDirection>> = {
@@ -79,9 +89,23 @@ function onRowKeydown(event: KeyboardEvent): void {
 const { t } = useI18n();
 const domId = useId();
 
+// D-1777/D-1778：容器集合 = {main, right}。`tree` 不再是容器（树是右栏的面板），
+// 这里只认 main/right 两种值域。
 const containerLabel = computed(() =>
-    props.containerId === "tree" ? t("workspace.containerTree") : t("workspace.containerMain"),
+    props.containerId === "right" ? t("workspace.containerRight") : t("workspace.containerMain"),
 );
+
+/** 页签/close 的 testid：右栏行走 dock-tab-* 前缀（见 props 注释），其余走容器形默认名。 */
+function tabTestid(id: string): string {
+    return props.testidPrefix
+        ? props.testidPrefix + id
+        : "workspace-container-tab-" + props.containerId + "-" + id;
+}
+function closeTestid(id: string): string {
+    return props.closeTestidPrefix
+        ? props.closeTestidPrefix + id
+        : "workspace-container-tab-close-" + props.containerId + "-" + id;
+}
 
 /**
  * task-17 W-1（自审批01）：单 tab 且与容器标签同名 ⇒ 视觉上去掉容器标签，只留 tab。
@@ -132,7 +156,8 @@ const activeTab = computed<string>({
                 >
                     <TabsTrigger
                         :value="tab.id"
-                        :data-testid="'workspace-container-tab-' + containerId + '-' + tab.id"
+                        :data-testid="tabTestid(tab.id)"
+                        @auxclick="emit('tab-auxclick', tab.id, $event)"
                         :data-tab-id="tab.id"
                         :title="tab.label"
                         class="h-auto max-w-52 flex-none rounded-md px-2 py-1 text-xs after:hidden data-active:bg-transparent data-active:text-inherit dark:data-active:border-transparent dark:data-active:bg-transparent"
@@ -160,9 +185,9 @@ const activeTab = computed<string>({
                         `min-h-7 min-w-7` = 7 × 3.5px = 24.5px 命中盒；`X` 图标仍 size-3 不放大。
                     -->
                     <button
-                        v-if="tab.closable"
+                        v-if="tab.closable && (!closeActiveOnly || tab.id === activeId)"
                         type="button"
-                        :data-testid="'workspace-container-tab-close-' + containerId + '-' + tab.id"
+                        :data-testid="closeTestid(tab.id)"
                         :aria-label="'关闭 ' + tab.label"
                         class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="emit('close', tab.id)"
@@ -172,6 +197,14 @@ const activeTab = computed<string>({
                 </div>
             </TabsList>
         </Tabs>
+        <!--
+            task-65 A 段（§8 第 1 步）：右栏行复用既有 WorkspaceContainerTabs，行尾 actions 插槽放
+            mode/focus/close 三键（替代原 WorkspaceDock 自造 tablist 条内那三个按钮）。插槽必须挂在
+            nav 内、Tabs 之后，否则三键会被看成容器页签（行内 role=tab 计数与 aria-current 都要干净）。
+        -->
+        <div class="ml-auto flex shrink-0 items-center gap-1">
+            <slot name="actions" />
+        </div>
         <span v-if="allowEmpty && tabs.length === 0" class="text-xs text-muted-foreground">
             {{ t("workspace.containerEmpty") }}
         </span>

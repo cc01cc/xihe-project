@@ -1,18 +1,13 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
-import { useMediaQuery, useWindowSize } from "@vueuse/core";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { FolderTree } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
-    SPLITTER_REFERENCE_WIDTH,
     TREE_COLLAPSED_WIDTH,
-    TREE_WIDTH_DEFAULT,
-    TREE_WIDTH_KEYBOARD_STEP,
-    TREE_WIDTH_MAX,
-    TREE_WIDTH_MIN,
     canOpenDockTab,
     clampDockWidth,
     clampTreeWidth,
@@ -21,25 +16,16 @@ import {
     createWorkspaceLayoutWriter,
     defaultWorkspaceLayout,
     defaultWorkspaceLayoutForViewport,
-    deriveDockMode,
     hasWorkspaceLayout,
     isDockTabId,
     readWorkspaceLayout,
-    type DockMode,
     type DockTabId,
     type WorkbenchSqueezeDemand,
     type WorkbenchSqueezeResult,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
-import {
-    useSplitterPanelBridge,
-    type SplitterPanelExposed,
-} from "../../../composables/useSplitterPanelBridge";
-import { useSplitterPanelWidthSync } from "../../../composables/useSplitterPanelWidthSync";
-import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
-import SashGrip from "../../../components/shared/SashGrip.vue";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
 import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
@@ -51,6 +37,7 @@ import {
 } from "./workspaceTabBarContext";
 import {
     containerOf,
+    visibleContainers,
     type ActiveColumn,
     type ContainerId,
     type ContainerMode,
@@ -75,7 +62,7 @@ import {
 /**
  * PLAN-0582 S2: the workspace workbench skeleton. It owns the workspace-scoped
  * layout state (file tree collapse + right dock tabs/active/width/collapsed) and
- * renders the three columns; `WorkspaceView` stays a data-assembly layer.
+ * renders the two containers (main + right; D-1777/D-1778, task-65 A 段); `WorkspaceView` stays a data-assembly layer.
  *
  * Invariants:
  * - one writer: this component is the only place that mutates and persists the
@@ -164,62 +151,6 @@ function initialLayout(workspaceId: string): WorkspaceLayoutState {
 }
 
 const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
-/**
- * task-94 (B)：内层 SplitterGroup 的两道 panel 一律用**百分比**，持久化仍是 px。
- *
- * 依据：`reka-ui@2.11.0 src/Splitter/utils/units.ts:29-38` —— 组内只要有 px 面板且首次测量
- * 拿不到 groupSize，`convertPanelConstraintsToPercent` 就返回 null ⇒ `SplitterGroup.vue:341-343`
- * 直接 return，`layout` 永远是 `[]`；而 `:387-388` 的恢复分支又要求 `prevLayout.length !== 0`
- * ⇒ 永不恢复。layout 空的时候：① `computePanelFlexBoxStyle` 把 `defaultSize` 当 flex-grow、
- * 缺省落 `"1"`（`dist/utils/style.js:45-50`），主列被压成 5px；② 重渲染期
- * `isPanelCollapsed → getPanelSize` 断言（`Panel size not found`）打断渲染 ⇒ dock 状态改了不渲染。
- * 全用 % 之后 `requiresMeasurement` 为 false，layout 一定能从默认值初始化。
- *
- * 换算只在这一处：reka 收/发 %（`treePercentOf` / `treePxOf`），store 与 UI 仍是 px。
- *
- * task-353（D-1207 甲案）：`centerGroupRef` 指向**中栏容器内部**那道 SplitterGroup（改造前指向
- * 工作台根下那道）。**基准宽没变**：两者都是 `WorkspaceDock` 的兄弟、都吃 `flex-1`，量到的宽同值
- * —— 由 bl576 的改前/改后读数证实（`containerWidth` 两次都是 1157.609375）。因此 px↔% 换算
- * 不需要重算，判据③（展开回原宽）不会因搬家而漂。这不是「不必小心」，而是「小心过了、有读数」：
- * 下次再动这层嵌套，必须重跑那条读数。
- */
-const centerGroupRef = ref<{ $el?: HTMLElement } | null>(null);
-const splitterWidth = ref(0);
-let splitterObserver: ResizeObserver | null = null;
-
-function releaseSplitterObserver(): void {
-    splitterObserver?.disconnect();
-    splitterObserver = null;
-}
-
-function treePercentOf(px: number): number {
-    const width = splitterWidth.value > 0 ? splitterWidth.value : SPLITTER_REFERENCE_WIDTH;
-    return Math.min(100, Math.max(0, (px / width) * 100));
-}
-
-function treePxOf(percent: number): number {
-    const width = splitterWidth.value > 0 ? splitterWidth.value : SPLITTER_REFERENCE_WIDTH;
-    return (percent / 100) * width;
-}
-
-const treeDefaultPercent = computed(() => treePercentOf(treeWidth.value));
-const treeMinPercent = computed(() => treePercentOf(TREE_WIDTH_MIN));
-const treeMaxPercent = computed(() => treePercentOf(TREE_WIDTH_MAX));
-const treeCollapsedPercent = computed(() => treePercentOf(TREE_COLLAPSED_WIDTH));
-const mainDefaultPercent = computed(() => Math.max(0, 100 - treePercentOf(TREE_WIDTH_DEFAULT)));
-
-onMounted(() => {
-    const element = centerGroupRef.value?.$el;
-    if (!element || typeof ResizeObserver !== "function") return;
-    splitterObserver = new ResizeObserver((entries) => {
-        const width = entries[0]?.contentRect.width ?? 0;
-        if (width > 0) splitterWidth.value = width;
-    });
-    splitterObserver.observe(element);
-});
-
-onBeforeUnmount(releaseSplitterObserver);
-
 let layoutWriter = createWorkspaceLayoutWriter(props.workspaceId || "");
 
 // Switching workspace swaps the whole per-workspace set (V11: "切 workspace 换一套").
@@ -342,13 +273,6 @@ const mainContainerActiveId = computed(() => tabBarContext.activeId.value);
  * <p>空行在这里自然被 `resolveNavKey`/`focusableRows` 过滤掉（`mainContainerTabs` 为空时中栏不画行），
  * 所以「DOM 顺序 vs 容器常量表」的分叉不会传到键盘判定里。</p>
  */
-const containerRows = computed<ContainerRow[]>(() => {
-    const rows: ContainerRow[] = [
-        { container: "tree", tabs: treeContainerTabs.value, activeId: "tree" },
-        { container: "main", tabs: mainContainerTabs.value, activeId: mainContainerActiveId.value },
-    ];
-    return [...rowsForMode(rows, containerMode.value, layout.value.activeColumn)];
-});
 
 /**
  * task-174 / `D-1545`：**形态只决定看得见哪一栏**，不改归属。
@@ -357,7 +281,35 @@ const containerRows = computed<ContainerRow[]>(() => {
  * （`D-1544` 遗留：真正的窄屏渲染由移动壳卡接通）⇒ 这一层现在是**形状就位、产品面不触发**，
  * 由单测钉住。桌面形态下 `visibleContainers` 返回全部 ⇒ 行为与本卡之前完全一致。</p>
  */
-const containerMode = computed<ContainerMode>(() => (props.isMobile ? "single" : "desktop"));
+const containerMode = computed<ContainerMode>(() =>
+    props.isMobile || forceSingleColumn.value ? "single" : "desktop",
+);
+
+/**
+ * task-94 S4（`D-1545`）：单栏时**只渲染当前那一栏**，另一栏仍在（切换器一键回来）。
+ * 判据来源是 `visibleContainers`（`containers.ts` 的纯函数，已有单测），这里不另写一份可见性规则。
+ */
+/**
+ * task-94 S4 修正（Lead 2026-11-17 20:10 评审）：**「收起后必须看得见东西」是状态约束，不是动作副作用**。
+ *
+ * <p>上一版把它写成 `collapseDock()` 里的一行 `activeColumn = "main"`，于是每个不走
+ * `collapseDock()` 的收起路径都漏一次 —— 评审当天就有两处（`toggleDockTab` 的「再按一次活动页签」、
+ * `closeDockTab` 的「关掉最后一个页签」）。症状是**白屏**：单栏 + 当前栏是 right + 右栏因
+ * `dockOpen=false` 不渲染，而中栏又被 `visibleContainers` 判成不可见 ⇒ 整行只剩顶部切换器。</p>
+ *
+ * <p>改成派生后只有一个判定点，未来新增的收起路径**自动被覆盖**；且用户的栏偏好不再被抹掉
+ * （收起 → 显示中栏；重开右栏 ⇒ 回到右栏，而不是每次都重置成 main）。</p>
+ */
+const effectiveActiveColumn = computed<ActiveColumn>(() =>
+    containerMode.value === "single" && !dockOpen.value && layout.value.activeColumn === "right"
+        ? "main"
+        : layout.value.activeColumn,
+);
+const visibleColumns = computed<readonly ContainerId[]>(() =>
+    visibleContainers(containerMode.value, effectiveActiveColumn.value),
+);
+const mainVisible = computed(() => visibleColumns.value.includes("main"));
+const rightVisible = computed(() => visibleColumns.value.includes("right"));
 
 /** 窄屏切换当前显示哪一栏（与布局同源落盘：写的是同一个 `xihe-layout-ws:<id>`）。 */
 function setActiveColumn(value: ActiveColumn): void {
@@ -373,11 +325,20 @@ function setActiveColumn(value: ActiveColumn): void {
 const containerNavStatus = ref("");
 
 function focusContainerTab(container: ContainerId, tabId: string): void {
-    document
-        .querySelector<HTMLElement>(
-            '[data-testid="workspace-container-tab-' + container + "-" + tabId + '"]',
-        )
-        ?.focus();
+    // D-1777/D-1778：右栏行页签 testid 沿用既有 dock-tab-* 契约（66+ 消费点，不得改名），
+    // 所以在行内按 data-tab-id 找；main 行仍走 workspace-container-tab-<container>-<id>。
+    // task-144 ①（P0，a11y）：**选择器必须落在页签本体上**。`data-tab-id` 与 `role="tab"`
+    // 挂在**同一个** `TabsTrigger`（`WorkspaceContainerTabs.vue:157-166`）⇒ 旧的
+    // `[data-tab-id="X"] [role="tab"]`（后代选择器）恒匹配 0 个，`.focus()` 无声 no-op：
+    // F6 的右栏一半完全不通且控制台干净（真浏览器实测：修前 activeElement 停在
+    // `workspace-container-tab-main-*`，右栏行选择器命中 0 / 新选择器命中 1）。
+    const selector =
+        container === "right"
+            ? '[data-testid="workspace-container-tabs"][data-container="right"] [data-tab-id="' +
+              tabId +
+              '"]'
+            : '[data-testid="workspace-container-tab-' + container + "-" + tabId + '"]';
+    document.querySelector<HTMLElement>(selector)?.focus();
 }
 
 function onContainerRowKey(payload: ContainerRowKeyPayload): void {
@@ -410,22 +371,18 @@ const dockTabs = computed<DockTab[]>(() =>
     layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
 );
 
-const narrowViewport = useMediaQuery("(max-width: 1439px)");
-const treeExpandedManually = ref(false);
-
-const dockMode = computed<DockMode>(() =>
-    layout.value.dockModeManual ? layout.value.dockMode : deriveDockMode(viewportWidth.value),
-);
-
 /**
- * S3b P1-2 (audit): the squeeze must consume the tree state **as rendered**. The
- * previous version fed the persisted `treeCollapsed` while the manual expansion
- * short-circuited outside of it, so the computed `mainWidth` assumed a 40px rail
- * that was actually 240px — the toast lied and the 640 floor could be breached.
+ * task-94 S2：树**不再是行内列**（它是右栏的 `files` 页签），所以「挤压模型要吃树的渲染态」
+ * 这一层整条退场，随之退场三个启发式：
+ *
+ * - `treeCollapsedForSqueeze`（喂给模型的树态）—— 模型里没有树项，无输入可喂；
+ * - `treeExpandedManually`（手工展开盖过自动让位）—— 没有自动让位可盖；
+ * - `narrowViewport ⇒ 树自动折叠`（「树是独立列、窄屏先让它让位」时代的规则）—— 树已在右栏里，
+ *   窄屏腾空间改由**单栏切换**做（`forceSingleColumn`）。折叠现在只跟用户的 `treeCollapsed`。
+ *
+ * <p>留着会怎样：窄屏下这个启发式把 `treeCollapsed` 伪造成「折叠」，用户在单栏里打开右栏看到的
+ * 是一条 40px rail 而不是树 —— 即 task-144 ③ 修掉的「折叠吞掉右栏」换一个入口再来一次。</p>
  */
-const treeCollapsedForSqueeze = computed(() =>
-    treeExpandedManually.value ? false : layout.value.treeCollapsed || narrowViewport.value,
-);
 
 /**
  * S5-W2: the squeeze itself is owned by `useWorkspaceLayout` (single geometry
@@ -478,6 +435,55 @@ function observeWorkbenchWidth(): void {
 watch(workbenchRootRef, (el) => {
     if (el) observeWorkbenchWidth();
 });
+
+/**
+ * D-1777/D-1778（task-65 A 段）：右栏容器行页签 = dock 页签（含 files 树面板）。
+ * 与 WorkspaceDock 的 chips 同一份数据（Q2：复用既有 dock tab 数据，不新造 IA）。
+ */
+const rightContainerTabs = computed(() =>
+    dockTabs.value.map((tab) => ({ id: tab.id, label: tab.label, closable: true })),
+);
+
+/** files（目录树）面板开没开：树是右栏的一个 dock 页签（D-1777/D-1778 第 10 行 (a)）。 */
+const filesPanelOpen = computed(() => layout.value.dockTabs.includes("files"));
+
+/**
+ * 右栏行渲染与否（F6 的可遍历行必须真的渲染了，containerTabNav 的约定）。
+ *
+ * <p>**task-144 ③**（Lead 2026-11-17 批）：折叠 `treeCollapsed` **不再移走整行** ——
+ * 行是否存在只由 `dockOpen` 决定。</p>
+ *
+ * <p>为什么改：此前 rail 被提到整栏位置、与 `WorkspaceDock` 做 `v-if`/`v-else-if` 互斥 ⇒
+ * 折叠树把**整个右栏**（行 + monitor/code/changes/members/context/agents/delegation）换成 40px rail。
+ * 真浏览器实测（1920×1080，手写路径，dockTabs=[files,monitor,code]）折叠后：
+ * `workspace-container-tabs[data-container="right"]` false、`workspace-aux-panel` false、
+ * `dock-active-panel` false、`dock-tab-code|monitor` 命中 **0** ⇒「折叠树」等于「右栏消失」，
+ * BL-561 的另一半页签全部不可达。</p>
+ *
+ * <p>折叠现在的落点 = `files` 的**面板体**（`#files` slot 里的 `workspace-file-rail`，40px，
+ * 见模板）。语义是「这个面板收起来」，不是「把右栏还给主列」；真正腾空间的是单栏切换
+ * （task-94 S4），两件事不混。**已知取舍（裁定接受）**：折叠**不回收列宽**，右栏仍是 `dockWidth`。</p>
+ */
+const rightRowRendered = computed(() => dockOpen.value && rightVisible.value);
+
+/**
+ * task-184（D-1600 ①②）：渲染出来的容器行，顺序 = 渲染顺序。
+ * D-1777/D-1778：行集合 = {main, right}；右栏行在 dock 渲染时恒存在（折叠只收 files 面板体，
+ * task-144 ③ —— 折叠态按 F6 仍能落到右栏行激活页签，真浏览器实测 activeElement=dock-tab-monitor）。
+ */
+const containerRows = computed<ContainerRow[]>(() => {
+    const rows: ContainerRow[] = [
+        { container: "main", tabs: mainContainerTabs.value, activeId: mainContainerActiveId.value },
+    ];
+    if (rightRowRendered.value) {
+        rows.push({
+            container: "right",
+            tabs: rightContainerTabs.value,
+            activeId: activeDockTab.value,
+        });
+    }
+    return [...rowsForMode(rows, containerMode.value, layout.value.activeColumn)];
+});
 onMounted(observeWorkbenchWidth);
 onBeforeUnmount(() => {
     workbenchResizeObserver?.disconnect();
@@ -488,14 +494,8 @@ const demand = computed<WorkbenchSqueezeDemand | null>(() => {
     if (layout.value.dockFocus && dockOpen.value) return null;
     return {
         chromeOverheadMeasured: chromeOverheadMeasured.value,
-        treeWidth: layout.value.treeWidth,
-        treeCollapsed: treeCollapsedForSqueeze.value,
         dockWidth: layout.value.dockWidth,
         dockOpen: dockOpen.value,
-        dockMode: dockMode.value,
-        // A manual expansion is an explicit choice: no automatic yielding, the dock
-        // goes floating instead (the hard floor still overrides if that is not enough).
-        allowTreeYield: !treeExpandedManually.value,
     };
 });
 
@@ -508,13 +508,7 @@ const squeeze = computed<WorkbenchSqueezeResult>(() => {
         currentDemand = demand.value;
     if (!currentDemand) {
         // Focus: nothing to squeeze (mirrors the owner's "no demand" result).
-        return {
-            mainWidth: offset,
-            treeYielded: false,
-            navYielded: false,
-            forceFloating: false,
-            treeOverflow: false,
-        };
+        return { mainWidth: offset, navYielded: false, forceSingleColumn: false };
     }
     return computeWorkbenchSqueeze({
         workbenchWidth: offset,
@@ -523,164 +517,34 @@ const squeeze = computed<WorkbenchSqueezeResult>(() => {
     });
 });
 
-/** Rendered dock mode: forced floating wins over the user's pinned choice. */
-const renderedDockMode = computed<DockMode>(() =>
-    squeeze.value.forceFloating ? "floating" : dockMode.value,
-);
-/** True when the pinned choice is being overruled so the UI can say why. */
-const dockModeOverruled = computed(
-        () => squeeze.value.forceFloating && dockMode.value === "pinned",
-    ),
-    /**
-     * D26-04: the render projection of the focus flag. It only holds while the dock is
-     * actually rendered — a stored `dockFocus` without an open dock cannot hide the main
-     * column (that would be an empty workbench).
-     */
-    dockFocus = computed(() => dockOpen.value && layout.value.dockFocus);
+/**
+ * D26-04: the render projection of the focus flag. It only holds while the dock is
+ * actually rendered — a stored `dockFocus` without an open dock cannot hide the main
+ * column (that would be an empty workbench).
+ */
+const dockFocus = computed(() => dockOpen.value && layout.value.dockFocus);
 
-const effectiveTreeCollapsed = computed(
-    () => treeCollapsedForSqueeze.value || squeeze.value.treeYielded,
-);
+/**
+ * task-94 S2 / S4：**单栏判定由挤压模型给出，不由视口数字给出**（Lead 2026-11-17：
+ * 「1280 切单栏」是口语，实施必须换算成约束式 `主列会 <640 就切`，否则换个 dock 宽就错）。
+ *
+ * <p>等价阈值实测：会话列 260 ⇒ 1382；会话列 280 ⇒ 1402；随 dock 宽 320–480 移动
+ * （见 `internal/A03-xihe/evidence/2026-11-17-task94-dock-tree/README.md` §5）。</p>
+ */
+const forceSingleColumn = computed(() => squeeze.value.forceSingleColumn);
+
+/** 折叠只跟用户的持久值（S2：树不再进挤压模型，也没有窄屏自动折叠）。 */
+const effectiveTreeCollapsed = computed(() => layout.value.treeCollapsed);
 
 const treeWidth = computed(() => layout.value.treeWidth);
-const treeBubbleRef = ref<HTMLElement | null>(null);
 
 function setTreeWidth(width: number): void {
     layout.value.treeWidth = clampTreeWidth(width);
 }
 
 /**
- * PLAN-0753 T3 —— 文件树列（splitter panel #1）的桥接层，与导航面板同构：reka 拥有
- * 几何与指针拖拽，`@resize` 只喂宽度气泡（命令式文本），存储只经
- * release(`getSize()` 真值)/键盘/双击写入。折叠状态与宽度分开存（PLAN-0582 §1.5-A：
- * 收起不改宽度、展开回原宽），所以 `defaultSize` 是**展开宽**、`collapsedSize` 是 40px
- * rail —— reka 的 `collapsePanel` 只存 `panelSizeBeforeCollapseRef`，展开时恢复原宽。
- * 折叠桥接复用外壳已落地的 `navBridge` 同款 watcher 模式（`effectiveTreeCollapsed`）。
- */
-const TREE_RESIZE_HANDLE_ID = "tree-resize-handle";
-const treePanelCollapsed = computed(() => effectiveTreeCollapsed.value);
-const treePanelEl = ref<SplitterPanelExposed | null>(null);
 
-const treeBridge = useSplitterPanelBridge({
-    clamp: clampTreeWidth,
-    currentWidth: () => layout.value.treeWidth,
-    commit: (width) => setTreeWidth(width),
-    defaultWidth: TREE_WIDTH_DEFAULT,
-    onKeyResize: (key) => {
-        if (key === "ArrowLeft") return treeWidth.value - TREE_WIDTH_KEYBOARD_STEP;
-        if (key === "ArrowRight") return treeWidth.value + TREE_WIDTH_KEYBOARD_STEP;
-        if (key === "Home") return TREE_WIDTH_MIN;
-        if (key === "End") return TREE_WIDTH_MAX;
-        return null;
-    },
-    bubble: treeBubbleRef,
-    // task-94 (B)：reka 侧收/发百分比，store 仍是 px。
-    sizeUnit: { toPx: treePxOf, fromPx: treePercentOf },
-    handleId: TREE_RESIZE_HANDLE_ID,
-    isCollapsed: () => treePanelCollapsed.value,
-});
-const { resizing: treeResizing } = treeBridge;
 
-/**
- * 每个 panel 实例只 bootstrap 一次（task-2 / 原 task-613 的修法）。
- *
- * 为什么必须这道门（根因，[实测] mock lane stack 探针）：Vue 的**函数 ref 在该 vnode 每次
- * patch 时都会被回调**（`@vue/runtime-core` 的 `patch()`：`if (ref != null && parentComponent)
- * setRef(...)`，而 `setRef` 对函数 ref 无条件 `rawRef(value, refs)`），reka 的 SplitterGroup
- * 每写一次 layout 就重渲染（`reka-ui@2.11.0 dist/Splitter/SplitterGroup.js:517` 的
- * `renderSlot(_ctx.$slots, "default", { layout: layout.value })`）⇒ **一次指针拖拽 = 每帧一次
- * patch = 每帧一次本函数**。bootstrap 若跟着每帧跑，就等于对同一实例反复 `resize(存储宽)`
- * （实测栈：`resizePanel` ← `useSplitterPanelBridge.ts` 的 `resizeToWidth` ← 本函数），
- * 把 reka 刚应用的拖拽增量整段撤销：拖拽帧 `prev=[17.28,82.72]` 被写回 `[20.73,79.27]`
- * （= 存储宽 240px / 组宽 1158），于是 rail 恒 240、aria-valuenow 恒 21、release 也写不到新值。
- * 键盘路径不走 patch（reka 的 resizeHandler 是 imperative），所以一直好使 —— 这就是
- * 「键盘通、指针静默失效」的全部差别。
- *
- * 保留 task-551 的语义：bootstrap 仍发生在**ref 投递同刻**（不靠 collapse 变化触发），
- * 所以窄视口首帧即折叠的情形照旧生效；只是「同一实例再次投递」不再重复执行。
- * 实例换了（工作区切换/重挂载，含卸载时的 `null` 投递）会重置这道门。
- */
-let bootstrappedTreePanel: unknown = null;
-
-function setTreePanel(el: unknown): void {
-    treePanelEl.value = (el as SplitterPanelExposed | null) ?? null;
-    if (!el) {
-        bootstrappedTreePanel = null;
-        return;
-    }
-    // task-551：`:ref` 在 253ms 就已经投递到组件实例（真栈打点：setTreePanel 多次调用、panelRef 已被赋值），
-    // 所以修法就落在**这里**（与 ref 投递同刻），而不是再补一个 watcher。
-    // 原来的 `watch(treePanelCollapsed)` 只在 false→true 变化时调 collapse()；而 1180 档该值挂载首帧
-    // 就为 true（`narrowViewport` ≤1439 恒真）⇒ 永远没有变化 ⇒ collapse() 一次都不执行
-    // （真栈打点 collapse 调用次数 = 0），rail 靠 v-if 已渲染 ⇒ 看着折叠、宽度仍是展开态（220px / main 597）。
-    if (el === bootstrappedTreePanel) return;
-    bootstrappedTreePanel = el;
-    void nextTick(() => {
-        // 折叠初始态**不**在这里 collapse()：reka 的 `collapsePanel` 要求 layout 已初始化
-        // （`assert(panelSize != null)`），首帧常常还在那个窗口里 —— 原来的「每 patch 重投递」
-        // 靠反复重试把这枪补上了，收成 once 之后就没有第二枪（实测：1180 档停在 expanded/220px，
-        // task-2 回归读数）。折叠初值改由模板的 `:default-size` 承载：layout 初始化时就取
-        // collapsedSize，不需要任何 imperative 调用（task-551 的语义因此**更强**，不再依赖时序）。
-        if (treePanelCollapsed.value) return;
-        treeBridge.resizeToWidth(treeWidth.value);
-    });
-}
-
-watch(treePanelEl, (panel) => {
-    treeBridge.panelRef.value = panel;
-});
-
-/**
- * store → 面板 的**显式**通道（task-2 / 原 task-613 修法的第二半，缺它就会把
- * 「拖拽被撤销」换成「宽度再也改不动」）。
- *
- * 为什么必须显式写：把 `setTreePanel` 收成「每实例一次」之后，「每次 patch 都重投递一次 store 宽」
- * 那条隐式通道没了 —— 而它在修复前是**唯一**把 `treeWidth` 写进 reka layout 的通用通道。其余
- * `resizeToWidth` 调用点各自只管一件事：键盘 `useSplitterPanelBridge.ts:143`、双击 `:155`、
- * 折叠态切换 `本文件:534`、nav 侧 `AppLayout.vue:182`。少了这条通用通道，凡不是这三条动作
- * 来源的宽度变更都会静默失效；最现实的一例就在 release 路径上：`clampTreeWidth` 会**取整**
- * （`useWorkspaceLayout.ts:183-186`），拖到 239.4 时 store 是 240 而面板停在 239.4，没人纠正。
- *
- * 与拖拽**不会打架**，两道判据：
- *   ① 结构判据：拖拽期间 store **根本不写** —— `commit` 只在 `onDragging(false)` / 键盘 / 双击
- *      三处被调（`useSplitterPanelBridge.ts:120/144/156`），`@resize` 只喂宽度气泡
- *      ⇒ 本 watcher 在拖拽帧逻辑上不可能触发。
- *   ② 兜底判据：`treeResizing`（= bridge 的 `draggingActive`）为真时直接 return —— 将来若有人
- *      在拖拽中写 store，也不会回灌成「自我强写」循环（那正是本次 bug 的形态）。
- * 折叠态同样跳过：折叠由 reka 的 `collapse()` 管，写回展开宽会把 40px rail 顶回去。
- *
- * 为什么监听里还有 `splitterWidth`（[实测] 没有它会假绿）：reka 侧收/发的是**百分比**
- * （task-94 B），px→% 用的是 `treePercentOf` 里的组宽；而组宽在挂载期是变长的
- * （宿主链有 `transition-[flex-grow] duration-300`，实测 410→1158）。用未稳的组宽换算出来的 %
- * 在组宽变大后就不再等于存储的 px：实测修掉每帧写回之后，拖到 200px 落盘、reload 起来渲染成
- * **207px**（17.8% × 1162）。所以组宽变化也要按存储 px 重算一次 —— 这同时就是
- * 「持久化是 px」这个契约的落点（窗口变宽时面板保持 px，而不是保持 %）。
- * 组宽只在窗口/容器变化时变，拖拽期不变 ⇒ 不会与拖拽打架；且 apply 只写 layout、不写 store、
- * 不改组宽 ⇒ 没有回灌环。
- */
-useSplitterPanelWidthSync({
-    width: treeWidth,
-    groupSize: splitterWidth,
-    isDragging: treeResizing,
-    isCollapsed: () => treePanelCollapsed.value,
-    apply: (widthPx) => treeBridge.resizeToWidth(widthPx),
-});
-
-// `treeCollapsed`（用户/窄视口收起）与 `treeYielded`（挤压让位）都是**渲染**状态：
-// 它们走 collapse()/expand()，永不写存储宽度。
-watch(
-    treePanelCollapsed,
-    (collapsed) => {
-        if (collapsed) {
-            treeBridge.collapse();
-            return;
-        }
-        treeBridge.expand();
-        // expand() 恢复 collapse 前宽度；窄视口等显示态变化后补一次 display 夹取（见 ruling ③）。
-        treeBridge.resizeToWidth(treeWidth.value);
-    },
-    { flush: "post" },
-);
 
 /**
  * task-369 S1（D-1222）：dockview 壳开关。默认 false ⇒ 产品路径与两条既有判据
@@ -720,45 +584,13 @@ function reopenPanel(payload: { id: string; target: "center" | "dock" }): void {
     if (isDockTabId(payload.id)) openDockTab(payload.id);
 }
 
-/** Pin/unpin is an explicit user choice: it wins over the breakpoint derivation. */
-function toggleDockMode(): void {
-    layout.value.dockMode = dockMode.value === "pinned" ? "floating" : "pinned";
-    layout.value.dockModeManual = true;
-}
-
-// §4 rule 3 must not be silent: one toast per transition into forced floating.
-// `immediate` matters — a window that is already too narrow on first paint would
-// otherwise be forced floating without any explanation.
-let squeezeToastShown = false;
-watch(
-    dockModeOverruled,
-    (overruled) => {
-        if (overruled && !squeezeToastShown) {
-            squeezeToastShown = true;
-            toast.warning(t("workspace.squeezeFloatingNotice"));
-            return;
-        }
-        if (!overruled) squeezeToastShown = false;
-    },
-    { immediate: true },
-);
-
-// task-589：用户显式展开文件树后主列可能低于硬底线。产品裁定 = **允许破底线 + 给一次可见提示**
-// （静默无效是最坏的：点击「展开」后界面毫无变化）。同样按「一次进入」计，不做逐帧刷屏。
-let treeOverflowToastShown = false;
-watch(
-    () => squeeze.value.treeOverflow,
-    (overflow) => {
-        if (overflow && !treeOverflowToastShown) {
-            treeOverflowToastShown = true;
-            toast.warning(t("workspace.squeezeTreeOverflowNotice"));
-            return;
-        }
-        if (!overflow) treeOverflowToastShown = false;
-    },
-    { immediate: true },
-);
-
+/**
+ * task-94 S1/S2：两条一次性提示随各自的机制退场，**不是被静音** —— 它们提示的两件事都不再发生：
+ *
+ * - `workspace.squeezeFloatingNotice`（「右栏被挤压成浮窗」）：浮窗没了，挤压的出口改成单栏，
+ *   单栏切换器本身就是可见的状态指示（用户在右栏 / 在中栏，一眼可见，不需要 toast 解释）；
+ * - `workspace.squeezeTreeOverflowNotice`（「树展开后主列破 640」）：树不再占行宽 ⇒ 破不了。
+ */
 /**
  * Escape typed into a field belongs to that field (rename, search, composer), not to
  * the dock; an open dialog likewise owns Escape for its own dismissal.
@@ -770,25 +602,19 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-// Floating is not a modal (Lead ruling 2026-10-31): no backdrop, dismiss with Esc
-// or by clicking the main column instead.
+/**
+ * Escape 只剩一件事：退出 focus（D26-04）。**「关闭浮窗」那条规则随浮窗退场**（task-94 S1）——
+ * pinned 右栏是用户的持久选择，Escape 不该关它；旧代码那条分支在 pinned 下本来就是 no-op，
+ * 留着它只会让人以为「还有浮窗形态」。
+ */
 function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     // An open dialog closes itself on Escape; do not also collapse the dock behind it.
     if (document.querySelector('[data-testid="modal-backdrop"]')) return;
     // Escape in a text field cancels that field's interaction, not the dock.
     if (isTextEntryTarget(event.target)) return;
-    // PLAN-0626 D26-04: focus fills the row, so it needs a keyboard exit even though it
-    // is laid out as a flex child (the floating-only rule below would ignore it).
-    // Esc restores the previous layout instead of rolling the dock up.
-    if (dockFocus.value) {
-        exitDockFocus();
-        return;
-    }
-    // A pinned panel is a deliberate layout choice: Escape must not close it, and a
-    // squeeze-forced floating panel keeps the same body of behaviour (rendered mode).
-    if (!dockOpen.value || renderedDockMode.value !== "floating") return;
-    collapseDock();
+    // PLAN-0626 D26-04: focus fills the row, so it needs a keyboard exit.
+    if (dockFocus.value) exitDockFocus();
 }
 
 if (typeof window !== "undefined") {
@@ -796,20 +622,22 @@ if (typeof window !== "undefined") {
     onBeforeUnmount(() => window.removeEventListener("keydown", handleWindowKeydown));
 }
 
-/** Clicking the main column dismisses a floating dock (no overlay to click). */
-function handleMainColumnPointerDown(): void {
-    if (!dockOpen.value || renderedDockMode.value !== "floating") return;
-    collapseDock();
+/**
+ * 折叠 = 这个面板收起来（不是把右栏还给主列，也不是关掉 files 页签）。
+ * task-94 S2：窄屏自动折叠的启发式退场 —— 窄屏腾空间现在由单栏切换做，折叠只跟用户点的那一下。
+ */
+function toggleTree(): void {
+    layout.value.treeCollapsed = !layout.value.treeCollapsed;
 }
 
-function toggleTree(): void {
-    // Below 1440px the tree yields by default; an explicit expand is session-scoped
-    // and does not overwrite the user's persisted preference.
-    if (narrowViewport.value) {
-        treeExpandedManually.value = !treeExpandedManually.value;
-        return;
-    }
-    layout.value.treeCollapsed = !layout.value.treeCollapsed;
+/**
+ * task-94 S4（`D-1545`）：单栏形态下「右栏可见」= 当前那一栏就是右栏。
+ *
+ * <p>没有这一步，窄屏点工具栏上的 files/code 会**什么都不发生**（右栏是渲染了，但被单栏规则挡在
+ * 视口外）—— 那正是本卡要治的「按了没反应」。所以凡是「用户要右栏」的动作，都先把活跃栏切过去。</p>
+ */
+function revealRightColumn(): void {
+    if (containerMode.value === "single") layout.value.activeColumn = "right";
 }
 
 /** Opening a tab that is already open keeps it, activates it and expands the dock. */
@@ -825,6 +653,7 @@ function openDockTab(id: DockTabId): void {
     }
     layout.value.activeDockTab = id;
     layout.value.dockCollapsed = false;
+    revealRightColumn();
 }
 
 /** Toolbar toggles: pressing the active tab collapses the dock but keeps tabs/width. */
@@ -840,6 +669,7 @@ function setActiveDockTab(id: string): void {
     if (!isDockTabId(id) || !layout.value.dockTabs.includes(id)) return;
     layout.value.activeDockTab = id;
     layout.value.dockCollapsed = false;
+    revealRightColumn();
 }
 
 /**
@@ -899,6 +729,8 @@ function collapseDock(): void {
     // Collapsing is itself the stored truth: `initialLayout` only applies the
     // "≥1800 opens the monitor" default while no geometry exists (S3b P1-1).
     layout.value.dockCollapsed = true;
+    // 单栏下「收起后看得见中栏」由 *effectiveActiveColumn* 派生兜住（见该 computed 的注释）——
+    // 这里**不写** activeColumn，用户的栏偏好要留着：重开右栏就回到右栏。
     // D26-05/D26-04: collapsing the dock also leaves focus — one action, never a
     // half state where "focused" survives a hidden panel.
     layout.value.dockFocus = false;
@@ -911,6 +743,8 @@ function collapseDock(): void {
  */
 function toggleDockFocus(): void {
     if (!dockOpen.value) return;
+    // task-94 S4：focus 是「右栏占满整行」，所以它必须让右栏成为当前栏（单栏形态下尤其）。
+    if (!layout.value.dockFocus) revealRightColumn();
     layout.value.dockFocus = !layout.value.dockFocus;
 }
 
@@ -1006,6 +840,8 @@ defineExpose({ openDockTab });
             :delegation-open="isMobile ? false : delegationOpen"
             @agents="emit('agents')"
             @files="emit('files')"
+            :files-open="isMobile ? false : dockOpen && filesPanelOpen"
+            @toggle-files="toggleDockTab('files')"
             @toggle-code="handleToggleCode"
             @toggle-changes="handleToggleChanges"
             @toggle-monitor="handleToggleMonitor"
@@ -1019,12 +855,10 @@ defineExpose({ openDockTab });
         </div>
 
         <!--
-            D-1207 甲案（task-353）：文件树不再是工作台的第三列，而是**中栏容器内部**的可折叠 panel。
-            中栏容器 = `[data-testid="workspace-center"]` —— 判据①的指称物（D-1190 同族：没有名字的
-            节点没法被断言）。内层 SplitterGroup 的两道 panel 仍是 [文件树 | 主区]，**与改造前同序**，
-            因此几何（`treeWidth` px）、折叠语义与持久化键一个都不用改。
-            PLAN-0753 T3 的 handle 净零宽约定（`-ml-1 w-1` ⇒ 主列起始位不变）照旧。
-        -->
+        D-1777/D-1778（task-65 A 段）：两栏各自是一个容器 —— 中栏（main，会话页签 + 路由内容）
+        与右栏（right，dock 页签行 + 面板身体）。**目录树是右栏的 files 面板**（不占独立容器行、
+        不参与容器级页签之外的特殊通道）；树宽 = 右栏 dock 宽（splitter 语义已退场，第 10 行 (a) 的已接受代价）。
+    -->
         <div
             v-else
             ref="workbenchRootRef"
@@ -1067,7 +901,7 @@ defineExpose({ openDockTab });
                         >
                             <!-- task-174（S2b）：树容器自己的页签行（容器子件，不再全局）。 -->
                             <WorkspaceContainerTabs
-                                container-id="tree"
+                                container-id="right"
                                 :tabs="treeContainerTabs"
                                 :active-id="'tree'"
                                 @row-key="onContainerRowKey"
@@ -1101,7 +935,6 @@ defineExpose({ openDockTab });
                         <div
                             data-testid="workspace-main"
                             class="flex min-w-0 flex-1 flex-col bg-card"
-                            @mousedown="handleMainColumnPointerDown"
                         >
                             <slot name="center" />
                         </div>
@@ -1111,6 +944,7 @@ defineExpose({ openDockTab });
                             :id="tab.id"
                             :session-id="sessionId"
                             :workspace-id="workspaceId"
+                            @collapse-tree="toggleTree"
                             @close="collapseDock"
                             @mention="emit('mention', $event)"
                         />
@@ -1124,147 +958,113 @@ defineExpose({ openDockTab });
                 -->
                 <WorkspaceContainerSwitcher
                     v-if="containerMode === 'single'"
-                    :active-column="layout.activeColumn"
+                    :active-column="effectiveActiveColumn"
                     @update:active-column="setActiveColumn"
                 />
-                <SplitterGroup
-                    ref="centerGroupRef"
-                    direction="horizontal"
-                    class="flex min-h-0 min-w-0 flex-1"
-                    @keydown.capture="treeBridge.onKeydownCapture"
-                >
-                    <!-- Left column: the file tree. S3b: draggable 200-320 + keyboard + dblclick. -->
-                    <SplitterPanel
-                        :ref="setTreePanel"
-                        as-child
-                        size-unit="%"
-                        collapsible
-                        :default-size="
-                            treePanelCollapsed ? treeCollapsedPercent : treeDefaultPercent
-                        "
-                        :min-size="treeMinPercent"
-                        :max-size="treeMaxPercent"
-                        :collapsed-size="treeCollapsedPercent"
-                        @resize="treeBridge.onResize"
-                    >
-                        <div
-                            data-testid="workspace-file-rail"
-                            class="relative flex h-full shrink-0 flex-col border-r border-border bg-surface-canvas"
-                            :class="{
-                                'is-resizing': treeResizing,
-                            }"
-                        >
-                            <!-- task-174（S2b）：树容器自己的页签行（容器子件，不再全局）。 -->
-                            <WorkspaceContainerTabs
-                                container-id="tree"
-                                :tabs="treeContainerTabs"
-                                :active-id="'tree'"
-                                @row-key="onContainerRowKey"
-                            />
-                            <div
-                                v-if="effectiveTreeCollapsed"
-                                class="flex flex-col items-center gap-1 py-2"
-                            >
-                                <button
-                                    type="button"
-                                    data-testid="workspace-tree-expand"
-                                    class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                    :title="t('workspace.expandFiles')"
-                                    :aria-label="t('workspace.expandFiles')"
-                                    :aria-pressed="false"
-                                    @click="toggleTree"
-                                >
-                                    <FolderTree class="size-4" aria-hidden="true" />
-                                </button>
-                            </div>
-                            <div
-                                v-else
-                                class="flex h-full min-h-0 flex-1 flex-col"
-                                data-testid="workspace-file-tree"
-                            >
-                                <!-- S3a: tree panel head (workspace name / file actions / collapse). -->
-                                <FileTreePanel @collapse="toggleTree" />
-                            </div>
-
-                            <!--
-                            PLAN-0753 T3: 宽度气泡的显隐由桥接 `resizing` 驱动，文本由桥接在
-                            `@resize` 里命令式写入（textContent）——不建响应式宽度通道。
-                        -->
-                            <span
-                                v-if="treeResizing"
-                                ref="treeBubbleRef"
-                                data-testid="tree-resize-bubble"
-                                aria-hidden="true"
-                                class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-xs tabular-nums text-background"
-                            />
-                        </div>
-                    </SplitterPanel>
-                    <!-- testid/aria 走 fallthrough（与导航 handle 同口径）；⋮ 抓手是 SashGrip 子件（PLAN-0762 M4）。 -->
-                    <SplitterResizeHandle
-                        v-if="!treePanelCollapsed"
-                        id="tree-resize-handle"
-                        data-testid="tree-resizer"
-                        aria-orientation="vertical"
-                        :aria-label="t('workspace.treeResize')"
-                        :aria-valuenow="treeWidth"
-                        :aria-valuemin="TREE_WIDTH_MIN"
-                        :aria-valuemax="TREE_WIDTH_MAX"
-                        class="group/sash relative z-10 -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-                        @dragging="treeBridge.onDragging"
-                        @dblclick="treeBridge.onDblclick"
-                    >
-                        <SashGrip testid="tree-resizer-grip" />
-                    </SplitterResizeHandle>
-
-                    <!--
-                Center: the routed main content (chat / environment / settings).
-                D26-04: focus hides this column with `v-show` (never `v-if`) — unmounting
-                ChatPanel would drop its SSE subscription and the streaming state mid-run
-                (`useSSE.ts:555-557`), so the column stays mounted and merely stops taking
-                layout space.
+                <!--
+                D-1777/D-1778：中栏容器 = 会话页签行 + 路由内容。**树列已搬走**（右栏 files 面板）。
             -->
-                    <!-- task-94 (B)：主列也用 %（组里只要还剩一个 px 面板，layout 就可能永不初始化）。 -->
-                    <SplitterPanel
-                        class="flex min-w-0"
-                        size-unit="%"
-                        :default-size="mainDefaultPercent"
+                <div class="flex min-h-0 min-w-0 flex-1">
+                    <!--
+                    D26-04: focus hides this column with v-show (never v-if) — unmounting
+                    ChatPanel would drop its SSE subscription and the streaming state mid-run,
+                    so the column stays mounted and merely stops taking layout space.
+                -->
+                    <div
+                        v-show="!dockFocus && mainVisible"
+                        data-testid="workspace-main"
+                        class="flex min-w-0 flex-1 flex-col bg-card"
+                        :data-main-hidden="dockFocus ? 'true' : 'false'"
+                        :data-main-column-visible="mainVisible ? 'true' : 'false'"
                     >
-                        <div
-                            v-show="!dockFocus"
-                            data-testid="workspace-main"
-                            class="flex min-w-0 flex-1 flex-col bg-card"
-                            :data-main-hidden="dockFocus ? 'true' : 'false'"
-                            @mousedown="handleMainColumnPointerDown"
-                        >
-                            <!-- task-174（S2b）：内容容器页签行（页面/会话页签归这里）。 -->
-                            <WorkspaceContainerTabs
-                                container-id="main"
-                                :tabs="mainContainerTabs"
-                                :active-id="mainContainerActiveId"
-                                @select="selectWorkspaceTab($event)"
-                                @close="closeWorkspaceTab($event)"
-                                @row-key="onContainerRowKey"
-                            />
-                            <slot name="center" />
-                        </div>
-                    </SplitterPanel>
-                </SplitterGroup>
+                        <!-- task-174（S2b）：内容容器页签行（页面/会话页签归这里）。 -->
+                        <WorkspaceContainerTabs
+                            container-id="main"
+                            :tabs="mainContainerTabs"
+                            :active-id="mainContainerActiveId"
+                            @select="selectWorkspaceTab($event)"
+                            @close="closeWorkspaceTab($event)"
+                            @row-key="onContainerRowKey"
+                        />
+                        <slot name="center" />
+                    </div>
+                </div>
             </div>
+            <!--
+                D-1777/D-1778 第 5 行：折叠 ≠ 关闭。折叠 = `treeCollapsed` ⇒ **`files` 面板体**收成
+                TREE_COLLAPSED_WIDTH 的 rail（`workspace-file-rail` 仍在、`workspace-tree-expand` 一键展开，
+                见下方 `#files` slot）；关闭 = files 页签从右栏行关掉（或 dockCollapsed 整列收起），
+                重开走工具栏 workspace-toolbar-files。
+
+                task-144 ③：**rail 不再与整个右栏二选一** —— 那一版把「折叠树」变成「右栏消失」，
+                monitor/code/changes 一并不可达（实测读数见 `rightRowRendered` 上方注释）。
+
+                task-144 ②（P1）：**右栏归属 dockview 壳时不许再画手写右栏**。
+                本块是手写路径的右栏（`WorkspaceDock`），而 `dockviewEnabled` 时右栏由
+                `WorkspaceShellDockview` 里那个跨栏实例承载 ⇒ 两块同时渲染就是两套右栏：
+                实测（1920×1080，`__xhUseDockview=true`）展开态 `dock-active-panel` 仍在、
+                折叠态 `workspace-file-rail` 解析到 **2 个**（DOM 序：壳内 rail + 旧的本块 rail）。
+            -->
             <WorkspaceDock
-                v-if="dockOpen && activeDockTab"
+                v-if="!dockviewEnabled && dockOpen && activeDockTab && rightVisible"
                 :tabs="dockTabs"
                 :active-tab="activeDockTab"
                 :width="layout.dockWidth"
-                :mode="renderedDockMode"
+                :fill="containerMode === 'single'"
                 :default-width="DOCK_WIDTH_DEFAULT"
                 :focus="dockFocus"
                 @update:active-tab="setActiveDockTab"
                 @close-tab="closeDockTab"
                 @close="collapseDock"
                 @update:width="setDockWidth"
-                @toggle-mode="toggleDockMode"
                 @toggle-focus="toggleDockFocus"
+                @row-key="onContainerRowKey"
             >
+                <!--
+                    D-1777/D-1778：files = 目录树的面板身份（右栏容器）。树宽 = 右栏 dock 宽；
+                    折叠走 treeCollapsed（**面板体收成 rail**，见下面本 slot 的 v-if，task-144 ③），
+                    关闭 = 关掉 files 页签。
+                -->
+                <!--
+                    task-144 ②：`files` 面板内容**不再在这里另写一份**，改走
+                    `WorkspaceDockPanelContent`（dockview 路径同一个组件、同一个分支）。
+                    这就是该组件头注释「两条渲染路径共用同一份、避免各写一遍而漂移」的本意 ——
+                    此前 dockview 路径恰恰漏了 `files`，正是因为内容只在这个 slot 里。
+                -->
+                <template #files>
+                    <!--
+                        task-144 ③（Lead 2026-11-17 批）：**折叠 = 这个面板收起来**，所以 rail 收在
+                        `files` 的**面板体**里，右栏行与其余页签（monitor/code/changes/…）照常渲染。
+                        折叠不回收列宽（右栏仍 = dockWidth），这是裁定接受的取舍。
+                    -->
+                    <div
+                        v-if="effectiveTreeCollapsed"
+                        data-testid="workspace-file-rail"
+                        class="flex h-full flex-col items-center gap-1 border-r border-border bg-surface-canvas py-2"
+                        :style="{ width: TREE_COLLAPSED_WIDTH + 'px' }"
+                    >
+                        <button
+                            type="button"
+                            data-testid="workspace-tree-expand"
+                            class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            :title="t('workspace.expandFiles')"
+                            :aria-label="t('workspace.expandFiles')"
+                            :aria-pressed="false"
+                            @click="toggleTree"
+                        >
+                            <FolderTree class="size-4" aria-hidden="true" />
+                        </button>
+                    </div>
+                    <WorkspaceDockPanelContent
+                        v-else
+                        id="files"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @collapse-tree="toggleTree"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
+                </template>
                 <template #code>
                     <WorkspaceDockPanelContent
                         id="code"

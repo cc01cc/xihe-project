@@ -13,7 +13,6 @@ import {
     NAV_WIDTH_MAX,
     NAV_WIDTH_MIN,
     RAIL_WIDTH,
-    TREE_COLLAPSED_WIDTH,
     TREE_WIDTH_DEFAULT,
     TREE_WIDTH_MAX,
     TREE_WIDTH_MIN,
@@ -132,13 +131,18 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: DOCK_WIDTH_DEFAULT,
             dockTabs: [],
             activeDockTab: null,
-            dockMode: "floating",
+            // task-94 S1：floating 退场后的**存储默认**是 pinned（旧键里的 "floating" 仍能读，
+            // 但渲染侧已没有产生它的路径）；这里跟着改成 pinned，别把 impl 的默认当 bug 改回去。
+            dockMode: "pinned",
             dockModeManual: false,
             dockFocus: false,
             // C3: pages never enter the tab bar; the default open set is empty.
             openTabs: [],
             // D-1545：窄屏当前显示的栏（旧载荷缺字段 ⇒ 读成 main，行为同改动前）。
             activeColumn: "main",
+            // task-65 A 段（D-1777/D-1778）：文件内容投到哪个容器的唯一真源，默认右栏
+            // （今天唯一已接线的挂载点）。旧载荷缺字段 ⇒ 读成默认，不新增持久化键。
+            openTarget: "right",
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
     });
@@ -163,6 +167,8 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
             activeColumn: "right",
+            // task-65 A 段：新字段走的是**同一条往返**（不是「只补默认值」）—— 写 main 读回 main。
+            openTarget: "main",
         });
 
         expect(readStoredWorkspace("ws-1")).toEqual({
@@ -177,6 +183,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
             activeColumn: "right",
+            openTarget: "main",
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
             treeCollapsed: true,
@@ -190,6 +197,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
             activeColumn: "right",
+            openTarget: "main",
         });
         // Workspace-scoped: another workspace is untouched.
         expect(readWorkspaceLayout("ws-2")).toEqual(defaultWorkspaceLayout());
@@ -347,15 +355,24 @@ describe("PLAN-0582 S3a: breakpoint helpers (S2 audit P1-1/P1-4)", () => {
         expect(clampNavWidthForViewport(220, 1024)).toBe(220);
     });
 
-    it("derives a monitor dock default only for wide screens with no stored layout", () => {
+    it("seeds the files+monitor dock default at both breakpoints, opening it only on wide screens", () => {
+        /**
+         * 为什么宽屏首启带 `files` 是【期望行为】而不是副作用（card task-139/157 的问题）：
+         * `task-94 S5 / D4`（Lead 2026-11-17 裁「D4 必须同批修」）明写**两档首启都带 files 页签**，
+         * 与 `task-65 A 段`（`D-1777`/`D-1778`，「右侧容器显示目录树组件」）同源。
+         * 反面实证就在 D4 里：<1800 首启若不给 files 页签，`renderedDockTabs=0`、树根本不在 DOM ⇒
+         * 用户会以为「树不在这个版本里」。少一个页签不是布局差异，是**功能看起来不存在**。
+         * ⇒ 两档唯一差异是「dock 是否已展开」：宽屏展开且 files 在前，窄屏收起但页签与激活项就位。
+         */
         const wide = defaultWorkspaceLayoutForViewport(1920);
         expect(wide.dockCollapsed).toBe(false);
-        expect(wide.dockTabs).toEqual(["monitor"]);
-        expect(wide.activeDockTab).toBe("monitor");
+        expect(wide.dockTabs).toEqual(["files", "monitor"]);
+        expect(wide.activeDockTab).toBe("files");
 
         const narrow = defaultWorkspaceLayoutForViewport(1440);
         expect(narrow.dockCollapsed).toBe(true);
-        expect(narrow.dockTabs).toEqual([]);
+        expect(narrow.dockTabs).toEqual(["files", "monitor"]);
+        expect(narrow.activeDockTab).toBe("files");
         // S3a audit P1-1 (S3b fix): an openTabs-only payload is NOT stored geometry,
         // so the first-run policy still applies; any geometry field flips it.
         localStorage.setItem("xihe-layout-ws:ws-1", JSON.stringify({ openTabs: [] }));
@@ -375,14 +392,19 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         expect(clampTreeWidth(287.4)).toBe(287);
     });
 
-    it("derives the dock mode from the single breakpoint constant", () => {
-        expect(deriveDockMode(1920)).toBe("pinned");
-        expect(deriveDockMode(1800)).toBe("pinned");
-        expect(deriveDockMode(1799)).toBe("floating");
-        expect(deriveDockMode(1024)).toBe("floating");
-        // A fresh wide profile derives the pinned mode in its first-run layout.
+    // task-94 S1 / D-1754 ④ 判据 3：视口不再是 dock 形态的来源。1600 档曾派生出 absolute overlay
+    // （实测 position:absolute + z-index:20 + 与主列重叠 360px），那是用户点名要消灭的形态。
+    it("always derives the pinned mode at every viewport (floating branch retires)", () => {
+        for (const viewport of [2560, 1920, 1800, 1799, 1440, 1280, 1024, 768]) {
+            expect(deriveDockMode(viewport)).toBe("pinned");
+        }
+        // 非法宽度不再回落 floating（旧的 0/NaN 兜底本身就是浮窗的一个来源）。
+        expect(deriveDockMode(0)).toBe("pinned");
+        expect(deriveDockMode(Number.NaN)).toBe("pinned");
+        // A fresh profile derives the pinned mode in its first-run layout at every width.
         expect(defaultWorkspaceLayoutForViewport(1920).dockMode).toBe("pinned");
-        expect(defaultWorkspaceLayoutForViewport(1440).dockMode).toBe("floating");
+        expect(defaultWorkspaceLayoutForViewport(1440).dockMode).toBe("pinned");
+        expect(defaultWorkspaceLayoutForViewport(1024).dockMode).toBe("pinned");
     });
 
     it("keeps the persisted active dock tab aligned with the capped tab list (P2-7)", () => {
@@ -518,213 +540,129 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         scope.stop();
     });
 
-    it("yields the tree first and only then floats the dock (spec §1.5-C)", () => {
-        // Plenty of room: nothing yields.
+    /**
+     * task-94 S2：**行宽里没有树项**。树是右栏的一个面板（`D-1777`/`D-1778`），树宽已经含在
+     * `dockWidth` 里；旧实现同时扣 `treeWidth` 与 `dockWidth` 是**重复扣**（实测 1600 档：
+     * DOM 主列 1157 / 旧模型算 597）。所以这一组用例的输入里不再有 `treeWidth`/`treeCollapsed`。
+     */
+    it("computes the two-column main width from the dock alone (no tree term, task-94 S2)", () => {
         expect(
-            computeWorkbenchSqueeze({
-                workbenchWidth: 1444,
-                treeWidth: 240,
-                treeCollapsed: false,
-                dockWidth: 360,
-                dockOpen: true,
-                dockMode: "pinned",
-            }),
-        ).toEqual({
-            mainWidth: 844,
-            treeYielded: false,
-            navYielded: false,
-            forceFloating: false,
-            treeOverflow: false,
-        });
-
-        // 720 comfort floor: the pinned dock makes the tree yield (240 -> 40).
+            computeWorkbenchSqueeze({ workbenchWidth: 1804, dockWidth: 360, dockOpen: true }),
+        ).toEqual({ mainWidth: 1444, navYielded: false, forceSingleColumn: false });
+        // 右栏收起 ⇒ 整行都是主列，也没有「要分流的两栏」。
         expect(
-            computeWorkbenchSqueeze({
-                workbenchWidth: 1280,
-                treeWidth: 240,
-                treeCollapsed: false,
-                dockWidth: 360,
-                dockOpen: true,
-                dockMode: "pinned",
-            }),
-        ).toEqual({
-            mainWidth: 880,
-            treeYielded: true,
-            navYielded: false,
-            forceFloating: false,
-            treeOverflow: false,
-        });
+            computeWorkbenchSqueeze({ workbenchWidth: 1804, dockWidth: 360, dockOpen: false }),
+        ).toEqual({ mainWidth: 1804, navYielded: false, forceSingleColumn: false });
+    });
 
-        // 640 hard floor: even after the tree yields the main column is too narrow,
-        // so the dock renders floating and the user value is left untouched.
+    it("yields the navigation panel at the comfort floor", () => {
         const squeezed = computeWorkbenchSqueeze({
             workbenchWidth: 1000,
-            treeWidth: 240,
-            treeCollapsed: true,
+            navPanelWidth: 240,
             dockWidth: 360,
             dockOpen: true,
-            dockMode: "pinned",
         });
-        expect(squeezed.forceFloating).toBe(true);
-        expect(squeezed.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+        expect(squeezed.navYielded).toBe(true);
+        expect(squeezed.mainWidth).toBe(880);
+        expect(squeezed.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
+        expect(squeezed.forceSingleColumn).toBe(false);
+    });
 
-        // Floating never takes space, so nothing has to yield.
+    it("falls back to a single column when the yielded row still cannot hold 640 (D-1545)", () => {
+        // 会话列已让尽（navPanelWidth 0）后只剩 540 ⇒「主列 + 右栏同行」在这个宽度不成立。
+        const squeezed = computeWorkbenchSqueeze({
+            workbenchWidth: 900,
+            navPanelWidth: 0,
+            dockWidth: 360,
+            dockOpen: true,
+        });
+        expect(squeezed.forceSingleColumn).toBe(true);
+        // 右栏不死也不被关：这个判定只决定**形态**（两栏轮流占满整行）。
+        expect(squeezed.mainWidth).toBe(540);
+        // 同一宽度但右栏收起 ⇒ 没有第二栏要分流，不需要单栏。
         expect(
             computeWorkbenchSqueeze({
                 workbenchWidth: 900,
-                treeWidth: 240,
-                treeCollapsed: false,
+                navPanelWidth: 0,
                 dockWidth: 360,
-                dockOpen: true,
-                dockMode: "floating",
-            }),
-        ).toEqual({
-            mainWidth: 660,
-            treeYielded: false,
-            navYielded: false,
-            forceFloating: false,
-            treeOverflow: false,
-        });
+                dockOpen: false,
+            }).forceSingleColumn,
+        ).toBe(false);
+    });
 
-        // A collapsed tree already contributes only the 40px rail.
+    it("uses 640 as the only threshold (no second magic number)", () => {
+        // 1000 - 360 = 640 ⇒ 刚好够，仍是两栏；再少 1px 就该单栏。
         expect(
-            computeWorkbenchSqueeze({
-                workbenchWidth: 1200,
-                treeWidth: 300,
-                treeCollapsed: true,
-                dockWidth: 360,
-                dockOpen: true,
-                dockMode: "pinned",
-            }).mainWidth,
-        ).toBe(1200 - TREE_COLLAPSED_WIDTH - 360);
+            computeWorkbenchSqueeze({ workbenchWidth: 1000, dockWidth: 360, dockOpen: true })
+                .forceSingleColumn,
+        ).toBe(false);
+        expect(
+            computeWorkbenchSqueeze({ workbenchWidth: 999, dockWidth: 360, dockOpen: true })
+                .forceSingleColumn,
+        ).toBe(true);
     });
 
-    it("treats the comfort floor as a tree-yield trigger above the hard floor", () => {
-        const result = computeWorkbenchSqueeze({
-            workbenchWidth: 1200,
-            treeWidth: 240,
-            treeCollapsed: false,
+    it("never yields the dock itself: the row gives way in the order nav to single column", () => {
+        // 一条纵向检查：无论多窄，结果里都没有「关掉右栏」这种出口，只有 navYielded 与
+        // forceSingleColumn 两种让路方式。800 档：先让会话列（舒适级），让完 680 ≥ 640 ⇒ 不单栏。
+        const narrow = computeWorkbenchSqueeze({
+            workbenchWidth: 800,
+            navPanelWidth: 240,
             dockWidth: 360,
             dockOpen: true,
-            dockMode: "pinned",
         });
-        expect(result.treeYielded).toBe(true);
-        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
+        expect(narrow.navYielded).toBe(true);
+        expect(narrow.mainWidth).toBe(680);
+        expect(narrow.forceSingleColumn).toBe(false);
     });
+
+    /**
+     * task-94 S2 的**退场清单**（写在用例里，防止有人把旧行为当「还要支持」加回来）：
+     *
+     * - `treeYielded`（让树先收起）：树不再占行宽 ⇒ 没有可让的项；`#files` 面板的 rail 折叠现在
+     *   只跟用户的 `treeCollapsed`（task-144 ③）。
+     * - `treeOverflow` / `allowTreeYield`（手工展开后主列破 640 时报一次提示）：破不了 ⇒ 提示退场。
+     * - `forceFloating`（让尽就转浮窗）：`D-1754 ④` 判据 3 禁浮窗 ⇒ 出口换成 `forceSingleColumn`。
+     */
 });
 
-describe("PLAN-0582 S3b P1-2 (audit): squeeze consumes the rendered tree state", () => {
-    it("never breaches the 640 floor when the tree was expanded by hand (1200px counterexample)", () => {
-        // 1200px viewport -> workbench row ~904 (rail 56 + clamped panel 240 excluded).
-        // Before the fix the math assumed a yielded 40px tree while 240px rendered:
-        // main appeared to be 704 while the real main was 304, and the toast claimed
-        // the dock had gone floating when it had not.
-        const result = computeWorkbenchSqueeze({
-            workbenchWidth: 904,
-            treeWidth: 240,
-            treeCollapsed: false,
-            dockWidth: 360,
-            dockOpen: true,
-            dockMode: "pinned",
-            allowTreeYield: false,
-        });
-        expect(result.forceFloating).toBe(true);
-        // The dock floats, the manually expanded tree stays expanded...
-        expect(result.treeYielded).toBe(false);
-        // ...and the main column is really above the hard floor.
-        expect(result.mainWidth).toBe(904 - 240);
-        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
-    });
-
-    it("suppresses automatic tree yielding while a manual expansion is active", () => {
-        const input = {
-            workbenchWidth: 1280,
-            treeWidth: 240,
-            treeCollapsed: false,
-            dockWidth: 360,
-            dockOpen: true,
-            dockMode: "pinned" as const,
-        };
-        // Automatic mode: the tree yields first (comfort floor).
-        expect(computeWorkbenchSqueeze(input).treeYielded).toBe(true);
-        // Manual expansion: no automatic yielding. 680 still clears the hard floor,
-        // so the dock stays pinned — a manual choice trades the 720 comfort floor
-        // for the 640 floor, it never breaches it.
-        const manual = computeWorkbenchSqueeze({ ...input, allowTreeYield: false });
-        expect(manual.treeYielded).toBe(false);
-        expect(manual.forceFloating).toBe(false);
-        expect(manual.mainWidth).toBe(1280 - 240 - 360);
-        expect(manual.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
-    });
-
-    // task-589：硬底线**不再**否决用户的显式展开（旧行为会让「展开」按钮静默无效）。
-    it("keeps a manual expansion at the cost of the hard floor (task-589)", () => {
-        const result = computeWorkbenchSqueeze({
-            workbenchWidth: 900,
-            treeWidth: 320,
-            treeCollapsed: false,
-            dockWidth: 320,
-            dockOpen: true,
-            dockMode: "pinned",
-            allowTreeYield: false,
-        });
-        // Floating alone still leaves 580 < 640 —— 但显式展开优先：不再抢折叠，改为上报溢出。
-        expect(result.forceFloating).toBe(true);
-        expect(result.treeYielded).toBe(false);
-        expect(result.treeOverflow).toBe(true);
-        expect(result.mainWidth).toBe(900 - 320 - 320 + 320);
-    });
-});
-
-describe("PLAN-0582 S5-W2: navigation panel yields (spec §1.5-C rule 2, second half)", () => {
+describe("PLAN-0582 S5-W2: navigation panel yields (spec 1.5-C rule 2)", () => {
     // Shell arithmetic: rail 56 + clamped panel (240 below 1280, 260 at 1280-1439, 280 above).
     const navPanelWidth = (viewport) => (viewport < 1280 ? 240 : viewport < 1440 ? 260 : 280);
     const workbenchWidth = (viewport) => viewport - RAIL_WIDTH - navPanelWidth(viewport);
 
-    it("yields the navigation panel at 900px so the 640 floor becomes reachable", () => {
-        const viewport = 900;
+    it("yields the navigation panel so the 640 floor becomes reachable", () => {
+        const viewport = 1100;
         const result = computeWorkbenchSqueeze({
-            workbenchWidth: workbenchWidth(viewport), // 900 - 56 - 240 = 604
+            workbenchWidth: workbenchWidth(viewport), // 1100 - 56 - 240 = 804
             navPanelWidth: navPanelWidth(viewport),
-            treeWidth: 240,
-            treeCollapsed: true, // <1440px starts collapsed (40px rail)
             dockWidth: 360,
             dockOpen: true,
-            dockMode: "floating", // <1800 derives floating, so the dock takes no space
         });
         expect(result.navYielded).toBe(true);
-        expect(result.mainWidth).toBe(604 - TREE_COLLAPSED_WIDTH + 240); // 804
+        expect(result.mainWidth).toBe(804 - 360 + 240); // 684
         expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+        expect(result.forceSingleColumn).toBe(false);
     });
 
-    it("yields the navigation panel at 1200px with a hand-expanded tree and a pinned dock", () => {
-        const viewport = 1200;
+    it("yields at the comfort floor and still asks for a single column when that is not enough", () => {
+        const viewport = 900;
         const result = computeWorkbenchSqueeze({
-            workbenchWidth: workbenchWidth(viewport), // 1200 - 56 - 240 = 904
+            workbenchWidth: workbenchWidth(viewport), // 604
             navPanelWidth: navPanelWidth(viewport),
-            treeWidth: 240,
-            treeCollapsed: false, // expanded by hand
             dockWidth: 360,
             dockOpen: true,
-            dockMode: "pinned",
-            allowTreeYield: false, // manual expansion suppresses automatic tree yielding
         });
+        // 604 - 360 = 244 < 720（舒适线）⇒ 会话列让位 ⇒ 484，仍 < 640 ⇒ 单栏。
+        // 这条钉的是**两级一起发生**：让位不改变「还装不下」的判断，否则会出现
+        // 「以为让完就够了」而把 200px 的主列留在屏幕上。
         expect(result.navYielded).toBe(true);
-        // The pinned dock still cannot fit: it floats after the nav has yielded, and
-        // the main column ends up far above the floor.
-        expect(result.forceFloating).toBe(true);
-        expect(result.mainWidth).toBe(904);
-        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+        expect(result.mainWidth).toBe(484);
+        expect(result.forceSingleColumn).toBe(true);
     });
 
     it("restores the navigation panel automatically when the window grows again", () => {
-        const demand = {
-            treeWidth: 240,
-            treeCollapsed: true,
-            dockWidth: 360,
-            dockOpen: true,
-            dockMode: "floating" as const,
-        };
+        const demand = { dockWidth: 360, dockOpen: true };
         const narrow = computeWorkbenchSqueeze({
             workbenchWidth: workbenchWidth(900),
             navPanelWidth: navPanelWidth(900),
@@ -734,23 +672,20 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec §1.5-C rule 2, second 
 
         // Same runtime state, wider window: the yield is not persisted, so it is gone.
         const wide = computeWorkbenchSqueeze({
-            workbenchWidth: workbenchWidth(1440),
-            navPanelWidth: navPanelWidth(1440),
+            workbenchWidth: workbenchWidth(1920),
+            navPanelWidth: navPanelWidth(1920),
             ...demand,
         });
         expect(wide.navYielded).toBe(false);
-        expect(wide.mainWidth).toBe(1440 - RAIL_WIDTH - navPanelWidth(1440) - TREE_COLLAPSED_WIDTH);
+        expect(wide.mainWidth).toBe(1920 - RAIL_WIDTH - navPanelWidth(1920) - 360);
     });
 
     it("does not yield the navigation panel when nothing is squeezed", () => {
         const roomy = computeWorkbenchSqueeze({
             workbenchWidth: workbenchWidth(1920),
             navPanelWidth: navPanelWidth(1920),
-            treeWidth: 240,
-            treeCollapsed: false,
             dockWidth: 360,
             dockOpen: true,
-            dockMode: "pinned",
         });
         expect(roomy.navYielded).toBe(false);
         expect(roomy.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
@@ -759,28 +694,24 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec §1.5-C rule 2, second 
         const closed = computeWorkbenchSqueeze({
             workbenchWidth: 900 - RAIL_WIDTH,
             navPanelWidth: 0,
-            treeWidth: 240,
-            treeCollapsed: true,
             dockWidth: 360,
             dockOpen: false,
-            dockMode: "floating",
         });
         expect(closed.navYielded).toBe(false);
+        expect(closed.forceSingleColumn).toBe(false);
     });
 
-    it("keeps the nav panel at 1024px because the main column already clears the floor", () => {
+    it("switches 1024px to a single column now that the tree no longer pads the row (task-94)", () => {
+        const viewport = 1024;
         const result = computeWorkbenchSqueeze({
-            workbenchWidth: workbenchWidth(1024), // 728
-            navPanelWidth: navPanelWidth(1024),
-            treeWidth: 240,
-            treeCollapsed: true,
+            workbenchWidth: workbenchWidth(viewport), // 728
+            navPanelWidth: navPanelWidth(viewport),
             dockWidth: 360,
             dockOpen: true,
-            dockMode: "floating",
         });
-        expect(result.navYielded).toBe(false);
-        expect(result.mainWidth).toBe(728 - TREE_COLLAPSED_WIDTH); // 688 >= 640
-        expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+        expect(result.navYielded).toBe(true);
+        expect(result.mainWidth).toBe(608); // 728 - 360 + 240，仍差 32px
+        expect(result.forceSingleColumn).toBe(true);
     });
 });
 

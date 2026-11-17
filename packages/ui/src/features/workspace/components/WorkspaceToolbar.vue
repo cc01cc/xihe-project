@@ -7,6 +7,7 @@ import {
     Activity,
     Code,
     FileDiff,
+    FolderTree,
     GitBranch,
     MoreHorizontal,
     PanelLeft,
@@ -38,12 +39,15 @@ const props = defineProps<{
      */
     membersUnread?: number;
     /** PLAN-0659 T1.4：委派 DAG 面板是否处于当前 dock tab。 */
+    /** D-1777/D-1778：files（目录树）面板开没开（右栏容器行）。 */
+    filesOpen?: boolean;
     delegationOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
     agents: [];
     files: [];
+    toggleFiles: [];
     toggleCode: [];
     toggleChanges: [];
     toggleMonitor: [];
@@ -98,7 +102,7 @@ function overflowNav(navigate: () => void) {
     -->
     <div
         data-testid="workspace-toolbar"
-        class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-background/80"
+        class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-card"
     >
         <!--
             task-57（SC 2.5.8 24×24 AA）：原手搓 `<button class="p-1.5">` + `size-3.5` 图标 =
@@ -281,6 +285,26 @@ function overflowNav(navigate: () => void) {
         <div class="min-w-0 flex-1" aria-hidden="true" />
 
         <div class="flex items-center gap-1 max-md:hidden">
+            <!--
+                D-1777/D-1778 第 5 行：files（目录树）面板的桌面重开/收起入口。
+                树在右栏容器里被关掉后（files 页签关闭），从这里重开。
+            -->
+            <button
+                type="button"
+                data-testid="workspace-toolbar-files"
+                class="p-1.5 rounded transition-colors"
+                :class="
+                    filesOpen
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent'
+                "
+                :title="filesOpen ? t('workspace.collapseFiles') : t('workspace.expandFiles')"
+                :aria-label="filesOpen ? t('workspace.collapseFiles') : t('workspace.expandFiles')"
+                :aria-pressed="filesOpen === true"
+                @click="emit('toggleFiles')"
+            >
+                <FolderTree class="size-3.5" />
+            </button>
             <button
                 type="button"
                 data-testid="workspace-toolbar-code"

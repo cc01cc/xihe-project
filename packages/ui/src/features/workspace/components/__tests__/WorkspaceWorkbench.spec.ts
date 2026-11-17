@@ -6,13 +6,7 @@ import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
 import { shouldOpenAgentsDockFromDeepLink } from "../workspaceDockTabs";
-import {
-    SPLITTER_REFERENCE_WIDTH,
-    TREE_COLLAPSED_WIDTH,
-    TREE_WIDTH_DEFAULT,
-    TREE_WIDTH_MAX,
-    TREE_WIDTH_MIN,
-} from "../../../../composables/useWorkspaceLayout";
+import { TREE_COLLAPSED_WIDTH } from "../../../../composables/useWorkspaceLayout";
 import { useAuthStore } from "../../../../stores/auth";
 import { useWorkspaceStore } from "../../stores/workspace";
 
@@ -144,6 +138,8 @@ afterEach(() => {
     // 卸载会把 pending 的合并写入 flush 在本用例内（`onBeforeUnmount`），下一条用例的
     // `localStorage.clear()` 就能清掉它 —— 这才是"没有活实例的 timer 跨用例"的真解。
     for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount();
+    // 视口也要复位：漏掉这一步会让"设了 1920"的用例把宽度漏给下一条（顺序依赖）。
+    setViewport(VIEWPORT_DEFAULT);
 });
 
 function storedLayout(workspaceId = "workspace-1"): Record<string, unknown> {
@@ -153,9 +149,52 @@ function storedLayout(workspaceId = "workspace-1"): Record<string, unknown> {
     >;
 }
 
+/**
+ * D-1777/D-1778（task-65 A 段）：宽屏首启布局 = 右栏开着，files（目录树）面板在右栏容器里。
+ * jsdom 报 1024 ⇒ 默认（无存储）布局是 dock 收起、无 files 页签；要测树就先显式种一份。
+ */
+function seedWideLayout(overrides: Record<string, unknown> = {}): void {
+    localStorage.setItem(
+        "xihe-layout-ws:workspace-1",
+        JSON.stringify({
+            treeCollapsed: false,
+            treeWidth: 240,
+            dockCollapsed: false,
+            dockWidth: 360,
+            dockTabs: ["files", "monitor"],
+            activeDockTab: "files",
+            dockMode: "pinned",
+            dockModeManual: false,
+            openTabs: ["session:s1"],
+            ...overrides,
+        }),
+    );
+}
+
 /** S3b P2-9: writes are coalesced, so persistence assertions have to poll. */
 async function expectStored(check: () => void): Promise<void> {
     await vi.waitFor(check, { timeout: 2000, interval: 20 });
+}
+
+/**
+ * task-94 S4：**视口是显式变量**。jsdom 恒 1024，而「两栏还是单栏」由挤压模型按 640 硬底线算
+ * （`forceSingleColumn`）⇒ 凡是要断言**桌面两栏**的用例必须先写明宽视口，否则它测的是单栏形态，
+ * 而单栏下右栏被规则挡在视口外（症状就是「`workspace-aux-panel` 取不到」）。
+ *
+ * <p>注意本文件挂载时**没有布局 provider**，挤压模型的兜底把「工作台行宽」当作 `innerWidth`
+ * （真实 app 里还要减 56 rail + 会话列 240/280）。所以这里的单栏阈值是 `innerWidth < 1000`
+ * 而不是产品上的 ~1390 —— 用例按这个口径取数，别拿产品阈值来对。</p>
+ */
+const VIEWPORT_DEFAULT = window.innerWidth;
+function setViewport(width: number): void {
+    window.innerWidth = width;
+    window.dispatchEvent(new Event("resize"));
+}
+
+/** 桌面两栏 + **空右栏**（显式种子：<1800 首启现在也带 files 页签，别让默认值决定用例）。 */
+function seedDesktopDock(overrides: Record<string, unknown> = {}): void {
+    setViewport(1920);
+    seedWideLayout({ dockTabs: [], activeDockTab: null, dockCollapsed: true, ...overrides });
 }
 
 beforeEach(() => {
@@ -180,21 +219,47 @@ beforeEach(() => {
 const DOCK_TAB = '[aria-label="Workbench panels"] [role="tab"]';
 
 describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
-    it("renders the toolbar, the file tree column and the conversation slot with the dock closed", async () => {
+    it("renders the toolbar, the file tree (right container files panel) and the conversation slot", async () => {
+        seedWideLayout();
         const wrapper = mountWorkbench();
         await flushPromises();
 
         expect(wrapper.find('[data-testid="workspace-workbench"]').exists()).toBe(true);
+        // D-1777/D-1778：树是右栏容器的 files 面板（不再是中栏里的独立列）。
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-tree-stub"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="workspace-toolbar-code"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-tab-files"]').exists()).toBe(true);
+        expect(
+            wrapper
+                .get('[data-testid="workspace-container-tabs"][data-container="right"]')
+                .exists(),
+        ).toBe(true);
+    });
 
-        // Ruling #3: the dock is closed by default — no panel, no panel content.
+    it("D4（task-94 S5）：<1800 首启就带 files 页签，不是「树不在这个版本里」", async () => {
+        // 旧缺口（C2）：1024 档首启 `dockTabs=[]` ⇒ 右栏没有树，用户会以为树不存在。
+        setViewport(1024);
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // 两档差异只剩「dock 是否已展开」：<1800 仍收起。
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="workspace-conversation"]').exists()).toBe(false);
+
+        // 但 files 已经在页签集合里（首启默认值给的，不是用户自己找出来的）。
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await expectStored(() =>
+            expect(storedLayout().dockTabs).toEqual(["files", "monitor", "code"]),
+        );
+        expect(storedLayout().activeDockTab).toBe("code");
+
+        // 切到 files ⇒ 恰好 1 个文件树面板（D4 判据后半句）。
+        await wrapper.get('[data-testid="dock-tab-files"]').trigger("click");
+        expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
     });
 
     it("opens the dock on the requested tab and mounts only that panel", async () => {
+        seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
 
@@ -240,6 +305,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     });
 
     it("collapses the dock from the active toolbar toggle but keeps the tab set", async () => {
+        seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
 
@@ -258,6 +324,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     });
 
     it("closes dock tabs and rolls the dock up when the last one closes", async () => {
+        seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
 
@@ -280,6 +347,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
     it("activates the neighbouring tab when the active tab closes (right first, then left)", async () => {
         // PLAN-0626 D26-13: browser-tab convention instead of "always jump to the first tab".
+        seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
 
@@ -332,7 +400,8 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         expect(toastWarning).not.toHaveBeenCalled();
     });
 
-    it("restores the previous mode and width when focus ends (D26-04)", async () => {
+    it("restores the previous width when focus ends (D26-04)", async () => {
+        seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
@@ -423,6 +492,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {
+        seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
 
@@ -445,6 +515,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     });
 
     it("persists the file tree collapse state per workspace", async () => {
+        seedWideLayout();
         const wrapper = mountWorkbench();
         await flushPromises();
 
@@ -465,9 +536,9 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.setProps({ workspaceId: "workspace-2" });
 
-        // A different workspace starts with the default (closed dock, expanded tree).
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
+        // D-1777/D-1778：不同工作区回到默认布局。jsdom 1024 ⇒ <1800 右栏不占位，
+        // files 页签不在默认 set 里 ⇒ 树不渲染（C2 已知缺口，task-94 承接）。
+        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
 
         // Going back restores the first workspace's own set.
         await wrapper.setProps({ workspaceId: "workspace-1" });
@@ -518,98 +589,171 @@ describe("WorkspaceWorkbench workspace switch (PLAN-0582 S3a audit P0)", () => {
         expect(ws.activeFilePath).toBeNull();
     });
 });
-describe("WorkspaceWorkbench anti-squeeze (PLAN-0582 S3b §4)", () => {
-    it("forces a pinned dock back to floating and says why, without rewriting the choice", async () => {
-        // A narrow row (jsdom reports 1024) cannot host tree 240 + pinned dock 360.
-        localStorage.setItem(
-            "xihe-layout-ws:workspace-1",
-            JSON.stringify({
-                treeCollapsed: false,
-                treeWidth: 240,
-                dockCollapsed: false,
-                dockWidth: 360,
-                dockTabs: ["monitor"],
-                activeDockTab: "monitor",
-                dockMode: "pinned",
-                dockModeManual: true,
-                dockPolicyDismissed: false,
-                // C3: page ids no longer validate as work tabs; seed a session tab.
-                openTabs: ["session:s1"],
-            }),
-        );
+/**
+ * task-94 S2/S4 取代 PLAN-0582 S3b §4 的「让尽就转浮窗」。
+ *
+ * <p>旧用例钉的是「pinned 被挤压成 floating 并给一次 toast」—— 那条**前提被 `D-1754 ④` 判据 3 否了**：
+ * 右栏不许叠在主列上。现在让尽后的出口是**单栏切换**（`D-1545` 既有机制），一次性 toast 一并退场。</p>
+ */
+describe("WorkspaceWorkbench 单栏切换（task-94 S2/S4，取代 S3b §4 forcibly-floating）", () => {
+    it("装不下两栏时切单栏：右栏成为当前栏、主列 v-show 隐藏（不卸载），且不给 toast", async () => {
+        // 本文件挂载时没有布局 provider ⇒ 行宽按 innerWidth 兜底：900 − 360 = 540 < 640 ⇒ 单栏。
+        setViewport(900);
+        // 单栏形态下「看得见哪一栏」由 activeColumn 决定 ⇒ 种子必须写明用户正看着右栏。
+        seedWideLayout({
+            dockTabs: ["files"],
+            activeDockTab: "files",
+            dockCollapsed: false,
+            activeColumn: "right",
+        });
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        // Rendered as floating so the main column keeps its floor...
+        // 单栏形态的可见入口：切换器渲染（D-1545）。
+        expect(wrapper.find('[data-testid="workspace-container-switcher"]').exists()).toBe(true);
+        // 右栏此刻是当前栏 ⇒ 树可见，且**恰好一个**（D-1777/D-1778 的树面板只有一份）。
+        expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
+        // 主列**仍挂载**、只是 v-show 隐藏：卸载会丢 ChatPanel 的 SSE 订阅（D26-04 同一条理由）。
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(false);
+
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await flushPromises();
+
+        // 点右栏页签不能把用户留在中栏：右栏自动成为当前栏。
         expect(
             wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
-        ).toBe("floating");
-        // ...and the fallback is never silent.
-        expect(toastWarning).toHaveBeenCalledTimes(1);
-        // The user's explicit choice is preserved (rendering only).
-        expect(storedLayout().dockMode).toBe("pinned");
-        expect(storedLayout().dockModeManual).toBe(true);
-        wrapper.unmount();
+        ).toBe("pinned");
+        // 形态由几何算出，不落盘（D-1552/D-1222 ⑥：不新增第二个持久键）。
+        await expectStored(() => expect(storedLayout().dockTabs).toEqual(["files", "code"]));
+        expect(storedLayout()).not.toHaveProperty("singleColumn");
+        // 不是「被挤压成浮窗」：那条一次性提示随机制退场。
+        expect(toastWarning).not.toHaveBeenCalled();
+    });
+
+    /**
+     * **实测修正 Lead 的推断**（`D-1789`：以实测为准）：两条绕过路径确实存在
+     * （`toggleDockTab` / `closeDockTab` 不走 `collapseDock`），但在当前树里**推不出白屏**——
+     * `forceSingleColumn` 的判据带 `dockOpen`（`dockTakesSpace`），dock 一收 `containerMode`
+     * 立刻回 `desktop`，两栏都渲染、中栏自然可见；而 `isMobile` 那条路（`containerMode` 恒 single）
+     * 的移动壳渲染的是 `FileEditor`，根本不挂这套 dock。
+     *
+     * <p><b>但"没白屏"是巧合不是判据</b>：它依赖"单栏条件恰好随 dock 关闭而消失"。所以不变量照样
+     * 挪到派生（`effectiveActiveColumn`），并在这里钉两条**今天能测**的判据：
+     * ① 收起后不白屏且右栏确实不渲染；② <b>用户的栏偏好不被抹掉</b>（`activeColumn` 仍是 right，
+     * 上一版 `collapseDock` 会把它写成 main ⇒ 这两条就是那个回归的哨兵）。</p>
+     */
+    it("收起右栏后不白屏，且用户的栏偏好不被抹掉（Lead 20:10 评审）", async () => {
+        setViewport(900);
+        seedWideLayout({
+            dockTabs: ["files"],
+            activeDockTab: "files",
+            dockCollapsed: false,
+            activeColumn: "right",
+        });
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
+
+        // (a) 工具栏 files 再按一次 = 收起（走 toggleDockTab，**不**走 collapseDock —— Lead 点的第一处）。
+        await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        // 正文非空：中栏本体在 DOM 里且可见（若哪天单栏条件不再随 dock 关闭而消失，这里就是白屏线）。
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        expect(wrapper.get("[data-main-hidden]").attributes("data-main-column-visible")).toBe(
+            "true",
+        );
+        // 偏好留着：上一版在 collapseDock 里写 activeColumn='main'，这条会红。
+        await expectStored(() => expect(storedLayout().activeColumn).toBe("right"));
+
+        // (c) 再开回来 ⇒ 回到右栏（偏好回来了，不是 main）。
+        await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
+    });
+
+    it("关掉最后一个页签也不白屏、也不改写偏好（Lead 点的第二处绕过）", async () => {
+        setViewport(900);
+        seedWideLayout({
+            dockTabs: ["files"],
+            activeDockTab: "files",
+            dockCollapsed: false,
+            activeColumn: "right",
+        });
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // (b) 关掉最后一个页签：dockOpen 变 false 的**另一条**路径（closeDockTab）。
+        await wrapper.get('[data-testid="dock-tab-close-files"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        await expectStored(() => expect(storedLayout().activeColumn).toBe("right"));
+
+        // 重开 files ⇒ 又回到右栏。
+        await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
+    });
+
+    it("D5（形态不变式）：同一视口连开三次读数完全一致，且文件树面板恒 1 个", async () => {
+        // Lead 2026-11-17：同视口 × 3 次开场 ⇒ 形态必须一致（否则「首启看着对、重进就变」）。
+        setViewport(900);
+        seedWideLayout({
+            dockTabs: ["files"],
+            activeDockTab: "files",
+            dockCollapsed: false,
+            activeColumn: "right",
+        });
+
+        const readShape = async () => {
+            const wrapper = mountWorkbench();
+            await flushPromises();
+            const shape = {
+                dockModes: wrapper
+                    .findAll('[data-testid="workspace-aux-panel"]')
+                    .map((panel) => panel.attributes("data-dock-mode")),
+                dockWidth: wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style"),
+                mainVisible: wrapper.get("[data-main-hidden]").isVisible(),
+                treePanels: wrapper.findAll('[data-testid="workspace-file-tree"]').length,
+                railPanels: wrapper.findAll('[data-testid="workspace-file-rail"]').length,
+            };
+            wrapper.unmount();
+            return shape;
+        };
+
+        const first = await readShape();
+        expect(await readShape()).toEqual(first);
+        expect(await readShape()).toEqual(first);
+        // 「恒 1 个」：两条渲染路径（dockview 壳 / 手写 #files）合计也只能有一个树面板。
+        expect(first.treePanels).toBe(1);
+        expect(first.railPanels).toBe(0);
+        expect(first.dockModes).toEqual(["pinned"]);
     });
 });
-describe("WorkspaceWorkbench floating dock Escape (PLAN-0582 T5.4 gap)", () => {
+
+describe("WorkspaceWorkbench dock Escape（task-94 S1 之后的语义）", () => {
     function escapeFrom(target: EventTarget = window): void {
         target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     }
 
-    it("closes a floating dock on Escape", async () => {
+    it("does not roll up a pinned dock on Escape", async () => {
+        // 浮窗退场后「Esc 关浮窗」这条规则一起退场：pinned 右栏是用户的持久选择，Esc 不该关它。
+        seedDesktopDock({ dockTabs: ["monitor"], activeDockTab: "monitor", dockCollapsed: false });
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         expect(
             wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
-        ).toBe("floating");
+        ).toBe("pinned");
 
         escapeFrom();
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        // Collapsing is the stored truth (same path as the X button), not a latch.
-        await expectStored(() => expect(storedLayout().dockCollapsed).toBe(true));
-        wrapper.unmount();
-    });
-
-    it("keeps a pinned dock open on Escape", async () => {
-        // jsdom reports 1024 → floating is derived, so pin explicitly at a wide viewport.
-        const previousWidth = window.innerWidth;
-        window.innerWidth = 1920;
-        window.dispatchEvent(new Event("resize"));
-        localStorage.setItem(
-            "xihe-layout-ws:workspace-1",
-            JSON.stringify({
-                treeCollapsed: false,
-                treeWidth: 240,
-                dockCollapsed: false,
-                dockWidth: 360,
-                dockTabs: ["monitor"],
-                activeDockTab: "monitor",
-                dockMode: "pinned",
-                dockModeManual: true,
-                // C3: page ids no longer validate as work tabs; seed a session tab.
-                openTabs: ["session:s1"],
-            }),
-        );
-        try {
-            const wrapper = mountWorkbench();
-            await flushPromises();
-            expect(
-                wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
-            ).toBe("pinned");
-
-            escapeFrom();
-            await flushPromises();
-
-            expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
-            wrapper.unmount();
-        } finally {
-            window.innerWidth = previousWidth;
-            window.dispatchEvent(new Event("resize"));
-        }
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        await expectStored(() => expect(storedLayout().dockCollapsed).toBe(false));
     });
 
     it("ignores Escape typed inside a field", async () => {
@@ -743,136 +887,105 @@ describe("WorkspaceWorkbench pagehide/visibilitychange listener pairing (BL-379)
     });
 });
 
-describe("WorkspaceWorkbench file tree as splitter panel (PLAN-0753 T3)", () => {
-    it("renders the tree column and the main column as panels with the handle between them", async () => {
+/**
+ * D-1777/D-1778（task-65 A 段）：**树列的 splitter 机械已退场**。
+ *
+ * 用户 2026-11-17：「两栏各自是一个容器」「中栏容器有的组件右栏容器也都有」⇒ 树改为右栏容器的
+ * `files` 面板，宽度 = 右栏 dock 宽；`tree-resizer` / `treeBridge` / `%` 换算 / 键盘步进一并删除
+ *（PLAN-0753 T3 那套机械）。原用例锁的正是那套机械，这里改锁**它的不存在**与新的归属形态。
+ */
+describe("WorkspaceWorkbench 树列 splitter 退场（D-1777/D-1778）", () => {
+    it("工作台行不再是 splitter group，树列把手与宽度气泡都不渲染", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
-
-        const group = wrapper.get('[data-testid="workspace-workbench"]').find("[data-panel-group]");
-        expect(group.exists(), "workbench row is a splitter group").toBe(true);
-
-        const panels = group.findAll("[data-panel]");
-        expect(panels.length).toBe(2);
-        // panel #1 = 文件树列（rail），panel #2 = 主列。
-        // `as-child`：panel #1 **就是** rail 本身（不另套一层）。
-        expect(panels[0].attributes("data-testid")).toBe("workspace-file-rail");
-        // panel #2 是主列包装 div（center slot 由父级提供，单测不填 ⇒ 只锁包装身份）。
-        expect(panels[1].attributes("data-panel-collapsible")).toBe(undefined);
-        expect(panels[1].element.tagName).toBe("DIV");
-        // 折叠语义：collapsible + collapsedSize=40 rail。
-        expect(panels[0].attributes("data-panel-collapsible")).toBe("true");
-        // 注意：reka-ui 的 data-panel-size = inline flex-grow（保留 1 位小数）。layout 为空时它回落到
-        // default-size ⇒ 下面两条都只能证明「默认尺寸配置正确 / 两面板都是百分比」，**都不能**证明
-        // 「layout 已初始化」。它们在 B 之前（px 时代）同样只是回声 default-size，**以前也抓不到 BL-576**，
-        // 所以别读成「以前能抓、这次改坏了」。BL-576 的守卫在 e2e（真实布局），不在这里。
-        const treePct = Number(panels[0].attributes("data-panel-size"));
-        const mainPct = Number(panels[1].attributes("data-panel-size"));
-        // (A) 同源期望值：与组件引用同一个 SPLITTER_REFERENCE_WIDTH（任一侧分叉都会被这条抓住）。
-        //     容差 0.1 = 2× 量化分辨率（toFixed(1) ⇒ 0.05）；不要再收紧，否则会随机红。
-        expect(
-            Math.abs(treePct - (TREE_WIDTH_DEFAULT / SPLITTER_REFERENCE_WIDTH) * 100),
-        ).toBeLessThan(0.1);
-        // (B) percent 模式的约束：两面板百分比之和 = 100（不 pin 具体比例，理由同上注）。
-        expect(Math.abs(treePct + mainPct - 100)).toBeLessThan(0.1);
-        expect(panels[0].attributes("data-state")).toBe("expanded");
-
-        // handle 走 fallthrough：testid/aria + 桥接路由键。
-        const handle = wrapper.get('[data-testid="tree-resizer"]');
-        expect(handle.attributes("role")).toBe("separator");
-        expect(handle.attributes("aria-orientation")).toBe("vertical");
-        expect(handle.attributes("data-panel-resize-handle-id")).toBe("tree-resize-handle");
-    });
-
-    it("collapses the tree column to the 40px rail through the panel state", async () => {
-        localStorage.setItem(
-            "xihe-layout-ws:workspace-1",
-            JSON.stringify({ treeCollapsed: true, treeWidth: 280 }),
-        );
-        const wrapper = mountWorkbench();
-        await flushPromises();
-
-        const panels = wrapper.findAll("[data-panel]");
-        // 收起是渲染态：rail 内只剩展开按钮，文件树与 handle 都不渲染。
-        expect(panels[0].get('[data-testid="workspace-tree-expand"]').exists()).toBe(true);
-        // task-551：名字里写了「40px rail」就必须断言宽度 —— 只断言 rail 内容会让 220px 的假折叠
-        // （内容已切换、宽度仍是展开百分比）静默通过；这正是本卡漏到今天的原因。
-        const collapsedPercent = (TREE_COLLAPSED_WIDTH / SPLITTER_REFERENCE_WIDTH) * 100;
-        expect(Number(panels[0].attributes("data-panel-size"))).toBeLessThanOrEqual(
-            collapsedPercent + 0.1,
-        );
-        expect(panels[0].find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+        expect(wrapper.find("[data-panel-group]").exists()).toBe(false);
         expect(wrapper.find('[data-testid="tree-resizer"]').exists()).toBe(false);
-        // 收起不改宽度：存储仍是 280（PLAN-0582 §1.5-A）。
-        expect(storedLayout().treeWidth).toBe(280);
+        expect(wrapper.find('[data-testid="tree-resize-bubble"]').exists()).toBe(false);
     });
 
-    it("commits keyboard widths through the tree bridge (arrow keys, single write)", async () => {
-        localStorage.setItem(
-            "xihe-layout-ws:workspace-1",
-            JSON.stringify({ treeCollapsed: false, treeWidth: 240 }),
-        );
+    /**
+     * **task-144 ③ 翻转本判据**（Lead 2026-11-17 批）。原判据是「折叠 = **右栏收成**
+     * TREE_COLLAPSED_WIDTH 的 rail」，并显式断言 `workspace-aux-panel` 不渲染 —— 它钉住的
+     * 正是「折叠树 ⇒ 整个右栏消失」这个回归：真浏览器实测（1920×1080，dockTabs=[files,monitor,code]）
+     * 折叠后右栏行、`workspace-aux-panel`、`dock-active-panel` 全为 false，`dock-tab-code|monitor`
+     * 命中 0 ⇒ monitor/code/changes 一并不可达。
+     *
+     * <p>现行语义：**折叠 = files 这个面板体收成 rail**，右栏与其余页签照常渲染；折叠**不回收列宽**，
+     * 这是裁定接受的取舍（腾空间走单栏切换 task-94 S4，两件事不混）。</p>
+     */
+    it("折叠 = files 面板体收成 rail；右栏与其余页签照常渲染（task-144 ③）", async () => {
+        seedWideLayout({
+            treeCollapsed: true,
+            treeWidth: 280,
+            dockTabs: ["files", "monitor", "code"],
+            activeDockTab: "files",
+        });
         const wrapper = mountWorkbench();
         await flushPromises();
-        const handle = wrapper.get('[data-testid="tree-resizer"]');
 
-        // 240 + 16 = 256（TREE_WIDTH_KEYBOARD_STEP）。
-        await handle.trigger("keydown", { key: "ArrowRight" });
-        await expectStored(() => expect(storedLayout().treeWidth).toBe(256));
+        // ① 折叠 ≠ 关闭：rail 仍在面板体里，宽度与展开键可断言。
+        const rail = wrapper.get('[data-testid="workspace-file-rail"]');
+        expect(rail.attributes("style")).toContain(`width: ${TREE_COLLAPSED_WIDTH}px`);
+        expect(rail.find('[data-testid="workspace-tree-expand"]').exists()).toBe(true);
 
-        // 双击复位默认宽（240）。
-        await handle.trigger("dblclick");
-        await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_DEFAULT));
+        // ② 折叠**不再**移走整栏：右栏行、dock 本体、其余页签全在（这就是 ③ 的判据本体）。
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(
+            wrapper
+                .get('[data-testid="workspace-container-tabs"][data-container="right"]')
+                .exists(),
+        ).toBe(true);
+        expect(wrapper.find('[data-testid="dock-tab-monitor"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-tab-code"]').exists()).toBe(true);
 
-        // task-32 / PLAN-0762 M4：Home/End 到边界。与 sidebar 同走 `useSplitterPanelBridge.ts:139`
-        // （映射在 `WorkspaceWorkbench.vue:378-379`：Home→MIN、End→MAX）；此前这条共用实现只有 dock
-        // 有逐键断言（`WorkspaceDock.spec.ts:230-234`）。数值引常量，不写字面量。
-        await handle.trigger("keydown", { key: "Home" });
-        await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_MIN));
+        // ③ 折叠的是树本体：它不渲染，且折叠不改存储宽度（PLAN-0582 §1.5-A）。
+        expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="file-tree-stub"]').exists()).toBe(false);
+        expect(storedLayout().dockTabs).toEqual(["files", "monitor", "code"]);
+        expect(storedLayout().treeWidth).toBe(280);
+        // 反向控制：换一个不存在的 testid 必须查不到（防「拿不到就判过」）。
+        expect(wrapper.find('[data-testid="workspace-file-tree-absent"]').exists()).toBe(false);
 
-        await handle.trigger("keydown", { key: "End" });
-        await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_MAX));
+        // ④ 折叠态仍能切到别的页签 —— 旧实现拿不到这条读数（整栏当时已经不在）。
+        await wrapper.get('[data-testid="dock-tab-monitor"]').trigger("click");
+        expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
     });
 });
 
 /**
- * task-353 / D-1207 甲案：判据① 是**层级判据**，不是可见性判据。
+ * task-65 A 段（D-1777/D-1778，Lead 裁定 C1）：反转 task-353 判据① 的归属。
  *
- * 文件树必须是中栏容器（`[data-testid="workspace-center"]`）内部的一道 panel，而不是工作台的
- * 第三列。判据用 DOM 祖先判定，所以「加个 hidden 开关」不算进容器（D-1207 §⑤）：隐藏不改变
- * `closest()` 的结果 —— 只有真的换了父节点才会变。
- *
- * 反向（改前必红，`[源码]`）：改造前模板里 `workspace-center` 这个串出现 **0 次**
- * （`git show <改前 sha>:…/WorkspaceWorkbench.vue | Select-String -c 'workspace-center'` ⇒ 0），
- * `closest()` 对不存在的选择器返回 null ⇒ 本用例在旧结构上必红。
- * 恒绿风险由**负控**堵住：同一个节点换一个不存在的 testid 必须查不到（见下）。
+ * 原判据：文件树必须在中栏容器（`workspace-center`）内。现在反过来 —— 树是**右栏容器**的
+ * `files` 面板 ⇒ 祖先必须是 `workspace-aux-panel`，而 `workspace-center` 必须**查不到**。
+ * 负控照旧：同一个节点换一个不存在的 testid 必须为 null（防「找不到就判过」）。
  */
-describe("WorkspaceWorkbench 文件树归属中栏容器（task-353 / D-1207 甲案）", () => {
-    it("文件树与它的列壳都在 workspace-center 内，主区同属该容器", async () => {
+describe("WorkspaceWorkbench 文件树归属右栏容器（D-1777/D-1778 反转 task-353）", () => {
+    it("文件树在右栏容器内，且不再在中栏容器内", async () => {
+        seedWideLayout();
         const wrapper = mountWorkbench();
         await flushPromises();
 
         const treeStub = wrapper.get('[data-testid="file-tree-stub"]').element;
-        const centerEl = treeStub.closest('[data-testid="workspace-center"]');
-        expect(centerEl, "文件树的 DOM 祖先里必须有中栏容器（判据①a）").not.toBeNull();
+        const aux = treeStub.closest('[data-testid="workspace-aux-panel"]');
+        expect(aux, "文件树的 DOM 祖先里必须有右栏容器（D-1777）").not.toBeNull();
+        expect(
+            treeStub.closest('[data-testid="workspace-center"]'),
+            "反转 task-353：树不再在中栏容器内（D-1777）",
+        ).toBeNull();
 
         // 负控（恒绿防线）：同一个节点查一个不存在的 testid 必须为 null。
-        // 没有这一条时，选择器写错、属性没渲染等情形都会让上面的断言「找不到就判过」。
         expect(treeStub.closest('[data-testid="workspace-center-absent"]')).toBeNull();
-        if (!centerEl) return; // 已断言非空，这里只为类型收窄。
 
-        // 判据①b：列壳也必须搬进容器 —— 它不再是工作台的第三列。
-        // 注意判据是「rail 在中栏容器内」，**不是「rail 消失」**：折叠态下 rail 自己就是那道
-        // panel（`as-child`），要求它消失等于把结构判据写成不可能成立。
-        const rail = wrapper.get('[data-testid="workspace-file-rail"]').element;
+        // 右栏容器行 = 容器级页签行（Q2：复用 dock tab 数据，不新造 IA）。
         expect(
-            rail.closest('[data-testid="workspace-center"]'),
-            "列壳必须在中栏容器内（判据①b）",
-        ).not.toBeNull();
+            wrapper
+                .get('[data-testid="workspace-container-tabs"][data-container="right"]')
+                .exists(),
+        ).toBe(true);
 
-        // 容器语义的最小证据：主区与文件树必须同属这一个容器。
+        // 中栏容器仍只容纳主区（树搬走后语义更干净）。
         const main = wrapper.get('[data-testid="workspace-main"]').element;
-        expect(centerEl.contains(rail), "中栏容器必须容纳文件树列壳").toBe(true);
-        expect(centerEl.contains(main), "中栏容器必须同时容纳主区").toBe(true);
+        expect(main.closest('[data-testid="workspace-center"]')).not.toBeNull();
     });
 });
 

@@ -21,6 +21,10 @@ const i18n = createI18n({
                 dockFocusRestore: "Restore layout",
                 dockFocusHint: "Fill the workspace with this panel",
                 dockResizeBubble: "Width",
+                // D-1777/D-1778（task-65 A 段）：右栏行 = WorkspaceContainerTabs，其
+                // aria-label 走容器键（不再用 dockTabs 键）。
+                containerRight: "Right container",
+                containerMain: "Main container",
             },
         },
     },
@@ -38,9 +42,9 @@ function mountDock(
         activeTab: string;
         width: number;
         maxVisibleTabs: number;
-        mode: "pinned" | "floating";
         defaultWidth: number;
         focus: boolean;
+        fill: boolean;
     }> = {},
 ) {
     return mount(WorkspaceDock, {
@@ -265,7 +269,8 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
             expect(key.get("svg").classes()).toContain("size-3");
         }
 
-        for (const testid of ["dock-mode-toggle", "dock-focus-toggle", "workspace-aux-close"]) {
+        // task-94 S1：pin 切换按钮已随浮窗退场（判据 3），头部只剩两根键。
+        for (const testid of ["dock-focus-toggle", "workspace-aux-close"]) {
             const button = wrapper.get(`[data-testid="${testid}"]`);
             expect(button.classes()).toEqual(
                 expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
@@ -274,37 +279,31 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         }
     });
 
-    it("derives its layout classes from the dock mode instead of a second breakpoint source", () => {
-        // S3b P2-4: `DOCK_INLINE_MIN_VIEWPORT` is the only breakpoint source; the
-        // classes are its projection, so the old `min-[1800px]:static` is gone.
-        const floating = mountDock();
-        const floatingClasses = floating.get('[data-testid="workspace-aux-panel"]').classes();
-        expect(floatingClasses).toContain("absolute");
-        expect(floatingClasses).toContain("shadow-xl");
-        expect(floatingClasses).toContain("z-20");
-        expect(floatingClasses).not.toContain("min-[1800px]:static");
-        expect(
-            floating.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
-        ).toBe("floating");
-
-        const pinned = mountDock({ mode: "pinned" });
-        const pinnedClasses = pinned.get('[data-testid="workspace-aux-panel"]').classes();
-        expect(pinnedClasses).toContain("relative");
-        expect(pinnedClasses).toContain("shadow-none");
-        expect(pinnedClasses).not.toContain("absolute");
-        expect(pinned.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode")).toBe(
-            "pinned",
-        );
+    it("always renders as an inline column: no overlay classes at any width (task-94 S1)", () => {
+        // `D-1754 ④` 判据 3：右栏**不是**浮窗/overlay。这条用例把「浮窗那套 class 不许回来」钉住 ——
+        // 曾经存在的是 `absolute top-0 right-0 z-20 shadow-xl` + `--xh-composer-h` 底边让位，
+        // 整套随 floating 退场；`data-dock-mode` 也只剩 pinned（focus 另算）。
+        const wrapper = mountDock();
+        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+        const classes = panel.classes();
+        expect(classes).toContain("relative");
+        expect(classes).toContain("shadow-none");
+        expect(classes).toContain("h-full");
+        expect(classes).not.toContain("absolute");
+        expect(classes).not.toContain("shadow-xl");
+        expect(classes).not.toContain("top-0");
+        expect(panel.attributes("data-dock-mode")).toBe("pinned");
+        expect(panel.attributes("style") ?? "").not.toContain("bottom:");
     });
 
-    it("toggles the pin from the header with aria-pressed and an i18n label", async () => {
-        const wrapper = mountDock({ mode: "pinned" });
-        const toggle = wrapper.get('[data-testid="dock-mode-toggle"]');
-        expect(toggle.attributes("aria-pressed")).toBe("true");
-        expect(toggle.attributes("title")).toContain("Pinned");
-
-        await toggle.trigger("click");
-        expect(wrapper.emitted("toggle-mode")).toHaveLength(1);
+    it("fills the row when the workbench is in single-column mode (Q2)", () => {
+        // Lead 2026-11-17 裁「单栏时右栏占满整行」：宽度由行决定，width/分隔条/浮标一并退场。
+        const wrapper = mountDock({ fill: true, width: 480 });
+        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+        expect(panel.classes()).toContain("flex-1");
+        expect(panel.classes()).toContain("min-w-0");
+        expect(panel.attributes("style")).toBeUndefined();
+        expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(false);
     });
 
     it("resets the width on a handle double-click and shows a live bubble while dragging", async () => {
@@ -419,29 +418,33 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
 });
 
 /**
- * task-442（F-14 / D-1276 C1）：浮动 dock 的底边必须让开 composer。
- * 红线来自真栈实测（证据 2026-11-14-instance-flow-audit/aux-obstruction.json + 图 105）：
- * 1600×1000 浮动面板覆盖发送键，`elementFromPoint` 返回面板 div ⇒ 能打字不能发送。
- * jsdom 无布局引擎，量不到覆盖 ⇒ 这里只钉**契约**（class + CSS 变量），覆盖判据归 Playwright。
+ * task-94 S1（`D-1754 ④` 判据 3）取代 task-442 的浮窗契约。
+ *
+ * <p>task-442 钉的是「浮动态底边让开 composer」（`--xh-composer-h`）—— 那条红线的**前提已经消失**：
+ * 浮窗形态不存在了，右栏恒为行内 flex 子项，不覆盖主列也就压不到发送键。所以这里改钉**反面**：
+ * 浮窗那套 class / 内联样式**不许回来**（`absolute`、`top-0`、`bottom:`、`shadow-xl`、`z-20`）。</p>
+ *
+ * <p>保留的证据指针：真栈实测 1600×1000 浮窗覆盖发送键（`2026-11-14-instance-flow-audit/aux-obstruction.json`
+ * + 图 105）是「为什么禁浮窗」的历史依据，不是「浮窗该怎么摆」的现行契约。</p>
  */
-describe("WorkspaceDock · task-442 浮动底边让开 composer", () => {
-    it("floating：top-0 + bottom 走 --xh-composer-h，不再 inset-y-0", () => {
-        const wrapper = mountDock({ mode: "floating" });
-        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
-        expect(panel.classes()).toContain("top-0");
-        expect(panel.classes()).not.toContain("inset-y-0");
-        expect(panel.attributes("style")).toContain("bottom: var(--xh-composer-h, 0px)");
+describe("WorkspaceDock · 浮窗形态退场后的形态契约（task-94 S1）", () => {
+    it("任何入参下都不出现浮窗的定位/阴影/底边样式", () => {
+        for (const props of [{}, { width: 480 }, { focus: true }, { fill: true }] as const) {
+            const wrapper = mountDock(props);
+            const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+            const classes = panel.classes();
+            expect(classes).not.toContain("absolute");
+            expect(classes).not.toContain("top-0");
+            expect(classes).not.toContain("shadow-xl");
+            expect(classes).not.toContain("z-20");
+            expect(panel.attributes("style") ?? "").not.toContain("bottom:");
+        }
     });
 
-    it("pinned：不设 bottom（flex 子项本来就不覆盖主列）", () => {
-        const wrapper = mountDock({ mode: "pinned" });
+    it("非 focus/非 fill 时仍以存储宽度落成内联 width", () => {
+        const wrapper = mountDock({ width: 420 });
         const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
-        expect(panel.attributes("style") ?? "").not.toContain("bottom:");
-    });
-
-    it("focus：整行投影，不设 width/bottom", () => {
-        const wrapper = mountDock({ mode: "floating", focus: true });
-        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
-        expect(panel.attributes("style")).toBeUndefined();
+        expect(panel.attributes("style")).toContain("width: 420px");
+        expect(panel.attributes("data-dock-mode")).toBe("pinned");
     });
 });

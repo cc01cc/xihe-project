@@ -82,9 +82,9 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
 
     it("只读面板（closable=false）没有关闭按钮", () => {
         const wrapper = mountRow({
-            containerId: "tree",
-            tabs: [{ id: "tree", label: "文件树", closable: false }],
-            activeId: "tree",
+            containerId: "main",
+            tabs: [{ id: "main", label: "内容", closable: false }],
+            activeId: "main",
         });
         expect(wrapper.find('[data-testid^="workspace-container-tab-close-"]').exists()).toBe(
             false,
@@ -92,18 +92,20 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
     });
 
     it("task-17 W-1：单 tab 与容器同名 ⇒ 去掉容器标签只留 tab（aria-label 保住可访问名）", () => {
+        // D-1777/D-1778（task-65 A 段）：tree 容器已退场（两容器 = main/right），
+        // 同形用例改挂 main 容器 + 与容器同名的单 tab。
         const wrapper = mountRow({
-            containerId: "tree",
-            tabs: [{ id: "tree", label: "文件树", closable: false }],
-            activeId: "tree",
+            containerId: "main",
+            tabs: [{ id: "main", label: "内容", closable: false }],
+            activeId: "main",
         });
         expect(wrapper.find('[data-testid="workspace-container-label"]').exists()).toBe(false);
-        expect(wrapper.get('[data-testid="workspace-container-tab-tree-tree"]').text()).toBe(
-            "文件树",
+        expect(wrapper.get('[data-testid="workspace-container-tab-main-main"]').text()).toBe(
+            "内容",
         );
         expect(
             wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
-        ).toBe("文件树");
+        ).toBe("内容");
     });
 
     it("task-17 W-1 反向：单 tab 但与容器不同名 ⇒ 容器标签保留（主容器标识不丢）", () => {

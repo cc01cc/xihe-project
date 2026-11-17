@@ -41,8 +41,9 @@ export function rowEntryTabId(row: ContainerRow): string | null {
  * 可遍历的行 = **真的渲染了页签行**的行（顺序 = 调用方给的渲染顺序）。
  *
  * <p>为什么必须过滤而不是直接用容器常量表：空容器**不渲染页签行**（`WorkspaceContainerTabs`
- * 的 `allowEmpty` 默认 false，`task-174` 定的），所以 `CONTAINER_IDS` 里的三格与 DOM 里的行数
- * 不是一回事；照 DOM 顺序会「跳过一行跳到不相邻的容器」，照常量表会把焦点送到不存在的行上。</p>
+ * 的 `allowEmpty` 默认 false，`task-174` 定的），所以 `CONTAINER_IDS` 里的两格与 DOM 里的行数
+ * 不是一回事（右栏在 <1800 收起时就没有行）；照 DOM 顺序会「跳过一行跳到不相邻的容器」，
+ * 照常量表会把焦点送到不存在的行上。</p>
  */
 export function focusableRows(rows: readonly ContainerRow[]): readonly ContainerRow[] {
     return rows.filter((row) => rowEntryTabId(row) !== null);
@@ -130,7 +131,7 @@ export type MoveOutcome = {
  * `Ctrl+Alt+ArrowLeft|Right|Down`（跨组移动 / 新建组）的判定。
  *
  * <p>**今天恒为 blocked，且这是有意的**：默认路径（手写 dock）的容器归属是
- * **`containerOf(tabId)` 的纯函数**（`lib/containers.ts:41-44`：`tree` / `DOCK_TAB_IDS` / 其余 ⇒ main），
+ * **`containerOf(tabId)` 的纯函数**（`lib/containers.ts`：`DOCK_TAB_IDS` ⇒ right，其余 ⇒ main；`D-1777`/`D-1778`），
  * 也就是「这个面板属于哪个容器」**不是可写状态** ⇒ 跨组移动在这个模型里**不可表达**。
  * 能表达它的是 S2c 的 `panels[].groups`（`workspace-shell-refresh-design.md` §3.4.2/§5），
  * 所以本卡只把**判定与理由**落地，键位与 UI 等模型到位再接线。</p>

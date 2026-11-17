@@ -2,24 +2,55 @@ import { describe, expect, it } from "vitest";
 
 import {
     CONTAINER_IDS,
-    TREE_CONTAINER_PANEL_ID,
+    FILES_PANEL_ID,
     containerOf,
     groupTabsByContainer,
     visibleContainers,
 } from "../containers";
 
+/**
+ * task-65 A 段（`D-1777`/`D-1778`）：**容器只剩两个（main / right），树不再是容器**。
+ * 树改成右栏的一个普通面板，面板 id = `files`（`containers.ts` 的 `FILES_PANEL_ID`）。
+ *
+ * <p>本文件此前按「三个容器（树 → 中栏 → 右栏）」断言，而 `containers.ts` 已收窄到两项 ⇒
+ * 7 条用例全红（task-65 遗留漏项，task-144 顺手收账）。改法不是删断言，而是把判据换成
+ * **两容器口径 + 树的面板身份**（`files → right`），并把「树不是容器」写成**可咬的判据**——
+ * 否则下一个 lane 会把 `tree` 塞回 `CONTAINER_IDS` 而不红。</p>
+ */
 const PAGE_TABS = ["session:s1", "environment", "settings"];
-const RIGHT_TABS = ["code", "changes", "monitor", "members", "context", "agents", "delegation"];
+/** 右栏面板值域 = `DOCK_TAB_IDS`（含 `files`；树的面板身份）。 */
+const RIGHT_TABS = [
+    FILES_PANEL_ID,
+    "code",
+    "changes",
+    "monitor",
+    "members",
+    "context",
+    "agents",
+    "delegation",
+];
 
 describe("containerOf（D-1545：归属只由 tab 决定，与形态无关）", () => {
-    it("文件树 → tree；页面/会话 → main；dock 面板 → right", () => {
-        expect(containerOf(TREE_CONTAINER_PANEL_ID)).toBe("tree");
+    it("文件树（files 面板）→ right；页面/会话 → main；其余 dock 面板 → right", () => {
+        expect(containerOf(FILES_PANEL_ID)).toBe("right");
         for (const id of PAGE_TABS) expect(containerOf(id)).toBe("main");
         for (const id of RIGHT_TABS) expect(containerOf(id)).toBe("right");
     });
 
-    it("CONTAINER_IDS = 三个容器，顺序 = 渲染顺序（树 → 中栏 → 右栏）", () => {
-        expect(CONTAINER_IDS).toEqual(["tree", "main", "right"]);
+    it("CONTAINER_IDS = 两个容器，顺序 = 渲染顺序（中栏 → 右栏）", () => {
+        expect(CONTAINER_IDS).toEqual(["main", "right"]);
+    });
+
+    /**
+     * D-1777/D-1778 的反面判据：树**不是**容器。
+     * 只断言「文件树归属 right」不够 —— 那与「tree 仍是第三个容器、只是没人用」并存；
+     * 这一条咬的是「三个容器」这个形态本身不许回来。
+     */
+    it("树不是容器：容器值域里没有 tree，且 files 面板归属右栏", () => {
+        expect(CONTAINER_IDS).not.toContain("tree");
+        expect(CONTAINER_IDS).toHaveLength(2);
+        // 反向控制：换一个确实存在的容器 id 必须命中（防「永远 not.toContain 也绿」）。
+        expect(CONTAINER_IDS).toContain("right");
     });
 
     /**
@@ -27,13 +58,14 @@ describe("containerOf（D-1545：归属只由 tab 决定，与形态无关）", 
      * 它禁止的是「宽窄切换时页签搬家」—— 并集合并方案正是在破坏这一条。
      */
     it("同一 tab 的归属不随形态变化（宽窄切换不搬家）", () => {
-        const ids = [TREE_CONTAINER_PANEL_ID, ...PAGE_TABS, ...RIGHT_TABS];
+        const ids = [...PAGE_TABS, ...RIGHT_TABS];
+        const expected = new Map(ids.map((id) => [id, containerOf(id)]));
         for (const mode of ["desktop", "single"] as const) {
             for (const activeColumn of ["main", "right"] as const) {
                 // 形态/可见性只影响渲染哪些容器行，不得影响任何 tab 的归属。
                 void visibleContainers(mode, activeColumn);
                 for (const id of ids) {
-                    expect(containerOf(id)).toBe(containerOf(id));
+                    expect(containerOf(id)).toBe(expected.get(id));
                 }
             }
         }
@@ -43,8 +75,7 @@ describe("containerOf（D-1545：归属只由 tab 决定，与形态无关）", 
         for (const mode of ["desktop", "single"] as const) {
             for (const activeColumn of ["main", "right"] as const) {
                 void visibleContainers(mode, activeColumn);
-                const again = groupTabsByContainer(tabs);
-                expect(again).toEqual(once);
+                expect(groupTabsByContainer(tabs)).toEqual(once);
             }
         }
         expect(once.right.map((tab) => tab.id)).toEqual(RIGHT_TABS);
@@ -53,9 +84,9 @@ describe("containerOf（D-1545：归属只由 tab 决定，与形态无关）", 
 });
 
 describe("visibleContainers（D-1545：形态只决定看得见哪一栏）", () => {
-    it("desktop ⇒ 三个容器全渲染", () => {
-        expect(visibleContainers("desktop", "main")).toEqual(["tree", "main", "right"]);
-        expect(visibleContainers("desktop", "right")).toEqual(["tree", "main", "right"]);
+    it("desktop ⇒ 两个容器全渲染", () => {
+        expect(visibleContainers("desktop", "main")).toEqual(["main", "right"]);
+        expect(visibleContainers("desktop", "right")).toEqual(["main", "right"]);
     });
 
     it("single ⇒ 恰一个：activeColumn=main 时只有 main，=right 时只有 right", () => {
@@ -63,9 +94,11 @@ describe("visibleContainers（D-1545：形态只决定看得见哪一栏）", ()
         expect(visibleContainers("single", "right")).toEqual(["right"]);
     });
 
-    it("single 下 tree 永不可见（窄屏树是 sheet，不是容器行）", () => {
+    it("single 下 files 面板不单独占一行（它是右栏面板，不是容器）", () => {
         for (const activeColumn of ["main", "right"] as const) {
-            expect(visibleContainers("single", activeColumn)).not.toContain("tree");
+            const visible = visibleContainers("single", activeColumn);
+            expect(visible).not.toContain("tree");
+            expect(visible).not.toContain(FILES_PANEL_ID);
         }
     });
 
@@ -77,25 +110,24 @@ describe("visibleContainers（D-1545：形态只决定看得见哪一栏）", ()
 });
 
 describe("groupTabsByContainer", () => {
-    it("三个桶恒在，空桶是空数组", () => {
+    it("两个桶恒在，空桶是空数组", () => {
         const grouped = groupTabsByContainer([]);
-        expect(CONTAINER_IDS.map((id) => grouped[id])).toEqual([[], [], []]);
+        expect(CONTAINER_IDS.map((id) => grouped[id])).toEqual([[], []]);
     });
 
     it("保持入参顺序：顺序由布局单一 writer 决定，这里只归类", () => {
         const grouped = groupTabsByContainer([
             { id: "session:s2" },
-            { id: TREE_CONTAINER_PANEL_ID },
+            { id: FILES_PANEL_ID },
             { id: "session:s1" },
             { id: "code" },
         ]);
         expect(grouped.main.map((tab) => tab.id)).toEqual(["session:s2", "session:s1"]);
-        expect(grouped.tree.map((tab) => tab.id)).toEqual([TREE_CONTAINER_PANEL_ID]);
-        expect(grouped.right.map((tab) => tab.id)).toEqual(["code"]);
+        expect(grouped.right.map((tab) => tab.id)).toEqual([FILES_PANEL_ID, "code"]);
     });
 
     it("每个页签恰好落在一个容器里（不漏不重）", () => {
-        const tabs = ["tree", "code", "monitor", "session:s9"].map((id) => ({ id }));
+        const tabs = [FILES_PANEL_ID, "code", "monitor", "session:s9"].map((id) => ({ id }));
         const grouped = groupTabsByContainer(tabs);
         const flat = CONTAINER_IDS.flatMap((id) => grouped[id].map((tab) => tab.id));
         expect(flat.sort()).toEqual(tabs.map((tab) => tab.id).sort());
@@ -106,19 +138,16 @@ describe("groupTabsByContainer", () => {
      * 同一份 tabs 输入变化时两边集合各自更新、互不串扰 ⇒ 派生逻辑正确。
      */
     it("c4 替代：tabs 输入变化时两边集合各自更新（互不串扰）", () => {
-        const before = groupTabsByContainer([
-            { id: "session:s1" },
-            { id: TREE_CONTAINER_PANEL_ID },
-        ]);
+        const before = groupTabsByContainer([{ id: "session:s1" }, { id: FILES_PANEL_ID }]);
         const after = groupTabsByContainer([
             { id: "session:s1" },
+            { id: FILES_PANEL_ID },
             { id: "code" },
-            { id: TREE_CONTAINER_PANEL_ID },
         ]);
         expect(after.main.map((tab) => tab.id)).toEqual(["session:s1"]);
-        expect(after.tree.map((tab) => tab.id)).toEqual(before.tree.map((tab) => tab.id));
-        // 右栏新增一个面板，不影响 main / tree。
-        expect(after.right.map((tab) => tab.id)).toEqual(["code"]);
-        expect(before.right).toEqual([]);
+        expect(after.right.map((tab) => tab.id)).toEqual([FILES_PANEL_ID, "code"]);
+        // 右栏新增一个面板，不影响 main；左桶（main）在两个快照里都只有那一个会话。
+        expect(before.main.map((tab) => tab.id)).toEqual(["session:s1"]);
+        expect(before.right.map((tab) => tab.id)).toEqual([FILES_PANEL_ID]);
     });
 });

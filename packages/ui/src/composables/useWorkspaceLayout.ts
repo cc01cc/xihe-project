@@ -88,8 +88,17 @@ export const DOCK_INLINE_MIN_VIEWPORT = 1800;
  * the whole-page routes and `openTabs` are untouched, so existing deep links keep working.
  *
  * PLAN-0659 T1.4: `delegation`（委派 DAG）同样复用这一份值域与 `DOCK_MAX_TABS` 上限。
+ *
+ * task-65 A 段（`D-1777` / `D-1778`）：`files`（文件树）加入这一份值域 —— 用户 2026-11-17
+ * 「右侧容器显示目录树组件」「中栏容器和右栏容器几乎是等价的」。树此前是**容器级特例**
+ * （`lib/containers.ts` 的 `tree` 容器，`center` 组的第一道 SplitterPanel），
+ * 而「等价」的可判形式是**任意面板都能投进任一容器** ⇒ 树必须先是普通面板。
+ * 已知代价（Lead 采纳、非否决理由）：① `DOCK_MAX_TABS` 上限被树占一格；② `dock-tab-*`
+ * 消费面与既有 `workspace-file-rail`/`toolbar-toggle-tree` 成两个入口；③ 树宽语义从
+ * splitter% 变 dock px。
  */
 export const DOCK_TAB_IDS = [
+    "files",
     "code",
     "changes",
     "monitor",
@@ -169,6 +178,28 @@ export interface WorkspaceLayoutState {
      * 桌面形态读它但不用它（三栏全渲染）。
      */
     activeColumn: ActiveColumn;
+    /**
+     * task-65 A 段（`D-1777`）/ 用户原话：「点击目录树，可以在中间容器打开具体的文件内容，
+     * 当然也支持同一容器中打开」。
+     *
+     * **「在哪开」的唯一真源**：`FileEditor` 是 `openFiles`/`activeFilePath` 的**单例视图**
+     * （`stores/workspace.ts`），所以这里存的是「这个单例挂在哪个容器」，不是两份编辑器实例。
+     *
+     * **落进既有那个键**（`xihe-layout-ws:<id>`），不新增第二个持久化键 —— `D-1222 ⑥`
+     * 禁的是「新增第二份盘」，不是「在这份盘里加字段」。此前 dockview 壳的 `placements`
+     * （`WorkspaceShellDockview.vue:146`）明确不落盘，刷新即丢，正是本条要修的缺口。
+     */
+    openTarget: OpenTarget;
+}
+
+/**
+ * task-65 A 段：文件内容投到哪个容器。`main` = 中栏容器（`D-1777` 默认），
+ * `right` = 右栏容器（用户原话「也支持同一容器中打开」那一半）。
+ */
+export type OpenTarget = "main" | "right";
+
+export function isOpenTarget(value: unknown): value is OpenTarget {
+    return value === "main" || value === "right";
 }
 
 function storage(): Storage | null {
@@ -301,25 +332,55 @@ export function writeWorkspaceOpenTabs(workspaceId: string, openTabs: WorkTabId[
     }
 }
 
-/** S3b: single source of truth for the pinned/floating breakpoint. */
-export function deriveDockMode(viewportWidth: number): DockMode {
-    if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return "floating";
-    return viewportWidth >= DOCK_INLINE_MIN_VIEWPORT ? "pinned" : "floating";
+/**
+ * task-94 S1（`D-1754 ④` 判据 3「右栏 = 正常列，不得是浮窗/overlay」）：**视口不再决定 dock 形态**。
+ *
+ * <p>派生值恒为 `pinned` —— <1800 不再是浮窗断点（原实现按 `DOCK_INLINE_MIN_VIEWPORT` 派生 floating，
+ * 1600 档实测 `position:absolute` + `z-index:20` + 与主列水平重叠 360px，正是用户要消灭的形态）。
+ * 视口过窄时不再「换成浮窗」而是由 `computeWorkbenchSqueeze` 的 `forceSingleColumn` 走单栏（D-1545 既有机制）。</p>
+ *
+ * <p>**参数保留但不参与判定**：签名与调用点一起改会把规格与消费侧拖进同一批，而本步只需要「派生值恒 pinned」。
+ * `_viewportWidth` 保留 `_` 前缀（`noUnusedParameters` 对下划线参数豁免）。</p>
+ *
+ * <p>退场过程：本步只改派生值；`dockModeManual`、`floating` 渲染分支与 `forceFloating` 的消费侧
+ * 在 S2/S4 批次收口（那时 `DockMode` 收窄为单值，本函数整体退役）。</p>
+ */
+export function deriveDockMode(_viewportWidth: number): DockMode {
+    return "pinned";
 }
 
 export function defaultWorkspaceLayoutForViewport(viewportWidth: number): WorkspaceLayoutState {
     const defaults = defaultWorkspaceLayout(),
         dockMode = deriveDockMode(viewportWidth);
+    /**
+     * task-94 S5 / D4（Lead 2026-11-17 裁「D4 必须同批修」）：**两档首启都带 `files` 页签**。
+     *
+     * <p>为什么不是「后补」：<1800 首启若不给 files 页签，用户看到的是一个没有树的右栏（或干脆没有
+     * 右栏），会以为「树不在这个版本里」—— 实测 1600/1440/1280 首启 `renderedDockTabs=0`、
+     * 树元素根本不在 DOM。少一个页签不是布局差异，是**功能看起来不存在**。</p>
+     *
+     * <p>两档的差异只剩「dock 是否已展开」：宽屏展开并把 files 置前（今天的产品形态），窄屏保持收起
+     * 但页签与激活项就位 —— 用户点工具栏 files 或展开右栏，看到的就是树。宽度仍取 `dockWidth` 默认。</p>
+     */
+    const tabs: WorkspaceLayoutState["dockTabs"] = ["files", "monitor"];
     if (Number.isFinite(viewportWidth) && viewportWidth >= DOCK_INLINE_MIN_VIEWPORT) {
         return {
             ...defaults,
             dockCollapsed: false,
-            dockTabs: ["monitor"],
-            activeDockTab: "monitor",
+            // D-1777/D-1778（task-65 A 段）：宽屏首启右栏默认开 files（目录树）面板，
+            // 用户 2026-11-17「右侧容器显示目录树组件」。树是右栏的一个 dock 页签（不占独立容器行）。
+            dockTabs: tabs,
+            activeDockTab: "files",
             dockMode,
         };
     }
-    return { ...defaults, dockMode };
+    return {
+        ...defaults,
+        dockCollapsed: true,
+        dockTabs: tabs,
+        activeDockTab: "files",
+        dockMode,
+    };
 }
 
 // isWorkTabId: see the C3 block above — the prefix check replaces the old
@@ -345,11 +406,17 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         dockWidth: DOCK_WIDTH_DEFAULT,
         dockTabs: [],
         activeDockTab: null,
-        dockMode: "floating",
+        // task-94 S1：floating 退场后的**存储默认**。旧键里的 `"floating"` 仍能读（`DockMode` 保留两值），
+        // 但渲染侧不再有产生它的路径；读到未知值也按 pinned 落。
+        dockMode: "pinned",
         dockModeManual: false,
         dockFocus: false,
         activeColumn: "main",
         openTabs: defaultOpenTabs(),
+        // D-1777/D-1778（task-65 A 段，第 12 行 T2）：「同一文件中栏/右栏打开」的投递真源。
+        // 默认 "right" = 今天唯一已接线的挂载点（右栏 code 面板）；中栏挂载点与入口 UI 属 C3 后续卡，
+        // 字段先落读写净化，刷新后不再丢。
+        openTarget: "right",
     };
 }
 
@@ -383,12 +450,83 @@ export function writeGlobalLayout(state: GlobalLayoutState): void {
     const store = storage();
     if (!store) return;
     try {
+        // task-152：同一把键还有 `standaloneSessionOrder` 一个面 ⇒ 写 nav 时必须**保留**它，
+        // 否则每次折叠导航/拖栏宽都会把用户的会话排序清掉。
+        const order = readStandaloneSessionOrder();
         store.setItem(
             GLOBAL_LAYOUT_STORAGE_KEY,
-            JSON.stringify({ navOpen: state.navOpen, navWidth: clampNavWidth(state.navWidth) }),
+            JSON.stringify({
+                navOpen: state.navOpen,
+                navWidth: clampNavWidth(state.navWidth),
+                ...(order.length > 0 ? { standaloneSessionOrder: order } : {}),
+            }),
         );
     } catch (cause) {
         logger.warn("Failed to persist the global layout", cause);
+    }
+}
+
+/* ------------------------------------------------------------------------- *
+ * task-152 / `D-1221` ④：独立会话（L3）的用户顺序
+ *
+ * 落在**既有的** `xihe-layout-global` 里（不建第二把键，`D-1222` ⑥）。本块与
+ * `openTarget` / `DOCK_TAB_IDS` / `deriveDockMode` 那几段**物理分离**，便于按 hunk 判归属。
+ *
+ * 与 `writeGlobalLayout` 的关系：两处写同一把键，各自**保留对方的字段**
+ * （nav 写盘时带上 order，order 写盘时带上 nav）⇒ 谁后写都不会抹掉另一方。
+ * 已知边界（不是遗漏）：**跨 tab 不做同步** —— 布局状态今天没有 storage/BroadcastChannel
+ * 通道（`services/authChannel.ts` 是登出专用先例，不掺入），切 tab / 刷新重读即可。
+ * ------------------------------------------------------------------------- */
+
+/** 顺序载荷净化：非数组 ⇒ `[]`；非字符串 / 空串 / 重复项丢弃（与 `openTabs` 同口径）。 */
+export function sanitizeSessionOrder(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const item of value) {
+        if (typeof item !== "string" || item.length === 0 || seen.has(item)) continue;
+        seen.add(item);
+        order.push(item);
+    }
+    return order;
+}
+
+function readGlobalLayoutRaw(store: Storage): Record<string, unknown> | null {
+    try {
+        const raw = store.getItem(GLOBAL_LAYOUT_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as unknown;
+        return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+    } catch (cause) {
+        // 脏载荷：读方不删键（`readGlobalLayout` 那条路径才删），这里只回落默认。
+        logger.warn("Failed to read the global layout payload as JSON", cause);
+        return null;
+    }
+}
+
+/** 读独立会话顺序；缺字段 / 脏载荷 ⇒ `[]`（= 没有自定义顺序，渲染回默认 `updatedAt desc`）。 */
+export function readStandaloneSessionOrder(): string[] {
+    const store = storage();
+    if (!store) return [];
+    return sanitizeSessionOrder(readGlobalLayoutRaw(store)?.standaloneSessionOrder);
+}
+
+/** 写独立会话顺序；**保留** nav 两个字段（同一把键的两个面，互相不覆盖）。 */
+export function writeStandaloneSessionOrder(order: readonly string[]): void {
+    const store = storage();
+    if (!store) return;
+    try {
+        const nav = readGlobalLayout();
+        store.setItem(
+            GLOBAL_LAYOUT_STORAGE_KEY,
+            JSON.stringify({
+                navOpen: nav.navOpen,
+                navWidth: clampNavWidth(nav.navWidth),
+                standaloneSessionOrder: sanitizeSessionOrder(order),
+            }),
+        );
+    } catch (cause) {
+        logger.warn("Failed to persist the standalone session order", cause);
     }
 }
 
@@ -466,6 +604,10 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
             activeColumn: isActiveColumn(parsed.activeColumn)
                 ? parsed.activeColumn
                 : defaults.activeColumn,
+            // task-65 A 段：同一条「缺字段 ⇒ 默认」纪律（旧载荷没有这个键 ⇒ 文件开在中栏，
+            // 与改动前的行为一致）。**必须在这里净化**，否则刷新后读到越界的字符串会直接把
+            // 编辑器挂到不存在的容器上。
+            openTarget: isOpenTarget(parsed.openTarget) ? parsed.openTarget : defaults.openTarget,
         };
     } catch (cause) {
         logger.warn("Failed to read the workspace layout, falling back to defaults", cause);
@@ -495,13 +637,15 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 dockWidth: clampDockWidth(state.dockWidth),
                 dockTabs: tabs,
                 activeDockTab: active,
-                dockMode: isDockMode(state.dockMode) ? state.dockMode : "floating",
+                dockMode: isDockMode(state.dockMode) ? state.dockMode : "pinned",
                 dockModeManual: state.dockModeManual,
                 // Mirrors the read-side normalization: never persist "focused" for a dock
                 // that cannot render (collapsed or tabless).
                 dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,
                 openTabs: state.openTabs.filter(isWorkTabId),
                 activeColumn: isActiveColumn(state.activeColumn) ? state.activeColumn : "main",
+                // 与读侧镜像：写侧也过滤，避免把越界值落盘（读写两处必须同口径）。
+                openTarget: isOpenTarget(state.openTarget) ? state.openTarget : "main",
             }),
         );
     } catch (cause) {
@@ -629,13 +773,7 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
             Number.isFinite(overhead) && (overhead ?? 0) > 0 ? Math.round(overhead as number) : 0;
         const workbenchWidth = Math.max(0, (viewportWidth.value || 0) - offset - overheadPx);
         if (!demand) {
-            return {
-                mainWidth: workbenchWidth,
-                treeYielded: false,
-                navYielded: false,
-                forceFloating: false,
-                treeOverflow: false,
-            };
+            return { mainWidth: workbenchWidth, navYielded: false, forceSingleColumn: false };
         }
         return computeWorkbenchSqueeze({
             workbenchWidth,
@@ -698,20 +836,18 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
 }
 
 /**
- * PLAN-0582 S3b §4 anti-squeeze (spec §1.5-C). The main column is the protected
- * quantity, so the rules are ordered by that protection:
+ * PLAN-0582 S3b §4 anti-squeeze (spec §1.5-C) —— **task-94 S2 后的形态**。
  *
- * 1. `MAIN_MIN_WIDTH` (640) is a hard floor and outranks everything;
- * 2. a pinned dock first makes the **file tree** yield (never the dock itself);
- * 3. if the main column is still under the floor, the dock drops back to
- *    floating (rendering only — the user's pinned choice is kept and reported);
- * 4. below `MAIN_COMFORT_MIN_WIDTH` (720) the tree yields even when the floor is
- *    met, so the main column keeps a readable width.
+ * <p>有序规则（保护量仍是主列）：① `MAIN_MIN_WIDTH`(640) 是硬底线、优先于一切；
+ * ② pinned 右栏让**会话列**先让位（舒适级 720 / 硬底线 640 两级）；③ 会话列让尽仍 <640 ⇒
+ * **走单栏**（`forceSingleColumn`，`D-1545` 既有机制）；④ 右栏永不被关（② 不关 dock）。</p>
  *
- * S5-W2 adds the second yield step of spec §1.5-C: after the tree, the
- * **navigation panel** yields to its rail (`navYielded`) — comfort yield only while
- * a pinned dock squeezes, hard-floor yield always, and never by closing the dock.
- * Pure function so the breakpoint table is unit-testable without a DOM.
+ * <p>退场的两条旧规则，写在此处防复活：**「右栏先让文件树让位」不成立了** —— 树已是右栏的一个
+ * 面板（`D-1777`/`D-1778`），它不再占行宽，把 `treeWidth` 再扣一次就是把右栏宽里已经含着的
+ * 那份树宽扣第二遍（实测 1600 档：DOM 主列 1157 / 旧模型算 597）。**「让尽就转 floating」也不成立了**
+ * —— `D-1754 ④` 判据 3 禁浮窗，出口改成单栏。</p>
+ *
+ * <p>纯函数，断点表可无 DOM 单测。</p>
  */
 export const MAIN_MIN_WIDTH = 640;
 export const MAIN_COMFORT_MIN_WIDTH = 720;
@@ -719,19 +855,8 @@ export const MAIN_COMFORT_MIN_WIDTH = 720;
 export interface WorkbenchSqueezeInput {
     /** Measured width of the workbench row (rail+panel already excluded). */
     workbenchWidth: number;
-    treeWidth: number;
-    /** Whether the tree is collapsed **as rendered** (manual expansion included). */
-    treeCollapsed: boolean;
     dockWidth: number;
     dockOpen: boolean;
-    dockMode: DockMode;
-    /**
-     * S3b P1-2 (audit): `false` when the user expanded the tree by hand. Automatic
-     * yielding must then be suppressed (it would contradict the explicit choice),
-     * and the 640 floor is protected by forcing the dock to floating instead. The
-     * hard floor still wins over the manual preference if floating is not enough.
-     */
-    allowTreeYield?: boolean;
     /** Rendered width of the navigation panel that could yield (0 when closed). */
     navPanelWidth?: number;
     /**
@@ -758,18 +883,22 @@ export interface WorkbenchSqueezeInput {
 }
 
 export interface WorkbenchSqueezeResult {
+    /**
+     * 两栏形态下的主列宽（会话列让尽之后）。**单栏形态下不适用** —— 那时主列占满整行
+     * （`workbenchWidth`），由调用方按 `forceSingleColumn` 自行决定用哪个数。
+     */
     mainWidth: number;
-    /** The tree has to collapse so a pinned dock can keep the main column readable. */
-    treeYielded: boolean;
     /** The navigation panel has to collapse to its rail so the floor is reachable. */
     navYielded: boolean;
-    /** The dock has to render as floating to protect the hard floor. */
-    forceFloating: boolean;
     /**
-     * 主列在「用户显式展开文件树」后仍然低于硬底线（task-589）。
-     * 与 `treeYielded` 互斥：显式展开时不再抢折叠，而是**允许破底线**并由调用方给一次提示。
+     * task-94 S2：**这一行装不下「主列 ≥640 + 右栏」，右栏改由单栏切换承载**（`D-1545`）。
+     *
+     * <p>这是「让尽之后仍破 640」的**唯一出口**：右栏不死（② 不关 dock）、不叠（③ 判据 3 禁浮窗）、
+     * 主列不破 640（①），改由两栏轮流占满整行（与移动壳同一语义）。取代旧的 `forceFloating`。</p>
+     *
+     * <p>右栏折叠（`dockOpen=false`）时恒 false：没有第二栏要分流。</p>
      */
-    treeOverflow: boolean;
+    forceSingleColumn: boolean;
 }
 
 /**
@@ -779,56 +908,38 @@ export interface WorkbenchSqueezeResult {
  */
 export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): WorkbenchSqueezeResult {
     const workbenchWidth = Number.isFinite(input.workbenchWidth) ? input.workbenchWidth : 0;
-    const allowTreeYield = input.allowTreeYield !== false;
     const allowNavYield = input.allowNavYield !== false;
     const navPanelWidth = Number.isFinite(input.navPanelWidth)
         ? Math.max(0, input.navPanelWidth ?? 0)
         : 0;
-    const treeCollapsed = Boolean(input.treeCollapsed);
-    const tree = treeCollapsed ? TREE_COLLAPSED_WIDTH : input.treeWidth;
-    const dockTakesSpace = input.dockOpen && input.dockMode === "pinned";
-    let mainWidth = workbenchWidth - tree - (dockTakesSpace ? input.dockWidth : 0);
-    let treeYielded = false;
+    // task-94 S2：右栏恒为行内列（floating 退场）⇒ 开着就占行宽；**树不再是行内列**
+    // （它已是右栏的一个页签，树宽含在 dockWidth 里）⇒ 行宽里不再有树项。
+    const dockTakesSpace = input.dockOpen;
+    let mainWidth = workbenchWidth - (dockTakesSpace ? input.dockWidth : 0);
     let navYielded = false;
-    let treeOverflow = false;
 
-    // ── comfort floor (720), spec §1.5-C rule 2: tree first, then the nav panel ──
-    // Only a *pinned* dock squeezes the row, so the comfort yield is scoped to it.
-    if (dockTakesSpace && mainWidth < MAIN_COMFORT_MIN_WIDTH) {
-        if (!treeCollapsed && allowTreeYield) {
-            mainWidth += tree - TREE_COLLAPSED_WIDTH;
-            treeYielded = true;
-        }
-        if (mainWidth < MAIN_COMFORT_MIN_WIDTH && navPanelWidth > 0 && allowNavYield) {
-            mainWidth += navPanelWidth;
-            navYielded = true;
-        }
+    // ── comfort floor (720), spec §1.5-C rule 2：树让位退场后只剩会话列这一个舒适级杠杆 ──
+    if (
+        dockTakesSpace &&
+        mainWidth < MAIN_COMFORT_MIN_WIDTH &&
+        navPanelWidth > 0 &&
+        allowNavYield
+    ) {
+        mainWidth += navPanelWidth;
+        navYielded = true;
     }
 
-    // ── hard floor (640), outranks every manual preference ──
-    let forceFloating = false;
-    if (dockTakesSpace && mainWidth < MAIN_MIN_WIDTH) {
-        mainWidth += input.dockWidth;
-        forceFloating = true;
-    }
-    if (mainWidth < MAIN_MIN_WIDTH && !treeCollapsed && !treeYielded) {
-        if (allowTreeYield) {
-            mainWidth += tree - TREE_COLLAPSED_WIDTH;
-            treeYielded = true;
-        } else {
-            // task-589：用户**显式展开**了文件树（`allowTreeYield === false`）。硬底线不再抢折叠：
-            // 否则点击「展开」会被静默否决（现象：rail 仍 41px、界面毫无变化）。
-            // 按产品裁定：允许主列破 640，由调用方给一次可见提示（`treeOverflow`）。
-            treeOverflow = true;
-        }
-    }
-    // The nav panel is the last lever: at narrow viewports the rail + panel alone can
-    // eat the floor, so it yields even without a pinned dock (and even if the user
-    // re-opened it by hand — the floor is the higher-priority invariant).
+    // ── hard floor (640)：会话列是最后一个杠杆（连手动重开也要让 —— 底线优先于偏好）──
     if (mainWidth < MAIN_MIN_WIDTH && navPanelWidth > 0 && !navYielded) {
         mainWidth += navPanelWidth;
         navYielded = true;
     }
 
-    return { mainWidth, treeYielded, navYielded, forceFloating, treeOverflow };
+    /**
+     * task-94 S2 / S4：**单栏判定**。会话列让尽之后这一行仍装不下 640 的主列 ⇒「主列 + 右栏同行」
+     * 在该视口不成立 ⇒ 两栏轮流占满整行。判据与 ① 640 硬底线是同一个数，没有第二个魔数。
+     */
+    const forceSingleColumn = dockTakesSpace && mainWidth < MAIN_MIN_WIDTH;
+
+    return { mainWidth, navYielded, forceSingleColumn };
 }

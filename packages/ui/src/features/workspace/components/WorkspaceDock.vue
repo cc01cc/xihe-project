@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, Maximize2, Minimize2, Pin, PinOff, X } from "@lucide/vue";
+import { ChevronDown, Maximize2, Minimize2, X } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
     DOCK_WIDTH_KEYBOARD_STEP,
@@ -34,6 +34,8 @@ import SashGrip from "../../../components/shared/SashGrip.vue";
 // ─────────────────────────────────────────────────────────────────────────────
 // import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
 import type { DockTab } from "./workspaceDockTabs";
+import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
+import type { ContainerRowKeyPayload } from "../lib/containerTabNav";
 
 /**
  * PLAN-0582 S2: the right dock. Presentation only — the open tab set, the active
@@ -58,8 +60,11 @@ const props = withDefaults(
         tabs: DockTab[];
         activeTab: string;
         width: number;
-        /** Pinned = flex child (never covers content); floating = overlay. */
-        mode?: "pinned" | "floating";
+        /**
+         * task-94 S2 / Q2（Lead 2026-11-17 裁「单栏时右栏占满整行」）：单栏形态下右栏独占整行，
+         * 宽度由行决定（`flex-1`），`width`/分隔条/宽度浮标一并退场 —— 整行就是宽度，没有第二栏可拖。
+         */
+        fill?: boolean;
         /** Width restored by the resizer double-click (P2-1). */
         defaultWidth?: number;
         /** Tabs rendered in the strip before they move into the overflow menu. */
@@ -77,7 +82,7 @@ const props = withDefaults(
          */
         useDockview?: boolean;
     }>(),
-    { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT, focus: false },
+    { maxVisibleTabs: 3, defaultWidth: DOCK_WIDTH_DEFAULT, focus: false, fill: false },
 );
 
 const emit = defineEmits<{
@@ -85,8 +90,8 @@ const emit = defineEmits<{
     "close-tab": [id: string];
     close: [];
     "update:width": [width: number];
-    "toggle-mode": [];
     "toggle-focus": [];
+    "row-key": [payload: ContainerRowKeyPayload];
 }>();
 
 const { t } = useI18n();
@@ -110,16 +115,29 @@ const { resizingWidth, start: handleResizeStart } = useLiveResize({
 // dockview 停用（用户 2026-11-10 裁定）：固定 false —— `useDockview` prop 与
 // `globalThis.__xhUseDockview` 注入当前均无效，见文件顶部「dockview 停用」说明。
 const dockviewEnabled = computed(() => false),
-    isPinned = computed(() => props.mode === "pinned"),
-    modeLabel = computed(() =>
-        isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
-    ),
     focusLabel = computed(() =>
         props.focus ? t("workspace.dockFocusRestore") : t("workspace.dockFocusExpand"),
     );
+
+/**
+ * task-94 S1（`D-1754 ④` 判据 3）：**右栏只有一种形态 —— 行内列**。
+ *
+ * <p>浮窗分支（`absolute top-0 right-0 z-20 shadow-xl` + `--xh-composer-h` 底部让位 + pin 切换按钮）
+ * 整套退场。它存在的唯一理由是「主列 <640 时把右栏叠上去」，而那个出口已改成单栏
+ * （`forceSingleColumn`，`D-1545` 语义）。判据 3 原文是「不得是浮窗/overlay」⇒ 不是
+ * 「默认 pinned、兜底浮窗」，而是**没有那个兜底**。</p>
+ *
+ * <p>随之退场的还有 two-axis 的第二根：focus（D26-04）仍在，pin/overlay 那根不再存在。</p>
+ */
 const panelClass = computed(() => {
-    // Focus outranks the pinned/floating split: the row has no main column left to
-    // overlay or to be pinned beside, so it becomes the only flex child that grows.
+    if (props.fill) {
+        return [
+            "flex h-full min-w-0 flex-1 flex-col border-l border-border bg-surface-canvas",
+            "relative z-auto shadow-none",
+        ];
+    }
+    // Focus outranks the width: the row has no main column left, so it becomes the only
+    // flex child that grows.
     if (props.focus) {
         return [
             "flex h-full min-w-0 flex-1 flex-col border-l border-border bg-surface-canvas",
@@ -128,39 +146,25 @@ const panelClass = computed(() => {
     }
     return [
         "flex shrink-0 flex-col border-l border-border bg-surface-canvas",
-        // task-442：**浮动态不能带 `h-full`** —— 绝对定位元素一旦有显式 height，`bottom` 就被忽略
-        // （过约束：top + height 决定位置，bottom 被丢弃）。实测带 h-full 时 bottom:170px 完全不生效，
-        // 面板仍覆盖 composer。pinned 是 flex 子项，仍要 h-full 撑满。
-        isPinned.value
-            ? "relative z-auto h-full shadow-none"
-            : "absolute top-0 right-0 z-20 shadow-xl",
+        "relative z-auto h-full shadow-none",
     ];
 });
-
 /**
- * task-442（F-14 / D-1276 C1）：浮动面板的**底边让开 composer**。
- *
- * 为什么：浮动 dock 与 `workspace-center` 是兄弟且绝对定位，`inset-y-0` 会覆盖整个中列**含 composer**
- * ⇒ 1600×1000 实测发送键中心 `elementFromPoint` 返回面板 div，用户**能打字不能发送**；
- * Esc / 点击主列这两个既有 dismiss 都救不了（指针目标就是 dock；Esc 在输入框里属于输入框）。
- *
- * 为什么不用 dockview 的 API：`dockview-core` 的 `floatingGroupBounds` 只相对**视口**
- * （`boundedWithinViewport` / `minimum{Height,Width}WithinViewport`），`transformFloatingGroupDrag` 只在拖拽帧生效，
- * **没有「避开兄弟元素」的语义**；且产品路径当前是手写 dock（`dockviewEnabled` 恒 false）。
- * 为什么不用固定底部内距：composer 高度随附件/多行/移动端变化，写死是魔数。
- * 为什么不给中列留白：浮动是窄屏防挤压的兜底（主列 <640 才转 floating），留白会把它压回线下。
- *
- * 高度由聊天列用 `@vueuse/core` 的 `useElementSize` 量 composer 后发布 `--xh-composer-h`
- * （见 `chat/components/InputArea.vue`）；未发布时回落 0 = 与旧行为一致。
+ * 宽度：单栏（`fill`）与 focus 都由行决定，没有可拖的宽度 ⇒ 不写内联 `width`。
+ * （task-442 的 `--xh-composer-h` 底部让位只服务于浮窗态，随 `D-1754 ④` 判据 3 一起退场。）
  */
 const panelStyle = computed(() => {
-    if (props.focus) return undefined;
-    const style: Record<string, string> = { width: `${props.width}px` };
-    if (!isPinned.value) style.bottom = "var(--xh-composer-h, 0px)";
-    return style;
+    if (props.focus || props.fill) return undefined;
+    return { width: `${props.width}px` } as Record<string, string>;
 });
 
 const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
+
+/**
+ * D-1777/D-1778 §8 第 1 步：右栏容器行的页签数据 = 可见 dock 页签（overflow 之外的前
+ * maxVisibleTabs 个），与下方 chips 渲染的始终是同一份。
+ */
+const rowTabs = computed(() => visibleTabs.value.map((tab) => ({ ...tab, closable: true })));
 const overflowTabs = computed(() => props.tabs.slice(props.maxVisibleTabs));
 const hasOverflow = computed(() => overflowTabs.value.length > 0);
 
@@ -239,7 +243,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
     <aside
         ref="panelRef"
         data-testid="workspace-aux-panel"
-        :data-dock-mode="focus ? 'focus' : mode"
+        :data-dock-mode="focus ? 'focus' : 'pinned'"
         :data-dock-focus="focus ? 'true' : 'false'"
         :aria-label="t('workspace.dockTabs')"
         :class="[panelClass, { 'is-resizing': resizingWidth !== null }]"
@@ -253,7 +257,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
             热区仍是 `w-1`（4px），改宽度会让"拖不动"变成新 bug，禁止。
         -->
         <div
-            v-if="!focus"
+            v-if="!focus && !fill"
             role="separator"
             aria-orientation="vertical"
             :aria-label="t('workspace.dockResize')"
@@ -282,150 +286,102 @@ function handleResizeKeydown(event: KeyboardEvent) {
             {{ resizingWidth }}px
         </span>
 
-        <div class="flex h-9 shrink-0 items-center gap-1 border-b pl-2 pr-1 text-xs">
-            <div
-                v-if="!dockviewEnabled"
-                role="tablist"
-                :aria-label="t('workspace.dockTabs')"
-                class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
-            >
-                <!--
-                    PLAN-0626 D26-10: the chip is a wrapper because a tab and its close
-                    affordance are two sibling controls. Nesting a `role=button` span (or a
-                    second `<button>`) inside `role=tab` produced a nested-interactive element
-                    with hand-rolled Enter/Space handlers; the same shape already exists in
-                    `WorkspaceTabBar.vue`, so this is a reuse, not a new pattern.
-                -->
-                <div
-                    v-for="tab in visibleTabs"
-                    :key="tab.id"
-                    class="inline-flex shrink-0 items-center rounded transition-colors"
-                    :class="
-                        tab.id === activeTab
-                            ? 'bg-accent text-foreground'
-                            : 'text-muted-foreground hover:bg-accent'
-                    "
-                >
+        <!--
+            D-1777/D-1778 §8 第 1 步（task-65 A 段）：右栏容器的页签行 = WorkspaceContainerTabs
+            container-id="right"。页签数据 = 本组件既有的 visibleTabs（dock tab 数据，不新造 IA）；
+            页签/close 的 testid 沿用 dock-tab-* / dock-tab-close-* 既有契约（66+ 消费点不得改名），
+            close-active-only 保留「只有 active 页签有 close」的 dock 语义。
+            overflow 触发器与 mode/focus/close 三个动作收进行的 #actions 槽（行尾）。
+        -->
+        <WorkspaceContainerTabs
+            v-if="!dockviewEnabled"
+            container-id="right"
+            :tabs="rowTabs"
+            :active-id="activeTab"
+            testid-prefix="dock-tab-"
+            close-testid-prefix="dock-tab-close-"
+            close-active-only
+            @select="selectTab"
+            @close="closeTab"
+            @row-key="(payload) => emit('row-key', payload)"
+            @tab-auxclick="(id, event) => handleTabAuxClick(event, id)"
+        >
+            <template #actions>
+                <div v-if="hasOverflow" class="relative shrink-0">
                     <button
                         type="button"
-                        role="tab"
-                        :data-testid="`dock-tab-${tab.id}`"
-                        :aria-selected="tab.id === activeTab"
-                        class="inline-flex min-w-0 items-center gap-1 rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        :class="tab.id === activeTab ? 'font-medium' : ''"
-                        @click="selectTab(tab.id)"
-                        @auxclick="handleTabAuxClick($event, tab.id)"
+                        data-testid="dock-overflow-trigger"
+                        class="inline-flex items-center gap-0.5 rounded px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent"
+                        :aria-label="t('workspace.dockOverflow')"
+                        :title="t('workspace.dockOverflow')"
+                        :aria-expanded="overflowOpen"
+                        @click="overflowOpen = !overflowOpen"
                     >
-                        <span class="max-w-28 truncate">{{ tab.label }}</span>
+                        <ChevronDown class="size-3.5" aria-hidden="true" />
+                        <span class="tabular-nums">{{ overflowTabs.length }}</span>
                     </button>
-                    <!--
-                        task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：原先 `p-0.5` + `size-3` ⇒
-                        1.75×2 + 10.5 = **14px**，且与同 chip 的 `dock-tab-` 本体矩形距只有 7
-                        ⇒ 24 圆心圆必然相交 ⇒ **真缺陷**（不是"看起来小"）。
-                        改为 `min-h-7 min-w-7`：本仓 `--spacing` = 3.5px ⇒ 7 步 = **24.5px**；
-                        `X` 仍 `size-3`（10.5px）不放大 ⇒ chip 只加宽 10.5px，图标视觉档位不动。
-                    -->
-                    <button
-                        v-if="tab.id === activeTab"
-                        type="button"
-                        :data-testid="`dock-tab-close-${tab.id}`"
-                        :aria-label="t('workspace.dockCloseTab')"
-                        :title="t('workspace.dockCloseTab')"
-                        class="mr-0.5 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        @click.stop="closeTab(tab.id)"
-                    >
-                        <X class="size-3" aria-hidden="true" />
-                    </button>
-                </div>
-            </div>
-
-            <div v-if="hasOverflow" class="relative shrink-0">
-                <button
-                    type="button"
-                    data-testid="dock-overflow-trigger"
-                    class="inline-flex items-center gap-0.5 rounded px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent"
-                    :aria-label="t('workspace.dockOverflow')"
-                    :title="t('workspace.dockOverflow')"
-                    :aria-expanded="overflowOpen"
-                    @click="overflowOpen = !overflowOpen"
-                >
-                    <ChevronDown class="size-3.5" aria-hidden="true" />
-                    <span class="tabular-nums">{{ overflowTabs.length }}</span>
-                </button>
-                <div
-                    v-if="overflowOpen"
-                    data-testid="dock-overflow-menu"
-                    class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
-                >
                     <div
-                        v-for="tab in overflowTabs"
-                        :key="tab.id"
-                        class="flex w-full items-center justify-between gap-1 rounded hover:bg-accent"
+                        v-if="overflowOpen"
+                        data-testid="dock-overflow-menu"
+                        class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
                     >
-                        <button
-                            type="button"
-                            :data-testid="`dock-overflow-item-${tab.id}`"
-                            class="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            @click="selectTab(tab.id)"
+                        <div
+                            v-for="tab in overflowTabs"
+                            :key="tab.id"
+                            class="flex w-full items-center justify-between gap-1 rounded hover:bg-accent"
                         >
-                            {{ tab.label }}
-                        </button>
-                        <button
-                            type="button"
-                            :data-testid="`dock-overflow-close-${tab.id}`"
-                            :aria-label="t('workspace.dockCloseTab')"
-                            :title="t('workspace.dockCloseTab')"
-                            class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            @click.stop="closeTab(tab.id)"
-                        >
-                            <X class="size-3" aria-hidden="true" />
-                        </button>
+                            <button
+                                type="button"
+                                :data-testid="`dock-overflow-item-${tab.id}`"
+                                class="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                @click="selectTab(tab.id)"
+                            >
+                                {{ tab.label }}
+                            </button>
+                            <button
+                                type="button"
+                                :data-testid="`dock-overflow-close-${tab.id}`"
+                                :aria-label="t('workspace.dockCloseTab')"
+                                :title="t('workspace.dockCloseTab')"
+                                class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                @click.stop="closeTab(tab.id)"
+                            >
+                                <X class="size-3" aria-hidden="true" />
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <button
-                type="button"
-                data-testid="dock-mode-toggle"
-                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="isPinned ? 'text-primary' : ''"
-                :aria-pressed="isPinned"
-                :aria-label="modeLabel"
-                :title="`${modeLabel} · ${t('workspace.dockModeToggleHint')}`"
-                @click="emit('toggle-mode')"
-            >
-                <Pin v-if="isPinned" class="size-3.5" aria-hidden="true" />
-                <PinOff v-else class="size-3.5" aria-hidden="true" />
-            </button>
-            <!--
-                PLAN-0626 D26-04: expand/restore. Kept beside the pin toggle because the two
-                are independent axes (pin = dock vs overlay, focus = occupy the whole row);
-                restoring brings back the pinned/floating choice and the stored width.
-            -->
-            <button
-                type="button"
-                data-testid="dock-focus-toggle"
-                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="focus ? 'text-primary' : ''"
-                :aria-pressed="focus"
-                :aria-label="focusLabel"
-                :title="`${focusLabel} · ${t('workspace.dockFocusHint')}`"
-                @click="emit('toggle-focus')"
-            >
-                <Minimize2 v-if="focus" class="size-3.5" aria-hidden="true" />
-                <Maximize2 v-else class="size-3.5" aria-hidden="true" />
-            </button>
-            <button
-                type="button"
-                data-testid="workspace-aux-close"
-                class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :aria-label="t('workspace.closePanel')"
-                :title="t('workspace.closePanel')"
-                @click="emit('close')"
-            >
-                <X class="size-3.5" aria-hidden="true" />
-            </button>
-        </div>
+                <!-- task-94 S1：pin/浮窗切换按钮随浮窗退场（判据 3）——右栏没有第二种形态可切。 -->
+                <!--
+                    PLAN-0626 D26-04: expand/restore。task-94 S1 之后只剩「宽度」这一根轴
+                    （pin = dock vs overlay 那根随浮窗退场），focus 仍与宽度独立。
+                -->
+                <button
+                    type="button"
+                    data-testid="dock-focus-toggle"
+                    class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :class="focus ? 'text-primary' : ''"
+                    :aria-pressed="focus"
+                    :aria-label="focusLabel"
+                    :title="`${focusLabel} · ${t('workspace.dockFocusHint')}`"
+                    @click="emit('toggle-focus')"
+                >
+                    <Minimize2 v-if="focus" class="size-3.5" aria-hidden="true" />
+                    <Maximize2 v-else class="size-3.5" aria-hidden="true" />
+                </button>
+                <button
+                    type="button"
+                    data-testid="workspace-aux-close"
+                    class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="t('workspace.closePanel')"
+                    :title="t('workspace.closePanel')"
+                    @click="emit('close')"
+                >
+                    <X class="size-3.5" aria-hidden="true" />
+                </button>
+            </template>
+        </WorkspaceContainerTabs>
 
         <!--
             PLAN-0756 T1 dockview 渲染分支 —— 停用（用户 2026-11-10 裁定：保留依赖、
