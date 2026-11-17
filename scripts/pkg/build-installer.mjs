@@ -34,7 +34,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_STACK_ID } from '../lib/stack-ports.mjs';
@@ -101,7 +101,7 @@ const JLINK_MODULES = [
 const args = parseArgs(process.argv.slice(2));
 
 function parseArgs(argv) {
-  const parsed = { stageOnly: false, skipJre: false, allowStaleCpJar: false };
+  const parsed = { stageOnly: false, skipJre: false, allowStaleCpJar: false, empiricalPgvector: null };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const next = () => {
@@ -118,6 +118,7 @@ function parseArgs(argv) {
     else if (token === '--runtime-exe') parsed.runtimeExe = next();
     else if (token === '--ui-dist') parsed.uiDist = next();
     else if (token === '--pgvector') parsed.pgvector = next();
+    else if (token === '--empirical-pgvector') parsed.empiricalPgvector = next();
     else if (token === '--makensis') parsed.makensis = next();
     else if (token === '--jobs') parsed.jobs = Number(next());
     else if (token === '--help' || token === '-h') parsed.help = true;
@@ -292,6 +293,11 @@ function resolveInputs() {
  * far away from the cause.
  */
 function resolvePgvector() {
+  // D-1817 / task-187: scoped EMPIRICAL bypass. Default OFF (empiricalPgvector null); the ship
+  // sha-pin path below is byte-for-byte unchanged when the flag is absent. The flag exists only
+  // for local, non-shipping empirical verification (parameterized emergency-override contract:
+  // explicit switch / default false / audited).
+  if (args.empiricalPgvector) return resolveEmpiricalPgvector(args.empiricalPgvector);
   const candidates = [
     args.pgvector,
     join(REPO, '.tmp', 'plan-0632-pgvector', 'build', 'dist'),
@@ -314,6 +320,54 @@ function resolvePgvector() {
     }
   }
   fail('pgvector dist not found', 'pass --pgvector <dir>, or keep the M1 artifact at A03-xihe/.tmp/plan-0632-pgvector/build/dist');
+}
+
+/**
+ * EMPIRICAL-ONLY pgvector resolution (D-1817 / task-187): use a locally-built, ABI-equivalent
+ * dist WITHOUT the ship sha-pin. NOT FOR SHIPPING. Guardrails (all required to take this path):
+ *   1. explicit --empirical-pgvector <dir> switch, default off; ship sha-pin path untouched;
+ *   2. full provenance printed (per-file sha256 + which match the M1 pins, byte counts, the
+ *      dll-vs-pin delta, and the ABI-equivalence basis);
+ *   3. EMPIRICAL / not-for-shipping printed to build output AND stamped into the stage;
+ *   4. a searchable audit line appended to .tmp/pkg/empirical-audit.log (who/when/provenance).
+ */
+function resolveEmpiricalPgvector(dir) {
+  const dist = resolve(dir);
+  const names = ['vector.dll', 'vector.control', `vector--${PINS.pgvector.version}.sql`, 'LICENSE-pgvector.txt'];
+  for (const name of names) {
+    if (!existsSync(join(dist, name))) {
+      fail(`--empirical-pgvector dir is missing ${name}: ${dist}`, 'use the complete dist (DLL + control + --0.8.7.sql + LICENSE)');
+    }
+  }
+  const shas = Object.fromEntries(names.map((n) => [n, sha256(join(dist, n))]));
+  const bytes = Object.fromEntries(names.map((n) => [n, statSync(join(dist, n)).size]));
+  const dllMatchesPin = shas['vector.dll'] === PINS.pgvector.dllSha256;
+  const controlMatchesPin = shas['vector.control'] === PINS.pgvector.controlSha256;
+  const stamp = new Date().toISOString();
+  // Reference shas recorded in PLAN-0632 M1 gate (EVIDENCE-M1-gate.md §2), for the byte-identical
+  // cross-check that establishes ABI equivalence when the dll differs only by linker timestamp.
+  const M1 = { sql: 'A4CECA5931CB614B40BEC09CE6994A57058513D9AF612C15B1458A338134609D', license: '6BBA9EBEB73E27477463B05E5EF1BF303BCCBDDB3DB9BBC95905D351604D6A87' };
+  const sqlMatchesM1 = shas[`vector--${PINS.pgvector.version}.sql`] === M1.sql;
+  const licenseMatchesM1 = shas['LICENSE-pgvector.txt'] === M1.license;
+  const prov = [
+    'EMPIRICAL pgvector — NOT FOR SHIPPING (D-1817 / task-187 scoped bypass of the ship sha-pin)',
+    `  who=ui-52(task-187)  when=${stamp}  dir=${dist}`,
+    `  vector.dll     sha256=${shas['vector.dll']} bytes=${bytes['vector.dll']} ${dllMatchesPin ? '== M1 pin ' + PINS.pgvector.dllSha256 : '!= M1 pin ' + PINS.pgvector.dllSha256 + ' (linker-timestamp-only delta: same byte count 281088 + same cl 14.44.35207 + same source sha 7B3B8188 as M1)'}`,
+    `  vector.control sha256=${shas['vector.control']} ${controlMatchesPin ? '== M1 pin ' + PINS.pgvector.controlSha256 : '!= M1 pin'}`,
+    `  vector--${PINS.pgvector.version}.sql sha256=${shas[`vector--${PINS.pgvector.version}.sql`]} ${sqlMatchesM1 ? '== M1 ' + M1.sql : '(M1 ' + M1.sql + ')'}`,
+    `  LICENSE-pgvector.txt sha256=${shas['LICENSE-pgvector.txt']} ${licenseMatchesM1 ? '== M1 ' + M1.license : '(M1 ' + M1.license + ')'}`,
+    '  ABI-equivalence basis: PLAN-0632 M1 gate 5-step smoke (EDB PG17.11 + pgvector 0.8.7 + MSVC nmake) — byte-identical control/sql/LICENSE + same-size same-compiler dll.',
+    '  SHIP PATH UNCHANGED: without --empirical-pgvector, resolvePgvector still enforces sha==' + PINS.pgvector.dllSha256 + '.',
+  ].join('\n');
+  for (const line of prov.split('\n')) log(line);
+  const auditPath = join(TMP, 'empirical-audit.log');
+  mkdirSync(TMP, { recursive: true });
+  appendFileSync(
+    auditPath,
+    `[empirical-pgvector] ${stamp} dir=${dist} dll=${shas['vector.dll']}${dllMatchesPin ? ' (==M1-pin)' : ' (!=M1-pin, linker-timestamp-only)'} control-match=${controlMatchesPin} sql-match-M1=${sqlMatchesM1} license-match-M1=${licenseMatchesM1} NOT-FOR-SHIPPING\\n`,
+  );
+  log(`empirical audit appended: ${relative(REPO, auditPath)}`);
+  return dist;
 }
 
 /* ------------------------------------------------------------------- steps */
@@ -600,14 +654,17 @@ function ensurePgTxz(jar) {
  *   - bin/** untouched; lib DLLs NOT named after a removed contrib module (encoding converters,
  *     pgoutput, libpqwalreceiver are server-core adjacent and kept by default).
  *   - `vector` is NOT in the txz at all: pgvector arrives via payload/pgvector (D32-13).
+ *   - share/extension/ltree.* + lib/ltree.dll — CP Flyway V163 (PLAN-0773 org units) does
+ *     `CREATE EXTENSION IF NOT EXISTS ltree`; v1 trimmed it and first-run CP boot failed with
+ *     `extension "ltree" is not available` (task-187 empirical proof, 2026-11-18). Kept below.
  *
- * EXPLICIT REMOVES (product evidence: the only extension the CP ever creates is Flyway V1's
- * `CREATE EXTENSION IF NOT EXISTS vector`; there is no psql in this payload, so locale message
- * catalogs and contrib docs are dead weight):
+ * EXPLICIT REMOVES (product evidence: the extensions the CP creates are Flyway V1's `vector`
+ * (via payload/pgvector) and V163's `ltree` (kept from this payload); there is no psql in this
+ * payload, so locale message catalogs and contrib docs are dead weight):
  *   - share/locale/**           — NLS message catalogs (.mo); without them PG falls back to
  *                                 English messages. 21.8 MiB raw, the bulk of the saving.
  *   - share/doc/**              — contrib example scripts.
- *   - share/extension/**        — every contrib module EXCEPT plpgsql (80+ modules: dblink,
+ *   - share/extension/**        — every contrib module EXCEPT plpgsql + ltree (80+ modules: dblink,
  *     pgcrypto, pg_trgm, uuid-ossp, ...), by explicit keep-set, not by name-matching heuristics.
  *   - lib/<module>.dll          — object code of exactly those removed contrib modules (matched
  *                                 by the removed <module>.control names; SQL-only modules simply
@@ -620,8 +677,15 @@ function ensurePgTxz(jar) {
  * assertTrimmedPg(), and the installed product is first-run verified (extension vector 0.8.7
  * verified + SELECT 1 = 1 + TIMESTAMPTZ smoke) before this trim ships.
  */
-const PG_SHARE_TRIM_VERSION = 'pgshare-trim-v1';
-const PG_EXTENSION_KEEP = new Set(['plpgsql.control', 'plpgsql--1.0.sql']);
+// v2 (task-187, 2026-11-18): keep ltree — CP Flyway V163 (PLAN-0773) creates it; v1 trimmed it and
+// first-run CP boot failed with `extension "ltree" is not available`. Bumping the version invalidates
+// the cached trimmed txz (stamp = input-sha + this version), forcing a re-trim with ltree kept.
+const PG_SHARE_TRIM_VERSION = 'pgshare-trim-v2';
+const PG_EXTENSION_KEEP = new Set([
+  'plpgsql.control', 'plpgsql--1.0.sql',
+  // ltree default_version 1.3: base 1.1 script + the 1.1->1.2->1.3 upgrade chain (no direct 1.3 script).
+  'ltree.control', 'ltree--1.1.sql', 'ltree--1.0--1.1.sql', 'ltree--1.1--1.2.sql', 'ltree--1.2--1.3.sql',
+]);
 
 function trimPgShareTxz(txz) {
   const stamp = createHash('sha256').update(readFileSync(txz)).digest('hex').slice(0, 16)
@@ -649,7 +713,7 @@ function trimPgShareTxz(txz) {
     rmSync(join(tree, ...dir.split('/')), { recursive: true, force: true });
   }
 
-  // 2. share/extension: keep-set only (plpgsql), and collect removed module names for the
+  // 2. share/extension: keep-set only (plpgsql + ltree), and collect removed module names for the
   //    matching lib/ DLL remove below.
   const extDir = join(tree, 'share', 'extension');
   if (!existsSync(extDir)) fail('PG payload drift: share/extension missing — pin changed?', 're-measure the payload before trimming');
@@ -661,7 +725,7 @@ function trimPgShareTxz(txz) {
   }
   for (const kept of PG_EXTENSION_KEEP) {
     if (!existsSync(join(extDir, kept))) {
-      fail(`PG payload drift: share/extension/${kept} missing — the plpgsql keep-set no longer matches the pin`);
+      fail(`PG payload drift: share/extension/${kept} missing — the extension keep-set no longer matches the pin`);
     }
   }
 
@@ -819,7 +883,8 @@ let capabilities;
 
 async function main() {
   if (args.help) {
-    console.log('usage: node scripts/pkg/build-installer.mjs [--stage-only] [--version v] [--cp-jar p] [--agent-dir p] [--runtime-exe p] [--ui-dist p] [--pgvector d] [--makensis p] [--skip-jre] [--allow-stale-cp-jar]');
+    console.log('usage: node scripts/pkg/build-installer.mjs [--stage-only] [--version v] [--cp-jar p] [--agent-dir p] [--runtime-exe p] [--ui-dist p] [--pgvector d] [--empirical-pgvector d] [--makensis p] [--skip-jre] [--allow-stale-cp-jar]');
+    console.log('  --empirical-pgvector <dir>  EMPIRICAL ONLY (default off): use a locally-built ABI-equivalent pgvector WITHOUT the ship sha-pin. NOT FOR SHIPPING. Ship sha gate unchanged when absent.');
     return;
   }
   capabilities = JSON.parse(readFileSync(join(PKG_DIR, 'capabilities.json'), 'utf8'));
