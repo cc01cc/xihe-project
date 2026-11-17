@@ -14,6 +14,7 @@ import AlertDialogFooter from "../../../components/ui/alert-dialog/AlertDialogFo
 import AlertDialogHeader from "../../../components/ui/alert-dialog/AlertDialogHeader.vue";
 import AlertDialogTitle from "../../../components/ui/alert-dialog/AlertDialogTitle.vue";
 import { discloseHostPath, type HostPathPrincipal } from "../lib/hostPathDisclosure";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { toast } from "vue-sonner";
@@ -1115,10 +1116,30 @@ onBeforeUnmount(stopPolling);
                                 <dt class="text-muted-foreground">
                                     {{ t("workspace.environmentFieldLastHeartbeat") }}
                                 </dt>
-                                <dd class="mt-1 break-all">
+                                <!--
+                                    task-79：`lastHeartbeatAt` 是 wire 上的 ISO 8601 原文
+                                    （`2026-11-11T09:10:00Z`），此前**整条链没有任何格式化**，直接穿透到界面。
+                                    经 task-73 的唯一入口（lib/dateFormat.ts）渲染后的三条取舍：
+                                      · **带秒**（`seconds` 默认 true）：源头是 Runtime 心跳循环的 **30 s** 节拍
+                                        （packages/runtime/src/heartbeat.rs:17 的 `Duration::from_secs(30)`），
+                                        到分钟精度会让相邻两次心跳渲染成同一串 —— 用户分不出「活着且在跳」与
+                                        「已经卡住 59 s」。同族先例是设置区 MonitoringView 的「最后更新」
+                                        也显式 `{ seconds: true }`（freshness 读数的判据相同：用户多久以前见过它）。
+                                      · **不传 timeZone**：默认本地墙上时间（与全站监控读数一致；入口文档明写
+                                         不许为「统一」改 UTC）。
+                                      · **`break-all` 撤掉**：格式化后串里已没有 T/Z 这类不可断点，唯一的断点是
+                                         日期与时间之间的空格（天然断点）；留着 `break-all` 反而会在极窄容器里
+                                         把 `2026/11/11 17:10:00` 从数字中间劈开。
+                                      · **文案半边不改**：`environmentValueNotObserved`（未观测到 / Not observed）
+                                         是**文案不是占位**，通过 `fallback` 参数传入 —— 缺值与不可解析两种情形都落
+                                         这一句，不落 `—`。
+                                -->
+                                <dd class="mt-1" data-testid="workspace-runtime-last-heartbeat">
                                     {{
-                                        environment.runtime.lastHeartbeatAt ||
-                                        t("workspace.environmentValueNotObserved")
+                                        formatDateTime(
+                                            environment.runtime.lastHeartbeatAt,
+                                            t("workspace.environmentValueNotObserved"),
+                                        )
                                     }}
                                 </dd>
                             </div>

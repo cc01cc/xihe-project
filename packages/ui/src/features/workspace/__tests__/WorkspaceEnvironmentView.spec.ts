@@ -1462,3 +1462,127 @@ describe("WorkspaceEnvironmentView dl 行标签护栏（task-66）", () => {
         expect(offenders, "有行缺 shrink-0 / items-start：长值一出现就会被压成竖排").toEqual([]);
     });
 });
+
+/**
+ * task-79：环境页「最近心跳」此前把 wire 上的 ISO 8601 原文直接穿透到界面
+ * （`2026-11-11T09:10:00Z`），整条渲染链没有任何格式化。
+ *
+ * <p>下面四条钉的是**两种失效方向**，缺一个就会单向放宽：
+ * <ol>
+ *   <li>正向：值在场时不再出现 ISO 原文形态，而是与界面语言一致的人读时间（含秒）；</li>
+ *   <li>反向：缺值 / 不可解析时**仍显示原有文案**（未观测到 / Not observed）—— 不是
+ *       `DATE_FALLBACK` 的 `—`。这条是「哨兵语义」的护栏：把 `environmentValueNotObserved`
+ *       换成占位符看起来"更统一"，实际把那句已本地化的文案删了。</li>
+ * </ol>
+ *
+ * <p>期望值由 `Intl.DateTimeFormat` **独立现算**（与 `lib/__tests__/dateFormat.spec.ts:85`
+ * 同一手法），不复用 `formatDateTime` 的返回值 —— 用被测实现算期望值再与它自己比，
+ * 只能证明"它等于它"，证明不了它跟界面语言/本地时区一致。</p>
+ */
+describe("WorkspaceEnvironmentView 最近心跳格式化（task-79）", () => {
+    /** 心跳 dd 的稳定锚（与页面同处一个 testid）。 */
+    const HEARTBEAT = '[data-testid="workspace-runtime-last-heartbeat"]';
+
+    /** 与页面完全同源的 Intl 选项：日期 + 本地时分秒（不带 dateStyle，见 dateFormat.ts 的注释）。 */
+    const INTL_OPTIONS: Intl.DateTimeFormatOptions = {
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    };
+
+    /** 该 locale 下、按本地墙上时间渲染该 ISO 的期望串（独立基准，不借道 dateFormat.ts）。 */
+    function expectedIn(locale: string, iso: string): string {
+        return new Intl.DateTimeFormat(locale, INTL_OPTIONS).format(new Date(iso));
+    }
+
+    /** ISO 8601 UTC 原文形态（本卡修的就是它穿透到界面）。 */
+    const RAW_ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|\+\d{2}:\d{2})/;
+
+    function envWithHeartbeat(lastHeartbeatAt: unknown) {
+        return {
+            ...environment("windows-host"),
+            runtime: { status: "up", deviceId: "device-1", lastHeartbeatAt },
+        };
+    }
+
+    it("zh-CN：心跳按界面语言 + 本地时区渲染（含秒），不再出现 ISO 原文", async () => {
+        applyLocale("zh-CN");
+        const ISO = "2026-11-11T09:10:00Z";
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(envWithHeartbeat(ISO) as never);
+
+        const wrapper = await mountView();
+        const dd = wrapper.get(HEARTBEAT);
+        const text = dd.text();
+
+        // ① 反向判据先钉：ISO 原文形态不得出现在这一格（本卡的唯一缺陷形态）。
+        expect(text).not.toMatch(RAW_ISO);
+        expect(text).not.toBe(ISO);
+        // ② 与独立基准（Intl 现算）逐字相等 ⇒ 语言与本地时区都对，且真的带到秒。
+        expect(text).toBe(expectedIn("zh-CN", ISO));
+        expect(text).not.toBe(messageIn("zh-CN", "workspace.environmentValueNotObserved"));
+
+        // ③ 秒的判定落成可执行判据：期望串里确实有两个冒号（时:分:秒），不是「到分钟」。
+        expect(text.match(/:/g)).toHaveLength(2);
+    });
+
+    it("en-US：同一 ISO 换成 en-US 形态（不是浏览器 locale 的残留），且与 zh-CN 不同", async () => {
+        applyLocale("en-US");
+        const ISO = "2026-11-11T09:10:00Z";
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(envWithHeartbeat(ISO) as never);
+
+        const wrapper = await mountView();
+        const text = wrapper.get(HEARTBEAT).text();
+
+        expect(text).not.toMatch(RAW_ISO);
+        expect(text).toBe(expectedIn("en-US", ISO));
+        // 两侧必须真的不同：同一串复制两份不算"跟随界面语言"。
+        expect(text).not.toBe(expectedIn("zh-CN", ISO));
+
+        applyLocale("zh-CN");
+    });
+
+    it("缺值：仍显示原有文案（未观测到），不是 — 占位符", async () => {
+        applyLocale("zh-CN");
+        for (const missing of ["", null, undefined]) {
+            mockedApi.getWorkspaceEnvironment.mockResolvedValue(envWithHeartbeat(missing) as never);
+            const wrapper = await mountView();
+            const text = wrapper.get(HEARTBEAT).text();
+            expect(text, `缺值 ${JSON.stringify(missing)} 应走「未观测到」文案`).toBe(
+                messageIn("zh-CN", "workspace.environmentValueNotObserved"),
+            );
+            // 文案不是占位：`—` 是 dateFormat 的通用兜底，这里**不许**落它。
+            expect(text).not.toBe("—");
+            wrapper.unmount();
+        }
+    });
+
+    it("不可解析：同样走原有文案，不抛错也不落 —", async () => {
+        applyLocale("en-US");
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(
+            envWithHeartbeat("not-a-date") as never,
+        );
+
+        const wrapper = await mountView();
+        const text = wrapper.get(HEARTBEAT).text();
+        expect(text).toBe(messageIn("en-US", "workspace.environmentValueNotObserved"));
+        expect(text).not.toBe("not-a-date");
+        expect(text).not.toBe("—");
+
+        applyLocale("zh-CN");
+    });
+
+    it("`break-all` 已撤（格式化后串内没有不可断点，留着会从数字中间劈开）", async () => {
+        applyLocale("zh-CN");
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue(
+            envWithHeartbeat("2026-11-11T09:10:00Z") as never,
+        );
+
+        const wrapper = await mountView();
+        const dd = wrapper.get(HEARTBEAT);
+        expect(dd.classes()).not.toContain("break-all");
+        expect(dd.classes()).toContain("mt-1");
+    });
+});
