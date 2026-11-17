@@ -76,11 +76,18 @@ const rawResult = computed(() =>
                             >{{ view.result.exit_code }}</span
                         >
                     </span>
-                    <span :class="view.result.success ? 'text-green-500' : 'text-destructive'">{{
-                        view.result.success
-                            ? t("chat.toolCard.success")
-                            : t("chat.toolCard.failure")
-                    }}</span>
+                    <span
+                        :class="
+                            view.result.success
+                                ? 'text-green-800 dark:text-green-300'
+                                : 'text-destructive'
+                        "
+                        >{{
+                            view.result.success
+                                ? t("chat.toolCard.success")
+                                : t("chat.toolCard.failure")
+                        }}</span
+                    >
                     <span
                         v-if="view.result.artifact_id"
                         class="max-w-full truncate"

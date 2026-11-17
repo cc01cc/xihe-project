@@ -218,7 +218,7 @@ async function closeAutoApproval() {
                     {{ t("chat.approvalModeLabel") }}
                     <span class="font-medium text-foreground">{{ modeLabel }}</span>
                 </span>
-                <span class="shrink-0 text-muted-foreground/50">·</span>
+                <span class="shrink-0 text-muted-foreground" aria-hidden="true">·</span>
                 <span
                     class="min-w-0 truncate"
                     data-testid="session-context-template-current"
@@ -227,12 +227,14 @@ async function closeAutoApproval() {
                     {{ t("chat.contextTemplateLabel") }}
                     <span
                         class="font-medium"
-                        :class="templateRisk ? 'text-amber-700' : 'text-foreground'"
+                        :class="
+                            templateRisk ? 'text-amber-800 dark:text-amber-300' : 'text-foreground'
+                        "
                     >
                         {{ templateDisplay }}
                     </span>
                 </span>
-                <span class="shrink-0 text-muted-foreground/50">·</span>
+                <span class="shrink-0 text-muted-foreground" aria-hidden="true">·</span>
                 <span class="shrink-0" data-testid="session-settings-summary-branch">
                     {{ t("chat.branchSelectorLabel") }}
                     <span class="font-medium text-foreground">{{ branchLabel }}</span>
@@ -241,7 +243,7 @@ async function closeAutoApproval() {
             <span
                 v-if="templateRisk"
                 data-testid="session-settings-risk-template"
-                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700"
+                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-800 dark:text-amber-300"
                 :title="templateRiskText"
             >
                 <CircleAlert class="size-3 shrink-0" aria-hidden="true" />
@@ -250,7 +252,7 @@ async function closeAutoApproval() {
             <span
                 v-if="branchDetached"
                 data-testid="session-settings-risk-branch"
-                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700"
+                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-800 dark:text-amber-300"
                 :title="t('sessionSettings.branchDetached')"
             >
                 <CircleAlert class="size-3 shrink-0" aria-hidden="true" />
@@ -263,7 +265,7 @@ async function closeAutoApproval() {
             v-if="autoApproval"
             data-testid="session-policy-auto-banner"
             role="alert"
-            class="flex items-center justify-between gap-2 border-t border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700"
+            class="flex items-center justify-between gap-2 border-t border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-800 dark:text-amber-300"
         >
             <span class="flex min-w-0 items-center gap-1.5">
                 <CircleAlert class="size-3.5 shrink-0" aria-hidden="true" />

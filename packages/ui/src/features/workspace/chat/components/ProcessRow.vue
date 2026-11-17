@@ -99,7 +99,7 @@ function toggle(): void {
             >
             <span
                 v-if="summary"
-                class="min-w-0 flex-1 truncate text-muted-foreground"
+                class="min-w-0 flex-1 truncate text-foreground/60"
                 data-testid="process-row-summary"
                 >{{ summary }}</span
             >
@@ -129,13 +129,11 @@ function toggle(): void {
                     data-testid="process-row-actor-initials"
                     >{{ actor.initials }}</span
                 >
-                <span class="max-w-24 truncate text-xs text-muted-foreground">{{
-                    actor.name
-                }}</span>
+                <span class="max-w-24 truncate text-xs text-foreground/60">{{ actor.name }}</span>
             </span>
             <span
                 v-if="meta"
-                class="shrink-0 tabular-nums text-xs text-muted-foreground"
+                class="shrink-0 tabular-nums text-xs text-foreground/60"
                 data-testid="process-row-meta"
                 >{{ meta }}</span
             >

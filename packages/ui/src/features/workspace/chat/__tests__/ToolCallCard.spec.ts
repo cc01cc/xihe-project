@@ -541,7 +541,10 @@ describe("ToolCallCard refusal presentation (PLAN-0649 M3)", () => {
         expect(header).toContain("Refused");
         expect(header).not.toContain("Completed");
         // Red tone comes from the failed palette, not from a new colour token.
-        expect(wrapper.get('[data-testid="tool-card-toggle"]').html()).toContain("text-red-500");
+        // task-86: 断言的是**具体档位**而不是「某种红」——档位一漂回浅档，本行即红。
+        // 为什么是 -700 而不是 -500：判据按 task-86 的对比度探针（逐层 over() 合成底面）
+        // 复算，此处不复制读数（D-1767：无机器判据的数不落文件）。
+        expect(wrapper.get('[data-testid="tool-card-toggle"]').html()).toContain("text-red-700");
     });
 
     it("renders one refusal line plus the reason code when expanded", async () => {
@@ -600,7 +603,7 @@ describe("ToolCallCard refusal presentation (PLAN-0649 M3)", () => {
 
         expect(header.text()).toContain("Refused");
         expect(header.text()).not.toContain("Completed");
-        expect(header.html()).toContain("text-red-500");
+        expect(header.html()).toContain("text-red-700");
     });
 
     it("keeps a normal completed card free of any refusal block", async () => {

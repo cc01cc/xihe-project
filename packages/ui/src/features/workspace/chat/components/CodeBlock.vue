@@ -42,10 +42,10 @@ const displayHtml = computed(() =>
 <template>
     <div class="group relative my-2 rounded-lg overflow-hidden border bg-muted/50">
         <div class="flex items-center justify-between px-4 py-1.5 bg-muted/80 border-b">
-            <span class="text-xs font-mono text-muted-foreground">{{ lang }}</span>
+            <span class="text-xs font-mono text-foreground/60">{{ lang }}</span>
             <div class="flex gap-1">
                 <button
-                    class="px-2 py-1 text-xs rounded hover:bg-background transition-colors text-muted-foreground hover:text-foreground"
+                    class="px-2 py-1 text-xs rounded hover:bg-background transition-colors text-foreground/60 hover:text-foreground"
                     @click="handleApply"
                 >
                     {{ t("chat.apply") }}
@@ -54,8 +54,8 @@ const displayHtml = computed(() =>
                     class="px-2 py-1 text-xs rounded transition-colors"
                     :class="
                         copied
-                            ? 'bg-green-500/10 text-green-600'
-                            : 'hover:bg-background text-muted-foreground hover:text-foreground'
+                            ? 'bg-green-500/10 text-green-800 dark:text-green-300'
+                            : 'hover:bg-background text-foreground/60 hover:text-foreground'
                     "
                     @click="handleCopy"
                 >

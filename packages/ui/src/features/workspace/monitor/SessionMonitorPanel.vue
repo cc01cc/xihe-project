@@ -530,9 +530,21 @@ function bytesLabel(value: number | null): string {
     return value === null ? t("monitor.transport.unknown") : `${value} B`;
 }
 
+/*
+ * task-86（2026-11-17）：三个 chip 家族的字色按「字 + 自家 10% 同色 tint」的**最差组合**取值，
+ * 而不是只按中性底面 —— tint 底面 = 该色 10% 叠 bearer 面（逐层 over() 合成）。
+ * 判据 WCAG 2.2 SC 1.4.3 正文 4.5:1（DEV-011:196）。
+ *
+ * **本注释不复制读数**（`D-1767`）。原值与新值的对比见证据包
+ * `internal/A03-xihe/evidence/2026-11-17-ui-contrast-probe/`，按其合成口径可复算。
+ *
+ * 一条必须留下的判断（不含数字，故不是读数）：emerald-700 对 tint 够用，但**同一个 chip
+ * 也会落在 `--muted` 底上**（outcomeChipClass 与 statusChipClass 共用渲染位置）⇒ 取值要按
+ * 「两种底面里更差的那个」定，不能只按自己那层 tint 定。这条是本文件选 -800 而非 -700 的理由。
+ */
 function statusChipClass(status: string): string {
-    if (status === "awaiting_approval") return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
-    if (status === "cancelling") return "bg-orange-500/10 text-orange-600 dark:text-orange-400";
+    if (status === "awaiting_approval") return "bg-amber-500/10 text-amber-800 dark:text-amber-300";
+    if (status === "cancelling") return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
     return "bg-primary/10 text-primary";
 }
 
@@ -542,15 +554,18 @@ function statusLabel(status: string): string {
 }
 
 function outcomeChipClass(outcome: string | null): string {
-    if (outcome === "success") return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+    /* 取值按「对本家 10% tint」的最差组合定；读数见 task-86 对比度探针，本处不复制（D-1767）。 */
+    if (outcome === "success") return "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300";
     if (outcome === "error" || outcome === "failed" || outcome === "partial")
-        return "bg-red-500/10 text-red-600 dark:text-red-400";
+        return "bg-red-500/10 text-red-700 dark:text-red-300";
     return "bg-muted text-muted-foreground";
 }
 
 const connectionChipClass = computed(() => {
-    if (connection.value === "live") return "text-emerald-600 dark:text-emerald-400";
-    if (connection.value === "stale") return "text-amber-600 dark:text-amber-400";
+    /* 裸字无 tint ⇒ 底面是 background（不是 tint）：旧值对 background 只有 3.x，故下沉到 -800。
+       取值依据见 task-86 对比度探针，本处不复制读数（D-1767）。 */
+    if (connection.value === "live") return "text-emerald-800 dark:text-emerald-300";
+    if (connection.value === "stale") return "text-amber-800 dark:text-amber-300";
     return "text-muted-foreground";
 });
 </script>
@@ -582,14 +597,14 @@ const connectionChipClass = computed(() => {
         <div class="min-h-0 flex-1 space-y-3 overflow-auto p-3">
             <div
                 v-if="connection === 'stale'"
-                class="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400"
+                class="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300"
                 data-testid="monitor-stale-banner"
             >
                 {{ t("monitor.staleNote") }}
             </div>
             <div
                 v-if="loadFailed && data"
-                class="flex items-center gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-xs text-red-700 dark:text-red-400"
+                class="flex items-center gap-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-xs text-red-800 dark:text-red-300"
                 data-testid="monitor-fetch-failed-banner"
             >
                 <span class="flex-1">{{ t("monitor.loadFailed") }}</span>
@@ -828,7 +843,7 @@ const connectionChipClass = computed(() => {
                         >
                             <SelectTrigger
                                 id="monitor-trace-run-select"
-                                class="w-full min-w-0 rounded border bg-background px-2 py-1.5 text-xs"
+                                class="w-full min-w-0 rounded border bg-background px-2 py-1.5 text-xs disabled:data-placeholder:text-foreground"
                                 :aria-label="t('monitor.trace.runLabel')"
                                 data-testid="monitor-trace-run-select"
                             >
