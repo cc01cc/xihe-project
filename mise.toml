@@ -238,6 +238,21 @@ description = "Run the UI unit test suite"
 dir = "packages/ui"
 alias = "test:ui"
 
+[tasks."test:ui:changed"]
+# task-176（问题②，Lead 2026-11-18 照批规则草案）：UI 单测的**增量入口**（收尾默认；全量留里程碑/申请窗口前 R2）。
+# 选择规则保守并集（宁多勿漏 ⇒ 安全不假绿）：changed-spec ∪ 同名共置 spec（basename 跨 __tests__）∪ 静态导入可达
+# spec（TS 编译器 API 反向导入图 BFS + vue/compiler-sfc 抽 .vue script，零新增依赖、禁手写 parser）。
+# 配置/全局面（vite.config/tsconfig/package.json/setup.ts/main.ts/router/i18n/main.css）或 hub 扇出 ⇒ 回退全量。
+# mock-agnostic 首版（172/379 spec 用 vi.mock；忽略 mock 只多选不漏选，mock-aware 剪枝列二期）。
+# **默认只报不阻断观察窗，不接 validate**（连续两窗稳定再议转阻断，同 task-172 口径）。
+# 实测：单 spec 墙钟 4.1 s（pnpm 2.6 + vitest 1.49）；全量串行 ~604 s。扇出注记：组件树祖先被大量 spec 挂载
+# （resourceViews.ts/router 注册表连通全图），默认 hub 阈值 40 会使多数组件改动回退全量；--threshold/--max-fraction
+# 可调（实测 task-175 场景：阈值 200/0.6 ⇒ 124 spec 增量 ≈3× 提速）。详见冻结报告与脚本头注。
+run = "node scripts/test-ui-changed.mjs"
+description = "Incremental UI unit-test entry (task-176): select related specs from git diff (changed-spec + colocated + TS-API reverse import graph; config/global or hub fan-out falls back to full). Report-only observation window, NOT in validate. Flags: --print-only / --full / --base <ref> / --staged / --threshold N / --max-fraction F / --json."
+dir = "packages/ui"
+alias = "test:ui:changed"
+
 [tasks."test:e2e:fixtures"]
 # PLAN-0648: e2e 测试夹具自身的状态机（fake LLM mode=chain 的会话游标 / 重试重放 /
 # 耗尽回落）在真栈上只表现为"工具莫名不出现"，排障成本极高；这里用 node:test 直接
@@ -600,14 +615,17 @@ alias = "format"
   alias = "check:plan-anchors"
 
 [tasks.validate]
+# **task-176 后读法**：以下 task-237 / task-313 / task-266 的「排位 / 同段 / 首个失败」措辞属 **旧 depends 时代** ——
+# 门段接线判据（为什么接、判据是什么）仍适用；但 task-176 起 validate.run 改为聚合执行器（scripts/validate-run.mjs），
+# 门段是并行的 GATES 列表，`首位`/`同段`/`执行顺序` 不再有执行语义，`首个失败即中止` 已被 keep-going 取代。
 # test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
 # （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
 # task-237: check:api-docs 与 check:openapi 同段 —— 两者都是「契约/文档是否落后」的静态门，且 validate 已通过
 # lint:agent 依赖 uv/python，把 python 依赖放这里不会污染纯 Maven 的 test:cp 车道（故不挂到 check:openapi 上）。
 # task-313（D-1062 第 6a / 10a 项）：把两道「已绿但零自动执行者」的门接进来 ——
 # ① check:mise-env 挂**最前**：毫秒级、已 fail-closed（WARN 非空 ⇒ exit 1），最便宜的失败放第一位；
-#    **depends 为并行执行，首个失败即中止**（2026-11-12 实测注入 WARN 后 35.2 s 收口）；排在首位的理由是
-#    毫秒级且无外部依赖，**不是执行顺序** —— 别把这条读成"串行第一步"。
+#    旧口径「depends 并行、首个失败即中止（2026-11-12 实测注入 WARN 后 35.2 s 收口）」**已被 task-176 推翻**
+#    （task-176 实测：无 -c 的 validate 5.4 s 即被 check:api-docs 快红掐死，见 one/.tmp/task176-ABORT.log）；此处只留「毫秒级、无外部依赖、最便宜的检查」这条接线理由。
 # ② check:openapi:lint 紧贴 check:openapi：文档承诺「HTTP 形态四道门全绿才算现行」，此前它无执行者；
 #    实测 errors=0 / warnings=124，而 redocly 只按 errors 退出、本命令也没设 --max-warnings ⇒ 不制造恒红。
 # 不接的两类（同卡 10b / 10d）：check:docs-gates 走 monitor 第⑧问（慢且依赖其它仓状态，接进来会拖垮每次提交）；
@@ -616,8 +634,16 @@ alias = "format"
 # 实现（产物 + 四脚本 + 决策稿）搬去 ONE 侧 `internal/A03-xihe/deferred/font-self-hosted/`。
 # 任务定义仍留在下方 `[tasks."check:font"]`（可手动复跑），但**不再是任何门的依赖** ——
 # 一条指向已搬走脚本的门挂在这里，会让 validate 恒红（这正是 D-1133 说的「留着就是干扰」）。
-depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:plan-anchors", "check:runtime:ignored", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
-description = "Run all quality gates — check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
+# task-176（方案甲，Lead 2026-11-18 裁）：聚合执行器 scripts/validate-run.mjs——
+# 门段 keep-going 并行（mise -c，12 门恒跑完、逐门报退出）→ test 串行末段。
+# 根因实证（one/.tmp/task176-ABORT.log）：旧 depends 并行 + 首红 abort，无 -c 的 validate **5.4 s** 就被
+# check:api-docs 快红掐死，test:ui / test:cp / build / typecheck **零执行**（「门是绿的但没在守」）。
+# 串行末段 alone 不治（保留首红 abort，test 恒末段反被任何门红**保证**掐掉）⇒ 门段必须 keep-going。
+# 并行 / keep-going / 逐门退出全部委托 mise（-c + jobs=4）；本脚本只做相位排序 + 汇总，不自造调度器
+# （仿 lint:e2e 的 run-e2e-static-gates.mjs 成熟模式）。5 个共享树既有恒红门如实显示为红（归他卡）；
+# overall exit 任一門红即非 0，但恒跑完报全景，不再 5 s abort。门段登记表在脚本 GATES（镜像旧 depends 去 test）。
+run = "node scripts/validate-run.mjs"
+description = "Run all quality gates via keep-going aggregator (task-176 甲): gate cluster parallel (mise -c, every gate always runs and reports its exit) then test serial tail; overall exit non-zero if any gate red, never 5s abort. Gate registry in scripts/validate-run.mjs GATES; no Docker step (CP defaults to H2, runtime --lib, agent deselects integration)."
 alias = "validate"
 
 [tasks."validate:full"]

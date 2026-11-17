@@ -567,8 +567,11 @@ Rules:
 ### 4.3. Running Tests
 
 ```bash
-# All quality gates (check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + lint + typecheck + build + test + e2e fixture self-tests + lint:links; no Docker step)
+# All quality gates via keep-going aggregator (task-176): gate cluster parallel (every gate always runs and reports its exit) then test serial tail; any red => non-zero but never 5s abort. Gates: check:mise-env + check:openapi(:lint) + check:api-docs + check:plan-anchors + check:runtime:ignored + check:commit-msg + lint + typecheck + build + e2e fixtures + lint:links, then test; no Docker step
 mise run validate
+
+# Incremental UI unit entry (task-176): related specs from git diff (changed-spec + colocated + TS-API reverse import graph; config/hub => full). Report-only, NOT in validate; full suite stays for milestones. Flags: --print-only / --full / --base / --threshold
+mise run test:ui:changed
 
 # validate + test:runtime + test:integration (no E2E; the compose E2E lane is frozen)
 mise run validate:full

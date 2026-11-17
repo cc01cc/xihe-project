@@ -172,9 +172,10 @@ The supervisor's order is the product contract, not a preference: PostgreSQL mus
 ## 5. Testing
 
 ```bash
-mise run validate             # all gates: check:mise-env + check:openapi(:lint) + check:api-docs + check:commit-msg + lint + typecheck + build + test + e2e fixtures + lint:links
+mise run validate             # task-176 keep-going aggregator: gate cluster parallel (every gate always runs, reports its exit) then test serial tail; any red ⇒ non-zero but never 5s abort. Gates: check:mise-env + check:openapi(:lint) + check:api-docs + check:plan-anchors + check:runtime:ignored + check:commit-msg + lint + typecheck + build + e2e fixtures + lint:links, then test
 mise run check:types          # UI + e2e TypeScript gates (D-727; every verify window, ~20–40 s)
 mise run validate:full        # validate + test:runtime + test:integration (no E2E; compose E2E lane is frozen)
+mise run test:ui:changed      # task-176 incremental UI unit entry: related specs from git diff (changed-spec + colocated + import graph; config/hub ⇒ full); report-only, not in validate. --print-only/--full/--base/--threshold
 mise run test:e2e:fixtures    # e2e fixture self-tests only (fake LLM chain state machine; no stack, seconds)
 mise run test:runtime:lib:gate  # BL-262 race gate: serial 1 + parallel 3; milestone only, not part of validate
 mise run test:cp:baseline       # BL-368: classify CP failures against scripts/cp-known-baseline.json (run after test:cp; baseline only shrinks)
@@ -185,7 +186,7 @@ mise run lint:i18n            # task-96: zh-CN/en-US key sets, {placeholder} dri
 mise run check:ui-copy        # task-172: UI copy-judgment fast lane (i18n cluster 4 files, report-only; part of mise run lint)
 mise run check:i18n-fixture-copies  # task-318/172: fixture i18n-copy ratchet (report-only; part of mise run lint)
 mise run check:dev-i18n-drift  # task-316/172: zh/en DEV id-set drift (report-only; part of mise run lint)
-mise run check:mise-env       # task-131/273/313: XIHE_* vars used in properties must be registered (fail-closed; first step of validate)
+mise run check:mise-env       # task-131/273/313: XIHE_* vars used in properties must be registered (fail-closed; a validate gate-cluster member — parallel, not a serial first step)
 mise run check:openapi:lint   # task-133/313: Redocly spec-level lint ($ref / operationId / unused); part of validate, errors-only (124 warnings don't block)
 mise run check:docs-gates     # doc gates aggregate (docs-index + doc-bytes + md-tables); run from the ONE workspace root as the monitor's ⑧ question, not by validate
 mise run check:dev-i18n-drift # task-316: DEV docs zh/en id-set drift + PLAN/D registration lookup; report-only (not in validate)
