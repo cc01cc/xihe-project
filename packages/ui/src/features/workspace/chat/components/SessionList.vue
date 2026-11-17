@@ -195,7 +195,7 @@ function onUnitKeydown(event: KeyboardEvent, sessions: Session[]): void {
     const unit = (event.target as HTMLElement | null)?.closest?.("[data-session-id]");
     const id = unit?.getAttribute("data-session-id");
     if (!id) return;
-    const next = moveInList(props.order, topLevelIds(sessions), id, action);
+    const next = moveInList({ order: props.order, rendered: topLevelIds(sessions), id, action });
     if (!next) return; // 已在边界：什么都不做，也不拦默认行为
     event.preventDefault();
     persistOrder(next);

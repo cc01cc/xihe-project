@@ -64,12 +64,13 @@ export function orderIds(ids: readonly string[], order: readonly string[]): stri
  * （会把不可见的行从 order 里抹掉），这也是 `SessionList` 的 `sortable` prop 由父层
  * 按 `!isSearching` 控制的原因。</p>
  */
-export function moveInList(
-    order: readonly string[],
-    rendered: readonly string[],
-    id: string,
-    action: MoveAction,
-): string[] | null {
+export function moveInList(opts: {
+    order: readonly string[];
+    rendered: readonly string[];
+    id: string;
+    action: MoveAction;
+}): string[] | null {
+    const { order, rendered, id, action } = opts;
     const current = orderIds(rendered, order);
     const from = current.indexOf(id);
     if (from < 0) return null;

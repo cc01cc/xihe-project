@@ -44,7 +44,7 @@ export const LAST_LOCATION_KEY = "xihe-last-location";
  */
 export type LastLocationKind = "workspace" | "standalone";
 
-const KNOWN_KINDS: readonly LastLocationKind[] = ["workspace", "standalone"];
+const KNOWN_KINDS = new Set<LastLocationKind>(["workspace", "standalone"]);
 
 /** 失效判据：超过该年龄的记录不再恢复。`at` 的唯一用途。 */
 export const LAST_LOCATION_MAX_AGE_MS = 21 * 24 * 60 * 60 * 1000;
@@ -89,7 +89,7 @@ function asNullableString(value: unknown): string | null | undefined {
 function normalizeEntry(raw: unknown): LastLocationInput | undefined {
     if (!raw || typeof raw !== "object") return undefined;
     const v = raw as Record<string, unknown>;
-    if (typeof v.kind !== "string" || !KNOWN_KINDS.includes(v.kind as LastLocationKind)) {
+    if (typeof v.kind !== "string" || !KNOWN_KINDS.has(v.kind as LastLocationKind)) {
         return undefined;
     }
     const workspaceId = asNullableString(v.workspaceId);

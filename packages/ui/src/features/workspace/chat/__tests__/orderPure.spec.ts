@@ -32,46 +32,103 @@ describe("sessionOrder 桶内移动", () => {
     const order = ["a", "b", "c"];
 
     it("delta 下移一位", () => {
-        expect(moveInList(order, ["a", "b", "c"], "a", { kind: "delta", delta: 1 })).toEqual([
-            "b",
-            "a",
-            "c",
-        ]);
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "a",
+                action: { kind: "delta", delta: 1 },
+            }),
+        ).toEqual(["b", "a", "c"]);
     });
 
     it("delta 上移一位", () => {
-        expect(moveInList(order, ["a", "b", "c"], "c", { kind: "delta", delta: -1 })).toEqual([
-            "a",
-            "c",
-            "b",
-        ]);
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "c",
+                action: { kind: "delta", delta: -1 },
+            }),
+        ).toEqual(["a", "c", "b"]);
     });
 
     it("越过边界 ⇒ null（不改、不夹取成无意义写入）", () => {
-        expect(moveInList(order, ["a", "b", "c"], "a", { kind: "delta", delta: -1 })).toBeNull();
-        expect(moveInList(order, ["a", "b", "c"], "c", { kind: "delta", delta: 1 })).toBeNull();
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "a",
+                action: { kind: "delta", delta: -1 },
+            }),
+        ).toBeNull();
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "c",
+                action: { kind: "delta", delta: 1 },
+            }),
+        ).toBeNull();
     });
 
     it("home / end", () => {
-        expect(moveInList(order, ["a", "b", "c"], "c", { kind: "home" })).toEqual(["c", "a", "b"]);
-        expect(moveInList(order, ["a", "b", "c"], "a", { kind: "end" })).toEqual(["b", "c", "a"]);
-        expect(moveInList(order, ["a", "b", "c"], "a", { kind: "home" })).toBeNull();
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "c",
+                action: { kind: "home" },
+            }),
+        ).toEqual(["c", "a", "b"]);
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "a",
+                action: { kind: "end" },
+            }),
+        ).toEqual(["b", "c", "a"]);
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "a",
+                action: { kind: "home" },
+            }),
+        ).toBeNull();
     });
 
     it("id 不在渲染列表里 ⇒ null（例如它属于别的分组）", () => {
-        expect(moveInList(order, ["a", "b", "c"], "zz", { kind: "delta", delta: 1 })).toBeNull();
+        expect(
+            moveInList({
+                order,
+                rendered: ["a", "b", "c"],
+                id: "zz",
+                action: { kind: "delta", delta: 1 },
+            }),
+        ).toBeNull();
     });
 
     it("写回的是完整投影：已删/不在列表的 id 被顺带裁掉，不留垃圾", () => {
         // order 里 c 已不在渲染列表（被删会话）⇒ 写回结果只含当前可见 id。
-        expect(moveInList(["b", "a", "c"], ["b", "a"], "b", { kind: "delta", delta: 1 })).toEqual([
-            "a",
-            "b",
-        ]);
+        expect(
+            moveInList({
+                order: ["b", "a", "c"],
+                rendered: ["b", "a"],
+                id: "b",
+                action: { kind: "delta", delta: 1 },
+            }),
+        ).toEqual(["a", "b"]);
     });
 
     it("结果再喂回去是稳定的（幂等：不动就不会继续漂）", () => {
-        const once = moveInList(order, order, "a", { kind: "delta", delta: 2 })!;
+        const once = moveInList({
+            order,
+            rendered: order,
+            id: "a",
+            action: { kind: "delta", delta: 2 },
+        })!;
         expect(once).toEqual(["b", "c", "a"]);
         expect(orderIds(order, once)).toEqual(["b", "c", "a"]);
     });

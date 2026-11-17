@@ -180,7 +180,8 @@ const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
  * D-1777/D-1778 §8 第 1 步：右栏容器行的页签数据 = 可见 dock 页签（overflow 之外的前
  * maxVisibleTabs 个），与下方 chips 渲染的始终是同一份。
  */
-const rowTabs = computed(() => visibleTabs.value.map((tab) => ({ ...tab, closable: true })));
+const withClosable = (tab: DockTab) => ({ ...tab, closable: true });
+const rowTabs = computed(() => visibleTabs.value.map(withClosable));
 const overflowTabs = computed(() => props.tabs.slice(props.maxVisibleTabs));
 const hasOverflow = computed(() => overflowTabs.value.length > 0);
 

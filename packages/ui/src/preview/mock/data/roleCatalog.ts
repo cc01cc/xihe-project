@@ -296,17 +296,18 @@ function canonicalResource(sources: CpSources, atomName: string): string {
 }
 
 /** 一条 RoleSeed 的原子表达式 ⇒ 原子名（展开 BASE_ATOMS / USER_DEFAULT_ATOMS / CREDENTIAL_ATOMS / superAdminAtoms()）。 */
-function expandSeedAtoms(
-    expression: string,
-    sources: CpSources,
-    seedBodies: Map<string, string>,
-    vocabulary: CpVocabulary,
-): string[] {
+function expandSeedAtoms(opts: {
+    expression: string;
+    sources: CpSources;
+    bodies: Map<string, string>;
+    vocabulary: CpVocabulary;
+}): string[] {
+    const { expression, sources, bodies, vocabulary } = opts;
     let text = expression;
     for (let round = 0; round < 8; round += 1) {
         const before = text;
-        for (const [name, body] of seedBodies) {
-            text = text.replace(new RegExp("\\b" + name + "\\b", "g"), () => body);
+        for (const [name, body] of bodies) {
+            text = text.replace(new RegExp(String.raw`\b${name}\b`, "g"), () => body);
         }
         if (text === before) break;
     }
@@ -439,7 +440,7 @@ function defaultGrants(sources: CpSources, vocabulary: CpVocabulary): MockRoleDe
             roleName,
             displayName: stringLiteralValue(args[2] ?? ""),
             description: description.length > 0 ? description : null,
-            atoms: expandSeedAtoms(args[4] ?? "", sources, bodies, vocabulary),
+            atoms: expandSeedAtoms({ expression: args[4] ?? "", sources, bodies, vocabulary }),
         });
     }
     if (grants.length === 0) {
