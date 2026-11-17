@@ -1249,8 +1249,14 @@ onMounted(() => {
                                 >
                                     {{ t("settings.providerHub.manage") }}
                                 </button>
+                                <!--
+                                    task-148：删除的**入口**中性，危险红只留给确认面（下方删除预览弹窗的
+                                    `provider-delete-confirm`，那条仍是 bg-destructive）。
+                                    DEV-011 §10:155「这个元素如果消失，用户会误操作吗？」——入口消失不会
+                                    （不可恢复发生在确认键上）⇒ L2、不许上色；:153「红只在【确认时】出现」。
+                                -->
                                 <button
-                                    class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
                                     :disabled="props.readonly"
                                     :data-testid="`provider-connection-delete-${defaultConnection.id}`"
                                     @click="remove(defaultConnection)"
@@ -1345,7 +1351,7 @@ onMounted(() => {
                                         {{ t("settings.providerHub.setAsDefault") }}
                                     </button>
                                     <button
-                                        class="rounded-md border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:border-destructive disabled:opacity-50"
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
                                         :disabled="props.readonly"
                                         :data-testid="`provider-connection-delete-${connection.id}`"
                                         @click="remove(connection)"
