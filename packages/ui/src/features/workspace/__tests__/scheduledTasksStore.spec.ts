@@ -8,6 +8,7 @@ import {
     useScheduledTasksStore,
 } from "../stores/scheduledTasks";
 import type { ScheduledTask } from "../../../types";
+import { i18n } from "../../../i18n";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -85,12 +86,26 @@ describe("useScheduledTasksStore", () => {
         expect(mockedApi.listScheduledTasks).toHaveBeenCalledTimes(2);
     });
 
-    it("records a readable error when the list request fails", async () => {
+    /**
+     * task-67：列表错误必须**整份呈现**（{ copy, code, technicalDetail }），因为本页卡片是
+     * 诊断面 —— 只留 copy 会让「请提供错误码」这句话没有对应物（Lead 实测 hasCode=false）。
+     *
+     * <p>判据按 AGENTS.md 三件事：可读文案在 + 不含错误码字样 + 不含 API error 数字；再加
+     * 一条**正向**：code 确实留住了具体码（供屏上渲染与复制）。改前这里断言的是
+     * toContain("WORKSPACE_NOT_FOUND")（记录缺陷的形态），已按「不许只删不加」换成下面这套。</p>
+     *
+     * <p><b>码名用 SCHEDULED_TASK_INTERNAL（task-67 复审 Lead 裁定）：</b>它在本仓 `src` 里
+     * 出现 **0** 次 ⇒ 落在 `mappedErrorCopy` 码表之外，正好走本题要测的「未登记码」路径；
+     * 而先前用的 `AUDIT_ERROR` 虽同样是「未登记码」，却在审计面有**本义**（`src` 里 20 处，
+     * 多为审计/错误面用例）⇒ 混用会让下一个人 grep 时命中两个不相干的面。**码名是模板的一部分**
+     * ——这份 spec 会被当作下一个诊断面用例的模板抄走，故取一个本域自洽、且全仓无歧义的名字。</p>
+     */
+    it("records a readable, code-bearing error when the list request fails", async () => {
         mockedApi.listScheduledTasks.mockRejectedValue(
             new ApiError({
-                status: 404,
-                code: "WORKSPACE_NOT_FOUND",
-                detail: "gone",
+                status: 500,
+                code: "SCHEDULED_TASK_INTERNAL",
+                detail: "API error 500",
                 requestId: "r",
             }),
         );
@@ -98,8 +113,25 @@ describe("useScheduledTasksStore", () => {
 
         await store.fetchScheduledTasks("ws-1");
 
-        expect(store.error).toContain("WORKSPACE_NOT_FOUND");
+        expect(store.error?.copy).toBe(i18n.global.t("errors.unknownCode"));
+        expect(store.error?.copy).not.toContain("SCHEDULED_TASK_INTERNAL");
+        expect(store.error?.copy).not.toMatch(/API error \d+/);
+        // 正向：具体码留在呈现里（诊断面靠它渲染可复制的 code 元素）。
+        expect(store.error?.code).toBe("SCHEDULED_TASK_INTERNAL");
+        expect(store.error?.technicalDetail).toBe("API error 500");
         expect(store.tasks).toHaveLength(0);
+    });
+
+    it("keeps the code null and the detail absent when the failure carries neither", async () => {
+        mockedApi.listScheduledTasks.mockRejectedValue(new Error("boom: socket hang up"));
+        const store = useScheduledTasksStore();
+
+        await store.fetchScheduledTasks("ws-1");
+
+        // 无码 ⇒ 不渲染 code 行；无 detail ⇒ 不渲染空折叠区。
+        expect(store.error?.code).toBeNull();
+        expect(store.error?.technicalDetail).toBeNull();
+        expect(store.error?.copy).toBe(i18n.global.t("errors.requestFailed"));
     });
 
     it("refetches on scheduled_tasks_changed workspace events", async () => {
@@ -263,14 +295,25 @@ describe("scheduledTaskErrorText", () => {
         expect(scheduledTaskErrorText(t, error)).toBe("workspace.scheduledTasks.errLimit");
     });
 
-    it("falls back to the raw code and detail for unmapped problems", () => {
+    /**
+     * task-67（顺带收的一条**存量红**，HEAD 上同样红 —— 已用 `git show HEAD:` 版本实跑证实）：
+     * 这条断言原本记录的是 task-45 **改前**的缺陷形态（码表之外的码拼 `CODE: english detail`）。
+     * 实现已按 task-45 契约改成「码表之外统一走可读文案入口」，断言没跟上 ⇒ 长期红。
+     * 按 AGENTS.md「改既有断言不许只删不加」，把记录缺陷的 `toContain("CODE")` 换成判据三件事。
+     */
+    it("falls back to the readable copy for unmapped problems (no raw code, no English detail)", () => {
         const error = new ApiError({
             status: 500,
             code: "INTERNAL_ERROR",
             detail: "boom",
             requestId: "r",
         });
-        expect(scheduledTaskErrorText(t, error)).toContain("INTERNAL_ERROR");
-        expect(scheduledTaskErrorText(t, error)).toContain("boom");
+        const copy = scheduledTaskErrorText(t, error);
+        // 可读文案在（未知码 ⇒ unknownCode 兜底句）。
+        expect(copy).toBe("errors.unknownCode");
+        // 不含错误码字样 / 不含英文 detail。
+        expect(copy).not.toContain("INTERNAL_ERROR");
+        expect(copy).not.toContain("boom");
+        expect(copy).not.toMatch(/API error \d+/);
     });
 });

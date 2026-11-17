@@ -6,10 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
-import {
-    installChatSessionEventStream,
-    pushChatEvent,
-} from "./helpers/context-events";
+import { installChatSessionEventStream, pushChatEvent } from "./helpers/context-events";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 

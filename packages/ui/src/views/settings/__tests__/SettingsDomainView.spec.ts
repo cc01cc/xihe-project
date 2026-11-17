@@ -87,7 +87,12 @@ const messages = {
             domainApprovalPolicy: "审批策略",
             saveFailed: "保存失败",
             // task-5（D-1521 M-2=B）：实例层只读信息条用到的两条（标题点名原子，详情给中文名）。
-            permissionAtom: { writeInstanceContent: "写入实例内容" },
+            // task-69：403 卡片也点名原子 ⇒ 读面原子的中文名必须在夹具里（缺了 t() 会回显裸键，
+            // 裸键守卫当场红 —— 这条不是顺手补，是本卡的判据之一）。
+            permissionAtom: {
+                writeInstanceContent: "写入实例内容",
+                readInstanceContent: "读取实例内容",
+            },
             ia: {
                 instanceReadonlyTitle: "只读：缺少 {atom} 权限",
                 instanceReadonlyDetail: "写入需要 {atom}（{label}）。",
@@ -99,7 +104,8 @@ const messages = {
                 dismiss: "知道了",
                 approvalTabPolicy: "审批策略",
                 navToolFaces: "工具分类",
-                forbiddenTitle: "这一层需要实例管理员能力",
+                // task-69：按**动作原子**口径（能力位口径是假陈述，见用例断言②）。
+                forbiddenTitle: "这一层需要「{atom}」权限",
                 layerInstance: "实例配置",
                 layerWorkspaceDefault: "工作区默认",
                 layerUser: "用户配置",
@@ -112,7 +118,10 @@ const messages = {
                 fourLayerUser: "个人",
                 fourLayerInstance: "实例",
                 fourLayerDetail: "工作区 → 工作区默认 → 个人 → 实例",
-                forbiddenBody: "不加载配置",
+                // 夹具照产品文案（含 task-18 裁定的「去哪授予」那句）——断言要能复算，就不能只给半句。
+                // 夹具照产品文案逐字（含 task-18 裁定的「去哪授予」那句）——断言要能复算，就不能只给半句。
+                forbiddenBody:
+                    "你的账号缺少「{atom}」权限（{code}），因此不加载配置。这是授权问题，不是功能缺失：可以改用个人层，或请管理员在「设置 → 角色与绑定」为你的账号授予该权限。",
                 backToUserLayer: "去用户层",
                 // task-509（E-03）：取数失败必须有独立文案 + 重试，不许借用 saveFailed。
                 domainLoadFailed: "配置加载失败",
@@ -231,6 +240,10 @@ describe("SettingsDomainView", () => {
     });
 
     // task-5（D-1521 M-1=B）：实例层读面判据换成 CP 的动作原子 READ_INSTANCE_CONTENT。
+    // task-69：**判据对了、文案却在说另一件事** —— 原文案按能力位口径（「你的账号没有「实例管理员」
+    // 能力」），而判据是动作原子，两者互不蕴含（`SettingsDomainView.vue:77-86` 的①②）。于是本用例
+    // 的场景（持能力位、缺原子 = 反面②）里，页面拒绝得对、理由却说错了：账号明明有那个能力位。
+    // ⇒ 增加的两条断言钉住「文案说的是**缺哪个原子**」，并钉住「**不再**声称缺能力位」。
     it("renders 403 and loads nothing without READ_INSTANCE_CONTENT (V4 / M-1)", async () => {
         state.readAtom = false;
         state.capability = false;
@@ -238,6 +251,37 @@ describe("SettingsDomainView", () => {
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
+        expect(state.loadLayerDomains).not.toHaveBeenCalled();
+
+        // ① 文案点名缺的**原子**：中文名（permissionAtomLabels 词表）+ 机器码都在屏上。
+        //    机器码是锚——中文名可被改词，机器码必须与 CP 的 `canReadInstanceContent()` 逐字一致。
+        const copy = wrapper.get('[data-testid="settings-forbidden"]').text();
+        expect(copy).toContain("READ_INSTANCE_CONTENT");
+        expect(copy).toContain("读取实例内容");
+        // ② 文案**不再**声称账号缺「实例管理员」能力（本用例里账号到底有没有能力位不算判据；
+        //    判据是这句话表述的是**能力位**，而拒绝的原因是**动作原子**）。
+        expect(copy).not.toContain("实例管理员");
+        // ③ 保留「下一步去哪授予」（task-18 裁定）：只说"请管理员授予"用户拿不到动作。
+        expect(copy).toContain("角色与绑定");
+    });
+
+    /**
+     * task-69 的**反面格**：持能力位、缺原子（D-1521 M-1 的反面②）。
+     *
+     * <p>这条用例存在的理由是把两个变量拆开：修前 `capability=false` 与 `readAtom=false` 一起置假，
+     * 于是「文案说能力位」和「文案说原子」在读数上都自洽 —— 缺陷在那种夹具下**不可观测**。
+     * 真实事故里账号 `isInstanceAdmin: true`（Lead 实拍 `/auth/me`），缺的只是原子。</p>
+     */
+    it("403 文案按原子口径，即便账号持有实例管理员能力位（反面②）", async () => {
+        state.readAtom = false;
+        state.capability = true;
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(true);
+        const copy = wrapper.get('[data-testid="settings-forbidden"]').text();
+        expect(copy).toContain("READ_INSTANCE_CONTENT");
+        // 假陈述判据：不能把判据(原子)说成能力位。
+        expect(copy).not.toContain("实例管理员");
         expect(state.loadLayerDomains).not.toHaveBeenCalled();
     });
 

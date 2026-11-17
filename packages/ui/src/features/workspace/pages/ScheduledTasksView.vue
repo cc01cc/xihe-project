@@ -24,6 +24,11 @@ import {
     AlertDialogCancel,
 } from "../../../components/ui/alert-dialog";
 import { LoaderCircle, Plus, RefreshCw } from "@lucide/vue";
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 import type { ScheduledTask, ScheduledTaskStatus } from "../../../types";
 import SseSubscriberLimitNotice from "../components/SseSubscriberLimitNotice.vue";
 
@@ -383,12 +388,51 @@ function openCreate() {
                 {{ t("workspace.scheduledTasks.loading") }}
             </div>
 
+            <!--
+                task-67：本卡是**诊断面**（持久在屏的错误条，AGENTS.md「错误面：错误码 → 文案」）。
+                改前只渲染 `store.error`（= presentCauseError 的 copy），而 copy 的兜底一句正是
+                「…请联系管理员**并提供错误码**」⇒ 文案要求用户做一件界面没提供的事（实测
+                `main.innerText` 里 hasCode=false）。修法按诊断面走：copy 照常渲染；错误码单独给出
+                且**可看见、可复制**（`<code>` 选得中）；原始 detail 收进 vendor Collapsible，
+                默认折叠、为空时不渲染空壳。
+            -->
             <div
                 v-else-if="store.error && store.tasks.length === 0"
                 class="rounded-lg border border-destructive/40 p-6 text-sm text-destructive"
                 data-testid="scheduled-tasks-error"
             >
-                <p>{{ store.error }}</p>
+                <p data-testid="scheduled-tasks-error-copy" role="alert">
+                    {{ store.error.copy }}
+                </p>
+                <p
+                    v-if="store.error.code"
+                    data-testid="scheduled-tasks-error-code"
+                    class="mt-2 text-xs text-muted-foreground"
+                >
+                    {{ t("errors.errorCodeLabel") }}
+                    <code
+                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                        data-testid="scheduled-tasks-error-code-value"
+                        >{{ store.error.code }}</code
+                    >
+                </p>
+                <Collapsible v-if="store.error.technicalDetail">
+                    <CollapsibleTrigger as-child>
+                        <button
+                            type="button"
+                            data-testid="scheduled-tasks-error-detail-toggle"
+                            class="mt-2 rounded text-xs text-muted-foreground underline underline-offset-2"
+                        >
+                            {{ t("errors.technicalDetail") }}
+                        </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <pre
+                            data-testid="scheduled-tasks-error-detail-body"
+                            class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                            >{{ store.error.technicalDetail }}</pre>
+                    </CollapsibleContent>
+                </Collapsible>
                 <Button
                     variant="outline"
                     size="sm"

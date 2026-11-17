@@ -12,6 +12,9 @@ const ATOM_LABEL_KEYS: Record<string, string> = {
     credential_manage: "settings.permissionAtom.credentialManage",
     CREATE_OWN_AGENT: "settings.permissionAtom.createOwnAgent",
     WRITE_INSTANCE_CONTENT: "settings.permissionAtom.writeInstanceContent",
+    // task-69：实例层**读面**原子（CP `ConfigController.java:89-90` 的 `canReadInstanceContent()`）。
+    // 403 卡片要按动作原子口径点名它；不登记就只有机器码、没有中文名 ⇒ 「中文名 + 机器码」只剩一半。
+    READ_INSTANCE_CONTENT: "settings.permissionAtom.readInstanceContent",
 };
 
 /** i18n 键，或 `null`（未登记 ⇒ 调用方回退到原始 atom 名）。 */

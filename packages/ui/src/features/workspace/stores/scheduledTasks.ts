@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { ApiError, api } from "../../../composables/api";
 import { i18n } from "../../../i18n";
-import { presentCauseError } from "../../../lib/errorMessages";
+import { presentCauseError, type ErrorPresentation } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
 import type {
     ScheduledTask,
@@ -11,9 +11,17 @@ import type {
     WorkspaceEvent,
 } from "../../../types";
 
-/** task-45：store 只存可读文案；原始 detail 由调用点 `logger.warn` 的 cause 留痕。 */
-function errorCopy(cause: unknown, fallback: string): string {
-    return presentCauseError(i18n.global.t, cause, fallback).copy;
+/**
+ * task-67：列表加载失败是**诊断面**（持久在屏的错误卡），所以要留住整份呈现
+ * （`{ copy, code, technicalDetail }`）而不只是 `copy`。
+ *
+ * <p>为什么不能只存文案：本页兜底文案是 `errors.unknownCode`（"…联系管理员并**提供错误码**"），
+ * 而只存 `copy` 时界面拿不到 `code` ⇒ 文案要求用户做一件界面没提供的事（task-67 实测
+ * `main.innerText` 里 `hasCode=false`，同一横幅自相矛盾）。原始 detail 仍由调用点的
+ * `logger.warn` cause 留痕；这里多存的 `code`/`technicalDetail` 只用于诊断面渲染。</p>
+ */
+function errorPresentation(cause: unknown, fallback: string): ErrorPresentation {
+    return presentCauseError(i18n.global.t, cause, fallback);
 }
 
 /**
@@ -66,7 +74,8 @@ export function canManageScheduledTask(
 export const useScheduledTasksStore = defineStore("scheduledTasks", () => {
     const tasks = ref<ScheduledTask[]>([]),
         loading = ref(false),
-        error = ref<string | null>(null),
+        /** task-67：诊断面需要 `code`/`technicalDetail`，故存整份呈现（不是单个字符串）。 */
+        error = ref<ErrorPresentation | null>(null),
         loadedWorkspaceId = ref<string | null>(null),
         mutatingTaskId = ref<string | null>(null);
     let storeGeneration = 0,
@@ -103,7 +112,7 @@ export const useScheduledTasksStore = defineStore("scheduledTasks", () => {
                 return tasks.value;
             } catch (cause) {
                 if (requestGeneration === storeGeneration) {
-                    error.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
+                    error.value = errorPresentation(cause, i18n.global.t("errors.requestFailed"));
                     logger.warn("Failed to load scheduled tasks", cause);
                 }
                 return null;

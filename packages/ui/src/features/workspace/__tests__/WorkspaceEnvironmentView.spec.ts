@@ -1400,3 +1400,65 @@ describe("WorkspaceEnvironmentView 释放确认层的对话框语义（task-31�
         wrapper.unmount();
     });
 });
+
+/**
+ * task-66：dl 行的「标签不被长值挤掉」护栏。
+ *
+ * <p>为什么布局缺陷也要进单测：几何读数（dt 25×63.6 ⇒ 一列一个字的 状/态 竖排）需要真浏览器，
+ * 但**成因是 class** —— 行容器是 `flex justify-between`，dt / dd 两个 flex 项默认都可收缩，
+ * dd 里放 `break-all` 长值时 dt 被压到只能一列一个字。同一个 dl 里少写一个 `shrink-0` 就复发，
+ * 而它今天不塌**只是因为值短**（Lead 实测 6 行里 1 行现症、5 行潜在）⇒ 这里钉的是
+ * 「每一行都有护栏」，不是「今天看起来没坏」。</p>
+ *
+ * <p>两个护栏缺一不可：`shrink-0` 让标签宽度守住 2 个 CJK 字（28px）；行容器 `items-start`
+ * 让 dt 的**盒高**不跟着 dd 的多行值一起被 `stretch` 拉满（只加 shrink-0 时实测仍是 28×63.6，
+ * 视觉上照旧是竖排）。改前（原样）25×63.6、只加 shrink-0 后 28×63.6、两者都加 28×21.7
+ * （1920×1080，`getBoundingClientRect()`；证据见 `.tmp/xh/task-66/`）。</p>
+ */
+describe("WorkspaceEnvironmentView dl 行标签护栏（task-66）", () => {
+    it("存储卡 / 执行配置卡的每个 flex 行：dt 带 shrink-0 且行容器带 items-start", async () => {
+        setPrincipal({ id: "owner-1" }, "owner-1");
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            storageMode: "direct_attach",
+            hostPath: "C:\\repo\\workspace",
+            executionSpec: { status: "assigned", generation: 3, sandboxSpecHash: "a".repeat(41) },
+            capability: { available: true, maturity: "stable", reason: null },
+        } as never);
+
+        const wrapper = await mountView();
+
+        const cards = wrapper.findAll("article");
+        const card = (titleKey: string) =>
+            cards.find((a) => a.element.textContent?.includes(i18n.global.t(titleKey)));
+        const storageCard = card("workspace.environmentStorageTitle");
+        const execCard = card("workspace.environmentExecutionTitle");
+        expect(storageCard, "存储卡必须存在").toBeTruthy();
+        expect(execCard, "执行配置卡必须存在").toBeTruthy();
+
+        // 「运行时」那张卡是 grid 布局（dt/dd 上下叠），形态不同、不在本卡范围。
+        // 只取**行容器本身**是 flex 的那些 div（「执行模式」外面还有个 space-y-1 包装层，
+        // 它含 dt 但不是 flex 行 —— 不按 flex 过滤会误报成缺护栏）。
+        const dtsIn = (el: Element) =>
+            [...el.querySelectorAll("div")].filter(
+                (row) => row.classList.contains("flex") && row.querySelector("dt") !== null,
+            );
+        const rows = [...dtsIn(storageCard!.element), ...dtsIn(execCard!.element)];
+
+        // 下限判据：存储卡 4 行（后端/存储方式/引用/宿主目录）、执行配置卡 5 行
+        // （状态/执行模式/能力探测/代号/配置摘要）—— 删掉任何一行都会先红在这里。
+        expect(rows.length).toBeGreaterThanOrEqual(9);
+
+        const offenders = rows
+            .filter((row) => {
+                const dt = row.querySelector("dt")!;
+                return !dt.classList.contains("shrink-0") || !row.classList.contains("items-start");
+            })
+            .map((row) => ({
+                label: row.querySelector("dt")!.textContent?.trim() ?? "",
+                rowClass: row.className,
+                dtClass: row.querySelector("dt")!.className,
+            }));
+        expect(offenders, "有行缺 shrink-0 / items-start：长值一出现就会被压成竖排").toEqual([]);
+    });
+});

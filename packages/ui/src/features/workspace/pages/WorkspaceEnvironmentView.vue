@@ -848,16 +848,16 @@ onBeforeUnmount(stopPolling);
                     <article class="rounded-lg border p-5">
                         <h2 class="font-medium">{{ t("workspace.environmentStorageTitle") }}</h2>
                         <dl class="mt-4 space-y-3 text-sm">
-                            <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                            <div class="flex items-start justify-between gap-4">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldBackend") }}
                                 </dt>
                                 <dd data-testid="workspace-environment-storage-backend">
                                     {{ storageBackendText }}
                                 </dd>
                             </div>
-                            <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                            <div class="flex items-start justify-between gap-4">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldStorageMode") }}
                                 </dt>
                                 <dd data-testid="workspace-environment-storage-mode">
@@ -871,8 +871,8 @@ onBeforeUnmount(stopPolling);
                                     </p>
                                 </dd>
                             </div>
-                            <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                            <div class="flex items-start justify-between gap-4">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldStorageRef") }}
                                 </dt>
                                 <dd class="break-all font-mono text-right">
@@ -882,9 +882,9 @@ onBeforeUnmount(stopPolling);
                             <div
                                 v-if="disclosedHostPath"
                                 data-testid="workspace-host-path"
-                                class="flex justify-between gap-4"
+                                class="flex items-start justify-between gap-4"
                             >
-                                <dt class="text-muted-foreground">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldHostPath") }}
                                 </dt>
                                 <dd class="break-all font-mono text-right">
@@ -896,8 +896,8 @@ onBeforeUnmount(stopPolling);
                     <article class="rounded-lg border p-5">
                         <h2 class="font-medium">{{ t("workspace.environmentExecutionTitle") }}</h2>
                         <dl class="mt-4 space-y-3 text-sm">
-                            <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                            <div class="flex items-start justify-between gap-4">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldStatus") }}
                                 </dt>
                                 <dd
@@ -1007,8 +1007,11 @@ onBeforeUnmount(stopPolling);
                                     </dd>
                                 </div>
                             </div>
-                            <div v-if="environment.capability" class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                            <div
+                                v-if="environment.capability"
+                                class="flex items-start justify-between gap-4"
+                            >
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldCapability") }}
                                 </dt>
                                 <dd
@@ -1036,15 +1039,15 @@ onBeforeUnmount(stopPolling);
                                     }}
                                 </dd>
                             </div>
-                            <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">
+                            <div class="flex items-start justify-between gap-4">
+                                <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldGeneration") }}
                                 </dt>
                                 <dd>
                                     {{ executionSpecSnapshot?.generation ?? "—" }}
                                 </dd>
                             </div>
-                            <div class="flex justify-between gap-4">
+                            <div class="flex items-start justify-between gap-4">
                                 <dt class="shrink-0 text-muted-foreground">
                                     {{ t("workspace.environmentFieldSpecHash") }}
                                 </dt>

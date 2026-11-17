@@ -43,11 +43,26 @@ vi.mock("../../composables/api", () => ({
 const WS = "44444444-4444-4444-8444-444444444444";
 const INSTANCE_WRITE = "WRITE_INSTANCE_CONTENT";
 const WS_WRITE = "WRITE_WORKSPACE_CONTENT";
-/** 与 `e2e/mock/helpers/auth.ts` 的 `PERMISSION_ATOMS` 同形的默认词表（含实例写原子）。 */
+/**
+ * 与 `e2e/mock/helpers/auth.ts` 的 `PERMISSION_ATOMS` 同形的默认词表（含实例写原子）。
+ *
+ * <p><b>task-70（2026-11-17）删掉了两条编造名</b>：本夹具此前带着 `MANAGE_INSTANCE_CONFIG` 与
+ * `VIEW_INSTANCE_AUDIT`，而 `grep packages/control-plane/**` 对这两个串是 **0 hits** ——
+ * 它们不在 CP 的 `ToolFaceRegistry` 常量声明里、也不在 `builtinActionClasses()` 词汇表里。
+ * 这不是「夹具多给了一条无害的名字」：它让「实例管理员词表」看起来比 CP 真实目录更宽，
+ * 有人照抄就会写出一个 CP 永远不认的原子。审计面的读端点更是**根本没有动作原子**
+ * （`audit/AuditController.java:48/:89` 两个读端点守卫都是 `@PreAuthorize("isAuthenticated()")` ⇒
+ * audit 属 UI 文档里的 `no-atom` 页，见 `components/settings/SettingsPermissionGate.vue:13-14`），
+ * 所以 `VIEW_INSTANCE_AUDIT` 不只是名字编错，它在**假装存在一个不存在的门**。
+ * 实例层**写**面的真名是 `WRITE_INSTANCE_CONTENT`（`INSTANCE_WRITE`，`ToolFaceRegistry.java:76`），
+ * 已在下面这一项里 —— 不需要第二个别名。</p>
+ *
+ * <p>机器判据在 `src/preview/__tests__/previewPermissions.spec.ts` 的 task-70 describe：
+ * 它直读 CP 源码，把「原子名必须真实存在」变成会红的断言。**本文件不重复那道门**（这里没有 CP 依赖）；
+ * 它只负责「夹具形状」。</p>
+ */
 const DEFAULT_ATOMS = [
     "MANAGE_ROLES",
-    "MANAGE_INSTANCE_CONFIG",
-    "VIEW_INSTANCE_AUDIT",
     "MANAGE_SKILL_LIBRARY",
     "READ_INSTANCE_CONTENT",
     INSTANCE_WRITE,

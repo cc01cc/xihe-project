@@ -203,10 +203,70 @@ describe("ScheduledTasksView list rendering", () => {
 
         const wrapper = await mountView();
 
-        // task-45：列表错误只放可读文案（改前断言的是 CP 码直出 `INTERNAL: boom`）
+        // task-45：列表错误只放可读文案（改前断言的是 CP 码直出 `INTERNAL: boom`）。
+        // task-67：码从此**单独**渲染在专用 code 元素里（不再拼进 copy），所以「不含错误码字样」
+        // 这条判据的落点从整卡移到 copy 段 —— 整卡含码是本卡要的行为，copy 含码才是回归。
+        const copyText = wrapper.get('[data-testid="scheduled-tasks-error-copy"]').text();
+        expect(copyText).not.toContain("INTERNAL");
+        expect(copyText).not.toContain("boom");
+        expect(copyText).not.toMatch(/API error \d+/);
         const listErrorText = wrapper.get('[data-testid="scheduled-tasks-error"]').text();
-        expect(listErrorText).not.toContain("INTERNAL");
-        expect(listErrorText).not.toContain("boom");
+        expect(listErrorText).not.toMatch(/API error \d+/);
+        expect(wrapper.get('[data-testid="scheduled-tasks-retry"]').exists()).toBe(true);
+    });
+
+    /**
+     * task-67（Lead 实测）：本卡是**诊断面**，而 copy 的兜底句是 `errors.unknownCode`
+     * ——"…若持续失败请联系管理员并**提供错误码**"。改前整块横幅**没有任何错误码**
+     * （浏览器实测 `main.innerText` 里 hasCode=false）⇒ 文案要求用户做一件界面没提供的事。
+     *
+     * <p>判据四件事：① 可读文案在（且就是 unknownCode 兜底句）；② 正文不含 `API error \d+`；
+     * ③ **正向**：错误码在屏上可见且可复制；④ 原始 detail 收进默认折叠（可展开、原文不丢）。</p>
+     *
+     * <p>形态与设置区诊断面（`DataControlsView` / `WorkspaceChangesPanel`）同一套：copy 段
+     * 用 copy / code 单列 / detail 进 vendor Collapsible。**不手拼 ``${code}: ${detail}``**。</p>
+     */
+    it("task-67：错误码在诊断面可见可复制，原始 detail 收进默认折叠", async () => {
+        // 复现实拍口径：码是后端未登记的假码，detail 是客户端兜底 `API error 500`。
+        mockedApi.listScheduledTasks.mockRejectedValue(
+            new ApiError({
+                status: 500,
+                code: "someCode",
+                detail: "API error 500",
+                requestId: "t67",
+            }),
+        );
+
+        const wrapper = await mountView();
+
+        const copy = wrapper.get('[data-testid="scheduled-tasks-error-copy"]');
+        expect(copy.text()).toBe(i18n.global.t("errors.unknownCode"));
+        // ② 正文不含错误码字样 / 客户端兜底英文 detail（码只允许出现在专用的 code 元素里）。
+        expect(copy.text()).not.toContain("someCode");
+        expect(copy.text()).not.toMatch(/API error \d+/);
+
+        // ③ 正向判据（本卡存在的理由）：具体错误码必须能在屏上看到，且可复制。
+        const codeValue = wrapper.get('[data-testid="scheduled-tasks-error-code-value"]');
+        expect(codeValue.text()).toContain("someCode");
+        expect(codeValue.element.tagName.toLowerCase()).toBe("code");
+        expect(codeValue.classes().join(" ")).toContain("select-all");
+        expect(wrapper.get('[data-testid="scheduled-tasks-error-code"]').text()).toContain(
+            i18n.global.t("errors.errorCodeLabel"),
+        );
+
+        // ④ 默认折叠：触发器在，正文不挂载（不为空壳渲染隐藏节点）。
+        const toggle = wrapper.get('[data-testid="scheduled-tasks-error-detail-toggle"]');
+        expect(toggle.text()).toBe(i18n.global.t("errors.technicalDetail"));
+        expect(wrapper.find('[data-testid="scheduled-tasks-error-detail-body"]').exists()).toBe(
+            false,
+        );
+
+        await toggle.trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="scheduled-tasks-error-detail-body"]').text()).toBe(
+            "API error 500",
+        );
+
         expect(wrapper.get('[data-testid="scheduled-tasks-retry"]').exists()).toBe(true);
     });
 

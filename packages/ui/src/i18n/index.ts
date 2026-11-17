@@ -11,6 +11,9 @@ const messages = {
             requestFailed: "请求失败，请稍后重试；若多次失败请联系管理员。",
             unknownCode: "请求失败，请稍后重试；若持续失败请联系管理员并提供错误码。",
             technicalDetail: "技术详情",
+            // task-67：诊断面把错误码**显示出来** —— unknownCode 文案要求用户「提供错误码」，
+            // 界面就必须给出一个可看、可复制的码（本键是它的标签）。
+            errorCodeLabel: "错误码",
         },
         userQuestions: {
             title: "待你回答",
@@ -2268,6 +2271,8 @@ const messages = {
                 credentialManage: "凭据管理",
                 createOwnAgent: "创建个人智能体",
                 writeInstanceContent: "写入实例内容",
+                // task-69：实例层**读面**原子的显示名（403 卡片点名的就是它）。
+                readInstanceContent: "读取实例内容",
             },
             // PLAN-0762 T3.4：⌘K 搜配置域（域清单来自 lib/settingsIa.ts 的单一矩阵）。
             commandk: {
@@ -2386,12 +2391,24 @@ const messages = {
                 layerOnlyInstanceDetail:
                     "{domain} 不在个人层的可写域清单里（CP 矩阵事实），所以这里不跳转，也不会给出 404。",
                 dismiss: "知道了",
-                forbiddenTitle: "这一层需要实例管理员能力",
+                // task-69：**判据是动作原子，文案就必须按动作原子措辞**。这一层 403 的判据是
+                // `READ_INSTANCE_CONTENT`（`stores/auth.ts:136` 镜像 CP `ConfigController.java:89-90` 的
+                // `canReadInstanceContent()`），**不是**能力位「实例管理员能力」—— 两者互不蕴含
+                // （见 `SettingsDomainView.vue:77-86` 的①②）。按能力位措辞，就会对「持能力位、无原子」的
+                // 账号说假话（那正是本卡的事故格）；而那一格恰恰是 UI 必须拒绝的格，文案说错就是把用户
+                // 赶去找一个他已经有的东西。
+                // 口径与 `SettingsPermissionGate` 的 `atomDeniedBody` 对齐（不另造第二套）：
+                // `{atom}` = 中文名（`permissionAtomLabels#formatPermissionAtom` 求值，未登记回退原码）、
+                // `{code}` = 机器码（供支持排查与按原文找管理员授予）。
+                forbiddenTitle: "这一层需要「{atom}」权限",
                 // task-18（源 = task-6 候选 C-4）：**不把内部能力位标识印给用户**（`cap:instance:admin`），
                 // 并补出"下一步去哪授予"——只说"请管理员授予"、不说在哪授予，用户仍然拿不到动作。
-                // 术语「个人层」按 T-03 待裁**原样保留**，本卡只摘技术标识。
+                // 术语「个人层」按 T-03 待裁**原样保留**。
+                // 句子骨架照 `SettingsPermissionGate` 的 `atomDeniedBody`（「缺少「{atom}」权限（{code}）。
+                // 这是授权问题，不是功能缺失」），只把「因此不加载配置 + 去哪授予」补上 ——
+                // 同一个"缺原子"语义在两张卡上必须是同一套说法，第三套措辞就是新的漂移源。
                 forbiddenBody:
-                    "你的账号没有「实例管理员」能力，因此不加载配置。可以改用个人层，或请管理员在「设置 → 角色与绑定」为你的账号授予该能力。",
+                    "你的账号缺少「{atom}」权限（{code}），因此不加载配置。这是授权问题，不是功能缺失：可以改用个人层，或请管理员在「设置 → 角色与绑定」为你的账号授予该权限。",
                 backToUserLayer: "去个人层",
                 notFoundTitle: "这个页面不存在",
                 notFoundBody: "该层没有这个配置域（或该域在这一层不可写）。请从左侧目录进入。",
@@ -3950,6 +3967,9 @@ const messages = {
             unknownCode:
                 "Request failed. Retry in a moment; if it persists, contact your administrator with the error code.",
             technicalDetail: "Technical details",
+            // task-67: the diagnostic surface shows the code itself — errors.unknownCode asks the
+            // user to hand the code over, so the UI owes them a copyable one (label lives here).
+            errorCodeLabel: "Error code",
         },
         userQuestions: {
             title: "Waiting for your answer",
@@ -6238,6 +6258,8 @@ const messages = {
                 credentialManage: "Credential management",
                 createOwnAgent: "Create your own agents",
                 writeInstanceContent: "Write instance content",
+                // task-69: display name of the instance-layer read atom (the 403 card names it).
+                readInstanceContent: "Read instance content",
             },
             // PLAN-0762 T3.4：⌘K searches config domains (domain list comes from the settingsIa matrix).
             commandk: {
@@ -6344,10 +6366,18 @@ const messages = {
                 layerOnlyInstanceDetail:
                     "{domain} is not in the personal layer's writable set (a CP-matrix fact), so the jump is blocked instead of landing on a 404.",
                 dismiss: "Got it",
-                forbiddenTitle: "This layer needs the instance-admin capability",
+                // task-69: the gate is an action atom (READ_INSTANCE_CONTENT, mirroring CP
+                // ConfigController.canReadInstanceContent), not the instance-admin capability — the two do
+                // not imply each other, so capability wording lies about accounts that hold the capability
+                // but not the atom. Wording mirrors SettingsPermissionGate's atomDeniedBody:
+                // {atom} = readable name, {code} = machine code.
+                forbiddenTitle: "This layer needs the “{atom}” permission",
                 // task-18 (source: task-6 candidate C-4): no internal capability token; say where to grant it.
+                // Sentence skeleton mirrors SettingsPermissionGate's atomDeniedBody ("Missing the
+                // “{atom}” permission ({code}). This is an authorization problem, not a missing feature"),
+                // plus "so nothing is loaded" and where to grant — one wording per semantic, not a third.
                 forbiddenBody:
-                    "Your account does not hold the instance-administrator capability, so no configuration is loaded. Use the personal layer, or ask an administrator to grant it to your account under Settings → Roles & bindings.",
+                    "Your account is missing the “{atom}” permission ({code}), so no configuration is loaded. This is an authorization problem, not a missing feature: use the personal layer, or ask an administrator to grant it to your account under Settings → Roles & bindings.",
                 backToUserLayer: "Go to the personal layer",
                 notFoundTitle: "This page does not exist",
                 notFoundBody:

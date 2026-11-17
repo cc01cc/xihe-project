@@ -24,19 +24,49 @@ export interface PreviewPermissionAtom {
 }
 
 /**
- * 默认（授权）投影。原子名全部取自 CP 真实目录，**不许编造**：
- * - `credential_manage` = `ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE`（task-249 新增，收尾 task-247 边界 ①）；
- * - 其余见 CP `PermissionAtomCatalog` / 各控制器守卫。
+ * 默认（授权）投影 = **CP 固定实例管理员集**（`SystemAccessRoleCatalog.java:141-183` 的
+ * `AtomRef.wildcard(...)` 清单）里 UI 真的会判的那几条。原子名全部取自 CP 真实目录，**不许编造**。
+ *
+ * <p><b>「不许编造」这条自 task-70 起不再是注释自律，而是机器判据</b>：
+ * `__tests__/previewPermissions.spec.ts` 的「原子名必须在 CP 真实目录里」用例**读**
+ * `packages/control-plane/.../policy/ToolFaceRegistry.java` 的常量声明、并核对它们都在
+ * `builtinActionClasses()` 的词汇表里（那是 `GrantIntersectionEvaluator` 的校验集）。
+ * 依据：注释写「不许编造」而单测只断言 `resource === "*"` 与「无重复」时，编造不会红 ——
+ * 本文件此前就躺着两条 CP 全仓 0 hits 的名字（删除理由见清单下方的「task-70 删掉的两条」），
+ * 同族 D-1760（观测采了没判定）。</p>
  */
 export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
+    // `ToolFaceRegistry.java:41` `ACTION_MANAGE_ROLES`（设置区「角色与绑定」面的判据）。
     { actionClass: "MANAGE_ROLES", resource: "*" },
     // PLAN-0772 M2 / 裁定三：实例智能体写面的真原子（不是 `cap:instance:admin` 特判）。
+    // `ToolFaceRegistry.java:71`。
     { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
-    { actionClass: "MANAGE_INSTANCE_CONFIG", resource: "*" },
-    // PLAN-0766（task-160）：写入共享 workspace-default 层的唯一原子。
+    /**
+     * task-70：**实例层读面**的真原子。补它之前这条投影缺 `READ_INSTANCE_CONTENT` ⇒
+     * `/settings/instance/*` 的 **14 个入口**在预览车道**全部 403`（判据
+     * `views/settings/SettingsDomainView.vue:87-93` + `stores/auth.ts:136`）⇒ 这 14 页的截图
+     * 自审一直做不了，是审计盲区。
+     *
+     * <p>依据（三处一致）：`ToolFaceRegistry.java:75` `ACTION_READ_INSTANCE_CONTENT`；
+     * `SystemAccessRoleCatalog.java:165-166` 把它放进**固定实例管理员集**
+     * （`AtomRef.wildcard(ACTION_READ_INSTANCE_CONTENT)`）；`ConfigController.java:89-90`
+     * 的 `canReadInstanceContent()` 就是它。**动作原子，不是能力位** —— 两者互不蕴含
+     * （`stores/auth.ts:90-95`）。</p>
+     */
+    { actionClass: "READ_INSTANCE_CONTENT", resource: "*" },
+    /**
+     * task-70：**实例层写面**的真原子（`ToolFaceRegistry.java:76`）。它顶替了原先被删掉的编造名
+     * `MANAGE_INSTANCE_CONFIG`（删除理由见下方「task-70 删掉的两条」）—— 那条想表达的语义「能写实例配置」
+     * 在 CP 侧的真名就是它：`ConfigController.java:384/:392`（PUT/DELETE `/config/instance/{domain}`）、
+     * `:592`（`POST /config/import`）。`SystemAccessRoleCatalog.java:167-168` 同样把它放进了
+     * 固定实例管理员集 ⇒ **实例管理员形态必须可写**，否则预览演的是「持 READ 不持 WRITE」这种
+     * 管理员身上不存在的组合态（同 `?denied=1` 的取证纪律：不造 CP 里没有的形态）。
+     */
+    { actionClass: "WRITE_INSTANCE_CONTENT", resource: "*" },
+    // PLAN-0766（task-160）：写入共享 workspace-default 层的唯一原子。`ToolFaceRegistry.java:93`。
     { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
-    { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
     // task-167：实例层技能库写入原子（`SkillAccessGuard.canManageInstanceLibrary()` 认的就是它）。
+    // `ToolFaceRegistry.java:78`。
     { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
     // task-284：个人技能库写入原子（`ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS`）。
     // CP 侧**默认授予每个账号**（D-1019：可撤销的能力授予，不是角色判定）⇒ 夹具的"默认授权形态"
@@ -46,6 +76,24 @@ export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
     // "授权问题"而不是"功能缺失"（见 `CredentialsPanel.vue` 的 canManage 判定）。
     { actionClass: "credential_manage", resource: "*" },
 ];
+
+// task-70：**从上面那份清单里删掉的两条编造名**（删掉，而不是留着改注释）。
+//
+// ① MANAGE_INSTANCE_CONFIG —— `grep packages/control-plane/**` 对它是 **0 hits**；UI 里也**无产品消费点**
+//    （`grep src/**` 只有本夹具与单测夹具；`e2e/` 里那几处是同一批夹具的副本）。它想表达的
+//    「实例层可写」由上面的 `WRITE_INSTANCE_CONTENT`（CP 真名，`ConfigController.java:384/:392/:592`
+//    的守卫原子）表达 —— 不需要第二个别名。
+//
+// ② VIEW_INSTANCE_AUDIT —— 同样 0 hits。这条更根本的问题**不是名字编错**：审计面两个读端点的守卫
+//    都是 `@PreAuthorize("isAuthenticated()")`（`audit/AuditController.java:48` 列表、`:89` 详情），
+//    即 **CP 侧根本没有这个门**（UI 文档把 audit / monitoring / knowledge 归为 `no-atom` 页，见
+//    `components/settings/SettingsPermissionGate.vue:13-14`）。留着它等于在夹具里**假装存在一个
+//    不存在的门**，会让「audit 页为什么不需要原子」这个事实从预览里彻底消失。
+//
+// 两条都曾出现在 `src/stores/__tests__/authInstanceAtomScope.spec.ts` 的夹具词表里，同批按「CP 真名」
+// 同步（那里也删了，理由写在该文件注释里）。机器判据见 `__tests__/previewPermissions.spec.ts`
+// 的 task-70 describe：它把「名字必须在 CP 真实目录里」变成会红的断言，并把这两条写成**反例钉子**
+// （`expect(DECLARED).not.toContain(...)`），防止有人把「删掉」误读成「漏配」又加回来。
 
 /** 受限模式下被扣留的原子（== `?denied=1` 时页面应看到的 403 形态）。 */
 export const DENIED_PERMISSION_ATOMS: readonly string[] = ["credential_manage"];
