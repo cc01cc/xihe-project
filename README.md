@@ -189,6 +189,7 @@ mise run check:dev-i18n-drift  # task-316/172: zh/en DEV id-set drift (report-on
 mise run check:mise-env       # task-131/273/313: XIHE_* vars used in properties must be registered (fail-closed; a validate gate-cluster member — parallel, not a serial first step)
 mise run check:openapi:lint   # task-133/313: Redocly spec-level lint ($ref / operationId / unused); part of validate, errors-only (124 warnings don't block)
 mise run check:docs-gates     # doc gates aggregate (docs-index + doc-bytes + md-tables); run from the ONE workspace root as the monitor's ⑧ question, not by validate
+mise run check:dialog-shape   # task-120/194: dialog/sheet panel shape scan (R1 requires overflow-y-auto; max-h alone insufficient); report-only, standalone — NOT in validate; first line prints "shape only does not prove reachability"; reachability criterion = dialog-reachability-sweep (on-demand instrument, registry D bucket)
 mise run check:dev-i18n-drift # task-316: DEV docs zh/en id-set drift + PLAN/D registration lookup; report-only (not in validate)
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```

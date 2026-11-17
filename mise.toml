@@ -537,6 +537,16 @@ alias = "lint:ui"
 run = "node packages/ui/scripts/check-lint-warnings.mjs --enforce"
 description = "UI oxlint warnings ratchet, per-rule (any rule above baseline ⇒ exit 1; total not gated; --write-baseline to re-baseline). Pair gate: node packages/ui/scripts/check-lint-rule-registry.mjs"
 
+# task-120/194（Lead 2026-11-18 裁「首选」）：对话框形态静态门 standalone —— **不进 validate/lint 聚合**，
+# 避免撞 task-74 的 validate 窗口成本（那是 validate 链运行时的账，standalone 直跑六秒级）。
+# 定位 = 纯打印（report-only 恒 exit 0；--enforce 手动才阻断，接 ratchet 待连续两窗 findings=0 再议）。
+# 首行强制印「形态 only 证明不了可达性」；可达性真判据是同目录 dialog-reachability-sweep.mjs（按需仪器，
+# 需 mock 服 + chrome-beta，登记在 internal/A03-xihe/scripts/gate-owner-registry.json D 桶）。
+[tasks."check:dialog-shape"]
+run = "node packages/ui/scripts/check-dialog-shape.mjs"
+description = "Report-only scan of dialog/sheet content-panel constraints (R1 requires overflow-y-auto; max-h alone is insufficient; prints findings, never fails). Shape only — does NOT prove reachability"
+alias = "check:dialog-shape"
+
 [tasks."lint:agent"]
 run = "uv run ruff check && uv run mypy src/"
 description = "Run Agent lint (ruff + mypy)"

@@ -690,6 +690,131 @@ function fixtureSegmentsOf(urlText) {
     if (raw.endsWith("/")) segments.push("{truncated}");
     return segments;
 }
+
+// ---------------------------------------------------------------- task-194：体形状与 URL 回退解析
+
+// 非 JSON schema 实例：二进制下载 / SSE 流。它们不是「schema 判不了」，是「根本不是 schema 实例」——
+// 单列一类，别混进 undecidable 稀释可判率。
+function nonSchemaBodyKind(ts, expr) {
+    if (!expr || typeof expr.getText !== "function") return null;
+    const text = expr.getText();
+    if (/\b(Uint8Array|ArrayBuffer|DataView|Blob)\b/.test(text)) return "binary";
+    if (/\b(ReadableStream|streamOf\s*\()/.test(text)) return "stream";
+    // SSE 必须同时有 event: 与 data: 两种行（只认 id:/retry: 会把多行 JSON 对象误判——真树实测 2 例假阳性）。
+    if (/event:\s*\S/.test(text) && /data:\s*\S/.test(text)) return "stream";
+    return null;
+}
+
+// 最近的、条件里带 URL 判别字面量（url.includes("...") / pathname.endsWith("...")）的 IfStatement 祖先。
+// 分支相关性是硬要求：catch-all 兜底 return 在 if 外，不许被硬配进某个 schema（防假 E）。
+function ifConditionFragments(ts, atNode) {
+    let current = atNode;
+    while (current) {
+        if (ts.isIfStatement(current)) {
+            const frags = [];
+            const visit = (n) => {
+                if (
+                    ts.isCallExpression(n) &&
+                    ts.isPropertyAccessExpression(n.expression) &&
+                    ["includes", "endsWith", "startsWith"].includes(n.expression.name.text) &&
+                    n.arguments &&
+                    n.arguments[0] &&
+                    ts.isStringLiteral(n.arguments[0])
+                ) {
+                    frags.push(n.arguments[0].text);
+                }
+                ts.forEachChild(n, visit);
+            };
+            visit(current.expression);
+            if (frags.length > 0) return [...new Set(frags)];
+        }
+        current = current.parent;
+    }
+    return null;
+}
+
+function enclosingTestBlock(ts, atNode) {
+    let current = atNode;
+    while (current) {
+        if (ts.isCallExpression(current) && ts.isIdentifier(current.expression)) {
+            const name = current.expression.text;
+            if (name === "it" || name === "test") return current;
+        }
+        current = current.parent;
+    }
+    return null;
+}
+
+// 块内 /api/v1/ 形态的字面量（模板串按 literalTextOf 归一成 ${EXPR}，去掉反引号）。去重后必须唯一，否则不猜。
+function apiUrlLiteralsIn(ts, node) {
+    const hits = [];
+    const visit = (n) => {
+        const text = literalTextOf(ts, n);
+        if (text && text.includes("/api/v1/")) hits.push(text);
+        ts.forEachChild(n, visit);
+    };
+    visit(node);
+    return [...new Set(hits)];
+}
+
+// 早退守卫（防假 E）：同一函数体里若 payload 之前有「URL 判别 if + return」分支，
+// 则 payload 处在 complement（catch-all）路径 —— 那个 URL 不是它的 URL，禁止用 B 级回退。
+function isComplementBranchPayload(ts, atNode) {
+    const chain = scopeChainOf(ts, atNode);
+    const fn = chain[0];
+    if (!fn) return false;
+    let guarded = false;
+    const visit = (n) => {
+        if (ts.isIfStatement(n) && n.getStart() < atNode.getStart()) {
+            const hasUrlPredicate = /includes|endsWith|startsWith/.test(n.expression.getText());
+            const body = n.thenStatement;
+            const returnsEarly =
+                body &&
+                (ts.isReturnStatement(body) ||
+                    (ts.isBlock(body) && body.statements.some((s) => ts.isReturnStatement(s))));
+            if (hasUrlPredicate && returnsEarly) guarded = true;
+        }
+        ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(fn, visit);
+    return guarded;
+}
+
+// 归因细化（只影响报告，不影响判定）：负载所在函数若是「通吃所有 URL 的 fetch mock」
+// （同一函数里 mockImplementation/mockResolvedValue 且无 URL 判别），端点本来就不可知。
+function isGenericFetchMock(ts, atNode) {
+    const chain = scopeChainOf(ts, atNode);
+    const fn = chain[0];
+    if (!fn) return false;
+    const text = fn.getText();
+    const looksLikeMock =
+        text.includes("mockImplementation") ||
+        text.includes("mockResolvedValue") ||
+        text.includes("mockResolvedValueOnce");
+    if (!looksLikeMock) return false;
+    const hasUrlPredicate = /includes\(|endsWith\(|startsWith\(/.test(text);
+    return !hasUrlPredicate;
+}
+
+function resolveUrl(ts, sourceFile, atNode) {
+    const direct = nearestUrlLiteral(ts, atNode);
+    if (direct) return { text: direct.text, via: "ancestor" };
+    const frags = ifConditionFragments(ts, atNode);
+    if (frags) {
+        const pathFrags = frags.filter((f) => f.includes("/api/v1/"));
+        if (pathFrags.length === 1) return { text: pathFrags[0], via: "if-condition" };
+        const domFrags = frags.filter((f) => !f.includes("/") && f.length > 3);
+        if (domFrags.length === 1) return { text: domFrags[0], via: "if-condition" };
+    }
+    if (isComplementBranchPayload(ts, atNode)) return null;
+    const block = enclosingTestBlock(ts, atNode);
+    if (block) {
+        const urls = apiUrlLiteralsIn(ts, block);
+        if (urls.length === 1) return { text: urls[0], via: "test-block-url" };
+    }
+    return null;
+}
+
 // ---------------------------------------------------------------- 判定
 
 function scanFile(ts, contract, file) {
@@ -703,11 +828,29 @@ function scanFile(ts, contract, file) {
             findings.push({ file: fileLabel, line: callLine, code: "fixture-carrier" });
             continue;
         }
-        const urlLiteral = nearestUrlLiteral(ts, payload.host);
-        if (!urlLiteral) {
-            findings.push({ file: fileLabel, line: callLine, reason: "no-api-url-in-scope" });
+        // task-194：非 JSON schema 实例的响应体（二进制 / SSE 流）与 URL 无关，先按体形状归类，
+        // 不占「不可判」名额（诚实分类 ≠ 判通过）。
+        const bodyKind = nonSchemaBodyKind(ts, payload.expr);
+        if (bodyKind) {
+            findings.push({
+                file: fileLabel,
+                line: callLine,
+                code: "fixture-non-schema-body",
+                bodyKind,
+            });
             continue;
         }
+        // task-194：URL 三级解析 —— 祖先字面量（既有）⇒ 所在 if 判别条件字面量（分支相关才用）
+        // ⇒ 所在 it/test 块唯一 /api/v1/ URL。后两级都要「唯一」命中，缺省不猜。
+        const urlResolved = resolveUrl(ts, sourceFile, payload.host);
+        if (!urlResolved) {
+            const reason = isGenericFetchMock(ts, payload.host)
+                ? "generic-fetch-mock"
+                : "no-api-url-in-scope";
+            findings.push({ file: fileLabel, line: callLine, reason });
+            continue;
+        }
+        const urlLiteral = { text: urlResolved.text };
         const method = nearestMethod(ts, payload.host);
         const fixtureSegments = fixtureSegmentsOf(urlLiteral.text);
         const resolvedOperation = resolveOperationLoosely(
@@ -734,6 +877,7 @@ function scanFile(ts, contract, file) {
             method: operation.method,
             path: operation.path,
             url: urlLiteral.text,
+            urlVia: urlResolved.via,
         };
         // 规则①：夹具自己声明非 2xx ⇒ 它是错误体，不是成功 schema 的实例。
         const status = declaredStatus(ts, payload.host);
@@ -815,6 +959,7 @@ function walkSpecFiles() {
 
 function bucketOf(finding) {
     if (finding.code === "fixture-carrier") return "carrier";
+    if (finding.code === "fixture-non-schema-body") return "nonschema";
     if (finding.code === "fixture-error-body") return "undecidable";
     if (finding.reason) return "undecidable";
     return finding.ok ? "ok" : "missing";
@@ -827,6 +972,15 @@ function describeFinding(finding) {
             "NOTE fixture-carrier " +
             anchor +
             " (辅助函数把形参原样包成响应体；夹具在调用点，已单独判定)"
+        );
+    }
+    if (finding.code === "fixture-non-schema-body") {
+        return (
+            "NOTE fixture-non-schema-body " +
+            anchor +
+            " kind=" +
+            String(finding.bodyKind) +
+            " (二进制/SSE 流响应体不是 JSON schema 实例，不按成功 schema 判定)"
         );
     }
     if (finding.code === "fixture-error-body") {
@@ -910,7 +1064,7 @@ function describeFinding(finding) {
 // ---------------------------------------------------------------- 报告
 
 function summarize(findings) {
-    const summary = { total: 0, ok: 0, missing: 0, undecidable: 0, carrier: 0 };
+    const summary = { total: 0, ok: 0, missing: 0, undecidable: 0, nonschema: 0, carrier: 0 };
     for (const finding of findings) {
         const bucket = bucketOf(finding);
         summary[bucket] += 1;
@@ -920,7 +1074,13 @@ function summarize(findings) {
 }
 
 function printFindings(findings) {
-    for (const kind of ["missing", "undecidable", "ok", ...(VERBOSE ? ["carrier"] : [])]) {
+    for (const kind of [
+        "missing",
+        "undecidable",
+        "nonschema",
+        "ok",
+        ...(VERBOSE ? ["carrier"] : []),
+    ]) {
         for (const finding of findings) {
             if (bucketOf(finding) === kind) console.log(describeFinding(finding));
         }
@@ -998,9 +1158,21 @@ function main() {
             String(summary.missing) +
             " undecidable=" +
             String(summary.undecidable) +
+            " nonschema=" +
+            String(summary.nonschema) +
             " carrier=" +
             String(summary.carrier),
     );
+    const urlViaCounts = {};
+    for (const finding of findings) {
+        if (!finding.urlVia) continue;
+        urlViaCounts[finding.urlVia] = (urlViaCounts[finding.urlVia] || 0) + 1;
+    }
+    const urlViaText = Object.keys(urlViaCounts)
+        .sort()
+        .map((key) => key + "=" + String(urlViaCounts[key]))
+        .join(" ");
+    if (urlViaText) console.log("urlVia " + urlViaText);
     if (ENFORCE && summary.missing > 0) process.exit(1);
 }
 // ---------------------------------------------------------------- selftest：6 组夹具，逐组证明会响
@@ -1015,6 +1187,14 @@ function writeFixture(root, relative, lines) {
 const SELFTEST_CONTRACT = [
     "openapi: 3.0.3",
     "paths:",
+    "  /api/v1/provider-catalog:",
+    "    get:",
+    "      responses:",
+    "        '200':",
+    "          content:",
+    "            application/json:",
+    "              schema:",
+    "                $ref: '#/components/schemas/ProviderCatalog'",
     "  /api/v1/workspaces/{workspaceId}:",
     "    get:",
     "      responses:",
@@ -1025,6 +1205,11 @@ const SELFTEST_CONTRACT = [
     "                $ref: '#/components/schemas/Workspace'",
     "components:",
     "  schemas:",
+    "    ProviderCatalog:",
+    "      type: object",
+    "      required: [catalogRevision]",
+    "      properties:",
+    "        catalogRevision: { type: string }",
     "    Workspace:",
     "      type: object",
     "      required: [id, name, ownerId]",
@@ -1245,12 +1430,81 @@ function runSelftest() {
                 : "<none>"),
     );
 
+    // ⑦ 二进制响应体 ⇒ nonschema（不是 undecidable，也不判 E）
+    const fileBinary = writeFixture(root, "g/__tests__/binary.spec.ts", [
+        'it("downloads", async () => {',
+        "    fetchSpy.mockResolvedValueOnce(",
+        "        new Response(new Uint8Array([1, 2, 3]), { status: 200 }),",
+        "    );",
+        "});",
+    ]);
+    const hitBinary = scanFile(ts, contract, fileBinary).filter(
+        (finding) => finding.code === "fixture-non-schema-body",
+    );
+    report(
+        "⑦ 二进制体 ⇒ nonschema",
+        hitBinary.length === 1 &&
+            scan(fileBinary).nonschema === 1 &&
+            scan(fileBinary).missing === 0,
+        "nonschema=" +
+            String(scan(fileBinary).nonschema) +
+            " missing=" +
+            String(scan(fileBinary).missing),
+    );
+
+    // ⑧ if 判别条件字面量（无祖先 URL）⇒ if-condition 级解析并判定
+    const fileIfUrl = writeFixture(root, "h/__tests__/ifUrl.spec.ts", [
+        'it("fetches catalog", async () => {',
+        "    fetchSpy.mockImplementation((input) => {",
+        "        const url = String(input);",
+        '        if (url.includes("provider-catalog")) {',
+        "            return Promise.resolve(new Response(JSON.stringify({ providers: [] }), { status: 200 }));",
+        "        }",
+        "        return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));",
+        "    });",
+        "});",
+    ]);
+    const ifFindings = scanFile(ts, contract, fileIfUrl);
+    const ifMissing = ifFindings.filter(
+        (finding) => !finding.ok && !finding.reason && !finding.code,
+    );
+    report(
+        "⑧ if-condition URL 解析 ⇒ 判缺项",
+        ifMissing.length === 1 && ifMissing[0].urlVia === "if-condition",
+        "missing=" +
+            String(ifMissing.length) +
+            " via=" +
+            (ifMissing[0] ? String(ifMissing[0].urlVia) : "<none>"),
+    );
+
+    // ⑨ 早退守卫：URL 判别 if 早 return 之后的 catch-all {} ⇒ 不许硬配 schema（防假 E）
+    const fileCatchAll = writeFixture(root, "i/__tests__/catchAll.spec.ts", [
+        'it("redirects", async () => {',
+        "    fetchSpy.mockImplementation((input) => {",
+        "        const url = String(input);",
+        '        if (url.includes("/api/v1/workspaces/ws-1")) {',
+        '            return Promise.resolve(new Response(JSON.stringify({ code: "X", status: 403 }), { status: 403 }));',
+        "        }",
+        "        return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));",
+        "    });",
+        "});",
+    ]);
+    const caFindings = scanFile(ts, contract, fileCatchAll);
+    const caMissing = caFindings.filter(
+        (finding) => !finding.ok && !finding.reason && !finding.code,
+    );
+    report(
+        "⑨ catch-all 不硬配 ⇒ 无假 E",
+        caMissing.length === 0,
+        "missing=" + String(caMissing.length),
+    );
+
     fs.rmSync(root, { recursive: true, force: true });
     if (failures > 0) {
-        console.error("selftest FAILED (" + String(failures) + "/6)");
+        console.error("selftest FAILED (" + String(failures) + "/9)");
         process.exit(1);
     }
-    console.log("selftest OK (6 cases)");
+    console.log("selftest OK (9 cases)");
 }
 
 if (SELFTEST) runSelftest();
