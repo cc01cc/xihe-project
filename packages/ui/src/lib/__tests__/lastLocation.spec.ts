@@ -3,6 +3,8 @@ import {
     LAST_LOCATION_KEY,
     LAST_LOCATION_MAX_AGE_MS,
     clearLastLocation,
+    forgetLastLocationForWorkspace,
+    isColdEntryNavigation,
     isExplicitPickerEntry,
     lastLocationForRoute,
     readLastLocation,
@@ -226,6 +228,45 @@ describe("isExplicitPickerEntry（H4-c 判据：显式进 picker 不是恢复入
     it("空/坏 path fail-closed ⇒ false（不把坏数据判成显式意图）", () => {
         expect(isExplicitPickerEntry({ redirectedFrom: { path: "" } })).toBe(false);
         expect(isExplicitPickerEntry({ redirectedFrom: {} as { path: string } })).toBe(false);
+    });
+});
+
+describe("isColdEntryNavigation（task-145 ① 判据：只有冷启恢复）", () => {
+    it("START_LOCATION（matched 为空）⇒ true；任何站内导航（matched 非空）⇒ false", () => {
+        // vue-router 的首次导航 from = START_LOCATION（`matched: []`）。
+        expect(isColdEntryNavigation({ matched: [] })).toBe(true);
+        expect(isColdEntryNavigation({ matched: [{ path: "/workbench" }] })).toBe(false);
+        expect(
+            isColdEntryNavigation({
+                matched: [{ path: "/workspace/:workspaceId" }, { path: "" }],
+            }),
+        ).toBe(false);
+    });
+});
+
+describe("forgetLastLocationForWorkspace（task-145 ②：指向死工作区的上一跳）", () => {
+    it("命中 ⇒ 清键并返回 true（下一次读取为空）", () => {
+        writeLastLocation({ kind: "workspace", workspaceId: WS, sessionId: SESS });
+        expect(forgetLastLocationForWorkspace(WS)).toBe(true);
+        expect(localStorage.getItem(LAST_LOCATION_KEY)).toBeNull();
+        expect(readLastLocation()).toBeNull();
+    });
+
+    it("未命中/无条目/坏数据一律不动（跨 tab：别把另一个 tab 的健康落点抹掉）", () => {
+        // 指向另一个工作区 ⇒ 保留（无条件 clearLastLocation 会误伤）。
+        writeLastLocation({ kind: "workspace", workspaceId: WS_OTHER, sessionId: SESS });
+        const kept = localStorage.getItem(LAST_LOCATION_KEY);
+        expect(forgetLastLocationForWorkspace(WS)).toBe(false);
+        expect(localStorage.getItem(LAST_LOCATION_KEY)).toBe(kept);
+        // standalone 上一跳没有工作区段 ⇒ 与工作区失效无关。
+        writeLastLocation({ kind: "standalone", workspaceId: null, sessionId: SESS });
+        expect(forgetLastLocationForWorkspace(WS)).toBe(false);
+        expect(readLastLocation()).not.toBeNull();
+        // 无条目 / 坏 JSON。
+        clearLastLocation();
+        expect(forgetLastLocationForWorkspace(WS)).toBe(false);
+        localStorage.setItem(LAST_LOCATION_KEY, "{not json");
+        expect(forgetLastLocationForWorkspace(WS)).toBe(false);
     });
 });
 

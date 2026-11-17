@@ -5,6 +5,11 @@
  * （localStorage）的最后落点记录，唯一用途是「冷启进入 /workbench 且本 tab 没有
  * 上下文时，回到上次停下的地方」。
  *
+ * **恢复只有一个入口：冷启**（task-145 ①）。站内到达 `workspace-home` 的任何导航都是
+ * 显式意图（删工作区/无权/上下文冲突的回弹也在此列）—— 判据点见
+ * `isColdEntryNavigation`。冷启**直接打开 `/workspace`**（旧模块入口 → redirect）不算，
+ * 那时用户要的就是选择面（H4-c，`isExplicitPickerEntry`）。
+ *
  * 四条不变式（卡面已裁，不许改）：
  *  1. **键形**：`xihe-last-location` = `{ kind, workspaceId, sessionId, at }`。
  *     `kind` 是页面种类判别字段 —— 新增可恢复页面种类 = 加一个 kind，不动键形。
@@ -202,6 +207,11 @@ export function resolveLastLocationTarget(last: LastLocation | null): string | n
  * 用户显式去 picker（`/workspace` 这个旧模块入口 → 路由表 redirect → `workspace-home`）时，
  * 他要的就是选择面；这时恢复等于**劫持他的显式意图**（上一跳随手把他拖回某个会话，picker 不出现）。</p>
  *
+ * <p><b>与 `isColdEntryNavigation` 的分工（task-145 ①补全全集）</b>：站内到达 `workspace-home`
+ * 已经由冷启判据整体挡掉，本函数只剩**冷启那一次**要判 —— 冷启直接打开 `/workspace` 是站外的、
+ * 带 `redirectedFrom` 的显式 picker 意图。两者不是替代关系：删了本函数，冷启打开 `/workspace`
+ * 就会被恢复劫持（H4-c）；删了冷启判据，删工作区的回弹就会被劫持（task-145 ①）。</p>
+ *
  * <p><b>判据怎么来的</b>：vue-router 5 在跑守卫前把「这次导航是从哪来的」挂在目标位置上 ——
  * `pushWithRedirect` 里 `toLocation.redirectedFrom = redirectedFrom`（`[源码]`
  * `node_modules/vue-router/dist/vue-router.js:1309`，重定向链上保留**最初**那个位置）。所以
@@ -218,6 +228,65 @@ export function isExplicitPickerEntry(to: { redirectedFrom?: { path: string } | 
     const origin = to.redirectedFrom;
     if (!origin || typeof origin.path !== "string") return false;
     return comparablePath(origin.path) === WORKSPACE_PICKER_PATH;
+}
+
+/**
+ * **task-145 ①（Lead 2026-11-17 裁定）：上一跳只在「冷启」生效。**
+ *
+ * <p>判据 = `from.matched.length === 0`：vue-router 的首次导航 `from` 是 `START_LOCATION`
+ * （`matched: []`，`[文档/源码] node_modules/vue-router/dist/vue-router.js` 的
+ * `START_LOCATION_NORMALIZED`）；此后任何一次导航的 `from` 都有匹配记录。</p>
+ *
+ * <p><b>为什么不能只认 `/workspace` redirect</b>：那是**一种**显式入口，被当成了全集
+ * （D-1785 同族：拿能识别的那一种冒充应有的全集）。站内主动去 `workspace-home` 的真实路径
+ * 有三处 —— 删工作区（`WorkspaceSettingsView.vue:322-326`）、工作区不可访问
+ * （`:231`）、上下文冲突回弹（`WorkspaceView.vue:368`）—— 它们在回弹前都会清掉 tab 上下文
+ * （前两处显式 `clearTabWorkspace()`；`WorkspaceView.vue:310` 那条由 `auth.selectWorkspace`
+ * 的 catch 内部清），所以守卫会走到「无 tab 上下文」这一段。旧判据（只认 redirect）对它们全部
+ * 失效 ⇒ 上一跳把用户**送回刚被判死的那个工作区**（见 task-145 卡面实测读数）。</p>
+ */
+export function isColdEntryNavigation(from: { matched: readonly unknown[] }): boolean {
+    return from.matched.length === 0;
+}
+
+/**
+ * **task-145 ②（Lead 2026-11-17 裁定）：指向「已判死工作区」的上一跳要被忘掉。**
+ *
+ * <p>① 只保证站内回弹不被劫持；键本身还指着那个已删除/无权的工作区 ⇒ **下一次冷启**
+ * 仍会被送过去（一次必然失败的请求 + 一次回弹）。所以回弹时顺手清。</p>
+ *
+ * <p><b>为什么是「条件清」而不是无条件 `clearLastLocation()`</b>：本键是**跨 tab** 的
+ * （localStorage）。A tab 从死工作区回弹时，B tab 可能正健康地停在另一个工作区 —— 无条件清会把
+ * B tab 的有效记忆一起抹掉。只清 `workspaceId` 命中的条目，语义是「这个落点已失效」，
+ * 不是「上一跳整体作废」。</p>
+ *
+ * @returns 是否真的清掉了（没有条目 / 指向别的工作区 / 坏数据都是 `false`，调用方无需分支）。
+ */
+export function forgetLastLocationForWorkspace(workspaceId: string): boolean {
+    if (!workspaceId) return false;
+    const store = storage();
+    if (!store) return false;
+    let raw: string | null;
+    try {
+        raw = store.getItem(LAST_LOCATION_KEY);
+    } catch {
+        return false;
+    }
+    if (!raw) return false;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return false;
+    }
+    const entry = normalizeEntry(parsed);
+    if (!entry || entry.kind !== "workspace" || entry.workspaceId !== workspaceId) return false;
+    try {
+        store.removeItem(LAST_LOCATION_KEY);
+    } catch {
+        return false;
+    }
+    return true;
 }
 
 /**

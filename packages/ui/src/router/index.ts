@@ -10,6 +10,8 @@ import {
 import { isUuid } from "../lib/uuid";
 import { WORKSPACE_PICKER_PATH } from "../lib/routes";
 import {
+    forgetLastLocationForWorkspace,
+    isColdEntryNavigation,
     isExplicitPickerEntry,
     lastLocationForRoute,
     readLastLocation,
@@ -595,7 +597,7 @@ async function resolveBootstrap(): Promise<{ initialized: boolean }> {
     return bootstrapCache;
 }
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
     migrateLegacyWorkspace();
     const token = localStorage.getItem("xihe-token"),
         requiresAuth = to.matched.some((r) => r.meta?.requiresAuth);
@@ -644,13 +646,29 @@ router.beforeEach(async (to) => {
             if (tabWorkspaceId) {
                 return { path: `/workspace/${tabWorkspaceId}`, query: to.query };
             }
-            // task-111 / H4-c（Lead 2026-11-17 裁定）：**显式导航到 picker 路由不是恢复入口**。
-            // `/workspace` 经路由表 redirect 落到本条（`workspace-home`）时，用户要的就是选择面
-            // —— 这时恢复等于劫持他的显式意图（被上一跳拖回某个会话，picker 不出现）。判据用
-            // vue-router 挂的 `to.redirectedFrom`（重定向链上保留最初位置），释义见
-            // `lib/lastLocation.ts#isExplicitPickerEntry`。命中 ⇒ 直接放行到 picker。
-            // 反面**不许跟着废**：`/workbench` 冷启（无 `redirectedFrom`）等仍照旧恢复 —— 本分支
-            // 是函数最后一个判定，`return true` 就是「不恢复」的完整语义。
+            // task-145 ①（Lead 2026-11-17 裁定）：**站内到达 `workspace-home` 一律不恢复**。
+            // 上一跳的用途只有「冷启回到停下的地方」；站内主动去 picker 的都是显式意图 —— 删工作区
+            // （`WorkspaceSettingsView.vue:322-326`）、工作区不可访问（`:231`）、上下文冲突回弹
+            // （`WorkspaceView.vue:368`）。判据 = `from.matched.length > 0`（非 START_LOCATION），
+            // 理由与「一种入口冒充全集」的教训见 `lib/lastLocation.ts#isColdEntryNavigation`。
+            if (!isColdEntryNavigation(from)) {
+                // task-145 ②：站内**从某个工作区**回弹到这里 ⇒ 那个工作区刚被判不可用（已删/无权/
+                // 上下文冲突）。指向它的上一跳已失效，顺手忘掉，否则下一次冷启还会被送过去。
+                // 只清命中项：上一跳是跨 tab 的，别的 tab 可能正健康地停着另一个工作区。
+                // 显式 picker 导航（站内 `/workspace`，带 `redirectedFrom`）不算「判死」——
+                // 用户只是要选择面，不该顺手抹掉刚停下的落点记忆。
+                const fromWorkspaceId =
+                    typeof from.params.workspaceId === "string" ? from.params.workspaceId : "";
+                if (fromWorkspaceId && !isExplicitPickerEntry(to)) {
+                    forgetLastLocationForWorkspace(fromWorkspaceId);
+                }
+                return true;
+            }
+            // task-111 / H4-c：冷启那一次也要分辨「用户显式要 picker」—— 冷启直接打开 `/workspace`
+            // （旧模块入口 → 路由表 redirect）时 `to.redirectedFrom` 就是 picker 入口，用户要的是
+            // 选择面；恢复会把他拖回某个会话。释义见 `lib/lastLocation.ts#isExplicitPickerEntry`。
+            // 反面**不许跟着废**：`/workbench` 冷启（无 `redirectedFrom`）仍照旧恢复 —— 本分支是
+            // 函数最后一个判定，`return true` 就是「不恢复」的完整语义。
             if (isExplicitPickerEntry(to)) return true;
             // task-111 / H1：**tab 上下文（sessionStorage，逐 tab）优先** —— 只有本 tab
             // 没有上下文时才读跨 tab 的上一跳（localStorage）。两个 tab 各停一处时，
