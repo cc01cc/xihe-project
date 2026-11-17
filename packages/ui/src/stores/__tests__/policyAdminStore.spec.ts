@@ -208,9 +208,14 @@ describe("usePolicyAdminStore", () => {
         ).rejects.toThrow("built-in face cannot be overridden");
 
         expect(store.toolFacesForbidden).toBe(true);
-        // task-45：工具面有屏面消费者 ⇒ 原文落在诊断字段（页面折叠区），不进主文案
-        expect(store.toolFacesError).not.toContain("FORBIDDEN");
-        expect(store.toolFacesErrorDetail).toContain("built-in face cannot be overridden");
+        // task-78：工具面页是**诊断面** ⇒ store 存整份 presentation。三个字段各判一次：
+        // 文案里不带码/原文（code 与 technicalDetail 走独立字段，页面左上角屏幕上的码）；
+        // 码**必须留着** —— 页面要靠它「可见可复制」，丢了就又是「文案要求用户出示错误码」。
+        expect(store.toolFacesError?.code).toBe("FORBIDDEN");
+        expect(store.toolFacesError?.copy).not.toContain("FORBIDDEN");
+        expect(store.toolFacesError?.technicalDetail).toContain(
+            "built-in face cannot be overridden",
+        );
     });
 
     it("marks the conflict summary unavailable instead of reporting none", async () => {
@@ -236,6 +241,8 @@ describe("usePolicyAdminStore", () => {
 
         expect(store.toolFaces).toHaveLength(0);
         expect(store.domains).toHaveLength(0);
+        // 空态必须是 null（不是 {}）—— 模板用 `v-if="toolFacesError"` 判空，空壳会让
+        // 「无码时不渲染空壳」那条判据失效。
         expect(store.toolFacesError).toBeNull();
     });
 });

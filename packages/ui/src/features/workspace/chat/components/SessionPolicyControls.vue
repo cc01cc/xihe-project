@@ -53,6 +53,13 @@ const lastRequestedMode = ref<SessionPolicyMode | null>(null);
 // PLAN-0582 S4 / P0-4: never surface the raw `CODE: english detail` string from
 // the API layer; the store keeps the diagnostic for logs and the UI shows an
 // actionable, localized inline hint instead.
+//
+// task-78 判定：这是**瞬时面**，所以这里**刻意不出错误码**（别按「统一」加码）。
+// 判据不是「它长得像错误条」，而是屏幕上有没有文案要求用户出示错误码 —— 下面这两句
+// （chat 域的 approvalModeLoadFailed / approvalModeChangeFailed）都不提错误码；
+// 落点是聊天列控件下方的一行内联提示，与聊天气泡/toast 同族。按 AGENTS.md 错误面表，
+// 瞬时面 = copy + logger.warn 留痕（cause 在 policy store 的 `logger.warn` 里），
+// 给它塞码/折叠控件属于给用户加噪音。反例见 ScheduledTasksView（那是持久在屏的诊断面）。
 const errorMessage = computed(() => {
     if (!state.value?.error) return null;
     return state.value.loaded

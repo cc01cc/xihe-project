@@ -252,15 +252,36 @@ onMounted(() => {
         >
             {{ t("settings.toolFacesForbidden") }}
         </div>
+        <!--
+            task-78：本卡是**诊断面**（设置页里持久在屏的错误条）。改前只有 copy —— 而 copy 的兜底
+            一句（errors 域的 unknownCode 键）是"…请联系管理员并**提供错误码**"⇒ 文案要求用户出示一个
+            界面没给的码。现按 task-67 形态补三件事：码单独给出且**可选可复制**（class="select-all"）、原始
+            detail 收进 vendor Collapsible（默认折叠、为空不渲染空壳）。重试不另加按钮：页头已有
+            `settings-tool-faces-refresh`（同一个 `loadToolFaces(activeScope)`），再加一个等于两个入口做一件事。
+            store 侧同批把 `toolFacesError` 从 string 换成整份 `ErrorPresentation`（与
+            `features/workspace/stores/scheduledTasks.ts:78` 一致）；波及面只有本页与 store 单测。
+        -->
         <div v-if="policyAdmin.toolFacesError" class="mb-4 space-y-1">
             <p
                 data-testid="settings-tool-faces-error"
                 class="text-sm text-destructive"
                 role="alert"
             >
-                {{ policyAdmin.toolFacesError }}
+                {{ policyAdmin.toolFacesError.copy }}
             </p>
-            <Collapsible v-if="policyAdmin.toolFacesErrorDetail">
+            <p
+                v-if="policyAdmin.toolFacesError.code"
+                data-testid="settings-tool-faces-error-code"
+                class="text-xs text-muted-foreground"
+            >
+                {{ t("errors.errorCodeLabel") }}
+                <code
+                    class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                    data-testid="settings-tool-faces-error-code-value"
+                    >{{ policyAdmin.toolFacesError.code }}</code
+                >
+            </p>
+            <Collapsible v-if="policyAdmin.toolFacesError.technicalDetail">
                 <CollapsibleTrigger as-child>
                     <button
                         type="button"
@@ -274,7 +295,7 @@ onMounted(() => {
                     <pre
                         data-testid="settings-tool-faces-error-detail-body"
                         class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
-                        >{{ policyAdmin.toolFacesErrorDetail }}</pre>
+                        >{{ policyAdmin.toolFacesError.technicalDetail }}</pre>
                 </CollapsibleContent>
             </Collapsible>
         </div>

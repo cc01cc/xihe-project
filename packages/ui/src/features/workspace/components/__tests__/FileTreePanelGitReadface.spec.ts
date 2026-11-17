@@ -104,8 +104,91 @@ describe("task-36 文件树面板 git 读面", () => {
         });
         await flushPromises();
 
-        const error = wrapper.get('[data-testid="workspace-git-readface-error"]');
-        expect(error.text()).not.toContain("API error");
-        expect(error.text()).toBe(i18n.global.t("workspace.gitReadfaceLoadFailed"));
+        const copy = wrapper.get('[data-testid="workspace-git-readface-error-copy"]');
+        expect(copy.attributes("role")).toBe("alert");
+        expect(copy.text()).not.toContain("API error");
+        expect(copy.text()).toBe(i18n.global.t("workspace.gitReadfaceLoadFailed"));
+        // 无码（前端/网络层错误没有稳定码）⇒ 不渲染码标签，也不渲染空折叠区。
+        expect(wrapper.find('[data-testid="workspace-git-readface-error-code"]').exists()).toBe(
+            false,
+        );
+        expect(
+            wrapper.find('[data-testid="workspace-git-readface-error-detail-toggle"]').exists(),
+        ).toBe(false);
+    });
+
+    /**
+     * task-78：本块是**诊断面**（持久在屏的树面板错误条）⇒ 必须给出**可见可复制**的码。
+     *
+     * <p>改前只渲染 `copy`，而 `presentCauseError` 对未登记码的 copy 就是
+     * `errors.unknownCode`（"…请联系管理员并**提供错误码**"）—— 文案要求用户出示一个界面
+     * 没提供的码，判据（"文案要求用户做一件事，界面就必须提供那件事的对应物"）因此不成立。
+     * 这里钉三件事：码在屏上、码**选得中**（`select-all`，可复制）、原文默认折叠。</p>
+     */
+    it("在屏上给出可选中的错误码，原文收进默认折叠的诊断区", async () => {
+        // 本 spec 的 module mock 把 `ApiError` 换成了裸 `class extends Error {}`（上面的
+        // `vi.mock`），所以这里给 cause 一个 **problem 形状**直接把码喂进去：`presentCauseError`
+        // 按结构化读 `cause.problem?.code`（lib 层刻意不用 `instanceof`，见 errorMessages.ts:236-245），
+        // 真实链路上由 `apiErrorFromResponse` 填同一形状。用裸 Error 就永远测不到码那条分支。
+        mockedApi.getWorkspaceGitStatus.mockRejectedValue({
+            problem: {
+                status: 500,
+                code: "GIT_READFACE_UNAVAILABLE",
+                detail: "API error 500",
+                requestId: "request-1",
+            },
+        });
+        const wrapper = mount(FileTreePanel, {
+            global: { plugins: [i18n], stubs: { FileTree: true } },
+        });
+        await flushPromises();
+
+        const copy = wrapper.get('[data-testid="workspace-git-readface-error-copy"]');
+        expect(copy.text()).toBe(i18n.global.t("errors.unknownCode"));
+        expect(copy.text()).not.toContain("GIT_READFACE_UNAVAILABLE");
+        expect(copy.text()).not.toContain("API error");
+
+        const code = wrapper.get('[data-testid="workspace-git-readface-error-code"]');
+        expect(code.text()).toContain(i18n.global.t("errors.errorCodeLabel"));
+        const codeValue = wrapper.get('[data-testid="workspace-git-readface-error-code-value"]');
+        expect(codeValue.element.tagName).toBe("CODE");
+        expect(codeValue.classes()).toContain("select-all");
+        expect(codeValue.text()).toBe("GIT_READFACE_UNAVAILABLE");
+
+        expect(
+            wrapper.find('[data-testid="workspace-git-readface-error-detail-body"]').exists(),
+        ).toBe(false);
+        await wrapper
+            .get('[data-testid="workspace-git-readface-error-detail-toggle"]')
+            .trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="workspace-git-readface-error-detail-body"]').text()).toBe(
+            "API error 500",
+        );
+    });
+
+    it("重试按钮复用 composable 的 reload，不自己再造一个取数通道", async () => {
+        mockedApi.getWorkspaceGitStatus.mockRejectedValueOnce({
+            problem: {
+                status: 503,
+                code: "GIT_READFACE_UNAVAILABLE",
+                detail: "API error 503",
+                requestId: "request-1",
+            },
+        });
+        const wrapper = mount(FileTreePanel, {
+            global: { plugins: [i18n], stubs: { FileTree: true } },
+        });
+        await flushPromises();
+
+        mockedApi.getWorkspaceGitStatus.mockResolvedValue({
+            isRepository: true,
+            entries: [{ status: " M", path: "README.md" }],
+        });
+        await wrapper.get('[data-testid="workspace-git-readface-error-retry"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-git-readface-error"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="workspace-git-readface-count"]').text()).toContain("1");
     });
 });

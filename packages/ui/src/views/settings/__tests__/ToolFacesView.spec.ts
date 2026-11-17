@@ -311,6 +311,69 @@ describe("ToolFacesView", () => {
         );
     });
 
+    /**
+     * task-78：本页错误卡是**诊断面** ⇒ 三个字段各自可判。改前只渲染 copy —— 而 copy 的兜底
+     * 一句是 errors.unknownCode（"…请联系管理员并**提供错误码**"），文案要求用户出示一个界面
+     * 没给的码。这条用例钉的就是「屏上真的出现了码 + 码可选可复制 + 原文默认不露」。
+     */
+    it("shows a selectable error code on the diagnostic card for an unmapped code", async () => {
+        seedIdentity({ workspaceOwner: true });
+        vi.mocked(api.listPolicyToolFaces).mockRejectedValue(
+            new ApiError({
+                status: 500,
+                code: "TOOL_FACES_UNMAPPED",
+                detail: "API error 500",
+                requestId: "test",
+            }),
+        );
+        const wrapper = await mountView();
+
+        const copy = wrapper.find('[data-testid="settings-tool-faces-error"]');
+        // 文案是本地化的兜底句（要求用户提供错误码），不是 CP 英文 detail。
+        expect(copy.text()).toBe(i18n.global.t("errors.unknownCode"));
+        expect(copy.text()).not.toContain("TOOL_FACES_UNMAPPED");
+        expect(copy.text()).not.toContain("API error");
+
+        // 码必须**在屏上**且可选（select-all 是"可复制"在 DOM 层的判据，不需要真按 Ctrl+C）。
+        const code = wrapper.get('[data-testid="settings-tool-faces-error-code"]');
+        expect(code.text()).toContain(i18n.global.t("errors.errorCodeLabel"));
+        const codeValue = wrapper.get('[data-testid="settings-tool-faces-error-code-value"]');
+        expect(codeValue.element.tagName).toBe("CODE");
+        expect(codeValue.classes()).toContain("select-all");
+        expect(codeValue.text()).toBe("TOOL_FACES_UNMAPPED");
+
+        // 原文默认折叠（不露在初屏），点开才出现。
+        expect(wrapper.find('[data-testid="settings-tool-faces-error-detail-body"]').exists()).toBe(
+            false,
+        );
+        await wrapper
+            .get('[data-testid="settings-tool-faces-error-detail-toggle"]')
+            .trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="settings-tool-faces-error-detail-body"]').text()).toBe(
+            "API error 500",
+        );
+    });
+
+    it("renders no code shell when the failure carries no problem code", async () => {
+        seedIdentity({ workspaceOwner: true });
+        vi.mocked(api.listPolicyToolFaces).mockRejectedValue(new Error("network down"));
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="settings-tool-faces-error"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-tool-faces-error"]').text()).toBe(
+            i18n.global.t("errors.requestFailed"),
+        );
+        // 无码 ⇒ 不渲染码标签、也不渲染空折叠区（否则用户点开一个空盒子）。
+        expect(wrapper.find('[data-testid="settings-tool-faces-error-code"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-tool-faces-error-code-value"]').exists()).toBe(
+            false,
+        );
+        expect(
+            wrapper.find('[data-testid="settings-tool-faces-error-detail-toggle"]').exists(),
+        ).toBe(false);
+    });
+
     it("renders the empty state when the catalog has no rows", async () => {
         seedIdentity();
         vi.mocked(api.listPolicyToolFaces).mockResolvedValue([]);

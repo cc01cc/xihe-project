@@ -74,6 +74,12 @@ describe("SessionPolicyControls", () => {
         expect(error.text()).not.toContain("POLICY_UNAVAILABLE");
         expect(error.text()).not.toContain("Invalid policy mode response");
         expect(error.get('[data-testid="session-policy-mode-retry"]').text()).toBe("重试");
+        // task-78 判定的**正向钉子**（瞬时面 ⇒ 刻意不给码）：这条不是「顺手删判据」，
+        // 而是把判定本身钉住 —— 若将来有人按「统一」给这里加码，本行会红。
+        // 依据：本句文案（chat.approvalModeLoadFailed）不提错误码，落点是聊天列内联提示，
+        // 归 AGENTS.md 的瞬时面（copy + logger.warn），故屏上不该出现码元素。
+        expect(error.find('[data-testid="session-policy-mode-error-code"]').exists()).toBe(false);
+        expect(error.find("code").exists()).toBe(false);
 
         vi.mocked(api.getPolicyMode).mockResolvedValue({
             sessionId: SESSION_ID,

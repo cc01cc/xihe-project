@@ -31,6 +31,12 @@ import { readTabWorkspaceId } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import FileTree from "./FileTree.vue";
 import { useWorkspaceGitReadState } from "../composables/useWorkspaceGitReadState";
+// task-78：诊断面的 technicalDetail 收进 vendor Collapsible（默认折叠、为空不渲染空壳）。
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 
 /**
  * PLAN-0582 S3a: the file tree moved inside the workbench's left column, so it
@@ -374,13 +380,63 @@ function upload() {
             >
                 {{ t("workspace.diffPendingLoading") }}
             </p>
-            <p
+            <!--
+                task-78：本块是**诊断面**（持久在屏的树面板错误条），按 AGENTS.md 错误面契约：
+                copy（role="alert"）+ **可见可复制的错误码** + 折叠的 technicalDetail。
+                改前只渲染 `copy`，而 copy 的兜底句（errors 域的 unknownCode 键）正是
+                "…并提供**错误码**" ⇒ 文案要求用户做一件界面没提供的事。composable 早已给出整份 ErrorPresentation
+                （useWorkspaceGitReadState.ts:21），这里只是模板没用 ⇒ 不改数据流。
+            -->
+            <div
                 v-else-if="gitRead.error.value"
                 data-testid="workspace-git-readface-error"
-                class="text-destructive"
+                class="space-y-1"
             >
-                {{ gitRead.error.value.copy }}
-            </p>
+                <p
+                    data-testid="workspace-git-readface-error-copy"
+                    class="text-destructive"
+                    role="alert"
+                >
+                    {{ gitRead.error.value.copy }}
+                </p>
+                <p
+                    v-if="gitRead.error.value.code"
+                    data-testid="workspace-git-readface-error-code"
+                    class="text-muted-foreground"
+                >
+                    {{ t("errors.errorCodeLabel") }}
+                    <code
+                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                        data-testid="workspace-git-readface-error-code-value"
+                        >{{ gitRead.error.value.code }}</code
+                    >
+                </p>
+                <Collapsible v-if="gitRead.error.value.technicalDetail">
+                    <CollapsibleTrigger as-child>
+                        <button
+                            type="button"
+                            data-testid="workspace-git-readface-error-detail-toggle"
+                            class="rounded text-muted-foreground underline underline-offset-2"
+                        >
+                            {{ t("errors.technicalDetail") }}
+                        </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <pre
+                            data-testid="workspace-git-readface-error-detail-body"
+                            class="mt-1 max-h-32 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                            >{{ gitRead.error.value.technicalDetail }}</pre>
+                    </CollapsibleContent>
+                </Collapsible>
+                <button
+                    type="button"
+                    data-testid="workspace-git-readface-error-retry"
+                    class="rounded border border-destructive/40 px-1.5 py-0.5 font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    @click="gitRead.reload()"
+                >
+                    {{ t("workspace.retry") }}
+                </button>
+            </div>
             <p
                 v-else-if="gitRead.status.value && !gitRead.status.value.isRepository"
                 data-testid="workspace-git-readface-no-repo"

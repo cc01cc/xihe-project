@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { ApiError, api } from "../composables/api";
 import { i18n } from "../i18n";
 import { presentCauseError } from "../lib/errorMessages";
+import type { ErrorPresentation } from "../lib/errorMessages";
 import { logger } from "../lib/logger";
 import type {
     ApprovalPolicyEffect,
@@ -36,16 +37,22 @@ function createLayerRecord<T>(create: () => T): Record<PolicyRuleLayer, T> {
 
 /**
  * task-45：只产出**可读文案**（改前拼 `CODE: english detail` 直出）。
- * 其中 `toolFacesError` 有屏面消费者（工具面页），所以那一路同时落
- * `toolFacesErrorDetail`（原始 detail，诊断面折叠显示）；其余四个错误位
- * （domains/rules/conflicts）当前没有渲染消费者，只留文案 —— 无消费者的字段会漂移。
+ *
+ * task-78：**形状跟着消费者走，不是一刀切**。本 store 里两类错误位的处境不同，分别记在这里：
+ *
+ * - `toolFacesError`：有**诊断面**消费者（`ToolFacesView` 设置页的持久错误卡）⇒ 存**整份**
+ *   `ErrorPresentation`（同 `features/workspace/stores/scheduledTasks.ts:78`）。理由不是「统一好看」：
+ *   `presentCauseError` 的 copy 在码未登记时就是 `errors.unknownCode`（「…请联系管理员并提供
+ *   **错误码**」），那句文案要求用户出示一个码，页面就必须给出码 —— 只存 copy 等于把码丢在路上。
+ *   原来拆成 `toolFacesError` + `toolFacesErrorDetail` 两个字段，两者永远同生同灭，合并后少一个可漂移的字段。
+ * - `domainsError` / `rulesError` / `conflictsError`：**当前没有任何渲染消费者**（唯一会渲染它们的
+ *   policy-rule 编辑器已随 task-74 B4 / PLAN-0752 M1 退役：`/settings/policy` 只剩 302 与 403 两条
+ *   断言，见 `e2e/mock/policy-management.spec.ts:341-347`）⇒ 屏上没有文案，**判据不适用**，
+ *   2026-11-17 不动类型（无消费者时改类型是纯噪音）。它们仍是孤儿字段：要么将来接回屏面时按本段
+ *   口径存整份 presentation，要么单独清理，登记在 task-78 判读表里。
  */
 function errorCopy(cause: unknown, fallback: string): string {
     return presentCauseError(i18n.global.t, cause, fallback).copy;
-}
-
-function errorDetailOf(cause: unknown): string | null {
-    return presentCauseError(i18n.global.t, cause, "").technicalDetail;
 }
 
 /** 403 means the authenticated user lacks the layer's write authority (server is authoritative). */
@@ -70,9 +77,8 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         toolFaces = ref<PolicyToolFaceView[]>([]),
         toolFacesScope = ref<PolicyToolFaceQueryScope>("workspace"),
         toolFacesLoading = ref(false),
-        toolFacesError = ref<string | null>(null),
-        /** task-45：原始 detail（仅工具面页的诊断折叠区使用；默认不渲染）。 */
-        toolFacesErrorDetail = ref<string | null>(null),
+        /** task-78：工具面页是诊断面 ⇒ 存整份 presentation（copy + code + technicalDetail）。 */
+        toolFacesError = ref<ErrorPresentation | null>(null),
         toolFacesForbidden = ref(false),
         classifyingTool = ref(false);
 
@@ -161,13 +167,15 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         toolFacesScope.value = scope;
         toolFacesLoading.value = true;
         toolFacesError.value = null;
-        toolFacesErrorDetail.value = null;
         toolFacesForbidden.value = false;
         try {
             toolFaces.value = await api.listPolicyToolFaces(scope);
         } catch (cause) {
-            toolFacesError.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
-            toolFacesErrorDetail.value = errorDetailOf(cause);
+            toolFacesError.value = presentCauseError(
+                i18n.global.t,
+                cause,
+                i18n.global.t("errors.requestFailed"),
+            );
             toolFacesForbidden.value = isForbidden(cause);
             logger.warn(`Failed to load ${scope}-scope tool faces`, cause);
         } finally {
@@ -178,15 +186,17 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
     async function classifyTool(draft: ToolFaceClassificationDraft): Promise<PolicyToolFaceView> {
         classifyingTool.value = true;
         toolFacesError.value = null;
-        toolFacesErrorDetail.value = null;
         toolFacesForbidden.value = false;
         try {
             const face = await api.upsertPolicyToolFace(draft);
             await loadToolFaces(draft.scope);
             return face;
         } catch (cause) {
-            toolFacesError.value = errorCopy(cause, i18n.global.t("errors.requestFailed"));
-            toolFacesErrorDetail.value = errorDetailOf(cause);
+            toolFacesError.value = presentCauseError(
+                i18n.global.t,
+                cause,
+                i18n.global.t("errors.requestFailed"),
+            );
             toolFacesForbidden.value = isForbidden(cause);
             throw cause;
         } finally {
@@ -204,7 +214,6 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         conflictsError.value = createLayerRecord(() => null);
         toolFaces.value = [];
         toolFacesError.value = null;
-        toolFacesErrorDetail.value = null;
         toolFacesForbidden.value = false;
     }
 
@@ -224,7 +233,6 @@ export const usePolicyAdminStore = defineStore("policyAdmin", () => {
         toolFacesScope,
         toolFacesLoading,
         toolFacesError,
-        toolFacesErrorDetail,
         toolFacesForbidden,
         classifyingTool,
         loadDomains,
