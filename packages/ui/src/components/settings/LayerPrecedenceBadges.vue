@@ -42,7 +42,16 @@ const badges = computed(() =>
                 {{ t("settings.ia.fourLayerOrderLabel") }}
             </span>
             <template v-for="(badge, index) in badges" :key="badge.id">
-                <span v-if="index > 0" class="text-xs text-muted-foreground/60" aria-hidden="true"
+                <!--
+                    task-138：层序箭头原为 `text-muted-foreground/60` —— 单层 color alpha .6 叠在
+                    `bg-muted/20` 的合成底上，实测浅 2.36 / 深 3.314（need 4.5，**两侧都不达**）。
+                    修法 = **撤掉那一层 alpha**（不是换 token）：实色 `text-muted-foreground` 实测
+                    浅 5.031 / 深 6.736，且与左右徽标文字同色 —— 箭头本来只是分隔符，比徽标更淡没有信息含义。
+                    可点态/禁用态：本元素无 button 祖先、无 aria-disabled（探针 disabled=false）；
+                    即便按 `aria-hidden` 论成装饰（1.4.11 3:1 已过），也不拿装饰口径当 1.4.3 的逃生门
+                    （contrast-probe 第 28-32 行明令），故按 4.5 判。
+                -->
+                <span v-if="index > 0" class="text-xs text-muted-foreground" aria-hidden="true"
                     >→</span
                 >
                 <span

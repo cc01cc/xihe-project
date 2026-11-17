@@ -72,9 +72,19 @@ function gapTitle(item: ResourceNavItem): string {
                 （12 域 + 2 运维 + 3 安全 = 17，缺口/灰显都算），不是「可用条目数」。两处口径必须一致，
                 否则同一个数字在设置区表示 A、在资源区表示 B。</p>
             -->
+            <!--
+                task-140：计数徽标原为 `text-muted-foreground/70`（单层 color alpha .7），实测浅 2.747 /
+                深 4.236 —— **两侧都不达 4.5**，且改前就存在（task-124 复扫发现，不是 task-124/125 引入）。
+                判「文字不达」而非「背景不达」：本 span 自身 background-color 是 transparent（实测
+                rgba(0,0,0,0)），缺陷在**字形自身的 alpha**，底（侧栏 245）没问题 —— 修法只能是提字色，
+                给字加底/加面板都是修错对象。它承载「本组有几个条目」这个可读信息（与 SettingsSidebar
+                计数同口径），不是 decorative，且非 aria-hidden ⇒ 4.5 族（12px、400 ⇒ 小字，不适用 3.0 大字档）。
+                修法 = 去掉 `/70` 这一层：实色 muted-foreground 实测浅 4.816 / 深 7.663（浅侧与左栏
+                条目文字的 4.816 同值，即回到与兄弟元素同一档）。
+            -->
             <span
                 data-testid="resources-nav-count"
-                class="ml-1.5 shrink-0 text-xs font-normal text-muted-foreground/70"
+                class="ml-1.5 shrink-0 text-xs font-normal text-muted-foreground"
                 >{{ items.length }}</span
             >
         </SidebarGroupLabel>
