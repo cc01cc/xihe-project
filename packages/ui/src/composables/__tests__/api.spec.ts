@@ -2297,6 +2297,8 @@ describe("agent principal create doors (PLAN-0750 M3)", () => {
 
         // R3：个人视图靠"没有 workspaceId 参数"选择，不是靠 header。
         expect(lastCall()[0]).toBe("/api/v1/agent-principals");
+        // task-191：行解析不再丢文档字段（丢失的后果是详情抽屉把「有订阅/有预算」画成未设置）。
+        // wire 缺席 ⇒ 各字段解析为 null，ownership 缺省按 USER（本次唯一可能的来源是同名视图字段）。
         expect(rows).toEqual([
             {
                 principalId: "principal-own",
@@ -2307,8 +2309,100 @@ describe("agent principal create doors (PLAN-0750 M3)", () => {
                 disabled: false,
                 defaultModelProvider: "openai",
                 defaultModelName: "gpt-4o",
+                allowedModels: null,
+                hooks: null,
+                contextPolicy: null,
+                delegationPolicy: null,
+                ownership: "USER",
             },
         ]);
+    });
+
+    it("task-191: listMyAgentPrincipals 保留文档字段（hooks/contextPolicy/delegationPolicy/allowedModels/ownership），畸形值 fail-closed", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    principals: [
+                        {
+                            principalId: "p-docs",
+                            name: "DocAgent",
+                            templateId: null,
+                            templateName: null,
+                            createdAt: "2026-11-10T00:00:00Z",
+                            disabledAt: "2026-11-10T01:00:00Z",
+                            defaultModelProvider: null,
+                            defaultModelName: null,
+                            hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
+                            contextPolicy: { memory: { enabled: true, types: ["fact"] } },
+                            delegationPolicy: { maxCount: 2, maxDepth: 1 },
+                            allowedModels: [{ provider: "openai", model: "gpt-4o" }],
+                            ownership: "INSTANCE",
+                        },
+                        {
+                            principalId: "p-bad",
+                            name: "BadAgent",
+                            createdAt: "2026-11-10T00:00:00Z",
+                            // 非对象/非数组的畸形文档与未知 ownership 一律降级，不抛。
+                            hooks: ["nope"],
+                            contextPolicy: "nope",
+                            delegationPolicy: 3,
+                            allowedModels: { provider: "x" },
+                            ownership: "WHATEVER",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const rows = await api.listMyAgentPrincipals();
+
+        expect(rows[0]).toMatchObject({
+            principalId: "p-docs",
+            disabled: true,
+            hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
+            contextPolicy: { memory: { enabled: true, types: ["fact"] } },
+            delegationPolicy: { maxCount: 2, maxDepth: 1 },
+            allowedModels: [{ provider: "openai", model: "gpt-4o" }],
+            ownership: "INSTANCE",
+        });
+        expect(rows[1]).toMatchObject({
+            hooks: null,
+            contextPolicy: null,
+            delegationPolicy: null,
+            allowedModels: null,
+            ownership: "USER",
+        });
+    });
+
+    it("task-191: updateAgentPrincipal 只发传入的键（absent=不触碰、显式 null=清空）", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    principalId: "p-1",
+                    defaultModelProvider: null,
+                    defaultModelName: null,
+                    allowedModels: null,
+                    hooks: null,
+                    contextPolicy: null,
+                    delegationPolicy: null,
+                }),
+        } as Response);
+
+        await api.updateAgentPrincipal("p-1", {
+            defaultModelName: "claude-x",
+            allowedModels: null,
+        });
+
+        expect(lastCall()[0]).toBe("/api/v1/agent-principals/p-1");
+        expect((lastCall()[1] as RequestInit).method).toBe("PATCH");
+        const body = JSON.parse(String((lastCall()[1] as RequestInit).body)) as Record<
+            string,
+            unknown
+        >;
+        // 未传的键必须不出现：PATCH 是 absent=保留存量，多发一个键就会覆盖别的分区。
+        expect(Object.keys(body).sort()).toEqual(["allowedModels", "defaultModelName"]);
+        expect(body.allowedModels).toBeNull();
     });
 });
 

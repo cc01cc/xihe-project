@@ -23,6 +23,8 @@ import {
 } from "./data/sessions";
 // task-449 / D-1287（D-1281 同形）：工作区智能体夹具 —— capSource 四态 + 记忆/角色绑定 + 写面判定。
 import { handleWorkspaceAgentResource } from "./data/workspaceAgents";
+// task-191：个人主体列表夹具（行内「配置」入口 + 详情抽屉在 mock 车道的唯一数据源）。
+import { mockPersonalAgentPrincipals } from "./data/agentPrincipals";
 // task-38：工作区成员面夹具 + dispatch（用户实拍「成员页 API error 404」）。
 import { handleWorkspaceMemberResource } from "./data/workspaceMembers";
 // task-84：角色页的原子目录 —— 从 CP policy 源码派生（43 = 40 action + 3 capability），
@@ -810,7 +812,9 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 }
                 if (path === "/agent-principals" && methodIsGet) {
                     // `api.listMyAgentPrincipals()`：`{principals:[…]}`；个人视图只回 `created_by=self`。
-                    return respond(200, { principals: [] });
+                    // task-191：不再回空集 —— 空集让行内「配置」入口与详情抽屉在浏览器车道无路可走
+                    // （D-1281：空集不是没有缺口，是看不见缺口）。夹具见 data/agentPrincipals.ts。
+                    return respond(200, { principals: mockPersonalAgentPrincipals() });
                 }
                 /**
                  * task-84：`GET /api/v1/roles/catalog?locale=` —— 角色页（/settings/roles 与
@@ -876,7 +880,7 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         });
                     // 个人主体列表（`GET /agent-principals`）形状不变：本模块只接写面与子资源。
                     if (agentMethod === "GET" && path === "/agent-principals") {
-                        return respond(200, { principals: [] });
+                        return respond(200, { principals: mockPersonalAgentPrincipals() });
                     }
                     void handleWorkspaceAgentResource(agentMethod, path, url, readAgentBody)
                         .then((result) => {
