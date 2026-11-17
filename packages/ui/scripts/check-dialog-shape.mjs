@@ -27,7 +27,7 @@ import { join, resolve } from "node:path";
 const ROOT = resolve(import.meta.dirname, "..");
 const ENFORCE = process.argv.includes("--enforce");
 const TAGS = ["DialogContent", "AlertDialogContent", "SheetContent", "DrawerContent"];
-const TAG_RE = new RegExp("<(" + TAGS.join("|") + ")(\\s[^>]*)?>", "g");
+// task-198：删 TAG_RE 死代码——实际扫描用下方局部 re（[\s\S]*? 多行版）；TAGS 仍被 re 复用。
 
 console.log(
     "形态 only 证明不了可达性 —— 本门只拦形态，不判主操作可达；可达性由 dialog-reachability-sweep 判（D-1721）。",

@@ -451,90 +451,37 @@ async function selftest() {
             '<div style="height:900px"></div>'.repeat(1) +
             '<button id=bc style="display:block">删除</button></div></div>',
     );
-    const c = await page.evaluate(() => {
-        const b = document.getElementById("bc");
-        const r = b.getBoundingClientRect();
-        let p = b.parentElement,
-            cont = null,
-            fixed = false;
-        while (p && p.nodeType === 1) {
-            const cs = getComputedStyle(p);
-            if (
-                !fixed &&
-                !cont &&
-                (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
-                p.scrollHeight > p.clientHeight + 1
-            )
-                cont = p;
-            if (cs.position === "fixed") fixed = true;
-            p = p.parentElement;
-        }
-        return {
-            inView: r.top >= 0 && r.bottom <= 720,
-            contOy: cont ? getComputedStyle(cont).overflowY : null,
-        };
-    });
+    // task-198：接 run()=真 PROBE（此前内联几何副本没测到门函数本体，空心绿风险 D-1804）。
+    const c = await run("#pc");
     results.push({
         arm: "C",
         expect: "UNREACHABLE",
-        got: !c.inView && !c.contOy ? "UNREACHABLE" : "REACHABLE?",
-        raw: c,
+        got: c.primary ? c.primary.verdict : "NO_PRIMARY",
+        raw: c.primary,
     });
     // 变体 D：max-height 盒子无 overflow，内容溢出 ⇒ 必须 UNREACHABLE。
     await mk(
         '<div style="position:fixed;inset:0"><div id=pd style="max-height:200px;overflow:visible"><div style="height:900px"></div><button id=bd style="display:block">删除</button></div></div>',
     );
-    const d = await page.evaluate(() => {
-        const b = document.getElementById("bd");
-        const r = b.getBoundingClientRect();
-        return { inView: r.top >= 0 && r.bottom <= 720 };
-    });
+    // task-198：接 run()=真 PROBE（同臂 C，测门函数本体而非内联副本）。
+    const d = await run("#pd");
     results.push({
         arm: "D",
         expect: "UNREACHABLE",
-        got: d.inView ? "REACHABLE?" : "UNREACHABLE",
-        raw: d,
+        got: d.primary ? d.primary.verdict : "NO_PRIMARY",
+        raw: d.primary,
     });
     // 正例：overflow-y-auto 容器，按钮在折叠区 ⇒ 必须 REACHABLE（byScroll）。
     await mk(
         '<div style="position:fixed;inset:0"><div id=pp style="overflow-y:auto;height:200px"><div style="height:900px"></div><button id=bp style="display:block">删除</button></div></div>',
     );
-    await page.evaluate(() => {
-        document.getElementById("pp").scrollTop = 0;
-    });
-    const ctrl = await page.evaluate(() => {
-        const b = document.getElementById("bp");
-        const r = b.getBoundingClientRect();
-        const inView = r.top >= 0 && r.bottom <= 720;
-        let p = b.parentElement,
-            cont = null,
-            fixed = false;
-        while (p && p.nodeType === 1) {
-            const cs = getComputedStyle(p);
-            if (
-                !fixed &&
-                !cont &&
-                (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
-                p.scrollHeight > p.clientHeight + 1
-            )
-                cont = p;
-            if (cs.position === "fixed") fixed = true;
-            p = p.parentElement;
-        }
-        let byScroll = false;
-        if (!inView && cont) {
-            cont.scrollTop = cont.scrollHeight;
-            const r2 = b.getBoundingClientRect();
-            byScroll = r2.top >= 0 && r2.bottom <= 720;
-            cont.scrollTop = 0;
-        }
-        return { inView, byScroll };
-    });
+    // task-198：接 run()=真 PROBE；byScroll 由 PROBE.measure 内部滚到底/顶判定并复位 scrollTop。
+    const ctrl = await run("#pp");
     results.push({
         arm: "control",
         expect: "REACHABLE",
-        got: ctrl.inView || ctrl.byScroll ? "REACHABLE" : "UNREACHABLE?",
-        raw: ctrl,
+        got: ctrl.primary ? ctrl.primary.verdict : "NO_PRIMARY",
+        raw: ctrl.primary,
     });
     await browser.close();
     return results;
