@@ -207,8 +207,13 @@ watch(
                     >
                         <Search class="size-3.5" aria-hidden="true" />
                         {{ t("settings.commandk.trigger") }}
+                        <!-- task-168：kbd 是**真实 hover 缺陷**，不是静止态问题。父 Button（variant=outline）
+                             带 hover:bg-muted，kbd 自己写死 text-muted-foreground 不跟随，悬停时实测
+                             4.816 → 4.286 < 4.5（page.hover() 实名复现，9 个 settings 路由都有）。
+                             改 text-foreground/60 后：静止 5.111 / 悬停 4.903，五套配色 × 浅深 10 格全 PASS。
+                             与 task-167 的 DEFAULT 徽章同一手（那次 4.286 → 4.903）。 -->
                         <kbd
-                            class="ml-1 rounded border px-1 font-mono text-xs text-muted-foreground"
+                            class="ml-1 rounded border px-1 font-mono text-xs text-foreground/60"
                             aria-hidden="true"
                             >⌘K</kbd
                         >

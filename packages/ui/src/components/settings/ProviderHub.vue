@@ -2017,30 +2017,34 @@ onMounted(() => {
                                     class="mt-0.5 flex flex-wrap items-center gap-1"
                                     :data-testid="`provider-supports-${provider.id}`"
                                 >
+                                    <!-- task-168：这 5 个 supports 徽章是纯 bg-muted 底 + text-muted-foreground 字，
+                                         实测 4.286 < 4.5（"新建连接"弹窗内实名量，13 个同类徽章一起验）。
+                                         改 text-foreground/60 后 4.903，五套配色 × 浅深全 PASS；
+                                         与 task-167 的 DEFAULT 徽章同族同值同手。 -->
                                     <span
                                         v-if="provider.supports.streaming"
-                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-foreground/60"
                                         >{{ t("settings.providerHub.supportsStreaming") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.tools"
-                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-foreground/60"
                                         >{{ t("settings.providerHub.supportsTools") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.toolsPartial"
-                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-foreground/60"
                                         :data-testid="`provider-supports-tools-partial-${provider.id}`"
                                         >{{ t("settings.providerHub.supportsToolsPartial") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.vision"
-                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-foreground/60"
                                         >{{ t("settings.providerHub.supportsVision") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.customBaseUrl"
-                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-foreground/60"
                                         >{{ t("settings.providerHub.supportsCustomBaseUrl") }}</span
                                     >
                                 </span>
