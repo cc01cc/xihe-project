@@ -146,7 +146,62 @@ status: active
 | **C Hierarchy & typography** | Type scale, line height, long values, CJK+Latin | Refactoring UI (size+weight+colour); 8pt grid | three visually distinct steps (e.g. 24/16/14); body line-height ≥1.5; digits/code monospaced; long values truncate or wrap | four heading levels at one size; a long id breaks the card; baselines jump |
 | **D Accessibility** | Contrast, focus, keyboard, target size, accessible name | WCAG 2.2 AA: 1.4.3 (4.5:1) / 1.4.11 (3:1) / 2.4.7 / 2.5.8 (≥24×24) / 4.1.2 | sane tab order with visible focus ring; icon buttons carry aria-label; status never colour-only | pale grey small text; unlabeled icon button; invisible focus |
 | **E Content & truth** | Copy, counts, empty states, i18n | Nielsen H2/H10 | counts/badges match visible data; empty states offer an exit; no hardcoded strings; sample values have real shapes | "8 settings in this domain" with zero fields; empty state with no action |
-| **F Layout & adaptivity** | Overflow, scrolling, collapsed states, breakpoints | Apple HIG (44pt) / Material (48dp) targets | no horizontal overflow at 1280/1600/1920; scrollbars do not cover content; collapsed panel keeps a readable entry; mobile targets ≥44px | overflow at 320px; no way back after collapsing; stacked mobile buttons |
+| **F Layout & adaptivity** | Overflow, scrolling, collapsed states, breakpoints | Apple HIG (44pt) / Material (48dp) targets | **page-level** horizontal overflow at 1280/1600/1920: `documentElement.scrollWidth ≤ innerWidth` at all three (criterion + exemptions: see "F criterion, made checkable" at the end of this section); scrollbars do not cover content; collapsed panel keeps a readable entry; mobile targets ≥44px | overflow at 320px; no way back after collapsing; stacked mobile buttons; **treating a long line inside `PRE.shiki` as "overflow"** |
+
+### F criterion, made checkable (2026-11-17, `task-90` measurements + `task-100` probe)
+
+**The criterion is page-level only — not "no element may ever cross the viewport edge."** The original wording "no horizontal overflow" never said which of the two it meant; this fills that gap.
+
+```js
+// Criterion (1): does a page-level horizontal scrollbar exist?
+document.documentElement.scrollWidth <= window.innerWidth
+// and scrollWidth <= document.documentElement.clientWidth
+// (a classic vertical scrollbar eats clientWidth; judging innerWidth alone goes falsely green in the
+//  "content 1275 < winW 1280 but usable width 1270" band)
+```
+
+**Criterion (2), parallel to (1), either failing ⇒ red: the count of out-of-viewport elements with no clipping ancestor must be 0.**
+Criterion (1) alone misses the `position: fixed` family: it does not grow `documentElement.scrollWidth`, yet the viewport still cuts it.
+
+**The two axes are not the same thing** (`task-90`, 1280×800 mock session page):
+
+| Axis | Reading | Verdict |
+| --- | --- | --- |
+| page-level `documentElement.scrollWidth` | 1270 ≤ `innerWidth` 1280 | **no horizontal overflow, criterion met** |
+| single element `getBoundingClientRect().right` | max 3059 (inside `PRE.shiki`: `code`/`span.line`) | element is past the viewport edge, but a **clipping ancestor absorbs it** — it never becomes page overflow |
+
+All three viewports have this shape: page-level overflow **false everywhere**, while out-of-viewport elements number 53–77. **The same reading can be read either as "no defect" or as "77 overflows"; the only difference is the criterion.**
+
+**Exemption channels (recorded as "already clipped", not as overflow)**:
+
+| Channel | Criterion | Note |
+| --- | --- | --- |
+| inside `PRE.shiki` (`code` / `span.line`) | an ancestor with `overflow-x: auto` exists and that ancestor has `scrollWidth > clientWidth` | code-block horizontal scrolling is standard interaction (same shape as GitHub / IDEs); `white-space: pre` is a code-semantics requirement — **never** switch it to `pre-wrap` just to silence "overflow" (line numbers and wrapping would misalign = broken semantics) |
+| children of any `overflow-x: auto / hidden / scroll` container | same | tables, long paths and timelines all follow the same shape |
+
+**Probe (the criterion's executor, not an optional extra)**: `internal/A03-xihe/scripts/check-ui-overflow.mjs`
+
+```bash
+# one command that proves the criterion reads both ways; starts no server
+node internal/A03-xihe/scripts/check-ui-overflow.mjs --fixtures
+```
+
+It must report three things — **reporting only the element count turns designed behaviour into a defect**:
+
+1. `docW` / `winW` (raw reading for criterion (1))
+2. the **nearest clipping ancestor** of every out-of-viewport element (tag + computed `overflow-x` + whether that ancestor can actually scroll)
+3. **the count of elements with no clipping ancestor** (**only this number is a defect candidate**)
+
+Four fixtures, two counter-paired sets, proving the exemption really applies rather than waving everything through:
+
+| Fixture | Expected | What it proves | Measured (1280×800) |
+| --- | --- | --- | --- |
+| `fixture-a-unclipped` (`w-[2000px]` block + no overflow container) | **RED** | the probe **does go red** | docW 2000 > winW 1280; unclipped 1; exit 1 |
+| `fixture-b-clipped` (same block inside `overflow-x:auto`) | **GREEN** | the exemption **really applies** | docW 1280; still 1 out-of-viewport element, absorbed by `DIV[auto]` ⇒ unclipped 0; exit 0 |
+| `fixture-c-shiki-like` (`PRE.shiki` + a 314-char line) | **GREEN** | designed behaviour is not misjudged | docW 1280; both out-of-viewport elements sit under `PRE.shiki[auto]` ⇒ unclipped 0 |
+| `fixture-d-shiki-plus-unclipped` (shiki **present** + a separate 2000px unclipped block) | **RED** | the exemption **is not a blanket pass** | docW 2000; unclipped 1 ⇒ "there is a PRE on the page, so let it go" is caught by this fixture |
+
+**The probe is mutation-checked too**: delete `overflow-x: auto` from `fixture-b`'s container (a single-line `edit`), and the same fixture flips from GREEN to **RED** (exit 1); after restoring, sha256 is byte-for-byte identical — i.e. "green" is not vacuously true. That is exactly what `D-1767` asks for: **only criteria with a machine judge earn a place in the doc; a criterion without a probe becomes "the doc says no overflow, nobody actually measures" a year later.**
 
 **Severity**: **P0 blocker** (inert control / contradictory data / unreachable path) · **P1 obvious** (hierarchy, consistency, WCAG AA violation) · **P2 polish** (spacing, weight, minor differences). P0/P1 become tasks; P2 accumulates.
 

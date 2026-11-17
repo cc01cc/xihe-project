@@ -195,7 +195,61 @@ status: active
 | **C 层级与排版** | 字阶、行高、长值、CJK 混排 | Refactoring UI（层级=字号+字重+色彩）；8pt 网格 | 三级字阶肉眼可分（如 24/16/14）；正文行高≥1.5；数字/代码等宽；长值截断或换行不撑破 | 四级标题同样大小；长 id 撑破卡片；中英基线跳动 |
 | **D 无障碍** | 对比度、焦点、键盘、触控目标、可访问名 | WCAG 2.2 AA：1.4.3(4.5:1) / 1.4.11(3:1) / 2.4.7 / 2.5.8(≥24×24) / 4.1.2 | Tab 顺序合理且焦点环可见；图标按钮有 aria-label；状态不能只靠颜色 | 灰色小字对比不足；图标按钮无标签；焦点看不到 |
 | **E 内容与真实性** | 文案、计数、空态、i18n | Nielsen H2/H10 | 计数/徽标与可见数据一致；空态有出口；无硬编码中英文；示例值是真实形状 | 「本域 8 项配置」却 0 字段；空态只有一行字没按钮 |
-| **F 布局与自适应** | 溢出、滚动、折叠态、断点 | Apple HIG（44pt）/ Material（48dp）触控；响应式 | 1280/1600/1920 无横向溢出；滚动条不遮内容；面板折叠后仍有可读入口；移动端触控目标≥44px | 320px 溢出；折叠后无法恢复；移动端按钮叠在一起 |
+| **F 布局与自适应** | 溢出、滚动、折叠态、断点 | Apple HIG（44pt）/ Material（48dp）触控；响应式 | **页面级**无横向溢出：1280/1600/1920 三档均 `documentElement.scrollWidth ≤ innerWidth`（口径与例外见本节末「F 维可判口径」）；滚动条不遮内容；面板折叠后仍有可读入口；移动端触控目标≥44px | 320px 溢出；折叠后无法恢复；移动端按钮叠在一起；**把 `PRE.shiki` 内层长行判成「溢出」** |
+
+### F 维「无横向溢出」的可判口径（2026-11-17，`task-90` 实测 + `task-100` 探针）
+
+**判据只认页面级，不认「任何元素都不得超出视口」。** 原文「无横向溢出」没写是哪种口径 —— 这一句就是补那个缺口。
+
+```js
+// 唯一判据 ①：页面级横向滚动条是否出现
+document.documentElement.scrollWidth <= window.innerWidth
+// 且 scrollWidth <= document.documentElement.clientWidth
+// （classic 纵向滚动条会吃掉 clientWidth；只判 innerWidth 在「内容 1275 < winW 1280、可用宽 1270」这一档会假绿）
+```
+
+**判据 ②（与 ① 并列，缺一即红）：无裁剪祖先的出视口元素数 = 0。**
+只判 ① 会漏掉 `position: fixed` 一类：它不撑 `documentElement.scrollWidth`，但照样被视口切掉。
+
+**两条轴不是一回事**（`task-90` 1280×800 mock 会话页实测）：
+
+| 轴 | 读数 | 结论 |
+| --- | --- | --- |
+| 页面级 `documentElement.scrollWidth` | 1270 ≤ `innerWidth` 1280 | **无横向溢出，满足判据** |
+| 单个元素 `getBoundingClientRect().right` | 最大 3059（`PRE.shiki` 内层 `code`/`span.line`） | 元素出视口，但**被裁剪祖先吸收**，不升级为页面溢出 |
+
+三档实测全是这个形状：页面级溢出 **全 false**，而「出视口元素」有 53–77 个。**同一个读数既能读成「无缺陷」也能读成「77 处溢出」，差别全在口径。**
+
+**例外通道（不判溢出，登记为「已裁剪」）**：
+
+| 通道 | 判据 | 说明 |
+| --- | --- | --- |
+| `PRE.shiki` 内层（`code` / `span.line`） | 存在 `overflow-x: auto` 祖先且该祖先 `scrollWidth > clientWidth` | 代码块横向滚动 = 标准交互（GitHub / IDE 同形）；`white-space: pre` 是代码语义要求，**不得**为消「溢出」改成 `pre-wrap`（行号与折行会错位 = 破坏语义） |
+| 任意 `overflow-x: auto / hidden / scroll` 容器的子元素 | 同上 | 表格、长路径、时间线等宽内容一律同形 |
+
+**探针（判据的执行者，不是可选项）**：`internal/A03-xihe/scripts/check-ui-overflow.mjs`
+
+```bash
+# 一条命令证明判据两侧都能读：不需要起任何服务
+node internal/A03-xihe/scripts/check-ui-overflow.mjs --fixtures
+```
+
+它必须报三件 —— **只报元素数会把设计行为报成缺陷**：
+
+1. `docW` / `winW`（判据 ① 的原始读数）
+2. 每个出视口元素的**最近裁剪祖先**（tag + computed `overflow-x` + 该祖先是否真能滚）
+3. **无裁剪祖先的元素数**（**只有这个数才是真缺陷候选**）
+
+四份夹具两两成对，证明例外条款真的在起作用、不是「一起放过」：
+
+| 夹具 | 预期 | 证明什么 | 实测（1280×800） |
+| --- | --- | --- | --- |
+| `fixture-a-unclipped`（`w-[2000px]` 块 + 无裁剪容器） | **RED** | 探针**会红** | docW 2000 > winW 1280；unclipped 1；exit 1 |
+| `fixture-b-clipped`（同一块塞进 `overflow-x:auto`） | **GREEN** | 例外条款**真生效** | docW 1280；出视口仍 1 个，但被 `DIV[auto]` 吸收 ⇒ unclipped 0；exit 0 |
+| `fixture-c-shiki-like`（`PRE.shiki` + 314 字符长行） | **GREEN** | 设计行为不被误判 | docW 1280；出视口 2 个全在 `PRE.shiki[auto]` ⇒ unclipped 0 |
+| `fixture-d-shiki-plus-unclipped`（shiki **在场** + 另有 2000px 无裁剪块） | **RED** | 例外**不是免死金牌** | docW 2000；unclipped 1 ⇒ 仅因页面上有 PRE 就放过整页会被这条抓住 |
+
+**探针自己也会被变异验证**：把 `fixture-b` 容器的 `overflow-x: auto` 删掉（单行 `edit`），同一份夹具立刻从 GREEN 变 **RED**（exit 1），还原后 sha256 逐字节相同 —— 即「绿」不是恒真的。这就是 `D-1767` 要的东西：**有机器判据才配进文档；没有探针的口径一年后就是「文档说不能溢出、实际没人测」。**
 
 **分档**：**P0 阻断**（点不动 / 数据矛盾 / 路径不可达）· **P1 明显**（层级、一致性、无障碍 AA 违例）· **P2 打磨**（间距、字重、微差）。P0/P1 一律转卡，P2 攒批。
 
