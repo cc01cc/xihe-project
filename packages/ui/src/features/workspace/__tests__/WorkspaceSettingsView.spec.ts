@@ -371,6 +371,29 @@ describe("WorkspaceSettingsView OWNER 编辑与删除 (PLAN-0560 T2.6/T3.3 迁�
         wrapper.unmount();
     });
 
+    /**
+     * task-85（DEV-011 §10:153「红，只在确认时出现」）：页面底部的「删除工作区」是入口，红只留在
+     * `ws-delete-confirm-btn`。改前该入口是 destructive（真浏览器实测列表态 1 个危险红控件），
+     * 改后为中性 outline，确认按钮仍是 destructive —— 取消/确认的视觉区分反而更清楚。
+     */
+    it("「删除工作区」入口中性、确认按钮才红（task-85）", async () => {
+        const wrapper = await mountOwner();
+        expect(wrapper.get('[data-testid="ws-settings-delete"]').attributes("data-variant")).toBe(
+            "outline",
+        );
+        await wrapper.find('[data-testid="ws-settings-delete"]').trigger("click");
+        await vi.waitFor(() =>
+            expect(
+                document.body.querySelector('[data-testid="ws-delete-confirm-btn"]'),
+            ).toBeTruthy(),
+        );
+        expect(
+            document.body
+                .querySelector('[data-testid="ws-delete-confirm-btn"]')!
+                .getAttribute("data-variant"),
+        ).toBe("destructive");
+        wrapper.unmount();
+    });
     it("requires exact workspace name before deleting", async () => {
         const wrapper = await mountOwner();
 

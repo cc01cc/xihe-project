@@ -305,8 +305,15 @@ onMounted(() => {
                                 </SelectItem>
                             </SelectContent>
                         </Select>
+                        <!--
+                            task-85（DEV-011 §10:153「红，只在确认时出现」+ :168-169 可发现性例外）：
+                            这里是**入口**，不是提交动作 —— 真正不可恢复的移除在下面 AlertDialog 的
+                            destructive 按钮上（那一处才是该红的地方）。行内入口改中性（outline）后，
+                            可发现性靠「位置固定（每行右侧）+ 文字标签（移除）+ 禁用时 title 给原因」，不靠颜色。
+                            实测：改前本页列表态 3 个危险红控件（每行一个）；改后 0，确认弹窗内仍 1。
+                        -->
                         <Button
-                            variant="destructive"
+                            variant="outline"
                             size="sm"
                             :data-testid="`ws-members-remove-${member.userId}`"
                             :disabled="

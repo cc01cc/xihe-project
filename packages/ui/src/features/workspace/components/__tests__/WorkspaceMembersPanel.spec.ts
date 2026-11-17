@@ -204,6 +204,34 @@ describe("WorkspaceMembersPanel", () => {
         readonlyWrapper.unmount();
     });
 
+    /**
+     * task-85（DEV-011 §10:153「红，只在确认时出现」+ :168-169 可发现性例外；用户 2026-11-03 裁定）。
+     *
+     * <p>行内「移除」是**入口**，不是提交动作 —— 真正不可恢复的移除发生在确认弹窗里。
+     * 改前实测（真浏览器）：本页列表态 3 个危险红控件（每行一个），违反「每屏 ≤ 1」；
+     * 而且它们行内就红、同时违反「只在确认时出现」。改后行内为中性 outline，
+     * 红只剩确认弹窗里的移除提交按钮（下面那条断言钉住它**必须**仍是 red）。</p>
+     */
+    it("行内「移除」是中性入口，危险视觉只留给确认弹窗（task-85）", async () => {
+        const wrapper = await mountPanel();
+        const rowRemoves = wrapper.findAll('[data-testid^="ws-members-remove-"]');
+        expect(rowRemoves.length).toBeGreaterThan(0);
+        for (const btn of rowRemoves) {
+            // 判据 1：入口不得带危险视觉（variant 投影成 data-variant，class 里也不许出现 destructive）。
+            expect(btn.attributes("data-variant")).toBe("outline");
+            //      注意：Button 基类里带 `aria-invalid:*:destructive`（校验态用的），那是所有
+            //      变体共有的、正常态不生效，所以只剔除该类 token 后判剩余危险 token。
+            const dangerTokens = btn
+                .classes()
+                .filter((c) => /destructive/.test(c))
+                .filter((c) => !/aria-invalid/.test(c));
+            expect(dangerTokens).toHaveLength(0);
+            // 判据 2：可发现性通道仍在（:168-169「位置固定 + 文字标签」）—— 颜色退出不等于入口消失。
+            expect(btn.text()).toBe("移除");
+            expect(btn.element.tagName).toBe("BUTTON");
+        }
+        wrapper.unmount();
+    });
     it("removes a member through the confirm dialog", async () => {
         const wrapper = await mountPanel();
         const editorRow = wrapper.findAll('[data-testid="ws-members-row"]')[1];
@@ -219,6 +247,8 @@ describe("WorkspaceMembersPanel", () => {
             '[data-testid="ws-members-remove-btn"]',
         ) as HTMLButtonElement | null;
         expect(confirm).not.toBeNull();
+        // task-85：红色只该落在确认弹窗里的提交按钮（行内入口已改中性）。
+        expect(confirm!.getAttribute("data-variant")).toBe("destructive");
         confirm?.click();
         await flushPromises();
 

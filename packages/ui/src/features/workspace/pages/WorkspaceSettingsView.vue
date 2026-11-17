@@ -624,8 +624,14 @@ onMounted(async () => {
                                         />
                                         {{ saving ? t("common.saving") : t("common.save") }}
                                     </Button>
+                                    <!--
+                                        task-85（DEV-011 §10:153「红，只在确认时出现」）：这里是入口按钮，
+                                        不可恢复的删除在 workspace-delete-confirm 弹窗的 ws-delete-confirm-btn（:726
+                                        destructive）—— 红只该在那里。行内入口中性后仍靠位置固定（页面底部危险区）
+                                        + 文字标签「删除工作区」+ 弹窗内的名称输入门保持可发现性（:168-169）。
+                                    -->
                                     <Button
-                                        variant="destructive"
+                                        variant="outline"
                                         data-testid="ws-settings-delete"
                                         @click="confirmDeleteOpen = true"
                                     >
