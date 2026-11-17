@@ -59,6 +59,14 @@ import {
     transferNode,
     writeFile,
 } from "./data/workspaceTree";
+// task-72：工作区**自动化任务**与**仓库状态**两条读面 —— 此前 mock 车道完全没有它们，页面上是
+// 「请求失败」红条 / 文件树面板常驻「加载失败」。夹具与出处见 data/scheduledTasks.ts 文件头。
+import {
+    MOCK_SCHEDULED_TASKS_WORKSPACE_ID,
+    isScheduledTasksEmptyPreview,
+    mockScheduledTaskListPage,
+    mockWorkspaceGitStatus,
+} from "./data/scheduledTasks";
 
 /**
  * task-137 rev2（Lead 2026-11-11 拍板）：**真实 UI + mock 数据** —— 数据在**网络层** mock。
@@ -884,6 +892,72 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 const jobsMatch = path.match(/^\/workspaces\/([^/]+)\/jobs$/);
                 if (jobsMatch && (req.method ?? "GET") === "GET") {
                     return respond(200, mockWorkspaceJobs(jobsMatch[1]));
+                }
+                /**
+                 * task-72：工作区**自动化任务**页的列表读面（Lead 实拍整页红条的唯一失败项
+                 * `GET /workspaces/{id}/scheduled-tasks?size=200 => 404`）。
+                 *
+                 * 只接**列表**（正则以 `/scheduled-tasks` **结尾**，理由与 e2e 桩同一条：
+                 * 不会吞掉 `/scheduled-tasks/{id}` 的详情/rerun/remove/postpone 四条写面 ——
+                 * 那四条本卡**故意不实现**，仍走下面的 404 兜底，免得演「mock 里点得通、真栈 409」）。
+                 * 外壳 `{workspaceId, page, size, tasks}` 逐字段照 `e2e/mock/helpers/auth.ts:1448-1462`
+                 * 的 task-174 桩（预览与 e2e 共用同一形状），只把 `tasks` 换成 3 条真夹具。
+                 * 未知 workspace 不回假数据 —— 与成员面同一口径（反例由 coverage 测钉住）。
+                 */
+                const scheduledTasksMatch = path.match(/^\/workspaces\/([^/]+)\/scheduled-tasks$/);
+                if (scheduledTasksMatch && (req.method ?? "GET") === "GET") {
+                    const workspaceId = decodeURIComponent(scheduledTasksMatch[1]);
+                    if (workspaceId !== MOCK_SCHEDULED_TASKS_WORKSPACE_ID) {
+                        return respond(404, {
+                            type: "about:blank",
+                            title: "Not Found",
+                            status: 404,
+                            code: "WORKSPACE_NOT_FOUND",
+                            requestId: "mock-request",
+                        });
+                    }
+                    const empty = isScheduledTasksEmptyPreview(req.headers.referer);
+                    const pageParam = Number.parseInt(url.searchParams.get("page") ?? "", 10);
+                    const sizeParam = Number.parseInt(url.searchParams.get("size") ?? "", 10);
+                    options.log?.(
+                        `[mock-api] GET workspace scheduled-tasks → ${empty ? "空态夹具" : "3 条夹具"}`,
+                    );
+                    return respond(
+                        200,
+                        mockScheduledTaskListPage(
+                            workspaceId,
+                            {
+                                page: Number.isNaN(pageParam) ? undefined : pageParam,
+                                size: Number.isNaN(sizeParam) ? undefined : sizeParam,
+                            },
+                            { empty },
+                        ),
+                    );
+                }
+                /**
+                 * task-72：工作区**仓库状态**读面（`GET /workspaces/{id}/git-status`）。
+                 *
+                 * 消费方在产品代码里（不在 `src/preview/`）：`FileTreePanel.vue:70` 经
+                 * `features/workspace/composables/useWorkspaceGitReadState.ts:46` 调
+                 * `api.getWorkspaceGitStatus` —— 文件树一面世就打它，mock 缺 ⇒ 面板常驻
+                 * 「仓库状态加载失败」。形状照 openapi `/api/v1/workspaces/{workspaceId}/git-status`
+                 * （required `isRepository`/`entries`，entry `{status, path}`；非 Git 工作区
+                 * `isRepository:false` + 空 entries）。夹具三条路径都在虚拟文件系统里真实存在。
+                 */
+                const gitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
+                if (gitStatusMatch && (req.method ?? "GET") === "GET") {
+                    const workspaceId = decodeURIComponent(gitStatusMatch[1]);
+                    if (workspaceId !== MOCK_SCHEDULED_TASKS_WORKSPACE_ID) {
+                        return respond(404, {
+                            type: "about:blank",
+                            title: "Not Found",
+                            status: 404,
+                            code: "WORKSPACE_NOT_FOUND",
+                            requestId: "mock-request",
+                        });
+                    }
+                    options.log?.("[mock-api] GET workspace git-status → fixtures");
+                    return respond(200, mockWorkspaceGitStatus());
                 }
                 // task-83：实例层 Skills 页的读面（`GET /skills` 默认 definitionScope=instance）。
                 // 列表**不带 body**；正文只在 `?includeBody=true` 时给 —— 与 openapi 一致，
