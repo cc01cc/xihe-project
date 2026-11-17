@@ -35,7 +35,9 @@ async function enterWorkspace() {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     });
     // task-224 档 4：`?redirect=` 是外来输入（可能被手工改、也可能是登出链遗留的嵌套串），
-    // 一律过 `safeRedirect`：入口页/已嵌套/站外/超长都回落到 /workspace。
+    // 一律过 `safeRedirect`：入口页/已嵌套/站外/超长都回落到 `/workbench`（模块入口，
+    // `task-34` / `D-1122`；fallback 在 `router/safeRedirect.ts` 里）。原文写的是 `/workspace`，
+    // 入口改名后这句成了过期注释（`task-146` 收口）。
     const redirect = safeRedirect(route.query.redirect);
     try {
         const failure = await router.push(redirect);

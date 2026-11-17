@@ -10,6 +10,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { chooseRekaOption } from "./helpers/reka-select";
 import { TEST_TIMEOUT_MS } from "../timeouts";
+import { WORKBENCH_PATH } from "../../src/lib/globalModules";
 // PLAN-0608 M3 — C′ 会话归属的**浏览器侧**证据。
 // 判据映射（编号以 `plans/PLAN-0608-XH-session-workspace-ownership/verify.md` V10 原文为准）：
 //   test 1 → V2 硬断言（必修 4）：登录后「未导航前」tab 上下文不存在/未选择
@@ -144,7 +145,17 @@ async function loginThroughUi(page: Page, email: string): Promise<void> {
     await page.fill('input[name="identifier"]', email);
     await page.fill('input[name="password"]', SHARED_PASSWORD);
     await page.press('input[name="password"]', "Enter");
-    await expect(page).toHaveURL(/\/workspace(?!\/)/);
+    // task-146（`D-1122` / `D-1688`）：模块入口已从 `/workspace` 搬到 `/workbench`
+    // （`/workspace` 只剩「picker 入口」的 redirect 记录，见 `src/lib/routes.ts` 的
+    // `WORKSPACE_PICKER_PATH`）。**判据意图不变**：登录后必须停在**选择面**（模块入口），
+    // 不得直接落进容器页 `/workspace/<id>` —— 那正是 I6「不得把回退 workspace 写进 tab 上下文」
+    // 的可观察形态。⇒ 改判据、不删：落点换成模块入口常量（单一来源，改名不会再静默过期），
+    // 负向那一半（不是容器页）在 :187 显式保留。
+    await expect
+        .poll(() => new URL(page.url()).pathname, {
+            message: "登录后应停在模块入口（选择面）而不是容器页",
+        })
+        .toBe(WORKBENCH_PATH);
 }
 
 async function tabContext(page: Page): Promise<{ id?: string } | null> {
@@ -184,7 +195,16 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
             await page.evaluate(() => sessionStorage.getItem("xihe-workspace")),
             "登录不得把回退值写进 tab 上下文（I6）",
         ).toBeNull();
-        expect(new URL(page.url()).pathname, "未选择前应停在选择面路由").toBe("/workspace");
+        // task-146：选择面的**落点**是 `/workbench`（`workspace-home` 渲染 `WorkspacePicker`）；
+        // `/workspace` 是旧模块入口的 redirect 记录，落定后不会停在它上面。
+        expect(new URL(page.url()).pathname, "未选择前应停在选择面路由（模块入口）").toBe(
+            WORKBENCH_PATH,
+        );
+        // 负向那一半（原 `:147` 的 `(?!\/)` 的显式版）：登录取到的落点不得是某个容器页 ——
+        // 那等于把回退 workspace 当成了用户的选择结果（I6）。
+        expect(new URL(page.url()).pathname, "登录后不得落进容器页（/workspace/<id>）").not.toMatch(
+            /^\/workspace\//,
+        );
         await expect(page.getByTestId("workspace-picker")).toBeVisible();
         await expect(page.getByTestId(`workspace-picker-item-${b.workspaceId}`)).toBeVisible();
         expect(

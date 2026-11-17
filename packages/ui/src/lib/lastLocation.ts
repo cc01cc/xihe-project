@@ -222,7 +222,12 @@ export function resolveLastLocationTarget(last: LastLocation | null): string | n
  * 站内导航，没有 `redirectedFrom`）、`/` 与兜底路由的 redirect（来源不是 picker 入口）
  * 都**不是**显式 picker 意图 ⇒ 照旧恢复。哨兵：
  * `e2e/real/plan-0608-browser.spec.ts` test 3 第二个 tab `goto("/workspace")` 必须出 picker
- * （该文件只读，**不许编辑**）。</p>
+ * —— **这处旧入口不许跟着「入口改名」一起被替换掉**（`D-1792`：批量替换是「同一个字符串有两个
+ * 语义」时最危险的自动化；同文件另有 4 处 `/workspace/<id>` 是容器 URL，也不动）。</p>
+ *
+ * <p><b>编辑边界（`task-146` 更正）</b>：本文件曾写「该文件只读，不许编辑」—— 那句话的作用是保护
+ * 上面这处哨兵不被顺手改掉，不是「哨兵永远不许动」。`task-146` 迁了同文件 `:147`/`:187` 的
+ * **落点判据**（`/workspace` → `WORKBENCH_PATH`，因为入口搬走了），test 3 的 `goto` 原样保留。</p>
  */
 export function isExplicitPickerEntry(to: { redirectedFrom?: { path: string } | null }): boolean {
     const origin = to.redirectedFrom;
