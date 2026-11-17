@@ -6,6 +6,7 @@ import { apiDelete, apiGet, apiPost } from "../../composables/api";
 import { AlertCircle, LoaderCircle } from "@lucide/vue";
 
 import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
+import ConfirmModal from "../../components/shared/ConfirmModal.vue";
 
 const { t } = useI18n(),
     files = ref<File[]>([]),
@@ -49,13 +50,44 @@ async function handleUpload() {
     uploading.value = false;
 }
 
-async function removeDoc(id: string) {
+/**
+ * task-109 站点 17：删除是**一步落盘**（`apiDelete` 直接打 RAG 文档删除），原先既没有确认、
+ * 又把红色画在入口上。按 DEV-011:155「这个元素如果消失，用户会误操作吗？」—— 会（文档删除
+ * 不可恢复），所以它属于 L4；而 :153 要求 L4 的红**只在确认时出现**。
+ * 顺序不能反：先把确认面建起来，红才落到确认键上；只改颜色等于把危险动作藏起来。
+ */
+const pendingDeleteId = ref<string | null>(null),
+    deleteError = ref<string | null>(null),
+    deleting = ref(false);
+
+function requestRemoveDoc(id: string) {
+    deleteError.value = null;
+    pendingDeleteId.value = id;
+}
+
+function cancelRemoveDoc() {
+    pendingDeleteId.value = null;
+}
+
+const pendingDocName = () => {
+    const id = pendingDeleteId.value;
+    if (!id) return "";
+    return documents.value.find((doc) => doc.id === id)?.filename ?? "";
+};
+
+async function confirmRemoveDoc() {
+    const id = pendingDeleteId.value;
+    if (!id || deleting.value) return;
+    deleting.value = true;
     try {
         await apiDelete(`/rag/documents/${id}`);
+        pendingDeleteId.value = null;
         await loadDocuments();
     } catch (e) {
         logger.warn("Document delete failed: " + (e instanceof Error ? e.message : String(e)));
-        loadError.value = e instanceof Error ? e.message : "Delete failed";
+        deleteError.value = e instanceof Error ? e.message : "Delete failed";
+    } finally {
+        deleting.value = false;
     }
 }
 </script>
@@ -134,9 +166,14 @@ async function removeDoc(id: string) {
                     class="flex items-center justify-between py-1 px-3 rounded bg-muted/50 text-sm"
                 >
                     <span>{{ doc.filename }} ({{ doc.chunks }} chunks)</span>
+                    <!--
+                        task-109 站点 17：入口中性（红留给确认键，见 :153）。
+                        这里的红不是"装饰"——它标记的是本对话框的终态动作（不可恢复的文档删除）。
+                    -->
                     <button
-                        class="text-xs text-destructive hover:underline"
-                        @click="removeDoc(doc.id)"
+                        class="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        :data-testid="`knowledge-doc-delete-${doc.id}`"
+                        @click="requestRemoveDoc(doc.id)"
                     >
                         {{ t("common.delete") }}
                     </button>
@@ -146,5 +183,21 @@ async function removeDoc(id: string) {
                 {{ t("settings.noDocuments") }}
             </p>
         </div>
+
+        <ConfirmModal
+            :show="pendingDeleteId !== null"
+            destructive
+            :title="t('common.confirmDelete')"
+            :description="`${pendingDocName()} — ${t('settings.knowledgeDeleteWarning')}`"
+            :confirm-label="t('common.delete')"
+            :cancel-label="t('common.cancel')"
+            :loading="deleting"
+            @confirm="confirmRemoveDoc"
+            @cancel="cancelRemoveDoc"
+            @close="cancelRemoveDoc"
+        />
+        <p v-if="deleteError" class="text-xs text-destructive" data-testid="knowledge-delete-error">
+            {{ deleteError }}
+        </p>
     </div>
 </template>

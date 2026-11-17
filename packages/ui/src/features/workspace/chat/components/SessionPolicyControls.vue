@@ -152,7 +152,7 @@ function retry() {
             <button
                 type="button"
                 data-testid="session-policy-mode-retry"
-                class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 text-xs font-medium transition hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 @click="retry"
             >
                 {{ t("common.retry") }}

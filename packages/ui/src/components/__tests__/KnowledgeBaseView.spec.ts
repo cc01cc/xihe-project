@@ -18,8 +18,15 @@ const i18n = createI18n({
                 theme: "Theme",
                 mcp: "MCP",
                 dataControls: "Data",
+                knowledgeDeleteWarning: "Deleting this document also removes its chunks.",
             },
-            common: { upload: "Upload", uploading: "Uploading...", delete: "Delete" },
+            common: {
+                upload: "Upload",
+                uploading: "Uploading...",
+                delete: "Delete",
+                cancel: "Cancel",
+                confirmDelete: "Confirm delete",
+            },
         },
     },
 });
@@ -135,13 +142,33 @@ describe("KnowledgeBaseView 列表 / 删除 / 上传（task-209 从 e2e 降级�
         expect(deleteButtons).toHaveLength(DOCS.length);
     });
 
-    it("deletes the clicked document by id and reloads the list", async () => {
+    // task-109 站点 17：删除原先**一步落盘**（无确认）。手机卡改为两段式后，此处钉住
+    // "第一击不删、确认才删"—— 只断言最终删掉了，等于把"有没有确认"这个被测行为漏掉。
+    it("requires a confirmation before deleting the document", async () => {
         mockRagFetch();
         const wrapper = mountKnowledgeView();
         await flushPromises();
 
         const firstDelete = wrapper.findAll("button").find((b) => b.text() === "Delete");
         await firstDelete!.trigger("click");
+        await flushPromises();
+
+        // 第一击后：确认面出现，且**一个 DELETE 都没发**。
+        expect(wrapper.find('[data-testid="modal-content"]').exists()).toBe(true);
+        const deletesBeforeConfirm = vi
+            .mocked(globalThis.fetch)
+            .mock.calls.filter(([, init]) => (init?.method ?? "GET") === "DELETE");
+        expect(deletesBeforeConfirm).toHaveLength(0);
+
+        // 确认后才发 DELETE。
+        // 在**确认面内**找确认键：全场按文字找会同时命中列表里那一排"Delete"，
+        // 那样的断言会指向错误元素（看着通过，实际点的是入口）。
+        const confirmBtn = wrapper
+            .find('[data-testid="modal-content"]')
+            .findAll("button")
+            .find((b) => b.text() === "Delete");
+        expect(confirmBtn).toBeTruthy();
+        await confirmBtn!.trigger("click");
         await flushPromises();
 
         const deleteCall = vi

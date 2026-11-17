@@ -181,8 +181,14 @@ function handleRenameKeydown(e: KeyboardEvent) {
                     >
                         {{ forkBusy ? t("sidebar.forking") : t("sidebar.fork") }}
                     </button>
+                    <!--
+                        task-109 站点 8：删除的**入口**用中性色，红只留给确认键。
+                        DEV-011:155「这个元素如果消失，用户会误操作吗？」——会，所以动作升到 L4；
+                        但 L4 的红按 :153「只在【确认时】出现」。确认面已正确（SessionList.vue:343
+                        在 BaseModal 内 fill-red）——入口这一侧的红是在给确认面开脱。故转中性。
+                    -->
                     <button
-                        class="w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors"
+                        class="w-full px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent"
                         data-testid="session-item-delete"
                         @click="handleDelete"
                     >

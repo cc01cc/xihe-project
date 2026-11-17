@@ -105,7 +105,7 @@ async function confirmNewFile() {
         </button>
         <hr class="my-1 border-t" />
         <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-destructive text-left"
+            class="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
             @click="handleDelete"
         >
             <Trash2 class="size-3.5" aria-hidden="true" />

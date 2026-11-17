@@ -461,7 +461,7 @@ async function loadJobOutput(reset: boolean) {
                         <span class="text-muted-foreground">{{ t("chat.jobCancelHint") }}</span>
                         <button
                             type="button"
-                            class="ml-auto rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                            class="ml-auto rounded border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                             :disabled="!canCancelJob"
                             data-testid="job-cancel-button"
                             @click="cancelConfirming = true"

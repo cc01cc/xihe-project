@@ -55,7 +55,8 @@ const roleId = ref(""),
     error = ref(""),
     malformedConfig = ref(false),
     success = ref(""),
-    pendingDeleteId = ref("");
+    pendingDeleteId = ref(""),
+    pendingRoleDeleteId = ref("");
 const ceilingUncovered = ref<string[]>([]),
     ceilingChecking = ref(false);
 const pendingPayload = ref<Record<string, string> | null>(null),
@@ -213,6 +214,7 @@ function deleteTemplate(template: Template) {
     if (props.saving || pendingPayload.value) return;
     if (pendingDeleteId.value !== template.id) {
         pendingDeleteId.value = template.id;
+        pendingRoleDeleteId.value = "";
         return;
     }
     const next = templates.value.filter((item) => item.id !== template.id);
@@ -297,11 +299,23 @@ function editRole(role: Role) {
     ceilingUncovered.value = [];
 }
 
+/**
+ * task-109 站点 2：角色删除原先**首击即持久化**（无任何确认），而红色已经画在入口上。
+ * 按 DEV-011:155「这个元素如果消失，用户会误操作吗？」—— 会（角色连同其权限配置一起消失），
+ * 属 L4；:153 又要求红只在确认时出现。故补成两段式（与模板删除同形态），红改由
+ * pendingRoleDeleteId 条件驱动 —— **先有确认面，颜色才有落点**。
+ */
 function deleteRole(role: Role) {
     if (props.saving || pendingPayload.value) return;
     if (templates.value.some((template) => template.roleId === role.id)) return;
+    if (pendingRoleDeleteId.value !== role.id) {
+        pendingRoleDeleteId.value = role.id;
+        pendingDeleteId.value = "";
+        return;
+    }
     const next = roles.value.filter((item) => item.id !== role.id);
     pendingKind.value = "role-delete";
+    pendingRoleDeleteId.value = "";
     persist(next, templates.value, t("settings.agentRoleDeleted"));
 }
 
@@ -484,7 +498,12 @@ function cancelRoleEdit() {
                     </button>
                     <button
                         type="button"
-                        class="text-xs text-destructive underline disabled:opacity-40"
+                        class="text-xs underline disabled:opacity-40"
+                        :class="
+                            pendingDeleteId === template.id
+                                ? 'text-destructive'
+                                : 'text-muted-foreground hover:text-foreground'
+                        "
                         :disabled="malformedConfig || saving"
                         :data-testid="`agent-template-delete-${template.id}`"
                         @click="deleteTemplate(template)"
@@ -557,7 +576,7 @@ function cancelRoleEdit() {
                     <button
                         type="button"
                         :aria-label="t('common.delete')"
-                        class="text-xs text-destructive underline"
+                        class="text-xs text-muted-foreground underline hover:text-foreground"
                         @click="rolePermissions.splice(index, 1)"
                     >
                         {{ t("common.delete") }}
@@ -631,9 +650,15 @@ function cancelRoleEdit() {
                     >
                         {{ t("settings.agentTemplateEdit") }}
                     </button>
+                    <!-- 站点 2：入口中性；pendingRoleDeleteId 那一态才是红的确认步。 -->
                     <button
                         type="button"
-                        class="text-destructive underline disabled:opacity-40"
+                        class="underline disabled:opacity-40"
+                        :class="
+                            pendingRoleDeleteId === role.id
+                                ? 'text-destructive'
+                                : 'text-muted-foreground hover:text-foreground'
+                        "
                         :disabled="
                             malformedConfig ||
                             saving ||
@@ -642,7 +667,11 @@ function cancelRoleEdit() {
                         :data-testid="`agent-role-delete-${role.id}`"
                         @click="deleteRole(role)"
                     >
-                        {{ t("common.delete") }}
+                        {{
+                            pendingRoleDeleteId === role.id
+                                ? t("settings.agentTemplateConfirmDelete")
+                                : t("common.delete")
+                        }}
                     </button>
                 </span>
             </li>

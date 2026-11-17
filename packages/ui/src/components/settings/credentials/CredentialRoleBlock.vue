@@ -94,7 +94,7 @@ onMounted(() => {
                 <span>{{ labelFor(item.id) }}</span>
                 <button
                     type="button"
-                    class="text-destructive"
+                    class="text-muted-foreground transition-colors hover:text-foreground"
                     :aria-label="t('credentials.roleBlockRemove')"
                     :data-testid="`credential-role-remove-${item.id}`"
                     @click="emit('remove', item.resource)"

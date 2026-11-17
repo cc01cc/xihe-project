@@ -407,7 +407,7 @@ watch(
                                 "
                                 type="button"
                                 data-testid="workspace-checkpoint-restore"
-                                class="inline-flex min-h-8 items-center rounded border border-destructive/40 bg-background px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
+                                class="inline-flex min-h-8 items-center rounded border bg-background px-2 py-1 text-xs font-medium transition-colors hover:bg-accent"
                                 @click="openRestore(checkpoint.sliceRef)"
                             >
                                 {{ t("workspace.checkpointRestore") }}

@@ -439,7 +439,7 @@ function upload() {
                 <button
                     type="button"
                     data-testid="workspace-git-readface-error-retry"
-                    class="rounded border border-destructive/40 px-1.5 py-0.5 font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="rounded border px-1.5 py-0.5 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="gitRead.reload()"
                 >
                     {{ t("workspace.retry") }}
@@ -691,7 +691,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-tree-retry"
-                class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 font-medium transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="shrink-0 rounded border px-1.5 py-0.5 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 @click="ws.loadTree()"
             >
                 {{ t("workspace.retry") }}
@@ -779,7 +779,7 @@ function upload() {
                         <button
                             type="button"
                             data-testid="workspace-tree-root-retry"
-                            class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 font-medium transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            class="shrink-0 rounded border px-1.5 py-0.5 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             @click="ws.loadRootTree(group.root.id)"
                         >
                             {{ t("workspace.retry") }}

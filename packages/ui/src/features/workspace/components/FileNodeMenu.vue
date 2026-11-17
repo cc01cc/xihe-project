@@ -217,7 +217,13 @@ function copyPath() {
                 Copy Path
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem variant="destructive" @select="showDeleteModal = true">
+            <!--
+                task-109 站点 11：入口不带危险色，红只留在确认面（:358 的 fill-red）。
+                variant="destructive" 会在运行态把这个菜单项直接染红 —— 位置就在入口面上，
+                而确认键是同一动作的下一步。DEV-011:155 结论不变（会误操作 => L4），
+                但 :153 的「只在确认时出现」要求把红推迟到确认面。
+            -->
+            <ContextMenuItem @select="showDeleteModal = true">
                 <Trash2 class="size-3.5" aria-hidden="true" />
                 Delete…
             </ContextMenuItem>

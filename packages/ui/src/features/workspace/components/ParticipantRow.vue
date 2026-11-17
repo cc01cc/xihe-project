@@ -383,7 +383,12 @@ function requestAdvance(): void {
             </button>
             <button
                 type="button"
-                class="rounded border px-1.5 py-0.5 text-xs text-destructive disabled:opacity-50"
+                class="rounded border px-1.5 py-0.5 text-xs disabled:opacity-50"
+                :class="
+                    confirmingRemove
+                        ? 'text-destructive'
+                        : 'text-muted-foreground hover:text-foreground'
+                "
                 :data-testid="`participant-remove-${participant.participantId}`"
                 :disabled="
                     !canManage || disabled || removing === true || participant.role === 'PRIMARY'
