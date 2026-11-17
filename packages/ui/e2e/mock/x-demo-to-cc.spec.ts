@@ -106,7 +106,6 @@ async function installDemoRuntime(page: Page, workspaceId: string): Promise<void
                     dockTabs: [],
                     activeDockTab: null,
                     dockMode: "pinned",
-                    dockModeManual: true,
                 }),
             );
             const enc = (s: string) => new TextEncoder().encode(s);

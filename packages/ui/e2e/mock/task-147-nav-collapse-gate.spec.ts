@@ -60,8 +60,9 @@ interface Reading {
 }
 
 /**
- * 种子：**pinned 且真渲染**的右栏。`dockModeManual: true` 是必须的 —— <1800 时
- * `deriveDockMode` 会派生 floating，只有"手选优先"才能在这个档位保持 pinned（正是复现场景）。
+ * 种子：**pinned 且真渲染**的右栏。task-162 后 `deriveDockMode` 与 `dockModeManual` 已删
+ * （D-1754 ④：右栏恒为正常列），pinned 恒成立 —— <1800 也无需任何"手选"就能保持
+ * pinned（正是本复现场景；seedLayout 只写现行持久面键）。
  */
 async function seedLayout(page: Page): Promise<void> {
     await page.addInitScript(
@@ -77,7 +78,6 @@ async function seedLayout(page: Page): Promise<void> {
                     dockTabs: ["files", "monitor"],
                     activeDockTab: "files",
                     dockMode: "pinned",
-                    dockModeManual: true,
                 }),
             );
         },

@@ -8,11 +8,11 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * 这个帮助器把"打开面板"收敛成一步，返回时**面板已可见且目标标签被选中**，调用方不必再自己断言，
  * 也不再需要"点摘要行 + 等一会儿"这类固定等待。
  *
- * 三种形态都要能开（`deriveDockMode`，断点见 `DOCK_PINNED_MIN_VIEWPORT`）：
- * - `pinned`（viewport ≥ 1800）：dock 常驻最后一列，开标签只切换活动标签；
- * - `floating`（< 1800）：dock 浮在中列之上，**不是模态、没有遮罩**，`Esc`/点主列才关闭。
- *   本帮助器只做"点开 + 断言可见"，不会触发这两种关闭手势；调用方也不要在之后点面板外部。
- *   需要 `pinned` 的用例请**显式** `test.use({ viewport: { width: 1920, ... } })`，不要依赖机器默认。
+ * 两种形态都要能开。task-179 更新：`deriveDockMode` / floating 已随 D-1754 ④ 退场
+ * （task-94 S1 + task-162，右栏恒为正常列），旧的"floating（<1800）非模态"段落删除；
+ * `DOCK_PINNED_MIN_VIEWPORT`（1800）只剩**首启默认**语义——≥1800 首启展开右栏、
+ * <1800 首启收起但页签与激活项就位（`defaultWorkspaceLayoutForViewport`），不再决定任何形态：
+ * - `pinned`（恒定形态）：dock 常驻最后一列，开标签只切换活动标签；
  * - **rail / 收起**（`dockCollapsed`，`WorkspaceWorkbench` 的 `dockOpen` 为 false）：`WorkspaceDock`
  *   是 `v-if` 渲染的，收起时**连标签条都不在 DOM 里**（`dock-tab-*` 计数为 0），所以本帮助器落到
  *   聊天列摘要行这条规范入口（`openDockTab` 会同时展开 dock 并激活目标标签）。
@@ -24,10 +24,11 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * 移动端（< 768，无 dock）不走这里：`SessionSettingsPanel` 在 `isMobile` 时仍在聊天 sheet 内就地展开。
  */
 
-/** `useWorkspaceLayout.ts` 的 `DOCK_INLINE_MIN_VIEWPORT`：≥ 该宽度 dock 才 inline（pinned）。 */
+/** `useWorkspaceLayout.ts` 的 `DOCK_INLINE_MIN_VIEWPORT`：只管**首启默认**（≥1800 首启展开右栏），
+ * 不再决定 dock 形态（floating 已退场；名里 inline 是历史残留，见 task-179）。 */
 export const DOCK_PINNED_MIN_VIEWPORT = 1800;
 
-/** dock 根节点（`WorkspaceDock.vue` 的 `<aside>`）；`data-dock-mode` 是 `pinned|floating|focus` 的投影。 */
+/** dock 根节点（`WorkspaceDock.vue` 的 `<aside>`）；`data-dock-mode` 是 `pinned|focus` 的投影（floating 已退场）。 */
 export function dockRoot(page: Page): Locator {
     return page.getByTestId("workspace-aux-panel");
 }

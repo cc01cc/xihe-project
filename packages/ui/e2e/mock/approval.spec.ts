@@ -786,47 +786,24 @@ test.describe("Chat approval flow", () => {
     });
 
     /**
-     * PLAN-0626 M2 的 dock 帮助器 `openContextPanel` 声称"pinned 与 floating 两种 dockMode 都适用"，
-     * 但此前只有代码阅读、没有机器证明（5 个改用帮助器的 spec 都跑在默认 1920 = pinned）。
-     * 这里用同一份已稳定的 mock 会话夹具把两种模式的**关闭语义**也钉死：
-     * - floating（< `DOCK_INLINE_MIN_VIEWPORT` 1800）：不是模态、没有遮罩，`Esc` 关闭；
-     * - pinned（≥1800）：用户刻意选择的布局，`Esc` **不得**关闭，否则等于偷偷降级。
+     * PLAN-0626 M2 的 dock 帮助器 `openContextPanel` 的**关闭语义**（用同一份已稳定的 mock
+     * 会话夹具钉死）。task-179：原 floating 子块随浮窗退场而删（D-1754 ④ 判据 3——右栏恒为
+     * 正常列，"非模态浮窗 + Esc 关闭"那套形态已不存在；原 floating 测试还断言已删的
+     * `dock-mode-toggle`，改前即红）；pinned 的「Esc 不得关闭用户刻意选择的布局」判据保留，
+     * 但不再断言已删除的 mode toggle（task-94 S1 已删 pin/浮窗切换按钮）。
      */
-    test.describe("PLAN-0626 M2 — context 面板在两种 dockMode 下都能开", () => {
-        test.describe("floating（viewport 1440 < 1800）", () => {
-            test.use({ viewport: { width: 1440, height: 900 } });
-
-            test("opens in floating, has no backdrop, and Esc dismisses it", async ({ page }) => {
-                await openApprovalChat(page);
-                await openContextPanel(page);
-                await expect(contextPanel(page)).toBeVisible();
-                await expect(page.getByTestId("dock-mode-toggle")).toHaveAttribute("title", /浮动/);
-                // 非模态：没有遮罩层挡主列（Lead 2026-10-31 裁定）
-                await expect(page.locator('[data-testid="modal-content"]')).toHaveCount(0);
-                await page.keyboard.press("Escape");
-                await expect(contextPanel(page)).toBeHidden();
-                // 帮助器可重入：dock 已被 Esc 关掉 ⇒ 这次走摘要行入口再开一次
-                await openContextPanel(page);
-                await expect(contextPanel(page)).toBeVisible();
-            });
-        });
-
-        test.describe("pinned（viewport 1920 ≥ 1800）", () => {
-            test.use({ viewport: { width: 1920, height: 1080 } });
-
-            test("opens pinned and Esc must not close a deliberate layout choice", async ({
-                page,
-            }) => {
-                await openApprovalChat(page);
-                await openContextPanel(page);
-                await expect(contextPanel(page)).toBeVisible();
-                await expect(page.getByTestId("dock-mode-toggle")).toHaveAttribute(
-                    "title",
-                    /已固定/,
-                );
-                await page.keyboard.press("Escape");
-                await expect(contextPanel(page)).toBeVisible();
-            });
+    test.describe("PLAN-0626 M2 — context 面板的关闭语义", () => {
+        test("opens pinned and Esc must not close a deliberate layout choice", async ({ page }) => {
+            await openApprovalChat(page);
+            await openContextPanel(page);
+            await expect(contextPanel(page)).toBeVisible();
+            // 右栏恒为正常列（data-dock-mode 只剩 pinned|focus 投影，WorkspaceDock.vue:263）
+            await expect(page.getByTestId("workspace-aux-panel")).toHaveAttribute(
+                "data-dock-mode",
+                /pinned|focus/,
+            );
+            await page.keyboard.press("Escape");
+            await expect(contextPanel(page)).toBeVisible();
         });
     });
 });

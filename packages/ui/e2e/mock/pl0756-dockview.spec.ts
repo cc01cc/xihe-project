@@ -6,7 +6,8 @@
  * - V2  序列化往返：打开 tab 集 / 活动 tab 与布局持久面一致；
  * - V2b dockview 宿主实渲染（`globalThis.__xhUseDockview` 开启后 `.dv-shell` 出现 + 面板内容挂载）；
  * - V3  clamp 不写回：`proportionalLayout:false` 下视口收窄，持久尺寸不变；
- * - V5  模式：pinned/floating 断点派生 + 手选优先（`dockModeManual`）。
+ * - V5  模式：pinned/floating 断点派生 + 手选优先 —— 已随 floating 退场删除（task-179；
+ *   原 V5 测的是已删的 dockModeManual / dock-mode-toggle，翻旗后勿照旧复活）。
  *
  * 跑法（lane 内）：`XIHE_UI_PORT=<port> XIHE_E2E_EXTERNAL_SERVER=1 pnpm exec playwright test
  * --config e2e/playwright.config.ts e2e/mock/pl0756-dockview.spec.ts`
@@ -135,32 +136,8 @@ test.describe.skip("PLAN-0756 dockview 集成（用户 2026-11-10 裁定停用�
         expectNoPageFailures(collectPageFailures(page));
     });
 
-    test("V5 dock mode derives from the breakpoint and honours the manual override", async ({
-        page,
-    }) => {
-        await openDock(page, "code");
-
-        // ≥1800 → pinned 派生；dockModeManual 未置位。
-        await expect
-            .poll(async () => (await readLayout(page)).dockMode, { timeout: EXPECT_TIMEOUT_MS })
-            .toBe("pinned");
-        await expect
-            .poll(async () => (await readLayout(page)).dockModeManual, {
-                timeout: EXPECT_TIMEOUT_MS,
-            })
-            .toBe(false);
-
-        // 手选优先：切换后 dockModeManual=true 且持久 dockMode 为用户选择。
-        await page.click('[data-testid="dock-mode-toggle"]');
-        await expect
-            .poll(async () => (await readLayout(page)).dockMode, { timeout: EXPECT_TIMEOUT_MS })
-            .toBe("floating");
-        await expect
-            .poll(async () => (await readLayout(page)).dockModeManual, {
-                timeout: EXPECT_TIMEOUT_MS,
-            })
-            .toBe(true);
-
-        expectNoPageFailures(collectPageFailures(page));
-    });
+    // task-179：原 V5「断点派生 + 手选优先」整条随 floating 退场而失效——它测的
+    // dockModeManual / dock-mode-toggle / floating 派生都已在 task-94 S1 + task-162 删除
+    // （D-1754 ④：右栏恒为正常列）。翻旗重启用时如需覆盖「组间比例」语义，按 BL-561
+    // 的 dockSashA11y 契约另写，不要复活本条。
 });
