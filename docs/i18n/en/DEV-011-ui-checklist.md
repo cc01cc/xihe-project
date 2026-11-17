@@ -132,6 +132,90 @@ status: active
 
 > **Interaction trap (measured 2026-11-12) | `AlertDialogAction` closes first and wipes the pending decision**: `AlertDialogAction` wraps reka-ui's `DialogClose` and closes **unconditionally** on click; the close synchronously fires `@update:open` first, so a "payload to submit on confirm" held in a ref is cleared by that handler before **your own click handler** runs — it then reads `null`, the confirm dialog is already gone, and **no request is ever sent** (task-312). **How to recognise it**: all copy assertions pass while the request never fires — the dialog did open and the wording did match, yet the call count stays 0 (`expected "vi.fn()" to be called 1 times, but got 0 times`). That red is routinely misread as "the mock isn't wired", because nothing on screen looks wrong, so the fix people reach for is a more realistic mock — which cannot help. **First check**: log the payload inside the click handler; `null` means this trap. **Fix**: never let `AlertDialogAction` carry an action with a side effect — use a plain `Button` and control the close order yourself (grab payload → close → submit); measured in `components/settings/PersonalSkillCreateDialog.vue`.
 
+
+## 10. Attention budget and the danger-red two-stage criterion (user ruling 2026-11-03; `task-109` probe 2026-11-17)
+
+> **This section exists on the zh-Hans side as well; the two sides are structurally divergent.** The zh-Hans file numbers it
+> `## 10. 注意力预算` — do not translate an English section number back into a zh-Hans one, or you will edit the wrong section.
+
+**Principle**: visual weight (colour, contrast, fill) is allocated by **what attention is for**, not by element identity.
+Before colouring a new element, ask three questions: how often is it used, how irreversible is it, how hard is it to find?
+**Only actions where a mistake is likely deserve colour**; frequent-but-harmless or low-frequency-but-obvious actions stay neutral.
+
+### Ladder (L0–L4)
+
+| Level | Purpose | Allowed treatment | Per-screen budget |
+| --- | --- | --- | --- |
+| L0 Surface | page/card background | white / near-white / light grey | unlimited |
+| L1 Content | body text, headings | dark grey text; hierarchy carried by size and weight | unlimited |
+| L2 Actionable | buttons, borders, icons, hover | mid-grey border + text; hover adds a light wash only | unlimited |
+| L3 Emphasis | primary CTA, selection indicator, focus ring | may take colour, but **1–2 places only** | ≤ 2 |
+| L4 Danger | delete, overwrite, irreversible | **red, and only at the confirmation step** | ≤ 1 |
+
+Decision question: **if this element disappeared, would the user take a wrong action?** Yes → L3/L4; no → L2, no colour.
+
+### Danger red: two orthogonal axes, judged separately
+
+The ladder's "red only at the confirmation step" (axis B) and "only mistakes deserve colour" (axis A) are **independent**.
+Collapsing them into one judgement produces the classic error: reading "this should have had a confirmation" as "this should not be red".
+
+| Axis | Question | If yes | Who judges |
+| --- | --- | --- | --- |
+| **A — should it be red at all** | If this element disappeared, would the user take a wrong action? | Yes ⇒ L3/L4; no ⇒ L2, no colour | **Human** (needs business semantics: reversibility, uncommitted state, rollback surface) |
+| **B — which stage carries the red** | Is the red present **only at the confirmation step**? | No ⇒ violation | **Machine** (static scan, below) |
+
+**The order cannot be reversed.** Decide A, then B. If A says "a mistake is likely" while the confirmation surface **does not exist yet**,
+the finding is **missing confirmation**, not "should not be red". Recolouring at that point **hides** the dangerous action
+(neutral colour plus a one-click irreversible delete) and is worse than the status quo. Correct order: **build the confirmation surface first, so the red has a place to land**.
+
+### Axis B: four states, machine-checkable
+
+The unit of judgement is **an element in a stage** — not a component, not an action. The entry control and the confirm control of one action
+are two separate judgements with different verdicts.
+
+| State | Meaning | Verdict | Typical form |
+| --- | --- | --- | --- |
+| `ENTRY_STATIC` | red is present in the static face and not inside a confirm surface | **violation** | `class="text-destructive"` |
+| `CONFIRM_SURFACE` | element sits inside a confirm container | compliant | `bg-destructive` inside `BaseModal` / `ConfirmModal` / `AlertDialogContent` |
+| `HOVER_ONLY` | the only red token is in an interaction segment (`hover:` / `focus:` / `active:` / `peer-*:` …) | compliant | `text-muted-foreground hover:text-destructive` |
+| `STATE_GATED` | red appears only in a dynamic conditional branch | compliant | `:class="pending ? 'text-destructive' : 'text-muted-foreground'"` |
+
+### Three boundaries that are easy to get wrong (each pinned by a counter-fixture)
+
+1. **Visibility gating is not colour gating.** `opacity-0 group-hover:opacity-100` only makes the control *visible* on hover; the colour itself is still a static red ⇒ `ENTRY_STATIC`. The criterion is **which body the colour token sits in**, not when it becomes visible.
+2. **A red confirmation surface does not excuse a red entry.** If one action has both, the entry still violates.
+3. **A conditional branch must be reachable both ways.** An object-literal `:class` key whose value is the **literal `true`** (`{ 'text-destructive': true }`) is not a branch ⇒ `ENTRY_STATIC`; only a ternary or a variable-keyed object with **both branches reachable** counts as `STATE_GATED`.
+
+### Executable criterion (`internal/A03-xihe/scripts/check-danger-entry.mjs`)
+
+The criterion text is the script's exported `CRITERION` constant, kept word-for-word identical to this section (`D-1767`: only document what a machine can check).
+**Verbatim source (do not reword the punctuation or arrows — these lines *are* the machine criterion)**:
+
+```js
+CRITERION = {
+    id: "DEV-011:155",
+    question: "这个元素如果消失，用户会误操作吗？",
+    answerYes: "会 -> L3/L4；L4 危险红按 :153 只在确认时出现",
+    answerNo: "不会 -> L2，不许上色",
+    ladder: "DEV-011:153 L4 危险 = 红，只在【确认时】出现，每屏 <= 1",
+}
+```
+
+> The values are **intentionally kept in Chinese**: `CRITERION` is a machine-readable constant whose source of truth is the script,
+> and the zh-Hans document quotes it verbatim. Translating them here would create a second wording that no tool compares against.
+
+```bash
+node internal/A03-xihe/scripts/check-danger-entry.mjs --selftest   # fixtures + bidirectional mutation; exit 0 means the criterion itself is trustworthy
+node internal/A03-xihe/scripts/check-danger-entry.mjs              # full-repo scan, compares against baseline; exit 1 = new violations
+node internal/A03-xihe/scripts/check-danger-entry.mjs --write-baseline  # accept current state (idempotent: two writes on one tree share a sha)
+```
+
+**The criterion must be able to go red**: `--selftest` runs a **bidirectional mutation** — moving the confirm-surface red onto the entry must flip to `RED`;
+moving the entry red back onto the confirm surface must flip to `GREEN`. A criterion that only verifies one direction is a biased instrument, and the next defect passes through it.
+
+**Known limitation** (state it, or the next reader treats it as a bug): the confirm arm of an inline two-stage confirmation (the second button rendered
+by a `v-if` on the same row) is not inside a confirm container and is reported as `ENTRY_STATIC`; the scan annotates it with the `<v-if condition>` so a human can judge.
+It deliberately does **not** treat every conditional branch as compliant — that would remove the bite from the entire "red at the entry" category.
 ## 11. UI review dimensions (screenshot review, user ruling 2026-11-11, D-926 / D-927)
 
 > The user's words: after UI work is done, review it from screenshots first — "button layout and whether each button means something; fonts, icons, overall interaction and static elements".
