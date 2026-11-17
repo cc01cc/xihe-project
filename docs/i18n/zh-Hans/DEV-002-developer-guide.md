@@ -356,6 +356,61 @@ mise run pkg:installer                                 # 从既有四个服务�
 - 开发机上 `pkg:launcher status` 会把 `dev:host` 的监听报成 `foreignListeners` 并返回 `ok:false`（exit 1）—— 这是"当前不是打包安装"的正确回答，不是故障。
 - 未覆盖的能力清单（本版不做自动更新/开机自启/代码签名/多用户服务安装）见 `plans/archive/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`。
 
+#### E.1 实测落地路径（task-187，2026-11-18）[实测]
+
+> 本节固化 task-187 实证通过的**产品部署**路径（非日常开发）。日常仍用模式 A。
+> **两条 launcher 别混**：产品首跑/起停用**随包 Java Launcher**（`app/xihe-launcher.jar`，做 secrets/initdb/pgvector/数据根/JDBC 引导）；`mise run pkg:launcher`（Node `scripts/pkg/launcher.mjs`）是**开发/冒烟监督器，不做 first-run**（未初始化数据目录直接报错）。本节命令一律指 Java Launcher。
+
+**① 构建 stage（只组装，不跑 makensis）**
+
+```bash
+# cwd = A03-xihe/；产物只落 .tmp/pkg/（gitignored）
+node scripts/pkg/build-installer.mjs --stage-only \
+  --empirical-pgvector "<pgvector dist 目录>" \
+  --runtime-exe "<xihe-runtime.exe>"
+# 或经 mise：mise run pkg:installer -- --stage-only --empirical-pgvector <dir> --runtime-exe <exe>
+```
+
+- `--empirical-pgvector <dir>`：**D-1817 参数化旁路**，默认关；给定时用目录内自建 pgvector 产物，但 **ship 的 sha 门原样不动**、打印完整 provenance 与 `EMPIRICAL — NOT FOR SHIPPING` 标记、审计落 `.tmp/pkg/empirical-audit.log`。仅当正版 pgvector 输入不可得时用于实证，**发布不得带此参数**。
+- **PG share-trim keep-set v2（task-187 修）**：CP Flyway V163 需 `ltree`（`V163__plan0773_org_units.sql:43`）；keep-set 仅留 plpgsql 会让 CP 起不来（`extension "ltree" is not available`）。现保留 plpgsql 全套 + ltree 全套（control + 1.1 基脚本 + 1.1→1.2→1.3 升级链）。`PG_SHARE_TRIM_VERSION` 已 v2——改 keep-set 必须 bump，否则 stamp 不变会复用旧缓存。
+
+**② 单实例首跑起停（产品 Java Launcher）**
+
+```bash
+S=<stage 目录>; LA=<数据根，如 /d/tmp/xh/la-1>
+export LOCALAPPDATA="$LA"        # 数据根 = <LOCALAPPDATA>/Xihe（PG 簇/secrets/workspaces/attachments）
+"$S/payload/jre/bin/java.exe" -jar "$S/app/xihe-launcher.jar" start \
+  --install "$S" --no-browser --cleanup-on-failure
+```
+
+- **start 阻塞**过 pg→cp→agent→runtime→ui 门后 exit 0，留 detached 子进程（无 Job Object）。首跑链：secrets 7 keys(owner-only ACL) → security env=prod 5/5 → pgvector 安装 → initdb → db-bootstrap(role xihe/db xihe_1/extension vector/SELECT 1) → CP(Flyway 含 V163) → agent → runtime → ui。
+- **webui = CP 同源**（D32-06）：`GET http://127.0.0.1:<cpPort>/` = 200；`/actuator/health` = 200。
+- **status**：`... status --install "$S"` 输出每服务 alive/ready + 「stack is up」。**注意 status 进程 exit=1 但「stack is up」——判活看文本，不看 exit**。
+- **stop**：`... stop --install "$S"` 逆序树 kill + 残留端口复核；成功输出 `residual=[]` + pid 文件移除。
+- **执行纪律（否则挂）**：launcher 子进程 detach 但**继承 stdout 管道** ⇒ **禁 `start | tee`**（tee 等子进程永不 EOF）；重定向到文件。DSH/agent 工具调用时**用 run_in_background + job_output**（前台 ops_bash 会等 detached 子进程句柄而挂）；start→验证→stop 放同一 job 内，避免 job 结束连坐杀死服务。
+
+**③ 双实例（端口/DB/数据根隔离）**
+
+```bash
+# 实例 A：stack-1 端口 12631-34，数据根 la-1（stage 默认 app/ports.json）
+# 实例 B：独立数据根 la-2 + 独立 ports.json（自定义干净端口段，如 12730-34）
+node scripts/pkg/ports-json.mjs --stack stack-2 --out <stage2>/app/ports.json   # 或手写干净段
+# payload 可 junction 共享（只读）：<stage2>/payload -> <stage1>/payload
+```
+
+- **隔离三杠杆**：① `app/ports.json` 的 5 端口；② env `LOCALAPPDATA` 数据根（各实例独立 PG 簇/secrets/workspaces）；③ 独立 install 目录（logs/pid 文件）。payload 可 junction 共享省盘。
+- **同刻双 webui 可达**：A `GET :1263x/`=200 + B `GET :1273x/`=200（不同端口同刻）。
+- **数据隔离实证口径**：A 注册用户 → B 用同凭据登录应 401；A 建 workspace → B 列表不含它、B 直访该 workspaceId 应 404 `WORKSPACE_NOT_FOUND`。
+- **Windows TIME_WAIT 坑**：Windows postgres **无 SO_REUSEADDR** ⇒ pg 端口若被反复 probe 留下 TIME_WAIT，bind 直接失败（`could not bind ... Only one usage`，即便无 LISTEN）。**给第二实例用从未 probe 过的干净端口段**（如 12730-34），别复用刚失败过的段。
+- **起停+验证同一 job 且后台跑**（理由同 ②）。
+
+**④ 已知限制（如实登记，未达项）**
+
+- **NSIS Setup.exe 未验**：`makensis` 未装、宿主安装需用户批准 ⇒ 安装器壳未跑；本路径走 **stage + Java Launcher**（功能等价，非双击安装器形态）。要验 NSIS 需用户批宿主安装 + 装 makensis。
+- **launcher 硬编码 stack-1/xihe_1**（`Launcher.java` @1048/1050/1074）：双实例 DB 名都叫 `xihe_1`、stack-id 都 `stack-1`，但**簇各自独立**（不同 dataRoot）⇒ 隔离成立，DB 名仅外观。要正规多栈需改 launcher 读 ports.json 的 stackId（属代码改动，本卡只文档化）。
+- **status exit=1**：判活看文本（见 ②）。
+- **产物/证据落点**：骨架 stage 落 `.tmp/pkg/`；完整实证 `internal/A03-xihe/evidence/2026-11-18-exe-dual-instance-infra/`。
+
 ## 4. 全栈调试（自 DEV-005-fullstack 并入）
 
 ```bash

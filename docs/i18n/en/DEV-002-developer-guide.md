@@ -333,6 +333,61 @@ mise run pkg:installer                                  # NSIS build from the fo
 - On a dev machine `pkg:launcher status` reports the `dev:host` listeners as `foreignListeners` and returns `ok:false` (exit 1): that is the correct answer to "this is not a packaged install", not a failure.
 - Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/archive/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
 
+##### Empirical landing path (task-187, 2026-11-18) [measured]
+
+> This section records the **product deployment** path proven by the task-187 empirical run (not the daily dev path — that stays Mode A).
+> **Do not mix the two launchers**: the product first run / start / stop uses the **bundled Java launcher** (`app/xihe-launcher.jar` — it does secrets / initdb / pgvector / data root / JDBC bootstrap); `mise run pkg:launcher` (Node `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor and does no first-run work** (an uninitialized data directory fails outright). Every command below targets the Java launcher.
+
+**Build the stage (assemble only; no makensis)**
+
+```bash
+# cwd = A03-xihe/; artifacts land only under .tmp/pkg/ (gitignored)
+node scripts/pkg/build-installer.mjs --stage-only \
+  --empirical-pgvector "<pgvector dist dir>" \
+  --runtime-exe "<xihe-runtime.exe>"
+# or via mise: mise run pkg:installer -- --stage-only --empirical-pgvector <dir> --runtime-exe <exe>
+```
+
+- `--empirical-pgvector <dir>`: the **D-1817 parameterized bypass**, **off by default**. When given, it uses a locally rebuilt pgvector artifact but **the shipped sha gate is untouched**, prints full provenance plus an `EMPIRICAL — NOT FOR SHIPPING` marker, and appends an audit line to `.tmp/pkg/empirical-audit.log`. Use it only when the genuine pgvector inputs are unavailable for empirical work; **a release must not pass this flag**.
+- **PG share-trim keep-set v2 (fixed by task-187)**: CP Flyway V163 needs `ltree` (`V163__plan0773_org_units.sql:43`); a keep-set with only plpgsql leaves the CP unable to boot (`extension "ltree" is not available`). The set now keeps all of plpgsql plus all of ltree (control + the 1.1 base script + the 1.1→1.2→1.3 upgrade chain). `PG_SHARE_TRIM_VERSION` is now v2 — changing the keep-set **requires a version bump**, otherwise the unchanged stamp reuses the stale cache.
+
+**Single-instance first-run start/stop (product Java launcher)**
+
+```bash
+S=<stage dir>; LA=<data root, e.g. /d/tmp/xh/la-1>
+export LOCALAPPDATA="$LA"        # data root = <LOCALAPPDATA>/Xihe (PG cluster / secrets / workspaces / attachments)
+"$S/payload/jre/bin/java.exe" -jar "$S/app/xihe-launcher.jar" start \
+  --install "$S" --no-browser --cleanup-on-failure
+```
+
+- **`start` blocks** through the pg→cp→agent→runtime→ui gates, then exits 0 leaving detached children (no Job Object). First-run chain: secrets (7 keys, owner-only ACL) → security env=prod 5/5 → pgvector install → initdb → db-bootstrap (role xihe / db xihe_1 / extension vector / SELECT 1) → CP (Flyway incl. V163) → agent → runtime → ui.
+- **webui = CP same-origin** (D32-06): `GET http://127.0.0.1:<cpPort>/` = 200; `/actuator/health` = 200.
+- **status**: `... status --install "$S"` prints each service's alive/ready plus "stack is up". **Note the status process exits 1 even when "stack is up" — judge liveness by the text, not the exit code.**
+- **stop**: `... stop --install "$S"` kills the tree in reverse order and rechecks residual ports; success prints `residual=[]` and removes the pid file.
+- **Execution discipline (or it hangs)**: launcher children detach but **inherit the stdout pipe** ⇒ **never pipe `start` into `tee`** (tee waits forever on the children); redirect to a file instead. Under a DSH/agent tool call **run it in the background + collect with job_output** (a foreground ops_bash waits on the detached children's handles and hangs); keep start→verify→stop inside one job so the job ending does not take the services down with it.
+
+**Dual instance (port / DB / data-root isolation)**
+
+```bash
+# instance A: stack-1 ports 12631-34, data root la-1 (stage's default app/ports.json)
+# instance B: own data root la-2 + own ports.json (a clean custom range, e.g. 12730-34)
+node scripts/pkg/ports-json.mjs --stack stack-2 --out <stage2>/app/ports.json   # or hand-write a clean range
+# the payload may be junction-shared (read-only): <stage2>/payload -> <stage1>/payload
+```
+
+- **Three isolation levers**: ① the five ports in `app/ports.json`; ② the `LOCALAPPDATA` data root (each instance gets its own PG cluster / secrets / workspaces); ③ a separate install directory (logs / pid file). The payload may be junction-shared to save disk.
+- **Both webui reachable at the same moment**: A `GET :1263x/`=200 + B `GET :1273x/`=200 (different ports, same moment).
+- **Data-isolation check**: register a user in A → logging in with the same credentials against B must return 401; create a workspace in A → B's list must not contain it and B directly requesting that workspaceId must return 404 `WORKSPACE_NOT_FOUND`.
+- **Windows TIME_WAIT trap**: Windows postgres **has no SO_REUSEADDR** ⇒ if a pg port accumulated TIME_WAIT from repeated probes, bind fails outright (`could not bind ... Only one usage`, even with no LISTEN). **Give the second instance a clean range never probed before** (e.g. 12730-34); do not reuse a range that just failed.
+- **Start/verify/stop in one job, run in the background** (same reason as above).
+
+**Known limitations (recorded as-is; unverified items)**
+
+- **NSIS Setup.exe unverified**: `makensis` is not installed and a host install needs user approval ⇒ the installer shell was not run; this path uses **stage + Java launcher** (functionally equivalent, not the double-click installer shape). Verifying NSIS needs user approval for a host install plus makensis.
+- **launcher hardcodes stack-1 / xihe_1** (`Launcher.java` @1048/1050/1074): both instances name the DB `xihe_1` and the stack `stack-1`, but the **clusters are separate** (different data roots) ⇒ isolation holds; the DB name is cosmetic. Proper multi-stack needs the launcher to read the stackId from ports.json (a code change; this card only documents).
+- **status exit=1**: judge liveness by the text (see above).
+- **Artifacts / evidence**: the skeleton stage lands under `.tmp/pkg/`; full evidence is `internal/A03-xihe/evidence/2026-11-18-exe-dual-instance-infra/`.
+
 #### Rust build cache and worktree isolation (PLAN-0596)
 
 - **Configurable build-output root (task-80, 2026-11-08; supersedes "Rust build output must stay on H:")**: Rust build output no longer has to live on the H: volume. `XH_CARGO_TARGET_ROOT` (the machine value lives in the gitignored `mise.local.toml` — on one dev box that reads e.g. `G:\zeolib\cargo-target`; no machine path is committed) relocates the whole cargo target family; the primary checkout gets `<root>/{main,stack-N,e2e}`, a linked worktree gets `<root>/<worktree-dir>/…` (so two lanes running the same stack id do not each overwrite the other's exe — the BL-221 failure mode). Precedence: `CARGO_TARGET_DIR` (`worktree-env.ps1` / manual) > `XH_CARGO_TARGET_ROOT` > old derivation `<one>/.tmp/cargo-target`; **unset ⇒ byte-for-byte the pre-080 behavior** (regression asserted in `scripts/lib/stack-cargo-target.test.mjs`). A relative or non-existent root makes the scripts **fail fast** instead of silently building on the old volume. To change the drive use `mise.local.toml` (gitignored, outranks `mise.toml`; exporting the variable in a shell does **not** win under `mise run` — measured 2026-11-08, mise `[env]` overrides the parent environment). **Scope:** mise cargo tasks that run through `scripts/cargo-run.mjs` land on `<root>`; **bare `cargo` that bypasses the wrapper, plus the IDE/rust-analyzer, still write the H: volume per `.cargo/config.toml`** (`target-dir = "../.tmp/cargo-target/main"` is deliberately kept; see below). **Net effect: the dev stacks, E2E, and wrapper-backed mise tasks no longer add H: usage; bare `cargo` and the IDE still do.**
