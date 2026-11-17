@@ -273,3 +273,130 @@ describe("useSplitterPanelBridge — layout 就绪前排队（task-51 / A）", (
         }
     });
 });
+/**
+ * task-147（P0）：**collapse()/expand() 与 resizeToWidth() 同口径 gate `layoutReady`**。
+ *
+ * 崩栈（实测 1280/1440/1455 崩、1460 不崩）：
+ * ```
+ * assert(panelSize != null) ← SplitterGroup.js:383 collapsePanel
+ *                          ← UseSplitterPanelBridge collapse()
+ *                          ← AppLayout.vue watch(navPanelCollapsed) (flush: "post")
+ * ```
+ * 下面把三件事钉住：①就绪前三条入口一律只排队、不碰 reka；②就绪后**按调用顺序**重放
+ * （宽度可合并、状态转移不可合并）；③排队不是吞掉 —— 返回值 / pendingCount 让调用方
+ * 分得清「已生效」与「已排队」，卸载仍有排队时按笔数记 dropped。
+ */
+describe("useSplitterPanelBridge — collapse/expand 也要 gate layoutReady（task-147）", () => {
+    it("就绪前 collapse/expand 一律不碰 reka：返回 false、排队计数、零丢弃", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        expect(host.bridge.collapse()).toBe(false);
+        expect(host.bridge.expand()).toBe(false);
+        expect(host.bridge.collapse()).toBe(false);
+        expect(host.panel.collapse).not.toHaveBeenCalled();
+        expect(host.panel.expand).not.toHaveBeenCalled();
+        // 排队不是吞掉：意图都在队列里，且没有被记成丢弃。
+        expect(host.bridge.pendingCount.value).toBe(3);
+        expect(host.bridge.dropped.value).toBe(0);
+        expect(host.bridge.layoutReady.value).toBe(false);
+    });
+
+    it("首帧 @resize 到达后按调用顺序重放（expand 在 resize 之前，宽度用排队值）", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        // AppLayout.vue:171-185 的真实顺序：展开后同拍再夹一次显示宽度。
+        host.bridge.expand();
+        host.bridge.resizeToWidth(260);
+        expect(host.bridge.pendingCount.value).toBe(2);
+
+        host.bridge.onResize(20); // reka 的 layout 初始化信号
+
+        expect(host.panel.expand).toHaveBeenCalledTimes(1);
+        expect(host.panel.resize).toHaveBeenCalledTimes(1);
+        expect(host.panel.resize).toHaveBeenCalledWith(260);
+        // 顺序是语义：expand 会用 panelSizeBeforeCollapse 覆盖布局，排在 resize 之后就会
+        // 把那笔宽度冲掉（见 useSplitterPanelBridge 的 enqueue 注释）。
+        expect(host.panel.expand.mock.invocationCallOrder[0]).toBeLessThan(
+            host.panel.resize.mock.invocationCallOrder[0] as number,
+        );
+        expect(host.bridge.pendingCount.value).toBe(0);
+        expect(host.bridge.layoutReady.value).toBe(true);
+        expect(host.bridge.dropped.value).toBe(0);
+    });
+
+    it("状态转移不合并：collapse→expand→collapse 三笔 1:1 重放，最终态不翻转", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        host.bridge.collapse();
+        host.bridge.expand();
+        host.bridge.collapse();
+        // 宽度那套「后写覆盖」不能套到状态上：合并成「最后一笔」会把中间那次 expand 抹掉，
+        // 而它决定了 panelSizeBeforeCollapse 的记账与后续宽度的生效顺序。
+        expect(host.bridge.coalesced.value).toBe(0);
+        expect(host.bridge.pendingCount.value).toBe(3);
+
+        host.bridge.onResize(20);
+
+        expect(host.panel.collapse).toHaveBeenCalledTimes(2);
+        expect(host.panel.expand).toHaveBeenCalledTimes(1);
+        const order = [
+            ...host.panel.collapse.mock.invocationCallOrder.map(
+                (n, i) => ["collapse", n, i] as const,
+            ),
+            ...host.panel.expand.mock.invocationCallOrder.map((n, i) => ["expand", n, i] as const),
+        ]
+            .sort((a, b) => a[1] - b[1])
+            .map(([kind]) => kind);
+        expect(order).toEqual(["collapse", "expand", "collapse"]);
+        expect(host.bridge.pendingCount.value).toBe(0);
+    });
+
+    it("宽度只在**相邻同类型**时合并；被状态转移隔开的两笔都保留", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        host.bridge.resizeToWidth(300);
+        host.bridge.collapse();
+        host.bridge.resizeToWidth(320);
+        expect(host.bridge.coalesced.value).toBe(0); // 隔着一次转移 ⇒ 不合并
+        expect(host.bridge.pendingCount.value).toBe(3);
+
+        host.bridge.onResize(20);
+
+        expect(host.panel.resize.mock.calls.map((call) => call[0])).toEqual([300, 320]);
+        expect(host.panel.collapse).toHaveBeenCalledTimes(1);
+        // 相对位置也保住了：300 在 collapse 之前、320 在之后。
+        const order = [
+            ["resize300", host.panel.resize.mock.invocationCallOrder[0] as number],
+            ["collapse", host.panel.collapse.mock.invocationCallOrder[0] as number],
+            ["resize320", host.panel.resize.mock.invocationCallOrder[1] as number],
+        ]
+            .sort((left, right) => left[1] - right[1])
+            .map(([label]) => label);
+        expect(order).toEqual(["resize300", "collapse", "resize320"]);
+    });
+
+    it("就绪后三条入口直通 reka 并返回 true（不是排队）", () => {
+        const host = mountHost({ width: 240, identityWidths: true });
+        expect(host.bridge.collapse()).toBe(true);
+        expect(host.bridge.expand()).toBe(true);
+        expect(host.bridge.resizeToWidth(300)).toBe(true);
+        expect(host.panel.collapse).toHaveBeenCalledTimes(1);
+        expect(host.panel.expand).toHaveBeenCalledTimes(1);
+        expect(host.panel.resize).toHaveBeenCalledWith(300);
+        expect(host.bridge.pendingCount.value).toBe(0);
+    });
+
+    it("layout 始终没就绪 ⇒ 卸载时按**笔数**记丢弃，warn 只出一条（不静默）", () => {
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+        try {
+            const host = mountHost({ width: 240, identityWidths: true, ready: false });
+            host.bridge.collapse();
+            host.bridge.expand();
+            host.bridge.resizeToWidth(300);
+            expect(host.panel.collapse).not.toHaveBeenCalled();
+            host.wrapper.unmount();
+            expect(host.bridge.dropped.value).toBe(3);
+            expect(host.bridge.pendingCount.value).toBe(0);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(String(warn.mock.calls[0]?.[0])).toContain("layout 始终未就绪");
+        } finally {
+            warn.mockRestore();
+        }
+    });
+});

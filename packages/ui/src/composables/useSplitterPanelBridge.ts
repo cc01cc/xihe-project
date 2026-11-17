@@ -18,7 +18,10 @@ import { logger } from "../lib/logger";
  *   handlers) through a capture-phase listener on the SplitterGroup ancestor;
  *   preventDefault stops reka's percent-based internal resize (ruling ①);
  * - collapse()/expand() bridge navOpen/navYielded-style state machines without
- *   touching min constraints (collapse may go below minSize by design);
+ *   touching min constraints (collapse may go below minSize by design); they are
+ *   gated on layoutReady **exactly like resizeToWidth** (task-147: reka's
+ *   collapsePanel asserts on a layout it has not initialized yet) and replayed in
+ *   order once the first @resize proves the layout exists;
  * - viewport changes re-issue resize(displayClamp(userWidth)) - ruling ③'s
  *   watcher - so a display clamp crossing never lands in the store.
  */
@@ -69,6 +72,12 @@ export interface SplitterPanelExposed {
 
 const RESIZE_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
 
+/**
+ * 就绪前积压的**命令式意图**。三种形态共用**一条有序队列**（而不是 width / transition
+ * 两条队列），理由见 `enqueue` 的注释。
+ */
+type PanelIntent = { kind: "resize"; width: number } | { kind: "collapse" } | { kind: "expand" };
+
 export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
     const panelRef = ref<SplitterPanelExposed | null>(null);
     /** Start/end only: toggles the bubble and is-resizing; never tracks the pointer. */
@@ -102,12 +111,28 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
      * <p>为什么必须有这道门：`SplitterPanel.resize()` 在 layout 还没初始化时走
      * `SplitterGroup.js:315-316` 的 `assert(panelSize != null)` **硬抛**（`utils/assert.js:5`），
      * 在 `:ref` 投递后的 nextTick 里调用它会变成一条未处理的 Promise rejection
-     * （task-51 实测 3 条）。vendor 不提供 `isLayoutReady`，只在文档里写「resize(1-100)」
-     * （`docs/content/meta/SplitterPanel.md`）—— 所以就绪判据只能由我们按上面那条 vendor 事实来定。</p>
+     * （task-51 实测 3 条）。**collapse()/expand() 是同一道门**（task-147）：`collapsePanel`
+     * 在 `SplitterGroup.js:383` 对同一个 `panelSize` 断言，而从 `AppLayout.vue` 的 watcher
+     * 抛出去就是整页崩（那正是「pinned 右栏 + 会话列让位」的必经时序）。vendor 不提供
+     * `isLayoutReady`，只在文档里写「resize(1-100)」（`docs/content/meta/SplitterPanel.md`）
+     * —— 所以就绪判据只能由我们按上面那条 vendor 事实来定，且三条入口必须共用它。</p>
      */
-    let layoutReady = false;
-    /** 排队中的宽度意图：**单槽、后写覆盖**（宽度是绝对值，中间值无意义，绝不 append）。 */
-    let pendingWidth: number | null = null;
+    const layoutReady = ref(false);
+    /**
+     * 就绪前积压的意图，**有序**（见 `enqueue` / `flushPendingIntents`）。
+     *
+     * <p>task-147：这个槽原先只装宽度（`pendingWidth: number | null`，单槽后写覆盖）。
+     * collapse()/expand() 当时**没过这道门**，而它们在 layout 未初始化时调
+     * `SplitterGroup.js:377-405` 的 `collapsePanel`，那里的
+     * `assert(panelSize != null, 'Panel size not found')` 取的是 `layout[panelIndex]`
+     * （`panelDataHelper`，同文件 `:488-500`）—— layout 还没初始化时它是 `undefined` ⇒
+     * **硬抛**。触发路径是 pinned 右栏把主列挤到 <640/720，工作台的既测量值让会话列
+     * （本面板）让位 ⇒ `navPanelCollapsed` 翻转 ⇒ `AppLayout.vue` 的 watch 在我们的
+     * 首帧 `@resize` 之前就调了 collapse()（实测 1280/1440/1455 崩，1460 不崩）。</p>
+     */
+    const pendingIntents: PanelIntent[] = [];
+    /** 排队深度（给调用方/测试读的投影；`layoutReady` 是唯一真相，这个只是它的影子）。 */
+    const pendingCount = ref(0);
     /**
      * **合并**计数：排队值被新值取代。这是**正常路径**（viewport 连续变化 / DevTools 开合都会发生），
      * 所以只计数、不告警，且**不参与**「正常路径恒 0」这条不变量。
@@ -130,7 +155,7 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
                 options.handleId +
                 ": " +
                 reason +
-                "；本次宽度变更被丢弃（累计 " +
+                "；本次意图被丢弃（累计 " +
                 dropped.value +
                 " 次）",
         );
@@ -156,13 +181,80 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         panel.resize(options.sizeUnit ? options.sizeUnit.fromPx(px) : px);
     }
 
-    /** 首帧尺寸到达 ⇒ layout 已初始化，把排队的那一笔补上（只有这一笔）。 */
+    /** 折叠/展开的唯一出口：与 applyResize 同口径——引用不在就记丢弃，绝不静默。 */
+    function applyTransition(kind: "collapse" | "expand"): void {
+        const panel = panelRef.value;
+        if (!panel) {
+            warnDrop("面板引用已释放");
+            return;
+        }
+        if (kind === "collapse") panel.collapse();
+        else panel.expand();
+    }
+
+    /** 执行一条意图（就绪后的公共出口；排队与直通走同一份代码）。 */
+    function applyIntent(intent: PanelIntent): void {
+        if (intent.kind === "resize") applyResize(intent.width);
+        else applyTransition(intent.kind);
+    }
+
+    function syncPendingCount(): void {
+        pendingCount.value = pendingIntents.length;
+    }
+
+    /**
+     * 就绪前入队。
+     *
+     * <p>**一条有序队列，不是 width / transition 两条队列**（task-147 的判据）：</p>
+     * <ul>
+     *   <li><b>跨类别的顺序是语义，不是实现细节。</b> `AppLayout.vue` 在展开时先
+     *       `expand()` 再 `resizeToWidth(effectiveNavWidth)`——reka 的 `expandPanel` 会
+     *       用 `panelSizeBeforeCollapseRef` 的旧尺寸**覆盖**布局（`SplitterGroup.js:407-435`），
+     *       所以那条 resize 必须落在 expand **之后**；反过来「先夹取宽度、再因让位折叠」
+     *       要求 resize 落在 collapse **之前**。任何固定的「先刷宽度再刷状态」或反向顺序
+     *       都会把其中一个方向做错 ⇒ 只有按调用顺序重放才对。</li>
+     *   <li><b>宽度可以合并，状态转移不可以。</b> 宽度是绝对值：被后写覆盖不改变语义
+     *       （只记 `coalesced`）。折叠/展开是**状态转移**：`collapse → expand → collapse`
+     *       一旦被合并成「最后一笔」或「净效果」，中间那次 expand 就不再发生，而
+     *       `panelSizeBeforeCollapseRef` 的记账、以及它对**后续宽度**的影响都跟着变
+     *       （expand 之后的 resize 才是生效的那笔）⇒ 会翻转最终态。所以转移一律 1:1 入队。</li>
+     *   <li>合并只发生在**相邻且同类**的情形：队尾也是 resize 才替换（见下）。被转移隔开的
+     *       两笔宽度**不合并**——它们的相对位置就是语义。</li>
+     * </ul>
+     */
+    function enqueue(intent: PanelIntent): void {
+        const tail = pendingIntents[pendingIntents.length - 1];
+        if (intent.kind === "resize" && tail?.kind === "resize") {
+            // 覆盖不是「合并」：上一笔意图还没落地就被新值取代 —— 对宽度语义无害（绝对值），
+            // 但它**不是丢弃**（意图被更新仍是意图），所以进 coalesced 而不进 dropped。
+            pendingIntents[pendingIntents.length - 1] = intent;
+            coalesced.value += 1;
+            syncPendingCount();
+            return;
+        }
+        pendingIntents.push(intent);
+        syncPendingCount();
+    }
+
+    /**
+     * 按序重放：逐条 `shift` 出来再执行。用 `while` 而不是「先 copy 再 forEach」是因为
+     * 执行中若再入队（当前无此路径——执行走的是就绪态直通，不会回到 `enqueue`）也同批处理，
+     * 不会留下永不复种的尾巴。`markLayoutReady` 先置位再 flush，因此重放本身不会再入队 ⇒
+     * 循环必然收敛。
+     */
+    function flushPendingIntents(): void {
+        while (pendingIntents.length > 0) {
+            const intent = pendingIntents.shift() as PanelIntent;
+            syncPendingCount();
+            applyIntent(intent);
+        }
+    }
+
+    /** 首帧尺寸到达 ⇒ layout 已初始化，按序补上积压的意图。 */
     function markLayoutReady(): void {
-        if (layoutReady) return;
-        layoutReady = true;
-        const queued = pendingWidth;
-        pendingWidth = null;
-        if (queued !== null) applyResize(queued);
+        if (layoutReady.value) return;
+        layoutReady.value = true;
+        flushPendingIntents();
     }
 
     function onResize(size: number): void {
@@ -224,15 +316,22 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         options.commit(clamped);
     }
 
-    function resizeToWidth(width: number): void {
-        if (!layoutReady) {
-            // 覆盖不是「合并」：上一笔意图还没落地就被新值取代 —— 对宽度语义无害（绝对值），
-            // 但它**不是丢弃**（意图被更新仍是意图），所以进 coalesced 而不进 dropped。
-            if (pendingWidth !== null) coalesced.value += 1;
-            pendingWidth = width;
-            return;
+    /**
+     * 三个命令式入口的返回值统一是「这一笔**此刻**是否已经落到 reka」：
+     * `true` = 已生效；`false` = 已排队（等首帧 @resize 后按序重放）。
+     *
+     * <p>为什么不返回 void：task-147 之前调用方（`AppLayout.vue` 的 watch）在未就绪时
+     * 什么也拿不到，于是「调过了」被当成「做完了」。排队不等于吞掉——它必须有 flush 时机
+     * （首帧 @resize），且调用方要能分辨两者；`pendingCount` / `layoutReady` 提供同一事实的
+     * 响应式投影。</p>
+     */
+    function resizeToWidth(width: number): boolean {
+        if (!layoutReady.value) {
+            enqueue({ kind: "resize", width });
+            return false;
         }
         applyResize(width);
+        return true;
     }
 
     function onDblclick(): void {
@@ -242,12 +341,31 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         options.commit(width);
     }
 
-    function collapse(): void {
-        panelRef.value?.collapse();
+    /**
+     * 折叠：与 `resizeToWidth` **同口径** gate `layoutReady`（task-147）。
+     *
+     * <p>为什么不能「就绪前先调，崩了再说」：未初始化时 reka 的 `collapsePanel` 走
+     * `assert(panelSize != null)`，在 watcher 里抛出的错误会冒到 Vue 的错误处理，
+     * 整块壳跟着挂（实测 pageerror + console error 各一条）。这不是「偶发」，是
+     * 「pinned 右栏 + 会话列让位」这条路的**必经**时序。</p>
+     */
+    function collapse(): boolean {
+        if (!layoutReady.value) {
+            enqueue({ kind: "collapse" });
+            return false;
+        }
+        applyTransition("collapse");
+        return true;
     }
 
-    function expand(): void {
-        panelRef.value?.expand();
+    /** 展开：与 `collapse` 同一道门、同一条队列（顺序由调用方决定，见 `enqueue`）。 */
+    function expand(): boolean {
+        if (!layoutReady.value) {
+            enqueue({ kind: "expand" });
+            return false;
+        }
+        applyTransition("expand");
+        return true;
     }
 
     // Destructured consts keep the narrowing valid inside the watcher callback: an
@@ -265,15 +383,24 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
     }
 
     // 卸载时还有排队 ⇒ 意图消失（不是合并），必须响亮地记一次再清槽。
+    // warn 只出一条（`warnDrop` 的一次性门控），`dropped` 按**笔数**如实计。
     onBeforeUnmount(() => {
-        if (pendingWidth === null) return;
-        pendingWidth = null;
-        warnDrop("layout 始终未就绪，排队的宽度从未生效");
+        if (pendingIntents.length === 0) return;
+        const lost = pendingIntents.length;
+        pendingIntents.length = 0;
+        syncPendingCount();
+        for (let index = 0; index < lost; index += 1) {
+            warnDrop("layout 始终未就绪，排队的意图从未生效");
+        }
     });
 
     return {
         panelRef,
         resizing,
+        /** reka 是否已报过一次尺寸（= layout 已初始化）；未就绪时三条命令式入口只排队。 */
+        layoutReady,
+        /** 排队深度（`layoutReady` 的影子；调用方据此判断「还没落地」而不是「已经做完」）。 */
+        pendingCount,
         /** 合并计数（正常路径可 >0，不参与不变量）。 */
         coalesced,
         /** 真丢弃计数（正常路径恒 0；测试可直接断言）。 */
