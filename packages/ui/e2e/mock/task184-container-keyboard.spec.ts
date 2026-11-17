@@ -62,9 +62,12 @@ test.describe("task-184 容器页签行键盘契约（BL-561 扩展）", () => {
 
         await page.keyboard.press("F6");
         const afterForward = await focusOf();
-        expect(afterForward.container, "F6 应把焦点移到文件树行").toBe("tree");
-        expect(afterForward.testid, "落点 = 目标行的入口页签").toBe(
-            "workspace-container-tab-tree-tree",
+        // task-65 A 段（`D-1777`/`D-1778`）：容器值域 = {main, right}，文件树**不再是容器行**
+        // （它是右栏的 `files` 面板）。所以 F6 的第二站是**右栏行**，落点 = 该行激活页签，
+        // 而右栏行页签沿用既有 `dock-tab-*` 契约（66+ 消费点不得改名）。
+        expect(afterForward.container, "F6 应把焦点移到右栏行").toBe("right");
+        expect(afterForward.testid, "落点 = 目标行的入口页签（= 右栏激活页签 files）").toBe(
+            "dock-tab-files",
         );
 
         await page.keyboard.press("Shift+F6");

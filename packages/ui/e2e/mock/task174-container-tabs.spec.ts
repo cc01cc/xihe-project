@@ -13,6 +13,15 @@ const SESSION_ID = "task174-session";
  *
  * 读数直接打印成一行 JSON 前缀 `[task174]`，便于贴进卡面；断言只钉前两条硬事实，
  * 其余数字先如实输出 —— 数字变了应当看见变化，而不是被一条宽断言吞掉。
+ *
+ * **task-65 A 段（`D-1777`/`D-1778`，2026-11-17）翻新了容器值域**：`tree` 不再是容器（文件树是
+ * 右栏的 `files` 面板），`CONTAINER_IDS = ["main","right"]`。于是本文件里凡是遍历
+ * `["tree","main"]` 的地方都改成 `["main","right"]`，并新增**判据 8**把「有且只有两栏、
+ * 右栏是正常列不是 overlay」钉死。
+ *
+ * 为什么要专门钉：旧写法对 `tree` 行取的是**空 locator**（行已不存在），`tabs:0 / ariaCurrent:0`
+ * 两条断言因此**空过**（`0 ≤ 1`）—— 读数看着是绿的，实际什么也没断。新写法要求每行的页签数
+ * `> 0`，同类空过会立刻变红。
  */
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const LAYOUT_KEY = "xihe-layout-ws:" + WORKSPACE_ID;
@@ -39,7 +48,8 @@ test.describe("task-174 S2b 容器页签行", () => {
         const globalRows = await page.locator('[data-testid="workspace-tab-bar"]').count();
 
         const perContainer: Record<string, { tabs: number; ariaCurrent: number }> = {};
-        for (const container of ["tree", "main"] as const) {
+        // task-65 A 段：行值域 = {main, right}（`tree` 已不是容器）。
+        for (const container of ["main", "right"] as const) {
             const row = page.locator(
                 `[data-testid="workspace-container-tabs"][data-container="${container}"]`,
             );
@@ -78,7 +88,10 @@ test.describe("task-174 S2b 容器页签行", () => {
         expect(rowCount, "判据1：容器数 == 页签行数").toBe(2);
         expect(new Set(containers.filter(Boolean)).size).toBe(2);
         expect(globalRows, "判据2：顶部不再有全局页签行").toBe(0);
-        for (const container of ["tree", "main"] as const) {
+        for (const container of ["main", "right"] as const) {
+            // 非空前提：行存在且真有页签 —— 否则 `≤1` 会在「行根本没渲染」时空过
+            // （task-65 A 段之前 tree 行的读数是 tabs:0 / ariaCurrent:0，正是这种空过）。
+            expect(perContainer[container]!.tabs, container + " 行必须有页签").toBeGreaterThan(0);
             expect(
                 perContainer[container]!.ariaCurrent,
                 container + " 行内 aria-current ≤1",
@@ -249,5 +262,105 @@ test.describe("task-174 S2b 容器页签行", () => {
         });
         expect(focusBefore, "判据7：页签行可聚焦").not.toBeNull();
         expect(focusAfterArrow, "判据7：焦点未丢失（键盘路径可达）").not.toBeNull();
+    });
+
+    /**
+     * 判据 8（task-65 A 段 / `D-1777`·`D-1778` 卡面验收）：**有且只有两栏**、**右栏不是 overlay**。
+     *
+     * 两件事分开钉，因为会被两种不同的走偏方式破坏：
+     * - 「只有两栏」：若把 right 挤进 main 那一行（读法甲「一个容器内两栏」）⇒ 行数从 2 掉到 1，
+     *   或两行共用同一份 tab 数据源 ⇒ 前两条红。
+     * - 「右栏是正常列」：若 `dockMode: floating` 的 absolute 定位回来（`D-1754 ④` 判据 3 的禁区）
+     *   ⇒ 右栏会盖在主列上 ⇒ 几何/层级三条红。
+     *
+     * 取值全部是**可机器复算**的 DOM 事实（行数 / `data-container` / tab 前缀 / computed position /
+     * 两列矩形不重叠），不写像素魔数。
+     */
+    test("判据 8：有且只有两栏（main + right 各一行），右栏是正常列不是 overlay", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 1920, height: 1080 });
+        await setupMockAuth(page, {});
+        await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "S2b" }] });
+        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        const rows = page.locator('[data-testid="workspace-container-tabs"]');
+        await rows.first().waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
+
+        const containers = await rows.evaluateAll((nodes) =>
+            nodes.map((node) => node.getAttribute("data-container")),
+        );
+        // ① 有且只有两栏，顺序 = 渲染顺序（`CONTAINER_IDS`）。
+        expect(containers, "有且只有两栏：main + right").toEqual(["main", "right"]);
+
+        // ② 两栏是**两个独立容器行**，各自有独立的页签数据源（不是一行内分两栏）。
+        const tabTestidsOf = (container: string) =>
+            page
+                .locator(`[data-testid="workspace-container-tabs"][data-container="${container}"]`)
+                .locator('[role="tab"]')
+                .evaluateAll((nodes) =>
+                    nodes.map((node) => node.getAttribute("data-testid") ?? ""),
+                );
+        const mainTestids = await tabTestidsOf("main");
+        const rightTestids = await tabTestidsOf("right");
+        expect(mainTestids.length, "main 行有页签").toBeGreaterThan(0);
+        expect(rightTestids.length, "right 行有页签").toBeGreaterThan(0);
+        expect(
+            mainTestids.every((id) => id.startsWith("workspace-container-tab-main-")),
+            "main 行页签全走 workspace-container-tab-main-* 前缀",
+        ).toBe(true);
+        expect(
+            rightTestids.every((id) => id.startsWith("dock-tab-")),
+            "right 行页签全走 dock-tab-* 前缀（复用既有 dock 数据源，不新造 IA）",
+        ).toBe(true);
+        // 反面判据：一行里同时含两栏的页签 ⇒ 实现走了「一个容器内两栏」的读法甲。
+        expect(
+            mainTestids.filter((id) => rightTestids.includes(id)),
+            "两行不得共用页签",
+        ).toEqual([]);
+
+        // ③ 右栏行属于右栏面板；右栏是**正常列**：不是 absolute/fixed、不带 z-20 遮盖、
+        //    与主列左右并排不重叠。
+        expect(
+            await rows
+                .nth(1)
+                .evaluate((el) => el.closest('[data-testid="workspace-aux-panel"]') !== null),
+            "右栏行必须渲染在右栏面板内",
+        ).toBe(true);
+        await expect(page.getByTestId("workspace-aux-panel")).toHaveAttribute(
+            "data-dock-mode",
+            "pinned",
+        );
+        const geometry = await page.evaluate(() => {
+            const dock = document.querySelector<HTMLElement>('[data-testid="workspace-aux-panel"]');
+            const main = document.querySelector<HTMLElement>('[data-testid="workspace-main"]');
+            if (!dock || !main) return null;
+            const style = getComputedStyle(dock);
+            const dockBox = dock.getBoundingClientRect();
+            const mainBox = main.getBoundingClientRect();
+            return {
+                position: style.position,
+                zIndex: style.zIndex,
+                dockLeft: dockBox.left,
+                mainRight: mainBox.right,
+                dockWidth: dockBox.width,
+            };
+        });
+        expect(geometry, "右栏面板必须与主列同屏存在").not.toBeNull();
+        const detail = JSON.stringify(geometry);
+        expect(
+            ["static", "relative"].includes(geometry!.position),
+            `右栏不得是 overlay（position 只能是 static/relative）；实际 ${detail}`,
+        ).toBe(true);
+        expect(
+            geometry!.zIndex === "auto" || Number(geometry!.zIndex) === 0,
+            `右栏不得带 z-20 遮盖；实际 ${detail}`,
+        ).toBe(true);
+        expect(
+            geometry!.dockLeft,
+            `右栏左缘必须 ≥ 主列右缘（两列并排、互不覆盖）；实际 ${detail}`,
+        ).toBeGreaterThanOrEqual(geometry!.mainRight - 1);
+        expect(geometry!.dockWidth, `右栏必须有实际宽度；实际 ${detail}`).toBeGreaterThan(0);
+
+        log("judge8", { containers, mainTestids, rightTestids, geometry });
     });
 });

@@ -1445,6 +1445,25 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
+    // task-65 A 段（`D-1777`/`D-1778`）：文件树从「容器级特例」变成**右栏 `files` 面板**，
+    // 且宽屏首启默认就是 active 页签 ⇒ **每个挂工作台的用例**一进页面就打这条路
+    // （`FileTreePanel.vue` → `useWorkspaceGitReadState` → `api.getWorkspaceGitStatus`）。
+    // 没有桩就落 `**/api/v1/**` 的 404 兜底 ⇒ `page-failures` 三通道门把整条用例判红：
+    // 实测 task174/task184/task2/bl576/task353/task369/task497 共 20+ 条**正文断言全过**、
+    // 红只来自这一条 404（红点落点与根因相距最远的那类假红）。
+    // 形状照 `docs/api/openapi.yaml` 的 `GET /workspaces/{workspaceId}/git-status`
+    // （required `isRepository` / `entries`，entry `{status, path}`）：**非 Git 工作区**的
+    // 合法读数就是 `isRepository:false` + 空 entries —— 不虚构脏文件（脏文件数会改文件树徽标，
+    // 那属于各 spec 自己的夹具面；spec 内后注册的 `page.route` 照旧覆盖本桩）。
+    await page.route("**/api/v1/workspaces/*/git-status", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ isRepository: false, entries: [] }),
+        });
+    });
+
     // task-174 定向读数：`GET /workspaces/{id}/scheduled-tasks?size=200` 之前没有桩 ⇒ 落到真
     // 服务端 404，而 mock 测试的严格控制台断言（`page-failures.ts`）把 404 记为失败 ⇒ 读数用例
     // 明明拿到了数却永远红。这里补**只读列表**桩：正则限定路径以 `/scheduled-tasks` **结尾**
