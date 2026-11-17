@@ -1,11 +1,11 @@
 {
     "$comment": "oxlint warnings 基线（task-171 ② ratchet 门；task-219 起按族拦）。只能由 node scripts/check-lint-warnings.mjs --write-baseline 生成/收缩，勿手改；基线只许变小，变大须在卡面说明原因。",
-    "total": 282,
+    "total": 279,
     "errors": 0,
-    "files": 1390,
+    "files": 1446,
     "byArea": {
         "src": {
-            "total": 141,
+            "total": 138,
             "byRule": {
                 "eslint(max-params)": 33,
                 "oxc(no-map-spread)": 24,
@@ -15,7 +15,6 @@
                 "unicorn(prefer-set-has)": 7,
                 "import(newline-after-import)": 3,
                 "unicorn(no-array-reverse)": 3,
-                "unicorn(number-literal-case)": 3,
                 "unicorn(prefer-string-raw)": 3,
                 "eslint(logical-assignment-operators)": 2,
                 "eslint(new-cap)": 2,
@@ -36,25 +35,25 @@
             },
             "locations": {
                 "eslint(logical-assignment-operators)": [
-                    "src/preview/mock/api-server.ts:124",
+                    "src/preview/mock/api-server.ts:135",
                     "src/stores/config.ts:414"
                 ],
                 "eslint(max-params)": [
                     "scripts/ui-mock-shot.mjs:1142",
                     "scripts/ui-mock-shot.mjs:1238",
                     "scripts/ui-mock-shot.mjs:784",
-                    "src/composables/api.ts:2934",
-                    "src/composables/api.ts:3213",
-                    "src/composables/api.ts:3671",
-                    "src/composables/api.ts:4078",
-                    "src/composables/api.ts:4790",
-                    "src/composables/api.ts:4806",
-                    "src/composables/api.ts:4822",
-                    "src/composables/api.ts:4830",
-                    "src/composables/api.ts:5325",
-                    "src/features/workspace/chat/components/ChatPanel.vue:1118",
-                    "src/features/workspace/chat/components/ChatPanel.vue:887",
-                    "src/features/workspace/chat/components/ChatPanel.vue:942",
+                    "src/composables/api.ts:2977",
+                    "src/composables/api.ts:3256",
+                    "src/composables/api.ts:3723",
+                    "src/composables/api.ts:4130",
+                    "src/composables/api.ts:4922",
+                    "src/composables/api.ts:4938",
+                    "src/composables/api.ts:4954",
+                    "src/composables/api.ts:4962",
+                    "src/composables/api.ts:5457",
+                    "src/features/workspace/chat/components/ChatPanel.vue:1159",
+                    "src/features/workspace/chat/components/ChatPanel.vue:934",
+                    "src/features/workspace/chat/components/ChatPanel.vue:989",
                     "src/features/workspace/chat/components/InputArea.vue:1375",
                     "src/features/workspace/chat/composables/virtualWindow.ts:157",
                     "src/features/workspace/composables/fileService.ts:84",
@@ -67,15 +66,15 @@
                     "src/preview/mock/data/workspaceTree.ts:325",
                     "src/preview/mock/data/workspaceTree.ts:418",
                     "src/preview/mock/data/workspaceTree.ts:62",
-                    "src/stores/auth.ts:307",
-                    "src/stores/auth.ts:339",
-                    "src/stores/auth.ts:387",
+                    "src/stores/auth.ts:308",
+                    "src/stores/auth.ts:340",
+                    "src/stores/auth.ts:388",
                     "src/stores/config.ts:529",
                     "src/views/resources/detailFields.ts:51",
                     "src/views/resources/detailFields.ts:95"
                 ],
                 "eslint(new-cap)": [
-                    "src/features/workspace/components/ScheduledTaskCreateDialog.vue:91",
+                    "src/features/workspace/components/ScheduledTaskCreateDialog.vue:99",
                     "src/main.ts:48"
                 ],
                 "eslint(no-multi-assign)": [
@@ -87,15 +86,15 @@
                 "eslint(no-shadow)": [
                     "src/components/settings/ProviderHub.vue:227",
                     "src/components/settings/ProviderHub.vue:231",
-                    "src/composables/api.ts:1419",
+                    "src/composables/api.ts:1462",
                     "src/features/workspace/chat/composables/useSSE.ts:303",
-                    "src/features/workspace/chat/composables/useSSE.ts:341",
+                    "src/features/workspace/chat/composables/useSSE.ts:345",
                     "src/features/workspace/components/SessionParticipantsPanel.vue:159",
                     "src/features/workspace/components/SessionParticipantsPanel.vue:180",
-                    "src/features/workspace/components/WorkspaceAgentsPanel.vue:373",
-                    "src/features/workspace/components/WorkspaceShellDockview.vue:449",
-                    "src/features/workspace/components/WorkspaceShellDockview.vue:456",
-                    "src/features/workspace/components/WorkspaceShellDockview.vue:488",
+                    "src/features/workspace/components/WorkspaceAgentsPanel.vue:456",
+                    "src/features/workspace/components/WorkspaceShellDockview.vue:504",
+                    "src/features/workspace/components/WorkspaceShellDockview.vue:511",
+                    "src/features/workspace/components/WorkspaceShellDockview.vue:543",
                     "src/preview/mock/data/providerConnections.ts:370",
                     "src/preview/mock/data/sessions.ts:470",
                     "src/stores/config.ts:347",
@@ -115,13 +114,13 @@
                 "eslint(prefer-object-has-own)": [
                     "src/components/settings/ConfigDomainPanel.vue:411",
                     "src/components/settings/jsonFieldFormat.ts:107",
-                    "src/composables/api.ts:1558",
+                    "src/composables/api.ts:1601",
                     "src/features/workspace/chat/composables/useSessionCommands.ts:79",
                     "src/features/workspace/chat/runStateView.ts:56",
-                    "src/preview/mock/api-server.ts:1501",
-                    "src/preview/mock/api-server.ts:1504",
-                    "src/preview/mock/api-server.ts:1506",
-                    "src/preview/mock/api-server.ts:1508",
+                    "src/preview/mock/api-server.ts:1609",
+                    "src/preview/mock/api-server.ts:1612",
+                    "src/preview/mock/api-server.ts:1614",
+                    "src/preview/mock/api-server.ts:1616",
                     "src/preview/mock/data/instanceResources.ts:356",
                     "src/preview/mock/data/workspaceAgents.ts:464",
                     "src/services/fieldState.ts:34"
@@ -137,13 +136,13 @@
                     "src/components/settings/ConnectionResourceLimits.vue:146",
                     "src/components/settings/ConnectionResourceLimits.vue:65",
                     "src/components/settings/LayerPrecedenceBadges.vue:34",
-                    "src/components/settings/McpStdioServerList.vue:33",
+                    "src/components/settings/McpStdioServerList.vue:34",
                     "src/components/settings/SettingsSidebar.vue:190",
                     "src/components/settings/contextPolicyForm.ts:29",
-                    "src/composables/api.ts:3752",
-                    "src/composables/api.ts:5273",
+                    "src/composables/api.ts:3804",
+                    "src/composables/api.ts:5405",
                     "src/features/workspace/chat/components/InputArea.vue:822",
-                    "src/features/workspace/chat/components/RevertResultDialog.vue:47",
+                    "src/features/workspace/chat/components/RevertResultDialog.vue:48",
                     "src/features/workspace/composables/sseSubscriberLimit.ts:111",
                     "src/preview/mock/data.ts:146",
                     "src/preview/mock/data.ts:149",
@@ -157,13 +156,13 @@
                     "src/preview/mock/data/workspaceAgents.ts:258",
                     "src/preview/mock/data/workspaceAgents.ts:591",
                     "src/preview/mock/data/workspaceMembers.ts:97",
-                    "src/stores/checkpoint.ts:77"
+                    "src/stores/checkpoint.ts:73"
                 ],
                 "unicorn(max-nested-calls)": [
                     "scripts/ui-mock-shot.mjs:1561",
                     "scripts/ui-mock-shot.mjs:1562",
                     "scripts/ui-mock-shot.mjs:1948",
-                    "src/preview/mock/api-server.ts:368",
+                    "src/preview/mock/api-server.ts:379",
                     "src/preview/mock/data/workspaceTree.ts:100",
                     "src/preview/mock/data/workspaceTree.ts:101",
                     "src/preview/mock/data/workspaceTree.ts:105",
@@ -185,18 +184,13 @@
                 "unicorn(no-unreadable-array-destructuring)": [
                     "src/preview/mock/data/workspaceAgents.ts:508"
                 ],
-                "unicorn(number-literal-case)": [
-                    "src/components/ui/sidebar/SidebarMenuSkeleton.vue:18",
-                    "src/lib/logger.ts:98",
-                    "src/lib/logger.ts:99"
-                ],
                 "unicorn(prefer-dom-node-text-content)": ["scripts/ui-mock-shot.mjs:1422"],
                 "unicorn(prefer-logical-operator-over-ternary)": [
-                    "src/features/workspace/chat/components/SessionList.vue:55"
+                    "src/features/workspace/chat/components/SessionList.vue:79"
                 ],
                 "unicorn(prefer-set-has)": [
                     "scripts/check-mock-domains.mjs:142",
-                    "src/features/workspace/chat/components/ToolCallCard.vue:135",
+                    "src/features/workspace/chat/components/ToolCallCard.vue:147",
                     "src/features/workspace/chat/components/ToolCallHost.vue:29",
                     "src/features/workspace/chat/stores/chat.ts:564",
                     "src/features/workspace/components/WorkspaceSourceImportDialog.vue:24",
@@ -227,14 +221,14 @@
                 "eslint(prefer-object-has-own)": 10,
                 "oxc(no-map-spread)": 5,
                 "eslint(preserve-caught-error)": 4,
-                "unicorn(number-literal-case)": 3,
+                "eslint(func-names)": 3,
                 "eslint(object-shorthand)": 2,
                 "unicorn(custom-error-definition)": 2,
+                "unicorn(error-message)": 2,
                 "unicorn(no-unreadable-array-destructuring)": 2,
                 "unicorn(prefer-dom-node-text-content)": 2,
                 "unicorn(prefer-logical-operator-over-ternary)": 2,
                 "unicorn(text-encoding-identifier-case)": 2,
-                "eslint(func-names)": 1,
                 "eslint(no-script-url)": 1,
                 "eslint(no-unmodified-loop-condition)": 1,
                 "eslint(prefer-object-spread)": 1,
@@ -243,14 +237,17 @@
                 "typescript(no-inferrable-types)": 1,
                 "typescript(parameter-properties)": 1,
                 "typescript(prefer-for-of)": 1,
-                "unicorn(error-message)": 1,
                 "unicorn(prefer-export-from)": 1,
                 "unicorn(prefer-modern-dom-apis)": 1,
                 "unicorn(prefer-set-has)": 1,
                 "unicorn(prefer-structured-clone)": 1
             },
             "locations": {
-                "eslint(func-names)": ["src/tests/lib/logger.spec.ts:38"],
+                "eslint(func-names)": [
+                    "e2e/mock/bl340-anchor-invariant.spec.ts:79",
+                    "e2e/mock/bl340-anchor-invariant.spec.ts:89",
+                    "src/tests/lib/logger.spec.ts:38"
+                ],
                 "eslint(no-script-url)": ["src/router/__tests__/safeRedirect.spec.ts:45"],
                 "eslint(no-shadow)": [
                     "e2e/headed/session-participants.spec.ts:772",
@@ -282,8 +279,8 @@
                     "src/features/workspace/components/__tests__/SessionParticipantsPanel.spec.ts:339",
                     "src/features/workspace/components/__tests__/SessionParticipantsPanel.spec.ts:386",
                     "src/features/workspace/components/__tests__/SessionParticipantsPanel.spec.ts:633",
-                    "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:1166",
-                    "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:283",
+                    "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:1173",
+                    "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:290",
                     "src/preview/mock/__tests__/providerConnections.coverage.spec.ts:526"
                 ],
                 "eslint(no-template-curly-in-string)": [
@@ -328,7 +325,7 @@
                 "eslint(prefer-object-spread)": ["e2e/real/run-linux-screenshots.mjs:64"],
                 "eslint(preserve-caught-error)": [
                     "e2e/chain-proof.setup.ts:43",
-                    "e2e/mock/full-ui-acceptance.spec.ts:713",
+                    "e2e/mock/full-ui-acceptance.spec.ts:716",
                     "e2e/real/bl349-agent-bind-guard.spec.ts:73",
                     "e2e/real/bl382-session-scale.spec.ts:576"
                 ],
@@ -366,7 +363,10 @@
                     "src/features/workspace/__tests__/task498TreeHydrationRace.spec.ts:67",
                     "src/features/workspace/__tests__/task532TreeSingleLoad.spec.ts:67"
                 ],
-                "unicorn(error-message)": ["src/test-utils/i18nKeys.ts:57"],
+                "unicorn(error-message)": [
+                    "e2e/mock/bl340-anchor-invariant.spec.ts:69",
+                    "src/test-utils/i18nKeys.ts:57"
+                ],
                 "unicorn(no-array-reverse)": [
                     "e2e/fixtures/fake-llm-server.mjs:1032",
                     "e2e/fixtures/fake-llm-server.mjs:207",
@@ -383,12 +383,7 @@
                 ],
                 "unicorn(no-unreadable-array-destructuring)": [
                     "src/components/settings/__tests__/ConfigLayerPanels.language.spec.ts:105",
-                    "src/features/workspace/__tests__/ScheduledTasksView.spec.ts:359"
-                ],
-                "unicorn(number-literal-case)": [
-                    "e2e/real/plan-0503-config-catalog.spec.ts:23",
-                    "e2e/real/plan-0503-config-catalog.spec.ts:24",
-                    "src/features/workspace/chat/__tests__/bl602E1ContentVisibilityStub.spec.ts:97"
+                    "src/features/workspace/__tests__/ScheduledTasksView.spec.ts:528"
                 ],
                 "unicorn(prefer-dom-node-text-content)": [
                     "e2e/headed/walkthrough.spec.ts:623",
@@ -411,14 +406,14 @@
                     "e2e/real/loop-observation.spec.ts:330",
                     "e2e/scripts/check-orphan-snapshots.mjs:149",
                     "src/components/settings/__tests__/ConfigLayerPanels.approval.spec.ts:129",
-                    "src/features/workspace/__tests__/WorkspaceDialogs.spec.ts:118",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1058",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1058",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1141",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1141",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:486",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:500",
-                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:515",
+                    "src/features/workspace/__tests__/WorkspaceDialogs.spec.ts:119",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1090",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1090",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1173",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1173",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:508",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:522",
+                    "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:537",
                     "src/features/workspace/components/__tests__/participantInitials.spec.ts:93",
                     "src/lib/__tests__/principalName.spec.ts:44"
                 ],
@@ -443,9 +438,9 @@
         "import(newline-after-import)": 15,
         "unicorn(no-array-reverse)": 15,
         "unicorn(prefer-set-has)": 8,
-        "unicorn(number-literal-case)": 6,
         "eslint(preserve-caught-error)": 5,
         "eslint(object-shorthand)": 4,
+        "eslint(func-names)": 3,
         "unicorn(no-unreadable-array-destructuring)": 3,
         "unicorn(prefer-dom-node-text-content)": 3,
         "unicorn(prefer-logical-operator-over-ternary)": 3,
@@ -453,10 +448,10 @@
         "eslint(new-cap)": 2,
         "eslint(no-multi-assign)": 2,
         "unicorn(custom-error-definition)": 2,
+        "unicorn(error-message)": 2,
         "unicorn(prefer-structured-clone)": 2,
         "unicorn(require-post-message-target-origin)": 2,
         "unicorn(text-encoding-identifier-case)": 2,
-        "eslint(func-names)": 1,
         "eslint(no-new-func)": 1,
         "eslint(no-new)": 1,
         "eslint(no-script-url)": 1,
@@ -469,33 +464,36 @@
         "typescript(no-inferrable-types)": 1,
         "typescript(parameter-properties)": 1,
         "typescript(prefer-for-of)": 1,
-        "unicorn(error-message)": 1,
         "unicorn(prefer-export-from)": 1,
         "unicorn(prefer-modern-dom-apis)": 1,
         "unicorn(relative-url-style)": 1
     },
     "locations": {
-        "eslint(func-names)": ["src/tests/lib/logger.spec.ts:38"],
+        "eslint(func-names)": [
+            "e2e/mock/bl340-anchor-invariant.spec.ts:79",
+            "e2e/mock/bl340-anchor-invariant.spec.ts:89",
+            "src/tests/lib/logger.spec.ts:38"
+        ],
         "eslint(logical-assignment-operators)": [
-            "src/preview/mock/api-server.ts:124",
+            "src/preview/mock/api-server.ts:135",
             "src/stores/config.ts:414"
         ],
         "eslint(max-params)": [
             "scripts/ui-mock-shot.mjs:1142",
             "scripts/ui-mock-shot.mjs:1238",
             "scripts/ui-mock-shot.mjs:784",
-            "src/composables/api.ts:2934",
-            "src/composables/api.ts:3213",
-            "src/composables/api.ts:3671",
-            "src/composables/api.ts:4078",
-            "src/composables/api.ts:4790",
-            "src/composables/api.ts:4806",
-            "src/composables/api.ts:4822",
-            "src/composables/api.ts:4830",
-            "src/composables/api.ts:5325",
-            "src/features/workspace/chat/components/ChatPanel.vue:1118",
-            "src/features/workspace/chat/components/ChatPanel.vue:887",
-            "src/features/workspace/chat/components/ChatPanel.vue:942",
+            "src/composables/api.ts:2977",
+            "src/composables/api.ts:3256",
+            "src/composables/api.ts:3723",
+            "src/composables/api.ts:4130",
+            "src/composables/api.ts:4922",
+            "src/composables/api.ts:4938",
+            "src/composables/api.ts:4954",
+            "src/composables/api.ts:4962",
+            "src/composables/api.ts:5457",
+            "src/features/workspace/chat/components/ChatPanel.vue:1159",
+            "src/features/workspace/chat/components/ChatPanel.vue:934",
+            "src/features/workspace/chat/components/ChatPanel.vue:989",
             "src/features/workspace/chat/components/InputArea.vue:1375",
             "src/features/workspace/chat/composables/virtualWindow.ts:157",
             "src/features/workspace/composables/fileService.ts:84",
@@ -508,15 +506,15 @@
             "src/preview/mock/data/workspaceTree.ts:325",
             "src/preview/mock/data/workspaceTree.ts:418",
             "src/preview/mock/data/workspaceTree.ts:62",
-            "src/stores/auth.ts:307",
-            "src/stores/auth.ts:339",
-            "src/stores/auth.ts:387",
+            "src/stores/auth.ts:308",
+            "src/stores/auth.ts:340",
+            "src/stores/auth.ts:388",
             "src/stores/config.ts:529",
             "src/views/resources/detailFields.ts:51",
             "src/views/resources/detailFields.ts:95"
         ],
         "eslint(new-cap)": [
-            "src/features/workspace/components/ScheduledTaskCreateDialog.vue:91",
+            "src/features/workspace/components/ScheduledTaskCreateDialog.vue:99",
             "src/main.ts:48"
         ],
         "eslint(no-multi-assign)": [
@@ -550,25 +548,25 @@
             "src/components/settings/ProviderHub.vue:227",
             "src/components/settings/ProviderHub.vue:231",
             "src/composables/__tests__/api.spec.ts:239",
-            "src/composables/api.ts:1419",
+            "src/composables/api.ts:1462",
             "src/features/workspace/__tests__/task498TreeHydrationRace.spec.ts:25",
             "src/features/workspace/chat/__tests__/chatStore.spec.ts:738",
             "src/features/workspace/chat/__tests__/chatStore.spec.ts:896",
             "src/features/workspace/chat/__tests__/chatStore.spec.ts:904",
             "src/features/workspace/chat/__tests__/chatStore.spec.ts:951",
             "src/features/workspace/chat/composables/useSSE.ts:303",
-            "src/features/workspace/chat/composables/useSSE.ts:341",
+            "src/features/workspace/chat/composables/useSSE.ts:345",
             "src/features/workspace/components/SessionParticipantsPanel.vue:159",
             "src/features/workspace/components/SessionParticipantsPanel.vue:180",
-            "src/features/workspace/components/WorkspaceAgentsPanel.vue:373",
-            "src/features/workspace/components/WorkspaceShellDockview.vue:449",
-            "src/features/workspace/components/WorkspaceShellDockview.vue:456",
-            "src/features/workspace/components/WorkspaceShellDockview.vue:488",
+            "src/features/workspace/components/WorkspaceAgentsPanel.vue:456",
+            "src/features/workspace/components/WorkspaceShellDockview.vue:504",
+            "src/features/workspace/components/WorkspaceShellDockview.vue:511",
+            "src/features/workspace/components/WorkspaceShellDockview.vue:543",
             "src/features/workspace/components/__tests__/SessionParticipantsPanel.spec.ts:339",
             "src/features/workspace/components/__tests__/SessionParticipantsPanel.spec.ts:386",
             "src/features/workspace/components/__tests__/SessionParticipantsPanel.spec.ts:633",
-            "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:1166",
-            "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:283",
+            "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:1173",
+            "src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts:290",
             "src/preview/mock/__tests__/providerConnections.coverage.spec.ts:526",
             "src/preview/mock/data/providerConnections.ts:370",
             "src/preview/mock/data/sessions.ts:470",
@@ -611,7 +609,7 @@
             "e2e/mock/task124-to-cc-wire.spec.ts:84",
             "src/components/settings/ConfigDomainPanel.vue:411",
             "src/components/settings/jsonFieldFormat.ts:107",
-            "src/composables/api.ts:1558",
+            "src/composables/api.ts:1601",
             "src/features/workspace/chat/__tests__/MessageListVirtual.spec.ts:310",
             "src/features/workspace/chat/__tests__/MessageListVirtual.spec.ts:484",
             "src/features/workspace/chat/__tests__/MessageListVirtual.spec.ts:488",
@@ -623,10 +621,10 @@
             "src/features/workspace/chat/__tests__/useSSE.spec.ts:1255",
             "src/features/workspace/chat/composables/useSessionCommands.ts:79",
             "src/features/workspace/chat/runStateView.ts:56",
-            "src/preview/mock/api-server.ts:1501",
-            "src/preview/mock/api-server.ts:1504",
-            "src/preview/mock/api-server.ts:1506",
-            "src/preview/mock/api-server.ts:1508",
+            "src/preview/mock/api-server.ts:1609",
+            "src/preview/mock/api-server.ts:1612",
+            "src/preview/mock/api-server.ts:1614",
+            "src/preview/mock/api-server.ts:1616",
             "src/preview/mock/data/instanceResources.ts:356",
             "src/preview/mock/data/workspaceAgents.ts:464",
             "src/services/fieldState.ts:34"
@@ -634,7 +632,7 @@
         "eslint(prefer-object-spread)": ["e2e/real/run-linux-screenshots.mjs:64"],
         "eslint(preserve-caught-error)": [
             "e2e/chain-proof.setup.ts:43",
-            "e2e/mock/full-ui-acceptance.spec.ts:713",
+            "e2e/mock/full-ui-acceptance.spec.ts:716",
             "e2e/real/bl349-agent-bind-guard.spec.ts:73",
             "e2e/real/bl382-session-scale.spec.ts:576",
             "scripts/ui-mock-shot.mjs:980"
@@ -666,13 +664,13 @@
             "src/components/settings/ConnectionResourceLimits.vue:146",
             "src/components/settings/ConnectionResourceLimits.vue:65",
             "src/components/settings/LayerPrecedenceBadges.vue:34",
-            "src/components/settings/McpStdioServerList.vue:33",
+            "src/components/settings/McpStdioServerList.vue:34",
             "src/components/settings/SettingsSidebar.vue:190",
             "src/components/settings/contextPolicyForm.ts:29",
-            "src/composables/api.ts:3752",
-            "src/composables/api.ts:5273",
+            "src/composables/api.ts:3804",
+            "src/composables/api.ts:5405",
             "src/features/workspace/chat/components/InputArea.vue:822",
-            "src/features/workspace/chat/components/RevertResultDialog.vue:47",
+            "src/features/workspace/chat/components/RevertResultDialog.vue:48",
             "src/features/workspace/composables/sseSubscriberLimit.ts:111",
             "src/lib/__tests__/globalModules.spec.ts:77",
             "src/preview/mock/data.ts:146",
@@ -687,7 +685,7 @@
             "src/preview/mock/data/workspaceAgents.ts:258",
             "src/preview/mock/data/workspaceAgents.ts:591",
             "src/preview/mock/data/workspaceMembers.ts:97",
-            "src/stores/checkpoint.ts:77"
+            "src/stores/checkpoint.ts:73"
         ],
         "typescript(consistent-indexed-object-style)": [
             "src/components/settings/__tests__/providerResolverCopy.spec.ts:12"
@@ -699,12 +697,15 @@
             "src/features/workspace/__tests__/task498TreeHydrationRace.spec.ts:67",
             "src/features/workspace/__tests__/task532TreeSingleLoad.spec.ts:67"
         ],
-        "unicorn(error-message)": ["src/test-utils/i18nKeys.ts:57"],
+        "unicorn(error-message)": [
+            "e2e/mock/bl340-anchor-invariant.spec.ts:69",
+            "src/test-utils/i18nKeys.ts:57"
+        ],
         "unicorn(max-nested-calls)": [
             "scripts/ui-mock-shot.mjs:1561",
             "scripts/ui-mock-shot.mjs:1562",
             "scripts/ui-mock-shot.mjs:1948",
-            "src/preview/mock/api-server.ts:368",
+            "src/preview/mock/api-server.ts:379",
             "src/preview/mock/data/workspaceTree.ts:100",
             "src/preview/mock/data/workspaceTree.ts:101",
             "src/preview/mock/data/workspaceTree.ts:105",
@@ -737,16 +738,8 @@
         ],
         "unicorn(no-unreadable-array-destructuring)": [
             "src/components/settings/__tests__/ConfigLayerPanels.language.spec.ts:105",
-            "src/features/workspace/__tests__/ScheduledTasksView.spec.ts:359",
+            "src/features/workspace/__tests__/ScheduledTasksView.spec.ts:528",
             "src/preview/mock/data/workspaceAgents.ts:508"
-        ],
-        "unicorn(number-literal-case)": [
-            "e2e/real/plan-0503-config-catalog.spec.ts:23",
-            "e2e/real/plan-0503-config-catalog.spec.ts:24",
-            "src/components/ui/sidebar/SidebarMenuSkeleton.vue:18",
-            "src/features/workspace/chat/__tests__/bl602E1ContentVisibilityStub.spec.ts:97",
-            "src/lib/logger.ts:98",
-            "src/lib/logger.ts:99"
         ],
         "unicorn(prefer-dom-node-text-content)": [
             "e2e/headed/walkthrough.spec.ts:623",
@@ -756,7 +749,7 @@
         "unicorn(prefer-export-from)": ["e2e/mock/helpers/mock-test.ts:29"],
         "unicorn(prefer-logical-operator-over-ternary)": [
             "e2e/real/helpers/agent-principal.ts:316",
-            "src/features/workspace/chat/components/SessionList.vue:55",
+            "src/features/workspace/chat/components/SessionList.vue:79",
             "src/router/__tests__/agentLandingRoutes.spec.ts:48"
         ],
         "unicorn(prefer-modern-dom-apis)": [
@@ -765,7 +758,7 @@
         "unicorn(prefer-set-has)": [
             "e2e/mock/task585-wsless-header-audit.spec.ts:145",
             "scripts/check-mock-domains.mjs:142",
-            "src/features/workspace/chat/components/ToolCallCard.vue:135",
+            "src/features/workspace/chat/components/ToolCallCard.vue:147",
             "src/features/workspace/chat/components/ToolCallHost.vue:29",
             "src/features/workspace/chat/stores/chat.ts:564",
             "src/features/workspace/components/WorkspaceSourceImportDialog.vue:24",
@@ -781,14 +774,14 @@
             "e2e/scripts/check-orphan-snapshots.mjs:149",
             "scripts/make-proof.mjs:225",
             "src/components/settings/__tests__/ConfigLayerPanels.approval.spec.ts:129",
-            "src/features/workspace/__tests__/WorkspaceDialogs.spec.ts:118",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1058",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1058",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1141",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1141",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:486",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:500",
-            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:515",
+            "src/features/workspace/__tests__/WorkspaceDialogs.spec.ts:119",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1090",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1090",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1173",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:1173",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:508",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:522",
+            "src/features/workspace/__tests__/WorkspaceEnvironmentView.spec.ts:537",
             "src/features/workspace/chat/deliveryView.ts:26",
             "src/features/workspace/components/__tests__/participantInitials.spec.ts:93",
             "src/lib/__tests__/principalName.spec.ts:44",
@@ -808,5 +801,5 @@
             "e2e/real/runtime-m1.spec.ts:50"
         ]
     },
-    "generatedAt": "2026-11-16T02:10:16.588Z"
+    "generatedAt": "2026-11-17T17:16:34.614Z"
 }
