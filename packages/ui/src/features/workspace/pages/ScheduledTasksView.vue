@@ -88,9 +88,13 @@ const STATUS_LABEL_KEYS: Record<ScheduledTaskStatus, string> = {
 const STATUS_BADGE_CLS: Record<ScheduledTaskStatus, string> = {
     scheduled: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
     firing: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-    missed: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    missed: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300",
     expired: "border-destructive/40 bg-background text-destructive",
-    completed: "border-border bg-muted text-muted-foreground",
+    // task-86：本档底面是 bg-muted（oklch 0.93），muted-foreground 在其上 4.286 不达标。
+    // 与 CodeBlock / ProcessRow 同一族：--muted-foreground 对 --background(4.816)、--card(5.031)
+    // 都合格，只与 --muted 这一对不够；换 token 要动 5 个调色板 + 暗色，属设计系统级，
+    // 超出本卡 write_scopes ⇒ 只做用法侧换成 text-foreground/60（对 muted 4.903）。
+    completed: "border-border bg-muted text-foreground/60",
     cancelled: "border-border bg-transparent text-muted-foreground line-through",
 };
 
@@ -538,7 +542,7 @@ function openCreate() {
                                     </span>
                                     <span
                                         v-if="task.status === 'missed' && task.missedCount > 0"
-                                        class="ml-1.5 inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-300"
+                                        class="ml-1.5 inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-xs text-amber-800 dark:text-amber-300"
                                         data-testid="scheduled-task-missed-count-row"
                                     >
                                         ×{{ task.missedCount }}
@@ -549,7 +553,7 @@ function openCreate() {
                                         :class="
                                             task.status === 'expired'
                                                 ? 'text-destructive'
-                                                : 'text-amber-700 dark:text-amber-300'
+                                                : 'text-amber-800 dark:text-amber-300'
                                         "
                                         data-testid="scheduled-task-reason-row"
                                     >
@@ -565,7 +569,7 @@ function openCreate() {
                                         task.createdBy.name || "—"
                                     }}</span>
                                     <span
-                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-xs text-foreground/60"
                                         :class="
                                             task.createdBy.type === 'agent'
                                                 ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
@@ -608,8 +612,13 @@ function openCreate() {
                                             >
                                                 {{ t("workspace.scheduledTasks.actionPostpone") }}
                                             </Button>
+                                            <!--
+                                                task-85（DEV-011 §10:153「红，只在确认时出现」）：行内「移除」是入口，
+                                                真正不可恢复的移除在 scheduled-task-remove-confirm-btn（:820 destructive）——
+                                                红只该在那里。可发现性按 :168-169 靠位置固定 + 文字标签「移除」+ 禁用时 title 给原因。
+                                            -->
                                             <Button
-                                                variant="destructive"
+                                                variant="outline"
                                                 size="sm"
                                                 :disabled="
                                                     !canManage(task) || !!store.mutatingTaskId
@@ -688,7 +697,7 @@ function openCreate() {
                                         task.createdBy.name || "—"
                                     }}</span>
                                     <span
-                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-xs text-foreground/60"
                                         :class="
                                             task.createdBy.type === 'agent'
                                                 ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
@@ -707,7 +716,7 @@ function openCreate() {
                             :class="
                                 task.status === 'expired'
                                     ? 'text-destructive'
-                                    : 'text-amber-700 dark:text-amber-300'
+                                    : 'text-amber-800 dark:text-amber-300'
                             "
                             data-testid="scheduled-task-reason-card"
                         >
@@ -742,7 +751,7 @@ function openCreate() {
                                     {{ t("workspace.scheduledTasks.actionPostpone") }}
                                 </Button>
                                 <Button
-                                    variant="destructive"
+                                    variant="outline"
                                     size="sm"
                                     :disabled="!canManage(task) || !!store.mutatingTaskId"
                                     :title="canManage(task) ? undefined : manageHint"
