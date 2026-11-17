@@ -54,7 +54,9 @@ function mockFetch() {
         const url = typeof input === "string" ? input : input.url;
         if (url.includes("provider-catalog")) {
             return Promise.resolve(
-                new Response(JSON.stringify({ providers: [] }), { status: 200 }),
+                new Response(JSON.stringify({ catalogRevision: "v3", providers: [] }), {
+                    status: 200,
+                }),
             );
         }
         return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
