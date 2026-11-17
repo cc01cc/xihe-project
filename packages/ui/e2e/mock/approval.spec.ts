@@ -2,6 +2,7 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { pushMockApproval } from "./helpers/approval-registry";
+import { installApprovalSSE } from "./helpers/approval-sse";
 import { workspaceWire } from "./helpers/workspace-fixture";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
@@ -53,82 +54,6 @@ const approvalEvent = (
         shape,
     },
 });
-
-async function installApprovalSSE(page: Page) {
-    await page.addInitScript(
-        ({ sessionId, runId }: { sessionId: string; runId: string }) => {
-            const pending: unknown[] = [];
-            let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
-            const encode = (value: string) => new TextEncoder().encode(value);
-            const sse = (name: string, data: unknown) =>
-                `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
-            const drain = () => {
-                if (!controllerRef) return;
-                while (pending.length > 0) {
-                    const item = pending.shift();
-                    controllerRef.enqueue(encode(sse("approval_request", item)));
-                }
-            };
-            (window as unknown as Record<string, unknown>).__pushApprovalEvent = (
-                payload: unknown,
-            ) => {
-                pending.push(payload);
-                drain();
-            };
-            const originalFetch = window.fetch.bind(window);
-            window.fetch = async (input, init) => {
-                const requestUrl =
-                    typeof input === "string"
-                        ? input
-                        : input instanceof Request
-                          ? input.url
-                          : input.url;
-                if (requestUrl.includes("/api/v1/events")) {
-                    const body = new ReadableStream<Uint8Array>({
-                        start(controller) {
-                            controllerRef = controller;
-                            controller.enqueue(encode("retry: 1000\n\n"));
-                            queueMicrotask(drain);
-                        },
-                    });
-                    return new Response(body, {
-                        status: 200,
-                        headers: { "Content-Type": "text/event-stream" },
-                    });
-                }
-                if (
-                    requestUrl.includes("/api/v1/chat") &&
-                    !requestUrl.includes("/api/v1/chat/approvals/") &&
-                    (init?.method ?? "GET") === "POST"
-                ) {
-                    const payload =
-                        typeof init?.body === "string"
-                            ? (JSON.parse(init.body) as { branchId?: string })
-                            : {};
-                    if (!payload.branchId) {
-                        return new Response(
-                            JSON.stringify({
-                                code: "INVALID_REQUEST",
-                                detail: "branchId is required",
-                            }),
-                            {
-                                status: 400,
-                                headers: { "Content-Type": "application/problem+json" },
-                            },
-                        );
-                    }
-                    return new Response(JSON.stringify({ status: "accepted", sessionId, runId }), {
-                        status: 202,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
-                return originalFetch(input, init);
-            };
-            void sessionId;
-        },
-        { sessionId: SESSION_ID, runId: RUN_ID },
-    );
-}
 
 async function installDecisionRoute(page: Page, status: number, body: Record<string, unknown>) {
     const calls: Array<{ requestId: string; body: Record<string, unknown> }> = [];
@@ -248,7 +173,7 @@ test.describe("Chat approval flow", () => {
         );
 
         await installPolicyModeRoute(page);
-        await installApprovalSSE(page);
+        await installApprovalSSE(page, { sessionId: SESSION_ID, runId: RUN_ID });
     });
 
     test("renders approval modal from canonical approval_request event", async ({ page }) => {
