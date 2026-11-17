@@ -2350,6 +2350,39 @@ paths:
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/sessions/{sessionId}/dispatch-queue:
+    get:
+      tags: [chat]
+      operationId: getSessionDispatchQueue
+      summary: Read the Session's deferred-resume queue positions
+      description: |
+        task-161 (D-1786 面 B / D-1785): the deferred-resume queue is where a run whose
+        human answer or approval decision arrived while the Session was at its execution
+        cap waits its turn. This read surface returns the queue entries in FIFO order with
+        their 0-based `position`, which is exactly what the UI needs to say
+        "queued, N ahead" and to jump to the waiting card (D-1785 minimal form: a fact
+        marker plus navigation — no real-time push).
+        The queue is in-memory per Control Plane instance (no durable row, no Flyway
+        migration); in a single-instance dev stack the read is the fact. An empty queue
+        returns 200 with an empty array so callers can clear the badge without treating
+        404 as a signal. Read access mirrors the Session read surface (owner or enabled
+        invited HUMAN participant); no message content is exposed.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Dispatch queue entries in FIFO order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDispatchQueueResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/sessions/{sessionId}/monitor:
     get:
       tags: [chat]
@@ -7671,6 +7704,23 @@ components:
         page: { type: integer, minimum: 0 }
         size: { type: integer, minimum: 1 }
         runs: { type: array, items: { $ref: '#/components/schemas/SessionRunSummary' } }
+    SessionDispatchQueueResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, queue]
+      properties:
+        sessionId: { type: string, format: uuid }
+        queue:
+          type: array
+          description: FIFO order; `position` is 0-based and equals "how many are ahead".
+          items: { $ref: '#/components/schemas/SessionDispatchQueueEntry' }
+    SessionDispatchQueueEntry:
+      type: object
+      additionalProperties: false
+      required: [runId, position]
+      properties:
+        runId: { type: string, format: uuid }
+        position: { type: integer, minimum: 0 }
     SessionMonitorResponse:
       type: object
       additionalProperties: false
@@ -7983,13 +8033,17 @@ components:
       description: |
         PLAN-0328 M1 result of a Chat approval decision. Mirrors what
         `ApprovalService.decisionResponse` actually returns: the CP-only decision metadata is
-        added here (Agent's own response carries none of it). `status` is always `accepted` —
-        a repeated identical decision is idempotent and still answers `accepted` with
-        `propagated: 0`, while a repeat with a *different* kind fails with 409
-        `APPROVAL_DECISION_CONFLICT` and no body of this shape.
+        added here (Agent's own response carries none of it). A repeated identical decision is
+        idempotent and still answers `accepted` with `propagated: 0`, while a repeat with a
+        *different* kind fails with 409 `APPROVAL_DECISION_CONFLICT` and no body of this shape.
+        task-161: `status` is `accepted` when the decision executed inline (the Agent was
+        woken and the rule, if any, was materialized), and `queued` when the Session was at
+        its execution cap: the decision is durably claimed (`dispatching`) but waits in the
+        deferred-resume queue for a free slot, so `propagated` is 0 and no `rule` is
+        returned. Callers read `GET /chat/sessions/{sessionId}/dispatch-queue` for its position.
       required: [status, requestId, approved, decision, propagated]
       properties:
-        status: { type: string, enum: [accepted] }
+        status: { type: string, enum: [accepted, queued], description: 'accepted = executed inline; queued = durably claimed, waiting for an execution slot' }
         requestId: { type: string, format: uuid }
         approved: { type: boolean, description: 'Derived from the resolved decision kind, not from the request field' }
         decision: { type: string, enum: [once, session, saved, reject, reject_always], description: Resolved decision kind; on an idempotent replay this is the recorded kind }

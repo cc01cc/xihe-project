@@ -110,6 +110,31 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
             @Param("tokenCount") int tokenCount,
             @Param("assistantChars") int assistantChars);
 
+    /**
+     * task-161 / D-1786 面 B：park 一个恢复被延 defer 的 run。{@code 'queued'} 是既有词汇
+     * （UI 事实标记 + 对账/取消语义都走它）；lease 一并续期，周期对账不会把合法 parked run
+     * 扫成 ambiguous。队列成员资格本身是内存态（{@code RunDispatchQueue}）——本写只落 durable 事实。
+     */
+    @Modifying
+    @Transactional
+    @Query("update ChatRun r set r.status = 'queued', r.leaseOwner = :owner, "
+            + "r.leaseExpiresAt = :expiresAt, r.updatedAt = CURRENT_INSTANT "
+            + "where r.id = :id and r.status in :expectedStatuses")
+    int parkRun(@Param("id") UUID id,
+                @Param("expectedStatuses") Collection<String> expectedStatuses,
+                @Param("owner") String owner,
+                @Param("expiresAt") Instant expiresAt);
+
+    /** task-161：排水恢复 —— queued → running，CAS 钉住 parked 状态并换发 lease。 */
+    @Modifying
+    @Transactional
+    @Query("update ChatRun r set r.status = 'running', r.leaseOwner = :owner, "
+            + "r.leaseExpiresAt = :expiresAt, r.updatedAt = CURRENT_INSTANT "
+            + "where r.id = :id and r.status = 'queued'")
+    int resumeQueuedRun(@Param("id") UUID id,
+                        @Param("owner") String owner,
+                        @Param("expiresAt") Instant expiresAt);
+
     @Modifying
     @Transactional
     @Query("update ChatRun r set r.status = :status, r.terminalOutcome = :outcome, "

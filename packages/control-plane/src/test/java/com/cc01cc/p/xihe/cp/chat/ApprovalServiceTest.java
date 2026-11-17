@@ -64,10 +64,15 @@ class ApprovalServiceTest {
     private final GuardAdviceService guardAdviceService = org.mockito.Mockito.mock(GuardAdviceService.class);
     /** PLAN-0676 T3：审批已决广播的出口，只断言"发了一条 approval_decided"。 */
     private final SseEmitterManager sse = mock(SseEmitterManager.class);
+    /** task-161：恢复闸替身。默认「拿到槽」（claim 返回 true），park 路径在专门用例里反转。 */
+    private final ChatRunDispatchQueueService dispatchQueue =
+            mock(ChatRunDispatchQueueService.class);
+    private final com.cc01cc.p.xihe.cp.service.InstanceIdentityService identity =
+            mock(com.cc01cc.p.xihe.cp.service.InstanceIdentityService.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
             historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
             sessionApprovalMode, policyRevision, workspaceRepository, answererChain,
-            guardAdviceService, sse);
+            guardAdviceService, sse, dispatchQueue, identity);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -83,6 +88,9 @@ class ApprovalServiceTest {
     void stubGrantInputs() {
         when(policyRevision.current()).thenReturn(0L);
         stubWorkspaceGeneration(0);
+        // task-161：默认放行恢复槽，既有用例语义不变（decide 照原路执行）。
+        when(dispatchQueue.claimApproval(any(), any())).thenReturn(true);
+        when(identity.instanceId()).thenReturn(java.util.UUID.randomUUID());
     }
 
     private void stubWorkspaceGeneration(int generation) {
@@ -115,14 +123,14 @@ class ApprovalServiceTest {
                 historyWriter, grantWriter, audit, summary,
                 new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState,
                 sessionApprovalMode, policyRevision, workspaceRepository, answererChain,
-                guardAdviceService, sse);
+                guardAdviceService, sse, dispatchQueue, identity);
     }
 
     private ApprovalService serviceWithAnswerers(ApprovalAnswerer... answerers) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
                 sessionApprovalMode, policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)),
-                guardAdviceService, sse);
+                guardAdviceService, sse, dispatchQueue, identity);
     }
 
     @Test
@@ -251,6 +259,35 @@ class ApprovalServiceTest {
         verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
                 eq("decided"), any(), eq("approved"), eq(true), any(), any(), any());
         verify(approvals, never()).saveAndFlush(any());
+    }
+
+    /**
+     * task-161 / D-1786 面 B：拿不到执行槽 ⇒ 整单决定入队，且**不**执行 respond/markDecided。
+     * 这是「决定已作出、等执行」与「决定已执行」的分界：闸在 claim 之后、规则物化之前。
+     */
+    @Test
+    void decideQueuesTheWholeDecisionWhenNoExecutionSlotIsAvailable() {
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
+                .thenReturn(1);
+        // 闸拒绝恢复。
+        when(dispatchQueue.claimApproval(any(), any())).thenReturn(false);
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
+
+        // 响应显式说"排队中"，而不是假装 accepted。
+        assertEquals("queued", response.get("status"));
+        assertEquals(false, response.containsKey("rule"), "排队时规则尚未物化，不能给出来");
+        // 决定没被执行：没有 respond、没有 markDecided、没有广播 —— 这些都留给排水。
+        verify(agent, never()).respond(any(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+        verify(approvals, never()).markDecided(any(), any(), any(), any());
+        verify(sse, never()).send(any(), eq("approval_decided"), any());
+        // 行保持 dispatching（事实：决定已作出、待执行），可被排水重放。
+        verify(dispatchQueue).parkApproval(eq(approval), any(), eq(TEST_USER));
     }
 
     @Test

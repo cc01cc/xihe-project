@@ -109,6 +109,21 @@ export interface SessionRunsResponse {
 }
 
 /**
+ * task-161 (D-1786 面 B / D-1785): the Session's deferred-resume queue.
+ * `position` is 0-based and equals "how many are ahead" — the UI reads it
+ * directly rather than deriving an order of its own.
+ */
+export interface DispatchQueueEntry {
+    runId: string;
+    position: number;
+}
+
+export interface SessionDispatchQueueResponse {
+    sessionId: string;
+    queue: DispatchQueueEntry[];
+}
+
+/**
  * PLAN-0507: read-only Session monitor aggregate
  * (`GET /api/v1/chat/sessions/{id}/monitor`). `null` components are explicit
  * "unavailable" facts, never zero-filled placeholders.

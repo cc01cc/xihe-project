@@ -55,6 +55,9 @@ public class ApprovalService {
     // json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).
     private static final String HASH_ALGORITHM = "SHA-256";
 
+    /** task-161：排水重放把 parked run 换回 running 时的 lease TTL（与 ChatSubmissionService 同口径）。 */
+    private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
+
     private final ChatApprovalRepository approvalRepository;
     private final ChatRunRepository chatRunRepository;
     private final ApprovalAgentClient agentClient;
@@ -73,6 +76,10 @@ public class ApprovalService {
     private final GuardAdviceService guardAdviceService;
     /** PLAN-0676 T3（BL-333）：审批已决后向会话 SSE 广播，多标签页/多浏览器据此撤卡。 */
     private final SseEmitterManager sseManager;
+    /** task-161 / D-1786 面 B：决定执行前的恢复槽申请；拿不到则整单决定入队。 */
+    private final ChatRunDispatchQueueService dispatchQueueService;
+    /** task-161：排水重放时把 parked（queued）run 换回 running 需要换发 lease。 */
+    private final com.cc01cc.p.xihe.cp.service.InstanceIdentityService identity;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
@@ -89,7 +96,9 @@ public class ApprovalService {
                            WorkspaceRepository workspaceRepository,
                            AnswererChain answererChain,
                            GuardAdviceService guardAdviceService,
-                           SseEmitterManager sseManager) {
+                           SseEmitterManager sseManager,
+                           ChatRunDispatchQueueService dispatchQueueService,
+                           com.cc01cc.p.xihe.cp.service.InstanceIdentityService identity) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
@@ -108,6 +117,8 @@ public class ApprovalService {
         this.answererChain = answererChain;
         this.guardAdviceService = guardAdviceService;
         this.sseManager = sseManager;
+        this.dispatchQueueService = dispatchQueueService;
+        this.identity = identity;
     }
 
     /**
@@ -420,11 +431,81 @@ public class ApprovalService {
         approval.setSandboxGeneration(sandboxGeneration);
         appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCHING,
                 approval.getState(), "dispatching", null, null, "user", null);
+        return decideAfterClaim(requestId, userId, workspaceId, decision, approval, plan,
+                modeAtGrant);
+    }
+
+    /**
+     * task-161：排水重放一个已入队的审批决定。
+     *
+     * <p>入队时 {@code decide} 已经走完「派生/校验 → markDispatching → history(dispatching)」，
+     * 所以这里从 claim 之后接着做（不重新 claim：重放再 claim 会与已 dispatching 的行冲突）。
+     * 决策前提不变（同 userId/workspaceId），因此重放不重验身份：队列项由本人请求产生且
+     * 只在内存里，重启即消失（证据 §7.3）。</p>
+     */
+    public Map<String, Object> replayQueuedDecision(String requestId, String userId, String workspaceId,
+                                                     ApprovalDecision decision) {
+        ChatApproval approval = approvalRepository.findById(parseRequestId(requestId))
+                .filter(row -> userId.equals(row.getUserId()) && workspaceId.equals(row.getWorkspaceId()))
+                .orElse(null);
+        if (approval == null || !"dispatching".equals(approval.getState())) {
+            // 行已被其它路径收口（过期/连坐/重放重复）：队列项作废，不重复执行。
+            logger.info("[LIFECYCLE] service=cp event=chat_approval_replay_skipped requestId={} state={}",
+                    requestId, approval == null ? "gone" : approval.getState());
+            return Map.of("status", "skipped", "requestId", requestId);
+        }
+        try {
+            resumeParkedRun(approval.getRunId());
+            ApprovalGrantWriter.RulePlan plan = decision.kind().grantsRule()
+                    ? grantWriter.prepare(decision, approval.getTool(), userId, workspaceId)
+                    : null;
+            return decideAfterClaim(requestId, userId, workspaceId, decision, approval, plan,
+                    approval.getModeAtGrant());
+        } catch (CpApiException e) {
+            // 与首个路径同语义：domain 错误留 dispatch_unknown 可重试，并向上抛给排水记录。
+            approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
+            appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
+                    "dispatching", "dispatch_unknown", null, null, "system", e.getCode());
+            throw e;
+        }
+    }
+
+    /** task-161：parked（queued）run 在重放决定时换回 running 并换发 lease。 */
+    private void resumeParkedRun(String runId) {
+        int updated = chatRunRepository.resumeQueuedRun(java.util.UUID.fromString(runId),
+                identity.instanceId().toString(), Instant.now().plus(LEASE_TTL));
+        if (updated == 0) {
+            logger.info("[LIFECYCLE] service=cp event=chat_approval_replay_run_not_queued runId={}", runId);
+        }
+    }
+
+    /**
+     * task-161：{@code decide} 的 claim 之后半段（规则物化 → respond → markDecided → returnRun →
+     * 广播 → propagate → 响应）。首个路径与排水重放共用，保证「同一个决定只有一套执行逻辑」。
+     */
+    private Map<String, Object> decideAfterClaim(String requestId, String userId, String workspaceId,
+                                                 ApprovalDecision decision, ChatApproval approval,
+                                                 ApprovalGrantWriter.RulePlan plan, String modeAtGrant) {
+        boolean approved = decision.kind().isApproved();
+        // task-161 / D-1786 面 B：执行前的恢复槽申请。拿不到槽 ⇒ 整单决定入队（行保持
+        // dispatching = 「决定已作出、待执行」的事实），由 ChatRunTerminalizedEvent 排水重放
+        // 本方法后半段。刻意放在 markDispatching 之后：回滚即回到 pending，用户可重试，
+        // 不会留下「已决定但无人执行」的行。上方 respond→markDecided→returnRun 的顺序不动。
+        if (!dispatchQueueService.claimApproval(approval.getSessionId(), approval.getRunId())) {
+            dispatchQueueService.parkApproval(approval, decision, userId);
+            logger.info("[LIFECYCLE] service=cp event=chat_approval_queued requestId={} runId={} "
+                    + "sessionId={}", requestId, approval.getRunId(), approval.getSessionId());
+            Map<String, Object> queued = decisionResponse(requestId, "queued", approved,
+                    decision.kind().wireName(), 0, null, modeAtGrant);
+            return queued;
+        }
         try {
             if (plan != null) {
+                // task-161：claim 阶段已把三者写进 approval 行（setModeAtGrant/setPolicyRevision/
+                // setSandboxGeneration），重放路径因此从行上读，不再依赖 decide 的局部变量。
                 grantWriter.commit(plan, approval.getSessionId(), userId, workspaceId,
                         new ApprovalGrantWriter.GrantContext(approval.getTool(), approval.getArgumentsHash(),
-                                modeAtGrant, policyRevisionAtGrant, sandboxGeneration));
+                                modeAtGrant, approval.getPolicyRevision(), approval.getSandboxGeneration()));
             }
         } catch (CpApiException e) {
             // 领域错误（如 workspace OWNER 校验 403）不是写入故障：行标记 dispatch_unknown 可重试，

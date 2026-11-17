@@ -80,8 +80,60 @@ class UserQuestionServiceTest {
         @Override
         public void rollback(TransactionStatus status) { }
     };
+    /**
+     * task-161：恢复闸的替身。默认走「拿到槽」路径 —— 直接把 respond 转发给 agentClient，
+     * 于是原有断言（谁在什么时机被 respond）保持原义；park 路径在专门用例里改成 return false。
+     */
+    private final ChatRunDispatchQueueService dispatchQueue =
+            org.mockito.Mockito.mock(ChatRunDispatchQueueService.class);
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubImmediateResume() {
+        org.mockito.Mockito.when(dispatchQueue.resumeQuestionOrPark(any(), any()))
+                .thenAnswer(invocation -> {
+                    UserQuestion row = invocation.getArgument(0);
+                    String answer = invocation.getArgument(1);
+                    agentClient.respond(row.getId().toString(), row.getSessionId().toString(),
+                            row.getRunId().toString(), answer);
+                    return true;
+                });
+    }
+
     private final UserQuestionService service = new UserQuestionService(questions, runs, approvals,
-            sessions, agentClient, sessionReadAccess, audit, TX_MANAGER);
+            sessions, agentClient, sessionReadAccess, audit, TX_MANAGER, dispatchQueue);
+
+    /** task-161 / D-1786 面 B：拿不到执行槽时答案仍 durable，但 Agent 不被唤醒。 */
+    @Test
+    void answer_parksTheResumeWhenTheSessionHasNoExecutionSlot() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+        when(questions.markAnswered(eq(row.getId()), eq(ANSWER), any())).thenReturn(1);
+        // 闸说不许恢复（会话执行数已到 cap）—— service 必须把答案落库并把 respond 交给队列。
+        org.mockito.Mockito.doReturn(false).when(dispatchQueue)
+                .resumeQuestionOrPark(any(), any());
+
+        service.answer(row.getId(), USER_ID, ANSWER);
+
+        // 关键：排队不是「没答」——行仍被 CAS 推进，审计仍写，用户看到已回答。
+        verify(agentClient, never()).respond(any(), any(), any(), any());
+        verify(audit).recordDurableChange(eq(USER_ID), any(), eq("user_question_answered"),
+                eq("user_question"), eq(row.getId().toString()), any());
+    }
+
+    /** 反问：正常路径把「行 + 答案」交给闸，由闸决定立即唤醒还是排队。 */
+    @Test
+    void answer_delegatesTheResumeDecisionToTheGate() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+        when(questions.markAnswered(eq(row.getId()), eq(ANSWER), any())).thenReturn(1);
+
+        service.answer(row.getId(), USER_ID, ANSWER);
+
+        // 默认 stub 放行并转发 respond：这里断言的是「服务把决定权交给了闸」，
+        // 而 respond 是否真的发出由闸的实现负责（RunDispatchQueueTest / 排水用例覆盖）。
+        verify(dispatchQueue).resumeQuestionOrPark(eq(row), eq(ANSWER));
+        verify(agentClient).respond(eq(row.getId().toString()), eq(SESSION_ID), eq(RUN_ID), eq(ANSWER));
+    }
 
     // ---------------------------------------------------------------------------------------
     // recordPending
@@ -607,7 +659,7 @@ class UserQuestionServiceTest {
     /** Same wiring as the shared {@link #service}, but with an injected clock. */
     private UserQuestionService serviceAt(java.time.Clock clock) {
         return new UserQuestionService(questions, runs, approvals, sessions, agentClient,
-                sessionReadAccess, audit, TX_MANAGER, clock);
+                sessionReadAccess, audit, TX_MANAGER, clock, dispatchQueue);
     }
 
     /** Fixed-instant clock that counts how many times the service asked for the time. */

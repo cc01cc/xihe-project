@@ -27,6 +27,7 @@ import type {
     Message,
     SessionDerivedStateResponse,
     SessionRunSummary,
+    DispatchQueueEntry,
     ToolCallWaitingOn,
 } from "../../../../types";
 import MessageList from "./MessageList.vue";
@@ -564,6 +565,37 @@ async function loadOlderMessages(): Promise<void> {
 // （goldpath G2-e reload 后 [data-slot=message] 卡 1/2 的根因）。对冷启动做有界追平：
 // 只要 listSessionRuns 还有非终态 run，就周期性重拉历史，直到无活动 run 或达到上限。
 // loadMessages 在 isStreaming 时早退，不会覆盖本页新发起的 live 流。
+/**
+ * task-161 / D-1786 面 B（D-1785 最低形态：事实标记 + 跳转）：恢复投放队列的位置。
+ *
+ * `position` 是 CP 给的队头距离（0 = 队头），本页**不做任何本地推算**——否则 UI 与
+ * CP 会各自维护一个顺序，迟早不一致。空队列就是空列表（CP 空队列返回 200 + []），
+ * 因此标记的显隐由数据本身决定。
+ */
+const dispatchQueue = ref<DispatchQueueEntry[]>([]);
+
+async function refreshDispatchQueue(sessionId: string): Promise<void> {
+    if (!sessionId) {
+        dispatchQueue.value = [];
+        return;
+    }
+    try {
+        const response = await api.getSessionDispatchQueue(sessionId);
+        if (props.sessionId !== sessionId) return;
+        dispatchQueue.value = response.queue ?? [];
+    } catch (cause) {
+        // 位置是辅助事实：读不到就撤标记，绝不用旧位置继续显示（陈旧位置比没有更误导）。
+        if (props.sessionId === sessionId) dispatchQueue.value = [];
+        logger.warn("failed to load dispatch queue", cause);
+    }
+}
+
+/** 跳到该排队 run 的消息/等待卡（消息列表的 run 头带 `data-run-id`）。 */
+function jumpToQueuedRun(runId: string): void {
+    const target = document.querySelector(`[data-run-id="${runId}"]`);
+    if (target instanceof HTMLElement) target.scrollIntoView({ block: "center" });
+}
+
 async function refreshSessionRuns(sessionId: string): Promise<void> {
     if (!sessionId) return;
     try {
@@ -609,6 +641,14 @@ function catchUpInFlightRunProjection(sessionId: string): void {
             // 落盘；会话切换时不再另发一次 `listSessionRuns`（同一事件两个消费者会让
             // BL-228 的调用次数语义漂移，也是白打一次请求）。
             sessionRuns.value = response.runs;
+            // task-161：还有 run 在排队（或本页已知队列非空）⇒ 同轮刷新队列位置。
+            // 不新增定时器：排队的 run 本身是非终态，本 tick 会继续跑，直到退役/恢复。
+            if (
+                dispatchQueue.value.length > 0 ||
+                response.runs.some((run) => run.status === "queued")
+            ) {
+                void refreshDispatchQueue(sessionId);
+            }
             if (sawActiveRun) await loadSessionMessages(sessionId);
             if (!hasActiveRun || exhausted) stopRunCatchup(sessionId);
         } catch (cause) {
@@ -1289,8 +1329,15 @@ async function decideApproval(submission: ApprovalDecisionEnvelope) {
             ...(layer === undefined ? {} : { layer }),
             ...(rule === undefined ? {} : { rule }),
         });
-        if (response.status === "accepted" || response.status === "already_decided") {
+        if (response.status === "queued") {
+            // task-161：决定已作出、等执行槽——不是 accepted（那表示已执行并唤醒 Agent）。
+            // 立刻取一次位置让标记出现；后续位置由 run 追平 tick 每轮刷新。
+            // 卡片收起：这一单已经落定在「等执行」，继续挂着只会引诱用户再点一次（那是 409）。
+            dismissedRequestIds.value.add(approval.requestId);
+            await refreshDispatchQueue(approval.sessionId);
+        } else if (response.status === "accepted" || response.status === "already_decided") {
             chatStore.invalidateRunRecovery(approval.sessionId, approval.runId);
+            if (dispatchQueue.value.length > 0) await refreshDispatchQueue(approval.sessionId);
         }
     } catch (err) {
         // task-45：兜底从英文硬编码改为本地化文案（这一处原本会漏出英文）。
@@ -1590,6 +1637,34 @@ watch(
                 t("chat.pendingApprovalReopenAction")
             }}</span>
         </button>
+
+        <!--
+            task-161 / D-1785：恢复投放队列的位置标记。position 直接来自 CP（不本地推算），
+            「前面还有 N 个」就是它；点「查看」跳到对应 run 的消息/等待卡。
+        -->
+        <div
+            v-if="dispatchQueue.length > 0"
+            data-testid="dispatch-queue-notice"
+            class="mx-4 mb-2 flex flex-col gap-1 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm"
+        >
+            <div
+                v-for="entry in dispatchQueue"
+                :key="entry.runId"
+                class="flex items-center justify-between gap-3"
+            >
+                <span class="min-w-0 truncate text-muted-foreground">
+                    {{ t("chat.dispatchQueue.ahead", { count: entry.position }) }}
+                </span>
+                <button
+                    type="button"
+                    class="shrink-0 font-medium text-primary transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :data-testid="`dispatch-queue-jump-${entry.runId}`"
+                    @click="jumpToQueuedRun(entry.runId)"
+                >
+                    {{ t("chat.dispatchQueue.jump") }}
+                </button>
+            </div>
+        </div>
 
         <InputArea
             ref="inputComponent"

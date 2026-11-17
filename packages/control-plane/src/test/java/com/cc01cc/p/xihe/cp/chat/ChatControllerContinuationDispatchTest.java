@@ -84,7 +84,8 @@ class ChatControllerContinuationDispatchTest {
                 Mockito.mock(ContextFingerprintRecorder.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.chat.UserQuestionService.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.event.UserChannelPort.class),
-                Mockito.mock(ProviderRequestFingerprintRecorder.class));
+                Mockito.mock(ProviderRequestFingerprintRecorder.class),
+                Mockito.mock(ChatRunDispatchQueueService.class));
     }
 
     @Test

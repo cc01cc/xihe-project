@@ -45,6 +45,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             continueFollowUpQueue: vi.fn<typeof api.continueFollowUpQueue>(),
             getSessionDerivedState: vi.fn<typeof api.getSessionDerivedState>(),
             listSessionRuns: vi.fn<typeof api.listSessionRuns>(),
+            getSessionDispatchQueue: vi.fn<typeof api.getSessionDispatchQueue>(),
             bindSessionDefaults: vi.fn<typeof api.bindSessionDefaults>(),
         },
     };
@@ -211,6 +212,10 @@ beforeEach(() => {
         terminalNotices: [],
     });
     vi.mocked(api.listSessionRuns).mockReset();
+    vi.mocked(api.getSessionDispatchQueue).mockReset().mockResolvedValue({
+        sessionId: SESSION_ID,
+        queue: [],
+    });
     vi.mocked(api.listSessionRuns).mockResolvedValue({
         sessionId: SESSION_ID,
         page: 0,
@@ -245,6 +250,45 @@ describe("ChatPanel approval decision correlation (PLAN-0328 T1.14)", () => {
         await flushPromises();
         expect(decideChatApproval).toHaveBeenCalledTimes(1);
         expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: "once" });
+    });
+
+    it("marks a queued decision with its CP-reported position and jumps to the run (task-161 / D-1785)", async () => {
+        // task-161：决定已作出但会话执行数到 cap ⇒ CP 返回 status=queued，位置来自
+        // GET /chat/sessions/{id}/dispatch-queue（position 0 = 前面没有别人）。
+        vi.mocked(api.decideChatApproval).mockResolvedValue({
+            status: "queued",
+            requestId: REQUEST_ID,
+            approved: true,
+            decision: "once",
+            propagated: 0,
+        });
+        vi.mocked(api.getSessionDispatchQueue).mockResolvedValue({
+            sessionId: SESSION_ID,
+            queue: [{ runId: RUN_ID, position: 1 }],
+        });
+        const wrapper = mountPanel();
+        useAgentStore().addApprovalRequest(approval);
+        await nextTick();
+        await flushPromises();
+
+        await wrapper.find('[data-testid="approval-approve"]').trigger("click");
+        await flushPromises();
+
+        const notice = wrapper.find('[data-testid="dispatch-queue-notice"]');
+        expect(notice.exists()).toBe(true);
+        // 位置是事实：文案里的数字就是 CP 给的 position，不是本地推算的顺序。
+        expect(notice.text()).toContain("1");
+
+        // 跳转目标：消息列表的 run 头（data-run-id）。方位由实现负责，这里只钉"点了会跳"。
+        const target = document.createElement("div");
+        target.setAttribute("data-run-id", RUN_ID);
+        target.scrollIntoView = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
+        document.body.append(target);
+
+        await wrapper.find(`[data-testid="dispatch-queue-jump-${RUN_ID}"]`).trigger("click");
+
+        expect(target.scrollIntoView).toHaveBeenCalled();
+        target.remove();
     });
 
     it("shows the serial queue progress (1/N) and only the first approval (PLAN-0665 M2 D5)", async () => {

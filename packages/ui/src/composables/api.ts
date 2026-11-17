@@ -60,6 +60,7 @@ import type {
     RunTransportAttemptsResponse,
     SessionDerivedStateResponse,
     SessionRunsResponse,
+    SessionDispatchQueueResponse,
     SessionMonitorResponse,
     SessionPolicyMode,
     SessionPolicyModeState,
@@ -1015,7 +1016,8 @@ export interface WorkspaceAgentCapResponse {
 }
 
 export interface ChatApprovalDecisionResponse {
-    status: "accepted" | "already_decided";
+    /** task-161: `queued` = the decision is durable but waits for an execution slot. */
+    status: "accepted" | "already_decided" | "queued";
     requestId: string;
     approved: boolean;
     decision?: ApprovalDecisionKind;
@@ -3386,6 +3388,15 @@ export const api = {
         params.set("size", String(options.size ?? 100));
         return request<SessionRunsResponse>(
             `/chat/sessions/${encodeURIComponent(sessionId)}/runs?${params.toString()}`,
+        );
+    },
+    /**
+     * task-161 (D-1786 面 B / D-1785): the Session's deferred-resume queue in FIFO order.
+     * `position` is the queue index (0 = head) — "N ahead" on screen is this number.
+     */
+    getSessionDispatchQueue(sessionId: string): Promise<SessionDispatchQueueResponse> {
+        return request<SessionDispatchQueueResponse>(
+            `/chat/sessions/${encodeURIComponent(sessionId)}/dispatch-queue`,
         );
     },
     /** PLAN-0507: read-only Session monitor aggregate (activity/history/readiness). */

@@ -70,6 +70,7 @@ public class ChatRunCancellationService {
     private final McpInvocationRepository mcpInvocationRepository;
     private final RuntimeExecutionClient runtimeExecutionClient;
     private final ChatRunTerminalService terminalService;
+    private final RunDispatchQueue dispatchQueue;
     private final DbLockTimeout dbLockTimeout;
     /**
      * 认领用编程式事务：{@link #claimCancellation} 由本类其他方法自调用（自调用不经过
@@ -95,7 +96,8 @@ public class ChatRunCancellationService {
             RuntimeExecutionClient runtimeExecutionClient,
             ChatRunTerminalService terminalService,
             DbLockTimeout dbLockTimeout,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            RunDispatchQueue dispatchQueue) {
         this.objectMapper = objectMapper;
         this.entityManager = entityManager;
         this.chatRunRepository = chatRunRepository;
@@ -105,6 +107,7 @@ public class ChatRunCancellationService {
         this.terminalService = terminalService;
         this.dbLockTimeout = dbLockTimeout;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.dispatchQueue = dispatchQueue;
     }
 
     /**
@@ -433,5 +436,10 @@ public class ChatRunCancellationService {
             return;
         }
         logger.info("[LIFECYCLE] service=cp event=run_cancelled runId={}", runId);
+        // task-161：parked run 也在 ACTIVE_LEASE_STATUSES 里、走同一条 cancel 路径；
+        // 终态化后必须摘出恢复队列，否则排水会对死 run 发起 respond。
+        if (dispatchQueue.remove(runId)) {
+            logger.info("[LIFECYCLE] service=cp event=chat_run_queue_removed_on_cancel runId={}", runId);
+        }
     }
 }

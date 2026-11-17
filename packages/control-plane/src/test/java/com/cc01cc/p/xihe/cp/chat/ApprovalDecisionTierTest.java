@@ -54,6 +54,9 @@ class ApprovalDecisionTierTest {
             new PolicyEngine(mock(AuditLogger.class), new BuiltinPolicyContextProvider()));
     private final ApprovalPendingStore pendingStore = new ApprovalPendingStore(
             approvals, new ObjectMapper(), policySummary);
+    /** task-161：恢复闸替身。默认放行（claim=true），既有用例语义不变；park 路径专门用例反转。 */
+    private final ChatRunDispatchQueueService dispatchQueue =
+            org.mockito.Mockito.mock(ChatRunDispatchQueueService.class);
     private final com.cc01cc.p.xihe.cp.policy.SessionPolicyState sessionPolicyState =
             new com.cc01cc.p.xihe.cp.policy.SessionPolicyState();
     private final com.cc01cc.p.xihe.cp.policy.SessionApprovalMode sessionApprovalMode =
@@ -63,13 +66,22 @@ class ApprovalDecisionTierTest {
             sessionApprovalMode, policyRevision, workspaceRepository,
             new AnswererChain(List.of(new UserAnswerer(), new AutoReviewAnswerer())),
             org.mockito.Mockito.mock(GuardAdviceService.class),
-            org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
+            org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class),
+            dispatchQueue,
+            org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.service.InstanceIdentityService.class));
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
     private static final String TEST_USER = "33333333-3333-3333-3333-333333333333";
     private static final String TEST_WORKSPACE = "44444444-4444-4444-4444-444444444444";
     private static final String TEST_SESSION = "55555555-5555-5555-5555-555555555555";
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubResumeSlotGranted() {
+        org.mockito.Mockito.when(dispatchQueue.claimApproval(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+    }
 
     private static final ApprovalGrantWriter.RulePlan SESSION_PLAN = new ApprovalGrantWriter.RulePlan(
             "session", "session", "write_file", "write", "*", PolicyEffect.ALLOW);

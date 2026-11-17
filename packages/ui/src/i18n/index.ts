@@ -1936,6 +1936,11 @@ const messages = {
             approvalClassifyRequiresOnce: "未分类工具只能选择「允许一次」。",
             pendingApprovalReopenLabel: "待审批",
             pendingApprovalReopenAction: "查看",
+            dispatchQueue: {
+                // task-161 / D-1785：排队位置是事实（position = 前面还有几个），不是推导线。
+                ahead: "排队等待执行，前面还有 {count} 个",
+                jump: "查看",
+            },
             checkpointMarkerChangedPrefix: "相邻切片差异",
             checkpointMarkerChangedUnit: "个文件",
             checkpointMarkerRollbackable: "可恢复",
@@ -5944,6 +5949,10 @@ const messages = {
             approvalClassifyRequiresOnce: "Unclassified tools can only be allowed once.",
             pendingApprovalReopenLabel: "Pending approval",
             pendingApprovalReopenAction: "Review",
+            dispatchQueue: {
+                ahead: "Queued to run — {count} ahead",
+                jump: "View",
+            },
             checkpointMarkerChangedPrefix: "Adjacent slice difference",
             checkpointMarkerChangedUnit: "file(s)",
             checkpointMarkerRollbackable: "restore available",

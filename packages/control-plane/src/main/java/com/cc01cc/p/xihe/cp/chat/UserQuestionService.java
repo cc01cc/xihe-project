@@ -116,6 +116,7 @@ public class UserQuestionService {
     private final SessionReadAccess sessionReadAccess;
     private final AuditLogger audit;
     private final TransactionTemplate transactionTemplate;
+    private final ChatRunDispatchQueueService dispatchQueueService;
     /**
      * BL-423: the deadline is a wall-clock boundary, so "which side of {@code expiresAt} are we on"
      * has to be answerable <b>once per request</b> and pin-able in tests. Same seam pattern as
@@ -133,15 +134,17 @@ public class UserQuestionService {
     public UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
             ChatApprovalRepository approvals, SessionRepository sessions,
             UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            ChatRunDispatchQueueService dispatchQueueService) {
         this(questions, runs, approvals, sessions, agentClient, sessionReadAccess, audit,
-                transactionManager, Clock.systemUTC());
+                transactionManager, Clock.systemUTC(), dispatchQueueService);
     }
 
     UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
             ChatApprovalRepository approvals, SessionRepository sessions,
             UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
-            PlatformTransactionManager transactionManager, Clock clock) {
+            PlatformTransactionManager transactionManager, Clock clock,
+            ChatRunDispatchQueueService dispatchQueueService) {
         this.questions = questions;
         this.runs = runs;
         this.approvals = approvals;
@@ -151,6 +154,7 @@ public class UserQuestionService {
         this.audit = audit;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.clock = clock;
+        this.dispatchQueueService = dispatchQueueService;
     }
 
     /** Single source of "now" for this request; never call {@link Instant#now()} in this class. */
@@ -310,17 +314,18 @@ public class UserQuestionService {
             return null;
         }
         // Fail-closed: if this call throws, the transaction rolls the advance back and the question
-        // stays pending for another attempt.
-        agentClient.respond(questionId.toString(), row.getSessionId().toString(),
-                row.getRunId().toString(), body);
+        // stays pending for another attempt. task-161 / D-1786 面 B：唤醒前先申请执行槽 ——
+        // 拿到槽 → 立即 respond（本路径，行为同原样）；拿不到 → park（答案保持 durable，
+        // respond 挂到 ChatRunTerminalizedEvent 排水，run 落 'queued' 作事实标记）。
+        boolean resumed = dispatchQueueService.resumeQuestionOrPark(row, body);
         row.setState(UserQuestion.STATE_ANSWERED);
         row.setAnswer(body);
         row.setSettledAt(now);
         audit.recordDurableChange(userId, null, "user_question_answered", "user_question",
                 questionId.toString(), auditDetail(row, body.length()));
         logger.info("[LIFECYCLE] service=cp event=run_question_answered questionId={}"
-                        + " sessionId={} runId={} answerLength={}", questionId, row.getSessionId(),
-                row.getRunId(), body.length());
+                        + " sessionId={} runId={} answerLength={} resumed={}",
+                questionId, row.getSessionId(), row.getRunId(), body.length(), resumed);
         return row;
     }
 

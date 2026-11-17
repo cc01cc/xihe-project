@@ -109,6 +109,8 @@ public class ChatController {
     private final ChatRunReadService chatRunReadService;
     private final ChatRunTransportService chatRunTransportService;
     private final SessionMonitorService sessionMonitorService;
+    /** task-161 / D-1785：恢复投放队列的位置读面。 */
+    private final ChatRunDispatchQueueService dispatchQueueService;
     private final ChatRunLifecycleService chatRunLifecycleService;
     private final MessageReadService messageReadService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
@@ -198,7 +200,9 @@ public class ChatController {
               UserQuestionService userQuestionService,
               com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel,
               // PLAN-0679 T2.2: appended last for the same reason.
-              ProviderRequestFingerprintRecorder providerRequestFingerprintRecorder) {
+              ProviderRequestFingerprintRecorder providerRequestFingerprintRecorder,
+              // task-161 / D-1785: the dispatch-queue position read face.
+              ChatRunDispatchQueueService dispatchQueueService) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -226,6 +230,7 @@ public class ChatController {
         this.userQuestionService = userQuestionService;
         this.userChannel = userChannel;
         this.providerRequestFingerprintRecorder = providerRequestFingerprintRecorder;
+        this.dispatchQueueService = dispatchQueueService;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpToolTimeoutService = mcpToolTimeoutService;
@@ -1338,6 +1343,30 @@ public class ChatController {
         int safeSize = Math.min(Math.max(size, 1), 200);
         return ResponseEntity.ok(chatRunReadService.listSessionRuns(
                 session.getId().toString(), safePage, safeSize));
+    }
+
+    // ── task-161 / D-1785: dispatch queue position (read-only) ─────────────
+
+    /**
+     * 恢复投放队列的**位置读面**（D-1785 最低形态：事实标记 + 跳转；不做实时推送）。
+     *
+     * <p>语义边界：{@code position} 0 起，等于 UI 的「前面还有 N 个」；{@code runId} 是排队中的
+     * Run，UI 用它跳到对应的等待卡（问题卡/审批卡）。队列是内存态（{@code RunDispatchQueue}），
+     * 因此这份读数描述的是**本实例**的排队情况 —— dev 单实例下即事实（证据 §7.5 边界）。
+     * 权限与会话读面同一把尺：{@code requireReadable}（受邀参与者也能看到排队，不含正文）。</p>
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/api/v1/chat/sessions/{sessionId}/dispatch-queue")
+    public ResponseEntity<Map<String, Object>> getSessionDispatchQueue(@PathVariable String sessionId) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || workspaceId == null) {
+            return ProblemDetailsHandler.workspaceContextRequired();
+        }
+        Session session = sessionService.requireReadable(sessionId, userId, workspaceId);
+        List<Map<String, Object>> entries = dispatchQueueService.queueView(session.getId().toString());
+        // 队列为空也返回 200 + 空数组：调用方据此把「排队中」标记撤掉，而不是靠 404 推断。
+        return ResponseEntity.ok(Map.of("queue", entries, "sessionId", session.getId().toString()));
     }
 
     // ── PLAN-0507: session monitor aggregate (read-only) ───────────────────
