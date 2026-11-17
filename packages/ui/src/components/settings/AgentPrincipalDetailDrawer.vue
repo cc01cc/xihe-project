@@ -502,7 +502,11 @@ function closeDrawer() {
                             </dt>
                             <dd class="flex min-w-0 items-center gap-2">
                                 <span class="truncate font-medium">{{ principal.name }}</span>
-                                <Badge v-if="principal.disabled" variant="outline">
+                                <Badge
+                                    v-if="principal.disabled"
+                                    variant="outline"
+                                    data-testid="apd-disabled-badge"
+                                >
                                     {{ t(K + "stateDisabled") }}
                                 </Badge>
                                 <Badge variant="outline" data-testid="apd-ownership">

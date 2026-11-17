@@ -260,6 +260,25 @@ describe("AgentPrincipalDetailDrawer", () => {
         expect(maybe('[data-testid="apd-model-save"]')).toBeNull();
     });
 
+    it("已禁用主体：身份区显示「已禁用」徽标，且危险区不渲染（禁用是终态，不给第二个「禁用」键）", async () => {
+        mountDrawer({ principal: principal({ disabled: true }), showDanger: true });
+        await flushPromises();
+
+        expect(q('[data-testid="apd-disabled-badge"]').textContent).toContain("已禁用");
+        // showDanger=true 也不渲染：危险区的前提是「还能禁用」，已禁用行没有这个动作。
+        expect(maybe('[data-testid="apd-disable"]')).toBeNull();
+        expect(maybe('[data-testid="apd-danger"]')).toBeNull();
+    });
+
+    it("未禁用主体 + showDanger：危险区渲染出「禁用主体」键", async () => {
+        mountDrawer({ showDanger: true });
+        await flushPromises();
+
+        expect(maybe('[data-testid="apd-disabled-badge"]')).toBeNull();
+        expect(q('[data-testid="apd-danger"]')).toBeTruthy();
+        expect(q('[data-testid="apd-disable"]').textContent).toContain("禁用主体");
+    });
+
     it("await 后回填守卫：请求在途时抽屉已关 ⇒ 不回填、不 emit", async () => {
         let resolveUpdate: ((value: unknown) => void) | null = null;
         vi.spyOn(api, "updateAgentPrincipal").mockImplementation(

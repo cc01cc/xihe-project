@@ -21,7 +21,10 @@ export interface MockPersonalPrincipal {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    disabled: boolean;
+    /** 契约 `AgentPrincipalView.disabledAt`：**时间戳或 null，没有布尔 disabled**（panel 解析器按它推导徽标）。 */
+    disabledAt: string | null;
+    /** 契约字段；PLAN-0750 用户层行恒为 null（创建不写 owner_user_id），照实给。 */
+    ownerUserId: string | null;
     ownership: "USER" | "INSTANCE";
     defaultModelProvider: string | null;
     defaultModelName: string | null;
@@ -38,7 +41,8 @@ const PRINCIPALS: MockPersonalPrincipal[] = [
         templateId: "tpl-research",
         templateName: "Researcher",
         createdAt: "2026-11-02T02:10:00Z",
-        disabled: false,
+        disabledAt: null,
+        ownerUserId: null,
         ownership: "USER",
         defaultModelProvider: "anthropic",
         defaultModelName: "claude-sonnet-4-5",
@@ -56,7 +60,8 @@ const PRINCIPALS: MockPersonalPrincipal[] = [
         templateId: null,
         templateName: null,
         createdAt: "2026-11-05T09:30:00Z",
-        disabled: false,
+        disabledAt: null,
+        ownerUserId: null,
         ownership: "USER",
         defaultModelProvider: null,
         defaultModelName: null,
@@ -71,7 +76,10 @@ const PRINCIPALS: MockPersonalPrincipal[] = [
         templateId: "tpl-ops",
         templateName: "Operator",
         createdAt: "2026-10-21T03:22:00Z",
-        disabled: true,
+        // 已禁用行的唯一表达方式：disabledAt 有值（写布尔 disabled 是**线形错误**，
+        // 契约里没有这个字段 —— 早先夹具写成 disabled:true 导致图 15 少了「已禁用」徽标）。
+        disabledAt: "2026-11-10T00:00:00Z",
+        ownerUserId: null,
         ownership: "USER",
         defaultModelProvider: null,
         defaultModelName: null,
