@@ -66,6 +66,21 @@ function select(value: string | number | undefined) {
     <div data-testid="resource-layer-tabs" class="flex flex-col gap-1.5">
         <Tabs :model-value="active" @update:model-value="select">
             <TabsList variant="line" :aria-label="t('resources.tabsLabel')">
+                <!--
+                    task-124：禁用态对比度（浅深不同案，一个类自动分叉）。vendor TabsTrigger 的禁用观感 =
+                    整行 disabled:opacity-50(.5) × 文字自身 alpha。light 基色 text-foreground/60(.6) 与 .5
+                    相乘 = 有效 .30、实测 2.03 FAIL（天花板 2.101 数学不可达）⇒ 撤**文字 alpha** 这层
+                    （disabled:text-foreground 顶成实色），.5 整行 opacity 保留为唯一单层（有效 .5 → 约 3.55
+                    PASS）。dark 基色 dark:text-muted-foreground 本就是实色（单层 2.671 FAIL）⇒ dark 侧顶成
+                    text-foreground（0.985，比 0.708 亮一档）、.5 不动（单层 → 约 5.15 PASS）。注意 dark 变体
+                    是 @custom-variant dark (&:is(.dark *))（main.css:71）——:is() 取内部最高特异性 ⇒
+                    dark:text-muted-foreground 实为 0,2,0，与 disabled:text-foreground（0,2,0）打平后凭源码序
+                    胜出 ⇒ dark 侧必须再叠一层 dark:disabled:text-foreground（0,3,0）才压得住（实测教训）。
+                    旧的自加 opacity-60 是死代码：vendor disabled:opacity-50（0,2,0）特异性压过裸
+                    opacity-60（0,1,0），删掉对比度不变。hover 安全：vendor disabled:pointer-events-none
+                    ⇒ 禁用 tab 不接收指针，hover:text-foreground 永不触发（实测悬停三项全不变）。
+                    非颜色通道不动：disabled 属性 / title / 光标类 / 下方可见理由列表全保留。
+                -->
                 <TabsTrigger
                     v-for="layer in layers"
                     :key="layer"
@@ -75,7 +90,7 @@ function select(value: string | number | undefined) {
                     :title="disabledReason?.[layer] ?? undefined"
                     :class="
                         disabledReason?.[layer] && layer !== active
-                            ? 'cursor-not-allowed opacity-60'
+                            ? 'cursor-not-allowed disabled:text-foreground dark:disabled:text-foreground'
                             : undefined
                     "
                 >

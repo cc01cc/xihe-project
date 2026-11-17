@@ -64,6 +64,16 @@ describe("技能三层 tab（T2b.3）", () => {
         );
     });
 
+    it("禁用层挂对比度修复类（task-124：浅深不同案；死代码 opacity-60 已移除）", () => {
+        const wrapper = mountTabs({ USER: "需要某个原子" });
+        const tabs = wrapper.findAll("[role='tab']");
+        // light 撤文字 alpha 层、dark 换亮一档（详见组件模板注释）；两个类都必须在场。
+        expect(tabs[0]!.classes()).toContain("disabled:text-foreground");
+        expect(tabs[0]!.classes()).toContain("dark:disabled:text-foreground");
+        // 死代码：vendor disabled:opacity-50（0,2,0）特异性压过裸 opacity-60（0,1,0），删掉对比度不变。
+        expect(tabs[0]!.classes()).not.toContain("opacity-60");
+    });
+
     it("真进不去的层：tab 仍留在 DOM、`disabled` 且理由可见（不隐藏）", () => {
         const wrapper = mountTabs({ USER: "需要某个原子" });
         const tabs = wrapper.findAll("[role='tab']");

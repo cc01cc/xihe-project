@@ -126,12 +126,14 @@ async function handleSubmit() {
                     </p>
                 </div>
 
+                <!-- task-125：同 LoginView——字色按分支给全（原 text-primary-foreground 压死分支的
+                    text-muted-foreground），撤 disabled:opacity-40（详见 LoginView 同款注释）。 -->
                 <button
                     type="submit"
-                    class="w-full py-2 px-4 rounded-md font-medium text-primary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    class="w-full py-2 px-4 rounded-md font-medium transition-colors disabled:cursor-not-allowed"
                     :class="
                         canSubmit()
-                            ? 'bg-primary hover:bg-primary/90'
+                            ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
                             : 'bg-muted-foreground/30 text-muted-foreground'
                     "
                     :disabled="loading"

@@ -410,13 +410,18 @@ onMounted(() => {
                         </button>
                     </li>
                 </ul>
+                <!--
+                    task-125：翻页按钮禁用观感 opt4——顶掉整行 disabled:opacity-40，文字自身 alpha /85
+                    单层表达（light ≈3.85 / dark ≈5.3 ≥3:1）；disabled:hover:bg-transparent 顶回
+                    hover:bg-muted（无 pointer-events-none 时 :hover 仍命中禁用键）。
+                -->
                 <footer
                     class="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted-foreground"
                 >
                     <button
                         type="button"
                         :disabled="auditStore.page === 0"
-                        class="rounded px-2 py-1 hover:bg-muted disabled:opacity-40"
+                        class="rounded px-2 py-1 hover:bg-muted disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:bg-transparent"
                         @click="changePage(-1)"
                     >
                         {{ t("settings.auditPrevious") }}
@@ -427,7 +432,7 @@ onMounted(() => {
                     <button
                         type="button"
                         :disabled="auditStore.page + 1 >= auditStore.totalPages"
-                        class="rounded px-2 py-1 hover:bg-muted disabled:opacity-40"
+                        class="rounded px-2 py-1 hover:bg-muted disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:bg-transparent"
                         @click="changePage(1)"
                     >
                         {{ t("settings.auditNext") }}

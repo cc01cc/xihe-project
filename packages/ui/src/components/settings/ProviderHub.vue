@@ -1325,8 +1325,15 @@ onMounted(() => {
                                         {{ t("settings.providerHub.manage") }}
                                     </button>
                                     <!-- PLAN-0523 T3.2 就地设定默认连接 -->
+                                    <!--
+                                        task-125：禁用观感走 opt4——顶掉整行 disabled:opacity-50，改由
+                                        文字自身 alpha /85 表达（单层 light ≈3.6 / dark ≈5.9 ≥3:1）。
+                                        必须同时 neutralize hover：本按钮无 pointer-events-none，disabled
+                                        时 :hover 仍命中，不顶回则 hover:border-primary/hover:text-foreground
+                                        全强度暴露、禁用键看起来比可点键还亮（task-106 同族坑）。
+                                    -->
                                     <button
-                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                         :disabled="
                                             props.readonly ||
                                             savingDefault ||

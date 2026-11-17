@@ -103,12 +103,23 @@ async function handleSubmit() {
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                     />
                 </div>
+                <!--
+                    task-125：禁用观感不靠整行 opacity，且文字色**按分支给全**。
+                    ① 原静态 text-primary-foreground 与禁用分支的 text-muted-foreground 同特异性
+                    （0,1,0），源码序前者恒胜 ⇒ 分支文字色一直是死类，禁用键实际=白字 on washed 灰底
+                    （light 实测 1.539 / dark 1.529）。② 原 disabled:opacity-40 再把整体压到
+                    1.194 / 1.208（<3:1 禁用判据）。修法：静态只留布局/光标，两个分支各带完整
+                    底色+字色（启用 = bg-primary + text-primary-foreground；未就绪/提交中 =
+                    bg-muted-foreground/30 + text-muted-foreground，washed 灰底表达"不可点"），
+                    实测 light ≈3.3 / dark ≈4.6，达标且观感不变。disabled:cursor-not-allowed 保留
+                    （pointer-events 未关，光标真实生效）。
+                -->
                 <button
                     type="submit"
-                    class="w-full py-2 px-4 rounded-md font-medium text-primary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    class="w-full py-2 px-4 rounded-md font-medium transition-colors disabled:cursor-not-allowed"
                     :class="
                         identifier && password && !busy
-                            ? 'bg-primary hover:bg-primary/90'
+                            ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
                             : 'bg-muted-foreground/30 text-muted-foreground'
                     "
                     :disabled="!identifier || !password || busy"
