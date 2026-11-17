@@ -144,8 +144,13 @@ export interface GlobalLayoutState {
     navWidth: number;
 }
 
-/** S3b: pinned = flex child, floating = overlay (never squeezes the main column). */
-export type DockMode = "pinned" | "floating";
+/**
+ * task-162 ①（task-94 S1 的行为收尾）：**收窄为单值**。floating 分支已随 task-94 S1/S2/S4 退场，
+ * 类型层保留两值会让「复活 floating」的改动在编译期没人拦 —— 收窄后任何写 `"floating"` 的地方
+ * 直接编译失败，正是本卡的验收信号。持久面字段保留（旧键仍要解析），读到 `"floating"` 一律
+ * 归一到 `pinned`（见 `isDockMode` 与 `readWorkspaceLayout`）。
+ */
+export type DockMode = "pinned";
 
 export interface WorkspaceLayoutState {
     treeCollapsed: boolean;
@@ -155,10 +160,8 @@ export interface WorkspaceLayoutState {
     dockWidth: number;
     dockTabs: DockTabId[];
     activeDockTab: DockTabId | null;
-    /** S3b: breakpoint-derived mode unless the user pinned/unpinned it explicitly. */
+    /** 恒 `pinned`（task-162 收窄单值）：字段保留只为解析旧键，不再承载两态。 */
     dockMode: DockMode;
-    /** S3b: `true` once the user toggled the mode; the derivation then backs off. */
-    dockModeManual: boolean;
     /**
      * PLAN-0626 D26-04: "expand the panel" — the dock fills the whole workbench row and
      * the main column is hidden (rendering only: the column stays mounted, so its SSE and
@@ -225,8 +228,9 @@ export function clampTreeWidth(width: number): number {
     return Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, Math.round(width)));
 }
 
+/** 收窄后的守卫：旧键里的 `"floating"`（task-94 前的形态）一律按 pinned 归一。 */
 export function isDockMode(value: unknown): value is DockMode {
-    return value === "pinned" || value === "floating";
+    return value === "pinned";
 }
 
 export type ActiveColumn = "main" | "right";
@@ -332,26 +336,8 @@ export function writeWorkspaceOpenTabs(workspaceId: string, openTabs: WorkTabId[
     }
 }
 
-/**
- * task-94 S1（`D-1754 ④` 判据 3「右栏 = 正常列，不得是浮窗/overlay」）：**视口不再决定 dock 形态**。
- *
- * <p>派生值恒为 `pinned` —— <1800 不再是浮窗断点（原实现按 `DOCK_INLINE_MIN_VIEWPORT` 派生 floating，
- * 1600 档实测 `position:absolute` + `z-index:20` + 与主列水平重叠 360px，正是用户要消灭的形态）。
- * 视口过窄时不再「换成浮窗」而是由 `computeWorkbenchSqueeze` 的 `forceSingleColumn` 走单栏（D-1545 既有机制）。</p>
- *
- * <p>**参数保留但不参与判定**：签名与调用点一起改会把规格与消费侧拖进同一批，而本步只需要「派生值恒 pinned」。
- * `_viewportWidth` 保留 `_` 前缀（`noUnusedParameters` 对下划线参数豁免）。</p>
- *
- * <p>退场过程：本步只改派生值；`dockModeManual`、`floating` 渲染分支与 `forceFloating` 的消费侧
- * 在 S2/S4 批次收口（那时 `DockMode` 收窄为单值，本函数整体退役）。</p>
- */
-export function deriveDockMode(_viewportWidth: number): DockMode {
-    return "pinned";
-}
-
 export function defaultWorkspaceLayoutForViewport(viewportWidth: number): WorkspaceLayoutState {
-    const defaults = defaultWorkspaceLayout(),
-        dockMode = deriveDockMode(viewportWidth);
+    const defaults = defaultWorkspaceLayout();
     /**
      * task-94 S5 / D4（Lead 2026-11-17 裁「D4 必须同批修」）：**两档首启都带 `files` 页签**。
      *
@@ -371,7 +357,6 @@ export function defaultWorkspaceLayoutForViewport(viewportWidth: number): Worksp
             // 用户 2026-11-17「右侧容器显示目录树组件」。树是右栏的一个 dock 页签（不占独立容器行）。
             dockTabs: tabs,
             activeDockTab: "files",
-            dockMode,
         };
     }
     return {
@@ -379,7 +364,6 @@ export function defaultWorkspaceLayoutForViewport(viewportWidth: number): Worksp
         dockCollapsed: true,
         dockTabs: tabs,
         activeDockTab: "files",
-        dockMode,
     };
 }
 
@@ -406,10 +390,9 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         dockWidth: DOCK_WIDTH_DEFAULT,
         dockTabs: [],
         activeDockTab: null,
-        // task-94 S1：floating 退场后的**存储默认**。旧键里的 `"floating"` 仍能读（`DockMode` 保留两值），
-        // 但渲染侧不再有产生它的路径；读到未知值也按 pinned 落。
+        // task-94 S1 / task-162：floating 退场，存储默认恒 pinned。旧键里的 `"floating"`
+        // 在 `isDockMode` 处被归一到 pinned（类型已收窄单值，写它编译失败）。
         dockMode: "pinned",
-        dockModeManual: false,
         dockFocus: false,
         activeColumn: "main",
         openTabs: defaultOpenTabs(),
@@ -590,11 +573,8 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                     : defaults.dockWidth,
             dockTabs: tabs,
             activeDockTab: tabs.length === 0 ? null : active,
+            // task-162：旧键的 "floating" 过不了守卫 ⇒ 归一 pinned（归一旧值不是宽容，是删形态）。
             dockMode: isDockMode(parsed.dockMode) ? parsed.dockMode : defaults.dockMode,
-            dockModeManual:
-                typeof parsed.dockModeManual === "boolean"
-                    ? parsed.dockModeManual
-                    : defaults.dockModeManual,
             // D26-04: focus is meaningless without a rendered panel, so a payload that says
             // "focused" while the dock is collapsed (or has no tabs) degrades to false
             // instead of storing a state the UI cannot honour.
@@ -638,7 +618,6 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 dockTabs: tabs,
                 activeDockTab: active,
                 dockMode: isDockMode(state.dockMode) ? state.dockMode : "pinned",
-                dockModeManual: state.dockModeManual,
                 // Mirrors the read-side normalization: never persist "focused" for a dock
                 // that cannot render (collapsed or tabless).
                 dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,

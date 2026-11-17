@@ -19,8 +19,8 @@ import type { DockTab } from "./workspaceDockTabs";
 const props = defineProps<{
     tabs: DockTab[];
     activeTab: string;
-    mode?: "pinned" | "floating";
 }>();
+// task-162 ①：`mode` prop 随 `DockMode` 收窄退场 —— 浮窗形态已不存在，`syncDockMode` 没有可走的分支。
 
 const emit = defineEmits<{
     "update:activeTab": [id: string];
@@ -32,7 +32,6 @@ const dockApi = ref<DockviewReadyEvent["api"] | null>(null);
 function onDockReady(event: DockviewReadyEvent) {
     dockApi.value = event.api;
     syncDockPanels();
-    syncDockMode();
 }
 
 /**
@@ -63,20 +62,6 @@ function syncDockPanels() {
 }
 
 watch([() => props.tabs, () => props.activeTab], syncDockPanels);
-
-/** PLAN-0756 T3: floating 模式驱动 dockview 浮动组（断点派生仍在 WorkspaceWorkbench）。 */
-function syncDockMode() {
-    const api = dockApi.value;
-    if (!api) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const group: any = api.groups?.[0];
-    if (!group) return;
-    if (props.mode === "floating" && group.api?.location?.type !== "floating") {
-        api.addFloatingGroup(group, { width: 360, height: api.height || 400 });
-    }
-}
-
-watch(() => props.mode, syncDockMode);
 </script>
 
 <template>

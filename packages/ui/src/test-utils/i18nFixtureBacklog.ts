@@ -152,9 +152,7 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
         keys: [
             "common.files",
             "files.titleFiles",
-            "workspace.dockModeFloating",
-            "workspace.dockModePinned",
-            "workspace.dockModeToggleHint",
+            // task-162 ②：dock 形态三键已随 locale 删除（浮窗退场），此台账条目同步收账。
             "workspace.importSource",
             "workspace.noActiveFile",
             "workspace.panelMembers",
@@ -163,7 +161,7 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
             "workspace.toolbarMore",
             "workspace.treeResize",
         ],
-        note: "渲染出 12 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。",
+        note: "渲染出 9 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。",
     },
     "layouts/__tests__/AppLayout.spec.ts": {
         keys: [

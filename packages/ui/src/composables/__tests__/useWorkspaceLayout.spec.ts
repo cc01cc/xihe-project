@@ -28,7 +28,6 @@ import {
     defaultGlobalLayout,
     defaultWorkspaceLayout,
     defaultWorkspaceLayoutForViewport,
-    deriveDockMode,
     hasWorkspaceLayout,
     isDockTabId,
     readGlobalLayout,
@@ -134,7 +133,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             // task-94 S1：floating 退场后的**存储默认**是 pinned（旧键里的 "floating" 仍能读，
             // 但渲染侧已没有产生它的路径）；这里跟着改成 pinned，别把 impl 的默认当 bug 改回去。
             dockMode: "pinned",
-            dockModeManual: false,
             dockFocus: false,
             // C3: pages never enter the tab bar; the default open set is empty.
             openTabs: [],
@@ -163,7 +161,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
             dockMode: "pinned",
-            dockModeManual: true,
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
             activeColumn: "right",
@@ -179,7 +176,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
             dockMode: "pinned",
-            dockModeManual: true,
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
             activeColumn: "right",
@@ -193,7 +189,6 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
             dockMode: "pinned",
-            dockModeManual: true,
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
             activeColumn: "right",
@@ -392,19 +387,24 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         expect(clampTreeWidth(287.4)).toBe(287);
     });
 
-    // task-94 S1 / D-1754 ④ 判据 3：视口不再是 dock 形态的来源。1600 档曾派生出 absolute overlay
-    // （实测 position:absolute + z-index:20 + 与主列重叠 360px），那是用户点名要消灭的形态。
-    it("always derives the pinned mode at every viewport (floating branch retires)", () => {
-        for (const viewport of [2560, 1920, 1800, 1799, 1440, 1280, 1024, 768]) {
-            expect(deriveDockMode(viewport)).toBe("pinned");
+    // task-162 ①（原 task-94 S1 那条「deriveDockMode 恒 pinned」的改写）：`deriveDockMode` 已随
+    // 类型收窄整体删除 —— 本用例现在钉的是它的**存续义务**：首启布局在**每个宽度**都落 pinned，
+    // 且旧键里的 "floating" 被归一到 pinned（收窄的归一语义，不是宽容）。
+    it("pins the dock mode at every viewport and normalizes a legacy floating key to pinned", () => {
+        for (const viewport of [2560, 1920, 1800, 1799, 1440, 1280, 1024, 768, 0, Number.NaN]) {
+            expect(defaultWorkspaceLayoutForViewport(viewport).dockMode).toBe("pinned");
         }
-        // 非法宽度不再回落 floating（旧的 0/NaN 兜底本身就是浮窗的一个来源）。
-        expect(deriveDockMode(0)).toBe("pinned");
-        expect(deriveDockMode(Number.NaN)).toBe("pinned");
-        // A fresh profile derives the pinned mode in its first-run layout at every width.
-        expect(defaultWorkspaceLayoutForViewport(1920).dockMode).toBe("pinned");
-        expect(defaultWorkspaceLayoutForViewport(1440).dockMode).toBe("pinned");
-        expect(defaultWorkspaceLayoutForViewport(1024).dockMode).toBe("pinned");
+        // 手拼旧形态载荷（不走类型默认）："floating" 是收窄前的合法值，读侧必须归一到 pinned。
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-1`,
+            JSON.stringify({
+                treeCollapsed: false,
+                dockTabs: ["files"],
+                activeDockTab: "files",
+                dockMode: "floating",
+            }),
+        );
+        expect(readWorkspaceLayout("ws-1").dockMode).toBe("pinned");
     });
 
     it("keeps the persisted active dock tab aligned with the capped tab list (P2-7)", () => {
@@ -434,15 +434,16 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         expect(stored.activeDockTab).toBe("code");
     });
 
-    it("persists dock mode and the manual flag across a reload", () => {
-        writeWorkspaceLayout("ws-1", {
-            ...defaultWorkspaceLayout(),
-            dockMode: "pinned",
-            dockModeManual: true,
-        });
+    // task-162 ①：`dockModeManual` 字段已删（没有两态就没有「手动覆盖」）。本用例现在钉的是
+    // **旧键兼容**：带着 `dockModeManual` 的旧载荷仍能读（多出来的键被忽略），dockMode 落 pinned。
+    it("reads a legacy payload with the retired manual flag without failing", () => {
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-1`,
+            JSON.stringify({ ...defaultWorkspaceLayout(), dockModeManual: true }),
+        );
         const layout = readWorkspaceLayout("ws-1");
         expect(layout.dockMode).toBe("pinned");
-        expect(layout.dockModeManual).toBe(true);
+        expect("dockModeManual" in layout).toBe(false);
     });
 
     // S3b P1-1 (audit): there is no dismissal latch any more — a stored value is the
@@ -450,7 +451,6 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
     it("keeps an explicitly re-opened dock open on the next load", () => {
         writeWorkspaceLayout("ws-1", { ...defaultWorkspaceLayout(), dockCollapsed: false });
         expect(readWorkspaceLayout("ws-1").dockCollapsed).toBe(false);
-        expect(readWorkspaceLayout("ws-1").dockModeManual).toBe(false);
     });
 
     // S3a audit P1-1 (S3b fix): an openTabs-only payload is not "layout chosen yet".

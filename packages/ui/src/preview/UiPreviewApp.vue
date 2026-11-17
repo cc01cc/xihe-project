@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+// task-162 ①：computed 随 dockMode 徽标恒 pinned 化一并退场（本文件不再有响应式计算）。
 import { useWindowSize } from "@vueuse/core";
 import { Moon, PanelRight, Sun } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
@@ -34,8 +34,8 @@ const blocks = [
 ];
 
 const { width } = useWindowSize();
-/** Mirrors `useWorkspaceLayout.deriveDockMode` (>=1800 pins the dock). */
-const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
+// task-162 ①：`deriveDockMode` 已退役、形态收窄为 pinned 单值 —— 徽标不再有第二态可显示。
+const dockMode = "pinned";
 </script>
 
 <template>

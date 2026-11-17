@@ -164,7 +164,6 @@ function seedWideLayout(overrides: Record<string, unknown> = {}): void {
             dockTabs: ["files", "monitor"],
             activeDockTab: "files",
             dockMode: "pinned",
-            dockModeManual: false,
             openTabs: ["session:s1"],
             ...overrides,
         }),

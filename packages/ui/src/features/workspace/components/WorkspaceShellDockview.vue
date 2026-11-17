@@ -72,6 +72,13 @@ const props = defineProps<{
     treeLabel: string;
     /** task-486（S2）：分隔条的无障碍可读名（i18n 由调用方给，本组件不持文案）。 */
     sashLabel: string;
+    /**
+     * task-162 ③：单栏投影（`D-1545`，与 task-94 S4 的手写路径同构）。缺省（desktop/缺字段）零行为
+     * 变化 —— 产品路径（`__xhUseDockview` 默认 false）不传这两个 prop，只有翻旗路径接线。
+     */
+    containerMode?: "desktop" | "single";
+    /** 单栏时当前栏；desktop 下不参与判定。 */
+    activeColumn?: "main" | "right";
 }>();
 
 const emit = defineEmits<{
@@ -338,6 +345,34 @@ function startProductWidthSync(): void {
     requestAnimationFrame(() => step(0));
 }
 
+/**
+ * task-162 ③：单栏投影。壳里**只有 dockview 一套 DOM**，中栏与右栏是它的并排 group ⇒ 单栏 =
+ * 用 dockview 自己的 **group maximize**（`api.maximizeGroup(panel)`，8.9 源码可查）：被最大化
+ * 的 group 填满宿主、另一侧自动不可见 —— 正是 Q2「右栏占满整行」在 dockview 路径的投影，
+ * 且**不卸载面板**（与手写路径「v-show 不卸载」同一条理由：卸载会丢 SSE/流式订阅）。
+ *
+ * <p>面板级 `setVisible` 不存在（`DockviewPanelApi` 显式 Omit 了它，`[源码]` 8.9.0）⇒ 这是库里
+ * 「一栏占满」语义的正规通道，不碰 vendor DOM。</p>
+ *
+ * <p>已知边界（预览旗路径可接受，翻旗 Playwright 验收时裁定）：树是独立 group，被最大化的
+ * 是它**旁边**的 dock 组 —— 树投在右栏时单栏右 active 会把树一起遮掉；缺目标侧面板时退出
+ * 最大化（不能让主列跟着消失）。desktop（含缺省）一律 `exitMaximizedGroup` 复位。</p>
+ */
+function syncSingleColumn(api: NonNullable<typeof dockApi.value>): void {
+    if (props.containerMode !== "single") {
+        if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
+        return;
+    }
+    const target =
+        props.activeColumn === "right"
+            ? (shellDockTabs()
+                  .map((id) => api.getPanel(id))
+                  .find((panel) => panel !== undefined) ?? null)
+            : (api.getPanel(MAIN_PANEL_ID) ?? null);
+    if (!target || target.group.api.isMaximized()) return;
+    api.maximizeGroup(target);
+}
+
 function syncPanels(): void {
     const api = dockApi.value;
     if (!api) return;
@@ -347,6 +382,7 @@ function syncPanels(): void {
         // 顺序固定：dock 先于树 —— 树投右栏时要拿 dock 面板当 referencePanel。
         syncDock(api);
         syncTree(api);
+        syncSingleColumn(api);
     } finally {
         syncing = false;
     }
@@ -517,6 +553,9 @@ watch(
         () => props.activeDockTab,
         () => props.treeOpen,
         () => props.treeCollapsed,
+        // task-162 ③：单栏形态变化也要重投影（切栏/切形态都是同一个函数）。
+        () => props.containerMode,
+        () => props.activeColumn,
     ],
     syncPanels,
 );

@@ -28,10 +28,9 @@ import SectionShell from "../SectionShell.vue";
 import { PREVIEW_SESSION_ID, mockConversation, mockSessions } from "../mockData";
 
 /**
- * Pinned dock shape (viewport ≥1800 ⇒ `deriveDockMode()` returns `pinned`): the dock is a
- * flex sibling that takes 360px, the file tree keeps its 240px column and the primary
- * column yields. Nothing here is absolutely positioned — that is the `floating` mode the
- * 1440 check renders.
+ * Pinned dock shape（task-162 ① 后**唯一**形态）：the dock is a flex sibling that takes
+ * 360px, the file tree keeps its 240px column and the primary column yields. Nothing here
+ * is absolutely positioned —— 绝对定位的浮窗形态已随 `D-1754 ④` 退场。
  */
 const treeRows = [
     { name: "src", depth: 0, kind: "dir" as const },
@@ -51,7 +50,7 @@ const railItems = [
 ];
 
 const { width } = useWindowSize();
-/** Same breakpoint as `useWorkspaceLayout.deriveDockMode`: >=1800 pins the dock. */
+/** `deriveDockMode` 已退役（task-162 ①）：≥1800 只影响预览排版示例的密度，不再决定 dock 形态。 */
 const pinned = computed(() => width.value >= 1800);
 
 const memorySwitch = { enabled: true };

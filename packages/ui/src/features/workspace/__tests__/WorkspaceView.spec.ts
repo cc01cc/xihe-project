@@ -401,7 +401,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 dockTabs: ["files", "monitor"],
                 activeDockTab: "files",
                 dockMode: "pinned",
-                dockModeManual: true,
+
                 openTabs: ["session:s1"],
                 activeColumn: "main",
                 openTarget: "right",
