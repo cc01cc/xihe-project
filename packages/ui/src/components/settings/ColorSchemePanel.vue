@@ -85,9 +85,16 @@ const isDefault = computed(() => colorScheme.value === DEFAULT_COLOR_SCHEME);
                 >
                     {{ option.label }}
                 </Label>
+                <!--
+                    task-167：角标落在**选中行**的 bg-muted 上，而 text-muted-foreground 对 --muted
+                    五套配色**全部**不达 4.5（neutral 4.286 / gray 4.395 / slate 4.349 / stone 4.388
+                    / zinc 4.392，浅色侧无一例外；深色侧 5.5–5.9 全过）⇒ 不是某一套配色的偶发。
+                    换成 text-foreground/60：对 --muted 浅色 4.903–5.233、深色 5.97–6.17，五套都过。
+                    同形态先例：ScheduledTasksView.vue:572 的同类小徽标即 bg-muted + text-foreground/60。
+                -->
                 <span
                     v-if="colorScheme === option.value && isDefault"
-                    class="ml-auto text-xs text-muted-foreground"
+                    class="ml-auto text-xs text-foreground/60"
                 >
                     DEFAULT
                 </span>
