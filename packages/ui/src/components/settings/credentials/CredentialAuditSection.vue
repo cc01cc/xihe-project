@@ -2,6 +2,7 @@
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api, ApiError } from "../../../composables/api";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import { credentialErrorText } from "./errorText";
 import type { CredentialEventView, CredentialReference } from "../../../types";
@@ -38,7 +39,7 @@ function referenceSource(reference: CredentialReference): string {
 }
 
 function formatTime(value: string): string {
-    return value ? new Date(value).toLocaleString() : "—";
+    return formatDateTime(value);
 }
 
 async function load() {

@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CircleAlert, FileDiff, LoaderCircle, RefreshCw, X } from "@lucide/vue";
 import { api } from "../../../composables/api";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { presentCauseError, type ErrorPresentation } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
 import {
@@ -320,7 +321,7 @@ watch(
                             >
                                 <span class="block text-xs font-semibold">{{
                                     checkpoint.capturedAt
-                                        ? new Date(checkpoint.capturedAt).toLocaleString()
+                                        ? formatDateTime(checkpoint.capturedAt)
                                         : t("workspace.checkpointTimeUnknown")
                                 }}</span>
                                 <span class="mt-0.5 block text-xs text-muted-foreground"

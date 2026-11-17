@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatDateTime } from "../../lib/dateFormat";
 import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
@@ -232,8 +233,8 @@ function statusClass(status: string): string {
 }
 
 function formatTime(value?: string | null): string {
-    if (!value) return t("settings.auditNotAvailable");
-    return new Date(value).toLocaleString();
+    // 兜底沿用审计表既有文案（与 runId / 时长那一列同一句话），不用占位符改词。
+    return formatDateTime(value, t("settings.auditNotAvailable"));
 }
 
 function formatDuration(value?: number | null): string {

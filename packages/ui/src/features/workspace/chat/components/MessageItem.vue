@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import type { AttachmentFile, Message } from "../../../../types";
 import type { SessionParticipantRole, SessionParticipantView } from "../../../../types/participant";
 import { participantDisplayName, participantInitials } from "../../components/participantInitials";
+import { formatTime } from "../../../../lib/dateFormat";
 import { mappedErrorCopy } from "../../../../lib/errorMessages";
 import { terminalMarkerOf } from "../runStateView";
 import RunTerminalChip from "./RunTerminalChip.vue";
@@ -151,8 +152,8 @@ const responderRoleLabel = computed(() =>
 );
 
 const timestamp = computed(() => {
-    const d = new Date(props.message.timestamp);
-    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    // 聊天气泡时钟是「用户本地墙上时间」（不要改成 UTC，见 lib/dateFormat.ts 顶部说明）。
+    return formatTime(props.message.timestamp);
 });
 
 const bubbleVariant = computed(() => {

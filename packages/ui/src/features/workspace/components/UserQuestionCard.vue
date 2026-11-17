@@ -20,6 +20,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Check, CircleSlash, Clock, XCircle } from "@lucide/vue";
+import { formatDateTime } from "../../../lib/dateFormat";
 import type { Component } from "vue";
 import type { UserQuestionView } from "../../../types/userQuestion";
 
@@ -81,7 +82,7 @@ const deadlineText = computed(() => {
     if (!raw) return "";
     const at = new Date(raw);
     if (Number.isNaN(at.getTime())) return "";
-    return t("userQuestions.deadline", { time: at.toLocaleString() });
+    return t("userQuestions.deadline", { time: formatDateTime(at) });
 });
 
 function submit(): void {

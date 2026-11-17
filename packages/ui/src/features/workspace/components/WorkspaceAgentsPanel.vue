@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
 import { mergeMemoryEnabled, readMemoryEnabled, readMemoryTypesMissing } from "./memoryPolicy";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import {
     ApiError,
@@ -1418,7 +1419,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     {{ t("workspace.agentTemplateId") }}:
                     {{ createdPrincipalMeta.templateId ?? "—" }} ·
                     {{ t("workspace.agentCreatedAt") }}:
-                    {{ new Date(createdPrincipalMeta.createdAt ?? Date.now()).toLocaleString() }}
+                    {{ formatDateTime(createdPrincipalMeta.createdAt ?? Date.now()) }}
                 </p>
                 <p class="mt-1 text-xs text-muted-foreground">
                     {{ t("workspace.agentPendingRecoveryNote") }}
@@ -1593,7 +1594,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             {{ agent.templateName ?? t("workspace.defaultAgentTemplate") }} ·
                             {{ t("workspace.agentTemplateId") }}: {{ agent.templateId ?? "—" }} ·
                             {{ t("workspace.agentWorkspaceId") }}: {{ workspaceId }} ·
-                            {{ new Date(agent.createdAt).toLocaleString() }}
+                            {{ formatDateTime(agent.createdAt) }}
                         </p>
                     </div>
                     <div class="flex shrink-0 flex-col items-end gap-1">
@@ -2153,7 +2154,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                         :data-testid="`agent-memory-updated-${memory.id}`"
                                     >
                                         {{ t("workspace.agentMemoryUpdatedAt") }}:
-                                        {{ new Date(memory.updatedAt).toLocaleString() }}
+                                        {{ formatDateTime(memory.updatedAt) }}
                                     </span>
                                     <!-- PLAN-0629 M1-5：行内操作只在有 MEMORY_WRITE 时出现。 -->
                                     <span

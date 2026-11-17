@@ -13,6 +13,7 @@ import { useI18n } from "vue-i18n";
 import type { Message, SessionRunSummary } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
+import { formatDate } from "../../../../lib/dateFormat";
 import { useChatStore } from "../stores/chat.ts";
 import MessageItem from "./MessageItem.vue";
 import ContextTruncationNotice from "./ContextTruncationNotice.vue";
@@ -159,8 +160,8 @@ const entries = computed<Entry[]>(() => {
     let lastDate = "";
 
     for (const msg of filteredMessages.value) {
-        const parsedDate = new Date(msg.timestamp);
-        const date = Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toLocaleDateString();
+        // `""` 是**哨兵**：解析失败时不插日期分隔行（不是渲染一个占位符）。
+        const date = formatDate(msg.timestamp, "");
         if (date && date !== lastDate) {
             result.push({ type: "date", date, id: `date-${date}` });
             lastDate = date;

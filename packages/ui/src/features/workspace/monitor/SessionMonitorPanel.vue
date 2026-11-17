@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { RefreshCw } from "@lucide/vue";
 import { api } from "../../../composables/api";
+import { formatTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import {
     Select,
@@ -515,13 +516,6 @@ const runIdentity = computed<string | null>(() => {
 });
 
 const counts = computed(() => Object.entries(data.value?.history.counts ?? {}));
-
-function formatTime(value: string | null): string {
-    if (!value) return "—";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "—";
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
 
 function runIdShort(runId: string): string {
     return runId.length > 8 ? runId.slice(0, 8) : runId;

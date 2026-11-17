@@ -14,6 +14,7 @@ import { Badge } from "../../ui/badge";
 import CredentialBindingsSection from "./CredentialBindingsSection.vue";
 import CredentialAuditSection from "./CredentialAuditSection.vue";
 import { ApiError, api } from "../../../composables/api";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import { useCredentialsStore } from "../../../stores/credentials";
 import { credentialErrorText } from "./errorText";
@@ -104,8 +105,8 @@ async function confirmDelete() {
 }
 
 function formatTime(value?: string | null): string {
-    if (!value) return t("credentials.notAvailable");
-    return new Date(value).toLocaleString();
+    // 兜底沿用凭据页既有文案（`credentials.notAvailable` 中英两侧都是占位符本身）。
+    return formatDateTime(value, t("credentials.notAvailable"));
 }
 </script>
 

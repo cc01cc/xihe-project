@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useAuthStore } from "../../../stores/auth";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import {
     canManageScheduledTask,
@@ -116,14 +117,11 @@ function formatInZone(iso: string | null, timeZone: string): string {
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return t("workspace.scheduledTasks.nextFireNone");
     try {
-        return new Intl.DateTimeFormat(undefined, {
-            timeZone,
-            dateStyle: "short",
-            timeStyle: "short",
-        }).format(date);
+        // 指定时区渲染（其余面一律本地时区）；locale 仍走当前界面语言。
+        return formatDateTime(date, undefined, { timeZone, seconds: false });
     } catch {
         // 无效 IANA 时区（后端已拒创建；历史行防御）→ 回退本地时间。
-        return date.toLocaleString();
+        return formatDateTime(date, undefined, { seconds: false });
     }
 }
 

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../../composables/api";
+import { formatDateTime, isValidDate } from "../../lib/dateFormat";
 
 // PLAN-0366 T2.1：stdio 服务器状态列表（视觉基线 evidence/ui-preview.html，已确认）。
 // 数据源 = `stdio-servers`（配置 name）∪ `mcp/servers`（会话快照 server_id）；
@@ -55,9 +56,10 @@ function badgeClass(state: string): string {
     }
 }
 
+/** 缺值返回 `""` 是**哨兵**（下面 `parts.filter(Boolean)` 据此判断要不要拼这一段），不是占位符。 */
 function sinceText(sinceMs?: number): string {
-    if (!sinceMs) return "";
-    return new Date(sinceMs).toLocaleString();
+    if (!isValidDate(sinceMs)) return "";
+    return formatDateTime(sinceMs);
 }
 
 function reasonText(row: { state: string; lastError?: string | null }): string {

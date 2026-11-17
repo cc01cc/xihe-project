@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatDateTime, formatTime } from "../../lib/dateFormat";
 import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
 import { api, type VersionInfo } from "../../composables/api";
@@ -74,8 +75,8 @@ function formatCommit(commit: string | null | undefined): string {
 }
 
 function formatStartedAt(value: string): string {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+    // 解析失败时回显原值（CP 给的启动时间字符串），便于排障，不吞成占位符。
+    return formatDateTime(value, value);
 }
 
 function statusColor(status: string): string {
@@ -98,10 +99,6 @@ function statusText(status: string): string {
         default:
             return t("settings.serviceUnknown");
     }
-}
-
-function formatTime(ts: number): string {
-    return new Date(ts).toLocaleTimeString();
 }
 
 onMounted(() => {
@@ -222,7 +219,7 @@ onUnmounted(() => {
                 }}
             </span>
             <span v-if="lastUpdated" class="text-muted-foreground ml-auto">
-                {{ t("settings.lastUpdated") }}: {{ formatTime(lastUpdated) }}
+                {{ t("settings.lastUpdated") }}: {{ formatTime(lastUpdated, { seconds: true }) }}
             </span>
         </div>
 

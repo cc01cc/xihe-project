@@ -15,6 +15,7 @@ import DialogDescription from "../ui/dialog/DialogDescription.vue";
 import DialogFooter from "../ui/dialog/DialogFooter.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { api, type AgentPrincipalSummary, type ApiWorkspace } from "../../composables/api";
+import { formatDate } from "../../lib/dateFormat";
 import { problemDetailText } from "../../lib/errorMessages";
 import { principalNameError } from "../../lib/principalName";
 import SettingsPermissionGate from "./SettingsPermissionGate.vue";
@@ -135,11 +136,7 @@ async function submitCreate() {
 }
 
 // ---- list ------------------------------------------------------------------
-function formatDate(value: string): string {
-    if (!value) return "—";
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString();
-}
+// 列表里的「创建日期」只到天；解析失败与缺值同走 `DATE_FALLBACK`（占位只在入口定义一次）。
 
 async function loadAgents() {
     loading.value = true;

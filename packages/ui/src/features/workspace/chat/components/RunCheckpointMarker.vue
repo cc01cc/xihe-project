@@ -3,6 +3,7 @@ import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArchiveRestore, CircleAlert, Clock, RotateCcw } from "@lucide/vue";
 import { useAuthStore } from "../../../../stores/auth";
+import { formatDateTime, isValidDate } from "../../../../lib/dateFormat";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
 import { checkpointReasonKey, checkpointReasonTitle } from "../../checkpoint-reason";
 import type { WorkspaceCheckpointRevertCounts } from "../../../../types";
@@ -50,11 +51,10 @@ const unrollableLabel = computed(() => {
 });
 const unrollableTitle = computed(() => checkpointReasonTitle(record.value?.unrollableReason));
 
+/** 缺值是**哨兵**（模板 `v-if="revertedAt"` 决定是否渲染这段），故返回 `""`。 */
 const revertedAt = computed(() => {
     const at = record.value?.revert?.at;
-    if (!at) return "";
-    const parsed = new Date(at);
-    return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString();
+    return isValidDate(at) ? formatDateTime(at) : "";
 });
 
 const revertSummary = computed(() => {
@@ -141,7 +141,7 @@ watch(
                 data-testid="run-checkpoint-captured-at"
                 class="text-xs text-muted-foreground"
                 :datetime="record.capturedAt"
-                >{{ new Date(record.capturedAt).toLocaleString() }}</time
+                >{{ formatDateTime(record.capturedAt) }}</time
             >
             <button
                 type="button"

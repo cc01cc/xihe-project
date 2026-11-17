@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatDateTime, isValidDate } from "../../../../lib/dateFormat";
 import type { ChatRunGuidanceItem } from "../../../../composables/api";
 import { useGuidance } from "../composables/useGuidance.ts";
 
@@ -51,13 +52,10 @@ function itemStatusClass(item: ChatRunGuidanceItem): string {
     return "bg-muted text-muted-foreground";
 }
 
+/** 缺值是**哨兵**（模板里 `v-if` 据此不渲染这一段），故返回 `""` 而不是占位符。 */
 function formatTime(iso: string): string {
-    if (!iso) return "";
-    try {
-        return new Date(iso).toLocaleString();
-    } catch {
-        return iso;
-    }
+    if (!isValidDate(iso)) return "";
+    return formatDateTime(iso);
 }
 
 async function handleSubmit() {

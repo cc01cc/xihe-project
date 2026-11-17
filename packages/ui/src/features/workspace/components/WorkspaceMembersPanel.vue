@@ -9,6 +9,7 @@ import {
     type ApiWorkspaceMember,
     type MemberAssignableRole,
 } from "../../../composables/api";
+import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
 import { usernameError } from "../../../lib/principalName";
 import Input from "../../../components/ui/input/Input.vue";
@@ -112,8 +113,9 @@ function isRemovalLocked(member: ApiWorkspaceMember): boolean {
     return member.role === "OWNER" && ownerCount.value <= 1;
 }
 
+/** 成员「加入时间」：空值与不可解析值同走 `DATE_FALLBACK`。 */
 function formatJoined(member: ApiWorkspaceMember): string {
-    return member.createdAt ? new Date(member.createdAt).toLocaleString() : "—";
+    return formatDateTime(member.createdAt);
 }
 
 function memberMessage(cause: unknown, fallbackKey: string): string {
