@@ -157,7 +157,10 @@ describe("ScheduledTasksView list rendering", () => {
         expect(wrapper.findAll('[data-testid="scheduled-task-status-card"]')).toHaveLength(3);
         expect(wrapper.findAll('[data-testid="scheduled-task-creator-type-card"]')).toHaveLength(3);
         expect(wrapper.get('[data-testid="scheduled-task-reason-row"]').text()).toContain("宽限期");
-        expect(creators[0]?.text()).toBe("human");
+        // task-88：人类行此前读数是字面 "human"（中英混排），本断言当时把缺陷写成了期望值。
+        // 现按 zh 正名「人类」——与 orgMembers.kindHuman / workspace.participantKindHuman 同词；
+        // 智能体侧不变。跨 locale 的「身份标签不许是英文」由 i18n/__tests__/terminology.spec.ts 守。
+        expect(creators[0]?.text()).toBe("人类");
         expect(creators[1]?.text()).toBe("智能体");
         // scheduled row shows the cron expression and timezone under next fire.
         expect(wrapper.text()).toContain("0 9 * * *");
@@ -414,6 +417,29 @@ describe("ScheduledTasksView disposition", () => {
         expect(mockedApi.listScheduledTasks).toHaveBeenCalledTimes(2);
     });
 
+    /**
+     * task-85（DEV-011 §10:153「红，只在确认时出现」）：行内「移除」是入口，红只留在确认弹窗
+     * 的 `scheduled-task-remove-confirm-btn`。改前真浏览器实测本页列表态 1 个危险红控件（行内），
+     * 密度 ≤1 达标但时机不达标；改后列表态 0、确认弹窗内仍 1。
+     */
+    it("行内「移除」是中性入口，红色只留给移除确认按钮（task-85）", async () => {
+        mockedApi.listScheduledTasks.mockResolvedValue(
+            listPage([task({ status: "missed", missedCount: 1 })]) as never,
+        );
+        const wrapper = await mountView();
+        expect(
+            wrapper.get('[data-testid="scheduled-task-remove-row"]').attributes("data-variant"),
+        ).toBe("outline");
+        await wrapper.get('[data-testid="scheduled-task-remove-row"]').trigger("click");
+        await nextTick();
+        const confirm = document.body.querySelector(
+            '[data-testid="scheduled-task-remove-confirm-btn"]',
+        ) as HTMLButtonElement | null;
+        expect(confirm).toBeTruthy();
+        // 红只该在这个位置：确认弹窗里的提交按钮。
+        expect(confirm!.getAttribute("data-variant")).toBe("destructive");
+        wrapper.unmount();
+    });
     it("removes a missed task after confirmation and surfaces the idempotent result", async () => {
         mockedApi.listScheduledTasks.mockResolvedValue(
             listPage([task({ status: "missed", missedCount: 1 })]) as never,

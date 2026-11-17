@@ -1088,7 +1088,10 @@ const messages = {
                 reasonTargetGone: "原因：目标会话已删除",
                 reasonExpiredTtl: "原因：超过 7 天 TTL，调度已停止",
                 lastMissedAt: "最近错过",
-                creatorHuman: "human",
+                // task-88：身份类别标签只许用 zh 正名「人类 / 智能体」（见 orgMembers.kindHuman /
+                // workspace.participantKindHuman / chat.input.mentionHuman 同族键）。原值字面 "human"
+                // 是漏网 —— 中文界面里出现英文类别名，与同列 "智能体" 中英混排。
+                creatorHuman: "人类",
                 creatorAgent: "智能体",
                 actionRerun: "补跑",
                 actionPostpone: "推迟",

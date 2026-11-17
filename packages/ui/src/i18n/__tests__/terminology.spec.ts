@@ -173,3 +173,94 @@ describe("Provider 主名词（task-18 / D-1664）：统一 Provider，不译「
         expect(copyOf("zh-CN", "settings.addProvider"), "zh 添加按钮").toBe("添加 Provider");
     });
 });
+
+/** 汉字探测走码点，避开 `\p{Script=Han}` 在不同解析路径下的转义差异。 */
+function hasHan(value: string): boolean {
+    for (const ch of value) {
+        const code = ch.codePointAt(0) ?? 0;
+        if (code >= 0x4e00 && code <= 0x9fff) return true;
+    }
+    return false;
+}
+
+function lastPathSegment(path: string): string {
+    const segments = path.split(".");
+    return segments[segments.length - 1] ?? "";
+}
+
+/** 键名以 Human/Agent 结尾的一族 = 身份类别标签（`kindHuman` / `creatorHuman` / `mentionAgent` …）。 */
+function isIdentityLabelKey(path: string): boolean {
+    return /(Human|Agent)(s?)$/.test(lastPathSegment(path));
+}
+
+/** 值的英文化形态：小写、去空白后**整体只由**身份类别词构成 ⇒ 「裸英文类别名」。 */
+const IDENTITY_WORD = new Set([
+    "human",
+    "agent",
+    "user",
+    "service",
+    "system",
+    "principal",
+    "member",
+    "person",
+    "people",
+    "bot",
+]);
+
+function isBareEnglishIdentity(value: string): boolean {
+    const normalized = value.trim().toLowerCase();
+    if (!/^[a-z ]+$/.test(normalized)) return false;
+    const words = normalized.match(/[a-z]+/g) ?? [];
+    if (words.length === 0) return false;
+    return (
+        words.every((word) => IDENTITY_WORD.has(word)) &&
+        words.some((word) => word === "human" || word === "agent")
+    );
+}
+
+/**
+ * task-88：身份类别标签（人类 / 智能体）在 zh 树里必须是**中文词**。
+ *
+ * <p>改前缺陷：`workspace.scheduledTasks.creatorHuman` 的值是字面 `"human"`，于是定时任务列表的
+ * 「创建者」列渲染成「阿岚 human」—— 中文界面里的类别名是英文，与同列「智能体」中英混排。
+ * 同族三键（`orgMembers.kindHuman` / `workspace.participantKindHuman` / `chat.input.mentionHuman`）
+ * 早已是「人类」⇒ 它是漏网而非约定，判 A（纯漏译）。术语依据见 DEV-032 §1.1a「agent = 智能体」
+ * 正名，以及 zh 侧「描述性 Agent 一律译作智能体」的既有 sweep（PLAN-0622 口径）。</p>
+ *
+ * <p><b>为什么这是语义判据而不是快照</b>：判据只约束「有没有汉字」「是不是裸英文类别词」，
+ * **不钉具体选词** —— `creatorHuman` 换成「人类」「人类成员」「人工」任一合法中文词都不红，
+ * 只有写回英文（`human` / `Human` / `agent` …）才红。快照式 `=== "人类"` 则会在每次正常改词时假红，
+ * 与本文件既有规则「不做全文件快照」的口径一致。</p>
+ *
+ * <p>两条判据互补：① 按**键名**扫（抓住「这一族标签被写成英文」）；② 按**值**扫（抓住
+ * 「新键名不在这一族、值仍是裸英文类别名」，例如改名后的 `creatorKind: "human"`）。
+ * 只留 ① 会漏掉这类改名后新增的键。</p>
+ *
+ * <p><b>为什么 ② 要排除「刻意保留英文的技术专名」**：zh 树里确有应当保留英文的键（如
+ * `settings.providerHub.scopeWorkspace: "Workspace"` —— provider 连接 scope 的技术标识，
+ * 与 `Provider` / `API key` 同一策略）。② 只点 human/agent，正是把「身份类别必须中文」这一条
+ * 与「技术专名保留英文」区分开；把全部英文词一禁，判据会先红在不是缺陷的地方。</p>
+ */
+describe("身份类别标签（task-88）：zh 的人类 / 智能体类别名必须是中文词", () => {
+    it("① 键名以 Human/Agent 结尾的 zh 文案必须含汉字（不得是裸英文类别名）", () => {
+        const offenders = leaves(i18n.global.getLocaleMessage("zh-CN"))
+            .filter((leaf) => isIdentityLabelKey(leaf.path) && !hasHan(leaf.value))
+            .map((leaf) => `${leaf.path}: ${leaf.value}`);
+        // 改前读数：唯一红点 = `workspace.scheduledTasks.creatorHuman: human`。
+        expect(offenders).toEqual([]);
+    });
+
+    it("② zh 文案里不存在「值整体就是裸英文身份词」的条目（键名不限）", () => {
+        const offenders = leaves(i18n.global.getLocaleMessage("zh-CN"))
+            .filter((leaf) => isBareEnglishIdentity(leaf.value))
+            .map((leaf) => `${leaf.path}: ${leaf.value}`);
+        expect(offenders).toEqual([]);
+    });
+
+    it("③ 反向：en 侧同族键不得出现汉字（防把中文抄进英文 locale）", () => {
+        const offenders = leaves(i18n.global.getLocaleMessage("en-US"))
+            .filter((leaf) => isIdentityLabelKey(leaf.path) && hasHan(leaf.value))
+            .map((leaf) => `${leaf.path}: ${leaf.value}`);
+        expect(offenders).toEqual([]);
+    });
+});
