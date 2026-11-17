@@ -178,36 +178,50 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
             标题密度按本页体型走：这是占满高度的面板页（不是 6xl 内容页），故用紧凑 header、
             不加描述行；标题字号与另三页一致（text-2xl），保证四页层级一致。
         -->
-        <header class="shrink-0 border-b border-border px-6 pt-3 pb-2">
-            <h1
-                data-testid="workspace-resources-title"
-                class="text-2xl leading-tight font-semibold tracking-tight"
-            >
-                {{ t("workspace.resourcesTitle") }}
-            </h1>
+        <!--
+            task-80（内容列宽）：本页此前**没有任何内容列上限**（根 div 只有 flex，没有 max-w），
+            实测 1920×1080 下 h1 左缘 413.39 / 卡片 1515.61 宽，而同一批面板在资源区渲染时是
+            1108 宽（那里由 `ResourcesLayout` 的 1152 列给出）。同一组件两种宽度不是「面板自己会适配」，
+            是本页漏了列宽 —— 兄弟页（设置 / 成员 / 环境 / 自动化任务）各自都有一档 max-w。
+            档位取 `max-w-6xl`（1152）：本页主内容与设置页同为**多栏面板**（凭据列表 + 智能体表 +
+            页签），不是环境页那种单列键值卡，故与兄弟页同档而不是另立第三档。
+            写法照抄 `WorkspaceMembersView.vue:57-58` / `WorkspaceSettingsView.vue:368-372`：
+            **边框留在满宽外层、内容列居中**（这样分隔线与页签栏仍横贯整页，只有内容对齐到列）。
+        -->
+        <header class="shrink-0 border-b border-border">
+            <div class="mx-auto w-full max-w-6xl px-6 pt-3 pb-2">
+                <h1
+                    data-testid="workspace-resources-title"
+                    class="text-2xl leading-tight font-semibold tracking-tight"
+                >
+                    {{ t("workspace.resourcesTitle") }}
+                </h1>
+            </div>
         </header>
         <!-- 资源切换：本页**固定在本工作区层**，所以这里是「资源」而不是「层」的页签。 -->
-        <div
-            class="flex shrink-0 items-center gap-1 border-b border-border px-2 pt-1"
-            role="tablist"
-            :aria-label="t('workspaceNav.resources')"
-        >
-            <button
-                v-for="tab in tabs"
-                :key="tab.id"
-                role="tab"
-                :data-testid="`ws-resources-tab-${tab.id}`"
-                :aria-selected="activeResource === tab.id"
-                class="px-4 py-2 text-sm border-b-2 transition-colors"
-                :class="
-                    activeResource === tab.id
-                        ? 'border-primary text-foreground font-medium'
-                        : 'border-transparent text-muted-foreground hover:text-foreground'
-                "
-                @click="selectResource(tab.id)"
+        <div class="shrink-0 border-b border-border">
+            <div
+                class="mx-auto flex w-full max-w-6xl items-center gap-1 px-2 pt-1"
+                role="tablist"
+                :aria-label="t('workspaceNav.resources')"
             >
-                {{ tab.label }}
-            </button>
+                <button
+                    v-for="tab in tabs"
+                    :key="tab.id"
+                    role="tab"
+                    :data-testid="`ws-resources-tab-${tab.id}`"
+                    :aria-selected="activeResource === tab.id"
+                    class="px-4 py-2 text-sm border-b-2 transition-colors"
+                    :class="
+                        activeResource === tab.id
+                            ? 'border-primary text-foreground font-medium'
+                            : 'border-transparent text-muted-foreground hover:text-foreground'
+                    "
+                    @click="selectResource(tab.id)"
+                >
+                    {{ tab.label }}
+                </button>
+            </div>
         </div>
 
         <!--
@@ -225,83 +239,108 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
             两行不可折叠的短句：两条说明的**类型不同**（一条是「搬走了」、一条是「只读」），
             并成一行会让「只读」听起来也像「搬走了」。
         -->
-        <Collapsible
+        <!--
+            task-80：说明条同样收进内容列 —— 外层留分隔线（满宽），内层居中到 1152。
+            取 `px-2`（7px）而不是 `px-6`（21px）：条内已有的 `px-4`（14px）仍在 ⇒ 7 + 14 = 21，
+            与 h1 / 页签 / 面板的左缘严丝合缝。直接把 `px-4` 改成 `px-6` 也能对齐，但会把
+            「条的内边距」与「列的边距」揉成一个数，下次调列宽就会连带把条内距改掉。
+        -->
+        <div
             v-if="MOVED_RESOURCE_IDS.length > 0 || referenceLayers.length > 0"
-            :open="hintsOpen"
             class="shrink-0 border-b border-border"
-            data-testid="ws-resources-hints"
-            @update:open="(value: boolean) => (hintsOpen = value)"
         >
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs">
-                <span class="text-muted-foreground">{{ t("resources.resourcesHintSummary") }}</span>
-                <CollapsibleTrigger as-child>
-                    <!--
+            <Collapsible
+                :open="hintsOpen"
+                class="mx-auto w-full max-w-6xl px-2"
+                data-testid="ws-resources-hints"
+                @update:open="(value: boolean) => (hintsOpen = value)"
+            >
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs">
+                    <span class="text-muted-foreground">{{
+                        t("resources.resourcesHintSummary")
+                    }}</span>
+                    <CollapsibleTrigger as-child>
+                        <!--
                         task-10 / batch-2 ④（触控）：原写 `h-6` = 21px（--spacing 3.5px × 6 步），
                         低于 WCAG 2.2 SC 2.5.8 的 24×24。删掉这个高度覆盖即回落到 vendor
                         `size="sm"` 的 `h-7` = 24.5px —— 视觉几乎不变，命中区达标。
                         注意别用 `h-6`/`size-6` 当 24 档：本仓 6 步是 21px。
                     -->
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        data-testid="ws-resources-hints-toggle"
-                        class="gap-1 px-1.5 text-xs text-muted-foreground"
-                        :aria-expanded="hintsOpen"
-                    >
-                        <span aria-hidden="true">?</span>
-                        <span>{{
-                            hintsOpen
-                                ? t("resources.resourcesHintHide")
-                                : t("resources.resourcesHintShow")
-                        }}</span>
-                    </Button>
-                </CollapsibleTrigger>
-            </div>
-            <CollapsibleContent>
-                <div
-                    v-if="MOVED_RESOURCE_IDS.length > 0"
-                    data-testid="ws-resources-moved-hint"
-                    class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
-                >
-                    <span>{{ t("resources.workspaceLayerMovedInlineHint") }}</span>
-                    <RouterLink
-                        v-for="id in MOVED_RESOURCE_IDS"
-                        :key="id"
-                        :to="movedHref(id)"
-                        :data-testid="`ws-resources-moved-link-${id}`"
-                        class="text-foreground underline-offset-2 hover:underline"
-                    >
-                        {{ t(resourceDef(id).labelKey) }}
-                    </RouterLink>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            data-testid="ws-resources-hints-toggle"
+                            class="gap-1 px-1.5 text-xs text-muted-foreground"
+                            :aria-expanded="hintsOpen"
+                        >
+                            <span aria-hidden="true">?</span>
+                            <span>{{
+                                hintsOpen
+                                    ? t("resources.resourcesHintHide")
+                                    : t("resources.resourcesHintShow")
+                            }}</span>
+                        </Button>
+                    </CollapsibleTrigger>
                 </div>
-                <!-- 平台 / 用户层：只读引用（不在这里编辑，也不给层切换入口）。 -->
-                <div
-                    v-if="referenceLayers.length > 0"
-                    class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
-                >
-                    <span>{{ t("workspace.resourcesRefHint") }}</span>
-                    <RouterLink
-                        v-for="layer in referenceLayers"
-                        :key="layer"
-                        :to="referenceHref(activeResource, layer)"
-                        :data-testid="`ws-resources-ref-layer-${layer}`"
-                        class="text-foreground underline-offset-2 hover:underline"
+                <CollapsibleContent>
+                    <div
+                        v-if="MOVED_RESOURCE_IDS.length > 0"
+                        data-testid="ws-resources-moved-hint"
+                        class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
                     >
-                        {{ layerLabel(activeResource, layer) }}
-                    </RouterLink>
-                </div>
-            </CollapsibleContent>
-        </Collapsible>
+                        <span>{{ t("resources.workspaceLayerMovedInlineHint") }}</span>
+                        <RouterLink
+                            v-for="id in MOVED_RESOURCE_IDS"
+                            :key="id"
+                            :to="movedHref(id)"
+                            :data-testid="`ws-resources-moved-link-${id}`"
+                            class="text-foreground underline-offset-2 hover:underline"
+                        >
+                            {{ t(resourceDef(id).labelKey) }}
+                        </RouterLink>
+                    </div>
+                    <!-- 平台 / 用户层：只读引用（不在这里编辑，也不给层切换入口）。 -->
+                    <div
+                        v-if="referenceLayers.length > 0"
+                        class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
+                    >
+                        <span>{{ t("workspace.resourcesRefHint") }}</span>
+                        <RouterLink
+                            v-for="layer in referenceLayers"
+                            :key="layer"
+                            :to="referenceHref(activeResource, layer)"
+                            :data-testid="`ws-resources-ref-layer-${layer}`"
+                            class="text-foreground underline-offset-2 hover:underline"
+                        >
+                            {{ layerLabel(activeResource, layer) }}
+                        </RouterLink>
+                    </div>
+                </CollapsibleContent>
+            </Collapsible>
+        </div>
 
         <div class="min-h-0 flex-1 overflow-y-auto">
-            <component
-                :is="activeView"
-                v-if="activeView"
-                :layer="WORKSPACE_LAYER"
-                :workspace-id="workspaceId"
-            />
-            <div v-else-if="activeMovedId" class="p-4">
-                <WorkspaceLayerMovedNotice :resource="activeMovedId" :workspace-id="workspaceId" />
+            <!--
+                task-80：面板本身不会自适应列宽 —— 同一批组件在资源区渲染时拿到的是 1108，
+                因为那里有 `ResourcesLayout` 的 `px-6 py-6 + max-w-6xl` 列；本页此前直接把面板
+                铺满整条路由区（1515.61）⇒ 卡片边框贴到页面最右。这里补上**同一组**内距，
+                于是「工作区资源」与「资源区 · 本工作区层」两个入口渲染出的面板是同一宽度。
+                注意是**同一组类**（`px-6 py-6`）而不是只加 `max-w`：只加 max-w 会让卡片的
+                竖向节奏（上方贴说明条、无上边距）与资源区不一致，视觉上仍是两套。
+            -->
+            <div class="mx-auto w-full max-w-6xl px-6 py-6">
+                <component
+                    :is="activeView"
+                    v-if="activeView"
+                    :layer="WORKSPACE_LAYER"
+                    :workspace-id="workspaceId"
+                />
+                <div v-else-if="activeMovedId" class="p-4">
+                    <WorkspaceLayerMovedNotice
+                        :resource="activeMovedId"
+                        :workspace-id="workspaceId"
+                    />
+                </div>
             </div>
         </div>
     </div>
