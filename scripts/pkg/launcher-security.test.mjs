@@ -95,6 +95,15 @@ test('all three dev-key fallbacks are still explicitly disabled', () => {
   }
 });
 
+test('D-1818 (task-205): the packaged CP seeds the instance admin so FIRST-RUN.txt holds', () => {
+  assert.ok(
+    source.includes('cpEnv.put("XIHE_SEED_ADMIN", "true")'),
+    'Launcher.java must set XIHE_SEED_ADMIN=true in cpEnv: DataSeeder defaults ' +
+    'cp.bootstrap.seed-admin=false, so without it admin@xihe.local promised by FIRST-RUN.txt ' +
+    'is never created and the first user has no instance:admin path (claim needs it)',
+  );
+});
+
 test('the security gate machinery is present (attestation, log signatures, exit 4)', () => {
   assert.ok(lineOf('security: env='), 'the A-1 attestation line is gone');
   assert.ok(lineOf(' keys=') && lineOf(' allowDevKeys='), 'the attestation stopped reporting keys/allowDevKeys');

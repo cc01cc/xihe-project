@@ -394,8 +394,8 @@ public final class Launcher {
         props.setProperty("credentials.fingerprint.key", randomBase64(random, 32));
         props.setProperty("oauth.encryption.key", randomBase64(random, 32));
         props.setProperty("service.token", randomToken(random, 40));
-        // The CP seeds `admin@xihe.local` as the instance owner on every non-local-mode boot and
-        // assigns SUPER_ADMIN to it (DataSeeder). Without this env the password would be a random
+        // The CP seeds `admin@xihe.local` as the instance owner and assigns SUPER_ADMIN to it
+        // (DataSeeder, enabled by XIHE_SEED_ADMIN=true in cpEnv — D-1818/task-205). Without this env the password would be a random
         // value that exists only as a hash — i.e. the instance owner could never log in and nobody
         // could configure an LLM provider. Pinning it to a generated, persisted secret is the
         // minimum viable onboarding for a per-user install; the human-readable copy is
@@ -1075,6 +1075,12 @@ public final class Launcher {
         cpEnv.put("XIHE_CP_DATASOURCE_USERNAME", "xihe");
         cpEnv.put("XIHE_CP_DATASOURCE_PASSWORD", password);
         cpEnv.put("XIHE_DEV_ADMIN_PASSWORD", requireSecret(secrets, "admin.password"));
+        // D-1818 (task-205): seed admin@xihe.local so the FIRST-RUN.txt credential promise holds.
+        // DataSeeder defaults cp.bootstrap.seed-admin=false; without this switch the first user
+        // has no instance:admin path (claim needs it; first registration binds USER tier) — a
+        // chicken-and-egg gap. The password is the launcher-generated admin.password above, so
+        // it is never a hardcoded default and is disclosed only in FIRST-RUN.txt (0600).
+        cpEnv.put("XIHE_SEED_ADMIN", "true");
         cpEnv.put("XIHE_AGENT_URL", "http://127.0.0.1:" + agentPort + "/internal/v1/agent/chat");
         cpEnv.put("XIHE_AGENT_BASE_URL", "http://127.0.0.1:" + agentPort);
         cpEnv.put("XIHE_RUNTIME_URL", "http://127.0.0.1:" + runtimePort);
@@ -1084,9 +1090,10 @@ public final class Launcher {
         cpEnv.put("XIHE_RUNTIME_STATE_DIR", dataRoot.resolve("data").resolve("runtime-state").toString());
         cpEnv.put("XIHE_WORKSPACE_DOCKER_BACKEND", "disabled");
         cpEnv.put("XIHE_CHANNEL_ENABLED", "true");
-        // PLAN-0758 (D-787): the retired local single-user mode is gone, so the packaged
-        // product keeps the normal register/login flow; a fresh install boots with no accounts
-        // and the UI's first screen is registration.
+        // PLAN-0758 (D-787): the retired local single-user mode is gone. D-1818 (task-205): the
+        // packaged launcher seeds admin@xihe.local (XIHE_SEED_ADMIN above) with the generated
+        // admin.password, so a fresh install boots WITH the instance owner named in FIRST-RUN.txt;
+        // the normal register/login flow remains for additional users.
         services.put("cp", new ServiceSpec(
                 "cp",
                 jre,
