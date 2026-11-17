@@ -69,6 +69,10 @@ const mockedApi = vi.mocked(api, true),
                     },
                     diffRunChangedUnit: "file(s)",
                 },
+                errors: {
+                    errorCodeLabel: "Error code",
+                    technicalDetail: "Technical details",
+                },
             },
         },
     });
@@ -227,9 +231,20 @@ describe("WorkspaceChangesPanel slice timeline", () => {
         );
         const wrapper = mountPanel();
         await settle();
-        expect(
-            wrapper.find('[data-testid="workspace-checkpoint-timeline-error"]').text(),
-        ).toContain("CHECKPOINT_UNAVAILABLE");
+        // task-175 D：诊断面三件事齐判（task-45/task-78 判据）——
+        // ① 可读文案在；② copy 不含错误码、不含 API error N（禁止把码拼进文案）；
+        // ③ 码在专用可选中 code 元素里（诊断面给码，task-78 同款）。
+        const error = wrapper.find('[data-testid="workspace-checkpoint-timeline-error"]');
+        expect(error.exists()).toBe(true);
+        const copy = wrapper.find('[data-testid="workspace-checkpoint-timeline-error-copy"]');
+        expect(copy.text()).not.toBe("");
+        expect(copy.text()).not.toContain("CHECKPOINT_UNAVAILABLE");
+        expect(copy.text()).not.toMatch(/API error \d+/);
+        const codeValue = wrapper.find(
+            '[data-testid="workspace-checkpoint-timeline-error-code-value"]',
+        );
+        expect(codeValue.text()).toBe("CHECKPOINT_UNAVAILABLE");
+        expect(codeValue.classes()).toContain("select-all");
         await wrapper.find('[data-testid="workspace-changes-close"]').trigger("click");
         expect(wrapper.emitted("close")).toHaveLength(1);
     });

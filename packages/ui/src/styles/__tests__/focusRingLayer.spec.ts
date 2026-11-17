@@ -94,10 +94,12 @@ describe("task-39 全局焦点轮廓的层归属", () => {
         }
     });
 
-    it("三个分隔条保留自有环（键盘可聚焦，DEV-011 §10 要求环形轮廓）", () => {
+    it("两个分隔条保留自有环（键盘可聚焦，DEV-011 §10 要求环形轮廓）", () => {
+        // task-175 B：tree-resizer 已随 D-1777/D-1778（e88bfd492，树改为右栏 files 面板）整段删除，
+        // 其「不存在」由 WorkspaceWorkbench.spec.ts 的正向判据钉住（搜 tree-resizer 非存在断言）。
+        // 产品路径现存的可聚焦分隔条只有 sidebar 与 dock 两个 ⇒ 表收窄到这两个，环判据不放宽。
         const separators: Array<[string, string]> = [
             ["src/layouts/AppLayout.vue", "sidebar-resizer"],
-            ["src/features/workspace/components/WorkspaceWorkbench.vue", "tree-resizer"],
             ["src/features/workspace/components/WorkspaceDock.vue", "dock-resizer"],
         ];
         for (const [rel, testid] of separators) {

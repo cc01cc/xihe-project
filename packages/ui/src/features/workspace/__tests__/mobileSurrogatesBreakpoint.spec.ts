@@ -263,6 +263,19 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
     });
 
     it("文件替身跨断点必须收回：`workspace-tree-head` 在同一 DOM 里恰好 1 个（task-124 转正）", async () => {
+        // task-175 C：D-1777/D-1778 后树是右栏 files 面板，不再是常挂独立列。jsdom innerWidth=1024
+        // (<1800) 首启默认 dockCollapsed:true（useWorkspaceLayout.defaultWorkspaceLayoutForViewport）⇒
+        // 不 seed 时桌面分支不挂树、tree-head=0。本用例钉的是「替身收回 + 树恰挂一次」的反重复意图，
+        // 故 seed 宽屏首启形态（dock 展开 + files 置前，键镜像 WORKSPACE_LAYOUT_STORAGE_PREFIX+id），
+        // 让桌面分支挂树一次；计数判据不放宽，并补一条显式「替身已收回」正向断言。
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({
+                dockCollapsed: false,
+                dockTabs: ["files", "monitor"],
+                activeDockTab: "files",
+            }),
+        );
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -271,6 +284,7 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
 
         await resizeTo(false);
 
+        expect(count("mobile-files-sheet")).toBe(0);
         expect(count("workspace-tree-head")).toBe(1);
         wrapper.unmount();
     });

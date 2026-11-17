@@ -42,6 +42,8 @@ const { wsStub, authStub, apiStub, toastStub } = vi.hoisted(() => ({
     apiStub: {
         listWorkspaceNestedRepos: vi.fn<() => Promise<NestedRepo[]>>(),
         addWorkspaceRoot: vi.fn<(wsId: string, input: { path: string }) => Promise<RootRow>>(),
+        getWorkspaceGitStatus:
+            vi.fn<(wsId: string) => Promise<{ isRepository: boolean; entries: unknown[] }>>(),
     },
     toastStub: {
         success: vi.fn<(message?: string) => void>(),
@@ -90,6 +92,24 @@ const i18n = createI18n({
                 nestedRepoType_submodule: "Submodule",
                 nestedRepoType_bare: "Bare repo",
                 nestedRepoType_symlink: "Symlink",
+                // task-175 A：读面（9eee94330）引入的键，夹具须与真源同步，否则裸键守卫红。
+                // 值镜像真源 en locale（i18n/index.ts:4451-4454）。
+                gitReadfaceTitle: "Repository status (pending commit)",
+                gitReadfaceHeadHint: "HEAD: see Changes panel / checkpoint timeline",
+                gitReadfaceNoRepo: "Current workspace is not a Git repository",
+                gitReadfaceLoadFailed: "Failed to load repository status",
+                // task-175 A：读面/树错误态其余键，值镜像真源 en locale，防夹具再漂移。
+                diffPendingLoading: "Reading git status…",
+                diffPendingCountUnit: "file(s)",
+                treeLoadFailed: "The file tree failed to load. Retry, or keep chatting meanwhile.",
+                treeLoadFailedRuntime:
+                    "The workspace runtime is unreachable. Start the service and retry; contact an admin if it keeps failing.",
+                treeLoadFailedTool:
+                    "The tool is missing or disabled. Refresh the workspace and retry.",
+            },
+            errors: {
+                errorCodeLabel: "Error code",
+                technicalDetail: "Technical details",
             },
         },
     },
@@ -114,6 +134,8 @@ beforeEach(() => {
     authStub.canWriteWorkspace = true;
     apiStub.listWorkspaceNestedRepos.mockResolvedValue([...REPOS]);
     apiStub.addWorkspaceRoot.mockResolvedValue({ id: "root-1", alias: null, position: 1 });
+    // task-175 A：读面取数须有 mock，否则走错误分支渲染 gitReadfaceLoadFailed 裸键。
+    apiStub.getWorkspaceGitStatus.mockResolvedValue({ isRepository: true, entries: [] });
 });
 
 describe("task-188 nested-repos 的工作区上下文来源", () => {

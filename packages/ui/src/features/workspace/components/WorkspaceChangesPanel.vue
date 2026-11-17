@@ -263,6 +263,20 @@ watch(
                     >
                         {{ timelineError.copy }}
                     </p>
+                    <!-- task-175 D：诊断面须透传错误码（task-45 把变更面板列诊断面；task-78 补码标签时漏了本面板）。
+                         形态照 FileTreePanel git readface：label + 可选中 code，码为空不渲染空壳。 -->
+                    <p
+                        v-if="timelineError.code"
+                        data-testid="workspace-checkpoint-timeline-error-code"
+                        class="text-xs text-muted-foreground"
+                    >
+                        {{ t("errors.errorCodeLabel") }}
+                        <code
+                            class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                            data-testid="workspace-checkpoint-timeline-error-code-value"
+                            >{{ timelineError.code }}</code
+                        >
+                    </p>
                     <Collapsible v-if="timelineError.technicalDetail">
                         <CollapsibleTrigger as-child>
                             <button
