@@ -588,9 +588,9 @@ function reopenPanel(payload: { id: string; target: "center" | "dock" }): void {
 /**
  * task-94 S1/S2：两条一次性提示随各自的机制退场，**不是被静音** —— 它们提示的两件事都不再发生：
  *
- * - `workspace.squeezeFloatingNotice`（「右栏被挤压成浮窗」）：浮窗没了，挤压的出口改成单栏，
+ * - 「右栏被挤压成浮窗」提示（task-162 ②：locale 键已删）：浮窗没了，挤压的出口改成单栏，
  *   单栏切换器本身就是可见的状态指示（用户在右栏 / 在中栏，一眼可见，不需要 toast 解释）；
- * - `workspace.squeezeTreeOverflowNotice`（「树展开后主列破 640」）：树不再占行宽 ⇒ 破不了。
+ * - 「树展开后主列破 640」提示（task-162 ②：locale 键已删）：树不再占行宽 ⇒ 破不了。
  */
 /**
  * Escape typed into a field belongs to that field (rename, search, composer), not to
@@ -888,6 +888,7 @@ defineExpose({ openDockTab });
                 data-testid="workspace-center"
                 class="flex min-h-0 min-w-0 flex-1"
             >
+                <!-- task-162 ③：单栏投影（D-1545 同构）—— 只接这两个派生 prop，单一 writer 不变。 -->
                 <WorkspaceShellDockview
                     :dock-tabs="layout.dockTabs"
                     :active-dock-tab="activeDockTab"
@@ -898,6 +899,8 @@ defineExpose({ openDockTab });
                     :labels="dockPanelLabels"
                     :tree-label="t('workspace.expandFiles')"
                     :sash-label="t('workspace.treeResize')"
+                    :container-mode="containerMode"
+                    :active-column="effectiveActiveColumn"
                     @update:active-dock-tab="setActiveDockTab"
                     @close-tab="closeDockTab"
                     @close-tree="closeTreePanel"
@@ -1006,12 +1009,18 @@ defineExpose({ openDockTab });
                         :data-main-hidden="dockFocus ? 'true' : 'false'"
                         :data-main-column-visible="mainVisible ? 'true' : 'false'"
                     >
-                        <!-- task-174（S2b）：内容容器页签行（页面/会话页签归这里）。 -->
+                        <!--
+                            task-174（S2b）：内容容器页签行（页面/会话页签归这里）。
+                            task-155：maxVisibleTabs=8 —— 溢出策略上限（照右栏 WorkspaceDock 形态）。
+                            依据：1920 视口约 11 页签溢出 ⇒ 8 留余量；窄视口溢出由下拉兜
+                            （固定上限、不做动态测量）；不传 = 旧行为（右栏/树行不传）。
+                        -->
                         <WorkspaceContainerTabs
                             container-id="main"
                             :tabs="mainContainerTabs"
                             :active-id="mainContainerActiveId"
                             allow-empty
+                            :max-visible-tabs="8"
                             @select="selectWorkspaceTab($event)"
                             @close="closeWorkspaceTab($event)"
                             @row-key="onContainerRowKey"

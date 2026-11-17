@@ -512,17 +512,11 @@ const messages = {
             dockTabsFull: "面板数量已达上限，请先关闭一个面板",
             dockCloseTab: "关闭此面板",
             dockResize: "调整面板宽度",
-            dockModePinned: "已固定",
-            dockModeFloating: "浮动",
-            dockModeToggleHint: "回车或点击切换面板固定/浮动",
             dockFocusExpand: "放大面板",
             dockFocusRestore: "还原面板",
             dockFocusHint: "让面板占满工作台（主内容列隐藏，Esc 还原）",
-            dockModeManual: "手动",
-            dockModeAuto: "自动",
+            // task-162 ①连带：dock 形态「手动/自动」两个标签键随字段删除（死键，卡面 5 键之外，报备）。
             treeResize: "调整文件树宽度",
-            squeezeFloatingNotice: "空间不足，面板已自动转为浮动，避免挤压主内容。",
-            squeezeTreeOverflowNotice: "已按你的选择展开文件树，主内容区变窄（低于常规最小宽度）。",
             editorSelectFile: "从文件树选择文件",
             editorSave: "保存",
             editorSaved: "已保存",
@@ -578,6 +572,8 @@ const messages = {
             containerEmpty: "此容器暂无页签",
             // task-97（D-1754 ②）：右栏页签行「+」= 重开已关闭面板（main 行「+」复用 sidebar.newChat）。
             containerPlusReopen: "重开已关闭面板",
+            // task-155：容器页签行溢出下拉触发器（照右栏 dockOverflow 形态，主栏页签语义）。
+            containerOverflow: "更多页签",
             // task-184（BL-561 扩展 / D-1600 ③）：跨组移动做不了时的播报。**不做静默 no-op**。
             containerMoveNoNeighbor: "没有可移入的相邻容器",
             // task-174 / D-1545：窄屏切换「显示哪一栏」与右栏容器名。
@@ -4500,19 +4496,10 @@ const messages = {
             dockTabsFull: "Panel limit reached — close a panel first",
             dockCloseTab: "Close this panel",
             dockResize: "Resize the panel",
-            dockModePinned: "Pinned",
-            dockModeFloating: "Floating",
-            dockModeToggleHint: "Toggle pinned/floating for this panel",
             dockFocusExpand: "Expand panel",
             dockFocusRestore: "Restore layout",
             dockFocusHint: "Fill the workspace with this panel (main column hidden, Esc restores)",
-            dockModeManual: "Manual",
-            dockModeAuto: "Auto",
             treeResize: "Resize the file tree",
-            squeezeFloatingNotice:
-                "Not enough room: the panel switched to floating so the main column stays readable.",
-            squeezeTreeOverflowNotice:
-                "The file tree is expanded as you asked, so the main column is narrower than usual.",
             editorSelectFile: "Select a file from the tree",
             editorSave: "Save",
             editorSaved: "Saved",
@@ -4562,6 +4549,8 @@ const messages = {
             containerEmpty: "No tabs in this container",
             // task-97 (D-1754 ②): the right-row "+" reopens closed panels (main-row "+" reuses sidebar.newChat).
             containerPlusReopen: "Reopen a closed panel",
+            // task-155: overflow dropdown trigger for container tab rows (right-row form, main-tab semantics).
+            containerOverflow: "More tabs",
             // task-184 (BL-561 extension / D-1600 ③): announced when a cross-container move cannot run.
             containerMoveNoNeighbor: "No adjacent container to move into",
             // task-174 / D-1545: narrow-screen column switcher and the right column name.
