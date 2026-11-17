@@ -4,9 +4,6 @@
         "e2e/headed/session-participants.spec.ts": {
             "TS7016": 2
         },
-        "e2e/mock/approval.spec.ts": {
-            "TS2339": 1
-        },
         "e2e/mock/audit.spec.ts": {
             "TS2345": 11,
             "TS2349": 3
