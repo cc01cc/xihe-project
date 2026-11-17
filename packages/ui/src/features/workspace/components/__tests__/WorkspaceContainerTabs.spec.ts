@@ -13,6 +13,8 @@ const i18n = createI18n({
                 containerTree: "文件树",
                 containerMain: "内容",
                 containerEmpty: "此容器暂无页签",
+                // task-155：溢出下拉触发器。
+                containerOverflow: "更多页签",
                 tabClose: "关闭页签",
             },
         },
@@ -146,5 +148,66 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         expect(
             triggers[0].find('[data-testid="workspace-tab-identity"]').attributes("aria-hidden"),
         ).toBe("true");
+    });
+});
+
+const FOUR_TABS = [
+    { id: "session:s1", label: "S1", closable: true },
+    { id: "session:s2", label: "S2", closable: true },
+    { id: "session:s3", label: "S3", closable: true },
+    { id: "session:s4", label: "S4", closable: true },
+];
+
+describe("WorkspaceContainerTabs（task-155：maxVisibleTabs 溢出策略）", () => {
+    it("不传上限 = 全部渲染、无溢出触发器（右栏/树行既有行为不变）", () => {
+        const wrapper = mountRow({ containerId: "main", tabs: FOUR_TABS, activeId: "session:s1" });
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(4);
+        expect(wrapper.find('[data-testid="workspace-container-overflow-main"]').exists()).toBe(
+            false,
+        );
+    });
+
+    it("传上限 = 只渲染前 N 个，触发器计数 = 溢出数，菜单列出溢出页签", async () => {
+        const wrapper = mountRow({
+            containerId: "main",
+            tabs: FOUR_TABS,
+            activeId: "session:s1",
+            maxVisibleTabs: 2,
+        });
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(2);
+        const trigger = wrapper.get('[data-testid="workspace-container-overflow-main"]');
+        expect(trigger.text()).toContain("2");
+        expect(
+            wrapper.find('[data-testid="workspace-container-overflow-main-menu"]').exists(),
+        ).toBe(false);
+        await trigger.trigger("click");
+        const menu = wrapper.get('[data-testid="workspace-container-overflow-main-menu"]');
+        expect(
+            menu.findAll('[data-testid^="workspace-container-overflow-main-item-"]'),
+        ).toHaveLength(2);
+        // 溢出项的 close 与行内页签同门槛（closable），testid 带容器段。
+        expect(
+            menu
+                .find('[data-testid="workspace-container-overflow-main-close-session:s3"]')
+                .exists(),
+        ).toBe(true);
+    });
+
+    it("溢出项的选中与关闭只 emit，不自己改状态（与行内页签同一纪律）", async () => {
+        const wrapper = mountRow({
+            containerId: "main",
+            tabs: FOUR_TABS,
+            activeId: "session:s1",
+            maxVisibleTabs: 1,
+        });
+        await wrapper.get('[data-testid="workspace-container-overflow-main"]').trigger("click");
+        await wrapper
+            .get('[data-testid="workspace-container-overflow-main-item-session:s4"]')
+            .trigger("click");
+        expect(wrapper.emitted("select")?.[0]).toEqual(["session:s4"]);
+        await wrapper
+            .get('[data-testid="workspace-container-overflow-main-close-session:s2"]')
+            .trigger("click");
+        expect(wrapper.emitted("close")?.[0]).toEqual(["session:s2"]);
     });
 });

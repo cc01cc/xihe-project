@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, useId } from "vue";
+import { computed, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
-import { AppWindow, X } from "@lucide/vue";
+import { AppWindow, ChevronDown, X } from "@lucide/vue";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import type { ContainerId } from "../lib/containers";
 import type { ContainerRowKeyPayload, MoveDirection } from "../lib/containerTabNav";
@@ -30,6 +30,12 @@ const props = defineProps<{
      * 所以无页签 ⇒ 不渲染（而不是渲染空壳）；只有显式 `allowEmpty` 的调用方才画空行。
      */
     allowEmpty?: boolean;
+    /**
+     * task-155：溢出策略上限（可见页签数），照右栏 WorkspaceDock 的既有形态（上限 + 下拉）。
+     * 不传 = 全部渲染（既有行为）：右栏行在 WorkspaceDock 内自切 rowTabs/overflowTabs 不传，
+     * 树行只有 1 页签不传 —— 今天只有 main 行调用方会传。
+     */
+    maxVisibleTabs?: number;
     /**
      * D-1777/D-1778 §8 第 1 步：右栏行页签 testid 沿用既有 dock-tab-* 契约（src+e2e 66+
      * 消费点，不得改名），故可传前缀覆盖默认的 workspace-container-tab-<container>-<id>。
@@ -117,6 +123,25 @@ const singleTabRedundant = computed(
     () => props.tabs.length === 1 && props.tabs[0].label === containerLabel.value,
 );
 
+/**
+ * task-155：溢出切分（照右栏 WorkspaceDock 的既有形态）。不传上限 ⇒ 全部可见、无下拉，
+ * 既有调用方（右栏/树行）行为不变。溢出页签不在 DOM ⇒ 行内方向键到不了它们，
+ * 与右栏行今天的限制同形（可达性由下拉补，不靠键盘遍历）。
+ */
+const visibleTabs = computed(() =>
+    props.maxVisibleTabs === undefined ? props.tabs : props.tabs.slice(0, props.maxVisibleTabs),
+);
+const overflowTabs = computed(() =>
+    props.maxVisibleTabs === undefined ? [] : props.tabs.slice(props.maxVisibleTabs),
+);
+const hasOverflow = computed(() => overflowTabs.value.length > 0);
+const overflowOpen = ref(false);
+
+/** 溢出触发器/菜单/菜单项的 testid：带容器段，main 行 = workspace-container-overflow-main-*。 */
+function overflowTestid(suffix: string): string {
+    return "workspace-container-overflow-" + props.containerId + suffix;
+}
+
 /** reka 的 v-model 是「当前活页签」；没有活页签时给空串，避免它自行选第一个。 */
 const activeTab = computed<string>({
     get: () => props.activeId ?? "",
@@ -145,7 +170,7 @@ const activeTab = computed<string>({
         <Tabs :id="domId" :model-value="activeTab" class="min-w-0 flex-1">
             <TabsList variant="line" class="p-0">
                 <div
-                    v-for="tab in tabs"
+                    v-for="tab in visibleTabs"
                     :key="tab.id"
                     class="group inline-flex shrink-0 items-center rounded-md"
                     :class="
@@ -197,6 +222,56 @@ const activeTab = computed<string>({
                 </div>
             </TabsList>
         </Tabs>
+        <!--
+            task-155：溢出下拉（照右栏 WorkspaceDock 的既有形态：上限 + 下拉 + 计数）。
+            挂在 Tabs 之后、actions 槽（task-97「+」与窗口控件）之前 —— 它是页签条控件，
+            与右栏 dock-overflow-trigger 同语义；不传 maxVisibleTabs 时整块不渲染（既有行为）。
+        -->
+        <div v-if="hasOverflow" class="relative shrink-0">
+            <button
+                type="button"
+                :data-testid="overflowTestid('')"
+                class="inline-flex items-center gap-0.5 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :aria-label="t('workspace.containerOverflow')"
+                :title="t('workspace.containerOverflow')"
+                :aria-expanded="overflowOpen"
+                @click="overflowOpen = !overflowOpen"
+            >
+                <ChevronDown class="size-3.5" aria-hidden="true" />
+                <span class="tabular-nums">{{ overflowTabs.length }}</span>
+            </button>
+            <div
+                v-if="overflowOpen"
+                :data-testid="overflowTestid('-menu')"
+                class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
+            >
+                <div
+                    v-for="tab in overflowTabs"
+                    :key="tab.id"
+                    class="flex w-full items-center justify-between gap-1 rounded hover:bg-accent"
+                >
+                    <button
+                        type="button"
+                        :data-testid="overflowTestid('-item-' + tab.id)"
+                        class="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click="emit('select', tab.id)"
+                    >
+                        {{ tab.label }}
+                    </button>
+                    <!-- 与行内页签的 close 同门槛：closable 且（非 closeActiveOnly 或当前活页签）。 -->
+                    <button
+                        v-if="tab.closable && (!closeActiveOnly || tab.id === activeId)"
+                        type="button"
+                        :data-testid="overflowTestid('-close-' + tab.id)"
+                        :aria-label="'关闭 ' + tab.label"
+                        class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click.stop="emit('close', tab.id)"
+                    >
+                        <X class="size-3" aria-hidden="true" />
+                    </button>
+                </div>
+            </div>
+        </div>
         <!--
             task-65 A 段（§8 第 1 步）：右栏行复用既有 WorkspaceContainerTabs，行尾 actions 插槽放
             mode/focus/close 三键（替代原 WorkspaceDock 自造 tablist 条内那三个按钮）。插槽必须挂在
