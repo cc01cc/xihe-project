@@ -1230,7 +1230,12 @@ onMounted(() => {
                             </button>
                             <div class="mt-3 flex flex-wrap gap-1.5">
                                 <button
-                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                    <!--
+                                        task-139【授权扩展】（Lead 19:5x 授权）：同族第三处 —— 本文件、同一串 class、
+                                        同一个 :disabled 源、同一个 FAIL 读数（readonly 1.967 浅 / 2.697 深）⇒ 一并 opt4。
+                                        不是原卡范围，属授权收口；单独 hunk，不与「管理/删除」混。
+                                    -->
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                     :disabled="
                                         verifyingId === defaultConnection.id || props.readonly
                                     "
@@ -1242,8 +1247,9 @@ onMounted(() => {
                                             : t("settings.providerHub.verify")
                                     }}
                                 </button>
+                                <!-- task-139：与「设为默认」同族 FAIL 收口（opt4，理由见其它行那条注释） -->
                                 <button
-                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                     :disabled="props.readonly"
                                     @click="openManage(defaultConnection)"
                                 >
@@ -1256,7 +1262,7 @@ onMounted(() => {
                                     （不可恢复发生在确认键上）⇒ L2、不许上色；:153「红只在【确认时】出现」。
                                 -->
                                 <button
-                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                    class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                     :disabled="props.readonly"
                                     :data-testid="`provider-connection-delete-${defaultConnection.id}`"
                                     @click="remove(defaultConnection)"
@@ -1313,7 +1319,7 @@ onMounted(() => {
                                 </button>
                                 <div class="mt-3 flex flex-wrap gap-1.5">
                                     <button
-                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                         :disabled="verifyingId === connection.id || props.readonly"
                                         @click="verify(connection)"
                                     >
@@ -1324,7 +1330,7 @@ onMounted(() => {
                                         }}
                                     </button>
                                     <button
-                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                         :disabled="props.readonly"
                                         @click="openManage(connection)"
                                     >
@@ -1351,7 +1357,7 @@ onMounted(() => {
                                         {{ t("settings.providerHub.setAsDefault") }}
                                     </button>
                                     <button
-                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        class="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-100 disabled:text-muted-foreground/85 disabled:hover:border-border disabled:hover:text-muted-foreground/85"
                                         :disabled="props.readonly"
                                         :data-testid="`provider-connection-delete-${connection.id}`"
                                         @click="remove(connection)"
