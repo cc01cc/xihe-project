@@ -147,7 +147,15 @@ const SHOTS = [
     { id: "10", name: "resources-mcp", path: "/resources/mcp?layer=INSTANCE", app: true },
     // task-167：实例层技能页。11 = 列表 + 「导入技能」入口（持有 MANAGE_SKILL_LIBRARY ⇒ 可点）；
     // 12 = 点开导入对话框（expand 点的是真按钮，弹的是真 Dialog，不是静态壳）。
-    { id: "11", name: "resources-skills", path: "/resources/skills?layer=INSTANCE", app: true },
+    {
+        id: "11",
+        name: "resources-skills",
+        path: "/resources/skills?layer=INSTANCE",
+        app: true,
+        // task-206 P0：等技能计数渲染（`SkillsPanel` 的 `settings-skills-count`）—— 异步技能行
+        // 落地前后列表高度不同，会推整页；等计数出现 = 「行已落地」。
+        waitFor: '[data-testid="settings-skills-count"]',
+    },
     {
         id: "12",
         name: "skills-import-dialog",
@@ -196,14 +204,26 @@ const SHOTS = [
         path: "/members",
         app: true,
         // 等到树节点真的落地再拍：冷启动首批模块要现转译，见 `shootOne` 里 waitFor 的实测记录。
-        waitFor: "[data-testid=org-tree-label-ou-rd]",
+        // task-206 P0：除树根外，还要等「智能体主体」卡片落地（`AgentPrincipalsPanel` 独立
+        // GET /agent-principals，agents.length>0 才渲染 `agent-principals-list`）—— 它是正常流元素，
+        // 加载前高度≠加载后，会把整页推移几像素（跨批漂移根因）。等它出现 = 「行已落地」。
+        waitFor: ["[data-testid=org-tree-label-ou-rd]", '[data-testid="agent-principals-list"]'],
+        // task-206 R2：显式前置 rail 展开态（shootOne 幂等 ensure，判 localStorage.open SSOT）——
+        // 消除「镜头 14 点 rail-toggle 持久化、整批共用 context 携带」导致的 subset/full 态差。
+        rail: "expanded",
     },
     {
         id: "16",
         name: "org-members-selected",
         path: "/members",
         app: true,
-        waitFor: "[data-testid=org-tree-label-ou-rd]",
+        // task-206 P0：除树根外，还要等「智能体主体」卡片落地（`AgentPrincipalsPanel` 独立
+        // GET /agent-principals，agents.length>0 才渲染 `agent-principals-list`）—— 它是正常流元素，
+        // 加载前高度≠加载后，会把整页推移几像素（跨批漂移根因）。等它出现 = 「行已落地」。
+        waitFor: ["[data-testid=org-tree-label-ou-rd]", '[data-testid="agent-principals-list"]'],
+        // task-206 R2：显式前置 rail 展开态（shootOne 幂等 ensure，判 localStorage.open SSOT）——
+        // 消除「镜头 14 点 rail-toggle 持久化、整批共用 context 携带」导致的 subset/full 态差。
+        rail: "expanded",
         // 三步：展开研发部 → 展开平台组（子单元的名字进注册表，「所在单元」列才不会退化成 id）
         // → 选中研发部。展开是**真点击**，所以第二级懒加载也在图里被证一次。
         expand: [
@@ -225,7 +245,13 @@ const SHOTS = [
         name: "org-members-detail-human",
         path: "/members",
         app: true,
-        waitFor: "[data-testid=org-tree-label-ou-rd]",
+        // task-206 P0：除树根外，还要等「智能体主体」卡片落地（`AgentPrincipalsPanel` 独立
+        // GET /agent-principals，agents.length>0 才渲染 `agent-principals-list`）—— 它是正常流元素，
+        // 加载前高度≠加载后，会把整页推移几像素（跨批漂移根因）。等它出现 = 「行已落地」。
+        waitFor: ["[data-testid=org-tree-label-ou-rd]", '[data-testid="agent-principals-list"]'],
+        // task-206 R2：显式前置 rail 展开态（shootOne 幂等 ensure，判 localStorage.open SSOT）——
+        // 消除「镜头 14 点 rail-toggle 持久化、整批共用 context 携带」导致的 subset/full 态差。
+        rail: "expanded",
         // 展开研发部 → 选中研发部（「含下级」默认开 ⇒ 张安那一行在列表里）→ 点行开抽屉。
         // 点的是行内**按钮** `org-member-open-<memberId>`（`OrgUnitMemberList.vue:165-170`）：
         // 行 `<tr>`（`org-member-row-*`）**没有** click handler，点行中心只会命中「所在单元」单元格
@@ -248,7 +274,13 @@ const SHOTS = [
         name: "org-members-detail-agent",
         path: "/members",
         app: true,
-        waitFor: "[data-testid=org-tree-label-ou-rd]",
+        // task-206 P0：除树根外，还要等「智能体主体」卡片落地（`AgentPrincipalsPanel` 独立
+        // GET /agent-principals，agents.length>0 才渲染 `agent-principals-list`）—— 它是正常流元素，
+        // 加载前高度≠加载后，会把整页推移几像素（跨批漂移根因）。等它出现 = 「行已落地」。
+        waitFor: ["[data-testid=org-tree-label-ou-rd]", '[data-testid="agent-principals-list"]'],
+        // task-206 R2：显式前置 rail 展开态（shootOne 幂等 ensure，判 localStorage.open SSOT）——
+        // 消除「镜头 14 点 rail-toggle 持久化、整批共用 context 携带」导致的 subset/full 态差。
+        rail: "expanded",
         // 多一步展开平台组：代码智能体在平台组下，「所属单元」取的是树节点注册表里的名字，
         // 不展开就会退化成 id（16 号镜头同款理由，见上一条注释）。
         expand: [
@@ -536,6 +568,8 @@ function parseArgs(argv) {
         // 临时加拍镜头的原始规格（<id>:<name>:<path>），可重复；见 parseExtraShot
         extraShots: [],
         selftest: false,
+        // task-206 P1：同调用跑两遍逐镜比 sha（默认关 ⇒ 日常出图零开销；发布/交付批次必跑）。
+        verifyStable: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
@@ -575,6 +609,9 @@ function parseArgs(argv) {
         } else if (arg === "--selftest") {
             // 只跑探活自检：不起浏览器、不需要 dev server，秒级返回（负例必须快速失败）。
             opts.selftest = true;
+        } else if (arg === "--verify-stable") {
+            // task-206 P1：把「跨批一致」从人工发现变门 —— 同调用两遍逐镜比 sha，不等 exit 1 点名。
+            opts.verifyStable = true;
         } else if (arg === "--dirty-proof") {
             opts.dirtyProof = path.resolve(process.cwd(), value);
             i += 1;
@@ -1235,7 +1272,40 @@ async function applyFocusSteps(page, shot) {
     return plan;
 }
 
-async function shootOne(page, base, shot, outDir) {
+// task-206 P2：在途 fetch 追踪（忽略 SSE 长连接）。app 页的 /user-events 走
+// @microsoft/fetch-event-source（resourceType=fetch 但永不 finish）⇒ 必须按 URL 排除，
+// 否则「无在途」永不归零。waitFor 只保证某选择器出现，其后仍可能有 fetch 落地推布局
+// （task-206 实测 15/18 在 P0 后仍漂移）⇒ 连拍前先等所有非 SSE fetch 静置。
+const SSE_URL_RE = /\/user-events(\?|$)/;
+function attachNetworkTracker(page) {
+    const inflight = new Set();
+    const trackable = (req) =>
+        !SSE_URL_RE.test(req.url()) &&
+        (req.resourceType() === "fetch" || req.resourceType() === "xhr");
+    page.on("request", (req) => {
+        if (trackable(req)) inflight.add(req);
+    });
+    page.on("requestfinished", (req) => inflight.delete(req));
+    page.on("requestfailed", (req) => inflight.delete(req));
+    return {
+        // 连续 quietMs 无在途即视为静置；预算耗尽不抛（慢请求不该卡死整批），交连拍收敛兜底。
+        async waitQuiet(quietMs = 500, budgetMs = 15000) {
+            const deadline = Date.now() + budgetMs;
+            let quietSince = inflight.size === 0 ? Date.now() : null;
+            while (Date.now() < deadline) {
+                if (inflight.size === 0) {
+                    if (quietSince === null) quietSince = Date.now();
+                    if (Date.now() - quietSince >= quietMs) return;
+                } else {
+                    quietSince = null;
+                }
+                await page.waitForTimeout(80);
+            }
+        },
+    };
+}
+
+async function shootOne(page, base, shot, outDir, tracker = null) {
     // task-57：`viewport=WxH` 的镜头按声明开拍，且**导航前**就切好 —— 页面从首帧起就是窄视口，
     // 不存在「重排没完成就 click」的竞态（抽屉触发器是 `lg:hidden`，宽视口下它压根不渲染）。
     // 没声明的镜头走存量路径（视口 = 画布 = 1920×1080），16 张交付图 sha 必须逐字节不变。
@@ -1283,10 +1353,40 @@ async function shootOne(page, base, shot, outDir) {
          * 而前面先拍一张 01 预热后同一镜头正常。给镜头声明一个**内容就绪选择器**比"再加 2 秒"
          * 更准（等的是它要拍的东西出现），且只对声明者生效 —— 存量镜头时序与 sha 零改动。
          */
-        if (shot.waitFor) {
-            await page.waitForSelector(shot.waitFor, { timeout: 20000 });
+        // task-206 P0：waitFor 支持数组（与 expand 同语义，按声明顺序逐个等）—— 让镜头声明
+        // 「**要拍的内容**就绪」而不只是「树根落地」：异步主体卡片（GET /agent-principals、技能计数）
+        // 是正常流元素，加载前后高度不同，会把整页推移几像素；两态各自都稳定 ⇒ 单次连拍必收敛，
+        // 工具原判据挡不住「动到另一个稳定布局」（跨批漂移）。存量镜头不声明则不等，零改动。
+        const waitFors = shot.waitFor
+            ? Array.isArray(shot.waitFor)
+                ? shot.waitFor
+                : [shot.waitFor]
+            : [];
+        for (const selector of waitFors) {
+            await page.waitForSelector(selector, { timeout: 20000 });
         }
         await page.evaluate(() => document.fonts.ready);
+        // task-206 R2：rail 前置态幂等 ensure（导航后、expand 前）。判 localStorage 的
+        // xihe-global-rail.open（SSOT，GlobalRail.vue:73）——不取 aria-label（i18n 会假）、
+        // 不取宽度像素（可拖拽）。isOpen!==want 才点 toggle：full 已展开⇒不点基线 sha 不变，
+        // subset 折叠⇒补点对齐 full。shot.rail 未声明⇒整段跳过，存量镜头零影响。
+        if (shot.rail) {
+            await page.waitForSelector("[data-testid=global-rail-toggle]", { timeout: 20000 });
+            const want = shot.rail === "expanded";
+            const isOpen = await page.evaluate(() => {
+                try {
+                    return (
+                        JSON.parse(localStorage.getItem("xihe-global-rail") ?? "{}").open === true
+                    );
+                } catch {
+                    return false;
+                }
+            });
+            if (isOpen !== want) {
+                await page.click("[data-testid=global-rail-toggle]");
+                await page.waitForTimeout(400);
+            }
+        }
         for (const selector of expandSteps) {
             // 域面板默认折叠；审计图要看字段级内容 ⇒ 点开再拍（这也是 B 轻量版要证的一种交互）。
             // task-57：选择器写错必须响亮失败（与 focus 同款），否则会拍出一张"抽屉没开"的图，
@@ -1349,21 +1449,32 @@ async function shootOne(page, base, shot, outDir) {
     const shotOpts = shot.fullPage
         ? { fullPage: true, animations: "disabled" }
         : { animations: "disabled" };
+    // task-206 P2：连拍前先等「无在途 fetch」静置（忽略 SSE）—— 异步数据全部落地再拍，
+    // 堵住「waitFor 选择器已现、其后仍有 fetch 推布局」的残余跨批漂移。
+    if (shot.app && tracker) await tracker.waitQuiet();
     let stable = null;
     let previous = null;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    let streak = 0;
+    // task-206 P2：收敛判据从「连续 2 次一致」加严到「连续 3 次一致」（streak>=2 即第 3 张同），
+    // 防「A,A,B 晚落地」在第 2 张就提前收敛到未落定态；稳定镜头只是多等一拍，sha 不变。
+    for (let attempt = 0; attempt < 12; attempt += 1) {
         const buf = target ? await target.screenshot(shotOpts) : await page.screenshot(shotOpts);
         const digest = sha(buf);
         if (previous && previous.digest === digest) {
-            stable = { buf, digest, attempts: attempt + 1 };
-            break;
+            streak += 1;
+            if (streak >= 2) {
+                stable = { buf, digest, attempts: attempt + 1 };
+                break;
+            }
+        } else {
+            streak = 0;
         }
         previous = { buf, digest };
         await page.waitForTimeout(400);
     }
     if (!stable) {
         throw new Error(
-            shot.id + " 连拍 10 次仍未收敛（sha 抖动）：" + String(previous && previous.digest),
+            shot.id + " 连拍 12 次仍未收敛（sha 抖动）：" + String(previous && previous.digest),
         );
     }
 
@@ -1455,6 +1566,8 @@ async function shootOne(page, base, shot, outDir) {
         // task-57（Lead 追加要求）：**逐镜记录展开过的选择器序列** —— 图里有抽屉，但没人知道
         // 它是怎么被打开的，就等于把"怎么复现"留在了命令行里。空数组 = 这镜没展开任何东西。
         expand: expandSteps,
+        // task-206 R2：本镜显式前置状态（审阅者一眼看出「这张图在什么状态下拍」）；未声明 = {}。
+        preconditions: shot.rail ? { rail: shot.rail } : {},
         bytes: stable.buf.length,
         deterministic: true,
         probe,
@@ -1479,6 +1592,134 @@ function launchOptions(opts) {
     return args.length > 0
         ? { channel: opts.channel, args: args.slice() }
         : { channel: opts.channel };
+}
+
+/**
+ * task-206 P1：跨批一致性比较（纯函数，selftest 直接测，不需要浏览器）。
+ * 逐镜比主图 sha（有 bottom 图也比它的 sha）；不等即列进 mismatches 供点名。
+ * 抽成纯函数是为了让负例自检能在 `--selftest` 里跑（那里不开浏览器）。
+ */
+// task-206 ①A：合成级等价判据（合既有 2026-11-11「合成级差异每通道≤1LSB」+ 像素数阈值防滑坡成布局容差）。
+// 仅当**每个差异像素每通道≤1LSB** 且 **差异像素数≤总像素 0.01%** 才算合成级（GPU 合成 AA 非确定性，已知类）。
+// 布局/内容漂移 maxDelta 动辄上百、差异像素成千上万 ⇒ 必然落选，判据不会放它过。
+// task-206 ①A 校准（Lead 批）：GPU AA 非确定性是**每浏览器会话**的 ⇒ maxΔ 阈值按作用域分档：
+// 同调用内两遍（--verify-stable，同 browser）≤1LSB；跨调用（subset vs full，不同 browser）≤2LSB。
+const COMPOSITING_MAX_LSB_SAME = 1;
+const COMPOSITING_MAX_LSB_CROSS = 2;
+const COMPOSITING_MAX_PIXEL_RATIO = 0.0001;
+// 布局守卫阈值：任何布局/内容漂移必产生 >8 的大差（实测 rail 位移 maxΔ245）⇒ diff>8 像素数必须 0。
+const LAYOUT_DIFF_THRESHOLD = 8;
+function isCompositingDiff(stats, maxLsb = COMPOSITING_MAX_LSB_SAME) {
+    if (!stats || stats.sizeMismatch) return false;
+    // **硬不变量（防滑坡关键）**：layoutPixels（diff>8 的像素数）必须 0 —— 布局漂移必红，
+    // 与 maxLsb 档位无关；合成级 AA 只产生亚阈值小差，绝不含 >8 的像素。
+    if (stats.layoutPixels !== 0) return false;
+    if (stats.maxDelta > maxLsb) return false;
+    const cap = Math.max(1, Math.floor(stats.totalPixels * COMPOSITING_MAX_PIXEL_RATIO));
+    return stats.diffPixels <= cap;
+}
+
+// 浏览器 canvas 原生 PNG 解码逐像素比（成熟解码器，非手写 parser、零新依赖）。
+// 在 page.evaluate 里跑：两张 base64 PNG → Image → canvas → getImageData → 统计差异像素与最大通道差。
+async function comparePngPixels([b64a, b64b, layoutThreshold]) {
+    const load = (b64) =>
+        new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("PNG 解码失败"));
+            img.src = "data:image/png;base64," + b64;
+        });
+    const [ia, ib] = await Promise.all([load(b64a), load(b64b)]);
+    const w = ia.width;
+    const h = ia.height;
+    if (ib.width !== w || ib.height !== h) {
+        return {
+            sizeMismatch: true,
+            diffPixels: -1,
+            maxDelta: -1,
+            layoutPixels: -1,
+            totalPixels: w * h,
+        };
+    }
+    const ca = document.createElement("canvas");
+    ca.width = w;
+    ca.height = h;
+    const cb = document.createElement("canvas");
+    cb.width = w;
+    cb.height = h;
+    const xa = ca.getContext("2d", { willReadFrequently: true });
+    const xb = cb.getContext("2d", { willReadFrequently: true });
+    xa.drawImage(ia, 0, 0);
+    xb.drawImage(ib, 0, 0);
+    const da = xa.getImageData(0, 0, w, h).data;
+    const db = xb.getImageData(0, 0, w, h).data;
+    let diffPixels = 0;
+    let maxDelta = 0;
+    let layoutPixels = 0;
+    for (let i = 0; i < da.length; i += 4) {
+        const d = Math.max(
+            Math.abs(da[i] - db[i]),
+            Math.abs(da[i + 1] - db[i + 1]),
+            Math.abs(da[i + 2] - db[i + 2]),
+        );
+        if (d > 0) {
+            diffPixels += 1;
+            if (d > maxDelta) maxDelta = d;
+        }
+        // layoutThreshold 由 Node 侧 LAYOUT_DIFF_THRESHOLD 经 evaluate args 传入（SSOT）——
+        // 本函数在 page.evaluate 浏览器上下文跑，取不到 Node 模块常量，故走参数而非闭包引用。
+        if (d > layoutThreshold) layoutPixels += 1;
+    }
+    return { sizeMismatch: false, diffPixels, maxDelta, layoutPixels, totalPixels: w * h };
+}
+
+function compareStability(
+    first,
+    second,
+    pixelStats = new Map(),
+    { maxLsb = COMPOSITING_MAX_LSB_SAME } = {},
+) {
+    const byId = new Map(second.map((item) => [item.id, item]));
+    const shots = [];
+    const mismatches = [];
+    for (const a of first) {
+        const b = byId.get(a.id);
+        const bottomEqual = (a.bottom?.sha256_16 ?? null) === (b?.bottom?.sha256_16 ?? null);
+        const byteEqual = !!b && a.sha256_16 === b.sha256_16 && bottomEqual;
+        let compositingEquivalent = false;
+        let stats = null;
+        if (!byteEqual && b) {
+            stats = pixelStats.get(a.id) ?? null;
+            // 合成级等价仅当主图像素差达判据**且 bottom 逐字节一致**（保守，防借合成级之名放布局漂移）。
+            compositingEquivalent = bottomEqual && isCompositingDiff(stats, maxLsb);
+        }
+        const equal = byteEqual || compositingEquivalent;
+        const classification = byteEqual
+            ? "byteEqual"
+            : compositingEquivalent
+              ? "compositingEquivalent"
+              : "drift";
+        shots.push({
+            id: a.id,
+            firstSha: a.sha256_16,
+            secondSha: b ? b.sha256_16 : null,
+            byteEqual,
+            compositingEquivalent,
+            classification,
+            equal,
+            ...(stats ? { diffPixels: stats.diffPixels, maxDelta: stats.maxDelta } : {}),
+        });
+        if (!equal)
+            mismatches.push({ id: a.id, first: a.sha256_16, second: b ? b.sha256_16 : null });
+    }
+    return {
+        verified: true,
+        equal: mismatches.length === 0,
+        byteEqualCount: shots.filter((s) => s.byteEqual).length,
+        compositingEquivalentCount: shots.filter((s) => s.compositingEquivalent).length,
+        shots,
+        mismatches,
+    };
 }
 
 async function runSelftest() {
@@ -1744,12 +1985,15 @@ async function runSelftest() {
         shotIds.join(","),
     );
     check(
-        "SHOTS: 17/18/19 追加在尾部，且都是 app 镜头 + 声明了 waitFor",
+        "SHOTS: 17/18/19 追加在尾部，且都是 app 镜头 + 声明了 waitFor（字符串或数组）",
         ["17", "18", "19"].every((id) => {
             const shot = SHOTS.find((item) => item.id === id);
-            return (
-                shot?.app === true && typeof shot.waitFor === "string" && shot.waitFor.length > 0
-            );
+            // task-206 P0：waitFor 支持数组（与 expand 同语义）⇒ 判据是「声明了非空等待」，
+            // 字符串与非空数组都算；空数组/缺省不算。
+            const declares =
+                (typeof shot?.waitFor === "string" && shot.waitFor.length > 0) ||
+                (Array.isArray(shot?.waitFor) && shot.waitFor.length > 0);
+            return shot?.app === true && declares;
         }),
         shotIds.slice(16).join(","),
     );
@@ -1766,6 +2010,156 @@ async function runSelftest() {
         "SHOTS: 成员详情双态点到**不同成员**（HUMAN=mock-user / AGENT=ap-codebot）",
         JSON.stringify(detailRows) === JSON.stringify(["mock-user", "ap-codebot"]),
         JSON.stringify(detailRows),
+    );
+    // task-206 R2：15-18 必须显式声明 rail 前置态（消除批次顺序携带）；缺省镜头不声明。
+    const railShots = ["15", "16", "17", "18"].map(
+        (id) => SHOTS.find((shot) => shot.id === id)?.rail,
+    );
+    check(
+        "SHOTS: 15-18 均声明 rail=expanded（R2 前置态显式化）",
+        JSON.stringify(railShots) ===
+            JSON.stringify(["expanded", "expanded", "expanded", "expanded"]),
+        JSON.stringify(railShots),
+    );
+
+    // task-206 P1：--verify-stable 的比较逻辑（纯函数，负例自检不开浏览器）。正例全同 + 负例点名，
+    // 与臂 C/臂 D 同风格：既钉「相等判为 true」，也钉「不等判 false 且**点名镜头**」。
+    const mkResult = (id, sha16, bottomSha) => ({
+        id,
+        sha256_16: sha16,
+        bottom: bottomSha ? { sha256_16: bottomSha } : null,
+    });
+    const allSame = compareStability(
+        [mkResult("01", "aaaa"), mkResult("02", "bbbb")],
+        [mkResult("01", "aaaa"), mkResult("02", "bbbb")],
+    );
+    check(
+        "--verify-stable: 两遍全同 → equal=true",
+        allSame.equal === true,
+        JSON.stringify(allSame.shots),
+    );
+    const drift = compareStability(
+        [mkResult("01", "aaaa"), mkResult("02", "bbbb")],
+        [mkResult("01", "aaaa"), mkResult("02", "cccc")],
+    );
+    check(
+        "--verify-stable: 单镜 sha 不等 → equal=false 且点名 02",
+        drift.equal === false && drift.mismatches.length === 1 && drift.mismatches[0].id === "02",
+        JSON.stringify(drift.mismatches),
+    );
+    const bottomDrift = compareStability(
+        [mkResult("03", "aaaa", "dddd")],
+        [mkResult("03", "aaaa", "eeee")],
+    );
+    check(
+        "--verify-stable: bottom 图 sha 不等也算不一致",
+        bottomDrift.equal === false && bottomDrift.mismatches[0].id === "03",
+        JSON.stringify(bottomDrift.mismatches),
+    );
+    const missingShot = compareStability([mkResult("04", "aaaa")], []);
+    check(
+        "--verify-stable: 第二遍缺镜 → equal=false 且 secondSha=null",
+        missingShot.equal === false && missingShot.mismatches[0].second === null,
+        JSON.stringify(missingShot.mismatches),
+    );
+
+    // task-206 ①A 校准（Lead 批）：合成级等价 = 布局守卫(layoutPixels=0 硬不变量) + maxΔ≤作用域阈值
+    // （同调用≤1LSB / 跨调用≤2LSB）+ 差异像素≤cap。GPU AA 是每浏览器会话的，故按作用域分档。
+    const TOTAL = 1920 * 1080; // 2073600，cap = floor(0.0001*TOTAL) = 207
+    const st = (over) => ({
+        sizeMismatch: false,
+        diffPixels: 1,
+        maxDelta: 1,
+        layoutPixels: 0,
+        totalPixels: TOTAL,
+        ...over,
+    });
+    const compOk = compareStability(
+        [mkResult("05", "aaaa")],
+        [mkResult("05", "bbbb")],
+        new Map([["05", st()]]),
+    );
+    check(
+        "--verify-stable: 1px/1LSB → compositingEquivalent（equal=true 但 byteEqual=false）",
+        compOk.equal === true &&
+            compOk.shots[0].byteEqual === false &&
+            compOk.shots[0].compositingEquivalent === true &&
+            compOk.shots[0].classification === "compositingEquivalent",
+        JSON.stringify(compOk.shots[0]),
+    );
+    const compHiLSB = compareStability(
+        [mkResult("06", "aaaa")],
+        [mkResult("06", "bbbb")],
+        new Map([["06", st({ maxDelta: 2 })]]),
+    );
+    check(
+        "--verify-stable 同调用: maxDelta=2 (>1LSB) → drift",
+        compHiLSB.equal === false && compHiLSB.shots[0].classification === "drift",
+        JSON.stringify(compHiLSB.shots[0]),
+    );
+    // 跨调用（subset vs full）maxLsb=2：2LSB 亚阈值 AA 正例放行（实测 shot15 131px maxΔ2 layout0）。
+    const compCross = compareStability(
+        [mkResult("08", "aaaa")],
+        [mkResult("08", "bbbb")],
+        new Map([["08", st({ diffPixels: 131, maxDelta: 2 })]]),
+        { maxLsb: COMPOSITING_MAX_LSB_CROSS },
+    );
+    check(
+        "跨调用 maxLsb=2: 131px/maxΔ2/layout0 → compositingEquivalent（校准正例）",
+        compCross.equal === true && compCross.shots[0].classification === "compositingEquivalent",
+        JSON.stringify(compCross.shots[0]),
+    );
+    const compCrossSame = compareStability(
+        [mkResult("09", "aaaa")],
+        [mkResult("09", "bbbb")],
+        new Map([["09", st({ diffPixels: 131, maxDelta: 2 })]]),
+    );
+    check(
+        "同调用 maxLsb=1: 同 131px/maxΔ2 → drift（作用域分档，跨批差不进同调用）",
+        compCrossSame.equal === false && compCrossSame.shots[0].classification === "drift",
+        JSON.stringify(compCrossSame.shots[0]),
+    );
+    // 布局守卫负例：layoutPixels>0 必红，即使 maxLsb 放到跨批档（证守卫独立咬得住，防滑坡关键）。
+    check(
+        "布局守卫: layoutPixels=5 → false，即使 maxLsb=2（硬不变量优先于档位）",
+        isCompositingDiff(
+            st({ diffPixels: 5, maxDelta: 1, layoutPixels: 5 }),
+            COMPOSITING_MAX_LSB_CROSS,
+        ) === false,
+        "",
+    );
+    const compLayout = compareStability(
+        [mkResult("10", "aaaa")],
+        [mkResult("10", "bbbb")],
+        new Map([["10", st({ diffPixels: 100209, maxDelta: 245, layoutPixels: 100209 })]]),
+        { maxLsb: COMPOSITING_MAX_LSB_CROSS },
+    );
+    check(
+        "布局漂移负例: 100209px/maxΔ245（rail 位移实测）→ drift，跨批档也红",
+        compLayout.equal === false && compLayout.shots[0].classification === "drift",
+        JSON.stringify(compLayout.shots[0]),
+    );
+    const compManyPx = compareStability(
+        [mkResult("07", "aaaa")],
+        [mkResult("07", "bbbb")],
+        new Map([["07", st({ diffPixels: 500 })]]),
+    );
+    check(
+        "--verify-stable: 500px (>0.01% cap=207) 即使各 1LSB → drift",
+        compManyPx.equal === false && compManyPx.shots[0].classification === "drift",
+        JSON.stringify(compManyPx.shots[0]),
+    );
+    check(
+        "isCompositingDiff: sizeMismatch / null → false",
+        isCompositingDiff(st({ sizeMismatch: true, diffPixels: 0, maxDelta: 0 })) === false &&
+            isCompositingDiff(null) === false,
+        "",
+    );
+    check(
+        "isCompositingDiff: 边界 cap=207 通过 / 208 拒",
+        isCompositingDiff(st({ diffPixels: 207 })) === true &&
+            isCompositingDiff(st({ diffPixels: 208 })) === false,
+        "cap=" + Math.floor(TOTAL * 0.0001),
     );
 
     for (const item of checks) {
@@ -1911,8 +2305,9 @@ async function main() {
         page.on("console", (message) => {
             if (message.type() === "error") consoleErrors.push(message.text());
         });
+        const tracker = attachNetworkTracker(page);
         for (const shot of shots) {
-            const result = await shootOne(page, base, shot, opts.out);
+            const result = await shootOne(page, base, shot, opts.out, tracker);
             results.push(result);
             process.stdout.write(
                 [
@@ -1932,6 +2327,77 @@ async function main() {
                         : "bottom=n/a",
                 ].join("  ") + "\n",
             );
+        }
+        // task-206 P1：--verify-stable 第二遍（写到 .verify/，不覆盖交付图），逐镜比 sha。
+        // 目的：把「跨批一致」从人工发现变门 —— 单次运行的连拍收敛只挡「还在动」，
+        // 挡不住「动到另一个稳定布局」；只有同调用两遍比 sha 才拦得住跨批漂移。
+        let stability = null;
+        if (opts.verifyStable) {
+            const verifyOut = path.join(opts.out, ".verify");
+            fs.mkdirSync(verifyOut, { recursive: true });
+            // 第二遍必须用**全新 context + page**：复用第一遍的页会带上残留路由/浮层/active 模块状态
+            // （实测复用同页，rail 展开镜头的 expand click 被 active 的 settings 模块按钮拦截而超时）。
+            // 新 context 存储隔离 ⇒ 与第一遍同样从零起，才能公平比「同一批两遍」。
+            const context2 = await browser.newContext({ viewport: VIEWPORT });
+            await context2.addInitScript((token) => {
+                localStorage.setItem("xihe-token", token);
+            }, MOCK_APP_TOKEN);
+            const page2 = await context2.newPage();
+            const tracker2 = attachNetworkTracker(page2);
+            const results2 = [];
+            for (const shot of shots) {
+                results2.push(await shootOne(page2, base, shot, verifyOut, tracker2));
+            }
+            await context2.close();
+            // task-206 ①A：sha 不等的镜头用浏览器 canvas 原生解码逐像素比，判「合成级等价 vs 布局漂移」。
+            // 用 browser.newPage()（独立 context、无 token init 脚本）⇒ about:blank 不触 localStorage。
+            const pixelStats = new Map();
+            const differIdx = shots
+                .map((_, i) => i)
+                .filter((i) => results[i].sha256_16 !== results2[i].sha256_16);
+            if (differIdx.length > 0) {
+                const diffPage = await browser.newPage();
+                await diffPage.goto("about:blank");
+                for (const i of differIdx) {
+                    const stats = await diffPage.evaluate(comparePngPixels, [
+                        fs.readFileSync(results[i].file).toString("base64"),
+                        fs.readFileSync(results2[i].file).toString("base64"),
+                        LAYOUT_DIFF_THRESHOLD,
+                    ]);
+                    pixelStats.set(results[i].id, stats);
+                }
+                await diffPage.close();
+            }
+            stability = compareStability(results, results2, pixelStats);
+            process.stdout.write(
+                "[ui-mock-shot] --verify-stable: " +
+                    (stability.equal
+                        ? "通过（byteEqual=" +
+                          stability.byteEqualCount +
+                          " compositingEquivalent=" +
+                          stability.compositingEquivalentCount +
+                          "）"
+                        : "漂移 " + stability.mismatches.length + " 镜") +
+                    "\n",
+            );
+            for (const s of stability.shots) {
+                if (s.compositingEquivalent) {
+                    process.stdout.write(
+                        "  ~ " +
+                            s.id +
+                            " 合成级等价（" +
+                            s.diffPixels +
+                            "px maxΔ" +
+                            s.maxDelta +
+                            " LSB，非 byte）\n",
+                    );
+                }
+            }
+            for (const m of stability.mismatches) {
+                process.stdout.write(
+                    "  ✗ " + m.id + " first=" + m.first + " second=" + m.second + "\n",
+                );
+            }
         }
         fs.writeFileSync(
             path.join(opts.out, "manifest.json"),
@@ -1961,6 +2427,9 @@ async function main() {
                     browser: browserInfo,
                     viewport: VIEWPORT,
                     canvas: CANVAS,
+                    // task-206 P1：--verify-stable 的结果（未开时为 null）——
+                    // 逐镜 firstSha/secondSha/equal，读 manifest 就能判断这批图是否跨批可复现。
+                    stability,
                     shots: results,
                     consoleErrors,
                 },
@@ -1968,6 +2437,17 @@ async function main() {
                 4,
             ),
         );
+        // 门：跨批不稳定 ⇒ exit 1 并点名（manifest 已先落盘，证据不丢）。fail() 只置 exitCode，
+        // 不抛异常，所以 finally 仍会关浏览器、server.stop()。
+        if (stability && !stability.equal) {
+            fail(
+                1,
+                "跨批不稳定（--verify-stable）：" +
+                    stability.mismatches
+                        .map((item) => item.id + " first=" + item.first + " second=" + item.second)
+                        .join(", "),
+            );
+        }
     } finally {
         await browser.close();
         if (server) server.stop();
