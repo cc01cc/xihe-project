@@ -41,6 +41,8 @@ const apiMock = vi.hoisted(() => ({
     listRoles: vi.fn<() => Promise<unknown[]>>(),
     getSkills: vi.fn<() => Promise<unknown[]>>(),
     getWorkspaceSkills: vi.fn<(workspaceId: string) => Promise<unknown[]>>(),
+    // task-134（D-1785）：workspace 级「委派的子会话」权威读面（只读、按主体展开时拉取）。
+    listWorkspaceAgentSpawnSessions: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 const CREATE_ACCOUNT_MISSING = {
@@ -56,11 +58,15 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         ...actual,
         api: apiMock,
         ApiError: class MockApiError extends Error {
-            problem: { code: string; detail?: string };
-            constructor(code: string, detail = "CREATE_ACCOUNT permission is required") {
+            problem: { code: string; detail?: string; status?: number };
+            constructor(
+                code: string,
+                detail = "CREATE_ACCOUNT permission is required",
+                status?: number,
+            ) {
                 super(detail);
                 this.name = "MockApiError";
-                this.problem = { code, detail };
+                this.problem = { code, detail, status };
             }
         },
     };
@@ -123,6 +129,7 @@ beforeEach(() => {
     apiMock.getWorkspaceAgentMemories.mockReset();
     apiMock.createAgentMemory.mockReset();
     apiMock.deleteAgentMemory.mockReset();
+    apiMock.listWorkspaceAgentSpawnSessions.mockReset();
     apiMock.getWorkspaceAgents.mockResolvedValue([]);
     apiMock.getAgentTemplates.mockResolvedValue({
         layer: "instance",
@@ -2325,5 +2332,168 @@ describe("WorkspaceAgentsPanel task-58 memory toggle contract", () => {
         expect(wrapper.get('[data-testid="agent-error"]').text()).toContain(
             i18n.global.t("workspace.agentLoadFailed"),
         );
+    });
+});
+
+describe("WorkspaceAgentsPanel task-134 委派的子会话（workspace 级权威读面）", () => {
+    const PRINCIPAL_ID = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+    const TOGGLE = `[data-testid="agent-delegated-toggle-${PRINCIPAL_ID}"]`;
+    const COUNT = `[data-testid="agent-delegated-count-${PRINCIPAL_ID}"]`;
+    const FORBIDDEN = `[data-testid="agent-delegated-forbidden-${PRINCIPAL_ID}"]`;
+    const PANEL = `[data-testid="agent-delegated-panel-${PRINCIPAL_ID}"]`;
+    const REDACTED_ROW_ID = "11111111-1111-4111-8111-111111111111";
+
+    function agentRow() {
+        return {
+            principalId: PRINCIPAL_ID,
+            name: "delegating agent",
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-17T00:00:00Z",
+            permissionsSnapshot: [],
+            bound: true,
+            disabled: false,
+            contextPolicy: null,
+        };
+    }
+
+    function view(overrides: Record<string, unknown> = {}) {
+        return {
+            workspaceId: WORKSPACE_ID,
+            principalId: PRINCIPAL_ID,
+            depth: "all",
+            includeArchived: false,
+            counts: { all: 1, direct: 1 },
+            sessions: [
+                {
+                    id: REDACTED_ROW_ID,
+                    parentSessionId: "22222222-2222-4222-8222-222222222222",
+                    depth: 1,
+                    direct: true,
+                    readable: true,
+                    title: "可读的委派",
+                    archived: false,
+                    runStatus: "running",
+                    active: true,
+                    spawnedAt: "2026-11-17T00:00:00Z",
+                },
+            ],
+            truncated: false,
+            limit: 100,
+            ...overrides,
+        };
+    }
+
+    async function mountExpanded() {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentRow()]);
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(TOGGLE).trigger("click");
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("数字取 counts.all（不被 limit 截断），并同时给出「其中直接委派」", async () => {
+        apiMock.listWorkspaceAgentSpawnSessions.mockResolvedValue(
+            view({ counts: { all: 7, direct: 2 }, truncated: true, limit: 1 }),
+        );
+        const wrapper = await mountExpanded();
+
+        expect(apiMock.listWorkspaceAgentSpawnSessions).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            { includeArchived: false },
+        );
+        // 判据：把渲染改成 sessions.length（=1）这条必红 —— limit 截断行，绝不截断数字。
+        expect(wrapper.get(COUNT).text()).toBe(
+            i18n.global.t("workspace.agentDelegatedCount", { count: 7 }),
+        );
+        expect(wrapper.get(`[data-testid="agent-delegated-direct-${PRINCIPAL_ID}"]`).text()).toBe(
+            i18n.global.t("workspace.agentDelegatedDirectCount", { count: 2 }),
+        );
+    });
+
+    it("不可读行只显示「该会话对你不可见」并说明只显示数量，计数仍诚实", async () => {
+        apiMock.listWorkspaceAgentSpawnSessions.mockResolvedValue(
+            view({ sessions: [{ ...view().sessions[0], readable: false, title: null }] }),
+        );
+        const wrapper = await mountExpanded();
+
+        const panel = wrapper.get(PANEL);
+        expect(panel.text()).toContain(i18n.global.t("workspace.agentDelegatedTitleHidden"));
+        expect(panel.text()).toContain(i18n.global.t("workspace.agentDelegatedRedactedHint"));
+        expect(panel.text()).not.toContain("可读的委派");
+        // 两条不变量：内容面遮蔽 ≠ 计数面少报。
+        expect(wrapper.get(COUNT).text()).toBe(
+            i18n.global.t("workspace.agentDelegatedCount", { count: 1 }),
+        );
+    });
+
+    it("403 ⇒ 明写「无权查看」，绝不渲染成 0 个", async () => {
+        apiMock.listWorkspaceAgentSpawnSessions.mockRejectedValue(
+            new ApiError("WORKSPACE_FORBIDDEN", "not a member", 403),
+        );
+        const wrapper = await mountExpanded();
+
+        expect(wrapper.get(FORBIDDEN).text()).toBe(
+            i18n.global.t("workspace.agentDelegatedForbidden"),
+        );
+        expect(wrapper.find(COUNT).exists()).toBe(false);
+        expect(wrapper.text()).not.toContain(
+            i18n.global.t("workspace.agentDelegatedCount", { count: 0 }),
+        );
+    });
+
+    it("其它失败 ⇒ 说「取不到」，同样不回落成 0", async () => {
+        apiMock.listWorkspaceAgentSpawnSessions.mockRejectedValue(new Error("boom"));
+        const wrapper = await mountExpanded();
+
+        expect(wrapper.get('[data-testid="agent-delegated-failed"]').text()).toContain(
+            i18n.global.t("workspace.agentDelegatedUnavailable"),
+        );
+        expect(wrapper.find(COUNT).exists()).toBe(false);
+    });
+
+    it("「含已归档」开关以 includeArchived=true 重新读，并在行上标「已归档」", async () => {
+        const archivedRow = {
+            ...view().sessions[0],
+            id: "33333333-3333-4333-8333-333333333333",
+            archived: true,
+            readable: true,
+            title: "归档的委派",
+        };
+        apiMock.listWorkspaceAgentSpawnSessions.mockResolvedValueOnce(view()).mockResolvedValueOnce(
+            view({
+                includeArchived: true,
+                counts: { all: 2, direct: 2 },
+                sessions: [view().sessions[0], archivedRow],
+            }),
+        );
+        const wrapper = await mountExpanded();
+        expect(
+            wrapper
+                .find(
+                    '[data-testid="agent-delegated-row-archived-33333333-3333-4333-8333-333333333333"]',
+                )
+                .exists(),
+        ).toBe(false);
+
+        await wrapper
+            .get(`[data-testid="agent-delegated-archived-toggle-${PRINCIPAL_ID}"]`)
+            .trigger("click");
+        await flushPromises();
+
+        expect(apiMock.listWorkspaceAgentSpawnSessions).toHaveBeenCalledTimes(2);
+        expect(apiMock.listWorkspaceAgentSpawnSessions).toHaveBeenLastCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            { includeArchived: true },
+        );
+        expect(
+            wrapper
+                .get(
+                    '[data-testid="agent-delegated-row-archived-33333333-3333-4333-8333-333333333333"]',
+                )
+                .text(),
+        ).toBe(i18n.global.t("workspace.agentDelegatedArchived"));
     });
 });

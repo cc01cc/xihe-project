@@ -14,13 +14,14 @@ import {
     type AgentSkillBinding,
     type AgentTemplateSummary,
     type ApiRole,
+    type DelegateSpawnSessions,
     type SelfPermissionsView,
     type WorkspaceAgentBinding,
     type WorkspaceAgentEffectiveCap,
     type WorkspaceAgentMemory,
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
-import { problemDetailText } from "../../../lib/errorMessages";
+import { presentCauseError, problemDetailText } from "../../../lib/errorMessages";
 import { type AgentSkillCandidate, selectSkillCandidates } from "./agentSkillCandidates";
 // 用户裁定（2026-11-03）：二态统一用项目 Switch（reka-ui），不混用 checkbox。
 import { Switch } from "../../../components/ui/switch";
@@ -158,6 +159,87 @@ const selectedSkillId = ref("");
 const rbacBusy = ref(false);
 const rbacActionError = ref("");
 let rbacGeneration = 0;
+
+/**
+ * task-134（D-1785）：**委派的子会话**（面板第四小节，只读）。
+ *
+ * <p>数字只能来自 CP 的 workspace 级权威读面。拿 `GET /sessions` 再在前端筛是**静默偏低**：
+ * 那个列表是调用者的可见集（owner / 受邀 HUMAN），多人工作区里「别人会话中该主体派出的子会话」
+ * 根本不在里面 —— 于是界面会显示 0 而事实不是 0（D-1782 的第三级错）。</p>
+ *
+ * <p>两条独立不变量（Lead 2026-11-17 裁定）：**计数面不看可读性**（否则少报）；
+ * **内容面只给可读行的 title**（PLAN-0668 D1b，管理者无内容读）。所以数字一律取 `counts`，
+ * **不用 `sessions.length`**（会被 limit 截断），不可读行只显示「该会话对你不可见」。</p>
+ *
+ * <p>失败面也是判据：403 必须显式说「无权查看」，失败说「取不到」——**都不许回落成 0**。
+ * 本区自己一份展开状态（`spawnPrincipalId`），不借用 `rbacPrincipalId`。</p>
+ */
+const spawnPrincipalId = ref<string | null>(null);
+const spawnSessions = ref<DelegateSpawnSessions | null>(null);
+const spawnState = ref<"idle" | "loading" | "ready" | "forbidden" | "failed">("idle");
+const spawnError = ref("");
+const spawnIncludeArchived = ref(false);
+/** 在途请求代号：切主体/收起后旧响应必须作废（不覆盖新状态）。 */
+let spawnGeneration = 0;
+
+function toggleSpawnSessions(principalId: string): void {
+    if (spawnPrincipalId.value === principalId) {
+        spawnPrincipalId.value = null;
+        spawnSessions.value = null;
+        spawnState.value = "idle";
+        spawnGeneration += 1;
+        return;
+    }
+    spawnPrincipalId.value = principalId;
+    spawnSessions.value = null;
+    spawnIncludeArchived.value = false;
+    void loadSpawnSessions(principalId);
+}
+
+async function loadSpawnSessions(principalId: string): Promise<void> {
+    const generation = ++spawnGeneration;
+    spawnState.value = "loading";
+    spawnError.value = "";
+    try {
+        const result = await api.listWorkspaceAgentSpawnSessions(props.workspaceId, principalId, {
+            includeArchived: spawnIncludeArchived.value,
+        });
+        if (generation !== spawnGeneration || spawnPrincipalId.value !== principalId) return;
+        spawnSessions.value = result;
+        spawnState.value = "ready";
+    } catch (cause) {
+        if (generation !== spawnGeneration || spawnPrincipalId.value !== principalId) return;
+        spawnSessions.value = null;
+        // 403 是权限面的结论（VIEWER 没有成员名册读面）：说「无权查看」，绝不说「0 个」。
+        if (cause instanceof ApiError && cause.problem.status === 403) {
+            spawnState.value = "forbidden";
+            return;
+        }
+        spawnState.value = "failed";
+        spawnError.value = presentCauseError(
+            t,
+            cause,
+            t("workspace.agentDelegatedUnavailable"),
+        ).copy;
+        logger.warn("[agents] delegated child sessions load failed", { principalId, cause });
+    }
+}
+
+function toggleSpawnArchived(principalId: string): void {
+    spawnIncludeArchived.value = !spawnIncludeArchived.value;
+    void loadSpawnSessions(principalId);
+}
+
+/** 折叠态摘要：只显示**已读到**的数字，没读过就留空（不编 0）。 */
+function spawnSummary(principalId: string): string {
+    if (spawnPrincipalId.value !== principalId || !spawnSessions.value) return "";
+    return t("workspace.agentDelegatedCount", { count: spawnSessions.value.counts.all });
+}
+
+/** 有读不到的行 ⇒ 明写「只显示数量」，而不是让列表看起来"只有这些"。 */
+const spawnHasRedacted = computed<boolean>(() =>
+    (spawnSessions.value?.sessions ?? []).some((row) => !row.readable),
+);
 
 /** 绑定/解绑的可用性：沿用工作区 agent 管理原子；`null` = 能力投影未回（禁用但不谎报）。 */
 const canBindRbac = computed<boolean | null>(() => canManageWorkspaceAgents.value);
@@ -1623,7 +1705,12 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         <!-- PLAN-0622：禁用需二次确认；无权限/投影未就绪时**点击前**就禁用。 -->
                         <button
                             type="button"
-                            class="rounded-md border px-2 py-1 text-xs text-destructive disabled:opacity-50"
+                            class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+                            :class="
+                                disableConfirmationId === agent.principalId
+                                    ? 'text-destructive'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            "
                             :data-testid="`workspace-agent-disable-${agent.principalId}`"
                             :disabled="saving || !canDisable() || agent.disabled === true"
                             @click="disableAgent(agent)"
@@ -2175,7 +2262,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                         </button>
                                         <button
                                             type="button"
-                                            class="rounded-md border border-destructive/50 px-2 py-0.5 text-xs text-destructive disabled:opacity-50"
+                                            class="rounded-md border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                                             :data-testid="`agent-memory-archive-${memory.id}`"
                                             :disabled="memoryWriteBusy || !memoryEnabled"
                                             @click="requestArchiveMemory(memory.id)"
@@ -2607,6 +2694,155 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                           : t("workspace.agentPermissionUnavailable")
                                 }}
                             </p>
+                        </template>
+                    </div>
+                </div>
+                <div class="border-t pt-3" data-testid="agent-delegated-section">
+                    <button
+                        type="button"
+                        class="flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1 text-xs"
+                        :aria-expanded="spawnPrincipalId === agent.principalId"
+                        :aria-controls="`agent-delegated-panel-${agent.principalId}`"
+                        :data-testid="`agent-delegated-toggle-${agent.principalId}`"
+                        @click="toggleSpawnSessions(agent.principalId)"
+                    >
+                        <span class="font-medium">{{ t("workspace.agentDelegatedTitle") }}</span>
+                        <span class="text-muted-foreground">{{
+                            spawnSummary(agent.principalId)
+                        }}</span>
+                    </button>
+                    <div
+                        v-if="spawnPrincipalId === agent.principalId"
+                        :id="`agent-delegated-panel-${agent.principalId}`"
+                        class="mt-2 space-y-2"
+                        :data-testid="`agent-delegated-panel-${agent.principalId}`"
+                    >
+                        <p
+                            v-if="spawnState === 'loading'"
+                            class="text-xs text-muted-foreground"
+                            data-testid="agent-delegated-loading"
+                        >
+                            {{ t("workspace.agentDelegatedLoading") }}
+                        </p>
+                        <p
+                            v-else-if="spawnState === 'forbidden'"
+                            class="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+                            :data-testid="`agent-delegated-forbidden-${agent.principalId}`"
+                        >
+                            {{ t("workspace.agentDelegatedForbidden") }}
+                        </p>
+                        <p
+                            v-else-if="spawnState === 'failed'"
+                            class="rounded-md border border-destructive/40 p-2 text-xs text-destructive"
+                            data-testid="agent-delegated-failed"
+                        >
+                            {{ spawnError || t("workspace.agentDelegatedUnavailable") }}
+                        </p>
+                        <template v-else-if="spawnState === 'ready' && spawnSessions">
+                            <div class="flex flex-wrap items-center gap-2 text-xs">
+                                <span
+                                    class="font-medium"
+                                    :data-testid="`agent-delegated-count-${agent.principalId}`"
+                                >
+                                    {{
+                                        t("workspace.agentDelegatedCount", {
+                                            count: spawnSessions.counts.all,
+                                        })
+                                    }}
+                                </span>
+                                <span
+                                    v-if="spawnSessions.counts.direct > 0"
+                                    class="text-muted-foreground"
+                                    :data-testid="`agent-delegated-direct-${agent.principalId}`"
+                                >
+                                    {{
+                                        t("workspace.agentDelegatedDirectCount", {
+                                            count: spawnSessions.counts.direct,
+                                        })
+                                    }}
+                                </span>
+                                <span v-if="spawnSessions.truncated" class="text-muted-foreground">
+                                    {{
+                                        t("workspace.agentDelegatedTruncated", {
+                                            limit: spawnSessions.limit,
+                                        })
+                                    }}
+                                </span>
+                                <button
+                                    type="button"
+                                    class="rounded-full border px-1.5 py-0.5 text-xs"
+                                    :data-testid="`agent-delegated-archived-toggle-${agent.principalId}`"
+                                    @click="toggleSpawnArchived(agent.principalId)"
+                                >
+                                    {{
+                                        spawnIncludeArchived
+                                            ? t("workspace.agentDelegatedExcludeArchived")
+                                            : t("workspace.agentDelegatedIncludeArchived")
+                                    }}
+                                </button>
+                            </div>
+                            <p
+                                v-if="!spawnIncludeArchived"
+                                class="text-xs text-muted-foreground"
+                                data-testid="agent-delegated-archived-note"
+                            >
+                                {{ t("workspace.agentDelegatedArchivedNote") }}
+                            </p>
+                            <p
+                                v-if="spawnHasRedacted"
+                                class="text-xs text-muted-foreground"
+                                :data-testid="`agent-delegated-redacted-${agent.principalId}`"
+                            >
+                                {{ t("workspace.agentDelegatedRedactedHint") }}
+                            </p>
+                            <p
+                                v-if="spawnSessions.counts.all === 0"
+                                class="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+                                data-testid="agent-delegated-empty"
+                            >
+                                {{ t("workspace.agentDelegatedEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-1.5" data-testid="agent-delegated-list">
+                                <li
+                                    v-for="row in spawnSessions.sessions"
+                                    :key="row.id"
+                                    class="flex flex-wrap items-center gap-1.5 rounded-md border p-2 text-xs"
+                                    :data-testid="`agent-delegated-row-${row.id}`"
+                                >
+                                    <span class="text-xs font-medium">
+                                        {{
+                                            row.readable
+                                                ? row.title || t("workspace.agentDelegatedUntitled")
+                                                : t("workspace.agentDelegatedTitleHidden")
+                                        }}
+                                    </span>
+                                    <span class="rounded-full border px-1.5 py-0.5 text-xs">
+                                        {{
+                                            t("workspace.agentDelegatedDepth", {
+                                                depth: row.depth,
+                                            })
+                                        }}
+                                    </span>
+                                    <span
+                                        v-if="row.archived"
+                                        class="rounded-full border px-1.5 py-0.5 text-xs"
+                                        :data-testid="`agent-delegated-row-archived-${row.id}`"
+                                    >
+                                        {{ t("workspace.agentDelegatedArchived") }}
+                                    </span>
+                                    <span
+                                        v-if="row.runStatus"
+                                        class="text-xs text-muted-foreground"
+                                        :data-testid="`agent-delegated-row-status-${row.id}`"
+                                    >
+                                        {{
+                                            t("workspace.agentDelegatedRunStatus", {
+                                                status: row.runStatus,
+                                            })
+                                        }}
+                                    </span>
+                                </li>
+                            </ul>
                         </template>
                     </div>
                 </div>

@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.AgentMemory;
 import com.cc01cc.p.xihe.cp.service.AgentMemoryService;
 import com.cc01cc.p.xihe.cp.service.AgentMemoryWriteAuthorizer;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.service.AgentSpawnSessionReadService;
 import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,17 +44,20 @@ public class WorkspaceAgentController {
     private final AgentPrincipalService agentPrincipalService;
     private final AgentMemoryService agentMemoryService;
     private final AgentMemoryWriteAuthorizer memoryWriteAuthorizer;
+    private final AgentSpawnSessionReadService spawnSessionReadService;
     private final ObjectMapper objectMapper;
     private final AuditLogger auditLogger;
 
     public WorkspaceAgentController(AgentPrincipalService agentPrincipalService,
                                     AgentMemoryService agentMemoryService,
                                     AgentMemoryWriteAuthorizer memoryWriteAuthorizer,
+                                    AgentSpawnSessionReadService spawnSessionReadService,
                                     ObjectMapper objectMapper,
                                     AuditLogger auditLogger) {
         this.agentPrincipalService = agentPrincipalService;
         this.agentMemoryService = agentMemoryService;
         this.memoryWriteAuthorizer = memoryWriteAuthorizer;
+        this.spawnSessionReadService = spawnSessionReadService;
         this.objectMapper = objectMapper;
         this.auditLogger = auditLogger;
     }
@@ -91,6 +95,45 @@ public class WorkspaceAgentController {
             auditLogger.record(null, "workspace-agent", "effective_cap_read",
                     "principalId=" + principalId, workspaceId, actor);
             return ResponseEntity.ok(toEffectiveCapView(result));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * task-134 (D-1785): the workspace-level read face for "how many child sessions has this Agent
+     * been delegated".
+     *
+     * <p>Why a new route instead of filtering the session list: {@code GET /api/v1/sessions} is the
+     * CALLER's visible set (owner, or an enabled HUMAN participant), so a multi-member workspace makes
+     * a client-side filter under-report silently. This face counts server-side by
+     * (workspace, PRIMARY agent principal) and is therefore the only honest source for the number.</p>
+     *
+     * <p>Two invariants that must stay independent (Lead ruling 2026-11-17):</p>
+     * <ol>
+     *   <li><b>count face</b> — the whole delegated cone in this workspace, no read-visibility
+     *       filter; {@code counts.all}/{@code counts.direct} are honest;</li>
+     *   <li><b>content face</b> — {@code title} only for a session the caller may read
+     *       (PLAN-0668 D1b keeps managers out of content read); an unreadable row answers
+     *       {@code title:null, readable:false} and is still counted.</li>
+     * </ol>
+     *
+     * <p>Gate = the member roster's gate (OWNER/EDITOR; a VIEWER answers 403 WORKSPACE_FORBIDDEN,
+     * instance scope via the MANAGE_WORKSPACE_MEMBERS atom). Read-only: no durable write, no SSE.</p>
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{principalId}/spawn-sessions")
+    public ResponseEntity<?> spawnSessions(@PathVariable String workspaceId,
+                                           @PathVariable String principalId,
+                                           @RequestParam(value = "depth", required = false) String depth,
+                                           @RequestParam(value = "includeArchived", required = false)
+                                           Boolean includeArchived,
+                                           @RequestParam(value = "limit", required = false) Integer limit) {
+        try {
+            AgentSpawnSessionReadService.Response result = spawnSessionReadService.read(
+                    requireActor(), parseUuid(workspaceId), parseUuid(principalId),
+                    depth, Boolean.TRUE.equals(includeArchived), limit);
+            return ResponseEntity.ok(toSpawnSessionsView(result));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -307,6 +350,42 @@ public class WorkspaceAgentController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    /**
+     * task-134: the frozen envelope. Explicit projection (not a record dump) so a future field added
+     * to the service record cannot leak onto the wire without a contract change.
+     */
+    private Map<String, Object> toSpawnSessionsView(AgentSpawnSessionReadService.Response result) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("workspaceId", result.workspaceId() == null ? null : result.workspaceId().toString());
+        view.put("principalId", result.principalId() == null ? null : result.principalId().toString());
+        view.put("depth", result.depth());
+        view.put("includeArchived", result.includeArchived());
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("all", result.counts().all());
+        counts.put("direct", result.counts().direct());
+        view.put("counts", counts);
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (AgentSpawnSessionReadService.Row row : result.sessions()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", row.id().toString());
+            item.put("parentSessionId",
+                    row.parentSessionId() == null ? null : row.parentSessionId().toString());
+            item.put("depth", row.depth());
+            item.put("direct", row.direct());
+            item.put("readable", row.readable());
+            item.put("title", row.title());
+            item.put("archived", row.archived());
+            item.put("runStatus", row.runStatus());
+            item.put("active", row.active());
+            item.put("spawnedAt", row.spawnedAt() == null ? null : row.spawnedAt().toString());
+            rows.add(item);
+        }
+        view.put("sessions", rows);
+        view.put("truncated", result.truncated());
+        view.put("limit", result.limit());
+        return view;
     }
 
     /** task-448: serialize the live-cap read face. effectiveCap is a Jackson-2 node => JacksonNodeExit. */

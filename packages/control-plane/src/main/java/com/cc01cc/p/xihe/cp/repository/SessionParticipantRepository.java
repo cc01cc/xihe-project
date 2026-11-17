@@ -39,6 +39,26 @@ public interface SessionParticipantRepository extends JpaRepository<SessionParti
     Optional<SessionParticipant> findFirstBySessionIdAndPrincipalId(UUID sessionId, UUID principalId);
 
     /**
+     * task-134 (D-1785): the attribution read behind the workspace-level "delegated child sessions"
+     * face — every roster row in one (kind, role) held by one principal.
+     *
+     * <p>Served by {@code idx_session_participants_principal (principal_kind, principal_id)}
+     * (V92:99), so the face starts from the principal instead of scanning the workspace's sessions.
+     * The caller still filters workspace/kind/archived on the loaded sessions: the index has no
+     * workspace dimension, and a principal's rows number far less than the workspace's sessions.</p>
+     */
+    List<SessionParticipant> findByPrincipalKindAndPrincipalIdAndRole(String principalKind,
+                                                                     UUID principalId, String role);
+
+    /**
+     * task-134: batched "is this caller an invited HUMAN participant" — the read-visibility arm that
+     * is <b>not</b> the count (PLAN-0668 D1b: the count face and the content face must not share one
+     * decision, so content is projected per row from this set while the cohort stays complete).
+     */
+    List<SessionParticipant> findBySessionIdInAndPrincipalKindAndPrincipalIdAndDisabledAtIsNull(
+            Collection<UUID> sessionIds, String principalKind, UUID principalId);
+
+    /**
      * PLAN-0689 A2c: the roster rows of the given Sessions in one role.
      *
      * <p>This is the single read entry behind every principal that used to be read off the

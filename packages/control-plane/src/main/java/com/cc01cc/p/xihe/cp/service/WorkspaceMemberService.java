@@ -80,13 +80,33 @@ public class WorkspaceMemberService {
     /** spec §3: GET list — OWNER/EDITOR see the list; VIEWER and outsiders do not. */
     @Transactional(readOnly = true)
     public List<MemberView> listMembers(String workspaceId, String callerUserId) {
-        Caller caller = authorize(workspaceId, callerUserId);
-        if (caller.workspaceRole() != null && "VIEWER".equals(caller.workspaceRole())) {
-            throw forbidden();
-        }
+        requireRosterRead(workspaceId, callerUserId);
         return memberships.members(UUID.fromString(workspaceId)).stream()
                 .map(WorkspaceMemberService::toView)
                 .toList();
+    }
+
+    /**
+     * task-134 (D-1785): the member-roster read gate as a <b>reusable decision</b>.
+     *
+     * <p>The roster's policy matrix (spec §3) is: a member sees the roster, except a VIEWER; anyone
+     * who is not a member at all is refused earlier by {@link #authorize} (403, with the
+     * instance-scope {@code MANAGE_WORKSPACE_MEMBERS} bypass). {@code GET /workspaces/{id}/members}
+     * is its first consumer; the workspace Agent delegation view (delegated child sessions) is the
+     * second — it exposes roster-adjacent facts about <b>other members'</b> sessions, so it must not
+     * be readable by a role the roster itself excludes.</p>
+     *
+     * <p>Extracted instead of re-stated: two copies of "who may read roster-level facts" is exactly
+     * the semantic fork round-4 P2-5 removed. It is a role check here because the matrix is the
+     * members contract's; it is not an instance-administrator role special-case (that bypass is the
+     * {@code MANAGE_WORKSPACE_MEMBERS} action atom inside {@link #authorize}).</p>
+     */
+    @Transactional(readOnly = true)
+    public void requireRosterRead(String workspaceId, String callerUserId) {
+        Caller caller = authorize(workspaceId, callerUserId);
+        if (WorkspaceRole.VIEWER.canonicalName().equals(caller.workspaceRole())) {
+            throw forbidden();
+        }
     }
 
     /** spec §3: POST — OWNER only (instance ADMIN cannot add, ruling #3). */

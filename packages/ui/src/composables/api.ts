@@ -952,6 +952,47 @@ export interface WorkspaceAgentEffectiveCap {
     bound: boolean;
 }
 
+/**
+ * task-134（D-1785）：成员页「委派的子会话」权威读面
+ * （CP `GET /workspaces/{ws}/agents/{pid}/spawn-sessions`）。
+ *
+ * <p><b>为什么不能自己算</b>：`GET /sessions` 是**调用者可见集**（owner 或受邀 HUMAN），多人工作区里
+ * 别人会话中这个主体派出的子会话根本不出现 ⇒ 客户端过滤**静默偏低**。这个面是服务端按
+ * (workspace, PRIMARY agent principal) 算的，所以它是唯一诚实的数字来源。</p>
+ *
+ * <p><b>两条独立不变量</b>：`counts` 不看可读性（否则会少报）；`title` 只在 `readable` 时给
+ * （PLAN-0668 D1b：管理者无内容读）——不可读行**仍然计数**，只是 `title:null`。
+ * 因此 UI 渲染一律以 `counts` 为准，**不许**用 `sessions.length` 当数字（会被 limit 截断）。</p>
+ */
+export interface DelegateSpawnSession {
+    id: string;
+    parentSessionId: string | null;
+    /** 1 = 直接从普通会话委派；2 = 从第 1 层子会话再委派（整锥深度）。 */
+    depth: number;
+    direct: boolean;
+    /** 调用者能否读这个会话（owner 或受邀 HUMAN）；false ⇒ title 必为 null。 */
+    readable: boolean;
+    title: string | null;
+    archived: boolean;
+    /** 最新非终态 Run 的状态；null = 当前没有在跑的 run。 */
+    runStatus: string | null;
+    active: boolean;
+    spawnedAt: string | null;
+}
+
+export interface DelegateSpawnSessions {
+    workspaceId: string;
+    principalId: string;
+    depth: "all" | "direct";
+    includeArchived: boolean;
+    /** 同一 cohort、同一次遍历算出的两个口径；**永远以它为准**渲染数字。 */
+    counts: { all: number; direct: number };
+    sessions: DelegateSpawnSession[];
+    /** true = 行被 limit 截断（counts 仍是全量）。 */
+    truncated: boolean;
+    limit: number;
+}
+
 /** CP 的 `GET /api/v1/me/permissions` 投影（PLAN-0621 F-01：前端唯一的权威能力来源）。 */
 export interface SelfPermissionsView {
     userId: string;
@@ -4353,6 +4394,86 @@ export const api = {
             provenance: { principalGrantIds, bindingGrantIds },
             defaultGrants: { readFace },
             bound: record.bound,
+        };
+    },
+
+    /**
+     * task-134（D-1785）：成员页「委派的子会话」权威读面（workspace 维度，不走调用者可见集）。
+     *
+     * <p><b>fail-closed 解析</b>：`counts`/`sessions` 形状不对就抛错，**不补 0、不截断成空数组** ——
+     * 编一个 0 比不显示更坏（用户会把它当事实，D-1782）。403 由调用方显式呈现「无权查看」，
+     * 不得回落成「0 个」。</p>
+     */
+    async listWorkspaceAgentSpawnSessions(
+        workspaceId: string,
+        principalId: string,
+        options: { depth?: "all" | "direct"; includeArchived?: boolean } = {},
+    ): Promise<DelegateSpawnSessions> {
+        const query = new URLSearchParams();
+        if (options.depth) query.set("depth", options.depth);
+        if (options.includeArchived === true) query.set("includeArchived", "true");
+        const suffix = query.toString();
+        const raw = await request<unknown>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/spawn-sessions${suffix ? `?${suffix}` : ""}`,
+        );
+        const record = asRecord(raw);
+        const counts = asRecord(record?.counts);
+        const countOf = (value: unknown): number | null =>
+            typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+        const all = countOf(counts?.all);
+        const direct = countOf(counts?.direct);
+        const rawSessions = record?.sessions;
+        if (
+            !record ||
+            typeof record.workspaceId !== "string" ||
+            typeof record.principalId !== "string" ||
+            !isEnumValue(record.depth, ["all", "direct"] as const) ||
+            typeof record.includeArchived !== "boolean" ||
+            all === null ||
+            direct === null ||
+            !Array.isArray(rawSessions) ||
+            typeof record.truncated !== "boolean" ||
+            typeof record.limit !== "number"
+        ) {
+            throw new Error("spawn-sessions response is malformed (DelegateSpawnSessionsResponse)");
+        }
+        const optionalString = (value: unknown): string | null =>
+            typeof value === "string" ? value : null;
+        const sessions: DelegateSpawnSession[] = rawSessions.map((item) => {
+            const row = asRecord(item);
+            if (
+                !row ||
+                typeof row.id !== "string" ||
+                typeof row.depth !== "number" ||
+                typeof row.direct !== "boolean" ||
+                typeof row.readable !== "boolean" ||
+                typeof row.archived !== "boolean" ||
+                typeof row.active !== "boolean"
+            ) {
+                throw new Error("spawn-sessions row is malformed (DelegateSpawnSession)");
+            }
+            return {
+                id: row.id,
+                parentSessionId: optionalString(row.parentSessionId),
+                depth: row.depth,
+                direct: row.direct,
+                readable: row.readable,
+                title: optionalString(row.title),
+                archived: row.archived,
+                runStatus: optionalString(row.runStatus),
+                active: row.active,
+                spawnedAt: optionalString(row.spawnedAt),
+            };
+        });
+        return {
+            workspaceId: record.workspaceId,
+            principalId: record.principalId,
+            depth: record.depth,
+            includeArchived: record.includeArchived,
+            counts: { all, direct },
+            sessions,
+            truncated: record.truncated,
+            limit: record.limit,
         };
     },
     async updateSession(id: string, patch: SessionBindingPatch): Promise<SessionResponse> {

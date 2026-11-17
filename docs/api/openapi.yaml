@@ -354,6 +354,54 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/agents/{principalId}/spawn-sessions:
+    get:
+      tags: [agent]
+      operationId: listWorkspaceAgentSpawnSessions
+      summary: List the child sessions this Workspace Agent has been delegated (workspace-level honest count)
+      description: |
+        task-134 (D-1785): the **workspace-level** read face for "how many child sessions has this
+        Agent been delegated". The existing session list is the CALLER's visible set (owner, or an
+        enabled HUMAN participant), so a client-side filter undercounts silently in a multi-member
+        Workspace; this face counts server-side by (workspace, PRIMARY agent principal) and is
+        therefore the only honest source for the number.
+
+        Two invariants that must stay independent (Lead ruling 2026-11-17): the COUNT never applies
+        read visibility (so it cannot under-report), and CONTENT (title) is projected only for a row
+        the caller may read (PLAN-0668 D1b keeps managers out of content read) — an unreadable row
+        answers title:null, readable:false and is still counted.
+
+        Attribution: a delegated child's PRIMARY participant is the Agent principal
+        (ChatSubmissionService:582-614, 743-765), so grandchildren land on the same principal: this
+        face returns the whole descendant cone flattened, with depth telling the first level apart.
+        counts.all and counts.direct always come from ONE materialized cohort in ONE traversal, so a
+        child created mid-request can never make them contradict each other.
+
+        Wording (D-1780/D-1783): these are 委派的子会话 (delegated child sessions) — never
+        "分身"/"instances": a delegated child is not a second copy of the principal.
+
+        Archived children are excluded by default and read back with includeArchived=true; rows and
+        counts follow that same switch, so the UI must label the number it shows.
+        An unknown or unbound principal answers an empty cohort with zero counts (no 404): the
+        response is a workspace-scoped aggregate with no subject content, so this face is not an
+        existence oracle.
+
+        Gate = the member roster's gate (OWNER/EDITOR, or the instance-scope MANAGE_WORKSPACE_MEMBERS
+        atom); a VIEWER answers 403 WORKSPACE_FORBIDDEN. Read-only: no durable write, no SSE, no
+        migration.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: depth, required: false, schema: { type: string, enum: [all, direct], default: all }, description: 'task-134: all (default) = the whole descendant cone flattened; direct = only depth=1 rows. counts always carries both. An unknown value is 400 INVALID_REQUEST (never a silent fallback).' }
+        - { in: query, name: includeArchived, required: false, schema: { type: boolean, default: false }, description: 'task-134: archived children are excluded by default (they are not part of "what is running now"); true reads them back and each row then carries archived=true where it applies. Rows and counts share this one opt-in.' }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 }, description: 'task-134: row cap (newest spawnedAt first); out of range is 400 INVALID_REQUEST. The counts are always computed over the FULL cohort, never over the page.' }
+      responses:
+        '200': { description: 'Delegated child sessions (frozen envelope {workspaceId,principalId,depth,includeArchived,counts,sessions,truncated,limit})', content: { application/json: { schema: { $ref: '#/components/schemas/DelegateSpawnSessionsResponse' } } } }
+        '400': { description: 'INVALID_REQUEST (malformed uuid, unknown depth, limit out of range)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN (not a member, or a VIEWER)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'WORKSPACE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories:
     get:
       tags: [agent]
@@ -7204,6 +7252,8 @@ components:
     AgentMemoryListResponse: { type: object, additionalProperties: false, required: [memories], properties: { memories: { type: array, items: { $ref: '#/components/schemas/AgentMemoryView' } } } }
     AgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }
     AgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
+    DelegateSpawnSessionsResponse: { type: object, additionalProperties: false, required: [workspaceId, principalId, depth, includeArchived, counts, sessions, truncated, limit], properties: { workspaceId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, depth: { type: string, enum: [all, direct], description: 'task-134: echo of the applied ROW filter — never a re-statement of the counts (counts always carry both cohorts).' }, includeArchived: { type: boolean, description: 'task-134: echo of the applied archived opt-in; rows and counts share this one switch.' }, counts: { type: object, additionalProperties: false, required: [all, direct], properties: { all: { type: integer, minimum: 0, description: 'task-134: every delegated child in this Workspace (whole descendant cone flattened), from ONE materialized cohort in ONE traversal — never capped by limit.' }, direct: { type: integer, minimum: 0, description: 'task-134: the depth=1 subset of all, from the same traversal (so direct can never exceed all).' } } }, sessions: { type: array, items: { $ref: '#/components/schemas/DelegateSpawnSession' } }, truncated: { type: boolean, description: 'task-134: true when the cohort exceeded limit; the counts stay complete.' }, limit: { type: integer, description: 'task-134: the effective row cap.' } } }
+    DelegateSpawnSession: { type: object, additionalProperties: false, required: [id, parentSessionId, depth, direct, readable, title, archived, runStatus, active, spawnedAt], properties: { id: { type: string, format: uuid }, parentSessionId: { type: string, format: uuid, nullable: true, description: 'task-134: sessions.spawned_from_session_id — an identifier, returned even when the parent itself is not readable (the UI builds the tree from it).' }, depth: { type: integer, minimum: 1, description: 'task-134: spawn-nesting level; 1 = delegated straight from a non-delegated session. Walks spawned_from_session_id while the ancestor is itself kind=spawn (bounded).' }, direct: { type: boolean, description: 'task-134: projection of depth == 1.' }, readable: { type: boolean, description: 'task-134: whether the CALLER may read this session (owner, or an enabled HUMAN participant; PLAN-0668 D1b keeps managers out). Independent of the count — an unreadable row is still counted.' }, title: { type: string, nullable: true, description: 'task-134: the session title when readable; null when unreadable, and also null for a readable session that has no title (that is why readable exists).' }, archived: { type: boolean }, runStatus: { type: string, nullable: true, description: 'task-134: status of the newest non-terminal ChatRun of that session (existing ChatRun vocabulary: accepted/queued/running/streaming/awaiting_approval/dispatching/cancelling); null when the child has no active run.' }, active: { type: boolean, description: 'task-134: runStatus is in ChatRunRepository.NON_TERMINAL_STATUSES — server-computed so the UI never duplicates the set.' }, spawnedAt: { type: string, format: date-time, nullable: true } } }
     AgentMemoryResponse: { type: object, additionalProperties: false, required: [memory], properties: { memory: { $ref: '#/components/schemas/AgentMemoryView' } } }
     AgentPrincipalRoleBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, roleId, name, scopeType, isSystem, atomCount, atoms, grantedAt], description: 'PLAN-0667: one role binding of an agent principal. `name`/`displayName` identify the role, `scopeName` carries the workspace name for workspace-scope rows; `atoms` are localized short labels (PermissionAtomLabels, at most 12) and `atomCount` is the real distinct atom count, so the UI can show the first three plus 共 N 个 without exposing the whole permission set (D5). Labels follow `?locale=` (zh-CN default, en-US supported) or the Accept-Language header; machine atom names never leave the server.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, roleId: { type: string, format: uuid }, name: { type: string, description: 'roles.name, e.g. WS_EDITOR' }, displayName: { type: [string, 'null'] }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid }, scopeName: { type: [string, 'null'], description: 'workspace name when scopeType=workspace, else null' }, isSystem: { type: boolean, description: 'PLAN-0667 (Lead ruling 2026-11-05): true only for a **seed binding** — a default grant written by the seeding/creation path, immutable (DELETE answers 409 ROLE_BINDING_IMMUTABLE). It does NOT mean "the role is a system role": a user-created binding of WS_EDITOR/AGENT_DELEGATOR reports false and is deletable (204).' }, atomCount: { type: integer, description: 'distinct derived atom count of the role' }, atoms: { type: array, maxItems: 12, items: { type: string }, description: 'localized short labels (PermissionAtomLabels); slice(0,3) for display' }, grantedBy: { type: [string, 'null'], format: uuid }, grantedAt: { type: string, format: date-time } } }
     AgentPrincipalRoleBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
