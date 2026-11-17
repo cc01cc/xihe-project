@@ -395,12 +395,6 @@ const dockTabs = computed<DockTab[]>(() =>
 const layoutOwner = inject(WORKSPACE_LAYOUT_KEY, null);
 
 /**
- * PLAN-0626 D26-04: in focus mode the main column is not laid out at all (it stays
- * mounted but hidden), so there is nothing to protect. Publishing a demand would let
- * the anti-squeeze rules collapse the tree or force the dock back to floating for a
- * column nobody can see; `null` means "this workbench needs no width arbitration".
- */
-/**
  * task-504（A 步，D-1413 同族）：把**实测**工作台行宽喂给挤压模型。
  *
  * 起因：模型原来自己算 `viewportWidth − (rail + navPanel)`，1024 档算 728（⇒ 认为 main 688 ≥ 640，
@@ -491,32 +485,42 @@ onBeforeUnmount(() => {
     workbenchResizeObserver = null;
 });
 
-const demand = computed<WorkbenchSqueezeDemand | null>(() => {
-    if (layout.value.dockFocus && dockOpen.value) return null;
-    return {
-        chromeOverheadMeasured: chromeOverheadMeasured.value,
-        dockWidth: layout.value.dockWidth,
-        dockOpen: dockOpen.value,
-    };
-});
+/**
+ * task-158：**焦点态也必须发布 demand** —— 焦点只改「谁占满这一行」，不改「这一行有多宽」。
+ *
+ * <p>旧行为是 focus 时 `return null`，理由是 D26-04 时代「主列不参与布局 ⇒ 没有东西要保护」。
+ * 但模型除「保护主列」之外还输出**导航面板是否让位**，那是行宽的分配决定、与主列可见性无关；
+ * 整段释放会连让位一起撤销。1440 档实测（2026-11-17，ui-41）：进 focus 前导航已让位
+ * （渲染 57.03、模型 `navYielded=true`），释放后回涨 **280.36px**（57.03 → 337.39）⇒
+ * 被「放大」的右栏反而少了同样多的宽度（1316.97 → 1036.61）。按钮叫「放大面板」，
+ * 却把面板压窄 —— 这是方向反了。</p>
+ *
+ * <p>⇒ 焦点与常态发布**同一个** demand：模型输入不变 ⇒ `navYielded` / `navPanelWidth` /
+ * `forceSingleColumn` 都不变 ⇒ 行宽与形态在焦点前后逐项相等。1920 档本来零变化（导航从未
+ * 让位），修后仍零变化，它就是「这条规则没有额外副作用」的对照组。</p>
+ */
+
+/** What the workbench needs from the geometry owner — **focus-independent** (task-158). */
+const demand = computed<WorkbenchSqueezeDemand>(() => ({
+    chromeOverheadMeasured: chromeOverheadMeasured.value,
+    dockWidth: layout.value.dockWidth,
+    dockOpen: dockOpen.value,
+}));
 
 watch(demand, (value) => layoutOwner?.setWorkbenchDemand(value), { immediate: true });
 onBeforeUnmount(() => layoutOwner?.setWorkbenchDemand(null));
 
-const squeeze = computed<WorkbenchSqueezeResult>(() => {
-    if (layoutOwner) return layoutOwner.squeeze.value;
-    const offset = viewportWidth.value || 0,
-        currentDemand = demand.value;
-    if (!currentDemand) {
-        // Focus: nothing to squeeze (mirrors the owner's "no demand" result).
-        return { mainWidth: offset, navYielded: false, forceSingleColumn: false };
-    }
-    return computeWorkbenchSqueeze({
-        workbenchWidth: offset,
-        ...currentDemand,
+/**
+ * 无 provider 的兜底（隔离单测）：同一个纯函数，但没有导航面板可让（`navPanelWidth: 0`）。
+ * task-158 起这里不再有「焦点态免挤压」的分支 —— demand 已与焦点无关，兜底自然同口径。
+ */
+const squeeze = computed<WorkbenchSqueezeResult>(() =>
+    computeWorkbenchSqueeze({
+        workbenchWidth: viewportWidth.value || 0,
+        ...demand.value,
         navPanelWidth: 0,
-    });
-});
+    }),
+);
 
 /**
  * D26-04: the render projection of the focus flag. It only holds while the dock is

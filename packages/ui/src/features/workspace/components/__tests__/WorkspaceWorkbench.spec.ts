@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import type { VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
@@ -6,7 +7,13 @@ import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
 import { shouldOpenAgentsDockFromDeepLink } from "../workspaceDockTabs";
-import { TREE_COLLAPSED_WIDTH } from "../../../../composables/useWorkspaceLayout";
+import {
+    RAIL_WIDTH,
+    TREE_COLLAPSED_WIDTH,
+    WORKSPACE_LAYOUT_KEY,
+    clampNavWidthForViewport,
+    useWorkspaceLayout,
+} from "../../../../composables/useWorkspaceLayout";
 import { useAuthStore } from "../../../../stores/auth";
 import { useWorkspaceStore } from "../../stores/workspace";
 
@@ -1044,5 +1051,84 @@ describe("WorkspaceWorkbench task-44 deep link (?agent=)", () => {
 
         // 手机没有 dock（那里由管理弹窗承载）⇒ 不渲染任何 dock 面板内容。
         expect(document.querySelector('[data-testid="agents-panel-stub"]')).toBeNull();
+    });
+});
+
+// ── task-158：焦点是「谁占满这一行」，不是「这一行多宽」────────────────────────────────────
+//
+// 缺陷本体（2026-11-17 实测，1440 档）：focus 时组件把挤压 demand 发布成 null，模型整段提前返回
+// ⇒ 连**导航面板让位**一起撤销（那是行宽分配，与主列可见性无关）⇒ 导航从 57.03 回涨到 337.39
+// （+280.36），被「放大」的右栏反而窄了同样多（1316.97 → 1036.61）。判据（卡面 §要做的事 1）：
+// 进 focus 后 workbench 不小于进之前，**导航面板宽度不变**。
+//
+// 为什么这条用例能咬住：jsdom 无布局引擎量不到像素（先例 layouts/__tests__/AppLayout.spec.ts:191-197），
+// 但挤掉的那 280px 是**模型输出**（`navYielded`/`navPanelWidth`）而不是像素 —— 模型输入里 jsdom 唯一的
+// 缺口是 `chromeOverheadMeasured`（没有 ResizeObserver ⇒ 恒 0），所以在 jsdom 里挑一个**同样会触发让位**
+// 的视口（1280：1280 − 56 − 260 − 360 = 604 < 720 舒适线）就能把「焦点不该改这些输出」钉住。
+// 像素级份额由 e2e/mock/task81-focus-share.spec.ts 断；本组只断机制。
+describe("WorkspaceWorkbench task-158 (focus must not re-allocate the row)", () => {
+    /** 用**真实** owner 挂载：焦点是否改变模型输出，只有真 owner 才看得见。 */
+    function mountWithRealLayout() {
+        const isMobile = ref(false),
+            owner = useWorkspaceLayout({ isMobile });
+        const wrapper = mount(WorkspaceWorkbench, {
+            props: {
+                workspaceId: "workspace-1",
+                sessionId: "session-1",
+                isMobile: false,
+            },
+            global: {
+                plugins: [i18n],
+                stubs,
+                provide: { [WORKSPACE_LAYOUT_KEY as unknown as string]: owner },
+            },
+        }) as VueWrapper;
+        mountedWrappers.push(wrapper);
+        return { wrapper, owner };
+    }
+
+    it("keeps the nav yield (and the row width) across focus — 1280 档，修复前让位被撤销", async () => {
+        setViewport(1280);
+        seedWideLayout({ dockTabs: ["files"], activeDockTab: "files", dockCollapsed: false });
+        const { wrapper, owner } = mountWithRealLayout();
+        await flushPromises();
+
+        // 前置（防空判据）：这一档**确实**发生了让位，否则下面的"不变"没有意义。
+        expect(owner.navYielded.value).toBe(true);
+        expect(owner.navPanelWidth.value).toBe(0);
+        const navAsked = clampNavWidthForViewport(280, 1280),
+            rowWidth = 1280 - RAIL_WIDTH - navAsked;
+        // 让位前的舒适级判定：主列 604 < 720 ⇒ 让位；让位后 864 ≥ 640 ⇒ 不切单栏。
+        expect(owner.squeeze.value.mainWidth).toBe(rowWidth - 360 + navAsked);
+        const beforeMain = owner.squeeze.value.mainWidth,
+            beforePanel = owner.navPanelWidth.value;
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+        await flushPromises();
+
+        // 焦点态：让位仍是让位（修复前这里会 false ⇒ 导航回涨 280px）。
+        expect(owner.navYielded.value).toBe(true);
+        expect(owner.navPanelWidth.value).toBe(beforePanel);
+        expect(owner.squeeze.value.mainWidth).toBe(beforeMain);
+        // 行宽分配不变 ⇒ 工作台行宽（模型侧入口）也不变。
+        expect(owner.squeeze.value.forceSingleColumn).toBe(false);
+    });
+
+    it("also keeps it at 1920 (the control group: the nav never yields either way)", async () => {
+        setViewport(1920);
+        seedWideLayout({ dockTabs: ["files"], activeDockTab: "files", dockCollapsed: false });
+        const { wrapper, owner } = mountWithRealLayout();
+        await flushPromises();
+
+        expect(owner.navYielded.value).toBe(false);
+        const beforePanel = owner.navPanelWidth.value,
+            beforeMain = owner.squeeze.value.mainWidth;
+        expect(beforePanel).toBe(clampNavWidthForViewport(280, 1920));
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+        await flushPromises();
+
+        expect(owner.navPanelWidth.value).toBe(beforePanel);
+        expect(owner.squeeze.value.mainWidth).toBe(beforeMain);
     });
 });

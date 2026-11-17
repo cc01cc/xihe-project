@@ -297,7 +297,7 @@ test("task-81：退出 focus 后中栏与右栏逐项还原（这条本来就绿
     expect.soft(restored.mainVisible, "退出 focus 后主列应可见；" + detail).toBe(true);
 });
 
-test("task-81：比值判据与视口无关（1440；工作台变窄属 task-158，不在本卡）", async ({ page }) => {
+test("task-81：比值判据与视口无关（1440；工作台不变窄由 task-158 的用例守）", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(WORKSPACE_PATH);
 
@@ -319,8 +319,9 @@ test("task-81：比值判据与视口无关（1440；工作台变窄属 task-158
         focus.workbench && focus.workbench.width > 0 && focus.dock
             ? focus.dock.width / focus.workbench.width
             : 0;
-    // 1440 档只断比值。**不断** workbench 绝对宽度 —— dockFocus 时 demand return null
-    // （WorkspaceWorkbench.vue:470-471）⇒ 防挤压整段释放 ⇒ 导航面板回涨 280px 是 task-158 的根因。
+    // 1440 档只断比值，不断 workbench 绝对宽度 —— 那是**另一个根因**（跨容器：dockFocus 时
+    // `demand` 曾 return null ⇒ 防挤压整段释放 ⇒ 导航面板回涨 280px），已由 task-158 修复，并由
+    // 下方 task-158 用例以「before↔focus 差值」形式守卫（差值锚自身基线，不会随布局改动静默过期）。
     expect
         .soft(share, "1440 档右栏占工作台比值必须 ≥ " + MIN_SHARE + "；" + detail)
         .toBeGreaterThanOrEqual(MIN_SHARE);
@@ -330,4 +331,90 @@ test("task-81：比值判据与视口无关（1440；工作台变窄属 task-158
             "1440 档 focus 时 workspace-center 同样必须不占份额；" + detail,
         )
         .toBe(true);
+});
+
+/**
+ * task-158 守卫（真实布局）：focus 是「谁占满这一行」，**不是**「这一行多宽」。
+ *
+ * ── 为什么这条不是「绝对宽度判据」（它不违反本文件的比值纪律）──────────────────────────
+ * 本文件拒绝绝对值，是因为**写死的目标像素**会随布局改动静默过期（见文件头 phase-1 事故）。
+ * 这里断的是**同一跑内的 before↔focus 差值** —— 基准是这次运行自己量出来的，锚的是自身，
+ * 换视口、换树宽、换 dock 宽都不会让它过期。D-1137「一致性断言必须锚独立基准」同型。
+ *
+ * ── 判据（卡面 §要做的事 1 / 3）──────────────────────────────────────────────────────
+ * ① `workbench.width(focus) ≥ workbench.width(before) − 1px`
+ * ② `|workbench.left(focus) − workbench.left(before)| ≤ 1px`
+ *    —— left = rail(56) + 导航面板宽，所以「left 不变」**就是**「导航面板宽度不变」。
+ *    这一条是跨容器的那一半：缺陷不在 workbench 自己身上，而是 dockFocus 让 `demand` 变 null
+ *    ⇒ 防挤压整段释放 ⇒ 导航面板从让位态回涨（1440 实测 57.03 → 337.39，+280.36px）。
+ * ③ 右侧栏吃满工作台（与 task-81 的比值判据同向，作为「放大的确发生了」的非空证据）。
+ *
+ * ── 缺陷本体（2026-11-17 实测，供红了的人读懂）──────────────────────────────────────
+ * 1440×900：改前 focus 时 `workbench 1316.97 → 1036.61`、`panels[0] 57.03 → 337.39`。
+ * 1920×1080 是**对照组**：导航本来就未让位，两改前后三帧全等（Δ=0）。
+ */
+test("task-158：focus 不重排行宽（workbench 不小于进之前，导航面板宽度不变）", async ({ page }) => {
+    for (const viewport of [
+        { width: 1440, height: 900 },
+        { width: 1920, height: 1080 },
+    ]) {
+        const label = viewport.width + "×" + viewport.height;
+        await page.setViewportSize(viewport);
+        await page.goto(WORKSPACE_PATH);
+        await page.waitForSelector(SEL.center, { state: "attached", timeout: EXPECT_TIMEOUT_MS });
+
+        // 空判据防护：先钉对象在且真有宽度，再谈"不变"。
+        const initial = await measureStable(page);
+        expect(
+            initial.workbench !== null && initial.workbench.width > 0,
+            label + " 进 focus 前 workspace-workbench 必须有宽度；" + detailOf(initial, initial),
+        ).toBe(true);
+
+        await openDock(page);
+        const baseline = await measureStable(page);
+        await enterFocus(page);
+        const focus = await measureStable(page);
+        const detail = "[" + label + "] " + detailOf(baseline, focus);
+        console.log("[task-158] " + label, detail);
+
+        expect(
+            baseline.workbench !== null && focus.workbench !== null,
+            label + " 三个对象必须都在场（workbench 缺席时下面的差值没有意义）；" + detail,
+        ).toBe(true);
+        const wbBefore = baseline.workbench!.width,
+            wbFocus = focus.workbench!.width;
+
+        // ① 工作台不得变窄（±1px 容差；卡面判据原文）。
+        expect
+            .soft(
+                wbFocus >= wbBefore - TOL_PX,
+                label + " 进 focus 后工作台宽度必须 ≥ 进之前（±" + TOL_PX + "px）；" + detail,
+            )
+            .toBe(true);
+
+        // ② 导航面板宽度不变 —— 用 workbench.left = rail + navPanel 编码。
+        const leftDrift = Math.abs(focus.workbench!.left - baseline.workbench!.left);
+        expect
+            .soft(
+                leftDrift <= TOL_PX,
+                label +
+                    " 进 focus 后导航面板宽度必须不变（workbench.left 漂移 " +
+                    leftDrift.toFixed(2) +
+                    "px ≤ " +
+                    TOL_PX +
+                    "）；" +
+                    detail,
+            )
+            .toBe(true);
+
+        // ③ 放大确实发生：右栏吃满工作台（否则上面的"不变"可能是「根本没进 focus」）。
+        expect
+            .soft(
+                focus.dock !== null && focus.dock.width >= wbFocus - TOL_PX,
+                label + " 进 focus 后右栏必须吃满工作台；" + detail,
+            )
+            .toBe(true);
+
+        await exitFocus(page);
+    }
 });
