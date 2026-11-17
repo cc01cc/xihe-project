@@ -60,6 +60,18 @@ const OPTIONS = {
         hour: "2-digit",
         minute: "2-digit",
     },
+    /**
+     * 日期 + 时分秒，月份用**短名**（中「11月」/ 英「Nov」）：复刻 `dateStyle:"medium"` 的日期段，
+     * 给回合执行记录（`RunTraceTimeline`）这类「中等粒度」读面用。见 `formatDateTimeMedium`。
+     */
+    dateTimeMedium: {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    },
     date: { year: "numeric", month: "numeric", day: "numeric" },
     time: { hour: "2-digit", minute: "2-digit" },
     timeWithSeconds: { hour: "2-digit", minute: "2-digit", second: "2-digit" },
@@ -144,6 +156,26 @@ export function formatDateTime(
         options.seconds === false ? "dateTimeShort" : "dateTime",
         options.timeZone,
     ).format(date);
+}
+
+/**
+ * 日期 + 时分秒，**月份用短名**（中「11月」/ 英「Nov」）。
+ *
+ * <p>存在的唯一理由：`RunTraceTimeline` 原先是 `dateStyle:"medium"`，而本入口整体不用
+ * `dateStyle`（`short` 在 en-US 会退成两位年）。显式字段里只有 `month:"short"` 能复刻它的
+ * 日期段，所以给它一个**具名**粒度，而不是把入口改造成能表达任意 `Intl` 选项的转发层。</p>
+ *
+ * <p>两种语言各自的字符串形态由 `__tests__/dateFormat.spec.ts` 钉住 —— 本注释不复制那些
+ * 字符串（`D-1767`：没有机器判据会跟着改的数不进注释）。</p>
+ */
+export function formatDateTimeMedium(
+    value: DateInput,
+    fallback: string = DATE_FALLBACK,
+    options: Pick<FormatDateTimeOptions, "timeZone"> = {},
+): string {
+    const date = toDate(value);
+    if (!date) return fallback;
+    return formatterFor(currentLocale(), "dateTimeMedium", options.timeZone).format(date);
 }
 
 /** 只有日期，如 zh-CN `2026/11/2` / en-US `11/2/2026`。 */

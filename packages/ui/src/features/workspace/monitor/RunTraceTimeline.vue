@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatDateTimeMedium } from "../../../lib/dateFormat";
 import type { RunTraceEvent, RunTraceResponse } from "../../../types";
 
 const props = defineProps<{
@@ -21,13 +22,15 @@ const { t } = useI18n();
 const orderedEvents = computed(() => props.trace?.events ?? []);
 const safeSources = computed(() => props.trace?.sources ?? []);
 
+/**
+ * 时间读数走 `lib/dateFormat.ts`（`task-91`）：原先这里是 `Intl.DateTimeFormat(undefined, …)`，
+ * `undefined` locale = **浏览器**语言，与界面语言（`i18n.global.locale`，用户可切）是两条轴。
+ * 粒度 = 「月名 + 秒」这一档 ⇒ `formatDateTimeMedium`（中「11月」/ 英「Nov」）。
+ */
 function formatTime(value: string): string {
     const timestamp = new Date(value);
     if (Number.isNaN(timestamp.getTime())) return t("monitor.trace.timeUnknown");
-    return new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        timeStyle: "medium",
-    }).format(timestamp);
+    return formatDateTimeMedium(timestamp);
 }
 
 function safeIdentifier(value: string | null): string | null {

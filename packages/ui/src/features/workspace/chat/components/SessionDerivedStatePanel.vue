@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatDateTime } from "../../../../lib/dateFormat";
 import type { SessionDerivedActiveChild, SessionDerivedTerminalNotice } from "../../../../types";
 
 const props = defineProps<{
@@ -23,13 +24,15 @@ const visible = computed(
         props.terminalNotices.length > 0,
 );
 
+/**
+ * 时间读数走 `lib/dateFormat.ts`（`task-91`）：原先这里是 `Intl.DateTimeFormat(undefined, …)`，
+ * `undefined` locale = **浏览器**语言，与界面语言（`i18n.global.locale`，用户可切）是两条轴。
+ * 粒度 = 到分钟、不带秒 ⇒ `formatDateTime(..., { seconds: false })`；**形态在 en-US 有一处变化**
+ * （两位年 `26` → `2026`、时 `1:00` → `01:00`），理由与逐字符对照见 `task-91` 收据 —— `dateStyle`
+ * 的两位年与非补零小时是 locale 数据里的产物，显式字段取不到「两种语言同时逐字符相同」的解。
+ */
 function formatTime(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime())
-        ? value
-        : new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(
-              date,
-          );
+    return formatDateTime(value, value, { seconds: false });
 }
 </script>
 

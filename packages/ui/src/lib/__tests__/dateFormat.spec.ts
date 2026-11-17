@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { i18n } from "../../i18n";
 import { applyLocale } from "../../i18n/locale";
-import { DATE_FALLBACK, formatDate, formatDateTime, formatTime, isValidDate } from "../dateFormat";
+import {
+    DATE_FALLBACK,
+    formatDate,
+    formatDateTime,
+    formatDateTimeMedium,
+    formatTime,
+    isValidDate,
+} from "../dateFormat";
 
 /**
  * `task-73` · 单一日期入口的读数。
@@ -43,6 +50,38 @@ describe("formatDateTime / formatDate / formatTime · 跟随界面语言", () =>
         applyLocale("zh-CN");
         expect(formatDateTime(ISO)).toBe(zh);
         expect(en).not.toBe(zh);
+    });
+});
+
+describe("formatDateTimeMedium · 月份短名这一档（task-91 起的两个调用点）", () => {
+    it("两种界面语言产出不同的字符串，且各自与显式 locale 的 Intl 结果逐字符相同", () => {
+        // 判据形态刻意是「与**显式** locale 的 Intl 结果相等」而不是与硬编码字面量相等：
+        // 前者在任意宿主时区都成立（两边的时区来源相同），后者会随宿主时区变而假红。
+        // 更关键的是：这一条与下一条合起来能把「locale 传 undefined」的变异判红 ——
+        // undefined 只能产出一份固定字符串，不可能同时等于 zh-CN 与 en-US 两种结果。
+        const options: Intl.DateTimeFormatOptions = {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+        };
+        applyLocale("zh-CN");
+        const zh = formatDateTimeMedium(ISO);
+        expect(zh).toBe(new Intl.DateTimeFormat("zh-CN", options).format(new Date(ISO)));
+        applyLocale("en-US");
+        const en = formatDateTimeMedium(ISO);
+        expect(en).toBe(new Intl.DateTimeFormat("en-US", options).format(new Date(ISO)));
+        expect(zh).not.toBe(en);
+    });
+
+    it("缺值走同一个占位，不需要再定义第二种形态", () => {
+        applyLocale("zh-CN");
+        expect(formatDateTimeMedium(null)).toBe(DATE_FALLBACK);
+        expect(formatDateTimeMedium("")).toBe(DATE_FALLBACK);
+        expect(formatDateTimeMedium("not-a-date")).toBe(DATE_FALLBACK);
+        expect(formatDateTimeMedium(null, "不可用")).toBe("不可用");
     });
 });
 
