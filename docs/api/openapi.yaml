@@ -890,7 +890,9 @@ paths:
         - with `workspaceId` — Workspace membership plus the **real reach**: principals bound in
           that Workspace (`workspace_agents` row or a workspace-scoped agent role binding) unioned
           with the caller's own owned rows (an owned, unbound row appears with `bound: false` so a
-          fresh create stays discoverable; `created_by_user_id` is never an authorization source).
+          fresh create stays discoverable). `created_by_user_id` is not what grants **reach** on this
+          list; it does authorize the **write** face since D-1816 (creator channel — see the
+          `disable` / `PATCH` descriptions below).
 
         The workspace arm stays deliberately **owner**-based (PLAN-0750 M2): it is reach-gated, so an
         owner-less row carries no reach there and enters a Workspace only through the bind surface.
@@ -970,11 +972,15 @@ paths:
         PLAN-0622 M1 + D-174 (tier removed): disabling is terminal for new Sessions
         and writes the durable audit `agent_principal_disabled`; the row itself is
         never deleted (FK ON DELETE RESTRICT keeps historical references intact).
-        The authority is **owner-or-N1-or-workspace**: the row's `owner_user_id` (legacy
-        owned rows), a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`, **or** an actor holding
-        `MANAGE_WORKSPACE_AGENTS` in a workspace that **binds** this principal (BL-331 / D-206, same
-        family as the cap `PUT`/`DELETE` faces — a workspace that owns the binding owns the lifecycle
-        write). A single Workspace's management right still never reaches principals it does not bind.
+        The authority is **creator-or-owner-or-N1-or-workspace**, a union of four disjoint grants
+        (D-1816, 2026-11-18, completes what the entity's `ownership` javadoc already promised):
+        the row's `created_by_user_id` (its creator — the only channel a PLAN-0750 user-level row
+        has, since user-level creates never write `owner_user_id`), the row's `owner_user_id`
+        (legacy owned rows), a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`, **or** an actor
+        holding `MANAGE_WORKSPACE_AGENTS` in a workspace that **binds** this principal (BL-331 /
+        D-206, same family as the cap `PUT`/`DELETE` faces — a workspace that owns the binding owns
+        the lifecycle write). A single Workspace's management right still never reaches principals it
+        does not bind. D-1816 is an authorization-defect fix: no new atom, no default-grant change.
 
         task-173 (V170, user ruling 40C; Lead ruling on the implementation): **one row, one writer** —
         an OWNERSHIP_INSTANCE row is retired only through
@@ -1012,10 +1018,11 @@ paths:
       description: |
         PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21) + D-174: there is no separate `/hooks` or
         `/context-policy` sub-resource — the principal's own update surface accepts the
-        subject-level documents, so the same **owner-or-N1-or-workspace** authority that guards
-        `disable` is reused verbatim (the row's `owner_user_id`, a holder of the instance-tier
-        `MANAGE_AGENT_PRINCIPALS`, or `MANAGE_WORKSPACE_AGENTS` in a workspace that binds this
-        principal — BL-331 / D-206; a workspace right still does not reach principals it never binds).
+        subject-level documents, so the same **creator-or-owner-or-N1-or-workspace** authority that
+        guards `disable` is reused verbatim (the row's `created_by_user_id`, the row's
+        `owner_user_id`, a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`, or
+        `MANAGE_WORKSPACE_AGENTS` in a workspace that binds this principal — BL-331 / D-206, creator
+        channel added by D-1816; a workspace right still does not reach principals it never binds).
 
         task-173 (V170, user ruling 40C; Lead ruling on the implementation): **one row, one writer.**
         An OWNERSHIP_INSTANCE row is written only through /api/v1/instance/agent-principals. On this
@@ -1038,7 +1045,7 @@ paths:
         one half alone answers 400 `INVALID_AGENT_PRINCIPAL`. `allowedModels` is an array of
         `{provider, model}` (both halves per entry; empty array or null clears). A preset guard
         refuses with 403 `GUARD_MODEL_INTENT_IMMUTABLE`. The authority is unchanged: the same
-        owner-or-N1-or-workspace rule that guards `disable`.
+        creator-or-owner-or-N1-or-workspace rule that guards `disable`.
 
         `hooks` is `{advisors:[{kind,on:[actionClass]}]}`; shape violations answer 400
         (D25-12: `on` must hit the frozen action-class whitelist — today `approval.ask`).

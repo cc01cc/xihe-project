@@ -1420,13 +1420,19 @@ public class AgentPrincipalService {
     /**
      * BL-331 / D-206 (方案 A, 2026-11-05 user ruling): who may <b>change</b> an existing agent principal.
      *
-     * <p>Three disjoint grants, evaluated as a <b>union</b> — none replaces another:</p>
+     * <p>Four disjoint grants, evaluated as a <b>union</b> — none replaces another:</p>
      * <ol>
      *   <li><b>instance override</b> — a holder of {@code MANAGE_AGENT_PRINCIPALS} (N1) may manage any
      *       principal, in any workspace. This is the cross-workspace channel and stays exactly as
      *       before (not a replacement for the workspace channel below);</li>
      *   <li><b>legacy owner</b> — {@code agent_principals.owner_user_id} still authorizes its own row
      *       (PLAN-0622 rows). D-174 stopped writing the column, so this is a historical path only;</li>
+     *   <li><b>creator</b> — the row's {@code created_by_user_id} authorizes its own creation.
+     *       D-1816 (2026-11-18 Lead ruling): the {@link AgentPrincipal} {@code ownership} javadoc
+     *       already promised "its creator ... manage it", but no channel implemented it, and
+     *       PLAN-0750 user-level rows carry no {@code owner_user_id} — so a creator could not change
+     *       (or disable) its own unbound principal at all. This is an authorization-defect fix that
+     *       completes the documented semantics: no new atom, no default-grant change;</li>
      *   <li><b>workspace management</b> — an actor holding {@code MANAGE_WORKSPACE_AGENTS} in a
      *       workspace that <b>binds</b> this principal may manage it. This is the D-206 addition and it
      *       puts {@code disable}/{@code PATCH} in the same family as {@code setWorkspaceCap} /
@@ -1448,8 +1454,14 @@ public class AgentPrincipalService {
             // (2) legacy owned row
             return;
         }
+        if (principal.getCreatedByUserId() != null
+                && principal.getCreatedByUserId().equalsIgnoreCase(actorId.toString())) {
+            // (3) creator channel (D-1816): completes the documented "its creator ... manage it"
+            // semantics for owner-less PLAN-0750 rows — see the class-level javadoc of this method.
+            return;
+        }
         for (UUID workspaceId : boundWorkspaceIds(principal.getId())) {
-            // (3) the workspace that binds this principal manages it through its own atom
+            // (4) the workspace that binds this principal manages it through its own atom
             if (requesterAuthority.holdsActionAtom(actorId,
                     ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspaceId)) {
                 return;
@@ -1461,8 +1473,9 @@ public class AgentPrincipalService {
         requesterAuthority.logActionAtomDenied(
                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS, actorId, null);
         throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
-                "Only the owner, a holder of MANAGE_AGENT_PRINCIPALS, or an administrator of a "
-                        + "workspace that binds this agent principal may change it");
+                "Only its creator, the owner, a holder of MANAGE_AGENT_PRINCIPALS, or an "
+                        + "administrator of a workspace that binds this agent principal may "
+                        + "change it");
     }
 
     /** The workspaces whose {@code workspace_agents} row binds this principal (D-206 authority set). */

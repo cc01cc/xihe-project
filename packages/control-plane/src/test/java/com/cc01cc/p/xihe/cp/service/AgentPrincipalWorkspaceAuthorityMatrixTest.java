@@ -48,13 +48,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * BL-331 / D-206 (方案 A, 2026-11-05 user ruling): who may change a <b>workspace-bound</b> agent
  * principal — the 2×3 authority matrix, plus the two refutations that prove each cell rides a real gate.
  *
- * <p>Ratified semantics: the instance atom ({@code MANAGE_AGENT_PRINCIPALS}) is an <b>override
- * channel</b>, the legacy {@code owner_user_id} still authorizes its own row, and — new — an actor
- * holding {@code MANAGE_WORKSPACE_AGENTS} <b>in a workspace that binds the principal</b> may manage it,
- * exactly like {@code setWorkspaceCap} / {@code unbindWorkspace}. The plain creator is deliberately
- * <b>not</b> an authority: creating a workspace-bound principal is a workspace operation, and its
- * lifecycle write belongs to the same workspace authority (before D-206 it answered 403 for everyone
- * except instance admins — the P1 gap).</p>
+ * <p>Ratified semantics (D-1816 revised): the instance atom ({@code MANAGE_AGENT_PRINCIPALS})
+ * is an <b>override channel</b>, the legacy {@code owner_user_id} still authorizes its own row, the
+ * <b>creator</b> ({@code created_by_user_id}) authorizes its own creation — completing the documented
+ * {@code ownership} javadoc for owner-less PLAN-0750 rows — and an actor holding
+ * {@code MANAGE_WORKSPACE_AGENTS} <b>in a workspace that binds the principal</b> may manage it,
+ * exactly like {@code setWorkspaceCap} / {@code unbindWorkspace}. A stranger with none of the four
+ * channels is still refused (the paired negative is row ④ of the matrix).</p>
  *
  * <p>Gate order stays the D22 one: context {@code 409} → existence {@code 404} → authority {@code 403}.</p>
  */
@@ -84,6 +84,7 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
     private UUID creatorUserId;
     private UUID workspaceAdminUserId;
     private UUID instanceAdminUserId;
+    private UUID strangerUserId;
     private final List<UUID> principalIds = new java.util.ArrayList<>();
 
     private static RestTemplate patchCapableClient() {
@@ -132,15 +133,14 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
     // ------------------------------------------------------------------ the matrix
 
     @Test
-    void matrixCreatorHasNoAuthorityWorkspaceAdminAndInstanceAdminDo() {
+    void matrixCreatorOwnsCreatedPrincipalAlongsideWorkspaceAndInstanceAdmins() {
         fixture();
 
         // ① creator: created_by = creator, owner column null (D-174 semantics), bound to the workspace.
-        assertCell(identity(creatorUserId), Operation.DISABLE, HttpStatus.FORBIDDEN,
-                "AGENT_PRINCIPAL_OWNER_MISMATCH",
-                "① creator without a workspace management atom must be refused (BL-331 方案 A)");
-        assertCell(identity(creatorUserId), Operation.PATCH, HttpStatus.FORBIDDEN,
-                "AGENT_PRINCIPAL_OWNER_MISMATCH", "① creator PATCH must be refused too");
+        assertCell(identity(creatorUserId), Operation.DISABLE, HttpStatus.NO_CONTENT, null,
+                "① creator may disable its own creation (D-1816 creator channel)");
+        assertCell(identity(creatorUserId), Operation.PATCH, HttpStatus.OK, null,
+                "① creator may PATCH its own creation (D-1816 creator channel)");
 
         // ② workspace admin: MANAGE_WORKSPACE_AGENTS in the workspace that binds the principal.
         assertCell(identity(workspaceAdminUserId), Operation.DISABLE, HttpStatus.NO_CONTENT, null,
@@ -153,6 +153,14 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
                 "③ instance admin keeps the cross-workspace override channel");
         assertCell(identity(instanceAdminUserId), Operation.PATCH, HttpStatus.OK, null,
                 "③ instance admin keeps PATCH through the override channel");
+
+        // ④ stranger: holds none of the four channels and is not the creator.
+        assertCell(identity(strangerUserId), Operation.DISABLE, HttpStatus.FORBIDDEN,
+                "AGENT_PRINCIPAL_OWNER_MISMATCH",
+                "④ a stranger must stay refused (D-1816 pairs the creator channel with no relaxation)");
+        assertCell(identity(strangerUserId), Operation.PATCH, HttpStatus.FORBIDDEN,
+                "AGENT_PRINCIPAL_OWNER_MISMATCH",
+                "④ stranger PATCH must stay refused too");
     }
 
     // ------------------------------------------------------------------ refutations
@@ -251,6 +259,8 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
         creatorUserId = newMember("matrix-creator");
         workspaceAdminUserId = newMember("matrix-ws-admin");
         instanceAdminUserId = newMember("matrix-instance-admin");
+        // ④ paired negative: a plain member with no management atom and no creator relation.
+        strangerUserId = newMember("matrix-stranger");
 
         // ② workspace admin: MANAGE_WORKSPACE_AGENTS scoped to this workspace.
         seedManagementAtom(workspaceAdminUserId, AccessScope.WORKSPACE, workspaceId,
