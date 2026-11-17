@@ -971,4 +971,33 @@ describe("ApprovalModal guard advice (PLAN-0625 G, D25-04)", () => {
 
         expect(wrapper.find('[data-testid="approval-guard-advice"]').exists()).toBe(false);
     });
+
+    /**
+     * task-75: the save-rule preview rows must not let a long dd squeeze the dt label.
+     *
+     * Measured on the real page (mock lane 5199, .local/task75 harness, 1920x1080):
+     *   资源范围 dd padded to 320 chars -> dt 21.86x76.75, 4 rendered lines (label broken up)
+     *   with shrink-0 only             -> dt 48x19.19, but the row stays 76.75 tall
+     *   with both guards               -> dt 48x19.19, row 57.56 (only the dd wraps)
+     * 动作类别 collapses at a 49-char actionClass and the tool-face form accepts 64.
+     * 效果 is a fixed 2-char word (a 32-char dd already collapses it, which nothing can produce)
+     *   and is deliberately NOT guarded -- adding the class everywhere is what this card rejects.
+     *   Its absence is asserted so the tiering cannot silently drift into "guard all rows".
+     */
+    it("guards exactly the save-rule preview rows whose dd can be long (task-75)", async () => {
+        const wrapper = mountModal({ approval: { ...baseApproval, policy }, show: true });
+        await wrapper.find('[data-testid="approval-save-rule"]').trigger("click");
+
+        const rows = wrapper.find('[data-testid="approval-rule-preview"]').findAll("dl > div");
+        expect(rows).toHaveLength(3);
+
+        const [actionClassRow, resourceRow, effectRow] = rows;
+        for (const row of [actionClassRow, resourceRow]) {
+            expect(row.classes()).toContain("items-start");
+            expect(row.get("dt").classes()).toContain("shrink-0");
+        }
+
+        expect(effectRow.classes()).not.toContain("items-start");
+        expect(effectRow.get("dt").classes()).not.toContain("shrink-0");
+    });
 });

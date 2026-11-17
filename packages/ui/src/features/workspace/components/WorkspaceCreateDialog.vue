@@ -703,8 +703,10 @@ watch(
                         </dt>
                         <dd>{{ storageModeLabel }}</dd>
                     </div>
-                    <div v-if="isDirectAttach" class="flex justify-between gap-3">
-                        <dt class="text-muted-foreground">{{ t("workspace.summaryDirectory") }}</dt>
+                    <div v-if="isDirectAttach" class="flex items-start justify-between gap-3">
+                        <dt class="shrink-0 text-muted-foreground">
+                            {{ t("workspace.summaryDirectory") }}
+                        </dt>
                         <dd
                             class="break-all text-right font-mono"
                             data-testid="workspace-summary-host-path"
@@ -724,8 +726,8 @@ watch(
                         <dt class="text-muted-foreground">{{ t("workspace.summaryMaturity") }}</dt>
                         <dd data-testid="workspace-summary-maturity">{{ executionMaturity }}</dd>
                     </div>
-                    <div class="flex justify-between gap-3">
-                        <dt class="text-muted-foreground">
+                    <div class="flex items-start justify-between gap-3">
+                        <dt class="shrink-0 text-muted-foreground">
                             {{ t("workspace.summaryAvailability") }}
                         </dt>
                         <dd

@@ -534,4 +534,34 @@ describe("ScheduledTasksView workspace events", () => {
 
         expect(mockedApi.listScheduledTasks).toHaveBeenCalledTimes(2);
     });
+
+    /**
+     * task-75: the mobile card's dl rows must not let a long dd squeeze the dt label.
+     *
+     * Measured on the real page (mock lane 5199, .local/task75 harness):
+     *   390x844 (card dl 322 wide): next-fire dt 43.34x38.38 (2 lines) / creator dt 35.45x43.88 (2)
+     *   320x720 (card dl 252 wide): next-fire dt 33.72x38.38 / creator dt 27.58x43.88
+     *   a legal 177-char cronExpr pushed trigger to dt 12x57.56 (one char per line)
+     * With both guards dt stays 24/36/48 x 19.19 and only the dd wraps.
+     *
+     * trigger and next-fire and creator are guarded; target is deliberately NOT guarded:
+     * its dd is `enum + middle-dot + uuid[0:8]` = at most 15 chars, measured collapse point 33.
+     */
+    it("guards the mobile card rows whose dd can be long, leaves target alone (task-75)", async () => {
+        mockedApi.listScheduledTasks.mockResolvedValue(listPage([task()]) as never);
+        const wrapper = await mountView();
+
+        const card = wrapper.get('[data-testid="scheduled-task-card"]');
+        const rows = card.findAll("dl > div");
+        expect(rows).toHaveLength(4);
+
+        const [triggerRow, targetRow, nextFireRow, creatorRow] = rows;
+        for (const row of [triggerRow, nextFireRow, creatorRow]) {
+            expect(row.classes()).toContain("items-start");
+            expect(row.get("dt").classes()).toContain("shrink-0");
+        }
+
+        expect(targetRow.classes()).not.toContain("items-start");
+        expect(targetRow.get("dt").classes()).not.toContain("shrink-0");
+    });
 });

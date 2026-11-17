@@ -1013,8 +1013,8 @@ onBeforeUnmount(() => {
                         >
                             <p class="mb-2 font-medium">{{ t("chat.approvalRulePreview") }}</p>
                             <dl class="space-y-1 text-xs">
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-muted-foreground">
+                                <div class="flex items-start justify-between gap-3">
+                                    <dt class="shrink-0 text-muted-foreground">
                                         {{ t("chat.approvalEvidenceActionClass") }}
                                     </dt>
                                     <dd class="font-mono">
@@ -1024,8 +1024,8 @@ onBeforeUnmount(() => {
                                         }}
                                     </dd>
                                 </div>
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-muted-foreground">
+                                <div class="flex items-start justify-between gap-3">
+                                    <dt class="shrink-0 text-muted-foreground">
                                         {{ t("chat.approvalRuleResource") }}
                                     </dt>
                                     <dd class="break-all font-mono">

@@ -661,22 +661,28 @@ function openCreate() {
                             </span>
                         </div>
                         <dl class="mt-2 space-y-1 text-xs text-muted-foreground">
-                            <div class="flex justify-between gap-2">
-                                <dt>{{ t("workspace.scheduledTasks.colTrigger") }}</dt>
+                            <div class="flex items-start justify-between gap-2">
+                                <dt class="shrink-0">
+                                    {{ t("workspace.scheduledTasks.colTrigger") }}
+                                </dt>
                                 <dd class="text-right">{{ triggerText(task) }}</dd>
                             </div>
                             <div class="flex justify-between gap-2">
                                 <dt>{{ t("workspace.scheduledTasks.colTarget") }}</dt>
                                 <dd class="text-right">{{ targetText(task) }}</dd>
                             </div>
-                            <div class="flex justify-between gap-2">
-                                <dt>{{ t("workspace.scheduledTasks.colNextFire") }}</dt>
+                            <div class="flex items-start justify-between gap-2">
+                                <dt class="shrink-0">
+                                    {{ t("workspace.scheduledTasks.colNextFire") }}
+                                </dt>
                                 <dd class="text-right">
                                     {{ nextFireText(task) }} · {{ task.timezone }}
                                 </dd>
                             </div>
-                            <div class="flex justify-between gap-2">
-                                <dt>{{ t("workspace.scheduledTasks.colCreator") }}</dt>
+                            <div class="flex items-start justify-between gap-2">
+                                <dt class="shrink-0">
+                                    {{ t("workspace.scheduledTasks.colCreator") }}
+                                </dt>
                                 <dd class="text-right">
                                     <span class="text-muted-foreground">{{
                                         task.createdBy.name || "—"

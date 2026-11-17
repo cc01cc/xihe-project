@@ -568,3 +568,51 @@ describe("DataControlsView import warnings", () => {
         expect(list.text()).toBe("only-this-one");
     });
 });
+
+/**
+ * task-75: the four checkpoint constant cells are NOT guarded, on purpose.
+ *
+ * Measured on the real page (mock lane 5199, .local/task75 harness, SettingsLayout main
+ * column): desktop cell 1910 wide -> dt 36-60px. Phone 390 -> cell 165.5 wide, dt still
+ * 36-60px with the real values. Phone 320 -> cell 130.5 wide; padding a dd to 7 digits
+ * finally wraps the label (dt 44.16x38.38). The dd is an integer count of slices in a
+ * workspace that caps at 50, so a 7-digit value cannot be produced.
+ *
+ * This test pins the absence so a later "guard every dl row" sweep has to argue with a
+ * measurement rather than quietly widen the change.
+ */
+describe("DataControlsView checkpoint constants stay unguarded (task-75)", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        sessionStorage.clear();
+        localStorage.setItem("xihe-token", "test-token");
+        localStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({ id: WORKSPACE_ID, name: "Workspace" }),
+        );
+    });
+
+    it("renders no shrink-0/items-start guards on the numeric constant rows", async () => {
+        mockedApi.getWorkspaceCheckpointRetention.mockResolvedValueOnce({
+            maxRuns: 50,
+            ttlDays: 30,
+            unsealedNeverDeleted: true,
+            currentRuns: 7,
+            currentRefs: 13,
+        });
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+        await flushPromises();
+
+        const dl = wrapper.find('[data-testid="settings-checkpoint-constants"]');
+        expect(dl.exists()).toBe(true);
+        const rows = dl.findAll("div");
+        expect(rows).toHaveLength(4);
+        for (const row of rows) {
+            expect(row.classes()).not.toContain("items-start");
+            expect(row.get("dt").classes()).not.toContain("shrink-0");
+        }
+    });
+});

@@ -302,4 +302,59 @@ describe("WorkspaceCreateDialog (PLAN-0384)", () => {
 
         expectModalDialog("workspace-create-dialog", "dialog", "添加 Workspace");
     });
+
+    /**
+     * task-75: the confirm summary rows must not let a long dd squeeze the dt label.
+     *
+     * Measured on the real page (mock lane 5199, .local/task75 harness, 1920x1080):
+     *   the host-path dd (a real Windows path, 96 chars above) -> dt 17.31x38.38 (2 lines)
+     *   with both guards -> dt 24x19.19, row height unchanged (only the dd wraps)
+     *   the availability dd is "unavailable + reason" (CP/OS text, no length bound):
+     *     a 120-char reason -> dt 12x76.75 (4 lines of one character each) at 1920x1080,
+     *     and a 40-char reason already does it at 390x844
+     *   with both guards -> dt 48x19.19 (1 line), dd wraps instead
+     * The other three rows carry enums / a fixed maturity word, short by construction,
+     *   so they are deliberately NOT guarded and asserted as such.
+     */
+    it("guards the host-path and availability rows of the confirm summary (task-75)", async () => {
+        mockedApi.preflightDirectAttach.mockImplementation(({ executionMode }) =>
+            Promise.resolve(preflightResult(executionMode, true)),
+        );
+
+        await mountCreateDialog(wrappers);
+        await driveDirectAttachToExecution();
+        await vi.waitFor(() => {
+            const mxc = document.body.querySelector(
+                '[data-testid="workspace-execution-mode-mxc"]',
+            ) as HTMLButtonElement | null;
+            expect(mxc && !mxc.disabled).toBe(true);
+        });
+        await clickBody('[data-testid="workspace-execution-next"]');
+        const summary = await bodyEl<HTMLElement>('[data-testid="workspace-create-summary"]');
+
+        const rows = Array.from(summary.querySelectorAll("div")) as HTMLElement[];
+        // 5 rows: storage mode, directory (direct-attach only), execution mode, maturity, availability
+        expect(rows).toHaveLength(5);
+
+        // exact match: "目录" must not select the "目录方式" row
+        const byLabel = (label: string) =>
+            rows.find((row) => (row.querySelector("dt")?.textContent ?? "").trim() === label);
+
+        // Guarded: the host path (user-controlled long input) and the availability reason
+        // (CP/OS text with no length bound -- 120 chars already collapsed the dt to 12x76.75/4).
+        for (const label of ["目录", "可用状态"]) {
+            const row = byLabel(label);
+            expect(row).toBeTruthy();
+            expect(row!.className).toContain("items-start");
+            expect(row!.querySelector("dt")!.className).toContain("shrink-0");
+        }
+
+        // Unguarded: the enum / fixed-word rows, whose dd is short by construction.
+        for (const label of ["目录方式", "执行模式", "成熟度"]) {
+            const row = byLabel(label);
+            expect(row).toBeTruthy();
+            expect(row!.className).not.toContain("items-start");
+            expect(row!.querySelector("dt")!.className ?? "").not.toContain("shrink-0");
+        }
+    });
 });
