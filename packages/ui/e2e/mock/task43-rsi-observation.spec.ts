@@ -16,7 +16,13 @@ const RUN_ID = "run-task43-rsi";
 const ANSWER = "S5 mock 回答：项目是通用 Agent 运行时平台。";
 
 test.describe("task-43 RSI observation receipt", () => {
-    test("tool card and assistant answer render in one message row", async ({ page }, testInfo) => {
+    // task-76: pageFailures is destructured on purpose - the receipt below must read the
+    // fixture's live three-channel accumulator instead of claiming a constant. The fixture is
+    // already auto: true (helpers/mock-test.ts:57-82), so asking for it adds no page work.
+    test("tool card and assistant answer render in one message row", async ({
+        page,
+        pageFailures,
+    }, testInfo) => {
         await setupMockAuth(page);
         // WorkspaceShell mounts the git read face; stub its fixed request so the
         // page-failures gate measures only this spec's stream, not shell noise.
@@ -107,22 +113,41 @@ test.describe("task-43 RSI observation receipt", () => {
         });
 
         const assistantText = (await assistantRows.first().innerText()).trim();
+        // task-76: pageFailures must be READ from the fixture, never written as a literal. The
+        // old line was `pageFailures: 0` - always 0 regardless of reality, so the receipt claimed
+        // "this gate ran and was clean" while proving nothing. These three arrays are filled by
+        // collectPageFailures (helpers/page-failures.ts:30-48) and asserted empty in the auto
+        // fixture teardown; reading them here makes the receipt report what was actually observed
+        // up to the emit point (the authoritative verdict is still the teardown assertion).
+        const pageFailureCount =
+            pageFailures.consoleErrors.length +
+            pageFailures.pageErrors.length +
+            pageFailures.failedResponses.length;
+        const checks = {
+            toolCardVisible: await toolCard.isVisible(),
+            assistantRendered: assistantText.includes(ANSWER),
+            sameMessage:
+                (await assistantRows.first().locator('[data-testid="tool-card"]').count()) === 1,
+            noErrorMessage: (await page.getByTestId("message-error").count()) === 0,
+            pageFailures: pageFailureCount,
+        };
+        // verdict is derived from the measured checks (task-76): before, it was the literal
+        // "pass", i.e. a receipt that could not go red even if every check above read false.
+        const allChecksPassed = Object.values(checks).every(
+            (value) => value === true || value === 0,
+        );
         const receipt = {
             schemaVersion: 1,
-            verdict: "pass",
+            verdict: allChecksPassed ? "pass" : "fail",
             lane: "mock",
             taskId: "task-43",
             sessionId: SESSION_ID,
             runId: RUN_ID,
-            checks: {
-                toolCardVisible: await toolCard.isVisible(),
-                assistantRendered: assistantText.includes(ANSWER),
-                sameMessage:
-                    (await assistantRows.first().locator('[data-testid="tool-card"]').count()) ===
-                    1,
-                noErrorMessage: (await page.getByTestId("message-error").count()) === 0,
-                pageFailures: 0,
-            },
+            checks,
+            // Reads are a snapshot at emit time; the authoritative emptiness assertion runs in
+            // the auto fixture teardown (helpers/mock-test.ts:79). Named so nobody reads this
+            // number as the final verdict of the gate.
+            pageFailuresScope: "observed up to emit point; asserted in fixture teardown",
             counts: {
                 assistantRows: await assistantRows.count(),
                 toolCards: await page.getByTestId("tool-card").count(),
