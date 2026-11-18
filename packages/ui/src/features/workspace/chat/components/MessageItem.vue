@@ -88,9 +88,29 @@ const deliveryCcNames = computed(() =>
 /**
  * task-66①（D-1884-B）：花名册没解析掉的原文 @token。名单按 locale 连接，渲染走纯文本——
  * 它不是名字、不是 id，不参与花名册匹配（契约与 deliveryView 同口径）。
+ *
+ * <p>task-66① 追加（Lead 2026-11-19 批准「chip 显示截断 + title 全文」）：token 可能很长——
+ * {@code MentionParser} 的边界是空白/标点，模型没打空格时整串中文就是一个 token（真栈实测
+ * {@code @ewLeadXYZ我已经把下一步交给你}）。**截断只在显示层**，数据仍逐字 verbatim：
+ * 可见文本超长截到 {@link UNRESOLVED_DISPLAY_MAX} 个字符加省略号，{@code title} 始终给全文
+ * （外加那句人话解释）。不猜边界、不改解析、不动 wire —— 加规则才是引入第二套解析器。</p>
  */
-const deliveryUnresolvedNames = computed(() =>
+const UNRESOLVED_DISPLAY_MAX = 28;
+/** title 用的全文（未截断），与可见文本分离。 */
+const deliveryUnresolvedFull = computed(() =>
     (props.delivery?.unresolved ?? []).join(t("chat.delivery.listSeparator")),
+);
+const deliveryUnresolvedTitle = computed(() =>
+    [t("chat.delivery.unresolvedHint"), deliveryUnresolvedFull.value].filter(Boolean).join("\n"),
+);
+const deliveryUnresolvedNames = computed(() =>
+    (props.delivery?.unresolved ?? [])
+        .map((token) =>
+            token.length <= UNRESOLVED_DISPLAY_MAX
+                ? token
+                : `${token.slice(0, UNRESOLVED_DISPLAY_MAX)}…`,
+        )
+        .join(t("chat.delivery.listSeparator")),
 );
 
 /** PLAN-0665 M2：TO 变集合（一条消息可定向多个 agent），消息头显示 `发送→A · B`。 */
@@ -426,7 +446,7 @@ onUnmounted(() => {
                     v-if="deliveryUnresolvedNames"
                     class="rounded border border-destructive/40 bg-destructive/10 px-1 text-destructive"
                     data-testid="message-delivery-unresolved"
-                    :title="t('chat.delivery.unresolvedHint')"
+                    :title="deliveryUnresolvedTitle"
                     >{{ t("chat.delivery.unresolved", { names: deliveryUnresolvedNames }) }}</span
                 >
                 <template v-if="delivery.cc.length">

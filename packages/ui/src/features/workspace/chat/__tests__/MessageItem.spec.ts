@@ -823,7 +823,9 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
             i18n.global.t("chat.delivery.unresolved", { names: "@ewLeadXYZ" }),
         );
         expect(chip.text()).toContain("@ewLeadXYZ");
-        expect(chip.attributes("title")).toBe(i18n.global.t("chat.delivery.unresolvedHint"));
+        // task-66① 追加：title = 那句人话解释 + 全文（两段都要在，别把解释换成纯文本）
+        expect(chip.attributes("title")).toContain(i18n.global.t("chat.delivery.unresolvedHint"));
+        expect(chip.attributes("title")).toContain("@ewLeadXYZ");
         // 反向钉：未识别不是「被 @」，不得冒充成功送达的样式
         expect(wrapper.find('[data-testid="message-delivery-mention"]').exists()).toBe(false);
         wrapper.unmount();
@@ -838,6 +840,28 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
         expect(wrapper.get('[data-testid="message-delivery-unresolved"]').text()).toContain(
             "@ghost",
         );
+        wrapper.unmount();
+    });
+
+    /**
+     * task-66① 追加（Lead 2026-11-19 批准「chip 显示截断 + title 全文」）。
+     *
+     * <p>为什么需要：{@code MentionParser} 的 token 边界是空白/标点，模型没打空格时**整串中文**
+     * 就是一个 token（真栈实测 {@code @ewLeadXYZ我已经把下一步交给你}）——逐字渲染会把投递行撑成
+     * 一大段。两侧一起钉：可见文本截断（有省略号、比原文短），title 仍给**全文**（截断只在显示层，
+     * 数据 verbatim 不变）。</p>
+     */
+    it("truncates a very long unresolved token for display but keeps the full text in the title", () => {
+        const longToken = "@ewLeadXYZ我已经把下一步交给你了请查收并在今天下班前回复我谢谢配合";
+        const wrapper = mountDelivery(
+            { role: "assistant", content: longToken },
+            { to: [], mentions: [], cc: [], unresolved: [longToken] },
+        );
+        const chip = wrapper.get('[data-testid="message-delivery-unresolved"]');
+        expect(chip.text().length).toBeLessThan(longToken.length + 8);
+        expect(chip.text()).toContain("…");
+        expect(chip.text()).not.toContain(longToken);
+        expect(chip.attributes("title")).toContain(longToken);
         wrapper.unmount();
     });
 
