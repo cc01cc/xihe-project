@@ -61,6 +61,7 @@
 
 - Bootstrap/deployment env 与运行时业务配置是不同配置面；loader、优先级和覆盖透明度以 DEV-003 与各模块实现为准。
 - `.env*` 入库文件只能放非敏感占位值；真实凭证用受保护的本机/部署注入，不写入 git、脚本或日志。模块间认证与密钥解析顺序见 DEV-024；MCP 逻辑入口无会话，见 DEV-016。
+- **`XIHE_SEED_ADMIN`（登记，task-60 2026-11-19）**：是否在首跑建 `admin@xihe.local`。产品默认 **false**（`application.properties` 的 `${XIHE_SEED_ADMIN:false}`，全新安装走 `/onboarding`，task-172 / `D-1532` ④）；host/e2e 车道由 `scripts/dev-stack.mjs` 与 `scripts/stack-run.mjs` 显式置 `true`（`application-e2e.properties` 的 `cp.bootstrap.seed-admin=${XIHE_SEED_ADMIN:true}`），运维自己导出的值优先。**不登记会让 `check:mise-env` 恒红 ⇒ `mise run validate` 恒红**（本行就是那次清账）。
 - Config import、dev admin password 和 host/Compose 导入差异见 DEV-002/003；不得因配置未导入而绕过认证或写入明文 secret。
 
 ## Testing
