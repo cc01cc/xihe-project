@@ -15,7 +15,7 @@
  */
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import { api } from "../composables/api";
+import { ApiError, api } from "../composables/api";
 import { logger } from "@/lib/logger";
 import {
     countBoardTasks,
@@ -89,6 +89,15 @@ export const useTeamTasksStore = defineStore("teamTasks", () => {
             initialized = true;
         } catch (cause) {
             if (sessionId !== attachedSessionId) return;
+            // 404 = 端点未登记（旧 CP / 未挂该路由的 mock 车道）⇒ 按「本队无板」处理并留 warn，
+            // 不上错误横幅 —— N1 针对的是读面存在时的失败；端点缺席时挂横幅会让 mock 车道
+            // 每会话都出假错误。其余失败（5xx/403/形状破坏）照旧显式。
+            if (cause instanceof ApiError && cause.problem.status === 404) {
+                logger.warn("team_tasks_endpoint_missing", { sessionId });
+                error.value = null;
+                initialized = true;
+                return;
+            }
             error.value = presentError(cause);
         } finally {
             inFlight = false;

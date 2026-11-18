@@ -34,6 +34,8 @@ const props = withDefaults(
         loading: boolean;
         /** 已解析的用户文案（null = 无错误）。 */
         error: string | null;
+        /** 板内依赖跳转目标行：该行走「强制展开 + 滚入视野」。 */
+        highlightedTaskId?: string | null;
     }>(),
     {
         tasks: () => [],
@@ -41,6 +43,7 @@ const props = withDefaults(
         dropped: () => ({ malformed: 0, foreign: 0, deleted: 0 }),
         loading: false,
         error: null,
+        highlightedTaskId: null,
     },
 );
 
@@ -157,6 +160,7 @@ watch(
                     :key="task.taskId"
                     :task="task"
                     :task-no-by-id="taskNoById"
+                    :force-open="task.taskId === highlightedTaskId"
                     @navigate="emit('navigate', $event)"
                 />
             </ul>

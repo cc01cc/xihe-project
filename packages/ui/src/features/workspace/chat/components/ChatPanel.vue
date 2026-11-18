@@ -10,6 +10,7 @@ import { useAuthStore } from "../../../../stores/auth";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
 import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
+import { useTeamTasksStore } from "../../../../stores/teamTasks";
 import {
     ApiError,
     api,
@@ -25,6 +26,7 @@ import type {
     AttachmentFile,
     CheckpointResult,
     Message,
+    SessionDerivedActiveChild,
     SessionDerivedStateResponse,
     SessionRunSummary,
     DispatchQueueEntry,
@@ -37,6 +39,7 @@ import ApprovalModal from "./ApprovalModal.vue";
 import SessionSettingsPanel from "./SessionSettingsPanel.vue";
 import SessionDerivedStatePanel from "./SessionDerivedStatePanel.vue";
 import FollowUpQueuePanel from "./FollowUpQueuePanel.vue";
+import TeamBoardPanel from "./TeamBoardPanel.vue";
 import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
@@ -52,6 +55,7 @@ import {
     errorCopyKey,
     presentCauseError,
     problemDetailText,
+    type ErrorPresentation,
 } from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
@@ -398,6 +402,117 @@ watch(pendingApproval, (approval, previous) => {
         void refreshFollowUpQueue(props.sessionId);
     }
 });
+
+// ---- task-188 S2/S3（MVP⑤）：TeamBoard 只读板 + steer 来源深链 --------------------------------
+// 只读裁定（D-1821）：这里只有挂载/错误文案/两处纯读导航，零写面。
+
+const teamTasksStore = useTeamTasksStore();
+teamTasksStore.configure({
+    presentError: (cause) => presentCauseError(t, cause, t("teamBoard.errorTitle")).copy,
+});
+watch(
+    () => props.sessionId,
+    (id) => teamTasksStore.attach(id),
+    { immediate: true },
+);
+onBeforeUnmount(() => teamTasksStore.detach());
+
+/** 依赖任务跳转：任务是板内资产（非路由对象）⇒ 板内定位并强制展开目标行。 */
+const boardHighlightTaskId = ref<string | null>(null);
+function onBoardNavigate(taskId: string): void {
+    boardHighlightTaskId.value = taskId;
+}
+async function onBoardRetry(): Promise<void> {
+    await teamTasksStore.refresh();
+}
+/** steer 来源会话跳转：显式导航走 push（深链 /chat/:sessionId 是唯一事实）。 */
+async function onFollowUpNavigate(sessionId: string): Promise<void> {
+    await router.push({ name: "workspace-chat", params: { sessionId } });
+}
+
+// ---- task-188 S3（MVP⑤）：steer 插话入口 ----------------------------------------------------
+// 复用既有 composer（InputArea 零改动）：steer 模式下 @send 改道 POST /steers（cp-1 钉形，
+// 见 api.steerSession）。面板写面裁定不冲突 —— steer 的写原语就是 CP 的 steer 端点本身，
+// UI 只是复用 composer 接住文本，不开第二条写通道。
+
+const steerMode = ref(false);
+const steerTargetId = ref<string | null>(null);
+const steerSending = ref(false);
+const steerError = ref<ErrorPresentation | null>(null);
+
+/** 可插话目标 = 本会话 derived-state 的存活子会话（PLAN-0408 契约，既有读面零新增）。 */
+const steerTargets = computed<SessionDerivedActiveChild[]>(
+    () => derivedState.value?.activeChildren ?? [],
+);
+const steerEntryVisible = computed(
+    () => steerTargets.value.length > 0 && !steerMode.value && !followUpQueueMode.value,
+);
+
+function enterSteerMode(): void {
+    steerTargetId.value = steerTargets.value[0]?.childSessionId ?? null;
+    steerError.value = null;
+    steerMode.value = true;
+}
+
+function exitSteerMode(): void {
+    steerMode.value = false;
+    steerTargetId.value = null;
+    steerError.value = null;
+}
+
+// 目标从 activeChildren 消失（child 终态被移出投影）⇒ 立即退出，防止把插话发给陈旧目标。
+watch(steerTargets, (targets) => {
+    if (
+        steerMode.value &&
+        steerTargetId.value &&
+        !targets.some((item) => item.childSessionId === steerTargetId.value)
+    ) {
+        exitSteerMode();
+    }
+});
+watch(
+    () => props.sessionId,
+    () => exitSteerMode(),
+);
+
+/** 逐码错误面（drawer sectionError 同款模式：码不同、补救不同，一句兜底等于让用户去猜）。 */
+function steerErrorPresentation(cause: unknown): ErrorPresentation {
+    const presentation = presentCauseError(t, cause, t("steer.errorTitle"));
+    const code = cause instanceof ApiError ? cause.problem.code : undefined;
+    switch (code) {
+        case "STEER_FORBIDDEN":
+            return { ...presentation, copy: t("steer.forbidden") };
+        case "FOLLOW_UP_NOT_AVAILABLE":
+            return { ...presentation, copy: t("steer.unavailable") };
+        case "FOLLOW_UP_QUEUE_FULL":
+            return { ...presentation, copy: t("steer.queueFull") };
+        case "IDEMPOTENCY_KEY_REUSED":
+            return { ...presentation, copy: t("steer.keyReused") };
+        default:
+            return presentation;
+    }
+}
+
+async function handleSteer(content: string, attachments?: AttachmentFile[]): Promise<void> {
+    const target = steerTargetId.value;
+    if (!target || steerSending.value) return;
+    if (attachments && attachments.length > 0) {
+        toast.error(t("steer.attachmentsUnsupported"));
+        return;
+    }
+    steerSending.value = true;
+    steerError.value = null;
+    try {
+        await api.steerSession(target, { text: content }, crypto.randomUUID());
+        toast.success(t("steer.sent"));
+        exitSteerMode();
+    } catch (cause) {
+        // 失败留在原地呈现错误面（AlertDialogAction 教训：无条件关弹窗会吞错误）。
+        steerError.value = steerErrorPresentation(cause);
+    } finally {
+        steerSending.value = false;
+    }
+}
 /** Classification authority hint (server still enforces): workspace OWNER / instance ADMIN. */
 const canClassifyApproval = computed(() => authStore.canClassifyTools);
 
@@ -1163,6 +1278,8 @@ function onInputSend(
     cc?: string[],
     toParticipantIds?: string[],
 ): Promise<void> {
+    // task-188 S3：steer 模式下 composer 的 send 改道插话（composer 复用，仅去向不同）。
+    if (steerMode.value) return handleSteer(content, attachments);
     return handleSend(content, attachments, undefined, asParticipantId, cc, toParticipantIds);
 }
 
@@ -1609,6 +1726,18 @@ watch(
             :run-status="currentRunStatus"
         />
 
+        <TeamBoardPanel
+            v-if="teamTasksStore.hasContent"
+            :tasks="teamTasksStore.rows"
+            :task-no-by-id="teamTasksStore.taskNoById"
+            :dropped="teamTasksStore.dropped"
+            :loading="teamTasksStore.loading"
+            :error="teamTasksStore.error"
+            :highlighted-task-id="boardHighlightTaskId"
+            @retry="onBoardRetry"
+            @navigate="onBoardNavigate"
+        />
+
         <FollowUpQueuePanel
             v-if="followUpQueue && followUpQueue.outstandingCount > 0"
             :snapshot="followUpQueue"
@@ -1619,6 +1748,7 @@ watch(
             :error="followUpQueueError"
             @withdraw="withdrawFollowUp"
             @continue="continueFollowUpQueue"
+            @navigate="onFollowUpNavigate"
         />
 
         <button
@@ -1665,6 +1795,57 @@ watch(
                 </button>
             </div>
         </div>
+
+        <!-- task-188 S3：steer 插话 —— 复用既有 composer，模式横幅标注 submit 去向。 -->
+        <div
+            v-if="steerMode"
+            class="mx-4 mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-xs"
+            data-testid="steer-mode-banner"
+        >
+            <span class="font-medium">{{ t("steer.modeTitle") }}</span>
+            <label class="inline-flex items-center gap-1">
+                <span class="text-muted-foreground">{{ t("steer.targetLabel") }}</span>
+                <select
+                    v-model="steerTargetId"
+                    class="max-w-40 truncate rounded border bg-background px-1.5 py-1"
+                    data-testid="steer-target-select"
+                >
+                    <option
+                        v-for="target in steerTargets"
+                        :key="target.childSessionId"
+                        :value="target.childSessionId"
+                    >
+                        {{ target.name ?? target.childSessionId.slice(0, 8) }}
+                    </option>
+                </select>
+            </label>
+            <span class="text-muted-foreground">{{ t("steer.modeHint") }}</span>
+            <button
+                type="button"
+                class="ml-auto shrink-0 font-medium text-primary transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-testid="steer-cancel"
+                @click="exitSteerMode"
+            >
+                {{ t("steer.cancel") }}
+            </button>
+            <p
+                v-if="steerError"
+                role="alert"
+                class="basis-full text-destructive"
+                data-testid="steer-error"
+            >
+                {{ steerError.copy }}
+            </p>
+        </div>
+        <button
+            v-else-if="steerEntryVisible"
+            type="button"
+            class="mx-4 mb-2 self-start rounded-lg border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="steer-entry"
+            @click="enterSteerMode"
+        >
+            {{ t("steer.entry") }}
+        </button>
 
         <InputArea
             ref="inputComponent"

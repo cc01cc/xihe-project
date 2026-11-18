@@ -3450,6 +3450,29 @@ export const api = {
         return root.tasks as ApiTeamTask[];
     },
     /**
+     * task-188 S3（MVP⑤）：Lead → teammate 中途指挥（steer 通道）。cp-1 钉形：
+     * Idempotency-Key 必填（1..128；幂等重放 200 / 首次 202）；body text 1..8192 必填、
+     * expectedRevision 可选（advisory-only）；响应 = FollowUpQueueSnapshot（steer 作为
+     * sourceKind=agent_steer 的 item 落 child 的 V49 队列）。
+     *
+     * <p>错误码（ChatPanel steer 错误面逐码映射）：403 STEER_FORBIDDEN /
+     * 409 FOLLOW_UP_NOT_AVAILABLE · FOLLOW_UP_QUEUE_FULL · IDEMPOTENCY_KEY_REUSED。</p>
+     */
+    steerSession(
+        childSessionId: string,
+        body: { text: string; expectedRevision?: number },
+        idempotencyKey: string,
+    ): Promise<ApiFollowUpQueueSnapshot> {
+        return request<ApiFollowUpQueueSnapshot>(
+            "/sessions/" + encodeURIComponent(childSessionId) + "/steers",
+            {
+                method: "POST",
+                headers: { "Idempotency-Key": idempotencyKey },
+                body: JSON.stringify(body),
+            },
+        );
+    },
+    /**
      * PLAN-0635 M3: server-owned command registry. The server decides availability
      * (`available` + `reason`); the UI only renders it and merges the local table.
      */

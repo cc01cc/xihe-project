@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { api, type ApiTeamTask } from "../../composables/api";
+import { ApiError, api, type ApiTeamTask } from "../../composables/api";
 import { useTeamTasksStore } from "../teamTasks";
 import { notifySessionEvent } from "../../features/workspace/chat/sessionEvents";
 
@@ -165,6 +165,20 @@ describe("useTeamTasksStore", () => {
         await flush();
         // 旧会话响应到达，但不得回填：行必须来自新会话那次调用。
         expect(store.rows.map((row) => row.subject)).toEqual(["新会话的任务"]);
+    });
+
+    it("treats a 404 as 'no board on this stack' instead of surfacing an error banner", async () => {
+        // 端点未登记（旧 CP / 未挂路由的 mock 车道）⇒ 无板无横幅，hasContent 保持 false。
+        spy.mockRejectedValue(
+            new ApiError({ status: 404, code: "MOCK_ENDPOINT_MISSING", requestId: "t" }),
+        );
+        const store = useTeamTasksStore();
+        store.attach(SESSION, { rootSessionId: ROOT });
+        await flush();
+
+        expect(store.error).toBeNull();
+        expect(store.rows).toHaveLength(0);
+        expect(store.hasContent).toBe(false);
     });
 
     it("stops reacting to signals after detach", async () => {

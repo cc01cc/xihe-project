@@ -221,6 +221,32 @@ describe("TeamBoardPanel", () => {
         expect(wrapper.emitted("navigate")).toEqual([[TASK_3]]);
     });
 
+    it("force-opens the highlighted row for in-board dependency jumps (M2)", async () => {
+        const wrapper = mountPanel({
+            tasks: [
+                wireTask({ blockedBy: [TASK_2] }),
+                wireTask({ taskId: TASK_2, taskNo: 2, description: "被依赖的行" }),
+            ],
+        });
+        // 未高亮时两行都闭合。
+        expect(
+            wrapper.find('[data-testid="team-board-detail"]').attributes("hidden"),
+        ).toBeDefined();
+
+        await wrapper.setProps({ highlightedTaskId: TASK_2 });
+        await nextTick();
+        await nextTick();
+
+        const rows = wrapper.findAll('[data-testid="team-board-row"]');
+        // 只有目标行走开（forceOpen 精确匹配 taskId）。
+        const detailOfTarget = rows[1].find('[data-testid="team-board-detail"]');
+        expect(detailOfTarget.exists()).toBe(true);
+        expect(detailOfTarget.attributes("hidden")).toBeUndefined();
+        expect(detailOfTarget.text()).toContain("被依赖的行");
+        const detailOfOther = rows[0].find('[data-testid="team-board-detail"]');
+        expect(detailOfOther.attributes("hidden")).toBeDefined();
+    });
+
     it("renders an unknown dependency as a short-id fallback instead of dropping it", async () => {
         const wrapper = mountPanel({
             tasks: [

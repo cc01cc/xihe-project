@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Badge } from "../../../../components/ui/badge";
 import {
@@ -20,6 +20,8 @@ const props = defineProps<{
     task: TeamBoardTaskView;
     /** taskId → taskNo（含已删任务 —— blockedBy 可能指向墓碑）。 */
     taskNoById: Record<string, number>;
+    /** 板内跳转目标（blockedBy 点击）：强制展开并滚入视野。 */
+    forceOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +33,18 @@ const { t } = useI18n();
 const K = "teamBoard.";
 
 const open = ref(false);
+const rootEl = ref<HTMLElement | null>(null);
+
+// 板内依赖跳转（M2）：目标是行不是路由 ⇒ 展开 + 滚入视野。scrollIntoView 在 jsdom 不存在，
+// 守卫跳过（spec 只断言展开）。
+watch(
+    () => props.forceOpen,
+    (forced) => {
+        if (!forced) return;
+        open.value = true;
+        void nextTick(() => rootEl.value?.scrollIntoView?.({ block: "nearest" }));
+    },
+);
 
 const DOT_CLASS: Record<TeamBoardDisplayStatus, string> = {
     pending: "bg-muted-foreground/50",
@@ -62,6 +76,7 @@ function isKnownTask(taskId: string): boolean {
 
 <template>
     <li
+        ref="rootEl"
         class="border-t first:border-t-0"
         data-testid="team-board-row"
         :data-task-no="task.label"
