@@ -3365,8 +3365,12 @@ paths:
         creates carry trigger_source="chain" while the human composer keeps "user". Distinguishability
         lives in the wake_dispatch rows: parentRunId is non-null (an agent hand-off IS a delegation
         edge; human TO siblings stay NULL), the audit label is "to", and the round prefix is
-        "wake:to:agent:". A reader that must tell a human-typed TO from an agent-emitted one joins those
-        three. Adding a run column for it later is not the plan (agent_to is a future upgrade item, not
+        "wake:to:agent:". Measured caveat: that label rides the submitted/notify/refused rows, while the
+        pre-existing chain_refused funnel stores the RAW trigger source ("chain" here, "user" for a
+        duplicated human TO hop) instead - so a refusal row is read by parentRunId plus round prefix,
+        never by the label alone. A reader that must tell a human-typed TO from an agent-emitted one
+        joins those three.
+        Adding a run column for it later is not the plan (agent_to is a future upgrade item, not
         debt of this batch), and the "origin-side wake runs are always scheduled" limitation is closed
         on this audit face via triggerSource="to".
         The announced line (Q3): on success the content is persisted as one ASSISTANT message under the

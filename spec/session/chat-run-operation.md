@@ -143,7 +143,12 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 > **人发起 vs agent 发起靠审计面区分、不靠 run 行**；origin 侧 wake run 一律 `scheduled` 那条限制，请用 `wake_dispatch` 审计行的 `triggerSource="to"` 补齐。
 
 - 被本面开出的 run 记 `trigger_source="chain"`（`chat_runs.trigger_source` 的 CHECK 本就允许该值 ⇒ 零迁移）；人发起的 TO 仍记 `user`。
-- 三件套判据（读 `context_events` 里 `event_type=wake_dispatch` 的行）：`parentRunId != null` ∧ 审计 label `to` ∧ 轮次前缀 `wake:to:agent:`。人发起的 TO 是**同一次提交的兄弟**，`parentRunId` 故意为 NULL——两个形状因此可分，且 agent 发起的这一条是**真实委派边**。
+- 三件套判据（读 `context_events` 里 `event_type=wake_dispatch` 的行）：`payload.parentRunId != null` ∧
+  `payload.triggerSource` 为 `to` ∧ `payload.wakeRoundId` 以 `wake:to:agent:` 起头。
+- 实测例外（真栈 2026-11-19 读数，勿按 label 一刀切）：`outcome=chain_refused` 的行走既有漏斗
+  `chainRefused(...)`，它把**原始** `triggerSource` 写进审计（本面记 `chain`；人发起的 TO 重复一跳记 `user`），
+  不是审计 label。所以「label=to」只对 `submitted`/`notify`/`refused` 成立；**判定委派边存在**请用
+  `parentRunId` + `wakeRoundId` 前缀这两条。
 - `agent_to`（在 run 行上直接区分发起方）是**未来升级项，不是本批欠账**；不得以「先加列再说」绕过上面这段注释。
 
 ### 告知落库的窄写入（Q3 裁定）与两处禁用的副作用
