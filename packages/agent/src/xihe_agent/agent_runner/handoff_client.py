@@ -107,6 +107,15 @@ def build_handoff_client(
     run_id = str(raw_run)
     if api_token is None:
         api_token = _resolve_api_token()
+    # 接线必须可观测（Lead 的验收判据是「模型自己发起」，出问题时第一个要能回答的就是
+    # 「工具到底进没进表、指向哪个 CP」）。这一行还顺带钉住一个真实坑：栈派生 env 与
+    # .env.dev 里写死的 12631 谁赢——不打印就只能靠猜。
+    logger.info(
+        "[LIFECYCLE] service=agent event=handoff_client_wired cpOrigin={} runId={} tokenSet={}",
+        base,
+        run_id,
+        bool(api_token),
+    )
 
     async def client(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {api_token}"}

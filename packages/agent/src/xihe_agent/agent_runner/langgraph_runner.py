@@ -130,9 +130,7 @@ def _align_truncation_start(history: Sequence[Message], limit: int) -> int:
     return start
 
 
-def _attach_terminal_truncation(
-    event: AgentEvent, truncation: dict[str, Any] | None
-) -> AgentEvent:
+def _attach_terminal_truncation(event: AgentEvent, truncation: dict[str, Any] | None) -> AgentEvent:
     """Merge the inbound-cap marker into the run's terminal ``done`` payload (BL-289).
 
     The marker is computed once by ``api/chat.py`` (the production truncation point) and travels on
@@ -318,8 +316,7 @@ class LangGraphRunner(AgentRunner):
             team_task_client = build_team_task_client(context)
         except Exception as exc:
             logger.warning(
-                "[LIFECYCLE] service=agent event=team_task_client_unwired"
-                + " reason=assembly_failed errorType={}",
+                "[LIFECYCLE] service=agent event=team_task_client_unwired" + " reason=assembly_failed errorType={}",
                 type(exc).__name__,
             )
             team_task_client = None
@@ -333,8 +330,7 @@ class LangGraphRunner(AgentRunner):
             handoff_client = build_handoff_client(context)
         except Exception as exc:
             logger.warning(
-                "[LIFECYCLE] service=agent event=handoff_client_unwired"
-                + " reason=assembly_failed errorType={}",
+                "[LIFECYCLE] service=agent event=handoff_client_unwired" + " reason=assembly_failed errorType={}",
                 type(exc).__name__,
             )
             handoff_client = None
@@ -358,9 +354,7 @@ class LangGraphRunner(AgentRunner):
         # PLAN-0493 T2.1/T2.2: per-Run observation window (CP-resolved thresholds
         # and exempt set; tier-1 admission in the tool adapter, tier-2 returns
         # through NO_PROGRESS_SIGNAL_KEY).
-        context.metadata[LOOP_WINDOW_KEY] = LoopObservationWindow(
-            config.loop, config.loop_exempt_tools
-        )
+        context.metadata[LOOP_WINDOW_KEY] = LoopObservationWindow(config.loop, config.loop_exempt_tools)
 
         credential_handoff = RunScopedCredentialHandoff()
         model = self._model_factory(config.model)
@@ -376,6 +370,14 @@ class LangGraphRunner(AgentRunner):
         elif any(tool.spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME for tool in config.tools):
             raise RuntimeError("credential delivery requires a Run-scoped model handoff")
         tools = [self._adapt_tool(t, context, credential_handoff) for t in run_tool_faces]
+        # 可观测（task-40 §3 第二批）：模型报「我没有工具」时，这条读数是唯一能分清
+        # 「工具没进表」与「工具进了表但模型没调」的东西 —— 两者的修法完全相反。
+        logger.info(
+            "[LIFECYCLE] service=agent event=run_tool_table runId={} count={} names={}",
+            context.metadata.get("runId"),
+            len(run_tool_faces),
+            ",".join(sorted(t.spec.name for t in run_tool_faces)),
+        )
 
         # PLAN-294 M1 (decision #1): the projection snapshot is the canonical
         # conversation history (compaction already applied by CP). The caller's
@@ -457,9 +459,7 @@ class LangGraphRunner(AgentRunner):
             # types it as Awaitable, not Coroutine; asyncio still schedules it).
             raw_task: asyncio.Future[Any] = asyncio.ensure_future(raw_stream.__anext__())
             human_wait_task = asyncio.create_task(human_wait_events.get())
-            transport_task = (
-                asyncio.create_task(transport_events.get()) if transport_events is not None else None
-            )
+            transport_task = asyncio.create_task(transport_events.get()) if transport_events is not None else None
             cancel_wait_task: asyncio.Task[bool] | None = (
                 asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
             )
@@ -544,9 +544,7 @@ class LangGraphRunner(AgentRunner):
                                     total_tokens=usage.total_tokens,
                                     elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
                                 )
-                            yield _attach_terminal_truncation(
-                                event, config.agent_context_truncation
-                            )
+                            yield _attach_terminal_truncation(event, config.agent_context_truncation)
                         if budget_dimension:
                             logger.info(
                                 "Run budget exhausted: dimension={} llmCalls={} tokens={}",
