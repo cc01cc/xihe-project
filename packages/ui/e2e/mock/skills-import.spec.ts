@@ -152,7 +152,9 @@ test.describe("实例层技能导入（task-167）", () => {
         await expect(page.getByTestId("skill-item-skill-9001-release-notes-check")).toBeVisible();
     });
 
-    test("无写权限：入口仍在但置灰 + 理由点名原子，对话框打不开", async ({ page }) => {
+    test("无写权限：入口仍在但置灰 + 理由说人话（不点名原子常量），对话框打不开", async ({
+        page,
+    }) => {
         await setupMockAuth(page);
         await page.route("**/api/v1/me/permissions", (route) =>
             route.fulfill({
@@ -178,7 +180,14 @@ test.describe("实例层技能导入（task-167）", () => {
         await expect(entry).toBeDisabled();
         const reason = page.getByTestId("settings-skills-import-disabled-reason");
         await expect(reason).toBeVisible();
-        await expect(reason).toContainText("MANAGE_SKILL_LIBRARY");
+        // task-67（F-17 补条）：这条原先钉的是**原子常量** `MANAGE_SKILL_LIBRARY`，文案去泄露后
+        // （A03 f63195fc3）它恒红 —— 改文案没改断言，且当时只跑了改过的 spec，所以红了两笔才被发现。
+        // 两面都要有，只留一面就是 F-17 的原始形态：
+        //   正向 —— 钉用户真正看到的人话；
+        //   反向 —— 钉住常量不许回流进用户文案（这条面另有仪器：DEV-011 §14 的「权限原子/枚举常量」
+        //   形态 /[A-Z][A-Z0-9]+(_[A-Z0-9]+)+/ 由 check:copy-leak 在技能三面上跑，当前 0 命中）。
+        await expect(reason).toContainText("管理实例技能库");
+        await expect(reason).not.toContainText("MANAGE_SKILL_LIBRARY");
 
         // 置灰按钮点不出对话框（Playwright 的 click 会因 disabled 超时，所以用 force 验一下没有副作用）。
         await entry.click({ force: true });
