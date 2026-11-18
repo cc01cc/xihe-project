@@ -105,7 +105,7 @@ function isItemActive(path: string) {
                         type="button"
                         :data-testid="`global-rail-menu-${module.id}`"
                         :aria-label="t('sidebar.moduleMenu')"
-                        class="rail-module-menu absolute top-1/2 right-1 flex min-h-7 min-w-7 -translate-y-1/2 items-center justify-center rounded-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:sr-only"
+                        class="rail-module-menu absolute top-1/2 right-1 flex min-h-7 min-w-7 -translate-y-1/2 items-center justify-center rounded-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:sr-only"
                     >
                         <ChevronRight class="size-3.5" aria-hidden="true" />
                     </button>

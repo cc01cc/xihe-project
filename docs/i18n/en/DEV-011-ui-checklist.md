@@ -481,3 +481,125 @@ Likewise **`opacity` breathing may only target non-text, non-icon surfaces** (`b
   1. The counting unit is the **application site**, not "the number of visually distinct animations": element reuse in virtual scrolling makes one code site produce many visible animations.
   2. `transition` / `<Transition>` are only registered in the audit report's supporting layer, not classified site by site (larger surface, half of it vendor).
   3. Vendor (`src/components/ui/**`) is **judged but never edited**: its header requires byte-alignment with upstream ⇒ inconsistencies are resolved on the in-house side, or by a batch that edits vendor and records it.
+
+
+## 13. Top-bar chrome and input-field visual weight (user ruling 2026-11-19, `task-38`)
+
+> Source: the user pointed at four defects on a real screenshot — the top bar is two rows, hint sentences each
+> occupy a row, CC is impossible to find, and a second rectangle appears with the caret while typing.
+> None of these were covered by any criterion (grepping `DEV-010`/`DEV-011` for "top bar / one row / two rows / nav"
+> returned nothing), which is why self-reviews never caught them. This section turns them into criteria **with a
+> measurement method** (`D-1871`: a criterion without a measurement method is not a criterion).
+
+### 13.1 The top bar is one row
+
+**Draw the boundary first (this matters more than any number — user ruling 2026-11-19)**:
+
+- **The top bar = the single `workspace-secondary-nav` band**, carrying "page navigation + panel toggles".
+- **`workspace-container-tabs` belongs to the content area and is explicitly NOT part of the top bar** (user: "the
+  container tabs are still the container's, not a top-bar component"). The reason "one row" was said many times and
+  never landed is exactly this undefined boundary: whoever read "one row" could not decide whether the container tabs
+  had to move, so everyone stayed put.
+- **`workspace-toolbar` is not part of the top bar**: it is the workbench (content area) tool band, and on desktop it
+  **must not form a band**.
+
+**Criterion**: on desktop (≥ `md`) there is exactly **one** top bar — `workspace-secondary-nav` — and the six panel
+toggles (files / code / changes / monitor / members / delegation) fall inside that band's x range.
+
+**Measurement** (real browser at 1920×1080, `getBoundingClientRect()`; "it looks like one row" does not count):
+
+| Element | Requirement |
+| --- | --- |
+| `[data-testid="workspace-secondary-nav"]` | `height == 32` (`h-8`); aligned to the page top |
+| `[data-testid="workspace-secondary-nav-actions"]` | present, `width > 0`, and its x range **inside the nav band's x range** |
+| `[data-testid="workspace-toolbar"]` | desktop: `height == 0` **or absent**; mobile still renders it (the only narrow-screen page entry — see the C3 guard comment in `WorkspaceToolbar.vue`, do not delete) |
+| top-band count | in the region y < 40 there is exactly **one** band carrying navigation plus the panel toggles |
+
+**Implementation constraint**: the toggle cluster moves via the Vue core `<Teleport to="#workspace-nav-actions">`;
+**props / emits / testids stay identical**. Do not lift the workbench's 6 props and 6 emits into the shell to merge the
+row — that turns a visual card into a structural refactor.
+
+**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: put the panel toggles
+back into the `workspace-toolbar` content band ⇒ both "nav-actions exists inside the nav band's x range" and
+"toolbar forms no band on desktop" **must go red**. Static guard:
+`packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts`
+
+### 13.2 Three weight tiers for input fields
+
+**Criterion**: input fields on one screen **must not all be fully boxed** — if everything is important, nothing is.
+
+| Tier | Form | Applies to | Anchor |
+| --- | --- | --- | --- |
+| **1 · boxed** | full `border` + radius | the primary input (where the user actually types: the composer textarea container) | `InputArea.vue` composer container |
+| **2 · light bottom rule** | `border-b` (muted), **no** side/top border, **no** rounded frame | auxiliary fields: Send (TO) / Cc (CC) / Send as | `RecipientField.vue` row container |
+| **3 · shadow only** | no `border`; `shadow-*` establishes the clickable surface | inline affordances: chips, the `+ Cc` pill | `RecipientField` chip, `cc-expand` |
+
+**Why the vendor default does not satisfy this** (the answer AGENTS demands before deviating): the base class of
+`components/ui/input/Input.vue` is `rounded-lg border … h-8` ⇒ **the vendor field is already tier 1**. The composer's
+auxiliary fields are an inline "label + chips + input" row; putting a vendor Input there inserts a 32px solid frame into
+every row, **equal in weight to the primary input** — exactly what this section forbids. Tier 2 is therefore a **new**
+form in this design system, implemented **locally on those composer fields only**. Adding a `secondary` variant to the
+global `Input.vue` is **forbidden**: it becomes an unowned global switch.
+
+**Basis**: information hierarchy — auxiliary fields must not weigh the same as the primary input. **Not** "it looks lighter".
+
+**Measurement**: real-browser `getComputedStyle` at three places — primary container `borderTopWidth == 1px` and
+`borderTopLeftRadius > 0`; TO/CC/Send-as row container `borderTopWidth == 0` and `borderBottomWidth >= 1px`;
+chip `borderTopWidth == 0` and `boxShadow != "none"`.
+
+### 13.3 Exactly one focus indicator
+
+**Criterion**: any focusable element may show **one** focus visual at a time. In nested forms (outer container +
+inner `input`/`textarea`/contenteditable) the indicator is drawn **by the outer element**; the inner element must not
+draw its own `box-shadow` ring and must not keep a UA / global `outline`.
+
+**Root cause (measured — do not chase the wrong thing again)**: the composer's "rectangle that appears with the caret"
+is **not** a UA outline: the inner `outline-style` already computes to `none`. The inner textarea draws
+`box-shadow … oklab(0.205 0 0 / 0.5) 0 0 0 3px` while the outer container has a `1px oklch(0.922 0 0)` rule ⇒
+**two frames, with different colour and width**. `--ring` / `--sidebar-ring` = `var(--primary)` is a **deliberate**
+deviation from the official shadcn value (`m2-impl.md:26/48`); reverting those two lines to `oklch(0.708 0 0)` "for a
+cleaner diff" is **a functional regression, not a cleanup**.
+
+**Measurement** (keyboard path per the focus-evidence discipline; scripted `focus()` does not count): after Tab reaches
+the target, **settle before reading**, then read `getComputedStyle`:
+
+> **Settling is a hard precondition** (pitfall measured 2026-11-19): when the focus ring carries `transition-shadow`, reading
+> `getComputedStyle` **immediately** after pressing Tab returns the **animation start value** — the ring layer still has alpha 0
+> (same element, measured: `oklab(0 0 0 / 0) 0px 0px 0px 0px` immediately vs `oklab(0.205 0 0 / 0.5) 0px 0px 0px 2px` after 400 ms).
+> The consequence is a **systematic false negative**: a ring that exists is read as absent, so a missing focus indicator goes undetected.
+> ⇒ **Criterion**: any `doubles` reading (including `doubles = 0`) must also state the **per-stop settle duration**, otherwise that 0
+> does not count; settle floor **220 ms** (longer than the vendor default 150 ms transition). This repo's measurement uses 220 ms.
+
+1. **inner**: `outlineStyle == "none"` **and** `boxShadow == "none"`;
+2. **outer**: a ring in `boxShadow` **or** `outlineStyle != "none"` — never both;
+3. **repo sweep**: walk every tab stop and **split `boxShadow` into layers** before judging —
+   a **ring layer** ⇔ `inset == false && offsetX == 0 && offsetY == 0 && blur == 0 && spread > 0` **and its colour alpha > 0**;
+   a **projection layer** ⇔ `blur > 0` or `offset ≠ 0`; layers with alpha 0 are **transparent placeholders**
+   (vendor `shadow-*` utilities lay down 5 layers, most of them transparent) and must be discarded.
+   **Double indicator ⇔ one valid ring layer exists AND `outlineStyle != "none" && parseFloat(outlineWidth) >= 1`.**
+   The literal `boxShadow != "none"` is **not usable as the test** (independent re-run 2026-11-19:
+   **2 false positives / 4 false negatives**) — it flagged `dock-tab-files` (5 fully transparent layers, in fact one outline)
+   and `message-search-toggle` (a `shadow-sm` projection, not a focus language at all) while missing four real ones.
+   **Inventory under the corrected test**: 4 `global-rail-menu-*` buttons (workbench / org-members / resources / settings —
+   `outline 2px solid` plus a solid `ring 2px`) and the tab's `outline-1` + `ring-3` pair (vendor
+   `components/ui/tabs/TabsTrigger.vue:20`). Both are fixed in this batch: the rail gains `focus-visible:outline-none`,
+   the vendor trigger drops `focus-visible:outline-1 focus-visible:outline-ring` (keeping `border-ring + ring-3`,
+   this repo's common focus language); the re-run after the fix measures 0.
+
+### 13.4 Hint copy must not occupy a whole row
+
+**Criterion**: a field explanation rendered as a **permanent full-width row** is retired — it moves into a tooltip
+(the in-stack `components/ui/tooltip/*`, reka-ui primitives; **no hand-rolled tooltip**), with all four holding:
+
+1. **keyboard reachable**: shown on focus, not hover only;
+2. **single source of copy**: still in `src/i18n/index.ts`, never hardcoded in the component;
+3. **motion tier**: §12.4 **T0, 80–120ms, `ease`|`ease-out`** — no invented durations;
+4. **AT-readable**: the text stays in the DOM permanently (`sr-only`), not only while the overlay is open.
+
+**Exceptions (registered as facts, not as loosening)**: `composer-workspace-less-hint` (task-547 F-A: an independent
+session must *say* why two controls are missing) and the one-shot `role="status"` notices
+(`chat-to-empty-hint`, `compose-deeplink-unsat-hint`: dismissible, not permanent chrome) **stay as rows**.
+
+**Measurement**: Tab to `composer-*-hint-trigger` in a real browser ⇒ `[data-testid="composer-*-hint"]` has
+`getBoundingClientRect().height > 0`; and the count of permanent hint paragraphs in the composer region
+(`[data-testid*="hint"]` `<p>` children of `.space-y-1.5`) is **0**.

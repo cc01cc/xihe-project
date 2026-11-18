@@ -1,20 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
-import {
-    Activity,
-    Code,
-    FileDiff,
-    FolderTree,
-    GitBranch,
-    MoreHorizontal,
-    PanelLeft,
-    Plus,
-    Users,
-} from "@lucide/vue";
+import { MoreHorizontal, PanelLeft, Plus } from "@lucide/vue";
 import { Button } from "../../../components/ui/button";
+import WorkspacePanelActions from "./WorkspacePanelActions.vue";
 import {
     workspacePath,
     workspaceScheduledTasksPath,
@@ -54,6 +45,35 @@ const emit = defineEmits<{
     toggleMembers: [];
     toggleDelegation: [];
 }>();
+
+/**
+ * task-38 C1（DEV-011 §13.1）：顶栏 = `workspace-secondary-nav` 一条带，面板开关必须落在那条带里。
+ * 这六个按钮的状态与回调都归 workbench，**不上提契约**，改用 Vue 核心 `<Teleport>` 把同一份标记
+ * 投进壳层 nav 行的挂载点 `#workspace-nav-actions`。挂载点不存在时（单测直接挂载本组件、或任何
+ * 没有工作区壳的上下文）**留在原地渲染**，两条路径共用 `WorkspacePanelActions`，不复制第二份标记。
+ */
+const navActionsReady = ref(false);
+
+onMounted(() => {
+    navActionsReady.value = document.getElementById("workspace-nav-actions") !== null;
+});
+
+const panelActionProps = computed(() => ({
+        filesOpen: props.filesOpen,
+        codeOpen: props.codeOpen,
+        changesOpen: props.changesOpen,
+        monitorOpen: props.monitorOpen,
+        membersOpen: props.membersOpen,
+        delegationOpen: props.delegationOpen,
+    })),
+    panelActionEvents = {
+        toggleFiles: () => emit("toggleFiles"),
+        toggleCode: () => emit("toggleCode"),
+        toggleChanges: () => emit("toggleChanges"),
+        toggleMonitor: () => emit("toggleMonitor"),
+        toggleMembers: () => emit("toggleMembers"),
+        toggleDelegation: () => emit("toggleDelegation"),
+    };
 
 const { t } = useI18n();
 const router = useRouter(),
@@ -102,7 +122,7 @@ function overflowNav(navigate: () => void) {
     -->
     <div
         data-testid="workspace-toolbar"
-        class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-card"
+        class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-card md:hidden"
     >
         <!--
             task-57（SC 2.5.8 24×24 AA）：原手搓 `<button class="p-1.5">` + `size-3.5` 图标 =
@@ -284,107 +304,16 @@ function overflowNav(navigate: () => void) {
         -->
         <div class="min-w-0 flex-1" aria-hidden="true" />
 
-        <div class="flex items-center gap-1 max-md:hidden">
-            <!--
-                D-1777/D-1778 第 5 行：files（目录树）面板的桌面重开/收起入口。
-                树在右栏容器里被关掉后（files 页签关闭），从这里重开。
-            -->
-            <button
-                type="button"
-                data-testid="workspace-toolbar-files"
-                class="p-1.5 rounded transition-colors"
-                :class="
-                    filesOpen
-                        ? 'bg-accent text-foreground'
-                        : 'text-muted-foreground hover:bg-accent'
-                "
-                :title="filesOpen ? t('workspace.collapseFiles') : t('workspace.expandFiles')"
-                :aria-label="filesOpen ? t('workspace.collapseFiles') : t('workspace.expandFiles')"
-                :aria-pressed="filesOpen === true"
-                @click="emit('toggleFiles')"
-            >
-                <FolderTree class="size-3.5" />
-            </button>
-            <button
-                type="button"
-                data-testid="workspace-toolbar-code"
-                class="p-1.5 rounded transition-colors"
-                :class="
-                    codeOpen ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent'
-                "
-                :title="t('workspace.toggleCode')"
-                :aria-label="t('workspace.toggleCode')"
-                :aria-pressed="codeOpen === true"
-                @click="emit('toggleCode')"
-            >
-                <Code class="size-3.5" />
-            </button>
-            <button
-                type="button"
-                data-testid="workspace-toolbar-changes"
-                class="p-1.5 rounded transition-colors"
-                :class="
-                    changesOpen
-                        ? 'bg-accent text-foreground'
-                        : 'text-muted-foreground hover:bg-accent'
-                "
-                :title="t('workspace.toggleDiff')"
-                :aria-label="t('workspace.toggleDiff')"
-                :aria-pressed="changesOpen === true"
-                @click="emit('toggleChanges')"
-            >
-                <FileDiff class="size-3.5" />
-            </button>
-            <button
-                type="button"
-                data-testid="workspace-toolbar-monitor"
-                class="p-1.5 rounded transition-colors"
-                :class="
-                    monitorOpen
-                        ? 'bg-accent text-foreground'
-                        : 'text-muted-foreground hover:bg-accent'
-                "
-                :title="t('workspace.toggleMonitor')"
-                :aria-label="t('workspace.toggleMonitor')"
-                :aria-pressed="monitorOpen === true"
-                @click="emit('toggleMonitor')"
-            >
-                <Activity class="size-3.5" />
-            </button>
-            <!-- PLAN-0623 U1：参与者面板入口（与 monitor 同构；移动端由 dock 溢出菜单进入）。 -->
-            <button
-                type="button"
-                data-testid="workspace-toolbar-members"
-                class="p-1.5 rounded transition-colors"
-                :class="
-                    membersOpen
-                        ? 'bg-accent text-foreground'
-                        : 'text-muted-foreground hover:bg-accent'
-                "
-                :title="t('workspace.toggleMembers')"
-                :aria-label="t('workspace.toggleMembers')"
-                :aria-pressed="membersOpen === true"
-                @click="emit('toggleMembers')"
-            >
-                <Users class="size-3.5" />
-            </button>
-            <!-- PLAN-0659 T1.4：委派 DAG 面板入口（与 monitor/members 同构）。 -->
-            <button
-                type="button"
-                data-testid="workspace-toolbar-delegation"
-                class="p-1.5 rounded transition-colors"
-                :class="
-                    delegationOpen
-                        ? 'bg-accent text-foreground'
-                        : 'text-muted-foreground hover:bg-accent'
-                "
-                :title="t('workspace.toggleDelegation')"
-                :aria-label="t('workspace.toggleDelegation')"
-                :aria-pressed="delegationOpen === true"
-                @click="emit('toggleDelegation')"
-            >
-                <GitBranch class="size-3.5" />
-            </button>
-        </div>
+        <!--
+            task-38 C1（DEV-011 §13.1「顶栏单行」）：六个面板开关不再自成一带 —— 桌面投进
+            `workspace-secondary-nav` 右端的挂载点；挂载点不存在时留在原地（单测/无壳上下文）。
+            本条工具带因此只剩移动态内容（files / newChat / ⋯ 溢出菜单，全部 md:hidden 元素），
+            外层已加 `md:hidden` ⇒ 桌面不再成带。窄屏那三个溢出入口是**唯一页面入口**
+            （task-217 C3 护栏），不许当重复面删掉。
+        -->
+        <Teleport v-if="navActionsReady" to="#workspace-nav-actions">
+            <WorkspacePanelActions v-bind="panelActionProps" v-on="panelActionEvents" />
+        </Teleport>
+        <WorkspacePanelActions v-else v-bind="panelActionProps" v-on="panelActionEvents" />
     </div>
 </template>

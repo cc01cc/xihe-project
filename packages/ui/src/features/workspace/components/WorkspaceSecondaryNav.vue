@@ -58,5 +58,16 @@ const { items, active } = useWorkspaceNav();
                 </RouterLink>
             </li>
         </ul>
+        <!--
+            task-38 C1（DEV-011 §13.1「顶栏单行」）：顶栏 = 这一条带，承载「页面导航 + 面板开关」。
+            面板开关簇原本在 WorkspaceToolbar 那条**内容区**工具带里（桌面 h-40，与 nav 分行），
+            由那边用 <Teleport> 搬进这个挂载点 —— props/emits/testid 一律不变，不为此上提
+            workbench 契约。判据的度量方式见 DEV-011 §13.1（getBoundingClientRect + 反例锚点）。
+        -->
+        <div
+            id="workspace-nav-actions"
+            data-testid="workspace-secondary-nav-actions"
+            class="ml-auto flex shrink-0 items-center gap-1"
+        />
     </nav>
 </template>

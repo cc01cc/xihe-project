@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { Info } from "@lucide/vue";
 import type { SessionParticipantView } from "../../../../types/participant";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "../../../../components/ui/tooltip";
 
 /**
  * Composer recipient field (2026-11-04 用户裁定): **input + typeahead popover** instead of a
@@ -21,8 +28,15 @@ const props = withDefaults(
         multiple?: boolean;
         placeholder?: string;
         testid: string;
+        /**
+         * task-38 C2（DEV-011 §13.4「提示语不得整幅占行」）：字段说明改为**焦点即显示的 tooltip**，
+         * 不再长期占一整行。文案仍由调用方从 src/i18n/index.ts 取（单一来源），本组件不硬编码。
+         */
+        hint?: string;
+        /** 说明文本落点（sr-only 常驻 DOM，读屏与单测都读得到）；默认 testid + "-field-hint"。 */
+        hintTestid?: string;
     }>(),
-    { multiple: false, placeholder: "" },
+    { multiple: false, placeholder: "", hint: "", hintTestid: "" },
 );
 
 const emit = defineEmits<{
@@ -39,6 +53,9 @@ const unknownHint = ref(false);
 
 const listId = computed(() => `${props.testid}-listbox`);
 const optionId = (participantId: string) => `${props.testid}-option-${participantId}`;
+
+/** 说明文本的 testid：调用方不给就退到本字段自己的命名空间，避免与 ${testid}-hint（键盘提示）撞名。 */
+const fieldHintTestid = computed(() => props.hintTestid || `${props.testid}-field-hint`);
 
 const displayNameOf = (participantId: string) =>
     props.candidates.find((item) => item.participantId === participantId)?.displayName ??
@@ -190,12 +207,47 @@ function focusInput(): void {
 </script>
 
 <template>
-    <div class="flex flex-wrap items-center gap-1.5 px-2" :data-testid="testid">
+    <!--
+        task-38 C5（DEV-011 §13.2）：辅助字段 = **二级 · 仅淡下边框** —— 无侧/上边框、无圆角框，
+        与一级全包的主输入区拉开权重（依据是信息层级，不是「看起来更轻」）。
+        task-38 C4（§13.3）：焦点指示由**这一层**画（has-[input:focus-visible] ⇒ 只有内层输入真的拿到
+        键盘焦点时才亮），内层不再自绘环 ⇒ 同一时刻只有一套焦点视觉。
+    -->
+    <div
+        class="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-2 py-0.5 transition-shadow has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring/50"
+        :data-testid="testid"
+    >
         <span class="shrink-0 text-xs text-muted-foreground">{{ label }}</span>
+        <!--
+            task-38 C2（DEV-011 §13.4）：说明收进**栈内 tooltip 原语**（reka-ui，经 components/ui/tooltip），
+            不手搓浮层。四条判据的落点：
+            ① 键盘可达 = TooltipTrigger 落在真 button 上，焦点即显示（不是只 hover）；
+            ② 文案单一来源 = hint 由调用方传 t("chat.input.*Hint")，本组件不硬编码；
+            ③ 动效 = vendor TooltipProvider 默认 delayDuration 0（T0 即时，§12.4），不新增时长；
+            ④ AT 可读 = 文本以 sr-only 常驻 DOM（fieldHintTestid），不依赖浮层打开才存在。
+            为什么必须自带 TooltipProvider：reka-ui 的 TooltipRoot 注入没有 fallback，不包直接抛错
+            （实测记录见 components/settings/SettingsSidebar.vue:308-316）。
+        -->
+        <TooltipProvider v-if="hint">
+            <Tooltip>
+                <TooltipTrigger as-child>
+                    <button
+                        type="button"
+                        :data-testid="fieldHintTestid + '-trigger'"
+                        class="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                        <Info class="size-3" aria-hidden="true" />
+                        <span class="sr-only" :data-testid="fieldHintTestid">{{ hint }}</span>
+                    </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{{ hint }}</TooltipContent>
+            </Tooltip>
+        </TooltipProvider>
+        <!-- task-38 C5（DEV-011 §13.2 三级 · 仅阴影）：chip 去掉 border，靠 shadow-xs 建立可点面 -->
         <span
             v-for="entry in selected"
             :key="entry.id"
-            class="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs"
+            class="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs shadow-xs"
             :data-testid="`${testid}-chip`"
             :data-participant-id="entry.id"
         >
@@ -211,6 +263,10 @@ function focusInput(): void {
             </button>
         </span>
         <div class="relative min-w-[9rem] flex-1">
+            <!--
+                task-38 C4（DEV-011 §13.3）：内层**不再自绘**焦点环（原 ring-1 / ring-ring/60 已删），
+                只保留 outline-none 压掉 UA 与全局规则 ⇒ 一套焦点视觉由外层行容器承担。
+            -->
             <input
                 ref="inputRef"
                 v-model="query"
@@ -222,7 +278,7 @@ function focusInput(): void {
                 aria-autocomplete="list"
                 :aria-label="label"
                 :placeholder="placeholder"
-                class="w-full min-w-0 rounded-sm bg-transparent py-0.5 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0"
+                class="w-full min-w-0 rounded-sm bg-transparent py-0.5 text-xs outline-none placeholder:text-muted-foreground"
                 :data-testid="`${testid}-input`"
                 @keydown="onKeydown"
                 @focus="open = query.trim().length > 0"

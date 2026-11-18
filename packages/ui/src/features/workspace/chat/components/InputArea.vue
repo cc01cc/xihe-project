@@ -19,6 +19,13 @@ import FileUpload from "../../../../components/multimodal/FileUpload.vue";
 import ScreenshotCapture from "../../../../components/multimodal/ScreenshotCapture.vue";
 import VoiceInput from "../../../../components/multimodal/VoiceInput.vue";
 import RecipientField from "./RecipientField.vue";
+// task-38 C2/C3（DEV-011 §13.4）：说明与「空候选」解释都走栈内 tooltip 原语（reka-ui），不手搓浮层。
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "../../../../components/ui/tooltip";
 import InputToolbar, { type ToolbarAction } from "./InputToolbar.vue";
 import { uploadAttachments, validateAttachment } from "../../../../services/attachmentService";
 import DelegationDialog, {
@@ -1529,6 +1536,8 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 :placeholder="t('chat.input.recipientPlaceholder')"
                 testid="speak-as"
                 data-testid="speak-as-bar"
+                :hint="speakAsOverriddenByTo ? '' : t('chat.input.toLabelHint')"
+                hint-testid="composer-speak-as-hint"
                 @update:model-value="onSpeakAsFieldChange"
             />
             <!--
@@ -1540,13 +1549,12 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 testid 用 composer- 前缀：RecipientField 自己会渲染 ${testid}-hint
                 （键盘提示），裸 speak-as-hint 会与它撞名。
             -->
-            <p
-                v-if="showSpeakAs && !speakAsOverriddenByTo"
-                class="px-2 text-xs text-muted-foreground"
-                data-testid="composer-speak-as-hint"
-            >
-                {{ t("chat.input.toLabelHint") }}
-            </p>
+            <!--
+                task-38 C2（DEV-011 §13.4）：这条说明不再长期占一整行 —— 收进「代发身份」栏标签后的
+                tooltip（栈内原语，焦点即显示）。文案仍是同一个 i18n 键（toLabelHint），单一来源不变；
+                testid 由 RecipientField 的 sr-only 文本承载，读屏与单测都还读得到。
+                被定向让位时不传 hint：那条路径本条不代发，照常说「以所选身份发出」就是假话。
+            -->
             <!-- task-453：默认代发被定向让位时必须说出来，不能只是 chip 悄悄消失。 -->
             <p
                 v-if="speakAsOverriddenByTo"
@@ -1569,6 +1577,8 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 :placeholder="t('chat.input.recipientPlaceholder')"
                 testid="to-targets"
                 data-testid="to-targets-bar"
+                :hint="t('chat.input.toHint')"
+                hint-testid="composer-send-hint"
                 @update:model-value="onToTargetsFieldChange"
             />
             <!--
@@ -1580,13 +1590,11 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 （键盘提示），叫 `cc-hint` 会与它**撞名** —— 实测撞名时断言拿到的是
                 「↑↓ 选择 · Enter 确认…」那一段，错的不是产品是选择器。
             -->
-            <p
-                v-if="showToTargets"
-                class="px-2 text-xs text-muted-foreground"
-                data-testid="composer-send-hint"
-            >
-                {{ t("chat.input.toHint") }}
-            </p>
+            <!--
+                task-38 C2（DEV-011 §13.4）：「发送 = @ 重要通知」这条说明收进「发送」栏标签后的
+                tooltip。task-50 的判据不变 —— 说明必须**贴着各自的栏**（tooltip 锚在栏标签上，
+                比原来另起一行更贴），文案仍是同一个 i18n 键（toHint），不硬编码、不自造浮层。
+            -->
             <!--
                 task-17（源 = task-6 候选 C-1）：显式空 TO 的**一次性**提示。形态照抄同区
                 `composer-send-hint`（`px-2 text-xs text-muted-foreground`）+ 一个可关闭按钮；
@@ -1653,12 +1661,43 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 自动展开仅两种 —— 已有 chips（含 @ 点名自动加入）、用户手动点开；
                 chips 清空后可手动收起，手动选择按会话记忆（不落 localStorage）。
             -->
-            <div v-if="showCcSection" class="flex items-center gap-1">
+            <!--
+                task-38 C3（用户直接问「为什么没有抄送」）：抄送入口原本在候选为空时**静默消失** ——
+                ccCandidates 会剔掉代发身份自己与已进 TO 的主体，独立会话里只剩调用者本人，于是
+                门恒为假、用户永远找不到抄送。实测（1920×1080，stack-2）：只有 agent + 本人时
+                `cc-expand` 矩形为 null；把另一个主体加为 MEMBER 后立刻出现 ⇒ 门本身没坏，坏在空态无入口。
+                现在空态给**可发现的禁用态入口**：aria-disabled 保持可聚焦（与 SettingsResourceNav.vue:132
+                同一模式，opacity 顶回 100% 以满足 DEV-011:165 的 ≥3:1），一句说明走同一个 tooltip 原语。
+            -->
+            <div v-if="!showCcSection" class="flex items-center gap-1">
+                <TooltipProvider>
+                    <Tooltip>
+                        <TooltipTrigger as-child>
+                            <button
+                                type="button"
+                                data-testid="cc-expand-empty"
+                                aria-disabled="true"
+                                class="inline-flex shrink-0 cursor-not-allowed items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground opacity-100 shadow-xs"
+                            >
+                                <Plus class="size-3" aria-hidden="true" />
+                                {{ t("chat.input.ccLabel") }}
+                                <span class="sr-only" data-testid="cc-empty-hint">
+                                    {{ t("chat.input.ccEmptyHint") }}
+                                </span>
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">{{
+                            t("chat.input.ccEmptyHint")
+                        }}</TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
+            </div>
+            <div v-else class="flex items-center gap-1">
                 <button
                     v-if="!ccBarVisible"
                     type="button"
                     data-testid="cc-expand"
-                    class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground"
                     @click="expandCc"
                 >
                     <Plus class="size-3" />
@@ -1674,6 +1713,8 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                         :placeholder="t('chat.input.recipientPlaceholder')"
                         testid="cc"
                         data-testid="cc-bar"
+                        :hint="t('chat.input.ccHint')"
+                        hint-testid="composer-cc-hint"
                         @update:model-value="onCcFieldChange"
                     />
                     <button
@@ -1688,13 +1729,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                     </button>
                 </template>
             </div>
-            <p
-                v-if="showCcSection && ccBarVisible"
-                class="px-2 text-xs text-muted-foreground"
-                data-testid="composer-cc-hint"
-            >
-                {{ t("chat.input.ccHint") }}
-            </p>
+            <!-- task-38 C2（DEV-011 §13.4）：抄送说明同样收进 cc 栏标签后的 tooltip。 -->
             <p
                 v-if="queueMode"
                 class="px-2 text-xs text-muted-foreground"
@@ -1892,12 +1927,21 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 task-39 已把那条全局规则搬进 `@layer base`，utility 恢复生效，这里不再需要 `!`。
                 （`!` 版本在 task-30 提交里用过；根因修掉后留在代码里会让下一个读注释的人以为还得加 `!`。）
             -->
-            <div class="rounded-lg border bg-muted/30 px-3 py-2">
+            <!--
+                task-38 C4（DEV-011 §13.3）+ C5（§13.2 一级 · 全包）：焦点指示**只由这一层容器画** ——
+                用 has-[textarea:focus-visible] 而不是 focus-within，点工具栏按钮时整块输入区不会发光
+                （task-30 当年因此拒绝过容器环）。内层 textarea 不再自绘 3px 环（实测：内层
+                `oklab(0.205 0 0 / 0.5) 0 0 0 3px` 与外层 1px `oklch(0.922 0 0)` 边框是两套框）。
+                宽度取 §10 状态矩阵的 2px 档，与同屏其它控件的焦点语言一致。
+            -->
+            <div
+                class="rounded-lg border bg-muted/30 px-3 py-2 transition-shadow has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
+            >
                 <textarea
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-offset-0 field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] rounded-none bg-transparent px-1 py-0.5 text-sm leading-relaxed field-sizing-content resize-none placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:outline-none"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"

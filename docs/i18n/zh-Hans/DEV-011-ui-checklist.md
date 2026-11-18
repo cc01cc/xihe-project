@@ -504,3 +504,81 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
   1. 盘点口径是**应用点**，不是「视觉上可见的动效数」：虚拟滚动里同一元素复用会让一处代码产生多次可见动画。
   2. `transition` / `<Transition>` 只在盘点报告旁证层登记，未逐处归类（体量更大，且一半在 vendor）。
   3. vendor 侧（`src/components/ui/**`）**只判不修**：文件头要求与上游字节对齐 ⇒ 不一致要靠改 in-house 侧，或同批改 vendor 并留记录。
+
+
+## 13. 顶栏 chrome 与输入域视觉权重（2026-11-19 用户裁定，`task-38`）
+
+> 来源：用户在真机截图上指出四条 —— 顶栏两行、提示各占一行、抄送找不到、输入框随光标出现第二套方框。
+> 这四条此前**没有任何判据覆盖**（`DEV-010`/`DEV-011` 全文 grep「顶栏|一行|单行|两行|导航」为空），所以自审查不出来。
+> 本节把它们落成**带度量方式**的判据（`D-1871`：判据不写度量方式 = 等于没写）。
+
+### 13.1 顶栏单行
+
+**先划边界（这条比数值重要 —— 2026-11-19 用户裁定）**：
+
+- **顶栏 = `workspace-secondary-nav` 一条带**，承载「页面导航 + 面板开关」。
+- **`workspace-container-tabs` 属内容区，明确不属于顶栏**（用户原话：「容器标签页仍然是容器的，不是顶栏组件的」）。此前「说了好多次 1 行却落不了地」的根因就是这条边界没定义：读「一行」的人无法判断要不要动容器页签，于是全部停在原地。
+- **`workspace-toolbar` 不是顶栏的一部分**：它是内容区（工作台）的工具带，桌面态**不得成带**。
+
+**判据**：桌面态（≥ `md`）顶栏**只有一条**，即 `workspace-secondary-nav`；六个面板开关（files / code / changes / monitor / members / delegation）落在这条带的 x 区间内。
+
+**度量方式**（1920×1080 真机，`getBoundingClientRect()`；不许肉眼说「看起来是一行」）：
+
+| 元素 | 要求 |
+| --- | --- |
+| `[data-testid="workspace-secondary-nav"]` | `height == 32`（`h-8`）；y 与页面顶部对齐 |
+| `[data-testid="workspace-secondary-nav-actions"]` | 存在且 `width > 0`，其 rect 的 x 区间**落在 nav 带的 x 区间内** |
+| `[data-testid="workspace-toolbar"]` | 桌面态 `height == 0` **或不存在**；移动态仍渲染（窄屏唯一页面入口，见 `WorkspaceToolbar.vue` 的 C3 护栏注释，不许删） |
+| 顶栏带计数 | 页面上方 y<40 区间内**只有一条**承载导航 + 面板开关的带 |
+
+**实现约束**：面板开关簇用 Vue 核心 `<Teleport to="#workspace-nav-actions">` 搬进 nav 行右端 —— **props / emits / testid 一律不变**；**不得**为合并把 workbench 的 6 组 props + 6 组 emits 上提到壳层（那会把一张视觉卡变成结构重构）。
+
+**反例锚点（判据必须能红，否则是装饰）**：把面板开关放回 `workspace-toolbar` 那条内容区工具带 ⇒ 上述「nav-actions 存在且落在 nav 带 x 区间内」与「toolbar 桌面不成带」两条**必须同时判红**。静态守卫：`packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts`。
+
+### 13.2 输入域三级视觉权重
+
+**判据**：同一屏内的输入域**不得同权重全包** —— 什么都重要 = 什么都不重要。三级形态与适用：
+
+| 级 | 形态 | 适用 | 实现锚点 |
+| --- | --- | --- | --- |
+| **一级 · 全包** | 完整 `border` + 圆角 | 主输入区（用户真正打字的那一个：消息正文 textarea 容器） | `InputArea.vue` composer 容器 |
+| **二级 · 仅淡下边框** | `border-b`（淡色），**无**侧/上边框、**无**圆角框 | 辅助字段：发送 TO / 抄送 CC / 代发身份 | `RecipientField.vue` 行容器 |
+| **三级 · 仅阴影** | 无 `border`，靠 `shadow-*` 建立可点面 | 行内可点件：chips、胶囊按钮（`+ 抄送`） | `RecipientField` chip、`cc-expand` |
+
+**为什么 vendor 默认不满足**（AGENTS 硬规则要求的答案，不许跳过）：`components/ui/input/Input.vue` 基类是 `rounded-lg border … h-8` ⇒ **vendor 本身就是一级全包**。composer 的辅助字段是「label + chips + 输入」的一行内联形态；套 vendor Input 等于把 32px 实心框塞进每一行，**与主输入区同权重**，正是本节禁止的形态。⇒ 二级是设计系统里**新增**的形态，**只许在 composer 这几个字段上局部实现**；**禁止**给全站 `Input.vue` 加 `secondary` 变体（那会变成一个没人管的全局开关）。
+
+**依据**：信息层级 —— 辅助字段不该与主输入区同权重。**不是**「看起来更轻」。
+
+**度量方式**：真机取 `getComputedStyle` 三处读数 —— 主输入容器 `borderTopWidth == 1px` 且 `borderTopLeftRadius` > 0；TO/CC/代发行容器 `borderTopWidth == 0` 且 `borderBottomWidth` ≥ 1px；chip `borderTopWidth == 0` 且 `boxShadow != "none"`。
+
+### 13.3 焦点指示只许一套
+
+**判据**：任一可聚焦元素在同一时刻**只许有一套**焦点视觉。嵌套形态（外层容器 + 内层 `input`/`textarea`/contenteditable）里，焦点指示**由外层画**；内层**不得**自绘 `box-shadow` 环，也**不得**保留 UA / 全局 `outline`。
+
+**根因（实测，别再走错方向）**：composer「随光标出现的矩形方框」**不是** UA outline —— 内层 `outline-style` 实测已是 `none`；是内层 textarea 自己画了 `box-shadow … oklab(0.205 0 0 / 0.5) 0 0 0 3px`，而外层容器是 `1px oklch(0.922 0 0)` 淡边框 ⇒ **两套框，颜色与宽度都不一致**。
+`--ring` / `--sidebar-ring` = `var(--primary)` 是**刻意偏离官方 shadcn 色值**的定制（`m2-impl.md:26/48`）；**不得**为了「diff 更干净 / 贴近上游」把这两行换回官方 `oklch(0.708 0 0)` —— **那不是清理，是功能回退**。
+
+**度量方式**（键盘路径纪律见 §焦点态取证纪律，脚本 `focus()` 不算）：Tab 到目标后**先 settle 再读数**，然后读 `getComputedStyle`。
+
+> **settle 是硬前置（2026-11-19 实测踩坑）**：焦点环带 `transition-shadow` 时，按下 Tab 后**立刻**读 `getComputedStyle` 取到的是**动画起始值** —— 环层的 alpha 还是 0（实测同一元素：即刻读 `oklab(0 0 0 / 0) 0px 0px 0px 0px`，400ms 后 `oklab(0.205 0 0 / 0.5) 0px 0px 0px 2px`）。
+> 后果是**系统性假阴**：有环被读成没环，「焦点指示缺失」读不出来。
+> ⇒ **判据**：任何 `doubles` 读数（含 `doubles = 0`）必须同时给出**每站 settle 时长**，否则该 0 不算数；settle 下限 **220ms**（> vendor 默认 150ms 过渡）。本仓实测用的是 220ms。
+
+1. **内层**：`outlineStyle == "none"` **且** `boxShadow == "none"`；
+2. **外层**：`boxShadow` 含环**或** `outlineStyle != "none"`，二者**只取其一**；
+3. **全仓扫**：键盘遍历每个 tab stop，把 `boxShadow` **逐层拆开**后再判 —— **环层** ⇔ `inset == false && offsetX == 0 && offsetY == 0 && blur == 0 && spread > 0` **且该层颜色 alpha > 0**；**投影层** ⇔ `blur > 0` 或 `offset ≠ 0`；alpha 为 0 的层是**透明占位**（vendor 的 `shadow-*` 工具类一次铺 5 层，多数透明），必须剔除。**双指示 ⇔ 存在有效环层 且 `outlineStyle != "none" && parseFloat(outlineWidth) >= 1`**。
+    字面式 `boxShadow != "none"` **不可当判据**（2026-11-19 独立复跑实测：**假阳 2 / 假阴 4**）—— 它把 `dock-tab-files`（5 层全透明，实际只有一套 outline）与 `message-search-toggle`（`shadow-sm` 投影，焦点语言与它无关）记成缺陷，同时漏掉 4 个真双指示的 rail 按钮。
+    **用修正式重扫的存量**：4 处 `global-rail-menu-*`（workbench / org-members / resources / settings —— `outline 2px solid` + `ring 2px` 实色环）与页签 `outline-1` + `ring-3` 并存（vendor `components/ui/tabs/TabsTrigger.vue:20`）。两处已同批修掉：rail 补 `focus-visible:outline-none`，vendor 删 `focus-visible:outline-1 focus-visible:outline-ring`（保留 `border-ring + ring-3` = 本仓通用焦点语言），改后复跑为 0。
+
+### 13.4 提示语不得整幅占行
+
+**判据**：字段说明**长期占一整行**的形态废止 —— 收进 tooltip（栈内 `components/ui/tooltip/*`，reka-ui 原语，**禁止手搓**），并四条同时成立：
+
+1. **键盘可达**：焦点即显示，不得只 hover；
+2. **文案单一来源**：仍在 `src/i18n/index.ts`，不得硬编码进组件；
+3. **动效档**：按 §12.4 **T0 即时 80–120ms / `ease`|`ease-out`**，不得自造时长；
+4. **AT 可读**：说明文本必须在 DOM 里常驻（`sr-only`），不得只在浮层打开时存在。
+
+**例外（照实登记，不是放宽判据）**：`composer-workspace-less-hint`（task-547 F-A：独立会话少了两栏**必须说出来**）与一次性 `role="status"` 提示（`chat-to-empty-hint`、`compose-deeplink-unsat-hint`：带关闭按钮、非长期 chrome）**保持成行**。
+
+**度量方式**：真机 Tab 到 `composer-*-hint-trigger` ⇒ `[data-testid="composer-*-hint"]` 的 `getBoundingClientRect().height > 0`；且 composer 区常驻说明段落计数（`.space-y-1.5 > p` 中 `[data-testid*="hint"]` 者）为 **0**。

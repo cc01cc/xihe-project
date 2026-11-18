@@ -1571,6 +1571,9 @@ const messages = {
                 toHint: "相当于 {'@'}，会作为重要通知送达，不会被免打扰屏蔽（可多选）",
                 // 用户裁定 P-6 原话：抄送就是普通抄送通知，**不会被免打扰屏蔽**（task-65 起代码已实现）。
                 ccHint: "普通抄送通知（不会被免打扰屏蔽）",
+                // task-38 C3（DEV-011 §13.4）：候选为空时入口**不许静默消失** —— 禁用态入口 + 这一句说明。
+                // 说「为什么现在不能抄送」与「怎么才能抄送」，不解释「抄送」这个词。
+                ccEmptyHint: "暂无可抄送成员：把成员加进这个会话后就能抄送",
                 // task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。清空定向栏后发送，
                 // wire 上是显式 []（CP 抑制通知）⇒ 消息照常记录、但谁都不通知；界面必须说出来一次。
                 // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
@@ -5699,6 +5702,9 @@ const messages = {
                 // which read as "only CC bypasses DND" — both bypass it (see zh block for CP line refs).
                 toHint: "Equivalent to {'@'} — delivered as an important notification, not muted by do-not-disturb (multi-select)",
                 ccHint: "Ordinary CC notification (not muted by do-not-disturb)",
+                // task-38 C3: when there is nobody to cc the entry must NOT vanish silently.
+                ccEmptyHint:
+                    "No one to cc yet: add a member to this session and CC becomes available",
                 // task-17 (source: task-6 candidate C-1): make an explicit empty TO visible.
                 toEmptyHint:
                     "This message notifies no participant (it is still recorded in this session)",

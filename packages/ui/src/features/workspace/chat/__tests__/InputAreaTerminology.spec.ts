@@ -201,6 +201,21 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
         await flushPromises();
 
         const hint = wrapper.get('[data-testid="composer-speak-as-hint"]');
+        // task-38 C2（DEV-011 §13.4）判据换轴：说明不再是一行 <p>，而是「tooltip 触发器 + sr-only 常驻文本」。
+        // 这里钉三件事，缺一条就回到原缺陷：
+        //   ① 触发器存在且是**真按钮** ⇒ 键盘 Tab 能焦点即显示（不是只 hover）；
+        //   ② 文本在 DOM 里常驻（sr-only），不依赖浮层打开才存在 ⇒ 读屏与单测都读得到；
+        //   ③ 三栏同构 = 类名元组逐字相同（判据仍然有效，只是现在比的是 sr-only span）。
+        // 并反向钉「整幅占行」不许复活：composer 区常驻说明段落计数必须为 0。
+        for (const id of ["composer-speak-as-hint", "composer-send-hint"]) {
+            const trigger = wrapper.get(`[data-testid="${id}-trigger"]`);
+            expect(trigger.element.tagName).toBe("BUTTON");
+            expect(wrapper.get(`[data-testid="${id}"]`).classes()).toContain("sr-only");
+        }
+        const permanentHintRows = wrapper
+            .findAll("p")
+            .filter((n) => String(n.attributes("data-testid") ?? "").includes("hint"));
+        expect(permanentHintRows.map((n) => n.attributes("data-testid"))).toEqual([]);
         // 同构判据：类名元组必须与 composer-send-hint / composer-cc-hint 逐字相同
         // （不是「看起来差不多」—— 三栏说明必须是同一种东西，否则就是第四种样式）。
         expect(hint.classes()).toEqual(wrapper.get('[data-testid="composer-send-hint"]').classes());
