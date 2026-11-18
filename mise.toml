@@ -689,7 +689,7 @@ alias = "format"
 #    旧口径「depends 并行、首个失败即中止（2026-11-12 实测注入 WARN 后 35.2 s 收口）」**已被 task-176 推翻**
 #    （task-176 实测：无 -c 的 validate 5.4 s 即被 check:api-docs 快红掐死，见 one/.tmp/task176-ABORT.log）；此处只留「毫秒级、无外部依赖、最便宜的检查」这条接线理由。
 # ② check:openapi:lint 紧贴 check:openapi：文档承诺「HTTP 形态四道门全绿才算现行」，此前它无执行者；
-#    实测 errors=0 / warnings=124，而 redocly 只按 errors 退出、本命令也没设 --max-warnings ⇒ 不制造恒红。
+#    2026-11-19 实测 errors=0 / warnings=126（errors 由 task-60 从 4 清到 0；此前 4 条 `nullable` 令本门恒红 ⇒ `mise run validate` 恒红），redocly 只按 errors 退出、本命令也没设 --max-warnings ⇒ 不制造恒红。
 # 不接的两类（同卡 10b / 10d）：check:docs-gates 走 monitor 第⑧问（慢且依赖其它仓状态，接进来会拖垮每次提交）；
 # 其余 report-only 门只登记不接 —— 接进去等于把 report-only 偷偷变阻断，那是策略变更，不是接线。
 # task-266 / D-1132 / D-1133：`check:font` 已**从 validate 摘除**（2026-11-13）。字体自托管整案缓做（BL-622），
@@ -1053,12 +1053,12 @@ alias = "pkg:installer"
 [tasks."check:commit-msg"]
 run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce"
 description = "Blocking commit-message gate (type/scope, display-width <=72 cols / merge <=100, empty line before body, PLAN-####/BL-###/D-### reference) over a632de77..HEAD; blocking is the script default and this task is a validate dependency (D-216) — pass --report-only for the old never-fails audit"
-# PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate。
+# PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only。**task-313 起 lint 已接入 validate**（门列表在 scripts/validate-run.mjs 的 GATES，不是 mise depends —— task-176 起 depends 不再承载门段）。
 # task-56（2026-11-19 实测更正）：旧注释「task-133/D-909 后 error=0 / public 面 error 归 0」已失真 —— 当日 HEAD 实测 **4 errors / 126 warnings**。
 #   原 9 条里 5 条本卡已修（flow 标量未加引号：description 中的逗号把句子截断并生成野键 ⇒ 文档正文被静默吃掉，非纯格式问题）；
 #   剩 4 条 = DelegateSpawnSession 的 `nullable`（本文档 `openapi: 3.1.0`，该关键字是 3.0 遗留、3.1 下被忽略 ⇒ 声明的不可空性被低估），
-#   改它等于改声明契约 ⇒ 归契约面另卡。判据：**errors 只许减不许增**（基线 4；明细与复跑命令见 docs/api/openapi-lint-baseline.md）。
-#   ⚠️ 本门 report-only 且无自动执行者（不接 validate）⇒ 计数须人工复跑；README §命令表与 DEV-002 zh/en §4 仍写「当前 0 / 124 warnings」，
+#   **task-60（2026-11-19）已把 4 条清到 0**：改成 3.1 写法 `type: [string, 'null']`，并按生产视图逐字段核对（WorkspaceAgentController.toSpawnSessionsView 对 parentSessionId/title/runStatus/spawnedAt 都显式产出 null）。判据：**errors 只许减不许增**（基线 **0**；明细与复跑命令见 docs/api/openapi-lint-baseline.md）。
+#   ⚠️ 本门**是 validate 门段的阻断成员**（不是 report-only，也没有「人工复跑」这一说）；README §命令表与 DEV-002 zh/en §4 的「当前 0 / 124 warnings」已由 task-60 同步为「基线 0 / 126 warnings」，
 #   属本卡发现的待同步面（写面在 mise.toml 之外，已报 Lead 扩 scope）。
 # task-69 / D-827：build-docs 已切 Redoc 3，主题走「模板注入 CSS 变量」而不是 .redocly.yaml 的 theme 块（后者在 Redoc 3 下实测无效）。
 #   -t ../../.redocly/api-docs.hbs ⇒ XH 主题（字体/主色/侧栏），相对路径从 packages/ui 解析；
@@ -1068,7 +1068,7 @@ description = "Blocking commit-message gate (type/scope, display-width <=72 cols
 #   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
 run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../../docs/api/openapi.yaml"
-description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a）；判据只有 errors：**基线 4、只许减不许增**（task-56 实测更正，旧写「当前 0」已失真；明细 docs/api/openapi-lint-baseline.md）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 126 warnings 不阻断（存量 warnings 清账见 task-245）"
+description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a）；判据只有 errors：**基线 0、只许减不许增**（task-60 2026-11-19 把最后 4 条 `nullable` 清到 0；task-56 记的「基线 4」是当时读数，已被清账取代；明细 docs/api/openapi-lint-baseline.md）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 126 warnings 不阻断（存量 warnings 清账见 task-245）"
 
 [tasks."docs:api:html"]
 run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
