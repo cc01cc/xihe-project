@@ -6,7 +6,8 @@
         "格子 = route × tab。没有 tab 的格子也必须列出来 —— 覆盖范围要能被第二人复算，光在报告里写「扫了 9 页」不够（task-47 实测：只扫默认态得出「9 页只有 1 页泄露」的错误结论）。",
         "expectedBefore 是 2026-11-19 01:2x 的实测命中，仅作回归锚点；它变小时要把本清单同批改小，别让它变成「永远对」的摆设。",
         "2026-11-19 01:5x 全部清零（A03 f63195fc3）：11 面 zh/en 各 0 命中。**此后任一格命中 > 0 即回归**，不是「新发现」——先查是不是有人把审查者口径写回正文。",
-        "带 via:\"mock\" 的格子**门跑不到**（真栈上那个形态凑不出来 —— 例如实例层列表为空），由 mock 车道 spec 覆盖。门会**显式打印 mock-covered 并跳过**，不静默略过：静默跳过会让「覆盖 11 面」这句话变成假话。"
+        "带 via:\"mock\" 的格子**门跑不到**（真栈上那个形态凑不出来 —— 例如实例层列表为空），由 mock 车道 spec 覆盖。门会**显式打印 mock-covered 并跳过**，不静默略过：静默跳过会让「覆盖 11 面」这句话变成假话。",
+        "dialog/* 类格子一律 via:\"mock\"：门只走 URL + tab，没有「点开弹窗」这一步。弹窗面能否进门是 task-58 的口径问题，不在本卡扩张。"
     ],
     "surfaces": [
         {
@@ -85,6 +86,42 @@
             "spec": "e2e/mock/resource-detail.spec.ts",
             "expectedBefore": 5,
             "note": "task-57：absent 区块 + 同页 notes。修前实测 5 命中（openapi.yaml x1 / 读面 x2 / 契约 x2），修后 0。真栈 stack-2 实例层三个列表全空（credentials 0 行、agent-principals 0 行、mcp 404）⇒ 门到不了这一格。"
+        },
+        {
+            "id": "skills-instance-import-dialog",
+            "route": "/resources/skills?layer=INSTANCE",
+            "tabs": [],
+            "via": "mock",
+            "spec": "e2e/mock/task57-copy-leak-surfaces.spec.ts",
+            "expectedBefore": 4,
+            "note": "task-57 判据 4。导入弹窗正文：修前实测 4 命中（SKILL_BODY_TOO_LARGE / SKILL_IMPORT_FORBIDDEN 各 1 + 契约 2）。这 4 条**不在 task-51 的源级盘点里** —— 是加了弹窗格子才照出来的。门跑不到（真栈弹窗要点，且实例层列表为空）。"
+        },
+        {
+            "id": "skills-instance-import-disabled",
+            "route": "/resources/skills?layer=INSTANCE",
+            "tabs": [],
+            "via": "mock",
+            "spec": "e2e/mock/task57-copy-leak-surfaces.spec.ts",
+            "expectedBefore": 1,
+            "note": "task-57 判据 4：disabledReason（原 :3311）。原「仅源级」——本卡测到**上屏**：无 MANAGE_SKILL_LIBRARY 原子时由 v-if 画成正文 <p>。修前源级读数 1（权限原子形态），task-51 已改写，本卡补上屏证据。"
+        },
+        {
+            "id": "skills-instance-import-403-card",
+            "route": "/resources/skills?layer=INSTANCE",
+            "tabs": [],
+            "via": "mock",
+            "spec": "e2e/mock/task57-copy-leak-surfaces.spec.ts",
+            "expectedBefore": 1,
+            "note": "task-57 判据 4：error.forbidden.action（原 :3346）。键是**动态拼**的（SkillsImportDialog.vue:349），静态 grep 找不到消费方 ⇒ 极易误判成死文案。本卡用故意 403 测到上屏。判据范围只含 title/body/action 三行；卡内另有「错误码：{code}」一行属另一条轴（ui/AGENTS.md §错误面），已登记为跨卡发现、不在本卡改。"
+        },
+        {
+            "id": "skills-personal-create-dialog",
+            "route": "/resources/skills?layer=USER",
+            "tabs": [],
+            "via": "mock",
+            "spec": "e2e/mock/task57-copy-leak-surfaces.spec.ts",
+            "expectedBefore": 1,
+            "note": "task-57 判据 4：新建个人技能弹窗说明（原 :2168，曾写 POST /api/v1/skills/import）。本卡测到**上屏**。"
         }
     ]
 }

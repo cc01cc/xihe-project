@@ -3312,12 +3312,12 @@ const messages = {
                         "粘贴或选择一个 JSON 批（一次最多 {max} 条）。这是技能定义唯一的写入方式，按名称幂等。",
                     fileLabel: "从文件读取",
                     fileHint:
-                        "接受 .json 批文件。本页不解包 zip、不解析 md：契约收发的就是 JSON 批，不是文件包。",
+                        "接受 .json 批文件。本页不解包 zip、不解析 md：这个入口收的就是 JSON 批，不是文件包。",
                     jsonLabel: "定义批（JSON）",
                     jsonPlaceholder: "在这里粘贴技能定义批（JSON）…",
                     exampleLabel: "示例（照抄即可改）",
                     exampleHint:
-                        "示例里只放契约必填字段；version / contentHash / bodyTokensEst / oversize 由服务端算，客户端给了也会被忽略。",
+                        "示例里只放必填字段；版本、内容哈希、正文估算与超长标记由服务端算，客户端给了也会被忽略。",
                     submit: "开始导入",
                     submitting: "导入中…",
                     cancel: "取消",
@@ -3325,9 +3325,8 @@ const messages = {
                     hintIdempotent:
                         "同名重导是幂等更新：内容没变返回 unchanged、版本不动 —— 不存在「重名冲突」。",
                     hintOversize:
-                        "正文超限不是 HTTP 413，而是按条拒绝（SKILL_BODY_TOO_LARGE），同批其它条目照常导入；超过约 5000 tokens 只标记「正文估算超长」，不拒也不截断。",
-                    hintPermission:
-                        "没有写权限时整批 403（SKILL_IMPORT_FORBIDDEN），一条都不会落库。",
+                        "正文超限不会整批失败，而是按条拒绝，同批其它条目照常导入；超过约 5000 tokens 只标记「正文估算超长」，不拒也不截断。",
+                    hintPermission: "没有写权限时整批被拒，一条都不会落库。",
                     errorCode: "错误码：{code}",
                     draftErrorTitle: "本地预检没通过",
                     draftErrorHint: "位置：{hint}",
@@ -7486,7 +7485,7 @@ const messages = {
                         "Paste or pick one JSON batch (at most {max} items). This is the only way definitions are written; imports are idempotent by name.",
                     fileLabel: "Read from a file",
                     fileHint:
-                        "Accepts a .json batch. This page neither unzips archives nor parses md: the contract takes a JSON batch, not a file package.",
+                        "Accepts a .json batch. This page neither unzips archives nor parses md: this entry takes a JSON batch, not a file package.",
                     jsonLabel: "Definition batch (JSON)",
                     jsonPlaceholder: "Paste the skill definition batch (JSON) here…",
                     exampleLabel: "Example (copy and edit)",
@@ -7499,9 +7498,9 @@ const messages = {
                     hintIdempotent:
                         "Re-importing the same name is an idempotent update: unchanged content answers unchanged and the version stays put, so a duplicate name is never a conflict.",
                     hintOversize:
-                        "An oversized body is not HTTP 413: that item is rejected as SKILL_BODY_TOO_LARGE while the rest of the batch still applies; above roughly 5000 tokens the definition is only marked oversize, never rejected or truncated.",
+                        "An oversized body does not fail the whole batch: that item alone is rejected while the rest still applies; above roughly 5000 tokens the definition is only marked oversize, never rejected or truncated.",
                     hintPermission:
-                        "Without write rights the whole batch answers 403 (SKILL_IMPORT_FORBIDDEN) and nothing is stored.",
+                        "Without write rights the whole batch is rejected and nothing is stored.",
                     errorCode: "Error code: {code}",
                     draftErrorTitle: "Local pre-check failed",
                     draftErrorHint: "Position: {hint}",
