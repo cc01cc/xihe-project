@@ -454,7 +454,13 @@ watch(
                             pendingError.copy
                         }}</span>
                     </p>
-                    <Collapsible v-if="pendingError.technicalDetail">
+                    <!-- task-69 A：这块原先 **v-if 只看 technicalDetail、且整块没有码元素**，而它的 copy 会落到
+                         errors.unknownCode（未登记码路径）⇒ 裁 ② 的新文案「展开技术详情，把其中的错误码报给
+                         管理员」在这条面上落空：用户被指示去展开一个没有码的地方。缺的是「给码」那半
+                         （task-61 判据），不是投影那半；结构照搬同文件 timeline 那块，同一个形态不手搓第二份。
+                         折叠区内 code 与 detail 各自 v-if：只有码 ⇒ 触发器必须在；两者都无 ⇒ 不渲染空壳
+                         （双空可达 = errorMessages.ts:230，非 ApiError 的 cause）。 -->
+                    <Collapsible v-if="pendingError.code || pendingError.technicalDetail">
                         <CollapsibleTrigger as-child>
                             <button
                                 type="button"
@@ -465,7 +471,20 @@ watch(
                             </button>
                         </CollapsibleTrigger>
                         <CollapsibleContent>
+                            <p
+                                v-if="pendingError.code"
+                                data-testid="workspace-diff-pending-error-code"
+                                class="mt-1 text-xs text-muted-foreground"
+                            >
+                                {{ t("errors.errorCodeLabel") }}
+                                <code
+                                    class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                                    data-testid="workspace-diff-pending-error-code-value"
+                                    >{{ pendingError.code }}</code
+                                >
+                            </p>
                             <pre
+                                v-if="pendingError.technicalDetail"
                                 data-testid="workspace-diff-pending-error-detail-body"
                                 class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
                                 >{{ pendingError.technicalDetail }}</pre>

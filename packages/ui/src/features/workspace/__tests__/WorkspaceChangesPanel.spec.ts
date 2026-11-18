@@ -255,4 +255,108 @@ describe("WorkspaceChangesPanel slice timeline", () => {
         await wrapper.find('[data-testid="workspace-changes-close"]').trigger("click");
         expect(wrapper.emitted("close")).toHaveLength(1);
     });
+
+    /**
+     * task-69 A：pending 这块原先**整块没有码元素**（v-if 只看 technicalDetail），而它的 copy 会落到
+     * `errors.unknownCode` ⇒ 裁 ② 的文案「展开技术详情，把其中的错误码报给管理员」在这条面上落空。
+     * 判据照 task-61 那一套（Lead 裁 ② 指定的机器判据，不另造）：折叠态码节点未渲染 → click + flush
+     * → 码出现、是 <code>、带 select-all；正文仍不含码、不含客户端兜底 detail。
+     */
+    it("pending 错误面在折叠区里给出可复制的码（折叠态取不到，展开后取得到）", async () => {
+        mockedApi.getWorkspaceGitStatus.mockRejectedValueOnce(
+            new ApiError({
+                status: 500,
+                code: "GIT_PENDING_UNAVAILABLE",
+                detail: "API error 500",
+                requestId: "req-pending-1",
+            }),
+        );
+        const wrapper = mountPanel();
+        await settle();
+        await wrapper.find('[data-testid="workspace-diff-tab-pending"]').trigger("click");
+
+        expect(wrapper.find('[data-testid="workspace-diff-pending-error"]').exists()).toBe(true);
+        const copy = wrapper.find('[data-testid="workspace-diff-pending-error-copy"]');
+        expect(copy.text()).not.toBe("");
+        expect(copy.text()).not.toContain("GIT_PENDING_UNAVAILABLE");
+        expect(copy.text()).not.toMatch(/API error \d+/);
+
+        // 折叠态：码与 detail 都不挂载（v-if，不是 display:none）。
+        expect(
+            wrapper.find('[data-testid="workspace-diff-pending-error-code-value"]').exists(),
+        ).toBe(false);
+        expect(
+            wrapper.find('[data-testid="workspace-diff-pending-error-detail-body"]').exists(),
+        ).toBe(false);
+
+        await wrapper
+            .get('[data-testid="workspace-diff-pending-error-detail-toggle"]')
+            .trigger("click");
+        await settle();
+        const codeValue = wrapper.get('[data-testid="workspace-diff-pending-error-code-value"]');
+        expect(codeValue.text()).toBe("GIT_PENDING_UNAVAILABLE");
+        expect(codeValue.element.tagName).toBe("CODE");
+        expect(codeValue.classes()).toContain("select-all");
+        expect(wrapper.get('[data-testid="workspace-diff-pending-error-code"]').text()).toContain(
+            i18n.global.t("errors.errorCodeLabel"),
+        );
+        expect(wrapper.get('[data-testid="workspace-diff-pending-error-detail-body"]').text()).toBe(
+            "API error 500",
+        );
+        // 诊断面第三件：下一步动作必须在（重试入口），否则文案只是把人引到一个死路上。
+        expect(wrapper.find('[data-testid="workspace-diff-pending-retry"]').exists()).toBe(true);
+    });
+
+    /**
+     * 两格判据之一：**只有码**时折叠区必须渲染 —— 码进折叠区后，触发器就是码唯一的落脚处。
+     * detail 为空 ⇒ 区内不出现 detail 节点（不为空壳渲染隐藏节点）。
+     */
+    it("pending 面只有码、没有 detail 时仍渲染诊断区", async () => {
+        mockedApi.getWorkspaceGitStatus.mockRejectedValueOnce(
+            new ApiError({
+                status: 500,
+                code: "GIT_PENDING_UNAVAILABLE",
+                detail: "",
+                requestId: "r",
+            }),
+        );
+        const wrapper = mountPanel();
+        await settle();
+        await wrapper.find('[data-testid="workspace-diff-tab-pending"]').trigger("click");
+
+        expect(
+            wrapper.find('[data-testid="workspace-diff-pending-error-detail-toggle"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="workspace-diff-pending-error-code-value"]').exists(),
+        ).toBe(false);
+        await wrapper
+            .get('[data-testid="workspace-diff-pending-error-detail-toggle"]')
+            .trigger("click");
+        await settle();
+        expect(wrapper.get('[data-testid="workspace-diff-pending-error-code-value"]').text()).toBe(
+            "GIT_PENDING_UNAVAILABLE",
+        );
+        expect(
+            wrapper.find('[data-testid="workspace-diff-pending-error-detail-body"]').exists(),
+        ).toBe(false);
+    });
+
+    /**
+     * 两格判据之二：**码与 detail 都取不到 ⇒ 不渲染空折叠区**（否则就是一个点开什么都没有的触发器）。
+     * 可达路径 = 非 ApiError 的 cause：presentError 走 fallback 且 code/technicalDetail 双 null
+     * （src/lib/errorMessages.ts:224-230）。
+     */
+    it("pending 面码与 detail 双无时不渲染空折叠区", async () => {
+        mockedApi.getWorkspaceGitStatus.mockRejectedValueOnce(new Error("network down"));
+        const wrapper = mountPanel();
+        await settle();
+        await wrapper.find('[data-testid="workspace-diff-tab-pending"]').trigger("click");
+
+        const copy = wrapper.find('[data-testid="workspace-diff-pending-error-copy"]');
+        expect(copy.text()).toBe(i18n.global.t("workspace.diffPendingLoadFailed"));
+        expect(
+            wrapper.find('[data-testid="workspace-diff-pending-error-detail-toggle"]').exists(),
+        ).toBe(false);
+    });
 });

@@ -55,10 +55,15 @@ const mockedApi = vi.mocked(api, true),
     WORKSPACE_ID = "66666666-6666-4666-8666-666666666666",
     messages = {
         "zh-CN": {
-            // task-45：错误面统一入口的兜底文案（真实 i18n 的 errors.* 同值）。
+            // task-45：错误面统一入口的兜底文案。**task-69 B 更正措辞**：本 fixture 是 errors.* 的**子集副本**，
+            // 作用是让本组件的分支在离线夹具下可判；字面**手工随真值同步**（下面 unknownCode 已随 task-64 裁 ②
+            // 改成「展开技术详情」那版），但**同步不受任何保证** —— 真值以 src/i18n/index.ts 为准，等值性不由本
+            // 文件保证。原注释写「同值」，而 check:i18n-fixture-copies 比的是引用关系不是字符串，不会提醒下
+            // 一个人，所以那半句必须删掉而不是并列保留。也别改成「等值断言」：那等于把局部夹具钉成全仓契约。
             errors: {
                 requestFailed: "请求失败，请稍后重试；若多次失败请联系管理员。",
-                unknownCode: "请求失败，请稍后重试；若持续失败请联系管理员并提供错误码。",
+                unknownCode:
+                    "请求失败，请稍后重试；若持续失败，请展开「技术详情」，把其中的错误码报给管理员。",
                 technicalDetail: "技术详情",
             },
             settings: {
