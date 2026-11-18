@@ -231,8 +231,11 @@ class ContextReuseBucketingTest {
         // ⇒ 进 reusable 桶 +1：78→79，合计 155→156。只更新由实现推导出的常量，上面的判据
         // （problems 空集 + 白名单/复用桶互斥穷尽）一字未改；也未改成「从集合长度推导」——那样等于同义反复。
         // cp-2：reusable 79→84（跨车道新增 5 类 reusable），合计 172。判据一字未改，只更新实测常量。
-        assertEquals(84, reusable, "reusable 桶 = 84（实测读数：cp-2 跨车道新增 5 类 reusable）");
-        assertEquals(172, classes.size(), "172 = 88 per-class + 84 reusable");
+        // task-23（D-1865 跨主体委派）：新增 policy/CrossPrincipalDelegationCapIntegrationTest（真 PG 授权面
+        // 证据，无 context-key 注解）⇒ reusable 84→85、合计 172→173。两处派生值均先读实测再写常量
+        // （守卫读数 expected 84 but was 85；独立扫描 extends 计数 85/88/173 对上）。判据一字未改。
+        assertEquals(85, reusable, "reusable 桶 = 85（实测读数：cp-2 跨车道新增 5 类 + task-23 跨主体委派集成测试 1 类）");
+        assertEquals(173, classes.size(), "173 = 88 per-class + 85 reusable");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {
