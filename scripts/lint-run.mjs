@@ -84,9 +84,21 @@ export function buildMiseArgs(gates) {
 }
 
 /**
+ * 子 mise 的环境：必须显式把计时打开（task-52 的修法本体）。
+ * 实测单变量（同一条 `mise run -c -o prefix check:ports`，2026-11-19 05:0x 本机）：
+ *   MISE_TASK_TIMINGS 未设 ⇒ 1 行 Finished in ｜ =1 ⇒ 1 行 ｜ =true ⇒ 1 行 ｜ =0 ⇒ **0 行**（整条计时消失，退出码不受影响）。
+ * 而外层 `mise run lint` 给 task 子进程注入的正是 MISE_TASK_TIMINGS=0（直跑时该键根本不存在，
+ * 嵌套时 env 里多出 9 个 MISE_* 键，这是唯一影响计时的一个）⇒ 「B 档只报 1/30」不是解析问题，是**上游按设计关掉了**，
+ * 所以修在这里：调用方自己声明要计时，不指望上游默认值。
+ */
+export function childEnv(base = process.env) {
+    return { ...base, MISE_TASK_TIMINGS: "1" };
+}
+
+/**
  * 逐门耗时（本文件新增，不是复制）：mise 的 -o prefix 会把每个 task 自己的
  * 「Finished in Xms / X.XXs」加上 [task] 前缀。上报率是既成事实（现行 28/30 上报），
- * 不上报不等于红 —— 表里以 exit 码为准，耗时缺失记 —。
+ * 不上报不等于红 —— 表里以 exit 码为准；缺失分两种写法见 formatTable（未上报 / 无计时）。
  */
 export function parseTaskTimings(output) {
     const ms = {};
@@ -104,14 +116,23 @@ export function formatTable(rows, timings, gates, elapsedMs) {
     const lines = [];
     lines.push("════════ lint-gates 汇总（共 " + gates.length + " 门，keep-going，全部执行）════════");
     let reported = 0;
+    // 「没报」和「测不到」是两件事，必须写成两个不同的词（同 task-58 的 skip ≠ 0 命中）：
+    // 整通道一行 Finished in 都没有 ⇒ 上游把计时关了（测不到）；有行但这门缺 ⇒ 这门自己没报。
+    // 两者都写光杆「—」就等于让读表的人替我们猜，历史事故是拿猜的结果当验收依据。
+    const available = Object.keys(timings).length > 0;
     for (const row of rows) {
         const t = timings[row.name];
         if (t !== undefined) reported += 1;
-        const cost = t === undefined ? "—" : t >= 1000 ? (t / 1000).toFixed(1) + "s" : Math.round(t) + "ms";
+        const cost = t !== undefined
+            ? (t >= 1000 ? (t / 1000).toFixed(1) + "s" : Math.round(t) + "ms")
+            : available ? "未上报" : "无计时";
         lines.push("  " + (row.exit === 0 ? "PASS" : "FAIL") + "  " + row.name.padEnd(26) + " exit=" + row.exit + "  " + cost);
     }
-    lines.push("  墙钟 " + (elapsedMs / 1000).toFixed(1) + "s ｜ 上报计时 " + reported + "/" + gates.length + " 门");
-    return { text: lines.join("\n"), reported };
+    lines.push(
+        "  墙钟 " + (elapsedMs / 1000).toFixed(1) + "s ｜ 上报计时 " + reported + "/" + gates.length + " 门" +
+        (available ? "" : " ⇒ **测不到**：子 mise 一行 Finished in 都没产（已按 task-52 强制 MISE_TASK_TIMINGS=1，仍无 ⇒ 上游行为又变了，别把这轮当「没有慢门」读）"),
+    );
+    return { text: lines.join("\n"), reported, available };
 }
 
 function runSelftest() {
@@ -163,6 +184,19 @@ function runSelftest() {
     check(t.text.includes("共 4 门"), "表里给出门总数");
     check(t.reported === 2, "上报计时数如实（2/4）", "reported=" + t.reported);
 
+    // ⑦ 嵌套计时修法本体：childEnv 必须把上游关掉的计时重新声明为「要」
+    const ce = childEnv({ MISE_TASK_TIMINGS: "0", PATH: "keep" });
+    check(ce.MISE_TASK_TIMINGS === "1", "上游注入 =0 也强制成 1（B 档 1/30 的根因）", "got=" + ce.MISE_TASK_TIMINGS);
+    check(ce.PATH === "keep", "其余环境原样继承，不重造 env");
+
+    // ⑧ 两种缺失分开写：测不到 ≠ 没报（负例 = 老版一律写 —，读表人分不清）
+    const none = formatTable(rows, {}, gateList, 1000);
+    check(none.available === false, "整通道无计时 ⇒ available=false");
+    check(none.text.includes("无计时") && none.text.includes("测不到"), "无计时写成「无计时 + 测不到」", none.text.split("\n").pop().slice(0, 40));
+    const part = formatTable(rows, { "lint:ui": 100 }, gateList, 1000);
+    check(part.available === true && part.text.includes("未上报"), "有能力但个别门缺 ⇒ 写「未上报」");
+    check(!part.text.includes("无计时"), "有计时能力时不得冒充「测不到」");
+
     console.log(fail === 0 ? "selftest: ALL PASS" : "selftest: " + fail + " FAIL");
     return fail === 0 ? 0 : 1;
 }
@@ -186,6 +220,7 @@ function main(argv) {
     const started = Date.now();
     const result = spawnSync("mise", args, {
         cwd: ROOT,
+        env: childEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf8",
         maxBuffer: 256 * 1024 * 1024,

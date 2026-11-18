@@ -549,8 +549,13 @@ alias = "check:config-schema"
 # 改法：这个任务**不再用 depends 并行拉 30 个门**，改为 run 一个 keep-going 聚合器 `scripts/lint-run.mjs`。
 # 为什么换：depends 并行是「首个失败即终止」语义 —— 慢门（check:trace 2.7 s、lint:ui 数十秒）会被早失败的门掐掉，
 #   于是「跑了 30 个」与「跑完 30 个」在输出里分不清；聚合器逐门跑完、逐门报 exit 与计时，末尾给一张 30 行汇总表。
-# 验收判据两档（D-1881③）：A 档 = `node scripts/lint-run.mjs`（exit 0 + 30/30 PASS + 逐门计时 30/30）—— 验收引用这一档；
-#   B 档 = `mise run lint`（exit 0 + 门集合逐名相同 30/30 + 墙钟与 A 档差 ≤10% + 慢门不被掐）；嵌套 mise 下子 mise 不产 Finished in 行 ⇒ B 档**不要求**逐门计时。
+# 验收判据两档（原 D-1881③，B 档计时已由 task-52 升回硬要求 2026-11-19 05:0x）：
+#   A 档 = `node scripts/lint-run.mjs`（exit 0 + 30/30 PASS + 逐门计时 30/30）；
+#   B 档 = `mise run lint`（exit 0 + 门集合逐名相同 30/30 + 墙钟与 A 档差 ≤10% + 慢门不被掐 + **逐门计时 30/30**）。
+# B 档为什么能升回来（根因，别当玄学）：外层 mise 给 task 子进程注入 MISE_TASK_TIMINGS=0，子 mise 按这个默认值**根本不产** Finished in 行。
+#   单变量实测（同一条 `mise run -c -o prefix check:ports`）：未设 ⇒ 1 行 / =1 ⇒ 1 行 / =true ⇒ 1 行 / =0 ⇒ **0 行**，退出码四种都一样。
+#   lint-run.mjs 现在给子 mise 显式声明 MISE_TASK_TIMINGS=1（childEnv，有自测钉住）⇒ 实测 A 30/30（23.0s）、B 30/30（19.5s），墙钟不升反降。
+#   再掉回 <30/30 时表里会写「无计时 / 测不到」而不是光杆 —：缺失的两种形态分开标（同 task-58「skip ≠ 0 命中」那条判据），别拿「没有慢门」当结论。
 # 回滚：把本行换回原来的 depends = [...]（原文见本条提交 diff 的删除行）。
 run = "node scripts/lint-run.mjs"
 description = "Run all linters"
