@@ -500,7 +500,25 @@ alias = "check:config-schema"
 # **三者默认 report-only（命中恒 exit 0）⇒ 不新增阻断语义**，只把「604 s 全量里才跑到的文案判据」提到高频面。
 # 唯一例外：脚本自身崩溃 exit 2 仍会中止聚合（判不了不许装绿，且崩溃是真问题）。:enforce 兄弟任务已建、**不接线**，
 # 连续两窗 findings=0 再议转阻断。实测增量 ≈6 s（vitest 地板 1.3 s + 簇 4.75 s；脚本门合计 ~1.4 s）。
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings", "check:ui-copy", "check:i18n-fixture-copies", "check:dev-i18n-drift"]
+# D-1843 第一批接线（2026-11-18，task-101 盘点 §4 批 1「离线、确定性、秒级」门；只改 depends，不动任何 check:* 的 run 与判据）：
+# 实测（2026-11-18 本机 @ A03 36a967687，`mise run <gate>` 连跑 2 次取稳定值，含 mise 冷启）：
+#   check:md-tables       exit 0 · 1,629 ms（第二次；首次 4,778 ms 含 fs 冷缓存）
+#   check:ports           exit 0 ·   196 ms
+#   check:migrations      exit 0 ·   211 ms
+#   check:bl-count        exit 0 ·   578 ms
+#   check:bl-decision-ref exit 0 ·   216 ms
+# 五个全绿 ⇒ 接（mise 的 depends 并行，最长新增门 < 既有临界路径 lint:runtime ⇒ 墙钟增量 ≈ 0）。
+# **第二批 3 个（2026-11-18 17:0x 清偿后接入，D-1850）**：以下三个本轮首测为红，但红因全部清偿 ⇒ 现接：
+#   check:docs-index    exit 0 —— H1 未登记已清：`d-1843-normalization-audit.md` / `mvp-acceptance-env-plan.md` 两份新文档按 §1.1 元数据流程登记进 `docs/AGENTS.md`（原红因：我新写文档未走 `--write` 流程）；
+#   check:md-emphasis   exit 0 —— 新增 0 / 存量 69 = 基线 69（原红因：`decisions-pending.md:345` 的 `papers/**` 通配被当强调符 ⇒ 改写成反引号 `` `papers/` ``）；
+#   check:terms         exit 0 —— 无真不一致（原红因：**门的规则漏了 D 号**，`NON_IDENTIFIER_RULES` 只覆盖 M/CTX/P0/BL/K，术语表里合法的裁定号 `D-1783` 被当代码标识符 ⇒ 已补 `D` 进该规则）；
+# 三个红因都**不在门本身**（除 terms 是门缺规则，已补），全部是本轮工作引入的文档债 ⇒ 清偿后可接。
+#   check:docs-index    exit 1 —— H1 未登记顶层 md 1 个：`internal/A03-xihe/docs/AGENTS.md` 索引缺 `d-1843-normalization-audit.md`（本盘点自身的文档，3662ed1e8 落盘时未登记）；
+#   check:md-emphasis   exit 1 —— 新增 1 条（`docs/decisions-pending.md:345` 单元格「**55**」未配对 **；812431372 落账引入），存量 69 = 基线 69；
+#   check:terms         exit 1 —— 术语表 `DEV-032:114` 的 `D-1783` 被当标识符（spec/contract 唯一命中 openapi:1），21f0eaa43 补 HUMAN/AGENT 段引入；
+# 三者都是**文档面存量红**（不是判据坏），清偿处不在 mise.toml ⇒ 先修文档再议接，不在此放水（D-1843 §5）。
+# 同批仍未接：`:enforce` 兄弟（观察窗档）、check:font（D-1132 已摘除，预期）。
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings", "check:ui-copy", "check:i18n-fixture-copies", "check:dev-i18n-drift", "check:md-tables", "check:ports", "check:migrations", "check:bl-count", "check:bl-decision-ref", "check:docs-index", "check:md-emphasis", "check:terms"]
 description = "Run all linters"
 alias = "lint"
 
