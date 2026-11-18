@@ -534,7 +534,8 @@ alias = "check:config-schema"
 #   check:event-keys   exit 0 ·  338 ms（report-only，默认恒 exit 0）
 #   check:a11y-refs    exit 0 ·  683 ms（report-only）
 # 三个合计 ≈1.24 s 串行 CPU，与 lint 其他成员并行，墙钟增量 ≈ 0。
-# **不接 check:i18n**：infra-6 标出「疑与 `lint:i18n` 同一脚本同一面」——需先核重复口径再定，不盲接（见下批）。
+# **check:i18n = 等价已满足，不重复接**（2026-11-19 核实，Q-8）：它与 `lint:i18n` **是同一个脚本** ——
+#   两处只差 cwd/路径写法（`node A03-xihe/scripts/i18n-scan.mjs` vs `node scripts/i18n-scan.mjs`），现行 30 门已含 `lint:i18n`；同一判据接两遍只增墙钟。
 # **不接 check:api-docs**：本轮已修 inventory 漂移（357→364 ops，`mise run gen:api-docs`），但该门依赖生成物，
 #   接进 lint 会与 `gen:api-docs` 形成「先写后查」的顺序依赖；且它本质是 docs 面派生件一致性，归 check:docs-index 邻域，另议。
 # D-1855 第四批接线（2026-11-18 19:2x）：`check:trace` 判定面收口后接入（29 → 30）。
