@@ -131,7 +131,10 @@ describe("SkillsPanel · 导入入口门（task-167）", () => {
         const reason =
             document.body.querySelector('[data-testid="settings-skills-import-disabled-reason"]')
                 ?.textContent ?? "";
-        expect(reason).toContain("MANAGE_SKILL_LIBRARY");
+        // 原钉原子常量 `MANAGE_SKILL_LIBRARY`：文案去泄露后（A03 f63195fc3）它恒红 —— 改文案没改断言。
+        // 现在钉人话，并把「常量不许回到用户文案」反向钉住。
+        expect(reason).toContain("管理实例技能库");
+        expect(reason).not.toContain("MANAGE_SKILL_LIBRARY");
         expect(reason).toContain("实例管理员");
         // 点不动的按钮不许偷偷打开对话框。
         entry?.click();

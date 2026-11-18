@@ -113,7 +113,7 @@
             "via": "mock",
             "spec": "e2e/mock/task57-copy-leak-surfaces.spec.ts",
             "expectedBefore": 1,
-            "note": "task-57 判据 4：error.forbidden.action（原 :3346）。键是**动态拼**的（SkillsImportDialog.vue:349），静态 grep 找不到消费方 ⇒ 极易误判成死文案。本卡用故意 403 测到上屏。判据范围只含 title/body/action 三行；卡内另有「错误码：{code}」一行属另一条轴（ui/AGENTS.md §错误面），已登记为跨卡发现、不在本卡改。"
+            "note": "task-57 判据 4：error.forbidden.action（原 :3346）。键是**动态拼**的（SkillsImportDialog.vue:349），静态 grep 找不到消费方 ⇒ 极易误判成死文案。本卡用故意 403 测到上屏。判据范围只含 title/body/action 三行；卡内另有「错误码：{code}」一行属另一条轴（ui/AGENTS.md §错误面），已登记为跨卡发现、不在本卡改。 task-61：错误码从**正文第 4 行常显**改为**折叠区**（技术详情），fallback slug 的 action 也不再插码 ⇒ 该面正文由四行变三行（标题/正文/动作），码不再进正文，所以本格判据继续为 0 命中；复跑读数见证据 2026-11-19-task61-error-card/README.md §3。"
         },
         {
             "id": "skills-personal-create-dialog",

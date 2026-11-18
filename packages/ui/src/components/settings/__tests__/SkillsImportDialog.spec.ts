@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { ApiError } from "../../../composables/api";
 import { i18n } from "../../../i18n";
@@ -61,6 +61,33 @@ async function fillAndSubmit(_wrapper: ReturnType<typeof mountDialog>, json: str
     await nextTick();
     q('[data-testid="skills-import-submit"]').click();
     await nextTick();
+    await nextTick();
+}
+
+/**
+ * task-61：错误卡**可见区**文本 = 标题 + 正文 + 动作三行。
+ * 折叠区（技术详情）刻意不算进来 —— 判据要的是「用户不展开时看不到码」。
+ */
+function errorCardVisibleText(): string {
+    return [
+        q('[data-testid="skills-import-error-title"]').textContent ?? "",
+        q('[data-testid="skills-import-error-body"]').textContent ?? "",
+        q('[data-testid="skills-import-error-action"]').textContent ?? "",
+    ].join("\n");
+}
+
+/**
+ * 展开「技术详情」折叠区（reka `CollapsibleTrigger` 自带切换，不额外绑 click）。
+ *
+ * <p>内容在**折叠态是未挂载**（`Presence`），展开要走 watcher 调度 ⇒ 必须 `flushPromises()`，
+ * 只 `nextTick()` 不够（第一版就是这么红的：节点 missing，症状像"折叠坏了"，其实是断言太早）。
+ * 写法对齐 `ToolFacesView.spec.ts:349-355` 的既有范式。</p>
+ */
+async function revealTechnicalDetail(): Promise<void> {
+    q('[data-testid="skills-import-error-detail-toggle"]').dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+    );
+    await flushPromises();
     await nextTick();
 }
 
@@ -130,7 +157,20 @@ describe("SkillsImportDialog（task-167）", () => {
         expect(wrapper.emitted("imported")).toHaveLength(1);
     });
 
-    it("403 越权：按 problem.code 映射中文文案 + 下一步动作，英文 detail 不出现", async () => {
+    /**
+     * task-61：判据本体换成 `packages/ui/AGENTS.md` §错误面 的**三件事**，并加一条反向判据「码不消失」。
+     *
+     * <p>旧断言只钉「码在屏上」（`toContain("SKILL_IMPORT_FORBIDDEN")`）—— 那正好是**记录缺陷**的写法：
+     * 码常显在正文第四行，用户先看到一串常量。现在拆成四条：</p>
+     * <ol>
+     *   <li>可读文案在（标题/正文/动作）—— 旧的标题与动作断言保留，不减；</li>
+     *   <li>**正文不含错误码**，也不含 `API error \d+`（§错误面 判据）；</li>
+     *   <li>**码不消失**：默认折叠 ⇒ 未渲染；展开后出现 —— 这是"只挪不删"的机器判据，
+     *       少了它下一个人会以为「既然不进正文，那就删掉这行」，报障凭据就此消失；</li>
+     *   <li>CP 英文 detail 永不进 UI（原断言保留）。</li>
+     * </ol>
+     */
+    it("403 越权：正文不含错误码，码只在折叠区里（不删只挪）", async () => {
         const submit = vi
             .fn<(payload: unknown) => Promise<unknown>>()
             .mockRejectedValue(
@@ -145,15 +185,53 @@ describe("SkillsImportDialog（task-167）", () => {
 
         expect(q('[data-testid="skills-import-error"]')).toBeTruthy();
         expect(q('[data-testid="skills-import-error-title"]').textContent).toBe("没有导入权限");
-        expect(q('[data-testid="skills-import-error-action"]').textContent ?? "").toContain(
-            "MANAGE_SKILL_LIBRARY",
-        );
+        // 这条断言原先钉的是原子常量 `MANAGE_SKILL_LIBRARY`，文案去泄露后（A03 f63195fc3）它恒红 ——
+        // 是**我自己**留下的红：改了文案没改断言，而且当时只跑了改过的 spec。现在钉人话，
+        // 并把「常量不许回到用户文案里」反向钉住（正向判据不能只删不加）。
+        const actionText = q('[data-testid="skills-import-error-action"]').textContent ?? "";
+        expect(actionText).toContain("管理实例技能库");
+        expect(actionText).not.toContain("MANAGE_SKILL_LIBRARY");
+
+        const visibleText = errorCardVisibleText();
+        expect(visibleText).not.toMatch(/SKILL_[A-Z_]+/);
+        expect(visibleText).not.toMatch(/API error \d+/);
+
+        // 折叠态：码节点根本没渲染（不是"隐藏"）
+        expect(document.body.querySelector('[data-testid="skills-import-error-code"]')).toBeNull();
+        await revealTechnicalDetail();
         expect(q('[data-testid="skills-import-error-code"]').textContent ?? "").toContain(
             "SKILL_IMPORT_FORBIDDEN",
         );
+
         expect(document.body.textContent ?? "").not.toContain(
             "you may not import into this skill library",
         );
+    });
+
+    /**
+     * task-61 的第二个泄露点：`fallback` slug 把码**插进了 action 文案**（`把错误码 {code} 和时间点报给管理员`），
+     * 于是整卡里码出现两次。真机读数见证据 §3。
+     */
+    it("未知码（fallback）：码不在 action 里，只在折叠区出现一次", async () => {
+        const submit = vi
+            .fn<(payload: unknown) => Promise<unknown>>()
+            .mockRejectedValue(apiError(502, "SOMETHING_UNEXPECTED", "upstream said no"));
+        const wrapper = mountDialog(submit);
+        await fillAndSubmit(wrapper, validBatch());
+
+        const visibleText = errorCardVisibleText();
+        expect(visibleText).not.toContain("SOMETHING_UNEXPECTED");
+        // HTTP 状态仍要可见（那是用户能报给管理员的另一条线索），只是措辞改成不插码
+        expect(visibleText).toContain("502");
+        expect(visibleText).not.toMatch(/API error \d+/);
+
+        await revealTechnicalDetail();
+        expect(q('[data-testid="skills-import-error-code"]').textContent ?? "").toContain(
+            "SOMETHING_UNEXPECTED",
+        );
+        // 整卡（含折叠区）里码只出现一次 —— 折叠区之外一处都没有
+        const whole = document.body.textContent ?? "";
+        expect(whole.split("SOMETHING_UNEXPECTED").length - 1).toBe(1);
     });
 
     it("400 批过大：整批拒绝的说法 + 拆分下一步（不冒充逐条拒绝）", async () => {

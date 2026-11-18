@@ -6,6 +6,7 @@ import { AlertCircle, CheckCircle2, LoaderCircle } from "@lucide/vue";
 import type { SkillImportRequestPayload, SkillImportResultPayload } from "../../composables/api";
 import { logger } from "../../lib/logger";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Button } from "../ui/button";
 import {
     Dialog,
@@ -349,12 +350,40 @@ const rejectedRows = computed(() =>
                                 t(`settings.skills.import.error.${error.slug}.action`, error.params)
                             }}
                         </p>
-                        <p
-                            data-testid="skills-import-error-code"
-                            class="mt-1 font-mono text-xs text-muted-foreground"
-                        >
-                            {{ t("settings.skills.import.errorCode", { code: error.code }) }}
-                        </p>
+                        <!--
+                            task-61（同批 D-1879）：错误码**不再出现在正文**，只挪进折叠区。
+
+                            ① 判据见 packages/ui/AGENTS.md §错误面 —— 新错误面的三件事：可读文案在 +
+                               **不含错误码** + 不含 `API error \d+`。码本身是报障凭据，所以是**折叠**不是删除。
+                            ② 这张卡的**面型判定**：§错误面 把「弹窗内提示」归**瞬时面**（只渲染 copy、原文只进
+                               logger）。本卡刻意按**诊断面**处理，理由是这个错误条**持久在屏**且给下一步动作，
+                               用户确实要把码报给管理员。但「英文 detail 不进 UI」这条仍然成立 ——
+                               `mapSkillImportError` 从不携带 CP 原文，折叠区里**只有码，没有 detail**。
+                               别把这里「简化」成 toast 那种只留 copy 的形态：那会让报障凭据消失。
+                            ③ 读数（证据 §3）：403 态整卡原本是「标题/正文/动作/错误码：SKILL_IMPORT_FORBIDDEN」
+                               四行，码在第 4 行常显；fallback slug 更严重 —— 码在 action 与码行**出现两次**。
+                        -->
+                        <Collapsible>
+                            <CollapsibleTrigger as-child>
+                                <button
+                                    type="button"
+                                    data-testid="skills-import-error-detail-toggle"
+                                    class="mt-1 text-xs text-muted-foreground underline underline-offset-2"
+                                >
+                                    {{ t("errors.technicalDetail") }}
+                                </button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                                <p
+                                    data-testid="skills-import-error-code"
+                                    class="mt-1 font-mono text-xs text-muted-foreground"
+                                >
+                                    {{
+                                        t("settings.skills.import.errorCode", { code: error.code })
+                                    }}
+                                </p>
+                            </CollapsibleContent>
+                        </Collapsible>
                     </AlertDescription>
                 </Alert>
 

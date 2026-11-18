@@ -3369,7 +3369,7 @@ const messages = {
                         fallback: {
                             title: "导入失败",
                             body: "服务端拒绝了这次导入（HTTP {status}）。",
-                            action: "把错误码 {code} 和时间点报给管理员；英文细节只进服务端日志，页面不展示。",
+                            action: "展开「技术详情」把错误码和时间点报给管理员；英文细节只进服务端日志，页面不展示。",
                         },
                     },
                     rejected: {
@@ -7548,7 +7548,7 @@ const messages = {
                         fallback: {
                             title: "Import failed",
                             body: "The server refused this import (HTTP {status}).",
-                            action: "Report error code {code} with the timestamp to an administrator; the English detail stays in the server log and is never rendered here.",
+                            action: "Expand the technical details and report the error code with the timestamp to an administrator; the English detail stays in the server log and is never rendered here.",
                         },
                     },
                     rejected: {
