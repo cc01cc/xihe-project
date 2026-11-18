@@ -37,9 +37,12 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
 </script>
 
 <template>
-    <!-- task-22（task-34 改白残项）：本页没有 <main>（全局模块直挂 ModuleStage），根 section
-         即内容容器 ⇒ 白底挂这里（bg-card），与 SettingsLayout/ResourcesLayout 同形态，不改结构与 IA。 -->
-    <section class="min-h-full bg-card" data-testid="org-members-page">
+    <!-- task-22（task-34 改白残项）：白底挂页面根（bg-card），与 SettingsLayout/ResourcesLayout 同形态。
+         task-81：本页直挂 ModuleStage（上方没有 layout 给 main），故页面根由 section 改为 **main**，
+         给出顶层 landmark（W3C ARIA APG · Main Landmark：每页一个、应为顶层地标、用 main 元素定义）。
+         class 与 data-testid 一字未动 ⇒ 盒子与既有选择器不变；旧注释那句「本页没有 <main>」已随本次改动过期，
+         留着会让下一个人照着它再判一次缺。 -->
+    <main class="min-h-full bg-card" data-testid="org-members-page">
         <header class="border-b">
             <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
                 <h1
@@ -102,5 +105,5 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
                 <AgentPrincipalsPanel />
             </div>
         </div>
-    </section>
+    </main>
 </template>

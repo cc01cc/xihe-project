@@ -58,7 +58,10 @@ async function handleSubmit() {
 </script>
 
 <template>
-    <div class="flex items-center justify-center min-h-screen bg-muted/30">
+    <!-- task-81：页面根即主内容区 ⇒ 用 HTML main 元素给出顶层 landmark
+         （W3C ARIA APG · Main Landmark：每页一个、应为顶层地标、用 main 元素定义）。
+         auth 面无侧栏，故不套 SidebarInset（它带 sidebar 布局语义，产品代码里也零引用）。 -->
+    <main class="flex items-center justify-center min-h-screen bg-muted/30">
         <div class="w-full max-w-md p-8 bg-background rounded-xl shadow-sm border">
             <div class="text-center mb-6">
                 <div class="mb-2 text-3xl"><Sun class="mx-auto size-8" aria-hidden="true" /></div>
@@ -144,5 +147,5 @@ async function handleSubmit() {
                 <p v-if="errorMsg" class="text-sm text-destructive text-center">{{ errorMsg }}</p>
             </form>
         </div>
-    </div>
+    </main>
 </template>
