@@ -5,8 +5,8 @@
 > Profile：`lifecycle`  
 > Owner：CP Session owner  
 > 消费者：UI、Agent、Context、Operation、Workspace  
-> 来源：PLAN-0387、PLAN-0348、PLAN-0660、PLAN-0689、DEV-017  
-> 更新日期：2026-11-07
+> 来源：PLAN-0387、PLAN-0348、PLAN-0660、PLAN-0689、PLAN-0665、D-1846、DEV-017  
+> 更新日期：2026-11-18
 
 ## 领域边界
 
@@ -108,6 +108,75 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
    （单测 + 真栈断言；run responder principal 与 participant 行 MUST 同一行）。
 6. **契约面**：OpenAPI `SessionMessage.participantId` 可空；fork/复制消息 MUST NOT 复制归属
    （子会话花名册未复制，父 id 会悬空/撞 FK）。
+
+## 派生态 anchor 消息投影（task-1 / D-1846）
+
+> 用户 2026-11-18 裁定：「我认为应该是最开始的时间戳那儿作为状态 link 的消息组件，然后干完活儿回复，就自然会在最新的消息」。
+> 设计草案见 [`derived-state-anchor.md`](./derived-state-anchor.md)（v1）；本节点是**落地契约**，实施卡 = task-1。
+> UI 实现：`packages/ui/src/features/workspace/chat/derivedAnchors.ts`（投影）、`components/RunAnchorItem.vue`（呈现）、
+> `composables/useDerivedAnchors.ts`（读投影接线）、`sessionRoute.ts`（三处入口共用的会话路由形态）。
+
+### A1. 数据来源：投影，不新增事件 / 路由 / 状态词
+
+anchor 是**呈现层投影**，MUST 由既有读面合成；MUST NOT 新增 SSE 事件名、durable 记录、API 路由或 run 状态词
+（与 §投递语义 7「不扩契约」同口径）：
+
+| 来源（既有读面） | 提供 |
+|---|---|
+| `GET /sessions/{id}/derived-state` → `activeChildren[]` / `terminalNotices[]` | `runId`、`childSessionId`、状态、`terminalAt`、`name` |
+| `GET /sessions`（`SessionSummary`：`kind=SPAWN` / `spawnedFromSessionId` / `spawnedAt`） | 时间锚 `startedAt`、子会话标题、`agentPrincipalId` |
+| `GET /workspaces/{id}/agents`（既有名册） | `agentPrincipalId → name`（主体显示名；不可得时退化为 run 短码，MUST NOT 上屏 UUID） |
+
+`startedAt` MUST 取子会话的 `spawnedAt`（缺失回落 `createdAt`）；MUST NOT 取「当前时间」或「最新消息时间」。
+
+### A2. 时间锚不可变、状态就地更新（用户核心要求）
+
+1. anchor 身份 MUST 是 (`runId` ∨ `childSessionId`) 复合键；状态变化 MUST 是**同一 anchor 的重绘**，
+   MUST NOT 追加第二条 anchor。
+2. 状态刷新 MUST 复用既有事件链（SSE `derived_state_changed` / `spawn_agent` 工具调用 ⇒ 父会话 derived-state
+   重读）；MUST NOT 为 anchor 新增轮询或定时器。
+3. 子 run 的终态回复 MUST 仍走既有 terminal 消息路径（assistant 消息），因此自然落在流末尾 ——
+   anchor 不承担「回复」职能。
+4. 刷新页面/重进会话后 anchor MUST 仍落在同一位置：位置只由 durable `startedAt` 决定，MUST NOT 依赖前端内存。
+
+### A3. 状态语义单解析器（N10）
+
+1. derived-state 的**两套词表**（`activeChildren[].status` 7 值、`terminalNotices[].state` 5 值）MUST 先归一到
+   `ChatRunResponse.status` 的 12 值冻结词表（`runStateView.ts#runStatusOfDerivedChild`），再由同模块取
+   tier / label；组件 MUST NOT 自写 `status === "..."` 判定。
+2. 映射是**函数**、不是新增词表：`terminalNotices.state` 的 `success`/`error` MUST 映射为 `succeeded`/`failed`，
+   `partial`/`ambiguous`/`cancelled` 同名；7 个 active 值本身已是 wire 状态，MUST 原样使用。
+3. 缺失/未知状态 MUST 呈现为「无状态」（不显示 label、不猜 `running`），与「不可见 ≠ 无变化」同源。
+
+### A4. 呈现与排序
+
+1. anchor MUST 与消息共用同一条时间线，按 `startedAt` 插入；MUST NOT 单开区块、MUST NOT 恒定置顶/置底。
+2. 插入点 MUST 落在 run 分组边界（不得把某个 run 的组头与其消息切开）。
+3. 同一时刻多条 anchor MUST 可区分主体：**主体显示名**优先，名称不可得时用 run 短码；MUST NOT 只靠时间戳区分。
+4. 状态文案 MUST 复用既有 i18n key（`chat.derivedStateStatus.*` / `chat.derivedStateOutcome.*` /
+   `chat.runState.*`）；耗时 MUST 复用 `runView.ts#formatRunDuration` —— **在途不显示耗时**
+   （该模块既有裁定：不引入每秒定时器重渲染）。
+5. 数量上限 MUST 显式：默认 24（`DelegationPolicyValidator` 8×3 最坏情况）；超限 MUST 显式告知
+   （保留最近 N 条），MUST NOT 静默丢弃。
+
+### A5. 点击导航
+
+1. 点击 anchor MUST 切到该 anchor 所属**子会话**：`Session.id == childSessionId`，路由形态 = 既有
+   `{ name: "workspace-chat", params: { sessionId } }`（与 steer 深链同一入口）。
+2. **与 DAG 面板的关系（决议，替代草案 O2）**：两者**并存、职责分开** —— anchor 是时间线视角，DAG 是结构视角；
+   DAG 节点 MUST 同样可点击，跳转语义与 anchor 一致。MUST NOT 把 DAG 降级为 anchor 的补充视图，
+   MUST NOT 让 anchor 复刻树形（同层两个视角，无环）。
+3. 目标会话不可达（已删/跨工作区）时 MUST NOT 伪造成功：沿用既有导航错误处置，不静默。
+
+### A6. 边界（不做什么）
+
+- **不覆盖同会话 run**：TO fan-out 产生的多个 run 与单 run 都在同一会话内，对话流的 run 头
+  （`RunGroupHeader`）已经「锚在该 run 起点 + 就地更新状态」；再给它们各加一条 anchor 等于同一事实两套机制。
+  ⇒ anchor 只覆盖**本线程看不见的派生 run（`kind=SPAWN` 子会话）**。该口径解决草案 O1。
+  可执行判据（N1 的现行形态）：同会话 fan-out 两主体 ⇒ 两个 run 头各自锚在自己 run 的起点；子会话
+  ⇒ 一条 anchor 锚在子会话 `spawnedAt`，两者都 MUST NOT 挂到流末尾。
+- 不新增 SSE 事件名、durable 事件、API 路由、run 状态词、图库依赖。
+- 不属于 MVP⑤ 收口判定：MVP⑤ 已三面全绿收口，本节点是独立增量。
 
 ## 恢复与失败
 

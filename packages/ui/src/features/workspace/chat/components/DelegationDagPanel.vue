@@ -9,10 +9,12 @@
  * 请求是**读投影**、失败可重试：拉不到就保留结构图并显式报错，不把"未知"画成"没有子会话"。
  * 不做轮询：derived-state 由 ChatPanel 的 SSE 提示驱动；本面板只在打开/切会话/手动刷新时拉。
  */
-import { computed, ref, watch } from "vue";
+import { computed, inject, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { routerKey } from "vue-router";
 import { RefreshCw } from "@lucide/vue";
 import { useSessionStore } from "../../../../stores/session";
+import { chatSessionRoute } from "../sessionRoute";
 import { api, type DelegationUsageView } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
 import type { SessionDerivedStateResponse } from "../../../../types";
@@ -25,6 +27,13 @@ import {
 } from "../delegationGraph";
 
 const props = defineProps<{ sessionId: string }>();
+/**
+ * task-1 / D-1846（契约 A5.2）：节点**可点击**，跳转语义与 anchor 一致（同一路由形态）。
+ * 用 `inject(routerKey, null)` 而不是 `useRouter()`：本面板在单测里可以脱离 router 挂载
+ * （没有 router 时退化为 emit，由宿主决定，不抛错、不静默吞）。
+ */
+const emit = defineEmits<{ openSession: [sessionId: string] }>();
+const router = inject(routerKey, null);
 const { t } = useI18n();
 const sessionStore = useSessionStore();
 
@@ -67,6 +76,23 @@ const canvas = computed(() => ({
     width: Math.max(1, graph.value.maxDepth + 1) * COL_W,
     height: Math.max(rows.value.length, 1) * ROW_H,
 }));
+
+/**
+ * 点击节点 ⇒ 进入该子会话。当前会话本身不导航（没有跳转目标，且重复 push 只会刷历史）。
+ * 失败不静默：记 error。无 router 上下文（单测/嵌入）⇒ emit 给宿主。
+ */
+async function openNode(node: DelegationNode): Promise<void> {
+    if (!node.sessionId || node.sessionId === props.sessionId) return;
+    if (!router) {
+        emit("openSession", node.sessionId);
+        return;
+    }
+    try {
+        await router.push(chatSessionRoute(node.sessionId));
+    } catch (cause) {
+        logger.error("failed to open delegated child session", cause);
+    }
+}
 
 function edgePath(from: string, to: string): string {
     const parent = rows.value.find((row) => row.node.sessionId === from),
@@ -267,10 +293,15 @@ watch(
                         data-testid="delegation-edge"
                     />
                 </svg>
-                <div
+                <!--
+                    task-1 / D-1846（契约 A5.2）：节点改成 <button> —— 键盘可达、可点击进入
+                    该子会话；当前会话节点仍渲染但点击是无操作（没有跳转目标）。
+                -->
+                <button
                     v-for="row in rows"
                     :key="row.node.sessionId"
-                    class="absolute flex items-center gap-1.5 overflow-hidden rounded-md border border-border/70 bg-muted/20 px-2 text-xs"
+                    type="button"
+                    class="absolute flex items-center gap-1.5 overflow-hidden rounded-md border border-border/70 bg-muted/20 px-2 text-left text-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :class="
                         row.node.sessionId === props.sessionId
                             ? 'border-primary/40 bg-accent/30'
@@ -283,6 +314,7 @@ watch(
                         height: `${NODE_H}px`,
                     }"
                     :title="row.node.title"
+                    :aria-label="t('chat.delegation.dagOpenNode', { name: row.node.title })"
                     data-testid="delegation-node"
                     :data-session-id="row.node.sessionId"
                     :data-depth="row.node.depth"
@@ -290,6 +322,7 @@ watch(
                         delegationStatusIsActive(row.node.status) ? 'true' : undefined
                     "
                     :data-node-terminal="row.node.status?.terminal ?? undefined"
+                    @click="openNode(row.node)"
                 >
                     <span
                         class="size-1.5 shrink-0 rounded-full"
@@ -310,7 +343,7 @@ watch(
                         data-testid="delegation-node-status"
                         >{{ statusLabel(row.node) }}</span
                     >
-                </div>
+                </button>
             </div>
         </div>
     </section>

@@ -1542,6 +1542,8 @@ const messages = {
                 dagRefresh: "刷新委派图",
                 dagError: "委派图暂时加载失败（结构仍显示）",
                 dagTruncated: "节点过多，仅显示前 {count} 个",
+                // task-1 / D-1846：节点可点击进入该子会话（与 anchor 同一跳转语义，契约 A5）。
+                dagOpenNode: "进入子会话：{name}",
                 dagBudget: "预算 {used}/{max} · 深度 {depth}/{maxDepth}",
             },
             // PLAN-0635 M1：`/` 命令与 `@` 提及的输入面文案（两者共用一个候选面）。
@@ -1720,6 +1722,12 @@ const messages = {
             derivedStateUnnamedChild: "子会话",
             derivedStateRefreshError: "子任务状态暂不可用",
             derivedStateLoading: "正在刷新子任务状态…",
+            // task-1 / D-1846：派生态 anchor（子会话状态卡）。状态文案复用 derivedState* 词汇，
+            // 这里只补卡片自身的两处文案（进入动作 + 超限告知）。
+            anchor: {
+                open: "进入子会话：{name}",
+                truncated: "子会话过多，仅显示最近 {count} 条",
+            },
             waitingOnChild: "等待子任务",
             derivedStateStatus: {
                 accepted: "已接收",
@@ -5667,6 +5675,8 @@ const messages = {
                 dagRefresh: "Refresh the delegation graph",
                 dagError: "The delegation graph could not be loaded (structure is still shown)",
                 dagTruncated: "Too many nodes — showing the first {count}",
+                // task-1 / D-1846: a node is now clickable and opens that child session.
+                dagOpenNode: "Open the child session: {name}",
                 dagBudget: "Budget {used}/{max} · depth {depth}/{maxDepth}",
             },
             placeholder: "Message · Enter to send · Shift+Enter for newline",
@@ -5850,6 +5860,12 @@ const messages = {
             derivedStateUnnamedChild: "Child session",
             derivedStateRefreshError: "Child task status is temporarily unavailable",
             derivedStateLoading: "Refreshing child task status…",
+            // task-1 / D-1846: derived-run anchor (child-session status card). Status copy reuses the
+            // derivedState* vocabulary; only the card's own two strings live here.
+            anchor: {
+                open: "Open the child session: {name}",
+                truncated: "Too many child sessions — showing the latest {count}",
+            },
             waitingOnChild: "Waiting for child task",
             derivedStateStatus: {
                 accepted: "Accepted",

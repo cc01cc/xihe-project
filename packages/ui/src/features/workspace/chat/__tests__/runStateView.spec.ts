@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { i18n } from "../../../../i18n";
 import {
     isTerminalRunStatus,
+    runStateIsFailure,
     runStateLabelKey,
     runStateTier,
+    runStatusOfDerivedChild,
     terminalMarkerOf,
 } from "../runStateView";
 
@@ -125,5 +127,59 @@ describe("isTerminalRunStatus", () => {
         expect(isTerminalRunStatus(undefined)).toBe(false);
         expect(isTerminalRunStatus(null)).toBe(false);
         expect(isTerminalRunStatus("interrupted")).toBe(false);
+    });
+});
+
+/**
+ * task-1 / D-1846：derived-state 的**两套**词表 → 冻结的 12 值 wire 词表。
+ * 断言三条：active 原样透传、terminal 两词被映射、未知不猜。
+ */
+describe("runStatusOfDerivedChild (task-1 derived anchors)", () => {
+    it("passes the seven in-flight derived statuses through unchanged", () => {
+        const active = [
+            "accepted",
+            "queued",
+            "dispatching",
+            "running",
+            "streaming",
+            "awaiting_approval",
+            "cancelling",
+        ] as const;
+        for (const status of active) {
+            expect(runStatusOfDerivedChild(status, null), status).toBe(status);
+            // 两条轴同时到达时在途优先（终态收口还没被读到）。
+            expect(runStatusOfDerivedChild(status, "success"), status).toBe(status);
+            expect(runStateTier(runStatusOfDerivedChild(status, null))).not.toBeNull();
+        }
+    });
+
+    it("maps the five derived terminal words onto existing wire statuses", () => {
+        expect(runStatusOfDerivedChild(null, "success")).toBe("succeeded");
+        expect(runStatusOfDerivedChild(null, "error")).toBe("failed");
+        expect(runStatusOfDerivedChild(null, "partial")).toBe("partial");
+        expect(runStatusOfDerivedChild(null, "ambiguous")).toBe("ambiguous");
+        expect(runStatusOfDerivedChild(null, "cancelled")).toBe("cancelled");
+        // 映射的每个结果都必须是既有 tier 表里的成员（= 没有新增状态词）。
+        for (const terminal of ["success", "error", "partial", "ambiguous", "cancelled"] as const) {
+            const status = runStatusOfDerivedChild(null, terminal);
+            expect(status, terminal).not.toBeNull();
+            expect(runStateTier(status), String(status)).not.toBeNull();
+        }
+    });
+
+    it("returns null for absent or unreadable vocabularies instead of guessing", () => {
+        expect(runStatusOfDerivedChild(null, null)).toBeNull();
+        expect(runStatusOfDerivedChild(undefined, undefined)).toBeNull();
+        // 运行期越界值（本 UI 不认识的新词）不得被当成在途。
+        expect(runStatusOfDerivedChild("paused" as never, null)).toBeNull();
+        expect(runStatusOfDerivedChild(null, "timed_out" as never)).toBeNull();
+    });
+
+    it("gives the failure predicate one home (anchor + run header share it)", () => {
+        expect(runStateIsFailure("failed")).toBe(true);
+        expect(runStateIsFailure("cancelled")).toBe(true);
+        for (const status of ["succeeded", "partial", "ambiguous", "running", undefined, null]) {
+            expect(runStateIsFailure(status), String(status)).toBe(false);
+        }
     });
 });

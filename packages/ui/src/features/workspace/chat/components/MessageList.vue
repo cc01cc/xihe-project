@@ -20,6 +20,8 @@ import ContextTruncationNotice from "./ContextTruncationNotice.vue";
 import MessageSearch from "./MessageSearch.vue";
 import RunGroupHeader from "./RunGroupHeader.vue";
 import RunTerminalChip from "./RunTerminalChip.vue";
+import RunAnchorItem from "./RunAnchorItem.vue";
+import type { DerivedRunAnchor } from "../derivedAnchors";
 import { terminalMarkerOf, type TerminalMarker } from "../runStateView";
 import type { AgentContextTruncation } from "../composables/useSSE";
 import { hasMultipleActors } from "../actorView";
@@ -56,6 +58,13 @@ const props = defineProps<{
      * 旧 CP 返回数组 ⇒ false ⇒ 入口不渲染，行为与改造前一致。
      */
     hasOlder?: boolean;
+    /**
+     * task-1 / D-1846：派生态 anchor（子会话状态卡）。按 `startedAt` 插进同一条时间线，
+     * **不是**末尾追加；同一个 `key` 的状态变化是就地重绘（见 `derivedAnchors.ts`）。
+     */
+    anchors?: readonly DerivedRunAnchor[];
+    /** 因上限被折叠掉的 anchor 条数（>0 时显式告知，不静默丢）。 */
+    anchorsHiddenCount?: number;
     /** 向上取更旧一页进行中（按钮禁用 + 文案切换）。 */
     loadingOlder?: boolean;
     /** PLAN-0670 M2d.3：因 500 条上限被折叠（已从内存丢弃）的最旧消息条数；0 = 无折叠。 */
@@ -130,6 +139,8 @@ const emit = defineEmits<{
     branch: [id: string];
     revert: [sliceRef: string];
     loadOlder: [];
+    /** 点击 anchor ⇒ 进入对应子会话（路由由 ChatPanel 决定，契约 A5）。 */
+    openSession: [sessionId: string];
 }>();
 
 const showSearch = ref(false),
@@ -246,8 +257,90 @@ interface RunHeaderModel {
 
 type Row =
     | { type: "date"; date: string; id: string; key: string }
+    | { type: "anchor"; anchor: DerivedRunAnchor; key: string }
     | { type: "header"; header: RunHeaderModel; groupMessages: Message[]; key: string }
     | { type: "message"; msg: Message; indented: boolean; key: string };
+
+/**
+ * task-1 / D-1846：一行的**时间读数**（anchor 排序与插入点用）。
+ *
+ * run 头的读数是它那个 run 的起点（`createdAt`，缺失回落到组内第一条消息），因此
+ * 「把 anchor 插在 run 头之前」与「插在它起点之前」是同一个位置。
+ */
+function rowTimestamp(row: Row): number | null {
+    const raw =
+        row.type === "header"
+            ? (row.header.createdAt ?? row.groupMessages[0]?.timestamp)
+            : row.type === "message"
+              ? row.msg.timestamp
+              : null;
+    if (!raw) return null;
+    const value = Date.parse(raw);
+    return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * anchor 的插入点：
+ *  - 第一条时间**晚于** anchor 的行之前（没有就追加到末尾）；
+ *  - 若该位置落在某个 run 组**内部**（该行是组内缩进消息），顺延到该组末尾 ——
+ *    契约 A4.2：不得把某个 run 的组头与其消息切开。
+ *
+ * 为什么是「顺延到组末尾」而不是「退回组头之前」：spawn/委派的起点几乎总是落在父 run 的
+ * 执行过程中间（工具调用完成的那一刻），退到组头会让 anchor 看起来比它实际开始得更早；
+ * 顺延到组末尾既保住组的完整，又尽量贴近真实时间。
+ */
+function anchorInsertIndex(rows: readonly Row[], startedAt: number): number {
+    const found = rows.findIndex((row) => {
+        const timestamp = rowTimestamp(row);
+        return timestamp !== null && timestamp > startedAt;
+    });
+    const index = found === -1 ? rows.length : found;
+    const row = rows[index];
+    if (!row || row.type !== "message" || !row.indented) return index;
+    let cursor = index;
+    while (cursor < rows.length) {
+        const candidate = rows[cursor];
+        if (!candidate) break;
+        // 日期分隔行跟在某组尾部时属于该组，一起跳过（不把 anchor 卡在组与分隔行之间）。
+        if (candidate.type === "date" || (candidate.type === "message" && candidate.indented)) {
+            cursor += 1;
+            continue;
+        }
+        break;
+    }
+    return cursor;
+}
+
+/**
+ * 把 anchor 合并进已排好的行列表。
+ *
+ * 不变式（契约 A2/A4）：位置**只**由 `startedAt` 决定，所以同一个 anchor 在任何一次渲染里都落在
+ * 同一处 —— 状态更新（`status` 变化、`terminalAt` 出现）只改卡片内容，不移动、不追加第二条。
+ * 搜索态不渲染 anchor（搜索的语义是「找消息」，anchor 不是消息）。
+ */
+function mergeAnchors(
+    base: readonly Row[],
+    anchors: readonly DerivedRunAnchor[],
+    searching: boolean,
+): Row[] {
+    if (searching || anchors.length === 0) return [...base];
+    const ordered = [...anchors].sort((left, right) => {
+        const byTime = Date.parse(left.startedAt) - Date.parse(right.startedAt);
+        return byTime === 0 ? left.key.localeCompare(right.key) : byTime;
+    });
+    const result = [...base];
+    for (const anchor of ordered) {
+        const startedAt = Date.parse(anchor.startedAt);
+        const row: Row = { type: "anchor", anchor, key: `anchor-${anchor.key}` };
+        if (!Number.isFinite(startedAt)) {
+            // 时间不可解析 ⇒ 无法定位：放到末尾并在契约层已被拦（投影只收可用时间锚）。
+            result.push(row);
+            continue;
+        }
+        result.splice(anchorInsertIndex(result, startedAt), 0, row);
+    }
+    return result;
+}
 
 const rows = computed<Row[]>(() => {
     // 分段（相邻同 runId 归一组；日期分隔符跟随当前组）。
@@ -304,7 +397,8 @@ const rows = computed<Row[]>(() => {
             }
         }
     }
-    return result;
+    // task-1 / D-1846：anchor 与消息共用同一条时间线（不是末尾追加、不是独立区块）。
+    return mergeAnchors(result, props.anchors ?? [], Boolean(searchQuery.value));
 });
 
 /**
@@ -609,6 +703,14 @@ watch(
                     class="[overflow-anchor:none]"
                 >
                     <MessageScrollerContent :class="showSearch ? 'pt-12' : undefined">
+                        <!-- task-1 / D-1846：anchor 超上限时显式告知（保留最近 N 条），不静默丢弃。 -->
+                        <p
+                            v-if="(anchorsHiddenCount ?? 0) > 0"
+                            class="px-4 py-1 text-xs text-muted-foreground"
+                            data-testid="run-anchor-truncated"
+                        >
+                            {{ t("chat.anchor.truncated", { count: anchorsHiddenCount }) }}
+                        </p>
                         <!--
                             PLAN-0670 M2d.1：只有 CP 明确给出 `nextCursor/truncated` 才显示
                             「加载更早」入口；旧 CP（数组响应）不渲染，行为不变。
@@ -692,6 +794,22 @@ watch(
                             >
                                 {{ row.date }}
                             </Marker>
+
+                            <!--
+                                task-1 / D-1846：派生态 anchor —— 锚在该子 run 的 `startedAt`，
+                                状态就地更新；点击进入子会话（契约 A5）。仍包在 MessageScrollerItem 里，
+                                这样窗口化能测量它的真实高度（与消息行同一条测量路径）。
+                            -->
+                            <MessageScrollerItem
+                                v-else-if="row.type === 'anchor'"
+                                :ref="(el) => rowElementRef(row.key, el)"
+                                :intrinsic-height="rowHeightOf(row.key)"
+                            >
+                                <RunAnchorItem
+                                    :anchor="row.anchor"
+                                    @open="emit('openSession', $event)"
+                                />
+                            </MessageScrollerItem>
 
                             <MessageScrollerItem
                                 v-else

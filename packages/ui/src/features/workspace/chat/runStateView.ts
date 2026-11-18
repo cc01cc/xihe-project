@@ -1,4 +1,8 @@
-import type { ChatRunResponse } from "../../../types";
+import type {
+    ChatRunResponse,
+    SessionDerivedActiveStatus,
+    SessionDerivedTerminalState,
+} from "../../../types";
 
 /**
  * PLAN-0631 D31-01: the **single** presentation projection for a Run's status.
@@ -93,5 +97,56 @@ export function terminalMarkerOf(
 ): TerminalMarker | null {
     if (status === "partial" || terminalOutcome === "partial") return "partial";
     if (status === "cancelled" || terminalOutcome === "cancelled") return "cancelled";
+    return null;
+}
+
+/**
+ * task-1 / D-1846：**「要不要染红」也只有一个解析器**。
+ *
+ * 派生态 anchor 与 run 头（`RunGroupHeader` 的 `data-failed`）都得回答同一个问题：这个状态
+ * 是「失败/取消」吗？判据留在本模块 ⇒ 以后新增终态词只会在这里被考虑一次
+ * （组件里出现 `status === "failed"` 就是 N10 的违规形态）。
+ */
+export function runStateIsFailure(status: string | undefined | null): boolean {
+    return status === "failed" || status === "cancelled";
+}
+
+/**
+ * task-1 / D-1846（派生态 anchor）：derived-state 的**两套**词表 → 冻结的 wire 状态词表。
+ *
+ * derived-state 给的是两条轴：在途词（`activeChildren[].status`，7 值）与终态词
+ * （`terminalNotices[].state`，5 值）。其中 7 个在途词与 `partial`/`ambiguous`/`cancelled`
+ * 恰好就是 `ChatRunResponse["status"]` 的成员；`success`/`error` 是终态轴自己的说法。
+ *
+ * 映射放在**这里**（而不是调用方）是 N10 的要求：否则每个消费者都要写一遍
+ * `if (state === "error") …`，那正是「一个语义、N 个解析器」。返回值只会是既有 12 个 wire
+ * 状态之一（`succeeded`/`failed` 是映射目标，不是新词）。
+ *
+ * 未知/缺失 ⇒ `null`：调用方据此**不渲染状态**，绝不猜成 `running`（同 A2「不可见 ≠ 无变化」）。
+ */
+function terminalToWire(terminal: SessionDerivedTerminalState): ChatRunResponse["status"] | null {
+    switch (terminal) {
+        case "success":
+            return "succeeded";
+        case "error":
+            return "failed";
+        case "partial":
+            return "partial";
+        case "ambiguous":
+            return "ambiguous";
+        case "cancelled":
+            return "cancelled";
+        default:
+            // 运行期可能是本 UI 不认识的新终态词 ⇒ 不猜（调用方据此不渲染状态）。
+            return null;
+    }
+}
+
+export function runStatusOfDerivedChild(
+    active: SessionDerivedActiveStatus | null | undefined,
+    terminal: SessionDerivedTerminalState | null | undefined,
+): ChatRunResponse["status"] | null {
+    if (active && isKnownStatus(active)) return active;
+    if (terminal) return terminalToWire(terminal);
     return null;
 }

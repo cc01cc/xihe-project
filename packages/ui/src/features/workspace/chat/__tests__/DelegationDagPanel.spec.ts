@@ -165,4 +165,32 @@ describe("DelegationDagPanel (PLAN-0659 T1.4)", () => {
         );
         wrapper.unmount();
     });
+
+    /**
+     * task-1 / D-1846（契约 A5.2）：节点可点击，跳转语义与 anchor 一致。
+     * 没有 router 上下文（本 spec 的挂载条件）⇒ 退化为 emit，由宿主决定；当前会话节点不导航。
+     */
+    it("makes nodes clickable and hands the target session to the host", async () => {
+        const pinia = createPinia();
+        setActivePinia(pinia);
+        seed([ROOT, CHILD_A, CHILD_B]);
+        const wrapper = mount(DelegationDagPanel, {
+            props: { sessionId: "root" },
+            global: { plugins: [i18n, pinia] },
+        });
+        await flushPromises();
+
+        const nodes = wrapper.findAll('[data-testid="delegation-node"]');
+        expect(nodes.map((node) => node.element.tagName)).toEqual(["BUTTON", "BUTTON", "BUTTON"]);
+        // 可访问名说明「点进去会到哪里」，而不是只留一个 title。
+        expect(nodes[1]?.attributes("aria-label")).toContain("子会话 A");
+
+        await nodes[1]!.trigger("click");
+        expect(wrapper.emitted("openSession")).toEqual([["child-a"]]);
+
+        // 当前会话节点：没有跳转目标，点击不得 emit（避免把「原地」记成一次导航）。
+        await nodes[0]!.trigger("click");
+        expect(wrapper.emitted("openSession")).toEqual([["child-a"]]);
+        wrapper.unmount();
+    });
 });

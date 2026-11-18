@@ -44,6 +44,8 @@ import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import { useSessionBranches } from "../composables/useSessionBranches";
+import { useDerivedAnchors } from "../composables/useDerivedAnchors";
+import { chatSessionRoute } from "../sessionRoute";
 import { useComposeDeeplink } from "../composables/useComposeDeeplink";
 import {
     ensureProviderBinding,
@@ -270,6 +272,15 @@ const derivedState = ref<SessionDerivedStateResponse | null>(null),
  * 只在会话切换与 **run 终态**（0645 的终态刷新点）各拉一次，不做轮询。
  */
 const sessionRuns = ref<SessionRunSummary[]>([]);
+/**
+ * task-1 / D-1846：派生态 anchor（子会话状态卡）。投影只用既有读面（会话列表 + 本会话
+ * derived-state + 工作区主体名册），**不新增轮询**：derived-state 由既有 SSE 链刷新，
+ * anchor 因此就地重绘（key 不变，不产生第二条）。
+ */
+const { anchors: derivedAnchors, hiddenCount: derivedAnchorsHiddenCount } = useDerivedAnchors({
+    sessionId: () => props.sessionId,
+    derivedState: () => derivedState.value,
+});
 const derivedStateError = ref(false),
     waitingOnByToolCallId = ref<Record<string, ToolCallWaitingOn>>({});
 let derivedStateRequestId = 0,
@@ -427,7 +438,7 @@ async function onBoardRetry(): Promise<void> {
 }
 /** steer 来源会话跳转：显式导航走 push（深链 /chat/:sessionId 是唯一事实）。 */
 async function onFollowUpNavigate(sessionId: string): Promise<void> {
-    await router.push({ name: "workspace-chat", params: { sessionId } });
+    await router.push(chatSessionRoute(sessionId));
 }
 
 // ---- task-188 S3（MVP⑤）：steer 插话入口 ----------------------------------------------------
@@ -1687,6 +1698,8 @@ watch(
             v-if="messages.length > 0"
             :messages="renderedMessages"
             :runs="sessionRuns"
+            :anchors="derivedAnchors"
+            :anchors-hidden-count="derivedAnchorsHiddenCount"
             :branch-busy="creatingBranchForMessageId !== null"
             :has-older="hasOlderMessages"
             :loading-older="loadingOlder"
@@ -1699,6 +1712,7 @@ watch(
             @retry="handleRetry"
             @branch="handleCreateBranch"
             @revert="openRevertPreview"
+            @open-session="onFollowUpNavigate"
         />
 
         <div
