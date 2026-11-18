@@ -733,3 +733,32 @@ Both bit during the same night, with the same symptom: the instrument reports em
 **General shape**: a 404 or an empty result is **not** evidence that a product surface is missing. To write "there is none", you must show **complete addressing** — same headers and parameters, plus a known-existing control that hits.
 
 P-9 in `task-59` was corrected exactly this way: the 404s first read as "there is no knowledge-base surface"; after adding the header and `branchId` the surfaces were all there, and the real finding was that **retrieval never happened that run** (`tools=0`). The two conclusions produce different copy, and the wrong one sends users looking for an entry point that does not exist.
+
+## 15. Four main-landmark criteria (measured in `task-81`, 2026-11-19, `D-1869`①)
+
+> Source: `task-81` gave the native element to the 4 surfaces that lacked a main landmark (`/members`, `/login`, `/register`, `/onboarding`); the full table and the accessibility-tree readings live in `internal/A03-xihe/evidence/2026-11-19-task81-main-landmark/README.md` (A03 commit `c7092cc007`). Industry basis = W3C APG · Main Landmark, four rules: one main per page / main is a top-level landmark / if a page has more than one, each must carry a unique label / use the HTML `main` element. All four criteria below were hit first and pinned afterwards; a criterion without a measurement method equals no criterion (`D-1871`).
+
+### 15.1 Derive the inventory from the router, not from the directory
+
+- **Boundary**: whether a surface has a main is decided by **which component the route renders**. `App.vue` mounts a single `<router-view>` into `ModuleStage`, and `ModuleStage` is a bare div (no main); the main comes either from the component itself or from an ancestor layout.
+- **Measurement**: take the `routes` array through the AST (the repo pins `typescript` 6.0.3 — **not a hand-written brace matcher**) and classify every surface that really renders a component into three buckets, self-provided / ancestor-provided / missing; **the three buckets must sum to the number of real surfaces** (this round 28 = 9 + 19 + 4). Of 44 route nodes, 16 are redirect or wildcard nodes that render no component and take no part in the judgement. The reading **must be recomputed on a commit** (`node scan-landmark.mjs --ref c7092cc007…` ⇒ 44 nodes / 0 missing) — a working-tree count only proves that moment.
+- **Counter-example anchor**: walking `src/views/**` makes two mistakes at once — it drops module pages that live under `features/**` (`/members` really is `src/features/org-members/pages/OrgMembersView.vue`) and it misjudges children of layouts as missing. The false claim that 25 files under views lack a main came exactly from that; **the real count was 4 surfaces**.
+
+### 15.2 A comment is not code
+
+- **Boundary**: text inside template or line comments — including a self-description such as 「this page has no main」 — is evidence of nothing. It is prose, not a landmark.
+- **Measurement**: strip comments **before** matching `<main` or `role="main"`; every claimed hit must cite `file:line + source text`, and **a hit without a line reference does not count**.
+- **Counter-example anchor**: the first version of the scanner read the comment in `OrgMembersView.vue` stating that the page has no `<main>` as **proof that it has one** — a self-declared gap turned into an existence claim (**false green**). After stripping comments, all 9 hits carry a line number and the source text. **The same trap is still in the tree**: `src/views/auth/LoginView.vue:73`, `RegisterView.vue:79` and `OnboardingView.vue:63` each carry a **comment** saying they deliberately do not use `SidebarInset` (it has sidebar layout semantics and zero references in product code) ⇒ running `grep -rl SidebarInset` without stripping comments yields 4 hits (3 comments plus the `components/ui/sidebar/index.ts` barrel), which reads as **it is referenced**. Any counting criterion must strip comments before it counts.
+
+### 15.3 The token `<main` may sit alone on its own line
+
+- **Boundary**: markup may open `<main` on one line and put the attributes on the lines below — `src/layouts/AppLayout.vue:460` is written that way.
+- **Measurement**: the set of characters allowed right after `<main` must include **end of line** (whitespace, `>`, `/` **or newline** — all four count); write one positive test using a bare `<main` line instead of testing only single-line tags.
+- **Counter-example anchor**: a per-line matcher that required `<main` to be followed by whitespace / `>` / `/` read `AppLayout.vue:460` — **the site-wide layout that really does have a main** — as genuinely missing (**false red**). The two directions cost differently: a false green stops people from fixing, a false red sends them to fix something that already exists.
+
+### 15.4 No blanket wrapper: putting main in the shared shell creates two nested mains
+
+- **Boundary**: **never** place one shared `<main>` in `ModuleStage` (the container of every route); the main of a page must be unique and top-level, and if a page genuinely shows more than one, each must carry a unique accessible name.
+- **Measurement**: count nodes in the **platform accessibility tree**, not in source — CDP `Accessibility.getFullAXTree`, counting **only nodes whose `ignored` is not `true`** (a hidden main does not exist for assistive tech and must not be counted). This round 5 surfaces each reported exactly 1, and `/workbench` served as the **control surface**, whose only purpose was to prove the change did not introduce a second main.
+- **Counter-example anchor**: candidate A (a blanket main inside `ModuleStage`) would have produced **two nested mains on the 24 surfaces that already have one**, breaking APG rule three and the rule that no more than one visible main may exist — that is a **machine-checkable criterion, not a taste call**. Rejected in the same batch: B `SidebarInset` (it does carry a main, but it is a sidebar-semantic container, these 4 surfaces have no rail, and it measures zero references in product code — **the count is zero only after comments are stripped**; the remaining hits are the three explanatory comments listed in §15.2 plus the vendor barrel itself), C `role="main"` (APG says use the native element, which also gives one free checkable constraint: `<main>` must not sit inside sectioning content), D a third-party landmark library (paying coupling and exit cost for four tags is not defensible).
+
