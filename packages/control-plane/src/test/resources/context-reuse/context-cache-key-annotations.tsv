@@ -70,6 +70,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/RunCheckpointDescendantWarningTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/SessionForkFailureInjectionIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/SessionForkIntegrationTest.java	property-variant
+@DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/SessionTitleNamingIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/UserQuestionControllerIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/UserQuestionServiceIntegrationTest.java	property-variant
@@ -175,6 +176,7 @@
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/WorkspaceServiceCustomPathTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/WorkspaceServiceTest.java	suite-context
 @TestConfiguration	com/cc01cc/p/xihe/cp/chat/ChatControllerTest.java	fixture-config
+@TestConfiguration	com/cc01cc/p/xihe/cp/chat/SessionTitleNamingIntegrationTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/crossmodule/AgentChatIntegrationTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/crossmodule/ApprovalAgentIntegrationTest.java	fixture-config

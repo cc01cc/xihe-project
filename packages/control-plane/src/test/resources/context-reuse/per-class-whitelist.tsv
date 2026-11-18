@@ -4,9 +4,10 @@
 #   mockito-bean | test-configuration | docker-frozen | async-sse | before-all | nested
 #   test-listeners | boot-test-variant | chat-run-dispatch（仅 §4.1 已批准的 17 类）
 # 列：FQCN <TAB> 判定码(逗号分隔) <TAB> 判定说明
-# 计数：per-class=88 / reusable=84 / 合计=172（cp-2 清偿批：跨车道新增 10 个 per-class 类 + OrgUnitGate 由 reusable 移入）
-# 判定码计数：active-profiles=2 | async-sse=30 | before-all=10 | chat-run-dispatch=17 | docker-frozen=2 | dynamic-property-source=17 | mockito-bean=20 | test-configuration=2 | test-property-source=13
-# 注意：docker-frozen 2 类在默认 surefire 配置下不执行，因此实际 per-class context = 70 - 2 = 68。
+# 计数：per-class=89 / reusable=85 / 合计=174（cp-2 清偿批：跨车道新增 10 个 per-class 类 + OrgUnitGate 由 reusable 移入；
+#   task-31：0cc9fb449/D-1866 新增 chat/SessionTitleNamingIntegrationTest 补登 1 行 ⇒ per-class 88→89、合计 173→174，reusable 不变）
+# 判定码计数（守卫实读 2026-11-18，task-31 后）：active-profiles=2 | async-sse=31 | before-all=11 | chat-run-dispatch=17 | docker-frozen=2 | dynamic-property-source=18 | mockito-bean=20 | test-configuration=3 | test-property-source=13
+# 注意：docker-frozen 2 类在默认 surefire 配置下不执行，因此实际 per-class context = 89 - 2 = 87（2026-11-18 实读；旧值 70-2=68 已随 per-class 增长失效）。
 com.cc01cc.p.xihe.cp.audit.CheckpointRevertAuditIntegrationTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
 com.cc01cc.p.xihe.cp.audit.SessionSnapshotAuditIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.auth.AuthLockoutAccountIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
@@ -43,6 +44,7 @@ com.cc01cc.p.xihe.cp.chat.SessionForkFailureInjectionIntegrationTest	dynamic-pro
 com.cc01cc.p.xihe.cp.chat.SessionForkIntegrationTest	dynamic-property-source,mockito-bean,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具
 com.cc01cc.p.xihe.cp.chat.SessionParticipantHttpTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.chat.SessionPrimaryParticipantTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SessionTitleNamingIntegrationTest	dynamic-property-source,test-configuration,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；@Import/@TestConfiguration/@ContextConfiguration；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具（task-31 登记 0cc9fb449/D-1866 新类）
 com.cc01cc.p.xihe.cp.chat.SkillSnapshotFreezeIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.chat.SkillSnapshotPrincipalContrastTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.chat.SpawnCancelSerializationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
