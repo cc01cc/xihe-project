@@ -545,7 +545,13 @@ alias = "check:config-schema"
 #     收口后残余 E=0 且规则可复算 ⇒ 再接才是「门」，接在红门上是「噪音」。
 #   注：A1_new 1460 / A3_new 150 是 W 级不进 exit（D-1852 口径），本门接入不改变它们的可见性。
 # 同批仍未接：`:enforce` 兄弟（观察窗档）、check:font（D-1132 已摘除，预期）。
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings", "check:ui-copy", "check:i18n-fixture-copies", "check:dev-i18n-drift", "check:md-tables", "check:ports", "check:migrations", "check:bl-count", "check:bl-decision-ref", "check:docs-index", "check:md-emphasis", "check:terms", "check:types", "check:internal-scripts", "check:root-residue", "check:commit-msg", "check:plan-anchors", "check:fixtures", "check:event-keys", "check:a11y-refs", "check:trace"]
+# ── W2 接线（2026-11-19 01:2x，窗口 VW-20261119-01，钉靶 00c91df3）─────────────────────────
+# 改法：这个任务**不再用 depends 并行拉 30 个门**，改为 run 一个 keep-going 聚合器 `scripts/lint-run.mjs`。
+# 为什么换：depends 并行是「首个失败即终止」语义 —— 慢门（check:trace 2.7 s、lint:ui 数十秒）会被早失败的门掐掉，
+#   于是「跑了 30 个」与「跑完 30 个」在输出里分不清；聚合器逐门跑完、逐门报 exit 与计时，末尾给一张 30 行汇总表。
+# 本窗验收判据：`node scripts/lint-run.mjs` 与 `mise run lint` 的门集合**逐名相同（30/30）**，且墙钟与逐门计时都打印。
+# 回滚：把本行换回原来的 depends = [...]（原文见本条提交 diff 的删除行）。
+run = "node scripts/lint-run.mjs"
 description = "Run all linters"
 alias = "lint"
 
