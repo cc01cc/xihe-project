@@ -5,9 +5,11 @@ follow the same shape on purpose, because two different seams for two sibling sl
 third one gets invented:
 
 * **CP owns selection.** ``AgentMemoryInjectionService`` has already filtered to exactly one
-  ``(principal, workspace)`` pair, dropped ``candidate``/soft-deleted rows and ordered the rest
-  (pinned -> profile -> freshest). Nothing here re-filters or re-orders: a second ordering rule
-  would drift from the one the operator sees in the UI.
+  **agent subject** (``principal_id``). The workspace is **not** a data key: it arrives only as the
+  request's **authorization context** and never partitions the memory set (V107). CP has dropped
+  ``candidate``/soft-deleted rows and ordered the rest (pinned -> profile -> freshest). Nothing here
+  re-filters or re-orders: a second ordering rule would drift from the one the operator sees in the
+  UI.
 * **The Agent owns the budget.** Entries are charged against the run's single injection ledger
   (``context/injection_budget.py``: 2% floor / 4% cap, shared pool, eviction order
   ``nested -> memory -> skills``), never against a private budget.
