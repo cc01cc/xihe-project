@@ -1372,12 +1372,12 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/SteerCreateRequest' } } }
       responses:
         '202': { description: Steer enqueued on the child's queue, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
-        '200': { description: Idempotent replay - same key, same text; nothing was written twice, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '200': { description: 'Idempotent replay - same key, same text; nothing was written twice', content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: STEER_FORBIDDEN - the caller does not own this Session's tree root, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: SESSION_NOT_FOUND - the Session does not exist or is not reachable for this caller, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '409': { description: One of the queue's own codes, passed through unchanged - FOLLOW_UP_NOT_AVAILABLE / FOLLOW_UP_QUEUE_FULL / IDEMPOTENCY_KEY_REUSED / SESSION_DELETING, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: "One of the queue's own codes, passed through unchanged - FOLLOW_UP_NOT_AVAILABLE / FOLLOW_UP_QUEUE_FULL / IDEMPOTENCY_KEY_REUSED / SESSION_DELETING", content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/follow-ups/{itemId}:
     delete:
       tags: [session]
@@ -7665,7 +7665,7 @@ components:
             properties:
               questionId: { type: string, format: uuid }
               state: { type: string, enum: [pending, answered] }
-              answer: { type: [string, 'null'], description: present only once the addressee has answered (durable, inside the CP-to-Agent trust domain) }
+              answer: { type: [string, 'null'], description: 'present only once the addressee has answered (durable, inside the CP-to-Agent trust domain)' }
               expiresAt: { type: [string, 'null'], format: date-time }
             additionalProperties: false
       additionalProperties: false
@@ -7725,7 +7725,7 @@ components:
         taskId: { type: string, format: uuid }
         teamRootSessionId: { type: string, format: uuid }
         taskNo: { type: integer, format: int64 }
-        revision: { type: integer, format: int64, description: advisory CAS identity — visible to readers, never gated on }
+        revision: { type: integer, format: int64, description: 'advisory CAS identity — visible to readers, never gated on' }
         subject: { type: string, maxLength: 200 }
         description: { type: [string, 'null'], maxLength: 16384 }
         status: { type: string, enum: [pending, in_progress, completed, deleted] }
@@ -7733,7 +7733,7 @@ components:
         ownerSessionId: { type: [string, 'null'], format: uuid }
         ownerName: { type: [string, 'null'] }
         blockedBy: { type: array, items: { type: string, format: uuid } }
-        writeScopeWarnings: { type: array, items: { type: string }, description: server-derived advisory overlap warnings — derived at read time, never stored }
+        writeScopeWarnings: { type: array, items: { type: string }, description: 'server-derived advisory overlap warnings — derived at read time, never stored' }
         createdBySessionId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

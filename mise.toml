@@ -961,6 +961,25 @@ run = "node scripts/check-ui-copy.mjs --enforce"
 description = "Enforce UI copy-judgment gate (test failures ⇒ exit 1). Manual only; NOT wired. Promote after two consecutive clean windows."
 alias = "check:ui-copy:enforce"
 
+# task-51（D-1879 裁定二 / D-1880 五必填）：面向用户的文案不得出现「审查者形态」的字符串（判据 DEV-011 §14）。
+# 形态 = 类名 / 命令 / 契约文件名 / 文件:行号 / 接口路径 / 权限原子与枚举常量 / 内部票号 / 内部术语。
+# **在渲染文本上跑，不在 i18n 源上跑**（扫源假阳：源级 66 行命中里绝大多数是注释与已迁走/未挂载的面）；
+# **矩阵落盘** packages/ui/scripts/copy-leak-matrix.json（只扫路由默认态假阴：技能面板在 role=tab 后面）。
+# 需要真实栈（默认 UI 12640 / CP 12641）。没有实例时 **SKIP 并 exit 0** —— 否则一条只在有栈时有意义的
+# 判据会永久红掉 lint 的 30 门（D-1879 前序裁定：基线红则整扇窗作废）。SKIP 不是通过，报告里会落盘。
+# **不接 [tasks.lint] / validate 的任何聚合**（scripts/lint-run.mjs 的 LINT_GATES 是硬编码数组，本任务不在其中）
+# ⇒ 30 门集合与 exit 不变。接线形态（独立任务 vs 进 lint vs CI）待裁。
+# 自测：node packages/ui/scripts/check-copy-leak.mjs --selftest（决策逻辑 10 例）。
+[tasks."check:copy-leak"]
+run = "node packages/ui/scripts/check-copy-leak.mjs"
+description = "Copy-leak gate (task-51, D-1879): user-facing text must not contain reviewer shapes (class names / commands / contract file names / file:line / endpoint paths / permission atoms / internal ticket ids / internal jargon). Runs on RENDERED text via route x tab matrix that is committed; needs a live stack (12640/12641) and SKIPs with exit 0 when absent. NOT wired into lint/validate aggregates. Selftest: --selftest (10 cases)."
+alias = "check:copy-leak"
+
+[tasks."check:copy-leak:enforce"]
+run = "node packages/ui/scripts/check-copy-leak.mjs --require-stack --enforce"
+description = "Enforce copy-leak gate: hits => exit 1, and no reachable stack => exit 2 (refuses to be green when it could not judge). Manual / windowed only; NOT wired into any aggregate."
+alias = "check:copy-leak:enforce"
+
 # task-172 快档②：夹具自带 i18n 副本 ratchet（task-318 脚本，补建任务）。当前基线外 (a) 5 文件 ⇒
 # 必须 report-only 起步（直接阻断会当场搅红全树）；清账或登记后另议转阻断。脚本自带 --selftest（5 例）。
 [tasks."check:i18n-fixture-copies"]
@@ -1034,7 +1053,13 @@ alias = "pkg:installer"
 [tasks."check:commit-msg"]
 run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce"
 description = "Blocking commit-message gate (type/scope, display-width <=72 cols / merge <=100, empty line before body, PLAN-####/BL-###/D-### reference) over a632de77..HEAD; blocking is the script default and this task is a validate dependency (D-216) — pass --report-only for the old never-fails audit"
-# PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate（task-133/D-909 后 error=0，warnings 126 = 存量 56 + internal summary 降格 70；public 面 error 归 0）。
+# PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate。
+# task-56（2026-11-19 实测更正）：旧注释「task-133/D-909 后 error=0 / public 面 error 归 0」已失真 —— 当日 HEAD 实测 **4 errors / 126 warnings**。
+#   原 9 条里 5 条本卡已修（flow 标量未加引号：description 中的逗号把句子截断并生成野键 ⇒ 文档正文被静默吃掉，非纯格式问题）；
+#   剩 4 条 = DelegateSpawnSession 的 `nullable`（本文档 `openapi: 3.1.0`，该关键字是 3.0 遗留、3.1 下被忽略 ⇒ 声明的不可空性被低估），
+#   改它等于改声明契约 ⇒ 归契约面另卡。判据：**errors 只许减不许增**（基线 4；明细与复跑命令见 docs/api/openapi-lint-baseline.md）。
+#   ⚠️ 本门 report-only 且无自动执行者（不接 validate）⇒ 计数须人工复跑；README §命令表与 DEV-002 zh/en §4 仍写「当前 0 / 124 warnings」，
+#   属本卡发现的待同步面（写面在 mise.toml 之外，已报 Lead 扩 scope）。
 # task-69 / D-827：build-docs 已切 Redoc 3，主题走「模板注入 CSS 变量」而不是 .redocly.yaml 的 theme 块（后者在 Redoc 3 下实测无效）。
 #   -t ../../.redocly/api-docs.hbs ⇒ XH 主题（字体/主色/侧栏），相对路径从 packages/ui 解析；
 #   --openapi.disableTelemetry=true ⇒ 关掉 Redoc 3 的 OpenTelemetry 上报（内部文档页不该向第三方发请求）；
@@ -1043,7 +1068,7 @@ description = "Blocking commit-message gate (type/scope, display-width <=72 cols
 #   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
 run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../../docs/api/openapi.yaml"
-description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a，此前零自动执行者）；判据只有 errors（当前 0）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 124 warnings 不阻断（2026-11-12 20:16 实测；存量 warnings 清账见 task-245）"
+description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a）；判据只有 errors：**基线 4、只许减不许增**（task-56 实测更正，旧写「当前 0」已失真；明细 docs/api/openapi-lint-baseline.md）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 126 warnings 不阻断（存量 warnings 清账见 task-245）"
 
 [tasks."docs:api:html"]
 run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
