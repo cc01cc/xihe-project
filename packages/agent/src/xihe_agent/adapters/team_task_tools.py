@@ -162,13 +162,13 @@ class TeamTaskCoordinator:
     async def create(
         self, client: TeamTaskClient, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        error = self._validate_create(arguments)
-        if error is not None:
-            return _error_result(CODE_INVALID_ARGUMENT, error)
+        error_message = self._validate_create(arguments)
+        if error_message is not None:
+            return _error_result(CODE_INVALID_ARGUMENT, error_message)
         result = await self._call(client, "team_task_create", arguments)
-        error = _unwrap_call_result(result)
-        if error is not None:
-            return error
+        error_payload = _unwrap_call_result(result)
+        if error_payload is not None:
+            return error_payload
         if isinstance(result.get("task"), dict):
             return _ok_task_result(result["task"])
         return _protocol_result("team_task_create", result)
@@ -177,9 +177,9 @@ class TeamTaskCoordinator:
         self, client: TeamTaskClient, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         result = await self._call(client, "team_task_list", {})
-        error = _unwrap_call_result(result)
-        if error is not None:
-            return error
+        error_payload = _unwrap_call_result(result)
+        if error_payload is not None:
+            return error_payload
         if isinstance(result.get("tasks"), list):
             tasks = result["tasks"]
             if all(isinstance(task, dict) for task in tasks):
@@ -189,13 +189,13 @@ class TeamTaskCoordinator:
     async def get(
         self, client: TeamTaskClient, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        error = self._validate_task_id(arguments)
-        if error is not None:
-            return _error_result(CODE_INVALID_ARGUMENT, error)
+        error_message = self._validate_task_id(arguments)
+        if error_message is not None:
+            return _error_result(CODE_INVALID_ARGUMENT, error_message)
         result = await self._call(client, "team_task_get", arguments)
-        error = _unwrap_call_result(result)
-        if error is not None:
-            return error
+        error_payload = _unwrap_call_result(result)
+        if error_payload is not None:
+            return error_payload
         if isinstance(result.get("task"), dict):
             return _ok_task_result(result["task"])
         return _protocol_result("team_task_get", result)
@@ -203,13 +203,13 @@ class TeamTaskCoordinator:
     async def update(
         self, client: TeamTaskClient, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        error = self._validate_update(arguments)
-        if error is not None:
-            return _error_result(CODE_INVALID_ARGUMENT, error)
+        error_message = self._validate_update(arguments)
+        if error_message is not None:
+            return _error_result(CODE_INVALID_ARGUMENT, error_message)
         result = await self._call(client, "team_task_update", arguments)
-        error = _unwrap_call_result(result)
-        if error is not None:
-            return error
+        error_payload = _unwrap_call_result(result)
+        if error_payload is not None:
+            return error_payload
         if isinstance(result.get("task"), dict):
             return _ok_task_result(result["task"])
         return _protocol_result("team_task_update", result)
