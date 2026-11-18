@@ -42,7 +42,6 @@ class AuditEntryPointInventoryTest {
      * {@link AuditLogger} is accounted for, so a newly added write entry point turns this red
      * instead of silently escaping the inventory.
      */
-    /** Main-only scope: a class file under a {@code test-classes} output dir is not part of the surface. */
     /**
      * Where the inventory artefacts go.
      *
@@ -58,14 +57,6 @@ class AuditEntryPointInventoryTest {
         var location = AuditEntryPointInventoryTest.class.getProtectionDomain().getCodeSource().getLocation();
         Path buildDir = Path.of(location.toURI()).getParent();
         return buildDir != null ? buildDir : Path.of(".");
-    }
-
-    private static String sourceUri(JavaClass javaClass) {
-        return javaClass.getSource().map(source -> source.getUri().toString()).orElse("<none>");
-    }
-
-    private static boolean isTestClass(JavaClass javaClass) {
-        return sourceUri(javaClass).replace('\\', '/').contains("test-classes");
     }
 
     private static final String[] NON_WRITE_PUBLIC_METHODS = {
@@ -98,23 +89,16 @@ class AuditEntryPointInventoryTest {
             }
         }
 
-        // task-598: DoNotIncludeTests() above let the test surface through (measured 2026-11-14: total 206
-        // with 69 test call sites vs 137 main-only), so the main-only scope is asserted from the class
-        // location here instead of trusted to the import option.
-        long testClassesExcluded = classes.stream().filter(AuditEntryPointInventoryTest::isTestClass).count();
-        assertThat(testClassesExcluded)
-                .as("the test surface must be dropped here because DoNotIncludeTests() does not drop it;"
-                        + " if this ever hits 0 the import option started working -> delete the manual filter")
-                .isPositive();
+        // task-598 follow-up (2026-11-18, cp-2): the sentinel above hit its own documented branch --
+        // DoNotIncludeTests() now drops the test surface on this toolchain (ArchUnit on Java 25), so the
+        // manual location filter was deleted as the in-code instruction says. Main-only scope is trusted
+        // to the import option again.
 
         int foreign = 0;
         java.util.Set<String> foreignNames = new java.util.TreeSet<>();
         for (JavaClass javaClass : classes) {
             if (javaClass.getName().equals(AuditLogger.class.getName())) {
                 continue;
-            }
-            if (isTestClass(javaClass)) {
-                continue; // test call sites are not the audited surface
             }
             for (JavaCall<?> call : javaClass.getMethodCallsFromSelf()) {
                 String owner = call.getTarget().getOwner().getName();
@@ -160,8 +144,7 @@ class AuditEntryPointInventoryTest {
                     .append(",\n");
         }
         json.append("  \"_total\": ").append(total).append(",\n");
-        json.append("  \"_foreignEntryPoints\": ").append(foreign).append(",\n");
-        json.append("  \"_testClassesExcluded\": ").append(testClassesExcluded).append("\n}\n");
+        json.append("  \"_foreignEntryPoints\": ").append(foreign).append("\n}\n");
 
         // task-607: the artefacts follow the real build output, never a hard coded target/. Two lanes
         // building into different directories must each read their own file.

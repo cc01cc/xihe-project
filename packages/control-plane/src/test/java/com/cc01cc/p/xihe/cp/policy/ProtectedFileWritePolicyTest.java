@@ -77,7 +77,8 @@ class ProtectedFileWritePolicyTest {
                 "AGENTS.md",
                 "a/b/AGENTS.md",
                 "a\\b\\agents.md",
-                "./deep/Agents.MD")) {
+                "./deep/Agents.MD",
+                "././deep/Agents.MD")) {
             PolicyVerdict result = verdict("write_file", writeBody(path), "auto");
             assertEquals(PolicyEffect.ASK, result.effect(), "path should be protected: " + path);
         }
@@ -85,10 +86,25 @@ class ProtectedFileWritePolicyTest {
 
     @Test
     void protectedFilePatternRejectsLookalikes() {
-        for (String path : List.of("AGENTS.md.bak", "docs/AGENTS.md.txt", "src/agent.md", "src/NOTES.md")) {
+        // cp-2: the leading-"./" strip must not widen the pattern -- lookalikes keep ALLOW
+        // with or without the redundant prefix.
+        for (String path : List.of("AGENTS.md.bak", "docs/AGENTS.md.txt", "src/agent.md", "src/NOTES.md",
+                "./AGENTS.md.bak", "./docs/AGENTS.md.txt")) {
             PolicyVerdict result = verdict("write_file", writeBody(path), "auto");
             assertEquals(PolicyEffect.ALLOW, result.effect(), "path must stay unprotected: " + path);
         }
+    }
+
+    /**
+     * cp-2: mid-path dot segments are pinned fail-closed for the NAME check -- the engine never
+     * resolves them here (that is the lexical containment layer's job), so the protected-name
+     * match deliberately stays a no-op and the verdict falls through to the ordinary auto path.
+     */
+    @Test
+    void midPathDotSegmentsStayFailClosedForTheNameCheck() {
+        PolicyVerdict result = verdict("write_file", writeBody("x/./deep/AGENTS.md"), "auto");
+        assertEquals(PolicyEffect.ALLOW, result.effect(),
+                "mid-path ./ is not resolved by the protected-name check: " + result.reason());
     }
 
     @Test

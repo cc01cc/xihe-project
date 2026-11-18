@@ -218,6 +218,15 @@ public class ToolFaceRegistry {
                 continue;
             }
             String normalized = resource.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+            // cp-2 (L1 预存清偿): redundant LEADING "./" segments must not let a protected-file
+            // write slip past the ask tier -- PathKey.lexical rejects dot segments fail-closed and
+            // the name match inherited that, so "./deep/AGENTS.md" matched nothing and auto mode
+            // ALLOWed it. Strip only the leading "./" (looped); mid-path dot segments are left
+            // fail-closed on purpose: this name check is defense-in-depth and must never resolve
+            // paths the lexical containment layer rejected.
+            while (normalized.startsWith("./")) {
+                normalized = normalized.substring(2);
+            }
             for (String pattern : PROTECTED_WRITE_PATTERNS) {
                 if (LayeredPolicyResolver.matches(pattern, normalized, ToolShape.STRUCTURED)) {
                     return true;

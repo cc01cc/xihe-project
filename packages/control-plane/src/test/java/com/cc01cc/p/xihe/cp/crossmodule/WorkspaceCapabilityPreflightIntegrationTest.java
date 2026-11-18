@@ -52,9 +52,12 @@ class WorkspaceCapabilityPreflightIntegrationTest extends AbstractWireMockTest {
 
     @Test
     void preflightDefaultsStorageModeAndPassesThroughTheRuntimeSnapshot() {
+        // cp-2: CP normalizes hostPath through PathKey.lexical (task-517: lowercase,
+        // forward slashes) before the probe leaves the building, so the stub must pin the
+        // canonical spelling -- an uppercase fixture never matches and collapsed into 502.
         wireMock.stubFor(post(urlEqualTo(PROBE_PATH))
                 .withRequestBody(matchingJsonPath("$.storageMode", equalTo("direct_attach")))
-                .withRequestBody(matchingJsonPath("$.hostPath", equalTo("C:/work/repo")))
+                .withRequestBody(matchingJsonPath("$.hostPath", equalTo("c:/work/repo")))
                 .withRequestBody(matchingJsonPath("$.executionMode", equalTo("windows-mxc")))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")

@@ -86,10 +86,13 @@ class WorkspaceRegistrationPushTest extends AbstractWireMockTest {
         String hostPath = Files.createTempDirectory("registration-created-").toAbsolutePath().toString();
         String workspaceId = createDirectAttachWorkspace(hostPath);
 
+        // cp-2: CP stores/sends the LEXICAL hostPath form (task-517 PathKey: lowercase,
+        // forward slashes), never the raw temp-dir spelling -- compare the canonical form.
         wireMock.verify(1, postRequestedFor(urlEqualTo(REGISTER_PATH))
                 .withRequestBody(matchingJsonPath("$.workspaceId", com.github.tomakehurst.wiremock.client.WireMock.equalTo(workspaceId)))
                 .withRequestBody(matchingJsonPath("$.workspacePath",
-                        com.github.tomakehurst.wiremock.client.WireMock.equalTo(hostPath)))
+                        com.github.tomakehurst.wiremock.client.WireMock.equalTo(
+                                com.cc01cc.p.xihe.cp.policy.PathKey.lexical(hostPath))))
                 .withRequestBody(matchingJsonPath("$.executionMode",
                         com.github.tomakehurst.wiremock.client.WireMock.equalTo("windows-host")))
                 .withRequestBody(matchingJsonPath("$.roots[0].rootId",

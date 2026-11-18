@@ -4,12 +4,11 @@
 #   mockito-bean | test-configuration | docker-frozen | async-sse | before-all | nested
 #   test-listeners | boot-test-variant | chat-run-dispatch（仅 §4.1 已批准的 17 类）
 # 列：FQCN <TAB> 判定码(逗号分隔) <TAB> 判定说明
-# 计数：per-class=77 / reusable=72（71 迁移类 + R-D 快照种子夹具 ReuseSnapshotSeedFixtureTest）/ 合计=149
-# 判定码计数：active-profiles=2 | async-sse=29 | before-all=9 | chat-run-dispatch=17 | docker-frozen=2 | dynamic-property-source=17 | mockito-bean=18 | test-configuration=1 | test-property-source=13（含 0691 T1.6b PluginRunSnapshotAdmissionTest）
+# 计数：per-class=88 / reusable=84 / 合计=172（cp-2 清偿批：跨车道新增 10 个 per-class 类 + OrgUnitGate 由 reusable 移入）
+# 判定码计数：active-profiles=2 | async-sse=30 | before-all=10 | chat-run-dispatch=17 | docker-frozen=2 | dynamic-property-source=17 | mockito-bean=20 | test-configuration=2 | test-property-source=13
 # 注意：docker-frozen 2 类在默认 surefire 配置下不执行，因此实际 per-class context = 70 - 2 = 68。
-com.cc01cc.p.xihe.cp.chat.WorkspaceLessChatRunWorkspaceParityTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0647 V8 parity）
-com.cc01cc.p.xihe.cp.chat.WorkspaceLessForbiddenNegativeTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0705 BL-513 负向 10 项）
-com.cc01cc.p.xihe.cp.chat.WorkspaceLessSessionCreationIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0647 M3 创建）
+com.cc01cc.p.xihe.cp.audit.CheckpointRevertAuditIntegrationTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.audit.SessionSnapshotAuditIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.auth.AuthLockoutAccountIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.auth.AuthLockoutIpIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.auth.AuthLockoutSpoofIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
@@ -28,6 +27,7 @@ com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceHttpIntegrationTest	chat-run-dispatch	d
 com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceRecoveryIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceServiceIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.chat.ChatRunLeaseIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ChatRunTerminalCollisionTest	mockito-bean,before-all	Boot4 bean override：@MockitoBean/@MockitoSpyBean；@BeforeAll/@AfterAll 静态夹具
 com.cc01cc.p.xihe.cp.chat.ChatRunTransportLifecycleIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.chat.ChatSubmissionServiceIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.chat.ConversationThreadMvpIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-43 0646 MVP）
@@ -53,10 +53,16 @@ com.cc01cc.p.xihe.cp.chat.TerminalInboxAtomicityIntegrationTest	mockito-bean,asy
 com.cc01cc.p.xihe.cp.chat.TerminalTransactionCoreIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.chat.UserQuestionControllerIntegrationTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一）；@BeforeAll/@AfterAll 静态夹具
 com.cc01cc.p.xihe.cp.chat.UserQuestionServiceIntegrationTest	dynamic-property-source,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.WorkspaceLessChatRunWorkspaceParityTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0647 V8 parity）
+com.cc01cc.p.xihe.cp.chat.WorkspaceLessForbiddenNegativeTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0705 BL-513 负向 10 项）
+com.cc01cc.p.xihe.cp.chat.WorkspaceLessSessionCreationIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0647 M3 创建）
+com.cc01cc.p.xihe.cp.config.ConfigLockUniqueConstraintPgTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.config.OrgUnitRootSeedIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.context.BranchConcurrencyIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.context.ContextEventReadContractIntegrationTest	dynamic-property-source	自带 @DynamicPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.context.ContextLockTimeoutIntegrationTest	dynamic-property-source,async-sse	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.context.EventStoreServiceIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.controller.WorkspaceMemberEffectivePermissionsTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.files.ChatAttachmentIntegrationTest	dynamic-property-source	自带 @DynamicPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.files.SessionForkRecoveryServiceIntegrationTest	dynamic-property-source,mockito-bean,before-all	自带 @DynamicPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean；@BeforeAll/@AfterAll 静态夹具
 com.cc01cc.p.xihe.cp.mcp.CredentialToolAcquisitionContractTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一）；@BeforeAll/@AfterAll 静态夹具
@@ -77,10 +83,15 @@ com.cc01cc.p.xihe.cp.policy.RoleUpdateBindingConcurrencyMatrixTest	async-sse	异
 com.cc01cc.p.xihe.cp.policy.RoleUpdateBindingRaceTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.provider.ApiRequestTemplateHttpIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.provider.ProviderConnectionHttpIntegrationTest	test-property-source,mockito-bean	自带 @TestPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.service.AgentPrincipalOrgUnitGateTest	test-configuration	@Import/@TestConfiguration/@ContextConfiguration
 com.cc01cc.p.xihe.cp.service.AgentPrincipalVisibilityContractTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
 com.cc01cc.p.xihe.cp.service.InstanceIdentityIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.service.InstanceOwnershipIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.service.InstanceOwnerTransferAtomicityTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.service.OrgUnitMemberServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
+com.cc01cc.p.xihe.cp.service.OrgUnitReadServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
+com.cc01cc.p.xihe.cp.service.OrgUnitRoleBindingServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
+com.cc01cc.p.xihe.cp.service.OrgUnitWriteServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.service.UserAdminIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.service.WorkspaceMemberControllerContractTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.session.SessionIntegrationTest	test-configuration,async-sse	@Import/@TestConfiguration/@ContextConfiguration；异步/SSE/并发（executor/latch/SSE 类型）

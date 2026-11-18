@@ -107,6 +107,8 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionRepository sessions;
     @Autowired private ChatRunTerminalService terminalService;
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    @Autowired private ChatRunDispatchQueueService dispatchQueueService;
+    @Autowired private RunDispatchQueue queue;
 
     private String ownerId;
     private String workspaceId;
@@ -238,26 +240,46 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
                 "a non-addressee must not learn the row exists");
     }
 
+    /**
+     * G3-a C3 (task-161 / D-1786, cp-2 rewrite): answering is <b>durable-first</b>. A respond
+     * the Agent refuses (500) no longer rolls the answer back — the row settles {@code answered}
+     * with the body durable, the run is parked {@code queued} for replay
+     * ({@code chat_run_respond_failed_park_for_replay}), and once the Agent accepts again the
+     * queue drain (here triggered by a sibling run's terminal event) replays the respond and
+     * resumes the run.
+     */
     @Test
-    void aRefusedCallbackLeavesTheQuestionPending() {
+    void aRefusedCallbackKeepsTheAnswerDurableAndParksTheRunForReplay() {
         ChatRun run = newRun(newSession(), null);
         UserQuestion asked = ask(run, null);
         AGENT_STATUS.set(500);
 
-        CpApiException failure = assertThrows(CpApiException.class,
-                () -> service.answer(asked.getId(), ownerId, "rebase onto develop"));
+        // Durable-first: no exception leaves answer(), the answer is settled despite the
+        // refused callback.
+        UserQuestion answered = service.answer(asked.getId(), ownerId, "rebase onto develop");
+        assertEquals(UserQuestion.STATE_ANSWERED, answered.getState());
+        assertEquals(UserQuestion.STATE_ANSWERED, service.stateOf(asked.getId()).orElseThrow());
+        assertEquals("rebase onto develop",
+                questions.findById(asked.getId()).orElseThrow().getAnswer(),
+                "the answer is durable before delivery; the replay owns the rest");
 
-        assertEquals(HttpStatus.BAD_GATEWAY, failure.getStatus());
-        assertEquals("AGENT_QUESTION_DELIVERY_FAILED", failure.getCode());
-        assertEquals(UserQuestion.STATE_PENDING, service.stateOf(asked.getId()).orElseThrow(),
-                "a failed callback must not fabricate answered — the CAS rolls back with the transaction");
-        assertNull(questions.findById(asked.getId()).orElseThrow().getAnswer(),
-                "no answer becomes durable before the waiting run received it");
+        // The refused respond parks the run as queued for replay (G3-a C3).
+        assertEquals("queued", runs.findById(run.getId()).orElseThrow().getStatus(),
+                "a respond failure parks the run instead of losing the answer");
 
-        // The question is still answerable: the retry succeeds once the Agent accepts again.
+        // The Agent accepts again. Drive the real parked entry through the queue's public
+        // replay face (the terminal-event drain is covered by ChatRunDispatchDrainServiceTest):
+        // the respond is replayed and the run resumes.
         AGENT_STATUS.set(200);
-        assertEquals(UserQuestion.STATE_ANSWERED,
-                service.answer(asked.getId(), ownerId, "rebase onto develop").getState());
+        RunDispatchQueue.Entry parked = queue.parkedEntries(run.getSessionId()).getFirst();
+        assertEquals(run.getId().toString(), parked.runId());
+        dispatchQueueService.resumeQuestionNow((RunDispatchQueue.QuestionResume) parked.payload());
+
+        assertEquals("running", runs.findById(run.getId()).orElseThrow().getStatus(),
+                "the replayed respond must resume the parked run");
+        assertEquals(UserQuestion.STATE_ANSWERED, service.stateOf(asked.getId()).orElseThrow());
+        assertTrue(AGENT_BODY.get().contains("rebase onto develop"),
+                "the replayed callback carries the durable body: " + AGENT_BODY.get());
     }
 
     @Test

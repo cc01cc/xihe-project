@@ -1,7 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
-import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -64,7 +64,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * one that must be false — the second case keeps the whole fixture identical and only removes the
  * org-unit rows, so "widened" cannot be explained by the fixture itself.</p>
  */
-class AgentPrincipalOrgUnitGateTest extends AbstractReusableIntegrationTest {
+class AgentPrincipalOrgUnitGateTest extends AbstractIntegrationTest {
 
     private static final String GOVERNANCE_ATOM = OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNITS;
 

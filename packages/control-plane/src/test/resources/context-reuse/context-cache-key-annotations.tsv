@@ -14,6 +14,7 @@
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/E2eGuidanceBarrierHttpIntegrationTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/MessageControllerTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigDomainSchemaCoverageTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigWorkspaceDefaultProfileTest.java	profile-variant
@@ -22,6 +23,11 @@
 @ActiveProfiles	com/cc01cc/p/xihe/cp/credentials/CredentialRotationIntegrationTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/crossmodule/AbstractWireMockTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/files/ChatAttachmentControllerTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/integration/SessionBindingProblemShapeTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessAccessTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessBindingTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessMcpFaceTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessScopeTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/integration/WorkspaceIsolationTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/mcp/McpForwardTimeoutTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/mcp/McpProxyControllerTest.java	profile-variant
@@ -32,12 +38,18 @@
 @ActiveProfiles	com/cc01cc/p/xihe/cp/service/WorkspaceServiceTest.java	profile-variant
 @DirtiesContext	com/cc01cc/p/xihe/cp/AbstractH2Test.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/AbstractIntegrationTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigDomainSchemaCoverageTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigWorkspaceDefaultProfileTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ProviderRequestFingerprintConfigTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/context/ContextSourceLiveChainTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/credentials/CredentialRotationIntegrationTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/integration/SessionBindingProblemShapeTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessAccessTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessBindingTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessMcpFaceTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessScopeTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/integration/WorkspaceIsolationTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/mcp/McpProxyControllerTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/oauth/OAuthBrokerIntegrationTest.java	isolation
@@ -78,6 +90,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/RuntimeWorkspaceIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/ToolHistoryCrossModuleIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/WorkspaceCapabilityPreflightIntegrationTest.java	property-variant
+@DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/WorkspaceCreatedAuditTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/WorkspaceCreationOwnerBindingWireMockTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/WorkspaceRootCrudTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/files/ChatAttachmentIntegrationTest.java	property-variant
@@ -91,8 +104,10 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/service/WorkspaceNestedReposCacheTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/service/WorkspaceRegistrationPushTest.java	property-variant
 @Import	com/cc01cc/p/xihe/cp/AbstractReusableIntegrationTest.java	fixture-config
+@MockitoBean	com/cc01cc/p/xihe/cp/audit/CheckpointRevertAuditIntegrationTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/chat/AgentSpawnPrincipalContractTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/chat/ChatRunLeaseIntegrationTest.java	bean-override
+@MockitoBean	com/cc01cc/p/xihe/cp/chat/ChatRunTerminalCollisionTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/context/ContextSourceRefreshServiceTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/operation/CapabilityEnvelopeRefusalTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/operation/WorkspaceJobCancelIntegrationTest.java	bean-override
@@ -128,6 +143,7 @@
 @SpringBootTest	com/cc01cc/p/xihe/cp/chat/MessagePaginationContractTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/chat/RunCheckpointControllerTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigDomainSchemaCoverageTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigWorkspaceDefaultProfileTest.java	suite-context
@@ -139,6 +155,11 @@
 @SpringBootTest	com/cc01cc/p/xihe/cp/crossmodule/NativeImageCompatibilityProbeTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/files/ChatAttachmentControllerTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/files/ChatAttachmentIntegrationTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/integration/SessionBindingProblemShapeTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessAccessTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessBindingTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessMcpFaceTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/integration/SessionWorkspacelessScopeTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/integration/WorkspaceIsolationTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/mcp/McpForwardTimeoutTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/mcp/McpProxyControllerTest.java	suite-context
@@ -159,6 +180,7 @@
 @TestConfiguration	com/cc01cc/p/xihe/cp/crossmodule/ApprovalAgentIntegrationTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/crossmodule/ContextTemplateIntegrationTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/crossmodule/ToolHistoryCrossModuleIntegrationTest.java	fixture-config
+@TestConfiguration	com/cc01cc/p/xihe/cp/service/AgentPrincipalOrgUnitGateTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/session/SessionIntegrationTest.java	fixture-config
 @TestConfiguration	com/cc01cc/p/xihe/cp/support/ReusableTestContextConfiguration.java	fixture-config
 @TestPropertySource	com/cc01cc/p/xihe/cp/AbstractH2Test.java	property-variant
@@ -169,6 +191,8 @@
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/AuthLockoutSpoofIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/AuthRegisterLimitIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/RegistrationPolicyIntegrationTest.java	property-variant
+@TestPropertySource	com/cc01cc/p/xihe/cp/config/OnboardingFirstRunWithoutSeedTest.java	property-variant
+@TestPropertySource	com/cc01cc/p/xihe/cp/config/OnboardingSeededAdminLoginTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/crossmodule/AbstractWireMockTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/files/WorkspaceFileRangeHttpTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginBindingAuthorizationGateTest.java	property-variant

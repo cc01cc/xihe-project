@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -357,8 +358,14 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 Map.of("chunkSize", "512"), "test", uid, null);
         // PLAN-0485: the embedding domain is a whole-unit profile and no longer
         // participates in Chat userOverrides/workspaceOverrides.
-        configService.putLayer("workspace", "llm-provider",
-                Map.of("modelParams", "{\"m-1\":{\"temperature\":0.2}}"), "test", uid, wid);
+        // D-1122 / PLAN-0766 T2.4 (cp-2): the four model domains (llm-provider among them)
+        // LEFT the workspace layer by design, so the old workspace-layer llm-provider premise
+        // of this test now refuses -- pinned here. The only workspace-writable domain the chat
+        // run-override resolution still forwards to the Agent is agent-runtime.
+        ConfigService.ConfigAccessException refused = assertThrows(ConfigService.ConfigAccessException.class,
+                () -> configService.putLayer("workspace", "llm-provider",
+                        Map.of("modelParams", "{\"m-1\":{\"temperature\":0.2}}"), "test", uid, wid));
+        assertTrue(refused.getMessage().contains("workspace layer"), refused.getMessage());
         configService.putLayer("workspace", "agent-runtime",
                 Map.of("useRegistry", "true"), "test", uid, wid);
 
@@ -397,16 +404,14 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                         "$.userOverrides['agent-profile'].userName", equalTo("Alice")))
                 .withRequestBody(matchingJsonPath(
                         "$.userOverrides['rag'].chunkSize", equalTo("512")))
-                .withRequestBody(matchingJsonPath(
-                        "$.workspaceOverrides['llm-provider'].modelParams",
-                        equalTo("{\"m-1\":{\"temperature\":0.2}}")))
+                // T2.4: no workspace-layer llm-provider override exists or travels anymore;
+                // agent-runtime is the surviving workspace-layer override domain.
                 .withRequestBody(matchingJsonPath(
                         "$.workspaceOverrides['agent-runtime'].useRegistry", equalTo("true"))));
 
         configService.deleteKey("user", "llm-provider", "modelParams", "test", uid, null);
         configService.deleteKey("user", "agent-profile", "userName", "test", uid, null);
         configService.deleteKey("user", "rag", "chunkSize", "test", uid, null);
-        configService.deleteKey("workspace", "llm-provider", "modelParams", "test", uid, wid);
         configService.deleteKey("workspace", "agent-runtime", "useRegistry", "test", uid, wid);
     }
 

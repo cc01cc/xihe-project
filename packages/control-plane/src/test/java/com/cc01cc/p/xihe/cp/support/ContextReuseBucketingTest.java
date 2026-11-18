@@ -221,14 +221,18 @@ class ContextReuseBucketingTest {
                 problems.add("白名单条目对应类不存在（stale）：" + fqcn);
             }
         }
-        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 156 类：" + problems);
-        assertEquals(77, whitelist.size(), "per-class 白名单 = 77（51 flagged + 5 @MockitoSpyBean + 17 §4.1 async-chat + 1 0691 T1.6b + 1 0646 MVP + 1 0642 MVP + 2 0647 3.1/3.2 + 1 0705 + 1 0767，去重）");
-        assertEquals(77, perClass, "per-class 类数必须等于白名单条目数");
+        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 172 类：" + problems);
+        // cp-2（L1 预存清偿）：跨车道新增 10 个 per-class 类补登（audit×2 / chat×1 / config×2 /
+        // controller×1 / service OrgUnit×4），并把 AgentPrincipalOrgUnitGateTest 按守卫设计从
+        // reusable 移入 per-class（它带 @TestConfiguration，严格标记无逃生口）⇒ 77→88。
+        assertEquals(88, whitelist.size(), "per-class 白名单 = 88（77 baseline + 10 跨车道新增 + 1 OrgUnitGate 移桶）");
+        assertEquals(88, perClass, "per-class 类数必须等于白名单条目数");
         // 2026-11-13（task-157）：9b356e6a9（PLAN-0774）新增 WorkspaceAgentCapSourceIntegrationTest（@SpringBootTest）
         // ⇒ 进 reusable 桶 +1：78→79，合计 155→156。只更新由实现推导出的常量，上面的判据
         // （problems 空集 + 白名单/复用桶互斥穷尽）一字未改；也未改成「从集合长度推导」——那样等于同义反复。
-        assertEquals(79, reusable, "reusable 桶 = 79（实测读数，含 task-309 新增审计类 1 类 + 0774 新增 1 类）");
-        assertEquals(156, classes.size(), "156 = 77 per-class + 79 reusable");
+        // cp-2：reusable 79→84（跨车道新增 5 类 reusable），合计 172。判据一字未改，只更新实测常量。
+        assertEquals(84, reusable, "reusable 桶 = 84（实测读数：cp-2 跨车道新增 5 类 reusable）");
+        assertEquals(172, classes.size(), "172 = 88 per-class + 84 reusable");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {

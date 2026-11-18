@@ -169,7 +169,8 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     void directAttachCreationProbesRuntimeAndIsIdempotent() {
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/capabilities/direct-attach/probe"))
                 .withRequestBody(matchingJsonPath("$.storageMode", equalTo("direct_attach")))
-                .withRequestBody(matchingJsonPath("$.hostPath", equalTo(tempWorkspace.toString())))
+                .withRequestBody(matchingJsonPath("$.hostPath",
+                        equalTo(com.cc01cc.p.xihe.cp.policy.PathKey.lexical(tempWorkspace.toString()))))
                 .withRequestBody(matchingJsonPath("$.executionMode", equalTo("windows-host")))
                 .willReturn(aResponse()
                         .withStatus(200)
@@ -193,7 +194,10 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
         assertEquals(createdWorkspace.getId(), replay.getId());
         assertEquals("direct_attach", createdWorkspace.getStorageMode());
-        assertEquals(tempWorkspace.toString(), createdWorkspace.getHostPath());
+        // cp-2: the persisted hostPath is the LEXICAL canonical form (task-517 PathKey:
+        // lowercase, forward slashes), not the raw @TempDir spelling.
+        assertEquals(com.cc01cc.p.xihe.cp.policy.PathKey.lexical(tempWorkspace.toString()),
+                createdWorkspace.getHostPath());
         assertEquals("windows-host", createdWorkspace.getExecutionMode());
         assertTrue(workspaceService.capabilitySnapshot(createdWorkspace).get("available") instanceof Boolean value && value);
 
