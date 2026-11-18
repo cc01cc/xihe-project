@@ -436,6 +436,29 @@ export interface SessionCompactResponse {
     createdAt: string;
 }
 
+/**
+ * task-188 S2（MVP⑤）：team_tasks 只读投影行（GET /sessions/{id}/team-tasks 的 tasks[]）。
+ * 字段集 = ui-1/cp-1 W0 对齐契约（13+1 字段，含 teamRootSessionId 供 UI 挡「非本队任务」）；
+ * status 为 string —— 枚举校验在 teamTasks.ts normalize（fail-closed，越界行丢弃并计数）。
+ */
+export interface ApiTeamTask {
+    taskId: string;
+    teamRootSessionId: string;
+    taskNo: number;
+    revision: number;
+    subject: string;
+    description: string | null;
+    status: string;
+    ready: boolean;
+    ownerSessionId: string | null;
+    ownerName: string | null;
+    blockedBy: string[];
+    writeScopeWarnings: string[];
+    createdBySessionId: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
 export interface ApiFollowUpAttachment {
     id: string;
     name: string;
@@ -455,6 +478,13 @@ export interface ApiFollowUpItem {
     pauseReason: string | null;
     childRunId: string | null;
     childMessageId: string | null;
+    /**
+     * task-188 S3（MVP⑤）：steer 复用 V49 队列后的来源标注（cp-1 W0 对齐 ②）。
+     * "agent_steer" = Lead 中途指挥插话（UI 渲染「来自 Lead」徽标）；缺省/human ⇒ 不渲染徽标。
+     */
+    sourceKind?: string | null;
+    /** steer 来源会话（sourceKind === "agent_steer" 时非空）。 */
+    fromSessionId?: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -3398,6 +3428,26 @@ export const api = {
         return request<SessionDerivedStateResponse>(
             `/sessions/${encodeURIComponent(sessionId)}/derived-state`,
         );
+    },
+    /**
+     * task-188 S2（MVP⑤）：team_tasks 任务板**只读**投影（D-1821 面板只读裁定 ⇒ 本文件只此一个
+     * team-tasks 方法且为 GET；claim/reassign/steer 等写一律走既有命令/审批原语，UI 零写端点）。
+     *
+     * <p>Envelope = cp-1 W0 对齐口径 { tasks: [...] }；tasks 缺失/非数组 ⇒ 抛错走面板错误三态，
+     * **不许静默成空列表**（反假绿 N1：失败被吞成「没任务」）。行级形状校验在 teamTasks.ts
+     * normalize（fail-closed）。</p>
+     */
+    async getSessionTeamTasks(sessionId: string): Promise<ApiTeamTask[]> {
+        const payload = await request<unknown>(
+            "/sessions/" + encodeURIComponent(sessionId) + "/team-tasks",
+        );
+        const root = asRecord(payload);
+        if (!root || !Array.isArray(root.tasks)) {
+            throw new Error(
+                "getSessionTeamTasks: unexpected payload (expected an object with a tasks array)",
+            );
+        }
+        return root.tasks as ApiTeamTask[];
     },
     /**
      * PLAN-0635 M3: server-owned command registry. The server decides availability

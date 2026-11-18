@@ -3,6 +3,8 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ApiFollowUpItem, ApiFollowUpQueueSnapshot } from "../../../../composables/api";
 import type { Message } from "../../../../types";
+// task-188 S3（MVP⑤）：steer 复用 V49 队列，来源标注渲染在既有队列项上（只读徽标）。
+import SteerSourceBadge from "./SteerSourceBadge.vue";
 
 const props = defineProps<{
     snapshot: ApiFollowUpQueueSnapshot;
@@ -16,6 +18,8 @@ const props = defineProps<{
 const emit = defineEmits<{
     withdraw: [queueItemId: string];
     continue: [];
+    /** task-188 S3：steer 来源会话跳转（纯读导航，父组件接 router）。 */
+    navigate: [sessionId: string];
 }>();
 
 const { t } = useI18n();
@@ -54,6 +58,11 @@ function itemBranch(item: ApiFollowUpItem): string {
         props.branchLabels[item.branchId] ??
         `${t("chat.branchPathOption")} ${item.branchId.slice(0, 8)}`
     );
+}
+
+/** task-188 S3：徽标跳转 —— 只有 agent_steer 项会渲染徽标，fromSessionId 应为非空；守卫兜底。 */
+function openSteerSource(item: ApiFollowUpItem): void {
+    if (item.fromSessionId) emit("navigate", item.fromSessionId);
 }
 
 function itemStatus(item: ApiFollowUpItem): string {
@@ -168,8 +177,12 @@ function pauseMessage(): string {
                         {{ itemText(item) }}
                     </p>
                     <div
-                        class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground"
+                        class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground"
                     >
+                        <SteerSourceBadge
+                            :source-kind="item.sourceKind ?? null"
+                            @navigate="openSteerSource(item)"
+                        />
                         <span>{{ itemBranch(item) }}</span>
                         <span
                             v-for="attachment in item.attachments"
