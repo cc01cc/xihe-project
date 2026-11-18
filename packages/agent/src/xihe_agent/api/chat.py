@@ -218,6 +218,36 @@ def xh_context_slots(skill_catalog: str = "", agent_memory: str = "") -> dict[st
     return {"skill_catalog": skill_catalog, "agent_memory": agent_memory}
 
 
+#: task-83 (D-1869): addressee frame for wake-created runs.
+#:
+#: The measured cause is the transcript, not the identity plumbing: a woken run receives the
+#: dispatcher's own first-person turns as its history (20 xhLead-authored assistant messages
+#: preceded one such run, 4 of them in "我（派发方）… 派给 <peer>" voice) while both principals
+#: CP-resolved instructions come out byte-identical, so nothing in its input says it is the
+#: addressee. The frame is assembled here, on the text handed to the model only: the
+#: CP-owned instructions baseline stays untouched (PLAN-0416 keeps that slot CP-owned),
+#: no participant names are embedded, and the durable admitted prompt stays the raw text so
+#: the audit still records what CP actually delivered.
+WAKEE_ADDRESSEE_FRAME = (
+    "[本轮你是被点名的一方] 下面这件事由会话里的另一位 agent 交给你执行。你不是派发方：\n"
+    "1. 直接做这件事，只报告你自己做了什么——读了哪些路径、跑了哪些命令、产出哪些工件。\n"
+    "2. 不要复述或改写派发话术，不要出现「派给某某」「我（派发方）」这类把任务又交出去的说法。\n"
+    "3. 不要用它把同一件事再派给别人；那只会让任务在原地打转。\n\n"
+)
+
+
+def model_input_content(content: str, parent_run_id: str | None) -> str:
+    """Return the text handed to the model for this run (task-83).
+
+    A wake-created run (CP sends a non-empty parentRunId) gets the addressee frame in front
+    of the delivered instruction; a root run is untouched. Kept as a function so both
+    branches are assertable without driving the whole endpoint.
+    """
+    if not parent_run_id:
+        return content
+    return WAKEE_ADDRESSEE_FRAME + content
+
+
 async def _close_guidance_consumer(consumer: GuidanceConsumer | None) -> None:
     if consumer is None:
         return
@@ -254,6 +284,8 @@ async def chat(request: Request):
     except ValueError as malformed:
         raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST"}) from malformed
     content: str = data.get("content", "")
+    # task-83: 唤醒类 run（CP 带 parentRunId）在交给模型的文本前加收件人框；长度门槛、
+    # admitted_prompt 与 RAG 查询仍按原文算，不把装配层的痕迹记成投递事实。
     session_id: str = data.get("sessionId", "default")
     workspace_id: str | None = data.get("workspaceId") or None
     request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
@@ -278,6 +310,9 @@ async def chat(request: Request):
     # closed before any provider dispatch. Summary/RAG/tool/file data must never
     # fill this authority slot - the check runs before RAG enrichment so
     # retrieved context cannot stand in for the CP-owned baseline.
+    # task-83: 唤醒类 run（CP 带 parentRunId）在交给模型的文本前加收件人框；长度门槛、
+    # admitted_prompt 与 RAG 查询仍按原文算，不把装配层的痕迹记成投递事实。
+    prompt_content = model_input_content(content, parent_run_id)
     raw_instructions = data.get("instructions", "")
     instructions: str = raw_instructions if isinstance(raw_instructions, str) else ""
     if not instructions.strip():
@@ -416,7 +451,7 @@ async def chat(request: Request):
             api_type,
             {
                 "model": str(model_override or ""),
-                "user_input": content,
+                "user_input": prompt_content,
                 "agent_instructions": instructions,
                 "rag_context": "",
                 "conversation_history": [{"role": "user", "content": ""}],
@@ -777,7 +812,7 @@ async def chat(request: Request):
                     body_source=template_snapshot["template"]["bodySource"],
                     values={
                         "model": str(model_override),
-                        "user_input": append_to_user_input(content, path_mention_block),
+                        "user_input": append_to_user_input(prompt_content, path_mention_block),
                         "agent_instructions": instructions,
                         "rag_context": rag_context,
                         "conversation_history": (
@@ -801,7 +836,7 @@ async def chat(request: Request):
                 # The Runner owns approval/durable/tool execution. This prompt is
                 # its admitted event input, not a provider-neutral body builder.
                 resume_pending = continuation is not None and continuation["mode"] == "resume_pending"
-                messages = [] if resume_pending else [TextMessage(role="human", content=content)]
+                messages = [] if resume_pending else [TextMessage(role="human", content=prompt_content)]
                 has_template = True
 
                 loop_thresholds, loop_exempt_tools = _resolve_loop_guard(
