@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -48,6 +49,7 @@ class AgentHandoffServiceTest {
     private SessionParticipantRepository participantRepository;
     private ChatSubmissionService submissionService;
     private WakeFanOutService wakeFanOutService;
+    private SessionParticipantService participantService;
     private AgentHandoffService service;
     private ChatRun run;
 
@@ -57,8 +59,9 @@ class AgentHandoffServiceTest {
         participantRepository = mock(SessionParticipantRepository.class);
         submissionService = mock(ChatSubmissionService.class);
         wakeFanOutService = mock(WakeFanOutService.class);
+        participantService = mock(SessionParticipantService.class);
         service = new AgentHandoffService(chatRunRepository, participantRepository, submissionService,
-                wakeFanOutService);
+                wakeFanOutService, participantService);
         run = mock(ChatRun.class);
         when(run.getSessionId()).thenReturn(SESSION_ID.toString());
         when(run.getWorkspaceId()).thenReturn("ws-1");
@@ -124,6 +127,107 @@ class AgentHandoffServiceTest {
                 parent.capture(), eq("接手吧"), eq(List.of(TARGET)));
         assertEquals(CALLER_RUN.toString(), parent.getValue(),
                 "the agent round is a delegation edge, not a sibling of a user submission");
+    }
+
+    // ── task-40 §3 第二批：按显示名点名（模型只读得到名字，读不到 UUID） ──────────────────
+    //
+    // 名字从哪儿来必须是**它自己读的**（Lead 2026-11-19），所以解析只在 CP 侧做、名册只在
+    // sessionParticipantService 一处取；这几条钉的是判法本身：精确、忽略大小写、重名不猜。
+
+    private static SessionParticipantService.ParticipantView peer(UUID id, String displayName) {
+        return new SessionParticipantService.ParticipantView(id, "AGENT", UUID.randomUUID(), "PRIMARY",
+                0, "mention", "respond", List.of(), java.time.Instant.now(), null, displayName, null,
+                null, "direct", false, null, null);
+    }
+
+    private static SessionParticipantService.ListView rosterOf(
+            SessionParticipantService.ParticipantView... views) {
+        return new SessionParticipantService.ListView(List.of(views), java.util.Map.of());
+    }
+
+    private void stubRoster(SessionParticipantService.ParticipantView... views) {
+        when(participantService.list("owner-1", "ws-1", SESSION_ID.toString()))
+                .thenReturn(rosterOf(views));
+    }
+
+    @Test
+    void displayNameTargetResolvesThroughTheSameRosterTheParserUses() {
+        stubRoster(peer(TARGET, "ewLead"));
+        UUID childRun = UUID.randomUUID();
+        when(wakeFanOutService.agentHandoffFanOut(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                eq(CALLER_RUN.toString()), anyString(), eq(List.of(TARGET))))
+                .thenReturn(dispatched(childRun, 1));
+        when(submissionService.persistAssistantResponse(anyString(), anyString(), anyString(), any(),
+                any())).thenReturn("message-1");
+
+        AgentHandoffService.HandoffOutcome outcome = service.handoff(CALLER_RUN.toString(),
+                "这一步交给你", List.of(), List.of("@ewLead"), List.of(), List.of(), KEY);
+
+        assertEquals(List.of(), outcome.unresolvedNames());
+        assertEquals(1, outcome.to().runIds().size());
+        // 前导 @ 与大小写都不是新语义：MentionParser 一直是这么处理的
+        verify(wakeFanOutService).agentHandoffFanOut(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                eq(CALLER_RUN.toString()), eq("这一步交给你"), eq(List.of(TARGET)));
+    }
+
+    /**
+     * 认不出来就**照既有词**留痕并拒绝：不新增 problem code，也不留一条「看起来成功了」的 200。
+     * 名字必须同时出现在 detail（模型据此改口）与 durable 行（人据此复盘）里。
+     */
+    @Test
+    void unknownDisplayNameRefusesWithTheExistingTokenAndAuditsEveryMiss() {
+        stubRoster(peer(TARGET, "ewLead"));
+
+        CpApiException failure = assertThrows(CpApiException.class, () -> service.handoff(
+                CALLER_RUN.toString(), "交给幽灵", List.of(), List.of("GhostWriterZ"), List.of(),
+                List.of(), KEY));
+
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, failure.getStatus());
+        assertEquals("HANDOFF_TARGETS_REQUIRED", failure.getCode());
+        org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("GhostWriterZ"),
+                "detail 要点名是哪个名字没解析：" + failure.getMessage());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                failure.getMessage().contains("mention_unresolved"), "拒绝理由要用既有词：" + failure.getMessage());
+        verify(wakeFanOutService).auditUnresolvedTargetName(SESSION_ID, "ws-1", "owner-1",
+                "wake:to:agent:" + CALLER_RUN, "to");
+        verify(wakeFanOutService, never()).agentHandoffFanOut(any(), anyString(), anyString(),
+                anyString(), anyString(), any());
+        verify(submissionService, never()).persistAssistantResponse(anyString(), anyString(),
+                anyString(), any(), any());
+    }
+
+    /** 重名 = 不可判定，MentionParser 一直不猜；这里也不许挑第一个。 */
+    @Test
+    void duplicateDisplayNameIsNotGuessed() {
+        stubRoster(peer(TARGET, "ewLead"), peer(OBSERVER, "EWLEAD"));
+
+        CpApiException failure = assertThrows(CpApiException.class, () -> service.handoff(
+                CALLER_RUN.toString(), "交给同名的人", List.of(), List.of("ewLead"), List.of(),
+                List.of(), KEY));
+
+        assertEquals("HANDOFF_TARGETS_REQUIRED", failure.getCode());
+        verify(wakeFanOutService).auditUnresolvedTargetName(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                anyString(), eq("to"));
+        verify(wakeFanOutService, never()).agentHandoffFanOut(any(), anyString(), anyString(),
+                anyString(), anyString(), any());
+    }
+
+    /** 一半认得一半认不得：投递照投，未解析的那个必须**同时**出现在响应与审计里。 */
+    @Test
+    void partialNameResolutionStillReportsTheUnresolvedOne() {
+        stubRoster(peer(TARGET, "ewLead"));
+        when(wakeFanOutService.agentHandoffFanOut(any(), anyString(), anyString(), anyString(),
+                anyString(), any())).thenReturn(dispatched(UUID.randomUUID(), 1));
+        when(submissionService.persistAssistantResponse(anyString(), anyString(), anyString(), any(),
+                any())).thenReturn("message-1");
+
+        AgentHandoffService.HandoffOutcome outcome = service.handoff(CALLER_RUN.toString(),
+                "一半给人一半给幽灵", List.of(), List.of("ewLead", "GhostWriterZ"), List.of(),
+                List.of(), KEY);
+
+        assertEquals(List.of("GhostWriterZ"), outcome.unresolvedNames());
+        verify(wakeFanOutService).auditUnresolvedTargetName(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                anyString(), eq("to"));
     }
 
     /** 失败不静默: every target failed ⇒ the session gets no sentence claiming a hand-off. */

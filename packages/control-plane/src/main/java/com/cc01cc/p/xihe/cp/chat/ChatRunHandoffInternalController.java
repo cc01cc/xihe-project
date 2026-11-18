@@ -47,9 +47,17 @@ public class ChatRunHandoffInternalController {
         this.agentHandoffService = agentHandoffService;
     }
 
-    /** The body carries no actor: runId in the path is the actor (see class javadoc). */
+    /**
+     * The body carries no actor: runId in the path is the actor (see class javadoc).
+     *
+     * <p>task-40 §3 第二批：{@code toDisplayNames} / {@code ccDisplayNames} 与 id 形式并存。模型只会
+     * 读名字、不会读 UUID，所以「按显示名点名」是这条内部面的主用法；解析在 CP 内按
+     * {@code MentionParser} 的既有语义做（精确、忽略大小写），未解析的名字复用 reason 词
+     * {@code mention_unresolved}，不新增 problem code。</p>
+     */
     public record HandoffRequest(String content, List<UUID> toParticipantIds,
-                                 List<UUID> ccParticipantIds) {
+                                 List<String> toDisplayNames, List<UUID> ccParticipantIds,
+                                 List<String> ccDisplayNames) {
     }
 
     @PostMapping
@@ -61,13 +69,19 @@ public class ChatRunHandoffInternalController {
             String content = request == null ? null : request.content();
             List<UUID> toIds = request == null ? List.of() : request.toParticipantIds();
             List<UUID> ccIds = request == null ? List.of() : request.ccParticipantIds();
+            List<String> toNames = request == null ? List.of() : request.toDisplayNames();
+            List<String> ccNames = request == null ? List.of() : request.ccDisplayNames();
             AgentHandoffService.HandoffOutcome outcome = agentHandoffService.handoff(runId, content,
-                    toIds, ccIds, idempotencyKey);
+                    toIds, toNames, ccIds, ccNames, idempotencyKey);
             WakeFanOutService.TargetedWake to = outcome.to();
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("runId", outcome.runId());
             body.put("roundId", outcome.roundId());
             body.put("messageId", outcome.messageId());
+            // 按名字点名时「哪些名字没解析」是这条面唯一能告诉模型的修正依据；空则省略。
+            if (!outcome.unresolvedNames().isEmpty()) {
+                body.put("unresolvedNames", outcome.unresolvedNames());
+            }
             body.put("to", Map.of(
                     "requested", to.targets(),
                     "runIds", to.runIds(),

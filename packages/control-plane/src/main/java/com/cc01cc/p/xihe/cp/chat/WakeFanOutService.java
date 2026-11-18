@@ -475,7 +475,7 @@ public class WakeFanOutService {
             logger.info("[LIFECYCLE] service=cp event=wake_mention_unresolved sessionId={} "
                     + "token={} round={}", sessionId, token, wakeRoundId);
             // task-66② (D-1884-B): the log line used to be the ONLY trace of a human's mistyped @.
-            auditUnresolvedMention(sessionId, workspaceId, userId, wakeRoundId);
+            auditUnresolvedTargetName(sessionId, workspaceId, userId, wakeRoundId, "mention");
         }
         int started = 0;
         int deferred = 0;
@@ -600,7 +600,12 @@ public class WakeFanOutService {
     }
 
     /**
-     * task-66② (D-1884-B): a mistyped `@name` from a HUMAN sender leaves the same durable reading
+     * task-66② (D-1884-B) / task-40 §3 第二批: an unresolved target NAME leaves the same durable
+     * reading on every face that accepts names — the human composer (triggerSource="mention") and
+     * the agent hand-off face (triggerSource="to"). Two callers, ONE row shape: a second shape would
+     * let the same mistake look different depending on who made it.
+
+     * <p>Originally written for a mistyped `@name` from a HUMAN sender, which leaves the same durable reading
      * the agent path leaves ({@code WakeChainService.auditUnresolvedMention}, task-63) — same event
      * name {@code wake_dispatch}, same {@code outcome=refused} / {@code reason=mention_unresolved},
      * same empty {@code participantId} because an unresolved token names nobody, and one row per
@@ -618,15 +623,15 @@ public class WakeFanOutService {
      *       of borrowing the chain path's {@code "chain"}.</li>
      * </ul>
      */
-    private void auditUnresolvedMention(UUID sessionId, String workspaceId, String userId,
-                                        String wakeRoundId) {
+    public void auditUnresolvedTargetName(UUID sessionId, String workspaceId, String userId,
+                                          String wakeRoundId, String triggerSource) {
         if (eventStoreService == null) {
             return;
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("wakeRoundId", wakeRoundId);
         payload.put("participantId", "");
-        payload.put("triggerSource", "mention");
+        payload.put("triggerSource", triggerSource);
         payload.put("outcome", "refused");
         payload.put("reason", "mention_unresolved");
         eventStoreService.append(sessionId.toString(), workspaceId, userId, EVENT_WAKE_DISPATCH, payload);
