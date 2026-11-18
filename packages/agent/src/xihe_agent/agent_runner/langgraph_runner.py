@@ -28,7 +28,7 @@ from xihe_agent.adapters.user_question_tool import USER_QUESTION_EVENT_SINK_KEY
 from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.agent_runner.graph_builder import build_react_graph
 from xihe_agent.agent_runner.guidance import GuidanceInjectionModel
-from xihe_agent.agent_runner.team_task_client import build_team_task_client
+from xihe_agent.agent_runner.team_task_client import build_team_task_client, team_task_tool_faces
 from xihe_agent.agent_runner.tool_adapter import (
     EVENT_STORE_FAILURES_KEY,
     LCToolAdapter,
@@ -323,6 +323,12 @@ class LangGraphRunner(AgentRunner):
             team_task_client = None
         if team_task_client is not None:
             context.metadata[TEAM_TASK_CLIENT_KEY] = team_task_client
+        # D-1831 (task-188 MVP⑤ gray extension): the four CP-owned board faces
+        # join THIS run's tool table only when a callable client is wired; a run
+        # without it never sees them — absent from the table is today's behavior.
+        run_tool_faces: list[BaseAgentTool] = config.tools
+        if callable(context.metadata.get(TEAM_TASK_CLIENT_KEY)):
+            run_tool_faces = [*config.tools, *team_task_tool_faces()]
         # PLAN-0508: provider transport telemetry arrives on the caller-owned
         # queue (the model's collector sink is bound at construction); the loop
         # below fans it into the same ordered event stream. ``transport_task`` is
@@ -349,7 +355,7 @@ class LangGraphRunner(AgentRunner):
             handoff_setter(credential_handoff)
         elif any(tool.spec.name == ACQUIRE_CREDENTIAL_TOOL_NAME for tool in config.tools):
             raise RuntimeError("credential delivery requires a Run-scoped model handoff")
-        tools = [self._adapt_tool(t, context, credential_handoff) for t in config.tools]
+        tools = [self._adapt_tool(t, context, credential_handoff) for t in run_tool_faces]
 
         # PLAN-294 M1 (decision #1): the projection snapshot is the canonical
         # conversation history (compaction already applied by CP). The caller's

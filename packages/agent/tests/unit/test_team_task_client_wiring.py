@@ -317,3 +317,100 @@ async def test_client_reports_missing_structured_content_as_protocol(stub_manage
         await client("team_task_get", {"taskId": TASK_ID})
 
     assert err.value.code == CODE_PROTOCOL
+
+
+# -- D-1831: the four faces join the run tool table only when wired -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_runner_registers_faces_when_client_wired(monkeypatch):
+    captured: list = []
+
+    def _fake_graph(_model, tools, **_kwargs):
+        class FakeAgent:
+            async def astream_events(self, _inputs, version, **kwargs):
+                captured.extend(tools)
+                yield _llm_usage_event("m0")
+
+        return FakeAgent()
+
+    monkeypatch.setenv("XIHE_CP_URL", "http://cp:12631")
+    monkeypatch.setattr(team_task_client_module, "_resolve_api_token", lambda: "token-1")
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", _fake_graph)
+    context = _context()
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+    config = RunnerConfig(model="fake", system_prompt="", tools=[], context=context)
+
+    await _collect(runner, config)
+
+    names = [t.name for t in captured]
+    for face in ("team_task_create", "team_task_list", "team_task_get", "team_task_update"):
+        assert names.count(face) == 1, f"{face} must appear exactly once in the run table"
+
+
+@pytest.mark.asyncio
+async def test_runner_omits_faces_when_client_unwired(monkeypatch):
+    captured: list = []
+
+    def _fake_graph(_model, tools, **_kwargs):
+        class FakeAgent:
+            async def astream_events(self, _inputs, version, **kwargs):
+                captured.extend(tools)
+                yield _llm_usage_event("m0")
+
+        return FakeAgent()
+
+    monkeypatch.delenv("XIHE_CP_URL", raising=False)
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", _fake_graph)
+    context = _context()
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+    config = RunnerConfig(model="fake", system_prompt="", tools=[], context=context)
+
+    await _collect(runner, config)
+
+    names = [t.name for t in captured]
+    for face in ("team_task_create", "team_task_list", "team_task_get", "team_task_update"):
+        assert face not in names
+
+
+@pytest.mark.asyncio
+async def test_create_end_to_end_through_the_run_table(monkeypatch, stub_manager):
+    """D-1831 assertion 3: one team_task_create call straight off the adapted run
+    table reaches the stubbed CP transport with per-call identity headers."""
+    outcomes: list = []
+
+    def _fake_graph(_model, tools, **_kwargs):
+        class FakeAgent:
+            async def astream_events(self, _inputs, version, **kwargs):
+                create = next(t for t in tools if t.name == "team_task_create")
+                # the call happens INSIDE the run: the finally cleanup pops
+                # TEAM_TASK_CLIENT_KEY the moment the stream closes.
+                content, _artifact = await create._arun(**{"subject": "End to end card"})
+                outcomes.append(content)
+                yield _llm_usage_event("m0")
+
+        return FakeAgent()
+
+    stub_manager.result = _ok_result(_row())
+    monkeypatch.setenv("XIHE_CP_URL", "http://cp:12631")
+    monkeypatch.setattr(team_task_client_module, "_resolve_api_token", lambda: "token-1")
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", _fake_graph)
+    context = _context()
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+    config = RunnerConfig(model="fake", system_prompt="", tools=[], context=context)
+
+    await _collect(runner, config)
+
+    # the model-visible content is untrusted-wrapped; the envelope JSON rides inside.
+    assert len(outcomes) == 1
+    assert '"status":"ok"' in outcomes[0]
+    assert f'"taskId":"{TASK_ID}"' in outcomes[0]
+
+    manager = stub_manager.instances[0]
+    name, arguments, headers = manager.calls[0]
+    assert name == "team_task_create"
+    assert arguments == {"subject": "End to end card"}
+    assert headers["X-Session-Id"] == "session-1"
+    assert headers["X-Chat-Run-Id"] == "run-1"
+    # LCToolAdapter stamps the per-call tool identity before executing.
+    assert headers["X-Tool-Call-Id"]

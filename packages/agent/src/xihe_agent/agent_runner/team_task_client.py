@@ -39,7 +39,14 @@ from xihe_agent.adapters.mcp_client import (
     _context_headers,
     _resolve_tool_wait,
 )
-from xihe_agent.adapters.team_task_tools import TeamTaskClient
+from xihe_agent.adapters.team_task_tools import (
+    TeamTaskClient,
+    TeamTaskCreateTool,
+    TeamTaskGetTool,
+    TeamTaskListTool,
+    TeamTaskUpdateTool,
+)
+from xihe_agent.interfaces.tool import BaseAgentTool
 
 # The four CP-owned faces (ToolFaceRegistry V172); the coordinator is the only
 # caller and always addresses one of these names.
@@ -175,3 +182,19 @@ def build_team_task_client(
         return _unwrap_result(tool, result)
 
     return client
+
+
+def team_task_tool_faces() -> list[BaseAgentTool]:
+    """D-1831: fresh instances of the four board faces for ONE run's tool table.
+
+    The ToolSpecs are the single declarations in
+    :mod:`xihe_agent.adapters.team_task_tools` — this factory only instantiates;
+    nothing here copies a second schema. The coordinator is stateless, so fresh
+    instances per run are behavior-free.
+    """
+    return [
+        TeamTaskCreateTool(),
+        TeamTaskListTool(),
+        TeamTaskGetTool(),
+        TeamTaskUpdateTool(),
+    ]
