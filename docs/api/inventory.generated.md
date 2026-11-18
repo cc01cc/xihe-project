@@ -267,10 +267,10 @@
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
-| `GET /api/v1/instance/mcp` | `listInstanceMcpServers` | `bearerAuth` | Read the instance MCP server registry | 公开 |
-| `POST /api/v1/instance/mcp` | `createInstanceMcpServer` | `bearerAuth` | Register one instance MCP server (instance admin only) | 公开 |
-| `PATCH /api/v1/instance/mcp/{name}` | `updateInstanceMcpServer` | `bearerAuth` | Replace one instance MCP server entry (instance admin only) | 公开 |
-| `DELETE /api/v1/instance/mcp/{name}` | `deleteInstanceMcpServer` | `bearerAuth` | Remove one instance MCP server from the registry (instance admin only) | 公开 |
+| `GET /api/v1/instance/mcp` | `listInstanceMcpServers` | `bearerAuth` | [PLANNED - not implemented] Read the instance MCP server registry | 公开 |
+| `POST /api/v1/instance/mcp` | `createInstanceMcpServer` | `bearerAuth` | [PLANNED - not implemented] Register one instance MCP server (instance admin only) | 公开 |
+| `PATCH /api/v1/instance/mcp/{name}` | `updateInstanceMcpServer` | `bearerAuth` | [PLANNED - not implemented] Replace one instance MCP server entry (instance admin only) | 公开 |
+| `DELETE /api/v1/instance/mcp/{name}` | `deleteInstanceMcpServer` | `bearerAuth` | [PLANNED - not implemented] Remove one instance MCP server from the registry (instance admin only) | 公开 |
 | `GET /api/v1/mcp` | `mcpStream` | `bearerAuth` | Open the MCP event stream | 公开 |
 | `POST /api/v1/mcp` | `mcpPost` | `bearerAuth` | MCP JSON-RPC endpoint (tools/list, tools/call, discovery) | 公开 |
 | `DELETE /api/v1/mcp` | `mcpDisconnect` | `bearerAuth` | Disconnect the MCP stream | 公开 |

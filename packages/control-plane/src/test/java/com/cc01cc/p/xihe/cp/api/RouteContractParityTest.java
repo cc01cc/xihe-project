@@ -215,6 +215,13 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         //        /api/v1/instance/mcp/{}            ← PATCH(replace one) + DELETE(remove one)
         PLANNED_APIS.put("/api/v1/instance/mcp", "PLAN-0771 M3");
         PLANNED_APIS.put("/api/v1/instance/mcp/{}", "PLAN-0771 M3");
+        //      task-62(b) 读数规则（2026-11-19）：**本表不是「实现正在跑」的证据，恰恰是它缺失的证据**。
+        //      一条 planned 面必须同时满足三件事，否则「验收要读门」会被读成「契约写了就是做了」：
+        //      ① 本表登记（机制出处，缺了就红）；② openapi 的 summary 带 [PLANNED - not implemented] 前缀，
+        //         该前缀由生成器带进 docs/api/inventory.generated.md，派生件无法被读成实现；
+        //      ③ 文档侧写明调用方现状（调用方拿到的是什么错误）。实测调用方只有 UI 两处：
+        //         InstanceMcpPanel（实例设置 MCP 面板）与 ResourceDetailView 的 INSTANCE 层，二者在真栈都拿到 404。
+        //      实现落地的那次提交必须同时删本表条目与前缀（D-932「代码落地即删」）。
         // PLAN-0773 M2-11: the org-unit contract is written first (batch A ships the two read
         // routes), so the write/member/role routes below are documented but served by no controller
         // yet. Each entry is deleted in the commit that implements its batch (batch B / batch C).

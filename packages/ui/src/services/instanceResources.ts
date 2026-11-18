@@ -37,6 +37,12 @@ export const BASE = {
     // （openapi.yaml:4876、InstanceAgentPrincipalController.java:52）。原先写 `/instance/agents`
     // ⇒ 真栈 404；mock 夹具当时也有同名路径 ⇒ mock 绿、真栈红。改这里必须同批改夹具。
     agents: "/instance/agent-principals",
+    // task-62(b)（2026-11-19 真栈读数）：这三条 mcp 面是**契约先行、CP 无控制器**（PLAN-0771 M3，
+    // RouteContractParityTest 的 PLANNED_APIS 登记；openapi summary 带 [PLANNED - not implemented]）。
+    // 真栈实测 GET 返 404 ⇒ 调用方拿到的是错误态，不是空列表：
+    //   · components/settings/InstanceMcpPanel.vue（实例设置 MCP 面板，GET/POST/DELETE 都走这里）
+    //   · views/resources/ResourceDetailView.vue:loadMcp()（INSTANCE 层，404 进 catch ⇒ phase=error）
+    // 别按「契约里有」去修页面：先等实现落地（D-932：代码落地时同批删 PLANNED_APIS 与前缀）。
     mcp: "/instance/mcp",
 } as const;
 
