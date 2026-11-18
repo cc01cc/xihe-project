@@ -82,3 +82,45 @@ task-188 MVP⑤（D-1821）冻结的两张面：**读** = 任务板只读投影�
   （`RouteContractParityTest` / `DefaultSetAtomMatrixTest` / `PermissionAtomLabelsTest` /
   `DefaultSetMigrationParityTest`）。
 - 真栈判据（重启后 steer 续跑、板 CAS 并发）按 task-128 §5 口径用真栈用例验；停栈期只列判据。
+### 5.1 真栈判据清单（停栈期只列，11-22 解冻后执行）
+
+> 口径：每条判据必须给出「操作序列 + 观察点 + 通过条件」；不得写成「验一下 steer 能用」。
+> 依据 = `task-128` §5（真栈用例口径）；执行窗口见 `internal/A03-xihe/docs/l2-window-protocol.md`。
+
+**A 组（板 / CAS 并发，S2 承接）**
+
+| # | 操作序列 | 观察点 | 通过条件 |
+|---|---|---|---|
+| A1 | 两个 agent principal 同时对同一 `(teamRootSessionId, taskNo)` 板行 `claim` | 两 HTTP/工具响应 + `team_tasks` 行终态 | 恰一个成功、另一个 `409` 且带原 `revision`；无重复 owner |
+| A2 | `complete` / `reopen` / `move` 三动作各用**陈旧** `expectedRevision` 重放 | 三响应 | 均 `409`（CAS 拒绝），行状态未变 |
+| A3 | `create` 带 `blockedBy` 指向自身 + 指向存在的行串成 A→B→C→A | 响应 | `TEAM_TASK_CYCLE` 拒绝；依赖缺失 id ⇒ `404` 而非静默丢（L0 已锁，此处验真实 DB 约束不吞） |
+| A4 | 非 board root owner 的会话读 `GET /api/v1/sessions/{id}/team-tasks` | 响应 | `403`（只读投影的人类 owner 闸）；树成员走工具面不走 HTTP 口 |
+
+**B 组（steer 通道，S3 承接）**
+
+| # | 操作序列 | 观察点 | 通过条件 |
+|---|---|---|---|
+| B1 | child run 在途时 `POST /steers`（幂等键 K1） | 202 + 队列 + 下一 admission 边界 | 202 入队；**不抢占**在途 run；steer 文本在下一个 admission 边界送达 child |
+| B2 | 同 K1 同文重发；同 K1 异文重发 | 两响应 | 前者 `200` 且不重复写（无第二行、无新审计）；后者 `409 IDEMPOTENCY_KEY_REUSED` |
+| B3 | `sourceKind`/`fromSessionId` 归因存活 | `session_follow_up_item` 行 + `GET` 视图 | admission 清 `content` 后归因列仍在；`agent_steer` 行必有 `from_session_id`（CHECK 未退化） |
+| B4 | 非树根 owner 调 `POST /steers` | 响应 | `403 STEER_FORBIDDEN`；跨租户 child ⇒ `404`（不作存在性探针） |
+| B5 | 停栈前 park 的 steer → 重启后恢复 | 重启后队列与 child run | steer 续跑（D-1832 恢复路径）；**同时观察 D-1836**（见 C3） |
+
+**C 组（等待可续跑 G3-a，跨批）**
+
+| # | 操作序列 | 观察点 | 通过条件 |
+|---|---|---|---|
+| C1 | run 进入 ask_user 等待期，CP 落盘 checkpoint（含 pending AI 消息两工具调用） | CP checkpoint 写入 + 闩状态 | 落盘成功、不上闩（判据 2）；对照：未注册 schema 的同形态仍闩死 |
+| C2 | kill CP → 重启 → 认领 waiting 行 | `GET /internal/v1/chat/runs/{runId}/user-questions/waiting` + agent resume | answered 直回信封不再问人（判据 5）；pending 重挂等待**不重发问题**（判据 6） |
+| C3 | 答案 durable 后 respond 失败 → park → 终态事件驱动重放 | `chat_run` 状态 + 日志 | 答案 durable 不丢、run 经排水恢复 `running`。**重点验 D-1836**：`afterCommit` 路径 `resumeQueued` 是否抛 `No active transaction`（停栈期单测驱动已复现，生产路径待判） |
+| C4 | approval 对称口读事实 | `GET /internal/v1/chat/runs/{runId}/approval/waiting` | `approved/rejected` 读后行状态**零变化**；`dispatching/dispatch_unknown` 折叠为 wire `pending`；expired 惰性结算 |
+
+**D 组（agent 四工具直连，S3 后新增面）**
+
+| # | 操作序列 | 观察点 | 通过条件 |
+|---|---|---|---|
+| D1 | 配 `XIHE_CP_URL` 起 run，模型调用 `team_task_create` | agent 侧 callable → CP MCP `tools/call` | 工具在表（D-1835 条件成立）；CP 收到 `team_task_create` + 正确实参；三身份头齐全 |
+| D2 | 不配 `XIHE_CP_URL` 起 run | run 工具表 | 四工具**零出现**（灰度门）；无意外传输面 |
+| D3 | 配 CP 但 CP 返回 `isError` | agent 侧信封 | CP `code` 原样透传，**不重分类**、不开造新 code |
+
+**执行顺序建议**：A→B→C→D。A/B 只需 CP+runtime 栈；C 需 kill/restart 编排；D 需 agent 真 LLM run（锚点④ provider 凭据）。
