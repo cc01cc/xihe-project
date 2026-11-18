@@ -13,7 +13,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+from xihe_agent.interfaces.tool import BaseAgentTool, CheckpointSafeToolSchema, ToolSpec
 
 ApprovalEventSink = Callable[[dict[str, Any]], Awaitable[None]]
 APPROVAL_EVENT_SINK_KEY = "_approval_event_sink"
@@ -66,6 +66,76 @@ APPROVAL_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 # Fail-closed ceiling for a pushed approval wait: a bogus far-future expiresAt
 # must not produce an unbounded waiter.
 EXTERNAL_WAIT_CEILING_S = 3600.0
+
+# ---------------------------------------------------------------------------
+# G3-a checkpoint-safe envelope (task-208 acceptance draft 判据 1/3/7)
+# ---------------------------------------------------------------------------
+#
+# Symmetric to user_question_tool.py. Terminal semantics are UNCHANGED (PLAN-0381
+# T3.2 / decision #23): a rejected or expired approval still raises
+# ApprovalRejectedError / ApprovalExpiredError — those paths end the run by design
+# and never produce a ToolMessage, so there is nothing to checkpoint-latch. The
+# envelope is produced for the approved path (and carries the full status enum so a
+# future ruling can envelope the terminal outcomes without a schema change; the
+# enum/fields are the draft baseline, 只减不增).
+
+REQUEST_APPROVAL_ENVELOPE_VERSION = "request-approval-envelope.v1"
+
+# Same bound rationale as ask_user: schema bounds must accept every live arg the
+# coordinator handles so validation stays in code and outcomes stay envelopes
+# instead of dispatch-time projection failures. 65536 is the validator ceiling.
+CHECKPOINT_SAFE_APPROVAL_INPUT_MAX_LENGTH = 65536
+
+REQUEST_APPROVAL_CHECKPOINT_SAFE_SCHEMA = CheckpointSafeToolSchema(
+    version=REQUEST_APPROVAL_ENVELOPE_VERSION,
+    input_schema={
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "maxLength": CHECKPOINT_SAFE_APPROVAL_INPUT_MAX_LENGTH},
+            "details": {"type": "string", "maxLength": CHECKPOINT_SAFE_APPROVAL_INPUT_MAX_LENGTH},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+    output_schema={
+        "type": "object",
+        "properties": {
+            "requestId": {"type": "string", "maxLength": 64},
+            "status": {
+                "type": "string",
+                "enum": ["approved", "rejected", "expired", "error"],
+            },
+            # Rejection feedback is capped at APPROVAL_FEEDBACK_LIMIT (512) before
+            # it reaches the coordinator; 2048 is the draft baseline with headroom.
+            # Only meaningful for status=rejected; "" otherwise.
+            "feedback": {"type": "string", "maxLength": 2048},
+        },
+        "required": ["requestId", "status"],
+        "additionalProperties": False,
+    },
+)
+
+# Agent-side client shape for the CP C4 read-only endpoint (draft §2-C4, approval
+# symmetric; implemented by the cp lane). Given a runId, return the durable
+# approval row, or None when the run has none:
+#   {"requestId": str, "state": "pending"|"approved"|"rejected"|"expired",
+#    "feedback": str | None, "expiresAt": str | None}   # ISO-8601
+APPROVAL_RESUME_LOOKUP_KEY = "_approval_resume_lookup"
+ApprovalResumeLookup = Callable[[str], Awaitable[dict[str, Any] | None]]
+
+APPROVAL_RESUME_STATE_APPROVED = "approved"
+APPROVAL_RESUME_STATE_REJECTED = "rejected"
+APPROVAL_RESUME_STATE_EXPIRED = "expired"
+APPROVAL_RESUME_STATE_PENDING = "pending"
+
+
+def _approval_envelope_result(request_id: str, status: str, feedback: str = "") -> dict[str, Any]:
+    """Result whose content is the canonical request-approval envelope JSON."""
+    envelope = {"requestId": request_id, "status": status, "feedback": feedback}
+    return {
+        "content": json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        **envelope,
+    }
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+[A-Za-z0-9\-._~+/=]+)"),
@@ -169,9 +239,23 @@ class ApprovalCoordinator:
         event_sink: ApprovalEventSink | None,
         tool: str = "request_approval",
     ) -> dict[str, Any]:
+        metadata = context.metadata
+        # G3-a resume 认领: on replay after a restart the CP durable approval row
+        # (keyed by runId, CP C4 read-only endpoint via the registered lookup)
+        # settles the outcome BEFORE a new request is generated or published —
+        # approved rows are consumed directly, pending rows re-arm the wait keyed
+        # by the CP requestId, rejected/expired rows re-raise the same terminal
+        # error the original wait produced. Without a registered lookup this is a
+        # no-op.
+        resume_lookup = metadata.get(APPROVAL_RESUME_LOOKUP_KEY)
+        if callable(resume_lookup):
+            row = await self._resume_row(resume_lookup, str(metadata.get("runId", "")))
+            if row is not None:
+                resumed = await self._request_from_resume_row(row, context, tool)
+                if resumed is not None:
+                    return resumed
         request_id = str(uuid4())
         event = asyncio.Event()
-        metadata = context.metadata
         now = datetime.now(UTC)
         preview, arguments_hash = redact_approval_details(details)
         payload = {
@@ -233,11 +317,9 @@ class ApprovalCoordinator:
             if feedback:
                 message = f"{message}. User feedback: {feedback}"
             raise ApprovalRejectedError(message)
-        return {
-            "content": f"Approved: {action}",
-            "approval": "approved",
-            "requestId": request_id,
-        }
+        # G3-a: the approved result is the request-approval envelope; feedback is
+        # empty on approval (it only travels with a rejection, which is terminal).
+        return _approval_envelope_result(request_id=request_id, status="approved")
 
     def resolve(self, request_id: str, approved: bool) -> bool:
         status, _ = self.resolve_status(request_id, approved)
@@ -345,6 +427,89 @@ class ApprovalCoordinator:
         self.pending_payloads.pop(request_id, None)
         self.approval_feedback.pop(request_id, None)
 
+    # -- resume 认领 (G3-a A3: replay after restart claims the CP durable row) --
+    async def _resume_row(
+        self, lookup: ApprovalResumeLookup, run_id: str
+    ) -> dict[str, Any] | None:
+        """Call the C4 resume lookup, mapping every failure to "no row".
+
+        Falling through to a fresh request on failure is acceptable because CP
+        keeps at most one live approval per run (claim/replay vocabulary), so a
+        duplicate publish is refused rather than silently double-asking.
+        """
+        try:
+            row = await lookup(run_id)
+        except Exception:
+            logger.warning(
+                "Approval resume lookup failed; falling back to a fresh request: runId={}",
+                run_id,
+                exc_info=True,
+            )
+            return None
+        if not isinstance(row, dict) or not isinstance(row.get("requestId"), str) or not row["requestId"]:
+            return None
+        return row
+
+    async def _request_from_resume_row(
+        self, row: dict[str, Any], context: AgentContext, tool: str
+    ) -> dict[str, Any] | None:
+        """Map one CP durable approval row (looked up by runId) to an outcome.
+
+        Returns None for unrecognized states so the caller falls through to a
+        fresh request. Terminal outcomes re-raise exactly what the normal wait
+        path raises (PLAN-0381 T3.2 unchanged); the completed tables are primed so
+        a retried decision push resolves idempotently instead of not_found.
+        """
+        request_id = row["requestId"]
+        state = row.get("state")
+        feedback = row.get("feedback")
+        if not isinstance(feedback, str):
+            feedback = None
+        payload = self._external_payload(
+            request_id, tool, row.get("expiresAt") or "", context
+        )
+        if state == APPROVAL_RESUME_STATE_APPROVED:
+            self._complete(request_id, payload, "approved", True)
+            return _approval_envelope_result(request_id=request_id, status="approved")
+        if state == APPROVAL_RESUME_STATE_REJECTED:
+            self._complete(request_id, payload, "rejected", False)
+            message = f"Approval request rejected: {request_id}"
+            if feedback:
+                message = f"{message}. User feedback: {feedback}"
+            raise ApprovalRejectedError(message)
+        if state == APPROVAL_RESUME_STATE_EXPIRED:
+            self._complete(request_id, payload, "expired", None)
+            raise ApprovalExpiredError(f"Approval request expired: {request_id}")
+        if state == APPROVAL_RESUME_STATE_PENDING:
+            # Reuse the proven CP-gate wait: it registers the waiter under the CP
+            # requestId, never publishes (the durable row already exists — 判据 7
+            # forbids a second request), clamps to the local ceiling and raises
+            # the same terminal errors on rejection/expiry.
+            # L-8 conservative choice: the remaining durable window owns the wait;
+            # a missing/malformed expiresAt is a protocol violation, never an
+            # unbounded wait.
+            await self.await_external(request_id, tool, self._resume_expires_at(row, request_id), context)
+            return _approval_envelope_result(request_id=request_id, status="approved")
+        logger.warning(
+            "Approval resume row has an unrecognized state: requestId={} state={}",
+            request_id,
+            state,
+        )
+        return None
+
+    @staticmethod
+    def _resume_expires_at(row: dict[str, Any], request_id: str) -> datetime:
+        raw = row.get("expiresAt")
+        if not isinstance(raw, str) or not raw:
+            raise ApprovalProtocolError("CP resume approval expiresAt is missing")
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            raise ApprovalProtocolError("CP resume approval expiresAt is malformed") from None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
     def resolve_status(self, request_id: str, approved: bool, feedback: str | None = None) -> tuple[str, bool | None]:
         """Resolve one pending request; PLAN-0328 M1 adds optional rejection feedback."""
         self._purge_completed()
@@ -437,6 +602,10 @@ class ApprovalAgentTool(BaseAgentTool):
                 },
                 "required": ["action"],
             },
+            # G3-a 判据 1/7: a waiting approval run must checkpoint — the pending AI
+            # message args project through this schema and the approved result
+            # projects through the output envelope (判据 3).
+            checkpoint_safe_schema=REQUEST_APPROVAL_CHECKPOINT_SAFE_SCHEMA,
         )
 
     @property

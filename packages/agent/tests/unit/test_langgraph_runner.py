@@ -286,7 +286,12 @@ async def test_runner_fans_in_approval_event_before_blocked_tool_completes(monke
                     "data": {"input": {"action": "delete file"}},
                     "run_id": "tool-run",
                 }
-                request_task = asyncio.create_task(adapted_tool._arun(action="delete file"))
+                # G3-a: request_approval now declares a checkpoint-safe schema, so
+                # the adapter requires the framework-injected originating
+                # tool_call_id (production: InjectedToolCallId via _build_args_schema).
+                request_task = asyncio.create_task(
+                    adapted_tool._arun(action="delete file", tool_call_id="approval-origin-call")
+                )
                 while not approval_tool.pending_payloads:
                     await asyncio.sleep(0)
                 result = await request_task

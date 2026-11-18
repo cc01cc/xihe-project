@@ -22,9 +22,31 @@ refusal: when the delivery path surfaces a refusal — an explicit
 and the model gets a readable ``status=error`` result with the CP code. It is never
 ``no_answer`` and never a fabricated success. Unknown delivery failures still raise: a refusal
 is a decision, a transport bug is a bug.
+
+G3-a「checkpoint_safe_schema」(task-208 acceptance draft): every return path of this tool —
+answered / no_answer / refused (子会话门, QUESTION_ALREADY_PENDING, CP 409 codes) / error
+(INVALID_QUESTION, INVALID_TIMEOUT) — now produces the ask-user-envelope.v1 JSON envelope
+as its result content, and the ToolSpec carries a CheckpointSafeToolSchema so a waiting
+run's checkpoints persist instead of tripping the checkpoint-saver unsafe latch (draft §0-3).
+
+Privacy registration (draft §0-2 / 判据 4, 登记不隐瞒): the checkpoint *input* projection of a
+pending AI tool call necessarily contains the question body verbatim — the projection
+mechanism (interfaces/tool.py) copies declared fields losslessly, and the body is already
+durable in CP's user_questions.prompt (same DB trust domain, V128). The correct boundary is
+the *output* envelope: it carries only questionId + status + answer + code — never the
+question body — and the body never leaves the DB trust domain.
+
+Resume 认领 (draft A2, 判据 5/6 agent 腿): when the run metadata carries a
+_user_question_resume_lookup callable, a (replayed) ask first looks up the CP durable
+waiting row by runId — answered → answered envelope without re-asking; pending → re-arm
+the local wait WITHOUT re-publishing (the user must never see a second question); expired /
+cancelled → no_answer envelope. The callable is the agent-side client shape for the CP C4
+read-only endpoint (cp lane, 后做); until CP ships it nothing registers the key and behavior
+is exactly today's fresh ask.
 """
 
 import asyncio
+import json
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -35,7 +57,7 @@ from uuid import uuid4
 from loguru import logger
 
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
+from xihe_agent.interfaces.tool import BaseAgentTool, CheckpointSafeToolSchema, ToolSpec
 
 USER_QUESTION_EVENT_SINK_KEY = "_user_question_event_sink"
 UserQuestionEventSink = Callable[[dict[str, Any]], Awaitable[None]]
@@ -56,7 +78,75 @@ COMPLETED_RETENTION_S = 3600.0
 
 STATUS_ANSWERED = "answered"
 STATUS_NO_ANSWER = "no_answer"
+STATUS_REFUSED = "refused"
 STATUS_ERROR = "error"
+
+# CP durable-row states (V128 CHECK constraint) used by the resume lookup (G3-a A2).
+STATE_PENDING = "pending"
+STATE_EXPIRED = "expired"
+STATE_CANCELLED = "cancelled"
+
+# ---------------------------------------------------------------------------
+# G3-a checkpoint-safe envelope (task-208 acceptance draft 判据 1/3/4)
+# ---------------------------------------------------------------------------
+
+ASK_USER_ENVELOPE_VERSION = "ask-user-envelope.v1"
+
+# G3-a 判据 3 note — the draft baseline suggests maxLength 2000 for the checkpoint
+# input schema, but 判据 2/3 force a wider bound: the checkpointed *pending AI
+# message* carries the model's raw args, and a question of 2001..N chars is a live
+# arg that execute() maps to an INVALID_QUESTION *envelope* — if the schema bound
+# were 2000, the adapter's dispatch-time project_input would reject it first and the
+# run would die (or latch) instead of producing the envelope. The semantic bound
+# (MAX_QUESTION_LENGTH) stays in execute(); this bound only caps the checkpoint
+# payload. 65536 is the validator ceiling (interfaces/tool.py).
+CHECKPOINT_SAFE_QUESTION_INPUT_MAX_LENGTH = 65536
+
+# G3-a 判据 3 note — no minimum/maximum on timeoutSeconds on purpose: _resolve_timeout
+# validates ("must be positive") and clamps (> MAX_TIMEOUT_SECONDS) live values, and
+# both outcomes must stay reachable as envelopes rather than becoming dispatch-time
+# projection failures. The number projection already rejects non-finite values.
+ASK_USER_CHECKPOINT_SAFE_SCHEMA = CheckpointSafeToolSchema(
+    version=ASK_USER_ENVELOPE_VERSION,
+    input_schema={
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "maxLength": CHECKPOINT_SAFE_QUESTION_INPUT_MAX_LENGTH},
+            "timeoutSeconds": {"type": "number"},
+        },
+        "required": ["question"],
+        "additionalProperties": False,
+    },
+    output_schema={
+        "type": "object",
+        "properties": {
+            "questionId": {"type": "string", "maxLength": 64},
+            "status": {
+                "type": "string",
+                "enum": [STATUS_ANSWERED, STATUS_NO_ANSWER, STATUS_REFUSED, STATUS_ERROR],
+            },
+            # CP caps durable answers at MAX_ANSWER_LENGTH = 2000
+            # (UserQuestionService); 4096 leaves headroom without unbounding the
+            # payload. Only meaningful for status=answered; "" otherwise.
+            "answer": {"type": "string", "maxLength": 4096},
+            # CP problem code (e.g. SUBAGENT_QUESTION_REFUSED); "" unless
+            # status=refused/error.
+            "code": {"type": "string", "maxLength": 64},
+        },
+        "required": ["questionId", "status"],
+        "additionalProperties": False,
+    },
+)
+
+# Agent-side client shape for the CP C4 read-only endpoint (draft §2-C4, implemented
+# by the cp lane): given a runId, return the durable waiting row, or None when the
+# run has none:
+#   {"questionId": str, "state": "pending"|"answered"|"expired"|"cancelled",
+#    "answer": str | None, "expiresAt": str | None}   # ISO-8601, timed rows only
+# The lookup must not carry the question body — the read face follows the existing
+# addressee/session visibility rules and never discloses the prompt (C4 contract).
+USER_QUESTION_RESUME_LOOKUP_KEY = "_user_question_resume_lookup"
+UserQuestionResumeLookup = Callable[[str], Awaitable[dict[str, Any] | None]]
 
 REASON_TIMEOUT = "timeout"
 REASON_LOCAL_CEILING = "local_ceiling"
@@ -145,10 +235,22 @@ class UserQuestionCoordinator:
         self._purge_completed()
         if run_id in self.pending_by_run:
             logger.warning("User question refused: a question is already pending for runId={}", run_id)
-            return _error_result(
+            return _refusal_result(
                 "QUESTION_ALREADY_PENDING",
-                "A question is already pending for this run; wait for its answer first.",
+                message="A question is already pending for this run; wait for its answer first.",
             )
+        # G3-a resume 认领: on replay after a restart the CP durable waiting row
+        # (keyed by runId, CP C4 read-only endpoint via the registered lookup)
+        # decides the outcome BEFORE anything new is published — answered rows are
+        # consumed directly, pending rows re-arm the wait, expired/cancelled rows
+        # collapse to no_answer. Without a registered lookup this is a no-op.
+        resume_lookup = metadata.get(USER_QUESTION_RESUME_LOOKUP_KEY)
+        if callable(resume_lookup):
+            row = await self._resume_row(resume_lookup, run_id)
+            if row is not None:
+                resumed = await self._ask_from_resume_row(row, run_id, session_id)
+                if resumed is not None:
+                    return resumed
         wait_timeout, expires_at, timeout_error = self._resolve_timeout(timeout_seconds)
         if timeout_error is not None:
             return _error_result("INVALID_TIMEOUT", timeout_error)
@@ -187,11 +289,10 @@ class UserQuestionCoordinator:
                 run_id,
                 reason,
             )
-            return {
-                "content": NO_ANSWER_CONTENT,
-                "status": STATUS_NO_ANSWER,
-                "reason": reason,
-            }
+            return _envelope_result(
+                _ask_user_envelope(question_id=local_id, status=STATUS_NO_ANSWER),
+                reason=reason,
+            )
         except asyncio.CancelledError:
             # A cancelled run must not leave a waiter the answer route could still resolve.
             self.pending_by_run.pop(run_id, None)
@@ -207,7 +308,7 @@ class UserQuestionCoordinator:
                     run_id,
                     refused_code,
                 )
-                return _refusal_result(refused_code)
+                return _refusal_result(refused_code, question_id=local_id)
             logger.warning("User question wait failed: id={} runId={}", local_id, run_id, exc_info=True)
             raise
 
@@ -215,16 +316,20 @@ class UserQuestionCoordinator:
         self.pending_by_run.pop(run_id, None)
         if answer is None:
             # The event was set without an answer: never fabricate one.
-            return {
-                "content": NO_ANSWER_CONTENT,
-                "status": STATUS_NO_ANSWER,
-                "reason": REASON_LOCAL_CEILING,
-            }
-        return {
-            "content": f"User answer: {answer}",
-            "status": STATUS_ANSWERED,
-            "questionId": local_id,
-        }
+            return _envelope_result(
+                _ask_user_envelope(question_id=local_id, status=STATUS_NO_ANSWER),
+                reason=REASON_LOCAL_CEILING,
+            )
+        return _envelope_result(
+            _ask_user_envelope(
+                # The CP-owned questionId learned from the answer push is the
+                # durable identity; the local id is the fallback for paths that
+                # never reached CP.
+                question_id=pending.answered_question_id or local_id,
+                status=STATUS_ANSWERED,
+                answer=answer,
+            )
+        )
 
     # -- resolve (CP → Agent answer push, T5.16 route) -----------------------
     def resolve(
@@ -295,9 +400,180 @@ class UserQuestionCoordinator:
                 self.delivered_at.pop(question_id, None)
                 self.question_runs.pop(question_id, None)
 
+    # -- resume 认领 (G3-a A2: replay after restart claims the CP durable row) ----
+    async def _resume_row(
+        self, lookup: UserQuestionResumeLookup, run_id: str
+    ) -> dict[str, Any] | None:
+        """Call the C4 resume lookup, mapping every failure to "no row".
+
+        A failed lookup must never block the run: falling through to a fresh ask is
+        fail-closed because CP's uq_user_questions_run_pending unique constraint
+        refuses a duplicate pending row — the degradation is a refused envelope, not
+        a second durable question.
+        """
+        try:
+            row = await lookup(run_id)
+        except Exception:
+            logger.warning(
+                "User question resume lookup failed; falling back to a fresh ask: runId={}",
+                run_id,
+                exc_info=True,
+            )
+            return None
+        if not isinstance(row, dict) or not isinstance(row.get("questionId"), str) or not row["questionId"]:
+            return None
+        return row
+
+    async def _ask_from_resume_row(
+        self, row: dict[str, Any], run_id: str, session_id: str
+    ) -> dict[str, Any] | None:
+        """Map one CP durable waiting row (looked up by runId) to a tool result.
+
+        Returns None for unrecognized states so the caller falls through to a fresh
+        ask; every recognized state settles the wait WITHOUT publishing anything.
+        """
+        question_id = row["questionId"]
+        state = row.get("state")
+        if state == STATUS_ANSWERED:
+            answer = row.get("answer")
+            if not isinstance(answer, str) or not answer.strip():
+                # A durable row without a usable answer never fabricates one.
+                return _envelope_result(
+                    _ask_user_envelope(question_id=question_id, status=STATUS_NO_ANSWER),
+                    reason="resume_answer_missing",
+                )
+            self.question_runs[question_id] = run_id
+            self.delivered_at[question_id] = datetime.now(UTC)
+            return _envelope_result(
+                _ask_user_envelope(
+                    question_id=question_id, status=STATUS_ANSWERED, answer=answer
+                )
+            )
+        if state in (STATE_EXPIRED, STATE_CANCELLED):
+            return _envelope_result(
+                _ask_user_envelope(question_id=question_id, status=STATUS_NO_ANSWER),
+                reason=f"resume_{state}",
+            )
+        if state == STATE_PENDING:
+            return await self._rearm_pending_question(row, run_id, session_id)
+        logger.warning(
+            "User question resume row has an unrecognized state: runId={} state={}",
+            run_id,
+            state,
+        )
+        return None
+
+    async def _rearm_pending_question(
+        self, row: dict[str, Any], run_id: str, session_id: str
+    ) -> dict[str, Any]:
+        """Re-arm the local wait for a CP row that is still pending.
+
+        The question is deliberately NOT re-published: the user already sees the
+        durable row (draft 判据 6 — a restarted run must never show a second
+        question). The waiter keeps the ordinary runId keying; the answer push
+        resolves it exactly like a fresh wait.
+
+        L-8 (draft §4, conservative choice recorded): a timed row waits out only its
+        REMAINING durable window and is never extended by the restart; a row without
+        a usable expiresAt falls back to the local fail-closed ceiling.
+        """
+        question_id = row["questionId"]
+        wait_timeout = self.wait_ceiling_seconds
+        expires_at: datetime | None = None
+        raw_expires = row.get("expiresAt")
+        if isinstance(raw_expires, str) and raw_expires:
+            try:
+                expires_at = datetime.fromisoformat(raw_expires.replace("Z", "+00:00"))
+            except ValueError:
+                expires_at = None
+            if expires_at is not None:
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+                remaining = (expires_at - datetime.now(UTC)).total_seconds()
+                if remaining <= 0:
+                    return _envelope_result(
+                        _ask_user_envelope(question_id=question_id, status=STATUS_NO_ANSWER),
+                        reason="resume_expired",
+                    )
+                wait_timeout = min(remaining, self.wait_ceiling_seconds)
+        pending = PendingQuestion(
+            local_id=question_id,
+            run_id=run_id,
+            session_id=session_id,
+            payload={"questionId": question_id, "resumed": True},
+        )
+        self.pending_by_run[run_id] = pending
+        logger.info(
+            "User question wait re-armed from the durable row: id={} runId={}",
+            question_id,
+            run_id,
+        )
+        try:
+            await asyncio.wait_for(pending.event.wait(), timeout=wait_timeout)
+        except TimeoutError:
+            self.pending_by_run.pop(run_id, None)
+            reason = REASON_TIMEOUT if expires_at is not None else REASON_LOCAL_CEILING
+            logger.warning(
+                "Re-armed user question wait ended without an answer: id={} runId={} reason={}",
+                question_id,
+                run_id,
+                reason,
+            )
+            return _envelope_result(
+                _ask_user_envelope(question_id=question_id, status=STATUS_NO_ANSWER),
+                reason=reason,
+            )
+        except asyncio.CancelledError:
+            self.pending_by_run.pop(run_id, None)
+            logger.warning(
+                "Re-armed user question wait cancelled: id={} runId={}", question_id, run_id
+            )
+            raise
+        answer = pending.answer
+        self.pending_by_run.pop(run_id, None)
+        if answer is None:
+            return _envelope_result(
+                _ask_user_envelope(question_id=question_id, status=STATUS_NO_ANSWER),
+                reason=REASON_LOCAL_CEILING,
+            )
+        return _envelope_result(
+            _ask_user_envelope(
+                question_id=pending.answered_question_id or question_id,
+                status=STATUS_ANSWERED,
+                answer=answer,
+            )
+        )
+
+
+# Keys the checkpoint-saver/tool-adapter never persist: the message and reason
+# extras are dict-only diagnostics for tests/debugging; only content reaches the
+# model and the durable ToolMessage, and content is exactly the canonical JSON
+# envelope.
+def _envelope_result(envelope: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "content": json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        **envelope,
+    }
+    result.update(extra)
+    return result
+
+
+def _ask_user_envelope(
+    *, question_id: str, status: str, answer: str = "", code: str = ""
+) -> dict[str, Any]:
+    # Always emit the full field set (answer/code as "" when not applicable) so the
+    # canonical form is stable across paths; the schema whitelist is exactly these
+    # four fields — the question body never appears here (draft 判据 4).
+    return {"questionId": question_id, "status": status, "answer": answer, "code": code}
+
 
 def _error_result(code: str, message: str) -> dict[str, Any]:
-    return {"content": message, "status": STATUS_ERROR, "code": code}
+    """Local validation failure → status=error envelope (draft 判据 3 mapping:
+    INVALID_QUESTION / INVALID_TIMEOUT are error; refusals are refused)."""
+    return _envelope_result(
+        _ask_user_envelope(question_id="", status=STATUS_ERROR, code=code),
+        message=message,
+    )
 
 
 def _refused_code(exc: BaseException) -> str | None:
@@ -328,10 +604,21 @@ def _refused_code(exc: BaseException) -> str | None:
     return None
 
 
-def _refusal_result(code: str) -> dict[str, Any]:
-    if code == CODE_SUBAGENT_QUESTION_REFUSED:
-        return _error_result(code, SUBAGENT_QUESTION_REFUSED_CONTENT)
-    return _error_result(code, f"User question refused by CP ({code}); it was not delivered.")
+def _refusal_result(
+    code: str, question_id: str = "", message: str | None = None
+) -> dict[str, Any]:
+    """CP/local refusal → status=refused envelope (draft 判据 3 mapping: the 子会话门,
+    QUESTION_ALREADY_PENDING and every CP 409 problem code are refused, never error
+    and never a fabricated no_answer)."""
+    if message is None:
+        if code == CODE_SUBAGENT_QUESTION_REFUSED:
+            message = SUBAGENT_QUESTION_REFUSED_CONTENT
+        else:
+            message = f"User question refused by CP ({code}); it was not delivered."
+    return _envelope_result(
+        _ask_user_envelope(question_id=question_id, status=STATUS_REFUSED, code=code),
+        message=message,
+    )
 
 
 class UserQuestionTool(BaseAgentTool):
@@ -367,6 +654,10 @@ class UserQuestionTool(BaseAgentTool):
                 },
                 "required": ["question"],
             },
+            # G3-a 判据 1: waiting runs must checkpoint — the pending AI message args
+            # project through this schema and every result below projects through
+            # the output envelope (判据 3).
+            checkpoint_safe_schema=ASK_USER_CHECKPOINT_SAFE_SCHEMA,
         )
 
     @property

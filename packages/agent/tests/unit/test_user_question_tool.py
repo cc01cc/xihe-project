@@ -23,7 +23,6 @@ from xihe_agent.adapters.user_question_tool import (
     CODE_SUBAGENT_QUESTION_REFUSED,
     MAX_QUESTION_LENGTH,
     MAX_TIMEOUT_SECONDS,
-    NO_ANSWER_CONTENT,
     PARENT_RUN_ID_KEY,
     SUBAGENT_QUESTION_REFUSED_CONTENT,
     USER_QUESTION_EVENT_SINK_KEY,
@@ -97,8 +96,9 @@ async def test_ask_user_timed_returns_explicit_no_answer_and_continues():
 
     assert result["status"] == "no_answer"
     assert result["reason"] == "timeout"
-    assert result["content"] == NO_ANSWER_CONTENT
-    assert "answer" not in result  # never fabricated
+    # G3-a: content is the canonical envelope JSON; the answer is never fabricated.
+    assert '"status":"no_answer"' in result["content"]
+    assert result["answer"] == ""
     assert 0.05 <= elapsed < 5.0
     assert published[0]["expiresAt"].endswith("Z")
     assert tool.get_pending() == []
@@ -246,7 +246,8 @@ async def test_ask_user_second_pending_ask_for_the_same_run_is_refused():
     await ready.wait()
     second = await tool.execute({"question": "second"}, context)
 
-    assert second["status"] == "error"
+    # G3-a draft 判据 3 mapping: QUESTION_ALREADY_PENDING is refused, not error.
+    assert second["status"] == "refused"
     assert second["code"] == "QUESTION_ALREADY_PENDING"
     assert len(published) == 1
     tool.resolve_answer("q-1", "session-1", "run-1", "ok")
@@ -277,9 +278,10 @@ async def test_ask_user_child_run_is_refused_before_any_event_is_published():
 
     result = await tool.execute({"question": "Which env?"}, context)
 
-    assert result["status"] == "error"
+    # G3-a draft 判据 3 mapping: the 子会话门 is refused.
+    assert result["status"] == "refused"
     assert result["code"] == CODE_SUBAGENT_QUESTION_REFUSED
-    assert result["content"] == SUBAGENT_QUESTION_REFUSED_CONTENT
+    assert result["message"] == SUBAGENT_QUESTION_REFUSED_CONTENT
     assert published == [], "a child run must not append session_question_asked"
     assert tool.coordinator.pending_by_run == {}
     assert tool.get_pending() == []
@@ -340,10 +342,11 @@ async def test_ask_user_subagent_refusal_is_a_readable_error_not_a_wait():
     result = await tool.execute({"question": "Which env?"}, context)
     elapsed = time.monotonic() - started
 
-    assert result["status"] == "error"
+    # G3-a draft 判据 3 mapping: a CP refusal is refused, never error/no_answer.
+    assert result["status"] == "refused"
     assert result["code"] == "SUBAGENT_QUESTION_REFUSED"
-    assert result["content"] == SUBAGENT_QUESTION_REFUSED_CONTENT
-    assert "parent run" in result["content"]
+    assert result["message"] == SUBAGENT_QUESTION_REFUSED_CONTENT
+    assert "parent run" in result["message"]
     assert elapsed < 5.0  # never the local ceiling, never a hang
     assert tool.get_pending() == []
     assert tool.coordinator.question_runs == {}
@@ -365,7 +368,7 @@ async def test_ask_user_refusal_leaves_no_waiter_and_the_run_can_ask_again():
     context.metadata[USER_QUESTION_EVENT_SINK_KEY] = flaky_sink
 
     refused = await tool.execute({"question": "first"}, context)
-    assert refused["status"] == "error"
+    assert refused["status"] == "refused"
     # A refused ask must not poison the run's next ask (no stale pending_by_run entry).
     assert tool.get_pending() == []
 
@@ -387,9 +390,9 @@ async def test_ask_user_http_409_problem_code_is_mapped_to_the_cp_code():
     context.metadata[USER_QUESTION_EVENT_SINK_KEY] = refusing_sink
     result = await tool.execute({"question": "Which env?"}, context)
 
-    assert result["status"] == "error"
+    assert result["status"] == "refused"
     assert result["code"] == CODE_SUBAGENT_QUESTION_REFUSED
-    assert result["content"] == SUBAGENT_QUESTION_REFUSED_CONTENT
+    assert result["message"] == SUBAGENT_QUESTION_REFUSED_CONTENT
 
 
 @pytest.mark.asyncio
@@ -403,9 +406,9 @@ async def test_ask_user_other_cp_refusal_code_is_reported_verbatim():
     context.metadata[USER_QUESTION_EVENT_SINK_KEY] = refusing_sink
     result = await tool.execute({"question": "Which env?"}, context)
 
-    assert result["status"] == "error"
+    assert result["status"] == "refused"
     assert result["code"] == "QUESTION_NOT_FOUND"
-    assert result["content"] != SUBAGENT_QUESTION_REFUSED_CONTENT
+    assert result["message"] != SUBAGENT_QUESTION_REFUSED_CONTENT
 
 
 @pytest.mark.asyncio

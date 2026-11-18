@@ -150,8 +150,11 @@ async def test_agent_approval_emits_canonical_event_before_waiting():
 
     tool.resolve_approval(payload["requestId"], True)
     result = await request_task
-    assert result["approval"] == "approved"
-    assert "Approved" in result["content"]
+    # G3-a: the approved result is the request-approval envelope.
+    assert result["status"] == "approved"
+    assert result["requestId"] == payload["requestId"]
+    assert result["feedback"] == ""
+    assert '"status":"approved"' in result["content"]
 
 
 @pytest.mark.asyncio
@@ -255,10 +258,17 @@ async def test_coordinator_pending_payload_is_preserved_and_resolves_approved():
     assert (resolved_status, decision) == ("accepted", True)
 
     result = await request_task
+    # G3-a: the approved result is the request-approval envelope.
     assert result == {
-        "content": "Approved: delete file",
-        "approval": "approved",
+        "content": json.dumps(
+            {"feedback": "", "requestId": request_id, "status": "approved"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
         "requestId": request_id,
+        "status": "approved",
+        "feedback": "",
     }
 
     completed = coordinator.get_status(request_id)
@@ -349,7 +359,7 @@ async def test_duplicate_same_decision_returns_already_decided_and_consistent_re
     assert coordinator.resolve_status(request_id, True) == ("already_decided", True)
 
     result = await request_task
-    assert result["approval"] == "approved"
+    assert result["status"] == "approved"
 
     # After completion the terminal outcome keeps reporting already_decided.
     assert coordinator.resolve_status(request_id, True) == ("already_decided", True)
@@ -395,7 +405,7 @@ async def test_opposite_decisions_report_conflict():
     assert (status, decision) == ("conflict", True)
 
     result = await request_task
-    assert result["approval"] == "approved"
+    assert result["status"] == "approved"
 
     # Post-completion conflict still reports the recorded decision.
     assert coordinator.resolve_status(request_id, False) == ("conflict", True)
@@ -419,7 +429,7 @@ async def test_completed_outcome_survives_within_ttl(monkeypatch):
     request_id = published[0]["requestId"]
 
     coordinator.resolve_status(request_id, True)
-    assert (await request_task)["approval"] == "approved"
+    assert (await request_task)["status"] == "approved"
 
     # Freeze just under the TTL boundary; outcome must remain queryable.
     just_before_expiry = coordinator.completed_at[request_id] + timedelta(seconds=59)
@@ -578,7 +588,7 @@ async def test_event_sink_is_called_before_entering_wait():
 
     coordinator.resolve_status(request_id, True)
     result = await request_task
-    assert result["approval"] == "approved"
+    assert result["status"] == "approved"
     assert waiting_sink.await_count == 1
 
 
