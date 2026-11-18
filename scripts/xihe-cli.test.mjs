@@ -6740,6 +6740,18 @@ async function startM63Mock() {
     }
     if (url.pathname === '/api/v1/workspaces' && request.method === 'POST') {
       record(request, url, body);
+      // task-10: mirror CP's binding contract. CreateWorkspaceRequest.roots is
+      // List<Map<String,String>>; a string array is a Jackson binding failure and CP
+      // answers 400 INVALID_REQUEST *before* any service validation. The mock refuses
+      // the same shape so the CLI regression is caught here, not only in a live stack.
+      if (body.roots !== undefined && body.roots !== null) {
+        const bad = !Array.isArray(body.roots)
+          || body.roots.some((entry) => entry === null || typeof entry !== 'object' || Array.isArray(entry));
+        if (bad) {
+          json(response, 400, { code: 'INVALID_REQUEST', message: 'mock CP: roots must be a list of objects' });
+          return;
+        }
+      }
       json(response, 201, {
         id: 'ws-new', name: body.name, storageMode: body.storageMode,
         hostPath: body.hostPath ?? null, roots: body.roots ?? null,
@@ -6955,6 +6967,82 @@ test('PLAN-0643 T4.3/V48: workspace create posts direct_attach body with idempot
     name: 'demo', storageMode: 'direct_attach', hostPath: 'C:/data/demo',
   });
   assert.equal(post[0].idempotencyKey, 'idem-1');
+});
+
+test('task-10: workspace create --roots sends CP object shape [{path,alias}] (comma form)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'multi', '--storage-mode', 'direct_attach',
+    '--roots', 'C:/data/a,C:/data/b', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'workspace-created');
+
+  const post = cp.hits('POST', '/api/v1/workspaces');
+  assert.equal(post.length, 1);
+  // The regression this card fixes: these used to be the strings 'C:/data/a' / 'C:/data/b',
+  // which CP's List<Map<String,String>> binding rejects with 400 INVALID_REQUEST.
+  assert.deepEqual(post[0].body.roots, [{ path: 'C:/data/a' }, { path: 'C:/data/b' }]);
+  for (const entry of post[0].body.roots) {
+    assert.equal(typeof entry, 'object');
+    assert.equal(Array.isArray(entry), false);
+    assert.equal(typeof entry.path, 'string');
+  }
+});
+
+test('task-10: workspace create --roots accepts the JSON object array (path + alias)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'multi', '--storage-mode', 'direct_attach',
+    '--roots', '[{"path":"C:/data/a","alias":"one"},{"path":"C:/data/b"}]', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+
+  const post = cp.hits('POST', '/api/v1/workspaces');
+  assert.deepEqual(post[0].body.roots, [{ path: 'C:/data/a', alias: 'one' }, { path: 'C:/data/b' }]);
+});
+
+test('task-10: workspace create --roots maps a JSON string array to objects (wire compat)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'multi', '--storage-mode', 'direct_attach',
+    '--roots', '["C:/data/a","C:/data/b"]', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+
+  const post = cp.hits('POST', '/api/v1/workspaces');
+  assert.deepEqual(post[0].body.roots, [{ path: 'C:/data/a' }, { path: 'C:/data/b' }]);
+});
+
+test('task-10: workspace create rejects malformed --roots before any CP call (usage)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const cases = [
+    ['--roots', '[]', /at least one root/],
+    ['--roots', '[{not json', /not valid JSON/],
+    ['--roots', '[{"alias":"one"}]', /--roots\[0\]\.path requires/],
+    ['--roots', '[{"path":"C:/data/a","typo":"x"}]', /unknown key/],
+    ['--roots', '[["C:/data/a"]]', /must be an object/],
+    ['--roots', '{"path":"C:/data/a"}', /must be an array/],
+    ['--roots', ', ,', /at least one directory/],
+    ['--roots', '[,]', /not valid JSON/],
+  ];
+  for (const [flag, value, expected] of cases) {
+    const result = await runCommand([
+      'workspace', 'create', '--name', 'multi', '--storage-mode', 'direct_attach', flag, value, '--json',
+    ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+    assert.equal(result.exitCode, 2, `${value} must be a usage error`);
+    assert.equal(result.error.code, 'INVALID_ARGUMENT');
+    assert.match(result.error.message, expected);
+  }
+  assert.equal(cp.state.requests.length, 0, 'no CP call may leave the CLI before --roots validation');
 });
 
 test('PLAN-0643 T4.3: workspace create warns before a managed_import call (docker frozen)', async (t) => {

@@ -253,7 +253,7 @@ export const HELP_GROUPS = Object.freeze([
     name: 'workspace',
     summary: 'Workspaces, members and roots',
     commands: Object.freeze([
-      cmd('workspace create', '--name <n> --storage-mode direct_attach (--host-path <dir> | --roots <dir,...>) [--execution-mode <m>] [--idempotency-key <k>]', 'Create a direct_attach workspace'),
+      cmd('workspace create', '--name <n> --storage-mode direct_attach (--host-path <dir> | --roots <dir,...> | --roots \'[{"path":"<dir>","alias":"<a>"},...]\') [--execution-mode <m>] [--idempotency-key <k>]', 'Create a direct_attach workspace (--roots entries are sent as {path, alias} objects; a comma path list or a JSON array are both accepted)'),
       cmd('workspace delete', '<wsId> [--yes]', 'Delete a workspace'),
       cmd('workspace get', '<wsId>', 'Show one workspace'),
       cmd('workspace list', '', 'List workspaces'),

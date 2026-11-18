@@ -32,6 +32,73 @@ async function confirmOrYes({ yes, confirm, stdin, message }) {
   await (confirm ?? confirmAction)({ message, stdin });
 }
 
+// task-10 (mvp acceptance, S3 附带发现): CP's CreateWorkspaceRequest.roots is
+// List<Map<String,String>> — every entry must be an object {path, alias?}.
+// The CLI used to send a **string array** (`--roots a,b` -> ["a","b"]), which CP's
+// Jackson binding rejects with 400 INVALID_REQUEST before any validation runs.
+// CP is right; the CLI was wrong. This parser builds the object shape and accepts
+// three input forms:
+//
+//   1. JSON array of objects:  [{"path":"...","alias":"..."}, ...]
+//   2. JSON array of strings:  ["...", "..."]           (legacy wire shape, mapped)
+//   3. Comma-separated paths:  "path1,path2"            (the documented help form)
+//
+// A JSON form is recognised by a leading `[` — no Windows path starts with that,
+// so the two forms cannot collide. A leading `{` is a named typo (the array wrapper
+// is missing) instead of being comma-split into a bogus path. Aliases are optional;
+// a blank alias is omitted (CP trims and truncates at 128, the CLI does not re-enforce
+// that). CP's contract is NOT relaxed: the CLI only starts producing the shape CP
+// always required.
+const ROOT_ENTRY_KEYS = new Set(['path', 'alias']);
+
+function invalidRoots(message) {
+  return new CliError('INVALID_ARGUMENT', message);
+}
+
+function rootEntryFromValue(value, index) {
+  if (typeof value === 'string') {
+    const path = value.trim();
+    if (path === '') throw invalidRoots(`--roots[${index}] must be a non-empty path.`);
+    return { path };
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidRoots(`--roots[${index}] must be an object {path, alias?} or a path string.`);
+  }
+  const unknown = Object.keys(value).filter((key) => !ROOT_ENTRY_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw invalidRoots(`--roots[${index}] has unknown key(s): ${unknown.join(', ')}; only path and alias are accepted.`);
+  }
+  const path = requireValue(value.path, `--roots[${index}].path`, 'absolute host directory');
+  const alias = typeof value.alias === 'string' && value.alias.trim() !== ''
+    ? value.alias.trim()
+    : undefined;
+  return alias === undefined ? { path } : { path, alias };
+}
+
+function parseRootsOption(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined;
+  const text = raw.trim();
+  // A single object is a plausible typo for the array form; naming it beats letting
+  // the comma splitter turn it into a bogus path that CP then rejects as INVALID_HOST_PATH.
+  if (text.startsWith('{')) {
+    throw invalidRoots('--roots JSON must be an array; wrap the object: --roots \'[{"path":"...","alias":"..."}]\'.');
+  }
+  if (text.startsWith('[')) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw invalidRoots('--roots is not valid JSON; expected [{"path":"...","alias":"..."}] or "path1,path2".');
+    }
+    if (!Array.isArray(parsed)) throw invalidRoots('--roots JSON must be an array.');
+    if (parsed.length === 0) throw invalidRoots('--roots JSON must contain at least one root.');
+    return parsed.map(rootEntryFromValue);
+  }
+  const paths = text.split(',').map((p) => p.trim()).filter((p) => p !== '');
+  if (paths.length === 0) throw invalidRoots('--roots must contain at least one directory.');
+  return paths.map((path) => ({ path }));
+}
+
 export async function runWorkspaceCreate({ apiBase, fetchImpl, token, options, stderr }) {
   const name = requireValue(options['--name'], '--name', 'workspace name');
   const storageMode = requireValue(options['--storage-mode'], '--storage-mode', 'storage mode (direct_attach)');
@@ -46,14 +113,13 @@ export async function runWorkspaceCreate({ apiBase, fetchImpl, token, options, s
   const hostPath = typeof options['--host-path'] === 'string' && options['--host-path'].trim() !== ''
     ? options['--host-path'].trim()
     : undefined;
-  const roots = typeof options['--roots'] === 'string' && options['--roots'].trim() !== ''
-    ? options['--roots'].split(',').map((p) => p.trim()).filter((p) => p !== '')
-    : undefined;
+  const roots = parseRootsOption(options['--roots']);
   if (hostPath !== undefined && roots !== undefined) {
     throw new CliError('INVALID_ARGUMENT', '--host-path and --roots are mutually exclusive.');
   }
   if (storageMode === 'direct_attach' && hostPath === undefined && roots === undefined) {
-    throw new CliError('INVALID_ARGUMENT', 'direct_attach requires --host-path <dir> or --roots <dir,...>.');
+    throw new CliError('INVALID_ARGUMENT',
+      'direct_attach requires --host-path <dir> or --roots <dir,...> / --roots \'[{"path":"...","alias":"..."}]\'.');
   }
   const body = {
     name,
