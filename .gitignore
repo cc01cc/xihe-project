@@ -120,3 +120,6 @@ packages/ui/usage-line-*.png
 packages/ui/e2e/evidence/0702/
 # 门禁 receipt 探针的运行产物（样本已归档到 one/internal/A03-xihe/evidence/2026-11-16-gate-receipt-sample/）
 .tmp-probe/
+
+# 后台起栈时 shell 重定向产物（0 字节占位，无内容；2026-11-18 起栈实测被检出）
+nohup.out
