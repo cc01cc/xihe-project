@@ -528,12 +528,17 @@ alias = "check:config-schema"
 #                       8 天内台账/文档大量新增，624 条「新增」是**基线从未刷新**的必然结果，不是新写的绝对路径变多；
 #                       且该门的判据是「存量冻结 / 只判新增」⇒ 刷新基线需人工逐条判（不能自动 ack）⇒ 不属秒级门。
 # **R1 缺口已闭合**：`check:types` 此前 depends=[] 且不在 lint/validate 图内（AGENTS.md 却写「每窗必跑」）—— 本轮接入后它真正成为聚合的一部分。
-#   check:docs-index    exit 1 —— H1 未登记顶层 md 1 个：`internal/A03-xihe/docs/AGENTS.md` 索引缺 `d-1843-normalization-audit.md`（本盘点自身的文档，3662ed1e8 落盘时未登记）；
-#   check:md-emphasis   exit 1 —— 新增 1 条（`docs/decisions-pending.md:345` 单元格「**55**」未配对 **；812431372 落账引入），存量 69 = 基线 69；
-#   check:terms         exit 1 —— 术语表 `DEV-032:114` 的 `D-1783` 被当标识符（spec/contract 唯一命中 openapi:1），21f0eaa43 补 HUMAN/AGENT 段引入；
-# 三者都是**文档面存量红**（不是判据坏），清偿处不在 mise.toml ⇒ 先修文档再议接，不在此放水（D-1843 §5）。
+# （首测红因逐条留档见 D-1850 / 台账 `lead-decisions-ledger.md`。此处原有 4 行要求在文档清偿后再议接入，与上方 511-515 的「已清偿并接入」逐字冲突 ⇒ 2026-11-18 17:5x 删除，依据 infra-6 报告。）
+# D-1843 第三批接线（2026-11-18 17:5x，实测逐门 exit + 墙钟，均由 infra-6 先行实测耗时）：
+#   check:fixtures     exit 0 ·  218 ms（e2e 夹具模式机自检 —— **改 `packages/ui/e2e/fixtures/` 必先跑**，AGENTS.md 有硬规则但此前不在聚合内）
+#   check:event-keys   exit 0 ·  338 ms（report-only，默认恒 exit 0）
+#   check:a11y-refs    exit 0 ·  683 ms（report-only）
+# 三个合计 ≈1.24 s 串行 CPU，与 lint 其他成员并行，墙钟增量 ≈ 0。
+# **不接 check:i18n**：infra-6 标出「疑与 `lint:i18n` 同一脚本同一面」——需先核重复口径再定，不盲接（见下批）。
+# **不接 check:api-docs**：本轮已修 inventory 漂移（357→364 ops，`mise run gen:api-docs`），但该门依赖生成物，
+#   接进 lint 会与 `gen:api-docs` 形成「先写后查」的顺序依赖；且它本质是 docs 面派生件一致性，归 check:docs-index 邻域，另议。
 # 同批仍未接：`:enforce` 兄弟（观察窗档）、check:font（D-1132 已摘除，预期）。
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings", "check:ui-copy", "check:i18n-fixture-copies", "check:dev-i18n-drift", "check:md-tables", "check:ports", "check:migrations", "check:bl-count", "check:bl-decision-ref", "check:docs-index", "check:md-emphasis", "check:terms", "check:types", "check:internal-scripts", "check:root-residue", "check:commit-msg", "check:plan-anchors"]
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e", "check:lint-warnings", "check:ui-copy", "check:i18n-fixture-copies", "check:dev-i18n-drift", "check:md-tables", "check:ports", "check:migrations", "check:bl-count", "check:bl-decision-ref", "check:docs-index", "check:md-emphasis", "check:terms", "check:types", "check:internal-scripts", "check:root-residue", "check:commit-msg", "check:plan-anchors", "check:fixtures", "check:event-keys", "check:a11y-refs"]
 description = "Run all linters"
 alias = "lint"
 

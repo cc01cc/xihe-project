@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**357** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 257 · 服务间 100
+- 规模：**364** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 262 · 服务间 102
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（357 / 357 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（364 / 364 个操作带 tag）。
 
-## public（257 operations · 公开 · 17 tags）
+## public（262 operations · 公开 · 17 tags）
 
 ### auth（12）
 
@@ -96,7 +96,7 @@
 | `DELETE /api/v1/workspaces/{workspaceId}/roots/{rootId}` | `deleteWorkspaceRoot` | `bearerAuth` | Soft-delete a root (PLAN-0639 D39-3) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/runtime/release` | `releaseWorkspaceRuntime` | `bearerAuth` | Release workspace execution resources (any accessible member) | 公开 |
 
-### agent（27）
+### agent（28）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -127,8 +127,9 @@
 | `POST /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories` | `createWorkspaceAgentMemory` | `bearerAuth` | [DEPRECATED] Write one agent memory assertion (subject-level route preferred) | 公开 |
 | `PATCH /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories/{memoryId}` | `updateWorkspaceAgentMemory` | `bearerAuth` | [DEPRECATED] Edit one agent memory assertion (subject-level route preferred) | 公开 |
 | `DELETE /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories/{memoryId}` | `deleteWorkspaceAgentMemory` | `bearerAuth` | [DEPRECATED] Archive (soft-delete) one agent memory assertion (subject-level route preferred) | 公开 |
+| `GET /api/v1/workspaces/{workspaceId}/agents/{principalId}/spawn-sessions` | `listWorkspaceAgentSpawnSessions` | `bearerAuth` | List the child sessions this Workspace Agent has been delegated (workspace-level honest count) | 公开 |
 
-### session（31）
+### session（34）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -137,6 +138,7 @@
 | `POST /api/v1/conversation-threads/{threadId}/sessions` | `attachConversationThreadSession` | `bearerAuth` | Attach a session to a conversation thread | 公开 |
 | `GET /api/v1/sessions` | `listSessions` | `bearerAuth` | List chat sessions | 公开 |
 | `POST /api/v1/sessions` | `createSession` | `bearerAuth` | Create a new chat session | 公开 |
+| `POST /api/v1/sessions/{childSessionId}/steers` | `steerChildSession` | `bearerAuth` | Lead mid-run command interjection into a child Session's follow-up queue (task-188 MVP⑤ S3) | 公开 |
 | `GET /api/v1/sessions/{sessionId}` | `getSession` | `bearerAuth` | Get one session by id | 公开 |
 | `PATCH /api/v1/sessions/{sessionId}` | `updateSession` | `bearerAuth` | Update session metadata | 公开 |
 | `DELETE /api/v1/sessions/{sessionId}` | `deleteSession` | `bearerAuth` | Delete one session | 公开 |
@@ -162,9 +164,11 @@
 | `PATCH /api/v1/sessions/{sessionId}/participants/{participantId}` | `updateSessionParticipant` | `bearerAuth` | Change a participant's wake/respond policy or disable it | 公开 |
 | `DELETE /api/v1/sessions/{sessionId}/participants/{participantId}` | `removeSessionParticipant` | `bearerAuth` | Remove a member/guard participant (the PRIMARY is not removable) | 公开 |
 | `PATCH /api/v1/sessions/{sessionId}/participants/{participantId}/cursor` | `advanceParticipantCursor` | `bearerAuth` | Advance the caller's own read cursor for this session | 公开 |
+| `GET /api/v1/sessions/{sessionId}/team-tasks` | `getSessionTeamTasks` | `bearerAuth` | Read-only team-task board projection of the tree that owns this session (task-188 MVP⑤ S2) | 公开 |
+| `GET /api/v1/sessions/{sessionId}/team-tasks/{taskId}` | `getSessionTeamTask` | `bearerAuth` | One board card (same wire shape as a board row; the UI consumes the list row's expansion instead) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/sessions` | `createWorkspaceSession` | `bearerAuth` | Create a session under an explicit workspace (PLAN-0608) | 公开 |
 
-### chat（17）
+### chat（18）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -180,6 +184,7 @@
 | `GET /api/v1/chat/runs/{runId}/provider-request-fingerprint` | `getChatRunProviderRequestFingerprint` | `bearerAuth` | Read a run's provider-request fingerprint, optionally diffed against another run | 公开 |
 | `GET /api/v1/chat/runs/{runId}/trace` | `getChatRunTrace` | `bearerAuth` | Read a bounded, privacy-safe timeline of durable ChatRun facts | 公开 |
 | `POST /api/v1/chat/runs/{sourceRunId}/continue` | `continueChatRun` | `bearerAuth` | Continue an eligible ChatRun from its latest safe graph checkpoint | 公开 |
+| `GET /api/v1/chat/sessions/{sessionId}/dispatch-queue` | `getSessionDispatchQueue` | `bearerAuth` | Read the Session's deferred-resume queue positions | 公开 |
 | `GET /api/v1/chat/sessions/{sessionId}/monitor` | `getSessionMonitor` | `bearerAuth` | Read-only Session monitor aggregate (activity, history window, readiness) | 公开 |
 | `GET /api/v1/chat/sessions/{sessionId}/runs` | `listSessionChatRuns` | `bearerAuth` | List a Session's ChatRuns with status and spawn waiting link | 公开 |
 | `GET /api/v1/user-questions` | `listUserQuestions` | `bearerAuth` | The caller's own inbound questions (the asker's inbox) | 公开 |
@@ -353,7 +358,7 @@
 | `POST /api/v1/telemetry/logs` | `ingestTelemetry` | `bearerAuth` | Ingest telemetry events | 公开 |
 | `GET /api/v1/version` | `deploymentVersion` | `bearerAuth` | Deployment identity and module versions | 公开 |
 
-## internal（100 operations · 服务间 · 3 tags）
+## internal（102 operations · 服务间 · 3 tags）
 
 ### service-agent（30）
 
@@ -433,14 +438,16 @@
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/release` | `releaseRuntimeWorkspace` | `bearerAuth` | — | 服务间 |
 | `GET /internal/v1/runtime/workspaces/{workspaceId}/status` | `getRuntimeWorkspaceStatus` | `bearerAuth` | — | 服务间 |
 
-### service-misc（32）
+### service-misc（34）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
 | `GET /internal/v1/attachments/{attachmentId}/content` | `internalAttachmentContent` | `bearerAuth` | Stream one attachment's stored bytes to the Agent (internal, run-bound) | 服务间 |
 | `GET /internal/v1/audit/entries/{type}/{id}` | `getInternalAuditEntryDetail` | `bearerAuth` | — | 服务间 |
+| `GET /internal/v1/chat/runs/{runId}/approval/waiting` | `getChatRunWaitingApproval` | `bearerAuth` | The Agent approval resume claim read mouth — the run's current approval fact envelope | 服务间 |
 | `GET /internal/v1/chat/runs/{runId}/guidance/pending` | `getPendingChatRunGuidance` | `bearerAuth` | Pending Guidance for the Agent runner at the tool-batch boundary | 服务间 |
 | `POST /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume` | `consumeChatRunGuidance` | `bearerAuth` | Acknowledge Guidance as injected into the next planning step | 服务间 |
+| `GET /internal/v1/chat/runs/{runId}/user-questions/waiting` | `getChatRunWaitingQuestion` | `bearerAuth` | The Agent resume claim read mouth — the run's current waiting-question envelope | 服务间 |
 | `GET /internal/v1/config/effective/{domain}` | `getEffectiveConfig` | `bearerAuth` | Resolve effective config for a domain (env > lock > workspace > user > instance > defaults); no lay… | 服务间 |
 | `POST /internal/v1/context/{sessionId}/agents-md/resolve` | `resolveNestedAgentsMd` | `bearerAuth` | — | 服务间 |
 | `POST /internal/v1/context/{sessionId}/compact` | `compactContext` | `bearerAuth` | — | 服务间 |
