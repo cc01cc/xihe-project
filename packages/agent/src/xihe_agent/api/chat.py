@@ -20,6 +20,7 @@ from xihe_agent.adapters.approval_tool import ApprovalExecutorUnsupportedError, 
 from xihe_agent.adapters.sse_adapter import render_sse
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.agent_runner.checkpoint_saver import CheckpointStoreError, CpAgentCheckpointSaver
+from xihe_agent.agent_runner.conditional_faces import attach_conditional_faces
 from xihe_agent.agent_runner.guidance import GuidanceConsumer
 from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
@@ -136,9 +137,9 @@ def _validate_continuation(value: Any, *, run_id: str, content: str) -> dict[str
     completed = value.get("completedToolCallIds")
     if not isinstance(completed, list) or len(completed) > 256:
         raise ValueError("continuation side-effect IDs are invalid")
-    if any(not isinstance(item, str) or not item or len(item) > 128 or not item.isprintable() for item in completed) or len(
-        set(completed)
-    ) != len(completed):
+    if any(
+        not isinstance(item, str) or not item or len(item) > 128 or not item.isprintable() for item in completed
+    ) or len(set(completed)) != len(completed):
         raise ValueError("continuation side-effect IDs are invalid")
     if normalized["continuationRunId"] != run_id:
         raise ValueError("continuation Run identity does not match request")
@@ -485,11 +486,7 @@ async def chat(request: Request):
     request_config = LLMConfig(
         provider=str(provider_override),
         model=effective_model,
-        timeout=(
-            float(model_params["timeout"])
-            if model_params and "timeout" in model_params
-            else 60.0
-        ),
+        timeout=(float(model_params["timeout"]) if model_params and "timeout" in model_params else 60.0),
     )
     sampling_overrides: dict[str, Any] = {}
     if model_params:
@@ -576,12 +573,20 @@ async def chat(request: Request):
                 )
 
                 all_tools = (
-                    []
-                    if tool_mode == "none"
-                    else [approval_tool, user_question_tool, app_state.generate_image_tool]
+                    [] if tool_mode == "none" else [approval_tool, user_question_tool, app_state.generate_image_tool]
                 )
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
+                # task-82 (D-1884): CP-owned conditional faces are granted at this assembly
+                # point, because this list (and the ToolSpec rows derived from it) is what the
+                # outbound provider request is built from. Granting them inside the runner made
+                # them executable but invisible: measured run_tool_faces=42 against
+                # chat_run_provider_requests.tool_count=36, and with only the four injected
+                # board faces in the table the request carried 0. The grant set is
+                # toolMode-independent by design - these faces belong to the control plane, not
+                # to the workspace file sandbox - and a run whose client did not wire is granted
+                # nothing, which preserves the task-188 G3-a gray behaviour.
+                all_tools = attach_conditional_faces(context, all_tools)
 
                 # PLAN-0590: owner identity comes from the same CP payload key
                 # used for the run config snapshot (I2; no local derivation).
@@ -596,7 +601,9 @@ async def chat(request: Request):
                         or context.latest_sequence != continuation["eventSequence"]
                     ):
                         raise CheckpointStoreError("Continuation source checkpoint is stale")
-                    tool_specs = [spec for tool in all_tools if isinstance((spec := getattr(tool, "spec", None)), ToolSpec)]
+                    tool_specs = [
+                        spec for tool in all_tools if isinstance((spec := getattr(tool, "spec", None)), ToolSpec)
+                    ]
                     saver_args = {
                         "cp_url": CP_URL,
                         "service_token": CP_API_TOKEN,
@@ -702,9 +709,7 @@ async def chat(request: Request):
                 # PLAN-0635 M2 (D35-01): render `@文件/目录` into the template `user_input` slot.
                 # Deliberately NOT into `messages`: in template mode only `user_input` reaches the
                 # provider body, so `messages` would miss the model and double-count tokens.
-                path_mention_block, path_mention_diagnostics = render_for_context(
-                    context, path_mentions
-                )
+                path_mention_block, path_mention_diagnostics = render_for_context(context, path_mentions)
                 if path_mention_diagnostics["requested"]:
                     context.runtime_state["pathMentionDiagnostics"] = path_mention_diagnostics
                     logger.info(
@@ -779,9 +784,7 @@ async def chat(request: Request):
                             [] if continuation is not None else native_history(context.messages, api_type)
                         ),
                         "tools": native_tools(all_tools, api_type),
-                        **xh_context_slots(
-                            skill_catalog=skill_catalog_content, agent_memory=memory_content
-                        ),
+                        **xh_context_slots(skill_catalog=skill_catalog_content, agent_memory=memory_content),
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
@@ -835,9 +838,7 @@ async def chat(request: Request):
                     guidance=guidance_consumer,
                     # PLAN-0670 M2c / BL-289: the runner merges this into the terminal `done`
                     # payload (wire shape already approved; absent when nothing was dropped).
-                    agent_context_truncation=(
-                        inbound_truncation.to_wire() if inbound_truncation is not None else None
-                    ),
+                    agent_context_truncation=(inbound_truncation.to_wire() if inbound_truncation is not None else None),
                 )
 
                 llm_request_started = True
@@ -1074,4 +1075,3 @@ async def chat(request: Request):
 
 
 __all__ = ["router", "_rag_config_defaults", "problem_details"]
-
