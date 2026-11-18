@@ -93,6 +93,21 @@ public class SessionWakeupService {
 
     public WakeupResult wakeup(String sessionId, String userId, String workspaceId,
                                String prompt, String idempotencyKey) {
+        return wakeup(sessionId, userId, workspaceId, prompt, idempotencyKey, null);
+    }
+
+    /**
+     * task-86 (decision = (a)): a <b>delegation-derived</b> run (a chain hop with a causal parent run,
+     * i.e. what dispatch_agent_task creates) must not inherit its tool surface from the dispatching
+     * request nor fall through to the ChatRun column default. The caller — WakeDispatchService, the one
+     * place that knows both the woken principal and that this is a delegation edge — passes the value
+     * resolved from the woken principal's own context_policy. A null here means the run is NOT
+     * delegation-derived (schedule/user/mention paths), which keeps today's value on purpose: task-86
+     * only moves the derived path, and the mention/cc surfaces are registered as an open item rather
+     * than silently widened here.
+     */
+    public WakeupResult wakeup(String sessionId, String userId, String workspaceId,
+                               String prompt, String idempotencyKey, String derivedToolMode) {
         Session session;
         try {
             session = sessionService.requireCurrent(sessionId, userId, workspaceId);
@@ -120,7 +135,7 @@ public class SessionWakeupService {
             // (the caller then commits into UnexpectedRollbackException). `tryCreateScheduled` catches
             // only CHAT_IN_PROGRESS; everything else still throws.
             WakeupResult started = startScheduledRun(session, sessionId, userId, workspaceId, prompt,
-                    idempotencyKey);
+                    idempotencyKey, derivedToolMode);
             if (started != null) {
                 return started;
             }
@@ -137,7 +152,9 @@ public class SessionWakeupService {
         TenantContext.setWorkspaceId(workspaceId);
         try {
             followUpQueueService.enqueue(sessionId, userId, workspaceId, idempotencyKey,
-                    new FollowUpCreateRequest(prompt, List.of(), branchId, "none", null, null, null));
+                    new FollowUpCreateRequest(prompt, List.of(), branchId,
+                            derivedToolMode == null ? SCHEDULED_TOOL_MODE : derivedToolMode,
+                            null, null, null));
         } catch (CpApiException e) {
             logger.warn("[LIFECYCLE] service=cp event=session_wakeup_follow_up_enqueue_failed "
                     + "sessionId={} code={}", sessionId, e.getCode());
@@ -171,7 +188,17 @@ public class SessionWakeupService {
     public WakeupResult wakeupAs(String sessionId, String userId, String workspaceId, String prompt,
                                  String idempotencyKey, java.util.UUID asResponderPrincipalId,
                                  String triggerSource, java.util.UUID parentRunId) {
-        WakeupResult result = wakeup(sessionId, userId, workspaceId, prompt, idempotencyKey);
+        return wakeupAs(sessionId, userId, workspaceId, prompt, idempotencyKey, asResponderPrincipalId,
+                triggerSource, parentRunId, null);
+    }
+
+    /** task-86: see the {@link #wakeup(String, String, String, String, String, String)} overload. */
+    public WakeupResult wakeupAs(String sessionId, String userId, String workspaceId, String prompt,
+                                 String idempotencyKey, java.util.UUID asResponderPrincipalId,
+                                 String triggerSource, java.util.UUID parentRunId,
+                                 String derivedToolMode) {
+        WakeupResult result = wakeup(sessionId, userId, workspaceId, prompt, idempotencyKey,
+                derivedToolMode);
         if (result.started() && asResponderPrincipalId != null) {
             chatRunRepository.findById(result.runId()).ifPresent(run -> {
                 run.setAgentPrincipalId(asResponderPrincipalId);
@@ -195,7 +222,11 @@ public class SessionWakeupService {
      * (no ChatController injection → no dependency cycle).
      */
     private WakeupResult startScheduledRun(Session session, String sessionId, String userId,
-                                           String workspaceId, String prompt, String idempotencyKey) {
+                                           String workspaceId, String prompt, String idempotencyKey,
+                                           String derivedToolMode) {
+        // task-86: the tool surface of a delegation-derived run is the resolved value; every other
+        // path keeps the historical constant, so this is the only place the default used to apply.
+        String toolMode = derivedToolMode == null ? SCHEDULED_TOOL_MODE : derivedToolMode;
         String branchId = branchPathService.ensureRootBranchId(sessionId);
         // 镜像 follow-up dispatch 的连接权威规则：Session 绑定了 Provider Connection
         // 则 provider/model 由 Session 行决定；未绑定则不带提示（Agent 侧走默认）。
@@ -208,12 +239,12 @@ public class SessionWakeupService {
         String principalId = scheduledPrincipal == null ? null : scheduledPrincipal.toString();
         String runId = UUID.randomUUID().toString();
         String requestHash = ChatRequestHash.calculate(objectMapper, prompt, provider, model,
-                SCHEDULED_TOOL_MODE, List.of(), Map.of(), principalId, branchId);
+                toolMode, List.of(), Map.of(), principalId, branchId);
         // BL-283: a full run cap answers as an empty Optional instead of a thrown 409 — the throw used
         // to cross `createScheduled`'s REQUIRED boundary and poison the caller's transaction.
         java.util.Optional<ChatSubmissionService.Submission> created =
                 chatSubmissionService.tryCreateScheduled(runId, sessionId, userId, workspaceId, branchId,
-                        idempotencyKey, requestHash, provider, model, SCHEDULED_TOOL_MODE,
+                        idempotencyKey, requestHash, provider, model, toolMode,
                         session.getProviderConnectionId(), session.getConnectionRevision(), null,
                         UUID.randomUUID().toString(), prompt, "[]", List.of(),
                         Message.VISIBILITY_INTERNAL);

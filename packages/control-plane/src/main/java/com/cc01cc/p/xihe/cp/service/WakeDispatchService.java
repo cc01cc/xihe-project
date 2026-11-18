@@ -64,6 +64,11 @@ public class WakeDispatchService {
     private final ObjectMapper objectMapper;
     private final ChatRunRepository chatRunRepository;
     private final DbLockTimeout dbLockTimeout;
+    /**
+     * task-86: the ONLY source of a delegation-derived run's tool surface. Read it as the grant
+     * decision, not as a lookup: unresolved means refuse, never "use the column default".
+     */
+    private final DerivedRunToolSurfaceResolver derivedRunToolSurface;
     private final DelegationChainWalker chainWalker;
 
     /**
@@ -82,7 +87,8 @@ public class WakeDispatchService {
                                EventStoreService eventStoreService,
                                ObjectMapper objectMapper,
                                ChatRunRepository chatRunRepository,
-                               DbLockTimeout dbLockTimeout) {
+                               DbLockTimeout dbLockTimeout,
+                               DerivedRunToolSurfaceResolver derivedRunToolSurface) {
         this.participantRepository = participantRepository;
         this.sessionRepository = sessionRepository;
         this.participantService = participantService;
@@ -93,6 +99,7 @@ public class WakeDispatchService {
         this.objectMapper = objectMapper;
         this.chatRunRepository = chatRunRepository;
         this.dbLockTimeout = dbLockTimeout;
+        this.derivedRunToolSurface = derivedRunToolSurface;
         this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository,
                 participantRepository);
     }
@@ -242,12 +249,35 @@ public class WakeDispatchService {
             }
         }
 
+        // task-86: a delegation edge — a chain hop with a causal parent run, which is what the
+        // dispatch face creates — resolves its tool surface from the WOKEN principal's own
+        // context_policy. Two shapes are explicitly rejected here: inheriting the dispatching run's
+        // toolMode (that moves the authority to the party that does not bear the permission
+        // consequence), and falling through to ChatRun's column default (that is not a decision at
+        // all, and it is the measured cause of the derived run landing on "none"). Unresolved is a
+        // refusal with an audited reason; the detail token deliberately does NOT start with
+        // "authorization:", so WakeFanOutService keeps it in failedTargets instead of laundering it
+        // into the suppressed bucket (task-60 rule).
+        String derivedToolMode = null;
+        if (chainParentRunId != null) {
+            DerivedRunToolSurfaceResolver.Resolution surface =
+                    derivedRunToolSurface.resolve(participant.getPrincipalId());
+            if (!surface.granted()) {
+                audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
+                        "derived run has no tool surface grant (reason=" + surface.reason() + ")",
+                        null, parentRunId);
+                return new WakeFireResult(false, null, "refused",
+                        "derived_tool_surface_" + surface.reason());
+            }
+            derivedToolMode = surface.toolMode();
+        }
         String prompt = buildWakePrompt(auditLabel, wakeRoundId, sessionId, triggeringContent);
         // The responder stamped on the run is the participant's PRINCIPAL id — chat_runs.agent_principal_id
         // carries an FK to agent_principals (V92 R1); the D23-08 gate above has just verified the row.
         SessionWakeupService.WakeupResult result = sessionWakeupService.wakeupAs(
                 sessionId.toString(), session.getUserId(), session.getWorkspaceId(), prompt,
-                wakeRoundId, participant.getPrincipalId(), triggerSource, chainParentRunId);
+                wakeRoundId, participant.getPrincipalId(), triggerSource, chainParentRunId,
+                derivedToolMode);
         // PLAN-0630 M5b / D2: a dispatch refusal downstream terminalizes the Run with its own
         // error_code (ChatController listener); this wake-level audit keeps "submitted/deferred",
         // so a reviewer can join the two facts instead of guessing from a stuck Run.

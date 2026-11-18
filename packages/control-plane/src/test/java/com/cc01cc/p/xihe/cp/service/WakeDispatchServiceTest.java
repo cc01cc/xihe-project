@@ -50,6 +50,7 @@ class WakeDispatchServiceTest {
     private EventStoreService eventStore;
     private ChatRunRepository chatRuns;
     private DbLockTimeout dbLockTimeout;
+    private DerivedRunToolSurfaceResolver derivedRunToolSurface;
     private WakeDispatchService service;
 
     private Session session;
@@ -66,8 +67,14 @@ class WakeDispatchServiceTest {
         eventStore = mock(EventStoreService.class);
         chatRuns = mock(ChatRunRepository.class);
         dbLockTimeout = mock(DbLockTimeout.class);
+        derivedRunToolSurface = mock(DerivedRunToolSurfaceResolver.class);
         service = new WakeDispatchService(participants, sessions, participantService, wakeupService,
-                judgeInputAssembler, judgeService, eventStore, new ObjectMapper(), chatRuns, dbLockTimeout);
+                judgeInputAssembler, judgeService, eventStore, new ObjectMapper(), chatRuns, dbLockTimeout,
+                derivedRunToolSurface);
+        // task-86: the default stub grants a surface so the pre-existing dispatch cases keep their
+        // shape; the new tests below re-stub it to prove the refusal and the value transfer.
+        when(derivedRunToolSurface.resolve(any())).thenReturn(
+                new DerivedRunToolSurfaceResolver.Resolution(true, "workspace", "granted"));
 
         session = mock(Session.class);
         when(session.getUserId()).thenReturn("owner-1");
@@ -355,7 +362,7 @@ class WakeDispatchServiceTest {
         when(judgeService.decide(any())).thenReturn(
                 new JudgeDecisionService.JudgeOutcome(true, "{\"speak\":true}", "succeeded", null));
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), eq("mention"), any()))
+                any(), eq("mention"), any(), any()))
                 .thenReturn(SessionWakeupService.WakeupResult.started(RUN_ID));
 
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
@@ -364,7 +371,7 @@ class WakeDispatchServiceTest {
         assertEquals(RUN_ID, result.runId());
         assertEquals("submitted", result.outcome());
         verify(wakeupService).wakeupAs(eq(SESSION_ID.toString()), eq("owner-1"), eq("ws-1"), anyString(),
-                eq(ROUND), eq(agent.getPrincipalId()), eq("mention"), isNull());
+                eq(ROUND), eq(agent.getPrincipalId()), eq("mention"), isNull(), isNull());
         // CP-2 (PLAN-0690 T1.2b): the judge input is assembled, not inlined in the dispatch path.
         verify(judgeInputAssembler).assemble(eq(session), eq(agent), eq("mention"), eq(ROUND));
         ArgumentCaptor<JudgeDecisionService.JudgeInput> judgeInput =
@@ -391,7 +398,7 @@ class WakeDispatchServiceTest {
     @Test
     void capReachedWakeReturnsDeferred_andAuditsDeferred() {
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyString(), any()))
+                any(), anyString(), any(), any()))
                 .thenReturn(SessionWakeupService.WakeupResult.deferred());
 
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
@@ -405,7 +412,7 @@ class WakeDispatchServiceTest {
     @Test
     void alwaysPolicySubmitsDirectly() {
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), eq("schedule"), any()))
+                any(), eq("schedule"), any(), any()))
                 .thenReturn(SessionWakeupService.WakeupResult.started(RUN_ID));
 
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null);
@@ -494,14 +501,85 @@ class WakeDispatchServiceTest {
 
     private void stubAgentWake() {
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyString(), any())).thenReturn(
+                any(), anyString(), any(), any())).thenReturn(
                 SessionWakeupService.WakeupResult.started(RUN_ID));
     }
 
     private String capturedPrompt() {
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
         verify(wakeupService).wakeupAs(anyString(), anyString(), anyString(), prompt.capture(),
-                anyString(), any(), anyString(), any());
+                anyString(), any(), anyString(), any(), any());
         return prompt.getValue();
+    }
+    /**
+     * task-86 (decision = (a)): a delegation hop whose woken principal carries no
+     * context_policy.derivedRunToolMode must be REFUSED, not admitted with the entity default. This is
+     * the no-key side of the grant-set audit; the granted side is the value-transfer test below.
+     */
+    @Test
+    void derivedHopWithoutGrantIsRefusedAndNeverSubmitted() {
+        stubAgentWake();
+        when(derivedRunToolSurface.resolve(any())).thenReturn(
+                new DerivedRunToolSurfaceResolver.Resolution(false, null, "no_key"));
+
+        stubChainParent();
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "chain", ROUND,
+                SESSION_ID, RUN_ID.toString(), "把这件事交给另一位 agent");
+
+        assertEquals("refused", result.outcome());
+        assertEquals("derived_tool_surface_no_key", result.detail(),
+                "task-60: a non-authorization detail must land in failedTargets, not the suppression bucket");
+        verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString(), any(), any());
+        assertAuditOutcome("refused");
+    }
+
+    /** task-86: a granted surface is handed to the submission verbatim, never inherited. */
+    @Test
+    void derivedHopPassesTheResolvedSurfaceToTheSubmission() {
+        stubAgentWake();
+        when(derivedRunToolSurface.resolve(any())).thenReturn(
+                new DerivedRunToolSurfaceResolver.Resolution(true, "workspace", "granted"));
+
+        stubChainParent();
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "chain", ROUND,
+                SESSION_ID, RUN_ID.toString(), "核对 branchId 的主干读数");
+
+        assertTrue(result.dispatched());
+        verify(derivedRunToolSurface).resolve(agent.getPrincipalId());
+        verify(wakeupService).wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(), eq("chain"), any(), eq("workspace"));
+    }
+
+    /**
+     * task-86 boundary, stated rather than smuggled: a wake with no causal parent (schedule/mention)
+     * is not widened by this card, so the submission gets a null surface and today's value stays in
+     * SessionWakeupService. That gap is registered on the card, not silently included here.
+     */
+    @Test
+    void wakeWithoutParentRunKeepsTheHistoricalSurface() {
+        stubAgentWake();
+
+        service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null, "随便聊一句");
+
+        verify(derivedRunToolSurface, never()).resolve(any());
+        verify(wakeupService).wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(), eq("mention"), isNull(), isNull());
+    }
+    /**
+     * Chain admission for a delegation hop (PLAN-0630 M2): the parent row must be lock-readable,
+     * the ancestor walk must complete, and this parent must not have woken the same responder yet.
+     * Without these three the hop is refused as chain_refused before the tool-surface gate is even
+     * reached, which is the right order and is why the tests below need this stub.
+     */
+    private void stubChainParent() {
+        com.cc01cc.p.xihe.cp.entity.ChatRun parent = mock(com.cc01cc.p.xihe.cp.entity.ChatRun.class);
+        when(parent.getSessionId()).thenReturn(SESSION_ID.toString());
+        when(parent.getParentRunId()).thenReturn(null);
+        when(chatRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(parent));
+        when(chatRuns.existsByParentRunIdAndAgentPrincipalId(RUN_ID.toString(), agent.getPrincipalId()))
+                .thenReturn(false);
     }
 }
