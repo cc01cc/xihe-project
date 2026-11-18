@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-10
+updated: 2026-11-18
 status: active
 ---
 
@@ -346,3 +346,130 @@ Keep only new criteria and counter-examples in the doc; screenshots stay as evid
 ```
 
 **Sources (checked 2026-11-11)**: Nielsen Norman Group "10 Usability Heuristics" (headings verified by fetch) · W3C WCAG 2.2 Quick Reference · Apple Human Interface Guidelines · Material 3 · IBM Carbon · Refactoring UI. See the standards table above (zh source list: `DEV-012-ui-ux-references`, zh-only).
+
+## 12. Motion criteria (user ruling 2026-11-18, built the same way as §10)
+
+> **This section exists on both sides; zh-Hans is the source and this is the derived English copy.** Unlike §10, the two sides now agree on the number (`## 12`) — do not renumber when editing.
+>
+> **Why this section exists**: the user asked "is the UI all static, and should something like 'running' have motion?" The measured answer is "**not static** (88 animation application sites), but **no criterion governs them**" — this file previously matched `动效|动画|transition` only once (§6, navigation panel collapse), while colour already had the full L0–L4 budget ⇒ **88 sites written by whoever needed them**. This section follows the structure of §10: purpose first, then the budget ladder and the state matrix, then the machine criterion and known limitations.
+>
+> Per-site audit (**A keep 77 / B change 4 / C delete 1 / D inconsistent 6 = 88**) lives in `internal/A03-xihe/evidence/2026-11-18-motion-audit/README.md` (**cross-repo path**: ONE workspace private layer, not linked from this repo); re-run with `node internal/A03-xihe/evidence/2026-11-18-motion-audit/motion-inventory.mjs` (exit code 0 means the four classes sum to the measured total).
+
+### 12.1 Motion may express exactly two things (purpose)
+
+| Purpose | Examples | Criterion (after the motion stops) |
+| --- | --- | --- |
+| **State change** | loading, submitting, in progress, open/closed, uploading | the user **misses "still going"** |
+| **Attention guidance** | new content entering, scroll-edge fade, focus moving | the user **misses "appeared / moved"** |
+
+**Decorative motion is forbidden outright** — glow, decorative breathing borders, endlessly rotating icons, cards rising on hover. Decision question: **when this motion stops, what does the user miss? No answer ⇒ delete it** (same form as §10's "only mistakes deserve colour").
+
+### 12.2 Motion budget ladder (M0–M3, read alongside §10's L0–L4)
+
+| Level | Purpose | Allowed treatment | Per-screen budget |
+| --- | --- | --- | --- |
+| **M0 Static** | elements with no state change | **no motion**; hover/focus use §10's channels only (light wash / 2px focus ring) | unlimited |
+| **M1 State** | loading, submitting, in progress | the only allowed **looping** motion: spinner / skeleton / row-level breathing (one carrier per screen per meaning) | unlimited, but **≤ 3 concurrent looping motions per screen** |
+| **M2 Guidance** | content entering, drawer/menu open-close, scroll edge | **one-shot** transition (≤250ms) or a scroll-driven mask | ≤ 1 |
+| **M3 Emphasis** | irreversible confirmation, a transfer the user must see | one-shot emphasis, **at most 2 cycles then still** | ≤ 1 |
+
+Decision question: **when this motion disappears, what does the user miss?** "Still going" ⇒ M1; "appeared / moved" ⇒ M2; "this will destroy something" ⇒ M3; **no answer ⇒ M0 (do not add it)**.
+
+### 12.3 State matrix (each state may use only its channel; motion must never be the only carrier)
+
+| State | Allowed motion | Forbidden |
+| --- | --- | --- |
+| First load | shape **unknown** ⇒ skeleton pulse; shape **known** ⇒ spinner + label | shaking the whole block, cycling text colours |
+| Submitting | 14–16px spinner inside the button + button disabled; the label may switch ("Save" → "Saving") | button size/position change, label disappearing, whole-button opacity breathing |
+| In progress (>1s) | **low-frequency row-level breathing**, carried only by a **non-text, non-icon** surface (border / background) + **keep the spinner** | enlarging the icon instead of adding weight, opacity breathing over text, fast whole-row flicker |
+| Completed / failed | **0ms switch**: text + icon + colour land at once | adding a transition, fading residue, a completion highlight pulse |
+| hover / focus | §10 only (wash / focus ring), **no motion** | hover-triggered scaling, translation, glow |
+| Empty / error | no motion | endless pulse as decoration (**an empty-state pulse reads as "still loading"**) |
+| Completed history | no motion | scroll-driven entrances **replaying** when scrolling back |
+
+**Two hard rules**:
+
+1. **State tiers must be carried by text + icon + colour; motion is only an amplifier**. Motion-only ⇒ users with colour-vision deficiency or motion sensitivity cannot read the state (WCAG 1.4.1 / 2.3.3).
+2. **Under `prefers-reduced-motion` the state must still be readable** — when motion is switched off, the state face must not degrade into "indistinguishable from the neighbouring state" (§12.7).
+
+### 12.4 Only these 5 duration/easing tiers (arbitrary values forbidden)
+
+| Tier | Value | Easing | Used for | Where today's values come from (measured 2026-11-18) |
+| --- | --- | --- | --- | --- |
+| **T0 instant** | 80–120ms | `ease` / `ease-out` | overlay, menu, tooltip in/out | of the 15 vendor `animate-in/out` sites, **12 set `duration-100` explicitly** (overriding the 150ms default); `SheetContent` and `DialogScrollContent` use `duration-200` (that is T1 — a drawer is a structural change); `TooltipContent` keeps the 150ms default (**unclassified, existing deviation**, see audit report §7) |
+| **T1 structural** | 180–250ms | `ease-out` | drawer, accordion, panel open-close | `animate-accordion-down/up` = **0.2s** (`--animate-accordion-*` in `tw-animate-css`); `BaseModal` 0.2s |
+| **T2 emphasis** | 300–400ms | `ease-out` | one-shot notices (**must be registered in this table when added**) | **0 sites** today |
+| **R1 loop · spinner** | 1s | `linear` | loading / submitting (`animate-spin`) | Tailwind default 1s |
+| **R2 loop · breathing** | 1.6–2.4s | `ease-in-out` | row-level breathing while in progress (§12.3) | **no implementation yet**; new ones must land here — `animate-pulse` (2s / opacity 0.5) **does not qualify**, see §12.5 |
+
+**Forbidden in new code (existing instances are registered in the audit report §7)**:
+
+- **Arbitrary values** `duration-[…]` / `ease-[…]` / `animate-[…]`: measured `duration-[` **0**, `animate-[` **0**, `ease-[` **2** (one vendor line, `MessageScrollerButton.vue:61`) ⇒ **the product surface must stay at 0**.
+- **`transition: all` / `transition-all`**: named properties only (`transition-colors` / `transition-[opacity,transform]`). Measured 9 instances (mostly vendor) + 1 in CSS (`BaseModal.vue:186-190`), registered as existing.
+- **Durations and easings do not live inside components**: changing a tier means editing this table first, then the code.
+
+**Machine criterion (runnable; the 2026-11-18 readings are the baseline)**:
+
+```bash
+cd A03-xihe/packages/ui/src
+grep -rn 'duration-\[' --include=*.vue --include=*.css . | wc -l   # baseline 0
+grep -rn 'animate-\['  --include=*.vue --include=*.css . | wc -l   # baseline 0
+grep -rn 'ease-\['     --include=*.vue --include=*.css . | wc -l   # baseline 2 (one vendor line, registered)
+```
+
+### 12.5 One channel, one meaning
+
+§10's state matrix already assigns **left 2px indicator + light wash** to `selected` ⇒ **a left 2px bar must not also mean "running / loading / unread"**: the sidebar's selected row and the chat stream's running row appear on screen together, and the user can only read them as "both are selected".
+
+Likewise **`opacity` breathing may only target non-text, non-icon surfaces** (`border` / `background`). Putting `animate-pulse` on a whole row or button that contains text compresses the text/icon to 50% opacity at the trough ⇒ **periodically harder to read** (the opposite of the intent), and 0.5 amplitude at a 2s period is already in the WCAG 2.3.1 "flash" concern zone.
+
+### 12.6 Where motion is forbidden (hard list)
+
+| # | Location | Why forbidden |
+| --- | --- | --- |
+| 1 | **Message bubble enter/exit** | High-frequency stream + virtual scrolling: the animation competes with scroll anchoring in the same frame, and a node inserted during scrolling is re-laid-out, swallowing the animation (visible as "a blink"); scrolling already communicates "position changed" |
+| 2 | **The state text itself** ("running" → "completed") | Must switch in **0ms**. A transition makes users **think the transition has not finished** (worse when the state does not update at all, see §12.8); text is information, not decoration |
+| 3 | **Anything that already has a hover wash** | §10 puts hover at L2 (wash only). Adding motion = a repaint on every pointer move, and it lifts L2 to L3 ⇒ both the budget and the channel are broken |
+| 4 | **List row entrance / reordering** | Under virtual scrolling, "new row fades in" is indistinguishable from "row reused" — users see rows they already read fade in again |
+| 5 | **Streaming output / logs / terminal append** | Animating every appended frame = a flicker source; the arrival rate itself is the motion |
+| 6 | **Completed states and history** | A highlight/pulse after "done" suggests more is coming; scroll-driven animation replays when scrolling back through history |
+
+> The three candidates on the task card (bubble enter/exit, state text, existing hover wash) are **all kept**; items 4–6 are the same criterion applied to virtual scrolling and streaming (the high-frequency surfaces such as `MessageItem` / `MessageScrollerViewport`).
+
+### 12.7 `prefers-reduced-motion` is a hard requirement
+
+**Requirement**: any new motion **must fall inside the existing media queries**; do not introduce a second switch.
+
+| Existing implementation | Coverage |
+| --- | --- |
+| `styles/main.css:241` | `*, *::before, *::after` `animation-duration` / `transition-duration` forced to `0.01ms !important` (covers everything) |
+| `styles/shadcn-vue-tailwind.css:569` | `.shimmer` explicitly `animation: none` + `-webkit-text-fill-color: currentColor` (text gradient falls back to solid) |
+
+**Required checks on any motion PR**:
+
+- [ ] Under `prefers-reduced-motion: reduce` **the state is still readable** (loading has a label, in-progress has a static marker, completed is distinguishable from in-progress)
+- [ ] `animation` is not declared inline or in an `!important` rule later than `main.css` (that would bypass the global override)
+- [ ] Looping motion is **still, not phase-jittering**, under reduce (see "known gap" below)
+
+**Known gap (measured 2026-11-18, `[source]` fact)**: the global override only sets `animation-duration`; it **lacks `animation-iteration-count: 1`** (mainstream resets pair the two). Consequence: `infinite` animations keep looping with the period squashed to 0.01ms ⇒ the browser samples a near-random phase each frame, so the intended "still" may show up as **jitter**. Two fixes: add `animation-iteration-count: 1 !important`, or add `motion-reduce:animate-none` to the `animate-spin` family (63 sites ⇒ use a global rule). **The visual consequence still needs a browser measurement** (this section only records source readings).
+
+### 12.8 Motion must not mask a bug (hard constraint; F1 / F2 evidence)
+
+**Confirmed fact**: `F1` / `F2` are **states that simply never update** — `e2e-1` measured the running anchor unchanged for 25s (a state-fact defect, not a motion defect).
+
+⇒ **Animating a state that never updates is using motion to hide the defect**: the spinner/breathing reads as "the system is progressing" while the UI has in fact stopped, and during triage such motion makes people misjudge "the link is alive".
+
+**Fixed order, not negotiable**:
+
+1. fix the **state fact** (state really goes running → completed / failed);
+2. then discuss **motion expression** (whether it should breathe, at what weight).
+
+**PR criterion**: a motion PR **must not** double as a workaround for "state does not update" — if review finds the motion exists to make the UI look alive, reject it and file a state defect instead.
+
+### 12.9 Who executes the criterion, and known limitations
+
+- **Executor**: `internal/A03-xihe/evidence/2026-11-18-motion-audit/motion-inventory.mjs` (enumerate → named rules → assert "four classes sum to the measured total"; **the exit code is the criterion**). **Changing this section's criteria means changing that script in the same batch**, otherwise this section becomes another unverified document (same as `D-1767`).
+- **Known limitations (state them, or the next reader treats them as bugs)**:
+  1. The counting unit is the **application site**, not "the number of visually distinct animations": element reuse in virtual scrolling makes one code site produce many visible animations.
+  2. `transition` / `<Transition>` are only registered in the audit report's supporting layer, not classified site by site (larger surface, half of it vendor).
+  3. Vendor (`src/components/ui/**`) is **judged but never edited**: its header requires byte-alignment with upstream ⇒ inconsistencies are resolved on the in-house side, or by a batch that edits vendor and records it.
