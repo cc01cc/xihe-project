@@ -48,6 +48,28 @@ public interface ChatApprovalRepository extends JpaRepository<ChatApproval, UUID
     List<ChatApproval> findByRunIdAndStateIn(String runId, Collection<String> states);
 
     /**
+     * G3-a C4-approval (task-188 D-1834): the newest approval row of the run among the
+     * waiting-mouth states — i.e. the run's current waiting fact for the Agent's resume claim.
+     * requestId breaks the createdAt tie deterministically (two rows of one run can share a
+     * createdAt within one transaction's clock granularity).
+     */
+    Optional<ChatApproval> findFirstByRunIdAndStateInOrderByCreatedAtDescRequestIdDesc(
+            String runId, Collection<String> states);
+
+    /**
+     * G3-a C4-approval (task-188 D-1834): the lazy settle the Agent resume READ mouth performs
+     * on an overdue pending row. Unlike {@link #markExpired} the guard is ONLY 'pending':
+     * dispatching / dispatch_unknown are in-flight dispatch states (C5 explicit retry) and a
+     * read must never touch them. The settlement lands in the DB (same discipline as the
+     * user-question mouth); the row's decidedAt records when the read observed the lapse.
+     */
+    @Transactional
+    @Modifying
+    @Query("update ChatApproval a set a.state = 'expired', a.decidedAt = :at, a.updatedAt = :at "
+            + "where a.requestId = :requestId and a.state = 'pending'")
+    int settleExpiredPendingById(@Param("requestId") UUID requestId, @Param("at") Instant at);
+
+    /**
      * T1.7 gate-side idempotency: live (non-terminal) rows for one exact invocation, oldest first.
      * The gate must reuse an existing row instead of archiving a duplicate approval request.
      */

@@ -3291,6 +3291,36 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ChatRunWaitingQuestionView' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /internal/v1/chat/runs/{runId}/approval/waiting:
+    get:
+      tags: [service-misc]
+      operationId: getChatRunWaitingApproval
+      summary: The Agent approval resume claim read mouth — the run's current approval fact envelope
+      description: |
+        G3-a C4-approval (task-188 D-1834): after a restart the Agent re-arms or claims the approval
+        it was waiting on, reading only durable facts. Wire shape mirrors the user-question mouth:
+        {runId, items[]} with zero or one item of {requestId, state, expiresAt?} — keys are omitted,
+        never filled with nulls.
+        DELIBERATE C5/D-1820 NON-SYMMETRY: this mouth reads the waiting fact and NEVER consumes it —
+        reading an approved/rejected row changes nothing on the row (no grant_consumed_at, no
+        markConsumed semantics; the durable consume belongs to the C5 dispatch path only). The only
+        write ever performed here is the lazy settlement of an overdue pending row to expired (in the
+        DB, same CAS predicate discipline as the user-question mouth).
+        State mapping: pending → pending (with expiresAt); dispatching/dispatch_unknown fold into
+        pending (decision in flight or result unknown — the C5 explicit retry is a separate mechanism
+        this mouth does not drive); approved/rejected surface verbatim WITHOUT expiresAt (the deadline
+        is moot once decided); expired surfaces verbatim WITH expiresAt (the lapsed deadline is the
+        fact). feedback: the consumer shape reserves the key, but CP does not durably persist decision
+        feedback (the respond path is fire-and-forget), so the key is always omitted today.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Zero or one envelope item (a run has at most one current approval fact)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ChatRunWaitingApprovalView' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume:
     post:
       tags: [service-misc]
@@ -7637,6 +7667,40 @@ components:
               state: { type: string, enum: [pending, answered] }
               answer: { type: [string, 'null'], description: present only once the addressee has answered (durable, inside the CP-to-Agent trust domain) }
               expiresAt: { type: [string, 'null'], format: date-time }
+            additionalProperties: false
+      additionalProperties: false
+    ChatRunWaitingApprovalView:
+      type: object
+      required: [runId, items]
+      properties:
+        runId: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 1
+          items:
+            type: object
+            required: [requestId, state]
+            properties:
+              requestId: { type: string, format: uuid }
+              state:
+                type: string
+                enum: [pending, approved, rejected, expired]
+                description: |
+                  pending = still waiting (unexpired pending row, or a dispatching/dispatch_unknown row
+                  folded in — the wire union has no dispatch states); approved/rejected = the durable
+                  decision (reading it never mutates the row — no consume on this mouth); expired =
+                  the pending row lapsed (either settled by this read or earlier).
+              feedback:
+                type: string
+                description: |
+                  Reserved by the consumer shape but NEVER emitted: CP does not durably persist decision
+                  feedback (respond path is fire-and-forget). Key omitted, not null-filled.
+              expiresAt:
+                type: string
+                format: date-time
+                description: |
+                  Present only while the deadline is a live fact — the pending and expired states.
+                  Omitted for approved/rejected (moot once decided).
             additionalProperties: false
       additionalProperties: false
     SteerCreateRequest:

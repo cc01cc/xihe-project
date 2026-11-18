@@ -748,6 +748,95 @@ public class ApprovalService {
         return summaries;
     }
 
+    // ---------------------------------------------------------------------------------------
+    // G3-a C4-approval (task-188 D-1834): Agent resume claim read mouth (internal service surface)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * The full state vocabulary this mouth reads. Terminal rows (approved/rejected/expired) are
+     * durable facts the restarted Agent claims; the three live states fold into the wire
+     * {@code pending} (see {@link #agentWaitingRow}).
+     */
+    private static final List<String> AGENT_WAITING_MOUTH_STATES =
+            List.of("pending", "dispatching", "dispatch_unknown", "approved", "rejected", "expired");
+
+    /**
+     * G3-a C4-approval (task-188 D-1834): the run's current approval fact as an envelope for the
+     * Agent's resume claim (agent-1 {@code _approval_resume_lookup}). Frozen wire shape (agent-1):
+     * requestId / state: pending|approved|rejected|expired / feedback? / expiresAt? -- with
+     * omitted-never-null keys, same discipline as the user-question mouth.
+     *
+     * <p>This is a read of the waiting fact, NOT a consume -- the C5/D-1820 deliberate
+     * asymmetry: reading an {@code approved} or {@code rejected} row changes NOTHING on the row
+     * (no {@code grant_consumed_at}, no markConsumed; the durable consume belongs to the C5
+     * dispatch path only). The only write this method may perform is the lazy expiry settlement
+     * of an overdue {@code pending} row -- same CAS-predicate discipline as the user-question
+     * mouth, landing in the DB -- which is why the transaction is NOT readOnly.</p>
+     *
+     * <p>State mapping (the wire union has no dispatch states):
+     * {@code pending} reads as pending (with expiresAt); {@code dispatching} and
+     * {@code dispatch_unknown} fold into pending (a decision is in flight or its result unknown;
+     * the C5 explicit retry is a separate mechanism this mouth does not drive);
+     * {@code approved}/{@code rejected} surface verbatim with no expiresAt (the deadline is moot
+     * once decided); {@code expired} surfaces verbatim with expiresAt (the lapsed deadline is
+     * the fact). {@code feedback} is never emitted: decision feedback is fire-and-forget on the
+     * respond path and is not durably stored on the row, so the key stays omitted rather than
+     * fabricated (省略键不填空值).</p>
+     *
+     * @param runId run id (path variable; anything non-UUID reads as "no fact")
+     * @return the newest waiting-mouth row of the run, mapped; empty when there is none
+     */
+    @Transactional
+    public Optional<AgentApprovalWaitingView> agentWaitingRow(String runId) {
+        UUID id;
+        try {
+            id = UUID.fromString(runId);
+        } catch (RuntimeException invalid) {
+            return Optional.empty();
+        }
+        Optional<ChatApproval> found = approvalRepository
+                .findFirstByRunIdAndStateInOrderByCreatedAtDescRequestIdDesc(
+                        id.toString(), AGENT_WAITING_MOUTH_STATES);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        ChatApproval row = found.get();
+        Instant now = Instant.now();
+        if ("pending".equals(row.getState()) && !row.getExpiresAt().isAfter(now)) {
+            int settled = approvalRepository.settleExpiredPendingById(row.getRequestId(), now);
+            if (settled != 1) {
+                // Lost the CAS race (concurrent decide/dispatch moved the row): report the fresh
+                // fact instead of a stale settlement.
+                Optional<ChatApproval> fresh = approvalRepository
+                        .findFirstByRunIdAndStateInOrderByCreatedAtDescRequestIdDesc(
+                                id.toString(), AGENT_WAITING_MOUTH_STATES);
+                if (fresh.isEmpty()) {
+                    return Optional.empty();
+                }
+                row = fresh.get();
+            } else {
+                return Optional.of(new AgentApprovalWaitingView(row.getRequestId().toString(),
+                        "expired", row.getExpiresAt()));
+            }
+        }
+        String wireState = switch (row.getState()) {
+            case "pending", "dispatching", "dispatch_unknown" -> "pending";
+            default -> row.getState();
+        };
+        Instant expiresAt = "pending".equals(wireState) || "expired".equals(wireState)
+                ? row.getExpiresAt() : null;
+        return Optional.of(new AgentApprovalWaitingView(row.getRequestId().toString(),
+                wireState, expiresAt));
+    }
+
+    /**
+     * G3-a C4-approval envelope: {@code expiresAt} is carried only while the deadline is a live
+     * fact (pending / expired states); {@code feedback} has no durable source and is therefore
+     * never part of this view.
+     */
+    public record AgentApprovalWaitingView(String requestId, String state, Instant expiresAt) {
+    }
+
     /** Feedback is user-authored text: keep it bounded and redacted in the audit trail. */
     private static String safeFeedback(String feedback) {
         String redacted = LogRedactor.redact(feedback);
