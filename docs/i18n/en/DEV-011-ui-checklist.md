@@ -154,6 +154,20 @@ Before colouring a new element, ask three questions: how often is it used, how i
 
 Decision question: **if this element disappeared, would the user take a wrong action?** Yes → L3/L4; no → L2, no colour.
 
+### Focus-state evidence discipline (2026-11-15, `D-1435`; measured in `task-40`)
+
+When capturing an acceptance shot of a focus ring, **use only the keyboard path (Tab / `tab=<n>`); never scripted `focus()`, and never a mouse-driven step inside the same shot**. This is not a preference — it is what was measured:
+
+| preceding action | path | `:focus` | `:focus-visible` | ring visible in the image |
+|---|---|---|---|---|
+| none | scripted `focus()` | true | **true** | yes |
+| **click a button first** | scripted `focus()` | true | **false** | **no** |
+| click first | Tab to the target | true | true | yes |
+
+⇒ what decides `:focus-visible` is **whether a pointer interaction happened before**, not "scripted versus keyboard". The `expand`/`hover` steps of a screenshot script are themselves pointer operations, so taking the focus shot after a panel-revealing step **reliably produces an image without a ring**.
+
+**Two hard constraints**: (1) a focus image must go through `tab`; (2) `focus=` is allowed only when the target sits behind dozens of tab stops (measured: 53 Tab presses on one page), and it **must not share a shot with `expand`/`hover`** (the script hard-blocks this). **A fake focus image is the worst class of evidence: `:focus=true`, an activeElement present, a PNG written — it looks entirely normal.**
+
 ### Danger red: two orthogonal axes, judged separately
 
 The ladder's "red only at the confirmation step" (axis B) and "only mistakes deserve colour" (axis A) are **independent**.
