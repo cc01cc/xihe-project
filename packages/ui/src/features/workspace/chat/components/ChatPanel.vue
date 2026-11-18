@@ -1366,9 +1366,9 @@ async function submitMessage(input: {
         // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
         // identity the caller chose (CP validates it). Absent = the caller's own words.
         ...(asParticipantId ? { participantId: asParticipantId } : {}),
-        // PLAN-0659 T1.3：投递语义（发送/抄送）只有 composer 这一层知道，**UI 本地视图**，
-        // 与 `participantId` 同一口径：history DTO 不携带该字段 ⇒ 刷新后消失（BL-239：
-        // 投递语义暂无持久载体，P3）。不落 localStorage、不进 wire（本 PLAN 非目标）。
+        // PLAN-0659 T1.3：投递语义（发送/抄送）由 composer 这一层产出，**乐观本地视图**；
+        // PLAN-0665 M2 / V120 起已 durable（`messages.delivery` jsonb，BL-239 已关账）——
+        // 刷新后不再消失。不落 localStorage、不进 wire（本 PLAN 非目标）。
         // PLAN-0665 M2 / V120：乐观消息直接写 **durable 形状**（`{to[], cc[]}`），
         // 这样刷新回来的 durable `messages.delivery` 与本地是同一形状、同一渲染路径；
         // legacy 形状只作为旧消息的回落（见 `resolveDelivery`）。
