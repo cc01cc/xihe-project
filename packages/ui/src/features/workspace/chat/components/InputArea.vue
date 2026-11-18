@@ -107,14 +107,21 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 /**
- * PLAN-0630 M5b (D30-14)：speak-as 下拉升级为 **to 栏**（本次消息的主要响应者，单选）。
- * - 入口仍由 `capabilities.speakAs`（同一响应里的归约）决定**显不显示**，false 时**不渲染**；
- * - 候选 = store 的 `speakAsCandidates`（`selfOwned === true` 且未停用）——只有能说的人才出现在 to；
- * - 默认 = PRIMARY participant（D30-14），没有 PRIMARY 行时回落到自己的 HUMAN 行、再退回第一个；
- * - **纯前端状态**：改变 to 不写回参与者行 —— 会话身份是 `session_participants` 的 PRIMARY 行
- *   （`sessions.agent_principal_id` 已由 V133 删除），每次 Run 的应答者记在 `chat_runs` 自己的
- *   `agent_principal_id` 列上，绑定期的路径 cap 快照留在 `sessions.agent_permissions_snapshot`；
- *   选定值只随本条消息以 `asParticipantId` 发出。
+ * **task-55（D-1882③）：composer 的「代发身份」入口已移除 —— 本文件不再渲染它，也不再发
+ * `asParticipantId`。** 口径固定为「人在 composer 点 TO」：TO 同时决定受众与 run 归属
+ * （第一个 AGENT 目标拥有本提交 run，见 ChatController 的 TO 派生层），所以「谁作答」已由 TO 回答；
+ * 「以别人的账号发言」是另一件事，产品上不再给 composer 控件。
+ *
+ * - **wire 能力保留**：`emit("send")` 的第 3 位与 ChatPanel → SSEStream → useSSE → POST body 的
+ *   `asParticipantId` 通路一律未动（恒为 undefined ⇒ 字段省略）。CP 侧仍授权并生效，旧客户端照发
+ *   不报错（BL-444 窗口），历史消息的 speakAs 归属展示（MessageItem）也照旧。
+ * - **恢复成本 = 一个 v-if**：把下面被删的 `RecipientField` 区块与 `showSpeakAs` / `speakAsOptions`
+ *   / `speakAsId` / `activeSpeakAsId` / `effectiveSpeakAsId` / `onSpeakAsFieldChange` / 默认值 watch
+ *   一并恢复即可（原文在 task-55 的父提交上）；但那是**契约决定**，须先按 D-1882③ 重新裁定，
+ *   不许当作排版修复顺手做。
+ * - 曾经的语义（PLAN-0623 D23-27 → PLAN-0630 M5b D30-14 → 2026-11-04 改「输入 + 候选浮层」）：
+ *   入口由 `capabilities.speakAs` 决定显不显示、候选 = `speakAsCandidates`、默认 = PRIMARY 行，
+ *   选定值只随本条消息发出 —— 留在此处供审计追溯，不是待办。
  */
 const participantsStore = useSessionParticipantsStore();
 /** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
@@ -231,10 +238,6 @@ watch(
 const chatStore = useChatStore();
 /** 无 router 的组件单测里注入结果为空 ⇒ 判定为「非独立会话」（见 workspaceLess.ts 注释）。 */
 const route = inject(routeLocationKey, null);
-const speakAsId = ref("");
-
-const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
-
 /**
  * task-547 F-A（D-1409 判据⑤）：独立会话下「发送」与「定向」**不渲染**。
  *
@@ -255,15 +258,6 @@ const workspaceLess = computed(() => isWorkspaceLessRoute(route));
 // 能被禁用，ImageUpload / FileUpload 是多根组件 ⇒ attrs 被丢弃，两个按钮仍然可点（假绿风险）。
 // 一个永远点不动的按钮不会告诉用户"为什么"，而 composer 里的 workspaceLessNoTargets 已经写明原因。
 const attachmentLocked = computed(() => workspaceLess.value);
-
-const showSpeakAs = computed(() => participantsStore.canSpeakAs && speakAsOptions.value.length > 0);
-
-/** 只有真的选了候选才带 `asParticipantId`：空串不发，避免把"以某人身份"误当默认行为。 */
-const activeSpeakAsId = computed(() =>
-    showSpeakAs.value && speakAsOptions.value.some((item) => item.participantId === speakAsId.value)
-        ? speakAsId.value
-        : "",
-);
 
 /**
  * PLAN-0665 M2（Q3，D4）+ task-88：**发送（多选收件人）**。与上面的「代发」是两件事：
@@ -361,25 +355,11 @@ function onToTargetsFieldChange(ids: string[]): void {
     if (ids.length > 0) showToEmptyHint.value = false;
 }
 
-/**
- * task-453（F-16 / D-1300）：**显式定向优先于默认代发**。
- * CP（ChatController:569-577，PLAN-0665 M1/Q1）：TO 非空时 `asParticipantId` 必须等于**首目标**
- * 或缺席，否则 400 `INVALID_REQUEST`。而上面那个 watch 会把代发自动默认成 PRIMARY（D30-14 的
- * 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用定向栏就必然冲突，且只看到一句英文 detail。
- * 这里让**默认**让位：相等则保留，不等则省略；`speakAsId` 本身不清空 ⇒ 撤掉定向后自动恢复。
- * 可见 chip 也绑这个有效值（不能显示「以 A 身份发」而 wire 里其实没有 A）。
- * task-87 补充：省略 `as` 现在正是「首目标是真人」时的正确形态 —— CP 把 run 归属交给请求序里
- * 第一个 AGENT 目标，不再把它当`as`去跑 speak-as 闸；UI 这里不需要为真人目标做别的。
- */
-const effectiveSpeakAsId = computed(() => {
-    const targets = activeToTargetIds.value;
-    if (targets.length === 0) return activeSpeakAsId.value;
-    return activeSpeakAsId.value === targets[0] ? activeSpeakAsId.value : "";
-});
-
-const speakAsOverriddenByTo = computed(
-    () => Boolean(activeSpeakAsId.value) && !effectiveSpeakAsId.value,
-);
+// task-55（D-1882③）：这里原有 `effectiveSpeakAsId` / `speakAsOverriddenByTo` 两个派生值，
+// 用来在「显式定向」与「默认代发」冲突时让代发让位（task-453 / F-16 / D-1300：CP 要求 TO 非空时
+// `asParticipantId` 必须等于首目标或缺席，否则 400 INVALID_REQUEST）。代发入口移除后 UI 恒**缺席**，
+// 那套让位逻辑没有对象可让，整段删除。CP 侧的交叉校验仍在（带错值照样 400），只是本 UI 不可能再触发；
+// task-87 那条「省略 as ⇒ 归属交给请求序里第一个 AGENT 目标」现在正是 UI 的常态形态。
 
 /** 发送用的 TO 载荷：非空 ⇒ 数组；空但动过 ⇒ **显式 []**；从未动过 ⇒ undefined（省略）。 */
 const toTargetsPayload = computed(() => {
@@ -444,9 +424,8 @@ const ccCandidates = computed(() =>
             Boolean(item.displayName) &&
             // task-102：与「发送」同一口径 —— 自己的真人行不进抄送候选（CP 同样 400）。
             !isOwnHumanRow(item) &&
-            // task-453 follow-up（Lead 准）：按**有效**代发排除 —— 让位时没有代发身份，
-            // 不该把默认代发那个人从抄送候选里剔掉。
-            item.participantId !== effectiveSpeakAsId.value &&
+            // task-55（D-1882③）：原先这里还排除「当前代发身份」（task-453 follow-up 按有效值排除），
+            // 代发入口移除后 UI 没有代发身份可排除，该子句删除。
             !activeToTargetIds.value.includes(item.participantId),
     ),
 );
@@ -502,13 +481,7 @@ function resetCc(): void {
     ccSuppressed = new Set<string>();
 }
 
-/**
- * 2026-11-04 用户裁定：`发送` 栏改为「输入 + 候选浮层」，单选，值仍是 participantId。
- * 清空（点 × 或 Backspace）时不猜测默认值 —— 空值就不带 `asParticipantId`。
- */
-function onSpeakAsFieldChange(ids: string[]): void {
-    speakAsId.value = ids[0] ?? "";
-}
+// task-55（D-1882③）：`onSpeakAsFieldChange` 随「代发身份」入口一起移除。
 
 /**
  * 2026-11-04 用户裁定：`抄送` 栏改为「输入 + 候选浮层」，多选。手动移除的条目仍进
@@ -590,17 +563,8 @@ watch(
     { immediate: true },
 );
 
-watch(
-    speakAsOptions,
-    (options) => {
-        if (options.some((item) => item.participantId === speakAsId.value)) return;
-        // D30-14：默认 to = PRIMARY participant；无 PRIMARY（如纯人类会话）回落自己，绝不默认代别人。
-        const primary = options.find((item) => item.role === "PRIMARY");
-        const own = options.find((item) => item.principalKind === "HUMAN") ?? options[0];
-        speakAsId.value = (primary ?? own)?.participantId ?? "";
-    },
-    { immediate: true },
-);
+// task-55（D-1882③）：D30-14 的「默认代发 = PRIMARY 行」watch 随入口移除 ——
+// 没有入口就没有「默认值」可展示；保留它只会让 emit 的第 3 位悄悄带上一个用户从未选过的身份。
 
 const input = ref(""),
     isComposing = ref(false),
@@ -1001,7 +965,9 @@ async function handleSend() {
             "queue",
             text,
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
-            effectiveSpeakAsId.value || undefined,
+            // task-55（D-1882③）：代发入口已移除 ⇒ 第 3 位恒 undefined（wire 上省略该字段）；
+            // 参数位与下游通路一律保留，恢复成本 = 一个 v-if。
+            undefined,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
             toTargetsPayload.value,
             draftRevision.value,
@@ -1011,7 +977,9 @@ async function handleSend() {
             "send",
             text,
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
-            effectiveSpeakAsId.value || undefined,
+            // task-55（D-1882③）：代发入口已移除 ⇒ 第 3 位恒 undefined（wire 上省略该字段）；
+            // 参数位与下游通路一律保留，恢复成本 = 一个 v-if。
+            undefined,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
             toTargetsPayload.value,
             draftRevision.value,
@@ -1512,14 +1480,14 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
     >
         <div class="w-full max-w-4xl space-y-1.5">
             <!--
-                D23-27 / PLAN-0630 M5b (D30-14)：`发送`栏（speak-as 升级版）——本次消息的主要响应者
-                （单选，默认 = PRIMARY participant）。只有 capabilities.speakAs 为真才**渲染**
-                （false 时不渲染，不是禁用）；候选只含我拥有的、未停用的参与者。
-                2026-11-04 用户裁定：从原生 select 改为「输入 + 候选浮层」（RecipientField），术语「发送」。
+                task-55（D-1882③）：这里原本渲染「代发身份」RecipientField（testid="speak-as" /
+                data-testid="speak-as-bar"；PLAN-0623 D23-27 → PLAN-0630 M5b D30-14 → 2026-11-04 改为
+                「输入 + 候选浮层」），**入口已整块移除**：谁作答由下面的「发送（TO）」决定，
+                「以别人的账号发言」不再给 composer 控件。wire 字段与 CP 授权一律未动。
             -->
             <!--
-                task-547 F-A：独立会话下这里**没有**「发送」「定向」两栏（见 showSpeakAs/showToTargets），
-                但必须**说出来为什么** —— 用户看到少了两个控件而没有任何解释，等于把失败换成了困惑。
+                task-547 F-A：独立会话下这里**没有**「发送」「抄送」两栏（见 showToTargets/showCcSection），
+                但必须**说出来为什么** —— 用户看到少了控件而没有任何解释，等于把失败换成了困惑。
             -->
             <p
                 v-if="workspaceLess"
@@ -1528,41 +1496,18 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
             >
                 {{ t("chat.input.workspaceLessNoTargets") }}
             </p>
-            <RecipientField
-                v-if="showSpeakAs"
-                :label="t('chat.input.toLabel')"
-                :model-value="effectiveSpeakAsId ? [effectiveSpeakAsId] : []"
-                :candidates="speakAsOptions"
-                :placeholder="t('chat.input.recipientPlaceholder')"
-                testid="speak-as"
-                data-testid="speak-as-bar"
-                :hint="speakAsOverriddenByTo ? '' : t('chat.input.toLabelHint')"
-                hint-testid="composer-speak-as-hint"
-                @update:model-value="onSpeakAsFieldChange"
-            />
             <!--
-                task-114：三栏（代发身份 / 发送 / 抄送）里只有「代发身份」没有栏外说明 ——
-                那四个字答不上「本条以谁的账号发出」，读者无从判断该选谁。形态照抄同区
-                composer-send-hint / composer-cc-hint（px-2 text-xs text-muted-foreground），
-                不另造样式；文案说「做什么」（以谁的账号发出），不解释词义。
-                被定向让位时不渲染：那条路径本条不代发，照常说「以所选身份发出」就是假话。
-                testid 用 composer- 前缀：RecipientField 自己会渲染 ${testid}-hint
-                （键盘提示），裸 speak-as-hint 会与它撞名。
+                task-55（D-1882③）：上面的 RecipientField（代发身份入口）已删除 —— 见文件头文档块。
             -->
             <!--
-                task-38 C2（DEV-011 §13.4）：这条说明不再长期占一整行 —— 收进「代发身份」栏标签后的
-                tooltip（栈内原语，焦点即显示）。文案仍是同一个 i18n 键（toLabelHint），单一来源不变；
-                testid 由 RecipientField 的 sr-only 文本承载，读屏与单测都还读得到。
-                被定向让位时不传 hint：那条路径本条不代发，照常说「以所选身份发出」就是假话。
+                task-55（D-1882③）：这里原有 task-114 栏外说明、task-38 C2 的 tooltip 说明与 task-453 的
+                「代发被定向让位」提示 <p>（data-testid 为 speak-as-overridden-hint，文案是 chat.input
+                段的 speakAsOverriddenByTo「已指定发送对象（优先），本条不代发」）。
+                它们描述的都是已经不存在的控件 —— 留着就是「判据先行、产品缺失」的同型问题，整块移除。
+                chat.input 段的 toLabel / toLabelHint / speakAsOverriddenByTo 三个键本卡不动：写面在
+                src/i18n（并行卡持有），且删键会把「恢复入口」的成本从「一个 v-if」抬成「改两个文件」，
+                与 D-1882③ 相悖。
             -->
-            <!-- task-453：默认代发被定向让位时必须说出来，不能只是 chip 悄悄消失。 -->
-            <p
-                v-if="speakAsOverriddenByTo"
-                class="text-muted-foreground"
-                data-testid="speak-as-overridden-hint"
-            >
-                {{ t("chat.input.speakAsOverriddenByTo") }}
-            </p>
             <!--
                 PLAN-0665 M2（Q3/D4）+ task-88：发送多选（1..N 个参与者，真人也在内）——与上面的
                 「代发」栏分开，因为一个消息只能有一个发言身份，但可以有多个响应者。真人目标只收

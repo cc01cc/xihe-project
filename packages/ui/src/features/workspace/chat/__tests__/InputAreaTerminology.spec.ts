@@ -157,17 +157,22 @@ beforeEach(() => {
 });
 
 describe("task-50 composer 两词制（发送 / 抄送）", () => {
-    it("① 栏位定义：发送 = 收件人（多选），代发身份 = 身份（单选），抄送 = 抄送", async () => {
+    it("① 栏位定义：发送 = 收件人（多选），抄送 = 抄送；代发身份栏已移除（task-55 / D-1882③）", async () => {
         const wrapper = mountInputArea();
         await flushPromises();
 
         expect(wrapper.get('[data-testid="to-targets-bar"]').attributes("data-testid")).toBe(
             "to-targets-bar",
         );
-        // RecipientField 把 label 渲染成首段文本；这里断言三个栏各自的 label 不再互相撞词。
-        expect(wrapper.get('[data-testid="speak-as-bar"]').text()).toContain("代发身份");
+        // RecipientField 把 label 渲染成首段文本；这里断言两个栏各自的 label 不再互相撞词。
         expect(wrapper.get('[data-testid="to-targets-bar"]').text()).toContain("发送");
         expect(wrapper.get('[data-testid="to-targets-bar"]').text()).not.toContain("代发");
+        // 负判据（防复活）：第三个栏不存在，界面上也不该再出现「代发身份」这四个字。
+        expect(
+            wrapper.find('[data-testid="speak-as-bar"]').exists(),
+            "代发身份栏不得复活（D-1882③）",
+        ).toBe(false);
+        expect(wrapper.text()).not.toContain("代发身份");
 
         await wrapper.get('[data-testid="cc-expand"]').trigger("click");
         await flushPromises();
@@ -196,42 +201,38 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
         wrapper.unmount();
     });
 
-    it("②b 代发身份也有栏外说明，且与另两条同构（task-114）", async () => {
+    /**
+     * task-55（D-1882③）改写：代发身份栏的栏外说明随入口一起消失。
+     * 原判据里**仍然成立**的两条留着：① 说明是「tooltip 触发器 + sr-only 常驻文本」（task-38 C2，
+     * DEV-011 §13.4），不是整幅占行的段落；② 发送与抄送两条说明类名元组逐字相同（同一种东西）。
+     * 新增一条负判据：代发文案不得在没有代发控件时残留成幽灵说明。
+     */
+    it("②b 代发栏说明随入口移除；发送/抄送两条说明仍同构（task-114 / task-38 C2）", async () => {
         const wrapper = mountInputArea();
         await flushPromises();
 
-        const hint = wrapper.get('[data-testid="composer-speak-as-hint"]');
-        // task-38 C2（DEV-011 §13.4）判据换轴：说明不再是一行 <p>，而是「tooltip 触发器 + sr-only 常驻文本」。
-        // 这里钉三件事，缺一条就回到原缺陷：
-        //   ① 触发器存在且是**真按钮** ⇒ 键盘 Tab 能焦点即显示（不是只 hover）；
-        //   ② 文本在 DOM 里常驻（sr-only），不依赖浮层打开才存在 ⇒ 读屏与单测都读得到；
-        //   ③ 三栏同构 = 类名元组逐字相同（判据仍然有效，只是现在比的是 sr-only span）。
-        // 并反向钉「整幅占行」不许复活：composer 区常驻说明段落计数必须为 0。
-        for (const id of ["composer-speak-as-hint", "composer-send-hint"]) {
-            const trigger = wrapper.get(`[data-testid="${id}-trigger"]`);
-            expect(trigger.element.tagName).toBe("BUTTON");
-            expect(wrapper.get(`[data-testid="${id}"]`).classes()).toContain("sr-only");
-        }
+        expect(
+            wrapper.find('[data-testid="composer-speak-as-hint"]').exists(),
+            "代发说明不得在入口移除后残留（D-1882③）",
+        ).toBe(false);
+
+        const trigger = wrapper.get('[data-testid="composer-send-hint-trigger"]');
+        expect(trigger.element.tagName).toBe("BUTTON");
+        expect(wrapper.get('[data-testid="composer-send-hint"]').classes()).toContain("sr-only");
+
         const permanentHintRows = wrapper
             .findAll("p")
             .filter((n) => String(n.attributes("data-testid") ?? "").includes("hint"));
         expect(permanentHintRows.map((n) => n.attributes("data-testid"))).toEqual([]);
-        // 同构判据：类名元组必须与 composer-send-hint / composer-cc-hint 逐字相同
-        // （不是「看起来差不多」—— 三栏说明必须是同一种东西，否则就是第四种样式）。
-        expect(hint.classes()).toEqual(wrapper.get('[data-testid="composer-send-hint"]').classes());
+
         await wrapper.get('[data-testid="cc-expand"]').trigger("click");
         await flushPromises();
-        expect(wrapper.get('[data-testid="composer-speak-as-hint"]').classes()).toEqual(
-            wrapper.get('[data-testid="composer-cc-hint"]').classes(),
+        // 同构判据：两栏说明必须是同一种东西（类名元组逐字相同），不是「看起来差不多」。
+        expect(wrapper.get('[data-testid="composer-cc-hint"]').classes()).toEqual(
+            wrapper.get('[data-testid="composer-send-hint"]').classes(),
         );
-
-        // 文案判据：回答「本条以谁的账号发出」（读者据此知道该选谁），
-        // **不是**解释「代发身份」这个词是什么意思 —— 后者对要动手选的人毫无帮助。
-        const text = hint.text();
-        expect(text).toContain("所选身份");
-        expect(text).toContain("账号发出");
-        expect(text).toContain("不是你");
-        wrapper.unmount();
+        // 原先回答「本条以谁的账号发出」的那句文案已无渲染处 —— 留着就是假话（没有可选的身份了）。
+        expect(wrapper.text()).not.toContain("账号发出");
     });
 
     it("③ 抄送候选里有人类参与者（改前/改后都成立，防线不是本次新增）", async () => {
@@ -242,14 +243,14 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
 
         const kinds = candidateKinds("cc", wrapper);
         expect(kinds, "抄送栏必须渲染并带候选").not.toBeNull();
-        // 花名册 2 AGENT + 2 HUMAN；默认代发（PRIMARY=Alpha）被排除 ⇒ 1 AGENT + 2 HUMAN = 3 条。
-        // 这几个数是**读数**不是装饰：改前就是这个形状（抄送栏本来就能选真人），
-        // 所以「人类从候选里消失」只可能是回归 —— 那就是下面 mutation 要抓的东西。
+        // 花名册 2 AGENT + 2 HUMAN。task-55（D-1882③）**翻转**了这里的读数：改前默认代发（PRIMARY=Alpha）
+        // 被排除 ⇒ 3 条；代发入口移除后没有代发可排除 ⇒ 4 条全在。
+        // 这几个数仍是**读数**不是装饰：「人类从候选里消失」依旧只可能是回归。
         expect(kinds).toEqual({
-            total: 3,
+            total: 4,
             humans: 2,
-            agents: 1,
-            names: ["Ada Lovelace", "Helper", "Grace Hopper"],
+            agents: 2,
+            names: ["Alpha", "Ada Lovelace", "Helper", "Grace Hopper"],
         });
         wrapper.unmount();
     });

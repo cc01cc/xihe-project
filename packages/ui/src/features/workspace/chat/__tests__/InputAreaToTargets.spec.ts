@@ -304,12 +304,12 @@ describe("InputArea · task-450 省略 vs 显式空集", () => {
 });
 
 /**
- * task-453（F-16 / Lead 裁 P1，D-1300）：发送（多选收件人）与默认「代发」的联动。
- * CP 契约（ChatController:569-577，PLAN-0665 M1/Q1）：显式 TO 非空时 asParticipantId 必须
- * **等于首目标**或缺席，否则 400 INVALID_REQUEST。而 InputArea 会自动把代发默认成 PRIMARY
- * （D30-14 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用多选栏就必然冲突。
- * 真栈实证：To=MiMo 直接发 ⇒ 400「asParticipantId conflicts with toParticipantIds[0]」；
- * 手动点掉代发 chip 后同一条 ⇒ 202 且 MiMo 真作答（task445-case-b2/b3.json）。
+ * task-55（D-1882③）改写：本节原先钉「发送（多选收件人）与默认代发」的联动（task-453 / F-16 / D-1300：
+ * CP 要求 TO 非空时 `asParticipantId` 必须等于首目标或缺席，否则 400 INVALID_REQUEST）。
+ * composer 的代发身份入口已移除 ⇒ UI 恒**不发**该字段，联动退化成一条单向判据：
+ * **任何 TO 形态下 emit 第 3 位都是 undefined**。
+ * 真栈实证见 internal/A03-xihe/evidence/2026-11-19-branchid-mainpath/（task-53）：
+ * POST body 键集不含 asParticipantId、TO=[ewLead] ⇒ 202 且 run 归属 ewLead。
  */
 describe("InputArea · task-453 发送让位默认代发", () => {
     function mountWithSpeakAs() {
@@ -332,53 +332,57 @@ describe("InputArea · task-453 发送让位默认代发", () => {
         return wrapper.emitted("send")![0];
     }
 
-    it("To 非空且首目标≠默认代发 ⇒ 省略 asParticipantId，且代发 chip 不再显示", async () => {
+    it("To 非空 ⇒ 第 5 位是 TO、第 3 位恒 undefined（代发入口已移除）", async () => {
         const wrapper = mountWithSpeakAs();
         await flushPromises();
-        expect(wrapper.findAll('[data-testid="speak-as-chip"]')).toHaveLength(1);
+        expect(
+            wrapper.findAll('[data-testid="speak-as-chip"]'),
+            "composer 不得再渲染代发面（D-1882③）",
+        ).toHaveLength(0);
         await pickTo(wrapper, "Helper");
         const args = await send(wrapper);
         expect(args[4]).toEqual([HELPER_ID]);
         expect(args[2]).toBeUndefined();
-        expect(wrapper.findAll('[data-testid="speak-as-chip"]')).toHaveLength(0);
     });
 
     /**
-     * task-114 负侧：代发被让位时栏外说明**不渲染** —— 那条路径本条不代发，照常说
-     * 「以所选身份发出」就是假话（InputArea.vue 注释原文）。让位提示（task-453）取而代之，
-     * 两条互斥同屏。正向（未让位时说明在）一并钉住，别只跑负例。
+     * task-114 的栏外说明与 task-453 的让位提示描述的都是**已经不存在的控件** ⇒ 两个 testid 必须都不出现。
+     * 只钉「新元素不在」而不钉「旧元素也不在」，就会留下幽灵说明：DOM 里有文案、界面上没控件。
      */
-    it("task-114：代发被让位 ⇒ composer-speak-as-hint 消失，speak-as-overridden-hint 顶上", async () => {
+    it("task-114 / task-453 的代发说明均不渲染（入口移除后不留幽灵文案）", async () => {
         const wrapper = mountWithSpeakAs();
         await flushPromises();
-        expect(wrapper.find('[data-testid="composer-speak-as-hint"]').exists()).toBe(true);
-
+        for (const id of ["composer-speak-as-hint", "speak-as-overridden-hint"]) {
+            expect(
+                wrapper.find('[data-testid="' + id + '"]').exists(),
+                id + " 必须随代发入口一起移除（D-1882③）",
+            ).toBe(false);
+        }
         await pickTo(wrapper, "Helper");
-        expect(wrapper.find('[data-testid="composer-speak-as-hint"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="speak-as-overridden-hint"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="speak-as-overridden-hint"]').exists()).toBe(false);
     });
 
-    it("To 首目标 == 默认代发 ⇒ 保留 asParticipantId（CP 允许相等）", async () => {
+    it("To 首目标 == 原默认代发 ⇒ 仍不带 as（相等分支随入口一起消失）", async () => {
         const wrapper = mountWithSpeakAs();
         await flushPromises();
         await pickTo(wrapper, "Alpha");
         const args = await send(wrapper);
         expect(args[4]).toEqual([PRIMARY_ID]);
-        expect(args[2]).toBe(PRIMARY_ID);
+        expect(args[2], "缺席是 CP 允许的形态：归属由 TO 里第一个 AGENT 目标决定").toBeUndefined();
     });
 
-    it("To 为空 ⇒ 旧单响应者路径不变（仍带默认代发）", async () => {
+    it("To 为空 ⇒ 第 5 位省略、第 3 位同样省略（旧单响应者路径由 CP 默认）", async () => {
         const wrapper = mountWithSpeakAs();
         await flushPromises();
         const args = await send(wrapper);
         expect(args[4]).toBeUndefined();
-        expect(args[2]).toBe(PRIMARY_ID);
+        expect(args[2], "入口移除后 UI 不再自动带 PRIMARY 代发（D-1882③）").toBeUndefined();
     });
 });
 
-/** task-453 follow-up（Lead 准）：让位后抄送候选按**有效**代发排除，而不是原始默认值。 */
-describe("InputArea · task-453 让位后的抄送候选", () => {
-    it("To 非空让位 ⇒ 默认代发那个人重新可被抄送", async () => {
+/** task-55（D-1882③）：原节钉「让位后抄送候选按**有效**代发排除」；入口移除后没有代发可排除。 */
+describe("InputArea · task-55 抄送候选不再排除代发身份", () => {
+    it("原默认代发（PRIMARY）现在恒在抄送候选里", async () => {
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = roster();
         storeState.participants = roster();
@@ -396,8 +400,8 @@ describe("InputArea · task-453 让位后的抄送候选", () => {
                 (c) => c.participantId,
             );
         };
-        const idsBefore = candidateIds();
-        expect(idsBefore).not.toContain(PRIMARY_ID);
+        // 改前这一格**不含** PRIMARY（默认代发把它剔掉了）⇒ 翻转是本卡的真实语义变化，不是笔误。
+        expect(candidateIds()).toContain(PRIMARY_ID);
         await wrapper.get('[data-testid="to-targets-input"]').setValue("Helper");
         await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
         await flushPromises();
@@ -527,8 +531,9 @@ describe("task-102：TO/CC 候选排除「调用者自己的真人行」", () =>
         wrapper.unmount();
     });
 
-    it("as 与某个 AGENT 目标同行时：候选仍含它，且 as 照发（CP 202 的正常形态）", async () => {
-        // Lead 2026-11-15：「以 A 代发 + TO=[A]」CP 判 202 且有用例钉住 ⇒ UI 不得剔除。
+    it("原代发候选与某个 AGENT 目标同行时：TO 候选仍含它，但 as 不再发", async () => {
+        // task-55（D-1882③）改写。Lead 2026-11-15 的旧判据「以 A 代发 + TO=[A] ⇒ CP 判 202」仍然成立，
+        // 但 UI 现在只走 TO 一条轴：候选照旧含 A，第 3 位恒 undefined ⇒ 归属由 TO 里第一个 AGENT 目标决定。
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = [roster()[0]];
         storeState.participants = roster();
@@ -539,35 +544,39 @@ describe("task-102：TO/CC 候选排除「调用者自己的真人行」", () =>
             PRIMARY_ID,
         );
 
-        // 选中 Alpha 作为 TO：as === to[0] ⇒ 相等分支保留 as（InputArea.vue 的 effectiveSpeakAsId）。
         await wrapper.get('[data-testid="to-targets-input"]').setValue("Alpha");
         await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
         await flushPromises();
-        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
-            PRIMARY_ID,
-        );
+        expect(
+            wrapper.findAll('[data-testid="speak-as-chip"]'),
+            "代发面不得复活（D-1882③）",
+        ).toHaveLength(0);
 
-        await wrapper.get('[data-testid="chat-input"]').setValue("代 A 发言并通知 A");
+        await wrapper.get('[data-testid="chat-input"]').setValue("通知 A 并由 A 作答");
         await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
         await flushPromises();
         const args = wrapper.emitted("send")![0];
-        expect(args[2], "as 必须照发（不是静默丢弃）").toBe(PRIMARY_ID);
+        expect(args[2], "UI 恒不带 asParticipantId").toBeUndefined();
         expect(args[4]).toEqual([PRIMARY_ID]);
         wrapper.unmount();
     });
 
-    it("as 候选不受本卡影响：自己的真人行仍是可代发身份", async () => {
-        // CP SessionParticipantService:725-731「a HUMAN may speak as themselves」⇒ speakAsCandidates
-        // 列出自己是同一判据的投影。**两套候选是两个对象**，本卡只动 TO/CC。
+    it("store 的 speakAsCandidates 仍在（CP 投影未动），但 UI 不再渲染它的候选", async () => {
+        // task-55（D-1882③）：本卡只移除入口，store 面一律不动 —— speakAsCandidates 仍在原处产出，
+        // 只是没有任何控件消费它。**两套候选仍是两个对象**，这条判据的轴从「候选形状」换成「不渲染」。
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = [selfHumanRow()];
         storeState.participants = [...roster(), selfHumanRow()];
         const wrapper = mountInputArea();
         await flushPromises();
 
-        expect(candidatesOf("speak-as", wrapper)!.map((item) => item.participantId)).toContain(
+        expect(storeState.speakAsCandidates.map((item) => item.participantId)).toContain(
             "part-self-human",
         );
+        expect(
+            candidatesOf("speak-as", wrapper),
+            "代发面已移除，不该再有任何 speak-as 候选浮层（D-1882③）",
+        ).toBeNull();
         wrapper.unmount();
     });
 });

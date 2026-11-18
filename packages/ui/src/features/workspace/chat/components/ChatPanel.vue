@@ -1102,6 +1102,8 @@ async function handleSend(
         content,
         attachments,
         branchId,
+        // task-55（D-1882③）：composer 的「代发身份」入口已移除 ⇒ speakAsParticipantId 恒 undefined，
+        // 通路保留给 wire 能力与历史调用方（队列重放 :1429 / 深链 / 未来恢复入口），useSSE 只在真值时写 body。
         asParticipantId: speakAsParticipantId,
         cc,
         toParticipantIds,
@@ -1281,6 +1283,10 @@ async function continueFollowUpQueue() {
  * 输入框的 `send` 事件现在带第三个参数（`asParticipantId`，D23-27 代发 / M5b to）与第四个参数
  * （`cc`，M5b 旁听名单）。`handleSend` 的第三个位置是 `branchIdOverride`（队列流程在用），
  * 所以这里显式转接，避免"代发 id 被当成 branchId"这种静默错位。
+ *
+ * <p>task-55（D-1882③）：composer 不再渲染代发身份入口 ⇒ 第 3 位现在恒为 undefined。
+ * **参数位与这条显式转接必须留着** —— 它正是那类静默错位的唯一防线（判据见
+ * `__tests__/ChatPanel.spec.ts` 的位置参数用例），删了它等于把防错降级成靠运气。</p>
  */
 function onInputSend(
     content: string,

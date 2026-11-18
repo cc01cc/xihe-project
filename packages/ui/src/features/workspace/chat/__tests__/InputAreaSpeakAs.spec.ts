@@ -4,17 +4,23 @@ import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import InputArea from "../components/InputArea.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
-import { useAuthStore } from "../../../../stores/auth";
 
 /**
- * D23-27「代发」下拉的单元契约。
+ * task-55（D-1882③）：composer 的「代发身份」入口**已移除** —— 本文件从「入口行为契约」改写为
+ * 「入口缺席 + wire 不带 as + TO 未被牵连」三组钉子。
  *
- * store 被替换为受控替身：这里只验证**渲染与发送契约**（显隐、候选、默认值、emit 的第三个参数），
- * 数据来源（`selfOwned` 归约、fail-closed）在 `stores/__tests__/sessionParticipants.spec.ts` 里验证。
+ * <p>为什么不干脆删掉这个 spec：删掉断言 = 下一个人没有东西挡他重新加回入口（D-1879 同一课，
+ * 与「判据先行、产品缺失」互为反面）。这里钉的是**移除本身**，不是旧行为的残留。</p>
+ *
+ * <p>wire 能力仍然保留：`emit("send")` 的第 3 位、ChatPanel → SSEStream → useSSE 的
+ * `asParticipantId` 通路一律未动（本 UI 恒传 undefined ⇒ 字段省略）；排队发送（emit("queue")）
+ * 走同一段代码与同一个 undefined，故不再单列用例。数据来源（`selfOwned` 归约、fail-closed）
+ * 仍在 `stores/__tests__/sessionParticipants.spec.ts` 验证 —— store 面本卡未动。</p>
  */
 const storeState = vi.hoisted(() => ({
     canSpeakAs: false,
     speakAsCandidates: [] as SessionParticipantView[],
+    participants: [] as SessionParticipantView[],
     ensureLoaded: vi.fn<(id: string | null) => Promise<void>>(),
 }));
 
@@ -93,107 +99,93 @@ function mountInputArea() {
     });
 }
 
-/** task-102：本 spec 里「我自己的真人行」用的 user id（`HUMAN.principalId === user id`）。 */
-const SELF_USER_ID = "77777777-7777-4777-8777-777777777777";
-
 beforeEach(() => {
     setActivePinia(createPinia());
     storeState.canSpeakAs = false;
     storeState.speakAsCandidates = [];
+    storeState.participants = [];
     storeState.ensureLoaded.mockReset();
     storeState.ensureLoaded.mockResolvedValue(undefined);
 });
 
-describe("InputArea speak-as entry (PLAN-0623 D23-27)", () => {
-    // 裁定 2：speakAs=false ⇒ **不渲染**（不是禁用）。渲染一个永远点不动的入口只会让人以为坏了。
-    it("renders no speak-as entry at all when the capability is off", async () => {
-        storeState.canSpeakAs = false;
-        storeState.speakAsCandidates = [participant({ participantId: "self" })];
-        const wrapper = mountInputArea();
-        await flushPromises();
-
-        expect(wrapper.find('[data-testid="speak-as-bar"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="speak-as-input"]').exists()).toBe(false);
-    });
-
-    // 2026-11-04 用户裁定：原生 select 换成「输入 + 候选浮层」，候选在打字/↓ 后才出现。
-    it("lists only the candidates the store exposes", async () => {
+describe("InputArea · task-55 代发身份入口已移除（D-1882③）", () => {
+    function mountWithCandidates() {
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = [
             participant({ participantId: "self", displayName: "Ada Lovelace" }),
             participant({ participantId: "agent", principalKind: "AGENT", displayName: "Helper" }),
         ];
-        const wrapper = mountInputArea();
+        storeState.participants = [...storeState.speakAsCandidates];
+        return mountInputArea();
+    }
+
+    // 判据主体：**入口缺席**。能力开着、候选齐了也不许出现任何代发面（旧代码在这里会渲染 speak-as-bar）。
+    it("capabilities.speakAs 为真且候选齐备，也不渲染任何代发面", async () => {
+        const wrapper = mountWithCandidates();
         await flushPromises();
 
-        const field = wrapper.get('[data-testid="speak-as-input"]');
-        // 已选中的（默认 self）不进候选，避免把自己再选一次。
-        await field.setValue("h");
-        await flushPromises();
-        expect(
-            wrapper
-                .findAll('[data-testid="speak-as-option"]')
-                .map((option) => option.attributes("data-participant-id")),
-        ).toEqual(["agent"]);
-
-        await field.setValue("");
-        await field.trigger("keydown", { key: "ArrowDown" });
-        await flushPromises();
-        expect(
-            wrapper
-                .findAll('[data-testid="speak-as-option"]')
-                .map((option) => option.attributes("data-participant-id")),
-        ).toEqual(["agent"]);
+        for (const testid of [
+            "speak-as-bar",
+            "speak-as-input",
+            "speak-as-chip",
+            "speak-as-option",
+            "composer-speak-as-hint",
+            "speak-as-overridden-hint",
+        ]) {
+            expect(
+                wrapper.find(`[data-testid="${testid}"]`).exists(),
+                `代发面 ${testid} 不得再出现（入口已按 D-1882③ 移除）`,
+            ).toBe(false);
+        }
+        wrapper.unmount();
     });
 
-    it("defaults to my own HUMAN row, never to somebody else", async () => {
-        // task-102：把「自己的真人行」钉成 HUMAN + `principalId === 登录用户 id`。
-        // 理由：本卡在 TO/CC 上剔了 self，最容易的误改是**顺手也剔 `as`**（两套候选形状一样）。
-        // 不设 auth user 时那条误改在这里**不会红**（`isOwnHumanRow` 恒 false）—— 变异实测见
-        // `InputAreaToTargets.spec.ts` 的「as 候选不受本卡影响」用例与本卡报告 §变异。
-        useAuthStore().user = { id: SELF_USER_ID, email: "me@example.com" };
-        storeState.canSpeakAs = true;
-        storeState.speakAsCandidates = [
-            participant({ participantId: "agent", principalKind: "AGENT", displayName: "Helper" }),
-            participant({
-                participantId: "self",
-                principalKind: "HUMAN",
-                principalId: SELF_USER_ID,
-                displayName: "Ada Lovelace",
-            }),
-        ];
-        const wrapper = mountInputArea();
+    // 第二轴：wire。发送的第 3 位恒 undefined ⇒ useSSE 的 `if (asParticipantId)` 不写 body 字段。
+    it("发送不带 asParticipantId：第 3 位恒 undefined，即使候选里有人", async () => {
+        const wrapper = mountWithCandidates();
         await flushPromises();
-
-        const chip = wrapper.get('[data-testid="speak-as-chip"]');
-        expect(chip.attributes("data-participant-id")).toBe("self");
-        expect(chip.text()).toContain("Ada Lovelace");
-    });
-
-    it("sends the selected participant id as the third argument", async () => {
-        storeState.canSpeakAs = true;
-        storeState.speakAsCandidates = [
-            participant({ participantId: "self", displayName: "Ada Lovelace" }),
-            participant({ participantId: "agent", principalKind: "AGENT", displayName: "Helper" }),
-        ];
-        const wrapper = mountInputArea();
-        await flushPromises();
-
-        // 空格结束一个名字：不必点候选，敲完名字 + 空格即可换人。
-        const field = wrapper.get('[data-testid="speak-as-input"]');
-        await field.setValue("Helper");
-        await field.trigger("keydown", { key: " " });
-        await flushPromises();
-        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
-            "agent",
-        );
 
         await wrapper.get('[data-testid="chat-input"]').setValue("hello");
         await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
         await flushPromises();
 
-        const emitted = wrapper.emitted("send");
-        expect(emitted).toBeTruthy();
-        expect(emitted![0][2]).toBe("agent");
+        const args = wrapper.emitted("send");
+        expect(args).toBeTruthy();
+        expect(
+            args![0][2],
+            "代发入口移除后 UI 不得再带 asParticipantId（D-1882③）",
+        ).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    // 牵连面：本卡只移除代发，「发送（TO）」必须原样还在、照发第 5 位。
+    it("「发送（TO）」栏仍在且照发第 5 位 —— 移除只针对代发面", async () => {
+        const wrapper = mountWithCandidates();
+        await flushPromises();
+
+        expect(
+            wrapper.find('[data-testid="to-targets-input"]').exists(),
+            "TO 栏不得被本卡牵连删掉（谁作答现在只由 TO 回答）",
+        ).toBe(true);
+
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await wrapper.get('[data-testid="chat-input"]').setValue("hello");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+
+        const args = wrapper.emitted("send")!;
+        expect(args[0][4], "TO 载荷仍走第 5 位").toEqual(["agent"]);
+        expect(args[0][2], "同一一次发送不得再带 as").toBeUndefined();
+        wrapper.unmount();
+    });
+
+    // 防复活钉子：composer 顶层子元素里不再有代发栏 ⇒ 行数判据交给 task-50，这里只钉「代发面为零」。
+    it("整个 composer 内没有任何「代发身份」文案（入口缺席的可见面）", async () => {
+        const wrapper = mountWithCandidates();
+        await flushPromises();
+
+        expect(wrapper.text()).not.toContain("代发");
+        wrapper.unmount();
     });
 });

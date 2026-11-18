@@ -145,16 +145,21 @@ beforeEach(() => {
 
 describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
     // 2026-11-04 用户裁定：「发送 / 抄送」都是「输入 + 候选浮层」，空格结束一个名字。
-    it("发送栏默认选中 PRIMARY participant", async () => {
+    it("不再有代发默认选中：speak-as 面全缺，发送不带 as（task-55 / D-1882③）", async () => {
+        // 改前这条钉的是「代发栏自动默认选中 PRIMARY」；入口移除后判据换轴 —— **没有任何代发面**，
+        // 且发送的第 3 位恒 undefined（CP 靠会话 PRIMARY 行 + TO 决定归属）。
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = roster().filter((item) => item.selfOwned);
         const wrapper = mountInputArea();
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
-            PRIMARY_ID,
-        );
-        expect(wrapper.get('[data-testid="speak-as-chip"]').text()).toContain("Alpha");
+        expect(wrapper.findAll('[data-testid="speak-as-chip"]')).toHaveLength(0);
+        expect(wrapper.findAll('[data-testid="speak-as-input"]')).toHaveLength(0);
+
+        await wrapper.get('[data-testid="chat-input"]').setValue("hi");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("send")![0][2], "UI 恒不带 asParticipantId").toBeUndefined();
     });
 
     it("抄送默认收起为「抄送 +」，点击后才出现输入行", async () => {
@@ -234,7 +239,8 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         expect(wrapper.find('[data-testid="cc-unknown"]').exists()).toBe(true);
     });
 
-    it("发送栏改变不写回 Session 绑定（store 数据源不被触碰）", async () => {
+    it("改「发送（TO）」不写回 Session 绑定（store 数据源不被触碰）", async () => {
+        // task-55（D-1882③）：判据主体不变（改收件人只改本地态），只是原先动的是代发栏、现在动 TO 栏。
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = roster().filter((item) => item.selfOwned);
         storeState.participants = roster();
@@ -243,13 +249,14 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
 
         const participantsBefore = storeState.participants;
         const callsBefore = storeState.ensureLoaded.mock.calls.length;
-        await wrapper.get('[data-testid="speak-as-input"]').setValue("Ada Lovelace");
-        await wrapper.get('[data-testid="speak-as-input"]').trigger("keydown", { key: "Enter" });
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Ada Lovelace");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: "Enter" });
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
-            SELF_ID,
-        );
+        expect(
+            wrapper.findAll('[data-testid="speak-as-chip"]'),
+            "代发面不得复活（D-1882③）",
+        ).toHaveLength(0);
         expect(storeState.participants).toBe(participantsBefore);
         expect(storeState.ensureLoaded.mock.calls.length).toBe(callsBefore);
     });

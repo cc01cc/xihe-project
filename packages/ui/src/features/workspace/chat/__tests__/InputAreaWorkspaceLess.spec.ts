@@ -199,12 +199,14 @@ type CapabilityProbe = {
 };
 
 const CAPABILITY_PROBES: CapabilityProbe[] = [
-    // —— task-49 放开的三个收件人面：两种会话都必须渲染 ——
+    // —— task-49 放开的收件人面 × task-55 移除代发入口：三种格都有**显式期望**，不留空 ——
     {
-        capability: "代发身份（以某参与者身份发送）",
+        // task-55（D-1882③）：代发身份入口从 composer 移除，两种会话都是 absent。
+        // 这一行**不许删** —— 删掉它就等于把「代发面回来了」判为通过（表驱动的价值恰在显式负格）。
+        capability: "代发身份入口（task-55 已移除，只留 wire）",
         probe: '[data-testid="speak-as-bar"]',
-        workspace: "present",
-        workspaceLess: "present",
+        workspace: "absent",
+        workspaceLess: "absent",
     },
     {
         capability: "发送多选（TO）",
@@ -258,7 +260,7 @@ function surveyCapabilities(wrapper: ReturnType<typeof mountComposer>, kind: Ses
 }
 
 describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期望", () => {
-    it("独立会话：三个收件人面在、附件三件套与委派不在", async () => {
+    it("独立会话：两个收件人面在（代发入口已移除）、附件三件套与委派不在", async () => {
         const wrapper = mountComposer(standaloneRoute());
         await flushPromises();
 
@@ -266,7 +268,7 @@ describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期�
         const wrong = cells.filter((cell) => cell.expected !== cell.actual);
         expect(
             wrong,
-            "独立会话下这些格与期望不符（task-49 放开 TO/CC/代发，附件与委派仍禁用）",
+            "独立会话下这些格与期望不符（task-49 放开 TO/CC；task-55 移除代发入口；附件与委派仍禁用）",
         ).toEqual([]);
         wrapper.unmount();
     });
@@ -281,7 +283,7 @@ describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期�
         wrapper.unmount();
     });
 
-    it("表本身有判别力：14 格里负例恰好 4 格（删光负例 ⇒ 本用例红）", () => {
+    it("表本身有判别力：14 格里负例恰好 6 格（删光负例 ⇒ 本用例红）", () => {
         const cells = CAPABILITY_PROBES.flatMap((row) => [
             { session: "workspace" as const, expected: row.workspace },
             { session: "workspaceLess" as const, expected: row.workspaceLess },
@@ -291,8 +293,15 @@ describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期�
         expect(
             negatives,
             "负例格数变了：要么有人把「仍不支持」的能力放开，要么把表格改成了恒真断言",
-        ).toHaveLength(4);
-        // 恒真防护：负例只能出现在独立会话列 —— 若某天工作区会话也出负例，说明表的期望写反了。
-        expect(new Set(negatives.map((cell) => cell.session))).toEqual(new Set(["workspaceLess"]));
+        ).toHaveLength(6);
+        // 恒真防护升级（task-55 / D-1882③）：负例现在**跨两种会话**，原判据「负例只出现在独立会话列」
+        // 会直接把这次合法翻转判红，而放宽成「数量对就行」又会退化成恒真断言。
+        // 改法 = 按行归属点名：整行两格皆 absent 的**只许是**代发入口那一行。
+        const bothAbsent = CAPABILITY_PROBES.filter(
+            (row) => row.workspace === "absent" && row.workspaceLess === "absent",
+        ).map((row) => row.capability);
+        expect(bothAbsent).toEqual(["代发身份入口（task-55 已移除，只留 wire）"]);
+        expect(negatives.filter((cell) => cell.session === "workspace")).toHaveLength(1);
+        expect(negatives.filter((cell) => cell.session === "workspaceLess")).toHaveLength(5);
     });
 });

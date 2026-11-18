@@ -295,7 +295,11 @@ async function handleSend(
         branchId: string;
         attachments?: string[];
         toolMode?: "none" | "workspace";
-        /** D23-27："代发" —— 以该参与者身份发言（`speakAs` 能力 + 契约字段 `asParticipantId`）。 */
+        /**
+         * D23-27："代发" —— 以该参与者身份发言（`speakAs` 能力 + 契约字段 `asParticipantId`）。
+         * task-55（D-1882③）：composer 入口已移除 ⇒ 本 UI 路径恒不传；字段与 useSSE 的
+         * `if (asParticipantId)` 写入保留（wire 能力仍在，旧客户端与恢复入口都靠它）。
+         */
         asParticipantId?: string;
         /** PLAN-0630 M5b (D30-14)：旁听名单（participantId 数组），契约字段 `cc`。 */
         cc?: string[];
