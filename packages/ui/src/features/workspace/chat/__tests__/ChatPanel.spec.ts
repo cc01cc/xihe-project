@@ -47,6 +47,8 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             listSessionRuns: vi.fn<typeof api.listSessionRuns>(),
             getSessionDispatchQueue: vi.fn<typeof api.getSessionDispatchQueue>(),
             bindSessionDefaults: vi.fn<typeof api.bindSessionDefaults>(),
+            // task-29：首条消息后的那一次会话重读走这里，必须可计数（否则测不到「只读一次」）。
+            getSession: vi.fn<typeof api.getSession>(),
         },
     };
 });
@@ -221,6 +223,20 @@ beforeEach(() => {
         page: 0,
         size: 100,
         runs: [],
+    });
+    // task-29：默认给一份「重读回来的会话」，让不关心这条路径的用例（task-49 发送边界）
+    // 不会因为重读拿到 undefined 而多打一行 warn。
+    vi.mocked(api.getSession).mockReset().mockResolvedValue({
+        id: SESSION_ID,
+        title: "T",
+        workspaceId: "workspace-1",
+        agentPrincipalId: "00000000-0000-4000-8000-0000000000a1",
+        modelProvider: "deepseek",
+        modelName: "deepseek-flash",
+        providerConnectionId: "conn-1",
+        connectionRevision: 2,
+        createdAt: "2026-11-04T10:00:00Z",
+        updatedAt: "2026-11-04T10:00:00Z",
     });
 });
 
@@ -1486,6 +1502,135 @@ describe("task-49 独立会话预剥离（2a：函数边界，非 wire）", () =
         const [, options] = sendMessage.mock.calls[0] as [string, Record<string, unknown>];
         expect(options.attachments, "独立会话附件仍 400（D-1436 裁定 3）⇒ 必须剥").toBeUndefined();
         expect(vi.mocked(toast.warning), "剥了东西就必须说出来").toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-29（D-1866 后续）：**首条消息之后**重读该会话一次。
+ *
+ * <p>事实：CP 已在首条 user-facing 消息落库的同一事务里把默认标题改成派生标题（`0cc9fb449`），
+ * 但仓库没有 session-updated SSE、`POST /chat` 响应也不带标题 ⇒ 不重读就得刷新页面/切会话才见新名。
+ * 这里钉的是 UI 欠下的那一次重读；wire 层（真浏览器 ≤2 s、不整页刷新）由 Playwright 另证。</p>
+ *
+ * <p>四条判据：① 首条消息 ⇒ **恰好一次** `GET /sessions/{id}`，新标题落进侧栏渲染的 live 投影；
+ * ② 后续消息 ⇒ **不再重读**（每条都读等于每次对话多拉一遍会话投影）；③ 有历史的会话不算首条
+ * ⇒ 零重读；④ 重读失败只留痕、不改投影、不重试。</p>
+ */
+describe("task-29 首条消息后重读会话标题（零刷新）", () => {
+    const DERIVED = "解释一下这个概念";
+
+    function sessionRecord(title: string) {
+        return {
+            id: SESSION_ID,
+            title,
+            workspaceId: "workspace-1",
+            agentPrincipalId: "00000000-0000-4000-8000-0000000000a1",
+            modelProvider: "deepseek",
+            modelName: "deepseek-flash",
+            providerConnectionId: "conn-1",
+            connectionRevision: 2,
+            createdAt: "2026-11-04T10:00:00Z",
+            updatedAt: "2026-11-04T10:00:00Z",
+        };
+    }
+
+    /** 默认标题 + 已绑定的**空会话**（= 用户刚点「新建对话」落进侧栏的那个状态）。 */
+    async function mountUnnamedPanel() {
+        const sendMessage = vi.fn<
+            (...args: unknown[]) => Promise<{ runId: string; messageId: string; status: string }>
+        >(async () => ({
+            runId: RUN_ID,
+            messageId: "55555555-5555-4555-8555-555555555555",
+            status: "thinking",
+        }));
+        useSessionStore().applySessionRecord(
+            sessionRecord(i18n.global.t("workspace.sessionDefaultTitle")) as never,
+        );
+        // 重读回来的是派生标题（CP 的 durable 事实）⇒ 钉这一次读确实把新名带回投影。
+        vi.mocked(api.getSession).mockResolvedValue(sessionRecord(DERIVED));
+        const router = createRouter({
+            history: createMemoryHistory(),
+            routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div />" } }],
+        });
+        const wrapper = mount(ChatPanel, {
+            props: { sessionId: SESSION_ID },
+            global: {
+                plugins: [i18n, router],
+                stubs: {
+                    // 桩"发送出口"：sendMessage 成功返回 ⇒ 走完整 submitMessage 路径。
+                    SSEStream: { template: "<span />", methods: { sendMessage } },
+                    InputArea: { template: "<span />", methods: { clearDraft: () => undefined } },
+                    MessageList: true,
+                    SessionPolicyControls: true,
+                    SessionContextTemplate: true,
+                    ContextSourcesU1: true,
+                },
+            },
+        });
+        await flushPromises();
+        // 只统计发送之后的重读；挂载期若有人替我们读了一次，也应该被算进"每条都读"的账。
+        vi.mocked(api.getSession).mockClear();
+        return { wrapper, sendMessage };
+    }
+
+    async function emitSend(wrapper: Awaited<ReturnType<typeof mountUnnamedPanel>>["wrapper"]) {
+        wrapper.findComponent(InputArea).vm.$emit("send", DERIVED);
+        await flushPromises();
+    }
+
+    it("首条消息发出后恰好重读一次，新标题进入侧栏读的 live 投影", async () => {
+        const { wrapper } = await mountUnnamedPanel();
+        await emitSend(wrapper);
+
+        expect(api.getSession).toHaveBeenCalledTimes(1);
+        expect(api.getSession).toHaveBeenCalledWith(SESSION_ID);
+        expect(
+            useSessionStore().sessions.find((item) => item.id === SESSION_ID)?.title,
+            "重读回来的派生标题必须落进侧栏渲染的那份投影",
+        ).toBe(DERIVED);
+        wrapper.unmount();
+    });
+
+    it("后续消息不得再重读（每条都读 = 每次对话多拉一遍会话投影）", async () => {
+        const { wrapper } = await mountUnnamedPanel();
+        await emitSend(wrapper);
+        await emitSend(wrapper);
+        await emitSend(wrapper);
+
+        expect(api.getSession, "重读只属于首条消息").toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+
+    it("已有历史的会话不是首条 ⇒ 零重读", async () => {
+        const { wrapper } = await mountUnnamedPanel();
+        useChatStore().addMessage(SESSION_ID, {
+            id: "88888888-8888-4888-8888-888888888888",
+            sessionId: SESSION_ID,
+            role: "user",
+            content: "earlier",
+            timestamp: "2026-11-04T10:00:00Z",
+        });
+        await emitSend(wrapper);
+
+        expect(api.getSession).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("重读失败：不改投影、不重试，只留痕", async () => {
+        const { wrapper } = await mountUnnamedPanel();
+        vi.mocked(api.getSession).mockRejectedValueOnce(new Error("network down"));
+        await emitSend(wrapper);
+
+        expect(api.getSession).toHaveBeenCalledTimes(1);
+        expect(
+            useSessionStore().sessions.find((item) => item.id === SESSION_ID)?.title,
+            "读失败不得把默认名抹成 undefined，也不得改动会话行",
+        ).toBe(i18n.global.t("workspace.sessionDefaultTitle"));
+
+        // 失败后也不重试：重试判据（发送前无消息）在乐观消息入表后已不成立。
+        await emitSend(wrapper);
+        expect(api.getSession, "重读按会话至多一次").toHaveBeenCalledTimes(1);
         wrapper.unmount();
     });
 });

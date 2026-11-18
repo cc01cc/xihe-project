@@ -1294,6 +1294,38 @@ function onInputSend(
     return handleSend(content, attachments, undefined, asParticipantId, cc, toParticipantIds);
 }
 
+/**
+ * task-29（D-1866 后续）：首条消息发出后把该会话**重读一次**。
+ *
+ * <p>事实：CP 在首条 user-facing 消息落库的**同一事务、同一 Session 行锁内**把默认标题改成
+ * 规则派生标题（`0cc9fb449`，`SessionTitleDeriver.applyToFirstMessage`）⇒ `POST /chat` 返回 202
+ * 时新标题已经 durable。但仓库里**没有 session-updated SSE 事件**，`POST /chat` 响应也**不带标题**
+ * （把标题塞进响应要动 OpenAPI 契约面，按 `xc-cross-cutting-checklist` 评估后裁定不做）⇒
+ * 侧栏要刷新页面或切会话才看到新名字。标题是已 durable 的事实，UI 只欠一次重读：
+ * `loadSession` → `applySessionRecord` → `upsertSession` 原地替换 live 投影，侧栏当帧更新，
+ * **不整页刷新**。</p>
+ *
+ * <p>为什么按「首条」而不是每条：每条消息都重读等于每次对话多拉一遍会话投影（判据 3）。
+ * 判据在**发送之前**取 `messages.length === 0` —— 发送成功后本地已经有这条乐观消息了。
+ * `Set` 是第二道闸：历史加载失败的老会话不会被误判成首条并反复重读。</p>
+ *
+ * <p>失败只留痕、不弹错：标题在 durable 侧已经改好，下一次列表刷新（切会话 / 手动改名）照样带上，
+ * 一次 cosmetic 重读失败不值得打断用户 —— 也不重试，因为重试的判据（`hadNoMessages`）在乐观消息
+ * 入表后就不成立了，硬留一个撤销分支只会变成没人走的代码路。</p>
+ */
+const sessionRereadsAfterFirstMessage = new Set<string>();
+
+function rereadSessionAfterFirstMessage(sessionId: string, hadNoMessages: boolean): void {
+    if (!hadNoMessages || sessionRereadsAfterFirstMessage.has(sessionId)) return;
+    sessionRereadsAfterFirstMessage.add(sessionId);
+    void sessionStore.loadSession(sessionId).catch((cause: unknown) => {
+        logger.warn("Re-reading the session after its first message failed", {
+            sessionId,
+            cause,
+        });
+    });
+}
+
 async function submitMessage(input: {
     content: string;
     attachments?: AttachmentFile[];
@@ -1330,6 +1362,8 @@ async function submitMessage(input: {
         }
     }
     const id = props.sessionId;
+    // task-29：首条消息的判据必须在发送**之前**取（发送后乐观消息已入表）。
+    const hadNoMessages = messages.value.length === 0;
 
     const fileIds = attachments
         ?.map((a) => a.fileId)
@@ -1377,6 +1411,8 @@ async function submitMessage(input: {
             : {}),
     });
     inputComponent.value?.clearDraft();
+    // task-29：首条消息落库即命名（D-1866）⇒ 这一次重读把新标题带回侧栏，不刷页面、不切会话。
+    rereadSessionAfterFirstMessage(id, hadNoMessages);
 }
 
 async function handleRetry(messageId: string) {
