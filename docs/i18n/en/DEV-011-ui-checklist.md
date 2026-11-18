@@ -585,6 +585,10 @@ the target, **settle before reading**, then read `getComputedStyle`:
 > ⇒ **Criterion**: a reading must state **which element box it measures** (including `padding` and positioning context),
 > and one quantity must come with **at least a two-layer comparison** (own layer plus parent or child), otherwise
 > "fixed" cannot be told apart from "the cascade filled it back in".
+>
+> **Decide the drawing layer first and read both properties (`task-75`, measured pitfall)**: a focus ring may be drawn by the global `@layer base` rule `*:focus-visible { outline }` (`main.css:235`) or by the component's own `focus-visible:ring-*` utility. A reading must give `outline` / `outlineStyle` **and** `boxShadow` / `--tw-ring-shadow` together, and state which rule draws it on that surface.
+> Measured counter-example: the collapsed-region "technical details" trigger has **no** ring utility ⇒ `boxShadow` is always `none` and `--tw-ring-shadow` always `0 0 #0000`, while the ring really exists (`outline: 2px solid`). **Reading only `box-shadow` turns "ring present" into "ring absent"** — it already happened once: two delivered frames shipped with a `boxShadow=none` reading line.
+> **The genuinely invisible sample is the double `none`**: `styles/dockview-theme.css:32` records `outline-style:none` **and** `box-shadow:none` inside dockview regions — that is what an invisible focus indicator looks like.
 
 1. **inner**: `outlineStyle == "none"` **and** `boxShadow == "none"`;
 2. **outer**: a ring in `boxShadow` **or** `outlineStyle != "none"` — never both;
@@ -635,10 +639,20 @@ session must *say* why two controls are missing) and the one-shot `role="status"
 | Required field | Value for this criterion |
 | --- | --- |
 | **What to measure** | number of regex hits in rendered text, **naming both the matching shape and the offending string** |
-| **Where to measure** | `document.querySelector("main").innerText`. **Not `textContent`** — it swallows `sr-only`, `display:none` subtrees and script text ⇒ false positives |
+| **Where to measure** | Two axes: (1) `document.querySelector("main").innerText` — the enforce axis, unchanged legacy ledger; (2) every direct child subtree of `document.body` that does **not** contain `main` (the portal family), read per block with **its identity attached** (report-only by default; `--portals-enforce` merges it into the ledger). Root priority `main` → the face's declared `container` → `body` fallback, and **which root was actually used must land in the reading**: `/members` has no `<main>` by design (`OrgMembersView.vue:40`), so the old version silently fell back to `body` and mixed the whole navigation chrome into the 2937 characters while the report only printed a character count. **Not `textContent`** — it swallows `sr-only`, `display:none` subtrees and script text ⇒ false positives |
 | **Which layers to read** | (1) **rendered-text layer = the only criterion layer**; (2) component source layer (`t()` key reference integrity, owned by `lint:i18n`); (3) i18n source layer (**for locating only, never a criterion**). **Every reading must state which layer it read** |
 | **When to measure** | after route `networkidle` **plus expanding every `role=tab`**; one-shot `role="status"` notices and toasts **do not count** (transient by design) |
-| **What red looks like** | name the surface / shape / offending string, e.g. `条目 noDocList 命中「类名」形态：RagProxyController`. **It must be able to go red**: `task-47` ran the mutation test — injecting `RagProxyController` back into body copy turns 2 assertions red while the other 6 stay green |
+| **What red looks like** | name the surface / shape / offending string, e.g. `条目 noDocList 命中「类名」形态：RagProxyController`. **It must be able to go red**: `task-47` ran the mutation test — injecting `RagProxyController` back into body copy turns 2 assertions red while the other 6 stay green. `task-75` adds the **counter-example anchor** `--anchor`: inject one leak-shaped string visible only inside a portal subtree, with both sides pinned — before the change the `main` root must report 0 hits (proving the blind spot is real), after the change the portal axis must report it (proving convergence). **A 0-hit reading after the change is not a convergence proof** |
+
+The blind spot is conditioned by **viewport and interaction together** (`task-75`, measured): the same code mounts in different places at 1920 vs 390 (the mobile changes Sheet hangs off `document.body`, the desktop dock lives inside `main`), and a portal **only exists once it has been opened**. Three optional matrix fields were added:
+
+| Field | Purpose | Measured reading |
+| --- | --- | --- |
+| `viewport` | per-face viewport (the run default stays `1920x1080`) | `#mobile-changes-sheet` only appears at 390 |
+| `open` | which selectors must be clicked before this face exists | without an `open` step both the 1920 and 390 surveys report portal block count **0** — the gate never opened the door; the surface was not absent |
+| `container` | the face's own content root when there is no `main` (second root tier) | `/members` resolves to `[data-testid=`org-members-page`]` instead of swallowing navigation chrome |
+
+⇒ **Criterion**: a new portal / overlay face must ship `viewport` + `open` (or `container`) together; adding only the root axis yields fake coverage with a count of 0.
 
 ### 14.2 Regex whitelist (the only allowed expression; no string enumeration)
 

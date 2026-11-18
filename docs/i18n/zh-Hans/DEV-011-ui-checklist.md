@@ -576,6 +576,10 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 >
 > ⇒ **判据**：读数必须写明「量的是哪一层元素的盒子」（含 `padding` 与定位上下文），且**同一量要给出至少两层的对照**
 > （自己这层 + 父/子一层），否则无法区分「修好了」与「被级联补位了」。
+>
+> **绘制层必须先定，两个属性都读（`task-75` 实测踩坑）**：焦点环可能由 `@layer base` 的全局 `*:focus-visible { outline }`（`main.css:235`）画，也可能由组件自带的 `focus-visible:ring-*` utility 画。读数必须**同时**给出 `outline` / `outlineStyle` 与 `boxShadow` / `--tw-ring-shadow`，并写明该面的环由哪条规则画。
+> 实测反例：折叠区「技术详情」触发器**没有** ring utility ⇒ `boxShadow` 恒 `none`、`--tw-ring-shadow` 恒 `0 0 #0000`，而环真实存在（`outline: 2px solid`）。**只读 `box-shadow` 会把「有环」判成「无环」** —— 已经发生过一次：两张交付图配着一行 `boxShadow=none` 的读数。
+> **真不可见的样本是双 `none`**：`styles/dockview-theme.css:32` 记录 dockview 区域内 `outline-style:none` **且** `box-shadow:none`，那才叫焦点不可见。
 
 1. **内层**：`outlineStyle == "none"` **且** `boxShadow == "none"`；
 2. **外层**：`boxShadow` 含环**或** `outlineStyle != "none"`，二者**只取其一**；
@@ -611,10 +615,20 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 | 必填项 | 本条的取值 |
 | --- | --- |
 | **量什么** | 渲染文本过 9 条正则的命中数，**命中项与命中串都要点名** |
-| **在哪量** | `document.querySelector("main").innerText`。**不用 `textContent`** —— 它把 `sr-only`、`display:none` 子树与脚本串一起吞进来 ⇒ 假阳 |
+| **在哪量** | 两把轴：① `document.querySelector("main").innerText`（判红轴，老账不变）；② `document.body` 直接子层里**不含 `main`** 的每棵子树（portal 族）逐块取 `innerText`，**每块带身份**（默认只报不判红，`--portals-enforce` 才并账）。取文根优先级 `main` → 面声明的 `container` → `body` 兜底，**实际用了哪一把必须落进读数**：`/members` 按设计没有 `<main>`（`OrgMembersView.vue:40`），旧版静默落 body，2937 字符里混着整条导航 chrome，报告却只写字符数。**不用 `textContent`** —— 它把 `sr-only`、`display:none` 子树与脚本串一起吞进来 ⇒ 假阳 |
 | **在哪些层读** | ① **渲染文本层 = 唯一判据层**；② 组件源码层（`t()` 键引用完整性，归 `lint:i18n`）；③ i18n 源层（**仅供定位，不作判据**）。**读数必须写明读的是哪一层** |
 | **何时量** | 路由 `networkidle` 后 **+ 逐个展开 `role=tab`**；一次性 `role="status"` 与 toast **不计**（按设计是临时的） |
-| **红的样子** | 逐条点名「面 / 正则名 / 命中串」，例：`条目 noDocList 命中「类名」形态：RagProxyController`。**必须能红**：`task-47` 已做变异验证 —— 把 `RagProxyController` 注回正文，2 条断言转红、其余 6 绿 |
+| **红的样子** | 逐条点名「面 / 正则名 / 命中串」，例：`条目 noDocList 命中「类名」形态：RagProxyController`。**必须能红**：`task-47` 已做变异验证 —— 把 `RagProxyController` 注回正文，2 条断言转红、其余 6 绿。`task-75` 再加**反例锚点** `--anchor`：把一条只在 portal 内可见的泄露串注入 body 级子树，判据两侧都钉 —— 改前（`main` 一把根）必须 0 命中（证盲区真实存在），改后（portal 轴）必须报出（证收敛）**。「改后 0 命中」不算通过 |
+
+盲区是**视口 + 交互两个条件**一起决定的（`task-75` 实测）：同一段代码在 1920 与 390 下挂载位置不同（移动变更 Sheet 挂 `document.body`，桌面 dock 在 `main` 内），而 portal **只在被点开之后存在**。所以矩阵加三个可选字段：
+
+| 字段 | 作用 | 实测读数 |
+| --- | --- | --- |
+| `viewport` | 该面单独换视口（整轮默认仍是 `1920x1080`） | 390 下 `#mobile-changes-sheet` 才出现 |
+| `open` | 该面要先点哪些选择器才存在 | 无 `open` 步骤时，1920 与 390 两轮普查里 portal 块数**恒 0** —— 是门没把门点开，不是浮层不存在 |
+| `container` | 该面无 `main` 时用自己的内容根（取文根第二档） | `/members` 落到 `[data-testid=`org-members-page`]`，不再混入导航 chrome |
+
+⇒ **判据**：新增一个 portal / 浮层面，必须同时给 `viewport` + `open`（或 `container`）；只加取文根轴不加交互步骤 = 覆盖数为 0 的假覆盖。
 
 ### 14.2 正则白名单（唯一表达方式，禁枚举字符串）
 
