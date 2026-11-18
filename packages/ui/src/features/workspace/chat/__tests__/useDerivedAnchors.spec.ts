@@ -177,4 +177,31 @@ describe("useDerivedAnchors (task-1 wiring)", () => {
         expect(rows).toHaveLength(1);
         expect(rows[0]!.attributes("data-name")).toBe("none");
     });
+
+    /**
+     * task-70 双向钉（来自一次真实读数，不是假想）：395 个文件全绿的一轮 `test:unit` 仍然
+     * `exit 1` —— 因为 `useDerivedAnchors` 的 watcher 抛了 `Cannot read properties of undefined
+     * (reading 'map')`，vitest 记 1 个 unhandled error。成因：读面空壳（`{}`）被当成完整载荷。
+     *  正向 —— 空壳/老版本载荷 ⇒ 安静地没有 anchor（不抛、不崩、不吞错到看不见：这里断言的是
+     *          不抛，抛了这条就红）；
+     *  反向 —— 也不许因为缺席就凭空补拉会话列表 / 伪造 id。
+     */
+    it("tolerates a partial derived-state payload: no anchors, no crash, no fabricated fetch", async () => {
+        const pinia = createPinia();
+        setActivePinia(pinia);
+        seedAuth();
+        const store = useSessionStore();
+        store.sessions = [session({ id: "parent" })];
+        const loadSessions = vi.spyOn(store, "loadSessions").mockResolvedValue(undefined as never);
+        vi.spyOn(api, "getWorkspaceAgents").mockResolvedValue(agents());
+
+        const wrapper = mount(Harness, {
+            props: { sessionId: "parent", derivedState: {} as SessionDerivedStateResponse },
+        });
+        await flushPromises();
+
+        expect(wrapper.findAll("[data-session]"), "空壳 ⇒ 没有 anchor").toEqual([]);
+        expect(loadSessions, "缺席不是「有新子会话」的证据 ⇒ 不许补拉").not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
 });

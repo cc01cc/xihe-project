@@ -174,7 +174,14 @@ describe("我的技能面板（T2b.3）", () => {
         wrapper.unmount();
     });
 
-    it("无权写：导入按钮仍在 DOM、disabled，且理由文本点名 MANAGE_PERSONAL_SKILLS", async () => {
+    /**
+     * task-70 两面判据（D-1879 同口径，只留一面就是 F-17 的原始形态）：
+     *  正向 —— 理由说**人话**（用户真正读到的那句，i18n `resources.skills.importDisabledReason`）；
+     *  反向 —— 原子常量 `MANAGE_PERSONAL_SKILLS` 不许回流上屏（i18n 里该常量今日 0 命中，
+     *          它只属于代码侧判定，写进文案就是泄露实现细节）。
+     * 入口面不变：按钮仍在 DOM、disabled、理由行在页面上（键盘/读屏/触屏都拿得到）。
+     */
+    it("无权写：导入按钮仍在 DOM、disabled，理由说人话且不点名原子常量", async () => {
         const wrapper = mountPanel();
         await nextTick();
         await nextTick();
@@ -185,8 +192,11 @@ describe("我的技能面板（T2b.3）", () => {
         // 理由必须**在页面上**（只写 `title` 的话键盘/读屏/触屏都拿不到）。
         const reason = wrapper.find("[data-testid='personal-skills-import-disabled-reason']");
         expect(reason.exists()).toBe(true);
-        expect(reason.text()).toContain("MANAGE_PERSONAL_SKILLS");
-        expect(button.attributes("title")).toContain("MANAGE_PERSONAL_SKILLS");
+        expect(reason.text(), "正向：用户读到的那句人话").toContain("写入需要「管理个人技能」权限");
+        expect(button.attributes("title")).toContain("写入需要「管理个人技能」权限");
+        // 反向：常量不许回到任何一面（可见文本、title）。
+        expect(reason.text()).not.toContain("MANAGE_PERSONAL_SKILLS");
+        expect(button.attributes("title")).not.toContain("MANAGE_PERSONAL_SKILLS");
         wrapper.unmount();
     });
 
@@ -276,7 +286,10 @@ describe("我的技能面板（T2b.3）", () => {
         expect(
             wrapper.find("[data-testid='personal-skills-import-disabled-reason']").exists(),
         ).toBe(true);
-        expect(create.attributes("title")).toContain("MANAGE_PERSONAL_SKILLS");
+        expect(create.attributes("title"), "同一句人话（共用理由段落，不另造文案）").toContain(
+            "写入需要「管理个人技能」权限",
+        );
+        expect(create.attributes("title")).not.toContain("MANAGE_PERSONAL_SKILLS");
         wrapper.unmount();
     });
 

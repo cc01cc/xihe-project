@@ -67,13 +67,22 @@ export function useDerivedAnchors(options: {
         loadSessionsQuietly();
     }
 
-    /** derived-state 提到的子会话 id（两条轴合并；顺序无关）。 */
+    /**
+     * derived-state 提到的子会话 id（两条轴合并；顺序无关）。
+     *
+     * <p>task-70：两个轴都按「可能缺席」处理。这是**投影**，不是契约校验点：读面返回空壳/
+     * 老版本载荷时，anchor 区该安静地不出东西，而不是在 watcher 里抛 unhandled rejection
+     * （实测：夹具给 `{}` 时 vitest 记 1 个 unhandled error，整轮 exit 1，测试全绿也没用）。
+     * 与同文件 `for (const agent of agents ?? [])` 一致：可缺省的一律当空集合，绝不伪造 id。</p>
+     */
     function derivedChildIds(): string[] {
         const derived = options.derivedState();
         if (!derived) return [];
+        const children = Array.isArray(derived.activeChildren) ? derived.activeChildren : [];
+        const notices = Array.isArray(derived.terminalNotices) ? derived.terminalNotices : [];
         return [
-            ...derived.activeChildren.map((child) => child.childSessionId),
-            ...derived.terminalNotices.map((notice) => notice.childSessionId),
+            ...children.map((child) => child.childSessionId),
+            ...notices.map((notice) => notice.childSessionId),
         ];
     }
 

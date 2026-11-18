@@ -207,9 +207,15 @@ describe("ResourceDetailView — 凭据（USER/WORKSPACE/INSTANCE）", () => {
         await flushPromises();
 
         expect(wrapper.get('[data-testid="resource-detail-body"]').text()).toContain("平台令牌");
-        expect(wrapper.get('[data-testid="resource-detail-note"]').text()).toContain(
-            "实例层凭据没有引用/审计读面",
-        );
+        // task-70：task-57（`b1466c698`，D-1879）把这句里「读面/契约」的行话去掉了，**语义没变**：
+        // 实例层凭据的两块数据（谁在引用、审计记录）都不存在，所以两个区块不渲染 —— 但「不渲染」
+        // 不等于「没有引用」，这句必须留着，否则用户会把「没展示」读成「没人用」。
+        // 所以这里钉**语义三件**而不是旧长句，措辞可改、承诺不可丢。
+        const note = wrapper.get('[data-testid="resource-detail-note"]').text();
+        expect(note).toContain("实例层凭据");
+        expect(note).toContain("谁在引用它");
+        expect(note).toContain("审计记录");
+        expect(note, "「没展示」不许被读成「没有引用」").toContain("这不等于");
         expect(apiMock.listCredentials).not.toHaveBeenCalled();
         expect(apiMock.getCredentialReferences).not.toHaveBeenCalled();
         // task-254：实例层分支一行未动 —— 仍然只打 `/instance/credentials` 那一条读面。

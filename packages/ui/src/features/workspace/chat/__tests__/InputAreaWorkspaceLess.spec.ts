@@ -109,6 +109,9 @@ const messages = {
                 recipientHint: "↑↓ 选择 · Enter 确认 · Tab 补全 · Esc 关闭",
                 recipientEmpty: "没有匹配的成员",
                 recipientUnknown: "没有找到这个成员",
+                // task-38 C3（bc81fff811）：抄送空候选时的常驻说明。夹具与产品同文；
+                // 缺这条键时整支 spec 会在挂载期被裸键护栏判红（task-70 实测）。
+                ccEmptyHint: "暂无可抄送成员：把成员加进这个会话后就能抄送",
             },
             delegation: { button: "委派", reasonUnknown: "未知原因" },
         },
@@ -163,6 +166,23 @@ describe("task-555 独立会话的附件入口", () => {
         const hint = wrapper.find('[data-testid="composer-workspace-less-hint"]');
         expect(hint.exists(), "必须给出可见原因，不能只是少几个按钮").toBe(true);
         expect(hint.text()).toContain("独立会话不支持");
+    });
+
+    /**
+     * task-70 正向钉人话 + 反向钉入口：task-38 C3 把「抄送无可选成员」做成**常驻禁用入口 + 一句说明**
+     * （产品侧 `cc-expand-empty` / sr-only `cc-empty-hint`）。两件事一起钉：
+     *  正向 —— 用户看得到那句人话（不是只有 aria-disabled 的灰按钮）；
+     *  反向 —— 入口不许回流成「静默消失」（C3 之前空候选就是把控件去掉），且必须仍可聚焦。
+     */
+    it("抄送无可选成员：常驻禁用入口 + 同一句人话说明（不静默消失）", () => {
+        const wrapper = mountComposer(workspaceRoute());
+        const entry = wrapper.find('[data-testid="cc-expand-empty"]');
+        expect(entry.exists(), "空候选不许把入口整块去掉").toBe(true);
+        expect(entry.attributes("aria-disabled")).toBe("true");
+        const hint = wrapper.find('[data-testid="cc-empty-hint"]');
+        expect(hint.exists(), "禁用入口必须带可读原因（sr-only 也算）").toBe(true);
+        expect(hint.text()).toContain("暂无可抄送成员");
+        wrapper.unmount();
     });
 
     it("工作区会话（负向对照）：三个附件入口必须都在", () => {

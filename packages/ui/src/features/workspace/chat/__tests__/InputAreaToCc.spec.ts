@@ -409,14 +409,27 @@ describe("composer 打磨（2026-11-04 用户裁定）", () => {
         await flushPromises();
 
         const textarea = wrapper.get('[data-testid="chat-input"]');
-        // task-30：环的**落点**（只落在 input、不落在容器）不变，形态改成控件族标准
-        // `ring-3 + ring-ring/50` —— 旧值 ring-1/60 在近黑的 `--ring` 下就是用户看到的那圈硬黑框。
-        // 这条断言原来钉的是 ring-1，属于"钉住了错误形态"：它让孤例活了下来（只改行为不改外观）。
-        expect(textarea.classes().join(" ")).toContain("focus-visible:ring-3");
-        expect(textarea.classes().join(" ")).toContain("focus-visible:ring-ring/50");
-        // 全宽容器（textarea 的祖先）不得再把 focus-within ring 套成满框。
-        const composerBox = textarea.element.parentElement?.parentElement;
-        expect(composerBox?.className ?? "").not.toContain("focus-within:ring");
+        // task-38 C4（bc81fff811，2026-11-19）**有意**把焦点视觉收成一套：环只由外层容器对
+        // textarea 焦点的 `has-[textarea:focus-visible]:ring-2 + ring-ring/50` 承担 —— 真机上用户
+        // 看到的「光标旁第二个矩形框」正是 textarea 自绘的那套 ring。所以这条断言跟改：钉
+        // **来源与唯一性**（谁画环、画几套），不再钉某个 class 的旧形态。
+        const composerBox = textarea.element.parentElement;
+        const boxClass = composerBox?.className ?? "";
+        expect(boxClass, "焦点视觉必须由容器承担（has- 变体，不是 focus-within 满框）").toContain(
+            "has-[textarea:focus-visible]:ring-2",
+        );
+        expect(boxClass).toContain("has-[textarea:focus-visible]:ring-ring/50");
+        expect(boxClass).not.toContain("focus-within:ring");
+        // 反向钉：textarea 自己不得再挂一套 focus-visible ring（C4 删掉的那套不许回流）。
+        const own = textarea.classes().join(" ");
+        expect(own, "textarea 不再自绘第二套焦点环").not.toContain("focus-visible:ring-3");
+        expect(own).not.toContain("focus-visible:ring-1");
+        // 唯一性：这一对元素里只有一处声明焦点环（容器那处）。
+        const ringSources = [
+            own.includes("focus-visible:ring"),
+            boxClass.includes("has-[textarea:focus-visible]:ring"),
+        ].filter(Boolean).length;
+        expect(ringSources, "一次焦点只许一套环声明").toBe(1);
     });
 });
 
