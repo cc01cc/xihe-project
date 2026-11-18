@@ -229,7 +229,11 @@ watch(
             <!-- 全局层把 100vh 收走了：设置内容列自己滚动，页面（含长域页）不被裁切。 -->
             <!-- task-34：内容列自己带白底（bg-card）。此前无背景类 ⇒ 透出 body 的
                  --background oklch(0.97 0 0) 浅灰，这就是用户报的「都是灰色的背景」。 -->
-            <main class="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto bg-card px-6 py-6">
+            <main
+                id="main-content"
+                tabindex="-1"
+                class="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto bg-card px-6 py-6"
+            >
                 <router-view />
             </main>
         </div>

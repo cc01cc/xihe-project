@@ -458,6 +458,8 @@ onUnmounted(() => {
                 :class="navResizing ? 'transition-none' : 'transition-[flex-grow] duration-300'"
             >
                 <main
+                    id="main-content"
+                    tabindex="-1"
                     class="min-h-0 min-w-0 flex-1 bg-card"
                     :class="
                         workspaceTabBarVisible

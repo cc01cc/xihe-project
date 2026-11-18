@@ -3821,6 +3821,10 @@ const messages = {
             files: "文件",
             openNavigation: "打开导航",
             breadcrumb: "面包屑",
+            // task-84（D-1869①）：GlobalRail 的地标标签 + WCAG 2.4.1 bypass 的跳过链接文案。
+            // 中英两侧同批（mise run lint:i18n 查键差集），缺一侧即红。
+            globalNav: "全局导航",
+            skipToMain: "跳到主内容",
             delete: "删除",
         },
         login: {
@@ -8038,6 +8042,8 @@ const messages = {
             files: "Files",
             openNavigation: "Open navigation",
             breadcrumb: "Breadcrumb",
+            globalNav: "Global navigation",
+            skipToMain: "Skip to main content",
             delete: "Delete",
         },
         login: {

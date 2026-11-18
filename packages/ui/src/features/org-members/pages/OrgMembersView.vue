@@ -42,7 +42,7 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
          给出顶层 landmark（W3C ARIA APG · Main Landmark：每页一个、应为顶层地标、用 main 元素定义）。
          class 与 data-testid 一字未动 ⇒ 盒子与既有选择器不变；旧注释那句「本页没有 <main>」已随本次改动过期，
          留着会让下一个人照着它再判一次缺。 -->
-    <main class="min-h-full bg-card" data-testid="org-members-page">
+    <main id="main-content" tabindex="-1" class="min-h-full bg-card" data-testid="org-members-page">
         <header class="border-b">
             <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
                 <h1

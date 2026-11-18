@@ -190,7 +190,31 @@ function isPanelActive(name: string) {
             collapsible="icon"
             data-testid="global-rail"
             class="border-r border-sidebar-border"
+            role="navigation"
+            :aria-label="t('common.globalNav')"
         >
+            <!--
+                task-84（D-1869① · WCAG 2.4.1 bypass blocks）：跳过链接是文档里**第一个可聚焦元素**，
+                所以放在 Sidebar 的第一个子节点 —— rail 在 App.vue 里排在 ModuleStage 之前 ⇒ DOM 序即文档序。
+
+                为什么是 native <a href="#main-content">：W3C 技术 G1 原文要求「Activating the link **sets focus**
+                beyond the other content to the main content」—— 手搓 JS scrollIntoView 只滚动不移动焦点，不满足；
+                目标 <main> 因此带 id="main-content" + tabindex="-1"（无 tabindex 的元素不可聚焦，焦点落不进去）。
+                sr-only / focus:not-sr-only 是 Tailwind 既有工具类，未新增样式令牌：G1 明写「只在有焦点时可见」
+                也可以满足 2.4.1（原文：links that are visible only when they have focus can meet this SC）。
+
+                role="navigation" + aria-label 挂在 <Sidebar> 上（Vue 属性透传落到 vendor 根 div）：
+                rail 承载 GLOBAL_MODULES 模块链接（主导航），APG 对 complementary 的定义要求「与 main 内容相关」，
+                并明写「not related to the main content ⇒ 用更通用角色」⇒ 本面取 navigation 不取 aside，
+                且只挂这一个角色。
+            -->
+            <a
+                href="#main-content"
+                data-testid="skip-to-main"
+                class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-md"
+                >{{ t("common.skipToMain") }}</a
+            >
+
             <!--
                 task-64 · 左上角 logo 槽位（形态由用户 2026-11-12 定：rail 顶部、28×28 方片、黑底白字 XH，暗色自动反转）。
 
