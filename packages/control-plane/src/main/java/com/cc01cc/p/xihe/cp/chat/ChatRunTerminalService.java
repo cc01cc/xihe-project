@@ -568,7 +568,10 @@ public class ChatRunTerminalService {
                 payload.put("at", terminalAt.toString());
                 try {
                     // The parent page owns the derived-state view; the payload identifies the child run.
-                    sseEmitters.send(parentSessionId.toString(), "derived_state_changed", payload);
+                    boolean delivered = sseEmitters.send(parentSessionId.toString(), "derived_state_changed", payload);
+                    // task-21：把「发出→收到→处理」三段对得上的发送日志（与 spawn hint 那条对齐）。
+                    logger.info("[LIFECYCLE] service=cp event=derived_state_terminal_hint parentSessionId={} "
+                                    + "childRunId={} delivered={}", parentSessionId, childRunId, delivered);
                 } catch (RuntimeException error) {
                     logger.warn("[LIFECYCLE] service=cp event=derived_state_sse_failed runId={} parentSessionId={}",
                             childRunId, parentSessionId, error);
