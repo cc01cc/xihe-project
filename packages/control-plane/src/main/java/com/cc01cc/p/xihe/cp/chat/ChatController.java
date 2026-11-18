@@ -549,10 +549,14 @@ public class ChatController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId must be a UUID");
         }
         String content = (String) request.getOrDefault("content", "");
-        // PLAN-0689 A2 (T1.2 / design §3 B3): the wire field is retired — a request can no longer
-        // name the run's answering principal; that is resolved at admission instead. Old clients
-        // that still send it are ignored rather than rejected: the body is a Map, so there is no
-        // strict deserialization to 400 on it (BL-444 tracks the deprecation window).
+        // PLAN-0689 A2 (T1.2 / design §3 B3) retired the ENTRY, not this field: `asParticipantId` is
+        // deprecated-NOT-removed and still live below — it is read at the next line, cross-checked
+        // against toParticipantIds[0] (the 400 further down), kept as the explicit-attribution branch
+        // after the TO authorization, and passed into create(), where responderFor() lets it win over
+        // the PRIMARY. What A2 actually removed is the composer control and the caller-supplied
+        // `agentPrincipalId` field; old clients that still send this one are served, not rejected (the body is
+        // a Map, so nothing 400s on an unknown key) — BL-444 tracks the window. Do not read this
+        // comment as "the value is ignored": ChatSubmissionService:207-211 is the authority.
         Object rawAsParticipantId = request.get("asParticipantId");
         if (rawAsParticipantId != null && !(rawAsParticipantId instanceof String)) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
@@ -949,7 +953,8 @@ public class ChatController {
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
-                    // 0689 B3/A4b: no caller can name a run principal — the parameter is gone.
+                    // 0689 B3/A4b: no caller can name a run PRINCIPAL — that parameter (agentPrincipalId)
+                    // is gone. asParticipantId is still passed and still resolves attribution.
                     runId, sessionId, userId, workspaceId, branchId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,

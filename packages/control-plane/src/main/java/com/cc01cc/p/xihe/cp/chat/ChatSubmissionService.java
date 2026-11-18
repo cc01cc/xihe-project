@@ -1062,7 +1062,9 @@ public class ChatSubmissionService {
         // and the dispatch read (memory / skill_catalog components) lost the principal.
         // PLAN-0689 A1: the stamp now comes from the admission responder resolved above — AGENT-only,
         // because a HUMAN responder can never be stored (V92 FK) and NULL is better than a wrong actor.
-        // create() still narrows it to the actual asParticipantId responder when the caller passed one.
+        // create() still narrows it to the actual asParticipantId responder when the caller passed one
+        // (that wire field is deprecated-not-removed: the composer no longer offers the control, but a
+        // legacy client that sends it still decides who answers — see ChatController's A2 comment).
         chatRun.setAgentPrincipalId(admissionPrincipalId);
         // PLAN-0464 T1.1: ChatRun is the only admission root. Conflicts are owned
         // by the chat_runs unique indexes; a race that slips past the in-memory
