@@ -32,6 +32,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,16 @@ public class ChatSubmissionService {
 
     @org.springframework.beans.factory.annotation.Autowired
     private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    /**
+     * task-21/F1：spawn hint 的发送端（{@link DerivedStateHintPublisher}，与终态那条走同一条 SSE 通道）。
+     *
+     * <p>{@code required = false} 的真实理由**不是**测试便利：事件流契约写明 SSE hint
+     * 「不承诺必达」（spec/protocol/event-stream.md），derived-state API 才是事实源 ⇒ 一条提示的发送端
+     * 缺席不该让 durable 的 spawn 失败。缺失时 spawn 照常提交，只是不发 hint。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DerivedStateHintPublisher derivedStateHints;
     public static final String SPAWN_TOOL_NAME = "spawn_agent";
 
     private static final int MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH = 4096;
@@ -627,6 +638,8 @@ public class ChatSubmissionService {
         childRun.setWaitingOnRunId(parentRun.getId().toString());
         childRun.setWaitingToolCallId(invocation.toolCallId());
         chatRunRepository.save(childRun);
+        publishSpawnedHint(parentSession.getId().toString(), childSession.getId().toString(),
+                childRun.getId().toString());
 
         com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "SPAWN_AGENT");
@@ -781,6 +794,8 @@ public class ChatSubmissionService {
                 java.util.UUID.nameUUIDFromBytes(idempotencyKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                         .toString());
         chatRunRepository.save(childRun);
+        publishSpawnedHint(parentSession.getId().toString(), childSession.getId().toString(),
+                childRun.getId().toString());
 
         com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "SPAWN_AGENT");
@@ -803,6 +818,16 @@ public class ChatSubmissionService {
     private static CpApiException parentPrincipalMissing() {
         return new CpApiException(HttpStatus.CONFLICT, "SPAWN_PARENT_PRINCIPAL_MISSING",
                 "Parent Session has no agent principal; spawn would persist a NULL-principal run");
+    }
+
+    /**
+     * task-21 / F1：spawn 创建后把「父会话该重读 derived-state」这件事 hint 出去（失败不影响提交）。
+     * 发送端缺席 / 发送失败都只是少一条 best-effort 提示，见 {@link DerivedStateHintPublisher}。
+     */
+    private void publishSpawnedHint(String parentSessionId, String childSessionId, String childRunId) {
+        if (derivedStateHints != null) {
+            derivedStateHints.publishSpawned(parentSessionId, childSessionId, childRunId);
+        }
     }
 
     private LockedSpawnParent lockSpawnParent(String parentRunId,
