@@ -1507,10 +1507,10 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
     <div
         ref="composerRoot"
-        class="min-w-0 border-t bg-background px-4 pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
+        class="min-w-0 border-t bg-background pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
         data-testid="chat-composer"
     >
-        <div class="mx-auto w-full max-w-4xl space-y-1.5">
+        <div class="w-full max-w-4xl space-y-1.5">
             <!--
                 D23-27 / PLAN-0630 M5b (D30-14)：`发送`栏（speak-as 升级版）——本次消息的主要响应者
                 （单选，默认 = PRIMARY participant）。只有 capabilities.speakAs 为真才**渲染**

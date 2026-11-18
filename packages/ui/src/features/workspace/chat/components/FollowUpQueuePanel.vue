@@ -107,7 +107,7 @@ function pauseMessage(): string {
 
 <template>
     <section
-        class="mx-auto mb-3 w-[calc(100%_-_2rem)] max-w-4xl rounded-xl border bg-card px-3 py-2.5 max-sm:max-h-56 max-sm:overflow-y-auto"
+        class="mb-3 w-[calc(100%_-_2rem)] max-w-4xl rounded-xl border bg-card px-3 py-2.5 max-sm:max-h-56 max-sm:overflow-y-auto"
         :aria-label="t('chat.followUpQueueTitle')"
         data-testid="follow-up-queue"
     >

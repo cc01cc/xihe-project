@@ -570,6 +570,22 @@ the target, **settle before reading**, then read `getComputedStyle`:
 > ⇒ **Criterion**: any `doubles` reading (including `doubles = 0`) must also state the **per-stop settle duration**, otherwise that 0
 > does not count; settle floor **220 ms** (longer than the vendor default 150 ms transition). This repo's measurement uses 220 ms.
 
+> **Fifth required item: "which layer are you reading" (the cascade fills back in, `D-1880` ②)** — any focus-visual change
+> **must measure the settled final `outline` / `box-shadow`**, never just the declaration you deleted. Two measured counter-examples:
+>
+> 1. **Deleting a utility lets `@layer base` take over**: removing only the vendor `TabsTrigger` declaration
+>    `focus-visible:outline-1 outline-ring` made the global `*:focus-visible { outline: 2px solid var(--ring) }` fill back in,
+>    so `workspace-container-tab-main-*` was still a true double indicator (`outline solid/2px` + 3px ring); only adding
+>    `focus-visible:outline-none` brought it to zero.
+> 2. **One and the same Δ stacks two layers**: the composer column vs the message column differed by 131 px — layer one was
+>    `mx-auto max-w-4xl` centring ((1158−896)/2 = 131); after removing the centring **16 px remained** — layer two was the
+>    composer frame `px-4` (the message scroller has `padding-left: 0`). Fixing one layer and calling it done turns that
+>    16 px residue into noise.
+>
+> ⇒ **Criterion**: a reading must state **which element box it measures** (including `padding` and positioning context),
+> and one quantity must come with **at least a two-layer comparison** (own layer plus parent or child), otherwise
+> "fixed" cannot be told apart from "the cascade filled it back in".
+
 1. **inner**: `outlineStyle == "none"` **and** `boxShadow == "none"`;
 2. **outer**: a ring in `boxShadow` **or** `outlineStyle != "none"` — never both;
 3. **repo sweep**: walk every tab stop and **split `boxShadow` into layers** before judging —

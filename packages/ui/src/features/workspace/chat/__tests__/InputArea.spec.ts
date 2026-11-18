@@ -354,28 +354,42 @@ describe("BL-288 Problem detail for /export", () => {
  * task-30 ①（用户报障「输入框有一圈黑框」）：判据必须是**类契约**，不是「有焦点环」——
  * 后者恒真（旧值 `ring-1` 也有环），正是它让这处孤例活了这么久。
  *
- * <p>本仓控件族的焦点环标准 = `focus-visible:ring-3` + `focus-visible:ring-ring/50`
- * （Button / Tabs / Switch / Checkbox / Select / Slider / Accordion / RadioGroup / Badge /
- * Toggle / ScrollArea 共 13 个文件）。`--ring` 在本主题下是 `--primary`（近黑）⇒ 旧值
- * `ring-1 + ring-ring/60` 就是 1px 60% 的近黑硬框，叠上容器 border 看着像渲染 bug。</p>
+ * <p><b>2026-11-19 task-38 C4 改判（本段原结论「内层画 ring-3」已被取代，不删以免读者按旧判据复现）</b>：
+ * 用户第二次报障「光标旁还有第二个矩形框」，实测是**内层自绘环与外层容器各自画了一套**（内层
+ * `box-shadow … oklab(0.205 0 0 / 0.5) 0 0 0 3px` + 外层 1px 边框）⇒ 现行判据是**只许一套**：
+ * 焦点视觉由**外层容器**用 `has-[textarea:focus-visible]:ring-2` 画，内层 textarea **什么都不画**
+ * （`outline-style` 与 `box-shadow` 在真机结算后都必须为 `none`，见 DEV-011 §13.3）。
+ * 因此本条现在钉两件事：① 内层**没有任何** ring 声明；② 外层容器**恰好一条** ring 声明且是
+ * `ring-2 + ring-ring/50`（`--ring = --primary` 的刻意定制，不得改回官方 oklch(0.708 0 0)）。</p>
  *
- * <p>变异（已实测）：把 `ring-3` 改回 `ring-1`、或把 `ring-ring/50` 改回 `ring-ring/60`，
- * 这条都会红。另钉 `focus:outline-none`：全局 `*:focus-visible { outline: 2px solid var(--ring) }`
- * （`styles/main.css:225-226`）若不被压住，就会在环外面再套一圈 2px 纯色近黑 —— 比修前更糟。</p>
+ * <p>变异（已实测）：把外层 `ring-2` 改回 `ring-1` / 把内层 ring 加回来 / 把 `ring-ring/50`
+ * 改成 `ring-ring/60`，这三条任一都会红。内层 `focus-visible:outline-none` 仍必须留着：
+ * 全局 `*:focus-visible { outline: 2px solid var(--ring) }`（`styles/main.css`）不被压住就会
+ * 在环外再套一圈 2px 纯色近黑 —— 这正是 task-38 修 vendor `TabsTrigger` 时踩到的「删 utility 反而
+ * 让 base 层补位」（D-1880）。</p>
  */
-describe("task-30 ① composer 焦点环形态", () => {
-    it("输入框焦点环 = ring-3 + ring-ring/50（不是 1px/60% 硬框）", () => {
+describe("task-30 ① / task-38 C4 composer 焦点指示只许一套", () => {
+    it("内层不画环（outline-none + 无 ring），外层容器画唯一一套 ring-2", () => {
         const wrapper = mountInputArea();
-        const classes = wrapper.get('[data-testid="chat-input"]').classes();
-        expect(classes).toContain("focus-visible:ring-3");
-        expect(classes).toContain("focus-visible:ring-ring/50");
-        // 反向：旧的两条必须不在（只断言新值存在，等于允许"两个都留着"）
-        expect(classes).not.toContain("focus-visible:ring-1");
-        expect(classes).not.toContain("focus-visible:ring-ring/60");
-        // 必须压住全局 outline，否则环外再套 2px 纯色近黑轮廓（实测那才是用户看到的"黑框"主体）。
-        // task-39 之后这条真能生效（全局规则搬进 @layer base）⇒ 不再需要 `!`；
-        // 「utility 能不能压住全局规则」由 src/styles/__tests__/focusRingLayer.spec.ts 静态守卫。
-        expect(classes).toContain("focus:outline-none");
+        const inner = wrapper.get('[data-testid="chat-input"]');
+        const innerClasses = inner.classes();
+        // ① 内层不许有任何 ring（三档旧值全钉，防「两个都留着」）
+        expect(innerClasses).not.toContain("focus-visible:ring-1");
+        expect(innerClasses).not.toContain("focus-visible:ring-3");
+        expect(innerClasses).not.toContain("focus-visible:ring-ring/50");
+        expect(innerClasses).not.toContain("focus-visible:ring-ring/60");
+        // 内层仍须压住全局 outline，否则 base 层补位成第二个框（D-1880）
+        expect(innerClasses).toContain("focus-visible:outline-none");
+        // ② 外层容器持有唯一一套环
+        const container = inner.element.parentElement as HTMLElement | null;
+        expect(container).not.toBeNull();
+        const containerClasses = Array.from((container as HTMLElement).classList);
+        expect(containerClasses).toContain("has-[textarea:focus-visible]:ring-2");
+        expect(containerClasses).toContain("has-[textarea:focus-visible]:ring-ring/50");
+        // 反向锚点：容器不得自己再叠 outline（base 层补位的另一半）
+        expect(containerClasses.filter((c) => c.startsWith("focus-visible:outline")).length).toBe(
+            0,
+        );
         wrapper.unmount();
     });
 });

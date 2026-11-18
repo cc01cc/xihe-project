@@ -564,6 +564,19 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 > 后果是**系统性假阴**：有环被读成没环，「焦点指示缺失」读不出来。
 > ⇒ **判据**：任何 `doubles` 读数（含 `doubles = 0`）必须同时给出**每站 settle 时长**，否则该 0 不算数；settle 下限 **220ms**（> vendor 默认 150ms 过渡）。本仓实测用的是 220ms。
 
+> **第五项必填：「在哪些层读」（级联会补位，`D-1880` ②）** —— 焦点视觉类改动**必须量结算后的最终 `outline` / `box-shadow`**，
+> 不许只看自己删掉的那条声明。两个已实测的反例：
+>
+> 1. **删 utility ⇒ base 层补位**：只删 vendor `TabsTrigger` 的 `focus-visible:outline-1 outline-ring`，
+>    结果 `@layer base` 的全局 `*:focus-visible { outline: 2px solid var(--ring) }` 立刻补位，
+>    `workspace-container-tab-main-*` 仍是真双层（`outline solid/2px` + 环 3px）；补 `focus-visible:outline-none` 才归零。
+> 2. **同一个 Δ 由两层叠加**：composer 列与消息列左边界差 131px，第一层是 `mx-auto max-w-4xl` 居中
+>    （(1158−896)/2 = 131），去掉居中后仍剩 **16px** —— 第二层是 composer 外框的 `px-4`（消息滚动面 `padding-left: 0`）。
+>    只改一层就报「已修好」会把 16px 的残差当抖动。
+>
+> ⇒ **判据**：读数必须写明「量的是哪一层元素的盒子」（含 `padding` 与定位上下文），且**同一量要给出至少两层的对照**
+> （自己这层 + 父/子一层），否则无法区分「修好了」与「被级联补位了」。
+
 1. **内层**：`outlineStyle == "none"` **且** `boxShadow == "none"`；
 2. **外层**：`boxShadow` 含环**或** `outlineStyle != "none"`，二者**只取其一**；
 3. **全仓扫**：键盘遍历每个 tab stop，把 `boxShadow` **逐层拆开**后再判 —— **环层** ⇔ `inset == false && offsetX == 0 && offsetY == 0 && blur == 0 && spread > 0` **且该层颜色 alpha > 0**；**投影层** ⇔ `blur > 0` 或 `offset ≠ 0`；alpha 为 0 的层是**透明占位**（vendor 的 `shadow-*` 工具类一次铺 5 层，多数透明），必须剔除。**双指示 ⇔ 存在有效环层 且 `outlineStyle != "none" && parseFloat(outlineWidth) >= 1`**。
