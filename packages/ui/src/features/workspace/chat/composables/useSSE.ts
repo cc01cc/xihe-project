@@ -416,13 +416,40 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         syncStreamingState();
     }
 
+    /** task-21 / F2：连接身份过期（见 handleMessage）时重建连接，同一 tick 只排一次。 */
+    let staleEpochReconnectScheduled = false;
+
+    function reconnectForStaleEpoch(): void {
+        if (staleEpochReconnectScheduled) return;
+        staleEpochReconnectScheduled = true;
+        queueMicrotask(() => {
+            staleEpochReconnectScheduled = false;
+            connect(currentCallbacks);
+        });
+    }
+
     function handleMessage(msg: EventSourceMessage) {
         if (
             activeSessionId !== null &&
             activeApprovalEpoch !== null &&
             !agentStore?.isApprovalEpochCurrent(activeSessionId, activeApprovalEpoch)
-        )
+        ) {
+            // task-21 / F2：epoch 是**连接身份**的一部分（agent store 的上下文代次）。上下文被重置后
+            // （`agentStore.reset()` / `clearPendingApprovals()`）旧连接捕获的 epoch 就过期，此后
+            // 每一帧都该丢——但**只丢不重连，整条 SSE 会永久失聪**。2026-11-18 真栈实测：会话深链
+            // 首屏 SSE 先连上（捕获 `0:0`），随后 AppLayout 的 hydration watch 调
+            // `agentStore.reset()`（epoch 变 `1:0`）⇒ heartbeat / approval / `derived_state_changed`
+            // 全部静默丢弃，父会话页 25s 内 0 次 derived-state 重读，anchor 状态停在 running。
+            // 丢这一帧是对的（它属于旧上下文），**不重建连接是错的**：重建后 `onOpen` 会发一次
+            // refresh 信号，视图自己追平（Inbox/derived-state 是 durable 读面，SSE 只是提示）。
+            logger.warn("SSE approval epoch changed; reconnecting session stream", {
+                sessionId: activeSessionId,
+                captured: activeApprovalEpoch,
+                current: agentStore?.getApprovalEpoch(activeSessionId),
+            });
+            reconnectForStaleEpoch();
             return;
+        }
         // PLAN-0631 D31-08: CP stamps **every** event envelope with the producing
         // participant (`openapi.yaml:1374`; a producer-less event carries an explicit
         // null). Parse it once here — before the switch — so consumers get the run's

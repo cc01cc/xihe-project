@@ -358,6 +358,35 @@ describe("useSSE", () => {
         expect(useAgentStore().agentState.pendingApprovals).toEqual([]);
     });
 
+    it("rebuilds the session stream when the approval epoch changes (task-21 / F2)", async () => {
+        const transport = createTransportController(),
+            onDerivedStateChanged =
+                vi.fn<NonNullable<useSSEModule.SSECallbacks["onDerivedStateChanged"]>>(),
+            { connect } = useSSE(SESSION_ID);
+        connect({ onDerivedStateChanged });
+        await flushPromises();
+        const connectsBefore = vi.mocked(chatTransport.sendMessages).mock.calls.length;
+        // 真栈实测的时序：会话深链首屏先 connect（捕获 epoch 0:0），随后 AppLayout 的 hydration
+        // watch 调 agentStore.reset()（epoch 1:0）。旧写法此后把每一帧都丢掉 ⇒ 整条 SSE 永久失聪，
+        // 父会话的 anchor 状态永远停在 running（F2）。
+        useAgentStore().reset();
+
+        await transport.simulateMessage(
+            "derived_state_changed",
+            JSON.stringify({
+                sessionId: SESSION_ID,
+                runId: RUN_ID,
+                state: "active",
+                at: new Date().toISOString(),
+            }),
+        );
+        await flushPromises();
+
+        // 旧上下文那一帧**仍然丢弃**（既有断言不放宽），但连接必须重建。
+        expect(onDerivedStateChanged).not.toHaveBeenCalled();
+        expect(vi.mocked(chatTransport.sendMessages).mock.calls.length).toBe(connectsBefore + 1);
+    });
+
     it("emits done via onDone callback and stops streaming flag", async () => {
         const transport = createTransportController(),
             { connect, isStreaming } = useSSE(SESSION_ID),
