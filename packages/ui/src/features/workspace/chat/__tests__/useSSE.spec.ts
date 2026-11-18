@@ -19,7 +19,12 @@ const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     LATE_REQUEST_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     LOGOUT_REQUEST_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
     LIVENESS_REQUEST_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff",
-    WORKSPACE_ID = "99999999-9999-4999-8999-999999999999";
+    WORKSPACE_ID = "99999999-9999-4999-8999-999999999999",
+    // task-26 / Q-5：钉 clearPendingApprovals 的 epoch bump（此前全库零断言覆盖）
+    OTHER_SESSION_ID = "77777777-7777-4777-8777-777777777777",
+    STALE_AFTER_CLEAR_REQUEST_ID = "88888888-8888-4888-8888-888888888888",
+    STALE_ON_CLEARED_STREAM_A = "12121212-1212-4121-8121-121212121212",
+    STALE_ON_CLEARED_STREAM_B = "13131313-1313-4131-8131-131313131313";
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
@@ -356,6 +361,134 @@ describe("useSSE", () => {
         );
 
         expect(useAgentStore().agentState.pendingApprovals).toEqual([]);
+    });
+
+    // ── task-26 / Q-5 ────────────────────────────────────────────────────────────────────────
+    // 上面两条钉的是 reset() 这条 bump 路径。clearPendingApprovals()（agent.ts:424-439，
+    // ws-less 路由 / 无工作区上下文时 AppLayout 走的就是它）**同样** invalidateAllApprovalEpochs()，
+    // 但 2026-11-18 实测查下来：全库 grep 在产品代码外 0 命中 ⇒ 这条语义此前**没有任何断言覆盖**，
+    // 谁删掉那行都不会有门红。下面三条把它钉住；**语义未改，只补断言**。
+    // 范围按实测写：它清的是**全 store**（所有会话 summaries/pending/resolved/decision promises + scope）
+    // ⇒ 失效范围必须也是全局，**断言不许收窄成「只失效当前会话」**。
+
+    it("drops late approval events after clearPendingApprovals clears the pending projection", async () => {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
+        connect();
+        await flushPromises();
+
+        // 前置：审批卡必须先真的出现过，否则「不得复活」会被「根本没出现过」蒙过去。
+        await transport.simulateMessage(
+            "approval_request",
+            JSON.stringify({
+                requestId: REQUEST_ID,
+                runId: RUN_ID,
+                sessionId: SESSION_ID,
+                workspaceId: WORKSPACE_ID,
+                tool: "write_file",
+                action: "write file",
+                details: "/README.md",
+                state: "pending",
+            }),
+        );
+        expect(useAgentStore().agentState.pendingApprovals.map((a) => a.requestId)).toEqual([
+            REQUEST_ID,
+        ]);
+
+        useAgentStore().clearPendingApprovals();
+        expect(useAgentStore().agentState.pendingApprovals).toEqual([]);
+
+        // 旧连接（捕获的是清空前的 epoch）随后迟到的同一类帧：不得把卡复活。
+        await transport.simulateMessage(
+            "approval_request",
+            JSON.stringify({
+                requestId: STALE_AFTER_CLEAR_REQUEST_ID,
+                runId: RUN_ID,
+                sessionId: SESSION_ID,
+                workspaceId: WORKSPACE_ID,
+                tool: "write_file",
+                action: "write file",
+                details: "/README.md",
+                state: "pending",
+            }),
+        );
+        expect(useAgentStore().agentState.pendingApprovals).toEqual([]);
+    });
+
+    it("invalidates the approval epoch of every session when the pending projection is cleared", () => {
+        const agentStore = useAgentStore(),
+            connectedEpoch = agentStore.getApprovalEpoch(SESSION_ID),
+            otherEpoch = agentStore.getApprovalEpoch(OTHER_SESSION_ID);
+        // 前置：两条会话此刻都算「当前」，否则下面的失效没有信息量。
+        expect(agentStore.isApprovalEpochCurrent(SESSION_ID, connectedEpoch)).toBe(true);
+        expect(agentStore.isApprovalEpochCurrent(OTHER_SESSION_ID, otherEpoch)).toBe(true);
+
+        agentStore.clearPendingApprovals();
+
+        // 清全局 ⇒ 失效全局。收窄成按会话就是改语义，这条断言拦的正是那次改动。
+        expect(agentStore.isApprovalEpochCurrent(SESSION_ID, connectedEpoch)).toBe(false);
+        expect(agentStore.isApprovalEpochCurrent(OTHER_SESSION_ID, otherEpoch)).toBe(false);
+    });
+
+    it("drops late approval events on every live session stream after the projection is cleared", async () => {
+        // 两条会话各有一条活连接（真栈里对应两个 tab / 两个会话页），必须**都**丢帧。
+        const handlers = new Map<
+                string,
+                (event: { event: string; data: string }) => void | Promise<void>
+            >(),
+            sendMessages = vi.mocked(chatTransport.sendMessages);
+        sendMessages.mockImplementation(
+            (
+                sessionId: string,
+                options: { onmessage?: (event: { event: string; data: string }) => void },
+            ) => {
+                if (options.onmessage) handlers.set(sessionId, options.onmessage);
+                return Promise.resolve();
+            },
+        );
+        useSSE(SESSION_ID).connect();
+        useSSE(OTHER_SESSION_ID).connect();
+        await flushPromises();
+        expect(handlers.size).toBe(2);
+
+        // **清空前**取引用：清空会触发重建，重建后的连接属于新上下文，它的帧本来就该被接受。
+        const staleStreamA = handlers.get(SESSION_ID)!,
+            staleStreamB = handlers.get(OTHER_SESSION_ID)!,
+            connectsBefore = sendMessages.mock.calls.length;
+
+        useAgentStore().clearPendingApprovals();
+
+        await staleStreamA({
+            event: "approval_request",
+            data: JSON.stringify({
+                requestId: STALE_ON_CLEARED_STREAM_A,
+                runId: RUN_ID,
+                sessionId: SESSION_ID,
+                workspaceId: WORKSPACE_ID,
+                tool: "write_file",
+                action: "write file",
+                details: "/README.md",
+                state: "pending",
+            }),
+        });
+        await staleStreamB({
+            event: "approval_request",
+            data: JSON.stringify({
+                requestId: STALE_ON_CLEARED_STREAM_B,
+                runId: RUN_ID,
+                sessionId: OTHER_SESSION_ID,
+                workspaceId: WORKSPACE_ID,
+                tool: "write_file",
+                action: "write file",
+                details: "/README.md",
+                state: "pending",
+            }),
+        });
+        await flushPromises();
+
+        expect(useAgentStore().agentState.pendingApprovals).toEqual([]);
+        // 丢帧不是终点：两条流都必须重建（task-21 / F2 的口径同样适用于这条 bump 路径）。
+        expect(sendMessages.mock.calls.length).toBe(connectsBefore + 2);
     });
 
     it("rebuilds the session stream when the approval epoch changes (task-21 / F2)", async () => {
