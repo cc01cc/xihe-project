@@ -65,7 +65,7 @@ function listVueFiles() {
 function* tagSites(file) {
     const src = readFileSync(join(ROOT, file), "utf8");
     // 多行标签：从 <Tag 读到 >；排除 v-bind=“{ …$attrs }” 透传包装（同 inventory.mjs 口径）。
-    const re = new RegExp("<(" + TAGS.join("|") + ")[\\s\\S]*?>", "g");
+    const re = new RegExp(String.raw`<(${TAGS.join("|")})[\s\S]*?>`, "g");
     let m;
     while ((m = re.exec(src)) !== null) {
         const tag = m[0];

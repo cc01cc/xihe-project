@@ -6,6 +6,7 @@ import { LoaderCircle, Plus, RotateCcw, X } from "@lucide/vue";
 import { api, ApiError, type AgentModelRef, type AgentRoleBinding } from "../../composables/api";
 import { presentCauseError, type ErrorPresentation } from "../../lib/errorMessages";
 import { formatDate } from "../../lib/dateFormat";
+import { shallowClone } from "../../lib/shallowClone";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -179,7 +180,7 @@ function resetDrafts() {
     if (!principal) return;
     modelDraft.provider = principal.defaultModelProvider ?? "";
     modelDraft.model = principal.defaultModelName ?? "";
-    modelDraft.allowedModels = (principal.allowedModels ?? []).map((entry) => ({ ...entry }));
+    modelDraft.allowedModels = (principal.allowedModels ?? []).map((entry) => shallowClone(entry));
     modelBaseline.value = snapshotModel(modelDraft);
     delegationDraft.value = parseDelegationPolicy(principal.delegationPolicy);
     delegationBaseline.value = { ...delegationDraft.value };
@@ -341,7 +342,7 @@ async function saveModel() {
         if (!principalGuard(principalId)) return;
         modelDraft.provider = view.defaultModelProvider ?? "";
         modelDraft.model = view.defaultModelName ?? "";
-        modelDraft.allowedModels = (view.allowedModels ?? []).map((entry) => ({ ...entry }));
+        modelDraft.allowedModels = (view.allowedModels ?? []).map((entry) => shallowClone(entry));
         modelBaseline.value = snapshotModel(modelDraft);
         emit("changed", {
             principalId,
@@ -363,7 +364,7 @@ function resetModel() {
     const baseline = JSON.parse(modelBaseline.value) as [string, string, AgentModelRef[]];
     modelDraft.provider = baseline[0];
     modelDraft.model = baseline[1];
-    modelDraft.allowedModels = baseline[2].map((entry) => ({ ...entry }));
+    modelDraft.allowedModels = baseline[2].map((entry) => shallowClone(entry));
     sectionErrors.model = null;
 }
 

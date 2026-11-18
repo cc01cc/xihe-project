@@ -15,6 +15,8 @@
  * <p>注意：`listMyAgentPrincipals` 解析器对缺席字段 fail-closed ⇒ 这里给的是**完整**形状，
  * 不要靠「省略键」表达空值（那会让 mock 掩盖真实线形的差异）。</p>
  */
+import { shallowClone } from "../../../lib/shallowClone";
+
 export interface MockPersonalPrincipal {
     principalId: string;
     name: string;
@@ -91,5 +93,5 @@ const PRINCIPALS: MockPersonalPrincipal[] = [
 ];
 
 export function mockPersonalAgentPrincipals(): MockPersonalPrincipal[] {
-    return PRINCIPALS.map((row) => ({ ...row }));
+    return PRINCIPALS.map((row) => shallowClone(row));
 }

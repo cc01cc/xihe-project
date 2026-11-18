@@ -30,13 +30,13 @@ import { createRequire } from "node:module";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const ARGS = process.argv.slice(2);
-const FLAG = (n) => ARGS.includes(n);
-const OPT = (n, d) => {
+const flag = (n) => ARGS.includes(n);
+const opt = (n, d) => {
     const i = ARGS.indexOf(n);
     return i >= 0 ? ARGS[i + 1] : d;
 };
-const BASE = OPT("--base", "http://127.0.0.1:5197");
-const OUT = OPT("--out", "");
+const BASE = opt("--base", "http://127.0.0.1:5197");
+const OUT = opt("--out", "");
 const WS = "9f8e7d6c-5b4a-4321-8fed-cba987654321";
 const VPS = [
     { w: 1920, h: 1080 },
@@ -561,7 +561,7 @@ async function main() {
     }
     console.log("server probe: HTTP " + st + " via " + base);
 
-    if (FLAG("--selftest")) {
+    if (flag("--selftest")) {
         const r = await selftest();
         for (const x of r)
             console.log(
@@ -721,7 +721,7 @@ async function main() {
         console.log("wrote " + OUT);
     }
 
-    if (FLAG("--enforce") && unreachable > 0) process.exit(1);
+    if (flag("--enforce") && unreachable > 0) process.exit(1);
     process.exit(0);
 }
 

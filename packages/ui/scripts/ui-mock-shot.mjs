@@ -1676,8 +1676,7 @@ async function comparePngPixels([b64a, b64b, layoutThreshold]) {
 function compareStability(
     first,
     second,
-    pixelStats = new Map(),
-    { maxLsb = COMPOSITING_MAX_LSB_SAME } = {},
+    { pixelStats = new Map(), maxLsb = COMPOSITING_MAX_LSB_SAME } = {},
 ) {
     const byId = new Map(second.map((item) => [item.id, item]));
     const shots = [];
@@ -2074,11 +2073,9 @@ async function runSelftest() {
         totalPixels: TOTAL,
         ...over,
     });
-    const compOk = compareStability(
-        [mkResult("05", "aaaa")],
-        [mkResult("05", "bbbb")],
-        new Map([["05", st()]]),
-    );
+    const compOk = compareStability([mkResult("05", "aaaa")], [mkResult("05", "bbbb")], {
+        pixelStats: new Map([["05", st()]]),
+    });
     check(
         "--verify-stable: 1px/1LSB → compositingEquivalent（equal=true 但 byteEqual=false）",
         compOk.equal === true &&
@@ -2087,33 +2084,27 @@ async function runSelftest() {
             compOk.shots[0].classification === "compositingEquivalent",
         JSON.stringify(compOk.shots[0]),
     );
-    const compHiLSB = compareStability(
-        [mkResult("06", "aaaa")],
-        [mkResult("06", "bbbb")],
-        new Map([["06", st({ maxDelta: 2 })]]),
-    );
+    const compHiLSB = compareStability([mkResult("06", "aaaa")], [mkResult("06", "bbbb")], {
+        pixelStats: new Map([["06", st({ maxDelta: 2 })]]),
+    });
     check(
         "--verify-stable 同调用: maxDelta=2 (>1LSB) → drift",
         compHiLSB.equal === false && compHiLSB.shots[0].classification === "drift",
         JSON.stringify(compHiLSB.shots[0]),
     );
     // 跨调用（subset vs full）maxLsb=2：2LSB 亚阈值 AA 正例放行（实测 shot15 131px maxΔ2 layout0）。
-    const compCross = compareStability(
-        [mkResult("08", "aaaa")],
-        [mkResult("08", "bbbb")],
-        new Map([["08", st({ diffPixels: 131, maxDelta: 2 })]]),
-        { maxLsb: COMPOSITING_MAX_LSB_CROSS },
-    );
+    const compCross = compareStability([mkResult("08", "aaaa")], [mkResult("08", "bbbb")], {
+        pixelStats: new Map([["08", st({ diffPixels: 131, maxDelta: 2 })]]),
+        maxLsb: COMPOSITING_MAX_LSB_CROSS,
+    });
     check(
         "跨调用 maxLsb=2: 131px/maxΔ2/layout0 → compositingEquivalent（校准正例）",
         compCross.equal === true && compCross.shots[0].classification === "compositingEquivalent",
         JSON.stringify(compCross.shots[0]),
     );
-    const compCrossSame = compareStability(
-        [mkResult("09", "aaaa")],
-        [mkResult("09", "bbbb")],
-        new Map([["09", st({ diffPixels: 131, maxDelta: 2 })]]),
-    );
+    const compCrossSame = compareStability([mkResult("09", "aaaa")], [mkResult("09", "bbbb")], {
+        pixelStats: new Map([["09", st({ diffPixels: 131, maxDelta: 2 })]]),
+    });
     check(
         "同调用 maxLsb=1: 同 131px/maxΔ2 → drift（作用域分档，跨批差不进同调用）",
         compCrossSame.equal === false && compCrossSame.shots[0].classification === "drift",
@@ -2128,22 +2119,20 @@ async function runSelftest() {
         ) === false,
         "",
     );
-    const compLayout = compareStability(
-        [mkResult("10", "aaaa")],
-        [mkResult("10", "bbbb")],
-        new Map([["10", st({ diffPixels: 100209, maxDelta: 245, layoutPixels: 100209 })]]),
-        { maxLsb: COMPOSITING_MAX_LSB_CROSS },
-    );
+    const compLayout = compareStability([mkResult("10", "aaaa")], [mkResult("10", "bbbb")], {
+        pixelStats: new Map([
+            ["10", st({ diffPixels: 100209, maxDelta: 245, layoutPixels: 100209 })],
+        ]),
+        maxLsb: COMPOSITING_MAX_LSB_CROSS,
+    });
     check(
         "布局漂移负例: 100209px/maxΔ245（rail 位移实测）→ drift，跨批档也红",
         compLayout.equal === false && compLayout.shots[0].classification === "drift",
         JSON.stringify(compLayout.shots[0]),
     );
-    const compManyPx = compareStability(
-        [mkResult("07", "aaaa")],
-        [mkResult("07", "bbbb")],
-        new Map([["07", st({ diffPixels: 500 })]]),
-    );
+    const compManyPx = compareStability([mkResult("07", "aaaa")], [mkResult("07", "bbbb")], {
+        pixelStats: new Map([["07", st({ diffPixels: 500 })]]),
+    });
     check(
         "--verify-stable: 500px (>0.01% cap=207) 即使各 1LSB → drift",
         compManyPx.equal === false && compManyPx.shots[0].classification === "drift",
@@ -2368,7 +2357,7 @@ async function main() {
                 }
                 await diffPage.close();
             }
-            stability = compareStability(results, results2, pixelStats);
+            stability = compareStability(results, results2, { pixelStats });
             process.stdout.write(
                 "[ui-mock-shot] --verify-stable: " +
                     (stability.equal
