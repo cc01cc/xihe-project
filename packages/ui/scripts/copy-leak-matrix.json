@@ -1,0 +1,79 @@
+{
+    "version": 1,
+    "reason": "check-copy-leak 的扫描面清单。必须入库：只扫路由默认态会假阴（技能面板在 role=tab 后面）。",
+    "criteria": "DEV-011 §14（D-1879 裁定二 / D-1880 五必填）",
+    "notes": [
+        "格子 = route × tab。没有 tab 的格子也必须列出来 —— 覆盖范围要能被第二人复算，光在报告里写「扫了 9 页」不够（task-47 实测：只扫默认态得出「9 页只有 1 页泄露」的错误结论）。",
+        "expectedBefore 是 2026-11-19 01:2x 的实测命中，仅作回归锚点；它变小时要把本清单同批改小，别让它变成「永远对」的摆设。"
+    ],
+    "surfaces": [
+        {
+            "id": "resources-knowledge",
+            "route": "/resources/knowledge",
+            "tabs": [],
+            "expectedBefore": 12,
+            "note": "task-47 已修 ⇒ 期望 0"
+        },
+        {
+            "id": "resources-skills-my",
+            "route": "/resources/skills",
+            "tabs": ["我的技能"],
+            "expectedBefore": 1
+        },
+        {
+            "id": "resources-skills-workspace",
+            "route": "/resources/skills",
+            "tabs": ["本工作区技能"],
+            "expectedBefore": 0,
+            "note": "默认层是「已迁到工作区设置」提示，面板不挂载"
+        },
+        {
+            "id": "resources-skills-instance",
+            "route": "/resources/skills",
+            "tabs": ["全平台技能"],
+            "expectedBefore": 1
+        },
+        {
+            "id": "resources-credentials",
+            "route": "/resources/credentials",
+            "tabs": [],
+            "expectedBefore": 0
+        },
+        {
+            "id": "resources-mcp",
+            "route": "/resources/mcp",
+            "tabs": [],
+            "expectedBefore": 0
+        },
+        {
+            "id": "workspace-settings-skills",
+            "route": "/workspace/{ws}/settings?tab=skills",
+            "tabs": [],
+            "expectedBefore": 3
+        },
+        {
+            "id": "workspace-settings-config",
+            "route": "/workspace/{ws}/settings",
+            "tabs": [],
+            "expectedBefore": 0
+        },
+        {
+            "id": "session",
+            "route": "/workspace/{ws}",
+            "tabs": [],
+            "expectedBefore": 0
+        },
+        {
+            "id": "settings-llm-provider",
+            "route": "/settings/instance/llm-provider",
+            "tabs": [],
+            "expectedBefore": 0
+        },
+        {
+            "id": "members",
+            "route": "/members",
+            "tabs": [],
+            "expectedBefore": 0
+        }
+    ]
+}
