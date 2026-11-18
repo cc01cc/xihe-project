@@ -22,12 +22,14 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
+from xihe_agent.adapters.handoff_tools import HANDOFF_CLIENT_KEY, handoff_tool_faces
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
 from xihe_agent.adapters.team_task_tools import TEAM_TASK_CLIENT_KEY
 from xihe_agent.adapters.user_question_tool import USER_QUESTION_EVENT_SINK_KEY
 from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.agent_runner.graph_builder import build_react_graph
 from xihe_agent.agent_runner.guidance import GuidanceInjectionModel
+from xihe_agent.agent_runner.handoff_client import build_handoff_client
 from xihe_agent.agent_runner.team_task_client import build_team_task_client, team_task_tool_faces
 from xihe_agent.agent_runner.tool_adapter import (
     EVENT_STORE_FAILURES_KEY,
@@ -323,12 +325,30 @@ class LangGraphRunner(AgentRunner):
             team_task_client = None
         if team_task_client is not None:
             context.metadata[TEAM_TASK_CLIENT_KEY] = team_task_client
+        # task-40 §3 batch 2 (D-1884): the agent-initiated TO face. Same seam as the board above —
+        # wired only when CP is explicitly configured, and absent from the table otherwise, so a host
+        # without CP sees exactly today's tools. runId is required (the face is run-scoped by
+        # construction); build_handoff_client returns None without it, which degrades to un-wired.
+        try:
+            handoff_client = build_handoff_client(context)
+        except Exception as exc:
+            logger.warning(
+                "[LIFECYCLE] service=agent event=handoff_client_unwired"
+                + " reason=assembly_failed errorType={}",
+                type(exc).__name__,
+            )
+            handoff_client = None
+        if handoff_client is not None:
+            context.metadata[HANDOFF_CLIENT_KEY] = handoff_client
         # D-1831 (task-188 MVP⑤ gray extension): the four CP-owned board faces
         # join THIS run's tool table only when a callable client is wired; a run
         # without it never sees them — absent from the table is today's behavior.
         run_tool_faces: list[BaseAgentTool] = config.tools
         if callable(context.metadata.get(TEAM_TASK_CLIENT_KEY)):
             run_tool_faces = [*config.tools, *team_task_tool_faces()]
+        if callable(context.metadata.get(HANDOFF_CLIENT_KEY)):
+            # 两个面分开注入：读名册与「派活」是两件事，模型不该从同一个口的参数里猜哪个是 TO。
+            run_tool_faces = [*run_tool_faces, *handoff_tool_faces()]
         # PLAN-0508: provider transport telemetry arrives on the caller-owned
         # queue (the model's collector sink is bound at construction); the loop
         # below fans it into the same ordered event stream. ``transport_task`` is
