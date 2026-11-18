@@ -68,10 +68,16 @@ interface VariantCase {
 const DEFAULT_B = {
     name: "密集",
     bodyFontPx: 14,
-    lineHeightPx: 21.7,
+    /*
+     * D-1842（2026-11-16 用户裁定「能根治都根治」）：正文行高回到 Tailwind 默认
+     * `calc(1.25 / 0.875)` ⇒ 14 × 1.4286 = **20px**。此前 A″ 实验把它钉成绝对值 1.55
+     * ⇒ 21.7px；那是「行高装不下 `p-2` 内距」的根因之一，已与 `--spacing` 同批撤回。
+     * 基线跟着**源头**改（不是为了让测试变绿而放宽）：量到的 20 现在是对的读数。
+     */
+    lineHeightPx: 20,
     controlRadiusPx: 10,
-    /** 0.25rem × 0.875 = 3.5px 步进。 */
-    spacing: "0.21875rem",
+    /** Tailwind 默认 0.25rem = 4px 步进（`main.css` 的 `:root` 已不再覆盖，D-1842）。 */
+    spacing: "0.25rem",
     radius: "0.625rem",
     textSm: "0.875rem",
     /*
@@ -871,12 +877,15 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         // "默认与改动前逐像素一致" —— 默认现在就应该长成 B，而不是维持旧外观。
         expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
         expect(result.text.fontSizePx, "B 正文 14px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
-        expect(result.text.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(DEFAULT_B.lineHeightPx, 1);
+        expect(result.text.lineHeightPx, "B 正文行高 20px（上游默认 1.4286）").toBeCloseTo(
+            DEFAULT_B.lineHeightPx,
+            1,
+        );
         expect(result.control.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(
             DEFAULT_B.controlRadiusPx,
             1,
         );
-        expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
+        expect(result.tokens.spacing, "B 间距 4px 步进（上游默认）").toBe(DEFAULT_B.spacing);
         expect(result.tokens.radius, "B --radius = 10px（A″ 固化）").toBe(DEFAULT_B.radius);
         expect(result.tokens.textSm, "B 正文阶梯 14px").toBe(DEFAULT_B.textSm);
         expect(result.tokens.brand, "B 唯一强调色 = 官方 --primary").toBe(DEFAULT_B.primary);
@@ -969,12 +978,15 @@ test.describe("PLAN-0631 M2 visual variants", () => {
 
         expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
         expect(result.text.fontSizePx, "B 正文 14px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
-        expect(result.text.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(DEFAULT_B.lineHeightPx, 1);
+        expect(result.text.lineHeightPx, "B 正文行高 20px（上游默认 1.4286）").toBeCloseTo(
+            DEFAULT_B.lineHeightPx,
+            1,
+        );
         expect(result.control.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(
             DEFAULT_B.controlRadiusPx,
             1,
         );
-        expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
+        expect(result.tokens.spacing, "B 间距 4px 步进（上游默认）").toBe(DEFAULT_B.spacing);
         expect(result.tokens.brand, "B 唯一强调色 = 官方 --primary").toBe(DEFAULT_B.primary);
         expect(bodyContrast, "正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);

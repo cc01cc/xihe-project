@@ -78,12 +78,19 @@ describe("chat bubble typography（PLAN-0631 T3.3 WFont）", () => {
         wrapper.unmount();
     });
 
-    it("气泡正文 token 锚在 14px / 1.55（--text-sm 对），且字阶 token 全站只定义一次", () => {
+    it("气泡正文 token 锚在 14px（--text-sm），行高/密度交回 Tailwind 默认，字阶 token 全站只定义一次", () => {
         const roots = declarationBlocks(main, ":root").join("\n");
         expect(roots.length, "main.css 至少要有一处顶层 :root").toBeGreaterThan(0);
         expect(roots).toContain("--text-sm: 0.875rem");
-        expect(roots).toContain("--text-sm--line-height: 1.55");
         expect(roots).toContain("--leading-relaxed: 1.55");
+        // D-1842：`--text-sm--line-height` 与 `--spacing` 两条覆盖已从 `:root` **删除**（不是改成默认值），
+        // 因为它们是 unlayered `:root` 对 `@theme` 的覆盖 —— 删掉即落回 Tailwind 默认，不留第二份数值。
+        // 所以这里断言「不出现」而不是「等于某个值」：把默认值抄回 `:root` 会重新变成一处覆盖，
+        // 下次上游改默认值时我们又漂走（这正是 12.5% 缩小的成因）。
+        expect(roots, "--spacing 不得在 :root 覆盖（交回 @theme）").not.toContain("--spacing:");
+        expect(roots, "--text-sm--line-height 不得在 :root 覆盖").not.toContain(
+            "--text-sm--line-height:",
+        );
 
         // 不变量：**字阶 token 全站只定义一次，主题切换不改字号节奏**。
         //
@@ -92,10 +99,12 @@ describe("chat bubble typography（PLAN-0631 T3.3 WFont）", () => {
         // 以后真有人按主题重定义 `--text-sm`，这里会**红**；红着改到「含目标 token 的那个块」
         // = 有人看了一眼；绿着放过 = 没人知道约定变了。
         expect(main.match(/--text-sm:\s/g)?.length ?? 0, "--text-sm 只能定义一次").toBe(1);
+        // `--text-sm--line-height`（D-1842 起）：`main.css` 里**一次都不该出现** —— 它既不该在 `:root`
+        // 覆盖（上面那条守着），也不该被别处重新定义。注意注释里也不写带冒号的形态，否则这条会红。
         expect(
             main.match(/--text-sm--line-height:\s/g)?.length ?? 0,
-            "--text-sm--line-height 只能定义一次",
-        ).toBe(1);
+            "--text-sm--line-height 全站零定义（交回 @theme 默认，D-1842）",
+        ).toBe(0);
         expect(
             main.match(/--leading-relaxed:\s/g)?.length ?? 0,
             "--leading-relaxed 只能定义一次",

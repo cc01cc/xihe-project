@@ -194,17 +194,23 @@ function isPanelActive(name: string) {
             <!--
                 task-64 · 左上角 logo 槽位（形态由用户 2026-11-12 定：rail 顶部、28×28 方片、黑底白字 XH，暗色自动反转）。
 
-                几何（本仓 `--spacing` = 3.5px 步进，`main.css:302`）：
-                  `size-8` = 8 × 3.5 = 28px；`my-2` = 2 × 3.5 = 7px（上下各一）
-                  槽位块高 = 7 + 28 + 7 = 42 ⇒ 下方分组的 `p-4`(14) 把首个按钮推到 y = 42 + 14 = 56
-                  （改前 y = 14 ⇒ 净下移 42px，与 `56 = 28 + 14×2` 是同一条等式，不用 32）
+                几何（4px 栅格 = Tailwind 默认 `--spacing`，D-1842 起）：
+                  `size-8` = 8 × 4 = 32px；`my-2` = 2 × 4 = 8px（上下各一）
+                  槽位块高 = 8 + 32 + 8 = 48 ⇒ 下方分组的 `p-3`(12) 把首个按钮推到 y = 48 + 12 = 60
+                  （纵向仍与 logo 槽位同一节奏：槽位块高 + 分组内距 = 首个按钮的 y）
+                  注：D-1842 之前是 3.5px 步进 ⇒ 7 + 28 + 7 = 42、p-4(14) ⇒ y = 56。
+                  两个数各自都对，**不可混乘**（用 4px 的 p-4=16 配 3.5px 的 size-8=28 就是错的读法）。
                 水平（task-224）：**两态同 x 才是判据，居中不是**。
-                  改前写的是 `self-center` —— 它只对**折起态**成立（56px 栏 ⇒ (56 − 28) / 2 = 14 每侧）；
-                  展开态栏宽 192px，「居中于当前宽度」= (192 − 28) / 2 = 82 ⇒ logo 相对折起态右移 68px。
-                  判据只算了折起态就宣布「天然居中」= 判据只覆盖一半状态（用户 2026-11-13 看截图直述「展开后 logo 不该移动」）。
-                  现在固定左内距：`ml-3.5` = **3.5 个单位 × `--spacing` 0.21875rem = 12.25px**
-                  （**12.25 而不是 14**：14 是把 rem 基准和倍数混乘的结果 —— 1 单位就是 3.5px，
-                  `main.css:302`；写 14 会让后来人以为与折叠态居中位（14）逐像素对齐，其实差 1.75px）。
+                  改前写的是 `self-center` —— 它只对**折起态**成立（56px 栏 ⇒ (56 − 28) / 2 = 14 每侧，
+                  那是 28px logo / 3.5px 栅格时代的数）；展开态栏宽 192px，「居中于当前宽度」= (192 − 28) / 2
+                  = 82 ⇒ logo 相对折起态右移 68px。判据只算了折起态就宣布「天然居中」= 判据只覆盖一半状态
+                  （用户 2026-11-13 看截图直述「展开后 logo 不该移动」）。
+                  现在固定左内距：`ml-3.5` = 3.5 个单位 × `--spacing`。4px 栅格（D-1842 起）⇒ **14px**
+                  （3.5px 栅格时代同一行代码是 12.25px —— 值变了但**判据没变**：判据是「两态同 x」，
+                  固定内距天然满足，不依赖栏宽）。
+                  与图标列的关系（有意，非缺陷）：折起态图标列左缘 = `p-3` = 12px，logo 在 14px ⇒ 差 2px。
+                  这与 3.5px 时代的 1.75px 偏移同量级，**不是被判据锚定的像素**；若将来要求逐像素对齐，
+                  改 `ml-3`（=12px）并同步 GlobalRail.spec.ts 的类断言。
                   配 `self-start`：交叉轴对齐不再参与水平定位（父级是 flex 列，`self-*` 管交叉轴）。
 
                   实测（`[实测]` ui-2，真浏览器 1920×1080，钉 `ede53f115`；选择器
@@ -216,6 +222,9 @@ function isPanelActive(name: string) {
                   相对 12.25 差 **+69.25px**；几何推算 (192 − 28) / 2 − (56 − 28) / 2 = **68px**
                   （**推算值，与实测 69.25 不同源，别混写成一个数**：推算取 rail 外框宽，
                   `self-center` 实际居中在内容盒）。
+                  **注（D-1842 起）**：上面 12.25 / 1.75 / 69.25 都是 3.5px 栅格时代钉在 `ede53f115` 的读数，
+                  保留作反证依据，**不是现值**。现值：`ml-3.5` = 14px ⇒ 两态 x 均 14（Δ 仍 0）；
+                  居中位差与反证量只由栏宽和 logo 尺寸决定，判据（两态同 x）不受 `--spacing` 影响。
 
                 配色为什么用 token 而不是 #000/#fff（`[源码]` styles/themes/color-shadcn-neutral.css）：
                   亮色 `--primary: oklch(0.205 0 0)`（近黑）/ `--primary-foreground: oklch(0.985 0 0)`（近白）
@@ -235,14 +244,20 @@ function isPanelActive(name: string) {
             </div>
             <SidebarContent>
                 <!--
-                    task-50 B2：折起态（icon 栏）内距 14px =（56 − 28）/ 2。
-                    为什么不是 `p-3`：本仓 `--spacing` 是 3.5px 步进（`main.css:302`），`p-3`=10.5px
-                    会留 3.5px 偏移；按钮是 vendor `size-8!` = 8 步 = 28px。vendor 的 `p-2` 是给
-                    48px 栏设计的常量，我们覆盖成 56px 后「宽度」与「内距」各自合理、相乘才错。
+                    task-50 B2：折起态（icon 栏）内距必须与 56px 栏宽**逐像素闭合**。
+                    栏宽是 `--sidebar-width-icon: 3.5rem` = **56px 字面值**（见上方 Provider 的 :style，
+                    不由 `--spacing` 推导）；按钮是 vendor `size-8!` = 8 步。于是内距只能是
+                    一条等式：`2 × 内距 + size-8 = 56`。
+                    - 4px 栅格（现状，D-1842 已把 `--spacing` 恢复默认）：size-8 = 32 ⇒ 内距 = 12 = `p-3`。
+                    - vendor 的 `p-2` 是给 48px 默认栏（`SIDEBAR_WIDTH_ICON` 3rem）设计的常量，
+                      我们覆盖成 56px 后「宽度」与「内距」各自看着合理、相乘才错，所以不能直接用 p-2。
+                    D-1842 之前这里是 `p-4`：那是按 3.5px 步进算的 14 + 28 + 14 = 56（同样闭合），
+                    间距回 4px 后 `p-4` = 16 而 `size-8` = 32 ⇒ 16+32+16 = 64 > 56，图标会被 clipped。
+                    所以这里跟 `--spacing` 一起改成 `p-3`，不是「顺手调小」。
                 -->
-                <SidebarGroup class="group-data-[collapsible=icon]:p-4">
+                <SidebarGroup class="group-data-[collapsible=icon]:p-3">
                     <SidebarGroupContent>
-                        <SidebarMenu class="gap-0.5">
+                        <SidebarMenu>
                             <GlobalRailModule
                                 v-for="module in contentModules"
                                 :key="module.id"
@@ -260,17 +275,17 @@ function isPanelActive(name: string) {
                 <SidebarGroup
                     v-if="railPanels.length > 0"
                     data-testid="global-rail-panels"
-                    class="group-data-[collapsible=icon]:p-4"
+                    class="group-data-[collapsible=icon]:p-3"
                 >
                     <SidebarGroupContent>
-                        <SidebarMenu class="gap-0.5">
+                        <SidebarMenu>
                             <SidebarMenuItem v-for="panel in railPanels" :key="panel.id">
                                 <SidebarMenuButton
                                     :data-testid="`global-rail-panel-${panel.id}`"
                                     :is-active="isPanelActive(panel.name)"
                                     :aria-current="isPanelActive(panel.name) ? 'page' : undefined"
                                     :title="t(panel.labelKey)"
-                                    class="h-9 py-1.5 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
+                                    class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
                                     @click="navigate(panel.path)"
                                 >
                                     <component
@@ -295,8 +310,8 @@ function isPanelActive(name: string) {
                 `SidebarSeparator` 分隔（既有 token `bg-sidebar-border`，不新增色阶）。
                 这里只移动、不改任何 class/tooltip/aria。
             -->
-            <SidebarFooter class="group-data-[collapsible=icon]:p-4">
-                <SidebarMenu class="gap-0.5">
+            <SidebarFooter class="group-data-[collapsible=icon]:p-3">
+                <SidebarMenu>
                     <GlobalRailModule
                         v-for="module in footerModules"
                         :key="module.id"
@@ -315,7 +330,6 @@ function isPanelActive(name: string) {
                         -->
                         <SidebarMenuButton
                             data-testid="global-rail-logout"
-                            class="h-9 py-1.5"
                             :aria-label="t('sidebar.logout')"
                             :tooltip="t('sidebar.logout')"
                             @click="handleLogout"
@@ -339,7 +353,6 @@ function isPanelActive(name: string) {
                     <SidebarMenuItem>
                         <SidebarMenuButton
                             data-testid="global-rail-toggle"
-                            class="h-9 py-1.5"
                             :aria-expanded="railOpen"
                             :aria-label="railOpen ? t('sidebar.collapse') : t('sidebar.expand')"
                             :tooltip="railOpen ? undefined : t('sidebar.expand')"

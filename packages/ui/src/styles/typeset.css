@@ -7,7 +7,9 @@
      * `line-height: var(--ms-leading-body)`（`.paragraph-node[data-v-…]` 等）。后代的自有
      * 声明不继承祖先字号，所以下面这行只提供「继承基准」，管不到段落 —— 必须重定义这两个
      * 上游 token，让正文跟随气泡口径（= `text-sm`：`BubbleContent` 已是 `text-sm
-     * leading-relaxed`，`--text-sm` / `--leading-relaxed` 同为 14px / 1.55）。PLAN-0631 T3.3。 */
+     * leading-relaxed`）。这里只桥接字号与行高：段落取 `--text-sm--line-height`（上游默认
+     * `calc(1.25 / 0.875)` = 20px），气泡容器行高另由 `--leading-relaxed` 给，两者不必相等 ——
+     * 先前「同为 1.55」是 A″ 遗留，D-1842 已把 `--text-sm--line-height` 撤回默认。PLAN-0631 T3.3。 */
     --ms-text-body: var(--text-sm);
     --ms-leading-body: var(--text-sm--line-height);
     font-size: var(--text-sm);

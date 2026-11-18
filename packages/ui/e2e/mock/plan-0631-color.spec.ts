@@ -524,7 +524,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
 
             // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
             expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
-            expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
+            expect(body.lineHeightPx, "B 正文行高 20px（上游默认 1.4286）").toBeCloseTo(20, 0);
             expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
 
             // 颜色必须真的落官方 neutral（旧 c1/c3 只剩迁移入口，见文件头 NEUTRAL）。
@@ -815,7 +815,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
 
         // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
         expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
-        expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
+        expect(body.lineHeightPx, "B 正文行高 20px（上游默认 1.4286）").toBeCloseTo(20, 0);
         expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
 
         expect(tokens.primary, "--primary").toBe(NEUTRAL.primary);
