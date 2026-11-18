@@ -106,6 +106,8 @@ public class ChatSubmissionService {
     private final com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots;
     // PLAN-0642 T2.1 (D42-03): runtime model resolution for an unbound Session.
     private final ChatModelResolutionService modelResolution;
+    // D-1866 (task-24): rule-based session naming (no model call) at first user message.
+    private final SessionTitleDeriver sessionTitleDeriver;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -130,7 +132,8 @@ public class ChatSubmissionService {
                                  com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots,
                                  SessionRunConcurrencyGate runConcurrencyGate,
                                  com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots,
-                                 ChatModelResolutionService modelResolution) {
+                                 ChatModelResolutionService modelResolution,
+                                 SessionTitleDeriver sessionTitleDeriver) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -159,6 +162,7 @@ public class ChatSubmissionService {
         this.runConcurrencyGate = runConcurrencyGate;
         this.pluginCatalogSnapshots = pluginCatalogSnapshots;
         this.modelResolution = modelResolution;
+        this.sessionTitleDeriver = sessionTitleDeriver;
     }
 
     @Transactional
@@ -1085,6 +1089,15 @@ public class ChatSubmissionService {
         // PLAN-0665 D3: the delivery audience is durable on the Message itself (nullable).
         userMessage.setDelivery(deliveryJson);
         messageRepository.save(userMessage);
+        // D-1866 (task-24): rule-based naming — the ONE funnel for every first-message origin
+        // (user submission / follow-up / scheduled / spawn / delegation), inside the admission
+        // transaction that already holds this Session's row lock. A manual rename therefore can
+        // never be clobbered: it either committed first (the title is no longer a default ⇒ the
+        // deriver skips) or it blocks on this lock and wins right after us. Internal (model-input)
+        // messages are skipped — a wake instruction is not a user-facing turn.
+        if (Message.VISIBILITY_USER.equals(userMessage.getVisibility())) {
+            sessionTitleDeriver.applyToFirstMessage(session, content);
+        }
         chatRun.setUserMessageId(userMessage.getId().toString());
         chatRunRepository.save(chatRun);
 
