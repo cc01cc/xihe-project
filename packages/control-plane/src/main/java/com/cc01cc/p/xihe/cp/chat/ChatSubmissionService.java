@@ -438,9 +438,15 @@ public class ChatSubmissionService {
      *
      * <p>与 {@code WakeChainService} 的「原文 token 不进 durable 事件」并不冲突：那条规则防的是把
      * 模型输出写进会被喂回上下文的事件流；这里写的是消息自身的元数据，而同一段原文本来就已经在
-     * {@code content} 里，可见域没有扩大。UI 必须按纯文本渲染（它不是 id，不参与花名册匹配）。</p>
+     * <p>UI 必须按纯文本渲染（它不是 id，不参与花名册匹配）。</p>
+     *
+     * <p>task-66② (D-1884-B)：同一个方法服务**两条路径**，所以它是 public——
+     * ① agent 路径由 {@link #persistAssistantResponse} 在写完 assistant 行后调用（投影在
+     * 说那句话的那条消息上）；② 人路径由 {@code ChatController} 在解析完 composer 正文后
+     * 对**刚提交的 user 行**调用。两条路径共用一份投影代码是刻意的：出现第二份实现就等于
+     * 允许两边对「什么算未送达」各说各话，而那正是这张卡要消灭的分歧。</p>
      */
-    private void patchUnresolvedDelivery(Message message, List<String> unresolvedTokens) {
+    public void patchUnresolvedDelivery(Message message, List<String> unresolvedTokens) {
         if (message == null || unresolvedTokens == null || unresolvedTokens.isEmpty()) {
             return;
         }

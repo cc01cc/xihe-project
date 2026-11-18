@@ -1049,6 +1049,14 @@ public class ChatController {
             // workspace_id, V92:50-72), so an independent session has @-mentions like any other.
             List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
+            // task-66② (D-1884-B): a mistyped @name in the composer used to leave NO visible trace —
+            // not on the message the sender just wrote, and (until the matching change in
+            // WakeFanOutService.runSerial) not even in the durable trail: only a log line. The sender
+            // saw their own「已交给 @ewLeadX」and had no way to learn nobody was woken.
+            // Projected here, unconditionally and BEFORE the branches below, because the miss belongs
+            // to the message the sender wrote — not to whichever dispatch path answers it. Same cell
+            // as the agent path (delivery.unresolved), same tokens, no new concept.
+            chatSubmissionService.patchUnresolvedDelivery(userMessage, mentions.unresolvedTokens());
             // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
             // message can never create two runs for the same participant.
             Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);

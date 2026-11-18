@@ -3005,6 +3005,87 @@ class ChatControllerTest extends AbstractH2Test {
                 java.util.Objects.requireNonNull(response.getBody()).get("code"));
     }
 
+    // ── task-66②: 人在 composer 里打错名字 ⇒ 既有 durable 行，又有可见投影 ────────────────────
+
+    /**
+     * task-66② (D-1884-B) 的反例锚点，**人路径自备**，不搭 ①（agent 路径）的绿。
+     *
+     * <p>改之前：人写「这件事我交给 @GhostWriterZ 处理吧」，而花名册里没有这个名字 ⇒ 平台只留一行
+     * 日志（{@code WakeFanOutService.runSerial} 的 {@code wake_mention_unresolved}），消息照发、
+     * 界面什么都不说 ⇒ 发送者看着自己写下了一次不存在的送达。</p>
+     *
+     * <p>现在两侧必须同时成立：</p>
+     * <ul>
+     *   <li><b>可见面</b>：刚发出去的那条 <b>user 消息自己</b>的 {@code delivery} 里出现
+     *       {@code unresolved} 含原文 token —— 与 ① 同一个格子、同一份投影代码（同一个方法）。</li>
+     *   <li><b>durable 面</b>：{@code context_events} 里出现
+     *       {@code wake_dispatch{outcome=refused, reason=mention_unresolved, triggerSource=mention}}，
+     *       {@code participantId} 为空串（未解析的 token 点名不了任何人），且 payload <b>不含</b>原文
+     *       token —— 事件流会被喂回上下文，task-63 划的边界在这里同样成立。</li>
+     * </ul>
+     */
+    @Test
+    void chat_mistypedMentionFromAHuman_isProjectedOnItsOwnMessageAndAudited() {
+        seedMentionPair("VisiblePeerG");
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo("这件事我交给 @GhostWriterZ 处理吧", null);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+
+        String delivery = jdbcTemplate.queryForObject(
+                "SELECT delivery::text FROM messages WHERE CAST(id AS VARCHAR) = ?", String.class,
+                String.valueOf(body.get("messageId")));
+        java.util.Objects.requireNonNull(delivery,
+                "②：发送者自己那条消息必须带上投影；NULL 就是改之前那种「只有日志」的静默行为");
+        assertTrue(delivery.contains("\"unresolved\""),
+                "打错的名字必须出现在发送者那条消息上，实际=" + delivery);
+        assertTrue(delivery.contains("@GhostWriterZ"),
+                "投影的是原文 token（不是 id、不是猜出来的名字），实际=" + delivery);
+
+        await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> {
+            java.util.List<String> refused = wakeDispatchPayloads().stream()
+                    .filter(payload -> payload.contains("\"outcome\":\"refused\"")
+                            && payload.contains("\"reason\":\"mention_unresolved\"")
+                            && payload.contains("\"triggerSource\":\"mention\""))
+                    .toList();
+            assertEquals(1, refused.size(),
+                    "人路径的 miss 现在必须留下一条 durable 拒绝行（改之前只有日志，查不到任何行）");
+            assertTrue(refused.get(0).contains("\"participantId\":\"\""),
+                    "未解析 token 点名不了任何人：participantId 必须是空串，与 ① 同口径");
+            assertFalse(refused.get(0).contains("GhostWriterZ"),
+                    "原文 token 不许进事件流 —— 它会被喂回上下文（task-63 边界不放宽）");
+        });
+    }
+
+    /**
+     * 反向（同一个改动面，另一个方向）：点名一个**真实存在**的成员 ⇒ 两边都不许出现 unresolved，
+     * 尤其不许留一个空数组占位（「没有 miss」和「miss 集合为空」是两件事，后者是新造的空标记）。
+     */
+    @Test
+    void chat_resolvedMentionFromAHuman_projectsNothingAndRefusesNothing() {
+        seedMentionPair("VisiblePeerH");
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo("请 @VisiblePeerH 来看一下这条", null);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+
+        String delivery = jdbcTemplate.queryForObject(
+                "SELECT delivery::text FROM messages WHERE CAST(id AS VARCHAR) = ?", String.class,
+                String.valueOf(body.get("messageId")));
+        assertFalse(delivery != null && delivery.contains("unresolved"),
+                "点名成功 ⇒ 不造空标记，实际=" + delivery);
+
+        // 等这一轮 fan-out 真的跑过（有行落地）再判「没有拒绝行」，否则这条断言只是在和时间赛跑。
+        await().atMost(java.time.Duration.ofSeconds(20))
+                .until(() -> !wakeDispatchPayloads().isEmpty());
+        assertTrue(wakeDispatchPayloads().stream().noneMatch(p -> p.contains("mention_unresolved")),
+                "没有 miss ⇒ 不许留下 mention_unresolved 行");
+    }
+
     // ── task-104: delivering to YOURSELF is refused at the delivery gate (cp-1 task-100 ①) ─────
 
     /**

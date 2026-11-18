@@ -474,6 +474,8 @@ public class WakeFanOutService {
         for (String token : unresolvedTokens) {
             logger.info("[LIFECYCLE] service=cp event=wake_mention_unresolved sessionId={} "
                     + "token={} round={}", sessionId, token, wakeRoundId);
+            // task-66② (D-1884-B): the log line used to be the ONLY trace of a human's mistyped @.
+            auditUnresolvedMention(sessionId, workspaceId, userId, wakeRoundId);
         }
         int started = 0;
         int deferred = 0;
@@ -595,6 +597,39 @@ public class WakeFanOutService {
             notified.add(participantId);
         }
         return notified;
+    }
+
+    /**
+     * task-66② (D-1884-B): a mistyped `@name` from a HUMAN sender leaves the same durable reading
+     * the agent path leaves ({@code WakeChainService.auditUnresolvedMention}, task-63) — same event
+     * name {@code wake_dispatch}, same {@code outcome=refused} / {@code reason=mention_unresolved},
+     * same empty {@code participantId} because an unresolved token names nobody, and one row per
+     * token. Nothing here invents a vocabulary.
+     *
+     * <p>Two choices are load-bearing, both inherited from the agent path:</p>
+     * <ul>
+     *   <li>The raw token text is NOT written into the payload. It would land in the event stream
+     *       that is fed back into context. Here the human's own message already carries it
+     *       durably, and the visible half of this card is the projection onto that message
+     *       ({@code ChatController} -> {@code ChatSubmissionService.patchUnresolvedDelivery}),
+     *       not a copy in the audit trail.</li>
+     *   <li>{@code triggerSource} is {@code "mention"} — the value this path already passes to
+     *       {@code WakeDispatchService.fire} below, so the row names how it was triggered instead
+     *       of borrowing the chain path's {@code "chain"}.</li>
+     * </ul>
+     */
+    private void auditUnresolvedMention(UUID sessionId, String workspaceId, String userId,
+                                        String wakeRoundId) {
+        if (eventStoreService == null) {
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("wakeRoundId", wakeRoundId);
+        payload.put("participantId", "");
+        payload.put("triggerSource", "mention");
+        payload.put("outcome", "refused");
+        payload.put("reason", "mention_unresolved");
+        eventStoreService.append(sessionId.toString(), workspaceId, userId, EVENT_WAKE_DISPATCH, payload);
     }
 
     private void notifyObserver(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
