@@ -2095,8 +2095,7 @@ const messages = {
             // 技能「本工作区」层只读面板（Lead 裁定一：读面补上，写面如实写明未接线）。
             workspaceSkillsTitle: "本工作区技能",
             workspaceSkillsCount: "{count} 个",
-            workspaceSkillsSubtitle:
-                "只读列表：本工作区自建的技能定义（读面走 GET /api/v1/skills?definitionScope=workspace）。",
+            workspaceSkillsSubtitle: "这里只读列出本工作区自建的技能定义。",
             workspaceSkillsWriteUnavailable:
                 "写面未接线：导入对话框的 scope 由 JSON 里的 definitionScope 决定，本页不预填 workspace scope。",
             workspaceSkillsLoading: "正在读取本工作区技能…",
@@ -2106,7 +2105,7 @@ const messages = {
             workspaceSkillsRetry: "重试",
             workspaceSkillsEmptyTitle: "本工作区还没有技能",
             workspaceSkillsEmptyBody:
-                "本工作区自建的技能会出现在这里；读面正常返回空列表时才显示本状态。",
+                "本工作区自建的技能会出现在这里。只有接口正常返回空列表时才显示这句话。",
             breadcrumbRoot: "资源",
             breadcrumbLabel: "面包屑",
             layerUser: "我的",
@@ -2140,15 +2139,15 @@ const messages = {
                 loading: "正在读取个人技能…",
                 loadErrorTitle: "读取个人技能失败",
                 loadErrorBody:
-                    "读面请求失败。这不代表你没有个人技能 —— 请重试；仍然失败请查看服务健康。",
+                    "读取请求失败。这不代表你没有个人技能 —— 请重试；仍然失败请查看服务健康。",
                 retry: "重试",
                 emptyTitle: "个人技能库还是空的",
                 emptyBody: "用「导入技能」把已有的技能定义（JSON）导入进来；只有你自己能看到它们。",
                 importMine: "导入技能",
                 importDisabledReason:
-                    "写入需要「管理个人技能」权限（MANAGE_PERSONAL_SKILLS）；读面不受该原子限制（P-189-3：撤销后仍可读自己已有的个人技能）。",
+                    "写入需要「管理个人技能」权限；读取不受该权限限制（撤销权限后仍可读自己已有的个人技能）。",
                 importEntryNote:
-                    "导入走 POST /api/v1/skills/import 的 type=user；归属人由服务端从登录态取，请求里不带也不接受他人 id。",
+                    "导入时归属人由服务端按当前登录账号确定，请求里不带也不接受他人的 id。",
                 foreignIgnored: "{count} 条不属于个人库的行被忽略（它们不属于这一层）",
                 importResultTitle: "导入结果",
                 importResultLine:
@@ -2164,8 +2163,7 @@ const messages = {
                 create: {
                     cta: "新建技能",
                     title: "新建个人技能",
-                    description:
-                        "只有你能看到它。提交走 POST /api/v1/skills/import 的 type=user，归属人由服务端从登录态取。",
+                    description: "只有你能看到它。提交时归属人由服务端按当前登录账号确定。",
                     nameLabel: "名称",
                     nameHint:
                         "小写字母或数字开头，可含 . _ -，最长 64 字符；它同时决定存放目录名（派生为 manual/名称/SKILL.md）。",
@@ -3299,7 +3297,7 @@ const messages = {
                 loading: "正在加载技能定义…",
                 emptyTitle: "实例层还没有技能定义",
                 emptyBody:
-                    "技能定义只能通过导入接口写入：持有实例技能库管理权限（MANAGE_SKILL_LIBRARY）时，用右上角「导入技能」提交一批 JSON。",
+                    "技能定义只能通过「导入技能」写入：有「管理实例技能库」权限时，可从右上角提交一批 JSON。",
                 errorTitle: "技能定义加载失败",
                 retry: "重试",
                 readOnlyNote:
@@ -3308,7 +3306,7 @@ const messages = {
                     entry: "导入技能",
                     entryHint: "粘贴或选择一批技能定义（JSON），按名称幂等导入",
                     disabledReason:
-                        "无导入权限，入口置灰：技能库写入需要实例域原子 MANAGE_SKILL_LIBRARY（实例技能库管理）。下一步：让实例管理员在「角色与权限」页给当前账号授予该原子，授予后刷新本页即可。",
+                        "没有导入权限，入口置灰：技能库写入需要「管理实例技能库」权限。下一步：让实例管理员在「角色与权限」页给当前账号授予该权限，授予后刷新本页即可。",
                     title: "导入技能定义",
                     subtitle:
                         "粘贴或选择一个 JSON 批（一次最多 {max} 条）。这是技能定义唯一的写入方式，按名称幂等。",
@@ -3343,7 +3341,7 @@ const messages = {
                         forbidden: {
                             title: "没有导入权限",
                             body: "服务端拒绝了这次导入：当前账号不持有实例技能库的写权限。",
-                            action: "让实例管理员授予原子 MANAGE_SKILL_LIBRARY（实例域）；若你要导的是工作区私有库，请到工作区设置里操作。",
+                            action: "让实例管理员授予「管理实例技能库」权限；若你要导的是工作区私有库，请到工作区设置里操作。",
                         },
                         batchTooLarge: {
                             title: "一次最多 64 条",
@@ -6240,7 +6238,7 @@ const messages = {
             workspaceSkillsTitle: "Workspace skills",
             workspaceSkillsCount: "{count} total",
             workspaceSkillsSubtitle:
-                "Read-only list of skill definitions created in this workspace (GET /api/v1/skills?definitionScope=workspace).",
+                "This read-only list shows skill definitions created in this workspace.",
             workspaceSkillsWriteUnavailable:
                 "Writing is not wired yet: the import dialog derives its scope from the definitionScope in the JSON, so this page never pre-fills a workspace scope.",
             workspaceSkillsLoading: "Loading workspace skills…",
@@ -6250,7 +6248,7 @@ const messages = {
             workspaceSkillsRetry: "Retry",
             workspaceSkillsEmptyTitle: "This workspace has no skills yet",
             workspaceSkillsEmptyBody:
-                "Skill definitions created in this workspace show up here; this state only appears when the read face really returned an empty list.",
+                "Skill definitions created in this workspace show up here. This state only appears when the API really returned an empty list.",
             breadcrumbRoot: "Resources",
             breadcrumbLabel: "Breadcrumb",
             layerUser: "Mine",
@@ -6292,9 +6290,9 @@ const messages = {
                     "Use “Import skills” to bring existing skill definitions (JSON) in here; only you can see them.",
                 importMine: "Import skills",
                 importDisabledReason:
-                    "Writing requires the MANAGE_PERSONAL_SKILLS permission; the read face is not gated by that atom (P-189-3: after a revocation you can still read your own personal skills).",
+                    "Writing requires the “Manage personal skills” permission; reading is not gated by it (after a revocation you can still read your own personal skills).",
                 importEntryNote:
-                    "Import goes through POST /api/v1/skills/import with type=user; the owner comes from the session token server-side, and the request carries no id of anyone else.",
+                    "On import the owner is determined server-side from the signed-in account; the request carries no id of anyone else and does not accept one.",
                 foreignIgnored:
                     "{count} row(s) outside the personal library were ignored (they do not belong to this layer)",
                 importResultTitle: "Import result",
@@ -6312,7 +6310,7 @@ const messages = {
                     cta: "New skill",
                     title: "New personal skill",
                     description:
-                        "Only you can see it. The submit goes through POST /api/v1/skills/import with type=user; the owner comes from the session token server-side.",
+                        "Only you can see it. On submit the owner is determined server-side from the signed-in account.",
                     nameLabel: "Name",
                     nameHint:
                         "Starts with a lowercase letter or digit; may contain . _ -; at most 64 characters. It also decides the directory name (derived as manual/<name>/SKILL.md).",
@@ -7472,7 +7470,7 @@ const messages = {
                 loading: "Loading skill definitions…",
                 emptyTitle: "No instance-scope skill definitions yet",
                 emptyBody:
-                    "Definitions are written only through the import endpoint: with MANAGE_SKILL_LIBRARY you can submit a JSON batch from the top-right Import skills entry.",
+                    "Definitions can only be written through “Import skills”: with the “Manage instance skill library” permission you can submit a JSON batch from the top-right entry.",
                 errorTitle: "Failed to load skill definitions",
                 retry: "Retry",
                 readOnlyNote:
@@ -7482,7 +7480,7 @@ const messages = {
                     entryHint:
                         "Paste or pick a batch of skill definitions (JSON); imports are idempotent by name",
                     disabledReason:
-                        "No import right, so the entry is disabled: writing the library needs the instance-scope atom MANAGE_SKILL_LIBRARY. Next step: ask an instance administrator to grant it on the roles page, then reload this page.",
+                        "No import right, so the entry is disabled: writing the library needs the “Manage instance skill library” permission. Next step: ask an instance administrator to grant it on the roles page, then reload this page.",
                     title: "Import skill definitions",
                     subtitle:
                         "Paste or pick one JSON batch (at most {max} items). This is the only way definitions are written; imports are idempotent by name.",
@@ -7518,7 +7516,7 @@ const messages = {
                         forbidden: {
                             title: "No import right",
                             body: "The server refused this import: the current account holds no write right on the instance skill library.",
-                            action: "Ask an instance administrator to grant the atom MANAGE_SKILL_LIBRARY at instance scope; if you meant a workspace-private library, do it from the workspace settings.",
+                            action: "Ask an instance administrator to grant the “Manage instance skill library” permission at instance scope; if you meant a workspace-private library, do it from the workspace settings.",
                         },
                         batchTooLarge: {
                             title: "At most 64 items per batch",
