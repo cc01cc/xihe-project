@@ -28,9 +28,9 @@ from xihe_agent.adapters.approval_tool import (
 )
 from xihe_agent.adapters.user_question_tool import (
     ASK_USER_ENVELOPE_VERSION,
+    CODE_SUBAGENT_QUESTION_REFUSED,
     USER_QUESTION_EVENT_SINK_KEY,
     USER_QUESTION_RESUME_LOOKUP_KEY,
-    CODE_SUBAGENT_QUESTION_REFUSED,
     PendingQuestion,
     UserQuestionTool,
 )

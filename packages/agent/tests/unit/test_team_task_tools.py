@@ -17,11 +17,11 @@ import pytest
 
 from xihe_agent.adapters.team_task_tools import (
     DESCRIPTION_MAX,
+    MOVE_STATUSES,
     SCOPE_ENTRY_MAX,
     SCOPE_LIST_MAX,
     SUBJECT_MAX,
     TEAM_TASK_CLIENT_KEY,
-    MOVE_STATUSES,
     UPDATE_ACTIONS,
     TeamTaskCreateTool,
     TeamTaskGetTool,
