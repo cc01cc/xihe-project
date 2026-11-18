@@ -59,10 +59,11 @@ const props = defineProps<{
      */
     showActor?: boolean;
     /**
-     * PLAN-0659 T1.3：消息头投递语义（发送/抄送/被 @），由列表按本地发送态 + 花名册
-     * 解析成**显示名**后传入；`undefined` = 不渲染投递行。
+     * PLAN-0659 T1.3：消息头投递语义（发送/抄送/被 @），由列表按 durable `delivery`
+     * + 花名册解析成**显示名**后传入；`undefined` = 不渲染投递行。
      *
-     * 限制（BL-239）：TO/CC 无持久载体，会话重载后丢失；@ 从正文 + 花名册重建仍在。
+     * TO/CC 已在 `messages.delivery` jsonb 持久（V120 / PLAN-0665 D3），跨刷新仍在
+     * （BL-239 已关账）；@ 仍从正文 + 花名册重建、不入库。
      */
     delivery?: ResolvedDelivery;
 }>();
@@ -386,9 +387,10 @@ onUnmounted(() => {
         <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
             <!--
                 PLAN-0659 T1.3：消息头投递语义 —— `发送→(A) · @被@者 · 抄送→(B,C)`。
-                三态来源不同：TO/CC 是 composer 发送态本地视图（BL-239：无持久载体，刷新后
-                丢失）；@ 从正文 + 花名册重建（仍在）。@ 是**高亮 chip**，不再重复出现在
-                抄送名单里；只染色到 muted/foreground 层级（注意力预算：投递信息不是危险/主 CTA）。
+                三态来源不同：TO/CC 读 durable `messages.delivery`（V120 / PLAN-0665 D3，
+                跨刷新仍在，BL-239 已关账）；@ 从正文 + 花名册重建（不入库）。@ 是**高亮 chip**，
+                不再重复出现在抄送名单里；只染色到 muted/foreground 层级（注意力预算：投递信息
+                不是危险/主 CTA）。
             -->
             <div
                 v-if="delivery"

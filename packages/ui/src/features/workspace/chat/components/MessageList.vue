@@ -117,8 +117,9 @@ function responderFor(message: Message): SessionParticipantView | undefined {
 }
 
 /**
- * PLAN-0659 T1.3：消息头投递语义投影（显示名）。TO/CC 来自 composer 本地发送态
- * （`Message.delivery`，BL-239：无持久载体）；@ 从正文 + 花名册重建。没有任何一态 ⇒ 不渲染。
+ * PLAN-0659 T1.3：消息头投递语义投影（显示名）。TO/CC 读 durable `Message.delivery`
+ * （`messages.delivery` jsonb，V120 / PLAN-0665 D3，跨刷新仍在 / BL-239 已关账）；
+ * @ 从正文 + 花名册重建。没有任何一态 ⇒ 不渲染。
  */
 const roster = computed(() => participantsStore.participants ?? []);
 function deliveryOf(message: Message): ResolvedDelivery | undefined {

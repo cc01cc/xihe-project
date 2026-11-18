@@ -1497,7 +1497,8 @@ const messages = {
             },
             // PLAN-0659 T1.3：消息头投递语义三态（发送 / 抄送 / 被 @）。`listSeparator` 供
             // 名单按 locale 连接（不在视图里硬编码 "、" / ", "）。
-            // 限制：TO/CC 无持久载体（BL-239），刷新后三态丢失（@ 可从正文+花名册重建）。
+            // 投递语义（TO/CC）已在 `messages.delivery` jsonb 持久（V120 / PLAN-0665 D3，
+            // BL-239 已关账），跨刷新仍在；`@` 仍从正文+花名册重建、不入库。
             delivery: {
                 to: "发送→{name}",
                 cc: "抄送→{names}",
@@ -5627,9 +5628,9 @@ const messages = {
             runHeader: {
                 toggle: "Expand or collapse run {run}",
             },
-            // PLAN-0659 T1.3: delivery semantics (to / cc / mentioned). TO/CC have no durable
-            // carrier yet (BL-239), so they disappear after a reload; @ is rebuilt from the
-            // message body + roster.
+            // PLAN-0659 T1.3: delivery semantics (to / cc / mentioned). TO/CC are durable in
+            // `messages.delivery` jsonb (V120 / PLAN-0665 D3, BL-239 closed), so they survive a
+            // reload; @ is still rebuilt from the message body + roster (never persisted).
             delivery: {
                 to: "To → {name}",
                 cc: "Cc → {names}",
