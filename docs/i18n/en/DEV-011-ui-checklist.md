@@ -675,6 +675,10 @@ Scan surface = **`route × tab/layer`**; the grid list is **committed** (`matrix
 
 Technical detail the **user deliberately expands** is not a violation: diagnostic surfaces follow the existing ruling in `packages/ui/AGENTS.md` ("error surface: code → copy") by putting `technicalDetail` inside a **collapsed-by-default** control with a label saying it is technical detail. The criterion is the **body text the user reads**; collapsed content is not body text, but **it must be visibly identifiable as technical detail** and must never be mixed into body copy.
 
+**The exception covers collapsed content only ⇒ an error code that stays on screen is a violation** (Lead ruling ②, 2026-11-19, ledger §14 `fc327a318`). First-hand evidence: `task-58`'s trigger judged the `session` cell red on its very first real run (shape 权限原子/枚举常量, sample `CHECKPOINT_UNAVAILABLE`, clean on the confirmation run) — that was the change panel's **always-on-screen** code, not build/HMR noise.
+Current wording: **the two diagnostic shapes converge into one** — `code` and `technicalDetail` go into the same collapsed-by-default control (`packages/ui/AGENTS.md` §错误面). The rejected alternative was a DOM-surface allowlist for the gate: it would move §14.1's **single judgement layer from rendered text to the DOM axis**, i.e. dismantle the criterion to avoid editing a few specs.
+Consequence on the copy side: once the code is collapsed, “visible and copyable” only holds **after expanding**, so any copy that asks the user to “provide the error code” must also name the action (expand Technical details). `errors.unknownCode` was changed in both locales in the same batch.
+
 ### 14.6 Some cells the gate cannot reach must be labelled, not skipped silently (`task-57`)
 
 The copy under "resource detail › instance layer › fields the API did not return" renders **only when the wire is missing keys**. On the real stack every instance list is empty (`credentials` 0 rows, `agent-principals` 0 rows, `mcp` **404**), so the gate cannot reach that cell; it is covered by the mock-lane spec (`e2e/mock/resource-detail.spec.ts`).
@@ -685,3 +689,33 @@ Such cells carry `via: "mock"` in the matrix and the gate prints **`MOCK … (no
 - **never print "0 hits / 0 chars"** — that reads like "scanned and clean". The gate did not scan it, so the reading must not be 0.
 
 This is the **dual** of §14.4 ("the instrument not seeing it is not the same as it not existing"): **an instrument reporting 0 is not the same as an instrument having looked.**
+
+### 14.7 Copy provenance must never come from the model's self-report (`task-59`; Lead approved into the ledger as F-24, 2026-11-19)
+
+**Criterion**: any **factual claim** put into product copy (what the UI did, what it covers, why there was no result) must be sourced from an **instrument reading** — the CP log, an API response, rendered text or a durable record **from the same run**. It must **never** be sourced from the model describing its own behaviour.
+
+This is not a metaphor for `D-1879`, it is a **new shape** of it: before, we inferred on the model's behalf; here somebody used **the model's word as an instrument reading**. First-hand evidence (same-run comparison, `task-59`): the CP recorded **`tools=0`** for that run and its durable records contained only USER + ASSISTANT, while the model's `reasoning` listed a tool set — "workspace file tools, git, team tasks" — **that does not exist**. Writing from the self-report yields sentences like "retrieval found nothing in your workspace files": **something that never happened is reported as having happened, and the user is handed a wrong next step along with it**.
+
+**Operable criterion (three steps, reproducible by a second person)**:
+
+1. Every **action / capability** noun in the copy ("retrieval", "reads your workspace", "calls a tool") must point at one instrument record **from the same run** (a CP log line, a response field, a `main.innerText` fragment). No record ⇒ **do not write it**; and do not write a half-guess like "it probably covers X and Y" — report only what was observed.
+2. The provenance lives in the **evidence surface** (the "where measured" / "reading" columns of the five required fields), **never inside the user-facing copy** — that is §14's category error; do not push provenance back into body copy just to justify yourself.
+3. "The UI has no such surface" and "this surface did not fire this run" are **two different claims**: the first needs the addressing evidence from §14.8, the second needs this run's records. Neither may be derived from a self-report.
+
+**Counter-example anchor (must be able to go red, on an axis a second person can recompute)**: put the sentence "retrieval currently covers only this session and your workspace files" into any i18n key.
+
+- **The honest half**: that sentence contains **none of the nine shapes** (clean prose ⇒ `check:copy-leak` stays green). Anyone claiming "the regex will catch self-report copy automatically" is selling a false green.
+- **The half that does go red**: step 1 pins this criterion on the **capability axis**, not the text axis — that run's `tools=0` contradicts the sentence outright, so a review card **judges it red under this rule**, recomputed with the same read-only probe (list the run's durable records and tool count). Like §14.6, this rule **states out loud that the nine shapes do not cover it**, so the next person does not assume the regex has their back.
+
+### 14.8 An instrument returning nothing is not the same as nothing being there — two addressing traps (`task-59` / `task-64`)
+
+Both bit during the same night, with the same symptom: the instrument reports empty or 404, and the next sentence concludes "this surface does not exist".
+
+| Trap | Measured symptom | Operable criterion |
+| --- | --- | --- |
+| Missing `x-workspace-id` header | The CP answers **404, never 403** — it reports neither "no permission" nor "missing header" | Any conclusion built on "could not fetch" must **first prove the request matches the page's real request, header-for-header and parameter-for-parameter**: capture the request the UI itself sends and replay it with the same headers and query. **Control group**: hit a resource known to exist with those same parameters; only when that hits is the addressing usable |
+| `branchId` is a required query parameter | Omitting it ⇒ **404** (not a full list) | Before writing a probe, check the operation's `required` in `docs/api/openapi.yaml` (here: `openapi.yaml:3827`). **The first candidate explanation for a 404 is "my addressing is incomplete", not "the resource does not exist"** |
+
+**General shape**: a 404 or an empty result is **not** evidence that a product surface is missing. To write "there is none", you must show **complete addressing** — same headers and parameters, plus a known-existing control that hits.
+
+P-9 in `task-59` was corrected exactly this way: the 404s first read as "there is no knowledge-base surface"; after adding the header and `branchId` the surfaces were all there, and the real finding was that **retrieval never happened that run** (`tools=0`). The two conclusions produce different copy, and the wrong one sends users looking for an entry point that does not exist.
