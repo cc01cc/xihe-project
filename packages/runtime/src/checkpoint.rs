@@ -2844,18 +2844,19 @@ impl ShadowGit {
         Ok((tree, opaque, nested_repos))
     }
 
-    /// PLAN-0641 T2.3 (contract F3): read-only discovery for the on-demand
-    /// endpoint. One cold staging pass into a **throwaway shadow** (no object,
-    /// tree or ref ever reaches the real shadow store) plus a single-level
-    /// readdir for bare repos (gitlink never lists them; design §6.1「一次
-    /// readdir 启发式」—— never a recursive walk, D41-7), then five-kind
-    /// classification.
+    /// PLAN-0641 T2.3 (contract F3) + task-9: read-only discovery for the
+    /// on-demand endpoint. One **index-free** enumeration into a throwaway shadow
+    /// (no object, index, tree or ref ever reaches the real shadow store) plus a
+    /// single-level readdir for bare repos (gitlink-style discovery never lists
+    /// them; design §6.1「一次 readdir 启发式」—— never a recursive walk, D41-7),
+    /// then five-kind classification. Nothing is staged, so the read cost does not
+    /// scale with tree content and the result is always fresh.
     ///
-    /// [`Self::stage_index`] already excludes declared roots through the same
-    /// `core.excludesFile` capture uses, so gitlink results are undeclared
-    /// candidates; declared roots that ARE repositories are appended from the
-    /// hydrated declared set with `declared=true` so the read face can label —
-    /// never re-offer — an already declared path (cache-staleness defence).
+    /// [`Self::probe_nested_paths`] applies the same `core.excludesFile` capture
+    /// uses, so its results are undeclared candidates; declared roots that ARE
+    /// repositories are appended from the hydrated declared set with
+    /// `declared=true` so the read face can label — never re-offer — an already
+    /// declared path (cache-staleness defence).
     pub async fn detect_nested_repos(&self, workspace_id: &str) -> Result<Vec<NestedRepoItem>> {
         validate_workspace_id(workspace_id)?;
         let work_tree = self.work_tree_for_root(workspace_id)?;
@@ -2899,7 +2900,7 @@ impl ShadowGit {
 
         // PLAN-0641 M2 T3.5 (B10 / D41-25): recurse into every declared root so a
         // repository nested INSIDE an already declared one still surfaces (one more
-        // staging pass per root — bounded by the declared-root count and cached by CP).
+        // index-free enumeration per root — bounded by the declared-root count).
         for (_, host_path) in self.declared_roots(workspace_id) {
             let Some(prefix) = Self::workspace_relative_path(&work_tree, &host_path) else {
                 continue; // the primary root itself or a path outside the tree
@@ -2938,17 +2939,43 @@ impl ShadowGit {
         Ok(items)
     }
 
-    /// PLAN-0641 T2.3/M2 T3.5: one throwaway-shadow staging pass scoped to
-    /// `work_tree` — gitlink (160000) candidates plus the one-level bare readdir
-    /// (design §6.1「一次 readdir 启发式」, D41-7: never a recursive walk). The
-    /// scratch shadow never touches the real store; declared roots are excluded by
-    /// [`Self::stage_index`] with the same excludes file capture uses.
+    /// PLAN-0641 T2.3/M2 T3.5 + task-9: one throwaway-shadow, **index-free**
+    /// enumeration scoped to `work_tree` — embedded-repository candidates plus the
+    /// one-level bare readdir (design §6.1「一次 readdir 启发式」, D41-7: never a
+    /// recursive walk).
+    ///
+    /// Why no staging: the old probe seeded a fresh shadow with no `last-index`, so
+    /// every request ran a cold `git add -A` — measured 45 s on the 1.6 GB
+    /// acceptance tree and 110–115 s end-to-end across three roots, against a 15 s
+    /// CP timeout. `git status --porcelain -uall` reports the same
+    /// embedded-repository boundary as a `?? <dir>/` record **without hashing
+    /// blobs or writing any object or index** (measured 120–907 ms on that tree,
+    /// 0 objects, 80 KB shadow). It honours the same `core.excludesFile` (static +
+    /// declared-root prefixes) and the work-tree `.gitignore`, so discovery parity
+    /// with capture is preserved: a 19-case equivalence matrix matched 18/19, the
+    /// sole difference being a `.git` directory with no commit, where `add -A`
+    /// fails outright (rc=128) and `status` still reports it.
+    ///
+    /// No cache is introduced: every request re-reads the tree, so there is no
+    /// invalidation window (a persisted staging index demonstrably keeps stale
+    /// `160000` gitlinks after a nested `.git` is removed).
     async fn probe_nested_paths(&self, work_tree: &Path) -> Result<Vec<String>> {
         let scratch = tempfile::TempDir::new()?;
         let shadow = scratch.path().join(SHADOW_DIR_NAME).join("probe.git");
-        // Discovery keeps the primary-root table: the M2 discovery shape is unchanged.
-        self.ensure_initialized(&shadow, work_tree, ExcludeProfile::PrimaryRoot)
-            .await?;
+        let shadow_arg = normalize_path_for_git(&shadow);
+        self.run_git_checked(
+            &[
+                "-c",
+                "advice.defaultBranchName=false",
+                "init",
+                "--bare",
+                &shadow_arg,
+            ],
+            &self.null_config_env(),
+            None,
+            self.call_timeout,
+        )
+        .await?;
         let token = format!(
             "nestedprobe-{}",
             SystemTime::now()
@@ -2956,20 +2983,49 @@ impl ShadowGit {
                 .map(|elapsed| elapsed.as_millis())
                 .unwrap_or_default()
         );
-        let index = scratch_index_path(&shadow, &token);
         let excludes = scratch_excludes_path(&shadow, &token);
-        let _scratch = ScratchFiles::new(vec![index.clone(), excludes.clone()]);
-        self.stage_index(
-            &shadow,
-            work_tree,
-            &index,
-            &excludes,
-            None,
-            ExcludeProfile::PrimaryRoot,
-        )
-        .await?;
-        let env = self.isolated_env(&shadow, work_tree, Some(&index));
-        let mut detected = self.staged_gitlinks(&env).await?;
+        let _scratch = ScratchFiles::new(vec![excludes.clone()]);
+        // Same exclusion table as `stage_index`: PrimaryRoot static/noise patterns
+        // plus declared-root prefixes (declared repos are labelled, not re-offered).
+        let declared = self.nested_declared_root_prefixes(work_tree);
+        self.write_excludes_file(&excludes, &declared, ExcludeProfile::PrimaryRoot)
+            .await?;
+        // No GIT_INDEX_FILE: git treats the index as empty, so every work-tree
+        // entry is untracked and an embedded repository is a single `?? dir/`
+        // record. GIT_OPTIONAL_LOCKS=0 (plus --no-optional-locks in run_git) keeps
+        // this strictly read-only — no index file and no objects are written.
+        let env = self.isolated_env(&shadow, work_tree, None);
+        let work_tree_arg = format!("core.worktree={}", normalize_path_for_git(work_tree));
+        let excludes_arg = format!("core.excludesFile={}", normalize_path_for_git(&excludes));
+        let stdout = self
+            .run_git_checked(
+                &[
+                    "-c",
+                    &work_tree_arg,
+                    "-c",
+                    "core.bare=false",
+                    "-c",
+                    "core.autocrlf=false",
+                    "-c",
+                    "core.filemode=false",
+                    "-c",
+                    "core.symlinks=true",
+                    "-c",
+                    "gc.auto=0",
+                    "-c",
+                    &excludes_arg,
+                    "status",
+                    "--porcelain",
+                    "-z",
+                    "-uall",
+                    "--ignored=no",
+                ],
+                &env,
+                Some(work_tree),
+                self.call_timeout,
+            )
+            .await?;
+        let mut detected = parse_nested_dir_records(&stdout);
 
         if let Ok(entries) = std::fs::read_dir(work_tree) {
             for entry in entries.flatten() {
@@ -4117,6 +4173,35 @@ fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
     Ok(changed)
 }
 
+/// Parse `git status --porcelain -z --untracked-files=all` output for embedded
+/// repository directories.
+///
+/// With an empty index every work-tree entry is untracked. Git refuses to recurse
+/// into a directory that is itself a repository and instead emits ONE record for
+/// it — `?? <dir>/` with a trailing slash — exactly the boundary `git add -A`
+/// would record as a mode-160000 gitlink. This is the index-free equivalent of
+/// [`parse_staged_gitlinks`] used by the nested-repo probe (task-9).
+///
+/// Records whose path does not end in `/` are ordinary untracked files and are
+/// skipped, as are the status letters of non-untracked entries.
+fn parse_nested_dir_records(bytes: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for field in bytes.split(|byte| *byte == 0) {
+        if field.len() < 4 || field[0] != b'?' || field[1] != b'?' || field[2] != b' ' {
+            continue;
+        }
+        let path = &field[3..];
+        let Some(trimmed) = path.strip_suffix(b"/") else {
+            continue;
+        };
+        if trimmed.is_empty() {
+            continue;
+        }
+        paths.push(String::from_utf8_lossy(trimmed).into_owned());
+    }
+    paths
+}
+
 /// Parse `git ls-files --stage -z` output for mode 160000 (gitlink) entries.
 ///
 /// Records look like `160000 <oid> 0\t<path>\0`; nested repository directories
@@ -4443,6 +4528,25 @@ mod tests {
 120000 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tlink\0";
         assert_eq!(parse_staged_gitlinks(raw), vec!["sub/nested".to_string()]);
         assert!(parse_staged_gitlinks(b"").is_empty());
+    }
+
+    #[test]
+    fn checkpoint_parse_nested_dir_records_takes_only_directory_records() {
+        // An embedded repo is the only case where git refuses to recurse and
+        // emits a single trailing-slash directory record.
+        let raw = b"?? top/\0?? deep/nested/\0?? plain.txt\0 M tracked.txt\0";
+        assert_eq!(
+            parse_nested_dir_records(raw),
+            vec!["top".to_string(), "deep/nested".to_string()]
+        );
+        // Ignored / non-untracked / truncated fragments never become candidates.
+        assert!(parse_nested_dir_records(b"").is_empty());
+        assert!(parse_nested_dir_records(b"?? \0").is_empty());
+        // A path that merely CONTAINS a slash but does not END with one is a file.
+        assert!(parse_nested_dir_records(b"?? file/name\0").is_empty());
+        assert!(parse_nested_dir_records(b"!! ignored/\0").is_empty());
+        assert!(parse_nested_dir_records(b"A  added/\0").is_empty());
+        assert!(parse_nested_dir_records(b"??\0").is_empty());
     }
 
     #[test]

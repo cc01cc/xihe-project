@@ -72,7 +72,11 @@ public class RuntimeCheckpointClient {
     private static final Duration GIT_LOG_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration GC_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration CLEANUP_TIMEOUT = Duration.ofSeconds(10);
-    /** PLAN-0641 F3: cold probe runs one full staging pass over the work tree. */
+    /**
+     * PLAN-0641 F3: read-only discovery over the work tree. task-9 made the Runtime probe index-free,
+     * measured 0.3-0.9 s on a 1.6 GB tree, so 15 s is comfortable headroom for the call itself rather
+     * than a budget the probe had to fit into.
+     */
     private static final Duration NESTED_REPOS_TIMEOUT = Duration.ofSeconds(15);
 
     /**
