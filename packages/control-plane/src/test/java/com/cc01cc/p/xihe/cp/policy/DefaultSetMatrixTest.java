@@ -73,7 +73,11 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // its write atom is in the registration default set. Instance-bindable only (decision
             // #27) — a workspace-scoped grant cannot carry it, and it never leaves the owner's own
             // library.
-            "MANAGE_PERSONAL_SKILLS");
+            "MANAGE_PERSONAL_SKILLS",
+            // task-188 MVP⑤ (V172, 2026-11-18): the shared base set gained TEAM_TASK_MANAGE (the
+            // session human owner directs the board by default), and the USER derivation carries
+            // every base atom — so the registration default set now holds it too (9 -> 10).
+            "TEAM_TASK_MANAGE");
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
@@ -117,7 +121,12 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // instance administrator writes any workspace's configuration. Leaving them out would
             // REMOVE that ability, not "tighten" anything — the per-endpoint gate is what turns a
             // non-member into 404 and a read-only member into 403.
-            "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP");
+            "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP",
+            // task-188 MVP⑤ (V172): ADMIN's derivation passed USER_DEFAULT_ATOMS, so the new
+            // TEAM_TASK_MANAGE base atom arrives the same way MANAGE_PERSONAL_SKILLS did — no
+            // second literal, just inheritance (the measured parity gate forced the ADMIN seed,
+            // so removing it would REMOVE the ability, not tighten it).
+            "TEAM_TASK_MANAGE");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(
@@ -414,5 +423,4 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
                 .getId().toString();
     }
 }
-
 

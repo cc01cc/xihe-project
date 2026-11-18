@@ -155,6 +155,9 @@ public final class AgentPrincipalScopeUpgradeFixture {
         // so the "current set" this cap mirrors grew by exactly those two atoms. Without them the
         // WS_EDITOR binding below would answer 409 ROLE_BINDING_EXCEEDS_CAP and the behaviour tests
         // would be asserting the upgrade path through a cap nobody could satisfy.
+        // task-188 MVP⑤ (V172, 2026-11-18) is the same shape one more time: TEAM_TASK_MANAGE joined
+        // WS_OWNER + WS_EDITOR (the teammate claim path), so the fixture's "current set" grows by
+        // one more atom — same reasoning as V157 above, verbatim.
         insertWorkspaceBinding(connection, WORKSPACE_PRINCIPAL_ID,
                 "[{\"actionClass\": \"read\"}, {\"actionClass\": \"write\"},"
                         + " {\"actionClass\": \"delete\"}, {\"actionClass\": \"exec\"},"
@@ -163,7 +166,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
                         + " {\"actionClass\": \"USE_WORKSPACE_RUNTIME\"},"
                         + " {\"actionClass\": \"PLUGIN_INVOKE\"},"
                         + " {\"actionClass\": \"WRITE_WORKSPACE_CONTENT\"},"
-                        + " {\"actionClass\": \"MANAGE_WORKSPACE_MCP\"}]");
+                        + " {\"actionClass\": \"MANAGE_WORKSPACE_MCP\"},"
+                        + " {\"actionClass\": \"TEAM_TASK_MANAGE\"}]");
         insertWorkspaceBinding(connection, INSTANCE_PRINCIPAL_ID, "[{\"actionClass\": \"write\"}]");
 
         insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
@@ -179,10 +183,11 @@ public final class AgentPrincipalScopeUpgradeFixture {
         // (AgentPrincipalService.java:739), so an atom the principal does not hold is dropped
         // from its own cap — a snapshot alone would still answer 409. On a real upgrade database
         // V157 backfilled exactly these rows onto every existing WS_OWNER/WS_EDITOR binding, which
-        // is the state this loop mirrors.
+        // is the state this loop mirrors; V172 backfilled TEAM_TASK_MANAGE onto the same bindings
+        // for exactly the same reason, so it is in this loop too.
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE",
-                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP"}) {
+                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE"}) {
             // `role` is the authoritative source (2026-11-04 ruling). Seeding it keeps the fixture
             // deterministic even after another test triggers the role materializer: a principal with
             // role rows no longer falls back to its legacy template snapshot.
@@ -200,7 +205,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
      * <p>Its set must stay equal to the snapshot above, which is why it carries the two task-229
      * atoms too: the role is a stand-in for "the workspace role the agent currently holds", and
      * V157 backfilled both atoms onto existing WS_OWNER/WS_EDITOR bindings (V157:62-80). A role
-     * without them would make a cap write silently shrink the cap by two atoms.</p>
+     * without them would make a cap write silently shrink the cap by two atoms. V172's
+     * TEAM_TASK_MANAGE is in the set for the identical reason.</p>
      */
     private static void seedLegacyWorkspaceRole(Connection connection) throws SQLException {
         execute(connection, "INSERT INTO roles (id, name, display_name, description, is_system)"
@@ -208,7 +214,7 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 + " 'V19 legacy workspace', 'fixture-only pre-upgrade workspace role', FALSE)");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE",
-                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP"}) {
+                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE"}) {
             execute(connection, "INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
                     + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', '" + atom + "', '*')");
         }

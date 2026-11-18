@@ -84,9 +84,12 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // already-bound BUILTIN plugin is part of the base set of every non-viewer role), so
         // AGENT_USER — whose seed *is* BASE_ATOMS — went from five atoms to six. The expectation
         // moves with the single source; the atom is seed data, not a role special case.
-        assertEquals(6, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
-                "AGENT_USER seeds exactly the six base atoms (PLAN-0691 T1.3 added PLUGIN_INVOKE:"
-                        + " 5 -> 6)");
+        // task-188 MVP⑤ (V172, 2026-11-18) added TEAM_TASK_MANAGE to BASE_ATOMS (design §3:
+        // a teammate is an agent principal, so claiming/completing board tasks is its base
+        // capability), so AGENT_USER — whose seed IS BASE_ATOMS — went 6 -> 7.
+        assertEquals(7, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
+                "AGENT_USER seeds exactly the seven base atoms (V172 added TEAM_TASK_MANAGE:"
+                        + " 6 -> 7)");
         assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
                         .filter(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())).count(),
                 "the agent-forbidden atom is never part of AGENT_USER");
@@ -99,10 +102,10 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // is 6 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS = 9. AGENT_USER stays at six:
         // all three extras are agent-principal-forbidden (PermissionAtomCatalog.java:96-139), which
         // is exactly why the two roles differ again.
-        assertEquals(9, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
+        assertEquals(10, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
                 "human USER keeps its registration atoms + the V129 SELF atom + the PLAN-0750 M1"
-                        + " own-agent atom + the V156 personal-library atom"
-                        + " (6 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS)");
+                        + " own-agent atom + the V156 personal-library atom + the V172 team-task atom"
+                        + " (7 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS)");
         assertTrue(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
                         .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
                 "PLAN-0750 M1: creating one's own user-level principal is a registration capability"
@@ -173,11 +176,11 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         assertEquals(0, forbiddenGrantCount(agentIds),
                 "the agent-forbidden grant is stripped");
         for (UUID agentId : agentIds) {
-            assertEquals(6, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
+            assertEquals(7, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                             + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                             + " AND source='role' AND scope_type='instance'", Integer.class,
-                    agentId.toString()), "each agent materializes exactly AGENT_USER's six atoms"
-                    + " (PLAN-0691 T1.3 added PLUGIN_INVOKE to the base set: 5 -> 6)");
+                    agentId.toString()), "each agent materializes exactly AGENT_USER's seven atoms"
+                    + " (V172 added TEAM_TASK_MANAGE to the base set: 6 -> 7)");
         }
         // BL-367 处置③: no upgraded agent may hold any AGENT_FORBIDDEN_ATOMS atom. This is the
         // structural guard against a future migration re-materializing SELF (or another forbidden atom).

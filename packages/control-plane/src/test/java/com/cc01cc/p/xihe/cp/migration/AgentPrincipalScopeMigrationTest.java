@@ -327,53 +327,60 @@ class AgentPrincipalScopeMigrationTest {
 
     @Test
     void headSeedsMatchTheCodeSideCatalog() throws SQLException {
+        // task-188 MVP⑤ (V172, 2026-11-18) exposed a latent mis-wiring: these are HEAD-seed
+        // assertions, but they ran on the UPGRADE-side connection, which deliberately stops at
+        // V169 (task-173: pre-V170 ownership rows are refused, so "migrate a pre-V170 database to
+        // head" is unsupported). Every atom added after V169 therefore made the code-side catalog
+        // outrun the fixture DB and fail here for the wrong reason. The seed-parity contract lives
+        // on the FRESH side (empty -> head), so that is where these assertions belong.
+        Connection head = freshConnection;
         // BL-312 (option B, 2026-11-09): V147 removed the atom V91 planted, so the PostgreSQL seed
         // and the code catalog shrank together (33 → 32 action atoms).
         assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
-                roleAtomCount(connection, SystemAccessRoleCatalog.SUPER_ADMIN_ID),
+                roleAtomCount(head, SystemAccessRoleCatalog.SUPER_ADMIN_ID),
                 "SUPER_ADMIN carries every action atom plus the capability atoms");
         // The per-role counts are derived from the code-side seeds: V91/V147 keep the SQL mirror of
         // SystemAccessRoleCatalog, so a hard-coded 10/6 would be the next thing to rot.
         assertEquals(seedAtomCount(SystemAccessRoleCatalog.ADMIN),
-                roleAtomCount(connection, SystemAccessRoleCatalog.ADMIN_ID),
+                roleAtomCount(head, SystemAccessRoleCatalog.ADMIN_ID),
                 "ADMIN seeds exactly the atoms of its code-side role definition "
                         + "(plus instance:admin; BL-312 removed CREATE_OWN_AGENT from both sides)");
         assertEquals(seedAtomCount(SystemAccessRoleCatalog.USER),
-                roleAtomCount(connection, SystemAccessRoleCatalog.USER_ID),
+                roleAtomCount(head, SystemAccessRoleCatalog.USER_ID),
                 "USER seeds exactly the atoms of its code-side role definition "
                         + "(BL-312 removed CREATE_OWN_AGENT from both sides)");
         for (UUID roleId : new UUID[] {SystemAccessRoleCatalog.SUPER_ADMIN_ID,
                 SystemAccessRoleCatalog.ADMIN_ID, SystemAccessRoleCatalog.USER_ID}) {
-            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+            assertEquals(1, scalarInt(head, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                             + roleId + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
                     "PLAN-0750 M1 (V148): the user-level create atom is seeded on " + roleId
                             + " (BL-312's V147 removal is superseded by the G1 ruling)");
         }
         // AGENT_USER must stay clean: the atom is agent-principal-forbidden.
-        assertEquals(0, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+        assertEquals(0, scalarInt(head, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.AGENT_USER_ID + "'::uuid"
                         + " AND action_class = 'CREATE_OWN_AGENT'"),
                 "an agent principal is a grantee, never an account creator");
         // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
         // V115 N9 default.
-        assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+        assertEquals(1, scalarInt(head, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid"
                         + " AND action_class = 'MANAGE_WORKSPACE_POLICY'"),
                 "ADMIN default set carries N9 (V115), the atom A13 now uses");
         // D-168 (user ruling 2026-11-05, migration V125): ADMIN gains MANAGE_ROLES — but only
         // together with the subset guard (PLAN-0673 M1), so it can never delegate beyond itself.
-        assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+        assertEquals(1, scalarInt(head, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid AND action_class = 'MANAGE_ROLES'"),
                 "ADMIN holds MANAGE_ROLES since V125 (D-168)");
         // D-166: the subset bypass is SUPER_ADMIN-only; ADMIN must never hold it.
-        assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+        assertEquals(1, scalarInt(head, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.SUPER_ADMIN_ID + "'::uuid"
                         + " AND action_class = 'GRANT_ANY_ATOM'"), "SUPER_ADMIN holds the bypass atom (V125)");
-        assertEquals(0, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+        assertEquals(0, scalarInt(head, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid AND action_class = 'GRANT_ANY_ATOM'"),
                 "ADMIN must not hold the subset bypass");
         // The migration itself is part of the fresh-database contract (V125 success).
-        assertEquals(1, scalarInt(connection, "SELECT count(*) FROM flyway_schema_history"
+        assertEquals(1, scalarInt(head, "SELECT count(*) FROM flyway_schema_history"
                         + " WHERE version = '125' AND success"),
                 "V125 (GRANT_ANY_ATOM + ADMIN MANAGE_ROLES) applied successfully");
     }

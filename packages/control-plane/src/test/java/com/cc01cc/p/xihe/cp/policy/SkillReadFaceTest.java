@@ -36,7 +36,9 @@ class SkillReadFaceTest {
     // task-229 / PLAN-0773 (V157, 2026-11-12) added WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP
     // (35 → 37). PLAN-0773 M2-2 (task-158 / V162, 2026-11-13) added the three org-unit governance
     // atoms (37 → 40).
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 40;
+    // task-188 MVP⑤ (V172): TEAM_TASK_MANAGE joined the vocabulary (40 -> 41). The frozen count is
+    // the tripwire, not the authority — the authority is ToolFaceRegistry itself.
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 41;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {

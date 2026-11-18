@@ -108,6 +108,11 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // (2026-11-12) — a pre-existing red, not something task-229 introduced (task-229 adds no
         // atom to the USER default set).
         atoms.add(ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS);
+        // task-188 MVP⑤ (V172, 2026-11-18): the shared BASE_ATOMS gained TEAM_TASK_MANAGE and the
+        // catalog seeds it onto USER (design §3: the session human owner directs the board by
+        // default). It is in neither the forbidden nor the instance-only list, so the USER default
+        // materialization — which mirrors the catalog seed — carries it (9 -> 10).
+        atoms.add(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE);
         return Set.copyOf(atoms);
     }
 
@@ -241,13 +246,14 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
 
         Set<String> userAtoms = roleAtoms("user", user.getId());
         assertEquals(USER_DEFAULT_ATOMS, userAtoms,
-                "the USER default is the five allow classes plus MEMORY_WRITE_SELF/PLUGIN_INVOKE "
-                        + "and the PLAN-0750 M1 own-agent atom; credential atoms stay out");
+                "the USER default is the five allow classes plus MEMORY_WRITE_SELF/PLUGIN_INVOKE,"
+                        + " the PLAN-0750 M1 own-agent atom and the V172 team-task atom;"
+                        + " credential atoms stay out");
         assertTrue(userAtoms.containsAll(USER_ALLOW_ATOMS),
                 "the five allow classes are still materialized");
         assertEquals(USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
-                "one instance-tier row per USER atom (nine: eight after PLAN-0750 M1 restored the"
-                        + " own-agent atom, plus V156 MANAGE_PERSONAL_SKILLS)");
+                "one instance-tier row per USER atom (ten: eight after PLAN-0750 M1 restored the"
+                        + " own-agent atom, plus V156 MANAGE_PERSONAL_SKILLS, plus V172 TEAM_TASK_MANAGE)");
         assertEquals(0, grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId()).size(),
                 "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
         assertEquals("read", roleRows("user", user.getId()).get(0).getReadState());
@@ -273,7 +279,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals("read", agentDefault.getReadState());
         assertEquals(USER_DEFAULT_ATOMS.size(), agentDefault.getPermissions().size(),
                 "round-2 P1-1: the frozen Agent snapshot keeps the whole USER atom array in one row "
-                        + "(nine since V156, not five)");
+                        + "(ten since V172, not five)");
         assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT));
@@ -295,7 +301,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
 
         Set<String> userAtoms = roleAtoms("user", UUID.fromString(userId));
         assertEquals(USER_DEFAULT_ATOMS, userAtoms,
-                "the materialized USER set carries the five allow classes plus MEMORY_WRITE_SELF"
+                "the materialized USER set carries the five allow classes plus MEMORY_WRITE_SELF,"
                         + "/PLUGIN_INVOKE and the PLAN-0750 M1 own-agent atom");
         roleRows("user", UUID.fromString(userId)).forEach(row -> grantIds.add(row.getId()));
 
@@ -515,5 +521,3 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 ToolShape.STRUCTURED, userId, workspaceId, null);
     }
 }
-
-

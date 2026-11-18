@@ -178,6 +178,15 @@ final class CpModuleAssignment implements SliceAssignment {
                 || name.equals("BranchPathService") || name.equals("RootBranchBinder")) {
             return "chat";
         }
+        // task-188 MVP⑤ (V172, 2026-11-18): the shared team-task board is part of the spawned-team
+        // conversation surface — its rows are keyed by the tree root Session, walked by
+        // DelegationChainWalker, and read through the chat package — so "TeamTask" (which the
+        // "Task" prefix above does NOT match) joins the same chat slice rather than growing a
+        // module for one family. Without this, CpArchitectureTest aborts at import with the
+        // unassigned-type error.
+        if (name.startsWith("TeamTask")) {
+            return "chat";
+        }
         // PLAN-0646 MVP: the conversation-thread seam (entity/repository/service live in the mixed
         // packages) belongs to the chat/session pipeline; its nested AttachResult is covered because
         // the name is split at '$' above; without this ArchUnit aborts at import ("unassigned type").
