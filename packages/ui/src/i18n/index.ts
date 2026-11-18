@@ -2216,6 +2216,10 @@ const messages = {
                         title: "④ 上传入口暂时没有挂载点",
                         body: "上传与删除的能力还在，但目前没有任何页面把它接出来 —— 这是当前入口的真实状态，不是排期。",
                     },
+                    chatSide: {
+                        title: "⑤ 提问不会触发知识库检索",
+                        body: "这一版里没有可检索的知识库：在会话里问「只有资料里才有」的问题时，不会发生任何检索，也就不会拿到来自知识库的答案。会话本身照常可用。",
+                    },
                 },
             },
             /**
@@ -6365,6 +6369,10 @@ const messages = {
                     noWriteEntry: {
                         title: "4. The upload entry has no mount point today",
                         body: "Upload and delete still exist in the product, but no page wires them up — that is the current state of the entry point, not a schedule.",
+                    },
+                    chatSide: {
+                        title: "5. Asking a question never searches a knowledge base",
+                        body: "There is no searchable knowledge base in this build: asking about something only a document could answer triggers no retrieval, so no knowledge-base answer comes back. The conversation itself keeps working.",
                     },
                 },
             },

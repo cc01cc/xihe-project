@@ -13,8 +13,14 @@ import { useI18n } from "vue-i18n";
  *   ② 证据面 —— `internal/A03-xihe/evidence/2026-11-13-task-42-resource-detail/README.md`（四条读数原文）
  *      与 `internal/A03-xihe/evidence/2026-11-19-task47-copy-audience/`（本次定性与真机盘点）。</p>
  *
- * <p>四条缺口：① 还没有「库」这个对象 ② 看不到库里收了哪些文档 ③ 索引按「人 + 工作区」分开、
- * 不按库共享 ④ 上传入口当前没有挂载点。</p>
+ * <p>五条缺口：① 还没有「库」这个对象 ② 看不到库里收了哪些文档 ③ 索引按「人 + 工作区」分开、
+ * 不按库共享 ④ 上传入口当前没有挂载点 ⑤ 提问不会触发知识库检索。</p>
+ *
+ * <p><b>⑤ 的出处</b>（task-59 / 卡面硬约束「写不出出处的句子一律不写」）：真机 stack-2 真模型一轮，
+ * CP 自己打的 event=tool_timeout_payload 记 tools=0、agent 日志本轮无任何检索事件、durable records 只有
+ * USER+ASSISTANT 两条且 jobSummary 为空。读数与两处仪器坑见
+ * internal/A03-xihe/evidence/2026-11-19-task59-kb-retrieval-face/README.md。
+ * 卡面示例句里「当前检索只覆盖本会话与工作区文件」那半句**没写** —— 那一轮恰恰不支持它。</p>
  *
  * <p>出口：本页渲染在 `ResourcesLayout` 内，左侧资源目录里的凭据 / MCP 服务器 / 技能三个**可用**
  * 项就在旁边（`settings-nav-resource-*`），不需要页内再造一个跳转按钮。</p>
@@ -23,7 +29,7 @@ import { useI18n } from "vue-i18n";
  * 「计划在」这类排期措辞，机器判据见 spec 的正则负断言。能力回来了就改文案，而不是先写一句愿望。</p>
  */
 /** 缺口条目 id（顺序即页面顺序；文案键 = `resources.knowledgeGap.gaps.<id>.<field>`）。 */
-const GAPS = ["noLibrary", "noDocList", "partition", "noWriteEntry"] as const;
+const GAPS = ["noLibrary", "noDocList", "partition", "noWriteEntry", "chatSide"] as const;
 
 const { t } = useI18n();
 

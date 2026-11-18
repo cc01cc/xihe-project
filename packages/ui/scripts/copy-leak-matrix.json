@@ -7,7 +7,8 @@
         "expectedBefore 是 2026-11-19 01:2x 的实测命中，仅作回归锚点；它变小时要把本清单同批改小，别让它变成「永远对」的摆设。",
         "2026-11-19 01:5x 全部清零（A03 f63195fc3）：11 面 zh/en 各 0 命中。**此后任一格命中 > 0 即回归**，不是「新发现」——先查是不是有人把审查者口径写回正文。",
         "带 via:\"mock\" 的格子**门跑不到**（真栈上那个形态凑不出来 —— 例如实例层列表为空），由 mock 车道 spec 覆盖。门会**显式打印 mock-covered 并跳过**，不静默略过：静默跳过会让「覆盖 11 面」这句话变成假话。",
-        "dialog/* 类格子一律 via:\"mock\"：门只走 URL + tab，没有「点开弹窗」这一步。弹窗面能否进门是 task-58 的口径问题，不在本卡扩张。"
+        "dialog/* 类格子一律 via:\"mock\"：门只走 URL + tab，没有「点开弹窗」这一步。弹窗面能否进门是 task-58 的口径问题，不在本卡扩张。",
+        "resources-knowledge 在 task-59 从 4 条缺口变 5 条：条目数由 KnowledgeResourceView 的 GAPS 数组决定，spec 里的 findAll(\"li\") 计数跟着改（两处必须同批）。"
     ],
     "surfaces": [
         {
@@ -15,7 +16,7 @@
             "route": "/resources/knowledge",
             "tabs": [],
             "expectedBefore": 12,
-            "note": "task-47 已修 ⇒ 期望 0"
+            "note": "task-47 整页改写 + task-59 新增第 ⑤ 条（提问不会触发知识库检索）。修前 12 命中，2026-11-19 01:5x 清零（A03 f63195fc3）；task-59 加条目后 02:5x 复跑 zh/en 仍 0。⑤ 的出处是 stack-2 真模型一轮（tools=0 / 无检索事件 / records 仅 2 条），见 evidence 2026-11-19-task59-kb-retrieval-face；此后任一格命中 > 0 即回归。"
         },
         {
             "id": "resources-skills-my",

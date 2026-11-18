@@ -57,15 +57,16 @@ const FALLBACK_PATTERNS: [string, RegExp][] = [
 describe("KnowledgeResourceView — 缺口文案", () => {
     it("四条缺口逐条渲染，且都不带审查者形态的字符串（D-1879 裁定二）", () => {
         const wrapper = mountView();
-        const ids = ["noLibrary", "noDocList", "partition", "noWriteEntry"];
+        const ids = ["noLibrary", "noDocList", "partition", "noWriteEntry", "chatSide"];
         for (const id of ids) {
             const item = wrapper.get(`[data-testid="resources-knowledge-gap-${id}"]`);
             expect(item.text().length).toBeGreaterThan(20);
             const leaks = findLeaks(item.text());
             expect(leaks, `条目 ${id} 命中审查者形态：${summarizeLeaks(leaks)}`).toEqual([]);
         }
-        // 阳性对照：四条之外不应多出条目（`<li>` 恰好 4 个），否则是模板漏了 v-for 边界
-        expect(wrapper.findAll("li")).toHaveLength(4);
+        // 阳性对照：缺口清单之外不应多出条目（task-59 起为 5 个：加了「⑤ 提问不会触发知识库检索」），
+        // 否则是模板漏了 v-for 边界。这条计数**跟着 GAPS 走**，改一处必须改两处。
+        expect(wrapper.findAll("li")).toHaveLength(5);
     });
 
     it("用用户语言点名缺的是哪四块，而不是笼统的「暂不可用」", () => {
