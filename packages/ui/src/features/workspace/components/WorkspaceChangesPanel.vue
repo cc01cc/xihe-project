@@ -181,7 +181,7 @@ watch(
 
 <template>
     <div class="flex h-full min-h-0 flex-col" data-testid="workspace-changes-panel">
-        <div class="flex h-9 shrink-0 items-center gap-1 border-b px-2" role="tablist">
+        <div class="flex h-8 shrink-0 items-center gap-1 border-b px-2" role="tablist">
             <button
                 type="button"
                 role="tab"

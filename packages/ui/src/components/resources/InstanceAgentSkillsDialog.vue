@@ -175,6 +175,12 @@ watch(
 
             <div class="space-y-3">
                 <div v-if="loading" class="space-y-1.5" data-testid="instance-agent-skills-loading">
+                    <!--
+                        D-1842 判据（保留 `h-9`，它不是布局站点）：本 Skeleton 是**列表行的占位替身**。
+                        真实行高由内容撑（`p-2` 上下 16px + 行内最高的 `h-6` 解绑键 24px ⇒ ≥40px），
+                        本就不与 `h-8`/`h-9` 同轴 ⇒ 4px 栅格下不构成「按 3.5 算成 31.5」的补偿，
+                        也无断言钉它。判据 = 占位只求近似，改它没有收益 ⇒ 保留原值，避免无谓抖动。
+                    -->
                     <Skeleton v-for="row in 2" :key="row" class="h-9 w-full" />
                 </div>
 

@@ -38,7 +38,7 @@ const activeTab = computed<string>({
 <template>
     <nav
         data-testid="workspace-container-switcher"
-        class="flex h-9 shrink-0 items-center gap-1 border-b bg-card px-2"
+        class="flex h-8 shrink-0 items-center gap-1 border-b bg-card px-2"
         :aria-label="t('workspace.containerSwitcherLabel')"
     >
         <Tabs :id="domId" v-model="activeTab">

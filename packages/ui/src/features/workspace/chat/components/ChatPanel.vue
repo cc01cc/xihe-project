@@ -1603,7 +1603,9 @@ watch(
 
 <template>
     <!-- `flex-1` takes the height left by the session head / banners instead of a hard
-         `h-full` of the column: the panel sits in a flex column with a 36px title row above
+         `h-full` of the column: the panel sits in a flex column with a 32px title row above
+         (`h-8` since D-1842 put `--spacing` back to the Tailwind default 4px; it was 31.5px
+         under the old 3.5px grid and "36px" in older comments was the nominal value),
          it, so 100% would overflow the column by exactly that row and push the composer (and
          the dock's bottom edge) below the fold. `h-full` stays for hosts where the panel is
          the only child and the parent is not a flex container.

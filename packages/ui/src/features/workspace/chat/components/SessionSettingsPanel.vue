@@ -194,7 +194,7 @@ async function closeAutoApproval() {
         <button
             type="button"
             data-testid="session-settings-summary"
-            class="flex h-9 w-full min-w-0 items-center gap-2 px-3 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            class="flex h-8 w-full min-w-0 items-center gap-2 px-3 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             :aria-expanded="isMobile ? open : undefined"
             :aria-controls="isMobile ? panelId : undefined"
             :aria-label="isMobile ? undefined : t('sessionSettings.openInPanel')"

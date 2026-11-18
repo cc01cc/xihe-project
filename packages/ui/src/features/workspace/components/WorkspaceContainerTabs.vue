@@ -154,7 +154,7 @@ const activeTab = computed<string>({
 <template>
     <nav
         v-if="tabs.length > 0 || allowEmpty"
-        class="flex h-9 shrink-0 items-center gap-1 border-b bg-card px-2"
+        class="flex h-8 shrink-0 items-center gap-1 border-b bg-card px-2"
         data-testid="workspace-container-tabs"
         :data-container="containerId"
         :aria-label="containerLabel"
@@ -207,7 +207,8 @@ const activeTab = computed<string>({
                     <!--
                         task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：`p-0.5` + `size-3`
                         ⇒ 14×14，与左邻 `workspace-container-tab-` 本体矩形距 7 ⇒ 是真缺陷。
-                        `min-h-7 min-w-7` = 7 × 3.5px = 24.5px 命中盒；`X` 图标仍 size-3 不放大。
+                        `min-h-7 min-w-7` = 7 步 × `--spacing`；D-1842 起 4px 栅格 ⇒ **28px**
+                        命中盒（3.5px 栅格时代是 24.5px）；`X` 图标仍 size-3 不放大。
                     -->
                     <button
                         v-if="tab.closable && (!closeActiveOnly || tab.id === activeId)"

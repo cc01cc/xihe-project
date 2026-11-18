@@ -542,7 +542,8 @@ watch(isMobileViewport, (mobile) => {
                         为什么常显而不是 tooltip：这条限制会持续影响「为什么工具能跑但产物不在工作区」这类判断，
                         藏进 hover 等于只在用户想起来要看的时候才存在。
                         为什么两行：主文案 24 个汉字 / 48 列（task-7 前是 21 字 / 42 列 —— 旧注释写「22 个汉字」是错数），
-                        塞进 36px 单行头部会在窄档被 truncate，而后半句（限定）恰恰最容易被截掉 ——
+                        塞进 32px 单行头部（`h-8`，D-1842 后）会在窄档被 truncate，而后半句（限定）
+                        恰恰最容易被截掉 ——
                         它正是防止「以为完全没有边界」的那半句。
                         task-7（2026-11-15，Lead 裁 A 版）：括号里原写「工作区路径边界仍生效」，读起来像
                         「文件被限制在工作区内」；实测只约束 cwd（job_engine/mod.rs:1108-1141），故只写「只限启动目录」。
@@ -573,7 +574,7 @@ watch(isMobileViewport, (mobile) => {
                         }}</span>
                     </div>
                     <div
-                        class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
+                        class="h-8 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"
                     >
                         <!-- S3a (review P1-2): the workspace name lives in the panel head

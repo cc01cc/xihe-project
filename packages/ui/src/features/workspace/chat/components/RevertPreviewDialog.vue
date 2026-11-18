@@ -413,6 +413,13 @@ function submit() {
                     {{ error }}
                 </p>
 
+                <!--
+                    D-1842 判据（保留 `min-h-9`，它不是布局站点）：本组是**弹窗底部动作键**，
+                    走内容几何而非栏高 —— `py-2` 上下 = 2 × 2 × `--spacing` = 16px，`text-sm` 行盒
+                    （D-1842 后 Tailwind 默认）= 20px ⇒ 内盒 36px（1px 描边另计）。4px 栅格下
+                    `h-9` = 36 与该内盒同档，与 shadcn `button` 的 `lg`（`h-9`）一致 ⇒ 保留。
+                    改 `min-h-8` 不会让按钮变矮（内盒仍 36）只会把「36 下限」错标成 32 ⇒ 不改。
+                -->
                 <div class="flex flex-wrap justify-end gap-2 border-t pt-3">
                     <button
                         ref="cancelButton"

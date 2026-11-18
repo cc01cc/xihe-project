@@ -29,7 +29,8 @@ import { workspaceChatPath, workspacePath } from "../../../lib/routes";
 /**
  * C3 (task-217) + task-365 D（D-1220 ①）：行1 页签栏**只显示钉住的会话页签** ——
  * 固定的「会话」页签（workspace-tab-chat）整体删除：它是 fallback 入口，但它永远
- * 存在 ⇒ 行1 永远占着一条 36px chrome；「去会话页」与「回工作区页」本就有合法入口
+ * 存在 ⇒ 行1 永远占着一条 chrome（D-1842 后 = `h-8` = 32px；3.5px 栅格时代的注释写
+ * 36px 名义值、实测 31.5px）；「去会话页」与「回工作区页」本就有合法入口
  * （左栏分组里的会话行 / rail 工作台模块）。钉住会话（`session:<id>` work tabs，
  * 持久在 `xihe-layout-ws:<id>.openTabs`）保留 —— 它们是「打开过哪些会话」的指示，
  * 不是行1 的去留判据（整行删除等右侧多页签 + 并行会话替代验证后再裁，D-1136）。
@@ -255,7 +256,7 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
 
 <template>
     <!--
-        task-365 D：没有钉住页签时整条栏隐藏 —— 空 36px chrome 只会让人以为「这里该有东西」。
+        task-365 D：没有钉住页签时整条栏隐藏 —— 空 `h-8` = 32px chrome 只会让人以为「这里该有东西」。
         会话一旦打开（`watch` 钉住）它就回来；不改变 WorkspaceWorkbench 的布局链（它是
         flex 列里的 `shrink-0`，有内容才占高）。
     -->
@@ -268,7 +269,7 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
         v-if="tabs.length > 0 && tabRowClaims === 0"
         data-testid="workspace-tab-bar"
         :aria-label="t('workspace.tabBarLabel')"
-        class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"
+        class="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"
     >
         <Tabs v-model="activeTab" class="min-w-0 flex-1">
             <TabsList variant="line" class="p-0">
@@ -323,7 +324,8 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
                         <!--
                             task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：同 `WorkspaceContainerTabs`
                             与 `WorkspaceDock` 的页签关闭键 —— 14×14 + 矩形距 7 ⇒ 真缺陷。
-                            `min-h-7 min-w-7` = 24.5px；三个同类关闭键同批改，避免"同动作不同尺寸"。
+                            `min-h-7 min-w-7` = 7 步 × `--spacing`；D-1842 起 4px 栅格 ⇒ **28px**
+                            （3.5px 栅格时代是 24.5px）。三个同类关闭键同批改，避免"同动作不同尺寸"。
                         -->
                         <button
                             v-if="tab.closable"

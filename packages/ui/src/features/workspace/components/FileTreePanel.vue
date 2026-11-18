@@ -312,7 +312,7 @@ function upload() {
         <!-- Panel head: workspace identity + file actions + the built-in collapse -->
         <div
             data-testid="workspace-tree-head"
-            class="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2"
+            class="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2"
         >
             <span
                 data-testid="workspace-tree-title"
@@ -322,12 +322,14 @@ function upload() {
                 {{ workspaceName }}
             </span>
             <!--
-                task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：四个头按钮原先是 `p-1` + `size-3.5`
-                ⇒ 3.5×2 + 12.25 = **19.25px**。四个按钮互相矩形距 0、圆心距 22.75 < 24，
-                而两者都欠尺寸 ⇒ 2.5.8 的 **Spacing 例外不成立** ⇒ 真缺陷（不是"看着小"）。
-                补 `min-h-7 min-w-7`：本仓 `--spacing` = 3.5px ⇒ 7 步 = **24.5px** 达标；
-                图标仍 `size-3.5`（12.25px）不放大 ⇒ 视觉档位不变（DEV-011:194 同动作同尺寸）。
-                头栏是 `h-9`(31.5)，24.5 的按钮装得下，不改栏高。
+                task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24；**当时** 3.5px 栅格）：四个头按钮
+                是 `p-1` + `size-3.5` ⇒ 7 + 12.25 = **19.25px**。四个按钮互相矩形距 0、圆心距
+                22.75 < 24，且两者都欠尺寸 ⇒ 2.5.8 的 **Spacing 例外不成立** ⇒ 真缺陷（不是"看着小"）。
+                补 `min-h-7 min-w-7`（当时 7 × 3.5 = 24.5）达标；图标仍 `size-3.5` 不放大
+                ⇒ 视觉档位不变（DEV-011:194 同动作同尺寸）。
+                **D-1842（`--spacing` 回 Tailwind 默认 4px 后的现值）**：`min-h-7` = 7 × 4 = **28px**
+                （判据 ≥24 仍满足）、`size-3.5` = 14px；头栏由 `h-9`（4px 下 = 36px）撤回
+                **`h-8` = 32px** —— 28 的按钮装得下，仍不改栏高。
             -->
             <button
                 type="button"
