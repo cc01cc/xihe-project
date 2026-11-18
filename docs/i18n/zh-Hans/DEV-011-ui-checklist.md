@@ -433,14 +433,20 @@ node internal/A03-xihe/scripts/check-ui-overflow.mjs --fixtures
 - **`transition: all` / `transition-all`**：只许**具名属性**（`transition-colors` / `transition-[opacity,transform]`）。实测 9 处（vendor 为主）+ 1 处 CSS（`BaseModal.vue:186-190`），登记为存量。
 - **时长 / 缓动不得写在组件里**：新增档位先改本节表格，再改代码。
 
-**机器判据（可跑，2026-11-18 读数即基线）**：
+**机器判据（可跑，2026-11-18 读数即基线；2026-11-19 纠计量口径，判据未放宽）**：
 
 ```bash
 cd A03-xihe/packages/ui/src
-grep -rn 'duration-\[' --include=*.vue --include=*.css . | wc -l   # 基线 0
-grep -rn 'animate-\['  --include=*.vue --include=*.css . | wc -l   # 基线 0
-grep -rn 'ease-\['     --include=*.vue --include=*.css . | wc -l   # 基线 2（vendor 单行，登记）
+grep -ro 'duration-\[[^]]*\]' --include=*.vue --include=*.css . | wc -l   # 基线 0
+grep -ro 'animate-\[[^]]*\]'  --include=*.vue --include=*.css . | wc -l   # 基线 0
+grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基线 2（vendor 同一行 2 处，逐条登记）
 ```
+
+口径：**按出现次数计**——`grep -o` 让每个匹配单独成行，`wc -l` 才是次数。旧写法 `grep -rn … | wc -l` 数的是
+**行**，同一行里两个任意值会读成 1，与上方散文和盘点报告 §7 的「2 处」自相矛盾（task-25 实测纠口径）。
+执行者：`node internal/A03-xihe/scripts/check-motion-arbitrary-values.mjs`（ONE 仓、只读、~0.2 s）——
+命中即 exit 1 并点名 `file:line`；面另含 `.ts`、注释不计；豁免必须**逐条 token 登记**且所在族登记在
+`VENDOR.md` 族表（E1–E3，见该脚本文件头），**不许整目录放行**。
 
 ### 12.5 一通一义（同一视觉通道只承载一种语义）
 

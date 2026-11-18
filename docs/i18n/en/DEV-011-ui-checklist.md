@@ -408,14 +408,22 @@ Decision question: **when this motion disappears, what does the user miss?** "St
 - **`transition: all` / `transition-all`**: named properties only (`transition-colors` / `transition-[opacity,transform]`). Measured 9 instances (mostly vendor) + 1 in CSS (`BaseModal.vue:186-190`), registered as existing.
 - **Durations and easings do not live inside components**: changing a tier means editing this table first, then the code.
 
-**Machine criterion (runnable; the 2026-11-18 readings are the baseline)**:
+**Machine criterion (runnable; the 2026-11-18 readings are the baseline; the counting unit was corrected on 2026-11-19, the rule itself was not relaxed)**:
 
 ```bash
 cd A03-xihe/packages/ui/src
-grep -rn 'duration-\[' --include=*.vue --include=*.css . | wc -l   # baseline 0
-grep -rn 'animate-\['  --include=*.vue --include=*.css . | wc -l   # baseline 0
-grep -rn 'ease-\['     --include=*.vue --include=*.css . | wc -l   # baseline 2 (one vendor line, registered)
+grep -ro 'duration-\[[^]]*\]' --include=*.vue --include=*.css . | wc -l   # baseline 0
+grep -ro 'animate-\[[^]]*\]'  --include=*.vue --include=*.css . | wc -l   # baseline 0
+grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # baseline 2 (two occurrences on one vendor line, registered individually)
 ```
+
+Unit: **occurrences, not lines** — `grep -o` puts every match on its own line, so `wc -l` counts occurrences.
+The previous `grep -rn … | wc -l` counted **lines**, which reads two arbitrary values on one line as 1 and
+contradicted "2 instances" in the prose above and in audit report §7 (corrected by task-25 after measuring).
+Executor: `node internal/A03-xihe/scripts/check-motion-arbitrary-values.mjs` (ONE repo, read-only, ~0.2 s) —
+exits 1 on any hit and names `file:line`; its face additionally covers `.ts` and ignores comments; an exemption
+must be **registered per token** and its family must be listed in the `VENDOR.md` family table (E1–E3, see the
+script header). Blanket directory exemptions are not supported by design.
 
 ### 12.5 One channel, one meaning
 
