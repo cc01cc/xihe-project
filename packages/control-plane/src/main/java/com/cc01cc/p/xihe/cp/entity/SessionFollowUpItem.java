@@ -33,6 +33,10 @@ public class SessionFollowUpItem {
     public static final String PAUSE_SESSION_BINDING_STALE = "session_binding_stale";
     public static final String PAUSE_CHILD_MISSING = "child_missing";
 
+    /** task-188 S3 (V173): attribution vocabulary — who put this item in the queue. */
+    public static final String SOURCE_HUMAN = "human";
+    public static final String SOURCE_AGENT_STEER = "agent_steer";
+
     @Id
     @Column(name = "id", columnDefinition = "uuid")
     private UUID id;
@@ -96,6 +100,29 @@ public class SessionFollowUpItem {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /**
+     * task-188 S3 (V173): NULL (every pre-V173 row and every ordinary human Follow-up) |
+     * {@code human} | {@code agent_steer} (the Lead's 指挥插话). Deliberately nullable with no
+     * default: "no attribution says nothing" is the wire contract the badge follows.
+     */
+    @Column(name = "source_kind", length = 16)
+    private String sourceKind;
+
+    /** The steering Session for agent_steer rows; NULL for human rows. */
+    @Column(name = "from_session_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String fromSessionId;
+
+    /**
+     * task-188 S3 (V173): ADVISORY-ONLY (D-1830) — the board revision the steering Lead assumed.
+     * Persisted and echoed for the reader; never a gate on the queue. It is its own column rather
+     * than a key inside {@code tool_timeouts}, because that document is a tool-name-to-seconds map
+     * that admission reads (FollowUpQueueService), so parking this integer there would look like a
+     * tool named "expectedRevision" and could be rejected by the timeout policy.
+     */
+    @Column(name = "expected_revision")
+    private Integer expectedRevision;
 
     @Column(name = "admitted_at")
     private Instant admittedAt;
@@ -179,6 +206,12 @@ public class SessionFollowUpItem {
     public void setChildMessageId(UUID childMessageId) { this.childMessageId = childMessageId; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+    public String getSourceKind() { return sourceKind; }
+    public void setSourceKind(String sourceKind) { this.sourceKind = sourceKind; }
+    public String getFromSessionId() { return fromSessionId; }
+    public void setFromSessionId(String fromSessionId) { this.fromSessionId = fromSessionId; }
+    public Integer getExpectedRevision() { return expectedRevision; }
+    public void setExpectedRevision(Integer expectedRevision) { this.expectedRevision = expectedRevision; }
     public Instant getAdmittedAt() { return admittedAt; }
     public void setAdmittedAt(Instant admittedAt) { this.admittedAt = admittedAt; }
     public Instant getCompletedAt() { return completedAt; }

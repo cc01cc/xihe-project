@@ -254,7 +254,7 @@ class TeamTaskServiceTest {
     void claimAssignsTheCallerAndBumpsRevisionThroughTheCas() {
         TeamTask unclaimed = row(1, TeamTask.STATUS_PENDING, null, List.of(), List.of(), CHILD_ID);
         when(teamTasks.findByTeamRootSessionIdOrderByTaskNo(ROOT)).thenReturn(List.of(unclaimed));
-        when(teamTasks.casClaim(eq(unclaimed.getId()), eq(0L), eq(CHILD), any()))
+        when(teamTasks.casClaim(eq(unclaimed.getId()), eq(0L), eq(CHILD), any(), any()))
                 .thenReturn(1);
 
         service.update("team_task_update", USER, WS, CHILD,
@@ -263,7 +263,7 @@ class TeamTaskServiceTest {
         // The assertion lands on the CAS call, not the returned view: the mocked repository does
         // not reflect the UPDATE back into the stale in-memory row (in production the
         // clearAutomatically fresh SELECT does).
-        verify(teamTasks).casClaim(eq(unclaimed.getId()), eq(0L), eq(CHILD), eq("child"));
+        verify(teamTasks).casClaim(eq(unclaimed.getId()), eq(0L), eq(CHILD), eq("child"), any());
     }
 
     @Test
@@ -274,26 +274,26 @@ class TeamTaskServiceTest {
         assertProblem(HttpStatus.CONFLICT, "TEAM_TASK_CONFLICT",
                 () -> service.update("team_task_update", USER, WS, CHILD,
                         owned.getId().toString(), "claim", 0L, null, null, null, null, null, null));
-        verify(teamTasks, never()).casClaim(any(), anyLong(), anyString(), any());
+        verify(teamTasks, never()).casClaim(any(), anyLong(), anyString(), any(), any());
     }
 
     @Test
     void completeRequiresOwnerAndInProgress() {
         TeamTask owned = row(1, TeamTask.STATUS_IN_PROGRESS, CHILD, List.of(), List.of(), CHILD_ID);
         when(teamTasks.findByTeamRootSessionIdOrderByTaskNo(ROOT)).thenReturn(List.of(owned));
-        when(teamTasks.casUpdateStatus(eq(owned.getId()), eq(0L), eq(TeamTask.STATUS_COMPLETED)))
+        when(teamTasks.casUpdateStatus(eq(owned.getId()), eq(0L), eq(TeamTask.STATUS_COMPLETED), any()))
                 .thenReturn(1);
 
         // Non-owner cannot complete.
         assertProblem(HttpStatus.CONFLICT, "TEAM_TASK_CONFLICT",
                 () -> service.update("team_task_update", USER, WS, ROOT,
                         owned.getId().toString(), "complete", 0L, null, null, null, null, null, null));
-        verify(teamTasks, never()).casUpdateStatus(any(), anyLong(), eq(TeamTask.STATUS_COMPLETED));
+        verify(teamTasks, never()).casUpdateStatus(any(), anyLong(), eq(TeamTask.STATUS_COMPLETED), any());
 
         // Owner completes.
         TeamTaskService.TeamTaskView view = service.update("team_task_update", USER, WS, CHILD,
                 owned.getId().toString(), "complete", 0L, null, null, null, null, null, null);
-        verify(teamTasks).casUpdateStatus(owned.getId(), 0L, TeamTask.STATUS_COMPLETED);
+        verify(teamTasks).casUpdateStatus(eq(owned.getId()), eq(0L), eq(TeamTask.STATUS_COMPLETED), any());
         assertNotNull(view);
     }
 
@@ -304,7 +304,7 @@ class TeamTaskServiceTest {
         assertProblem(HttpStatus.CONFLICT, "TEAM_TASK_CONFLICT",
                 () -> service.update("team_task_update", USER, WS, CHILD,
                         pending.getId().toString(), "complete", 0L, null, null, null, null, null, null));
-        verify(teamTasks, never()).casUpdateStatus(any(), anyLong(), anyString());
+        verify(teamTasks, never()).casUpdateStatus(any(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -318,14 +318,14 @@ class TeamTaskServiceTest {
         assertProblem(HttpStatus.CONFLICT, "TEAM_TASK_CONFLICT",
                 () -> service.update("team_task_update", USER, WS, CHILD,
                         row.getId().toString(), "claim", null, null, null, null, null, null, null));
-        verify(teamTasks, never()).casClaim(any(), anyLong(), anyString(), any());
+        verify(teamTasks, never()).casClaim(any(), anyLong(), anyString(), any(), any());
     }
 
     @Test
     void reassignIsCreatorLineageOnlyAndTargetMustShareTheTree() {
         TeamTask createdByRoot = row(1, TeamTask.STATUS_PENDING, CHILD, List.of(), List.of(), ROOT_ID);
         when(teamTasks.findByTeamRootSessionIdOrderByTaskNo(ROOT)).thenReturn(List.of(createdByRoot));
-        when(teamTasks.casReassign(eq(createdByRoot.getId()), eq(0L), eq(CHILD), eq("child")))
+        when(teamTasks.casReassign(eq(createdByRoot.getId()), eq(0L), eq(CHILD), eq("child"), any()))
                 .thenReturn(1);
 
         // A child-session caller is not the creator.
@@ -336,7 +336,7 @@ class TeamTaskServiceTest {
         // The creator (root caller) reassigns to a tree member.
         TeamTaskService.TeamTaskView view = service.update("team_task_update", USER, WS, ROOT,
                 createdByRoot.getId().toString(), "reassign", 0L, CHILD, null, null, null, null, null);
-        verify(teamTasks).casReassign(createdByRoot.getId(), 0L, CHILD, "child");
+        verify(teamTasks).casReassign(eq(createdByRoot.getId()), eq(0L), eq(CHILD), eq("child"), any());
         assertEquals(CHILD, view.ownerSessionId());
 
         // A foreign session (its own root) is not a tree member.
@@ -354,7 +354,7 @@ class TeamTaskServiceTest {
         when(teamTasks.findByTeamRootSessionIdOrderByTaskNo(ROOT))
                 .thenReturn(List.of(first, second));
         when(teamTasks.casUpdateDetails(eq(first.getId()), eq(0L), any(), isNull(),
-                any(), isNull())).thenReturn(1);
+                any(), isNull(), any())).thenReturn(1);
 
         // Unknown dependency id.
         assertProblem(HttpStatus.NOT_FOUND, "TEAM_TASK_NOT_FOUND",
@@ -392,12 +392,12 @@ class TeamTaskServiceTest {
         // Happy path renames — the CAS call carries the new values (the mocked repo does not
         // reflect them back into the stale row, so the assertion lands on the verify, not the view).
         when(teamTasks.casUpdateDetails(eq(closingCycle.getId()), eq(0L), eq("renamed"),
-                isNull(), any(), any())).thenReturn(1);
+                isNull(), any(), any(), any())).thenReturn(1);
         service.update("team_task_update", USER, WS, CHILD,
                 closingCycle.getId().toString(), "update_details", 0L, null, "renamed", null,
                 null, List.of(), List.of("packages/control-plane"));
         verify(teamTasks).casUpdateDetails(eq(closingCycle.getId()), eq(0L), eq("renamed"),
-                isNull(), any(), any());
+                isNull(), any(), any(), any());
     }
 
     @Test
@@ -408,7 +408,7 @@ class TeamTaskServiceTest {
                 () -> service.update("team_task_update", USER, WS, CHILD,
                         row.getId().toString(), "move", 0L, null, null, null, "sideways",
                         null, null));
-        verify(teamTasks, never()).casUpdateStatus(any(), anyLong(), anyString());
+        verify(teamTasks, never()).casUpdateStatus(any(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -421,7 +421,7 @@ class TeamTaskServiceTest {
         assertProblem(HttpStatus.CONFLICT, "TEAM_TASK_CONFLICT",
                 () -> service.update("team_task_update", USER, WS, CHILD,
                         tomb.getId().toString(), "claim", 0L, null, null, null, null, null, null));
-        verify(teamTasks, never()).casUpdateDetails(any(), anyLong(), any(), any(), any(), any());
+        verify(teamTasks, never()).casUpdateDetails(any(), anyLong(), any(), any(), any(), any(), any());
     }
 
     @Test

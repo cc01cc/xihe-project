@@ -481,7 +481,15 @@ public class FollowUpQueueService {
             views.add(new FollowUpItemView(row.getId(), row.getQueueSequence(), row.getStatus(), row.getContent(),
                     attachmentInfos(row.getAttachmentRefs()), row.getBranchId(), row.getAnchorRunId(),
                     row.getPauseReason(), row.getChildRunId(), row.getChildMessageId(),
-                    row.getCreatedAt(), row.getUpdatedAt()));
+                    row.getCreatedAt(), row.getUpdatedAt(),
+                    // task-188 S3 (V173): pass the columns through VERBATIM — a null source_kind
+                    // means "no attribution" on the wire, not "human". Defaulting it here would
+                    // make every pre-V173 row render as attributed, which is exactly the
+                    // "never unknown" rule the badge follows (DEV-032).
+                    row.getSourceKind(),
+                    row.getFromSessionId() == null
+                            ? null : java.util.UUID.fromString(row.getFromSessionId()),
+                    row.getExpectedRevision()));
         }
         String state = paused ? "paused" : count == 0 ? "empty" : "queued";
         return new FollowUpQueueSnapshot(sessionId, state, count, CAPACITY_LIMIT, pauseReason, List.copyOf(views));

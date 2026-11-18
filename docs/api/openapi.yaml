@@ -1335,6 +1335,49 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{childSessionId}/steers:
+    post:
+      tags: [session]
+      operationId: steerChildSession
+      summary: Lead mid-run command interjection into a child Session's follow-up queue (task-188 MVP⑤ S3)
+      description: |
+        A steer REUSES the durable Follow-up FIFO (D-1821 default-3, V49) rather than adding a second
+        queue: it becomes an ordinary item on the CHILD Session tagged sourceKind=agent_steer with
+        fromSessionId = the tree root Session (V173). Admission, the 5-item capacity, settlement and
+        restart recovery are therefore the existing ones - this endpoint adds exactly the Lead gate
+        and the attribution stamp.
+
+        NON-PREEMPTIVE by construction: an in-flight child run makes the head ineligible (the
+        existing anchor_not_terminal rule), so a steer waits for the child's NEXT admission boundary.
+        It is a durable instruction delivered later, NOT an interrupt - a client that expects an
+        abort will wait for something that never comes.
+
+        Authorization is a RELATIONSHIP, not a role (design section 4.2: no isInstanceAdmin special
+        case): the caller must own the tree's ROOT Session. Members of somebody else's tree are
+        refused 403 STEER_FORBIDDEN; a Session the caller cannot reach at all answers 404 (steering
+        is not an existence oracle across tenants).
+
+        expectedRevision is ADVISORY-ONLY (D-1830): it is persisted on the item (its own column,
+        V173) and echoed back as item.expectedRevision for the reader, never used as a
+        compare-and-set gate - the queue has no revision to compare, and inventing one would be a
+        new mechanism. It deliberately does NOT ride toolTimeouts, which is a tool-name-to-seconds
+        map that admission actually reads. No new SSE event is registered (default-8): the child's
+        view refreshes through the existing derived_state_changed hint re-read.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: childSessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SteerCreateRequest' } } }
+      responses:
+        '202': { description: Steer enqueued on the child's queue, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '200': { description: Idempotent replay - same key, same text; nothing was written twice, content: { application/json: { schema: { $ref: '#/components/schemas/FollowUpQueueSnapshot' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: STEER_FORBIDDEN - the caller does not own this Session's tree root, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SESSION_NOT_FOUND - the Session does not exist or is not reachable for this caller, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: One of the queue's own codes, passed through unchanged - FOLLOW_UP_NOT_AVAILABLE / FOLLOW_UP_QUEUE_FULL / IDEMPOTENCY_KEY_REUSED / SESSION_DELETING, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/follow-ups/{itemId}:
     delete:
       tags: [session]
@@ -7560,7 +7603,7 @@ components:
     GuidancePendingView: { type: object, additionalProperties: false, required: [runId, items], properties: { runId: { type: string, format: uuid }, items: { type: array, items: { type: object, additionalProperties: false, required: [id, sequence, sourceKind, content], properties: { id: { type: string, format: uuid }, sequence: { type: integer, format: int64 }, sourceKind: { type: string, const: user }, content: { type: string } } } } } }
     GuidanceConsumeRequest: { type: object, additionalProperties: false, properties: { consumedBy: { type: string, description: Consumer identity for audit (e.g. agent-runner). } } }
     GuidanceConsumeResult: { type: object, additionalProperties: false, required: [id, status, consumedAt, firstConsumption], properties: { id: { type: string, format: uuid }, status: { type: string, const: consumed }, consumedAt: { type: string, format: date-time }, firstConsumption: { type: boolean } } }
-    FollowUpItem: { type: object, additionalProperties: false, required: [queueItemId, queueSequence, status, content, attachments, branchId, createdAt, updatedAt], properties: { queueItemId: { type: string, format: uuid }, queueSequence: { type: integer, format: int64 }, status: { type: string, enum: [queued, paused, admitted, completed, withdrawn] }, content: { type: [string, 'null'] }, attachments: { type: array, items: { type: object, additionalProperties: false, required: [id, name, type, size], properties: { id: { type: string, format: uuid }, name: { type: string }, type: { type: [string, 'null'] }, size: { type: integer, format: int64 }, url: { type: [string, 'null'] } } } }, branchId: { type: string, format: uuid }, anchorRunId: { type: [string, 'null'], format: uuid }, pauseReason: { type: [string, 'null'] }, childRunId: { type: [string, 'null'], format: uuid }, childMessageId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time } } }
+    FollowUpItem: { type: object, additionalProperties: false, required: [queueItemId, queueSequence, status, content, attachments, branchId, createdAt, updatedAt], properties: { queueItemId: { type: string, format: uuid }, queueSequence: { type: integer, format: int64 }, status: { type: string, enum: [queued, paused, admitted, completed, withdrawn] }, content: { type: [string, 'null'] }, attachments: { type: array, items: { type: object, additionalProperties: false, required: [id, name, type, size], properties: { id: { type: string, format: uuid }, name: { type: string }, type: { type: [string, 'null'] }, size: { type: integer, format: int64 }, url: { type: [string, 'null'] } } } }, branchId: { type: string, format: uuid }, anchorRunId: { type: [string, 'null'], format: uuid }, pauseReason: { type: [string, 'null'] }, childRunId: { type: [string, 'null'], format: uuid }, childMessageId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time }, sourceKind: { type: [string, 'null'], enum: [human, agent_steer, null], description: 'task-188 S3 (V173) steer attribution - null means NO attribution (every pre-V173 row and every ordinary human follow-up); agent_steer renders the from-Lead badge. A client must never substitute a default string for null.' }, fromSessionId: { type: [string, 'null'], format: uuid, description: 'the steering (tree root) Session for agent_steer rows; null otherwise' }, expectedRevision: { type: [integer, 'null'], minimum: 0, description: 'ADVISORY-ONLY echo (D-1830): the board revision the steering Lead assumed. Persisted and returned so a reader can see what the interjection was written against; NOTHING gates on it.' } } }
     SessionBranch: { type: object, additionalProperties: false, required: [branchId, createdAt], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: [string, 'null'], format: uuid, description: Branch that owns the fork-point Message/Run; it can be an ancestor of the requested sourceBranchId. }, forkPointMessageId: { type: [string, 'null'], format: uuid }, forkPointRunId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
     SessionBranchCreatedResponse: { type: object, additionalProperties: false, required: [branchId, parentBranchId, forkPointMessageId], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: string, format: uuid }, forkPointMessageId: { type: string, format: uuid } } }
     SessionCompactRequest: { type: object, additionalProperties: false, required: [branchId], properties: { branchId: { type: string, format: uuid }, upToSequence: { type: integer, format: int64, minimum: 0 } } }
@@ -7596,6 +7639,13 @@ components:
               expiresAt: { type: [string, 'null'], format: date-time }
             additionalProperties: false
       additionalProperties: false
+    SteerCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 8192, description: 'the instruction; it becomes the follow-up item content' }
+        expectedRevision: { type: [integer, 'null'], minimum: 0, description: 'ADVISORY-ONLY (D-1830): persisted on the item and echoed back as item.expectedRevision, never a compare-and-set gate' }
     TeamTaskBoard:
       type: object
       required: [sessionId, teamRootSessionId, tasks]

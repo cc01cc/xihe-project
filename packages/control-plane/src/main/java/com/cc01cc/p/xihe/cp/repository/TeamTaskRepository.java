@@ -14,8 +14,16 @@ import java.util.UUID;
  * task-188 MVP⑤ S2 (V172): the team-task board rows.
  *
  * <p>Derived reads and CAS writes only — no @Lock pessimistic shapes (the board is advisory CAS,
- * bl-354). {@link #casUpdateStatus(UUID, long, String)} returns the affected-row count; the
- * service translates 0 into the precise conflict state instead of trusting the caller's view.</p>
+ * bl-354). {@link #casUpdateStatus(UUID, long, String, java.time.Instant)} returns the affected-row
+ * count; the service translates 0 into the precise conflict state instead of trusting the caller's
+ * view.</p>
+ *
+ * <p><b>Why {@code :now} and not {@code CURRENT_TIMESTAMP}</b>: JPQL types {@code CURRENT_TIMESTAMP}
+ * as {@code java.sql.Timestamp}, and Hibernate refuses to assign it to the entity's {@code Instant}
+ * field ("Cannot assign expression of type java.sql.Timestamp to target path t.updatedAt"). Passing
+ * the timestamp as a bound parameter keeps one clock reading per statement AND keeps the field type
+ * honest. This is only caught by a test that actually boots the JPA context, so the unit-mocked
+ * service tests could not have found it.</p>
  */
 public interface TeamTaskRepository extends JpaRepository<TeamTask, UUID> {
 
@@ -33,31 +41,34 @@ public interface TeamTaskRepository extends JpaRepository<TeamTask, UUID> {
      */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE TeamTask t SET t.status = :toStatus, t.revision = t.revision + 1, "
-            + "t.updatedAt = CURRENT_TIMESTAMP "
+            + "t.updatedAt = :now "
             + "WHERE t.id = :id AND t.revision = :expectedRevision")
     int casUpdateStatus(@Param("id") UUID id,
                         @Param("expectedRevision") long expectedRevision,
-                        @Param("toStatus") String toStatus);
+                        @Param("toStatus") String toStatus,
+                        @Param("now") java.time.Instant now);
 
     /** Claim CAS: sets the owner (and its display name) on an unclaimed row; guarded by revision. */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE TeamTask t SET t.ownerSessionId = :ownerSessionId, t.ownerName = :ownerName, "
-            + "t.revision = t.revision + 1, t.updatedAt = CURRENT_TIMESTAMP "
+            + "t.revision = t.revision + 1, t.updatedAt = :now "
             + "WHERE t.id = :id AND t.revision = :expectedRevision AND t.ownerSessionId IS NULL")
     int casClaim(@Param("id") UUID id,
                  @Param("expectedRevision") long expectedRevision,
                  @Param("ownerSessionId") String ownerSessionId,
-                 @Param("ownerName") String ownerName);
+                 @Param("ownerName") String ownerName,
+                 @Param("now") java.time.Instant now);
 
     /** Reassign CAS: owner may move to another tree session or to null (unclaim); guarded by revision. */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE TeamTask t SET t.ownerSessionId = :ownerSessionId, t.ownerName = :ownerName, "
-            + "t.revision = t.revision + 1, t.updatedAt = CURRENT_TIMESTAMP "
+            + "t.revision = t.revision + 1, t.updatedAt = :now "
             + "WHERE t.id = :id AND t.revision = :expectedRevision")
     int casReassign(@Param("id") UUID id,
                     @Param("expectedRevision") long expectedRevision,
                     @Param("ownerSessionId") String ownerSessionId,
-                    @Param("ownerName") String ownerName);
+                    @Param("ownerName") String ownerName,
+                    @Param("now") java.time.Instant now);
 
     /**
      * Details CAS: null parameters keep the stored value (partial update); the JSON columns are
@@ -69,12 +80,13 @@ public interface TeamTaskRepository extends JpaRepository<TeamTask, UUID> {
             + "t.description = COALESCE(:description, t.description), "
             + "t.blockedBy = COALESCE(:blockedBy, t.blockedBy), "
             + "t.writeScopes = COALESCE(:writeScopes, t.writeScopes), "
-            + "t.revision = t.revision + 1, t.updatedAt = CURRENT_TIMESTAMP "
+            + "t.revision = t.revision + 1, t.updatedAt = :now "
             + "WHERE t.id = :id AND t.revision = :expectedRevision")
     int casUpdateDetails(@Param("id") UUID id,
                          @Param("expectedRevision") long expectedRevision,
                          @Param("subject") String subject,
                          @Param("description") String description,
                          @Param("blockedBy") com.fasterxml.jackson.databind.JsonNode blockedBy,
-                         @Param("writeScopes") com.fasterxml.jackson.databind.JsonNode writeScopes);
+                         @Param("writeScopes") com.fasterxml.jackson.databind.JsonNode writeScopes,
+                         @Param("now") java.time.Instant now);
 }

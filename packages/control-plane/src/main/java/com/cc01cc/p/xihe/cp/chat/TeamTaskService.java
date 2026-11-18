@@ -214,6 +214,9 @@ public class TeamTaskService {
         }
         long expected = expectedRevision;
         String callerId = board.caller.getId().toString();
+        // One reading of the clock per update; the repository binds it (CURRENT_TIMESTAMP cannot
+        // be assigned to an Instant field — see TeamTaskRepository's javadoc).
+        java.time.Instant now = java.time.Instant.now();
         int updated;
         switch (action == null ? "" : action) {
             case "claim" -> {
@@ -223,34 +226,34 @@ public class TeamTaskService {
                 }
                 // The caller already proved tree membership (their root == the board root).
                 updated = teamTasks.casClaim(row.getId(), expected, callerId,
-                        board.caller.getTitle());
+                        board.caller.getTitle(), now);
             }
             case "complete" -> {
                 requireOwner(row, callerId, "complete");
                 requireStatus(row, TeamTask.STATUS_IN_PROGRESS, "complete");
-                updated = teamTasks.casUpdateStatus(row.getId(), expected, TeamTask.STATUS_COMPLETED);
+                updated = teamTasks.casUpdateStatus(row.getId(), expected, TeamTask.STATUS_COMPLETED, now);
             }
             case "reopen" -> {
                 requireOwner(row, callerId, "reopen");
                 requireStatus(row, TeamTask.STATUS_COMPLETED, "reopen");
-                updated = teamTasks.casUpdateStatus(row.getId(), expected, TeamTask.STATUS_IN_PROGRESS);
+                updated = teamTasks.casUpdateStatus(row.getId(), expected, TeamTask.STATUS_IN_PROGRESS, now);
             }
             case "move" -> {
                 requireOwner(row, callerId, "move");
                 String target = requireStatusName(status);
-                updated = teamTasks.casUpdateStatus(row.getId(), expected, target);
+                updated = teamTasks.casUpdateStatus(row.getId(), expected, target, now);
             }
             case "reassign" -> {
                 requireCreatorLineage(board, row, callerId);
                 if (ownerSessionId == null) {
-                    updated = teamTasks.casReassign(row.getId(), expected, null, null);
+                    updated = teamTasks.casReassign(row.getId(), expected, null, null, now);
                 } else {
                     Session target = sessions.findById(parseUuid(ownerSessionId, "ownerSessionId"))
                             .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT,
                                     "TEAM_TASK_INVALID_TARGET", "target session does not exist"));
                     requireTreeMember(board, target);
                     updated = teamTasks.casReassign(row.getId(), expected,
-                            target.getId().toString(), target.getTitle());
+                            target.getId().toString(), target.getTitle(), now);
                 }
             }
             case "update_details" -> {
@@ -267,7 +270,7 @@ public class TeamTaskService {
                 List<String> newScopes = writeScopes == null ? null : normalizeScopeList(writeScopes, "writeScopes");
                 updated = teamTasks.casUpdateDetails(row.getId(), expected,
                         trimmed, description, newBlocked == null ? null : jsonArray(newBlocked),
-                        newScopes == null ? null : jsonArray(newScopes));
+                        newScopes == null ? null : jsonArray(newScopes), now);
             }
             default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "unknown update action: " + action);
