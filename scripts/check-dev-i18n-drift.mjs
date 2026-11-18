@@ -13,6 +13,12 @@
  *   1. **编号对称差**：同一篇文档，`PLAN-\d{4}` / `D-\d{3,4}` / `task-\d+` 中英两侧集合取对称差，非空即报；
  *   2. **PLAN 登记面**：`PLAN-NNNN` 必须在 `plans/`（**含 `plans/archive/`，且单文件与目录都收**）有落点；
  *   3. **D 登记面**：`D-NNNN` 必须在台账主册有 `### D-NNNN` 标题，或在归档 D 号卷里出现过。
+ *   4. **小节标题对拍**（`task-88` 新增；判据来自 `task-87` 实测的口径盲区）：同一篇文档按**层级**（H2/H3/H4）取小节标题做对称差 ——
+ *      三条老判据全部以「编号」为锚，**一个不含任何编号/日期/code span 的小节标题在另一册整节消失，一条都不会报**。
+ *      实测样本：`DEV-011` zh 有 `### 可发现性例外`、en 无 ⇒ 旧版命中 0（见 `internal/A03-xihe/docs/dev-i18n-heading-drift-20261119.md`）。
+ *      对齐口径（翻译场景下措辞必然不同，所以**不比文字**）：同层内**签名有交集即视为同一小节**；
+ *      签名 = 标题里的 code span / 编号 / 日期 / 数字（翻译不会改动的那部分）；剩下**两侧都无签名**的标题按出现顺序互相抵消，
+ *      抵消不完的就是分叉，按侧列出标题原文。读数首行带**作用域根 + cwd + 册数** —— 不带作用域的「0 问题」不算数（同一把门换 cwd 作用域就变，实测）。
  *
  * 盲区（**本工具结构上不覆盖**，输出里会原样打印，别以为它全覆盖）
  *   a. **负向陈述**：「已删除 / 未落地 / 无 X」这类句子 —— 任何存在性检查都会把"正确地不存在"判成缺陷
@@ -58,6 +64,7 @@ const BLIND_SPOTS = [
     "  c. 相对子路由：`chat/:sessionId` 需拼父级 `path:`，本工具不解析路由 ⇒ 路径存在性检查实测 8/12 假阳；",
     "  d. 不覆盖：组件名 / data-testid / CSS 类 / 参数值域 / 路由表（这些只能人读或另立专用门）。",
     "  e. 登记面取「出现过」而非「被定义为条目」：正文顺带提一句也算已登记 ⇒ 会漏掉「从未定义、只被引用」的号；",
+    "  f. 小节标题对拍的残余盲区：无签名标题按「同层出现顺序」配对 ⇒ 两侧**条数相同而内容互换**（改名 + 换序）不报；章号在两册**故意**分叉（en DEV-011 第 10 节自己写着别按编号平移）⇒ H2 条数相同就不报。",
 ];
 
 function readText(file) {
@@ -119,6 +126,97 @@ function collectDecisionLandings(docsDir) {
     return { main, archive, ops, effective: new Set([...main, ...archive]) };
 }
 
+// ─────────────────── 小节标题对拍（task-88：无 token 的分叉也要报） ───────────────────
+const LF_CH = String.fromCharCode(10);
+const CR_CH = String.fromCharCode(13);
+const HEADING_LINE = /^ {0,3}(#{2,4}) +(.+?) *$/u;
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/u;
+const QUOTE_PREFIX = /^ {0,3}(?:> ?)+/u;
+
+// 标题里「翻译不会改动」的部分当签名：code span / 编号 / 日期 / 数字。日期先摘掉，免得它的片段被当成普通数字到处乱配。
+function headingSignature(title) {
+    const s = new Set();
+    // 先剥前导序号：两册章号**故意**分叉（en DEV-011 第 10 节明写别按编号平移），
+    // 不剥就会把 zh `1.1. UI 模块` 与 en `2.1. UI Module` 当成两节不同的小节 —— 纯噪声（本卡实测 DEV-002 一度报 43 条）。
+    let ord = title.replace(/^[0-9]+(?:[.][0-9]+)*[.、]?[ ]+/u, "");
+    for (const m of ord.matchAll(/`([^`]+)`/gu)) s.add("code:" + m[1]);
+    for (const m of ord.matchAll(/(?:PLAN-[0-9]{4}|D-[0-9]{3,4}|BL-[0-9]+|task-[0-9]+)/gu)) s.add("id:" + m[0]);
+    let bare = ord;
+    for (const m of ord.matchAll(/[0-9]{4}-[0-9]{2}-[0-9]{2}/gu)) s.add("date:" + m[0]);
+    bare = bare.replace(/[0-9]{4}-[0-9]{2}-[0-9]{2}/gu, " ");
+    for (const m of bare.matchAll(/[0-9]+(?:[.][0-9]+)*/gu)) s.add("num:" + m[0]);
+    return s;
+}
+
+function extractHeadings(text) {
+    const out = [];
+    let inFence = false;
+    for (const raw of text.split(LF_CH)) {
+        const line = raw.endsWith(CR_CH) ? raw.slice(0, -1) : raw;
+        if (FENCE_LINE.test(line)) {
+            inFence = !inFence;
+            continue;
+        }
+        if (inFence) continue;
+        const m = HEADING_LINE.exec(line.replace(QUOTE_PREFIX, ""));
+        if (!m) continue;
+        const title = m[2];
+        out.push({ level: m[1].length, title, sig: headingSignature(title) });
+    }
+    return out;
+}
+
+function sigOverlap(a, b) {
+    if (a.size === 0 || b.size === 0) return false;
+    for (const t of a) if (b.has(t)) return true;
+    return false;
+}
+
+// 同层内：签名有交集即认同一小节；剩下两侧都无签名的按顺序互相抵消，抵消不完 = 分叉。
+function headingDiffByLevel(zhHeads, enHeads) {
+    const used = new Set();
+    const zhRest = [];
+    for (const z of zhHeads) {
+        let hit = -1;
+        for (let i = 0; i < enHeads.length; i += 1) {
+            if (!used.has(i) && sigOverlap(z.sig, enHeads[i].sig)) {
+                hit = i;
+                break;
+            }
+        }
+        if (hit >= 0) used.add(hit);
+        else zhRest.push(z);
+    }
+    const enRest = enHeads.filter((_, i) => !used.has(i));
+    const zhBare = zhRest.filter((h) => h.sig.size === 0);
+    const enBare = enRest.filter((h) => h.sig.size === 0);
+    const cancel = Math.min(zhBare.length, enBare.length);
+    return {
+        zhOnly: [...zhRest.filter((h) => h.sig.size > 0), ...zhBare.slice(cancel)].map((h) => h.title),
+        enOnly: [...enRest.filter((h) => h.sig.size > 0), ...enBare.slice(cancel)].map((h) => h.title),
+    };
+}
+
+function compareHeadings(name, zhText, enText, findings) {
+    const zhAll = extractHeadings(zhText);
+    const enAll = extractHeadings(enText);
+    const group = (heads) => {
+        const m = new Map();
+        for (const h of heads) {
+            if (!m.has(h.level)) m.set(h.level, []);
+            m.get(h.level).push(h);
+        }
+        return m;
+    };
+    const zhM = group(zhAll);
+    const enM = group(enAll);
+    for (const level of new Set([...zhM.keys(), ...enM.keys()])) {
+        const d = headingDiffByLevel(zhM.get(level) ?? [], enM.get(level) ?? []);
+        if (d.zhOnly.length) findings.push({ kind: "headingAsymmetry", file: name, level, side: "zh", titles: d.zhOnly });
+        if (d.enOnly.length) findings.push({ kind: "headingAsymmetry", file: name, level, side: "en", titles: d.enOnly });
+    }
+    return { zh: zhAll.length, en: enAll.length };
+}
 function scan({ workspace, a03 }) {
     const i18nRoot = path.join(a03, "docs", "i18n");
     const zhDir = path.join(i18nRoot, "zh-Hans");
@@ -131,7 +229,7 @@ function scan({ workspace, a03 }) {
     const missingOnEn = zhFiles.filter((n) => !enFiles.has(n));
     const paired = zhFiles.filter((n) => enFiles.has(n));
 
-    const surface = { pairedFiles: paired.length, missingOnEn: missingOnEn.length, zhSpans: 0, enSpans: 0, zhIds: {}, enIds: {} };
+    const surface = { pairedFiles: paired.length, missingOnEn: missingOnEn.length, zhFiles: zhFiles.length, enFiles: enFiles.size, zhSpans: 0, enSpans: 0, headingZh: 0, headingEn: 0, zhIds: {}, enIds: {} };
     for (const c of CLASSES) {
         surface.zhIds[c.key] = 0;
         surface.enIds[c.key] = 0;
@@ -159,6 +257,9 @@ function scan({ workspace, a03 }) {
             if (onlyZh.length) findings.push({ kind: "asymmetry", file: name, class: c.key, side: "zh", ids: onlyZh });
             if (onlyEn.length) findings.push({ kind: "asymmetry", file: name, class: c.key, side: "en", ids: onlyEn });
         }
+        const heads = compareHeadings(name, zhText, enText, findings);
+        surface.headingZh += heads.zh;
+        surface.headingEn += heads.en;
     }
     for (const c of CLASSES) {
         surface.zhIds[c.key] = seenZh[c.key].size;
@@ -191,12 +292,15 @@ function scan({ workspace, a03 }) {
             decisionOps: decisions.ops.size,
         },
         missingOnEn,
-        dirs: { i18nRoot, plans: path.join(workspace, "plans") },
+        dirs: { workspace, i18nRoot, plans: path.join(workspace, "plans") },
     };
 }
 
 function render(result) {
     const lines = [];
+    lines.push(
+        `[dev-i18n-drift] 作用域根 ${result.dirs.workspace} ｜ cwd ${process.cwd()} ｜ 册数 zh ${result.surface.zhFiles} · en ${result.surface.enFiles} · 配对 ${result.surface.pairedFiles}`,
+    );
     lines.push(
         `[dev-i18n-drift] 扫描面：配对文档 ${result.surface.pairedFiles} 篇；en 缺篇 ${result.surface.missingOnEn} 篇` +
             `${result.surface.missingOnEn ? "（" + result.missingOnEn.slice(0, 8).join(", ") + (result.surface.missingOnEn > 8 ? " …" : "") + "）" : ""}`,
@@ -207,12 +311,15 @@ function render(result) {
             `en PLAN ${result.surface.enIds.PLAN} · D ${result.surface.enIds.D} · task ${result.surface.enIds.task}`,
     );
     lines.push(
+        `[dev-i18n-drift] 小节标题对拍：zh ${result.surface.headingZh} 条 / en ${result.surface.headingEn} 条（同层内签名相同即配对；两侧无签名按顺序互相抵消）`,
+    );
+    lines.push(
         `[dev-i18n-drift] 登记面：plans 落点 ${result.registry.plans} 个 PLAN 号（含 archive，文件+目录）；` +
             `台账主册 ${result.registry.decisionMain} 个 D 号 + 归档卷 ${result.registry.decisionArchive} 个` +
             `（操作台账 lead-ledger.md 另有 ${result.registry.decisionOps} 个，**不算登记面**，只作错册提示）`,
     );
     if (!result.findings.length) {
-        lines.push("[dev-i18n-drift] 命中 0 处（判据：编号对称差 + 登记面存在性；盲区见下）");
+        lines.push("[dev-i18n-drift] 命中 0 处（作用域根 " + result.dirs.workspace + "；判据：编号对称差 + 登记面存在性 + 小节标题对拍；盲区见下，0 处只在这条作用域内成立）");
     } else {
         lines.push(`[dev-i18n-drift] 命中 ${result.findings.length} 处：`);
         let n = 0;
@@ -221,6 +328,10 @@ function render(result) {
             if (f.kind === "asymmetry") {
                 lines.push(
                     `  ${n}. 中英不对称 · ${f.file} · ${f.class} · 仅 ${f.side} 有：${f.ids.join(", ")}`,
+                );
+            } else if (f.kind === "headingAsymmetry") {
+                lines.push(
+                    `  ${n}. 小节标题分叉 · ${f.file} · H${f.level} · 仅 ${f.side} 有 ${f.titles.length} 条：「${f.titles.join("」「")}」`,
                 );
             } else {
                 lines.push(`  ${n}. 登记面缺失 · ${f.class} · ${f.ids.join(", ")}（plans/ 或台账里找不到落点）${f.hint ? " —— " + f.hint : ""}`);
@@ -342,6 +453,34 @@ function runSelftest() {
 
         // 9) 盲区段必须原样打印
         check("9 打印盲区自白", text.includes("盲区（本工具结构上不覆盖") && text.includes("负向陈述"), text.slice(-200));
+
+        // 10) task-88：无 token 的小节标题两侧**只是翻译不同**（条数相同）⇒ 不许误报
+        fs.writeFileSync(path.join(fx.zh, "T4.md"), "## 章" + LF_CH + LF_CH + "### 可发现性例外" + LF_CH + LF_CH + "正文。" + LF_CH, "utf8");
+        fs.writeFileSync(path.join(fx.en, "T4.md"), "## Chapter" + LF_CH + LF_CH + "### Discoverability exception" + LF_CH + LF_CH + "Text." + LF_CH, "utf8");
+        const renamed = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "10 无 token 标题只是改写译文 ⇒ 不报（不误伤翻译）",
+            !renamed.findings.some((f) => f.kind === "headingAsymmetry" && f.file === "T4.md"),
+            JSON.stringify(renamed.findings.filter((f) => f.kind === "headingAsymmetry")),
+        );
+
+        // 11) task-88 主案：en 侧整节消失且该节**不含任何 token** ⇒ 必须报，并附标题原文
+        fs.writeFileSync(path.join(fx.en, "T4.md"), "## Chapter" + LF_CH + LF_CH + "Text." + LF_CH, "utf8");
+        const lost = scan({ workspace: fx.root, a03: fx.a03 });
+        const lostHit = lost.findings.find((f) => f.kind === "headingAsymmetry" && f.file === "T4.md" && f.side === "zh");
+        check(
+            "11 en 少一整节无 token 标题 ⇒ 报并给原文",
+            Boolean(lostHit) && lostHit.titles.includes("可发现性例外"),
+            JSON.stringify(lost.findings.filter((f) => f.kind === "headingAsymmetry")),
+        );
+
+        // 12) 读数首行必须带作用域根 / cwd / 册数（不带作用域的 0 问题不算数）
+        const firstLine = render(lost).split(LF_CH)[0];
+        check(
+            "12 首行含作用域根 + cwd + 册数",
+            firstLine.includes("作用域根") && firstLine.includes("cwd") && firstLine.includes("册数"),
+            firstLine,
+        );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
