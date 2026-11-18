@@ -79,4 +79,28 @@ describe("SessionItem", () => {
         active.unmount();
         inactive.unmount();
     });
+
+    /**
+     * D-1828（条目 57B）：移动态会话行恢复**可见**标题（用户裁 B；行高增加/条数下降为已接受代价）。
+     *
+     * <p>背景取证：batch-4 的「21px 纯图标仅靠 aria-label 可辨」读数出自**关态**抽屉探针，
+     * task-58 开态复测 247.6px 行宽、标题可见 —— 本用例是把「标题必须在可见文本里」这一裁定的
+     * **负例锁**：若哪天行退回纯图标（标题只进 aria-label），text() 立即丢标题 ⇒ 红。</p>
+     */
+    it("D-1828: renders the title as a visible truncated span, not only aria-label (mobile ruling)", () => {
+        const session = { id: "s1", title: "移动态可见标题", updatedAt: new Date().toISOString() };
+        const wrapper = mount(SessionItem, {
+            props: { session, isActive: false },
+        });
+
+        const row = wrapper.get('[data-testid="session-item"]');
+        // 可见文本（不是可访问名）：标题在 textContent 里。
+        expect(row.text()).toContain("移动态可见标题");
+        // 呈现形式：截断样式的标题 span（移动态侧栏靠它在 220–360px 里截断）。
+        const titleSpan = row.find("span.truncate");
+        expect(titleSpan.exists()).toBe(true);
+        expect(titleSpan.text()).toBe("移动态可见标题");
+        // aria-label 保留（读屏双保险），但**不能是唯一的标题载体**。
+        expect(row.attributes("aria-label")).toBe("移动态可见标题");
+    });
 });

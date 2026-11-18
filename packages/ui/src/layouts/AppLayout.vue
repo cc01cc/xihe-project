@@ -31,6 +31,7 @@ import {
     clampNavWidth,
     clampNavWidthForViewport,
     clearLayoutStorage,
+    mobileDrawerWidth,
     useWorkspaceLayout,
 } from "../composables/useWorkspaceLayout";
 import {
@@ -113,7 +114,9 @@ const navHandleVisible = computed(() => !isMobile.value && !navPanelCollapsed.va
  */
 const navPanelStyle = computed(() => {
     if (!isMobile.value) return undefined;
-    const drawerWidth = Math.min(navWidth.value, viewportWidth.value - 16);
+    // D-1828：宽度算法本体是 useWorkspaceLayout 里的纯函数（守卫与判据见那里）；
+    // 这里只做「开 ⇒ 抽屉宽 / 关 ⇒ 0」的投影。
+    const drawerWidth = mobileDrawerWidth(navWidth.value, viewportWidth.value);
     return {
         flex: "none",
         width: navOpen.value ? `${drawerWidth}px` : "0px",

@@ -8,7 +8,9 @@ import {
     DOCK_WIDTH_MIN,
     GLOBAL_LAYOUT_STORAGE_KEY,
     MAIN_COMFORT_MIN_WIDTH,
+    MAIN_FLOOR_HINT_STORAGE_KEY,
     MAIN_MIN_WIDTH,
+    MOBILE_DRAWER_MIN_WIDTH,
     NAV_WIDTH_DEFAULT,
     NAV_WIDTH_MAX,
     NAV_WIDTH_MIN,
@@ -30,9 +32,12 @@ import {
     defaultWorkspaceLayoutForViewport,
     hasWorkspaceLayout,
     isDockTabId,
+    markMainFloorHintShown,
+    mobileDrawerWidth,
     readGlobalLayout,
     readWorkspaceLayout,
     useWorkspaceLayout,
+    wasMainFloorHintShown,
     writeGlobalLayout,
     writeWorkspaceLayout,
     writeWorkspaceOpenTabs,
@@ -548,11 +553,11 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
     it("computes the two-column main width from the dock alone (no tree term, task-94 S2)", () => {
         expect(
             computeWorkbenchSqueeze({ workbenchWidth: 1804, dockWidth: 360, dockOpen: true }),
-        ).toEqual({ mainWidth: 1444, navYielded: false, forceSingleColumn: false });
-        // 右栏收起 ⇒ 整行都是主列，也没有「要分流的两栏」。
+        ).toEqual({ mainWidth: 1444, navYielded: false });
+        // 右栏收起 ⇒ 整行都是主列。
         expect(
             computeWorkbenchSqueeze({ workbenchWidth: 1804, dockWidth: 360, dockOpen: false }),
-        ).toEqual({ mainWidth: 1804, navYielded: false, forceSingleColumn: false });
+        ).toEqual({ mainWidth: 1804, navYielded: false });
     });
 
     it("yields the navigation panel at the comfort floor", () => {
@@ -565,46 +570,51 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         expect(squeezed.navYielded).toBe(true);
         expect(squeezed.mainWidth).toBe(880);
         expect(squeezed.mainWidth).toBeGreaterThanOrEqual(MAIN_COMFORT_MIN_WIDTH);
-        expect(squeezed.forceSingleColumn).toBe(false);
     });
 
-    it("falls back to a single column when the yielded row still cannot hold 640 (D-1545)", () => {
-        // 会话列已让尽（navPanelWidth 0）后只剩 540 ⇒「主列 + 右栏同行」在这个宽度不成立。
+    it("lets the main column break the 640 floor instead of switching shape (D-1829)", () => {
+        // 会话列已让尽（navPanelWidth 0）后只剩 540 ⇒ **主列就破 640**：两栏保持同行，
+        // 模型原样返回 <640 的主列宽（首次破线的一次性提示由 UI 层给，不进纯函数）。
         const squeezed = computeWorkbenchSqueeze({
             workbenchWidth: 900,
             navPanelWidth: 0,
             dockWidth: 360,
             dockOpen: true,
         });
-        expect(squeezed.forceSingleColumn).toBe(true);
-        // 右栏不死也不被关：这个判定只决定**形态**（两栏轮流占满整行）。
         expect(squeezed.mainWidth).toBe(540);
-        // 同一宽度但右栏收起 ⇒ 没有第二栏要分流，不需要单栏。
+        expect(squeezed.mainWidth).toBeLessThan(MAIN_MIN_WIDTH);
+        // 右栏不死也不被关：结果里根本没有「形态切换」这个出口了。
+        // 同一宽度但右栏收起 ⇒ 整行归主列，自然不破线。
         expect(
             computeWorkbenchSqueeze({
                 workbenchWidth: 900,
                 navPanelWidth: 0,
                 dockWidth: 360,
                 dockOpen: false,
-            }).forceSingleColumn,
-        ).toBe(false);
+            }).mainWidth,
+        ).toBe(900);
     });
 
-    it("uses 640 as the only threshold (no second magic number)", () => {
-        // 1000 - 360 = 640 ⇒ 刚好够，仍是两栏；再少 1px 就该单栏。
-        expect(
-            computeWorkbenchSqueeze({ workbenchWidth: 1000, dockWidth: 360, dockOpen: true })
-                .forceSingleColumn,
-        ).toBe(false);
-        expect(
-            computeWorkbenchSqueeze({ workbenchWidth: 999, dockWidth: 360, dockOpen: true })
-                .forceSingleColumn,
-        ).toBe(true);
+    it("uses 640 as the report line only (no second magic number, D-1829)", () => {
+        // 1000 - 360 = 640 ⇒ 恰好在线；再少 1px ⇒ 破线。两种情况的返回值只差 mainWidth，
+        // 形态永不切换 —— 640 从「硬底线」降级为「提示线」。
+        const onTheLine = computeWorkbenchSqueeze({
+            workbenchWidth: 1000,
+            dockWidth: 360,
+            dockOpen: true,
+        });
+        expect(onTheLine.mainWidth).toBe(MAIN_MIN_WIDTH);
+        const below = computeWorkbenchSqueeze({
+            workbenchWidth: 999,
+            dockWidth: 360,
+            dockOpen: true,
+        });
+        expect(below.mainWidth).toBe(MAIN_MIN_WIDTH - 1);
     });
 
-    it("never yields the dock itself: the row gives way in the order nav to single column", () => {
+    it("never yields the dock itself: the row gives way in the order nav to broken floor", () => {
         // 一条纵向检查：无论多窄，结果里都没有「关掉右栏」这种出口，只有 navYielded 与
-        // forceSingleColumn 两种让路方式。800 档：先让会话列（舒适级），让完 680 ≥ 640 ⇒ 不单栏。
+        // 破不破 640 两种结局。800 档：先让会话列（舒适级），让完 680 ≥ 640 ⇒ 不破线。
         const narrow = computeWorkbenchSqueeze({
             workbenchWidth: 800,
             navPanelWidth: 240,
@@ -613,7 +623,7 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         });
         expect(narrow.navYielded).toBe(true);
         expect(narrow.mainWidth).toBe(680);
-        expect(narrow.forceSingleColumn).toBe(false);
+        expect(narrow.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
     });
 
     /**
@@ -622,7 +632,10 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
      * - `treeYielded`（让树先收起）：树不再占行宽 ⇒ 没有可让的项；`#files` 面板的 rail 折叠现在
      *   只跟用户的 `treeCollapsed`（task-144 ③）。
      * - `treeOverflow` / `allowTreeYield`（手工展开后主列破 640 时报一次提示）：破不了 ⇒ 提示退场。
-     * - `forceFloating`（让尽就转浮窗）：`D-1754 ④` 判据 3 禁浮窗 ⇒ 出口换成 `forceSingleColumn`。
+     * - `forceFloating`（让尽就转浮窗）：`D-1754 ④` 判据 3 禁浮窗。
+     * - `forceSingleColumn`（让尽就切单栏，task-94 S2 的出口）：`D-1829`（条目 58B）用户裁
+     *   「主列允许破 640 + 一次提示」⇒ 桌面恒两栏，单栏出口退场（移动壳 `isMobile` 单栏是
+     *   `D-1545` 既有机制，不受影响）。字段从结果类型里**物理删除** —— 想复活先在编译期过红线。
      */
 });
 
@@ -642,10 +655,9 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec 1.5-C rule 2)", () => {
         expect(result.navYielded).toBe(true);
         expect(result.mainWidth).toBe(804 - 360 + 240); // 684
         expect(result.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
-        expect(result.forceSingleColumn).toBe(false);
     });
 
-    it("yields at the comfort floor and still asks for a single column when that is not enough", () => {
+    it("yields at the comfort floor and lets the main column break 640 when that is not enough (D-1829)", () => {
         const viewport = 900;
         const result = computeWorkbenchSqueeze({
             workbenchWidth: workbenchWidth(viewport), // 604
@@ -653,12 +665,12 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec 1.5-C rule 2)", () => {
             dockWidth: 360,
             dockOpen: true,
         });
-        // 604 - 360 = 244 < 720（舒适线）⇒ 会话列让位 ⇒ 484，仍 < 640 ⇒ 单栏。
-        // 这条钉的是**两级一起发生**：让位不改变「还装不下」的判断，否则会出现
-        // 「以为让完就够了」而把 200px 的主列留在屏幕上。
+        // 604 - 360 = 244 < 720（舒适线）⇒ 会话列让位 ⇒ 484，仍 < 640 ⇒ **破线**（D-1829：
+        // 不再切单栏）。这条钉的是**两级一起发生**：让位不改变「还装不下」的事实，
+        // 484 原样返回交给 UI 层做一次性提示。
         expect(result.navYielded).toBe(true);
         expect(result.mainWidth).toBe(484);
-        expect(result.forceSingleColumn).toBe(true);
+        expect(result.mainWidth).toBeLessThan(MAIN_MIN_WIDTH);
     });
 
     it("restores the navigation panel automatically when the window grows again", () => {
@@ -698,10 +710,10 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec 1.5-C rule 2)", () => {
             dockOpen: false,
         });
         expect(closed.navYielded).toBe(false);
-        expect(closed.forceSingleColumn).toBe(false);
+        expect(closed.mainWidth).toBe(900 - RAIL_WIDTH);
     });
 
-    it("switches 1024px to a single column now that the tree no longer pads the row (task-94)", () => {
+    it("keeps 1024px two-column with a broken floor now that the tree no longer pads the row (D-1829)", () => {
         const viewport = 1024;
         const result = computeWorkbenchSqueeze({
             workbenchWidth: workbenchWidth(viewport), // 728
@@ -710,8 +722,8 @@ describe("PLAN-0582 S5-W2: navigation panel yields (spec 1.5-C rule 2)", () => {
             dockOpen: true,
         });
         expect(result.navYielded).toBe(true);
-        expect(result.mainWidth).toBe(608); // 728 - 360 + 240，仍差 32px
-        expect(result.forceSingleColumn).toBe(true);
+        expect(result.mainWidth).toBe(608); // 728 - 360 + 240，仍差 32px ⇒ 破线，两栏同行
+        expect(result.mainWidth).toBeLessThan(MAIN_MIN_WIDTH);
     });
 });
 
@@ -779,5 +791,100 @@ describe("PLAN-0626 context dock tab", () => {
         expect(stored.dockTabs).toEqual(["code", "changes", "monitor", "members"]);
         expect(stored.activeDockTab).toBe("monitor");
         expect(defaultWorkspaceLayout().dockTabs).toEqual([]);
+    });
+});
+
+/**
+ * D-1828（条目 57B）：移动抽屉开态宽度守卫。
+ *
+ * <p>背景取证：batch-4 的「移动态会话行 21px 纯图标」读数出自**关态**抽屉探针（宽 0 + overflow
+ * hidden 把行压成图标宽），task-58 开态复测 247.6px、标题可见。用户仍裁 B（显示截断标题）⇒ 这道
+ * 纯函数守卫的是开态：视口首拍未量到（available ≤ 0）不得给出负宽度；正常开态不得窄于
+ * `MOBILE_DRAWER_MIN_WIDTH`（被 available 封顶，永远不出视口）。</p>
+ */
+describe("D-1828 mobileDrawerWidth（移动抽屉开态宽度守卫）", () => {
+    it("keeps the stored width when the viewport comfortably fits it", () => {
+        // 390px 手机：min(280, 374) = 280 —— 既有主路径不动。
+        expect(mobileDrawerWidth(280, 390)).toBe(280);
+        expect(mobileDrawerWidth(NAV_WIDTH_MAX, 390)).toBe(NAV_WIDTH_MAX);
+    });
+
+    it("never returns a negative width when the viewport has not been measured yet", () => {
+        // useWindowSize 首拍为 0：旧算式 min(280, -16) = -16 ⇒ 抽屉结构性消失。
+        // 负例：任何 available ≤ 0 的输入都必须退回存储宽（≥ NAV_WIDTH_MIN，标题列健在）。
+        expect(mobileDrawerWidth(280, 0)).toBe(280);
+        expect(mobileDrawerWidth(280, 16)).toBe(280);
+        expect(mobileDrawerWidth(280, -100)).toBe(280);
+    });
+
+    it("floors at MOBILE_DRAWER_MIN_WIDTH but never beyond the viewport", () => {
+        // 视口 256：available 240 ⇒ 240（下限与 available 恰好相等）。
+        expect(mobileDrawerWidth(280, 256)).toBe(240);
+        // 视口 200：available 184 < 下限 ⇒ 取 available（不出视口，也守「不为负」）。
+        expect(mobileDrawerWidth(280, 200)).toBe(184);
+    });
+
+    it("sanitizes a corrupt stored width like every other width reader", () => {
+        expect(mobileDrawerWidth(Number.NaN, 390)).toBe(NAV_WIDTH_DEFAULT);
+        expect(mobileDrawerWidth(10_000, 390)).toBe(NAV_WIDTH_MAX);
+        expect(mobileDrawerWidth(280, Number.NaN)).toBe(280);
+    });
+
+    it("never narrows below the title-bearing floor in any open-drawer scenario", () => {
+        // 横扫：存储宽全档 × 视口 240..430，开态结果要么 = min(存储, available)，
+        // 要么 = 下限（仍 ≤ available）。不存在「图标栏宽度」的输出。
+        for (let viewport = 240; viewport <= 430; viewport += 1) {
+            for (const stored of [NAV_WIDTH_MIN, NAV_WIDTH_DEFAULT, NAV_WIDTH_MAX]) {
+                const width = mobileDrawerWidth(stored, viewport);
+                const available = viewport - 16;
+                expect(width).toBeGreaterThan(0);
+                expect(width).toBeLessThanOrEqual(Math.max(available, 0) || NAV_WIDTH_MAX);
+                expect(width).toBeGreaterThanOrEqual(
+                    Math.min(MOBILE_DRAWER_MIN_WIDTH, Math.max(available, 0)),
+                );
+            }
+        }
+    });
+});
+
+/**
+ * D-1829（条目 58B）：主列破 640 的一次性提示标记。
+ *
+ * <p>「不是每次」的判据落在这里：标记落 `xihe-main-floor-hint-shown`，`clearLayoutStorage`
+ * （登出/切账号）必须把它一起清掉 —— 否则下一个账号继承「已提示」状态，永远看不到这条说明。</p>
+ */
+describe("D-1829 main-floor hint flag（一次性提示标记）", () => {
+    beforeEach(() => {
+        localStorage.clear();
+    });
+
+    it("defaults to not-shown, flips on mark, and reads back idempotently", () => {
+        expect(wasMainFloorHintShown()).toBe(false);
+        markMainFloorHintShown();
+        expect(wasMainFloorHintShown()).toBe(true);
+        expect(localStorage.getItem(MAIN_FLOOR_HINT_STORAGE_KEY)).toBe("1");
+        // 再记一次不抛、不变。
+        markMainFloorHintShown();
+        expect(wasMainFloorHintShown()).toBe(true);
+    });
+
+    it("is cleared together with the layout keys on logout (clearLayoutStorage)", () => {
+        markMainFloorHintShown();
+        localStorage.setItem(
+            GLOBAL_LAYOUT_STORAGE_KEY,
+            JSON.stringify({ navOpen: true, navWidth: 280 }),
+        );
+        expect(wasMainFloorHintShown()).toBe(true);
+
+        clearLayoutStorage();
+
+        expect(wasMainFloorHintShown()).toBe(false);
+        expect(localStorage.getItem(MAIN_FLOOR_HINT_STORAGE_KEY)).toBeNull();
+        expect(localStorage.getItem(GLOBAL_LAYOUT_STORAGE_KEY)).toBeNull();
+    });
+
+    it("treats a corrupted flag payload as not-shown (fail-open: hint may repeat, never vanish)", () => {
+        localStorage.setItem(MAIN_FLOOR_HINT_STORAGE_KEY, "not-a-flag");
+        expect(wasMainFloorHintShown()).toBe(false);
     });
 });

@@ -23,9 +23,10 @@ import { logger } from "../lib/logger";
  *   与这里拥有的 navOpen / navWidth 不是同一条状态。工作区 NavPanel 的折叠语义不变。**
  * - the workspace entry lives only in the navigation panel head, not in the rail;
  * - the right dock defaults to collapsed and is 320-480 wide (360 default);
- * - below 1800px the dock is an absolutely positioned overlay instead of a flex
- *   child (56 rail + 280 panel + 240 tree + 360 dock + 864 main = 1800), so it can
- *   never squeeze the main column below its 640px floor.
+ * - ~~below 1800px the dock is an absolutely positioned overlay~~ —— overlay/浮窗已随
+ *   `D-1754 ④` 判据 3 退场（task-94/162），右栏恒为 flex 行内列；`DOCK_INLINE_MIN_VIEWPORT`
+ *   现在只管「≥1800 首启右栏展开」这一个默认值，不再切换形态；主列 <640 时按 `D-1829`
+ *   允许破线（两栏同行 + 首次破线一次性提示），见文件尾 `computeWorkbenchSqueeze`。
  */
 export const GLOBAL_LAYOUT_STORAGE_KEY = "xihe-layout-global";
 export const WORKSPACE_LAYOUT_STORAGE_PREFIX = "xihe-layout-ws:";
@@ -265,6 +266,22 @@ export function clampNavWidthForViewport(width: number, viewportWidth: number): 
     if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return clampNavWidth(width);
     const breakpointMax = viewportWidth < 1280 ? 240 : viewportWidth < 1440 ? 260 : NAV_WIDTH_MAX;
     return Math.min(clampNavWidth(width), breakpointMax);
+}
+
+/**
+ * D-1828（条目 57B）：移动抽屉开态宽度。min(存储宽, 视口 − 16)，两条守卫：
+ * ① `available ≤ 0`（useWindowSize 首拍未量到）⇒ 退回存储宽，**不给负宽度**；
+ * ② 下限 `MOBILE_DRAWER_MIN_WIDTH`，但被 available 封顶 —— 守卫的是「开态抽屉永不被压成
+ * 纯图标栏」（会话行 = 图标 + 截断标题，用户裁定 B 要求标题可见；batch-4 的「21px 纯图标」
+ * 读数出自**关态**抽屉探针，开态复测 247.6px 有标题，这道守卫防的是开态也不慎收窄的那条路）。
+ */
+export const MOBILE_DRAWER_MIN_WIDTH = 240;
+
+export function mobileDrawerWidth(navWidth: number, viewportWidth: number): number {
+    const stored = clampNavWidth(navWidth);
+    const available = viewportWidth - 16;
+    if (!(available > 0)) return stored;
+    return Math.max(Math.min(stored, available), Math.min(MOBILE_DRAWER_MIN_WIDTH, available));
 }
 
 /**
@@ -689,6 +706,7 @@ export function clearLayoutStorage(): void {
     if (!store) return;
     try {
         store.removeItem(GLOBAL_LAYOUT_STORAGE_KEY);
+        store.removeItem(MAIN_FLOOR_HINT_STORAGE_KEY);
         const staleKeys: string[] = [];
         for (let index = 0; index < store.length; index += 1) {
             const key = store.key(index);
@@ -752,7 +770,7 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
             Number.isFinite(overhead) && (overhead ?? 0) > 0 ? Math.round(overhead as number) : 0;
         const workbenchWidth = Math.max(0, (viewportWidth.value || 0) - offset - overheadPx);
         if (!demand) {
-            return { mainWidth: workbenchWidth, navYielded: false, forceSingleColumn: false };
+            return { mainWidth: workbenchWidth, navYielded: false };
         }
         return computeWorkbenchSqueeze({
             workbenchWidth,
@@ -815,21 +833,56 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
 }
 
 /**
- * PLAN-0582 S3b §4 anti-squeeze (spec §1.5-C) —— **task-94 S2 后的形态**。
+ * PLAN-0582 S3b §4 anti-squeeze (spec §1.5-C) —— **D-1829（条目 58B，2026-11-18 用户裁定）后的形态**。
  *
- * <p>有序规则（保护量仍是主列）：① `MAIN_MIN_WIDTH`(640) 是硬底线、优先于一切；
- * ② pinned 右栏让**会话列**先让位（舒适级 720 / 硬底线 640 两级）；③ 会话列让尽仍 <640 ⇒
- * **走单栏**（`forceSingleColumn`，`D-1545` 既有机制）；④ 右栏永不被关（② 不关 dock）。</p>
+ * <p>有序规则：① `MAIN_MIN_WIDTH`(640) 只是**度量与提示线**，不再是硬底线 —— 会话列让尽之后
+ * 主列可以**破 640**（返回真实的 <640 的 `mainWidth`）；② pinned 右栏让**会话列**先让位
+ * （舒适级 720 / 底线 640 两级）；③ 右栏永不被关。首次破线由工作台层给**一次性提示**
+ * （`wasMainFloorHintShown`/`markMainFloorHintShown`，不是每次）。</p>
  *
- * <p>退场的两条旧规则，写在此处防复活：**「右栏先让文件树让位」不成立了** —— 树已是右栏的一个
+ * <p>退场的三条旧规则，写在此处防复活：**「右栏先让文件树让位」不成立了** —— 树已是右栏的一个
  * 面板（`D-1777`/`D-1778`），它不再占行宽，把 `treeWidth` 再扣一次就是把右栏宽里已经含着的
- * 那份树宽扣第二遍（实测 1600 档：DOM 主列 1157 / 旧模型算 597）。**「让尽就转 floating」也不成立了**
- * —— `D-1754 ④` 判据 3 禁浮窗，出口改成单栏。</p>
+ * 那份树宽扣第二遍（实测 1600 档：DOM 主列 1157 / 旧模型算 597）。**「让尽就转 floating」不成立了**
+ * —— `D-1754 ④` 判据 3 禁浮窗。**「让尽就走单栏」（`forceSingleColumn`，task-94 S2 的出口）也不成立了**
+ * —— `D-1829` 用户裁「主列允许破 640 + 一次提示」优先：禁浮窗是用户明确的话（「我们现在没有设计
+ * 浮窗的」），640 是 Lead 自定的布局底线，两者冲突时用户的话优先；单栏出口随之退场（桌面形态恒两栏），
+ * 移动壳的单栏（`isMobile` ⇒ `containerMode="single"`）是 `D-1545` 的既有机制，不受影响。</p>
  *
  * <p>纯函数，断点表可无 DOM 单测。</p>
  */
 export const MAIN_MIN_WIDTH = 640;
 export const MAIN_COMFORT_MIN_WIDTH = 720;
+
+/**
+ * D-1829（条目 58B）：主列首次破 640 底线的**一次性提示**标记。
+ *
+ * <p>用户裁定「主列允许破 640 + 首次破线时一次性提示（不是每次）」⇒ 提示次数必须跨会话记住，
+ * 否则刷新/重开就再提示一次。独立小键（不是布局几何，不进 `xihe-layout-ws:<id>`），
+ * 但同属布局层拥有、登出时随 `clearLayoutStorage` 清掉（用户级状态，不跨账号）。</p>
+ */
+export const MAIN_FLOOR_HINT_STORAGE_KEY = "xihe-main-floor-hint-shown";
+
+/** 破线提示是否已给过（缺键/脏值 ⇒ 没给过）。 */
+export function wasMainFloorHintShown(): boolean {
+    const store = storage();
+    if (!store) return false;
+    try {
+        return store.getItem(MAIN_FLOOR_HINT_STORAGE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+/** 记破线提示已给过。写失败不抛（提示层不能白屏布局）。 */
+export function markMainFloorHintShown(): void {
+    const store = storage();
+    if (!store) return;
+    try {
+        store.setItem(MAIN_FLOOR_HINT_STORAGE_KEY, "1");
+    } catch (cause) {
+        logger.warn("Failed to persist the main-floor hint flag", cause);
+    }
+}
 
 export interface WorkbenchSqueezeInput {
     /** Measured width of the workbench row (rail+panel already excluded). */
@@ -863,27 +916,19 @@ export interface WorkbenchSqueezeInput {
 
 export interface WorkbenchSqueezeResult {
     /**
-     * 两栏形态下的主列宽（会话列让尽之后）。**单栏形态下不适用** —— 那时主列占满整行
-     * （`workbenchWidth`），由调用方按 `forceSingleColumn` 自行决定用哪个数。
+     * 主列宽（会话列让尽之后）。**可以低于 `MAIN_MIN_WIDTH`** —— `D-1829` 裁定主列允许破
+     * 640 底线（禁浮窗优先于 Lead 自定的 640 底线），调用方据此给首次破线的一次性提示。
      */
     mainWidth: number;
     /** The navigation panel has to collapse to its rail so the floor is reachable. */
     navYielded: boolean;
-    /**
-     * task-94 S2：**这一行装不下「主列 ≥640 + 右栏」，右栏改由单栏切换承载**（`D-1545`）。
-     *
-     * <p>这是「让尽之后仍破 640」的**唯一出口**：右栏不死（② 不关 dock）、不叠（③ 判据 3 禁浮窗）、
-     * 主列不破 640（①），改由两栏轮流占满整行（与移动壳同一语义）。取代旧的 `forceFloating`。</p>
-     *
-     * <p>右栏折叠（`dockOpen=false`）时恒 false：没有第二栏要分流。</p>
-     */
-    forceSingleColumn: boolean;
 }
 
 /**
  * Pure anti-squeeze evaluation. Inputs are the **rendered** state (that is the S3b
  * P1-2 fix: feeding the persisted state made the toast lie whenever the user had
- * expanded the tree manually) and the output only *adds* collapses/floating on top.
+ * expanded the tree manually) and the output is the row allocation only — the 640
+ * floor is reported, never enforced (D-1829).
  */
 export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): WorkbenchSqueezeResult {
     const workbenchWidth = Number.isFinite(input.workbenchWidth) ? input.workbenchWidth : 0;
@@ -915,10 +960,9 @@ export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): Workbench
     }
 
     /**
-     * task-94 S2 / S4：**单栏判定**。会话列让尽之后这一行仍装不下 640 的主列 ⇒「主列 + 右栏同行」
-     * 在该视口不成立 ⇒ 两栏轮流占满整行。判据与 ① 640 硬底线是同一个数，没有第二个魔数。
+     * D-1829：**没有「让尽之后的第二出口」**。会话列让尽之后主列 <640 ⇒ 原样返回这个 <640 的
+     * 宽度（主列允许破底线，两栏仍同行），首次破线的一次性提示是 UI 层的职责
+     * （`wasMainFloorHintShown`/`markMainFloorHintShown`），不进纯函数。
      */
-    const forceSingleColumn = dockTakesSpace && mainWidth < MAIN_MIN_WIDTH;
-
-    return { mainWidth, navYielded, forceSingleColumn };
+    return { mainWidth, navYielded };
 }

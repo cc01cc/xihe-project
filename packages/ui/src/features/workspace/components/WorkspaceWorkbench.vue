@@ -7,10 +7,13 @@ import { toast } from "vue-sonner";
 import { FolderTree, Plus } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
+    MAIN_MIN_WIDTH,
     TREE_COLLAPSED_WIDTH,
     canOpenDockTab,
     clampDockWidth,
     clampTreeWidth,
+    markMainFloorHintShown,
+    wasMainFloorHintShown,
     WORKSPACE_LAYOUT_KEY,
     computeWorkbenchSqueeze,
     createWorkspaceLayoutWriter,
@@ -278,13 +281,12 @@ const mainContainerActiveId = computed(() => tabBarContext.activeId.value);
 /**
  * task-174 / `D-1545`：**形态只决定看得见哪一栏**，不改归属。
  *
- * <p>今天 `single` 只在移动壳（`isMobile`）成立，而移动壳现在渲染的是 `<FileEditor />`
- * （`D-1544` 遗留：真正的窄屏渲染由移动壳卡接通）⇒ 这一层现在是**形状就位、产品面不触发**，
- * 由单测钉住。桌面形态下 `visibleContainers` 返回全部 ⇒ 行为与本卡之前完全一致。</p>
+ * <p>`single` 只在移动壳（`isMobile`）成立。桌面窄屏**不再**切单栏 —— `D-1829`（条目 58B，
+ * 用户 2026-11-18 裁定）废掉了 task-94 S2 的桌面单栏出口：主列允许破 640，右栏恒为行内列
+ * （禁浮窗优先于 640 底线，关 dock 会让 pinned 静默失效）。桌面形态下 `visibleContainers`
+ * 返回全部 ⇒ 两栏恒渲染。</p>
  */
-const containerMode = computed<ContainerMode>(() =>
-    props.isMobile || forceSingleColumn.value ? "single" : "desktop",
-);
+const containerMode = computed<ContainerMode>(() => (props.isMobile ? "single" : "desktop"));
 
 /**
  * task-94 S4（`D-1545`）：单栏时**只渲染当前那一栏**，另一栏仍在（切换器一键回来）。
@@ -379,7 +381,8 @@ const dockTabs = computed<DockTab[]>(() =>
  * - `treeCollapsedForSqueeze`（喂给模型的树态）—— 模型里没有树项，无输入可喂；
  * - `treeExpandedManually`（手工展开盖过自动让位）—— 没有自动让位可盖；
  * - `narrowViewport ⇒ 树自动折叠`（「树是独立列、窄屏先让它让位」时代的规则）—— 树已在右栏里，
- *   窄屏腾空间改由**单栏切换**做（`forceSingleColumn`）。折叠现在只跟用户的 `treeCollapsed`。
+ *   窄屏主列直接破 640（`D-1829`，一次性提示），没有「自动折叠/切单栏」这层了。折叠只跟用户的
+ *   `treeCollapsed`。
  *
  * <p>留着会怎样：窄屏下这个启发式把 `treeCollapsed` 伪造成「折叠」，用户在单栏里打开右栏看到的
  * 是一条 40px rail 而不是树 —— 即 task-144 ③ 修掉的「折叠吞掉右栏」换一个入口再来一次。</p>
@@ -496,7 +499,7 @@ onBeforeUnmount(() => {
  * 却把面板压窄 —— 这是方向反了。</p>
  *
  * <p>⇒ 焦点与常态发布**同一个** demand：模型输入不变 ⇒ `navYielded` / `navPanelWidth` /
- * `forceSingleColumn` 都不变 ⇒ 行宽与形态在焦点前后逐项相等。1920 档本来零变化（导航从未
+ * 主列宽（含是否破 640）都不变 ⇒ 行宽与形态在焦点前后逐项相等。1920 档本来零变化（导航从未
  * 让位），修后仍零变化，它就是「这条规则没有额外副作用」的对照组。</p>
  */
 
@@ -530,13 +533,27 @@ const squeeze = computed<WorkbenchSqueezeResult>(() =>
 const dockFocus = computed(() => dockOpen.value && layout.value.dockFocus);
 
 /**
- * task-94 S2 / S4：**单栏判定由挤压模型给出，不由视口数字给出**（Lead 2026-11-17：
- * 「1280 切单栏」是口语，实施必须换算成约束式 `主列会 <640 就切`，否则换个 dock 宽就错）。
- *
- * <p>等价阈值实测：会话列 260 ⇒ 1382；会话列 280 ⇒ 1402；随 dock 宽 320–480 移动
- * （见 `internal/A03-xihe/evidence/2026-11-17-task94-dock-tree/README.md` §5）。</p>
+ * D-1829（条目 58B）：**破 640 底线判定**。桌面形态 + 右栏开着 + 会话列让尽之后主列仍 <640
+ * ⇒ 两栏保持同行、主列就破底线（模型原样返回 <640 的 `mainWidth`，无第二出口）。本 computed
+ * 只负责一件事：第一次出现这种情况时给**一次性提示**（已给过则不再提示 —— 刷新/重开也不提示，
+ * 标记落 `xihe-main-floor-hint-shown`，登出清除）。提示用 `toast.info`，不给警告色：这不是错误，
+ * 是用户裁定的可接受形态。</p>
  */
-const forceSingleColumn = computed(() => squeeze.value.forceSingleColumn);
+const squeezeResult = computed(() => layoutOwner?.squeeze.value ?? squeeze.value);
+const mainBelowFloor = computed(
+    () => !props.isMobile && dockOpen.value && squeezeResult.value.mainWidth < MAIN_MIN_WIDTH,
+);
+// immediate：应用**加载时就已经破线**（窄窗直接刷新进来）同样要给这一次提示 ——
+// 「首次」指本账号第一次遇到破线，不是「第一次从破线状态翻进去」。
+watch(
+    mainBelowFloor,
+    (below) => {
+        if (!below || wasMainFloorHintShown()) return;
+        markMainFloorHintShown();
+        toast.info(t("workspace.mainFloorHint"));
+    },
+    { immediate: true },
+);
 
 /** 折叠只跟用户的持久值（S2：树不再进挤压模型，也没有窄屏自动折叠）。 */
 const effectiveTreeCollapsed = computed(() => layout.value.treeCollapsed);

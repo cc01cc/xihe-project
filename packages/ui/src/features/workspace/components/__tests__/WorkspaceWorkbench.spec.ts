@@ -8,6 +8,7 @@ import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
 import { shouldOpenAgentsDockFromDeepLink } from "../workspaceDockTabs";
 import {
+    MAIN_MIN_WIDTH,
     RAIL_WIDTH,
     TREE_COLLAPSED_WIDTH,
     WORKSPACE_LAYOUT_KEY,
@@ -17,14 +18,17 @@ import {
 import { useAuthStore } from "../../../../stores/auth";
 import { useWorkspaceStore } from "../../stores/workspace";
 
-const { toastWarning } = vi.hoisted(() => ({ toastWarning: vi.fn<(message: string) => void>() }));
+const { toastWarning, toastInfo } = vi.hoisted(() => ({
+    toastWarning: vi.fn<(message: string) => void>(),
+    toastInfo: vi.fn<(message: string) => void>(),
+}));
 
 vi.mock("vue-sonner", () => ({
     toast: {
         warning: toastWarning,
+        info: toastInfo,
         success: vi.fn<(message?: string) => void>(),
         error: vi.fn<(message?: string) => void>(),
-        info: vi.fn<(message?: string) => void>(),
     },
 }));
 
@@ -74,6 +78,7 @@ const i18n = createI18n({
                 dockFocusHint: "Fill the workspace with this panel",
                 expandFiles: "Expand the file tree",
                 collapseFiles: "Collapse the file tree",
+                mainFloorHint: "Main column below 640px",
                 toggleCode: "Toggle code",
                 toggleDiff: "Toggle changes",
                 toggleMonitor: "Toggle monitor",
@@ -183,13 +188,10 @@ async function expectStored(check: () => void): Promise<void> {
 }
 
 /**
- * task-94 S4：**视口是显式变量**。jsdom 恒 1024，而「两栏还是单栏」由挤压模型按 640 硬底线算
- * （`forceSingleColumn`）⇒ 凡是要断言**桌面两栏**的用例必须先写明宽视口，否则它测的是单栏形态，
- * 而单栏下右栏被规则挡在视口外（症状就是「`workspace-aux-panel` 取不到」）。
- *
- * <p>注意本文件挂载时**没有布局 provider**，挤压模型的兜底把「工作台行宽」当作 `innerWidth`
- * （真实 app 里还要减 56 rail + 会话列 240/280）。所以这里的单栏阈值是 `innerWidth < 1000`
- * 而不是产品上的 ~1390 —— 用例按这个口径取数，别拿产品阈值来对。</p>
+ * D-1829 后：**视口只影响破不破 640 的提示，不再改变形态**。桌面恒两栏（右栏恒渲染），
+ * 所以本文件绝大多数用例与视口无关；唯一要记住的是 `innerWidth` 仍是挤压模型的兜底行宽
+ * （本文件挂载时没有布局 provider），破线提示会在 `innerWidth − 360 < 640` 的用例里触发 ——
+ * 断言提示次数的用例要显式 `setViewport` 取数，别拿产品阈值来对。
  */
 const VIEWPORT_DEFAULT = window.innerWidth;
 function setViewport(width: number): void {
@@ -207,9 +209,10 @@ beforeEach(() => {
     routeQuery.value = {};
     setActivePinia(createPinia());
     localStorage.clear();
-    // BL-359：清掉 toast 警告的**调用记录**。`not.toHaveBeenCalled()` 断的是"本用例没触发警告"，
+    // BL-359：清掉 toast 的**调用记录**。`not.toHaveBeenCalled()` 断的是"本用例没触发"，
     // 但前一条用例的调用残留在同一个 mock 上 ⇒ 用例顺序一变就红。
     toastWarning.mockClear();
+    toastInfo.mockClear();
     const auth = useAuthStore();
     auth.$patch({
         token: "token",
@@ -608,52 +611,116 @@ describe("WorkspaceWorkbench workspace switch (PLAN-0582 S3a audit P0)", () => {
     });
 });
 /**
- * task-94 S2/S4 取代 PLAN-0582 S3b §4 的「让尽就转浮窗」。
+ * D-1829（条目 58B，用户 2026-11-18 裁定）取代 task-94 S2/S4 的桌面单栏出口。
  *
- * <p>旧用例钉的是「pinned 被挤压成 floating 并给一次 toast」—— 那条**前提被 `D-1754 ④` 判据 3 否了**：
- * 右栏不许叠在主列上。现在让尽后的出口是**单栏切换**（`D-1545` 既有机制），一次性 toast 一并退场。</p>
+ * <p>历史链：PLAN-0582 S3b §4「让尽就转浮窗」→ `D-1754 ④` 判据 3 禁浮窗 → task-94 S2 出口改
+ * 桌面切单栏 → **`D-1829`：主列允许破 640 + 首次破线一次性提示**（禁浮窗是用户明确的话，
+ * 640 是 Lead 自定底线；A 关 dock 否决 = pinned 静默失效）。桌面从此恒两栏；单栏只剩移动壳
+ * （`isMobile`，`D-1545` 既有机制）一个入口。</p>
  */
-describe("WorkspaceWorkbench 单栏切换（task-94 S2/S4，取代 S3b §4 forcibly-floating）", () => {
-    it("装不下两栏时切单栏：右栏成为当前栏、主列 v-show 隐藏（不卸载），且不给 toast", async () => {
-        // 本文件挂载时没有布局 provider ⇒ 行宽按 innerWidth 兜底：900 − 360 = 540 < 640 ⇒ 单栏。
+describe("WorkspaceWorkbench 破 640 底线（D-1829，取代 task-94 S2/S4 桌面单栏）", () => {
+    it("装不下两栏时主列破 640：两栏仍同行，首次破线给一次性提示并落标记", async () => {
+        // 本文件挂载时没有布局 provider ⇒ 行宽按 innerWidth 兜底：900 − 360 = 540 < 640 ⇒ 破线。
         setViewport(900);
-        // 单栏形态下「看得见哪一栏」由 activeColumn 决定 ⇒ 种子必须写明用户正看着右栏。
         seedWideLayout({
             dockTabs: ["files"],
             activeDockTab: "files",
             dockCollapsed: false,
-            activeColumn: "right",
         });
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        // 单栏形态的可见入口：切换器渲染（D-1545）。
-        expect(wrapper.find('[data-testid="workspace-container-switcher"]').exists()).toBe(true);
-        // 右栏此刻是当前栏 ⇒ 树可见，且**恰好一个**（D-1777/D-1778 的树面板只有一份）。
+        // 桌面恒两栏：切换器不出现（它只属于移动壳单栏）。
+        expect(wrapper.find('[data-testid="workspace-container-switcher"]').exists()).toBe(false);
+        // 右栏照常渲染（pinned 不被静默关掉），树**恰好一个**。
         expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
-        // 主列**仍挂载**、只是 v-show 隐藏：卸载会丢 ChatPanel 的 SSE 订阅（D26-04 同一条理由）。
-        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(false);
+        // 主列**照常可见**（负例：若退回单栏形态，这里会被 v-show 藏掉 ⇒ 红）。
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        expect(wrapper.get("[data-main-hidden]").attributes("data-main-column-visible")).toBe(
+            "true",
+        );
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
-        await flushPromises();
-
-        // 点右栏页签不能把用户留在中栏：右栏自动成为当前栏。
+        // 首次破线：一次性提示（info，不是警告 —— 用户裁定的可接受形态）+ 标记落盘。
+        expect(toastInfo).toHaveBeenCalledTimes(1);
+        expect(toastInfo).toHaveBeenCalledWith("Main column below 640px");
+        expect(localStorage.getItem("xihe-main-floor-hint-shown")).toBe("1");
+        // 不给警告色、不态变浮窗。
+        expect(toastWarning).not.toHaveBeenCalled();
         expect(
             wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-mode"),
         ).toBe("pinned");
-        // 形态由几何算出，不落盘（D-1552/D-1222 ⑥：不新增第二个持久键）。
-        await expectStored(() => expect(storedLayout().dockTabs).toEqual(["files", "code"]));
+        // 形态不落盘（D-1552/D-1222 ⑥：不新增第二个持久键）。
         expect(storedLayout()).not.toHaveProperty("singleColumn");
-        // 不是「被挤压成浮窗」：那条一次性提示随机制退场。
-        expect(toastWarning).not.toHaveBeenCalled();
+    });
+
+    it("破线提示只给一次：标记在，再破线也不重复提示", async () => {
+        setViewport(900);
+        // 标记已存在（模拟"上一个会话提示过"）⇒ 这次破线静默。
+        localStorage.setItem("xihe-main-floor-hint-shown", "1");
+        seedWideLayout({
+            dockTabs: ["files"],
+            activeDockTab: "files",
+            dockCollapsed: false,
+        });
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // 形态照旧（两栏同行），只是这次没有提示 —— 「不是每次」的判据就钉在这里。
+        expect(wrapper.find('[data-testid="workspace-container-switcher"]').exists()).toBe(false);
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        expect(toastInfo).not.toHaveBeenCalled();
+        expect(localStorage.getItem("xihe-main-floor-hint-shown")).toBe("1");
+
+        // 视口来回穿越破线（900 ↔ 1920）也不补提示。
+        setViewport(1920);
+        window.dispatchEvent(new Event("resize"));
+        await flushPromises();
+        setViewport(900);
+        window.dispatchEvent(new Event("resize"));
+        await flushPromises();
+        expect(toastInfo).not.toHaveBeenCalled();
+    });
+
+    it("不破线时不提示（1024 档兜底行宽 1024 − 360 = 664 ≥ 640）", async () => {
+        setViewport(1024);
+        seedWideLayout({
+            dockTabs: ["files"],
+            activeDockTab: "files",
+            dockCollapsed: false,
+        });
+        mountWorkbench();
+        await flushPromises();
+
+        expect(toastInfo).not.toHaveBeenCalled();
+        expect(localStorage.getItem("xihe-main-floor-hint-shown")).toBeNull();
+    });
+
+    it("右栏收起时不提示（没有第二栏要分流，主列整行 900 ≥ 640）", async () => {
+        setViewport(900);
+        seedWideLayout({ dockTabs: [], activeDockTab: null, dockCollapsed: true });
+        mountWorkbench();
+        await flushPromises();
+
+        expect(toastInfo).not.toHaveBeenCalled();
+    });
+
+    it("移动壳单栏不受影响：isMobile 下既不提示也不渲染桌面右栏", async () => {
+        setViewport(900);
+        localStorage.setItem("xihe-main-floor-hint-shown", "1");
+        const wrapper = mountWorkbench({ isMobile: true });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        expect(toastInfo).not.toHaveBeenCalled();
     });
 
     /**
      * **实测修正 Lead 的推断**（`D-1789`：以实测为准）：两条绕过路径确实存在
-     * （`toggleDockTab` / `closeDockTab` 不走 `collapseDock`），但在当前树里**推不出白屏**——
-     * `forceSingleColumn` 的判据带 `dockOpen`（`dockTakesSpace`），dock 一收 `containerMode`
-     * 立刻回 `desktop`，两栏都渲染、中栏自然可见；而 `isMobile` 那条路（`containerMode` 恒 single）
-     * 的移动壳渲染的是 `FileEditor`，根本不挂这套 dock。
+     * （`toggleDockTab` / `closeDockTab` 不走 `collapseDock`），而在 `D-1829` 后的当前树里
+     * **结构性推不出白屏** —— `containerMode` 只看 `isMobile`，桌面恒 `desktop` 两栏都渲染、
+     * 中栏自然可见；而 `isMobile` 那条路（`containerMode` 恒 single）的移动壳渲染的是
+     * `FileEditor`，根本不挂这套 dock。
      *
      * <p><b>但"没白屏"是巧合不是判据</b>：它依赖"单栏条件恰好随 dock 关闭而消失"。所以不变量照样
      * 挪到派生（`effectiveActiveColumn`），并在这里钉两条**今天能测**的判据：
@@ -678,7 +745,7 @@ describe("WorkspaceWorkbench 单栏切换（task-94 S2/S4，取代 S3b §4 forci
         await flushPromises();
 
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
-        // 正文非空：中栏本体在 DOM 里且可见（若哪天单栏条件不再随 dock 关闭而消失，这里就是白屏线）。
+        // 正文非空：中栏本体在 DOM 里且可见（若哪天桌面形态又能把中栏藏掉，这里就是白屏线）。
         expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
         expect(wrapper.get("[data-main-hidden]").attributes("data-main-column-visible")).toBe(
             "true",
@@ -1110,8 +1177,9 @@ describe("WorkspaceWorkbench task-158 (focus must not re-allocate the row)", () 
         expect(owner.navYielded.value).toBe(true);
         expect(owner.navPanelWidth.value).toBe(beforePanel);
         expect(owner.squeeze.value.mainWidth).toBe(beforeMain);
-        // 行宽分配不变 ⇒ 工作台行宽（模型侧入口）也不变。
-        expect(owner.squeeze.value.forceSingleColumn).toBe(false);
+        // 行宽分配不变 ⇒ 工作台行宽（模型侧入口）也不变；焦点也不制造破线提示的突变。
+        expect(owner.squeeze.value.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
+        expect(toastInfo).not.toHaveBeenCalled();
     });
 
     it("also keeps it at 1920 (the control group: the nav never yields either way)", async () => {

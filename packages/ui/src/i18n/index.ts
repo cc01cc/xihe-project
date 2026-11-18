@@ -36,6 +36,35 @@ const messages = {
             loading: "加载中…",
             empty: "没有待你回答的问题",
         },
+        // task-188 S2/S3（MVP⑤）：会话指挥只读任务板 + steer 来源标注（ui-1）。
+        // 只读口径写进文案：板上没有任何写操作入口，写走对话中的 agent 工具（D-1821）。
+        teamBoard: {
+            title: "任务板",
+            counts: "已完成 {completed} · 进行中 {inProgress} · 待办 {pending}",
+            legendPending: "待办",
+            legendBlocked: "阻塞",
+            legendInProgress: "进行中",
+            legendCompleted: "已完成",
+            unowned: "未认领",
+            blockedBadge: "阻塞",
+            expandAria: "展开 {label} 详情",
+            descriptionLabel: "描述",
+            noDescription: "（无描述）",
+            blockedByLabel: "依赖",
+            scopeWarningsLabel: "写面提示",
+            createdAtLabel: "创建于 {time}",
+            updatedAtLabel: "更新于 {time}",
+            emptyTitle: "本队暂无任务",
+            emptyDesc: "派活与认领通过对话中的 agent 工具完成。",
+            errorTitle: "任务板加载失败",
+            retry: "重试",
+            readonlyNote: "只读展示 · 派活与认领请在对话中指派给 agent",
+        },
+        steer: {
+            fromLead: "来自 Lead",
+            fromLeadNamed: "来自 {name}",
+            jumpToSource: "跳转到来源会话",
+        },
         nav: {
             open: "打开导航",
         },
@@ -510,6 +539,13 @@ const messages = {
             dockTabs: "工作台面板",
             dockOverflow: "更多面板",
             dockTabsFull: "面板数量已达上限，请先关闭一个面板",
+            /**
+             * D-1829（条目 58B）：主列首次破 640 底线的一次性提示（之后不再提示，标记落
+             * `xihe-main-floor-hint-shown`，登出清除）。措辞要点：这是用户裁定的可接受形态，
+             * 不是错误 —— 不用警告色/道歉语，只说明现状与两条出路。
+             */
+            mainFloorHint:
+                "窗口较窄：主列已压缩到 640px 以下，右栏仍保持打开。拉宽窗口或收起右栏即可恢复。",
             dockCloseTab: "关闭此面板",
             dockResize: "调整面板宽度",
             dockFocusExpand: "放大面板",
@@ -4096,6 +4132,36 @@ const messages = {
             loading: "Loading…",
             empty: "No questions are waiting for you",
         },
+        // task-188 S2/S3 (MVP⑤): read-only team task board + steer source badge (ui-1).
+        // The copy itself states the read-only contract: no write controls on the board
+        // (writes go through agent tools in chat; D-1821).
+        teamBoard: {
+            title: "Task board",
+            counts: "Done {completed} · In progress {inProgress} · To do {pending}",
+            legendPending: "To do",
+            legendBlocked: "Blocked",
+            legendInProgress: "In progress",
+            legendCompleted: "Done",
+            unowned: "Unowned",
+            blockedBadge: "Blocked",
+            expandAria: "Expand details of {label}",
+            descriptionLabel: "Description",
+            noDescription: "(no description)",
+            blockedByLabel: "Depends on",
+            scopeWarningsLabel: "Write-scope notes",
+            createdAtLabel: "Created {time}",
+            updatedAtLabel: "Updated {time}",
+            emptyTitle: "No tasks on this team yet",
+            emptyDesc: "Dispatch and claim happen through agent tools in chat.",
+            errorTitle: "Failed to load the task board",
+            retry: "Retry",
+            readonlyNote: "Read-only · dispatch and claim via chat with the agent",
+        },
+        steer: {
+            fromLead: "From Lead",
+            fromLeadNamed: "From {name}",
+            jumpToSource: "Jump to source session",
+        },
         nav: {
             open: "Open navigation",
         },
@@ -4571,6 +4637,14 @@ const messages = {
             dockTabs: "Workbench panels",
             dockOverflow: "More panels",
             dockTabsFull: "Panel limit reached — close a panel first",
+            /**
+             * D-1829 (item 58B): one-time notice for the first time the main column drops
+             * below the 640px floor (never repeated; the flag lives in
+             * `xihe-main-floor-hint-shown` and is cleared on logout). Not an error — no
+             * alarm tone, just the state and the two ways out.
+             */
+            mainFloorHint:
+                "Narrow window: the main column is below 640px while the right panel stays open. Widen the window or collapse the panel to restore it.",
             dockCloseTab: "Close this panel",
             dockResize: "Resize the panel",
             dockFocusExpand: "Expand panel",
