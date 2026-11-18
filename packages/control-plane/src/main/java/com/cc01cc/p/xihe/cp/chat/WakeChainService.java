@@ -124,6 +124,19 @@ public class WakeChainService {
                         view.respondPolicy(), view.disabledAt()))
                 .toList();
         MentionParser.ParseResult parsed = MentionParser.parse(content, roster);
+        // task-63: an unresolved @token used to stop existing right here. MentionParser already
+        // reports them (MentionParser:91-95 collects the token, :156-160 returns the list), and this
+        // chain path dropped that list on the floor — so "I named someone and nothing happened" was
+        // indistinguishable from "nobody was named" in the session, in the logs and in the DB.
+        // Every token the roster could not resolve now leaves one durable reading; see
+        // auditUnresolvedMention for why the shape is exactly this and nothing more.
+        List<String> unresolvedTokens = parsed.unresolvedTokens();
+        if (!unresolvedTokens.isEmpty()) {
+            Session auditSession = sessionRepository.findById(UUID.fromString(sessionId)).orElse(null);
+            for (int index = 0; index < unresolvedTokens.size(); index++) {
+                auditUnresolvedMention(sessionId, runId, auditSession);
+            }
+        }
         List<MentionParser.Mention> links = parsed.all()
                 ? roster.stream().filter(MentionParser.RosterEntry::enabled)
                         .map(entry -> new MentionParser.Mention(entry.participantId(),
@@ -258,6 +271,55 @@ public class WakeChainService {
                         + "reason={} parentRunId={} rootRunId={} wakeDepth={} spawnDepth={} detail={}",
                 sessionId, link.participantId(), reason, parentRunId, rootRunId,
                 wakeDepth, spawnDepth, detail);
+    }
+
+    /**
+     * task-63: the durable reading for a mention the roster could not resolve — one
+     * {@code wake_dispatch} row per unresolved token, carrying the existing coarse
+     * {@code outcome=refused} (nothing was dispatched) and the cause in the machine
+     * {@code reason} token {@code mention_unresolved}.
+     *
+     * <p>Zero new contract surface, on purpose. {@code spec/session/chat-session.md} §7「不扩契约」
+     * forbids a new event name, a new counting dimension or a new route for wake semantics, so this
+     * rides the frozen {@code wake_dispatch} envelope and the pre-existing {@code reason} vocabulary
+     * (the same key {@link #auditRefused} and the spawn gate write). No counter field is added
+     * either: how many mentions failed is how many rows exist.</p>
+     *
+     * <p>Two field choices are load-bearing and must not be "improved" later:</p>
+     * <ul>
+     *   <li>{@code participantId} is the empty string, because an unresolved token names nobody.
+     *       {@code WakeDispatchService}'s own audit writer writes "" for the same case, and
+     *       {@code context_events} has no participant column at all — the value lives only in the
+     *       payload, so there is nothing to migrate.</li>
+     *   <li>The raw token text is never written here. It is model output (untrusted content per the
+     *       telemetry rule) and it would land in the event stream that is fed back into context;
+     *       the assistant message that produced it is already durable, and {@code parentRunId} on
+     *       this row points at it — that pairing is the diagnosis, no copy needed.</li>
+     * </ul>
+     *
+     * <p>Boundary kept deliberately (Lead ruling, 2026-11-19): the whitespace-only token boundary
+     * in {@code MentionParser} is HUMAN-side semantics and is NOT widened here. A handoff sentence
+     * like「交给@ewLead接手」therefore still fails to resolve — it now fails audibly, which is the
+     * precondition for deciding later, from real-stack readings, whether the boundary itself
+     * deserves a separate contract card. Counter-example anchor for acceptance: a run whose
+     * assistant content contains a malformed mention MUST produce a readable
+     * {@code wake_dispatch{outcome=refused, reason=mention_unresolved}} row; without that reading
+     * this card is not done.</p>
+     */
+    private void auditUnresolvedMention(String sessionId, String runId, Session session) {
+        String wakeRoundId = "wake:mention:" + runId;
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("wakeRoundId", wakeRoundId);
+        payload.put("participantId", "");
+        payload.put("triggerSource", "chain");
+        payload.put("outcome", "refused");
+        payload.put("reason", "mention_unresolved");
+        payload.put("parentRunId", runId);
+        eventStoreService.append(sessionId, session == null ? null : session.getWorkspaceId(),
+                session == null || session.getUserId() == null ? "" : session.getUserId(),
+                EVENT_WAKE_DISPATCH, payload);
+        logger.warn("[LIFECYCLE] service=cp event=wake_dispatch sessionId={} runId={} outcome=refused "
+                + "reason=mention_unresolved round={}", sessionId, runId, wakeRoundId);
     }
 
     /**

@@ -413,6 +413,68 @@ class WakeChainServiceTest {
 
     // ------------------------------------------------------------------ payload helpers
 
+    // ------------------------------------------------- task-63: unresolved mentions stay audible
+
+    @Test
+    void unresolvedMentionLeavesADurableRefusedReading() {
+        String root = rootRun();
+        // A token the roster cannot resolve: nobody is woken, and before task-63 that was also the
+        // only reading — the run settled as if nothing had been asked for.
+        chain.onAssistantContent(SESSION_ID, root, "请把下一步交给 @Zed 接手");
+        verify(dispatch, never()).fire(any(), anyString(), anyString(), any(), anyString());
+        com.fasterxml.jackson.databind.node.ObjectNode body = onlyWakeDispatchPayload(1);
+        assertEquals("refused", body.path("outcome").asText(),
+                "the coarse label stays inside the frozen wake_dispatch vocabulary");
+        assertEquals("mention_unresolved", body.path("reason").asText());
+        assertEquals("chain", body.path("triggerSource").asText());
+        assertEquals("", body.path("participantId").asText(),
+                "an unresolved token names nobody; the writer keeps the empty string, not a fake id");
+        assertEquals("wake:mention:" + root, body.path("wakeRoundId").asText());
+        assertEquals(root, body.path("parentRunId").asText(),
+                "parentRunId is how a reader gets back to the assistant message that carried the token");
+    }
+
+    @Test
+    void unresolvedRowCountIsTheFailureCount() {
+        String root = rootRun();
+        chain.onAssistantContent(SESSION_ID, root, "@Zed 和 @Yan 都解析不了");
+        ArgumentCaptor<Object> payloads = ArgumentCaptor.forClass(Object.class);
+        verify(eventStore, times(2)).append(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                eq("wake_dispatch"), payloads.capture());
+        for (Object one : payloads.getAllValues()) {
+            com.fasterxml.jackson.databind.node.ObjectNode body =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) one;
+            assertEquals("mention_unresolved", body.path("reason").asText());
+        }
+    }
+
+    @Test
+    void rawTokenTextNeverEntersTheWakeDispatchPayload() {
+        String root = rootRun();
+        chain.onAssistantContent(SESSION_ID, root, "交给 @canary-token 接手");
+        com.fasterxml.jackson.databind.node.ObjectNode body = onlyWakeDispatchPayload(1);
+        assertTrue(!body.toString().contains("canary-token"),
+                "model output is untrusted content: the row points at the message, it does not copy it"
+                        + " — payload was: " + body);
+    }
+
+    @Test
+    void resolvedMentionLeavesNoUnresolvedReading() {
+        stubChainRuns();
+        String root = rootRun();
+        chain.onAssistantContent(SESSION_ID, root, "@Bee 请继续");
+        verify(dispatch, times(1)).fire(eq(B), eq("chain"), contains(root),
+                eq(SESSION_UUID), anyString());
+        verify(eventStore, never()).append(anyString(), any(), any(), eq("wake_dispatch"), any());
+    }
+
+    private com.fasterxml.jackson.databind.node.ObjectNode onlyWakeDispatchPayload(int times) {
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(eventStore, times(times)).append(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                eq("wake_dispatch"), payload.capture());
+        return (com.fasterxml.jackson.databind.node.ObjectNode) payload.getValue();
+    }
+
     private void assertRefusedAudit(String reason) {
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
         verify(eventStore, times(1)).append(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
