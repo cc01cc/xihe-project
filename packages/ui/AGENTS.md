@@ -53,7 +53,7 @@ pnpm run build
 - `--allow-foreign` 显式放行边界外新增：写盘前先打印 `WARN --allow-foreign 放行 N 处…（留痕）`，并把放行清单写进基线的 `foreignAbsorbed`（**为空则省略该键** ⇒ 「同内容再写一次逐字节不变」这条幂等判据仍成立）。
 - 归属单位是 **(族, 文件)**：按每文件计数差找贡献文件；行号漂移不算新增；「族没长但换了文件」（净零）不拦 —— 净零没有放宽 ratchet 的计数，而计数才是门的判据。
 - 退出码分层：`0` 正常 / `1` 门红 / `2` 环境问题或 `errors>0` 拒写 / **`3` 收账边界拒绝**。
-- 自检：`node scripts/check-lint-warnings.mjs --selftest`（14 例）；改动这两个旗标后必须跑。
+- 自检：`node scripts/check-lint-warnings.mjs --selftest`（**22 例**，2026-11-19 实测 22/22；含 ⑲–㉒ 区域链点名与 added 不参与判定的红线用例）；改动这两个旗标后必须跑。
 
 <!-- lint-rule-registry 已外置（task-178 B1）：完整登记册（主块 57 / 文件级 5 / 三档 2 / 测试块 72 的表与 fence，含 begin/end 标记）在 [`docs/lint-rule-registry.md`](docs/lint-rule-registry.md)。`check-lint-rule-registry.mjs` 读该文件（B4）；本文件只留分类判据与计数哨兵。新增/恢复 off：改 docs 登记册 + 同步下方计数。 -->
 
@@ -61,6 +61,17 @@ pnpm run build
 
 - **类 F · 与格式化器轴冲突**：oxfmt 已接管该面（或规则会让代码变差）。恢复条件 = 先做一次性机械重排并单独提交（diff 全审），且用 2 例样本证明 oxfmt 不会反向改写；在此之前恢复只会把千百处风格翻转塞进每条 diff。
 - **类 S · 风格取向（仓库与规则方向相反，或规则对互斥）**：恢复条件 = 先定仓库口径并写进本指南（含互斥对处理），再一次性重排。互斥对：no-ternary ↔ unicorn/prefer-ternary、import/no-named-export ↔ import/prefer-default-export、**import/no-namespace ↔ typescript/consistent-type-imports**（type-only 命名空间：前者禁、后者要求；已把前者收窄到值形态，见其登记行）—— 任一侧单独打开都会让存量大面积红，须同时定口径。
+
+**互斥对登记表（4 对，2026-11-19 起）** —— 任一侧单独打开都会让存量大面积红，**必须同时定口径**；
+新发现一对先登记到这行表里再动手，别只写在报错/注释里（一天内两次踩同型陷阱：`UP031→UP032`、`no-map-spread→prefer-object-spread`，靠单点实验才发现太贵）。
+
+| 互斥的两族 | 症状（怎么撞） | 正解 | 被否决方案 |
+| --- | --- | --- | --- |
+| `no-ternary` ↔ `unicorn/prefer-ternary` | 一侧禁用三元、另一侧要求用三元 | 先定仓库口径，再一次性重排 | 单侧打开（存量必大面积红） |
+| `import/no-named-export` ↔ `import/prefer-default-export` | 禁具名导出 vs 要默认导出 | 同上 | 同上 |
+| `import/no-namespace` ↔ `typescript/consistent-type-imports` | type-only 命名空间：前者禁、后者要求 | 已把前者**收窄到值形态**（见其登记行） | 单侧打开 |
+| `oxc/no-map-spread` ↔ `eslint/prefer-object-spread` | map 里浅拷贝元素：前者报 spread 并让你改 `Object.assign`，后者立刻把 `Object.assign` 报回（**同一行**；实测 `0e47e2455`） | **抽成具名函数**，让 spread 不在任何 map 回调体内（本仓 = `src/lib/shallowClone.ts`）——实测两族同时静音 | ① `Object.assign({}, x)`（撞另一族，已实测）② `structuredClone`（深拷，快照/脏值语义会变）③ 两处各写一份本地 helper（重复） |
+
 - **类 Z · 当前 0 命中**：恢复条件 = 直接打开（零存量成本），同批删掉本行即可；打开后若命中非 0，按类 S 处理。
 - **类 V · 测试专用块**：只作用于 src/**/__tests__/**、src/**/*.spec.ts、src/**/*.test.ts；该块只阻断 vitest/require-mock-type-parameters 与 vitest/require-to-throw-message 两条（见配置），其余全部不强制。恢复条件 = 开始收敛测试风格时逐条打开（当前全部 0 命中 ⇒ 恢复零成本，同 Z）。
 `no-console` 不是"风格偏好"，而是**规则作用域与代码性质不匹配**：CLI/测试/E2E 的 `stdout` 就是它们的输出接口，`no-console` 在那里恒误报。**产品面（`src/**` 非测试非工具）不豁免** —— 那 19 处已按 ③ 逐个改成 `logger.warn`。

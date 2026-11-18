@@ -12,6 +12,9 @@
  *
  * <p><b>不要替换成 <code>structuredClone</code>：</b>那是**深拷贝**，
  * 会让嵌套引用不再共享 ⇒ 快照比较、脏值检测的语义都会变。</p>
+ *
+ * <p>互斥对登记见 <code>packages/ui/AGENTS.md</code>「互斥对登记表」第 4 行（单向引用：那边指实现，
+ * 这边不复制判据，避免两处口径漂移）。</p>
  */
 export function shallowClone<T extends object>(source: T): T {
     return { ...source };

@@ -293,12 +293,39 @@ function resolveArea(raw) {
     process.exit(2);
 }
 
-/** 按区域比族：grownFamilies 的区域版（判据逻辑复用同一份，不新造一套）。 */
-export function grownFamiliesInArea(nowArea, baseArea) {
+/**
+ * 按区域比族：grownFamilies 的区域版（判据逻辑复用同一份，不新造一套）。
+ *
+ * <p><b>task-41 甲补了 added</b>：这里此前只回计数（{rule,count,before,diff}），
+ * 所以区域路径丢了「点名新增 file:line」的能力 —— 门承诺的点名、以及 grownFamilies 注释里
+ * 「基线无坐标就改用 --list 提示」的设计意图，都只活在旧链上。结果是 task-43 分区域改造后，
+ * 红门只报族与条数、不报是哪些文件，归因只能人肉（实测一轮 3 次探测才定位到 3 笔提交）。
+ * </p>
+ *
+ * <p><b>红线不变</b>：added 与 hasBaseLocations 只供打印，**从不参与 exit code**
+ * （同 grownFamilies 的既有口径）。判定侧在 main 里是逐字段挑出 {area,rule,count,before,diff}
+ * （见文件尾的 grownAll 构造），多出来的键在结构上进不了判定；自检 ㉒ 钉住这条。</p>
+ *
+ * @param baseLocations 基线「该区域」的每族坐标；没有坐标 ⇒ 不猜，改为提示用 --list 看
+ */
+export function grownFamiliesInArea(nowArea, baseArea, baseLocations = {}) {
+    const baseByRule = baseArea?.byRule ?? {};
+    const hasBaseLocations = Object.keys(baseLocations ?? {}).length > 0;
     return Object.entries(nowArea.byRule ?? {})
         .map(([rule, count]) => {
-            const before = baseArea.byRule?.[rule] ?? 0;
-            return { rule, count, before, diff: count - before };
+            const before = baseByRule[rule] ?? 0;
+            return {
+                rule,
+                count,
+                before,
+                diff: count - before,
+                added: addedLocations(
+                    nowArea.locations?.[rule],
+                    baseLocations[rule],
+                    hasBaseLocations,
+                ),
+                hasBaseLocations,
+            };
         })
         .filter((entry) => entry.diff > 0)
         .sort((a, b) => b.diff - a.diff || a.rule.localeCompare(b.rule));
@@ -308,6 +335,56 @@ export function grownFamiliesInArea(nowArea, baseArea) {
 function fileOf(at) {
     const cut = at.lastIndexOf(":");
     return cut > 0 ? at.slice(0, cut) : at;
+}
+
+/**
+ * 「新增文件」差集 —— 旧链 grownFamilies 与区域链 grownFamiliesInArea **共用这一份**。
+ *
+ * <p>为什么必须共用：task-41 甲查出的点名缺失，根因就是区域链当年另写了一套只回计数的
+ * 比较函数；两套文案/两套判据迟早漂移。判据单位仍是 (族, 文件)：该文件在基线同族坐标里
+ * 已出现 ⇒ 视为行号漂移/同文件新增，不列为新文件（否则一次注释重构会把整族报成新增）。</p>
+ *
+ * @param hasBaseLocations 基线该侧有没有坐标；没有 ⇒ 返回空（不猜），由调用方改为提示 --list
+ */
+function addedLocations(nowLocations, baseLocations, hasBaseLocations) {
+    if (!hasBaseLocations) return [];
+    const baseFiles = new Set((baseLocations ?? []).map(fileOf));
+    return [
+        ...new Map(
+            (nowLocations ?? [])
+                .filter((at) => !baseFiles.has(fileOf(at)))
+                .map((at) => [fileOf(at), at]),
+        ).values(),
+    ];
+}
+
+/**
+ * 基线侧的「每区坐标」：新格式直接取 byArea[area].locations；
+ * 旧格式（只有顶层 locations）按路径分桶推回 —— 与 areasOf 的旧格式分支同一口径、同一个 fallback。
+ *
+ * <p>为什么单独要这一份：areasOf 只回 {byRule,total}，把基线的坐标**丢在了函数返回值外面**，
+ * 所以区域链当时**拿不到**基线坐标、也就算不了差集。这是点名断掉的第二半（第一半是没算 added）。
+ * </p>
+ */
+export function baselineAreaLocations(baseline) {
+    const out = {};
+    for (const area of AREAS) out[area] = {};
+    const byArea = baseline?.byArea;
+    if (byArea && typeof byArea === "object") {
+        for (const area of AREAS) {
+            const locs = byArea[area]?.locations;
+            if (locs && typeof locs === "object") out[area] = locs;
+        }
+        return out;
+    }
+    for (const [rule, ats] of Object.entries(baseline?.locations ?? {})) {
+        for (const at of ats) {
+            const area = areaOfLocation(at);
+            if (!area) continue;
+            (out[area][rule] ??= []).push(at);
+        }
+    }
+    return out;
 }
 
 /**
@@ -388,21 +465,13 @@ export function grownFamilies(now, baseline) {
     return Object.entries(now.byRule)
         .map(([rule, count]) => {
             const before = baseByRule[rule] ?? 0;
-            const baseFiles = new Set((baseLocations[rule] ?? []).map(fileOf));
             return {
                 rule,
                 count,
                 before,
                 diff: count - before,
-                added: hasLocations
-                    ? [
-                          ...new Map(
-                              (now.locations[rule] ?? [])
-                                  .filter((at) => !baseFiles.has(fileOf(at)))
-                                  .map((at) => [fileOf(at), at]),
-                          ).values(),
-                      ]
-                    : [],
+                // 差集本体已抽到 addedLocations（区域链共用同一份）；此处判据逐字不变。
+                added: addedLocations(now.locations?.[rule], baseLocations[rule], hasLocations),
             };
         })
         .filter((entry) => entry.diff > 0)
@@ -414,6 +483,29 @@ export function grownFamilies(now, baseline) {
  * 旧函数被 --selftest 的 14 例直接调用（那些例锁的是 task-36 的收账边界语义，
  * 不能为了分区域去改动它们的调用形状，否则「边界语义有没有被改坏」就不再可证）。
  */
+/**
+ * 「新增文件」的打印文案 —— 旧链与区域链**共用这一份**（同一句话说两套迟早漂移）。
+ *
+ * <p>纯打印：不参与任何判定（红线见 grownFamilies 的注释与自检 ㉒）。</p>
+ */
+function addedPrintLines(entry) {
+    if (entry.added?.length) {
+        return [
+            "      新增文件（" +
+                entry.added.length +
+                "）：" +
+                entry.added.slice(0, 10).join("、") +
+                (entry.added.length > 10 ? " …另 " + (entry.added.length - 10) + " 个" : ""),
+            "      行号见 --list <族>：行号漂移不算新增（按 file 前缀判定）",
+        ];
+    }
+    // 基线该侧没有坐标 ⇒ 不是「没有新增」，是「算不出新增」—— 必须说出来（旧链注释里的设计意图）。
+    if (entry.hasBaseLocations === false) {
+        return ["      （基线该侧无坐标 ⇒ 无法点名新增文件；看全量坐标用 --list <族>）"];
+    }
+    return [];
+}
+
 function renderReportArea({ now, nowAreas, baseAreas, grownByArea, areaSel, legacyBaseline }) {
     const sel = areaSel.areas;
     const nowTotal = sel.reduce((s, a) => s + nowAreas[a].total, 0);
@@ -460,6 +552,7 @@ function renderReportArea({ now, nowAreas, baseAreas, grownByArea, areaSel, lega
                 entry.count +
                 "）",
         );
+        lines.push(...addedPrintLines(entry));
     }
     return lines;
 }
@@ -495,18 +588,7 @@ function renderReport(now, baseline, grown) {
                     entry.count +
                     "）",
             );
-            if (entry.added.length) {
-                lines.push(
-                    "      新增文件（" +
-                        entry.added.length +
-                        "）：" +
-                        entry.added.slice(0, 10).join("、") +
-                        (entry.added.length > 10
-                            ? " …另 " + (entry.added.length - 10) + " 个"
-                            : ""),
-                );
-                lines.push("      行号见 --list <族>：行号漂移不算新增（按 file 前缀判定）");
-            }
+            lines.push(...addedPrintLines(entry));
         }
     } else {
         lines.push("无增长的族。");
@@ -932,6 +1014,162 @@ function selftest() {
             }
         }
     }
+    // ⑲–㉒ task-41 甲：**区域链的点名能力**。
+    // 此前 18 例全走旧链（grownFamilies + renderReport），而 task-43 起生产路径只有区域链
+    // ⇒ 区域链**零覆盖**，「点名能力丢了」这件事没有任何用例会红 —— 这才是这次回归真正的病根。
+    // 这四条把区域链的产出、文案、无坐标降级提示、以及「added 不参与判定」的红线一起钉住。
+    {
+        const shapeFlat = (locationsByRule) => {
+            const locations = {};
+            const byRule = {};
+            for (const [rule, ats] of Object.entries(locationsByRule)) {
+                locations[rule] = [...ats].sort();
+                byRule[rule] = ats.length;
+            }
+            return {
+                total: Object.values(byRule).reduce((s, n) => s + n, 0),
+                errors: 0,
+                byRule,
+                locations,
+            };
+        };
+        const packArea = (locs) => {
+            const byRule = {};
+            for (const [rule, ats] of Object.entries(locs)) byRule[rule] = ats.length;
+            return {
+                total: Object.values(byRule).reduce((s, n) => s + n, 0),
+                byRule,
+                locations: locs,
+            };
+        };
+        const pickFields = (x) => [x.rule, x.count, x.before, x.diff];
+        // 把 main 的接线复刻一遍（splitByArea / areasOf / baselineAreaLocations / 渲染 / 逐字段判定）。
+        const runArea = (flatNow, baseSrc, area) => {
+            const baseline = {
+                total: 0,
+                byArea: { src: baseSrc, tests: { total: 0, byRule: {}, locations: {} } },
+            };
+            const nowAreas = splitByArea(flatNow);
+            const baseAreas = areasOf(baseline);
+            const baseLocs = baselineAreaLocations(baseline);
+            const grownByArea = {};
+            for (const a of AREAS) {
+                grownByArea[a] = grownFamiliesInArea(nowAreas[a], baseAreas[a], baseLocs[a]);
+            }
+            const lines = renderReportArea({
+                now: flatNow,
+                nowAreas,
+                baseAreas,
+                grownByArea,
+                areaSel: { areas: [area], label: area },
+                legacyBaseline: false,
+            });
+            const grownAll = [area].flatMap((a) =>
+                grownByArea[a].map((g) => ({
+                    area: a,
+                    rule: g.rule,
+                    count: g.count,
+                    before: g.before,
+                    diff: g.diff,
+                })),
+            );
+            return { grownByArea, text: lines.join("\n"), verdict: grownAll.length };
+        };
+        const nowGrow = shapeFlat({
+            "import(first)": ["src/a.ts:1", "src/b.ts:2", "src/new.ts:7"],
+        });
+        const baseGrow = packArea({ "import(first)": ["src/a.ts:1", "src/b.ts:2"] });
+        const namingCases = [
+            {
+                name: "⑲ 区域链点名新增：src 真新增一个文件 ⇒ added 给出 file:line 且文案指 --list",
+                got: runArea(nowGrow, baseGrow, "src"),
+                want: (g) =>
+                    g.grownByArea.src[0].added.join(",") === "src/new.ts:7" &&
+                    g.text.includes("新增文件（1）：src/new.ts:7") &&
+                    g.text.includes("--list") &&
+                    g.verdict === 1,
+                detail: "added=[src/new.ts:7]、文案点名、判定 1 族",
+            },
+            {
+                name: "⑳ 区域链不制造噪音：行号整体平移且同文件多一处 ⇒ 计数仍红但不出现新增文件",
+                got: runArea(
+                    shapeFlat({
+                        "import(first)": ["src/a.ts:101", "src/b.ts:201", "src/b.ts:202"],
+                    }),
+                    packArea({ "import(first)": ["src/a.ts:1", "src/b.ts:1"] }),
+                    "src",
+                ),
+                want: (g) =>
+                    g.grownByArea.src[0].diff === 1 &&
+                    g.grownByArea.src[0].added.length === 0 &&
+                    !g.text.includes("新增文件") &&
+                    g.verdict === 1,
+                detail: "与旧链 ⑧ 同判据：行号漂移不算新增（按 file 前缀）",
+            },
+            {
+                name: "㉑ 基线该侧无坐标 ⇒ 不猜新文件，但必须出声（提示 --list），判定条数不变",
+                got: (() => {
+                    const withLocs = runArea(nowGrow, baseGrow, "src");
+                    const noLocs = runArea(
+                        nowGrow,
+                        { total: 2, byRule: { "import(first)": 2 } },
+                        "src",
+                    );
+                    return {
+                        hinted: noLocs.text.includes("无坐标") && noLocs.text.includes("--list"),
+                        noGuess: noLocs.grownByArea.src[0].added.length === 0,
+                        sameVerdict: noLocs.verdict === withLocs.verdict,
+                    };
+                })(),
+                want: (o) => o.hinted && o.noGuess && o.sameVerdict,
+                detail: "无坐标 ⇒ 打提示而非装干净；判定与有坐标时同",
+            },
+            {
+                name: "㉒ 红线：added 从不参与 exit 判定 —— 把它灌成垃圾，逐字段判定完全不变",
+                got: (() => {
+                    const g = runArea(nowGrow, baseGrow, "src");
+                    const poison = [];
+                    for (const e of g.grownByArea.src) {
+                        poison.push({
+                            rule: e.rule,
+                            count: e.count,
+                            before: e.before,
+                            diff: e.diff,
+                            added: ["bogus.ts:99"],
+                            hasBaseLocations: false,
+                        });
+                    }
+                    return {
+                        samePick:
+                            JSON.stringify(g.grownByArea.src.map(pickFields)) ===
+                            JSON.stringify(poison.map(pickFields)),
+                        verdictEqualsPoison: g.verdict === poison.length,
+                        realAddedKept: g.grownByArea.src[0].added.length === 1,
+                    };
+                })(),
+                want: (o) => o.samePick && o.verdictEqualsPoison && o.realAddedKept,
+                detail: "判定只看 {rule,count,before,diff}；added 加不进判定（main 逐字段挑）",
+            },
+        ];
+        for (const testCase of namingCases) {
+            checked += 1;
+            if (!testCase.want(testCase.got)) {
+                failed += 1;
+                console.error(
+                    "FAIL " +
+                        testCase.name +
+                        "（期望 " +
+                        testCase.detail +
+                        "，实得 " +
+                        JSON.stringify(testCase.got).slice(0, 220) +
+                        "）",
+                );
+            } else {
+                console.log("PASS " + testCase.name);
+            }
+        }
+    }
+
     rmSync(dir, { recursive: true, force: true });
     console.log("SELFTEST " + (checked - failed) + "/" + checked + (failed ? " ⇒ FAIL" : " ⇒ OK"));
     process.exit(failed ? 1 : 0);
@@ -1083,10 +1321,16 @@ function main() {
     const areaSel = resolveArea(optionValue("--area"));
     const nowAreas = splitByArea(now);
     const baseAreas = areasOf(baseline);
+    // task-41 甲：区域链也要拿到**基线侧坐标**才点得出新增（areasOf 只回 byRule/total，坐标落在它返回值外面）。
+    const baseLocsByArea = baselineAreaLocations(baseline);
     const legacyBaseline = !baseline.byArea && Object.keys(baseline.locations ?? {}).length === 0;
     const grownByArea = {};
     for (const area of areaSel.areas) {
-        grownByArea[area] = grownFamiliesInArea(nowAreas[area], baseAreas[area]);
+        grownByArea[area] = grownFamiliesInArea(
+            nowAreas[area],
+            baseAreas[area],
+            baseLocsByArea[area],
+        );
     }
     const lines = renderReportArea({
         now,
