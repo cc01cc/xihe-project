@@ -1,7 +1,9 @@
 # `src/components/ui` 第三方组件来源台账（VENDOR）
 
-本目录除 Xihe 自有组件外，还收录**逐字复制**的 shadcn-vue 注册表组件（reka-ui 版本）。
+本目录除 Xihe 自有组件外，还收录**逐字复制**的 shadcn-vue 注册表组件（reka-ui 版本），见 §1/§1.1。
 它们不是本仓库原创代码：升级与重取只走上游，**禁止手写近似实现**；改本地副本必须回写本台账。
+
+§1.2 另登一类**上游形制但本地已改动**的族（**非逐字件**）：登记目的是来源可核，不享受「不得改」保护。
 
 ## 1. 收录范围（BL-476 L1 试点）
 
@@ -26,6 +28,23 @@
 | `input-group/` | `input-group` | 7 | **仅收录、未接线**（combobox 的 registryDependency；其 deps=`button`/`input`/`textarea` 均已在仓） |
 
 合计 **47** 个文件（6 族 40 + `input-group` 传递依赖 7）；本批不接线业务页。
+
+## 1.2 上游形制、本地已改动（**非逐字件**；task-25 补登记，2026-11-19）
+
+| 组件目录 | 上游名 | 本地文件数 | 接线情况 |
+| ---- | ---- | ---- | ---- |
+| `message-scroller/` | `message-scroller` | 7 | 已接线：`src/features/workspace/chat/components/MessageList.vue`（聊天流滚动容器）；另有 `__poc__/PocHarness.vue` 与 3 处 spec 消费 |
+
+⚠️ **本节与 §1/§1.1 语义不同，别读混**：
+
+- §1/§1.1 = **逐字复制件**：禁止手改，重取只走上游（§4 的改动清单是机械改写）。
+- 本节 = 上游形制但**已被本地逻辑改动覆盖**，**不**享受「不得改」保护；登记它是为了**来源可核**，不是给豁免开后门。
+- 取件证据：初始提交 `c93e78643`（`feat(ui): implement AI chat component library with MessageScroller`，2026-10-07）。
+  此后本族另有 **11** 次本地提交；`MessageScrollerButton.vue` 本身 3 次（`f7fc8672f` / `0a501f03f` / `7cc1d0479`）。
+  **无** §2 那类 registry JSON 快照（当时未留）⇒ 本节**不做**逐字断言，§5 哈希仅为「登记时快照」。
+- 对 `DEV-011` §12.4 任意值门（`internal/A03-xihe/scripts/check-motion-arbitrary-values.mjs`）的影响：
+  族在本节出现 ⇒ 满足 E2 的 **V1（按族登记，脚本读 §1/§1.1/§1.2 的表格首格）** ⇒ `W1 债务` 警告消失。
+  但 **E1 逐条 token 登记与 E2 文档锚点仍是必要条件**：登记族 ≠ 放行该族里新增的任意值，也不恢复「整目录豁免」。
 
 ## 2. 上游来源与版本
 
@@ -185,6 +204,20 @@ install 当前冻结（BL-478 前置），由 Lead 在 UI 单测基线转绿后�
 | `HoverCardContent.vue` | 1474 B | `9A2F28FC9F7D` |
 | `HoverCardTrigger.vue` | 320 B | `554B85D7AC2D` |
 | `index.ts` | 196 B | `1C4223AD6386` |
+
+`message-scroller/`（7；§1.2 非逐字件，哈希为 2026-11-19 登记时快照，**不是**与上游逐字比对的结果）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `index.ts` | 615 B | `5D8D544DD96F` |
+| `MessageScroller.vue` | 698 B | `B5C4E5370FC0` |
+| `MessageScrollerButton.vue` | 2973 B | `64738B6AB94B` |
+| `MessageScrollerContent.vue` | 2212 B | `D8AC515974A6` |
+| `MessageScrollerItem.vue` | 1949 B | `AC49D118CA01` |
+| `MessageScrollerProvider.vue` | 1279 B | `11DFC567AE63` |
+| `MessageScrollerViewport.vue` | 2533 B | `F0AA451BBBB9` |
+
+> `__tests__/MessageScrollerItem.spec.ts` 是本仓库自测，不属上游件，不计入登记数。
 
 `input-group/`（7）
 
