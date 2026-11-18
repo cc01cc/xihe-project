@@ -757,7 +757,7 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
     it("renders 发送 / 抄送 / 被@ 三态: @ highlighted as its own chip", () => {
         const wrapper = mountDelivery(
             {},
-            { to: ["Owner One"], mentions: ["Member Two"], cc: ["Viewer Three"] },
+            { to: ["Owner One"], mentions: ["Member Two"], cc: ["Viewer Three"], unresolved: [] },
         );
 
         const header = wrapper.get('[data-testid="message-delivery"]');
@@ -776,7 +776,10 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
     });
 
     it("renders mention-only delivery (history messages after BL-239 loses TO/CC)", () => {
-        const wrapper = mountDelivery({}, { to: [], mentions: ["Member Two"], cc: [] });
+        const wrapper = mountDelivery(
+            {},
+            { to: [], mentions: ["Member Two"], cc: [], unresolved: [] },
+        );
         expect(wrapper.find('[data-testid="message-delivery-to"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="message-delivery-cc"]').exists()).toBe(false);
         expect(wrapper.get('[data-testid="message-delivery-mention"]').text()).toBe("@Member Two");
@@ -790,6 +793,7 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
                 to: ["Owner One", "Agent Alpha"],
                 mentions: [],
                 cc: [],
+                unresolved: [],
             },
         );
         const header = wrapper.get('[data-testid="message-delivery"]');
@@ -802,6 +806,47 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
     it("renders no delivery header when there is nothing to show", () => {
         const wrapper = mountDelivery({});
         expect(wrapper.find('[data-testid="message-delivery"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    /**
+     * task-66①（D-1884-B）正向钉：花名册解析不掉的原文 token 必须上屏。真栈反例锚点是
+     * `@ewLeadXYZ`——LEAD 的气泡说「我已经把下一步交给你」，而没有任何地方说这个名字没送到。
+     */
+    it("shows the unresolved @token verbatim on the message that carries it", () => {
+        const wrapper = mountDelivery(
+            { role: "assistant", content: "@ewLeadXYZ 我已经把下一步交给你" },
+            { to: [], mentions: [], cc: [], unresolved: ["@ewLeadXYZ"] },
+        );
+        const chip = wrapper.get('[data-testid="message-delivery-unresolved"]');
+        expect(chip.text()).toBe(
+            i18n.global.t("chat.delivery.unresolved", { names: "@ewLeadXYZ" }),
+        );
+        expect(chip.text()).toContain("@ewLeadXYZ");
+        expect(chip.attributes("title")).toBe(i18n.global.t("chat.delivery.unresolvedHint"));
+        // 反向钉：未识别不是「被 @」，不得冒充成功送达的样式
+        expect(wrapper.find('[data-testid="message-delivery-mention"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("renders the unresolved marker together with a real TO (partial delivery is not all-or-nothing)", () => {
+        const wrapper = mountDelivery(
+            {},
+            { to: ["Owner One"], mentions: [], cc: [], unresolved: ["@ghost"] },
+        );
+        expect(wrapper.get('[data-testid="message-delivery-to"]').exists()).toBe(true);
+        expect(wrapper.get('[data-testid="message-delivery-unresolved"]').text()).toContain(
+            "@ghost",
+        );
+        wrapper.unmount();
+    });
+
+    it("renders no unresolved marker for a clean audience", () => {
+        const wrapper = mountDelivery(
+            {},
+            { to: ["Owner One"], mentions: [], cc: [], unresolved: [] },
+        );
+        expect(wrapper.find('[data-testid="message-delivery-unresolved"]').exists()).toBe(false);
         wrapper.unmount();
     });
 });

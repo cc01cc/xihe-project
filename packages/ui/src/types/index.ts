@@ -723,6 +723,12 @@ export interface MessageDelivery {
     to?: string[];
     /** V120 durable：抄送集合（participantId）。 */
     cc?: string[];
+    /**
+     * task-66①（D-1884-B）：花名册解析不掉的**原文 @token**（打错的名字、被停用的名字、
+     * 空格被吃掉的 `@名字`）。它是不可信文本：必须按纯文本渲染，禁止参与花名册匹配或当 id 用。
+     * 无未解析项时键缺失（CP 不造空标记）。
+     */
+    unresolved?: string[];
     /** @deprecated legacy 本地发送态：单值 TO；durable `to` 存在时不读它。 */
     toParticipantId?: string | null;
     /** @deprecated legacy 本地发送态：单值 cc 名单；durable `cc` 存在时不读它。 */

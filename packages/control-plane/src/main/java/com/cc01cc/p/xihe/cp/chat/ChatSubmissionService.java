@@ -24,6 +24,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -410,9 +411,57 @@ public class ChatSubmissionService {
             // ObjectProvider on the constructor (was @Lazy — see the assignment comment):
             // WakeChainService → WakeDispatchService →
             // SessionWakeupService → this service is a cycle; the proxy breaks it.
-            wakeChainService.getObject().onAssistantContent(sessionId, runId, content);
+            //
+            // task-66①: the chain also returns the tokens it could not resolve. The Message just
+            // written above is the only place a human can actually SEE that a name missed — the
+            // durable wake_dispatch row (auditUnresolvedMention) is invisible in the session, which
+            // is exactly the gap this card closes. Parse stays single-source in the chain.
+            List<String> unresolvedMentions = wakeChainService.getObject()
+                    .onAssistantContent(sessionId, runId, content);
+            patchUnresolvedDelivery(assistantMessage, unresolvedMentions);
         }
         return assistantMessage.getId().toString();
+    }
+
+    /**
+     * task-66① / D-1884-B：把 roster 解析不掉的原文 token 挂到**产生它的那条消息**的既有投递投影上。
+     *
+     * <p>为什么是既有概念：{@code messages.delivery}（V120 / PLAN-0665 D3 的 jsonb）本就是这条消息的
+     * 受众记录，读面 {@code MessageReadService.putDelivery} 已对任何消息投影它，UI 的投递行
+     * （{@code deliveryView.resolveDelivery}）也已对任何一行渲染「发送→/抄送→」。新增键
+     * {@code unresolved} 只是把「没送出去」放进同一格，不引入新角色、新事件名、新表、新 wire。</p>
+     *
+     * <p>被否决的形态：{@code SYSTEM} 消息（公开契约 {@code SessionMessage.role} 只有
+     * {@code [USER, ASSISTANT]}）、新 SSE 事件名、{@code message.errorCode}（那是 Run 级失败语义，
+     * 而这条 Run 是 {@code succeeded}，拿它标未送达等于谎报健康）、{@code user_question}、
+     * {@code user_channel_hint}。</p>
+     *
+     * <p>与 {@code WakeChainService} 的「原文 token 不进 durable 事件」并不冲突：那条规则防的是把
+     * 模型输出写进会被喂回上下文的事件流；这里写的是消息自身的元数据，而同一段原文本来就已经在
+     * {@code content} 里，可见域没有扩大。UI 必须按纯文本渲染（它不是 id，不参与花名册匹配）。</p>
+     */
+    private void patchUnresolvedDelivery(Message message, List<String> unresolvedTokens) {
+        if (message == null || unresolvedTokens == null || unresolvedTokens.isEmpty()) {
+            return;
+        }
+        ObjectNode delivery = objectMapper.createObjectNode();
+        String existing = message.getDelivery();
+        if (existing != null && !existing.isBlank()) {
+            try {
+                delivery = (ObjectNode) objectMapper.readTree(existing);
+            } catch (JsonProcessingException malformed) {
+                // Same fail-soft rule as the read projection: a broken payload is replaced, never
+                // propagated — and it is never silent.
+                logger.warn("[LIFECYCLE] service=cp event=message_delivery_projection_failed messageId={} "
+                                + "errorType={}", message.getId(),
+                        malformed.getClass().getSimpleName());
+                delivery = objectMapper.createObjectNode();
+            }
+        }
+        var array = delivery.putArray("unresolved");
+        unresolvedTokens.forEach(array::add);
+        message.setDelivery(delivery.toString());
+        messageRepository.save(message);
     }
 
     /**

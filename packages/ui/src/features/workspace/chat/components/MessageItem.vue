@@ -85,6 +85,14 @@ const actorForRows = computed(() => (props.showActor ? actorOfMessage.value : un
 const deliveryCcNames = computed(() =>
     (props.delivery?.cc ?? []).join(t("chat.delivery.listSeparator")),
 );
+/**
+ * task-66①（D-1884-B）：花名册没解析掉的原文 @token。名单按 locale 连接，渲染走纯文本——
+ * 它不是名字、不是 id，不参与花名册匹配（契约与 deliveryView 同口径）。
+ */
+const deliveryUnresolvedNames = computed(() =>
+    (props.delivery?.unresolved ?? []).join(t("chat.delivery.listSeparator")),
+);
+
 /** PLAN-0665 M2：TO 变集合（一条消息可定向多个 agent），消息头显示 `发送→A · B`。 */
 const deliveryToNames = computed(() =>
     (props.delivery?.to ?? []).join(t("chat.delivery.listSeparator")),
@@ -414,6 +422,13 @@ onUnmounted(() => {
                         >@{{ name }}</span
                     >
                 </template>
+                <span
+                    v-if="deliveryUnresolvedNames"
+                    class="rounded border border-destructive/40 bg-destructive/10 px-1 text-destructive"
+                    data-testid="message-delivery-unresolved"
+                    :title="t('chat.delivery.unresolvedHint')"
+                    >{{ t("chat.delivery.unresolved", { names: deliveryUnresolvedNames }) }}</span
+                >
                 <template v-if="delivery.cc.length">
                     <span
                         v-if="deliveryToNames || delivery.mentions.length"

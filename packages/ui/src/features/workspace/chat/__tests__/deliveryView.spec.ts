@@ -96,6 +96,7 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
             to: ["Owner One"],
             mentions: ["Member Two"],
             cc: ["Viewer Three"],
+            unresolved: [],
         });
     });
 
@@ -105,6 +106,7 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
             to: [],
             mentions: ["Agent Alpha"],
             cc: [],
+            unresolved: [],
         });
     });
 
@@ -136,7 +138,12 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
             content: "走查一下",
             delivery: { ccParticipantIds: ["part-viewer", "part-member"] },
         });
-        expect(resolved).toEqual({ to: [], mentions: [], cc: ["Viewer Three", "Member Two"] });
+        expect(resolved).toEqual({
+            to: [],
+            mentions: [],
+            cc: ["Viewer Three", "Member Two"],
+            unresolved: [],
+        });
     });
 
     describe("durable delivery (PLAN-0665 M2 / V120)", () => {
@@ -156,6 +163,7 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
                 to: ["Agent Alpha", "Owner One"],
                 mentions: [],
                 cc: ["Viewer Three"],
+                unresolved: [],
             });
         });
 
@@ -176,7 +184,12 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
                 content: "普通提问",
                 delivery: { toParticipantId: "part-owner", ccParticipantIds: ["part-member"] },
             });
-            expect(resolved).toEqual({ to: ["Owner One"], mentions: [], cc: ["Member Two"] });
+            expect(resolved).toEqual({
+                to: ["Owner One"],
+                mentions: [],
+                cc: ["Member Two"],
+                unresolved: [],
+            });
         });
 
         it("dedupes durable to/cc overlaps and @ mentions", () => {
@@ -189,6 +202,7 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
                 to: ["Owner One"],
                 mentions: ["Agent Alpha"],
                 cc: ["Viewer Three"],
+                unresolved: [],
             });
         });
     });
@@ -221,7 +235,7 @@ describe("legacy @old-display-name after D-183 (PLAN-0684)", () => {
             delivery: { toParticipantId: "part-member", ccParticipantIds: [] },
         });
         // 只渲染名册里查得到的 username；失配的旧 @ 不进 mentions。
-        expect(resolved).toEqual({ to: ["member_two"], mentions: [], cc: [] });
+        expect(resolved).toEqual({ to: ["member_two"], mentions: [], cc: [], unresolved: [] });
         expect(JSON.stringify(resolved), "no participant id / UUID on screen").not.toContain(
             "part-member",
         );
@@ -233,5 +247,59 @@ describe("legacy @old-display-name after D-183 (PLAN-0684)", () => {
         expect(mentionParticipantIds("@member_two 帮我看下", USERNAME_ROSTER)).toEqual([
             "part-member",
         ]);
+    });
+});
+
+// ── task-66①（D-1884-B）：未解析的 @token 走既有投递投影 ─────────────────────
+/**
+ * 钉四件事：① 只有 unresolved 也必须出投影（agent 正文就是这形状：没有 TO/CC，却点了个空名字）；
+ * ② 原文 token **不参与**花名册解析——它是不可信文本，不是 id，也不是显示名；
+ * ③ 空/非字符串的载荷不进名单（CP 不造空标记，坏载荷不崩）；④ 上限 20 与契约 maxItems 同口径。
+ */
+describe("unresolved mention projection (task-66①)", () => {
+    const base2 = {
+        content: "请把下一步交给 @ewLeadXYZ",
+        role: "assistant" as const,
+        roster: ROSTER,
+        unknownNameLabel: "未知用户",
+    };
+
+    it("produces a projection from unresolved tokens alone", () => {
+        const resolved = resolveDelivery({
+            ...base2,
+            delivery: { unresolved: ["@ewLeadXYZ"] },
+        });
+        expect(resolved).toEqual({ to: [], mentions: [], cc: [], unresolved: ["@ewLeadXYZ"] });
+    });
+
+    it("keeps the raw token verbatim and never id-matches it", () => {
+        // 名字与花名册只差一个后缀：必须仍然算「没解析出来」，原样带上屏。
+        const resolved = resolveDelivery({
+            ...base2,
+            content: "交给 @Owner OneXX 处理",
+            role: "user",
+            delivery: { to: ["part-owner"], unresolved: ["@Owner OneXX"] },
+        });
+        expect(resolved?.unresolved).toEqual(["@Owner OneXX"]);
+        expect(resolved?.to).toEqual(["Owner One"]);
+        expect(JSON.stringify(resolved)).not.toContain("part-", "no id ever reaches the screen");
+    });
+
+    it("drops blank and non-string payloads instead of rendering an empty marker", () => {
+        const resolved = resolveDelivery({
+            ...base2,
+            delivery: { unresolved: ["  ", "", 42 as unknown as string, "@ghost"] },
+        });
+        expect(resolved?.unresolved).toEqual(["@ghost"]);
+        expect(
+            resolveDelivery({ ...base2, delivery: { unresolved: ["", "   "] } }),
+            "nothing real to show ⇒ no delivery row at all",
+        ).toBeUndefined();
+    });
+
+    it("caps the list at the contract limit (maxItems: 20)", () => {
+        const many = Array.from({ length: 25 }, (unused, index) => "@tok" + index);
+        const resolved = resolveDelivery({ ...base2, delivery: { unresolved: many } });
+        expect(resolved?.unresolved).toHaveLength(20);
     });
 });

@@ -100,8 +100,16 @@ public class WakeChainService {
                 participantRepository);
     }
 
-    /** M3 entry: an agent run's assistant text just settled. */
-    public void onAssistantContent(String sessionId, String runId, String content) {
+    /**
+     * M3 entry: an agent run's assistant text just settled.
+     *
+     * <p>task-66①: the return value is the tokens the roster could NOT resolve (never null;
+     * empty for the clean case). It exists so the caller that just wrote the assistant Message can
+     * put the fact on that Message's own {@code delivery} projection — the durable event stays the
+     * audit reading ({@link #auditUnresolvedMention}), the message field is the <b>visible</b> one,
+     * and the parse stays single-source here instead of being repeated at the write point.</p>
+     */
+    public List<String> onAssistantContent(String sessionId, String runId, String content) {
         List<SessionParticipantService.ParticipantView> views;
         try {
             views = participantService.list(sessionOwner(sessionId), workspaceOf(sessionId),
@@ -112,7 +120,7 @@ public class WakeChainService {
             // fixed the empty-roster half at the source (spawn children now get their PRIMARY).
             logger.warn("[LIFECYCLE] service=cp event=wake_roster_unreadable sessionId={} runId={} failureType={}",
                     sessionId, runId, noRoster.getClass().getSimpleName());
-            return;
+            return List.of();
         }
         Map<UUID, UUID> principalByParticipant = new HashMap<>();
         for (SessionParticipantService.ParticipantView view : views) {
@@ -145,6 +153,7 @@ public class WakeChainService {
         for (MentionParser.Mention link : links) {
             fireNextLink(sessionId, runId, link, principalByParticipant);
         }
+        return unresolvedTokens;
     }
 
     private void fireNextLink(String sessionId, String parentRunId, MentionParser.Mention link,

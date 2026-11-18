@@ -1507,6 +1507,9 @@ const messages = {
                 cc: "抄送→{names}",
                 // vue-i18n 里 `@` 是 link 语法修饰符，字面量必须用 `{'@'}` 转义。
                 mentioned: "被 {'@'}：{name}",
+                // task-66①：花名册解析不掉的原文 @token（不可信文本，纯文本渲染，不做 id 匹配）。
+                unresolved: "未识别：{names}",
+                unresolvedHint: "这个名字不在花名册里，消息没有发给任何人",
                 listSeparator: "、",
             },
             // 2026-11-04 DSH 式过程渲染：推理行的统一标签。
@@ -5644,6 +5647,10 @@ const messages = {
             delivery: {
                 to: "To → {name}",
                 cc: "Cc → {names}",
+                // task-66①: raw @tokens the roster could not resolve (untrusted text; plain-text
+                // render, never id-matched).
+                unresolved: "Unrecognized: {names}",
+                unresolvedHint: "This name is not in the roster; nothing was sent to it.",
                 mentioned: "Mentioned: {name}",
                 listSeparator: ", ",
             },

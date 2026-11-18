@@ -448,6 +448,22 @@ class WakeChainServiceTest {
         }
     }
 
+    /**
+     * task-66①: the token must NOT enter the durable payload (the case below), but it MUST leave
+     * the chain through the return value — that is how the caller that just wrote the assistant
+     * Message projects the miss onto {@code messages.delivery}, which is the only surface a human can see.
+     * Both directions asserted here so neither half can be dropped silently.
+     */
+    @Test
+    void unresolvedTokensComeBackToTheCallerForTheVisibleProjection() {
+        String root = rootRun();
+        assertEquals(List.of("@Zed"),
+                chain.onAssistantContent(SESSION_ID, root, "请把下一步交给 @Zed 接手"),
+                "the raw token is handed back for the visible projection");
+        assertEquals(List.of(), chain.onAssistantContent(SESSION_ID, root, "这次没有点名"),
+                "a clean line returns empty, never null");
+    }
+
     @Test
     void rawTokenTextNeverEntersTheWakeDispatchPayload() {
         String root = rootRun();

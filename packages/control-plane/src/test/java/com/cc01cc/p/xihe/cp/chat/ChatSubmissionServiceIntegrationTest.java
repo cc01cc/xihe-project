@@ -1274,6 +1274,51 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         verify(wakeChainService, never()).onAssistantContent(any(), any(), any());
     }
 
+    /**
+     * task-66① counter-evidence (the visible half): a name the roster cannot resolve is recorded
+     * on the message that carries it, in the SAME delivery jsonb the audience already uses. Without
+     * this the session shows "@ghost 我把活交给你" and nothing anywhere else — the durable
+     * wake_dispatch row is invisible to a human, which is the whole gap.
+     */
+    @Test
+    void unresolvedMentionRidesTheAssistantMessagesOwnDelivery() {
+        ChatFixture fixture = createChatFixture("unresolved-delivery");
+        saveBoundSession(fixture.session(), fixture.principal());
+        String sessionId = fixture.session().getId().toString();
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "host",
+                fixture.principal().getId().toString());
+
+        String messageId = submissionService.persistAssistantResponse(sessionId, runId,
+                "@ghost 我已经把下一步交给你", null);
+
+        Message row = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        assertNotNull(row.getDelivery(), "the miss is projected on the message itself");
+        assertTrue(row.getDelivery().contains("unresolved"),
+                "same jsonb, existing concept: " + row.getDelivery());
+        assertTrue(row.getDelivery().contains("@ghost"),
+                "the raw token is kept verbatim (plain text on screen, never an id): "
+                        + row.getDelivery());
+        assertEquals(Message.VISIBILITY_USER, row.getVisibility());
+    }
+
+    /** No token ⇒ no projection: an empty marker would be a new visual that means nothing. */
+    @Test
+    void cleanAssistantContentLeavesDeliveryAlone() {
+        ChatFixture fixture = createChatFixture("unresolved-clean");
+        saveBoundSession(fixture.session(), fixture.principal());
+        String sessionId = fixture.session().getId().toString();
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "host",
+                fixture.principal().getId().toString());
+
+        String messageId = submissionService.persistAssistantResponse(sessionId, runId,
+                "没有点名，正常收尾", null);
+
+        assertNull(messageRepository.findById(UUID.fromString(messageId)).orElseThrow().getDelivery(),
+                "no unresolved token, no delivery record");
+    }
+
     /** PLAN-0669 M1b: the durable listing projects participantId only when attributed. */
     @Test
     void messageListingProjectsParticipantIdOnlyWhenAttributed() {

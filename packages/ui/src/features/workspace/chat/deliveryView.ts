@@ -20,6 +20,11 @@ export interface ResolvedDelivery {
     mentions: string[];
     /** 抄送主体显示名（已排除 to 与 mentions，避免同一人出现两次）。 */
     cc: string[];
+    /**
+     * task-66①（D-1884-B）：花名册解析不掉的原文 @token——**不是显示名，也不是 id**。
+     * 必须按纯文本渲染（它来自用户/模型正文，不可信）；上限 20 与契约 `maxItems` 同口径。
+     */
+    unresolved: string[];
 }
 
 function escapeRegExp(value: string): string {
@@ -96,7 +101,10 @@ export interface ResolveDeliveryInput {
  */
 export function resolveDelivery(input: ResolveDeliveryInput): ResolvedDelivery | undefined {
     const { delivery, content, role, roster, unknownNameLabel } = input;
-    const hasDurableShape = Array.isArray(delivery?.to) || Array.isArray(delivery?.cc);
+    const hasDurableShape =
+        Array.isArray(delivery?.to) ||
+        Array.isArray(delivery?.cc) ||
+        Array.isArray(delivery?.unresolved);
     const toIds = hasDurableShape
         ? (delivery?.to ?? [])
         : delivery?.toParticipantId
@@ -124,6 +132,16 @@ export function resolveDelivery(input: ResolveDeliveryInput): ResolvedDelivery |
         .map((participantId) => nameOf(roster, participantId, unknownNameLabel))
         .filter((name): name is string => Boolean(name));
 
-    if (to.length === 0 && mentions.length === 0 && cc.length === 0) return undefined;
-    return { to, mentions, cc };
+    // task-66①：解析不掉的原文 token。它**不参与**上面的名字解析——不可信文本，只做非空过滤
+    // 与上限截断。只有它、没有 to/cc/mentions 时也必须出投影：agent 正文正是这种形状（那条消息
+    // 没有 TO/CC，却可能点了个空名字），而「说了要通知谁但什么都没发生」就是从这里被看见的。
+    const unresolved = (Array.isArray(delivery?.unresolved) ? delivery.unresolved : [])
+        .map((token) => (typeof token === "string" ? token.trim() : ""))
+        .filter((token) => token.length > 0)
+        .slice(0, 20);
+
+    if (to.length === 0 && mentions.length === 0 && cc.length === 0 && unresolved.length === 0) {
+        return undefined;
+    }
+    return { to, mentions, cc, unresolved };
 }
