@@ -23,10 +23,12 @@ from loguru import logger
 
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
+from xihe_agent.adapters.team_task_tools import TEAM_TASK_CLIENT_KEY
 from xihe_agent.adapters.user_question_tool import USER_QUESTION_EVENT_SINK_KEY
 from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.agent_runner.graph_builder import build_react_graph
 from xihe_agent.agent_runner.guidance import GuidanceInjectionModel
+from xihe_agent.agent_runner.team_task_client import build_team_task_client
 from xihe_agent.agent_runner.tool_adapter import (
     EVENT_STORE_FAILURES_KEY,
     LCToolAdapter,
@@ -306,6 +308,21 @@ class LangGraphRunner(AgentRunner):
 
         context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
         context.metadata[USER_QUESTION_EVENT_SINK_KEY] = publish_user_question
+        # task-188 MVP⑤ (D-1821): wire the CP logical-MCP team-task board client
+        # only when CP is explicitly configured (XIHE_CP_URL). Unconfigured, or an
+        # assembly failure, keeps the key absent — the four tools then answer
+        # TEAM_TASK_CLIENT_UNAVAILABLE, exactly today's behavior (G3-a 灰度).
+        try:
+            team_task_client = build_team_task_client(context)
+        except Exception as exc:
+            logger.warning(
+                "[LIFECYCLE] service=agent event=team_task_client_unwired"
+                + " reason=assembly_failed errorType={}",
+                type(exc).__name__,
+            )
+            team_task_client = None
+        if team_task_client is not None:
+            context.metadata[TEAM_TASK_CLIENT_KEY] = team_task_client
         # PLAN-0508: provider transport telemetry arrives on the caller-owned
         # queue (the model's collector sink is bound at construction); the loop
         # below fans it into the same ordered event stream. ``transport_task`` is
@@ -581,6 +598,7 @@ class LangGraphRunner(AgentRunner):
                     yield transport_events.get_nowait()
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
             context.metadata.pop(USER_QUESTION_EVENT_SINK_KEY, None)
+            context.metadata.pop(TEAM_TASK_CLIENT_KEY, None)
             context.metadata.pop(LOOP_WINDOW_KEY, None)
             usage.finish()
             # PLAN-294 M1 (decisions #2/#6): persist the assistant reply into
