@@ -626,8 +626,15 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 接口路径            \/api\/v1\/
 权限原子/枚举常量    \b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b
 内部票号            \b[A-Z]-\d+\b
-内部术语            读面 · 契约
+内部术语（读面）     读面 | \bread-face\b | \bread face\b   （i）
+内部术语（契约）     契约 | \bcontracts?\b                  （i）
 ```
+
+**后两条必须中英同形（`task-57` 补，2026-11-19）**：原先只写中文 `读面` / `契约`，于是英文界面跑出来是**全 0** ——
+那不是干净，是**判据不全造成的假绿**（`The read face returned none of these fields` 就在屏上，门看不见它）。
+**一般形态**：判据按语言写、读数按语言量，两者不一致时**先怀疑判据**，不要把 0 当结论。
+同一教训的另一半：`findLeaks()` 原先只补 `g` 旗标、丢掉 `i` —— 大小写不敏感的英文形态照样漏。
+两侧（TS 正规来源 `src/lib/copyLeakPatterns.ts` 与 Node 门脚本）由 `src/lib/__tests__/copyLeakPatterns.spec.ts` 逐条对齐，**改一侧必红**。
 
 **实现锚点**：`packages/ui/src/views/resources/__tests__/KnowledgeResourceView.spec.ts` 的 `LEAK_PATTERNS`（9 条）与两条负断言；机器门 `packages/ui/scripts/check-copy-leak.mjs`（`report-only`，见 `task-51`）。
 
@@ -643,3 +650,14 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 ### 14.5 例外（照实登记，不是放宽）
 
 **用户主动展开**的技术细节不算违规：诊断面按 `packages/ui/AGENTS.md`「错误面：错误码 → 文案」的既有口径，把 `technicalDetail` 收进**默认折叠**的控件，并带入口标签说明它是技术细节。判据是「**用户读到的正文**」—— 折叠里的内容不是正文，但**必须让用户看得出那是技术细节**，不得混在正文里。
+
+### 14.6 有些格子门跑不到 —— 必须显式标出来（`task-57`）
+
+「资源详情 › 实例层 › 接口没返回这几个字段」这段文案，**只在 wire 少键时才渲染**。真栈上实例层三个列表全空（`credentials` 0 行、`agent-principals` 0 行、`mcp` **404**），门到不了那一格 ⇒ 由 mock 车道 spec 覆盖（`e2e/mock/resource-detail.spec.ts`）。
+
+矩阵里这类格子标 `via: "mock"`，门打印 **`MOCK …（门未扫，由 <spec> 覆盖）`并跳过**：
+
+- **不许静默略过** —— 静默会让「覆盖 12 面」变成假话；
+- **不许打印「命中 0 / 0 字符」** —— 那读起来像「扫过且干净」。门根本没扫它，读数就必须不是 0。
+
+这一条是 §14.4「仪器看不见 ≠ 不存在」的**对偶**：**仪器扫到 0 也不等于扫过了**。

@@ -2235,10 +2235,10 @@ const messages = {
                 },
                 unwired: {
                     title: "这一层没有详情面",
-                    body: "本页只显示已接线的读面；上面这条说明是当前「资源 + 层」的真实状态，不是加载失败。",
+                    body: "本页只显示已经接通的功能；上面这条说明是当前「资源 + 层」的真实状态，不是加载失败。",
                     reasons: {
                         noWorkspace:
-                            "该层的资源按工作区归属：当前页签没有工作区上下文，读面无法确定取哪一个工作区。",
+                            "该层的资源按工作区归属：当前页签没有工作区上下文，页面无法确定该取哪一个工作区。",
                         // task-26（批 1）：不印内部编号（G3），也不印实现细节（无表/无 CRUD）——
                         // 用户要的是"为什么这里没有详情页"，不是数据库长什么样。
                         knowledgeGap:
@@ -2249,7 +2249,7 @@ const messages = {
                 },
                 error: {
                     title: "读取详情失败",
-                    body: "读面请求失败。下面给出 CP 健康检查结果，用来区分「后端不健康」与「这一条读不到」。",
+                    body: "读取这条详情失败。下面是后端健康检查的结果，用来区分「服务不健康」与「只有这一条读不到」。",
                     retry: "重试",
                 },
                 health: {
@@ -2276,14 +2276,14 @@ const messages = {
                 emptyValue: "（空）",
                 absent: {
                     title: "接口没有返回这几个字段",
-                    body: "这些键在读面响应里不存在（契约问题，不是「值为空」）：页面不猜、也不拿空值冒充，只点名。要区分「读面没实现」与「契约本就不要求」，看 docs/api/openapi.yaml 里该端点的响应 schema。",
+                    body: "下面这些字段，接口这次没有返回 —— 和「返回了但值是空的」不是一回事，所以页面不猜、也不拿空值顶上，只把它们逐条点名。至于这是后端还没做，还是本来就不要求这个字段，本页看不出来；要分清得看这个接口的字段定义，不在这里下结论。",
                 },
                 notes: {
                     instanceCredential:
-                        "实例层凭据没有引用/审计读面，本页不显示这两个区块（这不等于「没有引用」）。",
+                        "实例层凭据没有「谁在引用它」和「审计记录」这两块数据，所以本页不显示这两个区块（这不等于「没有引用」。）",
                     partialRead: "部分区块读取失败：只显示读取成功的区块，失败的不渲染。",
                     workspaceSkillBody:
-                        "工作区层没有单条正文读面（单条定义读面只服务实例层定义），因此本页不显示正文。",
+                        "工作区层没有「单条技能的正文」这项数据（正文只存在于实例层定义），因此本页不显示正文。",
                     needWorkspaceForBindings:
                         "角色/技能绑定按工作区归属：当前页签没有工作区上下文，因此本页不显示这两个区块。",
                 },
@@ -6386,10 +6386,10 @@ const messages = {
                 },
                 unwired: {
                     title: "This layer has no detail surface",
-                    body: "This page only shows wired read faces; the line above describes the real state of this resource + layer, not a load failure.",
+                    body: "This page only shows features that are actually wired up; the line above describes the real state of this resource and layer, not a load failure.",
                     reasons: {
                         noWorkspace:
-                            "This layer is scoped to a workspace and the current tab has no workspace context, so the read face cannot pick one.",
+                            "This layer is scoped to a workspace and the current tab has no workspace context, so the page cannot pick which workspace to read.",
                         // task-26 (batch 1): no internal gap id, no storage/CRUD detail.
                         knowledgeGap:
                             "Knowledge bases have no entity yet - only workspace-scoped endpoints exist today, so there is no detail page to open.",
@@ -6399,7 +6399,7 @@ const messages = {
                 },
                 error: {
                     title: "Could not load the detail",
-                    body: "The read face failed. The CP health probe below tells apart a degraded backend and a single unreadable record.",
+                    body: "Could not read this detail. The health check below tells apart an unhealthy service from a single unreadable record.",
                     retry: "Retry",
                 },
                 health: {
@@ -6424,19 +6424,19 @@ const messages = {
                 },
                 notes: {
                     instanceCredential:
-                        "Instance-layer credentials have no references/audit read face, so this page shows neither block (that is not the same as “no references”).",
+                        "Instance-layer credentials have no “who uses it” or “audit history” data, so this page shows neither block (that is not the same as “no references”).",
                     partialRead:
                         "Some blocks could not be read: only the successful ones render, the failed ones are omitted.",
                     workspaceSkillBody:
-                        "The workspace layer has no per-skill body read face (single-definition reads only serve instance definitions), so this page shows no body.",
+                        "The workspace layer has no per-skill body data (bodies exist only on instance definitions), so this page shows no body.",
                     needWorkspaceForBindings:
                         "Role and skill bindings are workspace-scoped and the current tab has no workspace context, so this page shows neither block.",
                 },
                 /** task-42: a key that IS present but empty renders an explicit "(empty)" instead of vanishing. */
                 emptyValue: "(empty)",
                 absent: {
-                    title: "The read face returned none of these fields",
-                    body: "These keys are absent from the response body (a contract problem, not an empty value): the page neither guesses nor invents a value — it names them. To tell whether the read face is unimplemented or the contract simply does not require the field, check that endpoint response schema in docs/api/openapi.yaml.",
+                    title: "These fields were not returned",
+                    body: "These fields were not returned by the API this time — that is different from “returned but empty”, so the page neither guesses nor fills in a blank value; it names them one by one. Whether the backend has not implemented them yet or the API simply does not require the field is not visible from this page; telling those apart needs the field definitions for this endpoint, and we do not draw that conclusion here.",
                 },
                 fields: {
                     label: "Label",

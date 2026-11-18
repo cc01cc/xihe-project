@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
+import { findLeaks, summarizeLeaks } from "../../src/lib/copyLeakPatterns";
 
 /**
  * PLAN-0772 M2 / task-228：资源**详情单页**（`/resources/<id>/:pk?layer=<LAYER>`）。
@@ -243,4 +244,54 @@ test.describe("PLAN-0772 task-228: 资源详情单页", () => {
      * 旧 URL 的去向（302 到哪个新家）**统一由** `task97-agent-landing-redirect.spec.ts` 钉住，
      * 避免同一条契约在两个文件里各写一份（两份会各自漂移，正是今晚反复踩的坑）。
      */
+
+    /**
+     * task-57：absent（「接口没有返回这几个字段」）区块的**可达性**判据。
+     *
+     * <p>为什么这条必须存在：卡面原先写「真栈凑不出来，得走 mock 车道」，但那是**推定**、不是读数。
+     * 现在两侧都量过：真栈 stack-2 的实例层三个列表全空 —— `/instance/credentials` 0 行、
+     * `/instance/agent-principals` 0 行、`/instance/mcp` **HTTP 404** ⇒ 真栈上确实到不了这个区块。
+     * 结论同向，但依据从推定变成读数（D-1879 的教训就是推定当读数用会带走一整批结论）。</p>
+     *
+     * <p>形态判据（`services/fieldState.ts#wireStateOf`）：**wire 里没有这个键**才叫 absent；
+     * `null` / `""` / `[]` 都是 empty。所以夹具必须**整键删掉** —— 本文件上面的 CREDENTIAL 写的是
+     * `replacedAt: null`，那条渲染成「（空）」，到不了 absent 区块。这就是为什么既有的 mock 车道
+     * 一直「绿着但没覆盖到」这一段文案。</p>
+     */
+    const INSTANCE_CREDENTIAL_SPARSE = {
+        id: "cred-inst-sparse",
+        label: "实例令牌（wire 缺键）",
+        kind: "token",
+        status: "active",
+        createdAt: "2026-11-01T09:00:00Z",
+        // 故意不写：deliveryTier / fingerprint / revision / replacedAt / referenceCount
+    };
+
+    test("实例层 wire 缺键 ⇒ absent 区块上屏，且区块文案不得含审查者形态（task-57 / D-1879）", async ({
+        page,
+    }) => {
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        await stubPermissions(page, ["credential_manage"]);
+        await page.route(/\/api\/v1\/instance\/credentials(\?.*)?$/, (route) =>
+            route.fulfill(json({ credentials: [INSTANCE_CREDENTIAL_SPARSE], count: 1 })),
+        );
+
+        await page.goto("/resources/credentials/cred-inst-sparse?layer=INSTANCE");
+        const block = page.getByTestId("resource-detail-absent-fields");
+        await expect(block).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        // 缺席的字段要逐个点名，不能只给一句「有字段缺失」
+        await expect(block.getByTestId("resource-detail-absent-field")).not.toHaveCount(0);
+        // 阳性对照：wire 里在的键（label/kind/status/createdAt）不许被算成缺席
+        await expect(page.getByTestId("resource-detail-fields")).toContainText("token");
+
+        // 判据本体：这段文案是**用户能读到的正文**，所以它同样要过 9 形态（DEV-011 §14）。
+        // 用 innerText 不用 textContent —— 与 §14.1「在哪量」同口径。
+        const blockLeaks = findLeaks(await block.innerText());
+        expect(blockLeaks, "absent 区块泄露审查者形态：" + summarizeLeaks(blockLeaks)).toEqual([]);
+
+        // 整页级：同页的 notes（如「实例层凭据没有引用/审计读面…」）也是正文，
+        // 只断区块会漏掉它们 —— DEV-011 §14.2 的实现锚点要求条目级与整页级各一条。
+        const pageLeaks = findLeaks(await page.locator("main").innerText());
+        expect(pageLeaks, "实例层详情页整页泄露：" + summarizeLeaks(pageLeaks)).toEqual([]);
+    });
 });

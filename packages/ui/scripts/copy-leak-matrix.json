@@ -5,7 +5,8 @@
     "notes": [
         "格子 = route × tab。没有 tab 的格子也必须列出来 —— 覆盖范围要能被第二人复算，光在报告里写「扫了 9 页」不够（task-47 实测：只扫默认态得出「9 页只有 1 页泄露」的错误结论）。",
         "expectedBefore 是 2026-11-19 01:2x 的实测命中，仅作回归锚点；它变小时要把本清单同批改小，别让它变成「永远对」的摆设。",
-        "2026-11-19 01:5x 全部清零（A03 f63195fc3）：11 面 zh/en 各 0 命中。**此后任一格命中 > 0 即回归**，不是「新发现」——先查是不是有人把审查者口径写回正文。"
+        "2026-11-19 01:5x 全部清零（A03 f63195fc3）：11 面 zh/en 各 0 命中。**此后任一格命中 > 0 即回归**，不是「新发现」——先查是不是有人把审查者口径写回正文。",
+        "带 via:\"mock\" 的格子**门跑不到**（真栈上那个形态凑不出来 —— 例如实例层列表为空），由 mock 车道 spec 覆盖。门会**显式打印 mock-covered 并跳过**，不静默略过：静默跳过会让「覆盖 11 面」这句话变成假话。"
     ],
     "surfaces": [
         {
@@ -75,6 +76,15 @@
             "route": "/members",
             "tabs": [],
             "expectedBefore": 0
+        },
+        {
+            "id": "resource-detail-instance-absent",
+            "route": "/resources/credentials/cred-inst-sparse?layer=INSTANCE",
+            "tabs": [],
+            "via": "mock",
+            "spec": "e2e/mock/resource-detail.spec.ts",
+            "expectedBefore": 5,
+            "note": "task-57：absent 区块 + 同页 notes。修前实测 5 命中（openapi.yaml x1 / 读面 x2 / 契约 x2），修后 0。真栈 stack-2 实例层三个列表全空（credentials 0 行、agent-principals 0 行、mcp 404）⇒ 门到不了这一格。"
         }
     ]
 }

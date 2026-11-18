@@ -55,8 +55,8 @@ export const LEAK_PATTERNS = [
     ["接口路径", /\/api\/v1\//],
     ["权限原子/枚举常量", /\b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b/],
     ["内部票号", /\b[A-Z]-\d+\b/],
-    ["内部术语 读面", /读面/],
-    ["内部术语 契约", /契约/],
+    ["内部术语 读面", /读面|\bread-face\b|\bread face\b/i],
+    ["内部术语 契约", /契约|\bcontracts?\b/i],
 ];
 
 const BLIND_SPOTS = [
@@ -397,6 +397,20 @@ async function main() {
     const results = [];
     for (const s of surfaces) {
         const route = String(s.route).replace("{ws}", wsId);
+        if (s.via === "mock") {
+            // 真栈凑不出这个形态（例：实例层列表为空）⇒ 门跑不到。**显式打印并跳过**，
+            // 不静默略过 —— 静默会让「覆盖 N 面」变成假话。覆盖方由 spec 列给出，可核。
+            results.push({
+                id: s.id,
+                route,
+                tabs: s.tabs || [],
+                expectedBefore: s.expectedBefore,
+                status: "mock-covered",
+                hits: [],
+                coveredBy: s.spec || "(未登记 spec)",
+            });
+            continue;
+        }
         const row = {
             id: s.id,
             route,
@@ -442,20 +456,20 @@ async function main() {
     for (const r of results) {
         const n = r.hits.reduce((a, h) => a + h.count, 0);
         findings += n;
-        const flag = r.status === "error" ? "ERR " : n > 0 ? "HIT " : "  ok";
-        console.log(
-            "  " +
-                flag +
-                " " +
-                r.id.padEnd(30) +
-                " 命中 " +
-                n +
-                "  (期望修复前 " +
-                (r.expectedBefore ?? "?") +
-                ", " +
-                (r.chars ?? 0) +
-                " 字符)",
-        );
+        const flag =
+            r.status === "error"
+                ? "ERR "
+                : r.status === "mock-covered"
+                  ? "MOCK"
+                  : n > 0
+                    ? "HIT "
+                    : "  ok";
+        // mock-covered 不许打印「0 字符」—— 那读起来像「扫过且干净」，而门根本没扫它。
+        const detail =
+            r.status === "mock-covered"
+                ? "门未扫（真栈凑不出该形态），由 " + (r.coveredBy || "未登记 spec") + " 覆盖"
+                : "期望修复前 " + (r.expectedBefore ?? "?") + "，" + (r.chars ?? 0) + " 字符";
+        console.log("  " + flag + " " + r.id.padEnd(30) + " 命中 " + n + "  (" + detail + ")");
         for (const h of r.hits)
             console.log("        [" + h.shape + "] x" + h.count + " -> " + h.samples.join(" | "));
     }

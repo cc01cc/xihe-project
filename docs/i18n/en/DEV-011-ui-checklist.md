@@ -650,8 +650,15 @@ source file:line              \b[\w./-]+\.(ts|vue|java|yaml|yml|mjs|js|json):\d+
 endpoint path                 \/api\/v1\/
 permission atom/enum constant \b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b
 internal ticket id            \b[A-Z]-\d+\b
-internal jargon               读面 · 契约
+jargon: read face             读面 | \bread-face\b | \bread face\b   (i)
+jargon: contract              契约 | \bcontracts?\b                  (i)
 ```
+
+**The last two must cover both languages (added by `task-57`)**: they originally matched only the Chinese terms, so the English run came back **all zeros** —
+that was not cleanliness, it was a **false green caused by an incomplete criterion** (`The read face returned none of these fields` was on screen and the gate could not see it).
+**General shape**: when the criterion is written per-language but the reading is taken per-language, a 0 reading must first raise suspicion about the criterion, not about the product.
+The other half of the same lesson: `findLeaks()` used to add only the `g` flag and drop `i`, so case-insensitive English forms leaked through anyway.
+Both copies (canonical `src/lib/copyLeakPatterns.ts` and the Node gate) are aligned item-by-item by `src/lib/__tests__/copyLeakPatterns.spec.ts` — **change one side and it goes red**.
 
 **Implementation anchors**: `LEAK_PATTERNS` (9 shapes) plus the two negative assertions in `packages/ui/src/views/resources/__tests__/KnowledgeResourceView.spec.ts`; the machine gate `packages/ui/scripts/check-copy-leak.mjs` (`report-only`, see `task-51`).
 
@@ -667,3 +674,14 @@ Scan surface = **`route × tab/layer`**; the grid list is **committed** (`matrix
 ### 14.5 Exception (registered as a fact, not as a loosening)
 
 Technical detail the **user deliberately expands** is not a violation: diagnostic surfaces follow the existing ruling in `packages/ui/AGENTS.md` ("error surface: code → copy") by putting `technicalDetail` inside a **collapsed-by-default** control with a label saying it is technical detail. The criterion is the **body text the user reads**; collapsed content is not body text, but **it must be visibly identifiable as technical detail** and must never be mixed into body copy.
+
+### 14.6 Some cells the gate cannot reach must be labelled, not skipped silently (`task-57`)
+
+The copy under "resource detail › instance layer › fields the API did not return" renders **only when the wire is missing keys**. On the real stack every instance list is empty (`credentials` 0 rows, `agent-principals` 0 rows, `mcp` **404**), so the gate cannot reach that cell; it is covered by the mock-lane spec (`e2e/mock/resource-detail.spec.ts`).
+
+Such cells carry `via: "mock"` in the matrix and the gate prints **`MOCK … (not scanned by the gate, covered by <spec>)`** and skips them:
+
+- **never skip silently** — silence would make "12 surfaces covered" a false statement;
+- **never print "0 hits / 0 chars"** — that reads like "scanned and clean". The gate did not scan it, so the reading must not be 0.
+
+This is the **dual** of §14.4 ("the instrument not seeing it is not the same as it not existing"): **an instrument reporting 0 is not the same as an instrument having looked.**

@@ -2,6 +2,7 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import KnowledgeResourceView from "../KnowledgeResourceView.vue";
 import { i18n } from "../../../i18n";
+import { findLeaks, summarizeLeaks } from "../../../lib/copyLeakPatterns";
 
 /**
  * 知识库缺口页的**文案判据**（不是"渲染出来了"就算）。
@@ -45,23 +46,13 @@ const FALLBACK_PATTERNS: [string, RegExp][] = [
 ];
 
 /**
- * D-1879 裁定二：面向用户的页面不得出现**审查者形态**的字符串。
- *
- * <p>用**形态**表达而不是枚举具体词，因为枚举追不上新形态 —— 这条正是 task-39 的主结论
- * （此前枚举出来的是「坏字段名」，而这里泄露的是「形态」）。四条缺口各自的读数原文
- * 存在 `internal/A03-xihe/evidence/2026-11-13-task-42-resource-detail/README.md`，不在页面复述。</p>
+ * 9 形态判据**不在本文件维护**（task-57 收口）：唯一来源是 `src/lib/copyLeakPatterns.ts`，
+ * 门脚本 `scripts/check-copy-leak.mjs` 那份由 `src/lib/__tests__/copyLeakPatterns.spec.ts` 逐条对齐。
+ * 原先这里有一份字面量副本 —— 同一契约写两份会各自漂移，仓库里已为此留过话
+ * （`e2e/mock/resource-detail.spec.ts` 末尾那条注释）。用形态而不是枚举具体词，
+ * 因为枚举追不上新形态（task-39 主结论）；四条缺口的读数原文在
+ * `internal/A03-xihe/evidence/2026-11-13-task-42-resource-detail/README.md`，不在页面复述。
  */
-const LEAK_PATTERNS: [string, RegExp][] = [
-    ["类名", /[A-Z][A-Za-z]*(Controller|Service|Repository|Middleware)\b/],
-    ["命令", /\bgrep\b/],
-    ["契约文件名", /\b(openapi|swagger)\.ya?ml\b/],
-    ["源码 文件:行号", /\b[\w./-]+\.(ts|vue|java|yaml|yml|mjs|js|json):\d+/],
-    ["接口路径", /\/api\/v1\//],
-    ["权限原子/枚举常量", /\b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b/],
-    ["内部票号", /\b[A-Z]-\d+\b/],
-    ["内部术语：读面", /读面/],
-    ["内部术语：契约", /契约/],
-];
 
 describe("KnowledgeResourceView — 缺口文案", () => {
     it("四条缺口逐条渲染，且都不带审查者形态的字符串（D-1879 裁定二）", () => {
@@ -70,14 +61,8 @@ describe("KnowledgeResourceView — 缺口文案", () => {
         for (const id of ids) {
             const item = wrapper.get(`[data-testid="resources-knowledge-gap-${id}"]`);
             expect(item.text().length).toBeGreaterThan(20);
-            for (const [name, pattern] of LEAK_PATTERNS) {
-                const hit = item
-                    .text()
-                    .match(
-                        new RegExp(pattern.source, "g" + (pattern.flags.includes("i") ? "i" : "")),
-                    );
-                expect(hit, `条目 ${id} 命中「${name}」形态：${hit?.join(" | ")}`).toBeNull();
-            }
+            const leaks = findLeaks(item.text());
+            expect(leaks, `条目 ${id} 命中审查者形态：${summarizeLeaks(leaks)}`).toEqual([]);
         }
         // 阳性对照：四条之外不应多出条目（`<li>` 恰好 4 个），否则是模板漏了 v-for 边界
         expect(wrapper.findAll("li")).toHaveLength(4);
@@ -96,12 +81,8 @@ describe("KnowledgeResourceView — 缺口文案", () => {
 
     it("整页正文同样过 9 形态负断言（条目之外的标题与引言也不许泄露）", () => {
         const text = mountView().text();
-        for (const [name, pattern] of LEAK_PATTERNS) {
-            const hit = text.match(
-                new RegExp(pattern.source, "g" + (pattern.flags.includes("i") ? "i" : "")),
-            );
-            expect(hit, `整页命中「${name}」形态：${hit?.join(" | ")}`).toBeNull();
-        }
+        const leaks = findLeaks(text);
+        expect(leaks, `整页命中审查者形态：${summarizeLeaks(leaks)}`).toEqual([]);
     });
 
     it("不承诺时间（逐条正则，命中即失败并点名）", () => {
