@@ -102,6 +102,13 @@ public class McpProxyController {
     private static final int GIT_LOG_MIN_LIMIT = 1;
     private static final int GIT_LOG_MAX_LIMIT = 200;
     private static final int GIT_LOG_DEFAULT_LIMIT = 20;
+    /** task-188 MVP⑤: the four CP-owned team-task board tools (face=TEAM_TASK_MANAGE, STRUCTURED). */
+    private static final String TEAM_TASK_CREATE_TOOL = "team_task_create";
+    private static final String TEAM_TASK_LIST_TOOL = "team_task_list";
+    private static final String TEAM_TASK_GET_TOOL = "team_task_get";
+    private static final String TEAM_TASK_UPDATE_TOOL = "team_task_update";
+    private static final Set<String> CP_OWNED_TEAM_TASK_TOOLS = Set.of(
+            TEAM_TASK_CREATE_TOOL, TEAM_TASK_LIST_TOOL, TEAM_TASK_GET_TOOL, TEAM_TASK_UPDATE_TOOL);
     /**
      * task-86: the tools a USER token may call directly on a workspace (the file panel surface).
      *
@@ -240,6 +247,8 @@ public class McpProxyController {
     private final com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService;
     /** PLAN-0686 G8: the Runtime read client the three CP-owned Git tools dispatch through. */
     private final RuntimeCheckpointClient runtimeCheckpointClient;
+    /** task-188 MVP⑤: the team-task board the four CP-owned team_task_* tools dispatch through. */
+    private final com.cc01cc.p.xihe.cp.chat.TeamTaskService teamTaskService;
     private final BuildVersion buildVersion;
 
     public McpProxyController(
@@ -266,6 +275,7 @@ public class McpProxyController {
             com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService,
             com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService,
             RuntimeCheckpointClient runtimeCheckpointClient,
+            com.cc01cc.p.xihe.cp.chat.TeamTaskService teamTaskService,
             com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter pluginToolCatalogFilter) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -293,6 +303,7 @@ public class McpProxyController {
         this.buildVersion = buildVersion;
         this.delegationBudgetService = delegationBudgetService;
         this.runtimeCheckpointClient = runtimeCheckpointClient;
+        this.teamTaskService = teamTaskService;
         this.pluginToolCatalogFilter = pluginToolCatalogFilter;
     }
 
@@ -637,6 +648,16 @@ public class McpProxyController {
             result.add(gitDiffToolDefinition());
             mapping.put(GIT_LOG_TOOL, CP_MCP_SERVER_ID);
             result.add(gitLogToolDefinition());
+            // task-188 MVP5: the four team-task board tools share the CP-owned surface; the board
+            // lives in CP (team_tasks table), so there is no Runtime endpoint behind them at all.
+            mapping.put(TEAM_TASK_CREATE_TOOL, CP_MCP_SERVER_ID);
+            result.add(teamTaskCreateToolDefinition());
+            mapping.put(TEAM_TASK_LIST_TOOL, CP_MCP_SERVER_ID);
+            result.add(teamTaskListToolDefinition());
+            mapping.put(TEAM_TASK_GET_TOOL, CP_MCP_SERVER_ID);
+            result.add(teamTaskGetToolDefinition());
+            mapping.put(TEAM_TASK_UPDATE_TOOL, CP_MCP_SERVER_ID);
+            result.add(teamTaskUpdateToolDefinition());
         }
         String listBody = TOOLS_LIST_PROBE_BODY;
         ResponseEntity<String> sysResp = forwardToRuntime(
@@ -663,7 +684,8 @@ public class McpProxyController {
         for (Map<String, Object> tool : sysTools) {
             String name = (String) tool.get("name");
             if (SPAWN_AGENT_TOOL.equals(name) || ACQUIRE_CREDENTIAL_TOOL.equals(name)
-                    || SKILL_READ_TOOL.equals(name) || CP_OWNED_GIT_TOOLS.contains(name)) {
+                    || SKILL_READ_TOOL.equals(name) || CP_OWNED_GIT_TOOLS.contains(name)
+                    || CP_OWNED_TEAM_TASK_TOOLS.contains(name)) {
                 logger.warn("Runtime tool name '{}' is reserved by the CP-owned tool surface", name);
             } else if (name != null) {
                 mapping.put(name, "__system__");
@@ -923,6 +945,124 @@ public class McpProxyController {
                         "additionalProperties", false));
     }
 
+    /**
+     * task-188 MVP5: create one task on this tree's shared board. The board is keyed by the tree
+     * root session (CP resolves it from the calling session) — the task is visible to every
+     * member session of the same team.
+     */
+    private static Map<String, Object> teamTaskCreateToolDefinition() {
+        return Map.of(
+                "name", TEAM_TASK_CREATE_TOOL,
+                "description", "Create a task on this team's shared task board. The board belongs to the"
+                        + " tree's root session (CP resolves it from the calling session), so every member"
+                        + " session of the same team sees the same board. subject is required (1..200 chars);"
+                        + " description, blockedBy and writeScopes are optional.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "subject", Map.of(
+                                        "type", "string",
+                                        "minLength", 1,
+                                        "maxLength", 200,
+                                        "description", "The task subject (required)."),
+                                "description", Map.of(
+                                        "type", "string",
+                                        "maxLength", 16384,
+                                        "description", "Optional longer description."),
+                                "blockedBy", teamTaskScopeListSchema("Optional task ids this task waits on."),
+                                "writeScopes", teamTaskScopeListSchema("Optional advisory workspace-relative write scopes.")),
+                        "required", List.of("subject"),
+                        "additionalProperties", false));
+    }
+
+    /** task-188 MVP5: the whole board (tombstones included), in taskNo order. */
+    private static Map<String, Object> teamTaskListToolDefinition() {
+        return Map.of(
+                "name", TEAM_TASK_LIST_TOOL,
+                "description", "List every task of this team's shared board, including deleted"
+                        + " tombstones, in task-number order. No arguments.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of(),
+                        "additionalProperties", false));
+    }
+
+    /** task-188 MVP5: one board card by taskId. */
+    private static Map<String, Object> teamTaskGetToolDefinition() {
+        return Map.of(
+                "name", TEAM_TASK_GET_TOOL,
+                "description", "Read one task of this team's shared board by its taskId.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "taskId", Map.of(
+                                        "type", "string",
+                                        "minLength", 1,
+                                        "description", "The task's uuid.")),
+                        "required", List.of("taskId"),
+                        "additionalProperties", false));
+    }
+
+    /**
+     * task-188 MVP5: lifecycle transitions. expectedRevision is mandatory: it is checked against
+     * the row's current revision and a mismatch answers 409 TEAM_TASK_CONFLICT, so re-read the row
+     * (team_task_get / team_task_list) before every mutation.
+     */
+    private static Map<String, Object> teamTaskUpdateToolDefinition() {
+        return Map.of(
+                "name", TEAM_TASK_UPDATE_TOOL,
+                "description", "Transition or edit one task. action is one of claim / complete /"
+                        + " reopen / move / reassign / update_details. expectedRevision (the row's current"
+                        + " revision) is REQUIRED on every call — a stale value answers 409"
+                        + " TEAM_TASK_CONFLICT; re-read the task first. claim takes the unclaimed task for"
+                        + " the calling session; complete / reopen / move / update_details require the"
+                        + " caller to BE the task's owner session; reassign moves it to another session of"
+                        + " the same tree and requires creator lineage.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "taskId", Map.of(
+                                        "type", "string",
+                                        "minLength", 1,
+                                        "description", "The task's uuid."),
+                                "action", Map.of(
+                                        "type", "string",
+                                        "enum", List.of("claim", "complete", "reopen", "move", "reassign", "update_details"),
+                                        "description", "The lifecycle verb."),
+                                "expectedRevision", Map.of(
+                                        "type", "integer",
+                                        "minimum", 0,
+                                        "description", "The row's current revision (mandatory, advisory CAS)."),
+                                "ownerSessionId", Map.of(
+                                        "type", "string",
+                                        "description", "reassign target session id (same tree); omit to release."),
+                                "subject", Map.of(
+                                        "type", "string",
+                                        "minLength", 1,
+                                        "maxLength", 200,
+                                        "description", "update_details only: new subject."),
+                                "description", Map.of(
+                                        "type", "string",
+                                        "maxLength", 16384,
+                                        "description", "update_details only: new description."),
+                                "status", Map.of(
+                                        "type", "string",
+                                        "description", "move only: the target status name."),
+                                "blockedBy", teamTaskScopeListSchema("update_details only: new dependency list."),
+                                "writeScopes", teamTaskScopeListSchema("update_details only: new advisory write scopes.")),
+                        "required", List.of("taskId", "action", "expectedRevision"),
+                        "additionalProperties", false));
+    }
+
+    /** The blockedBy / writeScopes argument shape: at most 50 entries of at most 512 chars each. */
+    private static Map<String, Object> teamTaskScopeListSchema(String description) {
+        return Map.of(
+                "type", "array",
+                "items", Map.of("type", "string", "maxLength", 512),
+                "maxItems", 50,
+                "description", description);
+    }
+
     private ResponseEntity<String> handleToolsCall(
             String wsId, String body, HttpHeaders headers, String sessionId, AccessContext access) {
         String toolName = extractToolName(body);
@@ -974,6 +1114,15 @@ public class McpProxyController {
         // handler are one edit on purpose: a routable tool without a handler reports "broken tool",
         // which is worse than a tool nobody can call (handoff-m2b §1).
         if (SKILL_READ_TOOL.equals(toolName)) {
+            if (!access.internalService()) {
+                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "This MCP tool is available only to Agent services");
+            }
+            serverId = CP_MCP_SERVER_ID;
+        }
+
+        // task-188 MVP5: the four team-task board tools are Agent-surface only (a human Lead
+        // drives the board through the UI read face + steer channel, D-1821). Same gate shape.
+        if (CP_OWNED_TEAM_TASK_TOOLS.contains(toolName)) {
             if (!access.internalService()) {
                 return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "This MCP tool is available only to Agent services");
             }
@@ -1223,6 +1372,23 @@ public class McpProxyController {
                     gitArguments, policySummary, lineageReservation);
         }
 
+        boolean cpOwnedTeamTask = CP_MCP_SERVER_ID.equals(serverId)
+                && CP_OWNED_TEAM_TASK_TOOLS.contains(toolName);
+        if (cpOwnedTeamTask) {
+            // task-188 MVP5: argument validation happens here, before the dispatch attempt is
+            // opened — a missing taskId / action / expectedRevision or a wrong-typed argument
+            // must read as a CP argument refusal (INVALID_ARGUMENTS), never as a board failure.
+            TeamTaskToolArguments teamTaskArguments;
+            try {
+                teamTaskArguments = extractTeamTaskArguments(body, toolName);
+            } catch (CpApiException e) {
+                audit.record(sessionId, toolName, "tool_error", e.getCode());
+                return cpToolErrorResponse(body, e.getCode());
+            }
+            return dispatchCpOwnedTeamTask(body, headers, sessionId, access, wsId, toolName,
+                    teamTaskArguments, policySummary, lineageReservation);
+        }
+
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
         // 且先剥离上游同名头（信任边界）。此块位于 __system__ 分支之前——系统工具同样受管。
         String perCallRaw = headers.getFirst("X-Xihe-Tool-Timeout-Per-Call");
@@ -1395,6 +1561,163 @@ public class McpProxyController {
 
     private ResponseEntity<String> cpToolErrorResponse(String body, String code) {
         return mcpJsonResponse(cpToolResult(body, null, code));
+    }
+
+    /**
+     * task-188 MVP5: CP-owned dispatch for the four team_task_* tools.
+     *
+     * <p>The outer MCP gate already evaluated the TEAM_TASK_MANAGE face through the normal grant
+     * path (no role special-casing — the face lookup is the authorization); the service entry then
+     * re-checks the same atom through its own grant path and applies the row-local rules
+     * (ownership, creator lineage, advisory CAS). Identity is the calling session's: the board is
+     * keyed by the tree root resolved from the X-Session-Id context (DelegationChainWalker), and
+     * the session owner is the grant principal — the same resolution every internal MCP mouth
+     * uses, no new identity mechanism. structuredContent is the canonical TeamTaskView wire row
+     * (15 fields) for create/get/update and a tasks array for list, so the Agent adapter shares
+     * one shape with the UI read face.</p>
+     */
+    private ResponseEntity<String> dispatchCpOwnedTeamTask(
+            String body, HttpHeaders headers, String sessionId, AccessContext access, String wsId,
+            String toolName, TeamTaskToolArguments arguments, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
+        attachPolicySummary(dispatch, policySummary);
+        String responseBody;
+        try {
+            // The caller session is established by the generic internal-service gate above
+            // (agent_session_required); it is reused here as the board identity, never re-checked.
+            String callerSessionId = access.applicationSessionId();
+            String userId = access.userId();
+            Map<String, Object> output;
+            switch (toolName) {
+                case TEAM_TASK_CREATE_TOOL -> output = teamTaskService.create(
+                        toolName, userId, wsId, callerSessionId,
+                        arguments.subject(), arguments.description(),
+                        arguments.blockedBy(), arguments.writeScopes()).toWire();
+                case TEAM_TASK_LIST_TOOL -> output = Map.of("tasks", teamTaskService.list(
+                        toolName, userId, wsId, callerSessionId).stream()
+                        .map(com.cc01cc.p.xihe.cp.chat.TeamTaskService.TeamTaskView::toWire).toList());
+                case TEAM_TASK_GET_TOOL -> output = teamTaskService.get(
+                        toolName, userId, wsId, callerSessionId, arguments.taskId()).toWire();
+                case TEAM_TASK_UPDATE_TOOL -> output = teamTaskService.update(
+                        toolName, userId, wsId, callerSessionId,
+                        arguments.taskId(), arguments.action(), arguments.expectedRevision(),
+                        arguments.ownerSessionId(), arguments.subject(), arguments.description(),
+                        arguments.status(), arguments.blockedBy(), arguments.writeScopes()).toWire();
+                default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "unreachable: " + toolName);
+            }
+            responseBody = cpToolResult(body, output, null);
+            audit.record(sessionId, toolName, "allow",
+                    "sessionId=" + callerSessionId + " taskId=" + arguments.taskId());
+        } catch (CpApiException e) {
+            responseBody = cpToolResult(body, null, e.getCode());
+            audit.record(sessionId, toolName, "tool_error", e.getCode());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=team_task_dispatch_failed sessionId={} tool={} failureType={}",
+                    sessionId, toolName, e.getClass().getSimpleName(), e);
+            responseBody = cpToolResult(body, null, "TEAM_TASK_DISPATCH_FAILED");
+            audit.record(sessionId, toolName, "tool_error", "TEAM_TASK_DISPATCH_FAILED");
+        }
+        finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
+        return mcpJsonResponse(responseBody);
+    }
+
+    /** The extracted and type-checked arguments of one team_task_* call (null = absent). */
+    private record TeamTaskToolArguments(
+            String taskId, String action, Long expectedRevision,
+            String ownerSessionId, String subject, String description, String status,
+            List<String> blockedBy, List<String> writeScopes) {
+    }
+
+    /**
+     * task-188 MVP5: validate the arguments of one team_task_* call before any dispatch is opened.
+     * A missing / wrongly-typed required argument is INVALID_ARGUMENTS (the MCP-layer convention
+     * the sibling CP-owned tools use); service-level validation (subject length, action enum,
+     * dependency closure) stays in TeamTaskService and answers with its own frozen codes.
+     */
+    private TeamTaskToolArguments extractTeamTaskArguments(String body, String toolName) {
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode args = root.path("params").path("arguments");
+            if (!args.isObject() && !args.isMissingNode()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                        toolName + " arguments must be a JSON object");
+            }
+            TeamTaskToolArguments extracted = new TeamTaskToolArguments(
+                    optionalText(args, "taskId", toolName),
+                    optionalText(args, "action", toolName),
+                    requiredRevision(args, toolName),
+                    optionalText(args, "ownerSessionId", toolName),
+                    optionalText(args, "subject", toolName),
+                    optionalText(args, "description", toolName),
+                    optionalText(args, "status", toolName),
+                    optionalStringList(args, "blockedBy", toolName),
+                    optionalStringList(args, "writeScopes", toolName));
+            boolean needsTask = TEAM_TASK_GET_TOOL.equals(toolName)
+                    || TEAM_TASK_UPDATE_TOOL.equals(toolName);
+            if (needsTask && (extracted.taskId() == null || extracted.taskId().isBlank())) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                        toolName + " requires a taskId argument");
+            }
+            if (TEAM_TASK_UPDATE_TOOL.equals(toolName)
+                    && (extracted.action() == null || extracted.action().isBlank())) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                        "team_task_update requires an action argument");
+            }
+            return extracted;
+        } catch (JsonProcessingException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                    "Tool arguments must be valid JSON", e);
+        }
+    }
+
+    private static String optionalText(JsonNode args, String key, String toolName) {
+        JsonNode node = args.path(key);
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (!node.isTextual()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                    toolName + " argument '" + key + "' must be a string");
+        }
+        return node.textValue();
+    }
+
+    private static Long requiredRevision(JsonNode args, String toolName) {
+        JsonNode node = args.path("expectedRevision");
+        if (node.isMissingNode() || node.isNull()) {
+            if (TEAM_TASK_UPDATE_TOOL.equals(toolName)) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                        "team_task_update requires an expectedRevision argument");
+            }
+            return null;
+        }
+        if (!node.canConvertToLong() || !node.isIntegralNumber()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                    "expectedRevision must be an integer");
+        }
+        return node.longValue();
+    }
+
+    private static List<String> optionalStringList(JsonNode args, String key, String toolName) {
+        JsonNode node = args.path(key);
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (!node.isArray()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                    toolName + " argument '" + key + "' must be an array of strings");
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode entry : node) {
+            if (!entry.isTextual()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
+                        toolName + " argument '" + key + "' must be an array of strings");
+            }
+            values.add(entry.textValue());
+        }
+        return values;
     }
 
     /**

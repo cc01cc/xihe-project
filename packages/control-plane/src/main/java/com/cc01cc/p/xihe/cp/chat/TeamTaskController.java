@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -54,23 +53,9 @@ public class TeamTaskController {
         return ResponseEntity.ok(row(task));
     }
 
+    // The projection itself lives on the record (TeamTaskView.toWire) so the UI mouth and the
+    // four MCP tool faces share one canonical 15-field builder.
     private Map<String, Object> row(TeamTaskService.TeamTaskView task) {
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("taskId", task.taskId());
-        row.put("teamRootSessionId", task.teamRootSessionId());
-        row.put("taskNo", task.taskNo());
-        row.put("revision", task.revision());
-        row.put("subject", task.subject());
-        row.put("description", task.description());
-        row.put("status", task.status());
-        row.put("ready", task.ready());
-        row.put("ownerSessionId", task.ownerSessionId());
-        row.put("ownerName", task.ownerName());
-        row.put("blockedBy", List.copyOf(task.blockedBy()));
-        row.put("writeScopeWarnings", List.copyOf(task.writeScopeWarnings()));
-        row.put("createdBySessionId", task.createdBySessionId());
-        row.put("createdAt", task.createdAt().toString());
-        row.put("updatedAt", task.updatedAt().toString());
-        return row;
+        return task.toWire();
     }
 }

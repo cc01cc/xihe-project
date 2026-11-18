@@ -100,6 +100,7 @@ class GrantDenyStopsBeforeDispatchTest {
                 mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class),
                 mock(com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService.class),
                 mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class),
+                mock(com.cc01cc.p.xihe.cp.chat.TeamTaskService.class),
                 new com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter(
                         org.mockito.Mockito.mock(
                                 com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService.class),

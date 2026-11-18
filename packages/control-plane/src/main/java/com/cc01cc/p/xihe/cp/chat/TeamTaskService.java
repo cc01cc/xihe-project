@@ -70,7 +70,33 @@ public class TeamTaskService {
             List<String> writeScopeWarnings,
             String createdBySessionId,
             java.time.Instant createdAt,
-            java.time.Instant updatedAt) {}
+            java.time.Instant updatedAt) {
+
+        /**
+         * The canonical 15-field wire projection, shared by every mouth (the UI read controller,
+         * the four MCP tool faces) — one builder so the surfaces can never drift apart.
+         * Instants serialize as RFC-3339 UTC strings; the two lists are defensively copied.
+         */
+        public Map<String, Object> toWire() {
+            Map<String, Object> row = new HashMap<>();
+            row.put("taskId", taskId);
+            row.put("teamRootSessionId", teamRootSessionId);
+            row.put("taskNo", taskNo);
+            row.put("revision", revision);
+            row.put("subject", subject);
+            row.put("description", description);
+            row.put("status", status);
+            row.put("ready", ready);
+            row.put("ownerSessionId", ownerSessionId);
+            row.put("ownerName", ownerName);
+            row.put("blockedBy", List.copyOf(blockedBy));
+            row.put("writeScopeWarnings", List.copyOf(writeScopeWarnings));
+            row.put("createdBySessionId", createdBySessionId);
+            row.put("createdAt", createdAt.toString());
+            row.put("updatedAt", updatedAt.toString());
+            return row;
+        }
+    }
 
     private final TeamTaskRepository teamTasks;
     private final SessionRepository sessions;
