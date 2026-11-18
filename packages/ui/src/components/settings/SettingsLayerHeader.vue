@@ -61,6 +61,7 @@ const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
 <template>
     <header
         data-testid="settings-layer-header"
+        :aria-label="t('settings.ia.headerLabel')"
         class="sticky top-0 z-10 border-b bg-background/95 backdrop-blur"
     >
         <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">

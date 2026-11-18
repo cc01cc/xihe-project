@@ -116,6 +116,7 @@ watch(
 
         <aside
             data-testid="settings-sidebar-scope"
+            :aria-label="t('settings.ia.navScopeLabel')"
             data-variant="sidebar"
             data-collapsible="offcanvas"
             data-state="expanded"

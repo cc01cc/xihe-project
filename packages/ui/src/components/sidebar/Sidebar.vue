@@ -168,6 +168,7 @@ function handleLogout() {
 <template>
     <aside
         data-testid="sidebar"
+        :aria-label="t('sidebar.panelLabel')"
         :aria-hidden="isMobile && !open ? 'true' : undefined"
         :inert="isMobile && !open ? true : undefined"
         class="flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border"

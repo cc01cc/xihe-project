@@ -254,6 +254,8 @@ const messages = {
             failed: "操作失败",
         },
         sidebar: {
+            // task-89：工作区侧栏面板是无名 complementary ⇒ 补可访问名（描述内容，不描述位置）。
+            panelLabel: "工作区与会话面板",
             newChat: "新建会话",
             noWorkspace: "当前没有可用工作区",
             search: "搜索会话...",
@@ -2082,6 +2084,9 @@ const messages = {
         // 里唯一被改的一条（Q4 技能也要分层），其余四屏沿用同一套措辞。
         resources: {
             navGroup: "资源",
+            // task-89：资源区两个无名地标（左侧栏 complementary、页头 banner）补可访问名。
+            navScopeLabel: "资源导航面板",
+            headerLabel: "资源区页头",
             // task-96：`nameAgents`（「智能体」）已删 —— 资源区不再有智能体页（用户裁定
             // 「智能体是组织成员，不是资源」）。层内名仍在 `settings.ia.resourceAgents`（平台智能体）
             // 与 `settings.ia.resourceAgentPrincipals`（智能体主体）里，分别被两个新落点复用。
@@ -2389,6 +2394,11 @@ const messages = {
             ia: {
                 breadcrumbRoot: "设置",
                 breadcrumbLabel: "面包屑",
+                // task-89：设置区三个无名地标补可访问名 —— 左栏 nav（APG「同页多个 nav 必须各有唯一标签」）、
+                // 左栏 complementary、页头 banner。名字描述内容，不用「导航」重复占位。
+                navLabel: "设置分组导航",
+                navScopeLabel: "设置导航面板",
+                headerLabel: "设置区页头",
                 layerInstance: "实例配置",
                 layerUser: "个人配置",
                 layerWorkspace: "工作区设置",
@@ -4391,6 +4401,8 @@ const messages = {
             failed: "Operation failed",
         },
         sidebar: {
+            // task-89: the workspace sidebar panel was an unnamed complementary landmark.
+            panelLabel: "Workspace and session panel",
             newChat: "New session",
             noWorkspace: "No workspace available yet",
             search: "Search sessions...",
@@ -6244,6 +6256,9 @@ const messages = {
         // PLAN-0772 M2: the resources module (a new top-level entry after leaving /settings).
         resources: {
             navGroup: "Resources",
+            // task-89: name the two unnamed landmarks in the resources area (sidebar complementary, header banner).
+            navScopeLabel: "Resources navigation panel",
+            headerLabel: "Resources header",
             workspaceLayerMovedTitle:
                 "The workspace layer of this resource moved to workspace settings",
             workspaceLayerMovedBody:
@@ -6557,6 +6572,11 @@ const messages = {
             ia: {
                 breadcrumbRoot: "Settings",
                 breadcrumbLabel: "Breadcrumb",
+                // task-89: name the three unnamed landmarks in settings — the section nav (APG requires unique
+                // labels per navigation), the sidebar complementary, and the header banner.
+                navLabel: "Settings section navigation",
+                navScopeLabel: "Settings navigation panel",
+                headerLabel: "Settings header",
                 layerInstance: "Instance settings",
                 layerUser: "Personal settings",
                 layerWorkspace: "Workspace settings",

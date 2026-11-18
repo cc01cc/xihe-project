@@ -380,4 +380,24 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         expect(wrapper.get('[data-testid="org-tree-node-d-root"]').html()).toContain("min-w-7");
         wrapper.unmount();
     });
+
+    // task-84：/members 自渲染 main，skip-link 的目标就钉在这里。
+    // 断言落在**标签名 + 全局 id + 可编程聚焦**上，不测 class —— class 变了不影响无障碍，
+    // 而这三件里任何一件掉出来，跳过链接就退化成「只滚动」。
+    it("页面根是 main 地标，且是 skip-link 的可聚焦目标", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        const mains = wrapper.findAll("main");
+        expect(mains).toHaveLength(1);
+        const main = mains[0];
+        expect(main.element.tagName).toBe("MAIN");
+        expect(main.attributes("id")).toBe("main-content");
+        expect(main.attributes("tabindex")).toBe("-1");
+        // 锚点必须能在文档里被解析到同一个节点（skip-link 的 href 指向的就是它）。
+        expect(document.getElementById("main-content")).toBe(main.element);
+        // tabindex="-1" 的语义是「可编程聚焦、不进 Tab 序」：focus() 后必须真的拿到焦点。
+        (main.element as HTMLElement).focus();
+        expect(document.activeElement).toBe(main.element);
+        wrapper.unmount();
+    });
 });

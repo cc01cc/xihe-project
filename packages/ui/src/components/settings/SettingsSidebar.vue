@@ -329,7 +329,11 @@ const layerHeaderClass =
             只去掉 `overflow-y-auto`（滚动归 viewport）。
         -->
         <ScrollArea class="h-full w-full">
-            <nav data-testid="settings-sidebar" class="flex min-h-full flex-col gap-2 px-3 py-4">
+            <nav
+                data-testid="settings-sidebar"
+                :aria-label="t('settings.ia.navLabel')"
+                class="flex min-h-full flex-col gap-2 px-3 py-4"
+            >
                 <!-- 实例层：当前层默认展开 -->
                 <Collapsible
                     v-if="canSeeInstanceLayer || canSeeInstanceOps"

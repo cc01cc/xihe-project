@@ -36,6 +36,12 @@ const messages = {
             scheduledTasks: "自动化任务",
             environment: "环境",
         },
+        // task-84/task-89：rail 的地标名与跳过链接文案都来自 common.*，夹具必须跟着补齐，
+        // 否则新断言读到的是裸 i18n 键（本仓历史上就是靠这条红发现夹具缺口的）。
+        common: {
+            globalNav: "全局导航",
+            skipToMain: "跳到主内容",
+        },
     },
 };
 
@@ -469,6 +475,32 @@ describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
         expect(wrapper.find('[data-testid="global-rail-panel-scheduled-tasks"]').exists()).toBe(
             false,
         );
+        wrapper.unmount();
+    });
+
+    // task-84（rail 可寻址 + 可跳过）与 task-89（标签唯一性）的行为断言。
+    // monitor 报的是「源码变更未伴配对测试」：本文件在 HEAD 里有，但一条也没测这两件事。
+    it("rail 是可寻址的 navigation 地标，且 skip-link 是第一个可交互元素", async () => {
+        patchAuth(true);
+        const wrapper = await mountRail();
+        const rail = wrapper.get('[data-testid="global-rail"]');
+        // ① 地标语义：role 与**可访问名**（名必须来自 i18n 解析结果，不是裸键、不是硬编码中文）。
+        expect(rail.attributes("role")).toBe("navigation");
+        expect(rail.attributes("aria-label")).toBe("全局导航");
+        // ② 只挂一个角色：rail 自己不得同时是第二个地标，也不许出现第二个 navigation。
+        expect(wrapper.findAll('[role="navigation"]')).toHaveLength(1);
+        expect(wrapper.findAll('[role="complementary"]')).toHaveLength(0);
+        expect(wrapper.findAll("aside")).toHaveLength(0);
+        // ③ 可跳过：DOM 序里第一个可聚焦元素就是 skip-link，且指向 main 的锚点。
+        //    「Enter 后焦点真的落进 main」jsdom 证不了（不实现 fragment 导航）——
+        //    那一半由真栈探针承担：evidence/…-task84…/landmarks 的 焦点是main 读数。
+        const focusable = wrapper.findAll(
+            "a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        );
+        expect(focusable.length).toBeGreaterThan(0);
+        expect(focusable[0].attributes("data-testid")).toBe("skip-to-main");
+        expect(focusable[0].attributes("href")).toBe("#main-content");
+        expect(focusable[0].text()).toBe("跳到主内容");
         wrapper.unmount();
     });
 });

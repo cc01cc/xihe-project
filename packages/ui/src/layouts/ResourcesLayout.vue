@@ -167,6 +167,7 @@ watch(
     >
         <aside
             data-testid="resources-sidebar-scope"
+            :aria-label="t('resources.navScopeLabel')"
             data-variant="sidebar"
             data-collapsible="offcanvas"
             data-state="expanded"
@@ -223,6 +224,7 @@ watch(
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
             <header
                 data-testid="resources-header"
+                :aria-label="t('resources.headerLabel')"
                 class="sticky top-0 z-10 border-b bg-background/95 backdrop-blur"
             >
                 <div class="mx-auto w-full max-w-6xl px-6 pt-3 pb-3">
