@@ -1536,6 +1536,42 @@ paths:
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/team-tasks:
+    get:
+      tags: [session]
+      operationId: getSessionTeamTasks
+      summary: Read-only team-task board projection of the tree that owns this session (task-188 MVP⑤ S2)
+      description: |
+        D-1821 panel-read ruling: this route is GET-only — zero write routes. The board belongs to
+        the TREE (board key = the root session, recomputed by DelegationChainWalker on every read);
+        the readable human is the ROOT session's owner only (tree members are agent principals and
+        use the tool faces instead). Envelope carries teamRootSessionId (the UI's N4 not-my-team
+        filter key). Deleted tombstone rows RIDE ALONG — the UI layers its own filter on top
+        (layer-filter discipline). Rows are the 15-field ApiTeamTask contract; ready and
+        writeScopeWarnings are server-derived; promptless (no question/approval body ever, spec §5.2).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: The whole board (tombstones included), content: { application/json: { schema: { $ref: '#/components/schemas/TeamTaskBoard' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: TEAM_TASK_FORBIDDEN — the caller is not the root session's owner, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SESSION_NOT_FOUND / TEAM_TASK_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: TEAM_TASK_TREE_BROKEN — the delegation chain is structurally broken (fail closed), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/sessions/{sessionId}/team-tasks/{taskId}:
+    get:
+      tags: [session]
+      operationId: getSessionTeamTask
+      summary: One board card (same wire shape as a board row; the UI consumes the list row's expansion instead)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The card, content: { application/json: { schema: { $ref: '#/components/schemas/TeamTaskRow' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: SESSION_NOT_FOUND / TEAM_TASK_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/delegation-spawn:
     post:
       tags: [session]
@@ -3188,6 +3224,28 @@ paths:
         '200':
           description: Pending items
           content: { application/json: { schema: { $ref: '#/components/schemas/GuidancePendingView' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /internal/v1/chat/runs/{runId}/user-questions/waiting:
+    get:
+      tags: [service-misc]
+      operationId: getChatRunWaitingQuestion
+      summary: The Agent resume claim read mouth — the run's current waiting-question envelope
+      description: |
+        G3-a C4 (task-188 地基批): after a restart the Agent must be able to re-arm or claim the
+        question it was waiting on, reading only durable facts. This is the ONLY mouth that carries
+        the answer body, and it is the CP↔Agent trust domain (service Bearer): the question PROMPT
+        never leaves the CP (spec/session/user-channel.md §5.2 — not in this payload, not in logs, not
+        in SSE, not in audit). An overdue pending row is lazily settled to expired by the same CAS
+        predicate as the user read face, and then answers with an empty items[] (the Agent maps that
+        to no_answer — settlement is not pushed as a hint, §6a.4-3).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Zero or one envelope item (a run has at most one live waiting row)
+          content: { application/json: { schema: { $ref: '#/components/schemas/ChatRunWaitingQuestionView' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume:
@@ -7520,6 +7578,52 @@ components:
         nextCursor: { type: string, description: 'Opaque cursor for the next (older) page; absent on the last page.' }
     SessionUpdateRequest: { type: object, description: "Metadata-only edits retain the pin. Binding edits require modelProvider/modelName/providerConnectionId/connectionRevision together; omitted template triple resolves the target default once; partial or null bindings fail. Cross-Type changes require confirmedTypeChange.", properties: { title: { type: [string, 'null'] }, modelProvider: { type: string }, modelName: { type: string }, providerConnectionId: { type: string, format: uuid }, connectionRevision: { type: integer, minimum: 1 }, confirmedTypeChange: { type: boolean }, contextTemplateLayer: { type: string, enum: [instance, user, workspace] }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
     ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace, workspace-default] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: 'Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND.' } } }
+    ChatRunWaitingQuestionView:
+      type: object
+      required: [runId, items]
+      properties:
+        runId: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 1
+          items:
+            type: object
+            required: [questionId, state]
+            properties:
+              questionId: { type: string, format: uuid }
+              state: { type: string, enum: [pending, answered] }
+              answer: { type: [string, 'null'], description: present only once the addressee has answered (durable, inside the CP-to-Agent trust domain) }
+              expiresAt: { type: [string, 'null'], format: date-time }
+            additionalProperties: false
+      additionalProperties: false
+    TeamTaskBoard:
+      type: object
+      required: [sessionId, teamRootSessionId, tasks]
+      properties:
+        sessionId: { type: string, format: uuid }
+        teamRootSessionId: { type: string, format: uuid, description: the board key — the tree root; the UI filters out rows whose teamRootSessionId does not match (N4) }
+        tasks: { type: array, items: { $ref: '#/components/schemas/TeamTaskRow' } }
+      additionalProperties: false
+    TeamTaskRow:
+      type: object
+      required: [taskId, teamRootSessionId, taskNo, revision, subject, description, status, ready, ownerSessionId, ownerName, blockedBy, writeScopeWarnings, createdBySessionId, createdAt, updatedAt]
+      properties:
+        taskId: { type: string, format: uuid }
+        teamRootSessionId: { type: string, format: uuid }
+        taskNo: { type: integer, format: int64 }
+        revision: { type: integer, format: int64, description: advisory CAS identity — visible to readers, never gated on }
+        subject: { type: string, maxLength: 200 }
+        description: { type: [string, 'null'], maxLength: 16384 }
+        status: { type: string, enum: [pending, in_progress, completed, deleted] }
+        ready: { type: boolean, description: server-derived — no unfinished blockedBy dependency }
+        ownerSessionId: { type: [string, 'null'], format: uuid }
+        ownerName: { type: [string, 'null'] }
+        blockedBy: { type: array, items: { type: string, format: uuid } }
+        writeScopeWarnings: { type: array, items: { type: string }, description: server-derived advisory overlap warnings — derived at read time, never stored }
+        createdBySessionId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      additionalProperties: false
     SessionDerivedStateResponse:
        type: object
        additionalProperties: false

@@ -90,6 +90,10 @@ public final class PermissionAtomLabels {
                 "管理技能库", "Manage skill library");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
                 "管理个人技能库", "Manage personal skill library");
+        // task-188 MVP⑤ S2 (V172): the shared team-task board face. PermissionAtomLabelsTest walks
+        // the catalog and fails on a missing entry — same batch as the catalog line and the seeds.
+        put(labels, ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE,
+                "管理共享任务板", "Manage team task board");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 "管理模型连接", "Manage provider connections");
         put(labels, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,

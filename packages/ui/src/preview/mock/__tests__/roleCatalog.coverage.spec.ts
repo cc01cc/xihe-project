@@ -12,7 +12,8 @@ import { deriveRoleCatalog, mockRoleCatalog, ROLE_CATALOG_SOURCES } from "../dat
  * <p><b>为什么要这道门</b>：这条面此前在 mock 车道是 404，角色页整页渲染成「该页面需要的服务端能力
  * 还没提供」；补夹具最容易踩的坑是**手抄一份原子表** —— 那既不会红也不会绿，只会让页面看起来正常而
  * 少了几个选项（\`D-1485\` 的「第二份清单」）。所以本门判的不是「形状对不对」，而是
- * 「**这 43 个名字是不是 CP 真会认的那些**」。</p>
+ * 「**这 44 个名字是不是 CP 真会认的那些**」（task-188 MVP⑤ S2 起：40→41 action atoms，
+ * 新增 TEAM_TASK_MANAGE —— 夹具从 CP 源码派生、本数随 CP 词汇表同批刷新）。</p>
  *
  * <p><b>判据分四层，每层都能红</b>：</p>
  * <ol>
@@ -277,13 +278,14 @@ describe("task-84 · /roles/catalog mock 夹具（形状与派生）", () => {
             "CP 的 builtinActionClasses() 签名不在了（改名要同批改这道门）",
         ).toBeGreaterThan(0);
         expect(VOCABULARY.size).toBeGreaterThan(20);
-        // 43 = 40 action + 3 capability 是本卡的读取值；写成常量断言，CP 增原子时这里先红。
-        expect(actionAtoms).toHaveLength(40);
+        // 44 = 41 action + 3 capability 是本卡的读取值（task-188 MVP⑤ S2 加 TEAM_TASK_MANAGE）；
+        // 写成常量断言，CP 增原子时这里先红。
+        expect(actionAtoms).toHaveLength(41);
         expect(capabilityAtoms).toHaveLength(3);
         expect(VOCABULARY.size).toBe(actionAtoms.length);
     });
 
-    it("词汇表相等（不漏不多）：mock 的 40 个动作原子 == builtinActionClasses()", () => {
+    it("词汇表相等（不漏不多）：mock 的 41 个动作原子 == builtinActionClasses()", () => {
         const mockActions = new Set(actionAtoms.map((atom) => atom.name));
         // 两侧都要「相等」：只在一边有用的是另一个方向的漏洞（漏一个不报、多一个也只报一边）。
         for (const name of mockActions) {
@@ -416,7 +418,7 @@ describe("task-84 · /roles/catalog mock 夹具（形状与派生）", () => {
 describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", () => {
     const handler = mountApiHandler();
 
-    it("GET /roles/catalog?locale=zh-CN ⇒ 200 且 43 原子（此前是 404 MOCK_ENDPOINT_MISSING）", async () => {
+    it("GET /roles/catalog?locale=zh-CN ⇒ 200 且 44 原子（此前是 404 MOCK_ENDPOINT_MISSING）", async () => {
         const answer = await call(handler, "/roles/catalog?locale=zh-CN");
         expect(answer.status).toBe(200);
         const body = answer.body as {
@@ -425,7 +427,7 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
             defaultGrants: unknown[];
         };
         expect(Array.isArray(body.atoms)).toBe(true);
-        expect(body.atoms).toHaveLength(43);
+        expect(body.atoms).toHaveLength(44);
         expect(body.scopes).toEqual(["instance", "workspace"]);
         expect(body.defaultGrants).toHaveLength(8);
         // 形状对齐 openapi RoleAtomView（字段齐、类型对）。
@@ -457,7 +459,7 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
         expect(zhRead).not.toBe(enRead);
         // 缺省 locale（不传）按 zh-CN。
         const fallback = (await call(handler, "/roles/catalog")).body as { atoms: unknown[] };
-        expect(fallback.atoms).toHaveLength(43);
+        expect(fallback.atoms).toHaveLength(44);
     });
 
     it("GET /roles 仍是裸数组（角色列表读面不受本次改动影响）", async () => {

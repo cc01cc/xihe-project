@@ -89,6 +89,17 @@ public class ToolFaceRegistry {
     public static final String ACTION_USE_WORKSPACE_RUNTIME = "USE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_RUNTIME = "MANAGE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
+    /**
+     * task-188 MVP⑤ S2 (D-1821 默认④⑤): the shared team-task board face — create/list/get/update
+     * on team_tasks, reassign included (spawn lineage). Scope class both: the board belongs to a
+     * tree inside one workspace, so a workspace-scoped grant is meaningful. Deliberately NOT
+     * agent-forbidden: the teammate is an agent principal and claiming/completing a task is its
+     * job (the MANAGE_SKILL_LIBRARY N5-N9 precedent: a workspace-domain action an agent may hold).
+     * Default-granted through BASE_ATOMS (AGENT_USER + USER) and the WS_OWNER/WS_EDITOR seeds;
+     * Flyway rows in V172. The four CP-owned tool faces (team_task_create/list/get/update) all
+     * map to this one action class.
+     */
+    public static final String ACTION_TEAM_TASK_MANAGE = "TEAM_TASK_MANAGE";
     /** D-928 / PLAN-0766: write access to the shared workspace-default config layer. */
     public static final String ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
     /**
@@ -230,6 +241,14 @@ public class ToolFaceRegistry {
         NETWORK_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
         EXEC_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_EXEC, ToolShape.INTERPRETER)));
         builder.put("spawn_agent", new Face(ACTION_SPAWN_AGENT, ToolShape.STRUCTURED));
+        // task-188 MVP⑤ S2: the four CP-owned team-task board tools. All map to the single
+        // TEAM_TASK_MANAGE action class (D-1821 默认④: board write = one atom; the four verbs are
+        // one face's operations, not four privileges). STRUCTURED like spawn_agent — CP parses
+        // the arguments (subject/blockedBy/writeScopes...) before any row is touched.
+        builder.put("team_task_create", new Face(ACTION_TEAM_TASK_MANAGE, ToolShape.STRUCTURED));
+        builder.put("team_task_list", new Face(ACTION_TEAM_TASK_MANAGE, ToolShape.STRUCTURED));
+        builder.put("team_task_get", new Face(ACTION_TEAM_TASK_MANAGE, ToolShape.STRUCTURED));
+        builder.put("team_task_update", new Face(ACTION_TEAM_TASK_MANAGE, ToolShape.STRUCTURED));
         // PLAN-0497 M0 冻结：CP-owned credential delivery tool — face=credential_use,
         // STRUCTURED; authorization runs the credential_use evaluation on the
         // credential:<id> resource extracted from the tool arguments.
@@ -305,7 +324,12 @@ public class ToolFaceRegistry {
                 // for the same mechanical reason V157 documents: a catalog entry without this line
                 // makes RoleGrantMaterializer throw "Unknown actionClass" the moment a seeded role is
                 // materialized, and MemoryWriteAtomTest asserts actionAtoms() == this set.
-                ACTION_MANAGE_ORG_UNITS, ACTION_MANAGE_ORG_UNIT_MEMBERS, ACTION_READ_ORG_UNIT_MEMBERS);
+                ACTION_MANAGE_ORG_UNITS, ACTION_MANAGE_ORG_UNIT_MEMBERS, ACTION_READ_ORG_UNIT_MEMBERS,
+                // task-188 MVP⑤ S2 (V172): the team-task board atom joins the action-class set in
+                // the same batch as its catalog entry, label and seed rows — the same mechanical
+                // reason V157/V162 document: GrantIntersectionEvaluator validates against this
+                // vocabulary, and MemoryWriteAtomTest asserts actionAtoms() == this set.
+                ACTION_TEAM_TASK_MANAGE);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

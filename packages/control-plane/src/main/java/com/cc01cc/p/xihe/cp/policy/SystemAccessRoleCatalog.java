@@ -90,7 +90,17 @@ public class SystemAccessRoleCatalog {
             // being the only plugin atom an agent may hold (AGENT_FORBIDDEN_ATOMS excludes it).
             // WS_VIEWER stays out on purpose: invocation executes a tool face, and a read-only role
             // must not be able to run one.
-            AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE),
+            // task-188 MVP⑤ S2 (V172, D-1821 默认④⑤): the shared team-task board atom is part of
+            // the base set every non-viewer account/agent carries — a teammate (agent principal)
+            // must be able to claim/complete board tasks, and the session human owner must be able
+            // to command the board, without an explicit grant. In BASE_ATOMS (not per-role) because
+            // "base set" must be one expression: AGENT_USER holds it directly, USER inherits via
+            // USER_DEFAULT_ATOMS concat below (and ADMIN via its concat of USER_DEFAULT_ATOMS —
+            // the established inheritance, see the USER_DEFAULT_ATOMS doc). WS_OWNER/WS_EDITOR
+            // carry it in their own seeds below; WS_VIEWER stays out (read-only role, no board
+            // writes). Never agent-forbidden: the board is a workspace-domain action.
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE));
 
     /**
      * The registration default set. PLAN-0750 M1 (G1 = (1a), user ruling 2026-11-10) restores the
@@ -241,7 +251,12 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP)))),
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP),
+                                        // task-188 MVP⑤ S2 (V172): the workspace owner commands the
+                                        // shared team-task board (workspace-domain action; the tree
+                                        // sits inside this workspace).
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE)))),
                 new RoleSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         "Workspace scope: read/write/delete/exec.",
                         List.of(
@@ -268,7 +283,11 @@ public class SystemAccessRoleCatalog {
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
                                 AtomRef.wildcard(
-                                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP))),
+                                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP),
+                                // task-188 MVP⑤ S2 (V172): an editor may claim/drive board tasks in
+                                // this workspace, same workspace-domain reasoning as the owner.
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),

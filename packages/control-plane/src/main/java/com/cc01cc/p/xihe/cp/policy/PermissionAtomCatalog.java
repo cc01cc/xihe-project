@@ -221,7 +221,16 @@ public final class PermissionAtomCatalog {
             // V162. Scope class is NOT decided here — see INSTANCE_ONLY_ATOMS below.
             ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS,
             ToolFaceRegistry.ACTION_MANAGE_ORG_UNIT_MEMBERS,
-            ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS);
+            ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS,
+            // task-188 MVP⑤ S2 (V172, D-1821 默认④⑤): the team-task board atom. 40 + 1 = 41 action
+            // atoms; the matching role seeds land in Flyway V172 (roles SUPER_ADMIN — mirror
+            // obligation — / ADMIN / USER / AGENT_USER / WS_OWNER / WS_EDITOR; ADMIN is seeded
+            // because the code catalog grants it via the USER_DEFAULT_ATOMS concat and
+            // DefaultSetMigrationParityTest enforces the mirror row). Scope class is both by
+            // construction (absent from INSTANCE_ONLY_ATOMS below); not agent-forbidden (a
+            // teammate is an agent principal; the board is a workspace-domain action, the
+            // MANAGE_SKILL_LIBRARY N5-N9 precedent).
+            ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
