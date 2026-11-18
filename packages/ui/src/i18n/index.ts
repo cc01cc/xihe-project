@@ -2194,30 +2194,29 @@ const messages = {
                 action: "去工作台选择工作区",
             },
             knowledgeGap: {
-                title: "知识库：CP 侧没有「库」这个被管理对象",
+                title: "知识库暂不可用",
                 // task-26（批 1）：「缺口」是内部概念词，用户语言是「目前还不可用」。
-                intro: "本页逐条列出目前还不可用的能力，每条都给出核对方式（读面读数）。这些能力补齐之前这里不会有可用入口；不写排期，也不承诺时间。",
-                basisLabel: "怎么核",
+                // D-1879 裁定一（task-47）：文案只写**用户能感知的后果**。可核验性属于测试面与
+                // 证据面，不属于文案面 —— 原先的 basisLabel「怎么核」+ 每条 basis（类名、grep 命令、
+                // 契约文件名、源码行号、接口路径）是**审查者的验证义务**，写进正文会让面向用户的
+                // 页面长成工程工作日志。删除判据见 DEV-011 §14；「不承诺时间」这条纪律保留。
+                intro: "这个版本还没有知识库：没有可以新建、命名或共享的「库」，也没有列出库内文档的地方。下面说明缺的是哪几块，以及它对你意味着什么。这里不写排期，也不承诺时间。",
                 gaps: {
                     noLibrary: {
-                        title: "① 没有「库」实体",
-                        body: "CP 侧没有知识库实体：没有表、没有 CRUD 端点。契约里 /api/v1/rag/* 一共 4 条（stats、ingest、search、documents/:docId），没有一条接受「库 id」，所以没有可命名、可列举、可授权的库。",
-                        basis: "openapi.yaml 里 rag 只有 4 条 path；CP 的 Java 源码里 grep KnowledgeBase 是 0 命中。",
+                        title: "① 还没有「库」这个东西",
+                        body: "你在别处熟悉的「新建知识库 → 上传文档 → 选库问答」在这里没有对应功能位 —— 服务端还没有这个对象，不是界面把它藏起来了。",
                     },
                     noDocList: {
-                        title: "② 没有「文档列表」读面",
-                        body: "documents/:docId 只有 DELETE，没有集合 GET；stats 在契约里只声明了 200，连响应字段都没写。所以一个库里有哪些文档、各多少分块，契约不保证 —— 页面只能靠猜 agent 的响应形状。",
-                        basis: "openapi.yaml 的 /rag/stats 的 200 无 schema、/rag/documents/:docId 只有 delete；旧组件按 data.documents 猜，该字段不在契约里。",
+                        title: "② 看不到库里收了哪些文档",
+                        body: "即便有内容，也没有地方列出「收了哪些文档、各分成多少块」。所以本页不画文档列表，免得给你一个看着能用、点开是空的列表。",
                     },
                     partition: {
-                        title: "③ 分区键是（用户, 工作区），不是库",
-                        body: "4 个端点都按调用者的用户与工作区下传分区，没有「选哪个库」的参数 —— 同一工作区里不同用户看到的是各自的索引，不是同一份共享库。",
-                        basis: "RagProxyController 的 stats 从 TenantContext 取 userId/workspaceId 再解析 profile；ingest、search 同形状。",
+                        title: "③ 索引按「人 + 工作区」分开，不按库共享",
+                        body: "同一个工作区里，不同的人看到的是各自的索引，不是一份共享库。「把库共享给同事」目前没有落点。",
                     },
                     noWriteEntry: {
-                        title: "④ 写入入口当前没有挂载点",
-                        body: "工作区设置收敛时撤掉了「工作区设置 → 知识库」tab，/settings/knowledge 路由也已删除。KnowledgeBaseView 组件与上传、删除端点都还在，但当前没有任何页面挂载它 —— 这是入口现状，不是排期。",
-                        basis: "router/index.ts 里的 knowledge 只指向 /resources/knowledge；/settings/knowledge 只留在已删路径清单 lib/legacyRoutes.ts:34 与测试里。",
+                        title: "④ 上传入口暂时没有挂载点",
+                        body: "上传与删除的能力还在，但目前没有任何页面把它接出来 —— 这是当前入口的真实状态，不是排期。",
                     },
                 },
             },
@@ -6345,29 +6344,30 @@ const messages = {
                 action: "Go to the workbench and pick a workspace",
             },
             knowledgeGap: {
-                title: "Knowledge base: CP has no managed library object",
-                intro: "This page lists what is not available yet and, for each item, how to verify it against the read faces. There is no usable entry here until it ships; no schedule is written down and no date is promised.",
-                basisLabel: "How to verify",
+                title: "Knowledge base is not available yet",
+                // D-1879 ruling 1 (task-47): copy states only what a **user can perceive**.
+                // Verifiability belongs to the test surface and the evidence pack, not to product
+                // copy. The old basisLabel "How to verify" plus each basis line (class names, grep
+                // commands, contract file names, source file:line, endpoint paths) was the
+                // reviewer's verification duty written into body text — which is what made this
+                // user-facing page read like an engineering work log. See DEV-011 §14.
+                intro: "This build has no knowledge base: there is no library you can create, name or share, and no place that lists the documents inside one. Below is what is missing and what that means for you. No schedule is written down here and no date is promised.",
                 gaps: {
                     noLibrary: {
-                        title: "1. No library entity",
-                        body: "CP has no knowledge-base entity: no table, no CRUD endpoint. The contract has exactly 4 /api/v1/rag/* paths (stats, ingest, search, documents/:docId) and none of them takes a library id, so there is nothing to name, list or authorize.",
-                        basis: "openapi.yaml has 4 rag paths; grepping KnowledgeBase in the CP Java sources returns 0 hits.",
+                        title: "1. There is no library object yet",
+                        body: "The flow you may know from elsewhere — create a library, upload documents, ask questions against one — has no entry point here, because the server has no such object. It is not hidden behind the interface.",
                     },
                     noDocList: {
-                        title: "2. No document-list read face",
-                        body: "documents/:docId only supports DELETE, there is no collection GET; stats declares a 200 without any response schema. Which documents a library holds, and how many chunks each has, is therefore not guaranteed by the contract — the page can only guess the agent response shape.",
-                        basis: "In openapi.yaml the /rag/stats 200 has no schema and /rag/documents/:docId is delete-only; the old component guessed data.documents, a field the contract never declares.",
+                        title: "2. No way to see which documents are in a library",
+                        body: "Even where content exists, nothing lists which documents were ingested or how many chunks each became. This page therefore shows no document list rather than one that looks usable and opens empty.",
                     },
                     partition: {
-                        title: "3. The partition key is (user, workspace), not a library",
-                        body: "All 4 endpoints partition by the caller user and workspace; none takes a library argument, so different users in one workspace see their own index rather than one shared library.",
-                        basis: "In RagProxyController the stats handler reads userId/workspaceId from TenantContext and resolves the profile; ingest and search have the same shape.",
+                        title: "3. Indexes are split by person and workspace, not by library",
+                        body: "Inside one workspace, different people see their own index rather than one shared library. Sharing a library with a teammate has no home today.",
                     },
                     noWriteEntry: {
-                        title: "4. The write entry has no mount point today",
-                        body: "When workspace settings were consolidated the workspace-settings knowledge tab was removed and the /settings/knowledge route was deleted. The KnowledgeBaseView component plus the upload and delete endpoints still exist, but no page mounts the component — this is the current entry state, not a schedule.",
-                        basis: "in router/index.ts every knowledge route is /resources/knowledge; /settings/knowledge survives only in the removed-path list lib/legacyRoutes.ts:34 and in tests.",
+                        title: "4. The upload entry has no mount point today",
+                        body: "Upload and delete still exist in the product, but no page wires them up — that is the current state of the entry point, not a schedule.",
                     },
                 },
             },

@@ -582,3 +582,51 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 **例外（照实登记，不是放宽判据）**：`composer-workspace-less-hint`（task-547 F-A：独立会话少了两栏**必须说出来**）与一次性 `role="status"` 提示（`chat-to-empty-hint`、`compose-deeplink-unsat-hint`：带关闭按钮、非长期 chrome）**保持成行**。
 
 **度量方式**：真机 Tab 到 `composer-*-hint-trigger` ⇒ `[data-testid="composer-*-hint"]` 的 `getBoundingClientRect().height > 0`；且 composer 区常驻说明段落计数（`.space-y-1.5 > p` 中 `[data-testid*="hint"]` 者）为 **0**。
+
+## 14. 面向用户的文案不得出现「审查者形态」的字符串
+
+> 来源：`D-1879` 裁定二（2026-11-19，`task-47`）。**本节是判据，不是文风偏好。**
+
+**判据**：用户能读到的正文里**不得出现**下列形态 —— 类名、shell 命令、契约/规范文件名、`文件:行号`、接口路径、权限原子与枚举常量、内部票号，以及把内部黑话（「读面」「契约」）当正文用。
+
+**为什么用「形态」而不是枚举具体词**：此前这类判据枚举的是「坏字段名」，而实际泄露的是**形态**。`task-47` 实测同一页同时泄露类名、`grep` 命令、`openapi.yaml`、`lib/legacyRoutes.ts:34` 与 `/api/v1/rag/*` —— **没有一条在预先枚举的清单里** ⇒ **枚举永远追不上新形态**（`task-39` 主结论）。
+
+**类别错误（这是本条真正的成因）**：**可核验性属于测试面与证据面，不属于文案面。** 文案是给用户读的；「这条结论怎么验」是审查者读的。把审查者的验证义务写进用户正文，等于要求每个面向用户的句子自带出处 ⇒ **产物必然长成工程工作日志**，而且**测试会主动维持这个畸形**（`task-47` 的 spec 曾断言 `toContain("怎么核")` / `toContain("CP")`，改文案不改断言会让下一个人把文案改回去）。
+
+### 14.1 度量方式（五必填：`D-1880` 扩的第五项，`D-1876`/`D-1879` 裁定三）
+
+| 必填项 | 本条的取值 |
+| --- | --- |
+| **量什么** | 渲染文本过 9 条正则的命中数，**命中项与命中串都要点名** |
+| **在哪量** | `document.querySelector("main").innerText`。**不用 `textContent`** —— 它把 `sr-only`、`display:none` 子树与脚本串一起吞进来 ⇒ 假阳 |
+| **在哪些层读** | ① **渲染文本层 = 唯一判据层**；② 组件源码层（`t()` 键引用完整性，归 `lint:i18n`）；③ i18n 源层（**仅供定位，不作判据**）。**读数必须写明读的是哪一层** |
+| **何时量** | 路由 `networkidle` 后 **+ 逐个展开 `role=tab`**；一次性 `role="status"` 与 toast **不计**（按设计是临时的） |
+| **红的样子** | 逐条点名「面 / 正则名 / 命中串」，例：`条目 noDocList 命中「类名」形态：RagProxyController`。**必须能红**：`task-47` 已做变异验证 —— 把 `RagProxyController` 注回正文，2 条断言转红、其余 6 绿 |
+
+### 14.2 正则白名单（唯一表达方式，禁枚举字符串）
+
+```text
+类名                [A-Z][A-Za-z]*(Controller|Service|Repository|Middleware)\b
+命令                \bgrep\b
+契约/规范文件名      \b(openapi|swagger)\.ya?ml\b
+源码 文件:行号       \b[\w./-]+\.(ts|vue|java|yaml|yml|mjs|js|json):\d+
+接口路径            \/api\/v1\/
+权限原子/枚举常量    \b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b
+内部票号            \b[A-Z]-\d+\b
+内部术语            读面 · 契约
+```
+
+**实现锚点**：`packages/ui/src/views/resources/__tests__/KnowledgeResourceView.spec.ts` 的 `LEAK_PATTERNS`（9 条）与两条负断言；机器门 `packages/ui/scripts/check-copy-leak.mjs`（`report-only`，见 `task-51`）。
+
+### 14.3 扫描矩阵必须落盘
+
+扫描面 = **`route × tab/layer`**，格子清单**入库**（`matrix.json`）。**只扫路由默认态会漏**：`task-47` 实测 `/resources/skills` 的默认层是「已迁到工作区设置」提示（渲染正文仅 66 字符），面板在 `role=tab` 之后；据此误判「9 页里只有 1 页泄露」，展开 tab 后实际 **4 个面命中**。
+
+### 14.4 反例锚点（两个方向都要钉，`D-1876`）
+
+- **扫 i18n 源会假阳**：源级命中 66 行，绝大多数是**注释**与**已迁走/未挂载**的面。实证：从源里认到的 `MANAGE_PERSONAL_SKILLS` 与内部票号 `P-189-3`，**在任何已渲染页面上都没出现** ⇒ **源级盘点 ≠ 渲染级证据**。
+- **扫默认态会假阴**：见 §14.3。**仪器看不见 ≠ 不存在。**
+
+### 14.5 例外（照实登记，不是放宽）
+
+**用户主动展开**的技术细节不算违规：诊断面按 `packages/ui/AGENTS.md`「错误面：错误码 → 文案」的既有口径，把 `technicalDetail` 收进**默认折叠**的控件，并带入口标签说明它是技术细节。判据是「**用户读到的正文**」—— 折叠里的内容不是正文，但**必须让用户看得出那是技术细节**，不得混在正文里。

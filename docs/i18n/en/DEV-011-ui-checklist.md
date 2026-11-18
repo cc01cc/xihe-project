@@ -603,3 +603,51 @@ session must *say* why two controls are missing) and the one-shot `role="status"
 **Measurement**: Tab to `composer-*-hint-trigger` in a real browser ⇒ `[data-testid="composer-*-hint"]` has
 `getBoundingClientRect().height > 0`; and the count of permanent hint paragraphs in the composer region
 (`[data-testid*="hint"]` `<p>` children of `.space-y-1.5`) is **0**.
+
+## 14. User-facing copy must not contain reviewer-shaped strings
+
+> Source: `D-1879` ruling 2 (2026-11-19, `task-47`). **This is a criterion, not a style preference.**
+
+**Criterion**: text a user can read must not contain any of these **shapes**: class names, shell commands, contract/spec file names, `file:line`, endpoint paths, permission atoms or enum constants, internal ticket ids, or internal jargon (`读面` / "read face", `契约` / "contract") used as body copy.
+
+**Why shapes rather than an enumerated word list**: earlier criteria enumerated known bad field names, while the actual leakage is a **shape**. `task-47` measured one page leaking a class name, a `grep` command, `openapi.yaml`, `lib/legacyRoutes.ts:34` and `/api/v1/rag/*` at once — **none of them was on any pre-enumerated list** ⇒ **enumeration never catches up with new shapes** (the headline conclusion of `task-39`).
+
+**Category error (the real cause)**: **verifiability belongs to the test surface and the evidence pack, not to product copy.** Copy is read by users; "how to verify this claim" is read by reviewers. Writing the reviewer's verification duty into user body text forces every user-facing sentence to carry its own citation ⇒ **the output necessarily degenerates into an engineering work log**, and **the tests actively preserve that deformation** (`task-47`'s spec asserted `toContain("怎么核")` / `toContain("CP")`; changing the copy without the assertions invites the next person to change it back).
+
+### 14.1 Measurement (five required fields; the fifth added by `D-1880`, on top of `D-1876` / `D-1879` ruling 3)
+
+| Required field | Value for this criterion |
+| --- | --- |
+| **What to measure** | number of regex hits in rendered text, **naming both the matching shape and the offending string** |
+| **Where to measure** | `document.querySelector("main").innerText`. **Not `textContent`** — it swallows `sr-only`, `display:none` subtrees and script text ⇒ false positives |
+| **Which layers to read** | (1) **rendered-text layer = the only criterion layer**; (2) component source layer (`t()` key reference integrity, owned by `lint:i18n`); (3) i18n source layer (**for locating only, never a criterion**). **Every reading must state which layer it read** |
+| **When to measure** | after route `networkidle` **plus expanding every `role=tab`**; one-shot `role="status"` notices and toasts **do not count** (transient by design) |
+| **What red looks like** | name the surface / shape / offending string, e.g. `条目 noDocList 命中「类名」形态：RagProxyController`. **It must be able to go red**: `task-47` ran the mutation test — injecting `RagProxyController` back into body copy turns 2 assertions red while the other 6 stay green |
+
+### 14.2 Regex whitelist (the only allowed expression; no string enumeration)
+
+```text
+class name                    [A-Z][A-Za-z]*(Controller|Service|Repository|Middleware)\b
+command                       \bgrep\b
+contract/spec file name       \b(openapi|swagger)\.ya?ml\b
+source file:line              \b[\w./-]+\.(ts|vue|java|yaml|yml|mjs|js|json):\d+
+endpoint path                 \/api\/v1\/
+permission atom/enum constant \b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b
+internal ticket id            \b[A-Z]-\d+\b
+internal jargon               读面 · 契约
+```
+
+**Implementation anchors**: `LEAK_PATTERNS` (9 shapes) plus the two negative assertions in `packages/ui/src/views/resources/__tests__/KnowledgeResourceView.spec.ts`; the machine gate `packages/ui/scripts/check-copy-leak.mjs` (`report-only`, see `task-51`).
+
+### 14.3 The scan matrix must be persisted
+
+Scan surface = **`route × tab/layer`**; the grid list is **committed** (`matrix.json`). **Scanning only the route default state misses content**: `task-47` measured that `/resources/skills` defaults to the "moved to workspace settings" notice (66 characters of rendered body) with the real panel behind `role=tab`, which produced the wrong conclusion "1 of 9 pages leaks"; after expanding the tabs, **4 surfaces leak**.
+
+### 14.4 Counter-example anchors (both directions pinned, `D-1876`)
+
+- **Scanning the i18n source gives false positives**: 66 source hits, mostly **comments** and **migrated/unmounted** surfaces. Measured: `MANAGE_PERSONAL_SKILLS` and internal ticket id `P-189-3` were identified from source but **never appeared on any rendered page** ⇒ **a source-level inventory is not render-level evidence**.
+- **Scanning the default state gives false negatives**: see §14.3. **The instrument not seeing it is not the same as it not existing.**
+
+### 14.5 Exception (registered as a fact, not as a loosening)
+
+Technical detail the **user deliberately expands** is not a violation: diagnostic surfaces follow the existing ruling in `packages/ui/AGENTS.md` ("error surface: code → copy") by putting `technicalDetail` inside a **collapsed-by-default** control with a label saying it is technical detail. The criterion is the **body text the user reads**; collapsed content is not body text, but **it must be visibly identifiable as technical detail** and must never be mixed into body copy.

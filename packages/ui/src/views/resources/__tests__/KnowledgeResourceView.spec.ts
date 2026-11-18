@@ -4,15 +4,22 @@ import KnowledgeResourceView from "../KnowledgeResourceView.vue";
 import { i18n } from "../../../i18n";
 
 /**
- * task-42：知识库缺口页的**文案判据**（不是"渲染出来了"就算）。
+ * 知识库缺口页的**文案判据**（不是"渲染出来了"就算）。
  *
- * <p>本卡之前的正文是一段概括 + 一句「恢复要等 G3 落地后挂到本资源页」—— 那是**时间承诺**，
- * 而没有人能给出这个时间。所以这里的负断言比正断言更重要：**不许出现排期措辞**、
- * **不许出现通用兜底文案**（「加载失败，请重试」这类既没说明缺什么、也指错了方向）。</p>
+ * <p><b>判据在 D-1879 裁定一改过一次方向，改这里之前先读那段。</b></p>
  *
- * <p>正断言的要求来自 Lead 的两条口径：① 文案必须来自**实测的缺口原因**（每条缺口带自己的
- * 核法读面，每条回答"什么请求 / 什么返回 / 页面显示什么"）；② 必须**点名缺的是 CP 库实体**，
- * 不能只说"暂不可用"。</p>
+ * <p>task-42 曾把两条口径写进本文件（原文「正断言的要求来自 Lead 的两条口径：① 每条缺口带自己的
+ * 核法读面 ② 必须点名缺的是 CP 库实体」），并据此断言 `toContain("怎么核")` 与
+ * `toContain("CP"/"实体"/"文档列表"/"分区")`。那两条**已废止**：可核验性属于测试面与证据面，
+ * 不属于文案面；把审查者的验证义务写进用户正文，页面就必然长成工程工作日志 —— 而这两条断言会
+ * **主动维持**那个畸形（改掉文案不改断言，下一个人会把文案改回来）。
+ * 依据：`internal/A03-xihe/docs/lead-decisions-ledger.md` D-1879 裁定一。</p>
+ *
+ * <p>task-42 的另一半目的**保留**：干掉不可兑现的时间承诺。所以「不承诺时间」与「不用兜底文案」
+ * 两条判据原样不动 —— 它们不产生泄露，且正是当初要解决的问题。</p>
+ *
+ * <p>新增的方向是**负向**的：面向用户的渲染文本里不得出现「审查者形态」的字符串（LEAK_PATTERNS）。
+ * 判据从「要求带核法」翻成「要求不带核法」，畸形才不会被反向改回去。机器判据正文见 DEV-011 §14。</p>
  */
 function mountView() {
     return mount(KnowledgeResourceView, { global: { plugins: [i18n] } });
@@ -37,28 +44,64 @@ const FALLBACK_PATTERNS: [string, RegExp][] = [
     ["英文 generic", /something went wrong|please try again|failed to load/i],
 ];
 
+/**
+ * D-1879 裁定二：面向用户的页面不得出现**审查者形态**的字符串。
+ *
+ * <p>用**形态**表达而不是枚举具体词，因为枚举追不上新形态 —— 这条正是 task-39 的主结论
+ * （此前枚举出来的是「坏字段名」，而这里泄露的是「形态」）。四条缺口各自的读数原文
+ * 存在 `internal/A03-xihe/evidence/2026-11-13-task-42-resource-detail/README.md`，不在页面复述。</p>
+ */
+const LEAK_PATTERNS: [string, RegExp][] = [
+    ["类名", /[A-Z][A-Za-z]*(Controller|Service|Repository|Middleware)\b/],
+    ["命令", /\bgrep\b/],
+    ["契约文件名", /\b(openapi|swagger)\.ya?ml\b/],
+    ["源码 文件:行号", /\b[\w./-]+\.(ts|vue|java|yaml|yml|mjs|js|json):\d+/],
+    ["接口路径", /\/api\/v1\//],
+    ["权限原子/枚举常量", /\b[A-Z][A-Z0-9]+(_[A-Z0-9]+)+\b/],
+    ["内部票号", /\b[A-Z]-\d+\b/],
+    ["内部术语：读面", /读面/],
+    ["内部术语：契约", /契约/],
+];
+
 describe("KnowledgeResourceView — 缺口文案", () => {
-    it("四条缺口逐条渲染，每条都带自己的核法", () => {
+    it("四条缺口逐条渲染，且都不带审查者形态的字符串（D-1879 裁定二）", () => {
         const wrapper = mountView();
         const ids = ["noLibrary", "noDocList", "partition", "noWriteEntry"];
         for (const id of ids) {
             const item = wrapper.get(`[data-testid="resources-knowledge-gap-${id}"]`);
             expect(item.text().length).toBeGreaterThan(20);
-            expect(item.text()).toContain("怎么核");
+            for (const [name, pattern] of LEAK_PATTERNS) {
+                const hit = item
+                    .text()
+                    .match(
+                        new RegExp(pattern.source, "g" + (pattern.flags.includes("i") ? "i" : "")),
+                    );
+                expect(hit, `条目 ${id} 命中「${name}」形态：${hit?.join(" | ")}`).toBeNull();
+            }
         }
         // 阳性对照：四条之外不应多出条目（`<li>` 恰好 4 个），否则是模板漏了 v-for 边界
         expect(wrapper.findAll("li")).toHaveLength(4);
     });
 
-    it("点名缺的是 CP 侧的库实体，而不是笼统的「暂不可用」", () => {
+    it("用用户语言点名缺的是哪四块，而不是笼统的「暂不可用」", () => {
         const wrapper = mountView();
         const text = wrapper.text();
-        expect(text).toContain("CP");
+        // 废止「点名 CP 库实体」之后，这条的正向对应物是：用户要能看出缺的是**哪四块**。
+        // 断言锚在用户词上，不锚在实现词（实体 / 读面 / 端点 / CP）上。
         expect(text).toContain("库");
-        // 缺口的三种形态都要有名字：实体 / 文档列表 / 分区
-        expect(text).toContain("实体");
-        expect(text).toContain("文档列表");
-        expect(text).toContain("分区");
+        expect(text).toContain("文档");
+        expect(text).toContain("共享");
+        expect(text).toContain("上传");
+    });
+
+    it("整页正文同样过 9 形态负断言（条目之外的标题与引言也不许泄露）", () => {
+        const text = mountView().text();
+        for (const [name, pattern] of LEAK_PATTERNS) {
+            const hit = text.match(
+                new RegExp(pattern.source, "g" + (pattern.flags.includes("i") ? "i" : "")),
+            );
+            expect(hit, `整页命中「${name}」形态：${hit?.join(" | ")}`).toBeNull();
+        }
     });
 
     it("不承诺时间（逐条正则，命中即失败并点名）", () => {

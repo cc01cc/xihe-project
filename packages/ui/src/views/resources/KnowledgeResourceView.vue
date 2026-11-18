@@ -4,28 +4,30 @@ import { useI18n } from "vue-i18n";
 /**
  * PLAN-0772 M2：知识库（`/resources/knowledge`）—— 后端缺口 G3，本页只解释缺口。
  *
- * <p><b>task-42：文案改由实测缺口逐条驱动</b>。改之前的正文是一段概括（「CP 侧没有知识库实体」）
- * 加一句「恢复要等 G3 落地后挂到本资源页」—— 后半句是**时间承诺**，而没有人能给出这个时间，
- * 于是它既不可核也不可兑现。现在每一缺口是一条独立条目，带自己的**核法**（`basis`），
- * 文案与 `internal/A03-xihe/evidence/2026-11-13-task-42-resource-detail/README.md` 的读数一致。</p>
+ * <p><b>D-1879 裁定一（task-47）：受众口径改正。</b>本页文案只写**用户能感知的后果**。
+ * 此前每条缺口自带一句「怎么核」（`basis`：类名 / grep 命令 / 契约文件名 / 源码 `文件:行号` /
+ * 接口路径），那是**审查者的验证义务被写进了正文** —— 于是面向用户的页面长成工程工作日志。
+ * 引入它的 `225020d73` 目的正确（干掉一句不可兑现的时间承诺），错的只是把「核验方式」当「正文」。
+ * 可核验性现在归两个面，不在页面上复述：
+ *   ① 测试面 —— `__tests__/KnowledgeResourceView.spec.ts` 的 7 形态正则**负**断言（判据见 DEV-011 §14）；
+ *   ② 证据面 —— `internal/A03-xihe/evidence/2026-11-13-task-42-resource-detail/README.md`（四条读数原文）
+ *      与 `internal/A03-xihe/evidence/2026-11-19-task47-copy-audience/`（本次定性与真机盘点）。</p>
  *
- * <p>四条缺口的读面出处（逐条见 i18n 的 `gaps.*.basis`）：
- * ① CP 无库实体（openapi 的 `/api/v1/rag/*` 只有 4 条 path，CP java 里 grep 0 命中）；
- * ② 无文档列表读面（`documents/{docId}` 只有 DELETE、`stats` 的 200 无 schema）；
- * ③ 分区键是（用户, 工作区）而非库（`RagProxyController` 从 TenantContext 取分区）；
- * ④ 写入口没有挂载点（`/settings/knowledge` 路由已删、`KnowledgeBaseView` 无处挂载）。</p>
+ * <p>四条缺口：① 还没有「库」这个对象 ② 看不到库里收了哪些文档 ③ 索引按「人 + 工作区」分开、
+ * 不按库共享 ④ 上传入口当前没有挂载点。</p>
  *
- * <p><b>不承诺时间</b>：本页任何一句都不得出现「等某事件落地」「恢复要等」「计划在」这类排期措辞，
- * 机器判据见 `__tests__/KnowledgeResourceView.spec.ts` 的正则负断言。能力回来了就改文案，
- * 而不是先写一句愿望。</p>
+ * <p>出口：本页渲染在 `ResourcesLayout` 内，左侧资源目录里的凭据 / MCP 服务器 / 技能三个**可用**
+ * 项就在旁边（`settings-nav-resource-*`），不需要页内再造一个跳转按钮。</p>
+ *
+ * <p><b>不承诺时间</b>（自 task-42 保留的纪律）：本页任何一句都不得出现「等某事件落地」「恢复要等」
+ * 「计划在」这类排期措辞，机器判据见 spec 的正则负断言。能力回来了就改文案，而不是先写一句愿望。</p>
  */
-
 /** 缺口条目 id（顺序即页面顺序；文案键 = `resources.knowledgeGap.gaps.<id>.<field>`）。 */
 const GAPS = ["noLibrary", "noDocList", "partition", "noWriteEntry"] as const;
 
 const { t } = useI18n();
 
-function gapText(id: string, field: "title" | "body" | "basis"): string {
+function gapText(id: string, field: "title" | "body"): string {
     return t(`resources.knowledgeGap.gaps.${id}.${field}`);
 }
 </script>
@@ -60,9 +62,6 @@ function gapText(id: string, field: "title" | "body" | "basis"): string {
                     "
                 >
                     {{ gapText(id, "body") }}
-                </p>
-                <p class="text-xs leading-relaxed text-muted-foreground">
-                    {{ t("resources.knowledgeGap.basisLabel") }}：{{ gapText(id, "basis") }}
                 </p>
             </li>
         </ol>
