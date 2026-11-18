@@ -254,13 +254,13 @@ async def test_ask_user_refusal_paths_envelope() -> None:
         def json(self):
             return {"code": "QUESTION_NOT_FOUND"}
 
-    class _409(Exception):
+    class ConflictHttp409Error(Exception):
         def __init__(self):
             super().__init__("409")
             self.response = _Resp()
 
     async def refusing_sink409(payload: dict) -> None:
-        raise _409()
+        raise ConflictHttp409Error()
 
     context3.metadata[USER_QUESTION_EVENT_SINK_KEY] = refusing_sink409
     result3 = await tool3.execute({"question": "Which env?"}, context3)

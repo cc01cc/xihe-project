@@ -203,7 +203,7 @@ def test_answered_envelope_tool_message_roundtrips_through_storage(
     result = ToolMessage(
         content=(
             CHECKPOINT_SAFE_OUTPUT_PREFIX
-            + '{"answer":"%s","code":"","questionId":"cp-q-30","status":"answered"}' % ANSWER_CANARY
+            + f'{{"answer":"{ANSWER_CANARY}","code":"","questionId":"cp-q-30","status":"answered"}}'
             + CHECKPOINT_SAFE_OUTPUT_SUFFIX
         ),
         tool_call_id="call-ask-done",
