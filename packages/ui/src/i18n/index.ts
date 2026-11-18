@@ -9,10 +9,13 @@ const messages = {
         // 与错误码（码与原文进 technicalDetail：诊断屏折叠显示，toast 面只 logger.warn）。
         errors: {
             requestFailed: "请求失败，请稍后重试；若多次失败请联系管理员。",
-            unknownCode: "请求失败，请稍后重试；若持续失败请联系管理员并提供错误码。",
+            // Lead 裁 ②（总账 §十四 `fc327a318`，`task-64`）：诊断面的错误码**一律进折叠区**，
+            // 所以这句不能再说「提供错误码」就完事 —— 它必须指向一个**用户做得出的动作**（展开），
+            // 否则就是「文案要求用户做界面没提供的事」，正是 task-67 记过的那个形态。
+            unknownCode:
+                "请求失败，请稍后重试；若持续失败，请展开「技术详情」，把其中的错误码报给管理员。",
             technicalDetail: "技术详情",
-            // task-67：诊断面把错误码**显示出来** —— unknownCode 文案要求用户「提供错误码」，
-            // 界面就必须给出一个可看、可复制的码（本键是它的标签）。
+            // 码标签：折叠区**内部**的标签（展开后可看、可复制；折叠态不渲染，不是 display:none）。
             errorCodeLabel: "错误码",
         },
         userQuestions: {
@@ -4129,11 +4132,15 @@ const messages = {
         errors: {
             requestFailed:
                 "Request failed. Retry in a moment; contact your administrator if it keeps failing.",
+            // Lead ruling ② (ledger §14 `fc327a318`, `task-64`): diagnostic surfaces put the error
+            // code **inside the collapsed area**, so this copy must point at an action the user can
+            // actually perform (expand) — "report the error code" alone asks for something the UI
+            // hides, which is exactly the defect task-67 recorded.
             unknownCode:
-                "Request failed. Retry in a moment; if it persists, contact your administrator with the error code.",
+                "Request failed. Retry in a moment; if it persists, expand Technical details and report the error code there to your administrator.",
             technicalDetail: "Technical details",
-            // task-67: the diagnostic surface shows the code itself — errors.unknownCode asks the
-            // user to hand the code over, so the UI owes them a copyable one (label lives here).
+            // Code label: lives **inside** the collapsed area (visible and copyable after expanding;
+            // collapsed state does not render it — not display:none).
             errorCodeLabel: "Error code",
         },
         userQuestions: {

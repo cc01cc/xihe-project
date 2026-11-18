@@ -233,13 +233,20 @@ describe("WorkspaceChangesPanel slice timeline", () => {
         await settle();
         // task-175 D：诊断面三件事齐判（task-45/task-78 判据）——
         // ① 可读文案在；② copy 不含错误码、不含 API error N（禁止把码拼进文案）；
-        // ③ 码在专用可选中 code 元素里（诊断面给码，task-78 同款）。
+        // ③ 码在专用可选中 code 元素里（诊断面给码，task-78 同款）。裁 ②（总账 §十四 `fc327a318`）：码进折叠区 ⇒ 折叠态不渲染码节点，展开后出现且可复制（机器判据同 task-61）。
         const error = wrapper.find('[data-testid="workspace-checkpoint-timeline-error"]');
         expect(error.exists()).toBe(true);
         const copy = wrapper.find('[data-testid="workspace-checkpoint-timeline-error-copy"]');
         expect(copy.text()).not.toBe("");
         expect(copy.text()).not.toContain("CHECKPOINT_UNAVAILABLE");
         expect(copy.text()).not.toMatch(/API error \d+/);
+        expect(
+            wrapper.find('[data-testid="workspace-checkpoint-timeline-error-code-value"]').exists(),
+        ).toBe(false);
+        wrapper
+            .get('[data-testid="workspace-checkpoint-timeline-error-detail-toggle"]')
+            .trigger("click");
+        await settle();
         const codeValue = wrapper.find(
             '[data-testid="workspace-checkpoint-timeline-error-code-value"]',
         );

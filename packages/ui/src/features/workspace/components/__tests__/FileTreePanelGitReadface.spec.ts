@@ -118,12 +118,13 @@ describe("task-36 文件树面板 git 读面", () => {
     });
 
     /**
-     * task-78：本块是**诊断面**（持久在屏的树面板错误条）⇒ 必须给出**可见可复制**的码。
+     * task-78：本块是**诊断面**（持久在屏的树面板错误条）⇒ 必须给出**可复制**的码；
      *
      * <p>改前只渲染 `copy`，而 `presentCauseError` 对未登记码的 copy 就是
      * `errors.unknownCode`（"…请联系管理员并**提供错误码**"）—— 文案要求用户出示一个界面
      * 没提供的码，判据（"文案要求用户做一件事，界面就必须提供那件事的对应物"）因此不成立。
-     * 这里钉三件事：码在屏上、码**选得中**（`select-all`，可复制）、原文默认折叠。</p>
+     * 裁 ②（总账 §十四 `fc327a318`）：码在折叠区内 ⇒ 折叠态**不渲染该节点**（不是 display:none），展开后才可看可复制。机器判据同 task-61：折叠态缺席 + 展开后出现并含码。
+     * 这里钉四件事：折叠态码**不渲染**、展开后码在、码**选得中**（`select-all`）、原文同样默认折叠。</p>
      */
     it("在屏上给出可选中的错误码，原文收进默认折叠的诊断区", async () => {
         // 本 spec 的 module mock 把 `ApiError` 换成了裸 `class extends Error {}`（上面的
@@ -148,13 +149,13 @@ describe("task-36 文件树面板 git 读面", () => {
         expect(copy.text()).not.toContain("GIT_READFACE_UNAVAILABLE");
         expect(copy.text()).not.toContain("API error");
 
-        const code = wrapper.get('[data-testid="workspace-git-readface-error-code"]');
-        expect(code.text()).toContain(i18n.global.t("errors.errorCodeLabel"));
-        const codeValue = wrapper.get('[data-testid="workspace-git-readface-error-code-value"]');
-        expect(codeValue.element.tagName).toBe("CODE");
-        expect(codeValue.classes()).toContain("select-all");
-        expect(codeValue.text()).toBe("GIT_READFACE_UNAVAILABLE");
-
+        // 裁 ②（总账 §十四 `fc327a318`）：码在折叠区内 ⇒ 折叠态**不渲染该节点**（不是 display:none），展开后才可看可复制。机器判据同 task-61：折叠态缺席 + 展开后出现并含码。
+        expect(wrapper.find('[data-testid="workspace-git-readface-error-code"]').exists()).toBe(
+            false,
+        );
+        expect(
+            wrapper.find('[data-testid="workspace-git-readface-error-code-value"]').exists(),
+        ).toBe(false);
         expect(
             wrapper.find('[data-testid="workspace-git-readface-error-detail-body"]').exists(),
         ).toBe(false);
@@ -162,6 +163,12 @@ describe("task-36 文件树面板 git 读面", () => {
             .get('[data-testid="workspace-git-readface-error-detail-toggle"]')
             .trigger("click");
         await flushPromises();
+        const code = wrapper.get('[data-testid="workspace-git-readface-error-code"]');
+        expect(code.text()).toContain(i18n.global.t("errors.errorCodeLabel"));
+        const codeValue = wrapper.get('[data-testid="workspace-git-readface-error-code-value"]');
+        expect(codeValue.element.tagName).toBe("CODE");
+        expect(codeValue.classes()).toContain("select-all");
+        expect(codeValue.text()).toBe("GIT_READFACE_UNAVAILABLE");
         expect(wrapper.get('[data-testid="workspace-git-readface-error-detail-body"]').text()).toBe(
             "API error 500",
         );

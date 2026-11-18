@@ -393,10 +393,11 @@ function openCreate() {
             <!--
                 task-67：本卡是**诊断面**（持久在屏的错误条，AGENTS.md「错误面：错误码 → 文案」）。
                 改前只渲染 `store.error`（= presentCauseError 的 copy），而 copy 的兜底一句正是
-                「…请联系管理员**并提供错误码**」⇒ 文案要求用户做一件界面没提供的事（实测
+                「…请联系管理员并提供错误码」⇒ 文案要求用户做一件界面没提供的事（实测
                 `main.innerText` 里 hasCode=false）。修法按诊断面走：copy 照常渲染；错误码单独给出
-                且**可看见、可复制**（`<code>` 选得中）；原始 detail 收进 vendor Collapsible，
-                默认折叠、为空时不渲染空壳。
+                Lead 裁 ②（总账 §十四 `fc327a318`，`task-64`）把「可见可复制」改成**展开后可复制**：码收进折叠区，折叠态不渲染该节点。 原始 detail 与码同在 vendor Collapsible 内，
+                默认折叠、**两者都空时不渲染空壳**（`v-if="code || technicalDetail"`）。
+                改前的读数（`main.innerText` 里 hasCode=false）已由 `task-67` 记录，形态照 task-61。
             -->
             <div
                 v-else-if="store.error && store.tasks.length === 0"
@@ -406,19 +407,7 @@ function openCreate() {
                 <p data-testid="scheduled-tasks-error-copy" role="alert">
                     {{ store.error.copy }}
                 </p>
-                <p
-                    v-if="store.error.code"
-                    data-testid="scheduled-tasks-error-code"
-                    class="mt-2 text-xs text-muted-foreground"
-                >
-                    {{ t("errors.errorCodeLabel") }}
-                    <code
-                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
-                        data-testid="scheduled-tasks-error-code-value"
-                        >{{ store.error.code }}</code
-                    >
-                </p>
-                <Collapsible v-if="store.error.technicalDetail">
+                <Collapsible v-if="store.error.code || store.error.technicalDetail">
                     <CollapsibleTrigger as-child>
                         <button
                             type="button"
@@ -429,7 +418,20 @@ function openCreate() {
                         </button>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
+                        <p
+                            v-if="store.error.code"
+                            data-testid="scheduled-tasks-error-code"
+                            class="mt-1 text-xs text-muted-foreground"
+                        >
+                            {{ t("errors.errorCodeLabel") }}
+                            <code
+                                class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                                data-testid="scheduled-tasks-error-code-value"
+                                >{{ store.error.code }}</code
+                            >
+                        </p>
                         <pre
+                            v-if="store.error.technicalDetail"
                             data-testid="scheduled-tasks-error-detail-body"
                             class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
                             >{{ store.error.technicalDetail }}</pre>

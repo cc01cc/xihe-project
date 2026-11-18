@@ -264,20 +264,10 @@ watch(
                         {{ timelineError.copy }}
                     </p>
                     <!-- task-175 D：诊断面须透传错误码（task-45 把变更面板列诊断面；task-78 补码标签时漏了本面板）。
-                         形态照 FileTreePanel git readface：label + 可选中 code，码为空不渲染空壳。 -->
-                    <p
-                        v-if="timelineError.code"
-                        data-testid="workspace-checkpoint-timeline-error-code"
-                        class="text-xs text-muted-foreground"
-                    >
-                        {{ t("errors.errorCodeLabel") }}
-                        <code
-                            class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
-                            data-testid="workspace-checkpoint-timeline-error-code-value"
-                            >{{ timelineError.code }}</code
-                        >
-                    </p>
-                    <Collapsible v-if="timelineError.technicalDetail">
+                         Lead 裁 ②（总账 §十四 `fc327a318`，`task-64`）：诊断面的错误码**一律进折叠区**，两种诊断面收敛成一种形态（= task-61 的 `SkillsImportDialog`）。不加面白名单 —— 那会把 DEV-011 §14.1 的唯一判据层从渲染文本换成 DOM 轴。折叠态码节点**不渲染**（不是 `display:none`），展开后可看、可复制。
+                         门的一手实证（`task-58`）：本面在 checkpoint 503 在屏时被 DEV-011 §14 判红一次
+                         （格子 `session`、形态「权限原子/枚举常量」、样例 `CHECKPOINT_UNAVAILABLE`，复跑归零）。 -->
+                    <Collapsible v-if="timelineError.code || timelineError.technicalDetail">
                         <CollapsibleTrigger as-child>
                             <button
                                 type="button"
@@ -288,7 +278,20 @@ watch(
                             </button>
                         </CollapsibleTrigger>
                         <CollapsibleContent>
+                            <p
+                                v-if="timelineError.code"
+                                data-testid="workspace-checkpoint-timeline-error-code"
+                                class="mt-1 text-xs text-muted-foreground"
+                            >
+                                {{ t("errors.errorCodeLabel") }}
+                                <code
+                                    class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                                    data-testid="workspace-checkpoint-timeline-error-code-value"
+                                    >{{ timelineError.code }}</code
+                                >
+                            </p>
                             <pre
+                                v-if="timelineError.technicalDetail"
                                 data-testid="workspace-checkpoint-timeline-error-detail-body"
                                 class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
                                 >{{ timelineError.technicalDetail }}</pre>

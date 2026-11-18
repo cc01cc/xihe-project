@@ -229,7 +229,7 @@ describe("ScheduledTasksView list rendering", () => {
      * <p>形态与设置区诊断面（`DataControlsView` / `WorkspaceChangesPanel`）同一套：copy 段
      * 用 copy / code 单列 / detail 进 vendor Collapsible。**不手拼 ``${code}: ${detail}``**。</p>
      */
-    it("task-67：错误码在诊断面可见可复制，原始 detail 收进默认折叠", async () => {
+    it("task-67/裁②：错误码与原始 detail 同在默认折叠的诊断区，展开后可看可复制", async () => {
         // 复现实拍口径：码是后端未登记的假码，detail 是客户端兜底 `API error 500`。
         mockedApi.listScheduledTasks.mockRejectedValue(
             new ApiError({
@@ -248,7 +248,21 @@ describe("ScheduledTasksView list rendering", () => {
         expect(copy.text()).not.toContain("someCode");
         expect(copy.text()).not.toMatch(/API error \d+/);
 
-        // ③ 正向判据（本卡存在的理由）：具体错误码必须能在屏上看到，且可复制。
+        // ③ 默认折叠：**码与 detail 都不挂载**（不是隐藏节点）。
+        // 裁 ②（总账 §十四 `fc327a318`）：码在折叠区内 ⇒ 折叠态**不渲染该节点**（不是 display:none），展开后才可看可复制。机器判据同 task-61：折叠态缺席 + 展开后出现并含码。
+        expect(wrapper.find('[data-testid="scheduled-tasks-error-code"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="scheduled-tasks-error-code-value"]').exists()).toBe(
+            false,
+        );
+        const toggle = wrapper.get('[data-testid="scheduled-tasks-error-detail-toggle"]');
+        expect(toggle.text()).toBe(i18n.global.t("errors.technicalDetail"));
+        expect(wrapper.find('[data-testid="scheduled-tasks-error-detail-body"]').exists()).toBe(
+            false,
+        );
+
+        // ④ 正向判据：展开后码出现、是 <code>、选得中（"可复制"在展开后成立）。
+        await toggle.trigger("click");
+        await flushPromises();
         const codeValue = wrapper.get('[data-testid="scheduled-tasks-error-code-value"]');
         expect(codeValue.text()).toContain("someCode");
         expect(codeValue.element.tagName.toLowerCase()).toBe("code");
@@ -256,16 +270,6 @@ describe("ScheduledTasksView list rendering", () => {
         expect(wrapper.get('[data-testid="scheduled-tasks-error-code"]').text()).toContain(
             i18n.global.t("errors.errorCodeLabel"),
         );
-
-        // ④ 默认折叠：触发器在，正文不挂载（不为空壳渲染隐藏节点）。
-        const toggle = wrapper.get('[data-testid="scheduled-tasks-error-detail-toggle"]');
-        expect(toggle.text()).toBe(i18n.global.t("errors.technicalDetail"));
-        expect(wrapper.find('[data-testid="scheduled-tasks-error-detail-body"]').exists()).toBe(
-            false,
-        );
-
-        await toggle.trigger("click");
-        await flushPromises();
         expect(wrapper.get('[data-testid="scheduled-tasks-error-detail-body"]').text()).toBe(
             "API error 500",
         );

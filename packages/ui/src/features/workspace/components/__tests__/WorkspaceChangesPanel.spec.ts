@@ -64,6 +64,10 @@ describe("WorkspaceChangesPanel 错误面（task-45）", () => {
             '[data-testid="workspace-checkpoint-timeline-error-detail-toggle"]',
         );
         expect(toggle.text()).toBe(i18n.global.t("errors.technicalDetail"));
+        // 裁 ②（总账 §十四 `fc327a318`）：码进折叠区 ⇒ 折叠态不渲染码节点，展开后出现且可复制（机器判据同 task-61）。：折叠态码节点与 detail 节点都不渲染。
+        expect(
+            wrapper.find('[data-testid="workspace-checkpoint-timeline-error-code-value"]').exists(),
+        ).toBe(false);
         expect(
             wrapper
                 .find('[data-testid="workspace-checkpoint-timeline-error-detail-body"]')
@@ -75,9 +79,17 @@ describe("WorkspaceChangesPanel 错误面（task-45）", () => {
         expect(
             wrapper.get('[data-testid="workspace-checkpoint-timeline-error-detail-body"]').text(),
         ).toBe("API error 503");
+        expect(
+            wrapper.get('[data-testid="workspace-checkpoint-timeline-error-code-value"]').text(),
+        ).toBe("CHECKPOINT_UNAVAILABLE");
     });
 
-    it("没有 detail 时不渲染空的折叠区", async () => {
+    /**
+     * 裁 ② 后的「空壳」判据换了轴：折叠区的 `v-if` 是 `code || technicalDetail` ——
+     * **只有码**时折叠区必须渲染（否则码就没有落脚处），**两者都无**时才不渲染空壳。
+     * 两档分开钉，别只留旧的那半（旧断言是「没有 detail ⇒ 没有触发器」，裁 ② 后它就是错的）。
+     */
+    it("只有码、没有 detail 时仍渲染诊断区，但折叠态不渲染码节点", async () => {
         mockedApi.listWorkspaceCheckpoints.mockRejectedValue(
             new ApiError({ status: 503, code: "CHECKPOINT_UNAVAILABLE", requestId: "test" }),
         );
@@ -87,6 +99,40 @@ describe("WorkspaceChangesPanel 错误面（task-45）", () => {
         });
         await flushPromises();
 
+        expect(
+            wrapper.find('[data-testid="workspace-checkpoint-timeline-error-copy"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper
+                .find('[data-testid="workspace-checkpoint-timeline-error-detail-toggle"]')
+                .exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="workspace-checkpoint-timeline-error-code-value"]').exists(),
+        ).toBe(false);
+        wrapper
+            .get('[data-testid="workspace-checkpoint-timeline-error-detail-toggle"]')
+            .trigger("click");
+        await flushPromises();
+        expect(
+            wrapper.get('[data-testid="workspace-checkpoint-timeline-error-code-value"]').text(),
+        ).toBe("CHECKPOINT_UNAVAILABLE");
+        // detail 为空 ⇒ 区内不出现 detail 节点（不为空壳渲染隐藏节点）。
+        expect(
+            wrapper
+                .find('[data-testid="workspace-checkpoint-timeline-error-detail-body"]')
+                .exists(),
+        ).toBe(false);
+    });
+
+    it("码与 detail 都取不到 ⇒ 不渲染空折叠区", async () => {
+        // 非 ApiError（无 `problem.code`）⇒ `presentError` 返回 code/technicalDetail 双 null（errorMessages.ts:230）。
+        mockedApi.listWorkspaceCheckpoints.mockRejectedValue(new Error("network down"));
+        const wrapper = mount(WorkspaceChangesPanel, {
+            props: { workspaceId: WORKSPACE_ID },
+            global: { plugins: [i18n] },
+        });
+        await flushPromises();
         expect(
             wrapper.find('[data-testid="workspace-checkpoint-timeline-error-copy"]').exists(),
         ).toBe(true);

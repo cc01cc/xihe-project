@@ -392,7 +392,9 @@ function upload() {
             </p>
             <!--
                 task-78：本块是**诊断面**（持久在屏的树面板错误条），按 AGENTS.md 错误面契约：
-                copy（role="alert"）+ **可见可复制的错误码** + 折叠的 technicalDetail。
+                copy（role="alert"）+ 折叠的 technicalDetail，**错误码也进同一个折叠区**（区内 label + 可选中 code）。
+                Lead 裁 ②（总账 §十四 `fc327a318`，`task-64`）把「可见可复制」改成**展开后可复制**：码收进折叠区，折叠态不渲染该节点。
+                为什么必须有码：见下两行 —— 兜底文案要求用户提供错误码。
                 改前只渲染 `copy`，而 copy 的兜底句（errors 域的 unknownCode 键）正是
                 "…并提供**错误码**" ⇒ 文案要求用户做一件界面没提供的事。composable 早已给出整份 ErrorPresentation
                 （useWorkspaceGitReadState.ts:21），这里只是模板没用 ⇒ 不改数据流。
@@ -409,19 +411,7 @@ function upload() {
                 >
                     {{ gitRead.error.value.copy }}
                 </p>
-                <p
-                    v-if="gitRead.error.value.code"
-                    data-testid="workspace-git-readface-error-code"
-                    class="text-muted-foreground"
-                >
-                    {{ t("errors.errorCodeLabel") }}
-                    <code
-                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
-                        data-testid="workspace-git-readface-error-code-value"
-                        >{{ gitRead.error.value.code }}</code
-                    >
-                </p>
-                <Collapsible v-if="gitRead.error.value.technicalDetail">
+                <Collapsible v-if="gitRead.error.value.code || gitRead.error.value.technicalDetail">
                     <CollapsibleTrigger as-child>
                         <button
                             type="button"
@@ -432,7 +422,20 @@ function upload() {
                         </button>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
+                        <p
+                            v-if="gitRead.error.value.code"
+                            data-testid="workspace-git-readface-error-code"
+                            class="mt-1 text-muted-foreground"
+                        >
+                            {{ t("errors.errorCodeLabel") }}
+                            <code
+                                class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
+                                data-testid="workspace-git-readface-error-code-value"
+                                >{{ gitRead.error.value.code }}</code
+                            >
+                        </p>
                         <pre
+                            v-if="gitRead.error.value.technicalDetail"
                             data-testid="workspace-git-readface-error-detail-body"
                             class="mt-1 max-h-32 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
                             >{{ gitRead.error.value.technicalDetail }}</pre>
