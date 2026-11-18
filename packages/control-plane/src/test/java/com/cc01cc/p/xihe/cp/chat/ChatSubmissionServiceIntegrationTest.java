@@ -48,7 +48,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
@@ -91,6 +95,14 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private MessageRepository messageRepository;
+
+    /**
+     * task-40 S3 N2 counter-evidence: the chain seam must be OBSERVABLE here. A SpyBean keeps the
+     * real behaviour (the 28 existing cases still walk the real chain), so the two handoff cases below
+     * can prove both directions — MODEL_RESPONSE enters it exactly once, AGENT_HANDOFF never.
+     */
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    private WakeChainService wakeChainService;
 
     @Autowired
     private McpInvocationRepository mcpInvocationRepository;
@@ -1185,6 +1197,81 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(assistantId);
         assertNull(messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
                 "no participant row ⇒ NULL; the read face then omits the field and the UI renders no badge");
+    }
+
+    // -------------------------------- task-40 S3 (D-1884 / D-1885): the agent handoff write kind
+
+    /**
+     * N2 counter-evidence #1 (Lead: 「assistant_message_id 仍指向真答案」). An agent handoff line is
+     * an ASSISTANT message under the CALLING run — that is what 告知 means on screen (Q3) — but it must
+     * not become the Run's reply. If the pointer moved, every trace/continuation reader that resolves
+     * a Run through assistant_message_id would start showing the handoff sentence instead of the
+     * answer, and the model reply would become unreachable from its own Run.
+     */
+    @Test
+    void agentHandoffLineIsAnnouncedWithoutMovingTheRunAssistantPointer() {
+        ChatFixture fixture = createChatFixture("handoff-pointer");
+        saveBoundSession(fixture.session(), fixture.principal());
+        UUID participantId = sessionParticipantRepository
+                .findFirstBySessionIdAndPrincipalId(fixture.session().getId(), fixture.principal().getId())
+                .orElseThrow().getId();
+        String sessionId = fixture.session().getId().toString();
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "handoff host",
+                fixture.principal().getId().toString());
+
+        String modelReplyId = submissionService.persistAssistantResponse(sessionId, runId,
+                "the real answer", null);
+        String handoffId = submissionService.persistAssistantResponse(sessionId, runId,
+                "交接给下游继续", null, ChatSubmissionService.AssistantWriteKind.AGENT_HANDOFF);
+        assertNotNull(handoffId, "the hand-off line is persisted, not dropped");
+
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertEquals(modelReplyId, run.getAssistantMessageId(),
+                "AGENT_HANDOFF never moves chat_runs.assistant_message_id");
+        Message handoff = messageRepository.findById(UUID.fromString(handoffId)).orElseThrow();
+        assertEquals(MessageRole.ASSISTANT, handoff.getRole(),
+                "Q3: the audience reads it as the agent speaking in the session");
+        assertEquals(runId, handoff.getRunId(), "the line belongs to the CALLING run");
+        assertEquals(sessionId, handoff.getSessionId());
+        assertEquals(run.getBranchId(), handoff.getBranchId(),
+                "branch stamp comes from the same write point (PLAN-0669 one-resolution rule)");
+        assertEquals(participantId, handoff.getParticipantId(),
+                "durable actor attribution is stamped here too — the write point stays single-source");
+        assertNull(handoff.getToolCalls(),
+                "the Run tool-call snapshot is not copied onto a second message");
+        // The submission's own USER message carries the same run_id, so the run owns three rows:
+        // user + model reply + announcement. Counting ASSISTANT rows is the assertion that matters.
+        assertEquals(2, messageRepository.findAll().stream()
+                .filter(message -> runId.equals(message.getRunId()))
+                .filter(message -> message.getRole() == MessageRole.ASSISTANT).count(),
+                "both assistant lines exist side by side: the answer and the announcement");
+    }
+
+    /**
+     * N2 counter-evidence #2 (Lead: 「:361 会二次自动开链」). A handoff names its audience explicitly
+     * through the TO fan-out; re-entering the mention chain with the same sentence would be a SECOND
+     * dispatch mechanism for one message, and it would also dodge the duplicate-hop gate that only
+     * exists because the fan-out passes a parentRunId. Asserted in BOTH directions so the case cannot
+     * pass vacuously.
+     */
+    @Test
+    void agentHandoffLineNeverReentersTheMentionChain() {
+        ChatFixture fixture = createChatFixture("handoff-chain");
+        saveBoundSession(fixture.session(), fixture.principal());
+        String sessionId = fixture.session().getId().toString();
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "chain host",
+                fixture.principal().getId().toString());
+
+        submissionService.persistAssistantResponse(sessionId, runId,
+                "@Someone model reply", null);
+        verify(wakeChainService, times(1)).onAssistantContent(sessionId, runId, "@Someone model reply");
+
+        clearInvocations(wakeChainService);
+        submissionService.persistAssistantResponse(sessionId, runId, "@Someone 交接句", null,
+                ChatSubmissionService.AssistantWriteKind.AGENT_HANDOFF);
+        verify(wakeChainService, never()).onAssistantContent(any(), any(), any());
     }
 
     /** PLAN-0669 M1b: the durable listing projects participantId only when attributed. */

@@ -250,10 +250,40 @@ public class WakeFanOutService {
     public TargetedWake targetedFanOut(UUID sessionId, String workspaceId, String userId,
                                        String rootRunId, String content,
                                        List<UUID> targetParticipantIds) {
+        // Human-initiated TO: the targets are SIBLINGS of one user submission, so the wake edge
+        // stays NULL and the Run is classified user-triggered (Q2 above).
+        return targetedWake(sessionId, workspaceId, userId, rootRunId, content, targetParticipantIds,
+                "wake:to:" + rootRunId, "user", "to", null);
+    }
+
+    /**
+     * task-40 §3 (D-1884 / D-1885): the SAME fan-out entered by an AGENT during its own run.
+     *
+     * <p>Only the coordinates differ, which is why this is one dispatch loop and not two:
+     * {@code wakeRoundId} is namespaced {@code wake:to:agent:} so a reader of the audit trail can
+     * tell the agent round apart from a human round without touching the Run rows; the created Run
+     * is classified {@code chain} (Lead's Q1 — zero migration, the CHECK already allows it); and
+     * {@code parentRunId} is the CALLING run, which is what makes the durable hop edge real. That
+     * last one is not decoration: {@code WakeDispatchService.refuseBrokenChain} dedupes by
+     * (parentRunId, responderPrincipal) and applies the cycle/depth gates only when a parent is
+     * present, so a handoff dispatched with a NULL parent would let one run wake the same
+     * participant twice. The "parent_run_id stays NULL on purpose" note above is about human
+     * siblings and does not extend here — an agent handoff IS a delegation edge.</p>
+     */
+    public TargetedWake agentHandoffFanOut(UUID sessionId, String workspaceId, String userId,
+                                           String callingRunId, String content,
+                                           List<UUID> targetParticipantIds) {
+        return targetedWake(sessionId, workspaceId, userId, callingRunId, content,
+                targetParticipantIds, "wake:to:agent:" + callingRunId, "chain", "to", callingRunId);
+    }
+
+    private TargetedWake targetedWake(UUID sessionId, String workspaceId, String userId,
+                                      String rootRunId, String content,
+                                      List<UUID> targetParticipantIds, String wakeRoundId,
+                                      String runTriggerSource, String auditLabel, String parentRunId) {
         if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
             return new TargetedWake(List.of(), List.of(), List.of(), List.of(), List.of(), 0);
         }
-        String wakeRoundId = "wake:to:" + rootRunId;
         List<UUID> runIds = new ArrayList<>();
         List<TargetedFailure> failedTargets = new ArrayList<>();
         List<TargetedFailure> deferredTargets = new ArrayList<>();
@@ -262,10 +292,13 @@ public class WakeFanOutService {
         for (UUID participantId : targetParticipantIds) {
             WakeDispatchService.WakeFireResult result;
             try {
-                // Column value "user" (a TO target run IS user-triggered; chat_runs.trigger_source
-                // CHECK only allows user/mention/schedule/judge/guard/chain), audit label "to".
-                result = wakeDispatchService.fire(participantId, "user", "to", wakeRoundId, sessionId,
-                        null, content);
+                // Column value and audit label come from the entry, not from here (task-40 §3):
+                // human TO ⇒ "user" + NULL parent (siblings of one submission); an agent handoff ⇒
+                // "chain" + the calling run (a real delegation edge, and the only shape where
+                // refuseBrokenChain's duplicate-hop gate applies). chat_runs.trigger_source CHECK
+                // allows both values already, which is why Q1 needed zero migration.
+                result = wakeDispatchService.fire(participantId, runTriggerSource, auditLabel,
+                        wakeRoundId, sessionId, parentRunId, content);
             } catch (RuntimeException failure) {
                 // Q3 (task-34 invariant): one target's failure never aborts the fan-out round, but it
                 // is never silent either — the caller reports it as failedTargets[].
@@ -509,29 +542,85 @@ public class WakeFanOutService {
      */
     private void notifyObserver(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
                                 MentionParser.RosterEntry observer) {
+        notifyObserver(sessionId, workspaceId, userId, wakeRoundId, observer.participantId());
+    }
+
+    /**
+     * task-40 §3 (D-1885): the CC half of an agent-initiated handoff — 告知不指派.
+     *
+     * <p>Same durable notify the human composer cc round produces (one
+     * {@code wake_dispatch} row with {@code triggerSource="cc", outcome="notify"}), reached WITHOUT
+     * going through {@link #fanOut}: the handoff line is prose the caller wrote on purpose, and
+     * re-parsing it for mentions would let the text itself decide who gets a Run — the second
+     * dispatch mechanism Q1/N3 exists to prevent. Membership and enablement are gated here against
+     * the roster row, so the caller cannot bypass them either. Both drop reasons reuse the
+     * vocabulary {@code resolveCcObservers} already logs ({@code not_in_roster} / {@code disabled}),
+     * and a missing roster collaborator (unit wiring) reuses the existing
+     * {@code wake_roster_unreadable} event name: this method adds no event name and no reason
+     * token.</p>
+     *
+     * @return the participant ids actually notified, in request order; the caller subtracts this
+     *     from what it asked for to report the ignored ones
+     */
+    public List<UUID> notifyExplicitObservers(UUID sessionId, String workspaceId, String userId,
+                                              String wakeRoundId, List<UUID> participantIds) {
+        List<UUID> notified = new ArrayList<>();
+        if (participantIds == null || participantIds.isEmpty()) {
+            return notified;
+        }
+        if (participantRepository == null) {
+            logger.warn("[LIFECYCLE] service=cp event=wake_roster_unreadable sessionId={} round={} " +
+                    "scope=explicit_cc observers={}", sessionId, wakeRoundId, participantIds.size());
+            return notified;
+        }
+        Set<UUID> seen = new HashSet<>();
+        for (UUID participantId : participantIds) {
+            if (participantId == null || !seen.add(participantId)) {
+                continue;
+            }
+            var row = participantRepository.findByIdAndSessionId(participantId, sessionId);
+            if (row.isEmpty()) {
+                logger.warn("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc " +
+                        "outcome=ignored reason=not_in_roster sessionId={} participantId={} round={}",
+                        sessionId, participantId, wakeRoundId);
+                continue;
+            }
+            if (row.get().getDisabledAt() != null) {
+                logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc " +
+                        "outcome=ignored reason=disabled sessionId={} participantId={} round={}",
+                        sessionId, participantId, wakeRoundId);
+                continue;
+            }
+            notifyObserver(sessionId, workspaceId, userId, wakeRoundId, participantId);
+            notified.add(participantId);
+        }
+        return notified;
+    }
+
+    private void notifyObserver(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
+                                UUID participantId) {
         if (eventStoreService != null) {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("wakeRoundId", wakeRoundId);
-            payload.put("participantId", observer.participantId().toString());
+            payload.put("participantId", participantId.toString());
             payload.put("triggerSource", "cc");
             payload.put("outcome", "notify");
             eventStoreService.append(sessionId.toString(), workspaceId, userId, EVENT_WAKE_DISPATCH, payload);
         }
-        pushObserverHint(sessionId, observer);
-        logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc outcome=notify "
-                        + "sessionId={} participantId={} round={}",
-                sessionId, observer.participantId(), wakeRoundId);
+        pushObserverHint(sessionId, participantId);
+        logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc outcome=notify " +
+                "sessionId={} participantId={} round={}", sessionId, participantId, wakeRoundId);
     }
 
     /**
      * T5.5 seam: resolve the observer's principal (the roster entry carries no principal id) and push
      * the hint. No-op when the user channel or the participant lookup is absent.
      */
-    private void pushObserverHint(UUID sessionId, MentionParser.RosterEntry observer) {
+    private void pushObserverHint(UUID sessionId, UUID participantId) {
         if (userChannel == null || participantRepository == null) {
             return;
         }
-        participantRepository.findById(observer.participantId()).ifPresent(row -> {
+        participantRepository.findById(participantId).ifPresent(row -> {
             if (row.getPrincipalId() == null) {
                 return;
             }

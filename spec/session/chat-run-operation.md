@@ -9,8 +9,8 @@
 > Owner：CP ChatRun + Follow-up Queue + Run Guidance domains
 >
 > 消费者：Agent、Runtime、UI、Audit
-> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、PLAN-0529、PLAN-0530、PLAN-0536、PLAN-0630、DEV-014、DEV-017
-> 更新日期：2026-11-03
+> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、PLAN-0529、PLAN-0530、PLAN-0536、PLAN-0630、DEV-014、DEV-017、task-40 §3（D-1884/D-1885）
+> 更新日期：2026-11-19
 
 ## 三类对象
 
@@ -128,6 +128,38 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 
 - 不复用 EventStore/Operation audit；不复用 Follow-up Queue 状态；不新增 SSE 事件类型（候选①）；不改变取消/审批/续跑端点。
 - 续跑（0510）新 Run 读不到源 Run 的 pending Guidance（runId 隔离 + terminal 收敛）；已消费条目**不在**本表迁移。
+
+## Agent 发起的 TO（task-40 §3，D-1884 / D-1885）
+
+**`POST /internal/v1/chat/runs/{runId}/to`**（服务间，`Authorization: Bearer <service token>`）
+
+- 语义：处于自己 run 中的 agent 把会话**指派**给同会话的其他参与者，等价于人在 composer 上点 TO，但不需要人手。
+- 调用方 = 路径里的 `runId`：session / workspace / owner / 回复主体一律从 `chat_runs` 行派生，body **不带任何身份字段**，因此命名他人永远不会以他人名义说话（Q2 裁定：因此不需要新能力原子；speak-as 仍是会话 owner）。
+- 受众与投递语义与**人发起 TO 完全同构**：`toParticipantIds` 里的 AGENT 用自己的 run 接手、HUMAN 只收通知；`ccParticipantIds` 一律只收通知、**永不开 run**；已在 TO 里的 id 不会被 CC 二次通知。响应 `to` 落五桶 `runIds/failedTargets/deferredTargets/notifiedTargets/suppressedTargets`，守恒式沿用 `TargetedWake.accounted()`（BL-283 / task-53 / task-60 建立的同一不变量）。
+- 必带 `Idempotency-Key`（1..128）。
+
+### 发起方辨识：在审计面，不在 run 行（Q1 裁定，零迁移）
+
+> **人发起 vs agent 发起靠审计面区分、不靠 run 行**；origin 侧 wake run 一律 `scheduled` 那条限制，请用 `wake_dispatch` 审计行的 `triggerSource="to"` 补齐。
+
+- 被本面开出的 run 记 `trigger_source="chain"`（`chat_runs.trigger_source` 的 CHECK 本就允许该值 ⇒ 零迁移）；人发起的 TO 仍记 `user`。
+- 三件套判据（读 `context_events` 里 `event_type=wake_dispatch` 的行）：`parentRunId != null` ∧ 审计 label `to` ∧ 轮次前缀 `wake:to:agent:`。人发起的 TO 是**同一次提交的兄弟**，`parentRunId` 故意为 NULL——两个形状因此可分，且 agent 发起的这一条是**真实委派边**。
+- `agent_to`（在 run 行上直接区分发起方）是**未来升级项，不是本批欠账**；不得以「先加列再说」绕过上面这段注释。
+
+### 告知落库的窄写入（Q3 裁定）与两处禁用的副作用
+
+- 验收原话的动词是「告知」，因此交接话 MUST 落成**调用方 run 名下的一条 ASSISTANT `messages` 行**（只进 wake prompt 等于观众看不见 LEAD 说了什么）。
+- 写入 MUST 经**唯一 assistant 写入点** `ChatSubmissionService.persistAssistantResponse(..., AssistantWriteKind.AGENT_HANDOFF)`，并且 MUST NOT：① 移动 `chat_runs.assistant_message_id`（真答案仍是该 run 的回复；指针被顶掉会让答案从自己的 run 上消失）；② 再次进入 `WakeChainService.onAssistantContent`（受众已由本面显式派发，二次开链等于给同一条正文两套派发机制）。
+- 反证在 `ChatSubmissionServiceIntegrationTest`：`agentHandoffLineIsAnnouncedWithoutMovingTheRunAssistantPointer`（指针仍等于模型回复 id；branch/participant 归属仍由同一点解析）、`agentHandoffLineNeverReentersTheMentionChain`（双向断言：MODEL_RESPONSE 恰一次进链，AGENT_HANDOFF 从不进链）。
+- 一个受众都没被动时（全 failed/ignored）`messageId=null`，会话里**不得**出现宣告性文字——「说了要通知谁但什么都没发生」正是本面要消灭的形状。
+
+### 与相邻机制边界
+
+- 不新增能力原子（Q2）、不新增事件名与计数维度（沿用 `wake_dispatch` 的 `outcome`/`reason`；CC 的丢弃原因沿用既有 `not_in_roster`/`disabled`，无 roster 协作者时沿用 `wake_roster_unreadable`）、不新增表与迁移、不改 SSE 载荷。
+- 跨会话目标不是请求错误：AGENT 侧落 `wake_dispatch{outcome=refused}`，其 `reason` 以 `cross_session:` 起头（完整串见 `WakeDispatchService:175`），响应桶里 `detail="cross_session"`；CC 侧只记日志 `triggerSource=cc outcome=ignored reason=not_in_roster`。两侧均不 wake、不计数为成功。
+- 点名解析失败的可见性另有卡承接（task-63 已落 `reason=mention_unresolved` 读数；task-66 ① 收口会话 UI 可见性），本节只声明 TO 面的受众必须是**参与者 id**而非姓名 token。
+- 幂等现状（如实）：重复调用不会重复 wake——唯一性锚点是 durable 唤醒边 `(parentRunId, 回复主体)`（`WakeDispatchService.refuseBrokenChain`）；本面**尚未持久化请求哈希**，故同 key 换内容仍会再落一条告知。补齐需要唯一约束存储（`chat_run_guidance` 的 `uq_..._run_idempotency` 是先例），属需要裁定的独立一步，不在本批。
+- agent 侧的**载体**（模型可调用的内置工具）属第二批，排在第一批落地之后、真机验收之前（K1 裁定）；在此之前本面的真机读数只能称「内部面打通」，不等于验收原话成立。
 
 ## 恢复
 

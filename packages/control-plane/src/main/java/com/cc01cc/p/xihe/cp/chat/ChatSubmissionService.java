@@ -317,6 +317,39 @@ public class ChatSubmissionService {
     }
 
     /**
+     * PLAN-0669 M1/D2 froze this as the ONE assistant write point (durable actor attribution,
+     * one resolution per Message). task-40 §3 N2' keeps it that way: a second write site would
+     * have re-derived {@code messages.participant_id} and the branch stamp on its own, which is
+     * exactly the drift that comment was written to prevent. What varies between call reasons is
+     * therefore expressed as ONE concept here — the {@link AssistantWriteKind} — not as a parallel
+     * method.
+     */
+    public enum AssistantWriteKind {
+        /** The model's own reply: it owns the Run's {@code assistant_message_id} pointer, carries
+         *  the tool-call snapshot, and may open a wake chain from mentions in the text
+         *  (PLAN-0624 M3). */
+        MODEL_RESPONSE(true, true, true),
+        /** An agent-initiated handoff line (POST /internal/v1/chat/runs/{runId}/to). It renders in
+         *  the session under the CALLING Run — that is what "告知" means on screen — but it must not
+         *  take over {@code assistant_message_id} (the real answer stays the Run's reply, and a
+         *  pointer that moves makes the reply invisible to trace readers), must not copy the Run's
+         *  tool-call snapshot onto a second message, and must not re-open the mention chain, because
+         *  its audience is dispatched explicitly by the caller. */
+        AGENT_HANDOFF(false, false, false);
+
+        private final boolean stampsRunPointer;
+        private final boolean carriesToolCalls;
+        private final boolean triggersWakeChain;
+
+        AssistantWriteKind(boolean stampsRunPointer, boolean carriesToolCalls,
+                           boolean triggersWakeChain) {
+            this.stampsRunPointer = stampsRunPointer;
+            this.carriesToolCalls = carriesToolCalls;
+            this.triggersWakeChain = triggersWakeChain;
+        }
+    }
+
+    /**
      * Persists an assistant response and links it to its Run in the existing order.
      *
      * <p>PLAN-0572 D1=A/D5: the Message carries a bounded snapshot of this Run's
@@ -335,8 +368,24 @@ public class ChatSubmissionService {
      */
     public String persistAssistantResponse(String sessionId, String runId, String assistantContent,
                                            String reasoningContent) {
+        return persistAssistantResponse(sessionId, runId, assistantContent, reasoningContent,
+                AssistantWriteKind.MODEL_RESPONSE);
+    }
+
+    /**
+     * task-40 §3 N2': the single assistant write point with the write reason named.
+     *
+     * <p>The two behaviours a handoff must NOT inherit are asserted by tests in both directions
+     * ({@code ChatSubmissionServiceHandoffWriteTest}): with {@link AssistantWriteKind#AGENT_HANDOFF}
+     * the Run's {@code assistant_message_id} keeps pointing at the model reply, and
+     * {@code WakeChainService.onAssistantContent} is not entered — the audience of a handoff is
+     * dispatched by {@code WakeFanOutService}, and a second chain would have to be refused as a
+     * duplicate hop instead of simply not existing.</p>
+     */
+    public String persistAssistantResponse(String sessionId, String runId, String assistantContent,
+                                           String reasoningContent, AssistantWriteKind kind) {
         // Preserve the existing repository commit boundaries by keeping this method non-transactional.
-        String toolCalls = toolCallSnapshotService.snapshotJson(sessionId, runId);
+        String toolCalls = kind.carriesToolCalls ? toolCallSnapshotService.snapshotJson(sessionId, runId) : null;
         String content = assistantContent == null ? "" : assistantContent;
         String reasoning = reasoningContent == null || reasoningContent.isBlank() ? null : reasoningContent;
         if (content.isBlank() && toolCalls == null && reasoning == null) {
@@ -350,15 +399,19 @@ public class ChatSubmissionService {
         ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
         assistantMessage.setParticipantId(resolveResponderParticipantId(sessionId, ownerRun.orElse(null)));
         messageRepository.save(assistantMessage);
-        ownerRun.ifPresent(run -> {
-            run.setAssistantMessageId(assistantMessage.getId().toString());
-            chatRunRepository.save(run);
-        });
-        // PLAN-0624 M3: agent 产出里的提及开链（深度/环检查在 WakeChainService）。
-        // ObjectProvider on the constructor (was @Lazy — see the assignment comment):
-        // WakeChainService → WakeDispatchService →
-        // SessionWakeupService → this service is a cycle; the proxy breaks it.
-        wakeChainService.getObject().onAssistantContent(sessionId, runId, content);
+        if (kind.stampsRunPointer) {
+            ownerRun.ifPresent(run -> {
+                run.setAssistantMessageId(assistantMessage.getId().toString());
+                chatRunRepository.save(run);
+            });
+        }
+        if (kind.triggersWakeChain) {
+            // PLAN-0624 M3: agent 产出里的提及开链（深度/环检查在 WakeChainService）。
+            // ObjectProvider on the constructor (was @Lazy — see the assignment comment):
+            // WakeChainService → WakeDispatchService →
+            // SessionWakeupService → this service is a cycle; the proxy breaks it.
+            wakeChainService.getObject().onAssistantContent(sessionId, runId, content);
+        }
         return assistantMessage.getId().toString();
     }
 

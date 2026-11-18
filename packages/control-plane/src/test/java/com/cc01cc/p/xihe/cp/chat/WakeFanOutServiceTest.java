@@ -2,6 +2,8 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,10 +13,12 @@ import org.mockito.InOrder;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
@@ -260,5 +264,99 @@ class WakeFanOutServiceTest {
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", nextRoot.toString(), "@John 后一轮", roster());
         verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
                 eq("wake:mention:" + nextRoot), eq(SESSION_ID), isNull(), anyString());
+    }
+
+    // ---------------- task-40 S3 (D-1884 / D-1885): the agent round and the explicit CC half
+
+    /**
+     * N3/N5: the coordinates of an agent-initiated hand-off. triggerSource "chain" is what Q1 chose
+     * over a migration; the audit label "to" and the round prefix "wake:to:agent:" are what a reader
+     * of the durable rows joins to tell the agent round apart; and parentRunId MUST be the calling
+     * run — the duplicate-hop gate in WakeDispatchService.refuseBrokenChain only exists when a parent
+     * is present, so a NULL parent here would silently allow one run to wake the same participant
+     * twice.
+     */
+    @Test
+    void agentRoundFiresChainSourceWithCallingParentAndToLabel() {
+        UUID child = UUID.randomUUID();
+        when(dispatch.fire(eq(ANN), eq("chain"), eq("to"), eq("wake:to:agent:" + ROOT_RUN),
+                eq(SESSION_ID), eq(ROOT_RUN.toString()), anyString()))
+                        .thenReturn(new WakeDispatchService.WakeFireResult(true, child, "submitted"));
+
+        WakeFanOutService.TargetedWake result = fanOut.agentHandoffFanOut(SESSION_ID, "ws-1",
+                "owner-1", ROOT_RUN.toString(), "交接给 Ann", List.of(ANN));
+
+        assertEquals(List.of(child), result.runIds());
+        assertEquals(1, result.accounted(), "every requested target is accounted for");
+        verify(dispatch).fire(eq(ANN), eq("chain"), eq("to"), eq("wake:to:agent:" + ROOT_RUN),
+                eq(SESSION_ID), eq(ROOT_RUN.toString()), anyString());
+    }
+
+    /**
+     * The extraction must not move the human face by one coordinate: still "user", still the "to"
+     * audit label, still a NULL parent (siblings of one submission, per the javadoc on
+     * targetedFanOut).
+     */
+    @Test
+    void humanRoundKeepsUserSourceNullParentAfterTheExtraction() {
+        when(dispatch.fire(eq(ANN), eq("user"), eq("to"), eq("wake:to:" + ROOT_RUN), eq(SESSION_ID),
+                isNull(), anyString()))
+                        .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "notify"));
+
+        WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "owner-1",
+                ROOT_RUN.toString(), "请看", List.of(ANN));
+
+        assertEquals(List.of(ANN.toString()), result.notifiedTargets().stream()
+                .map(WakeFanOutService.TargetedFailure::participantId).toList(),
+                "a HUMAN target is notified, not failed (task-53 bucket)");
+        verify(dispatch).fire(eq(ANN), eq("user"), eq("to"), eq("wake:to:" + ROOT_RUN),
+                eq(SESSION_ID), isNull(), anyString());
+    }
+
+    /**
+     * CC on the agent face is 告知不指派, gated here (not by the caller) on the roster row: an id that
+     * is not a participant of this session, and a disabled participant, are both dropped with the
+     * reason vocabulary the human cc round already logs. Only the enabled row writes the notify event,
+     * and a duplicate id is notified once.
+     */
+    @Test
+    void explicitObserversAreGatedOnRosterRowsAndWriteOneNotifyRow() {
+        EventStoreService events = mock(EventStoreService.class);
+        WakeFanOutService service = new WakeFanOutService(dispatch, config, events);
+        SessionParticipantRepository repo = mock(SessionParticipantRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "participantRepository",
+                repo);
+        UUID outsider = UUID.randomUUID();
+        SessionParticipant enabled = mock(SessionParticipant.class);
+        when(enabled.getDisabledAt()).thenReturn(null);
+        SessionParticipant muted = mock(SessionParticipant.class);
+        when(muted.getDisabledAt()).thenReturn(Instant.now());
+        when(repo.findByIdAndSessionId(ANN, SESSION_ID)).thenReturn(Optional.of(enabled));
+        when(repo.findByIdAndSessionId(GHOST, SESSION_ID)).thenReturn(Optional.of(muted));
+        when(repo.findByIdAndSessionId(outsider, SESSION_ID)).thenReturn(Optional.empty());
+
+        List<UUID> notified = service.notifyExplicitObservers(SESSION_ID, "ws-1", "owner-1",
+                "wake:to:agent:" + ROOT_RUN, List.of(ANN, ANN, GHOST, outsider));
+
+        assertEquals(List.of(ANN), notified);
+        verify(events).append(eq(SESSION_ID.toString()), eq("ws-1"), eq("owner-1"),
+                eq("wake_dispatch"), argThat(payload -> payload instanceof java.util.Map<?, ?> row
+                        && "cc".equals(row.get("triggerSource"))
+                        && "notify".equals(row.get("outcome"))
+                        && ANN.toString().equals(row.get("participantId"))
+                        && ("wake:to:agent:" + ROOT_RUN).equals(row.get("wakeRoundId"))));
+        verify(events, org.mockito.Mockito.times(1)).append(any(), any(), any(), any(), any());
+        verify(dispatch, org.mockito.Mockito.never()).fire(any(), any(), any(), any(), any(),
+                any(), any());
+    }
+
+    /** Without the roster collaborator the face refuses to guess: nobody is notified, loudly logged. */
+    @Test
+    void explicitObserversWithoutRosterNotifyNobody() {
+        EventStoreService events = mock(EventStoreService.class);
+        WakeFanOutService service = new WakeFanOutService(dispatch, config, events);
+        assertEquals(List.of(), service.notifyExplicitObservers(SESSION_ID, "ws-1", "owner-1",
+                "wake:to:agent:" + ROOT_RUN, List.of(ANN)));
+        verify(events, org.mockito.Mockito.never()).append(any(), any(), any(), any(), any());
     }
 }

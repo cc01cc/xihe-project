@@ -5,9 +5,9 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**364** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 262 · 服务间 102
+- 规模：**365** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 262 · 服务间 103
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（364 / 364 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（365 / 365 个操作带 tag）。
 
 ## public（262 operations · 公开 · 17 tags）
 
@@ -358,7 +358,7 @@
 | `POST /api/v1/telemetry/logs` | `ingestTelemetry` | `bearerAuth` | Ingest telemetry events | 公开 |
 | `GET /api/v1/version` | `deploymentVersion` | `bearerAuth` | Deployment identity and module versions | 公开 |
 
-## internal（102 operations · 服务间 · 3 tags）
+## internal（103 operations · 服务间 · 3 tags）
 
 ### service-agent（30）
 
@@ -438,7 +438,7 @@
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/release` | `releaseRuntimeWorkspace` | `bearerAuth` | — | 服务间 |
 | `GET /internal/v1/runtime/workspaces/{workspaceId}/status` | `getRuntimeWorkspaceStatus` | `bearerAuth` | — | 服务间 |
 
-### service-misc（34）
+### service-misc（35）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -447,6 +447,7 @@
 | `GET /internal/v1/chat/runs/{runId}/approval/waiting` | `getChatRunWaitingApproval` | `bearerAuth` | The Agent approval resume claim read mouth — the run's current approval fact envelope | 服务间 |
 | `GET /internal/v1/chat/runs/{runId}/guidance/pending` | `getPendingChatRunGuidance` | `bearerAuth` | Pending Guidance for the Agent runner at the tool-batch boundary | 服务间 |
 | `POST /internal/v1/chat/runs/{runId}/guidance/{guidanceId}/consume` | `consumeChatRunGuidance` | `bearerAuth` | Acknowledge Guidance as injected into the next planning step | 服务间 |
+| `POST /internal/v1/chat/runs/{runId}/to` | `agentHandoffRunTo` | `bearerAuth` | Agent-initiated TO - hand the session to participants of the same session | 服务间 |
 | `GET /internal/v1/chat/runs/{runId}/user-questions/waiting` | `getChatRunWaitingQuestion` | `bearerAuth` | The Agent resume claim read mouth — the run's current waiting-question envelope | 服务间 |
 | `GET /internal/v1/config/effective/{domain}` | `getEffectiveConfig` | `bearerAuth` | Resolve effective config for a domain (env > lock > workspace > user > instance > defaults); no lay… | 服务间 |
 | `POST /internal/v1/context/{sessionId}/agents-md/resolve` | `resolveNestedAgentsMd` | `bearerAuth` | — | 服务间 |

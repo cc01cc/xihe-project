@@ -3346,6 +3346,57 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /internal/v1/chat/runs/{runId}/to:
+    post:
+      tags: [service-misc]
+      operationId: agentHandoffRunTo
+      summary: Agent-initiated TO - hand the session to participants of the same session
+      description: |
+        task-40 S3 (D-1884 / D-1885): the agent-side twin of the composer TO. The actor is the RUN in
+        the path - session, workspace, owner and responder principal are read off the chat_runs row
+        and the body carries no actor field, so naming another participant never speaks as that
+        participant (Q2: no new capability atom; the face stays inside the existing CP<->Agent
+        service-Bearer trust domain, which is also why the response is the audience accounting rather
+        than a bare accepted flag).
+        Same-session rule: a target that is not a participant of this session is NOT a request error;
+        the AGENT half refuses it durably (wake_dispatch outcome=refused, reason starting cross_session:) and the
+        CC half drops it as not_in_roster, mirroring the human face.
+        Provenance on the audit face, not on the run row (Q1 = chain, zero migration): the runs this
+        creates carry trigger_source="chain" while the human composer keeps "user". Distinguishability
+        lives in the wake_dispatch rows: parentRunId is non-null (an agent hand-off IS a delegation
+        edge; human TO siblings stay NULL), the audit label is "to", and the round prefix is
+        "wake:to:agent:". A reader that must tell a human-typed TO from an agent-emitted one joins those
+        three. Adding a run column for it later is not the plan (agent_to is a future upgrade item, not
+        debt of this batch), and the "origin-side wake runs are always scheduled" limitation is closed
+        on this audit face via triggerSource="to".
+        The announced line (Q3): on success the content is persisted as one ASSISTANT message under the
+        CALLING run, so the human audience can read what was said. The write goes through the single
+        assistant write point with kind AGENT_HANDOFF, which does NOT move
+        chat_runs.assistant_message_id (the pointer keeps naming the model reply) and does NOT re-open
+        the mention chain (the audience is dispatched here, explicitly; a second mechanism would
+        double-dispatch and defeat the duplicate-hop gate). messageId is null exactly when nothing was
+        acted on: no sentence claims a hand-off that did not happen.
+        Idempotency: Idempotency-Key is required. The duplicate-run protection the fan-out offers is
+        the durable wake edge (parentRunId, responder principal) - see refuseBrokenChain - so a replay
+        cannot wake the same participant twice for this calling run; it re-announces the line, because
+        this face does not store the request hash (N8 open item).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentHandoffRequest' } } }
+      responses:
+        '200':
+          description: Audience accounting for this hand-off (buckets conserve the requested targets)
+          content: { application/json: { schema: { $ref: '#/components/schemas/AgentHandoffView' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
     get: { tags: [system], operationId: health, summary: Liveness probe, security: [], responses: { '200': { description: Healthy } } }
   /api/v1/status:
@@ -7633,6 +7684,9 @@ components:
     GuidancePendingView: { type: object, additionalProperties: false, required: [runId, items], properties: { runId: { type: string, format: uuid }, items: { type: array, items: { type: object, additionalProperties: false, required: [id, sequence, sourceKind, content], properties: { id: { type: string, format: uuid }, sequence: { type: integer, format: int64 }, sourceKind: { type: string, const: user }, content: { type: string } } } } } }
     GuidanceConsumeRequest: { type: object, additionalProperties: false, properties: { consumedBy: { type: string, description: Consumer identity for audit (e.g. agent-runner). } } }
     GuidanceConsumeResult: { type: object, additionalProperties: false, required: [id, status, consumedAt, firstConsumption], properties: { id: { type: string, format: uuid }, status: { type: string, const: consumed }, consumedAt: { type: string, format: date-time }, firstConsumption: { type: boolean } } }
+    AgentHandoffRequest: { type: object, additionalProperties: false, required: [content], description: 'No actor field by design: the calling run in the path is the actor. At least one of toParticipantIds / ccParticipantIds must be non-empty (422 HANDOFF_TARGETS_REQUIRED otherwise).', properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'The line announced as an assistant message under the calling run (same ceiling as run guidance).' }, toParticipantIds: { type: array, maxItems: 20, items: { type: string, format: uuid }, description: 'Selected participants get the same treatment as a composer TO: an AGENT answers with its own run, a HUMAN is notified.' }, ccParticipantIds: { type: array, maxItems: 20, items: { type: string, format: uuid }, description: 'Observers: the durable notify signal only, never a run of their own. Ids already in toParticipantIds are not notified twice.' } } }
+    AgentHandoffFailure: { type: object, additionalProperties: false, required: [participantId, reason], description: 'One target that did not get a run, with the reason the dispatch recorded.', properties: { participantId: { type: string, format: uuid }, reason: { type: string, description: 'Dispatch vocabulary: deferred / notify / skipped_muted / judged_no / refused / failed.' }, detail: { type: [string, 'null'], description: 'Machine-readable cause when the dispatcher had one (e.g. authorization:..., cross_session).' } } }
+    AgentHandoffView: { type: object, additionalProperties: false, required: [runId, roundId, messageId, to, cc], description: 'Conservation: to.runIds + failedTargets + deferredTargets + notifiedTargets + suppressedTargets == to.requested.', properties: { runId: { type: string, format: uuid, description: 'The calling run.' }, roundId: { type: string, description: 'wake:to:agent:{runId} - the audit round prefix.' }, messageId: { type: [string, 'null'], format: uuid, description: 'The announced assistant message, or null when nothing was acted on.' }, to: { type: object, additionalProperties: false, required: [requested, runIds, failedTargets, deferredTargets, notifiedTargets, suppressedTargets], properties: { requested: { type: integer }, runIds: { type: array, items: { type: string, format: uuid } }, failedTargets: { type: array, items: { $ref: '#/components/schemas/AgentHandoffFailure' } }, deferredTargets: { type: array, items: { $ref: '#/components/schemas/AgentHandoffFailure' } }, notifiedTargets: { type: array, items: { $ref: '#/components/schemas/AgentHandoffFailure' } }, suppressedTargets: { type: array, items: { $ref: '#/components/schemas/AgentHandoffFailure' } } } }, cc: { type: object, additionalProperties: false, required: [notified, ignored], properties: { notified: { type: array, items: { type: string, format: uuid } }, ignored: { type: array, items: { type: string, format: uuid }, description: 'Not in the session roster, or disabled; each drop is logged with the existing wake_dispatch reason vocabulary.' } } } } }
     FollowUpItem: { type: object, additionalProperties: false, required: [queueItemId, queueSequence, status, content, attachments, branchId, createdAt, updatedAt], properties: { queueItemId: { type: string, format: uuid }, queueSequence: { type: integer, format: int64 }, status: { type: string, enum: [queued, paused, admitted, completed, withdrawn] }, content: { type: [string, 'null'] }, attachments: { type: array, items: { type: object, additionalProperties: false, required: [id, name, type, size], properties: { id: { type: string, format: uuid }, name: { type: string }, type: { type: [string, 'null'] }, size: { type: integer, format: int64 }, url: { type: [string, 'null'] } } } }, branchId: { type: string, format: uuid }, anchorRunId: { type: [string, 'null'], format: uuid }, pauseReason: { type: [string, 'null'] }, childRunId: { type: [string, 'null'], format: uuid }, childMessageId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time }, sourceKind: { type: [string, 'null'], enum: [human, agent_steer, null], description: 'task-188 S3 (V173) steer attribution - null means NO attribution (every pre-V173 row and every ordinary human follow-up); agent_steer renders the from-Lead badge. A client must never substitute a default string for null.' }, fromSessionId: { type: [string, 'null'], format: uuid, description: 'the steering (tree root) Session for agent_steer rows; null otherwise' }, expectedRevision: { type: [integer, 'null'], minimum: 0, description: 'ADVISORY-ONLY echo (D-1830): the board revision the steering Lead assumed. Persisted and returned so a reader can see what the interjection was written against; NOTHING gates on it.' } } }
     SessionBranch: { type: object, additionalProperties: false, required: [branchId, createdAt], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: [string, 'null'], format: uuid, description: Branch that owns the fork-point Message/Run; it can be an ancestor of the requested sourceBranchId. }, forkPointMessageId: { type: [string, 'null'], format: uuid }, forkPointRunId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
     SessionBranchCreatedResponse: { type: object, additionalProperties: false, required: [branchId, parentBranchId, forkPointMessageId], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: string, format: uuid }, forkPointMessageId: { type: string, format: uuid } } }
