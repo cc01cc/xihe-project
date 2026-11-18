@@ -77,7 +77,9 @@
             "id": "members",
             "route": "/members",
             "tabs": [],
-            "expectedBefore": 0
+            "expectedBefore": 0,
+            "container": "[data-testid=\"org-members-page\"]",
+            "containerReason": "task-75 实测：本页无 <main>（OrgMembersView.vue:40 明写「全局模块直挂 ModuleStage」），旧版静默落 body ⇒ 2937 字符里混着整条导航 chrome"
         },
         {
             "id": "resource-detail-instance-absent",
@@ -123,6 +125,18 @@
             "spec": "e2e/mock/task57-copy-leak-surfaces.spec.ts",
             "expectedBefore": 1,
             "note": "task-57 判据 4：新建个人技能弹窗说明（原 :2168，曾写 POST /api/v1/skills/import）。本卡测到**上屏**。"
+        },
+        {
+            "id": "workspace-changes-pending-mobile",
+            "route": "/workspace/{ws}",
+            "tabs": [],
+            "viewport": "390x844",
+            "open": [
+                "[data-testid=\"workspace-toolbar-changes\"]",
+                "[data-testid=\"workspace-diff-tab-pending\"]"
+            ],
+            "expectedBefore": 0,
+            "reason": "task-75：移动变更 Sheet 是 body 级 portal（task-73 rootcheck 祖先链 div#mobile-changes-sheet < body）。门要 viewport + open 两步才扫得到它；只加 portal 轴不加 open 步骤，普查里 portal 块数仍是 0"
         }
     ]
 }

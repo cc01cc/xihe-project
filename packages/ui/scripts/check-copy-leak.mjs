@@ -64,7 +64,9 @@ const BLIND_SPOTS = [
     "只跑 zh-CN；英文界面要另跑一次 --language en-US（i18n-scan 只保证键与占位一致，不保证英文读得通）",
     "只跑一个视口（默认 1920x1080）；窄视口可能走不同的条件渲染分支",
     "需要真实栈 + 真实数据；没有实例时本轮 SKIP，**SKIP 不等于通过**",
-    "文本层用 main.innerText：sr-only 与 display:none 子树不计入 —— 若某个判据要求 sr-only 也不许泄露，本门覆盖不到",
+    "文本层两把轴：main.innerText（老账、判红轴）+ body 级不含 main 的 portal 子树（新轴，默认只报不判红，--portals-enforce 才并账）。sr-only 与 display:none 在两把轴上都不计入（innerText 为空）",
+    "portal 轴只扫已经存在的 body 级子树：矩阵里没声明 open 步骤的浮层，门不会自己去点开，依然不覆盖",
+    "#app 内的导航 chrome（rail / 侧栏 / 页签栏 / 面包屑）不进扫描轴，只由 --survey-roots 量出文本量并如实报 —— 改成 body 一把根会把这批正常文案并进泄露账",
 ];
 
 export function classify({
@@ -103,6 +105,11 @@ function parseArgs(argv) {
         enforce: false,
         requireStack: false,
         selftest: false,
+        surveyRoots: false,
+        anchor: false,
+        viewport: "1920x1080",
+        out: null,
+        portalsEnforce: false,
     };
     for (let i = 0; i < argv.length; i++) {
         const k = argv[i];
@@ -117,6 +124,11 @@ function parseArgs(argv) {
         else if (k === "--enforce") a.enforce = true;
         else if (k === "--require-stack") a.requireStack = true;
         else if (k === "--selftest") a.selftest = true;
+        else if (k === "--survey-roots") a.surveyRoots = true;
+        else if (k === "--anchor") a.anchor = true;
+        else if (k === "--viewport") a.viewport = next();
+        else if (k === "--out") a.out = resolve(next());
+        else if (k === "--portals-enforce") a.portalsEnforce = true;
         else if (k === "--help" || k === "-h") {
             console.log("see header docs");
             process.exit(0);
@@ -271,6 +283,273 @@ function applyPatterns(text) {
     return out;
 }
 
+/**
+ * 取文根：**两把轴分开取，不合成一把 body**。
+ *
+ * 为什么不直接用 document.body（task-75 卡面给的第一个选项）：
+ *   Vue 挂在 #app 里，#app 又包含 <main> 与整条导航 chrome。改成 body 一把根会**同时**
+ *   把「portal 盲区」与「应用外壳 chrome」两件事并进老账，一夜冒出的大批命中分不清
+ *   哪条是产品泄露、哪条是导航正常文案 —— 卡面明写「必须先分类，不能直接当泄露修」。
+ *   而实测盲区（MobileChangesSheet）恰恰是 **body 直接子层、且不含 main** 的那批子树
+ *   （reka-ui / 自建 portal 一律挂到 document.body）。所以按这个形状取：
+ *   只圈 portal 族，逐块带身份，命中天然归类。
+ *
+ * 仍必须 innerText 不用 textContent（理由同主循环那条注释：隐藏子树会假阳）。
+ * 隐藏子树的 innerText 为空串 ⇒ 老口径「sr-only / display:none 不计入」在这里仍然成立，
+ * 没有因为多取一把根而被悄悄放宽。
+ */
+async function readRoots(page, containerSel) {
+    return page.evaluate((container) => {
+        const SKIP = new Set([
+            "SCRIPT",
+            "STYLE",
+            "LINK",
+            "META",
+            "TITLE",
+            "TEMPLATE",
+            "NOSCRIPT",
+            "IFRAME",
+        ]);
+        const ident = (el) => {
+            // 归类全靠这个身份串 —— 只给 tag 名（实测锚点宿主曾只报出 "div"）等于没归类
+            const cls =
+                (typeof el.className === "string" ? el.className.trim().split(/\s+/)[0] : "") || "";
+            return (
+                el.tagName.toLowerCase() +
+                (el.id ? "#" + el.id : "") +
+                (el.getAttribute("data-testid")
+                    ? "[data-testid=" + el.getAttribute("data-testid") + "]"
+                    : "") +
+                (el.getAttribute("role") ? "[role=" + el.getAttribute("role") + "]" : "") +
+                (cls ? "." + cls.slice(0, 28) : "")
+            );
+        };
+        const mainEl = document.querySelector("main");
+        const 面容器 = container ? document.querySelector(container) : null;
+        // 取文根优先级：main → 面自带容器 → body 兜底。**用了哪一把必须落进读数**：
+        // 实测 /members（OrgMembersView.vue:40 明写「本页没有 <main>」）静默落到 body，
+        // 报告里却只写「2940 字符」，读起来像标准轴 —— 那是仪器在撒谎，不是产品泄露。
+        const root = mainEl || 面容器 || document.body;
+        const 根 = mainEl ? "main" : 面容器 ? "container:" + ident(面容器) : "body(兜底)";
+        if (!mainEl && !container) {
+            return {
+                根,
+                有main: false,
+                mainChars: 0,
+                // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+                bodyChars: (document.body.innerText || "").length,
+                // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+                mainText: (document.body.innerText || "").trim(),
+                portals: [],
+                壳内非main: [],
+            };
+        }
+        const portals = [];
+        const 壳内非main = [];
+        for (const el of Array.from(document.body.children)) {
+            if (SKIP.has(el.tagName)) continue;
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            const t = (el.innerText || "").trim();
+            if (el === root || el.contains(root)) {
+                // #app 这一支：含 main，也含导航 chrome。chrome 不进扫描轴（那是另一条盲区，
+                // 由 survey 单独量出「壳内非 main 文本量」并如实报，不静默并账）。
+                if (t.length) 壳内非main.push({ 身份: ident(el), chars: t.length });
+                continue;
+            }
+            if (!t) continue;
+            portals.push({
+                身份: ident(el),
+                在main内: !!mainEl && mainEl.contains(el),
+                chars: t.length,
+                text: t,
+            });
+        }
+        return {
+            根,
+            有main: !!mainEl,
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            mainChars: root === document.body ? 0 : (root.innerText || "").length,
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            bodyChars: (document.body.innerText || "").length,
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            mainText: (root.innerText || "").trim(),
+            portals,
+            壳内非main,
+        };
+    }, containerSel || null);
+}
+
+async function surveyRoots({ page, args, surfaces, wsId }) {
+    const rows = [];
+    for (const s of surfaces) {
+        const route = String(s.route).replace("{ws}", wsId);
+        if (s.via === "mock") {
+            rows.push({
+                id: s.id,
+                route,
+                status: "mock-covered",
+                说明:
+                    "真栈凑不出该形态，门不扫 ⇒ 本 survey 也扫不到（由 " +
+                    (s.spec || "未登记 spec") +
+                    " 覆盖）",
+            });
+            continue;
+        }
+        const row = { id: s.id, route, status: "ok" };
+        try {
+            // 面级视口必须与门一致：实测打过脸 —— 同一面门里 portal=1、普查 @1920 里 =0，
+            // 因为普查先前只复刻了 goto+tab，没走 viewport/open。两套驱动读同一个面不能给两个答案。
+            const vpS = /^(\d+)x(\d+)$/.exec(s.viewport || "") || [];
+            if (vpS.length)
+                await page.setViewportSize({ width: Number(vpS[1]), height: Number(vpS[2]) });
+            await page.goto(args.url + route, { waitUntil: "domcontentloaded", timeout: 60000 });
+            await page.waitForTimeout(2600);
+            await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+            for (const tabName of s.tabs || []) {
+                const el = page.locator("[role=tab]", { hasText: tabName }).first();
+                if (await el.count()) {
+                    await el.click({ timeout: 8000 }).catch(() => {});
+                    await page.waitForTimeout(1500);
+                }
+            }
+            // 与主循环同一套驱动：普查若不走 open 步骤，同一面在门与普查里的 portal 块数
+            // 会互相打脸（实测就打过一次：门扫到 1 块 Sheet，普查报 0）。
+            for (const osel of s.open || []) {
+                await page.click(osel, { timeout: 5000 }).catch(() => {});
+                await page.waitForTimeout(700);
+            }
+            const r = await readRoots(page, s.container || null);
+            row.视口 = s.viewport || args.viewport;
+            row.取文根 = r.根;
+            row.main字符 = r.mainChars;
+            row.body字符 = r.bodyChars;
+            row.差值 = r.bodyChars - r.mainChars;
+            row.有main = r.有main;
+            row.portal = r.portals.map((p) => ({
+                身份: p.身份,
+                chars: p.chars,
+                命中: applyPatterns(p.text).reduce((a, h) => a + h.count, 0),
+                形态: applyPatterns(p.text).map((h) => h.shape),
+            }));
+            row.壳内非main = r.壳内非main;
+        } catch (e) {
+            row.status = "error";
+            row.error = String(e.message || e).slice(0, 200);
+        }
+        rows.push(row);
+    }
+    return rows;
+}
+
+async function anchorPortal({ page, args, wsId }) {
+    // 宿主必须是卡面点名的那块 Sheet，不能是「body 下第一个不是 main 的东西」——
+    // 实测第一版落到遮罩 div.bg-black/10（innerText 为空）上：判据照样 PASS，但它证的是
+    // 「任意 body 子树」，不是「这块面的文本读不到」。锚点必须钉在它所声称的那块上。
+    // 反例锚点：一条**只在 portal 内可见**的泄露串。判据两侧都钉着：
+    //   改前（main 一把根）必须 0 命中 ⇒ 证明盲区真实存在，不是嘴上说说；
+    //   改后（portal 轴）必须报出 ⇒ 才算收敛证明。「改后 0 命中」不算通过。
+    const LEAK = "XhAnchorProbeSkillController.java:42 /api/v1/xh-anchor-probe";
+    await page.goto(args.url + "/workspace/" + wsId, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+    });
+    await page.waitForTimeout(2600);
+    await page
+        .click('[data-testid="workspace-toolbar-changes"]', { timeout: 4000 })
+        .catch(() => {});
+    await page.waitForTimeout(600);
+    await page
+        .click('[data-testid="workspace-diff-tab-pending"]', { timeout: 4000 })
+        .catch(() => {});
+    await page.waitForTimeout(800);
+    const host = await page.evaluate((leak) => {
+        const mainEl = document.querySelector("main");
+        const SKIP = new Set([
+            "SCRIPT",
+            "STYLE",
+            "LINK",
+            "META",
+            "TITLE",
+            "TEMPLATE",
+            "NOSCRIPT",
+            "IFRAME",
+        ]);
+        const ident = (el) =>
+            el.tagName.toLowerCase() +
+            (el.id ? "#" + el.id : "") +
+            (el.getAttribute("data-testid")
+                ? "[data-testid=" + el.getAttribute("data-testid") + "]"
+                : "") +
+            (el.getAttribute("role") ? "[role=" + el.getAttribute("role") + "]" : "");
+        const all = Array.from(document.body.children).filter(
+            (el) => !SKIP.has(el.tagName) && !el.contains(mainEl),
+        );
+        const want = '[data-testid="mobile-changes-sheet"], #mobile-changes-sheet';
+        const cands = all.filter((el) => el.matches(want));
+        const 候选 = all.map((el) => ({
+            身份: ident(el),
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            文本非空: !!(el.innerText || "").trim(),
+            是声称宿主: el.matches(want),
+        }));
+        const picked = cands[0] || null;
+        if (!picked)
+            return {
+                有宿主: false,
+                原因:
+                    "该视口下没打开移动变更 Sheet（body 直接子层里找不到 " +
+                    want +
+                    "）⇒ 锚点无处注入，open 步骤或视口不对",
+                候选,
+            };
+        const n = document.createElement("div");
+        n.id = "xh-anchor-portal-leak";
+        n.textContent = leak;
+        picked.appendChild(n);
+        return {
+            有宿主: true,
+            宿主身份: ident(picked),
+            候选,
+            注入在main内: !!(mainEl && mainEl.contains(n)),
+            // 盲区的定义要两个读数同时成立：渲染文本里**看得见**（不是藏在隐藏子树里），
+            // 而 main 那把根**读不到**。只证后者会漏掉「注入到一个不渲染的地方」这种假锚点。
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            渲染可见: (document.body.innerText || "").includes(leak),
+            // eslint-disable-next-line unicorn/prefer-dom-node-text-content
+            main读到: !!(mainEl && (mainEl.innerText || "").includes(leak)),
+        };
+    }, LEAK);
+    if (!host.有宿主)
+        return {
+            有效: false,
+            原因: "该视口下 body 直接子层没有 main 外的子树 ⇒ 锚点无处注入",
+            读数: host,
+        };
+    const r = await readRoots(page);
+    const 旧根命中 = applyPatterns(r.mainText);
+    // 不用 map 里 spread（oxc(no-map-spread) ↔ eslint(prefer-object-spread) 是登记在册的互斥对，
+    // 仓库口径 = 抽成具名写法让 spread 不进 map 回调体）：这里直接展开成显式字段。
+    const portal命中 = [];
+    for (const x of r.portals) {
+        for (const h of applyPatterns(x.text))
+            portal命中.push({ shape: h.shape, count: h.count, samples: h.samples, 身份: x.身份 });
+    }
+    return {
+        有效: true,
+        视口: args.viewport,
+        渲染可见: host.渲染可见,
+        main读到: host.main读到,
+        宿主身份: host.宿主身份,
+        portal候选: host.候选,
+        注入在main内: host.注入在main内,
+        泄露串: LEAK,
+        旧根命中数: 旧根命中.reduce((a, h) => a + h.count, 0),
+        旧根形态: 旧根命中.map((h) => h.shape),
+        新根命中数: portal命中.reduce((a, h) => a + h.count, 0),
+        新根形态: portal命中.map((h) => h.shape + "@" + h.身份),
+    };
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     if (args.selftest) selftest();
@@ -378,8 +657,9 @@ async function main() {
         console.error("[copy-leak] 判不了：浏览器起不来 " + (e.message || e));
         process.exit(2);
     }
+    const vp = /^(\d+)x(\d+)$/.exec(args.viewport) || [];
     const ctx = await browser.newContext({
-        viewport: { width: 1920, height: 1080 },
+        viewport: { width: Number(vp[1]) || 1920, height: Number(vp[2]) || 1080 },
         deviceScaleFactor: 1,
         locale: args.language,
     });
@@ -393,6 +673,128 @@ async function main() {
         localStorage.setItem("xihe-theme", "light");
         localStorage.setItem("xihe-language", lang);
     }, args.language);
+
+    if (args.surveyRoots || args.anchor) {
+        const payload = {
+            takenAt: new Date().toISOString(),
+            url: args.url,
+            api: args.api,
+            viewport: args.viewport,
+            language: args.language,
+            channel: args.channel,
+            matrix: args.matrix,
+            面数: surfaces.length,
+        };
+        let code = 0;
+        if (args.surveyRoots) {
+            payload.survey = await surveyRoots({ page, args, surfaces, wsId });
+            const 在main外 = payload.survey.filter((r) => (r.portal || []).length);
+            console.log(
+                "[copy-leak] 取文根普查 @ " +
+                    args.viewport +
+                    "：面 " +
+                    payload.survey.length +
+                    " 个 ｜ 存在 body 级 main 外子树的 " +
+                    在main外.length +
+                    " 个",
+            );
+            for (const r of payload.survey) {
+                if (r.status !== "ok") {
+                    console.log(
+                        "  -- " + r.id.padEnd(30) + " " + r.status + (r.说明 ? " " + r.说明 : ""),
+                    );
+                    continue;
+                }
+                console.log(
+                    "  " +
+                        r.id.padEnd(30) +
+                        " main " +
+                        String(r.main字符).padStart(6) +
+                        " 字符 ｜ body 外 " +
+                        String(r.差值).padStart(5) +
+                        " ｜ portal 子树 " +
+                        (r.portal || []).length +
+                        " 块" +
+                        ((r.portal || []).length
+                            ? " ⇒ " +
+                              r.portal
+                                  .map((x) => x.身份 + "(" + x.chars + "字符,命中" + x.命中 + ")")
+                                  .join(" ")
+                            : ""),
+                );
+            }
+        }
+        // 残缺普查不能长得像干净普查：实测撞过 UI 被别的 lane 重启的窗口，
+        // 4 面 ERR_CONNECTION_REFUSED 而 exit 仍是 0 —— 那等于交一份瞎掉的读数出去。
+        const 坏面 = (payload.survey || []).filter((r) => r.status === "error");
+        if (坏面.length) {
+            payload.不完整 = true;
+            payload.坏面 = 坏面.map((r) => ({ id: r.id, error: r.error }));
+            console.log(
+                "[copy-leak] 普查有 " +
+                    坏面.length +
+                    " 面 error（" +
+                    坏面.map((r) => r.id).join("、") +
+                    "）⇒ 本轮读数不完整，判不了就 exit 非 0，别当干净普查用",
+            );
+            code ||= 1;
+        }
+        if (args.anchor) {
+            payload.anchor = await anchorPortal({ page, args, wsId });
+            const a = payload.anchor;
+            if (!a.有效) {
+                console.error("[copy-leak] 锚点无效：" + a.原因 + " —— " + JSON.stringify(a.读数));
+                code = 2;
+            } else {
+                const 判据 = [
+                    [
+                        "宿主是卡面点名的 Sheet（不是遮罩/任意 body 子树）",
+                        String(a.宿主身份).includes("mobile-changes-sheet"),
+                    ],
+                    ["注入串在渲染文本里可见（不是藏进隐藏子树）", a.渲染可见 === true],
+                    ["main 那把根读不到它", a.main读到 === false],
+                    ["注入确实落在 main 外", a.注入在main内 === false],
+                    ["改前（main 一把根）0 命中 ⇒ 盲区真实", a.旧根命中数 === 0],
+                    ["改后（portal 轴）报出 ⇒ 收敛证明", a.新根命中数 > 0],
+                ];
+                console.log(
+                    "[copy-leak] 反例锚点 @ " +
+                        a.视口 +
+                        " 宿主 " +
+                        a.宿主身份 +
+                        " 串「" +
+                        a.泄露串 +
+                        "」",
+                );
+                console.log(
+                    "        渲染可见=" +
+                        a.渲染可见 +
+                        " ｜ main读到=" +
+                        a.main读到 +
+                        " ｜ body 外候选块数=" +
+                        a.portal候选.length,
+                );
+                console.log(
+                    "        旧根命中 " +
+                        a.旧根命中数 +
+                        " " +
+                        JSON.stringify(a.旧根形态) +
+                        " ｜ 新根命中 " +
+                        a.新根命中数 +
+                        " " +
+                        JSON.stringify(a.新根形态),
+                );
+                for (const [n, ok] of 判据) console.log("  " + (ok ? "PASS " : "FAIL ") + n);
+                code = 判据.every(([, ok]) => ok) ? 0 : 1;
+            }
+        }
+        if (args.out) {
+            await writeFile(args.out, JSON.stringify(payload, null, 2), "utf8");
+            console.log("[copy-leak] 读数已写入 " + args.out);
+        }
+        await browser.close();
+        process.exit(code);
+    }
 
     const results = [];
     for (const s of surfaces) {
@@ -420,6 +822,11 @@ async function main() {
             hits: [],
         };
         try {
+            // 面级视口（盲区是视口条件化的）+ 面级容器，见 surveyRoots 同款注释
+            const vp0 = /^(\d+)x(\d+)$/.exec(s.viewport || "") || [];
+            if (vp0.length)
+                await page.setViewportSize({ width: Number(vp0[1]), height: Number(vp0[2]) });
+            row.视口 = s.viewport || args.viewport;
             await page.goto(args.url + route, { waitUntil: "domcontentloaded", timeout: 60000 });
             await page.waitForTimeout(2600);
             await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
@@ -435,15 +842,38 @@ async function main() {
                         samples: ["找不到 tab：" + tabName],
                     });
             }
-            const text = await page.evaluate(
-                // 必须用 innerText，不能用 textContent：textContent 会把 sr-only、display:none 子树与脚本串
-                // 一起吞进来 => 假阳（DEV-011 §14.1「在哪量」明写这一条）。oxlint 这条规则在此不适用，
-                // 且**不许**按它改 —— 按它改，本门就变成了「什么都没泄露」的假绿。
-                // eslint-disable-next-line unicorn/prefer-dom-node-text-content
-                () => (document.querySelector("main") || document.body).innerText || "",
+            // open 步骤：矩阵里声明「要点哪些东西这块面才存在」。没有这一步，门的驱动只认
+            // route + role=tab ⇒ **portal 类面永远不会被打开**（task-75 实测：无 open 步骤时
+            // 1920 与 390 两轮普查里 portal 块数恒 0 —— 门从没点出过 Sheet，不是 Sheet 不在）。
+            for (const osel of s.open || []) {
+                await page.click(osel, { timeout: 5000 }).catch((e) => {
+                    row.hits.push({
+                        shape: "(open 步骤失配)",
+                        count: 0,
+                        samples: ["点不到：" + osel + " —— " + String(e.message || e).slice(0, 80)],
+                    });
+                });
+                await page.waitForTimeout(700);
+            }
+            const r0 = await readRoots(page, s.container || null);
+            row.取文根 = r0.根;
+            row.chars = r0.mainChars;
+            row.hits = row.hits.concat(applyPatterns(r0.mainText));
+            // 第二条轴：body 级、main 外的 portal 子树（task-73 实测 MobileChangesSheet 挂这里）。
+            // 命中**单独计数、单独归属**，默认不并进 findings —— 并进去就等于把「新覆盖」
+            // 当成「新泄露」，卡面明令禁止。要让它判红用 --portals-enforce。
+            row.有main = r0.有main;
+            row.portals = r0.portals.map((x) => ({
+                身份: x.身份,
+                chars: x.chars,
+                hits: applyPatterns(x.text),
+            }));
+            row.portalChars = r0.portals.reduce((a, x) => a + x.chars, 0);
+            row.portalHits = row.portals.reduce(
+                (a, x) => a + x.hits.reduce((b, h) => b + h.count, 0),
+                0,
             );
-            row.chars = text.length;
-            row.hits = row.hits.concat(applyPatterns(text));
+            row.壳内非main = r0.壳内非main;
         } catch (e) {
             row.status = "error";
             row.error = String(e.message || e).slice(0, 200);
@@ -453,9 +883,11 @@ async function main() {
     await browser.close();
 
     let findings = 0;
+    let portalFindings = 0;
     for (const r of results) {
         const n = r.hits.reduce((a, h) => a + h.count, 0);
         findings += n;
+        portalFindings += r.portalHits || 0;
         const flag =
             r.status === "error"
                 ? "ERR "
@@ -465,15 +897,41 @@ async function main() {
                     ? "HIT "
                     : "  ok";
         // mock-covered 不许打印「0 字符」—— 那读起来像「扫过且干净」，而门根本没扫它。
+        if (r.portalHits) {
+            for (const x of r.portals)
+                for (const h of x.hits)
+                    console.log(
+                        "        [portal] " +
+                            x.身份 +
+                            " [" +
+                            h.shape +
+                            "] x" +
+                            h.count +
+                            " -> " +
+                            h.samples.join(" | "),
+                    );
+        }
         const detail =
             r.status === "mock-covered"
                 ? "门未扫（真栈凑不出该形态），由 " + (r.coveredBy || "未登记 spec") + " 覆盖"
-                : "期望修复前 " + (r.expectedBefore ?? "?") + "，" + (r.chars ?? 0) + " 字符";
+                : "期望修复前 " +
+                  (r.expectedBefore ?? "?") +
+                  "，" +
+                  (r.chars ?? 0) +
+                  " 字符" +
+                  (r.取文根 && r.取文根 !== "main" ? "（取文根=" + r.取文根 + "，非 main）" : "");
         console.log("  " + flag + " " + r.id.padEnd(30) + " 命中 " + n + "  (" + detail + ")");
         for (const h of r.hits)
             console.log("        [" + h.shape + "] x" + h.count + " -> " + h.samples.join(" | "));
     }
     const errors = results.filter((r) => r.status === "error").length;
+    if (portalFindings)
+        console.log(
+            "[copy-leak] portal 轴命中 " +
+                portalFindings +
+                " 条：**未计入 findings**（新覆盖不等于新泄露，先按子树身份分类；要判红加 --portals-enforce）",
+        );
+    if (args.portalsEnforce) findings += portalFindings;
     const d = classify({
         stackReachable: true,
         matrixReadable: true,
