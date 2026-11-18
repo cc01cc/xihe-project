@@ -689,6 +689,76 @@ class UserQuestionServiceTest {
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // G3-a C4: agent resume claim read mouth (envelope view)
+    // ---------------------------------------------------------------------------------------
+
+    private UserQuestion runQuestion(String state, Instant expiresAt, String answer) {
+        UserQuestion row = new UserQuestion(UUID.fromString(SESSION_ID), UUID.fromString(RUN_ID),
+                null, UUID.fromString(USER_ID), PROMPT, expiresAt);
+        row.setId(UUID.randomUUID());
+        row.setState(state);
+        row.setAnswer(answer);
+        return row;
+    }
+
+    @Test
+    void agentWaitingRowReturnsEmptyWhenThereIsNoRowOrBadRunId() {
+        when(questions.findFirstByRunIdOrderByCreatedAtDescIdDesc(any())).thenReturn(Optional.empty());
+
+        assertTrue(service.agentWaitingRow(RUN_ID).isEmpty());
+        assertTrue(service.agentWaitingRow("not-a-uuid").isEmpty());
+        verify(questions, never()).settleExpiredById(any(), any());
+    }
+
+    @Test
+    void agentWaitingRowReturnsPendingForTheAgentToRearm() {
+        when(questions.findFirstByRunIdOrderByCreatedAtDescIdDesc(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runQuestion(UserQuestion.STATE_PENDING,
+                        Instant.now().plusSeconds(300), null)));
+
+        Optional<UserQuestionService.AgentWaitingView> view = service.agentWaitingRow(RUN_ID);
+
+        assertTrue(view.isPresent());
+        assertEquals(UserQuestion.STATE_PENDING, view.get().state());
+        assertEquals(null, view.get().answer(), "pending ⇒ no answer envelope yet");
+    }
+
+    @Test
+    void agentWaitingRowLazilySettlesAnOverduePendingToNoAnswer() {
+        // 与用户读面同一惰性结算纪律：过期 pending 落 expired，agent 看到的是「无行」= no_answer。
+        UserQuestion overdue = runQuestion(UserQuestion.STATE_PENDING,
+                Instant.now().minusSeconds(1), null);
+        when(questions.findFirstByRunIdOrderByCreatedAtDescIdDesc(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(overdue));
+
+        assertTrue(service.agentWaitingRow(RUN_ID).isEmpty());
+        verify(questions).settleExpiredById(eq(overdue.getId()), any());
+    }
+
+    @Test
+    void agentWaitingRowReturnsTheDurableAnswerEnvelope() {
+        when(questions.findFirstByRunIdOrderByCreatedAtDescIdDesc(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runQuestion(UserQuestion.STATE_ANSWERED, null, ANSWER)));
+
+        Optional<UserQuestionService.AgentWaitingView> view = service.agentWaitingRow(RUN_ID);
+
+        assertTrue(view.isPresent());
+        assertEquals(UserQuestion.STATE_ANSWERED, view.get().state());
+        assertEquals(ANSWER, view.get().answer());
+    }
+
+    @Test
+    void agentWaitingRowNeverExposesTerminalOrPrompt() {
+        // 负例：cancelled 行不可见（empty）；视图 record 根本没有 prompt 字段（编译期即最小化）。
+        when(questions.findFirstByRunIdOrderByCreatedAtDescIdDesc(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runQuestion(UserQuestion.STATE_CANCELLED, null, null)));
+
+        assertTrue(service.agentWaitingRow(RUN_ID).isEmpty());
+        assertEquals(4, UserQuestionService.AgentWaitingView.class.getRecordComponents().length,
+                "信封只有 questionId/state/answer/expiresAt —— prompt 永不出 CP（spec §5.2）");
+    }
+
     /** Clock that advances on every read, so two reads in one request become visible. */
     private static final class TickClock extends java.time.Clock {
         private final java.time.Instant start;

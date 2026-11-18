@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.scheduling.TaskScheduler;
 
 import java.time.Instant;
 import java.util.List;
@@ -43,11 +44,12 @@ class ChatRunDispatchDrainServiceTest {
     private final ChatRunDispatchQueueService queueService =
             Mockito.mock(ChatRunDispatchQueueService.class);
     private final ApprovalService approvalService = Mockito.mock(ApprovalService.class);
+    private final TaskScheduler taskScheduler = Mockito.mock(TaskScheduler.class);
 
     private ChatRunDispatchDrainService drain() {
         SessionRunConcurrencyGate gate = new SessionRunConcurrencyGate(
                 runs, questions, approvals, queue, config);
-        return new ChatRunDispatchDrainService(gate, queue, queueService, approvalService);
+        return new ChatRunDispatchDrainService(gate, queue, queueService, approvalService, taskScheduler);
     }
 
     private void cap(String value) {
@@ -161,6 +163,22 @@ class ChatRunDispatchDrainServiceTest {
                 eq("33333333-3333-3333-3333-333333333333"),
                 eq("44444444-4444-4444-4444-444444444444"), any());
         assertEquals(0, queue.parkedCount(SESSION));
+    }
+
+    @Test
+    void failedResumeRequeuesAndSchedulesABoundedRetry() {
+        // G3-a C2/C3: a resume failure (e.g. agent still down in the restart window) must not
+        // wait for a terminal event that may never come — one scheduled retry is booked.
+        cap("2");
+        nonTerminal(run(RUN_A, "queued"));
+        parked(RUN_A);
+        Mockito.doThrow(new IllegalStateException("agent unreachable"))
+                .when(queueService).resumeQuestionNow(any());
+
+        drain().drain(SESSION);
+
+        assertTrue(queue.isParked(SESSION, RUN_A), "failed resume stays parked at the head");
+        Mockito.verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
     }
 
     @Test

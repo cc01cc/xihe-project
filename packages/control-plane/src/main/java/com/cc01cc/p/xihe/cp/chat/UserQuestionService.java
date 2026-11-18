@@ -625,4 +625,57 @@ public class UserQuestionService {
     public Optional<String> stateOf(UUID questionId) {
         return questions.findStateById(questionId);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // G3-a C4: agent resume claim read mouth (internal service surface)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * G3-a C4: the newest waiting row of one run, as an envelope view for the Agent's
+     * resume claim (A2). Read-only, internal-service surface:
+     *
+     * <ul>
+     *   <li>{@code pending} (unexpired) → the agent re-arms its local waiter;
+     *       a pending row whose deadline has passed is lazily settled to {@code expired}
+     *       here, same discipline as the user-facing read faces — the agent then sees
+     *       "no row" and maps it to {@code no_answer}.</li>
+     *   <li>{@code answered} → the durable answer envelope; the run resumes from it
+     *       instead of asking the human a second time.</li>
+     *   <li>anything else (expired/cancelled/absent) → empty.</li>
+     * </ul>
+     *
+     * <p>Minimisation (spec/session/user-channel.md §5.2): the question prompt NEVER leaves
+     * CP on this mouth — the agent already holds it in its checkpoint input projection
+     * (G3-a §0-2). Only the answer crosses, and only inside the service trust domain
+     * (same rule as the respond callback).</p>
+     */
+    @Transactional(readOnly = true)
+    public Optional<AgentWaitingView> agentWaitingRow(String runId) {
+        UUID id;
+        try {
+            id = UUID.fromString(runId);
+        } catch (RuntimeException invalid) {
+            return Optional.empty();
+        }
+        Optional<UserQuestion> found = questions.findFirstByRunIdOrderByCreatedAtDescIdDesc(id);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        UserQuestion row = found.get();
+        if (UserQuestion.STATE_PENDING.equals(row.getState()) && row.getExpiresAt() != null
+                && !row.getExpiresAt().isAfter(now())) {
+            questions.settleExpiredById(row.getId(), now());
+            return Optional.empty();
+        }
+        if (UserQuestion.STATE_PENDING.equals(row.getState())
+                || UserQuestion.STATE_ANSWERED.equals(row.getState())) {
+            return Optional.of(new AgentWaitingView(row.getId().toString(), row.getState(),
+                    row.getAnswer(), row.getExpiresAt()));
+        }
+        return Optional.empty();
+    }
+
+    /** G3-a C4 envelope: {@code answer} is non-null only in the {@code answered} state. */
+    public record AgentWaitingView(String questionId, String state, String answer, Instant expiresAt) {
+    }
 }

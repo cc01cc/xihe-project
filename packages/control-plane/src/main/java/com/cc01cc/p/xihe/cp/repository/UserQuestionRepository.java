@@ -51,6 +51,12 @@ public interface UserQuestionRepository extends JpaRepository<UserQuestion, UUID
     /** Cheap existence check for the same precondition. */
     boolean existsByRunIdAndState(UUID runId, String state);
 
+    /** G3-a C2: the newest answered row of one run — the durable fact a startup replay rebuilds from. */
+    Optional<UserQuestion> findFirstByRunIdAndStateOrderByCreatedAtDescIdDesc(UUID runId, String state);
+
+    /** G3-a C4: the newest waiting row of one run, whatever its state (agent resume claim read). */
+    Optional<UserQuestion> findFirstByRunIdOrderByCreatedAtDescIdDesc(UUID runId);
+
     /**
      * Fresh state read that bypasses the persistence context. Loaded entities live in the
      * first-level cache, so re-reading a row with {@code findById} after a bulk update would still

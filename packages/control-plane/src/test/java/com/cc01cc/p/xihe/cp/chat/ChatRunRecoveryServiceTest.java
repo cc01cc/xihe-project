@@ -3,9 +3,11 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
+import com.cc01cc.p.xihe.cp.entity.UserQuestion;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
+import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,8 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,8 +47,10 @@ class ChatRunRecoveryServiceTest {
 
     private ChatRunRepository chatRunRepository;
     private ChatApprovalRepository approvalRepository;
+    private UserQuestionRepository userQuestionRepository;
     private ChatActiveRunRegistry activeRunRegistry;
     private ChatRunTerminalService terminalService;
+    private ApprovalHistoryWriter approvalHistoryWriter;
     private RunCheckpointService runCheckpointService;
     private ChatRunHistoryWriter historyWriter;
     private ChatRunRecoveryService service;
@@ -53,8 +59,10 @@ class ChatRunRecoveryServiceTest {
     void setUp() {
         chatRunRepository = mock(ChatRunRepository.class);
         approvalRepository = mock(ChatApprovalRepository.class);
+        userQuestionRepository = mock(UserQuestionRepository.class);
         activeRunRegistry = mock(ChatActiveRunRegistry.class);
         terminalService = mock(ChatRunTerminalService.class);
+        approvalHistoryWriter = mock(ApprovalHistoryWriter.class);
         runCheckpointService = mock(RunCheckpointService.class);
         historyWriter = mock(ChatRunHistoryWriter.class);
         when(terminalService.terminalize(any())).thenAnswer(invocation -> {
@@ -65,8 +73,11 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findByStatus("cancelling")).thenReturn(List.of());
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
         when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any())).thenReturn(List.of());
-        service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, activeRunRegistry,
-                terminalService, historyWriter, runCheckpointService);
+        // G3-a defaults: no live question, no replayable parked answer (tests opt in explicitly).
+        when(userQuestionRepository.findByRunIdAndStateIn(any(), any())).thenReturn(List.of());
+        when(userQuestionRepository.existsByRunIdAndState(any(), any())).thenReturn(false);
+        service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, userQuestionRepository,
+                activeRunRegistry, terminalService, historyWriter, approvalHistoryWriter, runCheckpointService);
     }
 
     private ChatRun runWithStatus(String status) {
@@ -112,6 +123,89 @@ class ChatRunRecoveryServiceTest {
 
         assertEquals("awaiting_approval", active.getStatus());
         verify(activeRunRegistry).restore(SESSION_ID, RUN_ID);
+    }
+
+    @Test
+    void recoveryRestoresRunWithLivePendingQuestionAsRunning() {
+        // G3-a C1: "人还没答" — the question row is the durable waiting fact, the run must
+        // survive the restart instead of being terminalized while a human can still answer.
+        ChatRun active = runWithStatus("running");
+        UserQuestion pending = new UserQuestion(UUID.fromString(SESSION_ID), UUID.fromString(RUN_ID),
+                null, UUID.fromString(USER_ID), "which branch?", Instant.now().plusSeconds(300));
+        when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of(active));
+        when(userQuestionRepository.findByRunIdAndStateIn(any(), any())).thenReturn(List.of(pending));
+
+        service.reconcileOnStartup();
+
+        assertEquals("running", active.getStatus());
+        verify(activeRunRegistry).restore(SESSION_ID, RUN_ID);
+        verify(terminalService, never()).terminalize(any());
+    }
+
+    @Test
+    void recoveryTerminalizesRunWithExpiredQuestion() {
+        // G3-a C1 负例对照：deadline 已过的 pending 行不是「live」等待 — 维持既有终态化，
+        // 证明 C1 的分支条件是过期判定而不是「有行就算」。
+        ChatRun active = runWithStatus("running");
+        UserQuestion overdue = new UserQuestion(UUID.fromString(SESSION_ID), UUID.fromString(RUN_ID),
+                null, UUID.fromString(USER_ID), "which branch?", Instant.now().minusSeconds(1));
+        when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of(active));
+        when(userQuestionRepository.findByRunIdAndStateIn(any(), any())).thenReturn(List.of(overdue));
+
+        service.reconcileOnStartup();
+
+        verify(terminalService).terminalize(argThat(request -> RUN_ID.equals(request.runId())
+                && "ambiguous".equals(request.status())
+                && "CP_RESTARTED".equals(request.errorCode())));
+        verify(activeRunRegistry, never()).restore(anyString(), anyString());
+    }
+
+    @Test
+    void recoverySkipsQueuedRunWithAnsweredQuestionForStartupReplay() {
+        // G3-a C2 handoff: queued + answered — the answer the human already gave must not be
+        // buried; ChatRunDispatchRecoveryService rebuilds and replays instead.
+        ChatRun parked = runWithStatus("queued");
+        when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of(parked));
+        when(userQuestionRepository.existsByRunIdAndState(UUID.fromString(RUN_ID), "answered"))
+                .thenReturn(true);
+
+        service.reconcileOnStartup();
+
+        assertEquals("queued", parked.getStatus());
+        verify(terminalService, never()).terminalize(any());
+        verify(activeRunRegistry, never()).restore(anyString(), anyString());
+    }
+
+    @Test
+    void recoverySettlesDispatchingApprovalToDispatchUnknownForExplicitRetry() {
+        // G3-a C5: a dispatching approval across the restart has an unknowable dispatch
+        // outcome (and the full decision body is not durable) — settle to dispatch_unknown
+        // so the user can retry explicitly; never silently replay.
+        ChatRun active = runWithStatus("awaiting_approval");
+        ChatApproval dispatching = new ChatApproval(
+                "77777777-7777-7777-7777-777777777777",
+                RUN_ID,
+                SESSION_ID,
+                USER_ID,
+                WORKSPACE_ID,
+                "write_file",
+                "Execute write_file",
+                "preview",
+                "dispatching",
+                Instant.now().plusSeconds(300));
+        when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of(active));
+        when(approvalRepository.findByRunIdAndStateIn(anyString(), any()))
+                .thenReturn(List.of(dispatching));
+        when(approvalRepository.markDispatchUnknown(any(), anyString(), any())).thenReturn(1);
+
+        service.reconcileOnStartup();
+
+        assertEquals("awaiting_approval", active.getStatus());
+        verify(approvalRepository).markDispatchUnknown(eq(dispatching.getRequestId()), eq("CP_RESTARTED"), any());
+        verify(approvalHistoryWriter).append(eq(dispatching.getRequestId()),
+                eq(UUID.fromString(RUN_ID)), eq(UUID.fromString(SESSION_ID)),
+                eq("dispatch_unknown"), eq("dispatching"), eq("dispatch_unknown"),
+                any(), any(), eq("system"), eq("CP_RESTARTED"));
     }
 
     @Test
@@ -166,7 +260,8 @@ class ChatRunRecoveryServiceTest {
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class),
                 mock(com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
-                approvalRepository, activeRunRegistry, terminalService, historyWriter, realService);
+                approvalRepository, userQuestionRepository, activeRunRegistry, terminalService,
+                historyWriter, approvalHistoryWriter, realService);
         try {
             recovery.captureRecoveredRuns();
             recovery.captureRecoveredRuns();

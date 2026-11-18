@@ -64,16 +64,30 @@ public class ChatRunDispatchQueueService {
     /**
      * 问题答案的恢复闸（在 deliverAnswer 的 CAS 之后调用，同一事务内）。
      *
+     * <p>G3-a C3 / 留白 L-4（本实现取「park 挂重放」形态，供 Lead 裁定）：槽在、respond 抛错
+     * 的典型场景是重启窗口内 agent 尚未恢复。此时若照旧向上抛、由外层事务回滚 CAS，
+     * 「人已经答了」会随回滚一起埋掉，用户重答只会再撞一次 —— 即条件稿所说的「无限回滚」。
+     * 改为：答案保持 durable（markAnswered 已在本事务内成功），run 落 'queued' 换发 lease
+     * 并入列，respond 由排水（终态事件）与启动重放接手重试。fail-closed 底线不变：
+     * 行上从没有过「伪造的 answered」。</p>
+     *
      * @return {@code true} = 已立即 respond（调用方继续其 audit/log 收尾）；
-     *         {@code false} = 已 park：答案保持 durable（用户看到「已回答」），respond 挂到排水。
+     *         {@code false} = 已 park（含 respond 失败转入的 park）：答案保持 durable，
+     *         respond 挂到排水/重放。
      */
     public boolean resumeQuestionOrPark(UserQuestion row, String answer) {
         String sessionId = row.getSessionId().toString();
         String runId = row.getRunId().toString();
         if (gate.canResume(sessionId, runId)) {
-            // 与原路径一致：respond 失败向上抛，由外层事务回滚 CAS（fail-closed，不伪造 answered）。
-            questionAgentClient.respond(row.getId().toString(), sessionId, runId, answer);
-            return true;
+            try {
+                questionAgentClient.respond(row.getId().toString(), sessionId, runId, answer);
+                return true;
+            } catch (RuntimeException respondFailed) {
+                logger.warn("[LIFECYCLE] service=cp event=chat_run_respond_failed_park_for_replay "
+                                + "sessionId={} runId={} failureType={}",
+                        sessionId, runId, respondFailed.getClass().getSimpleName());
+                // fall through to the park path below (G3-a C3).
+            }
         }
         if (!parkRunAsQueued(runId, List.of("running", "streaming", "dispatching"))) {
             // 状态期望集落空（run 已不在可 park 的状态）：队列项会成为死项、答案永远等不到执行。
@@ -127,6 +141,17 @@ public class ChatRunDispatchQueueService {
     /** 取消/会话删除路径：从队列摘除（run 的终态化由调用方负责）。 */
     public boolean removeParked(String runId) {
         return queue.remove(runId);
+    }
+
+    /**
+     * G3-a C2：启动重建时为仍 'queued' 的 run 换发 parked lease。重启前 park 的 run 其
+     * lease 可能早已过期；不续期的话周期对账会在 grace 后把它当 stale 终态化，重放目标
+     * 就没了。queued→queued 的 CAS 转移顺带完成续期。
+     *
+     * @return true = lease 已换发；false = run 已不在 queued（交由既有清扫）
+     */
+    public boolean renewParkedLease(String runId) {
+        return parkRunAsQueued(runId, List.of("queued"));
     }
 
     /**

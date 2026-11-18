@@ -83,6 +83,25 @@ class ChatRunDispatchQueueServiceTest {
     }
 
     @Test
+    void respondFailureWithAFreeSlotParksForReplayInsteadOfLosingTheAnswer() {
+        // G3-a C3 / L-4「park 挂重放」形态：重启窗口内 agent 尚未恢复时槽是空的但 respond 会抛。
+        // 答案必须保持 durable（调用方已 markAnswered），run 落 queued 入列等排水/重放重试，
+        // 而不是向上抛回滚把「人已答」埋掉。
+        cap("2");
+        executing(); // 0 在执行 ⇒ 有空槽
+        Mockito.doThrow(new RuntimeException("agent user-question service is unavailable"))
+                .when(agentClient).respond(anyString(), anyString(), anyString(), anyString());
+        when(runs.parkRun(eq(UUID.fromString(RUN_ID)), any(), anyString(), any())).thenReturn(1);
+
+        boolean resumed = service().resumeQuestionOrPark(question(), "answer");
+
+        assertFalse(resumed, "respond 失败转入 park：答案 durable、等待重放");
+        assertEquals(1, queue.parkedCount(SESSION));
+        assertTrue(queue.isParked(SESSION, RUN_ID));
+        Mockito.verify(runs).parkRun(eq(UUID.fromString(RUN_ID)), any(), anyString(), any());
+    }
+
+    @Test
     void aFullSessionParksTheResumeAndLeavesTheAnswerDurable() {
         cap("1");
         executing("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"); // 1 在执行，cap=1 ⇒ 无槽

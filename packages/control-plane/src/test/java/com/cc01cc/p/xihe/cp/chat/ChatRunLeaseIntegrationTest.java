@@ -13,9 +13,11 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.repository.ApprovalHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +68,12 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private ChatApprovalRepository approvalRepository;
+
+    @Autowired
+    private UserQuestionRepository userQuestionRepository;
+
+    @Autowired
+    private ApprovalHistoryRepository approvalHistoryRepository;
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
@@ -281,8 +289,9 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ChatRunRecoveryService reconciliationService() {
-        return new ChatRunRecoveryService(chatRunRepository, approvalRepository, activeRunRegistry,
-                chatRunTerminalService, historyWriter, runCheckpointService);
+        return new ChatRunRecoveryService(chatRunRepository, approvalRepository, userQuestionRepository,
+                activeRunRegistry, chatRunTerminalService, historyWriter,
+                new ApprovalHistoryWriter(approvalHistoryRepository), runCheckpointService);
     }
 
     // ── PLAN-0317 T2.7：周期对账（grace=-1 让所有测试 run 立即进入候选） ──────
