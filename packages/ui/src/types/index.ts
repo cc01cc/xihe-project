@@ -1036,6 +1036,12 @@ export interface ChatRunUsage {
     costCurrency?: string;
     costSource?: "price_table" | "provider_reported" | "unmapped";
     costNote?: string | null;
+    /**
+     * 上下文窗口（token），由 usage 事件原样带回；字段名逐字对齐
+     * `docs/api/openapi.yaml:2955` 的 usage 示例（CP 也读同名键 `usage.path("windowTokens")`
+     * 做上下文预算）。provider 未返回时为缺失或 null —— 调用方必须自带兜底。
+     */
+    windowTokens?: number | null;
 }
 
 // ── PLAN-0339: workspace checkpoint slices ───────────────────────────────────

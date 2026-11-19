@@ -150,6 +150,36 @@ describe("task-135 composer 元信息行", () => {
             "1,234,567 / 200k",
         );
     });
+
+    // task-154（M-5）：分母不再是常量，优先取当前 run 的 usage.windowTokens 真值。
+    it("分母优先取 usage.windowTokens 真值（131072 → 131k）", async () => {
+        const wrapper = mountInputArea();
+        useChatStore().setSessionLastUsage("meta-session", {
+            totalTokens: 12345,
+            windowTokens: 131_072,
+        });
+        await nextTick();
+        expect(wrapper.find('[data-testid="composer-meta-tokens"]').text()).toBe("12,345 / 131k");
+    });
+
+    it("windowTokens 缺失或为 null 时回落到 200k 兜底（兜底不是真值）", async () => {
+        const wrapper = mountInputArea();
+        const chat = useChatStore();
+        chat.setSessionLastUsage("meta-session", { totalTokens: 500 });
+        await nextTick();
+        expect(wrapper.find('[data-testid="composer-meta-tokens"]').text()).toBe("500 / 200k");
+
+        chat.setSessionLastUsage("meta-session", { totalTokens: 500, windowTokens: null });
+        await nextTick();
+        expect(wrapper.find('[data-testid="composer-meta-tokens"]').text()).toBe("500 / 200k");
+    });
+
+    it("windowTokens 非正数不渲染 0k，仍走兜底", async () => {
+        const wrapper = mountInputArea();
+        useChatStore().setSessionLastUsage("meta-session", { totalTokens: 7, windowTokens: 0 });
+        await nextTick();
+        expect(wrapper.find('[data-testid="composer-meta-tokens"]').text()).toBe("7 / 200k");
+    });
 });
 
 describe("task-135 模型·路由 chip", () => {

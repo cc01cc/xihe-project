@@ -39,6 +39,18 @@ const messages = {
             placeholder: "输入消息…",
             send: "发送",
             stop: "停止",
+            // task-135 起 InputArea 恒渲染 composer 元信息行；本夹具原先没这几个键，
+            // 自 5829a5cf5 起就落在「裸 i18n 键」护栏上（既有红，非 task-154 引入）。
+            // task-154 按台账口径「补齐夹具」修掉：键与值逐字对齐 src/i18n 的 zh-CN。
+            composerMeta: {
+                model: "模型 · 路由",
+                modelUnbound: "未绑定模型",
+                rounds: "轮 {value}",
+                steps: "步 {value}",
+                speed: "{value} tok/s",
+                tokens: "{used} / {limit}",
+                cacheHit: "缓存命中 {percent}",
+            },
             followUpComposerNotice: "当前任务之后执行",
             followUpPausedNotice: "追加到暂停队列末尾",
             followUpFullNotice: "队列已满，草稿保留",

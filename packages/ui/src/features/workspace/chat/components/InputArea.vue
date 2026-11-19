@@ -831,11 +831,25 @@ const sendDisabled = computed(() => {
  * - token 用量走 chat store 的 `getSessionLastUsage`（SSE `usage.recorded` 写入）。
  * - 轮 / 步 / tok-s 与缓存命中：UI 侧**没有**数据源（全 src 无字段）⇒ 恒 "—"，待 CP 补录，
  *   不许用估算值假装成读数。
- * - 分母 200k 是常量兜底：composer 侧没有「当前模型上下文窗口」的读取通路
- *   （provider 目录有 contextWindowTokens，但没有到 composer 的线路）。
+ * - 分母（task-154 / M-5）：优先取当前 run 的 `usage.windowTokens`——CP 已随 usage 事件带回
+ *   （契约见 `docs/api/openapi.yaml:2955`，字段名逐字对齐；CP 侧读同名键做上下文预算）。
+ *   缺读数时才回落下面的兜底常量。
  */
-const COMPOSER_CONTEXT_WINDOW_TOKENS = 200_000;
-const COMPOSER_CONTEXT_WINDOW_LABEL = `${Math.round(COMPOSER_CONTEXT_WINDOW_TOKENS / 1000)}k`;
+/**
+ * task-154：`usage.windowTokens` 缺失时的兜底分母。
+ *
+ * **它不是真值**：真实窗口由 provider 决定（131072 / 200000 / 1000000 都存在），这里只是让
+ * 「本轮还没有 usage」时元信息行仍有一个自洽的分母，而不是显示 "used / —"。
+ * 一旦本轮 usage 带回 `windowTokens`，本常量即被取代（见 composerContextWindowLabel）。
+ */
+const COMPOSER_CONTEXT_WINDOW_FALLBACK_TOKENS = 200_000;
+/** 标签统一按 /1000 取整（131072 → "131k"），与旧 200k 兜底同一口径；不按 1024 折算，避免混用两种基数。 */
+function formatContextWindowLabel(tokens: number): string {
+    return `${Math.round(tokens / 1000)}k`;
+}
+const COMPOSER_CONTEXT_WINDOW_FALLBACK_LABEL = formatContextWindowLabel(
+    COMPOSER_CONTEXT_WINDOW_FALLBACK_TOKENS,
+);
 const META_PLACEHOLDER = "—";
 
 const composerModelChip = computed(() => {
@@ -858,6 +872,18 @@ const composerTokensUsedLabel = computed(() =>
     composerTokensUsed.value == null
         ? META_PLACEHOLDER
         : new Intl.NumberFormat("en-US").format(composerTokensUsed.value),
+);
+
+/** 当前 run 的真实上下文窗口（token）；缺失或非正数 ⇒ null，由标签回落兜底常量。 */
+const composerContextWindowTokens = computed<number | null>(() => {
+    const windowTokens = chatStore.getSessionLastUsage(props.sessionId)?.windowTokens;
+    return typeof windowTokens === "number" && windowTokens > 0 ? windowTokens : null;
+});
+
+const composerContextWindowLabel = computed(() =>
+    composerContextWindowTokens.value == null
+        ? COMPOSER_CONTEXT_WINDOW_FALLBACK_LABEL
+        : formatContextWindowLabel(composerContextWindowTokens.value),
 );
 
 const toolbarActions = computed<ToolbarAction[]>(() => [
@@ -2015,7 +2041,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                     {{
                         t("chat.composerMeta.tokens", {
                             used: composerTokensUsedLabel,
-                            limit: COMPOSER_CONTEXT_WINDOW_LABEL,
+                            limit: composerContextWindowLabel,
                         })
                     }}
                 </span>
