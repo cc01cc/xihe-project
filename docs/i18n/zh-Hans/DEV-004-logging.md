@@ -292,9 +292,19 @@ node scripts/scan-log-secrets.mjs --selftest   # 内置夹具 6 例（含反向�
 ### 6.5 ChatRun 与 provider 审计（PLAN-247）
 
 - Chat 生命周期日志必须同时携带 `requestId`、`runId`、`sessionId`、`outcome` 和必要的 `errorCode`；异步 CP worker 使用显式参数传递关联 ID。
-- provider 仅记录 provider/model/status/duration/errorCode 和 token/字符计数，不记录 prompt、token 内容、raw response 或凭据。
-- Run Trace 只读投影不得在日志中记录原始请求、prompt、response、工具参数/结果或 credential。
+- provider 日志记录 provider/model/status/duration/errorCode 和 token/字符计数；**不记凭据值**（`Authorization`/Cookie/API key/JWT/PEM/密码）。**prompt 与 response 全文不写进日志流，改为落 durable 审计记录**（§6.5b）。
+- Run Trace 只读投影的**日志**不写全文；全文走 §6.5b 的 durable 审计记录，投影只引用记录 id/摘要。
 - ConfigAudit 对 provider secret 只记录 `present`/`missing` 与不可逆 fingerprint；ADMIN 配置 GET 的 raw-read 例外仅限配置 API 响应本身，不得进入日志、trace、截图或 evidence。
+
+### 6.5b provider 请求/响应正文的 durable 记录边界（2026-11-19 用户裁定）
+
+**结论：正文可以且应当被记录**——「不可信请求正文不得记录」这条禁令**已废止**；理由是**请求/响应本身不承载令牌**（凭证在 `Authorization` 头与配置面），把它当禁记对象会让「事后无法复盘一次调用的真实输入输出」，直接导致记账/预算/审计不可复算。
+
+- **落点**：durable 审计记录（`chat_run_provider_requests` 及其扩展），**不是日志流**；日志保持轻量、只留 id/摘要/计数。
+- **入库前必须脱敏**：`Authorization` / `Cookie` / `Set-Cookie` / `API key` / `sk-*` / JWT / PEM / 密码字段**整值替换为 `***` 并计数**；命中计数落审计行，**不因命中而拒绝落库**（拒绝会让审计残缺）。
+- **体积与保留**：单步正文上限与总水位按 `provider-call-audit-gaps-20261119.md`（≈73 KB/run、日 100 run ≈ 7 MB；保留 180 / 30 天；>50 M 行或 >20 GB 触发盘点）。
+- **开关**：`providerAudit = full-redacted`（**默认**）/ `metadata`（只落计数、hash、时延）/ `off`（回滚位，正文列写 `NULL`，**不写 0 也不写空串**）。
+- **红线不变**：**凭证、密钥、私钥、真实 token 值永不落库**（与「正文可记」不冲突：正文里若出现凭证，按上条脱敏）。
 
 ## 7. 错误日志规范
 
@@ -348,9 +358,9 @@ node scripts/scan-log-secrets.mjs --selftest   # 内置夹具 6 例（含反向�
 ### 8.4 禁止清单（红线）
 
 - Token、Cookie、密码、`Authorization` 原文、API key。
-- Prompt / 消息正文 / 工具参数原文 / stdout 内容。
+- **（本条已废止，2026-11-19 用户裁定）**原「Prompt / 消息正文 / 工具参数原文 / stdout 内容」禁止项**不再适用于 durable 审计记录**：请求/响应正文、工具参数与结果**允许落库**，见 §6.5b；**仅日志流**仍不写全文。
 - 宿主机绝对路径、容器 IP、完整 env。
-- 原始 provider error body（只记 status + errorCode）。
+- 原始 provider error body：**日志只记 status + errorCode**；**完整 error body 允许落 durable 审计记录**（§6.5b），入库前同样过脱敏。
 
 ## 9. 日志采集边界（外部采集器，PLAN-245）
 
