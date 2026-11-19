@@ -254,13 +254,15 @@ Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields. **Scan face (
 
 ### 6.5b Durable recording of provider request/response bodies (user ruling, 2026-11-19)
 
-**Bodies may and should be recorded.** The former prohibition on "untrusted request bodies" is **withdrawn**: the request/response payload does not carry tokens (credentials live in the `Authorization` header and the configuration plane), and refusing to record it makes a call's real input/output unrecoverable, which breaks accounting, budget and audit reproducibility.
+**Bodies are recorded verbatim — no redaction, no inspection, no rewriting.** The former prohibition on "untrusted request bodies" is **withdrawn**: the request/response payload does not carry tokens (credentials live in the `Authorization` header and the configuration plane), and refusing to record it makes a call's real input/output unrecoverable, which breaks accounting, budget and audit reproducibility.
+
+**Responsibility boundary (user ruling, 2026-11-19)**: **our request/response records are the raw records.** Redaction, inspection and rewriting are the **upstream gateway's** job; this layer must **never tamper with request/response content**. Any sanitization this layer needs is an **additional gateway configuration**, not an edit of the record. **Byte-exactness is the criterion**: store the body byte-identical to what arrived and keep its sha256 — rewriting "for safety" is a defect.
 
 - **Where**: durable audit records (`chat_run_provider_requests` and its extensions) — **not the log stream**; logs stay lightweight (ids, summaries, counts).
-- **Redaction before storage is mandatory**: `Authorization` / `Cookie` / `Set-Cookie` / API keys / `sk-*` / JWT / PEM / password fields are replaced with `***` and **counted**; the hit count is stored on the audit row. **A redaction hit never rejects the row** — rejecting would leave the audit incomplete.
+- **No rewriting at storage time**: store the body verbatim (including any `Authorization` header), with **no redaction, no scanning, no replacement, no trimmed counts**; integrity is guaranteed by **sha256 + byte length** only. If upstream needs redaction, that is a gateway configuration concern — this layer records what upstream sent.
 - **Volume and retention**: per-step body caps and total watermarks follow `provider-call-audit-gaps-20261119.md` (≈73 KB/run, 100 runs/day ≈ 7 MB; retention 180 / 30 days; re-inventory above 50 M rows or 20 GB).
 - **Switch**: `providerAudit = full-redacted` (**default**) / `metadata` (counts, hashes, latency only) / `off` (rollback position; body columns are `NULL`, never `0` and never an empty string).
-- **Unchanged red line**: **credentials, keys, private keys and real token values are never stored** — consistent with recording bodies, because credentials appearing inside a body are redacted by the rule above.
+- **Relation to "no credentials in logs"**: the **log stream** (which is collected and shipped) still carries no credential plaintext; the **durable audit record keeps bytes verbatim**. The two are not in conflict — **the record is evidence, the log is forwarding.**
 
 ## 7. Error Logging Standards
 
