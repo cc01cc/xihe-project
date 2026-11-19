@@ -69,6 +69,19 @@ PLAN-0492 实现。预算只约束「本次 Run 的累计消耗」，与输入�
 
 验证映射：Agent `tests/unit/test_run_budget_accounting.py`、`tests/unit/test_langgraph_runner_budget.py`、`tests/unit/test_run_budget_resolution.py`、`tests/unit/test_chat_budget_error_sse.py`；CP `ConfigServiceTest`（预算键/越权/默认）、`ChatIntegrationTest#budgetExhaustedConvergesToFailedWithDurableDimension`；host E2E `packages/ui/e2e/real/run-budget-exhaustion.spec.ts`（`--batch=run-budget`）。
 
+## 上下文压缩开关与保真断言（task-110/B，2026-11-19）
+
+上下文压缩 = 把**陈旧工具结果正文**换成占位符（既有 prune 语义，PLAN-0341 I5 tombstones 不变）；本节只新增「何时压」的开关与「压完必须还在」的断言，MUST NOT 改变占位符之外的裁切规则。
+
+1. **`contextCompaction` 配置键**（`context-policy` 域，默认 `overflow`）：`overflow` = 每次 Run 都压（task-110 之前的行为，逐字节一致）；`budget` = 仅当组装后历史达到 `0.8 × maxInputTokens` 才压（阈值随模型窗口解析，未解析时按代码默认窗口 128k）；`off` = 回滚开关，生产截断点与 runner 侧装配保险丝都不压。非法值记日志后回落 `overflow`，不静默改成别的模式。
+2. **触发点与顺序**：生产截断点（`api/chat.py`）在 `truncate_for_run` 之前求值——先压工具正文、再量 inbound cap，顺序仍是 prune → inbound cap（PLAN-0670 T2c.1）。触发估算复用同一套本地估值器（不引入第二套 tokenizer），且只决定**是否**压，不改 inbound cap、不改 `CONTEXT_OVERFLOW` 单次闸阈值。
+3. **保真三元组**：压缩前后逐项比较**工具调用清单**（`tool_call_id` / `tool_calls[].id`）、**审批 id**（`approvalRequestId`）、**文件路径**；三者是事实位，MUST NOT 被摘要或占位符吞掉。被替换的正文若含事实，占位符后追加一行 `[preserved facts] approvalRequestId=… path=…`，使 markdown 级读取仍能看见事实；不含事实的正文保持裸占位符（形状不变）。
+4. **失败不静默降级**：压完三元组不等 ⇒ 丢弃压缩结果、按**未压缩**历史继续，并记 `context_compaction_reverted reason=fidelity_mismatch`；压缩路径抛错 ⇒ 同样回退并记 `pruner_error`（含 stacktrace）。两种情形都在既有 `context.prune` 事件的 `compaction` 子对象里写 `reverted/reason/error/applied/mode/estimatedInputTokens/thresholdTokens`——不新增事件类型（CP 事件分类不在本节写范围），空 tombstones 的 `context.prune` 对投影是 no-op，故回退事件不会污染重建。
+5. **读数口径**：`budget` 模式未达阈值时节省 MUST 为 0（不得有 tombstone、不得改 messages）；达阈值时节省 = 压缩前后历史字符差（可算，不靠估计）。验收读数 R1–R4 见 `internal/A03-xihe/evidence/2026-11-19-task110-context-compaction/`。
+6. **不变式**：本节 MUST NOT 放宽 `CONTEXT_OVERFLOW` 终态、MUST NOT 用摘要替代事实位、MUST NOT 在压缩失败时宣称已压缩。
+
+验证映射：Agent `tests/unit/test_context_compaction.py`（三模式 + 保真红/绿 + 抛错回退 + 节省可算）、`tests/unit/test_context_policy.py`（`contextCompaction` 解析与回落）、`tests/unit/test_tool_result_masking.py`（裸占位符形状不变）。
+
 ## Agent Run 语义重复与无进展检测
 
 PLAN-0493 实现。与累计预算（上节）相互独立、可同时生效：预算约束「消耗总量」，本节约束「动作重复性与进展」，两类触发各自上报、各自终态归因（`RUN_BUDGET_EXHAUSTED` / `RUN_NO_PROGRESS`）。

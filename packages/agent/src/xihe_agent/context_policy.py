@@ -17,6 +17,10 @@ from loguru import logger
 DEFAULT_MAX_INPUT_TOKENS = 128_000
 DEFAULT_PRUNE_WINDOW_CHARS = 80_000
 DEFAULT_RECOVERY_BAND = 0.8
+# task-110: hybrid compaction switch (off | budget | overflow). 'overflow' keeps
+# the pre-task-110 behaviour (prune every run), so an unset key is a no-op change.
+COMPACTION_MODES = ("off", "budget", "overflow")
+DEFAULT_COMPACTION_MODE = "overflow"
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,7 @@ class ResolvedContextPolicy:
     recovery_band: float
     tokenizer_ref: str | None
     source: str  # config | default
+    compaction_mode: str = DEFAULT_COMPACTION_MODE
 
 
 def _parse_json_object(raw: str | None) -> dict[str, Any]:
@@ -78,6 +83,20 @@ def resolve_context_policy(
         resolved_band = float(recovery_band)
         source = "config"
 
+    resolved_compaction = DEFAULT_COMPACTION_MODE
+    compaction_mode = pick("contextCompaction")
+    if isinstance(compaction_mode, str) and compaction_mode.strip():
+        candidate = compaction_mode.strip().lower()
+        if candidate in COMPACTION_MODES:
+            resolved_compaction = candidate
+            source = "config"
+        else:
+            logger.warning(
+                "context-policy contextCompaction invalid ({}) falling back to {}",
+                compaction_mode,
+                DEFAULT_COMPACTION_MODE,
+            )
+
     resolved_tokenizer: str | None = None
     if isinstance(tokenizer_ref, str) and tokenizer_ref.strip():
         # PLAN-0341 Q5: only trusted namespaces / offline refs.
@@ -97,6 +116,7 @@ def resolve_context_policy(
         recovery_band=resolved_band,
         tokenizer_ref=resolved_tokenizer,
         source=source,
+        compaction_mode=resolved_compaction,
     )
 
 

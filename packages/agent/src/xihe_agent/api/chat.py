@@ -22,7 +22,6 @@ from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.agent_runner.checkpoint_saver import CheckpointStoreError, CpAgentCheckpointSaver
 from xihe_agent.agent_runner.conditional_faces import attach_conditional_faces
 from xihe_agent.agent_runner.guidance import GuidanceConsumer
-from xihe_agent.agent_runner.langgraph_runner import prune_history_tool_results
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
     CP_API_TOKEN,
@@ -56,6 +55,7 @@ from xihe_agent.config_state import ConfigUnavailableError, ensure_config_ready
 from xihe_agent.context.agent_memory import (
     render_from_component_sources as render_memory_from_component_sources,
 )
+from xihe_agent.context.compaction import CompactionOutcome, apply_compaction
 from xihe_agent.context.inbound_limits import (
     InboundTooLargeError,
     Truncation,
@@ -681,12 +681,20 @@ async def chat(request: Request):
                 policy = _resolve_policy_for_model(
                     model_override or request_config.model, config_snapshot, user_overrides, workspace_overrides
                 )
-                pruned = (
-                    prune_history_tool_results(context.messages, policy.prune_window_chars)
-                    if continuation is None
-                    else None
-                )
-                if pruned is not None and pruned.tombstones:
+                compaction: CompactionOutcome | None = None
+                if continuation is None:
+                    # task-110: hybrid compaction — the switch decides WHEN stale tool-result
+                    # bodies are cleared (off / budget trigger at 0.8x window / overflow = today),
+                    # never how much the inbound cap below allows. A rejected compaction returns
+                    # the original history and still travels as an event (no silent downgrade).
+                    compaction = apply_compaction(
+                        context.messages,
+                        mode=policy.compaction_mode,
+                        prune_window_chars=policy.prune_window_chars,
+                        max_input_tokens=policy.max_input_tokens,
+                        estimated_input_tokens=_estimate_input_tokens(context.messages),
+                    )
+                if compaction is not None and (compaction.tombstones or compaction.reverted):
                     from datetime import UTC, datetime
 
                     persisted = await cp_event_store_client.append(
@@ -695,9 +703,13 @@ async def chat(request: Request):
                             sequence=0,
                             type="context.prune",
                             payload={
-                                "tombstones": [item.to_payload() for item in pruned.tombstones],
-                                "pruned_count": len(pruned.tombstones),
+                                "tombstones": [item.to_payload() for item in compaction.tombstones],
+                                "pruned_count": compaction.pruned_count,
                                 "runId": run_id,
+                                # task-110: additive sub-object — mode/trigger/applied/reverted/
+                                # reason/error make a rejected compaction as auditable as an applied
+                                # one. The CP projection ignores unknown keys and empty tombstones.
+                                "compaction": compaction.to_payload(),
                             },
                             created_at=datetime.now(UTC),
                             correlation_id=run_id,
@@ -705,8 +717,8 @@ async def chat(request: Request):
                     )
                     if isinstance(getattr(persisted, "sequence", None), int):
                         context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
-                if pruned is not None:
-                    context.messages = pruned.messages
+                if compaction is not None:
+                    context.messages = compaction.messages
                     # PLAN-0670 T2c.1 / BL-289 — the production truncation point. Order is
                     # prune → inbound cap: prune replaces stale tool-result bodies first, so the cap
                     # measures the payload the run would actually send (capping pre-prune would drop
@@ -865,6 +877,8 @@ async def chat(request: Request):
                     loop=loop_thresholds,
                     loop_exempt_tools=loop_exempt_tools,
                     prune_window_chars=policy.prune_window_chars,
+                    # task-110: 'off' is a real rollback switch for the runner-side prune too.
+                    compaction_mode=policy.compaction_mode,
                     branch_id=context.branch_id,
                     template_context=has_template,
                     admitted_prompt=None if resume_pending else content,

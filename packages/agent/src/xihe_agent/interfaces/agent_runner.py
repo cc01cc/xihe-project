@@ -81,6 +81,11 @@ class RunnerConfig:
     cancel_event: asyncio.Event | None = None
     # PLAN-0341 T1.6: fixed cumulative chars of tool results to keep before prune.
     prune_window_chars: int = 80_000
+    # task-110: hybrid compaction switch (context-policy.contextCompaction).
+    # 'off' also disables this runner's assembly-fuse prune; 'budget' and
+    # 'overflow' both prune here — the fuse already bounds this list, so the token
+    # trigger belongs to api/chat.py (the production truncation point).
+    compaction_mode: str = "overflow"
     # PLAN-0410 T2.3: the CP-given branch of this run's context; the prompt is
     # assembled from that branch's snapshot and a mismatch with the loaded
     # AgentContext fails closed instead of silently re-reading the Session.

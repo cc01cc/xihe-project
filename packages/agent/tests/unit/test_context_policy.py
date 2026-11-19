@@ -1,6 +1,9 @@
-"""PLAN-0341 T1.6: context-policy resolution."""
+"""PLAN-0341 T1.6: context-policy resolution (task-110 adds contextCompaction)."""
+
+import json
 
 from xihe_agent.context_policy import (
+    DEFAULT_COMPACTION_MODE,
     DEFAULT_MAX_INPUT_TOKENS,
     DEFAULT_PRUNE_WINDOW_CHARS,
     resolve_context_policy,
@@ -48,3 +51,29 @@ def test_ignores_malformed_json() -> None:
 
 def test_default_max_is_conservative() -> None:
     assert DEFAULT_MAX_INPUT_TOKENS == 128_000
+
+
+def test_compaction_mode_defaults_to_today() -> None:
+    policy = resolve_context_policy("unknown-model", {})
+    assert DEFAULT_COMPACTION_MODE == "overflow"
+    assert policy.compaction_mode == "overflow"
+    assert policy.source == "default"
+
+
+def test_compaction_mode_resolves_from_config() -> None:
+    for mode in ("off", "budget", "overflow"):
+        policy = resolve_context_policy("m", {"defaults": json.dumps({"contextCompaction": mode})})
+        assert policy.compaction_mode == mode
+        assert policy.source == "config"
+
+    entries = {
+        "defaults": json.dumps({"contextCompaction": "off"}),
+        "models": json.dumps({"m": {"contextCompaction": " Budget "}}),
+    }
+    assert resolve_context_policy("m", entries).compaction_mode == "budget"
+
+
+def test_compaction_mode_invalid_value_falls_back_to_today() -> None:
+    policy = resolve_context_policy("m", {"defaults": json.dumps({"contextCompaction": "cumulative"})})
+    assert policy.compaction_mode == "overflow"
+    assert policy.source == "default"

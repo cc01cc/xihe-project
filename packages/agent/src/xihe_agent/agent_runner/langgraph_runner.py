@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -36,6 +36,7 @@ from xihe_agent.agent_runner.tool_adapter import (
     _run_correlation,
     bound_tool_preview,
 )
+from xihe_agent.context.compaction import render_fact_stub
 from xihe_agent.context.loop_detection import LOOP_WINDOW_KEY, NO_PROGRESS_SIGNAL_KEY, LoopObservationWindow
 from xihe_agent.interfaces.agent_runner import AgentEvent, AgentRunner, RunBudget, RunnerConfig
 from xihe_agent.interfaces.context import AgentContext, bound_tool_arguments
@@ -144,11 +145,16 @@ def _attach_terminal_truncation(event: AgentEvent, truncation: dict[str, Any] | 
 def prune_history_tool_results(
     history: Sequence[Message],
     prune_window_chars: int = DEFAULT_PRUNE_WINDOW_CHARS,
+    fact_stub: Callable[[Message], str | None] | None = None,
 ) -> PruneResult:
     """Prune stale oversized/duplicate/window-overflow tool results.
 
     Returns the pruned view plus tombstones for every pruned result so the
     operation is a durable, replayable fact (PLAN-0341 I5).
+
+    task-110: fact_stub, when given, is appended to the placeholder for a masked
+    result that carried facts (approval ids / file paths) worth keeping verbatim.
+    With None the mask is exactly MASK_PLACEHOLDER — pre-task-110 behaviour.
     """
     size = len(history)
     if size <= KEEP_RECENT_TAIL:
@@ -201,10 +207,15 @@ def prune_history_tool_results(
             # (id/name/status/degraded) survive so V9 keeps pairs intact.
             if getattr(msg, "native_records", None) is not None:
                 continue
+            masked_content = MASK_PLACEHOLDER
+            if fact_stub is not None:
+                stub = fact_stub(msg)
+                if stub:
+                    masked_content = f"{MASK_PLACEHOLDER}\n{stub}"
             if isinstance(msg, TextMessage):
-                result.append(replace(msg, content=MASK_PLACEHOLDER))
+                result.append(replace(msg, content=masked_content))
             else:
-                result.append(TextMessage(role="tool", content=MASK_PLACEHOLDER))
+                result.append(TextMessage(role="tool", content=masked_content))
         else:
             result.append(msg)
     return PruneResult(messages=result, tombstones=tombstones)
@@ -364,11 +375,19 @@ class LangGraphRunner(AgentRunner):
             history = history[fuse_start:]
         # PLAN-0341 T1.2: prune is the real shrinkage; emit tombstones as
         # durable facts so replay cannot resurrect pruned content.
-        prune_result = prune_history_tool_results(
-            history, prune_window_chars=getattr(config, "prune_window_chars", DEFAULT_PRUNE_WINDOW_CHARS)
-        )
-        history = prune_result.messages
-        if prune_result.tombstones:
+        # task-110: 'contextCompaction=off' is a real rollback switch, so the
+        # assembly-fuse prune obeys it too. 'budget'/'overflow' both prune here:
+        # ASSEMBLY_FUSE_LIMIT has already bounded this list, so the token trigger
+        # lives at the production truncation point (api/chat.py).
+        prune_result = None
+        if getattr(config, "compaction_mode", "overflow") != "off":
+            prune_result = prune_history_tool_results(
+                history,
+                prune_window_chars=getattr(config, "prune_window_chars", DEFAULT_PRUNE_WINDOW_CHARS),
+                fact_stub=render_fact_stub,
+            )
+            history = prune_result.messages
+        if prune_result is not None and prune_result.tombstones:
             await self._append_prune_event(context, prune_result.tombstones)
         assembled = list(messages) if config.template_context else [*history, *messages]
 
