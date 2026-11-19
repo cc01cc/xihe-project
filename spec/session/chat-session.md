@@ -6,7 +6,7 @@
 > Owner：CP Session owner  
 > 消费者：UI、Agent、Context、Operation、Workspace  
 > 来源：PLAN-0387、PLAN-0348、PLAN-0660、PLAN-0689、PLAN-0665、D-1846、DEV-017  
-> 更新日期：2026-11-18
+> 更新日期：2026-11-19
 
 ## 领域边界
 
@@ -83,6 +83,16 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
    （`UnexpectedRollbackException`）。审计 MUST 保留 `outcome=deferred`，INFO 级 `event=to_target_deferred` 留痕。
 6. **幂等身份含集合**：排序后的 TO 集合与 `asParticipantId` MUST 进入 `Idempotency-Key` 的
    request hash（同内容不同收件人 MUST NOT 判为重复）；`cc` 仍不入哈希（notify-only）。
+
+### 点名解析：代码段内的 `@` 不是投递意图（task-21，2026-11-19）
+
+> 来源：task-21 真机读数（2026-11-19）。同一份 `MentionParser.parse` 同时供两条路径：assistant 正文的**开链入口**（`WakeChainService`）与消息 `delivery.unresolved` 的**投影**（`ChatSubmissionService`）。agent 回复会贴代码，代码里的 `@click="toTop"` 曾同时被投影成红色「未识别」chip，并且——若代码里恰好写的是真实成员名——会真的开出一条 mention chain。
+
+1. **代码即非发言**：解析前 MUST 先按 Markdown 屏蔽代码区——fenced code block（连续三个及以上反引号或波浪号，行首至多 3 个空格缩进，可带 info string）与行内 code span（反引号 run 长度 N 需由同长度 N 闭合）。代码区内的 `@` MUST NOT 解析为 mention、MUST NOT 计入 `unresolvedTokens`、MUST NOT 参与 `@all` 判定、MUST NOT 开 wake chain。
+2. **单一解析入口不变**：开链与投递投影 MUST 继续共用同一份解析结果；MUST NOT 为实现「忽略代码」再写第二份解析/投影实现（理由同 `ChatControllerTest` 的投影 javadoc：第二份实现等于允许两条路径对「什么算未送达」各说各话）。
+3. **不扩契约**：`messages.delivery.unresolved` 键、`wake_dispatch` 信封与 `reason` 词表 MUST 保持不变；本条款只收窄「什么算一次点名」，不新增字段、事件名或路由。
+4. **已知不覆盖（不得假称已覆盖）**：①缩进 4 空格的代码块；②HTML `<code>` / `<pre>`；③表格单元格里的行内代码。围栏未闭合时 MUST 按 CommonMark 语义「直到内容结尾都是代码」处理。上述三类区域内的 `@` 仍按正文解析。
+5. **验收证据**：`MentionParserTest`（围栏内 `@click`、行内 code span、围栏内真实成员名、未闭合围栏、波浪号围栏、孤立反引号）、`WakeChainServiceTest#fencedCodeBlockNamingARealParticipantWakesNobody`（不唤醒）、`ChatSubmissionServiceIntegrationTest#fencedCodeNamingARealMemberNeitherProjectsNorWakes`（`delivery` 无 `unresolved` 且 durable `wake_dispatch` 计数为 0）。
 
 ### 投递语义的持久载体（PLAN-0665 D3 / V120）
 

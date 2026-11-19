@@ -865,6 +865,21 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
         wrapper.unmount();
     });
 
+    /**
+     * task-21：agent 回复里的代码块含 `@click="toTop"` 时，CP 的 `MentionParser` 不再把它投影成
+     * `unresolved` ⇒ 消息上不得出现「未识别」chip。UI 侧不自行解析正文里的 `@`（实现不动，
+     * `deliveryView.ts` 只对 user 重建 @）：chip 的唯一来源是 wire 的 `unresolved`。
+     */
+    it("shows no unresolved marker for an agent reply whose code block contains @click", () => {
+        const wrapper = mountDelivery({
+            role: "assistant",
+            content: '示例：\n```vue\n<button @click="toTop">top</button>\n```\n以上。',
+        });
+        expect(wrapper.find('[data-testid="message-delivery-unresolved"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="message-delivery"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
     it("renders no unresolved marker for a clean audience", () => {
         const wrapper = mountDelivery(
             {},

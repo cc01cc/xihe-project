@@ -107,6 +107,66 @@ class MentionParserTest {
         assertTrue(result.mentions().isEmpty(), "no boundary after the name → literal text");
     }
 
+    // ── task-21: an '@' inside markdown code is neither a mention nor an unresolved token ──
+
+    @Test
+    void atSignInsideAFencedCodeBlockIsNotAMention() {
+        String content = "看这段模板：\n```vue\n<button @click=\"toTop\">top</button>\n```\n就这样。";
+        MentionParser.ParseResult result = MentionParser.parse(content, ROSTER);
+        assertTrue(result.mentions().isEmpty());
+        assertEquals(List.of(), result.unresolvedTokens(),
+                "a pasted @click is code, not an unresolved mention (task-4's red chip)");
+    }
+
+    @Test
+    void atSignInsideAnInlineCodeSpanIsNotAMention() {
+        MentionParser.ParseResult result = MentionParser.parse("把 `@Ann ` 换成真实名字", ROSTER);
+        assertTrue(result.mentions().isEmpty());
+        assertTrue(result.unresolvedTokens().isEmpty());
+    }
+
+    @Test
+    void realMentionsOutsideCodeStillResolve() {
+        MentionParser.ParseResult result = MentionParser.parse("@Ann 看下 `@John ` 这行", ROSTER);
+        assertEquals(1, result.mentions().size());
+        assertEquals(ANN, result.mentions().getFirst().participantId(),
+                "masking is scoped to the code span; the prose mention before it still resolves");
+    }
+
+    @Test
+    void fencedCodeBlockNamingARealMemberResolvesNobody() {
+        MentionParser.ParseResult result = MentionParser.parse(
+                "示例：\n```\n@Ann @John Doe\n```\n结束", ROSTER);
+        assertTrue(result.mentions().isEmpty(),
+                "a roster name inside a fence must not open a wake chain (same parse call is the entry point)");
+        assertTrue(result.unresolvedTokens().isEmpty());
+    }
+
+    @Test
+    void unclosedFenceRunsToTheEndOfTheContent() {
+        MentionParser.ParseResult result = MentionParser.parse("示例：\n```\n@Nobody 还没闭合", ROSTER);
+        assertTrue(result.mentions().isEmpty());
+        assertTrue(result.unresolvedTokens().isEmpty(),
+                "CommonMark reads an unclosed fence as code until EOF — stated in spec as a known limit");
+    }
+
+    @Test
+    void tildeFenceClosesOnlyOnItsOwnMarker() {
+        MentionParser.ParseResult result = MentionParser.parse(
+                "~~~\n@Ann\n```\n@John\n~~~\n@Nobody 之后", ROSTER);
+        assertTrue(result.mentions().isEmpty(),
+                "a backtick line does not close a ~~~ fence");
+        assertEquals(List.of("@Nobody"), result.unresolvedTokens(),
+                "the prose token after the closing fence is still reported");
+    }
+
+    @Test
+    void unmatchedBacktickIsLiteralText() {
+        MentionParser.ParseResult result = MentionParser.parse("一个反引号 ` 后面 @Ann", ROSTER);
+        assertEquals(1, result.mentions().size(),
+                "an unmatched backtick run is literal text, not a code span");
+    }
+
     @Test
     void reservedDisplayNameCheck() {
         assertTrue(MentionParser.isReservedDisplayName("all"));

@@ -273,6 +273,25 @@ class WakeChainServiceTest {
     }
 
     /**
+     * task-21 (P1): this same {@code parse} call is the chain entry point, so a fenced code block that
+     * happens to name a real participant must wake nobody. The reported bug only looked harmless
+     * because {@code @click="toTop"} matches no display name; a pasted sample containing
+     * {@code @Bee } would really start a chain run.
+     */
+    @Test
+    void fencedCodeBlockNamingARealParticipantWakesNobody() {
+        stubChainRuns();
+        List<String> unresolved = chain.onAssistantContent(SESSION_ID, rootRun(),
+                "示例代码：\n```\n@Bee 请接手\n```\n以上。");
+
+        assertTrue(unresolved.isEmpty(),
+                "nothing unresolved, so nothing is projected onto the assistant message's delivery");
+        verify(dispatch, never()).fire(any(), anyString(), anyString(),
+                eq(SESSION_UUID), anyString());
+        verify(eventStore, never()).append(any(), any(), any(), eq("wake_dispatch"), any());
+    }
+
+    /**
      * PLAN-0630 M1 (taskbook §3.4-② second half): with a PRIMARY present, an agent that prints its own
      * display name mentions itself. The chain must terminate with a visible refusal instead of looping —
      * either the cycle guard (same principal on the same path) or the depth gate stops it.

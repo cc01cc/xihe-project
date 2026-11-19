@@ -27,7 +27,15 @@ import java.util.UUID;
  *       display name "all" (application-layer validation in SessionParticipantService);</li>
  *   <li><b>Ambiguity and misses fail closed</b>: a token matching zero or multiple enabled
  *       participants stays literal text and is reported in {@code unresolvedTokens} — the
- *       caller audits it, the parser never guesses.</li>
+ *       caller audits it, the parser never guesses;</li>
+ *   <li><b>Markdown code is not speech</b> (task-21): an {@code @} inside a fenced code block or
+ *       an inline code span is neither a mention nor an unresolved token. Agent replies paste
+ *       code such as {@code @click="toTop"}; those tokens must not show up as "未识别" chips, and
+ *       — because this same parse call is the wake-chain entry point — a pasted sample that
+ *       happens to spell a real display name must not wake that participant. The known gaps are
+ *       listed in {@code spec/session/chat-session.md}: 4-space indented code blocks, HTML
+ *       {@code <code>/<pre>} and table-cell spans are not masked, and an unclosed fence runs to
+ *       the end of the content (CommonMark's reading).</li>
  * </ul>
  */
 public final class MentionParser {
@@ -69,11 +77,17 @@ public final class MentionParser {
         List<Mention> mentions = new ArrayList<>();
         List<String> unresolved = new ArrayList<>();
         boolean all = false;
+        boolean[] code = codeMask(content);
         int index = 0;
         while (index < content.length()) {
             int at = content.indexOf('@', index);
             if (at < 0) {
                 break;
+            }
+            if (code[at]) {
+                // Markdown code is not speech: a pasted @click / @example is not a mention (task-21).
+                index = at + 1;
+                continue;
             }
             int tokenStart = at + 1;
             if (tokenStart < content.length() && !isTokenBoundary(content.charAt(tokenStart - 2 < 0
@@ -174,5 +188,156 @@ public final class MentionParser {
             end++;
         }
         return end;
+    }
+
+    // ── task-21: markdown code masking (an '@' in code is neither a mention nor a wake target) ──
+
+    /**
+     * Marks every character that belongs to markdown code. Two passes: fenced code blocks first
+     * (they win over inline spans, as in CommonMark's block-level precedence), then backtick code
+     * spans inside the remaining prose. Not covered — and not claimed: 4-space indented blocks,
+     * HTML {@code <code>/<pre>}, table-cell spans.
+     */
+    private static boolean[] codeMask(String content) {
+        boolean[] code = new boolean[content.length()];
+        List<int[]> fences = fenceRegions(content);
+        for (int[] region : fences) {
+            for (int index = region[0]; index < region[1]; index++) {
+                code[index] = true;
+            }
+        }
+        int proseStart = 0;
+        for (int[] region : fences) {
+            maskInlineCodeSpans(content, proseStart, region[0], code);
+            proseStart = region[1];
+        }
+        maskInlineCodeSpans(content, proseStart, content.length(), code);
+        return code;
+    }
+
+    /** Half-open {@code [start, end)} ranges of fenced code blocks, fences included. */
+    private static List<int[]> fenceRegions(String content) {
+        List<int[]> regions = new ArrayList<>();
+        int cursor = 0;
+        while (cursor < content.length()) {
+            int lineEnd = lineEndOf(content, cursor);
+            int markerStart = skipIndent(content, cursor, lineEnd);
+            int opening = markerStart < 0 || markerStart >= lineEnd
+                    ? 0 : fenceOpeningLength(content, markerStart, lineEnd);
+            if (opening == 0) {
+                cursor = lineEnd >= content.length() ? content.length() : lineEnd + 1;
+                continue;
+            }
+            char marker = content.charAt(markerStart);
+            int closeEnd = -1;
+            int probe = lineEnd + 1;
+            while (probe < content.length()) {
+                int probeEnd = lineEndOf(content, probe);
+                if (isClosingFence(content, probe, probeEnd, marker, opening)) {
+                    closeEnd = probeEnd;
+                    break;
+                }
+                probe = probeEnd + 1;
+            }
+            int regionEnd = closeEnd < 0 ? content.length()
+                    : Math.min(closeEnd + 1, content.length());
+            regions.add(new int[]{cursor, regionEnd});
+            cursor = regionEnd;
+        }
+        return regions;
+    }
+
+    /** The opening run length ({@code >= 3}) when this line opens a fence, else {@code 0}. */
+    private static int fenceOpeningLength(String content, int from, int lineEnd) {
+        char marker = content.charAt(from);
+        if (marker != '`' && marker != '~') {
+            return 0;
+        }
+        int run = runLength(content, from, lineEnd, marker);
+        if (run < 3) {
+            return 0;
+        }
+        if (marker == '`' && content.indexOf('`', from + run) >= 0
+                && content.indexOf('`', from + run) < lineEnd) {
+            // A backtick fence's info string may not contain backticks (CommonMark).
+            return 0;
+        }
+        return run;
+    }
+
+    private static boolean isClosingFence(String content, int lineStart, int lineEnd,
+                                          char marker, int opening) {
+        int markerStart = skipIndent(content, lineStart, lineEnd);
+        if (markerStart < 0 || runLength(content, markerStart, lineEnd, marker) < opening) {
+            return false;
+        }
+        for (int index = markerStart; index < lineEnd; index++) {
+            char c = content.charAt(index);
+            if (c != marker && !Character.isWhitespace(c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Masks backtick code spans inside {@code [from, to)}; an unmatched run stays literal text. */
+    private static void maskInlineCodeSpans(String content, int from, int to, boolean[] code) {
+        int index = from;
+        while (index < to) {
+            if (content.charAt(index) != '`') {
+                index++;
+                continue;
+            }
+            int opening = runLength(content, index, to, '`');
+            int close = closingBacktickRun(content, index + opening, to, opening);
+            if (close < 0) {
+                index += opening;
+                continue;
+            }
+            int end = Math.min(close + opening, to);
+            for (int marked = index; marked < end; marked++) {
+                code[marked] = true;
+            }
+            index = end;
+        }
+    }
+
+    /** Start of the next backtick run whose length is exactly {@code length}, or {@code -1}. */
+    private static int closingBacktickRun(String content, int from, int to, int length) {
+        int index = from;
+        while (index < to) {
+            if (content.charAt(index) != '`') {
+                index++;
+                continue;
+            }
+            int run = runLength(content, index, to, '`');
+            if (run == length) {
+                return index;
+            }
+            index += run;
+        }
+        return -1;
+    }
+
+    private static int lineEndOf(String content, int lineStart) {
+        int newline = content.indexOf('\n', lineStart);
+        return newline < 0 ? content.length() : newline;
+    }
+
+    /** First non-space index when the leading indent is at most three spaces, else {@code -1}. */
+    private static int skipIndent(String content, int from, int to) {
+        int index = from;
+        while (index < to && content.charAt(index) == ' ') {
+            index++;
+        }
+        return index - from <= 3 ? index : -1;
+    }
+
+    private static int runLength(String content, int from, int to, char marker) {
+        int index = from;
+        while (index < to && content.charAt(index) == marker) {
+            index++;
+        }
+        return index - from;
     }
 }

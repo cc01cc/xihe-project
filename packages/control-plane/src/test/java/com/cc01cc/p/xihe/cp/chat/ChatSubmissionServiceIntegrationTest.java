@@ -1319,6 +1319,34 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "no unresolved token, no delivery record");
     }
 
+    /**
+     * task-21 counter-evidence (the wake half): assistant replies paste code, and a fenced block that
+     * names a real roster member must neither be projected as "未识别" nor start a wake chain — the
+     * same parse call feeds both surfaces. The negative is asserted on the durable {@code
+     * wake_dispatch} log, which also carries a would-be refusal ({@code outcome=chain_refused}), so
+     * this cannot pass by the chain merely refusing.
+     */
+    @Test
+    void fencedCodeNamingARealMemberNeitherProjectsNorWakes() {
+        ChatFixture fixture = createChatFixture("code-fence-wake");
+        saveBoundSession(fixture.session(), fixture.principal());
+        String sessionId = fixture.session().getId().toString();
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "host",
+                fixture.principal().getId().toString());
+
+        String name = fixture.principal().getName();
+        String messageId = submissionService.persistAssistantResponse(sessionId, runId,
+                "示例：\n```vue\n<button @" + name + " >go</button>\n```\n以上。", null);
+
+        Message row = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        assertNull(row.getDelivery(), "code is not a delivery intent: no unresolved projection");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM context_events WHERE session_id = ? AND event_type = 'wake_dispatch'",
+                Integer.class, UUID.fromString(sessionId)),
+                "a roster name inside a fence must not wake anybody");
+    }
+
     /** PLAN-0669 M1b: the durable listing projects participantId only when attributed. */
     @Test
     void messageListingProjectsParticipantIdOnlyWhenAttributed() {
