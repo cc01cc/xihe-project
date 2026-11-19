@@ -61,3 +61,31 @@ def test_unknown_mode_falls_back_to_growth() -> None:
 def test_run_budget_carries_accounting_mode() -> None:
     assert RunBudget().budget_accounting == "growth"
     assert RunBudget(budget_accounting="cumulative").budget_accounting == "cumulative"
+
+
+def test_langchain_usage_carries_cache_read_only_when_reported() -> None:
+    """task-107: the mapping hop must not drop the cached-prefix counter."""
+    from xihe_agent.llm.api_sender import _langchain_usage
+
+    with_cache = _langchain_usage({"input_tokens": 6000, "output_tokens": 800, "cache_read_input_tokens": 5400})
+    assert with_cache["input_token_details"] == {"cache_read": 5400}
+    # the identity depends on both numbers surviving the SAME dict
+    assert with_cache["input_tokens"] - with_cache["input_token_details"]["cache_read"] + with_cache["output_tokens"] == 1400
+
+    without = _langchain_usage({"input_tokens": 6000, "output_tokens": 800})
+    assert "input_token_details" not in without  # absent stays absent, never 0
+
+
+def test_reported_cache_makes_budget_equal_total_minus_cache() -> None:
+    usage = RunUsage()
+    usage.record_llm_usage(input_tokens=6000, output_tokens=800, cache_read_tokens=5400)
+    assert usage.budget_consumed == usage.total_tokens - 5400
+    assert usage.total_tokens - usage.budget_consumed == usage.cache_read_input_tokens
+
+
+def test_absent_cache_is_full_charge_and_no_cache_number() -> None:
+    usage = RunUsage()
+    usage.record_llm_usage(input_tokens=6000, output_tokens=800, cache_read_tokens=None)
+    assert usage.budget_consumed == usage.total_tokens  # fail-open full charge
+    assert usage.cache_read_input_tokens == 0 and usage.total_tokens - usage.budget_consumed == 0
+

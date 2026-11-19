@@ -57,15 +57,31 @@ def _reported(usage: dict[str, Any], keys: tuple[tuple[str, str], ...]) -> dict[
     return reported
 
 
-def _langchain_usage(reported: dict[str, int]) -> dict[str, int]:
-    """Build the UsageMetadata-shaped dict; unknown counters read as 0 here only."""
+def _langchain_usage(reported: dict[str, int]) -> dict[str, Any]:
+    """Build the UsageMetadata-shaped dict; unknown counters read as 0 here only.
+
+    task-107 (B, D-1869①): the cached-prefix counter must survive this hop.
+    sse_adapter reads it back from ``input_token_details.cache_read`` when it
+    builds the per-call ``llm_usage`` event; dropping it here made every real run
+    look like a provider that reports no cache at all, so the growth accounting
+    fell back to the full charge on every call (the identity
+    ``token_count - budget_consumed == cache_read`` could never hold).
+
+    The key is added ONLY when the provider actually reported the counter: a
+    missing counter must stay missing (absent -> fail-open full charge
+    downstream), never become 0 ("no cache cost").
+    """
     input_tokens = reported.get("input_tokens", 0)
     output_tokens = reported.get("output_tokens", 0)
-    return {
+    usage: dict[str, Any] = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": input_tokens + output_tokens,
     }
+    cache_read = reported.get("cache_read_input_tokens")
+    if cache_read is not None:
+        usage["input_token_details"] = {"cache_read": cache_read}
+    return usage
 
 
 def _object(value: Any) -> dict[str, Any]:
