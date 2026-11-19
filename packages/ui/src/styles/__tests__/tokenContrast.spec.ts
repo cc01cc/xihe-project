@@ -1,5 +1,5 @@
 /**
- * task-74 → task-119：色板 token 的「层次」与「冷色」门（默认档 = light / neutral）。
+ * task-74 → task-119 → task-132：色板 token 的「层次」与「色板保真」门（默认档 = light / neutral）。
  *
  * <p><b>task-119（用户 2026-11-20 00:48 裁定）</b>：卡片层次**不再用 card/bg 面差衡量**，
  * 改为「阴影 + 边框」两层表达 —— 用户原话「那你就用阴影与边框呀？难道阴影与边框不能用吗？」。
@@ -34,8 +34,18 @@
  * <p>为什么必须有会红的断言：ConfigDomainPanel.spec.ts 这类只断言「用了哪个 token」的用例，
  * 在色板被改回纯灰时依旧全绿（D-1162 ③ 的同一形态）。证据只证明某个时刻。</p>
  *
- * <p>C2 的判据形态：src/styles/main.css 的文案自称「中性冷白」，而 6 个底色 token 的
- * chroma 全为 0（纯灰）⇒ 文案与实现二者必须有一边改；本 spec 只负责让这件事无法静默共存。</p>
+ * <p>C2 的判据形态（task-132 改判）：<b>不</b>判 chroma 够不够「冷」。用户 2026-11-20 00:49 裁定
+ * 不换色板，而本仓色板 = shadcn neutral registry 原样照抄（chroma 全 0），要求 chroma &gt; 0
+ * 等于要求改色值 —— 那不是回归门，是设计偏好。故 C2 改为<b>色板保真门</b>：31 个中性 token
+ * 逐个与 registry cssVarsV4 比对（oklch 数值一致 + 中性键 chroma = 0），并把文件头已声明的
+ * <b>有意偏离</b>写成显式白名单（--ring/--sidebar-ring → var(--primary)、--input、
+ * 「面差」5 键、--destructive 的 task-89 解 L）。本门只防漂移、不表达设计偏好；
+ * 任何擅自改色值、加 chroma、换 palette 都会红。官方值取自
+ * https://www.shadcn-vue.com/r/colors/neutral.json 的 cssVarsV4（2026-11-20 核对）。</p>
+ *
+ * <p>旧 C2（断言 main.css 文案含「中性冷白」且 chroma &gt; 0）已删除：main.css:154 的
+ * 「中性冷白 / 蓝拆分色板」是 A″ 固化基线的<b>标签</b>（2026-11-06 用户裁定），不是
+ * 「每个 token 必须带色相」的承诺；拿它反推色值等于用文案当判据。</p>
  *
  * <p>实现说明：不手写 CSS parser（postcss 是 vite 的硬依赖，按 vite 的位置解析它）；
  * 色彩数学全在 ./helpers/colorMath.ts，与 input-contrast.spec.ts 共用同一份，
@@ -77,7 +87,7 @@ interface Block {
     lines: Map<string, number>;
 }
 
-/** 解出中性冷白的 light / dark 两块；解析不到就抛（跳过 = 又一个不会红的门）。 */
+/** 解出 neutral 色板的 light / dark 两块；解析不到就抛（跳过 = 又一个不会红的门）。 */
 function parseNeutral(): { light: Block; dark: Block } {
     const base = createRequire(import.meta.url);
     let postcss: any;
@@ -138,7 +148,6 @@ function shadowCards(): { light: string | undefined; dark: string | undefined } 
 const { light, dark } = parseNeutral();
 
 const SURFACES = ["--background", "--card", "--popover", "--muted", "--sidebar"] as const;
-const COOL_SURFACES = [...SURFACES, "--border"] as const;
 
 /** 卡片可见边界门：ring-foreground/10 合成后的比值（task-119）。 */
 const MIN_CARD_BOUNDARY = 1.2;
@@ -148,7 +157,6 @@ const CARD_RING_ALPHA = 0.1;
 const MIN_BORDER_OVER_BG = 1.15;
 const MIN_MUTED_FG = 4.5;
 const MIN_RING_RENDERED = 3.0;
-const MIN_COOL_CHROMA = 0.004;
 const RING_ALPHA = 0.5;
 
 /** 报错用：「--card = oklch(1 0 0)（neutral.css:29）」——读数必须能顺着地方找回去。 */
@@ -285,27 +293,221 @@ describe("B1/B2 focus ring 的可视强度", () => {
     });
 });
 
-describe("C2 「中性冷白」不是纯灰", () => {
-    it("main.css 自称「中性冷白」⇒ 底色 token 必须有可测到的冷色 chroma", () => {
-        const mainCss = readFileSync(MAIN_CSS, "utf8");
+type Theme = "light" | "dark";
+
+/**
+ * shadcn neutral registry 的 cssVarsV4 官方值（light 31 键 / dark 31 键；--radius 不在色板文件里）。
+ *
+ * <p>来源：https://www.shadcn-vue.com/r/colors/neutral.json（2026-11-20 读取）。与
+ * https://ui.shadcn.com/r/colors/neutral.json 的差异只有 chart-1..5（官方 v4 已改灰阶），
+ * 本仓按文件头声明的「原样照抄 shadcn-vue」保留彩色 chart ⇒ 比对基准取 shadcn-vue。</p>
+ */
+const OFFICIAL_NEUTRAL: Record<Theme, Record<string, string>> = {
+    light: {
+        background: "oklch(1 0 0)",
+        foreground: "oklch(0.145 0 0)",
+        card: "oklch(1 0 0)",
+        "card-foreground": "oklch(0.145 0 0)",
+        popover: "oklch(1 0 0)",
+        "popover-foreground": "oklch(0.145 0 0)",
+        primary: "oklch(0.205 0 0)",
+        "primary-foreground": "oklch(0.985 0 0)",
+        secondary: "oklch(0.97 0 0)",
+        "secondary-foreground": "oklch(0.205 0 0)",
+        muted: "oklch(0.97 0 0)",
+        "muted-foreground": "oklch(0.556 0 0)",
+        accent: "oklch(0.97 0 0)",
+        "accent-foreground": "oklch(0.205 0 0)",
+        destructive: "oklch(0.577 0.245 27.325)",
+        border: "oklch(0.922 0 0)",
+        input: "oklch(0.922 0 0)",
+        ring: "oklch(0.708 0 0)",
+        "chart-1": "oklch(0.646 0.222 41.116)",
+        "chart-2": "oklch(0.6 0.118 184.704)",
+        "chart-3": "oklch(0.398 0.07 227.392)",
+        "chart-4": "oklch(0.828 0.189 84.429)",
+        "chart-5": "oklch(0.769 0.188 70.08)",
+        sidebar: "oklch(0.985 0 0)",
+        "sidebar-foreground": "oklch(0.145 0 0)",
+        "sidebar-primary": "oklch(0.205 0 0)",
+        "sidebar-primary-foreground": "oklch(0.985 0 0)",
+        "sidebar-accent": "oklch(0.97 0 0)",
+        "sidebar-accent-foreground": "oklch(0.205 0 0)",
+        "sidebar-border": "oklch(0.922 0 0)",
+        "sidebar-ring": "oklch(0.708 0 0)",
+    },
+    dark: {
+        background: "oklch(0.145 0 0)",
+        foreground: "oklch(0.985 0 0)",
+        card: "oklch(0.205 0 0)",
+        "card-foreground": "oklch(0.985 0 0)",
+        popover: "oklch(0.205 0 0)",
+        "popover-foreground": "oklch(0.985 0 0)",
+        primary: "oklch(0.922 0 0)",
+        "primary-foreground": "oklch(0.205 0 0)",
+        secondary: "oklch(0.269 0 0)",
+        "secondary-foreground": "oklch(0.985 0 0)",
+        muted: "oklch(0.269 0 0)",
+        "muted-foreground": "oklch(0.708 0 0)",
+        accent: "oklch(0.269 0 0)",
+        "accent-foreground": "oklch(0.985 0 0)",
+        destructive: "oklch(0.704 0.191 22.216)",
+        border: "oklch(1 0 0 / 10%)",
+        input: "oklch(1 0 0 / 15%)",
+        ring: "oklch(0.556 0 0)",
+        "chart-1": "oklch(0.488 0.243 264.376)",
+        "chart-2": "oklch(0.696 0.17 162.48)",
+        "chart-3": "oklch(0.769 0.188 70.08)",
+        "chart-4": "oklch(0.627 0.265 303.9)",
+        "chart-5": "oklch(0.645 0.246 16.439)",
+        sidebar: "oklch(0.205 0 0)",
+        "sidebar-foreground": "oklch(0.985 0 0)",
+        "sidebar-primary": "oklch(0.488 0.243 264.376)",
+        "sidebar-primary-foreground": "oklch(0.985 0 0)",
+        "sidebar-accent": "oklch(0.269 0 0)",
+        "sidebar-accent-foreground": "oklch(0.985 0 0)",
+        "sidebar-border": "oklch(1 0 0 / 10%)",
+        "sidebar-ring": "oklch(0.556 0 0)",
+    },
+};
+
+/**
+ * 有意偏离官方值的地方 —— 每一组都对应 color-shadcn-neutral.css 文件头/逐 token 注释里的依据。
+ *
+ * <p>改这张表 = 改色板基线，必须先有新的用户裁定与证据包；值写在这里而不是「跳过检查」，
+ * 是为了让偏离本身也被钉住（有人把 --input 调回官方 0.922，门同样会红）。</p>
+ */
+const INTENTIONAL_DEVIATIONS: Record<Theme, Record<string, { value: string; why: string }>> = {
+    light: {
+        background: {
+            value: "oklch(0.97 0 0)",
+            why: "面差 5 键（用户 2026-11-12 批 a2a24caf3）；官方 1",
+        },
+        muted: { value: "oklch(0.93 0 0)", why: "面差 5 键；官方 0.97" },
+        "muted-foreground": { value: "oklch(0.53 0 0)", why: "面差 5 键；官方 0.556" },
+        accent: { value: "oklch(0.93 0 0)", why: "面差 5 键；官方 0.97" },
+        "sidebar-accent": { value: "oklch(0.94 0 0)", why: "面差 5 键；官方 0.97" },
+        destructive: {
+            value: "oklch(0.55 0.245 27.325)",
+            why: "task-89：官方 0.577 落浅底仅 4.38:1，只解 L 到 0.55",
+        },
+        input: {
+            value: "oklch(0.605 0 0)",
+            why: "task-310：控件边界需 1.4.11 的 3:1，官方 0.922 对 --muted 仅 2.54",
+        },
+        ring: {
+            value: "var(--primary)",
+            why: "官方 0.708 对 --background 仅 2.58–2.63:1 < 3:1（2026-11-11 裁定）",
+        },
+        "sidebar-ring": { value: "var(--primary)", why: "同上" },
+    },
+    dark: {
+        input: {
+            value: "oklch(0.554 0 0)",
+            why: "task-310：同 3:1 判据（官方 oklch(1 0 0 / 15%)，5 底最差 3.192）",
+        },
+        ring: { value: "var(--primary)", why: "同 light 档 ① 偏离" },
+        "sidebar-ring": { value: "var(--primary)", why: "同上" },
+    },
+};
+
+/**
+ * 中性键 = 除 chart-1..5 / destructive / sidebar-primary 外的全部键：它们的 chroma 必须是 0。
+ *
+ * <p>三个例外都是 registry 自己带彩度的键（chart 是数据色、destructive 是警示红、
+ * dark 的 sidebar-primary = oklch(0.488 0.243 264.376) 是品牌蓝），不属于「中性色板」的判据面。</p>
+ */
+function isNeutralKey(bare: string): boolean {
+    return !bare.startsWith("chart-") && bare !== "destructive" && bare !== "sidebar-primary";
+}
+
+/**
+ * 逐键比对一档色板。
+ *
+ * <p>比的是 oklch 的四个数（L / C / H / alpha），不是字符串 —— 官方写 oklch(1 0 0 / 10%)、
+ * 本仓写 oklch(1 0 0 / 10%) 时字符串相等，但加空格或换百分比写法不该红。</p>
+ */
+function checkPalette(theme: Theme): void {
+    const block = theme === "light" ? light : dark;
+    const official = OFFICIAL_NEUTRAL[theme];
+    const deviations = INTENTIONAL_DEVIATIONS[theme];
+    const expectedKeys = Object.keys(official).sort();
+    const actualKeys = [...block.decls.keys()].sort();
+    expect(
+        actualKeys,
+        theme +
+            " 档的 token 集合与 shadcn neutral registry 不一致（多了键或少了解析）。registry 31 键：" +
+            expectedKeys.join(", "),
+    ).toEqual(expectedKeys.map((bare) => "--" + bare));
+
+    for (const bare of expectedKeys) {
+        const name = "--" + bare;
+        const actualRaw = tokenSource(block.decls, name);
+        const deviation = deviations[bare];
+        const expectedRaw = deviation ? deviation.value : official[bare];
+        const why = deviation ? deviation.why : "registry 原值";
+
+        if (expectedRaw.startsWith("var(")) {
+            // tokenSource 会把 var 链展开（--ring: var(--primary) 解成 oklch(0.205 0 0)），
+            // 所以这里比的是**原始声明**，不是展开后的值。
+            const rawDecl = (block.decls.get(name) ?? "").trim();
+            expect(
+                rawDecl,
+                name +
+                    " 应按文件头声明的偏离写成 " +
+                    expectedRaw +
+                    "（" +
+                    why +
+                    "），实际 " +
+                    rawDecl,
+            ).toBe(expectedRaw);
+            continue;
+        }
+
+        const actual = parseOklch(actualRaw);
+        const expected = parseOklch(expectedRaw);
+        if (actual === null || expected === null) {
+            throw new Error(
+                name + " 不是 oklch 字面量：实际 " + actualRaw + " / 期望 " + expectedRaw,
+            );
+        }
+        const same =
+            Math.abs(actual.l - expected.l) < 1e-9 &&
+            Math.abs(actual.c - expected.c) < 1e-9 &&
+            Math.abs(actual.h - expected.h) < 1e-9 &&
+            Math.abs(actual.alpha - expected.alpha) < 1e-9;
         expect(
-            mainCss,
-            "C2 判据的前提已变：main.css 不再自称「中性冷白」，本断言需要重写而不是删",
-        ).toContain("中性冷白");
-        const readings = COOL_SURFACES.map((name) => {
-            const value = parseOklch(tokenSource(light.decls, name));
-            if (value === null) throw new Error("token 不是 oklch 字面量：" + name);
-            return { name, c: value.c, h: value.h };
-        });
-        const cool = readings.filter((r) => r.c >= MIN_COOL_CHROMA && r.h >= 200 && r.h <= 290);
-        expect(
-            cool.length,
-            "文案说「中性冷白」，但 6 个底色 token 的 chroma 全是 " +
-                readings.map((r) => r.c).join(" / ") +
-                "、色相 " +
-                readings.map((r) => r.h).join(" / ") +
-                "（纯灰）⇒ 要么给 token 加冷色 chroma，要么改 main.css 的文案",
-        ).toBeGreaterThan(0);
+            same,
+            name +
+                " 偏离了色板基线：实际 " +
+                actualRaw +
+                " / 期望 " +
+                expectedRaw +
+                "（" +
+                why +
+                "）。改色值必须先有用户裁定 + 证据，再改 color-shadcn-neutral.css 与本表",
+        ).toBe(true);
+
+        if (isNeutralKey(bare)) {
+            expect(
+                actual.c,
+                name +
+                    " 不再是纯灰（chroma " +
+                    actual.c +
+                    "）：本仓中性色板 = shadcn neutral registry 原样照抄，chroma 必须 0。" +
+                    "要冷白请先改色板裁定，别在这里放宽门",
+            ).toBe(0);
+        }
+    }
+}
+
+describe("C2 色板保真（task-132：只防漂移，不表达设计偏好）", () => {
+    it("light 档：31 键与 shadcn neutral registry 一致，仅文件头声明的 3 组有意偏离（9 处）", () => {
+        checkPalette("light");
+    });
+
+    it("dark 档：31 键与 shadcn neutral registry 一致，仅文件头声明的 2 组有意偏离（3 处）", () => {
+        checkPalette("dark");
     });
 });
 
