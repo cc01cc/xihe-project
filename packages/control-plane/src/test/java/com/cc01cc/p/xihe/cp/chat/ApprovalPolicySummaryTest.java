@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -47,8 +48,12 @@ class ApprovalPolicySummaryTest {
 
         assertTrue(result.isPresent());
         Map<String, Object> policy = result.orElseThrow();
+        // D-1908 §6：描述符同时带生效档位、来源层与主体（主体在 107b 接线前恒为 null）。
         assertEquals(Set.of("effect", "sourceLayer", "matchedRule", "reason", "mode",
-                "actionClass", "shape"), policy.keySet());
+                "actionClass", "shape", "tier", "tierSourceLayer", "principalId"), policy.keySet());
+        assertNull(policy.get("tier"));
+        assertNull(policy.get("tierSourceLayer"));
+        assertNull(policy.get("principalId"));
         assertEquals("ask", policy.get("effect"));
         assertEquals("builtin", policy.get("sourceLayer"));
         assertEquals("WriteCustom", policy.get("actionClass"));
@@ -58,6 +63,41 @@ class ApprovalPolicySummaryTest {
         assertFalse(policy.containsKey("arguments"));
         assertFalse(policy.containsKey("details"));
         verify(engine).evaluateVerdict(context, "write_file", "", SESSION, null, USER, WORKSPACE);
+    }
+
+    /** D-1908 §6：判定用的档位与来源层必须进描述符，否则审计只能看到派生的 mode。 */
+    @Test
+    void buildAtCreationCarriesTheEffectiveTierAndItsLayer() {
+        PolicyEngine engine = mock(PolicyEngine.class);
+        PolicyContext context = new PolicyContext(Map.of(),
+                LayeredPolicyResolver.MODE_MANUAL, PolicyLayer.SESSION, LayeredPolicyResolver.MODE_MANUAL,
+                null, PolicyLayer.BUILTIN, "view", PolicyLayer.SESSION, null);
+        PolicyVerdict verdict = PolicyVerdict.of(PolicyEffect.ASK,
+                "{ write, \"*\", ask }", PolicyLayer.BUILTIN, null, "requires approval");
+        when(engine.loadContext(USER, WORKSPACE, SESSION)).thenReturn(context);
+        when(engine.evaluateVerdict(context, "write_file", "", SESSION, null, USER, WORKSPACE))
+                .thenReturn(verdict);
+        when(engine.faceOf(context, "write_file"))
+                .thenReturn(new ToolFaceRegistry.Face("WriteCustom", ToolShape.STRUCTURED));
+        ApprovalPolicySummary summary = new ApprovalPolicySummary(engine);
+
+        Map<String, Object> policy = summary.buildAtCreation("write_file", SESSION, USER, WORKSPACE).orElseThrow();
+
+        assertEquals("view", policy.get("tier"));
+        assertEquals("session", policy.get("tierSourceLayer"));
+        assertEquals("manual", policy.get("mode"));
+    }
+
+    /** 新形状里 tier 值不在白名单 ⇒ 整条快照作废（不猜成 manual/view）。 */
+    @Test
+    void readStoredRejectsAnUnsupportedTierValue() {
+        ApprovalPolicySummary summary = new ApprovalPolicySummary(mock(PolicyEngine.class));
+        String serialized = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\","
+                + "\"matchedRule\":null,\"reason\":\"requires approval\",\"mode\":\"manual\","
+                + "\"actionClass\":\"write\",\"shape\":\"structured\","
+                + "\"tier\":\"workspace-write\",\"tierSourceLayer\":\"session\",\"principalId\":null}";
+
+        assertTrue(summary.readStored(serialized).isEmpty());
     }
 
     @Test
@@ -107,7 +147,12 @@ class ApprovalPolicySummaryTest {
 
         Map<String, Object> parsed = summary.readStored(serialized).orElseThrow();
 
-        assertEquals(expected, parsed);
+        // 旧 7 键快照仍然合法：缺的档位/主体键如实报 null，不从 mode 反推档位。
+        Map<String, Object> expectedWithTier = new java.util.LinkedHashMap<>(expected);
+        expectedWithTier.put("tier", null);
+        expectedWithTier.put("tierSourceLayer", null);
+        expectedWithTier.put("principalId", null);
+        assertEquals(expectedWithTier, parsed);
         verifyNoInteractions(engine);
     }
 

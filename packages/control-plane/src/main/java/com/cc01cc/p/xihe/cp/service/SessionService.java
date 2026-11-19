@@ -361,6 +361,9 @@ public class SessionService {
         child.setModelProvider(source.getModelProvider());
         child.setModelName(source.getModelName());
         child.setApprovalMode(source.getApprovalMode());
+        // D-1908: the tier is the source of truth — copying only the derived mode would silently
+        // widen a "view" session back to the workspace default.
+        child.setPermissionTier(source.getPermissionTier());
         child.setContextTemplateLayer(source.getContextTemplateLayer());
         child.setContextTemplateId(source.getContextTemplateId());
         child.setContextTemplateVersion(source.getContextTemplateVersion());

@@ -9,4 +9,13 @@ package com.cc01cc.p.xihe.cp.policy;
 public interface PolicyContextProvider {
 
     PolicyContext load(String userId, String workspaceId, String sessionId);
+
+    /**
+     * Principal-scoped variant (D-1908 prerequisite, task-107b). The default keeps every existing
+     * implementation source-compatible: until grants carry a tier, the principal cannot tighten or
+     * relax the verdict, so delegating to the three-argument form is the documented behaviour.
+     */
+    default PolicyContext load(String userId, String workspaceId, String sessionId, String principalId) {
+        return load(userId, workspaceId, sessionId);
+    }
 }

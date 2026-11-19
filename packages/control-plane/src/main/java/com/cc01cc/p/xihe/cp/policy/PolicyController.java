@@ -4,6 +4,8 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,6 +28,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/policy")
 public class PolicyController {
+
+    private static final Logger log = LoggerFactory.getLogger(PolicyController.class);
 
     private final PolicyRuleService ruleService;
     private final ToolFaceService faceService;
@@ -103,8 +107,21 @@ public class PolicyController {
         payload.put("sessionId", sessionId);
         payload.put("mode", sessionApprovalMode.modeOf(sessionId)
                 .orElse(LayeredPolicyResolver.MODE_MANUAL));
+        // D-1908: the tier is the source of truth, so the UI cannot render "view" vs "workspace"
+        // from the derived mode alone. A failed tier read must not break this existing read face.
+        payload.put("tier", readTierQuietly(sessionId));
         payload.put("sessionRules", snapshot == null ? 0 : snapshot.rules().size());
         return ResponseEntity.ok(payload);
+    }
+
+    /** Reads the stored tier for a response, reporting {@code null} instead of failing the call. */
+    private String readTierQuietly(String sessionId) {
+        try {
+            return sessionApprovalMode.tierOf(sessionId).orElse(null);
+        } catch (RuntimeException e) {
+            log.error("[POLICY] session tier read failed, reporting tier=null sessionId={}", sessionId, e);
+            return null;
+        }
     }
 
     /**
@@ -116,7 +133,8 @@ public class PolicyController {
     public ResponseEntity<?> setMode(@RequestBody Map<String, Object> body) {
         String sessionId = asString(body, "sessionId");
         String mode = asString(body, "mode");
-        if (sessionId == null || mode == null) {
+        String tier = asString(body, "tier");
+        if (sessionId == null || (mode == null && tier == null)) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "sessionId and mode are required");
         }
@@ -131,7 +149,13 @@ public class PolicyController {
             return problem(e);
         }
         try {
-            sessionApprovalMode.setMode(sessionId, mode);
+            // D-1908 rev4: tier is written as the source and the mode is derived from it; a legacy
+            // "mode" body still works and is translated into the tier whose derived mode matches.
+            if (tier != null) {
+                sessionApprovalMode.setTier(sessionId, tier);
+            } else {
+                sessionApprovalMode.setMode(sessionId, mode);
+            }
         } catch (IllegalArgumentException e) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     e.getMessage());
@@ -139,9 +163,12 @@ public class PolicyController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
                     e.getMessage());
         }
+        String effectiveTier = readTierQuietly(sessionId);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sessionId", sessionId);
-        payload.put("mode", mode);
+        payload.put("mode", effectiveTier == null ? mode
+                : SessionPermissionTier.modeForTier(effectiveTier));
+        payload.put("tier", effectiveTier);
         payload.put("scope", "session");
         return ResponseEntity.ok(payload);
     }

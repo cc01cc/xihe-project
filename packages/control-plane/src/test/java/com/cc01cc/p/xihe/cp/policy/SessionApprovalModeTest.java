@@ -66,27 +66,37 @@ class SessionApprovalModeTest {
         assertTrue(mode.modeOf(SESSION_ID.toString()).isEmpty());
     }
 
+    /** D-1908：mode 开关写的是派生自 tier 的档位——一次落库同时写 permission_tier 与 approval_mode。 */
     @Test
     void persistsASupportedMode() {
         mode.setMode(SESSION_ID.toString(), "auto");
 
-        verify(store).setApprovalMode(SESSION_ID, "auto");
+        verify(store).setPermissionTier(SESSION_ID, SessionPermissionTier.FULL, "auto");
     }
 
     @Test
     void rejectsAnUnsupportedModeWithoutWriting() {
         assertThrows(IllegalArgumentException.class, () -> mode.setMode(SESSION_ID.toString(), "yolo"));
 
-        verify(store, never()).setApprovalMode(any(), any());
+        verify(store, never()).setPermissionTier(any(), any(), any());
     }
 
     @Test
     void rejectsAMissingSession() {
         doThrow(new IllegalStateException("session not found: " + SESSION_ID))
-                .when(store).setApprovalMode(SESSION_ID, "manual");
+                .when(store).setPermissionTier(SESSION_ID, SessionPermissionTier.WORKSPACE, "manual");
 
         assertThrows(IllegalStateException.class, () -> mode.setMode(SESSION_ID.toString(), "manual"));
 
-        verify(store).setApprovalMode(SESSION_ID, "manual");
+        verify(store).setPermissionTier(SESSION_ID, SessionPermissionTier.WORKSPACE, "manual");
+    }
+
+    /** 未过期也未被拒绝的 tier 值：setTier 只接受白名单内的值。 */
+    @Test
+    void rejectsAnUnsupportedTierWithoutWriting() {
+        assertThrows(IllegalArgumentException.class,
+                () -> mode.setTier(SESSION_ID.toString(), "workspace-write"));
+
+        verify(store, never()).setPermissionTier(any(), any(), any());
     }
 }

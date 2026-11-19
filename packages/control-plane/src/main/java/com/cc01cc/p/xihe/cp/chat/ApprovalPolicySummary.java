@@ -24,12 +24,18 @@ import org.springframework.stereotype.Component;
 public class ApprovalPolicySummary {
 
     private static final Logger logger = LoggerFactory.getLogger(ApprovalPolicySummary.class);
+    /** D-1908 §6: effective tier, the layer that supplied it, and the principal it applies to. */
     private static final Set<String> POLICY_KEYS = Set.of(
+            "effect", "sourceLayer", "matchedRule", "reason", "mode", "actionClass", "shape",
+            "tier", "tierSourceLayer", "principalId");
+    /** Snapshots written before task-107: same descriptor without the tier/principal keys. */
+    private static final Set<String> LEGACY_POLICY_KEYS = Set.of(
             "effect", "sourceLayer", "matchedRule", "reason", "mode", "actionClass", "shape");
     private static final Set<String> EFFECTS = Set.of("allow", "ask", "deny");
     private static final Set<String> SOURCE_LAYERS = Set.of(
             "builtin", "instance", "user", "workspace-default", "workspace", "session", "per_call");
     private static final Set<String> SHAPES = Set.of("structured", "interpreter", "opaque");
+    private static final Set<String> TIERS = Set.of("view", "workspace", "full");
 
     private final PolicyEngine policyEngine;
     private final ObjectMapper objectMapper;
@@ -72,6 +78,13 @@ public class ApprovalPolicySummary {
             summary.put("mode", effectiveMode(context, verdict));
             summary.put("actionClass", face.actionClass());
             summary.put("shape", face.shape().name().toLowerCase(Locale.ROOT));
+            // D-1908 §6: the tier that was actually applied and the layer that supplied it. The
+            // principal is not resolved on this path yet (task-107b wires it), so it stays null
+            // rather than echoing the user id as if it were an agent principal.
+            summary.put("tier", context.tier() == null ? null : context.tier().toLowerCase(Locale.ROOT));
+            summary.put("tierSourceLayer", context.tierSourceLayer() == null ? null
+                    : context.tierSourceLayer().name().toLowerCase(Locale.ROOT));
+            summary.put("principalId", null);
             return Optional.of(summary);
         } catch (RuntimeException e) {
             // A display descriptor must never block durable approval delivery. Do not log body,
@@ -109,7 +122,8 @@ public class ApprovalPolicySummary {
             // a malformed hooks section is DROPPED, never poisons the policy parse.
             Set<String> keys = keysOf(root);
             boolean hasHooks = keys.remove("hooks");
-            if (!keys.equals(POLICY_KEYS)) {
+            boolean hasTierKeys = keys.equals(POLICY_KEYS);
+            if (!hasTierKeys && !keys.equals(LEGACY_POLICY_KEYS)) {
                 return Optional.empty();
             }
 
@@ -120,8 +134,15 @@ public class ApprovalPolicySummary {
             String shape = requiredLowerCase(root, "shape", SHAPES);
             String matchedRule = optionalText(root, "matchedRule");
             String mode = optionalLowerCase(root, "mode");
+            // A legacy snapshot carries no tier at all: report null instead of deriving one from
+            // mode, because "absent" and "view" must stay distinguishable.
+            String tier = optionalLowerCase(root, "tier");
+            String tierSourceLayer = optionalLowerCase(root, "tierSourceLayer");
+            String principalId = optionalText(root, "principalId");
             if (effect == null || sourceLayer == null || reason == null || actionClass == null
-                    || shape == null) {
+                    || shape == null
+                    || (tier != null && !TIERS.contains(tier))
+                    || (tierSourceLayer != null && !SOURCE_LAYERS.contains(tierSourceLayer))) {
                 return Optional.empty();
             }
 
@@ -133,6 +154,9 @@ public class ApprovalPolicySummary {
             summary.put("mode", mode);
             summary.put("actionClass", actionClass);
             summary.put("shape", shape);
+            summary.put("tier", tier);
+            summary.put("tierSourceLayer", tierSourceLayer);
+            summary.put("principalId", principalId);
             if (hasHooks) {
                 JsonNode hooks = sanitizeHooks(root.get("hooks"));
                 if (hooks != null) {

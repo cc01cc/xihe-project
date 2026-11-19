@@ -86,8 +86,20 @@ public class Session {
      * PLAN-0337: session-scoped approval mode. {@code null} inherits the workspace
      * {@code approval-policy.mode}; only {@code manual} / {@code auto} may be stored (V24 CHECK).
      */
+    /**
+     * D-1908: DERIVED from {@link #permissionTier} (view/workspace {@code ->} manual,
+     * full {@code ->} auto) and kept only for rows written before V176. Never the source of truth —
+     * do not derive a tier from this column.
+     */
     @Column(name = "approval_mode", length = 16)
     private String approvalMode;
+
+    /**
+     * D-1908 rev4 session permission tier: view | workspace | full; null = inherit the workspace
+     * policy ({@code approval-policy.mode}). Source of truth since V176.
+     */
+    @Column(name = "permission_tier", length = 16)
+    private String permissionTier;
 
     @Column(nullable = false)
     private boolean archived;
@@ -191,6 +203,9 @@ public class Session {
 
     public String getApprovalMode() { return approvalMode; }
     public void setApprovalMode(String approvalMode) { this.approvalMode = approvalMode; }
+
+    public String getPermissionTier() { return permissionTier; }
+    public void setPermissionTier(String permissionTier) { this.permissionTier = permissionTier; }
 
     public boolean isArchived() { return archived; }
     public void setArchived(boolean archived) { this.archived = archived; }

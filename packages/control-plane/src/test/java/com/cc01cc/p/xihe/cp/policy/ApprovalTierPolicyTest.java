@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,21 +24,16 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
- * 审批档位（{@code sessions.approval_mode} 与 {@code approval-policy.mode}）的 CP 侧判据与「取严合成」
- * （D-1908 §1 / rev2）。task-122：把决策固化成可执行断言，改动档位语义必须先改这些测试。
+ * 审批档位（{@code sessions.permission_tier} 为源、{@code approval_mode} 为派生）与「取严合成」的 CP 侧判据
+ * （D-1908 §1 / rev4）。task-122 先固化了 characterization，task-107 起断言的是目标态：测试红即实现回退。
  *
  * <p><b>为什么走真实解析链</b>：这里 mock 的只有 {@link SessionRepository}、{@link ConfigService}、
  * {@link ToolFaceRepository} 与 {@code AuditLogger}，{@link SessionApprovalModeStore}、
  * {@link SessionApprovalMode} 与 {@link DbPolicyContextProvider} 都是真实实现——否则「档位怎么被读出来」
- * 会被 mock 绿掉，测不到 D-1908 关心的合成/回落语义。</p>
- *
- * <p><b>@Disabled 的两条是 characterization（先红后绿）</b>：D-1908 要求「取严合成」与「读失败回落最严」，
- * 当前实现是「session 覆盖 config」和「session 读失败静默继承 workspace」，因此这两条 body 锁的是
- * <b>当前</b>放宽读数。task-107 落地时把断言的放宽值改成严格值并删除 {@code @Disabled}——它们会成为回归门。</p>
+ * 会被 mock 绿掉，测不到 D-1908 关心的取严/派生/回落语义。</p>
  */
 class ApprovalTierPolicyTest {
 
@@ -65,11 +61,21 @@ class ApprovalTierPolicyTest {
         when(faceRepository.findByScopeAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", WS)).thenReturn(List.of());
     }
 
-    private void storedSessionMode(String mode) {
+    private Session storedSession(String approvalMode, String permissionTier) {
         Session session = new Session(WS, USER, "tier");
         session.setId(SESSION_ID);
-        session.setApprovalMode(mode);
+        session.setApprovalMode(approvalMode);
+        session.setPermissionTier(permissionTier);
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+        return session;
+    }
+
+    private void storedSessionMode(String mode) {
+        storedSession(mode, null);
+    }
+
+    private void storedSessionTier(String tier) {
+        storedSession(null, tier);
     }
 
     private void workspaceMode(String source, String mode) {
@@ -85,58 +91,47 @@ class ApprovalTierPolicyTest {
 
     // ---------------------------------------------------------------- ① 取严合成（D-1908 §1）
 
-    /**
-     * D-1908 §1：workspace=manual + session=auto 必须合成 manual。
-     *
-     * <p>当前读数（@Disabled 的理由）：session 档位非空就整体覆盖 config 档位，所以这里是 auto——放宽方向。
-     * task-107 转绿时把断言值改成 {@code LayeredPolicyResolver.MODE_MANUAL}（层应为 WORKSPACE）并删 {@code @Disabled}。</p>
-     */
+    /** D-1908 §1：workspace=manual + session=full(=auto) 必须合成 manual，且来源层是 workspace。 */
     @Test
-    @Disabled("待 task-107 转绿：D-1908 §1 取严合成；此刻锁的是放宽现状（auto）")
     void synthesis_workspaceManual_mustNotBeRelaxedBySessionAuto() {
-        storedSessionMode(LayeredPolicyResolver.MODE_AUTO);
+        storedSessionTier(SessionPermissionTier.FULL);
         workspaceMode("workspace", LayeredPolicyResolver.MODE_MANUAL);
 
         PolicyContext context = provider.load(USER, WS, SESSION);
 
-        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode(),
-                "当前实现 = session 覆盖式放宽（auto）；D-1908 §1 要求取严 manual");
-        assertEquals(PolicyLayer.SESSION, context.modeLayer());
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode(),
+                "session 档位只能收紧：auto 会话不得放宽 manual 的 workspace");
+        assertEquals(PolicyLayer.WORKSPACE, context.modeLayer());
+        assertEquals(SessionPermissionTier.WORKSPACE, context.tier());
+        assertEquals(PolicyLayer.WORKSPACE, context.tierSourceLayer());
     }
 
-    /** D-1908 §1 的反方向：session=manual + workspace=auto 必须 manual——当前实现已满足，改动合成规则不得破坏它。 */
+    /** D-1908 §1 的反方向：session=manual + workspace=auto 必须 manual，来源层是 session。 */
     @Test
     void synthesis_sessionManual_isNotRelaxedByWorkspaceAuto() {
-        storedSessionMode(LayeredPolicyResolver.MODE_MANUAL);
+        storedSessionTier(SessionPermissionTier.WORKSPACE);
         workspaceMode("workspace", LayeredPolicyResolver.MODE_AUTO);
 
         PolicyContext context = provider.load(USER, WS, SESSION);
 
         assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode());
         assertEquals(PolicyLayer.SESSION, context.modeLayer());
+        assertEquals(SessionPermissionTier.WORKSPACE, context.tier());
     }
 
-    /**
-     * 取严合成在判定面的后果：manual 的 workspace 下，auto 的 session 不得把写工具自动放行。
-     *
-     * <p>当前读数（@Disabled 的理由）：{@code approvalVerdict} 在 auto 下用
-     * {@code PolicyVerdict.allowedByMode} 把 ASK 改成 ALLOW，{@code allowedBy=auto@SESSION}——写工具被自动放行。
-     * task-107 转绿时改为断言 {@code PolicyEffect.ASK} 且 {@code allowedBy} 为 null。</p>
-     */
+    /** 取严合成在判定面的后果：manual 的 workspace 下，auto 会话不得把写工具自动放行。 */
     @Test
-    @Disabled("待 task-107 转绿：D-1908 §1；此刻锁的是 auto 会话把写工具自动放行")
     void synthesis_manualWorkspace_mustStillAskForWriteToolUnderAutoSession() {
-        storedSessionMode(LayeredPolicyResolver.MODE_AUTO);
+        storedSessionTier(SessionPermissionTier.FULL);
         workspaceMode("workspace", LayeredPolicyResolver.MODE_MANUAL);
 
         PolicyVerdict verdict = engine.evaluateVerdict("write_file", "{}", SESSION, null, USER, WS);
 
-        assertEquals(PolicyEffect.ALLOW, verdict.effect(),
-                "当前实现 auto 覆盖 manual：写工具直接放行；D-1908 §1 要求 ASK");
-        assertEquals("auto@" + PolicyLayer.SESSION, verdict.allowedBy());
+        assertEquals(PolicyEffect.ASK, verdict.effect());
+        assertNull(verdict.allowedBy(), "取严之后没有任何 allow-by-mode 的放行依据");
     }
 
-    /** 对照组：没有会话覆盖时，manual 的 workspace 必须让写工具走审批（这条现在就该绿，且转绿后仍必须绿）。 */
+    /** 对照组：没有会话覆盖时，manual 的 workspace 必须让写工具走审批。 */
     @Test
     void manualWorkspaceWithoutSessionOverrideAsksForWriteTool() {
         workspaceMode("workspace", LayeredPolicyResolver.MODE_MANUAL);
@@ -148,13 +143,67 @@ class ApprovalTierPolicyTest {
         assertNull(verdict.allowedBy(), "manual 下任何 allow-by-mode 都是放宽泄漏");
     }
 
-    // ---------------------------------------------------------------- ④ 档位白名单（不得回落成放宽值）
+    /** 没有任何 workspace 配置时会话档位仍然生效（不会因为没有下层就退成内置 manual 而丢档位）。 */
+    @Test
+    void sessionTierAppliesWithoutAnyWorkspacePolicy() {
+        storedSessionTier(SessionPermissionTier.VIEW);
+        emptyWorkspaceConfig();
 
-    /** 白名单值域就是 manual/auto 两个；新增档位必须同批改这条（否则 UI/契约两侧都不知道新值）。 */
+        PolicyContext context = provider.load(USER, WS, SESSION);
+
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode());
+        assertEquals(SessionPermissionTier.VIEW, context.tier());
+        assertEquals(PolicyLayer.SESSION, context.tierSourceLayer());
+        assertNull(context.tierFallback());
+    }
+
+    // ---------------------------------------------------------------- ② 派生（tier -> mode，单向）
+
+    /** D-1908 rev4：派生是单向的——view/workspace ⇒ manual，full ⇒ auto。 */
+    @Test
+    void permissionTierDerivesApprovalMode() {
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, SessionPermissionTier.modeForTier(SessionPermissionTier.VIEW));
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL,
+                SessionPermissionTier.modeForTier(SessionPermissionTier.WORKSPACE));
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, SessionPermissionTier.modeForTier(SessionPermissionTier.FULL));
+    }
+
+    /** 档位是源：列上 tier=full 时，遗留 approval_mode 列里的 manual 不得把它拉回 manual。 */
+    @Test
+    void storedTierWinsOverTheLegacyApprovalModeColumn() {
+        storedSession(LayeredPolicyResolver.MODE_MANUAL, SessionPermissionTier.FULL);
+
+        assertEquals(Optional.of(LayeredPolicyResolver.MODE_AUTO), sessionApprovalMode.modeOf(SESSION));
+        assertEquals(Optional.of(SessionPermissionTier.FULL), sessionApprovalMode.tierOf(SESSION));
+    }
+
+    /** V176 之前的行只有 approval_mode：仍必须读出档位与 mode（否则升级即把所有会话打回继承）。 */
+    @Test
+    void legacyApprovalModeRowStillResolvesTierAndMode() {
+        storedSessionMode(LayeredPolicyResolver.MODE_AUTO);
+
+        assertTrue(sessionApprovalMode.tierOf(SESSION).isEmpty(),
+                "tierOf 只报「存了档位」，遗留列不是档位；派生发生在 provider 里");
+        PolicyContext context = provider.load(USER, WS, SESSION);
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode());
+        assertEquals(SessionPermissionTier.FULL, context.tier());
+        assertEquals(PolicyLayer.SESSION, context.tierSourceLayer());
+    }
+
+    // ---------------------------------------------------------------- ③ 值域白名单（不得回落成放宽值）
+
+    /** 派生 mode 的取值域仍是 manual/auto 两个；新增档位必须同批改这条。 */
     @Test
     void tierWhitelistIsExactlyManualAndAuto() {
         assertEquals(Set.of(LayeredPolicyResolver.MODE_MANUAL, LayeredPolicyResolver.MODE_AUTO),
                 SessionPolicyState.MODES);
+    }
+
+    /** 档位取值域是 view/workspace/full（D-1908 rev4）；卡面旧写法 workspace-write 不在其中。 */
+    @Test
+    void permissionTierWhitelistIsExactlyViewWorkspaceFull() {
+        assertEquals(Set.of("view", "workspace", "full"), SessionPermissionTier.TIERS);
+        assertTrue(SessionPermissionTier.normalize("workspace-write").isEmpty());
     }
 
     /** 合法值的归一化：大小写与空白必须被吸收，不能因格式差异退回继承（继承可能更宽）。 */
@@ -178,6 +227,19 @@ class ApprovalTierPolicyTest {
         assertEquals(PolicyLayer.WORKSPACE, context.modeLayer());
     }
 
+    /** 非法 permission_tier 同样不得被猜成 full：丢到下一层，由下一层（或内置 manual）决定。 */
+    @Test
+    void unsupportedStoredPermissionTierFallsBackToTheNextLayer() {
+        storedSessionTier("god-mode");
+        workspaceMode("workspace", LayeredPolicyResolver.MODE_MANUAL);
+
+        assertTrue(sessionApprovalMode.tierOf(SESSION).isEmpty());
+        PolicyContext context = provider.load(USER, WS, SESSION);
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode());
+        assertEquals(SessionPermissionTier.WORKSPACE, context.tier());
+        assertEquals(PolicyLayer.WORKSPACE, context.tierSourceLayer());
+    }
+
     /** 非法列值 + 下一层也没有配置 ⇒ 内置 manual（不是 auto，也不是「继承到某个未知层」）。 */
     @Test
     void unsupportedStoredTierValueWithoutAnyLowerTierStaysManual() {
@@ -192,11 +254,68 @@ class ApprovalTierPolicyTest {
                 engine.evaluateVerdict("write_file", "{}", SESSION, null, USER, WS).effect());
     }
 
+    // ---------------------------------------------------------------- ④ 写侧（tier 与派生 mode 同一次落库）
+
     /** 写入口同样必须拒绝非法值，且不得落库（否则非法值会被写进列，读侧只能靠过滤兜底）。 */
     @Test
     void setterRejectsUnsupportedTierValuesWithoutWriting() {
         assertThrows(IllegalArgumentException.class, () -> sessionApprovalMode.setMode(SESSION, "yolo"));
         assertThrows(IllegalArgumentException.class, () -> sessionApprovalMode.setMode(SESSION, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> sessionApprovalMode.setTier(SESSION, "workspace-write"));
         verify(sessionRepository, never()).save(any());
+    }
+
+    /** setMode(auto) 必须写 tier=full 与 mode=auto（派生值不能只写一半）。 */
+    @Test
+    void setModeWritesTheDerivedTierInTheSameSave() {
+        Session session = storedSession(null, null);
+
+        sessionApprovalMode.setMode(SESSION, LayeredPolicyResolver.MODE_AUTO);
+
+        assertEquals(SessionPermissionTier.FULL, session.getPermissionTier());
+        assertEquals(LayeredPolicyResolver.MODE_AUTO, session.getApprovalMode());
+        verify(sessionRepository).save(session);
+    }
+
+    /** setTier(view) 必须写 mode=manual（派生方向恒为 tier -> mode）。 */
+    @Test
+    void setTierWritesTheDerivedModeInTheSameSave() {
+        Session session = storedSession(null, null);
+
+        sessionApprovalMode.setTier(SESSION, SessionPermissionTier.VIEW);
+
+        assertEquals(SessionPermissionTier.VIEW, session.getPermissionTier());
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, session.getApprovalMode());
+        verify(sessionRepository).save(session);
+    }
+
+    /** 旧的 mode 开关不得把更细的 view 抬成 workspace：派生 mode 未变时保留原档位。 */
+    @Test
+    void setModeKeepsTheFinerTierWhenTheDerivedModeDoesNotChange() {
+        Session session = storedSession(LayeredPolicyResolver.MODE_MANUAL, SessionPermissionTier.VIEW);
+
+        sessionApprovalMode.setMode(SESSION, LayeredPolicyResolver.MODE_MANUAL);
+
+        assertEquals(SessionPermissionTier.VIEW, session.getPermissionTier());
+    }
+
+    // ---------------------------------------------------------------- ⑤ 主体维度（设计闸门，D-1908 rev2 ③）
+
+    /**
+     * 设计闸门：principal 只能通过四参重载进入，且当前实现不因主主体改变档位；一旦把主体做成
+     * 第二维度（权限矩阵），这条测试必须同批改写——它不是「什么都不测」的占位。
+     */
+    @Test
+    void principalOverloadDelegatesWithoutChangingTheTier() {
+        storedSessionTier(SessionPermissionTier.WORKSPACE);
+        emptyWorkspaceConfig();
+
+        PolicyContext withPrincipal = provider.load(USER, WS, SESSION, "agent-principal-1");
+        PolicyContext withoutPrincipal = provider.load(USER, WS, SESSION);
+
+        assertEquals(withoutPrincipal.mode(), withPrincipal.mode());
+        assertEquals(withoutPrincipal.tier(), withPrincipal.tier());
+        assertFalse(withPrincipal.tierSourceLayer() == null);
     }
 }

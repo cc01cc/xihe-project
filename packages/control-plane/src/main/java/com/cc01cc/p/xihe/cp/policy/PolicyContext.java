@@ -18,13 +18,19 @@ import java.util.Map;
  * @param sessionMode      coherent session mode retained for fail-closed evidence; not applied to resolution
  * @param askActionClasses approval-policy ask list; null = use {@link #DEFAULT_ASK_ACTION_CLASSES}
  * @param askLayer         layer that supplied the ask list (audit/UI `sourceLayer`)
+ * @param tier             effective permission tier (D-1908: view / workspace / full); null = unknown
+ * @param tierSourceLayer  layer that supplied {@code tier} (SESSION / WORKSPACE / INSTANCE / ...)
+ * @param tierFallback     non-null when a fail-closed read forced {@code tier} (audit signal only)
  */
 public record PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
                             String mode,
                             PolicyLayer modeLayer,
                             String sessionMode,
                             List<String> askActionClasses,
-                            PolicyLayer askLayer) {
+                            PolicyLayer askLayer,
+                            String tier,
+                            PolicyLayer tierSourceLayer,
+                            String tierFallback) {
 
     /**
      * Approval-policy ask-list default (PLAN-0407 T2.8 ①, evidence
@@ -40,14 +46,24 @@ public record PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
     public PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
                          String mode,
                          PolicyLayer modeLayer) {
-        this(extraFaces, mode, modeLayer, mode, null, null);
+        this(extraFaces, mode, modeLayer, mode, null, null, null, null, null);
     }
 
     public PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
                          String mode,
                          PolicyLayer modeLayer,
                          String sessionMode) {
-        this(extraFaces, mode, modeLayer, sessionMode, null, null);
+        this(extraFaces, mode, modeLayer, sessionMode, null, null, null, null, null);
+    }
+
+    /** Pre-task-107 six-argument shape: no tier is known, so the tier keys stay null. */
+    public PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
+                         String mode,
+                         PolicyLayer modeLayer,
+                         String sessionMode,
+                         List<String> askActionClasses,
+                         PolicyLayer askLayer) {
+        this(extraFaces, mode, modeLayer, sessionMode, askActionClasses, askLayer, null, null, null);
     }
 
     public static final PolicyContext EMPTY = new PolicyContext(Map.of(), null, null);
@@ -64,7 +80,8 @@ public record PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
     /** Fail-closed context retaining session mode for evidence without applying bypass semantics. */
     public static PolicyContext failedClosed(String sessionMode) {
         return new PolicyContext(Map.of(), null, null, sessionMode,
-                List.copyOf(ToolFaceRegistry.builtinActionClasses()), PolicyLayer.INSTANCE);
+                List.copyOf(ToolFaceRegistry.builtinActionClasses()), PolicyLayer.INSTANCE,
+                null, null, null);
     }
 
     public PolicyContext {
@@ -73,5 +90,6 @@ public record PolicyContext(Map<String, ToolFaceRegistry.Face> extraFaces,
                 ? DEFAULT_ASK_ACTION_CLASSES
                 : List.copyOf(askActionClasses);
         askLayer = askLayer == null ? PolicyLayer.BUILTIN : askLayer;
+        tier = SessionPermissionTier.normalize(tier).orElse(null);
     }
 }

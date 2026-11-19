@@ -278,6 +278,7 @@ public class PolicyEngine {
             audit.record(sessionId, toolName, "policy_check", "require_approval");
             audit.record(sessionId, toolName, "policy_verdict",
                     verdict.effect() + ":" + verdict.sourceLayer() + ":-");
+            recordTierAudit(sessionId, toolName, context);
             return verdict;
         }
 
@@ -308,6 +309,24 @@ public class PolicyEngine {
         if (verdict.allowedBy() != null) {
             audit.record(sessionId, toolName, "policy_allowed_by_mode", verdict.allowedBy());
         }
+        recordTierAudit(sessionId, toolName, context);
         return verdict;
+    }
+
+    /**
+     * Records the effective permission tier and its source layer next to the verdict (D-1908 §6,
+     * task-107). A non-null fallback means the tier is the fail-closed value, not an inherited one —
+     * operators must be able to see that difference instead of reading a silent fallback as a normal
+     * workspace setting.
+     */
+    private void recordTierAudit(String sessionId, String toolName, PolicyContext context) {
+        if (context.tier() != null) {
+            audit.record(sessionId, toolName, "policy_tier",
+                    "tier=" + context.tier() + ":layer="
+                            + (context.tierSourceLayer() == null ? "-" : context.tierSourceLayer()));
+        }
+        if (context.tierFallback() != null) {
+            audit.record(sessionId, toolName, "policy_tier_fallback", context.tierFallback());
+        }
     }
 }

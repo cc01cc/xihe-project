@@ -722,6 +722,7 @@ public class ChatSubmissionService {
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
         childSession.setConnectionRevision(parentSession.getConnectionRevision());
         childSession.setApprovalMode(parentSession.getApprovalMode());
+        childSession.setPermissionTier(parentSession.getPermissionTier());
         childSession.setContextTemplateLayer(parentSession.getContextTemplateLayer());
         childSession.setContextTemplateId(parentSession.getContextTemplateId());
         childSession.setContextTemplateVersion(parentSession.getContextTemplateVersion());
@@ -883,6 +884,7 @@ public class ChatSubmissionService {
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
         childSession.setConnectionRevision(parentSession.getConnectionRevision());
         childSession.setApprovalMode(parentSession.getApprovalMode());
+        childSession.setPermissionTier(parentSession.getPermissionTier());
         childSession.setContextTemplateLayer(parentSession.getContextTemplateLayer());
         childSession.setContextTemplateId(parentSession.getContextTemplateId());
         childSession.setContextTemplateVersion(parentSession.getContextTemplateVersion());

@@ -45,4 +45,29 @@ public class SessionApprovalModeStore {
         session.setApprovalMode(mode);
         sessionRepository.save(session);
     }
+
+    /**
+     * The stored permission tier (D-1908); empty when the column is unset. Unlike
+     * {@link #findApprovalMode}, a failed read propagates: the policy layer must be able to tell
+     * "inherit" from "unreadable" and fail closed on the latter.
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> findPermissionTier(UUID sessionId) {
+        return sessionRepository.findById(sessionId).map(Session::getPermissionTier);
+    }
+
+    /**
+     * Persists the permission tier together with its derived approval mode (one row, one save).
+     * The derivation lives in the policy layer; this store only writes what it is handed.
+     *
+     * @throws IllegalStateException when the Session row does not exist
+     */
+    @Transactional
+    public void setPermissionTier(UUID sessionId, String tier, String derivedApprovalMode) {
+        Session session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalStateException("session not found: " + sessionId));
+        session.setPermissionTier(tier);
+        session.setApprovalMode(derivedApprovalMode);
+        sessionRepository.save(session);
+    }
 }

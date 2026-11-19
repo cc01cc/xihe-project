@@ -30,7 +30,6 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -71,6 +70,13 @@ class SessionTierResolutionTest {
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
     }
 
+    private void storedSessionTier(String tier) {
+        Session session = new Session(WS, USER, "tier");
+        session.setId(SESSION_ID);
+        session.setPermissionTier(tier);
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    }
+
     private void configTier(String source, String mode) {
         when(configService.effective(eq(APPROVAL_POLICY), any(), any()))
                 .thenReturn(new ConfigService.EffectiveConfig(APPROVAL_POLICY, "revision-1", source,
@@ -79,16 +85,18 @@ class SessionTierResolutionTest {
 
     // ---------------------------------------------------------------- 二节①：链的每一级
 
-    /** 第一级：会话列有值就用它，并如实标注 SESSION。 */
+    /** 第一级：会话档位比下层更严时用它，并如实标注 SESSION（放宽方向由取严合成拦住）。 */
     @Test
     void sessionTierBeatsEveryLowerTier() {
-        storedSessionMode(LayeredPolicyResolver.MODE_AUTO);
-        configTier("workspace", LayeredPolicyResolver.MODE_MANUAL);
+        storedSessionTier(SessionPermissionTier.WORKSPACE);
+        configTier("workspace", LayeredPolicyResolver.MODE_AUTO);
 
         PolicyContext context = provider.load(USER, WS, SESSION);
 
-        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode());
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode());
         assertEquals(PolicyLayer.SESSION, context.modeLayer());
+        assertEquals(SessionPermissionTier.WORKSPACE, context.tier());
+        assertEquals(PolicyLayer.SESSION, context.tierSourceLayer());
     }
 
     /** 第二级：会话列空 ⇒ 用 workspace 档位（不是「没配 ⇒ manual」）。 */
@@ -177,21 +185,24 @@ class SessionTierResolutionTest {
     /**
      * D-1908 二节②：任意层读失败必须回落最严 + 明确信号，不能静默继承。
      *
-     * <p>当前读数（@Disabled 的理由）：{@link SessionApprovalMode#modeOf} 吞掉 {@code RuntimeException} 返回
-     * empty，于是会话层读失败表现成「会话没配」⇒ 静默继承 workspace 的 auto（放宽方向）。
-     * task-107 转绿时改为断言 manual（以及一条可观测的回落信号），并删 {@code @Disabled}。</p>
+     * <p>会话层读失败时 {@link SessionApprovalMode#tierOf} 把异常抛出来，provider 回落 view(=manual)
+     * 并带上 {@code tierFallback} 标记；workspace 的 auto 不能因为它读不到而被继承。</p>
      */
     @Test
-    @Disabled("待 task-107 转绿：D-1908 二节②；此刻锁的是会话层读失败静默继承 auto")
     void unreadableSessionTierMustFailClosedToStrictestNotToWorkspaceAuto() {
         when(sessionRepository.findById(SESSION_ID)).thenThrow(new IllegalStateException("session db down"));
         configTier("workspace", LayeredPolicyResolver.MODE_AUTO);
 
         PolicyContext context = provider.load(USER, WS, SESSION);
 
-        assertEquals(LayeredPolicyResolver.MODE_AUTO, context.mode(),
-                "当前实现静默继承 workspace=auto；D-1908 要求回落最严（manual）+ 明确信号");
-        assertEquals(PolicyLayer.WORKSPACE, context.modeLayer());
+        assertEquals(LayeredPolicyResolver.MODE_MANUAL, context.mode(),
+                "读失败回落最严：不得静默继承 workspace=auto");
+        assertEquals(PolicyLayer.INSTANCE, context.modeLayer(), "回落值的来源层必须如实标 INSTANCE");
+        assertEquals(SessionPermissionTier.VIEW, context.tier());
+        assertEquals(SessionPermissionTier.FALLBACK_SESSION_READ_FAILED, context.tierFallback(),
+                "审计要能区分「继承」和「读失败回落」");
+        assertEquals(PolicyEffect.ASK,
+                engine.evaluateVerdict("write_file", "{}", SESSION, null, USER, WS).effect());
     }
 
     // ---------------------------------------------------------------- rev2 第 3 条：策略面没有主体维度
@@ -204,12 +215,21 @@ class SessionTierResolutionTest {
     @Test
     void policy_has_noPrincipalDimension_byDesign() {
         Method[] declared = PolicyContextProvider.class.getDeclaredMethods();
-        assertEquals(1, declared.length,
-                "PolicyContextProvider 是单方法接口；加主体维度必然在这里多出一个方法");
-        assertEquals("load", declared[0].getName());
+        assertEquals(2, declared.length, "三参抽象方法 + task-107 的四参 default 重载，别的一律不该有");
+        Method base = Arrays.stream(declared)
+                .filter(method -> method.getParameterCount() == 3)
+                .findFirst().orElseThrow();
         assertEquals(List.of(String.class, String.class, String.class),
-                List.of(declared[0].getParameterTypes()),
+                List.of(base.getParameterTypes()),
                 "策略上下文只按 userId/workspaceId/sessionId 求值");
+        Method principal = Arrays.stream(declared)
+                .filter(method -> method.getParameterCount() == 4)
+                .findFirst().orElseThrow();
+        assertEquals("load", principal.getName());
+        assertTrue(principal.isDefault(),
+                "主体重载必须是 default：它是 107b 的扩展点，不是新的策略维度");
+        assertEquals(String.class, principal.getParameters()[3].getType(),
+                "四参重载的第四参是 principalId（String），不参与档位计算");
 
         for (String forbidden : List.of("principalId", "principalKind", "agentPrincipalId")) {
             assertFalse(hasComponent(PolicyRequest.class, forbidden), "PolicyRequest 不得携带 " + forbidden);

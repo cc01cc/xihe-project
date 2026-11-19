@@ -2670,9 +2670,11 @@ paths:
       operationId: setPolicyMode
       summary: Set the session-scoped policy mode
       description: |
-        Persists `manual` / `auto` on the session row (PLAN-0337 V24), so the choice survives a CP
-        restart; a workspace-level default comes from the `approval-policy` config domain. An
-        unsupported mode is rejected with `400 INVALID_REQUEST`. BL-299: this is a write face and
+        Persists the session permission tier (D-1908 / V176 `sessions.permission_tier`); the
+        `mode` field is derived from it (view/workspace -> manual, full -> auto) and survives a CP
+        restart. A workspace-level default comes from the `approval-policy` config domain and can
+        only be tightened by the session tier, never relaxed. An unsupported tier or mode is
+        rejected with `400 INVALID_REQUEST`. BL-299: this is a write face and
         stays owner-only (the GET sibling is the only widened read).
 
         BL-309 — the refusal has **two intentionally different codes**, decided by the caller's
@@ -8665,27 +8667,43 @@ components:
     PolicyMode:
       type: string
       enum: [manual, auto]
+    PermissionTier:
+      type: string
+      enum: [view, workspace, full]
+      description: |
+        D-1908 rev4 session permission tier (V176 `sessions.permission_tier`). It is the source of
+        truth; `mode` is derived from it (view/workspace -> manual, full -> auto) and never the
+        reverse. null means "inherit the `approval-policy` workspace layer" for a stored row, and
+        also appears in a response when the tier could not be read.
     PolicyModeState:
       type: object
       additionalProperties: false
-      required: [sessionId, mode, sessionRules]
+      required: [sessionId, mode, sessionRules, tier]
       properties:
         sessionId: { type: string, format: uuid }
         mode: { $ref: '#/components/schemas/PolicyMode' }
         sessionRules: { type: integer, minimum: 0 }
+        tier: { type: [string, 'null'], enum: [view, workspace, full, null], description: 'the stored session tier; null when none is set or it could not be read' }
     PolicyModeUpdateRequest:
       type: object
-      required: [sessionId, mode]
+      required: [sessionId]
+      description: |
+        Sets the session tier. Send `tier` (preferred, D-1908) or the legacy `mode`; at least one
+        is required. A legacy `mode` is translated into the tier whose derived mode matches it
+        (manual -> workspace, auto -> full), keeping a finer stored tier (view) when the derived
+        mode does not change.
       properties:
         sessionId: { type: string, format: uuid }
         mode: { $ref: '#/components/schemas/PolicyMode' }
+        tier: { $ref: '#/components/schemas/PermissionTier' }
     PolicyModeUpdateResponse:
       type: object
       additionalProperties: false
-      required: [sessionId, mode, scope]
+      required: [sessionId, mode, tier, scope]
       properties:
         sessionId: { type: string, format: uuid }
         mode: { $ref: '#/components/schemas/PolicyMode' }
+        tier: { type: [string, 'null'], enum: [view, workspace, full, null], description: 'the stored tier after the write (mode above is its derived value)' }
         scope: { type: string, enum: [session] }
     Tier1ChainStatus:
       type: object

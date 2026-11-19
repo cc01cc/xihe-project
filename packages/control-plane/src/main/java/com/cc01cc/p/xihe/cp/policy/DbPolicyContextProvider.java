@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -83,48 +84,102 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
                 cache.put(cacheKey, cached);
             }
 
-            // Mode precedence (PLAN-0337；PLAN-0364 决策 #9): session override >
-            // config 链（workspace > user > instance，env 命中视为 instance 钉死）> builtin manual.
-            String sessionMode = sessionApprovalMode.modeOf(sessionId).orElse(null);
-            String mode = sessionMode;
-            PolicyLayer modeLayer = sessionMode == null ? null : PolicyLayer.SESSION;
+            // Tier first (D-1908 rev4): the session tier is derived from the single permission tier
+            // (view/workspace -> manual, full -> auto); the workspace/inherited mode is a lower layer.
+            TierResolution session = resolveTier(sessionId);
             ApprovalConfig config = approvalConfig(userId, workspaceId);
-            if (mode == null && config != null && config.mode() != null) {
-                mode = config.mode();
+            String inheritedMode = config == null ? null : config.mode();
+
+            // Strictest-wins (D-1908 §1): a session tier may only tighten, never relax, the inherited
+            // layer. Before task-107 a non-null session value overrode the config outright.
+            String mode;
+            PolicyLayer modeLayer;
+            if (session.mode() != null
+                    && SessionPermissionTier.strictestMode(session.mode(), inheritedMode).equals(session.mode())) {
+                mode = session.mode();
+                modeLayer = session.layer();
+            } else if (inheritedMode != null) {
+                mode = inheritedMode;
                 modeLayer = config.layer();
+            } else {
+                mode = null;
+                modeLayer = null;
             }
+
+            // Effective tier mirrors the winning mode so audit/UI can tell SESSION / WORKSPACE /
+            // INSTANCE apart; a fail-closed read reports the forced tier with an INSTANCE source.
+            String tier;
+            PolicyLayer tierSourceLayer;
+            if (session.tier() != null && mode != null && mode.equals(session.mode())) {
+                tier = session.tier();
+                tierSourceLayer = session.layer();
+            } else if (inheritedMode != null) {
+                tier = SessionPermissionTier.tierForMode(inheritedMode);
+                tierSourceLayer = config.layer();
+            } else {
+                tier = null;
+                tierSourceLayer = null;
+            }
+
             // Ask list (PLAN-0407 T2.8): config value > code default; never session-overridden.
             List<String> ask = config == null ? null : config.askActionClasses();
             PolicyLayer askLayer = config == null || config.askActionClasses() == null
                     ? PolicyLayer.BUILTIN : config.layer();
 
-            return new PolicyContext(cached.faces(), mode, modeLayer, mode, ask, askLayer);
+            return new PolicyContext(cached.faces(), mode, modeLayer, session.mode(), ask, askLayer,
+                    tier, tierSourceLayer, session.fallback());
         } catch (RuntimeException e) {
-            // fail-closed: an unreadable context must never relax the decision
-            log.error("[POLICY] context load failed, falling back to forced ask (fail-closed) "
-                    + "userId={} workspaceId={} sessionId={}", userId, workspaceId, sessionId, e);
+            log.error("[POLICY] failed to load policy context, failing closed userId={} workspaceId={} sessionId={}",
+                    userId, workspaceId, sessionId, e);
             String sessionMode = sessionApprovalMode.modeOf(sessionId).orElse(null);
             return PolicyContext.failedClosed(sessionMode);
         }
     }
 
     /**
-     * Reads the approval mode and ask list from the {@code approval-policy} config domain and
-     * reports the layer that actually supplied them (PLAN-0364 决策 #9；PLAN-0407 T2.8 ask list).
-     *
-     * <p>Read fresh (not cached with the face snapshot): config writes do not bump
-     * {@link PolicyVersion}, so caching here would serve a stale mode after a settings change.</p>
-     *
-     * <p>Layer mapping follows the config resolution chain
-     * ({@code workspace > user > instance > code default}); an env overlay is reported as
-     * {@link PolicyLayer#INSTANCE} because env is the instance-level deployment lockdown
-     * (PLAN-0364 决策 #2). Reporting the real source removes the previous mislabel where an
-     * instance-layer value was audited as {@code WORKSPACE}.</p>
-     *
-     * <p>Fail-closed: an unreadable config or an unsupported value is logged and ignored so the
-     * caller falls back to {@code manual} and the code default ask list; a broken config must
-     * never relax the decision.</p>
+     * Principal-scoped overload (D-1908 prerequisite). The principal is an extension point for
+     * task-107b (workspace-layer tiering + grant-side principal path); today it carries no tier of its
+     * own, so the resolution is identical to the three-argument form.
      */
+    @Override
+    @Transactional(readOnly = true)
+    public PolicyContext load(String userId, String workspaceId, String sessionId, String principalId) {
+        // TODO(task-107b): fold principal-scoped strictness into resolveTier once grants carry a tier.
+        return load(userId, workspaceId, sessionId);
+    }
+
+    /**
+     * Resolves the session layer of the tier resolution: stored tier > legacy approval_mode column >
+     * inherit. A failed read is not inherit — it fails closed to the strictest tier and is flagged so
+     * the audit trail shows the degradation instead of a silent fallback.
+     */
+    private TierResolution resolveTier(String sessionId) {
+        try {
+            Optional<String> storedTier = sessionApprovalMode.tierOf(sessionId);
+            if (storedTier.isPresent()) {
+                String tier = storedTier.get();
+                return new TierResolution(tier, SessionPermissionTier.modeForTier(tier),
+                        PolicyLayer.SESSION, null);
+            }
+            Optional<String> legacyMode = sessionApprovalMode.modeOf(sessionId);
+            if (legacyMode.isPresent()) {
+                String mode = legacyMode.get();
+                return new TierResolution(SessionPermissionTier.tierForMode(mode), mode,
+                        PolicyLayer.SESSION, null);
+            }
+            return new TierResolution(null, null, null, null);
+        } catch (RuntimeException e) {
+            String tier = SessionPermissionTier.FAIL_CLOSED_TIER;
+            log.error("[POLICY] session permission tier unreadable, failing closed to {} sessionId={}",
+                    tier, sessionId, e);
+            return new TierResolution(tier, SessionPermissionTier.modeForTier(tier),
+                    PolicyLayer.INSTANCE, SessionPermissionTier.FALLBACK_SESSION_READ_FAILED);
+        }
+    }
+
+    /** Session layer of the tier resolution; {@code fallback} is non-null only after a failed read. */
+    private record TierResolution(String tier, String mode, PolicyLayer layer, String fallback) {}
+
     private ApprovalConfig approvalConfig(String userId, String workspaceId) {
         if (workspaceId == null || workspaceId.isBlank()) {
             return null;
