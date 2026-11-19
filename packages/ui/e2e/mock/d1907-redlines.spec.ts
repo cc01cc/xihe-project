@@ -81,29 +81,61 @@ function persist(section: string, payload: unknown): void {
 }
 
 /** 与会话页同一套显式桩（口径同 task-118 的 mock spec：config/provider/mcp/environment 全给）。 */
-async function boot(page: Page): Promise<void> {
+async function boot(page: Page, options: { persistentSeed?: boolean } = {}): Promise<void> {
     await setupMockAuth(page, {});
     await setupMockSessions(page, { sessions: SESSIONS.map((id) => ({ id, title: id })) });
-    await page.addInitScript((key) => {
-        localStorage.setItem("xihe-mock-filetree", JSON.stringify([]));
-        // 固定布局：右栏关闭、只留一个会话页签，读数是「首启态」而不是上一个用例的残留。
-        localStorage.setItem(
+    /*
+     * task-150（Lead 裁定 B）：种子里的会话页签必须是**合法 id**。旧版写的是
+     * `openTabs: [String(key)]` —— 那是 localStorage 键名本身，`isWorkTabId` 读侧直接丢掉
+     * ⇒ 固定布局的 pin 每次装载都被冲成空集，旧 G-11 主栏断言恒红的真根因就是这个夹具缺陷。
+     * 合法值 = `session:<sid>`（主栏会话页签的 id 域，见 `useWorkspaceLayout.ts` 的
+     * `WORK_TAB_ID_PREFIX`），取 `SESSIONS[0]` 才与 `CHAT_PATH`（首屏会话）同形。
+     *
+     * `persistentSeed`：只种**第一次**（标记 `<layout-key>:seeded`）。主栏 pin 的累积与
+     * 「关掉的页签 reload 后不复活」都必须跨导航保住产品落盘值，而每次导航重写种子会把两者都抹掉
+     * ⇒ G-11b 用这个模式做**真 reload** 证法，而不是「只等落盘再读一次 store」。
+     * 默认仍是每次导航重写，保证用例之间不串残留。
+     */
+    await page.addInitScript(
+        ({
             key,
-            JSON.stringify({
-                treeCollapsed: false,
-                treeWidth: 240,
-                dockCollapsed: true,
-                dockWidth: 360,
-                dockTabs: [],
-                activeDockTab: null,
-                dockMode: "pinned",
-                dockFocus: false,
-                openTabs: [String(key)],
-                activeColumn: "main",
-                openTarget: "main",
-            }),
-        );
-    }, LAYOUT_KEY);
+            seededFlag,
+            persistent,
+            firstTab,
+        }: {
+            key: string;
+            seededFlag: string;
+            persistent: boolean;
+            firstTab: string;
+        }) => {
+            if (persistent && localStorage.getItem(seededFlag) === "1") return;
+            localStorage.setItem("xihe-mock-filetree", JSON.stringify([]));
+            // 固定布局：右栏关闭、只留一个会话页签，读数是「首启态」而不是上一个用例的残留。
+            localStorage.setItem(
+                key,
+                JSON.stringify({
+                    treeCollapsed: false,
+                    treeWidth: 240,
+                    dockCollapsed: true,
+                    dockWidth: 360,
+                    dockTabs: [],
+                    activeDockTab: null,
+                    dockMode: "pinned",
+                    dockFocus: false,
+                    openTabs: [firstTab],
+                    activeColumn: "main",
+                    openTarget: "main",
+                }),
+            );
+            if (persistent) localStorage.setItem(seededFlag, "1");
+        },
+        {
+            key: LAYOUT_KEY,
+            seededFlag: LAYOUT_KEY + ":seeded",
+            persistent: Boolean(options.persistentSeed),
+            firstTab: "session:" + SESSIONS[0],
+        },
+    );
     await page.route("**/api/v1/config/**", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
     );
@@ -464,6 +496,8 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
         const CONFIG_WORD = /配置|设置|configure|config|settings/i;
         const looksLikeWorkspaceConfig = (text: string) =>
             WORKSPACE_WORD.test(text) && CONFIG_WORD.test(text);
+        /** 选择器条目的 testid 前缀（主栏 `workspace-add-item-*`、右栏重开菜单 `dock-reopen-item-*`）。 */
+        const PICKER_ITEM_PREFIX = /^(?:workspace-add-item|dock-reopen-item)-/;
         for (const probe of [mainProbe, rightProbe]) {
             const tag = probe.container === "main" ? "主栏" : "右栏";
             expect(
@@ -475,8 +509,14 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
                 probe.optionLabels.filter(looksLikeWorkspaceConfig),
                 tag + "选择器不得出现工作区配置/设置类选项（G-12）",
             ).toEqual([]);
+            // testid 侧不能直接套文本正则：产品前缀 `workspace-` 自带 "workspace"，组件名
+            // `session-config` 自带 "config"，两项一拼就把合法的「会话配置」条目恒判成工作区配置项
+            // （HEAD 版本单跑同样红 —— task-150 用 `git show HEAD:` 副本复现过，与布局种子无关）。
+            // ⇒ 先剥掉产品前缀，只判**条目身份**；条目键里真的写了「工作区 + 配置」仍然红。
             expect(
-                probe.optionTestids.filter(looksLikeWorkspaceConfig),
+                probe.optionTestids.filter((testid) =>
+                    looksLikeWorkspaceConfig(testid.replace(PICKER_ITEM_PREFIX, "")),
+                ),
                 tag + "选择器不得出现工作区配置类 testid",
             ).toEqual([]);
         }
@@ -605,6 +645,154 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
          * 重写一遍（隔离用），reload 后看到的不是产品落盘值，而是种子里那两份。刷新往返由单测守：
          * `useWorkspaceLayout.spec.ts` 的 "keeps a pane tab active after a reload"。
          */
+    });
+
+    /*
+     * G-11b（task-150，Lead 裁定 B：主栏会话页签保持 `session:<sid>`，**不**扩 `pane:` 值域）：
+     * 三条可执行判据 —— ①访问过的会话各留一份页签（并存）②点页签切换不串台（url/高亮各自对得上）
+     * ③关掉的那份在**真 reload** 后不复活。
+     *
+     * 为什么必须 `persistentSeed`：默认种子每次导航重写固定布局，pin 的累积与「关掉后仍在」都会
+     * 被它抹掉（旧 G-11 主栏断言恒红就是这个夹具缺陷，不是产品缺口）。本次证法 = 「种子只在首次
+     * 导航生效」（`<layout-key>:seeded` 标记），后续导航读的都是产品落盘值 ⇒ 第三段是真 reload，
+     * 不是「只等落盘再读一次 store」。
+     *
+     * id 域：主栏会话页签 = `session:<sid>`（`useWorkspaceLayout.ts` 的 `WORK_TAB_ID_PREFIX`）。
+     * 容器归属由 `containerOf` 反推（非 `DOCK_TAB_IDS` ⇒ main），容器信息本来就不丢，
+     * 所以这里不需要（也不该有）`pane:main:*` 拼法。
+     */
+    test("G-11b：主栏 route 页签按会话 pin —— 两会话并存、切换不串台、关掉不复活", async ({
+        page,
+    }) => {
+        const tabIdOf = (sid: string): string => "session:" + sid;
+        const readMainRow = async (): Promise<{ ids: string[]; active: string[] }> =>
+            page.evaluate(() => {
+                const tabs = Array.from(
+                    document.querySelectorAll(
+                        '[data-testid="workspace-container-tabs"][data-container="main"] [data-tab-id]',
+                    ),
+                );
+                return {
+                    ids: tabs.map((el) => el.getAttribute("data-tab-id") ?? ""),
+                    active: tabs
+                        .filter((el) => el.getAttribute("aria-selected") === "true")
+                        .map((el) => el.getAttribute("data-tab-id") ?? ""),
+                };
+            });
+        const readStored = async (): Promise<string[]> =>
+            page.evaluate((key: string) => {
+                const raw = localStorage.getItem(key);
+                const parsed = raw ? (JSON.parse(raw) as { openTabs?: unknown }) : {};
+                return Array.isArray(parsed.openTabs) ? (parsed.openTabs as string[]) : [];
+            }, LAYOUT_KEY);
+        const gotoChat = async (sid: string): Promise<void> => {
+            await page.goto("/workspace/" + WORKSPACE_ID + "/chat/" + sid);
+            await page.locator('[data-testid="workspace-main"]').waitFor({
+                state: "visible",
+                timeout: EXPECT_TIMEOUT_MS,
+            });
+            await waitForSettledLayout(page);
+        };
+
+        // ① 首屏会话已 pin；再深链第二个会话 ⇒ 两份并存（pin 是 append，不是「只留当前」）。
+        await boot(page, { persistentSeed: true });
+        await waitForSettledLayout(page);
+        const first = { row: await readMainRow(), stored: await readStored() };
+        expect(first.row.ids, "首屏会话应已 pin 成一份主栏页签").toEqual([tabIdOf(SESSIONS[0])]);
+        expect(first.row.active, "首屏页签应是高亮项").toEqual([tabIdOf(SESSIONS[0])]);
+
+        await gotoChat(SESSIONS[1]);
+        const second = { row: await readMainRow(), stored: await readStored() };
+        expect(second.row.ids, "访问第二个会话后主栏应同时挂两份页签").toEqual([
+            tabIdOf(SESSIONS[0]),
+            tabIdOf(SESSIONS[1]),
+        ]);
+        expect(second.row.active, "高亮跟着路由走（当前 = 第二个会话）").toEqual([
+            tabIdOf(SESSIONS[1]),
+        ]);
+        expect(second.stored, "两份页签都要落盘（关掉不复活依赖它）").toEqual([
+            tabIdOf(SESSIONS[0]),
+            tabIdOf(SESSIONS[1]),
+        ]);
+
+        // ② 点页签切换：url 与高亮各自对得上，两份都不丢（不串台）。
+        await page
+            .getByTestId("workspace-container-tab-main-" + tabIdOf(SESSIONS[0]))
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        await page.waitForURL(new RegExp("/chat/" + SESSIONS[0] + "$"), {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        const switched = { row: await readMainRow(), stored: await readStored() };
+        expect(switched.row.active, "点第一份后高亮应回到第一个会话").toEqual([
+            tabIdOf(SESSIONS[0]),
+        ]);
+        expect(switched.stored, "切换不得丢页签").toEqual([
+            tabIdOf(SESSIONS[0]),
+            tabIdOf(SESSIONS[1]),
+        ]);
+
+        await page
+            .getByTestId("workspace-container-tab-main-" + tabIdOf(SESSIONS[1]))
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        await page.waitForURL(new RegExp("/chat/" + SESSIONS[1] + "$"), {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+
+        // ③ 关掉**非当前**那份 ⇒ 立刻少一份，且 reload 后不复活（单一 writer：只写 openTabs 分片）。
+        await page
+            .getByTestId("workspace-container-tab-close-main-" + tabIdOf(SESSIONS[0]))
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        await expect
+            .poll(readStored, {
+                timeout: EXPECT_TIMEOUT_MS,
+                message: "关掉的主栏页签不得留在布局里",
+            })
+            .toEqual([tabIdOf(SESSIONS[1])]);
+        // 行内少一份是布局写入驱动的异步效果：读一次可能撞在重渲染中间态，用精确值轮询收敛。
+        await expect
+            .poll(async () => (await readMainRow()).ids, {
+                timeout: EXPECT_TIMEOUT_MS,
+                message: "关掉后主栏行内应只剩第二份",
+            })
+            .toEqual([tabIdOf(SESSIONS[1])]);
+        const afterClose = { row: await readMainRow(), stored: await readStored() };
+
+        // 真 reload：种子已经种过（persistentSeed），这里读到的是产品落盘值。
+        await page.reload();
+        await page.locator('[data-testid="workspace-main"]').waitFor({
+            state: "visible",
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await waitForSettledLayout(page);
+        // 布局恢复（读 localStorage → 挂载页签）也在渲染之后才稳定，同样用精确值轮询收口。
+        await expect
+            .poll(async () => (await readMainRow()).ids, {
+                timeout: EXPECT_TIMEOUT_MS,
+                message: "reload 后主栏行内不得复活已关掉的页签",
+            })
+            .toEqual([tabIdOf(SESSIONS[1])]);
+        const afterReload = { row: await readMainRow(), stored: await readStored() };
+
+        persist("g11b-main-pin", { first, second, switched, afterClose, afterReload });
+        console.log(
+            "[task125] G-11b 读数 " +
+                JSON.stringify({
+                    first,
+                    second,
+                    switched,
+                    afterClose,
+                    afterReload,
+                }),
+        );
+
+        expect(afterClose.row.ids, "关掉后行内应只剩第二份").toEqual([tabIdOf(SESSIONS[1])]);
+        expect(afterReload.row.ids, "reload 后不得复活已关掉的页签").toEqual([
+            tabIdOf(SESSIONS[1]),
+        ]);
+        expect(afterReload.row.active, "reload 后高亮仍是第二个会话").toEqual([
+            tabIdOf(SESSIONS[1]),
+        ]);
+        expect(afterReload.stored, "落盘也不得把关掉的页签写回来").toEqual([tabIdOf(SESSIONS[1])]);
     });
 
     test("红线 4：workspace-config-reachable-from-workspace-page —— 配置/成员页可达且页内无右容器", async ({
