@@ -2,6 +2,9 @@
 // 红线来自真栈实测（internal/A03-xihe/evidence/2026-11-14-instance-flow-audit/aux-obstruction.json
 // + 图 105）：1600×1000 浮动面板覆盖发送键，elementFromPoint 返回面板 div，Playwright 19 次重试超时。
 // 修后同口径复测：dock 底边 = composer 顶（793.16），命中测试落在发送键内（图 129）。
+// 2026-11-20（task-147）：浮动态已随 e88bfd492「两容器单栏、右栏恒 pinned」退场 ⇒ 本 spec 的模式
+// 断言翻成 `pinned`；「不压 composer」改由「矩形不相交 + 命中测试」承载（并排布局下原 floating 的
+// 下边界判据不适用），未删除任何判据。
 // 两个真 bug 的防回归（D-1289「代码改了≠行为变了」）：
 //   ① 浮动态带 h-full ⇒ 绝对定位过约束，bottom 被丢弃；② useElementSize 量成 content-box ⇒ 少算内距。
 import { randomUUID } from "node:crypto";
@@ -50,36 +53,48 @@ async function openDock(page: Page): Promise<void> {
     await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 }
 
-test.describe("task-442 浮动 dock 不压 composer", () => {
-    test("1600×1000 浮动态：发送键命中测试通过且能真发送", async ({ page }) => {
+test.describe("task-442 dock 不压 composer（pinned 现行模式）", () => {
+    test("1600×1000 pinned：发送键命中测试通过且能真发送", async ({ page }) => {
         await page.setViewportSize({ width: 1600, height: 1000 });
         await prepare(page);
         await openDock(page);
         const aux = page.getByTestId("workspace-aux-panel");
-        await expect(aux).toHaveAttribute("data-dock-mode", "floating");
+        // 浮动态已随 e88bfd492 退场：未开 focus 时右栏恒为 pinned。
+        await expect(aux).toHaveAttribute("data-dock-mode", "pinned");
         const send = page.getByTestId("chat-send-button");
         await expect(send).toBeVisible();
         // 轮询而非一次性取数：composer 高度由 ResizeObserver 异步发布，开面板瞬间可能还没量到。
-        // 两条判据都钉算法不钉派生像素：① 发送键中心命中自身或后代 ② 面板底边 ≤ composer 顶。
+        // 两条判据都钉算法不钉派生像素：① 发送键中心命中自身或后代；
+        // ② 面板矩形与 composer 矩形不相交 —— pinned 是并排列，「不覆盖」即水平分离；
+        //    floating 时代「面板底边 ≤ composer 顶」的判据随模式退场，此处换成模式无关的矩形不相交。
         await expect
             .poll(async () =>
                 send.evaluate((el) => {
                     const b = el.getBoundingClientRect();
                     const target = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
-                    const dock = document.querySelector('[data-testid="workspace-aux-panel"]')!;
-                    const composer = document.querySelector('[data-testid="chat-composer"]')!;
+                    const dock = document
+                        .querySelector('[data-testid="workspace-aux-panel"]')!
+                        .getBoundingClientRect();
+                    const composer = document
+                        .querySelector('[data-testid="chat-composer"]')!
+                        .getBoundingClientRect();
+                    const disjoint =
+                        dock.right <= composer.left ||
+                        dock.left >= composer.right ||
+                        dock.bottom <= composer.top ||
+                        dock.top >= composer.bottom;
                     return {
                         hit: !!target && (target === el || el.contains(target)),
-                        clear:
-                            dock.getBoundingClientRect().bottom <=
-                            composer.getBoundingClientRect().top + 1,
+                        overlap: !disjoint,
+                        // 防真空绿：矩形不相交若因 composer 没量到尺寸（0×0）而恒真，判据就失去意义。
+                        sized: composer.width > 0 && composer.height > 0,
                     };
                 }),
             )
-            .toEqual({ hit: true, clear: true });
-        await page.getByTestId("chat-input").fill("task-442 浮动态发送");
+            .toEqual({ hit: true, overlap: false, sized: true });
+        await page.getByTestId("chat-input").fill("task-442 pinned 发送");
         await send.click({ timeout: ACTION_TIMEOUT_MS });
-        await expect(page.getByText("task-442 浮动态发送"), "user bubble rendered").toBeVisible({
+        await expect(page.getByText("task-442 pinned 发送"), "user bubble rendered").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
     });
