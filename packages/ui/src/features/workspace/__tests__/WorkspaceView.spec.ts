@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { setActivePinia, createPinia } from "pinia";
@@ -156,8 +156,24 @@ const stubs = {
     SessionMonitorPanel: { template: '<div data-testid="session-monitor-stub" />' },
 };
 
+/**
+ * BL-376 / task-152：**本文件所有挂载都必须经此函数登记**，`afterEach` 统一 `unmount()`。
+ *
+ * <p>原因与 `WorkspaceWorkbench.spec.ts:130-172` 同一根因：布局持久化是 250 ms 合并写入
+ * （`createWorkspaceLayoutWriter`，`WorkspaceWorkbench.vue:179-187` 的 deep watch → `schedule`）。
+ * 不卸载的实例会把 pending timer 活到下一条用例里落地，用**上一条用例**的几何（比如它开过的
+ * `code`/`changes` 页签）覆盖下一条用例刚种下的固定布局 —— 本文件 `:435` 那条用例此前就因此恒红：
+ * 期望 `dockTabs:[files,monitor]`，实测被追加 `code`（或 `changes`）。</p>
+ *
+ * <p>卸载会把 pending 值 flush 在本用例内（`WorkspaceWorkbench.vue:206` 的 `onBeforeUnmount`），
+ * 下一条用例的 `beforeEach` 里的 `localStorage.clear()` 就能清掉它。</p>
+ */
+const mountedWrappers: VueWrapper[] = [];
+
 function mountView(): VueWrapper {
-    return mount(WorkspaceView, { global: { plugins: [i18n], stubs } });
+    const wrapper = mount(WorkspaceView, { global: { plugins: [i18n], stubs } });
+    mountedWrappers.push(wrapper);
+    return wrapper;
 }
 
 /**
@@ -271,6 +287,11 @@ beforeEach(() => {
         templateName: "Stored template",
         createdAt: new Date().toISOString(),
     });
+});
+
+afterEach(() => {
+    // 见 mountView 上方注释：不卸载的实例会让 250 ms 合并写入跨用例落地（顺序敏感）。
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount();
 });
 
 describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
