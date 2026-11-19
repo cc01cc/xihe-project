@@ -304,7 +304,12 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(classes).not.toContain("absolute");
         expect(classes).not.toContain("shadow-xl");
         expect(classes).not.toContain("top-0");
-        expect(panel.attributes("data-dock-mode")).toBe("pinned");
+        // 锁的行为：默认（未开 focus）投影 = pinned ⇒ 内联列是唯一形态，浮窗模式没有兜底。
+        // 同时锁投影成对字段，避免只改一半（mode=pinned 而 focus 标志还留着）。
+        expect(panel.attributes("data-dock-mode"), "默认投影 = pinned（内联列唯一模式）").toBe(
+            "pinned",
+        );
+        expect(panel.attributes("data-dock-focus")).toBe("false");
         expect(panel.attributes("style") ?? "").not.toContain("bottom:");
     });
 
@@ -413,6 +418,29 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         );
     });
 
+    it("focus 与 pinned 条件同时成立时投影取 focus（优先级不是偶然）", () => {
+        // 「同时满足 pinned 条件」= width 有值、fill=false（pinned 那套入参），只把 focus 翻 true；
+        // 同一份入参的两侧对照 ⇒ mode 差异只能来自 focus 的优先级，而不是宽度/填充的副作用。
+        const pinned = mountDock({ width: 420, fill: false });
+        const pinnedPanel = pinned.get('[data-testid="workspace-aux-panel"]');
+        expect(pinnedPanel.attributes("data-dock-focus")).toBe("false");
+        expect(pinnedPanel.attributes("data-dock-mode")).toBe("pinned");
+        expect(pinnedPanel.attributes("style"), "pinned 下标量宽度生效（对照组）").toContain(
+            "width: 420px",
+        );
+
+        const focus = mountDock({ width: 420, fill: false, focus: true });
+        const focusPanel = focus.get('[data-testid="workspace-aux-panel"]');
+        expect(focusPanel.attributes("data-dock-focus")).toBe("true");
+        expect(
+            focusPanel.attributes("data-dock-mode"),
+            "focus 优先于 pinned：pinned 条件全部满足时仍必须投影 focus",
+        ).toBe("focus");
+        // focus 铺满整行 ⇒ 同一宽度不再应用；否则说明「取 focus」只是属性翻了、布局没换。
+        expect(focusPanel.attributes("style")).toBeUndefined();
+        expect(focusPanel.classes()).toContain("flex-1");
+    });
+
     it("emits the focus toggle from the header and reflects its pressed state", async () => {
         const wrapper = mountDock(),
             toggle = wrapper.get('[data-testid="dock-focus-toggle"]');
@@ -457,7 +485,11 @@ describe("WorkspaceDock · 浮窗形态退场后的形态契约（task-94 S1）"
         const wrapper = mountDock({ width: 420 });
         const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
         expect(panel.attributes("style")).toContain("width: 420px");
-        expect(panel.attributes("data-dock-mode")).toBe("pinned");
+        // 锁的行为：宽度生效不影响模式投影 —— 非 focus/非 fill 恒为 pinned（不是「有宽度才 pinned」）。
+        expect(
+            panel.attributes("data-dock-mode"),
+            "非 focus/非 fill ⇒ pinned，与是否有显式宽度无关",
+        ).toBe("pinned");
     });
 });
 

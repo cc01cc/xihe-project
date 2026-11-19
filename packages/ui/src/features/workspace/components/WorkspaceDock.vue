@@ -50,13 +50,11 @@ import type { DockTabId } from "../../../composables/useWorkspaceLayout";
  * tab, the width and the collapsed flag are owned by `WorkspaceWorkbench`
  * (single writer), so this component never persists anything itself.
  *
- * PLAN-0582 S3b: the pinned/floating mode is a prop (derived + user override live
- * in the workbench/layout composable), so the `min-[1800px]:*` Tailwind classes are
- * gone — the single source of truth for the breakpoint is
- * `DOCK_INLINE_MIN_VIEWPORT`, and this component only renders its projection.
- *
- * Floating is deliberately **not** a modal: no backdrop (it would block the main
- * column the user is editing), only a shadow, Esc and click-outside to dismiss.
+ * PLAN-0626 D26-04（现行）：右栏**只有一个形态** —— 行内列；模板里的 `data-dock-mode`
+ * 只是投影 `focus ? 'focus' : 'pinned'`（focus = 铺满整行，主列由 workbench 隐藏）。
+ * 浮动态（absolute 定位 + 阴影 + 断点派生 + 手选 override）已随 e88bfd492（2026-11-17
+ * 「两容器单栏、右栏恒 pinned」）删除 ⇒ 本组件不再有 mode/断点入参，只渲染投影；
+ * 「不得回到浮窗」的判据见 `panelClass` 上方那段形态契约说明与 `WorkspaceDock.spec.ts`。
  *
  * PLAN-0626 D26-10: every tab chip is a wrapper holding two sibling controls (the
  * `role=tab` button and its close button). Nothing interactive is nested inside a
