@@ -21,6 +21,7 @@ Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、
 - `runtime/`：CP 到 Runtime 的客户端；没有独立 `agent/` Java 包，Agent 调用适配位于所属能力包。
 - `context/`、`provider/`、`oauth/`、`config/`：Context EventStore/投影、Provider/OAuth 凭据能力及配置/认证边界。
 - `service/`、`entity/`、`repository/`：应用服务、持久化模型与仓储。
+- 其余能力包（同层级，共 **34** 个顶层包）：`audit/`、`auth/`、`channel/`、`checkpoint/`、`controller/`、`credentials/`、`crypto/`、`files/`、`importjob/`、`log/`、`logging/`、`observability/`、`plugin/`、`rag/`、`scheduled/`、`skill/`、`status/`、`telemetry/`、`timeout/`、`usage/`、`util/` —— 按「目录存在即登记」补齐，避免新增包再漏记（task-86 实测 `src/main/java/com/cc01cc/p/xihe/cp/*` 为 34 个）。
 
 Session、ChatRun、Workspace Job 与 MCP invocation 生命周期的项目级 proposed SPEC 见 `../../spec/`；Agent principal 与 Workspace 绑定契约见 `../../spec/agent/principal-workspace-binding.md`（PLAN-0374）。本文件和 DEV-014/OpenAPI/代码仍是当前实现事实源。
 
@@ -101,10 +102,10 @@ node scripts/l2/run-shards-sequential.mjs --root <worktree> --out <产物目录>
 PLAN-0584 的 Native Image 组件探针仅在 Windows x64 portable GraalVM 环境中运行：
 
 ```powershell
-mvn -PnativeTest,native-build,native-test-probe -Dtest=NativeImageCompatibilityProbeTest test
+mvn -Pnative-build,native-test-probe -Dtest=NativeImageCompatibilityProbeTest test
 ```
 
-`native-test-probe` 只编译 probe，并让 Spring Test AOT 与 Native Build Tools 共用 probe-only test output；这验证组件兼容性，不替代 native-compat host lane。
+`native-test-probe` 只编译 probe，并让 Spring Test AOT 与 Native Build Tools 共用 probe-only test output；这验证组件兼容性，不替代 native-compat host lane。**不存在 `nativeTest` profile**：本仓 native 相关 profile 只有 `native-build`（`pom.xml:483`）、`native-test-probe`（`:509`）、`native-aot`（`:529`）；Maven 对未知 profile 只 WARN，故旧命令 `-PnativeTest,...` 不报错但该段静默无效（task-86 更正）。
 
 `mvn checkstyle:check` 对 `checkstyle.xml` 全部规则按 severity=error 阻断（POM `violationSeverity=error` + `failOnViolation=true`）；基线为 0 违规，任何新增违规都会使命令失败。**task-583（2026-11-14）之前它没有显式 `<phase>`**，而该 Mojo 默认相位是 `verify` ⇒ 日常 `test-compile`/`test` 到不了那一档，门实际上从不执行（结果：一条未用 import 走到主干，见 `33bd1786e1`）；现已钉在 `validate`（`pom.xml` 的 execution id = `checkstyle-check-early`），不是靠「记得单独跑」。规则与项目约定的对齐取舍（单行 getter、测试方法下划线命名、logger 常量白名单）见 PLAN-0458 evidence，不得未经裁定回退为 warning 或加全局抑制。
 

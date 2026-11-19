@@ -56,6 +56,8 @@ src/
 └── error.rs           # 错误处理
 ```
 
+上图只注释了主链路文件。2026-11-20 实测 `src/` = **41 个 `.rs` + 3 个目录**，其余 **24 个模块文件** 为：`build_info.rs`、`channel.rs`、`channel_proto.rs`、`checkpoint.rs`、`checkpoint_api.rs`、`checkpoint_revert.rs`、`checkpoint_revert_api.rs`、`device.rs`、`dotenv_loader.rs`、`environment.rs`、`file_worker.rs`、`heartbeat.rs`、`hydrate.rs`、`import_job.rs`、`job_host_adapter.rs`、`job_mxc_adapter.rs`、`lifecycle.rs`、`nested_repo_kind.rs`、`plugin_fixture.rs`、`process_guard.rs`、`security_defaults.rs`、`stdio_fixture.rs`、`storage.rs`、`tool_timeout.rs`；未列目录为 `checkpoint_store/`、`plugin/`（`job_engine/` 已在上图）。
+
 Runtime MCP session 的项目级 proposed 生命周期边界见 `../../spec/session/mcp-session.md`；当前实现以代码及 [DEV-015](../../docs/i18n/zh-Hans/DEV-015-runtime-architecture.md)/DEV-016 为准。
 
 ## Key Conventions
