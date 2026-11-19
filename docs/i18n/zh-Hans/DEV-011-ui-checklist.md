@@ -737,3 +737,30 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 - **度量方式**：数**平台无障碍树**里的 main 节点，不是数源码 —— CDP `Accessibility.getFullAXTree`，**只数 `ignored` 不为 `true` 的节点**（`display:none` / hidden 的 main 对读屏不存在，不能算数）。本轮 5 面各 = 1，其中 `/workbench` 是**控制面**，它存在的唯一目的就是证明改动**没冒出第二个 main**。
 - **反例锚点**：候选 A（`ModuleStage` 一把套）会让**已有 main 的 24 个真渲染面出现两层 main**，直接违反 APG 第三条与「不得有多于一个可见 main」—— 这是**机器判据，不是审美**。同批否决：B `SidebarInset`（自带 main，但它是 sidebar 语义容器、这 4 面没有侧栏，且实测在产品代码里零引用 —— **口径 = 剥掉注释后为 0**：剩下的命中是 §15.2 列的 3 条解释性注释与 vendor barrel 本身）、C `role="main"`（APG 明写用原生元素；原生 `<main>` 还白送一条可检约束：不得嵌在 sectioning 内容里）、D 第三方 landmark 库（为 4 个标签付耦合与退出成本不成立）。
 
+## 16. 地标嵌套、标签唯一与消融的四条判据（`task-84` / `task-89` 实测，2026-11-19，`D-1869`①）
+
+> 来源：`task-84`（rail 加 `navigation` 地标 + skip-link）与 `task-89`（三处无名地标补标签 + 两个配对测试）交回来的四条，裁定入册 `5c780b6f0`（§27）。整表与读数在 `internal/A03-xihe/evidence/2026-11-19-task89-landmark-labels/README.md`（A03 提交 `79769f95a`）。四条都是**先踩后钉**；判据不写度量方式 = 等于没写（`D-1871`）。
+
+### 16.1 顶层四则约束的是 `banner` / `main` / `complementary` / `contentinfo` 本身，不禁止 `nav` 嵌套
+
+- **构成边界**：APG 写 “banner, main, complementary and contentinfo landmarks should be top level landmarks” —— 约束对象是**这四个角色本身**在不在顶层，**不是**「禁止 `nav` 进 banner」的规则；同页 APG 又写 “Landmark roles can be nested to identify parent/child relationships”。所以**面包屑嵌在 `banner` 里、导航嵌在 `complementary` 里都不是缺陷**，缺陷只有「无名」与「同角色重名」。**面包屑必须是带标签的 `nav`**（APG：“A nav element labeled Breadcrumb … makes it a navigation landmark”）⇒ **降成 `region` 是违反**，而移出 `banner` 要动 sticky 布局。判据 = 保留嵌套 + 各自唯一标签，**不移不降**。
+- **度量方式**：数**平台无障碍树**（CDP `Accessibility.getFullAXTree`，只数 `ignored` 不为 `true` 的节点），每面取每个地标节点的 `role` + 可访问名 + **祖先里还有没有地标**；「这四个在顶层」的判据是**其祖先链上没有地标**（实测 `banner` 祖先为空）。谁的 DOM 由谁渲染**靠量不靠猜**：节点 `backendNodeId` → `DOM.resolveNode` → 沿 `parentElement` 读 `__vueParentComponent.type.__name` —— 本卡靠这一步测出 **`/workbench` 面根本没有 `banner` 地标**（无名 `banner` 在 `settings-group` 与 `resources` 两面）。**卡面写「某面有某元素」是待证事实**：按实测处理优先于按转述处理。
+- **反例锚点**：把**带标签**的 `nav` 塞进 `main` 内 ⇒ 仪器必须报出「navigation 嵌在 main 内」（`task-84` 已实测）；反向的假缺陷是把 `nav` 嵌在 `banner` 内**当成违规去修** —— 那会为字面绿把面包屑降级成 `region`，直接违反 APG 面包屑条。
+
+### 16.2 多个 `navigation` 合法，标签必须互异 —— 禁止拿「只许一个」当判据
+
+- **构成边界**：一页可以有多个 `navigation`，APG 要求“If a page includes more than one navigation landmark, each should have a unique label”。**「只许一个 `navigation`」不是判据** —— 按它执行会把主导航降级成 `region` 换字面绿，即**假绿**。**单实例 `main` / `form` 不必命名**：标签要求只在「同一角色用了多次」时成立，硬加名字是噪音。
+- **度量方式**：每面三条同时成立才算绿 —— rail 的 `navigation` **恰 1 且带标签**、`main` **恰 1**、**同页 `navigation` 标签互不相同**；可访问名必须是 i18n **解析结果**（不是裸键、不是硬编码中文），标签一律走 `t()`，zh/en 同批。
+- **反例锚点**：**删掉任一行新增的 `aria-label` ⇒ 仪器必须报出无名地标**（`task-89` 实测：`settings-group` 报 `navigation` 无名，exit 1）。另一半是把「多个 `navigation`」当红点 ⇒ 会把 `settings-group` 那 3 个合法导航压成 1 个。
+
+### 16.3 消融必须发生在装配之后：缺席不等于摘除
+
+- **构成边界**：「改前 census 里没有这个标签」只证明**它当时没装**，不证明「装上再摘掉后仪器还抓得到」。**缺席 ≠ 摘除** —— 前者是基线，后者才是判据，所以「必现」这半**不许用改前基线顶替**。
+- **度量方式**：源码级删掉那一行 → 跑仪器 → 必须 exit 1 并点名该地标 → **用内存里的原字节整份写回**，再 `git diff --quiet` `<scope>` 证**逐字节一致**（不是「看起来一样」）。禁止用 DOM 注入造删节点：`addInitScript` 的删改在框架接管面上会被 patch 抹掉或被重渲染造回来，`task-84` 第一版两条锚点都因此**假失败**。
+- **反例锚点**：`task-89` 第一版拿改前 census 当「必现」被驳回，台账因此立一句「消融必须发生在装配之后，缺席不等于摘除」。**返工后实测**：删 `SettingsSidebar` 那行 `aria-label` ⇒ exit 1、判据红点恰 1 条；写回后 `git diff --quiet` 通过。
+
+### 16.4 门读数的复用与时间性：`lease` + 读数记录的 `HEAD`
+
+- **构成边界**：门的「改前」读数**可跨卡复用**，但**必须两条同时成立**：① 同一 `lease`（`dev-stack.mjs status` 的 `startedAt` 一致）；② `git diff --name-only <recorded-HEAD>..HEAD -- <scope>`（即读数里记录的那个 HEAD） **= 0**。只满足一条就是拿不同字节比。**`session` 面即使同窗也不可跨时间比**：它跟服务端会话数据漂移、与代码无关（实测 464 / 430 / 430 / 464 四点，跨窗与同窗都变过）。
+- **度量方式**：报告生成器的差集基准**必须钉在读数里记录的 `HEAD`**；拿当下 `HEAD` 作基准 ⇒ 本卡提交一落地，那条判据就永远复现不了（`task-89` 被自己这条绊过一次，改成钉 `census.A03HEAD`）。门的其它读数照旧：`findings` 恒 0、portal 命中 0、`--portals-enforce` 关。
+- **反例锚点**：把「同窗」当「可比」⇒ `task-89` 交出 16/17 面逐字段相同、只有 `session` 面 464 → 430，噪声被误读成回归；把「跨卡复用」当无条件 ⇒ 上卡读数落在旧 `lease`，比出来的是两份不同字节。
