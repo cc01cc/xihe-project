@@ -636,6 +636,57 @@ class OpenApiYamlContractTest {
     }
 
     /**
+     * task-16: the derived-run tool surface became writable on the subject document, so the contract has
+     * to say so on both faces and on the two schemas a client reads. Before task-16 the key existed only
+     * in the code ({@code DerivedRunToolSurfaceResolver}) and in a direct SQL UPDATE — the API contract
+     * said nothing, which is exactly why "the product face cannot set it" was a documented gap and not a
+     * bug report.
+     *
+     * <p>The assertion is on prose, not on a schema field: the document is unconstrained
+     * ({@code contextPolicy} is a free-form object validated by one Java seam), so the only place a
+     * client can learn the two accepted values and the 400 behaviour is the description text.
+     */
+    @Test
+    void openApiContractsTheDerivedRunToolSurfaceOnTheSubjectDocument() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+
+            for (String route : List.of("/api/v1/agent-principals/{principalId}",
+                    "/api/v1/instance/agent-principals/{principalId}")) {
+                Map<?, ?> patch = (Map<?, ?>) ((Map<?, ?>) paths.get(route)).get("patch");
+                assertInstanceOf(Map.class, patch, route + " PATCH is contracted");
+                String description = String.valueOf(patch.get("description"));
+                assertTrue(description.contains("derivedRunToolMode"),
+                        route + " PATCH must document the derived-run tool surface: " + description);
+                String badRequest = String.valueOf(
+                        ((Map<?, ?>) ((Map<?, ?>) patch.get("responses")).get("400")).get("description"));
+                assertTrue(badRequest.contains("derivedRunToolMode"),
+                        route + " 400 must name the key whose shape is refused: " + badRequest);
+            }
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            for (String schema : List.of("AgentPrincipalUpdateRequest", "WorkspaceAgentView")) {
+                Map<?, ?> properties = (Map<?, ?>) ((Map<?, ?>) schemas.get(schema)).get("properties");
+                String policyDescription = String.valueOf(
+                        ((Map<?, ?>) properties.get("contextPolicy")).get("description"));
+                assertTrue(policyDescription.contains("derivedRunToolMode"),
+                        schema + ".contextPolicy must name the second top-level key: " + policyDescription);
+            }
+
+            // The enumeration is quoted, not paraphrased: a client that reads only the contract must not
+            // send a third value, and the two words are the ones the resolver admits.
+            Map<?, ?> updateRequest = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalUpdateRequest"))
+                    .get("properties");
+            String updatePolicy = String.valueOf(
+                    ((Map<?, ?>) updateRequest.get("contextPolicy")).get("description"));
+            assertTrue(updatePolicy.contains("none") && updatePolicy.contains("workspace"),
+                    "the two accepted values must be named in the update schema: " + updatePolicy);
+        }
+    }
+
+    /**
      * PLAN-0622 M0.1/T0.4: the agent-principal three-tier scope, the merged workspace-agent list,
      * the provider-connection resource limits and the {@code RESOURCE_EXHAUSTED} 429 shape are
      * contracted in the same wave as the implementation (contract frozen in task-46 §2; the field

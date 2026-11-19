@@ -72,7 +72,25 @@ public final class ContextPolicyValidator {
     public static final String PASSIVE_SUMMARY = "summary";
     public static final String PASSIVE_JUDGE = "judge";
 
-    private static final Set<String> ALLOWED_TOP_LEVEL_KEYS = Set.of("memory");
+    /**
+     * task-16: the top-level key that decides the tool surface a <b>delegation-derived</b> run gets
+     * (task-86 / D-1869). Before this key was writable, the only way to set it was a direct SQL
+     * UPDATE on {@code agent_principals.context_policy}; the product face answered 400 because this
+     * gate knew only the memory section.
+     *
+     * <p>The enumeration is the resolver's, not a second copy: {@link #DERIVED_RUN_TOOL_MODES} is
+     * what {@code DerivedRunToolSurfaceResolver} hands over verbatim, so a value accepted here can
+     * never be one the resolver records as {@code invalid_value}.</p>
+     */
+    public static final String DERIVED_RUN_TOOL_MODE_KEY = "derivedRunToolMode";
+    public static final String DERIVED_RUN_TOOL_MODE_NONE = "none";
+    public static final String DERIVED_RUN_TOOL_MODE_WORKSPACE = "workspace";
+    /** {@code none | workspace} — the same two values the derived-run resolver grants. */
+    public static final Set<String> DERIVED_RUN_TOOL_MODES =
+            Set.of(DERIVED_RUN_TOOL_MODE_NONE, DERIVED_RUN_TOOL_MODE_WORKSPACE);
+
+    private static final Set<String> ALLOWED_TOP_LEVEL_KEYS =
+            Set.of("memory", DERIVED_RUN_TOOL_MODE_KEY);
     private static final Set<String> ALLOWED_MEMORY_KEYS =
             Set.of("enabled", "writeMode", "types", "passive");
     private static final Set<String> ALLOWED_WRITE_MODES = Set.of(WRITE_MODE_OFF, WRITE_MODE_TOOL);
@@ -96,7 +114,26 @@ public final class ContextPolicyValidator {
             throw invalid("contextPolicy must be an object with a memory section, or null");
         }
         rejectUnknownKeys(policy, ALLOWED_TOP_LEVEL_KEYS,
-                "contextPolicy accepts only the memory section");
+                "contextPolicy accepts only the memory section and " + DERIVED_RUN_TOOL_MODE_KEY);
+
+        // task-16: shape-checked here so an illegal value is a 400 at the write gate, never a stored
+        // document the resolver later reports as a wiring fault (invalid_value). Both sides trim the
+        // wire value identically, so a padded value is granted exactly as it was validated.
+        JsonNode derivedToolMode = policy.get(DERIVED_RUN_TOOL_MODE_KEY);
+        if (derivedToolMode != null) {
+            if (!derivedToolMode.isTextual()) {
+                throw invalid("contextPolicy." + DERIVED_RUN_TOOL_MODE_KEY
+                        + " must be \"" + DERIVED_RUN_TOOL_MODE_NONE + "\" or \""
+                        + DERIVED_RUN_TOOL_MODE_WORKSPACE + "\"");
+            }
+            String mode = derivedToolMode.asText().trim();
+            if (!DERIVED_RUN_TOOL_MODES.contains(mode)) {
+                throw invalid("contextPolicy." + DERIVED_RUN_TOOL_MODE_KEY + " must be \""
+                        + DERIVED_RUN_TOOL_MODE_NONE + "\" or \"" + DERIVED_RUN_TOOL_MODE_WORKSPACE
+                        + "\"; got \"" + derivedToolMode.asText() + "\" (the value decides the tool"
+                        + " surface of a delegation-derived run and is handed over verbatim)");
+            }
+        }
 
         JsonNode memory = policy.get("memory");
         if (memory == null) {

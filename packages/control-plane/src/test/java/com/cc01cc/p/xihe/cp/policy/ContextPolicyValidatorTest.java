@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -71,6 +72,64 @@ class ContextPolicyValidatorTest {
             assertEquals(document, ContextPolicyValidator.validate(document),
                     "must accept the partial document " + accepted);
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // task-16: the derived-run tool surface is writable on the same document
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * task-16 (D-1869 follow-up): the derived-run tool surface lives in the same column
+     * (`context_policy->>'derivedRunToolMode'`) but used to have no product-face writer — the
+     * top-level whitelist knew only `memory`, so PATCH answered 400 and the only producer was a
+     * direct SQL UPDATE. Both granted values are now part of the accepted document, alone and
+     * alongside the memory section.
+     */
+    @Test
+    void acceptsTheTwoDerivedRunToolSurfaces() throws Exception {
+        for (String accepted : List.of(
+                "{\"derivedRunToolMode\":\"none\"}",
+                "{\"derivedRunToolMode\":\"workspace\"}",
+                "{\"derivedRunToolMode\":\" workspace \"}",
+                "{\"memory\":{\"enabled\":true},\"derivedRunToolMode\":\"workspace\"}",
+                "{}")) {
+            JsonNode document = json(accepted);
+            assertEquals(document, ContextPolicyValidator.validate(document),
+                    "must accept the derived-run document " + accepted);
+        }
+    }
+
+    /**
+     * The enumeration is the resolver's enumeration: a value the write gate accepts can therefore
+     * never be one {@code DerivedRunToolSurfaceResolver} reports as `invalid_value`. `full` is the
+     * exact word that used to be refused at the resolver only, i.e. a store-then-lose-later path.
+     */
+    @Test
+    void rejectsADerivedRunToolSurfaceOutsideTheResolverEnumeration() {
+        assertInvalid("{\"derivedRunToolMode\":\"full\"}",
+                "contextPolicy.derivedRunToolMode must be \"none\" or \"workspace\"");
+        assertInvalid("{\"derivedRunToolMode\":\"workspace, none\"}",
+                "contextPolicy.derivedRunToolMode must be \"none\" or \"workspace\"");
+        assertInvalid("{\"derivedRunToolMode\":\"\"}",
+                "contextPolicy.derivedRunToolMode must be \"none\" or \"workspace\"");
+    }
+
+    @Test
+    void rejectsANonTextualDerivedRunToolSurface() {
+        assertInvalid("{\"derivedRunToolMode\":true}",
+                "contextPolicy.derivedRunToolMode must be \"none\" or \"workspace\"");
+        assertInvalid("{\"derivedRunToolMode\":1}",
+                "contextPolicy.derivedRunToolMode must be \"none\" or \"workspace\"");
+    }
+
+    /** The resolver and this gate must name the same key and the same two values (one wiring). */
+    @Test
+    void theResolverReadsExactlyTheKeyAndValuesThisGateAccepts() {
+        assertEquals("derivedRunToolMode", ContextPolicyValidator.DERIVED_RUN_TOOL_MODE_KEY);
+        assertEquals(Set.of("none", "workspace"), ContextPolicyValidator.DERIVED_RUN_TOOL_MODES);
+        assertEquals(ContextPolicyValidator.DERIVED_RUN_TOOL_MODE_KEY,
+                com.cc01cc.p.xihe.cp.service.DerivedRunToolSurfaceResolver.CONTEXT_POLICY_KEY,
+                "the resolver key must be the gate key, not a second literal");
     }
 
     // ---------------------------------------------------------------------------------------

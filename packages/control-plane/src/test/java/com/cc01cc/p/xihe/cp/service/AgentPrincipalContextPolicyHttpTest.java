@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -87,6 +88,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractReusableIntegrationTes
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private DerivedRunToolSurfaceResolver derivedRunToolSurfaceResolver;
 
     private RestTemplate patchClient;
     private UUID adminUserId;
@@ -252,6 +254,131 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractReusableIntegrationTes
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM agent_principals WHERE id = CAST(? AS UUID) AND context_policy IS NULL",
                 Integer.class, principalId.toString()));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // task-16: the derived-run tool surface lives on the same document, and the product face owns it
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Task-16's acceptance core: before this change the only producer of
+     * {@code context_policy->>'derivedRunToolMode'} was a direct SQL UPDATE, because the top-level
+     * whitelist knew only {@code memory} (PATCH answered 400). The assertions here walk the whole loop
+     * — absent key means no grant, PATCH means a stored value, and the resolver that actually decides a
+     * derived run's surface reads the same column back and grants it — so "the product face can set it"
+     * cannot be satisfied by a document that merely echo-round-trips.
+     */
+    @Test
+    void patchStoresTheDerivedRunToolSurfaceAndTheResolverGrantsItWithoutSql() {
+        fixture();
+        UUID principalId = createPrincipal("DerivedSurfaceAgent");
+        String document = "{\"derivedRunToolMode\":\"workspace\"}";
+
+        // 1) no key yet = refusal, which is the documented pre-task-16 behaviour (not "default none")
+        DerivedRunToolSurfaceResolver.Resolution before = derivedRunToolSurfaceResolver.resolve(principalId);
+        assertFalse(before.granted(), "an absent key must not read as a grant: " + before);
+        assertEquals("no_key", before.reason());
+
+        // 2) the product face writes it (no SQL, no 400)
+        ResponseEntity<Map> response = patch(principalId, body("contextPolicy", plainJson(document)),
+                globalToken());
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(plainJson(document), response.getBody().get("contextPolicy"),
+                "the PATCH echo is the persisted document: " + response.getBody());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM agent_principals WHERE id = CAST(? AS UUID) "
+                        + "AND context_policy->>'derivedRunToolMode' = 'workspace'",
+                Integer.class, principalId.toString()),
+                "the value must be readable through the JSON operator the resolver uses");
+
+        // 3) the deciding seam reads the same column: granted, same value, no coercion
+        DerivedRunToolSurfaceResolver.Resolution after = derivedRunToolSurfaceResolver.resolve(principalId);
+        assertTrue(after.granted(), "after a product-face write the resolver must grant: " + after);
+        assertEquals("workspace", after.toolMode(), "the stored value is handed over verbatim");
+        assertEquals("granted", after.reason());
+
+        // 4) flipping the value through the same face flips the decision
+        assertEquals(HttpStatus.OK,
+                patch(principalId, body("contextPolicy", plainJson("{\"derivedRunToolMode\":\"none\"}")),
+                        globalToken()).getStatusCode());
+        DerivedRunToolSurfaceResolver.Resolution flipped = derivedRunToolSurfaceResolver.resolve(principalId);
+        assertTrue(flipped.granted());
+        assertEquals("none", flipped.toolMode(), "none is a grant of a workspace-less surface, not a refusal");
+    }
+
+    /**
+     * The memory section and the derived-run surface share one document, and PATCH replaces that
+     * document as a whole (the reason the UI must merge instead of sending a single key). Both halves
+     * therefore have to survive one another in the only way the wire allows: by being carried together.
+     */
+    @Test
+    void theTwoSectionsOfOneDocumentCoexistAndAWholeDocumentPatchReplacesIt() {
+        fixture();
+        UUID principalId = createPrincipal("BothSectionsAgent");
+        String both = "{\"memory\":{\"enabled\":true,\"writeMode\":\"tool\",\"types\":[\"profile\"]},"
+                + "\"derivedRunToolMode\":\"workspace\"}";
+
+        ResponseEntity<Map> written = patch(principalId, body("contextPolicy", plainJson(both)), globalToken());
+        assertEquals(HttpStatus.OK, written.getStatusCode(), String.valueOf(written.getBody()));
+        assertEquals(plainJson(both), written.getBody().get("contextPolicy"));
+        assertTrue(derivedRunToolSurfaceResolver.resolve(principalId).granted(),
+                "the derived surface survives next to the memory section");
+
+        // Deliberate and documented: sending only the derived key replaces the whole document, so the
+        // memory section is gone. This is the exact trap the UI merge helper (mergeMemoryEnabled /
+        // mergeDerivedToolMode) exists to avoid; pinned here so a "convenience" server-side merge cannot
+        // be introduced silently.
+        ResponseEntity<Map> replaced = patch(principalId,
+                body("contextPolicy", plainJson("{\"derivedRunToolMode\":\"workspace\"}")), globalToken());
+        assertEquals(HttpStatus.OK, replaced.getStatusCode());
+        assertEquals(plainJson("{\"derivedRunToolMode\":\"workspace\"}"),
+                replaced.getBody().get("contextPolicy"),
+                "PATCH replaces the document; it does not deep-merge");
+    }
+
+    /** Acceptance ③: an illegal surface is a readable 400 and never lands in the column. */
+    @Test
+    void patchRejectsDerivedRunToolSurfacesOutsideTheResolverEnumeration() {
+        fixture();
+        UUID principalId = createPrincipal("InvalidDerivedSurfaceAgent");
+
+        for (String document : List.of(
+                "{\"derivedRunToolMode\":\"full\"}",          // an imagined third surface
+                "{\"derivedRunToolMode\":\"workspace, none\"}", // no alias set
+                "{\"derivedRunToolMode\":\"\"}",               // empty is not "none"
+                "{\"derivedRunToolMode\":true}",                // non-textual
+                "{\"derivedRunToolMode\":1}")) {
+            ResponseEntity<Map> response = patch(principalId,
+                    body("contextPolicy", plainJson(document)), globalToken());
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(),
+                    "must reject " + document + " — " + response.getBody());
+            assertEquals("INVALID_REQUEST", response.getBody().get("code"), String.valueOf(response.getBody()));
+            assertTrue(String.valueOf(response.getBody().get("detail"))
+                            .contains("contextPolicy.derivedRunToolMode must be \"none\" or \"workspace\""),
+                    "the refusal must name the key, the two accepted values and the offending value: "
+                            + response.getBody());
+        }
+        assertNull(principalRepository.findById(principalId).orElseThrow().getContextPolicy(),
+                "a rejected document must not reach the column (no store-then-lose-later path)");
+        assertFalse(derivedRunToolSurfaceResolver.resolve(principalId).granted(),
+                "nothing granted after an all-rejected session");
+    }
+
+    @Test
+    void workspaceAgentListProjectsTheDerivedRunToolSurface() {
+        fixture();
+        UUID principalId = createPrincipal("ListedDerivedSurfaceAgent");
+        String document = "{\"derivedRunToolMode\":\"workspace\"}";
+        assertEquals(HttpStatus.OK,
+                patch(principalId, body("contextPolicy", plainJson(document)), globalToken()).getStatusCode());
+        bindToWorkspace(principalId);
+
+        Map<String, Object> row = listAgents().stream()
+                .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("principal not listed in the workspace agent list"));
+        assertEquals(plainJson(document), row.get("contextPolicy"),
+                "the agent list must project the derived surface, or the UI cannot show it: " + row);
     }
 
     // ---------------------------------------------------------------------------------------

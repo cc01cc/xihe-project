@@ -164,6 +164,14 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.equals("UuidStringConverter")) {
             return "persistence";
         }
+        // task-86 (D-1869): the derived-run tool-surface resolver sits in `cp.service` but its only
+        // caller is the wake dispatcher (`WakeDispatchService`), i.e. the chat pipeline's wake path —
+        // the "Wake"/"Judge"/"Participant" prefixes below do not match it, and leaving it unassigned
+        // made CpArchitectureTest abort at import ("unassigned type") after cae3c7737. Same reasoning
+        // as the PassiveMemoryJudge precedent: assign the family, do not grow a slice for one type.
+        if (name.equals("DerivedRunToolSurfaceResolver")) {
+            return "chat";
+        }
         // PLAN-0624: the wake chain is the conversation pipeline's wake path, so it belongs to the same
         // slice as the chat-package `WakeChain*` / `WakeFanOut*` types; the judge family and the
         // participant-level capability resolution are part of that same path — the judge decides

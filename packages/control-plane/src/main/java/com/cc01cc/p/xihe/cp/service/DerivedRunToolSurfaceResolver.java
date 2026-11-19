@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.policy.ContextPolicyValidator;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Optional;
@@ -41,11 +42,20 @@ public class DerivedRunToolSurfaceResolver {
 
     private static final Logger logger = LoggerFactory.getLogger(DerivedRunToolSurfaceResolver.class);
 
-    /** The {@code context_policy} key holding this principal's default tool surface for derived runs. */
-    public static final String CONTEXT_POLICY_KEY = "derivedRunToolMode";
+    /**
+     * The {@code context_policy} key holding this principal's default tool surface for derived runs.
+     *
+     * <p>task-16: the key and its enumeration are owned by {@code ContextPolicyValidator}, which is the
+     * single write-side gate — the same two constants are read here so a value the gate accepts can
+     * never be one this resolver reports as {@code invalid_value}. Before task-16 the product face
+     * could not write this key at all (the gate's top-level whitelist knew only {@code memory}), so the
+     * only producer was a direct SQL UPDATE.</p>
+     */
+    public static final String CONTEXT_POLICY_KEY =
+            ContextPolicyValidator.DERIVED_RUN_TOOL_MODE_KEY;
 
     /** Enumerated values — anything else is a wiring fault, not a value to coerce. */
-    private static final Set<String> ALLOWED = Set.of("none", "workspace");
+    private static final Set<String> ALLOWED = ContextPolicyValidator.DERIVED_RUN_TOOL_MODES;
 
     private final AgentPrincipalRepository agentPrincipalRepository;
 
