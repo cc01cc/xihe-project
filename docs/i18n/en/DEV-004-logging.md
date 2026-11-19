@@ -260,7 +260,7 @@ Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields. **Scan face (
 
 - **Where**: durable audit records (`chat_run_provider_requests` and its extensions) — **not the log stream**; logs stay lightweight (ids, summaries, counts).
 - **No rewriting at storage time**: store the body verbatim (including any `Authorization` header), with **no redaction, no scanning, no replacement, no trimmed counts**; integrity is guaranteed by **sha256 + byte length** only. If upstream needs redaction, that is a gateway configuration concern — this layer records what upstream sent.
-- **Volume and retention**: per-step body caps and total watermarks follow `provider-call-audit-gaps-20261119.md` (≈73 KB/run, 100 runs/day ≈ 7 MB; retention 180 / 30 days; re-inventory above 50 M rows or 20 GB).
+- **Volume and retention (user ruling, 2026-11-19)**: **bodies are always kept — no retention limit, no automatic cleanup**; **the MVP does not implement watermarks, archival, or expiry deletion**. Retention, watermarks and external archival become **separate configuration after the MVP** (sized from measured volume then; see `provider-call-audit-gaps-20261119.md`). **The record is evidence; reclamation is a later configuration concern.**
 - **Switch**: `providerAudit = full-redacted` (**default**) / `metadata` (counts, hashes, latency only) / `off` (rollback position; body columns are `NULL`, never `0` and never an empty string).
 - **Relation to "no credentials in logs"**: the **log stream** (which is collected and shipped) still carries no credential plaintext; the **durable audit record keeps bytes verbatim**. The two are not in conflict — **the record is evidence, the log is forwarding.**
 
