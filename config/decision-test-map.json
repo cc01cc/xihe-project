@@ -275,40 +275,52 @@
         {
           "id": "D-1908/1",
           "text": "对外只有一个选择器：仅可查看 / 工作区内修改 / 完全权限（三档 = 一个策略对象，决定执行后端+写范围+审批模式），禁止 UI 再暴露独立审批模式下拉",
-          "status": "pending",
-          "card": "task-108"
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionTierControls.spec.ts",
+          "title": "在会话设置里只渲染一个 tier 选择器，且不再有『审批模式』下拉",
+          "assert": "expect(wrapper.find('[data-testid=\"session-policy-mode\"]').exists()).toBe(false);",
+          "note": "task-109 落地（SessionTierSelect.vue / SessionTierBadge.vue / src/stores/sessionTier.ts）；旧 SessionPolicyControls.vue 已无产品引用（仅自身 spec 与测试桩），用例断言旧 testid 与旧 aria-label 两个锚点都消失"
         },
         {
           "id": "D-1908/2",
           "text": "继承链 instance 默认档 → workspace 默认档 → 会话档（最终生效）；空=继承；任何层读不到 ⇒ 回落最严 + 明确提示，不静默放宽",
-          "status": "pending",
-          "card": "task-108"
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionTierControls.spec.ts",
+          "title": "无工作区默认值：徽标降级、回落最严档并给出可见提示（不静默）",
+          "assert": "expect(selectModelValue(selector, TIER_SELECT)).toBe(\"view\");",
+          "note": "UI 侧三态徽标（继承/覆盖/无默认值）由 sessionTierControls.spec.ts 三条 it 覆盖；CP 侧取严求值链由 SessionTierResolutionTest（9 条）与 ApprovalTierPolicyTest（19 条）覆盖，属 task-107 e97ae8ea8"
         },
         {
           "id": "D-1908/3",
           "text": "放宽需能力原子 session:permission:configure 且 调用者 = 会话创建者（sessions.user_id，V92 role 无 OWNER）；两条同时满足才可放宽，收紧任一参与者可做；拒绝面 403+审计（session.permission.escalated），越层放宽 fail-closed",
           "status": "pending",
           "card": "task-108",
-          "note": "rev3（00:54）拍板 owner 判据 = 方案 A；task-122 按 A 写 owner 用例"
+          "note": "rev3（00:54）拍板 owner 判据 = 方案 A；task-122 按 A 写 owner 用例。UI 只读面已覆盖（sessionTierControls.spec.ts「无权限时选择器 disabled 但仍可见」，denyReason=no-atom），但 CP 侧能力原子/owner 判定/403 审计仍未落地（main/java 无 session:permission:configure 命中）⇒ 条款保持 pending"
         },
         {
           "id": "D-1908/4",
           "text": "sessions.approval_mode 降级为派生列（view/workspace-write⇒manual，full⇒auto），UI 移除 SessionSettingsPanel.vue:62-68 独立下拉；workspace.execution_mode 降级为「可用能力」",
-          "status": "pending",
-          "card": "task-108"
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionTierControls.spec.ts",
+          "title": "在会话设置里只渲染一个 tier 选择器，且不再有『审批模式』下拉",
+          "assert": "translate(\"chat.approvalModeLabel\")",
+          "note": "UI 侧旧下拉已移除（用例断言旧 aria-label 的 combobox 数为 0）；派生列与同批写由 ApprovalTierPolicyTest#permissionTierDerivesApprovalMode / setTierWritesTheDerivedModeInTheSameSave 覆盖（task-107 e97ae8ea8）"
         },
         {
           "id": "D-1908/5",
           "text": "多主体正交：会话内生效 = 会话档 × run 的 agent_principal_id 档取严（现状无主体维度，DbPolicyContextProvider:86-101 仍「session 覆盖即放宽」短路）",
           "status": "pending",
-          "card": "task-108"
+          "card": "task-108",
+          "note": "CP 侧仍无主体维度：SessionTierResolutionTest#policy_has_noPrincipalDimension_byDesign 断言的正是「按设计无 principal 维度」⇒ 条款无覆盖测试，保持 pending"
         },
         {
           "id": "D-1908/6",
           "text": "UI↔CP 档位契约（rev4）：GET/PATCH /sessions/{id}/tier 返回 tier(view|workspace|full) + source(session|workspace|none) + workspaceTier + canConfigure + denyReason(viewer|not-owner|no-atom|null) + available[]；PATCH 单档语义、失败回滚且文案不含错误码；UI 六个 testid（session-tier-select/badge/readonly/unsupported/fallback/error），旧 session-policy-mode 在 task-109 落地后移除",
-          "status": "pending",
-          "card": "task-109",
-          "note": "task-123 已按此契约写先红 spec（features/workspace/chat/__tests__/sessionTierControls.spec.ts）；api.getSessionTier/setSessionTier 客户端在 src/composables/api.ts；CP 端 GET/PATCH 由 task-107/108"
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionTierControls.spec.ts",
+          "title": "失败路径：回滚到原档位，错误文案可读且不含错误码/英文 detail",
+          "assert": "expect(error).not.toContain(\"SESSION_TIER_FORBIDDEN\");",
+          "note": "task-109 已落地该契约：9 条 it 覆盖六 testid（select/badge/readonly/unsupported/fallback/error）与三态徽标；api.getSessionTier/setSessionTier 在 src/composables/api.ts；CP 端 GET/PATCH /sessions/{id}/tier 由 task-107 e97ae8ea8 落地"
         }
       ],
       "dsd": 1448
