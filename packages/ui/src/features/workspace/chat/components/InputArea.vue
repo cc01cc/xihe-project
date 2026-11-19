@@ -6,6 +6,7 @@ import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useAuthStore } from "../../../../stores/auth";
 import { useAgentStore } from "../../../../stores/agent";
+import { useConfigStore } from "../../../../stores/config";
 import { routeLocationKey } from "vue-router";
 import { isWorkspaceLessRoute } from "../workspaceLess";
 import { useChatStore } from "../stores/chat";
@@ -236,6 +237,8 @@ watch(
 );
 /** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
 const chatStore = useChatStore();
+/** task-135：右槽模型·路由 chip 的只读来源（与发送侧同源 getEffectiveModel）。 */
+const configStore = useConfigStore();
 /** 无 router 的组件单测里注入结果为空 ⇒ 判定为「非独立会话」（见 workspaceLess.ts 注释）。 */
 const route = inject(routeLocationKey, null);
 /**
@@ -820,6 +823,43 @@ const sendDisabled = computed(() => {
     return !input.value.trim() && attachments.value.length === 0;
 });
 
+/**
+ * task-135（composer 三层容器）第 2+3 层的数据源与口径。
+ *
+ * - 模型·路由 chip 走 `configStore.getEffectiveModel`，与发送侧（ChatPanel.vue 的发送签名）同源，
+ *   只做只读展示；未绑定时退回占位文案，不显示「看起来已绑」的名字（C1 口径）。
+ * - token 用量走 chat store 的 `getSessionLastUsage`（SSE `usage.recorded` 写入）。
+ * - 轮 / 步 / tok-s 与缓存命中：UI 侧**没有**数据源（全 src 无字段）⇒ 恒 "—"，待 CP 补录，
+ *   不许用估算值假装成读数。
+ * - 分母 200k 是常量兜底：composer 侧没有「当前模型上下文窗口」的读取通路
+ *   （provider 目录有 contextWindowTokens，但没有到 composer 的线路）。
+ */
+const COMPOSER_CONTEXT_WINDOW_TOKENS = 200_000;
+const COMPOSER_CONTEXT_WINDOW_LABEL = `${Math.round(COMPOSER_CONTEXT_WINDOW_TOKENS / 1000)}k`;
+const META_PLACEHOLDER = "—";
+
+const composerModelChip = computed(() => {
+    const binding = configStore.getEffectiveModel(props.sessionId);
+    const label = [binding?.provider, binding?.model].filter(Boolean).join(" · ");
+    return label
+        ? { label, title: `${t("chat.composerMeta.model")}: ${label}` }
+        : { label: t("chat.composerMeta.modelUnbound"), title: t("chat.composerMeta.model") };
+});
+
+const composerTokensUsed = computed<number | null>(() => {
+    const usage = chatStore.getSessionLastUsage(props.sessionId);
+    if (!usage) return null;
+    if (typeof usage.totalTokens === "number") return usage.totalTokens;
+    if (usage.inputTokens == null && usage.outputTokens == null) return null;
+    return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+});
+
+const composerTokensUsedLabel = computed(() =>
+    composerTokensUsed.value == null
+        ? META_PLACEHOLDER
+        : new Intl.NumberFormat("en-US").format(composerTokensUsed.value),
+);
+
 const toolbarActions = computed<ToolbarAction[]>(() => [
     {
         key: "image",
@@ -873,11 +913,23 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         visible: !workspaceLess.value && !props.queueMode,
     },
     {
+        // task-135 第 2 层右槽：模型·路由 chip（只读展示，不是控件；未绑定时显示占位）。
+        key: "model",
+        position: "right",
+        component: "div",
+        props: {
+            class: "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex",
+            "data-testid": "composer-model-chip",
+            title: composerModelChip.value.title,
+        },
+        label: composerModelChip.value.label,
+    },
+    {
         key: props.isStreaming ? "stop" : "send",
         position: "right",
         component: "button",
         props: {
-            class: "shrink-0 size-8 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity",
+            class: "shrink-0 size-9 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity",
             disabled: props.isStreaming ? false : sendDisabled.value,
             "data-testid": props.isStreaming ? "chat-stop-button" : "chat-send-button",
             "aria-label": props.isStreaming ? t("chat.stop") : t("chat.send"),
@@ -1889,13 +1941,13 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 （`e2e/real/ui-baseline.spec.ts` ④ 的 ringer.borderWidthPx）。
             -->
             <div
-                class="rounded-lg border-0 bg-muted/30 px-3 py-2 ring-1 ring-border transition-[box-shadow,border-color] has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
+                class="rounded-xl border-0 bg-muted/30 px-3 py-2 ring-1 ring-border transition-[box-shadow,border-color] has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
             >
                 <textarea
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] rounded-none bg-transparent px-1 py-0.5 text-sm leading-relaxed field-sizing-content resize-none placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:outline-none"
+                    class="w-full min-h-[40px] max-h-[240px] rounded-none bg-transparent px-1 py-0.5 text-sm leading-relaxed field-sizing-content resize-none placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:outline-none"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"
@@ -1940,6 +1992,36 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                         }}</span>
                     </button>
                 </div>
+            </div>
+            <!--
+                task-135 第 3 层：元信息行（轮·步·tok/s ｜ token 用量 ｜ 缓存命中）。
+                数据来源只有 token 用量（chat store 的 sessionLastUsage）；轮/步/tok/s 与缓存命中
+                UI 侧没有数据源 ⇒ 恒 "—"（见脚本里 composerModelChip 上方注释）。
+                抗抖动：min-h-4 + leading-4 + tabular-nums —— 数字变化只改字形不改行高，
+                判据是「连续三次 token 变化 composer 高度差 0」。
+            -->
+            <div
+                class="flex min-h-4 flex-wrap items-center gap-x-3 px-1 pt-1 text-[11px] leading-4 tabular-nums text-muted-foreground/80"
+                data-testid="composer-meta"
+            >
+                <span data-testid="composer-meta-run">
+                    {{ t("chat.composerMeta.rounds", { value: META_PLACEHOLDER }) }}
+                    ·
+                    {{ t("chat.composerMeta.steps", { value: META_PLACEHOLDER }) }}
+                    ·
+                    {{ t("chat.composerMeta.speed", { value: META_PLACEHOLDER }) }}
+                </span>
+                <span data-testid="composer-meta-tokens">
+                    {{
+                        t("chat.composerMeta.tokens", {
+                            used: composerTokensUsedLabel,
+                            limit: COMPOSER_CONTEXT_WINDOW_LABEL,
+                        })
+                    }}
+                </span>
+                <span data-testid="composer-meta-cache">
+                    {{ t("chat.composerMeta.cacheHit", { percent: META_PLACEHOLDER }) }}
+                </span>
             </div>
         </div>
     </div>

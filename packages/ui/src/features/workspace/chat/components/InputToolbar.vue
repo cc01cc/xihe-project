@@ -7,6 +7,8 @@ export interface ToolbarAction {
     component: Component | string;
     props?: Record<string, unknown>;
     icon?: Component;
+    /** task-135: 纯文本标签（模型·路由 chip 这类「展示型 action」用，不另造组件）。 */
+    label?: string;
     visible?: boolean | (() => boolean);
 }
 
@@ -43,6 +45,7 @@ function isVisible(action: ToolbarAction): boolean {
         <template v-for="action in rightActions" :key="action.key">
             <component :is="action.component" v-bind="action.props">
                 <component :is="action.icon" v-if="action.icon" class="size-3.5" />
+                <span v-if="action.label" class="truncate">{{ action.label }}</span>
             </component>
         </template>
     </div>

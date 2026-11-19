@@ -1710,6 +1710,16 @@ const messages = {
             thinking: "思考中...",
             error: "发送失败",
             stop: "停止生成",
+            // task-135：composer 第 3 层元信息行（轮/步/tok-s、token 用量、缓存命中）。
+            composerMeta: {
+                model: "模型 · 路由",
+                modelUnbound: "未绑定模型",
+                rounds: "轮 {value}",
+                steps: "步 {value}",
+                speed: "{value} tok/s",
+                tokens: "{used} / {limit}",
+                cacheHit: "缓存命中 {percent}",
+            },
             followUpQueueTitle: "接下来",
             followUpCount: "{count} / {capacity} 项未结束",
             followUpEnqueue: "排队发送",
@@ -5936,6 +5946,16 @@ const messages = {
             thinking: "Thinking...",
             error: "Failed to send",
             stop: "Stop generating",
+            // task-135: composer layer 3 meta row (rounds/steps/tok-s, token usage, cache hit).
+            composerMeta: {
+                model: "Model · route",
+                modelUnbound: "No model bound",
+                rounds: "rounds {value}",
+                steps: "steps {value}",
+                speed: "{value} tok/s",
+                tokens: "{used} / {limit}",
+                cacheHit: "cache hit {percent}",
+            },
             followUpQueueTitle: "Up next",
             followUpCount: "{count} / {capacity} unfinished",
             followUpEnqueue: "Queue message",
