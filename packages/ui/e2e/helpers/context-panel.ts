@@ -1,12 +1,20 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
- * PLAN-0626 M2：会话设置（审批模式 / 上下文模板 / 上下文源 / 分支）不再在聊天列里就地展开，
- * 而是迁进右侧 dock 的 `context` 标签（`SessionContextPanel.vue`）。聊天列的摘要行降级为
- * **入口**：桌面点它发 `open-context-panel`，由 `WorkspaceView` 调 `workbenchRef.openDockTab("context")`。
+ * PLAN-0626 M2：会话设置（审批模式 / 上下文模板 / 上下文源 / 分支）不在聊天列里就地展开，
+ * 而是住在右侧 dock 的 `context` 标签（`SessionContextPanel.vue`）。本帮助器把"打开面板"
+ * 收敛成一步，返回时**面板已可见且目标标签被选中**，调用方不必再自己断言，也不需要
+ * "点一下 + 等一会儿"这类固定等待。
  *
- * 这个帮助器把"打开面板"收敛成一步，返回时**面板已可见且目标标签被选中**，调用方不必再自己断言，
- * 也不再需要"点摘要行 + 等一会儿"这类固定等待。
+ * **task-151 更正（D-1907 / task-129 rev10 之后）—— 别再经摘要行开 `context`**：
+ * 聊天列 32px 摘要行（`session-settings-summary`）现在是**会话配置**页签的快捷开关，点下去开的是
+ * `pane:right:session-config:<sid>`，**不是** `context`。两种页签渲染的是同一份
+ * `SessionContextPanel` ⇒ 「面板可见」这条判据**区分不了它们**，旧写法于是静默地把 5 个消费
+ * spec 的「打开 context 面板」换成了「打开会话配置页签」（断言意图被换掉，测试还是绿的）。
+ * 现在 dock 收起/未开时走产品面上唯一正确的静态面板入口：**中栏「+」组件选择器**
+ * （触发器 `workspace-container-plus-main` → 项 `workspace-add-item-<tab>`，见
+ * `WorkspaceWorkbench.mainAddEntries` 与 `WorkspaceContainerAddButton`），它走
+ * `openDockTab` 开进右栏并激活目标标签 —— 与聊天列摘要行是两个不同的动作。
  *
  * 两种形态都要能开。task-179 更新：`deriveDockMode` / floating 已随 D-1754 ④ 退场
  * （task-94 S1 + task-162，右栏恒为正常列），旧的"floating（<1800）非模态"段落删除；
@@ -14,8 +22,9 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * <1800 首启收起但页签与激活项就位（`defaultWorkspaceLayoutForViewport`），不再决定任何形态：
  * - `pinned`（恒定形态）：dock 常驻最后一列，开标签只切换活动标签；
  * - **rail / 收起**（`dockCollapsed`，`WorkspaceWorkbench` 的 `dockOpen` 为 false）：`WorkspaceDock`
- *   是 `v-if` 渲染的，收起时**连标签条都不在 DOM 里**（`dock-tab-*` 计数为 0），所以本帮助器落到
- *   聊天列摘要行这条规范入口（`openDockTab` 会同时展开 dock 并激活目标标签）。
+ *   是 `v-if` 渲染的，收起时**连标签条都不在 DOM 里**（`dock-tab-*` 计数为 0）⇒ 落到中栏「+」；
+ *   「+」在中栏页签行上，**与 dock 是否展开无关**，所以这条路在 rail 形态同样可用
+ *   （`openDockTab` 会同时展开 dock 并激活目标标签）。
  *
  * 幂等：面板已可见时**只做校验、不再点任何东西**。这点是硬要求 —— 页签行上的芯片
  * （`dock-tab-*`）只会「选中」，重复点无副作用；旧工具栏那一排面板开关键已下线（task-137），
@@ -41,6 +50,9 @@ export function dockRoot(page: Page): Locator {
  * `getByTestId` 会触发 strict mode violation（"resolved to 2 elements"）。
  * 2026-11-03 真机 e2e 实测：`approval-policy` / `context-sources` 三例因此误报
  * "面板不可见"，实际是被隐藏副本卡住解析 —— 不是面板没打开。
+ *
+ * **它认不出页签 id**（task-151）：`context` 与 `pane:right:session-config:<sid>` 渲染同一份组件，
+ * 要判"开的是哪个页签"必须看芯片（`dockTab(page, "context")` 的 `aria-selected`）。
  */
 export function contextPanel(page: Page): Locator {
     return page.locator('[data-testid="session-context-panel"]').filter({ visible: true });
@@ -57,10 +69,13 @@ export interface OpenContextPanelOptions {
     /** 可见性/选中态断言超时，默认 15000。 */
     timeout?: number;
     /**
-     * 允许经聊天列摘要行（`session-settings-summary`）打开面板，默认 true。
-     * 置 false 时只点 dock 标签芯片 —— 用于"dock 已开但要显式验证芯片路径"的用例。
+     * 允许经中栏「+」的组件选择器打开，默认 true。置 false 时**只点 dock 标签芯片** —— 用于
+     * "dock 已开着、要显式验证芯片路径"的用例；dock 收起时该形态无从下手，会直接报错。
+     *
+     * task-151：旧名 `viaSummaryRow` 已删。它描述的机制（摘要行 → `openDockTab("context")`）
+     * 在 D-1907 rev10 之后不再成立，留着只会让调用方以为"摘要行还能开 context"。
      */
-    viaSummaryRow?: boolean;
+    viaAddMenu?: boolean;
 }
 
 /** 失败诊断用的 dock 快照；只读，判据全部来自 DOM，不看 localStorage。 */
@@ -77,7 +92,7 @@ export interface DockState {
     panelCopies: number;
     /** 其中可见的份数（>1 说明移动端 sheet 与 dock 同时挂载）。 */
     visiblePanelCopies: number;
-    /** 聊天列摘要行副本数；dock 收起时只有它能开面板。 */
+    /** 聊天列摘要行副本数；本帮助器**不再**用它开面板（task-151），只作为诊断读数保留。 */
     summaryCopies: number;
 }
 
@@ -142,7 +157,7 @@ export function formatDockState(state: DockState): string {
 }
 
 /**
- * 打开右侧 dock 的目标标签（默认 `context`，即会话设置面板），返回时面板已可见。
+ * 打开右侧 dock 的目标标签（默认 `context`，即会话设置面板），返回时面板已可见**且目标页签选中**。
  *
  * 失败时抛出的错误带一份 **当前 dock 快照**（渲染与否、`data-dock-mode`、活动标签、
  * 标签条内容、面板副本数）—— "面板没开"和"开在别的标签上"和"面板有两份导致 strict
@@ -170,6 +185,7 @@ async function openTargetDockTab(page: Page, options: OpenContextPanelOptions): 
         chip = dockTab(page, tab);
 
     // 已经是目标面板：只补一个选中态校验（防止"面板残留但标签已切走"）。
+    // 注意：这里判不出"面板是 context 还是 session-config"—— 交给下面的芯片断言。
     if (await panel.isVisible().catch(() => false)) {
         await expectActiveChip(page, tab, timeout);
         return;
@@ -178,23 +194,41 @@ async function openTargetDockTab(page: Page, options: OpenContextPanelOptions): 
     if (await chip.count()) {
         // dock 已打开（其它标签）→ 切成目标标签。芯片只"选中"、不 toggle，重复点安全。
         await chip.click();
-    } else if (options.viaSummaryRow === false) {
+    } else if (options.viaAddMenu === false) {
         throw new Error(
-            `dock 未打开且 viaSummaryRow=false：无法在不经摘要行的情况下打开 "${tab}" 标签`,
+            `dock 未打开且 viaAddMenu=false：无法在不经中栏「+」组件选择器的情况下打开 "${tab}" 标签`,
         );
     } else {
-        // dock 未打开 / 已收起（rail）→ 走聊天列的规范入口：点摘要行（桌面发 open-context-panel）。
-        const summary = page.getByTestId("session-settings-summary");
-        await summary.waitFor({ state: "visible", timeout });
-        await summary.click();
+        // dock 未打开 / 已收起（rail）→ 中栏「+」是产品面上唯一正确的静态面板入口（task-151）。
+        await openViaAddMenu(page, tab, timeout);
     }
 
     await expect(
         panel,
-        `openContextPanel("${tab}")：面板不可见。桌面宽度 ≥${DOCK_PINNED_MIN_VIEWPORT} 为 pinned、` +
-            `以下为 floating；移动端（无 dock）走 SessionSettingsPanel 的就地展开，不能调用本帮助器。`,
+        `openContextPanel("${tab}")：面板不可见。桌面宽度 ≥${DOCK_PINNED_MIN_VIEWPORT} 首启展开右栏，` +
+            `更窄的首启收起、右栏靠中栏「+」展开；移动端（无 dock）走 SessionSettingsPanel 的就地展开，` +
+            `不能调用本帮助器。`,
     ).toBeVisible({ timeout });
     await expectActiveChip(page, tab, timeout);
+}
+
+/**
+ * 经中栏「+」的组件选择器开静态面板页签（task-151 替代旧的"点聊天列摘要行"）。
+ *
+ * 为什么是这条：中栏「+」自 task-140 起就是**组件选择器**（`WorkspaceContainerAddButton`），
+ * 选中项一律经 `openDockTab` 进右栏 dock 并激活对应页签 —— 这是产品上"把某个静态面板开出来"
+ * 的正规路径，且**与聊天列摘要行现在是两个不同动作**（后者开的是会话配置页签）。
+ *
+ * 菜单项是 reka 的 `DropdownMenuCheckboxItem`（`role=menuitemcheckbox`，只受控不开`update:model-value`）：
+ * 点完由浮层自身关闭，这里显式等它消失再返回 —— 残留浮层会盖住调用方接下来的点击，
+ * 表现为"面板开了但下一个断言超时"，比"没开"更难查。
+ */
+async function openViaAddMenu(page: Page, tab: string, timeout: number): Promise<void> {
+    await page.getByTestId("workspace-container-plus-main").click({ timeout });
+    const item = page.getByTestId(`workspace-add-item-${tab}`);
+    await item.waitFor({ state: "visible", timeout });
+    await item.click({ timeout });
+    await expect(item, `中栏「+」选中 "${tab}" 后浮层应关闭`).toBeHidden({ timeout });
 }
 
 /**
@@ -205,6 +239,9 @@ async function openTargetDockTab(page: Page, options: OpenContextPanelOptions): 
  * "context 是活动标签"—— sticky 面板（`context`/`agents`）只挂载一次、用 `v-show="id === activeTab"`
  * 隐藏而非卸载，所以**可见的那份** `SessionContextPanel` 就只在 `activeTab === "context"` 时出现。
  * 为读一个选中态去展开 overflow 菜单会留下一个浮层，得不偿失。
+ *
+ * task-151 的边界：`pane:*` 面板（如 session-config）**不是** sticky（`stickyTabIds` 只有
+ * `context`/`agents`），切走即卸载 ⇒ 这条"可见即活动"的推理只对 sticky 标签成立。
  */
 async function expectActiveChip(page: Page, tab: string, timeout: number): Promise<void> {
     const chip = dockTab(page, tab);
