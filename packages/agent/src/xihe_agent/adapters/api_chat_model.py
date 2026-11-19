@@ -322,15 +322,24 @@ class ApiChatModel(BaseChatModel):
         """Attach the current Run's volatile credential channel explicitly."""
         self._credential_handoff = handoff
 
-    def _body(self, messages: list[BaseMessage]) -> dict[str, Any]:
+    def _body(self, messages: list[BaseMessage], *, injected_count: int = 0) -> dict[str, Any]:
+        # task-52 (D-1901): a wrapper may append transient messages to this call (the
+        # guidance envelope). They are provider-visible but are not durable baseline, so
+        # the frozen baseline must exclude them. Counting them in made the first request
+        # treat the envelope as baseline (consumed on CP, never sent) and pushed every
+        # later suffix window one message late, dropping this Run's own
+        # assistant(tool_calls) while keeping its tool result.
+        durable_end = len(messages) - injected_count
+        if durable_end < 0:
+            raise ApiRequestError("INVALID_REQUEST_SHAPE")
         if self._initial_count is None:
-            self._initial_count = 0 if self._include_initial_messages else len(messages)
-        if len(messages) < self._initial_count:
+            self._initial_count = 0 if self._include_initial_messages else durable_end
+        if len(messages) < self._initial_count or durable_end < self._initial_count:
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
         # RAG stays in its independent template data slot on every step; it is
         # never appended to baseline instructions or admitted durable messages.
         body = render_request(self._body_source, self._api_type, self._values)
-        suffix = messages[self._initial_count :]
+        suffix = messages[self._initial_count : durable_end]
         if any(not isinstance(message, (HumanMessage, SystemMessage, AIMessage, ToolMessage)) for message in suffix):
             raise ApiRequestError("INVALID_REQUEST_SHAPE")
         self._current_suffix = [record for message in suffix for record in native_message(message, self._api_type)]
@@ -359,7 +368,7 @@ class ApiChatModel(BaseChatModel):
         # for the current turn (no-op unless images were dispatched for this run).
         return apply_image_parts(body, self._api_type.id, self._image_data_urls)
 
-    def _dispatch_body(self, messages: list[BaseMessage]) -> dict[str, Any]:
+    def _dispatch_body(self, messages: list[BaseMessage], *, injected_count: int = 0) -> dict[str, Any]:
         """Final native body for this provider step, estimated before dispatch.
 
         PLAN-0416 T2.3: the estimate covers the complete serialized body the
@@ -373,7 +382,7 @@ class ApiChatModel(BaseChatModel):
         so this method only freezes the document. Neither the returned body nor
         the estimation behaviour changes.
         """
-        body = self._body(messages)
+        body = self._body(messages, injected_count=injected_count)
         self._provider_step += 1
         self._stage_provider_step(body)
         if self._token_estimator is None:
@@ -490,7 +499,13 @@ class ApiChatModel(BaseChatModel):
         raise ApiRequestError("ASYNC_CHAT_REQUIRED")
 
     async def _agenerate(
-        self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        *,
+        injected_count: int = 0,
+        **kwargs: Any,
     ) -> ChatResult:
         # PLAN-0761 (BL-555): this non-streaming path deliberately does NOT emit reasoning.
         # The stream yields (text, reasoning, final) but only the final NativeResponse is
@@ -500,7 +515,9 @@ class ApiChatModel(BaseChatModel):
         # the chat path" change cannot quietly drop reasoning.
         result = None
         try:
-            async for _text, _reasoning, final in self._sender.stream(self._dispatch_body(messages)):
+            async for _text, _reasoning, final in self._sender.stream(
+                self._dispatch_body(messages, injected_count=injected_count)
+            ):
                 if final is not None:
                     result = final
         finally:
@@ -523,7 +540,13 @@ class ApiChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
     async def _astream(
-        self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        *,
+        injected_count: int = 0,
+        **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         secrets = self._credential_handoff.secrets_for_stream_filter() if self._credential_handoff else ()
         text_redactor = StreamingSecretRedactor(secrets)
@@ -532,7 +555,9 @@ class ApiChatModel(BaseChatModel):
         # error or cancellation), so the record carries the bytes the wire actually saw.
         result: NativeResponse | None = None
         try:
-            async for text, reasoning, result in self._sender.stream(self._dispatch_body(messages)):
+            async for text, reasoning, result in self._sender.stream(
+                self._dispatch_body(messages, injected_count=injected_count)
+            ):
                 if result is not None:
                     # A complete provider response can contain a credential even
                     # when its stream chunks did not; reject it before callbacks or

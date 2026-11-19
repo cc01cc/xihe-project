@@ -13,6 +13,7 @@ the LangGraph ``messages`` channel, the EventStore transcript, or the
 checkpoint, so consumed guidance never leaks into a continuation run's context.
 """
 
+import inspect
 import json
 from typing import Any
 
@@ -31,6 +32,26 @@ def build_guidance_envelope(sequence: int, content: str) -> str:
     """Untrusted-input envelope: the model must be able to tell guidance apart
     from ordinary user turns and system policy (parent contract §4)."""
     return f"{ENVELOPE_PREFIX} (source=user, seq={sequence})\n{content}"
+
+
+def injected_baseline_kwargs(method: Any, injected: list[Any]) -> dict[str, int]:
+    """Tell a baseline-tracking inner model how many trailing messages are transient.
+
+    task-52 (D-1901): ``ApiChatModel`` freezes its durable baseline on the first call
+    of a Run, so an injected envelope must be excluded from it. Inner models that do
+    not declare ``injected_count`` (scripted or third-party models) keep the previous
+    call shape, which keeps this wrapper a drop-in for them.
+    """
+    if not injected:
+        return {}
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return {}
+    accepts = "injected_count" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+    return {"injected_count": len(injected)} if accepts else {}
 
 
 class GuidanceConsumer:
@@ -171,11 +192,17 @@ class GuidanceInjectionModel(BaseChatModel):
                          run_manager: Any = None, **kwargs: Any) -> ChatResult:
         injected = await self._drain_guidance()
         effective = self._envelop(list(messages)) + injected
-        return await self.inner._agenerate(effective, stop=stop, run_manager=run_manager, **kwargs)  # noqa: SLF001
+        baseline = injected_baseline_kwargs(self.inner._agenerate, injected)  # noqa: SLF001
+        return await self.inner._agenerate(  # noqa: SLF001
+            effective, stop=stop, run_manager=run_manager, **{**baseline, **kwargs}
+        )
 
     async def _astream(self, messages: list[Any], stop: list[str] | None = None,
                        run_manager: Any = None, **kwargs: Any) -> Any:
         injected = await self._drain_guidance()
         effective = self._envelop(list(messages)) + injected
-        async for chunk in self.inner._astream(effective, stop=stop, run_manager=run_manager, **kwargs):  # noqa: SLF001
+        baseline = injected_baseline_kwargs(self.inner._astream, injected)  # noqa: SLF001
+        async for chunk in self.inner._astream(  # noqa: SLF001
+            effective, stop=stop, run_manager=run_manager, **{**baseline, **kwargs}
+        ):
             yield chunk
