@@ -203,14 +203,18 @@ function handleParticipantMention(name: string): void {
 }
 
 /**
- * PLAN-0626 M2: the chat summary row is the entry to the dock's `context` panel.
- * The chat column is this page's slot content, so its event lands here; the dock is
- * owned by `WorkspaceWorkbench`, which exposes `openDockTab` for exactly this hop.
+ * D-1907 rev10：聊天列摘要行（`session-settings-summary`）= **会话配置页签的快捷开关**
+ * （rev2：不再是面板本体/折叠态）。点一下在右栏容器里开 `pane:right:session-config:<sid>`，
+ * 已开则聚焦、不重复开 —— 判定归 `WorkspaceWorkbench#openSessionConfigTab`（与右键「+」
+ * 选同一项同一条路）。
+ *
+ * <p>事件名保留 `open-context-panel`：它是 ChatPanel/SessionSettingsPanel 的既有契约
+ * （vitest 与真实 e2e 都按它钉），改名的收益只是好读，代价是一圈消费点漂移。</p>
  */
 const workbenchRef = ref<InstanceType<typeof WorkspaceWorkbench> | null>(null);
 
 function handleOpenContextPanel(): void {
-    workbenchRef.value?.openDockTab("context");
+    workbenchRef.value?.openSessionConfigTab(sessionId.value);
 }
 
 /**

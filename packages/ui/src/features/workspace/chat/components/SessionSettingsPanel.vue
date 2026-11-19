@@ -29,9 +29,9 @@ const props = defineProps<{
     selectedBranchId: string;
     mainBranchId: string | null;
     /**
-     * PLAN-0626 M2 (Q1 = C, Lead ruling 2026-11-02): the desktop summary row is an
-     * **entry** to the dock's `context` panel; mobile has no dock, so it keeps the
-     * in-place expansion. The two interaction paradigms are deliberately different.
+     * Task-129 / D-1907 rev10: the desktop summary row is a **shortcut to the session-config
+     * container tab**; mobile has no dock, so it keeps the in-place expansion. The two
+     * interaction paradigms are deliberately different.
      */
     isMobile?: boolean;
 }>();
@@ -150,8 +150,9 @@ function handleTemplateSummary(summary: TemplateSummary) {
 }
 
 /**
- * PLAN-0626 M2: desktop opens the dock `context` panel (the settings live there now);
- * mobile keeps the in-place expansion because a 390px sheet has no dock to open.
+ * D-1907 rev10（task-129）：这 32px 摘要条是**快捷开关** —— 桌面点它开/聚焦「会话配置」
+ * 容器页签（`pane:right:session-config:<sid>`，已开则聚焦、不重复开）；移动端没有 dock，
+ * 仍在 sheet 内就地展开。它**不再是面板本体**，也不再有「33px 折叠态」这层语义。
  */
 function handleSummaryClick(): void {
     if (props.isMobile) {

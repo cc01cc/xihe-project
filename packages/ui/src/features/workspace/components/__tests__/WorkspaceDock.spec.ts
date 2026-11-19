@@ -37,6 +37,8 @@ const i18n = createI18n({
                 panelContext: "Context",
                 panelAgents: "Agents",
                 panelDelegation: "Delegation",
+                // task-129（D-1907 rev10）：会话配置容器页签的标签键。
+                panelSessionConfig: "Session config",
             },
         },
     },
@@ -57,6 +59,7 @@ function mountDock(
         defaultWidth: number;
         focus: boolean;
         fill: boolean;
+        sessionId?: string | null;
     }> = {},
 ) {
     return mount(WorkspaceDock, {
@@ -536,5 +539,33 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
         await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
         await wrapper.get('[data-testid="dock-reopen-item-code"]').trigger("click");
         expect(wrapper.emitted("reopen-tab")).toEqual([["files"], ["code"]]);
+    });
+
+    /**
+     * task-129（D-1907 rev10）：会话配置是**容器组件**，与 8 个静态面板同列在一张选择器里；
+     * id 走 138 的三元组（容器 + 会话），**testid 不能拼 id**（里面带 `:sid`，会变成每次会话
+     * 都不同的选择器），故用稳定的 `dock-reopen-item-session-config`。
+     */
+    it("lists 会话配置 when a session is present; the item id carries the session (task-129)", async () => {
+        const wrapper = mountDock({ sessionId: "sess-a" });
+        await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
+
+        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(9);
+        const item = wrapper.get('[data-testid="dock-reopen-item-session-config"]');
+        expect(item.text()).toContain("Session config");
+        expect(item.attributes("aria-checked")).toBe("false");
+
+        await item.trigger("click");
+        expect(wrapper.emitted("reopen-tab")).toEqual([["pane:right:session-config:sess-a"]]);
+    });
+
+    it("hides 会话配置 without a session (no sid ⇒ no legal pane id) (task-129)", async () => {
+        const wrapper = mountDock({ sessionId: null });
+        await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
+
+        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(8);
+        expect(wrapper.find('[data-testid="dock-reopen-item-session-config"]').exists()).toBe(
+            false,
+        );
     });
 });

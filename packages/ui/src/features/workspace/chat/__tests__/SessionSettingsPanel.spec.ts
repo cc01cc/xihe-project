@@ -132,7 +132,8 @@ describe("SessionSettingsPanel collapsed summary", () => {
         // PLAN-0626 M2: on desktop the summary is an entry, not an expander, so it must
         // not advertise `aria-expanded` (that would promise a disclosure it does not do).
         expect(summary.attributes("aria-expanded")).toBeUndefined();
-        expect(summary.attributes("aria-label")).toBe("在侧栏打开会话设置");
+        // D-1907 rev10：摘要条是「会话配置」的快捷开关，文案不再指向侧栏/会话设置面板。
+        expect(summary.attributes("aria-label")).toBe("打开会话配置");
         expect(summary.get('[data-testid="session-settings-summary-approval"]').text()).toContain(
             "手动审批",
         );

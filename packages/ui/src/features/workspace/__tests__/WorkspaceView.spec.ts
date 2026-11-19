@@ -400,11 +400,20 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="chat-open-context"]').trigger("click");
         await settle();
 
-        // ChatPanel → page → workbenchRef.openDockTab("context"): the dock opens on it.
-        expect(wrapper.find('[data-testid="dock-tab-context"]').attributes("aria-selected")).toBe(
+        // D-1907 rev10（task-129）：ChatPanel → page → workbench.openSessionConfigTab(sessionId)
+        // ⇒ 右栏开出 `pane:right:session-config:<sid>` 页签，面板体仍是同一份 SessionContextPanel。
+        const configTab = `dock-tab-pane:right:session-config:${SESSION_A}`;
+        expect(wrapper.find(`[data-testid="${configTab}"]`).attributes("aria-selected")).toBe(
             "true",
         );
         expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
+
+        // 门：再点一次摘要行只聚焦，不重复开（卡面 rev2）。
+        await wrapper.find('[data-testid="chat-open-context"]').trigger("click");
+        await settle();
+        expect(
+            wrapper.findAll('[data-testid^="dock-tab-pane:right:session-config:"]'),
+        ).toHaveLength(1);
     });
 
     it("closes the dock from its own close action without dropping the tabs", async () => {

@@ -67,6 +67,8 @@ const i18n = createI18n({
                 panelContext: "Session settings",
                 panelAgents: "Agents",
                 panelDelegation: "Delegation",
+                // task-129（D-1907 rev10）：会话配置容器页签的标签键（与 panelContext 刻意不同名）。
+                panelSessionConfig: "Session config",
                 toggleDelegation: "Toggle delegation",
                 closePanel: "Close the auxiliary panel",
                 dockTabs: "Workbench panels",
@@ -617,6 +619,77 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         );
         expect(wrapper.findAll('[data-testid="agents-panel-stub"]')).toHaveLength(1);
         expect(wrapper.find('[data-testid="dock-sticky-panel-agents"]').exists()).toBe(true);
+    });
+
+    it("opens the session-config container tab from the chat-summary hop and focuses instead of duplicating (task-129)", async () => {
+        seedDesktopDock();
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        const workbench = wrapper.vm as unknown as {
+            openSessionConfigTab: (sessionId: string | null) => void;
+        };
+
+        workbench.openSessionConfigTab("session-1");
+        await flushPromises();
+
+        // id 走 138 的三元组：容器 + 会话都在 id 里 ⇒ 两栏/两会话各一份不会撞。
+        const tabId = "pane:right:session-config:session-1";
+        expect(wrapper.get(`[data-testid="dock-tab-${tabId}"]`).attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
+
+        // 门（卡面 rev2）：再点一次只**聚焦**，不新增第二个会话配置页签。
+        workbench.openSessionConfigTab("session-1");
+        await flushPromises();
+        expect(
+            wrapper.findAll('[data-testid^="dock-tab-pane:right:session-config:"]'),
+        ).toHaveLength(1);
+    });
+
+    it("lists session-config in the main container picker and opens it in the right container (task-129)", async () => {
+        seedDesktopDock();
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="workspace-container-plus-main"]').trigger("click");
+        const item = wrapper.get('[data-testid="workspace-add-item-session-config"]');
+        expect(item.text()).toContain("Session config");
+        await item.trigger("click");
+        await flushPromises();
+
+        expect(
+            wrapper
+                .get('[data-testid="dock-tab-pane:right:session-config:session-1"]')
+                .attributes("aria-selected"),
+        ).toBe("true");
+    });
+
+    it("persists the session-config tab per container and drops it on close (task-129)", async () => {
+        seedDesktopDock();
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        const tabId = "pane:right:session-config:session-1";
+        (wrapper.vm as unknown as { openDockTab: (id: string) => void }).openDockTab(tabId);
+        await flushPromises();
+
+        await expectStored(() => {
+            expect(storedLayout().dockTabs).toEqual([tabId]);
+            // 激活态写进**右栏**槽位（138 的两槽模型），旧镜像同步为 right 的值。
+            expect((storedLayout().activeDockTabs as { right: string | null }).right).toBe(tabId);
+            expect(storedLayout().activeDockTab).toBe(tabId);
+        });
+
+        await wrapper.get(`[data-testid="dock-tab-close-${tabId}"]`).trigger("click");
+        await flushPromises();
+
+        await expectStored(() => {
+            expect(storedLayout().dockTabs).toEqual([]);
+            expect((storedLayout().activeDockTabs as { right: string | null }).right).toBeNull();
+        });
+        // 关掉后不残留：面板体与容器列一起消失（0 页签 ⇒ 收起，既有语义）。
+        expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {

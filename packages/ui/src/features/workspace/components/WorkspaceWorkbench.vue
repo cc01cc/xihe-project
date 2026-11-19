@@ -10,7 +10,7 @@ import {
     DOCK_WIDTH_DEFAULT,
     MAIN_MIN_WIDTH,
     TREE_COLLAPSED_WIDTH,
-    canOpenDockTab,
+    canOpenPaneTab,
     clampDockWidth,
     clampTreeWidth,
     markMainFloorHintShown,
@@ -23,6 +23,8 @@ import {
     hasWorkspaceLayout,
     isDockTabId,
     readWorkspaceLayout,
+    writeWorkspaceActiveDockTabs,
+    type ActiveDockTabs,
     type DockTabId,
     type WorkbenchSqueezeDemand,
     type WorkbenchSqueezeResult,
@@ -47,6 +49,7 @@ import {
     type ContainerId,
     type ContainerMode,
 } from "../lib/containers";
+import { SESSION_CONFIG_VIEW, paneTabContainer, paneTabId, paneTabView } from "../lib/panelTabs";
 import {
     resolveMoveKey,
     resolveNavKey,
@@ -369,9 +372,41 @@ function onContainerRowKey(payload: ContainerRowKeyPayload): void {
     );
 }
 
+/**
+ * 页签的容器归属：pane id 自带容器，裸 8 值恒右栏 —— 与 `lib/containers.ts#containerOf`
+ * 同一口径（本组件只在「按哪一栏的额度记账 / 写哪一栏的激活态」两处需要它）。
+ */
+function containerOfDockTab(id: DockTabId): ContainerId {
+    return paneTabContainer(id) ?? "right";
+}
+
+/**
+ * 右栏容器里**属于右栏**的页签。task-129：持久化数组是**一份**（138 的口径），里面可以同时躺着
+ * `pane:main:*` 与右栏页签；右栏行/右栏 body 只能渲染自己那一栏的 —— 不过滤的话主栏页签会
+ * 在右栏行里多画一遍（同一 id 两处渲染）。
+ */
 const dockTabs = computed<DockTab[]>(() =>
-    layout.value.dockTabs.map((id) => ({ id, label: dockTabLabel(id, t) })),
+    layout.value.dockTabs
+        .filter((id) => containerOfDockTab(id) === "right")
+        .map((id) => ({ id, label: dockTabLabel(id, t) })),
 );
+
+/** 右栏里的 pane 形态页签（今天只有 session-config）：面板体由 `WorkspaceDockPanelContent` 渲染。 */
+const paneDockTabs = computed(() => dockTabs.value.filter((tab) => paneTabView(tab.id) !== null));
+
+/**
+ * 当前会话的「会话配置」容器页签 id（task-129 / D-1907 rev10）。
+ *
+ * <p>为什么落在**右栏**：主栏「+」自 task-140 起是「组件选择器」，选中的组件一律开进右栏
+ * dock（`openDockTab` 的历史语义，8 个静态面板都这样）—— 会话配置跟它们同列，落点也必须同栏，
+ * 否则同一个「+」里两个动作的去向不一致。`pane:main:*` 的面板体宿主是 task-150 的事。</p>
+ *
+ * <p>无会话（新建态）⇒ `null`：没有 sid 就构造不出合法 pane id，宁可不列这一项。</p>
+ */
+const sessionConfigTabId = computed<DockTabId | null>(() => {
+    const id = paneTabId("right", SESSION_CONFIG_VIEW, props.sessionId);
+    return isDockTabId(id) ? id : null;
+});
 
 /**
  * task-94 S2：树**不再是行内列**（它是右栏的 `files` 页签），所以「挤压模型要吃树的渲染态」
@@ -661,20 +696,48 @@ function revealRightColumn(): void {
     if (containerMode.value === "single") layout.value.activeColumn = "right";
 }
 
+/**
+ * 让某个页签成为**它所在容器**的活动页签，并把活动态立刻分片落盘。
+ *
+ * <p>task-129 接线：`writeWorkspaceActiveDockTabs`（task-138 建好、此前无产品调用方）就是在这里
+ * 用上的 —— 激活态由点击驱动，而整份写被几何动作去抖合并（250ms）；不立刻写，刷新落在窗口里
+ * 就回到挂载时的值。整份写的读侧本来就「内存容器态 → 分片 → 旧镜像」三路兜底（task-126 口径），
+ * 这里只补即时那一笔，不新增第二份真源。</p>
+ *
+ * <p>pane 页签的容器写在 id 里（138），所以激活态必须写进**对应那一栏**的槽位；旧镜像
+ * `activeDockTab` 只跟随右栏（兼容期 ADR：它恒等于 right 的值）。</p>
+ */
+function activateDockTab(id: DockTabId, container: ContainerId): void {
+    const current: ActiveDockTabs = layout.value.activeDockTabs ?? { main: null, right: null };
+    const next: ActiveDockTabs =
+        container === "main" ? { ...current, main: id } : { ...current, right: id };
+    layout.value.activeDockTabs = next;
+    if (container === "right") {
+        layout.value.activeDockTab = id;
+        layout.value.dockCollapsed = false;
+        revealRightColumn();
+    }
+    if (props.workspaceId && !props.isMobile) {
+        writeWorkspaceActiveDockTabs(props.workspaceId, next);
+    }
+}
+
 /** Opening a tab that is already open keeps it, activates it and expands the dock. */
 function openDockTab(id: DockTabId): void {
     const tabs = layout.value.dockTabs;
+    const container = containerOfDockTab(id);
     if (!tabs.includes(id)) {
         // PLAN-0626 D26-06: the cap is a visible refusal, never a silent no-op.
-        if (!canOpenDockTab(tabs.length)) {
+        // task-129：额度**按容器**记（138 的 `capFor`：main 8 / right 6）—— 右栏开满不该吃掉
+        // 主栏额度，主栏页签也不该把右栏挤没。右栏口径与旧的全局 6 相同（裸 id 恒右栏）。
+        const used = tabs.filter((tab) => containerOfDockTab(tab) === container).length;
+        if (!canOpenPaneTab(container, used)) {
             toast.warning(t("workspace.dockTabsFull"));
             return;
         }
         layout.value.dockTabs = [...tabs, id];
     }
-    layout.value.activeDockTab = id;
-    layout.value.dockCollapsed = false;
-    revealRightColumn();
+    activateDockTab(id, container);
 }
 
 /**
@@ -694,14 +757,28 @@ function openDockTab(id: DockTabId): void {
  */
 const mainAddEntries = computed<
     { id: DockTabId; label: string; checked: boolean; testid: string }[]
->(() =>
-    DOCK_TAB_IDS.map((id) => ({
-        id,
-        label: dockTabLabel(id, t),
-        checked: dockTabs.value.some((tab) => tab.id === id),
-        testid: `workspace-add-item-${id}`,
-    })),
-);
+>(() => {
+    const entries: { id: DockTabId; label: string; checked: boolean; testid: string }[] =
+        DOCK_TAB_IDS.map((id) => ({
+            id,
+            label: dockTabLabel(id, t),
+            checked: dockTabs.value.some((tab) => tab.id === id),
+            testid: `workspace-add-item-${id}`,
+        }));
+    // task-129 / D-1907 rev10：会话配置是**容器组件**，与 8 个静态面板同列在一张选择器里
+    // （rev7「两容器 + 弹出同一组组件」）。id 走 138 的三元组（带容器 + 会话）⇒ 同一会话在
+    // 两栏各开一份就是两个不同 id；无会话时不列（没有 sid 构造不出合法 id）。
+    const configId = sessionConfigTabId.value;
+    if (configId !== null) {
+        entries.push({
+            id: configId,
+            label: dockTabLabel(configId, t),
+            checked: dockTabs.value.some((tab) => tab.id === configId),
+            testid: "workspace-add-item-session-config",
+        });
+    }
+    return entries;
+});
 
 /** 主栏「+」选中某个组件：只转发给 `openDockTab`（单一 writer），不在这里写布局。 */
 function onMainContainerAdd(id: string): void {
@@ -739,9 +816,8 @@ function toggleDock(): void {
 
 function setActiveDockTab(id: string): void {
     if (!isDockTabId(id) || !layout.value.dockTabs.includes(id)) return;
-    layout.value.activeDockTab = id;
-    layout.value.dockCollapsed = false;
-    revealRightColumn();
+    // task-129：与 open 走同一条激活路径 —— 激活态的容器槽位与分片落盘只有那一处实现。
+    activateDockTab(id, containerOfDockTab(id));
 }
 
 /**
@@ -784,11 +860,27 @@ function closeDockTab(id: string): void {
         closingIndex = isDockTabId(id) ? tabs.indexOf(id) : -1,
         remaining = tabs.filter((tab) => tab !== id);
     if (closingIndex < 0) return;
+    const closed = tabs[closingIndex],
+        container = containerOfDockTab(closed);
     layout.value.dockTabs = remaining;
-    if (layout.value.activeDockTab === id) {
-        // After the filter `remaining[closingIndex]` is the tab that used to sit on the
-        // right of the closed one; it is absent only when the closed tab was last.
-        layout.value.activeDockTab = remaining[closingIndex] ?? remaining[closingIndex - 1] ?? null;
+    // task-129：只清**被关那一栏**的激活态，另一栏的活动页签不受影响（138 的两槽模型）。
+    const current: ActiveDockTabs = layout.value.activeDockTabs ?? { main: null, right: null };
+    let nextActive: ActiveDockTabs | null = null;
+    if (current[container] === id) {
+        // 同容器内的近邻（右优先，PLAN-0626 D26-13）：跨栏邻居不算 —— 右栏关掉最后一个页签
+        // 不该把主栏的会话页签抬成右栏活动项。
+        const siblings = remaining.filter((tab) => containerOfDockTab(tab) === container);
+        const passed = tabs
+            .slice(0, closingIndex)
+            .filter((tab) => containerOfDockTab(tab) === container).length;
+        const neighbor = siblings[passed] ?? siblings[passed - 1] ?? null;
+        nextActive =
+            container === "main" ? { ...current, main: neighbor } : { ...current, right: neighbor };
+        layout.value.activeDockTabs = nextActive;
+        if (container === "right") layout.value.activeDockTab = neighbor;
+    }
+    if (nextActive && props.workspaceId && !props.isMobile) {
+        writeWorkspaceActiveDockTabs(props.workspaceId, nextActive);
     }
     if (remaining.length === 0) {
         layout.value.dockCollapsed = true;
@@ -876,12 +968,29 @@ watch(
 );
 
 /**
+ * D-1907 rev10：聊天列摘要行（`session-settings-summary`）是**会话配置页签的快捷开关**，
+ * 不再是 context 面板的本体入口 —— 点一下在右栏容器里开 `pane:right:session-config:<sid>`。
+ *
+ * <p>「已开则聚焦、不重复开」**不在这里判**：`openDockTab` 的 `tabs.includes` 就是唯一判定
+ * （与右键「+」选同一项走的是同一条路）。复制一份判定 = 两处会漂的真源。</p>
+ *
+ * <p>移动端没有 dock（`SessionSettingsPanel` 就地展开），调用直接 no-op：手机上没有可开页签的
+ * 容器行，强改布局会把持久化写坏（与深链 agent 那条守卫同一条纪律）。</p>
+ */
+function openSessionConfigTab(sessionId: string | null): void {
+    if (props.isMobile) return;
+    const id = paneTabId("right", SESSION_CONFIG_VIEW, sessionId);
+    if (!isDockTabId(id)) return;
+    openDockTab(id);
+}
+
+/**
  * PLAN-0626 M2: the chat column is rendered by the page (this component's `#center`
  * slot), so the "open the settings panel" entry has to reach the dock from outside.
  * The page calls this through a template ref — the same shape it already uses in the
  * opposite direction (`ChatPanel` exposes `insertMention`).
  */
-defineExpose({ openDockTab });
+defineExpose({ openDockTab, openSessionConfigTab });
 </script>
 
 <template>
@@ -1173,6 +1282,7 @@ defineExpose({ openDockTab });
                 v-if="!dockviewEnabled && dockOpen && rightVisible"
                 :tabs="dockTabs"
                 :active-tab="activeDockTab ?? ''"
+                :session-id="sessionId"
                 :width="layout.dockWidth"
                 :fill="containerMode === 'single'"
                 :default-width="DOCK_WIDTH_DEFAULT"
@@ -1290,6 +1400,22 @@ defineExpose({ openDockTab });
                         :session-id="sessionId"
                         :workspace-id="workspaceId"
                         :agent-id="deepLinkAgentId"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
+                </template>
+                <!--
+                    task-129：pane 形态页签（今天只有 `pane:right:session-config:<sid>`）的面板体。
+                    `WorkspaceDock` 的面板体来自父级具名 slot（`<slot :name="activeTab">`），静态 8 值
+                    各自写了一份；pane id 是动态的 ⇒ 只能在这里按当前页签集合 v-for 生成。
+                    内容仍走 `WorkspaceDockPanelContent`（138 已实现 session-config 分支），两条渲染
+                    路径（手写 dock / dockview 壳）共用同一份，不在这里另写一遍。
+                -->
+                <template v-for="tab in paneDockTabs" :key="tab.id" #[tab.id]>
+                    <WorkspaceDockPanelContent
+                        :id="tab.id"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
                         @close="collapseDock"
                         @mention="emit('mention', $event)"
                     />

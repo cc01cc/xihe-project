@@ -9,7 +9,9 @@ import {
     DOCK_WIDTH_MAX,
     DOCK_WIDTH_MIN,
     clampDockWidth,
+    isDockTabId,
 } from "../../../composables/useWorkspaceLayout";
+import { SESSION_CONFIG_VIEW, paneTabId } from "../lib/panelTabs";
 import { useLiveResize } from "../../../composables/useLiveResize";
 import SashGrip from "../../../components/shared/SashGrip.vue";
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,8 +89,20 @@ const props = withDefaults(
          * real layout engine); e2e turns it on via `globalThis.__xhUseDockview`.
          */
         useDockview?: boolean;
+        /**
+         * task-129（D-1907 rev10）：当前会话 id —— 「+」菜单要列**会话配置**（容器组件，
+         * id 带会话：`pane:right:session-config:<sid>`）。没有会话时该项不列：缺 sid 构造不出
+         * 合法 pane id，列一个点开就死的项比不列更差。
+         */
+        sessionId?: string | null;
     }>(),
-    { maxVisibleTabs: 3, defaultWidth: DOCK_WIDTH_DEFAULT, focus: false, fill: false },
+    {
+        maxVisibleTabs: 3,
+        defaultWidth: DOCK_WIDTH_DEFAULT,
+        focus: false,
+        fill: false,
+        sessionId: null,
+    },
 );
 
 const emit = defineEmits<{
@@ -126,9 +140,35 @@ const overflowOpen = ref(false);
  * 那是无效组合。**状态真源仍是 `props.tabs`**：`:model-value` 只读投影，点击只 emit
  * `reopen-tab`，不接 `update:model-value`（否则菜单会自己记一份和第二份真源打架）。</p>
  */
-const dockMenuTabs = computed<{ id: DockTabId; open: boolean }[]>(() =>
-    DOCK_TAB_IDS.map((id) => ({ id, open: props.tabs.some((tab) => tab.id === id) })),
-);
+interface DockMenuItem {
+    id: DockTabId;
+    open: boolean;
+    /**
+     * 项的 `data-testid`。静态面板沿用 `dock-reopen-item-<id>`（66+ 既有消费点不改名）；
+     * task-129 的会话配置项 **不能**拼进 id（里面带 `:sid`，会变成每次会话都不同的 testid），
+     * 故给一个稳定名 `dock-reopen-item-session-config`。
+     */
+    testid: string;
+}
+
+const dockMenuTabs = computed<DockMenuItem[]>(() => {
+    const entries: DockMenuItem[] = DOCK_TAB_IDS.map((id) => ({
+        id,
+        open: props.tabs.some((tab) => tab.id === id),
+        testid: `dock-reopen-item-${id}`,
+    }));
+    // task-129 / D-1907 rev10：会话配置是容器组件，与静态面板**同列在一张选择器里**
+    // （rev7「两容器 + 弹出同一组组件」）。id 走 138 的三元组，落本容器（right）。
+    const configId = paneTabId("right", SESSION_CONFIG_VIEW, props.sessionId ?? null);
+    if (isDockTabId(configId)) {
+        entries.push({
+            id: configId,
+            open: props.tabs.some((tab) => tab.id === configId),
+            testid: "dock-reopen-item-session-config",
+        });
+    }
+    return entries;
+});
 function reopenTab(id: DockTabId): void {
     // 菜单关闭由原语（`DropdownMenuCheckboxItem` 的 select 后 dismiss）负责，
     // 这里只 emit：布局写入归调用方 `openDockTab`（单一 writer 不变）。
@@ -375,7 +415,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
                         <DropdownMenuCheckboxItem
                             v-for="entry in dockMenuTabs"
                             :key="entry.id"
-                            :data-testid="`dock-reopen-item-${entry.id}`"
+                            :data-testid="entry.testid"
                             :model-value="entry.open"
                             class="justify-start gap-2"
                             @select="reopenTab(entry.id)"

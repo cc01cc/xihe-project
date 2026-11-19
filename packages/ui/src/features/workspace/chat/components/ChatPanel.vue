@@ -77,7 +77,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-    /** PLAN-0626 M2: the chat summary row is the entry to the dock's `context` panel. */
+    /** D-1907 rev10（task-129）：the chat summary row opens the session-config container tab. */
     "open-context-panel": [];
 }>();
 
