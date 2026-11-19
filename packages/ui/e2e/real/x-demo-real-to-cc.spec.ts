@@ -24,6 +24,7 @@ import {
     LONG_TIMEOUT_MS,
     REAL_PROVIDER_POLL_MS,
 } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const REAL = process.env.XIHE_E2E_DEMO_REAL === "1";
 const SHOT_DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";

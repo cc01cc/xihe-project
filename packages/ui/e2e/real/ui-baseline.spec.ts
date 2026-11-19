@@ -48,10 +48,14 @@ const OUT_FILE =
 const SHOT_DIR = path.join(ONE_ROOT, ".tmp", "xh", "ui-gates", "shots");
 
 // ── 判据常量（括号内为 2026-11-19 真机现状，改前应红） ────────────────────────────
-/** ① 顶带层数上限。修正口径（Lead 2026-11-19 复核）：会话页顶部 = 4 条带、合计 124px
- *  （secondary-nav 32 + container-tabs 32 + WorkspaceView.vue:563-575 ~28 + 会话头 h-8 32）；
- *  settings-summary 属 chat 列内行（SessionSettingsPanel.vue:196，由 ChatPanel 挂载），**不计入**顶带。
- *  清单 v1 的「157px / 5 条带」是并入口径，只作参考、不作断言值。 */
+/** ① 顶带层数上限。真机口径（2026-11-20 三档实测，读数与截图见
+ *  internal/A03-xihe/evidence/2026-11-20-chrome-density/README.md）：会话页顶部 = **3 条带 / 96px**
+ *  （container-tabs 0–32 + workspace-conversation 32–64 + settings-summary 64–96），contentTop=97；
+ *  其中 settings-summary 属 chat 列内行（SessionSettingsPanel.vue:196，由 ChatPanel 挂载），按本 spec
+ *  口径 **不计入**顶带 ⇒ 常驻顶带 **2 条 / 64px**（chromeHeight=64，探针与 spec 读数一致）。
+ *  旧「4 条带 / 124px」含 task-118 移除的 workspace-secondary-nav 与 task-60 移除的 28px
+ *  session-sandbox-enforcement 带；清单 v1 的「157px / 5 条带」是并入口径 —— 两者只作历史参考，
+ *  不作断言值（常量仍取上限：≤3 条 / ≤104px）。 */
 const CHROME_MAX_BANDS = 3;
 /** 行高基数：xs 行 32px；内容区起点允许 3 行 + 8px 边框内距 */
 const CHROME_ROW_HEIGHT_PX = 32;
@@ -183,6 +187,12 @@ interface LayoutReading {
     chromeEnd: number;
     chromeHeight: number;
     chromeNotice: number;
+    /** ①A2 口径（task-120）：chrome 区内**有主像素**（命中 data-testid / role=tablist 的 raw 段，含 ≤4px 碎片）的覆盖和，按 chromeEnd 截断后扣掉运行态横幅 */
+    chromeCoverage: number;
+    /** 被 `to - from > 4` 判据丢弃的 ≤4px 碎片（只统计 chrome 区内、非排除键），供诊断 */
+    chromeSlivers: Band[];
+    /** chrome 区内只命中裸标签（无 data-testid / role）的段：它们不计入 chromeCoverage，红时用来指出「哪一段没有主」 */
+    chromeUnattributed: Band[];
     composer: Rect | null;
     /** composer 与视口求交后的可见高度：「横幅不得压缩 composer 可视高度」的观测值 */
     composerVisibleH: number | null;
@@ -506,7 +516,9 @@ async function readLayout(page: Page): Promise<LayoutReading> {
         // 顶带扫描：上限取内容区起点（旧探针写死 120 导致 5 条带被截断成 4 条，A2）
         const scanTo = Math.max(1, Math.round(contentTop ?? Math.min(240, viewport.h / 2)));
         const contentX = Math.round(viewport.w * 0.55);
-        const raw: { fromY: number; key: string }[] = [];
+        // 每段带 attributed：像素是否归属某个**具名** chrome 元素（data-testid / role=tablist）。
+        // 只命中裸标签（div/span/none）的段不计入 A2 覆盖 —— 否则 tiling 恒等覆盖，门就永远不会红（task-120）。
+        const raw: { fromY: number; key: string; attributed: boolean }[] = [];
         let last: string | null = null;
         for (let y = 0; y < scanTo; y += 1) {
             const hit = document.elementFromPoint(contentX, y);
@@ -524,18 +536,27 @@ async function readLayout(page: Page): Promise<LayoutReading> {
                 }
                 node = node.parentElement;
             }
+            const attributed = key !== null;
             if (!key) key = hit ? hit.tagName.toLowerCase() : "none";
             if (key !== last) {
-                raw.push({ fromY: y, key });
+                raw.push({ fromY: y, key, attributed });
                 last = key;
             }
         }
-        const bands: { key: string; fromY: number; h: number }[] = [];
+        // raw 段 = 逐 y 扫描得到的连续片段（tiling）：先全部保留，再按 4px 判据筛出「带」。
+        // task-120：A2 的覆盖和必须用**未经 4px 过滤**的 raw 段算，否则 1440 的 2px 碎片会被当成缺口。
+        const rawSegs: { key: string; fromY: number; h: number; attributed: boolean }[] = [];
         for (let i = 0; i < raw.length; i += 1) {
             const from = raw[i].fromY;
             const to = i + 1 < raw.length ? raw[i + 1].fromY : scanTo;
-            if (to - from > 4) bands.push({ key: raw[i].key, fromY: from, h: to - from });
+            rawSegs.push({
+                key: raw[i].key,
+                fromY: from,
+                h: to - from,
+                attributed: raw[i].attributed,
+            });
         }
+        const bands = rawSegs.filter((seg) => seg.h > 4);
         // 顶带 = 常驻 chrome；排除 chat 列内行与运行态横幅（口径见 CHROME_EXCLUDED_KEYS）
         // 下界取「会话区容器带」的底边（workspace-conversation）：其下是 chat 列内行（settings-summary 等），
         // 不是顶带 —— 按带数累加会把它们算进来（1440/1600 实测会出现 5~6 条假带）。
@@ -548,6 +569,29 @@ async function readLayout(page: Page): Promise<LayoutReading> {
         const notice = rect('[data-testid="sse-subscriber-limit-notice"]');
         const chromeNotice = notice ? notice.h : 0;
         const chromeHeight = chromeEnd - chromeNotice;
+        // ①A2 口径（task-120 / task-117 归因）：chrome 区覆盖和按 **raw 段**累加（含 ≤4px 碎片），
+        // 不是 Σ(>4px 带高)。task-117 当时 1440 的 workspace-secondary-nav 被 28px 行内导航项切成 2/28/2
+        // 三段，两侧各 2px 在旧口径里被丢掉 ⇒ Σ带高 120 vs chromeHeight 124（**历史读数**：该导航带已由
+        // task-118 移除，现 chromeHeight=64），红的是量测口径不是产品缺口。
+        // 最后一段可能越过容器底边 ⇒ 按 chromeEnd 截断；运行态横幅不在产品 chrome 里 ⇒ 扣掉 chromeNotice。
+        // 只累加 **attributed** raw 段（命中 data-testid / role=tablist）：逐 y tiling 的覆盖和恒等于
+        // chromeEnd，若不分归属，A2 就永远不可能红 —— 那不是门。只命中裸标签的段进 chromeUnattributed。
+        const chromeRaw = rawSegs.filter((seg) => seg.fromY < chromeEnd);
+        const chromeCoverage = Math.max(
+            0,
+            chromeRaw
+                .filter((seg) => seg.attributed)
+                .reduce(
+                    (sum, seg) => sum + (Math.min(seg.fromY + seg.h, chromeEnd) - seg.fromY),
+                    0,
+                ) - chromeNotice,
+        );
+        const chromeSlivers = chromeRaw.filter(
+            (seg) => seg.h <= 4 && !excludedKeys.includes(seg.key),
+        );
+        const chromeUnattributed = chromeRaw.filter(
+            (seg) => !seg.attributed && !excludedKeys.includes(seg.key),
+        );
 
         const composerRect = rect('[data-testid="chat-composer"]');
         // 「横幅/顶带不得压缩 composer 可视高度」的观测值：composer 与视口的交集高度
@@ -597,6 +641,9 @@ async function readLayout(page: Page): Promise<LayoutReading> {
             chromeEnd,
             chromeHeight,
             chromeNotice,
+            chromeCoverage,
+            chromeSlivers,
+            chromeUnattributed,
             composer: composerRect,
             composerVisibleH,
             composerInner: inner
@@ -805,7 +852,8 @@ async function runMatrix(
             )
             .toBe(theme);
 
-        // ① 顶带层数与顶带高度（A1 修正口径：现状 4 条带 / 合计 124px）
+        // ① 顶带层数与顶带高度（A1 修正口径：真机三档 3 条 / 96px，排除 settings-summary 后 2 条 / 64px、
+        //    contentTop=97；断言常量取上限 ≤3 条，见文件头常量注释）
         expect
             .soft(
                 layout.chromeBands.length,
@@ -819,14 +867,17 @@ async function runMatrix(
             )
             .toBeLessThanOrEqual(CHROME_MAX_CONTENT_TOP);
 
-        // ①A2（doc:34）：带层扫描必须覆盖到会话容器底边 —— Σ(带高) 与 chromeHeight 之差 ≤1px，
-        //    否则「4 带 124px」可能只是扫描被截断（旧探针 y<120 正是这样把 124 读成 120）。
+        // ①A2（doc:34；task-120 改口径）：带层扫描必须覆盖到会话容器底边 —— **raw 段覆盖和**（含 ≤4px
+        //    碎片）与 chromeHeight 之差 ≤1px。旧口径只累加 >4px 的带：1440 的导航带被 28px 行内项切成
+        //    2/28/2，两侧各 2px 碎片被丢 ⇒ Σ带高 120 vs chromeHeight 124（task-117 **历史读数**，该带已由
+        //    task-118 移除，现 chromeHeight=64），红的是量测口径不是产品缺口
+        //    （task-117 归因）。碎片单列 chromeSlivers；Σ(>4px) 仅保留为诊断读数，不再参与判据。
         const chromeBandSum = layout.chromeBands.reduce((sum, band) => sum + band.h, 0);
-        const bandScanGap = Math.abs(chromeBandSum - layout.chromeHeight);
+        const bandScanGap = Math.max(0, layout.chromeHeight - layout.chromeCoverage);
         expect
             .soft(
                 bandScanGap,
-                `${tag} ①A2 带层扫描缺口 ${fmt(bandScanGap)}px（实测 Σ带高=${fmt(chromeBandSum)}，chromeHeight=${fmt(layout.chromeHeight)}；阈值 ≤${BAND_SCAN_TOLERANCE_PX}px 归属卡 task-102 F-8/A2）实测带：${describeBands(layout.chromeBands)}`,
+                `${tag} ①A2 带层扫描缺口 ${fmt(bandScanGap)}px（实测 raw 覆盖=${fmt(layout.chromeCoverage)}，chromeHeight=${fmt(layout.chromeHeight)}，≤4px 碎片 ${layout.chromeSlivers.length} 段：${describeBands(layout.chromeSlivers) || "无"}；无主（只命中裸标签、不计入覆盖）${layout.chromeUnattributed.length} 段：${describeBands(layout.chromeUnattributed) || "无"}；旧口径 Σ(>4px 带高)=${fmt(chromeBandSum)} 仅作诊断；阈值 ≤${BAND_SCAN_TOLERANCE_PX}px 归属卡 task-102 F-8/A2）实测带：${describeBands(layout.chromeBands)}`,
             )
             .toBeLessThanOrEqual(BAND_SCAN_TOLERANCE_PX);
 
@@ -1197,10 +1248,13 @@ async function runMatrix(
         //    F-6：旧「新建会话与搜索框纵向不重叠」立论已撤（D-1236/task-373 起该键就是两项菜单触发器），删除。
         //    可见性一律用 count/isVisible 判（F-7：不按 rect 猜）。
         const { newChat, addWs } = layout.sidebar;
-        const importSourceBox = await page
-            .locator('[data-testid="sidebar-import-source"]')
-            .boundingBox()
-            .catch(() => null);
+        // task-120 F-8：Playwright 未配 use.actionTimeout（playwright.config.ts），boundingBox() 对 0 匹配
+        // 元素会无限等待且 .catch() 永不触发（实测 DEBUG=pw:api 卡死到 test.slow 后 180s 被杀）⇒ 先 count 再取 box。
+        // 注意：sidebar-import-source 在 Sidebar.vue:284-297 的 DropdownMenuContent 内，菜单未展开时不在 DOM，
+        // 这里按「取不到 ⇒ null」保留原容错语义（与改动前一致，不新增红）。
+        const importSource = page.locator('[data-testid="sidebar-import-source"]');
+        const importSourceBox =
+            (await importSource.count()) > 0 ? await importSource.first().boundingBox() : null;
         expect.soft(newChat, `${tag} ⑥未找到 [data-testid=sidebar-new-chat]`).not.toBeNull();
         expect.soft(addWs, `${tag} ⑥未找到 [data-testid=sidebar-add-workspace]`).not.toBeNull();
 
@@ -1241,11 +1295,10 @@ async function runMatrix(
         }
 
         // E2'：新建会话必须在首个会话行之上（Sidebar.vue:279-337 现状仍在搜索行 ⇒ 改前必红）
-        const firstSessionRow = await page
-            .locator('[data-testid="session-item"]')
-            .first()
-            .boundingBox()
-            .catch(() => null);
+        // task-120 F-8：同上，0 条会话时 first().boundingBox() 会无限等待 ⇒ 先 count。
+        const sessionRows = page.locator('[data-testid="session-item"]');
+        const firstSessionRow =
+            (await sessionRows.count()) > 0 ? await sessionRows.first().boundingBox() : null;
         if (newChat && firstSessionRow) {
             const newChatBottom = newChat.y + newChat.h;
             expect
