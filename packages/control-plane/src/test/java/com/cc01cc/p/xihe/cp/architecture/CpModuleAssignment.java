@@ -118,7 +118,7 @@ final class CpModuleAssignment implements SliceAssignment {
         //   1. design.md:12 (D-1089): "工作区与组织架构两者独立 … 组织在主体侧" — so NOT workspace, and the
         //      rules' subject is people/agent principals, so not a resource slice either;
         //   2. half of the family already lives in `cp.policy` (OrgUnitGovernancePolicy, OrgUnitGrants,
-        //      OrgUnitGrantExpander, OrgUnitGrantSource, PendingOrgUnitGrantSource), i.e. it already resolves
+        //      OrgUnitGrantExpander, OrgUnitGrantSource, JdbcOrgUnitGrantSource), i.e. it already resolves
         //      to "policy" through the top-level package branch above. Assigning the mixed-package half
         //      anywhere else would split one capability family across two slices and manufacture an
         //      artificial policy<->X edge in the cycle diagnostics.
