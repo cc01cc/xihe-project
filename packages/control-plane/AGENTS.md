@@ -42,9 +42,9 @@ mvn -o -q test "-Dtest=CpArchitectureTest"
 
 **task-583 起 Checkstyle 已绑到 `validate` 相位**：上面每条命令（含 `mvn -o -q test-compile`、`mvn -o test -Dtest=X`）都会先过 checkstyle，违规在编译前就红 ⇒ 清单里的 `mvn -o -q checkstyle:check` 只剩「只想单独跑这一道门」的用途。代价实测 2.2 s（全量，基线 0 违规）；显式跳过用 `-Dcheckstyle.skip=true`（不默认关）。
 
-### L2 全量的标准做法：2 shard（唯一允许的并行）
+### L2 全量的标准做法：2 shard 切分（runner 顺序执行）
 
-单进程全量 **598 s**（2654 测试 / 362 类），2 shard 并行 **301–343 s**（**−49.6%**）。**一次只允许一个"会写 `target/` 且产生权威测量"的全量执行体** —— 两个并发 `mvn test` 会共享 `target/classes`、`target/test-classes`、`target/surefire-reports*`，Maven 无锁，结果是**静默互覆盖 → 假绿/假红**（2026-11-02 实测：shard 把报告写成 `surefire-reports-shard-a/b`，读默认目录者只看到半个套件）。需要两个**完整** `mvn test` 同树并行时用 `D32-26 T2`：`"-Dxihe.build.suffix=-b"`（PowerShell 必须加引号）。
+单进程全量 **598 s**（2654 测试 / 362 类），2 shard 并行 **301–343 s**（**−49.6%**，2026-11-02 历史读数；并行 runner 已不在仓内，现行只有顺序 runner）。**一次只允许一个"会写 `target/` 且产生权威测量"的全量执行体** —— 两个并发 `mvn test` 会共享 `target/classes`、`target/test-classes`、`target/surefire-reports*`，Maven 无锁，结果是**静默互覆盖 → 假绿/假红**（2026-11-02 实测：shard 把报告写成 `surefire-reports-shard-a/b`，读默认目录者只看到半个套件）。需要两个**完整** `mvn test` 同树并行时用 `D32-26 T2`：`"-Dxihe.build.suffix=-b"`（PowerShell 必须加引号）。
 
 **这条不是"建议"，违反者会让正在跑的 JVM 读到空目录。** 2026-11-03 实测（改一个测试源后的 `mvn -o -q test-compile`，7.6 s 完成）：`target/test-classes` 在 t+2.4 s 变成 **0 个 class**、t+4.2 s 起回填、t+7.5 s 才回到 567 个。正在跑的套件按路径懒加载类/扫描组件，于是窗口内：
 
@@ -73,20 +73,22 @@ mvn -o "-Dxihe.target.dir=H:\zeotmp\cp-build-a" test -Dtest=ApprovalServiceTest
 - 跨卷可用（如 `C:/xihe-cp-build-x`）：H: 卷小文件写入约 120–200 ms/文件，是冷构建的主要成本，换卷能显著缩短冷编译。
 
 
-标准流程（在目标 worktree 内执行）：
+标准流程（在目标 worktree 内执行；runner 自己按 shard 编译到隔离目录，不再先 `test-compile`）：
 
 ```powershell
-git -C <worktree> merge --ff-only develop           # 1. 钉住 HEAD
-mvn -o -q test-compile                              # 2. 只编译一次：两 shard 只跑 surefire:test
-node one/.tmp/plan-eff-l2/run-shard-parallel.mjs    # 3. XIHE_SHARD_ROOT=<worktree>
+git -C <worktree> merge --ff-only develop                                       # 1. 钉住 HEAD
+$env:JAVA_TOOL_OPTIONS = "-Xmx4g"                                              # 2. runner 不设堆上限
+node scripts/l2/run-shards-sequential.mjs --root <worktree> --out <产物目录>   # 3. 两 shard 顺序跑
 ```
 
-判据（缺一不可，全部在 `.tmp/plan-eff-l2/` 产物里）：
+`scripts/l2/run-shards-sequential.mjs` 是本仓现存的唯一 L2 shard runner：**顺序**执行，逐 shard 用 `mvn -o -q -Dxihe.target.dir=<target-root>/<runTag>-<shard> clean test-compile` 编译进隔离目录，再 `mvn -o surefire:test -Pl2-shard-{a,b} -Dxihe.target.dir=…` 跑（互不共享 `target/`）。旧的 `one/.tmp/plan-eff-l2/run-shard-parallel.mjs` **已不在仓内**；上面的 301–343 s 并行墙钟是 2026-11-02 历史读数，runner 头注释明确「parallel wall clock NOT re-measured」，顺序版不可相加当并行。
 
-1. `shard-coverage-check.json` 的 **`ok=true`** —— 期望类数 = A+B 实跑类数，`missing`/`unexpected`/`duplicates` 全空；覆盖口径是**源码声明的顶层类名**（不是文件名：`RuntimeAssignmentIntegrationTest.java` 里声明的是 `RuntimeExecutionSpecIntegrationTest`），并显式排除 abstract + 全方法 `docker-frozen` 的类。
-2. 同一文件的 **`headStable=true`**（`headBefore == headAfter`）—— 测量期间 develop 前进会让新增类被误报 `missing`。
-3. `shard-merged-failures.json` 与环境性基线白名单**差集 = 0**；每条失败带 shard 归属。
-4. `pythonInterpreter` 已自动注入 `-Dxihe.context.python`（worktree 无 `.venv` 时 `ContextEventReadContractIntegrationTest` **失败而非 skip**，极易误判为回归）。
+判据（缺一不可，全部在 `--out` 目录的 `clean-sequential-result.json` 里）：
+
+1. **`ok=true`** —— 语义是**测量有效**（收尾无脏 + coverage 完整 + `headStable` + 每 shard guard 通过），**不是「测试全绿」**；环境性基线红走 `failingSuites`，不影响 `ok`。退出码 0=有效 / 1=无效。
+2. **`coverage.ok=true`** —— 期望类数 = A+B 实跑类数，`missing`/`unexpected`/`duplicates` 全空；覆盖口径是**源码声明的顶层类名**（不是文件名：`RuntimeAssignmentIntegrationTest.java` 里声明的是 `RuntimeExecutionSpecIntegrationTest`），并显式排除 abstract + 全方法 `docker-frozen` 的类。
+3. **`headStable=true`**（merge 后、每 shard 前、收尾四处 HEAD 相同）—— 测量期间 develop 前进会让新增类被误报 `missing`。
+4. **`failingSuites` 与环境性基线白名单差集 = 0**，每条失败带 shard 归属；runner 自动注入 `-Dxihe.context.python`（取 `packages/agent/.venv` 或 `XH_PYTHON`；worktree 无 `.venv` 时 `ContextEventReadContractIntegrationTest` **失败而非 skip**，极易误判为回归）。
 
 5. **分区自检**：`ShardPartitionTest`（`src/test/java/com/cc01cc/p/xihe/cp/`，task-611）用 pom 的两个
    profile 复算 A/B 并断言 `(A∪B)==全量`、`A∩B==∅`，不等时点名缺席/重叠的类。**它自己落在 shard B**
@@ -94,7 +96,7 @@ node one/.tmp/plan-eff-l2/run-shard-parallel.mjs    # 3. XIHE_SHARD_ROOT=<worktr
    另外它记录的既有不对称：A 的 include 只覆盖 `*Test.java` 一种后缀，`Test*.java` 等结构上只能落 B
    —— 有人改 A 的 include 会在该测试的读数里红出来。
 
-`shard-{a,b}-report-dir.txt` 指向原始 surefire XML 目录，可绕过汇总直接复核。
+`shards[].reportDir` 指向各 shard 的原始 surefire XML 目录（`<target-root>/<runTag>-<shard>/surefire-reports-shard-{a,b}`），可绕过汇总直接复核；`node scripts/l2/shard-report.mjs --root <worktree> --log-dir <产物目录>` 打印逐 shard tests/failures、失败类清单与覆盖并集。
 
 PLAN-0584 的 Native Image 组件探针仅在 Windows x64 portable GraalVM 环境中运行：
 

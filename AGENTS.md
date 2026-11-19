@@ -8,7 +8,7 @@
 |----|------|------|
 | `packages/ui/` | 前端界面 (Vue 3 + Vite) | TypeScript |
 | `packages/control-plane/` | 路由 + 认证 + MCP 反向代理 | Java 25 / Spring Boot 4 |
-| `packages/agent/` | LLM 编排 + 工具调用 + RAG | Python 3.12 / LangChain |
+| `packages/agent/` | LLM 编排 + 工具调用 + RAG | Python 3.14 / LangChain |
 | `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.97.1 / rmcp 3.7.0 (edition 2024) |
 
 ## Tech Stack
@@ -95,7 +95,7 @@
 ## Plan and Release Rules
 
 - 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/`）；PLAN 工作包统一放在 workspace 根 `plans/`，本仓不另设；XH Spec Impact 与 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
-- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT，池表 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位，开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序**以该 skill 为准，本行不复述**。**禁止 `git worktree add` 新建**（仅池内全忙 + 用户明确授权时可建，且**必须同批登记池表**；本机实测 470 s 与空残留事故见 `DEV-002` §8.2）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
+- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为唯一 SSOT：池槽判定与槽表均以 `.agents/skills/worktree-lifecycle` 为准；**本仓当前未维护本地池表**，需要时按该 skill 建立并登记）：一个 lane 领一个**已存在**的槽位，开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序**以该 skill 为准，本行不复述**。**禁止 `git worktree add` 新建**（仅池内全忙 + 用户明确授权时可建，且**必须同批登记池表**；本机实测 470 s 与空残留事故见 `DEV-002` §8.2）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
 - **开发期数据无迁移包袱（D-215）**：XH 尚未上线，本地/隔离栈的开发数据属可丢弃物 ⇒ schema 变更可**直接清库重建**，**不写回填脚本、不做双读/双写/灰度开关、不保留「新旧快照并存」兼容分支**，也不把「存量行数对照」当验收判据；三条边界与清库前声明要求见 `DEV-002` §8.3。
 
@@ -128,4 +128,4 @@
 - **测试超时**：`test-timeout-budget.md`（10/30/120 s；>10 s 须 `timeout-exempt`；`mise run lint:e2e`）。
 - **测试成本根因**：`test-suite-cost.md` §1–§7；复用设计 `test-context-reuse-design.md`。
 - **dev 热循环/lane 同步**：`dev-hot-loop.md`（§11 有效；§1–§10 按 D-818 ① 废弃，看 §0 判定表）。
-- **团队角色/并行度**：`team-roster.md`（6 工位；不设编译位上限 D-936；测量值班 16:00–18:00 独占）。
+- **团队角色/并行度**：`team-roster.md`（工位表：4 条常驻模块分支 `ui-1`/`cp-1`/`agent-1`/`runtime-1` + `infra-N` + `verify` + `research-N` + `lead`；不设编译位上限 D-936；测量值班 16:00–18:00 独占）。

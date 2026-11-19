@@ -4,7 +4,7 @@ LLM 编排、工具调用、RAG — Python Agent 服务。基于 FastAPI + LangC
 
 ## Tech Stack
 
-- **Python** 3.12 — 运行时
+- **Python** 3.14 — 运行时（`.python-version` 与 `mise.toml` 的实际值；`pyproject.toml` 的 `requires-python = ">=3.12"` 只是地板，ruff/mypy 目标仍 py312）
 - **uv** — 包管理（非 pip/poetry）
 - **FastAPI** — HTTP 服务框架
 - **LangChain** / **LangGraph** — 编排框架
@@ -23,7 +23,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 
 ### File-Scoped
 - Run single test: `uv run pytest tests/unit/test_file.py -k "test_name" -v`
-- Lint single file: `ruff check src/xihe_agent/path/to/file.py`
+- Lint single file: `uv run ruff check src/xihe_agent/path/to/file.py`
 
 ### Full Suite
 - `uv run pytest` — 默认跑单测与 env-free 用例（`pyproject.toml` 设 `addopts = '-m "not integration"'`，`tests/integration/**` 带 `integration` marker 者自动 deselected；`tests/unit/test_integration_markers.py` 防漏标）；host 车道注入 `XIHE_E2E_PG_*` 后显式 `uv run pytest -m integration` 跑真实 PG 集成（`test_vector_store.py` 缺 env 仍按设计硬失败、非 skip）
@@ -41,6 +41,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - `api/` 按域分组承载 HTTP 路由、请求 schema 与路由级错误映射；`api/` 不得直接 import LangChain/LangGraph。
 - `agent_runner/tool_adapter.py` 是 `LCToolAdapter`（含 D5 writer gate、bounded preview、append 失败台账等共享事件 helper）的唯一归属；`agent_runner/graph_builder.py` 是 `create_react_agent` 直调的唯一归属（runner 主图与 registry/supervisor 均经其建图）。
 - `registry/` 保留 worker 配置/启停/文件持久化职责；`get_tools_for_worker` 为公开选择函数，supervisor/registry 不得引用其他模块私有符号（`_` 前缀）。
+- `llm/` 是 LLM 供应商调用的唯一落点：错误分类唯一实现 `llm/error_classification.py`（`classify_provider_exception` / `classify_rejected_body` / `classify_output_truncation` → 9 个 `LLM_*` / `CONTEXT_OVERFLOW` / `AGENT_STREAM_FAILED` 码），其他模块不得自建分类分支。
 - `agent/supervisor.py` 自持 supervisor 图（PLAN-0633 批次 E 移除 `langgraph-supervisor`）：`StateGraph` + `graph_builder.build_react_graph`，路由靠 `transfer_to_<id>` 工具返回 `Command(goto=…, graph=Command.PARENT)`。**v1 不挂 checkpointer**（`checkpoint_saver.SAFE_REACT_NODE_NAMES` 只覆盖 `model`/`tools`）；`/chat` 的 supervisor 分支仍不可达。
 - 依赖方向与例外清单见根级 SPEC `../../spec/agent/agent-module-boundaries.md`（PLAN-0473 归档时晋升，`active/implemented`）。
 
