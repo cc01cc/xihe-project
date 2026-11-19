@@ -675,6 +675,24 @@ public class SessionParticipantService {
         }
     }
 
+    /**
+     * task-29 / D-1890 M1: the display name of a participant row's principal — AGENT →
+     * {@code agent_principals.name}, HUMAN → the user's display name. Same sources as the roster
+     * view, so a wake prompt that names its addressee can never disagree with what the roster
+     * shows. Null when the principal row is gone (such a wake is refused earlier anyway).
+     */
+    public String displayNameOf(SessionParticipant row) {
+        if (row == null || row.getPrincipalId() == null) {
+            return null;
+        }
+        if (SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())) {
+            return agentPrincipalRepository.findById(row.getPrincipalId())
+                    .map(com.cc01cc.p.xihe.cp.entity.AgentPrincipal::getName).orElse(null);
+        }
+        return userRepository.findById(row.getPrincipalId())
+                .map(SessionParticipantService::displayNameOf).orElse(null);
+    }
+
     private void requireManage(String actorId, String workspaceId, Session session) {
         if (!canManage(actorId, workspaceId, session)) {
             // PLAN-0651 T1.5 (proposal B): the participant-face denial joins the canonical

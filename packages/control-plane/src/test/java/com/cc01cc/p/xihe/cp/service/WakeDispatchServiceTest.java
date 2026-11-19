@@ -474,14 +474,43 @@ class WakeDispatchServiceTest {
     }
 
     @Test
-    void wakePromptWithoutContentKeepsTheLegacyReferenceOnlyForm() {
+    void wakePromptWithoutContentKeepsTheReferenceOnlyForm() {
         stubAgentWake();
 
         service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null, null);
 
         String prompt = capturedPrompt();
-        assertEquals("[schedule wake " + ROUND + "] session=" + SESSION_ID
-                + " respond to the conversation.", prompt);
+        assertTrue(prompt.startsWith("[schedule wake " + ROUND + "] session=" + SESSION_ID),
+                "the operator/audit marker stays first: " + prompt);
+        assertTrue(prompt.contains("You are a participant of this conversation."),
+                "task-40 section 3 batch 2: the woken agent is told WHO it is, and an unresolved"
+                        + " principal falls back to a neutral phrase instead of a blank: " + prompt);
+        assertTrue(prompt.endsWith("Respond to the conversation in your own voice."),
+                "the reference-only form keeps the answering instruction: " + prompt);
+        assertFalse(prompt.contains("Triggering message"), "there is no excerpt to show: " + prompt);
+        assertFalse(prompt.contains("addressed to you by another participant"),
+                "a schedule wake has no sender: the prompt must not invent one: " + prompt);
+    }
+
+    @Test
+    void wakePromptNamesTheAddresseeFromTheRoster() {
+        // The real stack symptom (2026-11-19): the TO-woken agent read the sender's framing
+        // ("except me (xhLead) ... reassigned to ewLead") and reported the assignment as if IT had
+        // dispatched the work. The addressee line is the fix, so the name must come from the same
+        // place the roster reads, and it must precede the excerpt.
+        stubAgentWake();
+        when(participantService.displayNameOf(agent)).thenReturn("  ewLead  ");
+
+        service.fire(PARTICIPANT_ID, "to", ROUND, SESSION_ID, null, "除了我（xhLead）之外，这三条派给 ewLead。");
+
+        String prompt = capturedPrompt();
+        assertTrue(prompt.contains("You are ewLead."),
+                "the addressee is named, trimmed, and not the sender: " + prompt);
+        assertTrue(prompt.contains("answer as the addressee, in your own voice, not in the sender"),
+                "the role sentence separates addressee from sender: " + prompt);
+        assertTrue(prompt.indexOf("You are ewLead.") < prompt.indexOf("Triggering message"),
+                "the addressee line must come BEFORE the sender's framing: " + prompt);
+        assertTrue(prompt.contains("这三条派给 ewLead"), "the excerpt still carries the ask: " + prompt);
     }
 
     @Test

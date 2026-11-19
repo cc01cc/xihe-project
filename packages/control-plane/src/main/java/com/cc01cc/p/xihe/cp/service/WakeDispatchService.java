@@ -271,7 +271,8 @@ public class WakeDispatchService {
             }
             derivedToolMode = surface.toolMode();
         }
-        String prompt = buildWakePrompt(auditLabel, wakeRoundId, sessionId, triggeringContent);
+        String prompt = buildWakePrompt(auditLabel, wakeRoundId, sessionId, triggeringContent,
+                participantService.displayNameOf(participant));
         // The responder stamped on the run is the participant's PRINCIPAL id — chat_runs.agent_principal_id
         // carries an FK to agent_principals (V92 R1); the D23-08 gate above has just verified the row.
         SessionWakeupService.WakeupResult result = sessionWakeupService.wakeupAs(
@@ -289,23 +290,42 @@ public class WakeDispatchService {
 
     /**
      * The prompt handed to the woken participant. It must carry what the participant needs to
-     * answer: the triggering message body (sanitised, truncated, never empty when there was text)
-     * plus the session id for a self-reference. The {@code [<trigger> wake <round>]} prefix stays —
-     * operators and the audit stream grep it.
+     * answer: WHO it answers as (task-29 / D-1890 M1), the triggering message body (sanitised,
+     * truncated, never empty when there was text) plus the session id for a self-reference. The
+     * {@code [<trigger> wake <round>]} prefix stays — operators and the audit stream grep it.
+     *
+     * <p>Why the addressee line exists: the excerpt carries the SENDER's framing, so a TO-woken
+     * participant read "除了我（xhLead）之外…派给 ewLead" and reported the assignment as if it had
+     * dispatched the work itself (real stack 2026-11-19, task-40 §3 batch 2). Naming the addressee
+     * and separating it from the sender is the whole fix; the identifier comes from the same
+     * principals the roster reads, so the prompt and the roster cannot disagree.</p>
      */
-    String buildWakePrompt(String triggerSource, String wakeRoundId, UUID sessionId, String triggeringContent) {
+    String buildWakePrompt(String triggerSource, String wakeRoundId, UUID sessionId,
+                           String triggeringContent, String responderDisplayName) {
         StringBuilder prompt = new StringBuilder("[")
-                .append(triggerSource).append(" wake ").append(wakeRoundId).append("] session=").append(sessionId);
+                .append(triggerSource).append(" wake ").append(wakeRoundId).append("] session=").append(sessionId)
+                .append(nl())
+                .append("You are ").append(responderName(responderDisplayName)).append('.');
         String excerpt = wakeExcerpt(triggeringContent);
         if (excerpt.isEmpty()) {
-            prompt.append(" respond to the conversation.");
+            // schedule/guard wakes carry no triggering message, so this branch must not claim one was
+            // addressed to the addressee — only the identity sentence is safe here.
+            prompt.append(' ').append("Respond to the conversation in your own voice.");
             return prompt.toString();
         }
+        prompt.append(" The message below was addressed to you by another participant: answer as the")
+                .append(" addressee, in your own voice, not in the sender's.");
         prompt.append(nl()).append(nl())
                 .append("Triggering message").append(truncationNote(triggeringContent)).append(':')
                 .append(nl()).append(nl()).append(excerpt).append(nl()).append(nl())
                 .append("Answer that message as your own turn. Do not describe the wake signal.");
         return prompt.toString();
+    }
+
+    /** The addressee name, or a neutral phrase when the principal row is gone. */
+    private static String responderName(String displayName) {
+        return displayName == null || displayName.isBlank()
+                ? "a participant of this conversation" : displayName.strip();
     }
 
     /**
