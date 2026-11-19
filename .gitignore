@@ -123,3 +123,7 @@ packages/ui/e2e/evidence/0702/
 
 # 后台起栈时 shell 重定向产物（0 字节占位，无内容；2026-11-18 起栈实测被检出）
 nohup.out
+
+# 他人 lane 残留的确定性生成副本（与 packages/ui/src/preview/mock/data/schema-catalog.ts 逐字节相同，
+# 仓内零引用、非构建产物；task-18 裁定：不删不碰，只忽略，避免长期污染脏文件读数）
+packages/.tmp-ignore
