@@ -9,17 +9,22 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from xihe_agent.log_redact import redact_text
+
 
 class ApiRequestError(RuntimeError):
     """Safe, classified failure; never includes provider body or credentials."""
 
-    def __init__(self, code: str, status: int = 400):
+    def __init__(self, code: str, status: int = 400, detail: str | None = None):
         self.code = {
             "LLM_PROVIDER_INVALID_RESPONSE": "AGENT_STREAM_FAILED",
             "LLM_PROVIDER_STREAM_TRUNCATED": "AGENT_STREAM_FAILED",
             "LLM_PROVIDER_TIMEOUT": "LLM_PROVIDER_UNREACHABLE",
             "LLM_PROVIDER_ERROR": "AGENT_STREAM_FAILED",
         }.get(code, code)
+        # task-111: a bounded, redacted diagnostic fragment travels with the
+        # dedicated terminal code; it is never a provider body or credentials.
+        self.detail = redact_text(detail)[:256] if detail else None
         self.status = status
         super().__init__(self.code)
 

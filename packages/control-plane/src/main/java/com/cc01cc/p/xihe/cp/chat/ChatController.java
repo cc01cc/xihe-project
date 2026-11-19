@@ -2421,7 +2421,8 @@ public class ChatController {
                     "AGENT_CIRCUIT_OPEN", "AGENT_STREAM_FAILED", "SSE_SUBSCRIPTION_REQUIRED", "CHAT_IN_PROGRESS",
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
                     "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
-                    "CONTEXT_OVERFLOW", "RUN_BUDGET_EXHAUSTED", "RUN_NO_PROGRESS" -> code;
+                    "CONTEXT_OVERFLOW", "RUN_BUDGET_EXHAUSTED", "RUN_NO_PROGRESS",
+                    "LLM_TOOL_ARGUMENTS_TRUNCATED" -> code;
             // PLAN-0416 V12/V6: these are Agent-side fail-closed rejections raised
             // BEFORE any provider dispatch. Their whole point is a stable,
             // actionable code on the wire; collapsing them to AGENT_UNAVAILABLE

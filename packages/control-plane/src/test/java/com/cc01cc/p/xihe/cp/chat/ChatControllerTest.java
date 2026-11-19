@@ -2414,6 +2414,40 @@ class ChatControllerTest extends AbstractH2Test {
         });
     }
 
+    // task-111: the dedicated tool-arguments-truncation code must also survive
+    // the CP safeErrorCode allowlist on the HTTP>=400 relay path.
+    @Test
+    void chatToolArgumentsTruncatedCodeSurvivesToRunTerminal() {
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            byte[] body = "{\"code\":\"LLM_TOOL_ARGUMENTS_TRUNCATED\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+            exchange.sendResponseHeaders(400, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "tool arguments truncated",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("failed", run.getStatus());
+            assertEquals("LLM_TOOL_ARGUMENTS_TRUNCATED", run.getErrorCode());
+        });
+    }
+
     @Test
     void cancelRunTerminalPathRequestsCheckpointSeal() {
         ChatRun run = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,

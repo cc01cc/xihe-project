@@ -573,7 +573,10 @@ class LangGraphRunner(AgentRunner):
             # from a pre-send failure (PLAN-0493 T0.2 diagnosis).
             logger.opt(exception=True).warning("API request failed code={}", e.code)
             context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
-            yield AgentEvent(type="error", data={"error": e.code, "code": e.terminal_code, "retryable": False})
+            error_data: dict[str, Any] = {"error": e.code, "code": e.terminal_code, "retryable": False}
+            if e.detail:
+                error_data["detail"] = e.detail
+            yield AgentEvent(type="error", data=error_data)
         except litellm.exceptions.ContextWindowExceededError as e:
             failed = True
             # PLAN-294 decision #10 (M3): provider-side overflow is a
@@ -651,9 +654,12 @@ class LangGraphRunner(AgentRunner):
                         context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
                 except ApiRequestError as e:
                     logger.warning("Native history persistence rejected code={}", e.terminal_code)
-                    yield AgentEvent(
-                        type="error", data={"error": e.terminal_code, "code": e.terminal_code, "retryable": False}
-                    )
+                    error_data: dict[str, Any] = {
+                        "error": e.terminal_code, "code": e.terminal_code, "retryable": False
+                    }
+                    if e.detail:
+                        error_data["detail"] = e.detail
+                    yield AgentEvent(type="error", data=error_data)
                 except Exception as e:
                     # PLAN-0410 T2.3: required assistant event — recorded here,
                     # converged to a failing run by the post-run check below

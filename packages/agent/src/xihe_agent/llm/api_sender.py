@@ -148,7 +148,12 @@ def _call(call_id: Any, name: Any, arguments: Any) -> dict[str, Any]:
     try:
         args = strict_json(arguments) if isinstance(arguments, str) else arguments
     except ApiRequestError as exc:
-        raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502) from exc
+        # task-111: a truncated native tool_call arguments payload is a
+        # provider contract break, not a generic stream failure. Keep a bounded
+        # redacted fragment for diagnosis under its own terminal code (D-206).
+        raise ApiRequestError(
+            "LLM_TOOL_ARGUMENTS_TRUNCATED", 502, arguments if isinstance(arguments, str) else None
+        ) from exc
     if not isinstance(args, dict):
         raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
     return {"id": call_id, "name": name, "args": args, "type": "tool_call"}

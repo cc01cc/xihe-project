@@ -427,6 +427,67 @@ async def test_single_attempt_failures(payload, status, stream, disconnect, code
         assert "must-never-log-body" not in str(error.value)
 
 
+# task-111 (D-206): provider-native tool_call arguments truncation. Fixtures are
+# the verbatim half-JSON argument strings reconstructed from PG response_body
+# of runs cc3d2fba / ffd84a82 (frame data lines, delta.tool_calls[].index join).
+_TRUNCATED_ARGUMENTS_FIXTURES = [
+    '{"path": "README.md", "rootId": ',
+    '{"path": "README.md", "limit": ',
+]
+
+
+@pytest.mark.parametrize("fragment", _TRUNCATED_ARGUMENTS_FIXTURES)
+async def test_tool_arguments_truncation_dedicated_code(fragment):
+    # Half-JSON tool arguments must surface as a dedicated terminal code, never AGENT_STREAM_FAILED.
+    frame = {"choices": [{"index": 0, "delta": {"tool_calls": [
+        {"index": 0, "id": "c1", "type": "function",
+         "function": {"name": "read_file", "arguments": fragment}}]},
+        "finish_reason": "tool_calls"}]}
+    payload = "data: " + json.dumps(frame) + "\n\ndata: [DONE]\n\n"
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        with pytest.raises(ApiRequestError) as error:
+            _ = [
+                part
+                async for part in sender.stream(
+                    render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+                )
+            ]
+    assert error.value.code == "LLM_TOOL_ARGUMENTS_TRUNCATED"
+    assert error.value.terminal_code == "LLM_TOOL_ARGUMENTS_TRUNCATED"
+    assert error.value.status == 502
+    assert error.value.detail == fragment
+    assert isinstance(error.value.__cause__, ApiRequestError)
+    assert error.value.__cause__.code == "INVALID_JSON"
+
+
+async def test_tool_arguments_truncation_detail_bounded_and_redacted():
+    # The diagnostic fragment is capped at 256 chars and strips credential shapes.
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    secretive = (
+        '{"path": "README.md", "auth": "Bearer sk-not-real-abcdefghijklmnop", "token": "'
+        + jwt
+        + '", "pad": "'
+        + ("A" * 400)
+        + '"}'
+    )
+    error = ApiRequestError("LLM_TOOL_ARGUMENTS_TRUNCATED", 502, secretive)
+    assert error.detail is not None
+    assert len(error.detail) == 256
+    assert "Bearer" not in error.detail
+    assert "sk-not-real" not in error.detail
+    assert "eyJ" not in error.detail
+    assert error.code == "LLM_TOOL_ARGUMENTS_TRUNCATED"
+
+
+def test_generic_provider_invalid_still_maps_to_stream_failed():
+    # Guard: only tool-argument JSON failures use the new code.
+    assert ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502).code == "AGENT_STREAM_FAILED"
+    assert ApiRequestError("LLM_PROVIDER_STREAM_TRUNCATED", 502).code == "AGENT_STREAM_FAILED"
+    assert ApiRequestError("LLM_PROVIDER_ERROR", 502).code == "AGENT_STREAM_FAILED"
+    assert ApiRequestError("LLM_TOOL_ARGUMENTS_TRUNCATED", 502).code == "LLM_TOOL_ARGUMENTS_TRUNCATED"
+
+
 @pytest.mark.parametrize("type_id", TYPES)
 async def test_timeout_and_cancel_never_retry(type_id):
     for cancel in (False, True):

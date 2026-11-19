@@ -84,6 +84,8 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
             return "AI 响应超时，请重试";
         case "AGENT_STREAM_FAILED":
             return "对话流中断，请重试";
+        case "LLM_TOOL_ARGUMENTS_TRUNCATED":
+            return "模型返回的工具调用参数被截断，请重试或换模型";
         case "SESSION_NOT_FOUND":
             return "会话不存在或已删除";
         // PLAN-0750 / G8 (task-155): dedicated code for a Session with no active Agent
