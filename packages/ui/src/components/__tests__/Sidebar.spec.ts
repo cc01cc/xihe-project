@@ -384,8 +384,9 @@ describe("Sidebar", () => {
         );
 
         // 栏头承载**列表级**动作 + 折叠（折叠按钮仍在原位）。
-        expect(header.find('[data-testid="sidebar-add-workspace"]').exists()).toBe(true);
-        expect(header.find('[data-testid="sidebar-import-source"]').exists()).toBe(true);
+        // task-89 ①：新建工作区与导入源收敛为**一个**常驻 32px 触发器 + 菜单
+        // （菜单 Content 未展开时不渲染，故这里只钉触发器；菜单项由 task-89 用例开菜单后钉）。
+        expect(header.find('[data-testid="sidebar-new-workspace"]').exists()).toBe(true);
         expect(header.find('[data-testid="sidebar-collapse"]').exists()).toBe(true);
 
         // 顺序意图不变：栏头在分组列表之前（锚点必须真的存在，否则双 -1 会假绿）。
@@ -491,21 +492,23 @@ describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
  * 「如果我没做」这条会怎么红：区头不存在 ⇒ ①② 直接找不到 testid；语义混用 ⇒ ③ 的 aria-label 对不上。
  */
 describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
-    it("renders add-workspace and import-source in the workspace section header", async () => {
+    it("task-89 ①：新建工作区 + 导入源收敛为一个常驻 32px 触发器 + 菜单", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
-        const add = wrapper.get('[data-testid="sidebar-add-workspace"]');
-        const importSource = wrapper.get('[data-testid="sidebar-import-source"]');
-        expect(add.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
-        expect(importSource.attributes("aria-label")).toBe(zhSource.workspace.importSource);
-        // task-57（SC 2.5.8 24×24 AA）：这两枚原来是 `size-6` = **21×21**（ui-2 batch-4 实测），
-        // 属固定尺寸档漏改（与抽屉宽度无关，开着也是 21）⇒ 顶到 `min-h-7 min-w-7` = 24.5。
-        // 图标仍 `size-3.5`，只长命中盒。jsdom 不求值 Tailwind ⇒ 钉类名，真 rect 归复测。
-        for (const button of [add, importSource]) {
-            expect(button.classes()).toContain("min-h-7");
-            expect(button.classes()).toContain("min-w-7");
-            expect(button.classes()).not.toContain("size-6");
-        }
+        const trigger = wrapper.get('[data-testid="sidebar-new-workspace"]');
+        expect(trigger.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
+        // task-57（SC 2.5.8 24×24 AA）判据未放宽：命中区从 24.5 涨到 32（h-8 w-8 = 32px）。
+        expect(trigger.classes()).toContain("h-8");
+        expect(trigger.classes()).toContain("w-8");
+
+        await trigger.trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="sidebar-add-workspace"]').text()).toContain(
+            zhSource.workspace.addWorkspace,
+        );
+        expect(wrapper.get('[data-testid="sidebar-import-source"]').text()).toContain(
+            zhSource.workspace.importSource,
+        );
         // 区头是**列表级**动作：它出现在分组列表之前，不在任何工作区行内。
         expect(wrapper.text()).toContain(zhSource.sidebar.workspacesSection);
     });
@@ -513,6 +516,8 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
     it("add-workspace opens the picker create dialog through ?create=1", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
+        await flushPromises();
         await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
         await flushPromises();
         expect(pushSpy).toHaveBeenCalledWith({ path: "/workbench", query: { create: "1" } });
@@ -521,6 +526,8 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
     it("import-source opens the workspace dialog through ?importSource=1", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
+        await flushPromises();
         await wrapper.get('[data-testid="sidebar-import-source"]').trigger("click");
         await flushPromises();
         expect(pushSpy).toHaveBeenCalledWith({
@@ -532,14 +539,16 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
     it("keeps the two plus buttons semantically distinct (header = workspace, row = session)", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
-        const header = wrapper.get('[data-testid="sidebar-add-workspace"]');
+        // task-89 ①：区头新增/导入现在的载体是常驻触发器（菜单里才是两个具体动作）。
+        const header = wrapper.get('[data-testid="sidebar-new-workspace"]');
         expect(header.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
         const rowNew = wrapper
             .findAll("button")
             .filter((b) => b.attributes("aria-label") === zhSource.sidebar.groupNewSession);
         expect(rowNew.length).toBeGreaterThan(0);
         for (const btn of rowNew) {
-            expect(btn.attributes("data-testid")).not.toBe("sidebar-add-workspace");
+            expect(btn.attributes("data-testid")).not.toBe("sidebar-new-workspace");
+            expect(btn.attributes("data-testid")).not.toBe("sidebar-workspace-config");
         }
     });
 });

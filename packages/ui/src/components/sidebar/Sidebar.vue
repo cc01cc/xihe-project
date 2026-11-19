@@ -13,6 +13,8 @@ import {
     Plus,
     Search,
     Settings,
+    Settings2,
+    Users,
     X,
 } from "@lucide/vue";
 import {
@@ -28,7 +30,7 @@ import WorkspaceSessionGroups from "../../features/workspace/chat/components/Wor
 import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
 // PLAN-0762 T2.1：NavRail 已提升为全局层（components/sidebar/GlobalRail.vue，App.vue 常驻），
 // 本组件不再自带 rail —— 它只负责工作区模块的导航面板。
-import { standaloneChatPath, workspacePath } from "../../lib/routes";
+import { standaloneChatPath, workspacePath, workspaceSettingsPath } from "../../lib/routes";
 import { useSessionStore } from "../../stores/session";
 import { defaultLayerPath } from "../../lib/settingsIa";
 
@@ -159,6 +161,39 @@ function navigateSettings() {
     void router.push(defaultLayerPath("instance"));
 }
 
+/**
+ * task-89 ①：区头的「搜索会话」是**常驻可见动作**（不是 hover 才出现的浮层）。
+ * 它只负责把焦点送进搜索框（搜索面仍是那一行 input，避免同一件事两个控件）。
+ */
+const searchInputRef = ref<HTMLInputElement | null>(null);
+
+function focusSearch() {
+    searchInputRef.value?.focus();
+}
+
+/**
+ * task-89 ②：区头的「配置工作区」常驻入口 —— 指向**当前工作区自己的**设置页与成员页
+ * （四 tab 由工作区自身导航承载；不复制到会话页、不进容器页签）。
+ * 没有活动工作区时触发器 disabled 并给出原因（sidebar.noWorkspace）。
+ */
+function openWorkspaceSettings() {
+    const workspaceId = auth.currentWorkspaceId;
+    if (!workspaceId) {
+        toast.error(t("sidebar.noWorkspace"));
+        return;
+    }
+    void router.push(workspaceSettingsPath(workspaceId));
+}
+
+function openWorkspaceMembers() {
+    const workspaceId = auth.currentWorkspaceId;
+    if (!workspaceId) {
+        toast.error(t("sidebar.noWorkspace"));
+        return;
+    }
+    void router.push(workspacePath(workspaceId) + "/members");
+}
+
 function handleLogout() {
     auth.logout();
     void router.push("/login");
@@ -219,7 +254,7 @@ function handleLogout() {
             -->
             <div
                 data-testid="sidebar-workspaces-header"
-                class="flex h-14 shrink-0 items-center gap-1 px-2"
+                class="flex h-14 shrink-0 items-center gap-1.5 px-2"
             >
                 <span
                     class="flex min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium tracking-wider text-muted-foreground"
@@ -227,33 +262,92 @@ function handleLogout() {
                     <FolderTree class="size-4 shrink-0" aria-hidden="true" />
                     <span class="truncate">{{ t("sidebar.workspacesSection") }}</span>
                 </span>
+                <!--
+                    task-89 ①：区头三个动作**常驻可见**（32px 命中区、gap-1.5、hover 底、aria-label），
+                    一律不做「hover 才出现」—— hover-only 在触摸与键盘下等于不存在。
+                    新建工作区仍是一级列表动作（导入源是它的同级菜单项，不是第二个图标），
+                    与工作区行上的 +（在该组新建会话）语义分开（D-1206）。
+                -->
+                <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
+                        <button
+                            type="button"
+                            data-testid="sidebar-new-workspace"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            :aria-label="t('workspace.addWorkspace')"
+                            :title="t('workspace.addWorkspace')"
+                        >
+                            <Plus class="size-4" aria-hidden="true" />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" class="w-56">
+                        <DropdownMenuItem
+                            data-testid="sidebar-add-workspace"
+                            @select="openAddWorkspace"
+                        >
+                            <Plus class="size-4" aria-hidden="true" />
+                            {{ t("workspace.addWorkspace") }}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                            data-testid="sidebar-import-source"
+                            @select="openImportSource"
+                        >
+                            <FolderOpen class="size-4" aria-hidden="true" />
+                            {{ t("workspace.importSource") }}
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
                 <button
                     type="button"
-                    data-testid="sidebar-import-source"
-                    class="flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    :aria-label="t('workspace.importSource')"
-                    :title="t('workspace.importSource')"
-                    @click="openImportSource"
+                    data-testid="sidebar-search-action"
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="t('sidebar.searchSessions')"
+                    :title="t('sidebar.searchSessions')"
+                    @click="focusSearch"
                 >
-                    <FolderOpen class="size-3.5" aria-hidden="true" />
+                    <Search class="size-4" aria-hidden="true" />
                 </button>
-                <button
-                    type="button"
-                    data-testid="sidebar-add-workspace"
-                    class="flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    :aria-label="t('workspace.addWorkspace')"
-                    :title="t('workspace.addWorkspace')"
-                    @click="openAddWorkspace"
-                >
-                    <Plus class="size-3.5" aria-hidden="true" />
-                </button>
+                <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
+                        <button
+                            type="button"
+                            data-testid="sidebar-workspace-config"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            :disabled="!auth.currentWorkspaceId"
+                            :aria-label="t('sidebar.configureWorkspace')"
+                            :title="
+                                auth.currentWorkspaceId
+                                    ? t('sidebar.configureWorkspace')
+                                    : t('sidebar.noWorkspace')
+                            "
+                        >
+                            <Settings2 class="size-4" aria-hidden="true" />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" class="w-56">
+                        <DropdownMenuItem
+                            data-testid="sidebar-workspace-config-settings"
+                            @select="openWorkspaceSettings"
+                        >
+                            <Settings2 class="size-4" aria-hidden="true" />
+                            {{ t("sidebar.workspaceSettings") }}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                            data-testid="sidebar-workspace-config-members"
+                            @select="openWorkspaceMembers"
+                        >
+                            <Users class="size-4" aria-hidden="true" />
+                            {{ t("workspace.membersTitle") }}
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
                 <button
                     type="button"
                     :data-testid="isMobile ? 'sidebar-close' : 'sidebar-collapse'"
                     :aria-label="t('sidebar.collapse')"
                     :title="t('sidebar.collapse')"
                     :aria-expanded="open"
-                    class="shrink-0 rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="toggleSidebar"
                 >
                     <PanelLeftClose class="size-4" aria-hidden="true" />
@@ -277,13 +371,14 @@ function handleLogout() {
                 不再是直接新建 —— 所以点它的 e2e 要再点一次菜单项（同批已改）。
             -->
             <div class="px-3 pb-2">
-                <div class="flex items-center gap-1">
+                <div class="sidebar-search-row flex items-center gap-1 overflow-hidden">
                     <div class="relative min-w-0 flex-1">
                         <Search
                             class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
                             aria-hidden="true"
                         />
                         <input
+                            ref="searchInputRef"
                             v-model="sessionStore.searchQuery"
                             data-testid="sidebar-session-search"
                             type="text"
@@ -397,6 +492,20 @@ function handleLogout() {
  * 子节点设为 pointer-events: none —— 内容不会跟着每次 pointermove 重排，手感与
  * PLAN-0626 的"跟手不走响应式"一致。will-change 指向实际被动画的属性。
  */
+/*
+ * task-89 ④：面板是 inline-size 容器。展开动画期间 flex-grow 会把面板从 56px 拉到目标宽，
+ * 那一瞬 58px 的搜索框与 28px 的新建会话按钮会相交 —— 面板窄于任何可用宽度时整行让位。
+ */
+#sidebar-panel {
+    container-type: inline-size;
+}
+
+@container (max-width: 15rem) {
+    .sidebar-search-row {
+        display: none;
+    }
+}
+
 .is-resizing {
     will-change: flex-grow;
 }

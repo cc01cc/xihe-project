@@ -49,7 +49,12 @@ function testRouter() {
 
 async function mountGroups() {
     const wrapper = mount(WorkspaceSessionGroups, {
-        global: { plugins: [i18n, testRouter()], stubs: { Teleport: true } },
+        // task-89：菜单内容在 Teleport 里 —— `Teleport: true` 会丢 slot（菜单永远找不到），
+        // 必须用渲染 slot 的桩。
+        global: {
+            plugins: [i18n, testRouter()],
+            stubs: { Teleport: { template: "<div><slot /></div>" } },
+        },
     });
     await flushPromises();
     return wrapper;
@@ -225,6 +230,34 @@ describe("WorkspaceSessionGroups standalone group (task-373)", () => {
             expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),
         );
         expect(newBtn.classes()).not.toContain("p-1");
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-89 ③：工作区组行同样不能只靠 hover。⋯ 常驻 + 菜单三项
+ * （工作区设置 / 成员 / 导入源），且 ⋯ 的 testid 带工作区 id（一栏多组时不串号）。
+ */
+describe("工作区行 ⋯（task-89 ③）", () => {
+    it("每个工作区组行都有常驻 ⋯，菜单含 设置/成员/导入源", async () => {
+        useSessionStore();
+        const wrapper = await mountGroups();
+        const more = wrapper.get('[data-testid="sidebar-workspace-more-' + WS_ID + '"]');
+        expect(more.classes()).toContain("h-7");
+        expect(more.classes()).toContain("opacity-70");
+        expect(more.classes()).not.toContain("opacity-0");
+
+        await more.trigger("click");
+        await flushPromises();
+        expect(
+            wrapper.find('[data-testid="sidebar-workspace-more-settings-' + WS_ID + '"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="sidebar-workspace-more-members-' + WS_ID + '"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="sidebar-workspace-more-import-' + WS_ID + '"]').exists(),
+        ).toBe(true);
         wrapper.unmount();
     });
 });

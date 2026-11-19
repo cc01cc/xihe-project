@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { CircleAlert, MessageSquareText } from "@lucide/vue";
+import { CircleAlert, MessageSquareText, MoreHorizontal } from "@lucide/vue";
+import { useRouter } from "vue-router";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "../../../../components/ui/dropdown-menu";
+import { workspaceSettingsPath } from "../../../../lib/routes";
 import type { Session } from "../../../../types";
 import type { DelegationUsageView } from "../../../../composables/api";
 
@@ -41,6 +49,15 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const router = useRouter();
+
+/** task-89 ③：行内动作「打开工作区设置」—— 会话属于工作区时才有对象（独立会话没有）。 */
+function openWorkspaceSettings() {
+    const workspaceId = props.session.workspaceId;
+    if (!workspaceId) return;
+    void router.push(workspaceSettingsPath(workspaceId));
+}
+
 const isRenaming = ref(false);
 const renameValue = ref("");
 const showContextMenu = ref(false);
@@ -146,6 +163,48 @@ function handleRenameKeydown(e: KeyboardEvent) {
                 }}
             </p>
         </div>
+        <!--
+            task-89 ③：次级动作的**常驻可见**入口（⋯）。此前只有 @contextmenu —— 触摸设备没有右键，
+            键盘更是没有；这里同时给 focus-visible 同等的可见性与 32px 级命中区（h-7 w-7）。
+        -->
+        <DropdownMenu v-if="canMutate">
+            <DropdownMenuTrigger as-child>
+                <button
+                    type="button"
+                    data-testid="session-item-more"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="t('sidebar.moreActions')"
+                    :title="t('sidebar.moreActions')"
+                    @click.stop
+                    @keydown.stop
+                >
+                    <MoreHorizontal class="size-4" aria-hidden="true" />
+                </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-48" @click.stop>
+                <DropdownMenuItem data-testid="session-item-more-rename" @select="startRename">
+                    {{ t("sidebar.rename") }}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                    v-if="isActive"
+                    data-testid="session-item-more-fork"
+                    :disabled="forkBusy"
+                    @select="handleFork"
+                >
+                    {{ forkBusy ? t("sidebar.forking") : t("sidebar.fork") }}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                    v-if="session.workspaceId"
+                    data-testid="session-item-more-workspace-settings"
+                    @select="openWorkspaceSettings"
+                >
+                    {{ t("sidebar.workspaceSettings") }}
+                </DropdownMenuItem>
+                <DropdownMenuItem data-testid="session-item-more-delete" @select="handleDelete">
+                    {{ t("sidebar.delete") }}
+                </DropdownMenuItem>
+            </DropdownMenuContent>
+        </DropdownMenu>
         <span
             v-if="pendingCount > 0"
             data-testid="session-pending-badge"

@@ -21,7 +21,17 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { ChevronRight, FolderTree, Loader2, MessageSquare, Plus } from "@lucide/vue";
+import {
+    ChevronRight,
+    FolderOpen,
+    FolderTree,
+    Loader2,
+    MessageSquare,
+    MoreHorizontal,
+    Plus,
+    Settings2,
+    Users,
+} from "@lucide/vue";
 import { api, ApiError, type ApiWorkspace } from "../../../../composables/api";
 import type { Session } from "../../../../types";
 import { useAuthStore } from "../../../../stores/auth";
@@ -31,8 +41,14 @@ import {
     writeStandaloneSessionOrder,
 } from "../../../../composables/useWorkspaceLayout";
 import { writeTabWorkspace } from "../../../../lib/workspaceContext";
-import { workspaceChatPath } from "../../../../lib/routes";
+import { workspaceChatPath, workspacePath, workspaceSettingsPath } from "../../../../lib/routes";
 import { logger } from "../../../../lib/logger";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "../../../../components/ui/dropdown-menu";
 import SessionList from "./SessionList.vue";
 
 const { t } = useI18n();
@@ -237,6 +253,30 @@ function openForeignSession(workspace: ApiWorkspace, sessionId: string): void {
         workspaceRole: workspace.workspaceRole ?? null,
     });
     void router.push(workspaceChatPath(workspace.id, sessionId));
+}
+
+/** 跨工作区动作：先写 tab 上下文（写入必须落在那个工作区），再跳。 */
+function switchTabContext(workspace: ApiWorkspace): void {
+    writeTabWorkspace({
+        id: workspace.id,
+        name: workspace.name,
+        workspaceRole: workspace.workspaceRole ?? null,
+    });
+}
+
+function openWorkspaceSettings(workspace: ApiWorkspace): void {
+    switchTabContext(workspace);
+    void router.push(workspaceSettingsPath(workspace.id));
+}
+
+function openWorkspaceMembers(workspace: ApiWorkspace): void {
+    switchTabContext(workspace);
+    void router.push(workspacePath(workspace.id) + "/members");
+}
+
+function openWorkspaceImport(workspace: ApiWorkspace): void {
+    switchTabContext(workspace);
+    void router.push({ path: workspacePath(workspace.id), query: { importSource: "1" } });
 }
 
 function workspaceLabel(workspace: ApiWorkspace): string {
@@ -449,6 +489,47 @@ defineExpose({
                     >
                         <Plus class="size-3.5" aria-hidden="true" />
                     </button>
+                    <!--
+                        task-89 ③：工作区行也有常驻可见的 ⋯（此前只有「+」= 新建会话）。
+                        配置类动作都指向**该工作区自己的**设置页/成员页；跨工作区时先写 tab 上下文，
+                        否则写请求会落到当前工作区（与 openForeignSession 同一判据）。
+                    -->
+                    <DropdownMenu>
+                        <DropdownMenuTrigger as-child>
+                            <button
+                                type="button"
+                                :data-testid="`sidebar-workspace-more-${workspace.id}`"
+                                :aria-label="t('sidebar.moreActions')"
+                                :title="t('sidebar.moreActions')"
+                                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground opacity-70 transition-colors hover:bg-sidebar-accent hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                                <MoreHorizontal class="size-4" aria-hidden="true" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" class="w-56">
+                            <DropdownMenuItem
+                                :data-testid="`sidebar-workspace-more-settings-${workspace.id}`"
+                                @select="openWorkspaceSettings(workspace)"
+                            >
+                                <Settings2 class="size-4" aria-hidden="true" />
+                                {{ t("sidebar.workspaceSettings") }}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                :data-testid="`sidebar-workspace-more-members-${workspace.id}`"
+                                @select="openWorkspaceMembers(workspace)"
+                            >
+                                <Users class="size-4" aria-hidden="true" />
+                                {{ t("workspace.membersTitle") }}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                :data-testid="`sidebar-workspace-more-import-${workspace.id}`"
+                                @select="openWorkspaceImport(workspace)"
+                            >
+                                <FolderOpen class="size-4" aria-hidden="true" />
+                                {{ t("workspace.importSource") }}
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
 
                 <div

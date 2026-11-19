@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import SessionItem from "../components/SessionItem.vue";
 
 vi.mock("vue-i18n", () => ({
@@ -102,5 +102,52 @@ describe("SessionItem", () => {
         expect(titleSpan.text()).toBe("移动态可见标题");
         // aria-label 保留（读屏双保险），但**不能是唯一的标题载体**。
         expect(row.attributes("aria-label")).toBe("移动态可见标题");
+    });
+});
+
+/**
+ * task-89 ③：行内次级动作**不能只靠 hover**（原实现只有 @contextmenu，hover 与触摸都没有入口）。
+ * ⋯ 常驻渲染、opacity-70（可见）、h-7 w-7 命中区；菜单至少提供 重命名 / 删除 /（有工作区时）打开工作区设置。
+ */
+describe("SessionItem 行内 ⋯（task-89 ③）", () => {
+    it("常驻渲染可见 ⋯，菜单提供重命名/删除/工作区设置", async () => {
+        const session = {
+            id: "s1",
+            title: "More",
+            workspaceId: "w1",
+            updatedAt: new Date().toISOString(),
+        };
+        const wrapper = mount(SessionItem, {
+            props: { session, isActive: false },
+            // task-89：菜单在 Teleport 里 —— `stubs: { Teleport: true }` 会把 slot 丢掉，
+            // 于是菜单永远找不到（实测 0 个 [role=menu]）；必须用渲染 slot 的桩。
+            global: { stubs: { Teleport: { template: "<div><slot /></div>" } } },
+        });
+        const more = wrapper.get('[data-testid="session-item-more"]');
+        expect(more.classes()).toContain("h-7");
+        expect(more.classes()).toContain("w-7");
+        expect(more.classes()).toContain("opacity-70");
+        expect(more.classes()).not.toContain("opacity-0");
+        expect(more.attributes("aria-label")).toBe("sidebar.moreActions");
+
+        await more.trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="session-item-more-rename"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="session-item-more-delete"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="session-item-more-workspace-settings"]').exists()).toBe(
+            true,
+        );
+        // 打开菜单不得顺带选中会话（@click.stop 的判别力）。
+        expect(wrapper.emitted("select")).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("canMutate=false 时不渲染 ⋯", () => {
+        const session = { id: "s1", title: "RO", updatedAt: new Date().toISOString() };
+        const wrapper = mount(SessionItem, {
+            props: { session, isActive: false, canMutate: false },
+        });
+        expect(wrapper.find('[data-testid="session-item-more"]').exists()).toBe(false);
+        wrapper.unmount();
     });
 });
