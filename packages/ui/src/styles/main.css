@@ -195,6 +195,16 @@
     :root {
         --scrollbar-thumb: oklch(0.6 0 0);
         /*
+         * task-119（用户 2026-11-20 00:48 裁定「层次用阴影与边框表达」）：卡片层次**不再靠
+         * card/bg 面差**（neutral 只有 1.091、slate light 恒 1.000，结构上做不到），改由
+         * 阴影承担。取两层：1px 贴边（描边感的软替代）+ 向下扩散（离开画布的悬浮感）。
+         * 亮色用 foreground 的极低 alpha；深色必须**加不透明度并放大扩散**，否则在
+         * oklch(0.145) 的底上等于没画（黑阴影叠黑底）。
+         * 消费方：components/ui/card/Card.vue 的 `shadow-[var(--shadow-card)]`；
+         * 判据：tokenContrast.spec.ts「卡片层次 = 非 none 阴影 + 可见边界 ≥1.20」。
+         */
+        --shadow-card: 0 1px 2px 0 oklch(0.145 0 0 / 0.06), 0 3px 8px -4px oklch(0.145 0 0 / 0.1);
+        /*
          * task-294：color-scheme 的权威声明。缺它时浏览器把原生控件（滚动条、焦点环、
          * checkbox/radio、日期选择器、autofill 底）一律按浅色渲染 —— 实测切深色后
          * 原生 textarea 仍是 rgb(255,255,255)。<meta name="color-scheme"> 只是 CSS
@@ -210,6 +220,8 @@
      */
     :root.dark {
         color-scheme: dark;
+        /* task-119：深色档阴影（理由见 :root 注释）。黑阴影叠黑底要更重、扩散更大一档才看得见。 */
+        --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.55), 0 4px 12px -6px oklch(0 0 0 / 0.65);
     }
 
     html {
