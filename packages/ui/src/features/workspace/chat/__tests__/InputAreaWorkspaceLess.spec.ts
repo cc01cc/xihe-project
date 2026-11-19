@@ -82,6 +82,17 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
 const messages = {
     "zh-CN": {
         chat: {
+            // task-135：composer 第 3 层元信息行。夹具跟产品同文；缺这组键时整支 spec
+            // 会在挂载期被裸键护栏（test-utils/i18nKeys.ts）判红。
+            composerMeta: {
+                model: "模型 · 路由",
+                modelUnbound: "未绑定模型",
+                rounds: "轮 {value}",
+                steps: "步 {value}",
+                speed: "{value} tok/s",
+                tokens: "{used} / {limit}",
+                cacheHit: "缓存命中 {percent}",
+            },
             placeholder: "输入消息...",
             send: "发送",
             stop: "停止",
