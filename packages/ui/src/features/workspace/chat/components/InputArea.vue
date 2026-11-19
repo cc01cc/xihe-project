@@ -1475,10 +1475,13 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
     <div
         ref="composerRoot"
-        class="min-w-0 border-t bg-background px-4 pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
+        class="min-w-0 border-t bg-background pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
         data-testid="chat-composer"
     >
-        <div class="mx-auto w-full max-w-4xl space-y-1.5">
+        <!-- task-130：列宽 token 挂在**带内边距的这一层**上（px-4 从 root 移到这里）。
+             这样它的 offsetWidth 与消息列 / 面板同为 min(父宽, --chat-column-max)，
+             四处差 ≤1px；内容净宽仍是列宽减 32。 -->
+        <div class="mx-auto w-full max-w-(--chat-column-max) space-y-1.5 px-4">
             <!--
                 task-55（D-1882③）：这里原本渲染「代发身份」RecipientField（testid="speak-as" /
                 data-testid="speak-as-bar"；PLAN-0623 D23-27 → PLAN-0630 M5b D30-14 → 2026-11-04 改为

@@ -412,7 +412,11 @@ onUnmounted(() => {
         data-testid="message-item"
         :data-message-role="message.role"
     >
-        <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
+        <!-- task-130：宽屏加可读性上限（44em）。
+             为何不是 68ch：ch 是「0」的数字宽（本页 14px 字号下 ch≈7.8px），68ch≈530px 对 CJK
+             只剩 29 汉字/行（真机实测 cpl=29 < 30 门槛）；上限走 token --chat-bubble-max = 44em
+             ⇒ 约 44 汉字/行。窄屏 85% / md 75% 不变。 -->
+        <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%] lg:max-w-(--chat-bubble-max)">
             <!--
                 PLAN-0659 T1.3：消息头投递语义 —— `发送→(A) · @被@者 · 抄送→(B,C)`。
                 三态来源不同：TO/CC 读 durable `messages.delivery`（V120 / PLAN-0665 D3，

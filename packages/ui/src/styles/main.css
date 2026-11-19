@@ -314,6 +314,23 @@
     --surface-canvas: var(--sidebar);
 
     /*
+     * task-130（D-1910）：会话列宽 —— 单列 fluid-then-cap（先流式、到上限封顶）。
+     *
+     * 起因不是「896 太窄」，而是**两套栅格**：composer 内层写死 896，而消息气泡是 75% 无上限
+     * ⇒ 3440 下 composer 左缘与消息左缘永不 X 轴对齐（实测差 ~595px）。本 token 让四处
+     * （composer 内层 / 消息列 / 跟进队列 / 团队看板）共用同一个列宽基数：min(父宽, 96rem)。
+     * 后续「带层 / 内部布局 / 元信息行」只改 token 或内层结构，不再各写各的 max-w。
+     * 气泡自身的可读性上限也走 token（--chat-bubble-max），MessageItem 用 max-w-(--chat-bubble-max)。
+     */
+    --chat-column-max: 96rem;
+
+    /*
+     * task-130：气泡可读性上限（宽屏）。为何不是 ch：ch 是「0」的数字宽，本页 14px 字号下 ch≈7.8px，
+     * 68ch≈530px 对 CJK 只剩 29 汉字/行（低于 30 行/字的可读门槛）；44em = 44×14 = 616px ⇒ 约 44 汉字/行。
+     */
+    --chat-bubble-max: 44em;
+
+    /*
      * PLAN-0702 / BL-327: mobile safe-area insets. Defined once at the root; components consume the
      * vars. env(safe-area-inset-*) is 0 on desktop browsers, so no layout change when absent.
      * `useMobileSafeArea` overrides the bottom var to 0px while the on-screen keyboard is open.

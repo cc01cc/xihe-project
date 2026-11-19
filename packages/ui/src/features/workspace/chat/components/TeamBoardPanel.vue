@@ -88,7 +88,7 @@ watch(
 
 <template>
     <section
-        class="mb-3 w-[calc(100%_-_2rem)] max-w-4xl rounded-xl border bg-card px-3 py-2.5"
+        class="mx-auto mb-3 w-full max-w-(--chat-column-max) rounded-xl border bg-card px-3 py-2.5"
         :aria-label="t(K + 'title')"
         data-testid="team-board"
     >

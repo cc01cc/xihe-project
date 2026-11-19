@@ -674,7 +674,11 @@ watch(
         default-scroll-position="last-anchor"
         :source-item-count="virtualizationActive ? rows.length : undefined"
     >
-        <div data-testid="message-list" class="relative flex flex-1 flex-col min-h-0">
+        <!-- task-130：消息列与 composer / 面板共用同一列宽（此前是全宽 ⇒ 两套栅格）。 -->
+        <div
+            data-testid="message-list"
+            class="relative mx-auto flex w-full max-w-(--chat-column-max) flex-1 flex-col min-h-0"
+        >
             <div v-if="showSearch" class="absolute right-12 top-2 z-10">
                 <MessageSearch v-model="searchQuery" @close="showSearch = false" />
             </div>
