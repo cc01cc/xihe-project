@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
@@ -194,10 +194,19 @@ async function resizeTo(mobile: boolean) {
     await settle();
 }
 
+const mountedWrappers: VueWrapper[] = [];
+
 function mountView(): VueWrapper {
     // attachTo：计数一律读 document（sheet 内容会 teleport）；脱离 body 挂载会永远数到 0。
-    return mount(WorkspaceView, { global: { plugins: [i18n] }, attachTo: document.body });
+    const wrapper = mount(WorkspaceView, { global: { plugins: [i18n] }, attachTo: document.body });
+    mountedWrappers.push(wrapper);
+    return wrapper;
 }
+
+// task-156：断言抛错时用例末尾的 unmount() 不会执行，实例会带着 250 ms 合并写入活到下一条用例。
+afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount();
+});
 
 function count(testid: string): number {
     return document.querySelectorAll(`[data-testid="${testid}"]`).length;
@@ -259,7 +268,6 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
 
         await resizeTo(false);
         expect(count("workspace-workbench")).toBe(1);
-        wrapper.unmount();
     });
 
     it("文件替身跨断点必须收回：`workspace-tree-head` 在同一 DOM 里恰好 1 个（task-124 转正）", async () => {
@@ -286,7 +294,6 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
 
         expect(count("mobile-files-sheet")).toBe(0);
         expect(count("workspace-tree-head")).toBe(1);
-        wrapper.unmount();
     });
 
     it("监控/改动替身跨断点必须收回：`mobile-changes-sheet` 在桌面分支起来后不再挂载（task-124 转正）", async () => {
@@ -300,7 +307,6 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
         await resizeTo(false);
 
         expect(count("mobile-changes-sheet")).toBe(0);
-        wrapper.unmount();
     });
 
     it("成员替身：收口由 `MobileChatSheet.isMobile` 覆盖（task-116 的正例）", async () => {
