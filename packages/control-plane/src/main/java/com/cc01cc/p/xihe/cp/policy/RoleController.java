@@ -21,7 +21,7 @@ import java.util.UUID;
  * PLAN-0610 W3-2a: the access-role definition surface (design §3.5).
  *
  * <pre>
- * GET    /api/v1/roles/catalog      44 atoms (41 action + 3 capability) with scope_class
+ * GET    /api/v1/roles/catalog      45 atoms (42 action + 3 capability) with scope_class
  * GET    /api/v1/roles              every definition (system roles first)
  * POST   /api/v1/roles              create a custom role
  * PATCH  /api/v1/roles/{roleId}     rename / re-describe / re-atom a custom role; system roles:

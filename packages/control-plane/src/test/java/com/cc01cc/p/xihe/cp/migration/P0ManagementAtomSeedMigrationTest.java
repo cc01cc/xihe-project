@@ -182,15 +182,17 @@ class P0ManagementAtomSeedMigrationTest {
         // Update together with SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
         // The arithmetic chain ends at 40 through V162; V172 (task-188 MVP⑤) added TEAM_TASK_MANAGE
         // (40 -> 41). The number is a tripwire for "someone added an atom without updating the
-        // chain", so the chain documents the new step too.
-        assertEquals(41, PermissionAtomCatalog.actionAtoms().size(),
+        // chain", so the chain documents the new step too. V178 (task-108 / D-1908 rev3) added
+        // SESSION_PERMISSION_CONFIGURE (41 -> 42), the widening-only session tier atom.
+        assertEquals(42, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
                         + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
                         + " removal = 32, plus the PLAN-0750 M1 restore = 33, plus PLAN-0766"
                         + " MANAGE_WORKSPACE_DEFAULT_CONFIG = 34, plus V156 MANAGE_PERSONAL_SKILLS = 35,"
                         + " plus V157 WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37, plus V162"
                         + " MANAGE_ORG_UNITS + MANAGE_ORG_UNIT_MEMBERS + READ_ORG_UNIT_MEMBERS = 40;"
-                        + " plus V172 TEAM_TASK_MANAGE = 41;"
+                        + " plus V172 TEAM_TASK_MANAGE = 41; plus V178"
+                        + " SESSION_PERMISSION_CONFIGURE = 42;"
                         + " the same arithmetic is frozen in"
                         + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());

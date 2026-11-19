@@ -37,16 +37,19 @@ public class PolicyController {
     private final SessionApprovalMode sessionApprovalMode;
     private final SessionService sessionService;
     private final RequesterAuthority requesterAuthority;
+    private final SessionPermissionGuard permissionGuard;
 
     public PolicyController(PolicyRuleService ruleService, ToolFaceService faceService,
                             SessionPolicyState sessionState, SessionApprovalMode sessionApprovalMode,
-                            SessionService sessionService, RequesterAuthority requesterAuthority) {
+                            SessionService sessionService, RequesterAuthority requesterAuthority,
+                            SessionPermissionGuard permissionGuard) {
         this.ruleService = ruleService;
         this.faceService = faceService;
         this.sessionState = sessionState;
         this.sessionApprovalMode = sessionApprovalMode;
         this.sessionService = sessionService;
         this.requesterAuthority = requesterAuthority;
+        this.permissionGuard = permissionGuard;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -125,8 +128,17 @@ public class PolicyController {
     }
 
     /**
-     * Session-scoped mode switch. Switching here never changes another session and
-     * never changes another session.
+     * Session-scoped tier switch (D-1908 rev4). The tier is written as the source and the approval
+     * mode is derived from it; a legacy {@code mode} body is translated into the tier whose derived
+     * mode matches.
+     *
+     * <p>task-108: the write face no longer uses {@code requireCurrent} (owner-only, no atom). The
+     * {@link SessionPermissionGuard} answers who may change it: widening needs
+     * {@code session:permission:configure} <em>and</em> {@code sessions.user_id == actor};
+     * tightening is open to any participant without the atom; and re-submitting the tier already
+     * stored is a no-op that needs no atom either. A refusal is 403 with the guard's reason code
+     * ({@code NO_CAPABILITY} / {@code NOT_SESSION_OWNER} / {@code TIER_UNREADABLE}) and one
+     * {@code session.permission.escalated} audit row.</p>
      */
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/mode")
@@ -140,13 +152,29 @@ public class PolicyController {
         }
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.workspaceContextRequired();
+        if (userId == null || userId.isBlank() || workspaceId == null || workspaceId.isBlank()) {
+            // BL-181: missing workspace context is a conflict with the account state (409).
+            return problem(CpApiException.workspaceContextRequired());
         }
+        SessionPermissionGuard.Decision decision;
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            String targetTier = tier != null ? tier : SessionPermissionTier.tierForMode(mode);
+            decision = permissionGuard.authorize(userId, workspaceId, sessionId, targetTier);
         } catch (CpApiException e) {
             return problem(e);
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    e.getMessage());
+        }
+        if (!decision.allowed()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, decision.reason(),
+                    "session permission change refused: " + decision.reason());
+        }
+        // Authorization runs first so an unknown session keeps its 404 and a refused caller keeps
+        // its 403; only an authorized caller with a bogus legacy mode sees 400.
+        if (tier == null && !SessionPolicyState.MODES.contains(mode)) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "unsupported policy mode: " + mode);
         }
         try {
             // D-1908 rev4: tier is written as the source and the mode is derived from it; a legacy
