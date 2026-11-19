@@ -396,6 +396,8 @@ describe("presentError（task-45：错误面单一入口）", () => {
 
 describe("mappedErrorCopy：task-111 工具参数截断专用文案", () => {
     it("LLM_TOOL_ARGUMENTS_TRUNCATED 有可操作文案", () => {
-        expect(mappedErrorCopy("LLM_TOOL_ARGUMENTS_TRUNCATED")).toBe("模型返回的工具调用参数被截断，请重试或换模型");
+        expect(mappedErrorCopy("LLM_TOOL_ARGUMENTS_TRUNCATED")).toBe(
+            "模型返回的工具调用参数被截断，请重试或换模型",
+        );
     });
 });
