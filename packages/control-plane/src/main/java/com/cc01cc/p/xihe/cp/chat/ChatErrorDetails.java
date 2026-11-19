@@ -5,7 +5,7 @@ package com.cc01cc.p.xihe.cp.chat;
  *
  * <p>CP no longer localizes user-facing errors: this helper returns {@code null} for every code
  * whose copy used to be an English sentence, and the UI renders {@code humanizeErrorCode(code)}.
- * Only the three codes whose product copy is already Chinese are kept here. Machine-readable
+ * Only the codes whose product copy is already Chinese are kept here. Machine-readable
  * codes (and technical 400 details elsewhere) are untouched.</p>
  */
 final class ChatErrorDetails {
@@ -19,6 +19,9 @@ final class ChatErrorDetails {
         }
         return switch (code) {
             case "CONTEXT_OVERFLOW" -> "上下文超限，已压缩并重试一次，仍超出限制";
+            // task-30 / D-1890③: 200 + finish_reason=length + empty body. Informational only —
+            // the run does not compaction-retry, so the copy must not promise a retry.
+            case "LLM_OUTPUT_TRUNCATED" -> "模型输出被长度截断，本轮回答可能不完整，可让模型继续";
             case "RUN_BUDGET_EXHAUSTED" -> "本次运行已达到累计预算上限";
             case "RUN_NO_PROGRESS" -> "检测到重复或无进展动作，运行已停止";
             default -> null;

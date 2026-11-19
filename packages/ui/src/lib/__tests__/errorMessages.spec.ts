@@ -154,6 +154,15 @@ describe("humanizeErrorCode", () => {
         }
     });
 
+    it("maps the informational truncation code without promising a retry (task-30)", () => {
+        const truncated = humanizeErrorCode("LLM_OUTPUT_TRUNCATED");
+        expect(truncated).toContain("被长度截断");
+        // D-1890③: only CONTEXT_OVERFLOW drives the compaction retry, so this copy must not
+        // reuse the overflow wording or advertise a retry the run never performs.
+        expect(truncated).not.toContain("重试");
+        expect(truncated).not.toContain("上下文超限");
+    });
+
     it("never surfaces an English backend detail for an unknown code", () => {
         const copy = humanizeErrorCode("SOMETHING_NEW", "Provider credentials are not configured");
         expect(copy).not.toContain("Provider credentials");

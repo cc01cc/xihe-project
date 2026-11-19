@@ -131,6 +131,10 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
             return "Agent 事件与当前运行不匹配，请重试";
         case "CONTEXT_OVERFLOW":
             return "上下文超限，已压缩并重试一次，仍超出限制";
+        // task-30 / D-1890③: 200 + finish_reason=length + empty body. Informational only —
+        // the run never compaction-retries this code, so the copy must not promise a retry.
+        case "LLM_OUTPUT_TRUNCATED":
+            return "模型输出被长度截断，本轮回答可能不完整，可让模型继续";
         case "RUN_BUDGET_EXHAUSTED":
             return "本次运行已达到累计预算上限";
         case "RUN_NO_PROGRESS":

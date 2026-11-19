@@ -34,5 +34,9 @@ class ChatErrorDetailsTest {
         assertEquals("上下文超限，已压缩并重试一次，仍超出限制", ChatErrorDetails.safeErrorDetail("CONTEXT_OVERFLOW"));
         assertEquals("本次运行已达到累计预算上限", ChatErrorDetails.safeErrorDetail("RUN_BUDGET_EXHAUSTED"));
         assertEquals("检测到重复或无进展动作，运行已停止", ChatErrorDetails.safeErrorDetail("RUN_NO_PROGRESS"));
+        // task-30 / D-1890③: informational truncation copy, deliberately not the overflow copy
+        // (the run does not compaction-retry), so the UI never promises a retry for it.
+        assertEquals("模型输出被长度截断，本轮回答可能不完整，可让模型继续",
+                ChatErrorDetails.safeErrorDetail("LLM_OUTPUT_TRUNCATED"));
     }
 }

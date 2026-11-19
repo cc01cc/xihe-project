@@ -2422,7 +2422,10 @@ public class ChatController {
                     "IDEMPOTENCY_KEY_CONFLICT", "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
                     "APPROVAL_EXECUTOR_UNSUPPORTED", "APPROVAL_DECISION_CONFLICT", "AGENT_EVENT_ID_MISMATCH",
                     "CONTEXT_OVERFLOW", "RUN_BUDGET_EXHAUSTED", "RUN_NO_PROGRESS",
-                    "LLM_TOOL_ARGUMENTS_TRUNCATED" -> code;
+                    // task-30 / D-1890③: 200 + finish_reason=length with an empty body is a
+                    // terminal, informational outcome (never a compaction retry); it still has
+                    // to survive to the run terminal instead of collapsing to AGENT_UNAVAILABLE.
+                    "LLM_OUTPUT_TRUNCATED", "LLM_TOOL_ARGUMENTS_TRUNCATED" -> code;
             // PLAN-0416 V12/V6: these are Agent-side fail-closed rejections raised
             // BEFORE any provider dispatch. Their whole point is a stable,
             // actionable code on the wire; collapsing them to AGENT_UNAVAILABLE

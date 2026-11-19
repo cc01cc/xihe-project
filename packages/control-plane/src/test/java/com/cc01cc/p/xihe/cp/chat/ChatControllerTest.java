@@ -2448,6 +2448,47 @@ class ChatControllerTest extends AbstractH2Test {
         });
     }
 
+    // task-30 / D-1890③: the informational truncation code must survive the CP
+    // safeErrorCode allowlist on the HTTP>=400 relay path (otherwise the run terminal reads
+    // AGENT_UNAVAILABLE), and it must NOT enter the compaction retry arm, which is keyed on
+    // CONTEXT_OVERFLOW only (ChatController:2014/2037). A retried run would POST
+    // /internal/v1/agent/chat a second time, so the dispatch counter is the proof.
+    @Test
+    void chatOutputTruncatedCodeSurvivesToRunTerminalWithoutCompactionRetry() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            calls.incrementAndGet();
+            byte[] body = "{\"code\":\"LLM_OUTPUT_TRUNCATED\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+            exchange.sendResponseHeaders(400, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "output truncated",
+                "workspaceId", workspaceId,
+                "userId", userId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+            assertEquals("failed", run.getStatus());
+            assertEquals("LLM_OUTPUT_TRUNCATED", run.getErrorCode());
+        });
+        // Exactly one agent dispatch: a CONTEXT_OVERFLOW-style compaction retry would be 2.
+        assertEquals(1, calls.get());
+    }
+
     @Test
     void cancelRunTerminalPathRequestsCheckpointSeal() {
         ChatRun run = new ChatRun(UUID.randomUUID().toString(), sessionId, userId, workspaceId,
