@@ -19,6 +19,7 @@ import httpx
 from loguru import logger
 
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, strict_json, validate_body
+from xihe_agent.llm.error_classification import classify_output_truncation, classify_rejected_body
 from xihe_agent.llm.transport_metrics import TransportMetricsCollector
 
 # PLAN-0416 T2.3: provider counters surfaced on the REGULAR usage wire. A counter
@@ -68,6 +69,16 @@ class NativeResponse:
     # from `usage` (which must stay in the LangChain UsageMetadata shape so
     # chunk merging stays valid). Keys outside this map are unknown.
     provider_usage: dict[str, int] = field(default_factory=dict)
+    # task-27/Q-45: the provider's own stop reason, kept on the parsed result so the
+    # sender can tell a silent truncation (200 + empty body + "length") from a normal
+    # max_tokens cut. The audit payload cannot be used for this: it is only complete
+    # after the stream ends, while the decision happens mid-stream.
+    finish_reason: str | None = None
+
+
+def _finish_reason(value: Any) -> str | None:
+    """task-27: normalize a provider stop reason; absent/invalid becomes None."""
+    return value if isinstance(value, str) and value else None
 
 
 def _counter(mapping: dict[str, Any], key: str) -> int | None:
@@ -171,6 +182,7 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
         choice = _object(choices[0])
         if not choice.get("finish_reason"):
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
+        result.finish_reason = _finish_reason(choice.get("finish_reason"))
         message = _object(choice.get("message"))
         if message.get("role") != "assistant":
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
@@ -202,6 +214,7 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
         if len(choices) != 1:
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
         choice = _object(choices[0])
+        result.finish_reason = _finish_reason(choice.get("finish_reason"))
         message = _object(choice.get("message"))
         result.records = [copy.deepcopy(message)]
         result.text = _text(message.get("content"))
@@ -215,6 +228,7 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
         blocks = _array(data.get("content"))
         if data.get("role") != "assistant" or not data.get("stop_reason"):
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
+        result.finish_reason = _finish_reason(data.get("stop_reason"))
         result.records = [{"role": "assistant", "content": copy.deepcopy(blocks)}]
         for block in blocks:
             block = _object(block)
@@ -241,6 +255,9 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
     else:
         if data.get("status") != "completed":
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
+        # Non-"completed" statuses are rejected above, so this is informational only:
+        # an incomplete response never reaches the truncation check.
+        result.finish_reason = _finish_reason(data.get("status"))
         records = _array(data.get("output"))
         result.records = copy.deepcopy(records)
         for item in records:
@@ -617,14 +634,15 @@ class ApiSender:
                         # task-103: the provider's original error body belongs in the
                         # record, so read it before raising instead of discarding it.
                         audit.error_bytes = await response.aread()
-                        code = (
-                            "LLM_CREDENTIALS_INVALID"
-                            if response.status_code in {401, 403}
-                            else "LLM_PROVIDER_UNREACHABLE"
-                            if response.status_code >= 500
-                            else "LLM_REQUEST_REJECTED"
+                        # task-27/Q-45: the status is only the first key. The provider's
+                        # own error body decides whether this is a context window, and
+                        # the classifier is the single place that decision is written
+                        # down (401/403 -> credentials, >=500 -> unreachable, else the
+                        # whitelist, fail closed to REJECTED).
+                        failure = classify_rejected_body(response.status_code, audit.error_bytes)
+                        raise ApiRequestError(
+                            failure.code, 502, detail=failure.detail, retryable=failure.retryable
                         )
-                        raise ApiRequestError(code, 502)
                     if not body.get("stream", False):
                         raw = await response.aread()
                         audit.streamed = False
@@ -637,6 +655,16 @@ class ApiSender:
                             raise
                         except (UnicodeError, ValueError, TypeError, KeyError) as exc:
                             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502) from exc
+                        # task-27/Q-45: a 200 with an empty body and finish_reason=length is
+                        # the provider's silent truncation (task-113). It is reported, never
+                        # retried by compaction: "length" can also be a normal max_tokens cut.
+                        truncation = classify_output_truncation(
+                            finish_reason=result.finish_reason, text=result.text, calls=result.calls
+                        )
+                        if truncation is not None:
+                            raise ApiRequestError(
+                                truncation.code, 502, detail=truncation.detail, retryable=truncation.retryable
+                            )
                         if probe is not None:
                             probe.observe_content(result.text, "")
                             probe.succeeded()
@@ -658,6 +686,18 @@ class ApiSender:
                                     yield text, reasoning, None
                                 if parser.complete:
                                     result = parser.result()
+                                    truncation = classify_output_truncation(
+                                        finish_reason=result.finish_reason,
+                                        text=result.text,
+                                        calls=result.calls,
+                                    )
+                                    if truncation is not None:
+                                        raise ApiRequestError(
+                                            truncation.code,
+                                            502,
+                                            detail=truncation.detail,
+                                            retryable=truncation.retryable,
+                                        )
                                     if probe is not None:
                                         probe.succeeded()
                                     yield "", "", result

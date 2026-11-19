@@ -44,6 +44,7 @@ from xihe_agent.llm.base import (
     LLMRouteConfigError,
     create_llm,
 )
+from xihe_agent.llm.error_classification import LLM_REQUEST_REJECTED, classify_provider_exception
 from xihe_agent.llm.models import _models_router
 from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.rag import VectorStore  # noqa: F401  (test seam; request-scoped since PLAN-0485)
@@ -686,45 +687,32 @@ def get_model_catalog() -> dict[str, Any]:
 
 
 def _classify_llm_exception(error: Exception) -> tuple[str, str, bool]:
-    """Map provider failures to safe, stable client-facing error semantics."""
-    if isinstance(error, LLMRouteConfigError):
-        return "LLM_BASE_URL_MISSING", str(error), False
-    text = str(error).lower()
-    if (
-        isinstance(error, litellm.exceptions.UnsupportedParamsError)
-        or "unsupportedparams" in text
-        or "does not support parameters" in text
-    ):
-        # PLAN-0364 M3: the resolved route rejects tool parameters (e.g. the native
-        # Xiaomi slug has no tool metadata). Never drop tools silently — the user
-        # must switch to an OpenAI-compatible connection or another model.
-        return (
-            "LLM_TOOL_ROUTE_UNSUPPORTED",
-            "当前模型路由不支持工具调用：请改用 OpenAI 兼容连接，或更换支持工具的模型",
-            False,
-        )
+    """Map provider failures to safe, stable client-facing error semantics.
+
+    task-27/Q-45: the mapping itself is the shared table in
+    ``xihe_agent.llm.error_classification``. This litellm bypass (judge / worker /
+    summarize) used to carry its own hand-written chain, so a provider overflow
+    reported here could never become CONTEXT_OVERFLOW while the raw-httpx sender
+    reported something else for the same body. Only the exception object is read
+    here; the decision is shared, one implementation.
+    """
     provider_status = getattr(error, "status_code", None)
-    if provider_status is None:
+    if not isinstance(provider_status, int):
         provider_status = getattr(getattr(error, "response", None), "status_code", None)
-    if isinstance(error, litellm.exceptions.BadRequestError) or provider_status == 400:
-        # The provider rejected the payload (message shape / params / tool schema).
+    error_type = "LLMRouteConfigError" if isinstance(error, LLMRouteConfigError) else type(error).__name__
+    failure = classify_provider_exception(
+        status_code=provider_status if isinstance(provider_status, int) else None,
+        message=str(error),
+        error_type=error_type,
+    )
+    if failure.code == LLM_REQUEST_REJECTED:
         # Provider detail can echo prompt data or credentials. Keep only the
         # classification and exception type in diagnostics.
         logger.error("[LLM] provider rejected the request errorType={}", type(error).__name__)
-        return (
-            "LLM_REQUEST_REJECTED",
-            "模型提供方拒绝了该请求（消息格式或参数不被接受）",
-            False,
-        )
-    if any(marker in text for marker in ("missing credentials", "api key", "apikey")):
-        return "LLM_NOT_CONFIGURED", "Provider credentials are not configured", True
-    if any(marker in text for marker in ("authentication", "unauthorized", "401", "403")):
-        return "LLM_CREDENTIALS_INVALID", "Provider credentials were rejected", False
-    if any(marker in text for marker in ("timeout", "timed out")):
-        return "LLM_PROVIDER_UNREACHABLE", "Provider request timed out", True
-    if any(marker in text for marker in ("connection", "connect", "dns", "unreachable")):
-        return "LLM_PROVIDER_UNREACHABLE", "Provider is unreachable", True
-    return "AGENT_STREAM_FAILED", "Agent stream failed", True
+    # LLM_BASE_URL_MISSING keeps carrying the route error text (it names the
+    # resolved route, not the provider payload).
+    detail = failure.detail if failure.detail is not None else str(error)
+    return failure.code, detail, failure.retryable
 
 
 async def _enrich_with_rag_context(content: str, instructions: str) -> str:

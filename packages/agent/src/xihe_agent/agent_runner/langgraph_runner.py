@@ -573,7 +573,9 @@ class LangGraphRunner(AgentRunner):
             # from a pre-send failure (PLAN-0493 T0.2 diagnosis).
             logger.opt(exception=True).warning("API request failed code={}", e.code)
             context.metadata.pop(EVENT_STORE_FAILURES_KEY, None)
-            error_data: dict[str, Any] = {"error": e.code, "code": e.terminal_code, "retryable": False}
+            # task-27/Q-45: retryability is part of the classification, not a constant;
+            # CONTEXT_OVERFLOW reaches here as a retryable ApiRequestError.
+            error_data: dict[str, Any] = {"error": e.code, "code": e.terminal_code, "retryable": e.retryable}
             if e.detail:
                 error_data["detail"] = e.detail
             yield AgentEvent(type="error", data=error_data)
@@ -654,9 +656,7 @@ class LangGraphRunner(AgentRunner):
                         context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
                 except ApiRequestError as e:
                     logger.warning("Native history persistence rejected code={}", e.terminal_code)
-                    error_data: dict[str, Any] = {
-                        "error": e.terminal_code, "code": e.terminal_code, "retryable": False
-                    }
+                    error_data = {"error": e.terminal_code, "code": e.terminal_code, "retryable": False}
                     if e.detail:
                         error_data["detail"] = e.detail
                     yield AgentEvent(type="error", data=error_data)

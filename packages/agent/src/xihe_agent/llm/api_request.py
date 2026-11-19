@@ -15,7 +15,9 @@ from xihe_agent.log_redact import redact_text
 class ApiRequestError(RuntimeError):
     """Safe, classified failure; never includes provider body or credentials."""
 
-    def __init__(self, code: str, status: int = 400, detail: str | None = None):
+    def __init__(
+        self, code: str, status: int = 400, detail: str | None = None, retryable: bool = False
+    ):
         self.code = {
             "LLM_PROVIDER_INVALID_RESPONSE": "AGENT_STREAM_FAILED",
             "LLM_PROVIDER_STREAM_TRUNCATED": "AGENT_STREAM_FAILED",
@@ -26,6 +28,9 @@ class ApiRequestError(RuntimeError):
         # dedicated terminal code; it is never a provider body or credentials.
         self.detail = redact_text(detail)[:256] if detail else None
         self.status = status
+        # task-27/Q-45: CONTEXT_OVERFLOW is the one transport failure the caller may
+        # retry by compacting; everything else stays non-retryable as before.
+        self.retryable = retryable
         super().__init__(self.code)
 
     @property

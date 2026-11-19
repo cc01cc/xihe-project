@@ -82,6 +82,16 @@ PLAN-0492 实现。预算只约束「本次 Run 的累计消耗」，与输入�
 
 验证映射：Agent `tests/unit/test_context_compaction.py`（三模式 + 保真红/绿 + 抛错回退 + 节省可算）、`tests/unit/test_context_policy.py`（`contextCompaction` 解析与回落）、`tests/unit/test_tool_result_masking.py`（裸占位符形状不变）。
 
+## provider 失败分类与 CONTEXT_OVERFLOW / LLM_OUTPUT_TRUNCATED 的可达性（task-27/Q-45，2026-11-19）
+
+1. **单一实现**：provider 失败到错误码的映射只有一处 —— `packages/agent/src/xihe_agent/llm/error_classification.py` 里的**数据表**（`OVERFLOW_CODE_VALUES` / `OVERFLOW_PHRASES` / `OVERFLOW_PHRASE_GROUPS` / `EXCLUSION_*` / `SAFE_OVERFLOW_PARAMS` / `EXCEPTION_RULES`）。两条 transport 同源：raw-httpx 的真实聊天面 `ApiSender.stream` 非 2xx 分支调用 `classify_rejected_body(status, body)`；litellm 旁路（judge / worker / summarize）`app_state._classify_llm_exception` 调用 `classify_provider_exception(status_code, message, error_type)`。新增错误码 MUST 改这张表，MUST NOT 在调用点再写 if 链。
+2. **判定顺序**：状态优先级不变（401/403 ⇒ `LLM_CREDENTIALS_INVALID`，≥500 ⇒ `LLM_PROVIDER_UNREACHABLE`）；只有 400/413 进入白名单判定；排除规则（`string_above_max_length`、`invalid 'user'` + `string too long`、非 `messages/input/prompt` 的 `param`）先于 T1/T2；再比对 `error.code == context_length_exceeded`，再比对短语表；**未识别一律 fail closed 到 `LLM_REQUEST_REJECTED`**（一次误判要白压一次上下文并重跑）。422/429 恒不参与；错误体按 64 KiB 有界读取，超出即当解析失败。
+3. **CONTEXT_OVERFLOW 的产出点只有一个**：`packages/agent/src/xihe_agent/agent_runner/langgraph_runner.py:591`（litellm `ContextWindowExceededError` 分支），消费方是 CP 的压缩重试臂。第二条路径 —— `ApiRequestError`（非流式/流式发送失败）——只**转发** `e.terminal_code`，`retryable` 随分类带入（`ApiRequestError.retryable`，`packages/agent/src/xihe_agent/llm/api_request.py:33`），MUST NOT 在 runner 里写死 `False`；故 `CONTEXT_OVERFLOW` 字面在 runner 仍只出现一次。
+4. **200 + 静默截断只告知、不重试**：provider 返回 200、`finish_reason` 为 `length`/`max_tokens` 且正文为空、无工具调用 ⇒ `LLM_OUTPUT_TRUNCATED`（`retryable=False`）。MUST NOT 归为 `CONTEXT_OVERFLOW`：`length` 也可能是正常 `max_tokens` 截断，误触发会白压一次上下文。正文非空时不做判定（与正常截断不可区分）。`finish_reason` 由解析结果携带（`NativeResponse.finish_reason`）；流式判定 MUST 用 `StreamParser` 的 `finish`，不得读 `audit.response_bytes`（该字段流结束才完整）。
+5. **已知不覆盖（登记说明）**：流内截断（未收到收尾帧）仍归 `LLM_PROVIDER_STREAM_TRUNCATED`；工具调用参数被截断仍归 `LLM_TOOL_ARGUMENTS_TRUNCATED`；`mimo-responses` 的非 `completed` 状态在解析层即 502，不进入截断判定。三者均不在本节判据内。
+6. **不变式**：MUST NOT 改变 `LLM_REQUEST_REJECTED` / `LLM_CREDENTIALS_INVALID` / `LLM_PROVIDER_UNREACHABLE` 的既有语义与文案；MUST NOT 让错误 detail 携带 provider 报文原文或凭据（分类只给安全 detail，报文只留在 `audit.error_bytes`）。
+
+验证映射：`packages/agent/tests/unit/test_error_classification.py`（12 正例 + 8 反例矩阵、状态优先级、param 规则、64 KiB 有界、截断三态）、`packages/agent/tests/unit/test_context_overflow_reachability.py`（真 loopback 400 报文 → 真 `ApiChatModel` → 真 `LangGraphRunner` 终态事件；普通 400 不可重试对照；200 截断不产 `CONTEXT_OVERFLOW`）、`packages/agent/tests/unit/test_main.py`（litellm 旁路既有映射不变）、`packages/agent/tests/unit/test_api_request_runtime.py`（发送面既有 400 映射不变）。案例来源：`internal/A03-xihe/docs/q45-option-a-and-b.md` §B2/§B3 与 `internal/A03-xihe/evidence/2026-11-19-q45-overflow-classification/matcher-cases.json`。
 ## Agent Run 语义重复与无进展检测
 
 PLAN-0493 实现。与累计预算（上节）相互独立、可同时生效：预算约束「消耗总量」，本节约束「动作重复性与进展」，两类触发各自上报、各自终态归因（`RUN_BUDGET_EXHAUSTED` / `RUN_NO_PROGRESS`）。
