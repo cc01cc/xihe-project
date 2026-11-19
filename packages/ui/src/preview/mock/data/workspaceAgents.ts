@@ -38,6 +38,11 @@ export interface MockWorkspaceAgentRow {
     capSource?: "baseline" | "explicit" | null;
     bound: boolean;
     disabled: boolean;
+    /**
+     * 默认智能体（task-139，CP 侧 task-106）：**每 workspace 至多一个 true**。
+     * 缺省 = 不是默认（旧响应形状）；UI 只认这一字段，不做本地推断。
+     */
+    isDefault?: boolean;
     roleIds: string[];
     hooks: { advisors: Array<{ event: string; target: string }> };
     contextPolicy: { memory: { enabled: boolean } };
@@ -115,14 +120,20 @@ function agent(
 
 /** 六行覆盖 capSource 四态 + disabled + 未绑定（bound=false 的可见行，D26）。 */
 const SEED_AGENTS: MockWorkspaceAgentRow[] = [
-    agent(PID_EXPLICIT, "cap-explicit-agent", "explicit", [
-        { actionClass: "file_read", resource: "workspace" },
-        { actionClass: "file_write", resource: "workspace" },
-        {
-            actionClass: "credential_use",
-            resource: "credential:11111111-2222-3333-4444-555555555555",
-        },
-    ]),
+    agent(
+        PID_EXPLICIT,
+        "cap-explicit-agent",
+        "explicit",
+        [
+            { actionClass: "file_read", resource: "workspace" },
+            { actionClass: "file_write", resource: "workspace" },
+            {
+                actionClass: "credential_use",
+                resource: "credential:11111111-2222-3333-4444-555555555555",
+            },
+        ],
+        { isDefault: true },
+    ),
     agent(PID_ZERO, "cap-zero-agent", "explicit", [], { roleIds: [ROLE_VIEWER] }),
     agent(PID_INHERIT, "cap-inherit-agent", "baseline", []),
     // 旧响应：**没有 capSource 字段**（不是 null），UI 不得据此编造来源。
@@ -373,6 +384,36 @@ export function setWorkspaceAgentCap(
     };
 }
 
+/**
+ * 设默认智能体（task-139，CP task-106 的 mock 对位）。
+ *
+ * <p>不变量「每 workspace 至多一个默认」在这里**一处收窄**：先把同集合其它行清掉再置该行。
+ * 没有走「先清后置两次调用」是因为 preview 是单进程内存集合，两步之间插入一次 GET 就会
+ * 让 UI 看到零默认的中间态（那是 CP 事务该保证的事，mock 不该复刻缺陷）。</p>
+ */
+export function setWorkspaceAgentDefault(
+    workspaceId: string,
+    principalId: string,
+): { principalId: string; workspaceId: string; isDefault: true } | null {
+    if (workspaceId !== MOCK_AGENT_WORKSPACE_ID) return null;
+    const row = agents.find((item) => item.principalId === principalId);
+    if (!row) return null;
+    for (const item of agents) item.isDefault = item.principalId === principalId;
+    return { principalId, workspaceId, isDefault: true };
+}
+
+/** 取消默认：只清该行（其它行本就为 false），未知主体回 null ⇒ 上层 404。 */
+export function clearWorkspaceAgentDefault(
+    workspaceId: string,
+    principalId: string,
+): { principalId: string; workspaceId: string; isDefault: false } | null {
+    if (workspaceId !== MOCK_AGENT_WORKSPACE_ID) return null;
+    const row = agents.find((item) => item.principalId === principalId);
+    if (!row) return null;
+    row.isDefault = false;
+    return { principalId, workspaceId, isDefault: false };
+}
+
 /** 与 `handleInstanceResource` / `handleAgentSkillBinding` 同形：返回 null = 本模块不接这条路径。 */
 export interface MockAgentDispatchResult {
     status: number;
@@ -454,6 +495,22 @@ export async function handleWorkspaceAgentResource(
     const listMatch = path.match(/^\/workspaces\/([^/]+)\/agents$/);
     if (listMatch && method === "GET") {
         return { status: 200, body: { agents: workspaceAgentsOfWorkspace(listMatch[1]) } };
+    }
+    // task-139：`PUT|DELETE /workspaces/{ws}/agents/{pid}/default`。两侧都回 204（CP 的写面
+    // 不带实体），读回仍走列表面 —— 与 `GET /agents` 的 `isDefault` 构成唯一事实源。
+    const defaultMatch = path.match(/^\/workspaces\/([^/]+)\/agents\/([^/]+)\/default$/);
+    if (defaultMatch) {
+        const [, workspaceId, principalId] = defaultMatch;
+        if (method === "PUT") {
+            return setWorkspaceAgentDefault(workspaceId, principalId)
+                ? { status: 204, body: null }
+                : problem(404, "WORKSPACE_AGENT_NOT_FOUND", "Workspace Agent binding not found");
+        }
+        if (method === "DELETE") {
+            return clearWorkspaceAgentDefault(workspaceId, principalId)
+                ? { status: 204, body: null }
+                : problem(404, "WORKSPACE_AGENT_NOT_FOUND", "Workspace Agent binding not found");
+        }
     }
     const itemMatch = path.match(/^\/workspaces\/([^/]+)\/agents\/([^/]+)$/);
     if (itemMatch) {

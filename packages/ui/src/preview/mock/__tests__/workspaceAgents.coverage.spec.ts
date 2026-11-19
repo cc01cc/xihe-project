@@ -226,6 +226,32 @@ describe("mock 工作区智能体夹具被路由消费（task-449）", () => {
         expect((denied.body as { code: string }).code).toBe("ROLE_BINDING_IMMUTABLE");
     });
 
+    it("默认智能体：种子恰一条、PUT 收窄到单行、DELETE 只清该行、未知主体 404（每 workspace 至多一个）", async () => {
+        const seeded = rows((await call(handler, agentsUrl)).body).filter(
+            (row) => row.isDefault === true,
+        );
+        expect(seeded.map((row) => row.principalId)).toEqual([MOCK_AGENT_PRINCIPAL_IDS.explicit]);
+
+        const target = MOCK_AGENT_PRINCIPAL_IDS.zero;
+        const put = await call(handler, `${agentsUrl}/${target}/default`, "PUT");
+        expect(put.status).toBe(204);
+        // 读面重新 GET：写面落在内存集合上，「刷新后仍在」不靠前端缓存。
+        const afterPut = rows((await call(handler, agentsUrl)).body);
+        expect(
+            afterPut.filter((row) => row.isDefault === true).map((row) => row.principalId),
+        ).toEqual([target]);
+
+        const cleared = await call(handler, `${agentsUrl}/${target}/default`, "DELETE");
+        expect(cleared.status).toBe(204);
+        expect(
+            rows((await call(handler, agentsUrl)).body).some((row) => row.isDefault === true),
+        ).toBe(false);
+
+        const missing = await call(handler, `${agentsUrl}/no-such-principal/default`, "PUT");
+        expect(missing.status).toBe(404);
+        expect((missing.body as { code: string }).code).toBe("WORKSPACE_AGENT_NOT_FOUND");
+    });
+
     it("未知 suffix 仍 404 MOCK_ENDPOINT_MISSING（不做通配 200 掩盖缺口）", async () => {
         const answer = await call(handler, `${agentsUrl}/${MOCK_AGENT_PRINCIPAL_IDS.zero}/bogus`);
         expect(answer.status).toBe(404);
