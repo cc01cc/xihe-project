@@ -118,6 +118,9 @@ function closeTestid(id: string): string {
  * 典型形态是树容器（恒单 tab「文件树」）——原先 nav 标签 + tab 画出「文件树 文件树」双标。
  * 可访问名不丢：nav 的 aria-label 仍是容器名；tab 文本照常可读。
  * 主容器单 tab（如仅一个会话）标签不同名 ⇒ 不受影响，容器标识保留。
+ *
+ * task-100 起容器标签本身已视觉隐藏（sr-only），视觉双标不可能再复现；本 computed 现在只决定该节点
+ * 是否存在于 DOM（保持既有 DOM 契约与「同名单 tab ⇒ 节点不存在」的 spec 断言）。
  */
 const singleTabRedundant = computed(
     () => props.tabs.length === 1 && props.tabs[0].label === containerLabel.value,
@@ -160,10 +163,16 @@ const activeTab = computed<string>({
         :aria-label="containerLabel"
         @keydown="onRowKeydown"
     >
+        <!--
+            task-100（用户 2026-11-19）：容器名对用户没有信息量，改视觉隐藏。
+            DOM 与 data-testid 保留（灰盒读数与既有 spec 依赖），可访问名也不丢：nav 的 aria-label 仍是容器名。
+            `w-0!` 不是冗余：Tailwind v4 的 `sr-only` 自身是 width:1px，而本卡判据要求 offsetWidth === 0。
+            隐藏后该节点 absolute（不在 flex 流里）⇒ 不会多出 nav 的 gap-1 间距，行高仍由 nav 的 h-8 = 32px 决定。
+        -->
         <span
             v-if="!singleTabRedundant"
             data-testid="workspace-container-label"
-            class="text-xs font-medium text-muted-foreground"
+            class="sr-only w-0!"
         >
             {{ containerLabel }}
         </span>

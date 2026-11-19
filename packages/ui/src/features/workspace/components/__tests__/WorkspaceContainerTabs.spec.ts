@@ -110,7 +110,7 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         ).toBe("内容");
     });
 
-    it("task-17 W-1 反向：单 tab 但与容器不同名 ⇒ 容器标签保留（主容器标识不丢）", () => {
+    it("task-17 W-1 反向：单 tab 但与容器不同名 ⇒ 容器标签保留（task-100 后 = DOM 保留、视觉隐藏）", () => {
         const wrapper = mountRow({
             containerId: "main",
             tabs: [{ id: "session:s1", label: "S1", closable: true }],
@@ -119,9 +119,25 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("内容");
     });
 
-    it("task-17 W-1 反向：多 tab ⇒ 容器标签保留", () => {
+    it("task-17 W-1 反向：多 tab ⇒ 容器标签保留（task-100 后 = DOM 保留、视觉隐藏）", () => {
         const wrapper = mountRow({ containerId: "main", tabs: TABS, activeId: "session:s1" });
         expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("内容");
+    });
+
+    /**
+     * task-100（用户 2026-11-19）：容器名「内容」对用户没有信息量 ⇒ 改视觉隐藏。
+     * 判据必须能区分「藏了」与「删了」：只断言 text() 的话 sr-only 也满足（SettingsDomainView.spec.ts:671
+     * 记过同一个坑）。所以这里钉类名钩子；真机的 offsetWidth === 0 归 Playwright（jsdom 不求值布局）。
+     */
+    it("task-100：容器名改视觉隐藏（保留 DOM 与 testid），可访问名由 nav 的 aria-label 承担", () => {
+        const wrapper = mountRow({ containerId: "main", tabs: TABS, activeId: "session:s1" });
+        const label = wrapper.get('[data-testid="workspace-container-label"]');
+        expect(label.classes()).toContain("sr-only");
+        expect(label.classes()).not.toContain("text-xs");
+        expect(label.text()).toBe("内容");
+        expect(
+            wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
+        ).toBe("内容");
     });
 
     /**
