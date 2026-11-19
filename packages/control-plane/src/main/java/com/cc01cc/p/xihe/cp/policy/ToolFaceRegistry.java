@@ -100,6 +100,11 @@ public class ToolFaceRegistry {
      * map to this one action class.
      */
     public static final String ACTION_TEAM_TASK_MANAGE = "TEAM_TASK_MANAGE";
+    // task-108 / D-1908 rev3: who may RELAX a session's permission tier (widening the write
+    // surface). Tightening never needs it. This is the first action atom whose name carries the
+    // domain-qualified `session:permission:configure` spelling the decision uses; it is still a
+    // plain action atom (validated against {@link #builtinActionClasses()}, never an authority).
+    public static final String ACTION_SESSION_PERMISSION_CONFIGURE = "session:permission:configure";
     /** D-928 / PLAN-0766: write access to the shared workspace-default config layer. */
     public static final String ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
     /**
@@ -338,7 +343,12 @@ public class ToolFaceRegistry {
                 // the same batch as its catalog entry, label and seed rows — the same mechanical
                 // reason V157/V162 document: GrantIntersectionEvaluator validates against this
                 // vocabulary, and MemoryWriteAtomTest asserts actionAtoms() == this set.
-                ACTION_TEAM_TASK_MANAGE);
+                ACTION_TEAM_TASK_MANAGE,
+                // task-108 (V178): the session-tier relaxation atom joins the action-class set in
+                // the same batch as its catalog entry, label and seed rows — the same mechanical
+                // reason V157/V162/V172 document: GrantIntersectionEvaluator validates against this
+                // vocabulary, and MemoryWriteAtomTest asserts actionAtoms() == this set.
+                ACTION_SESSION_PERMISSION_CONFIGURE);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

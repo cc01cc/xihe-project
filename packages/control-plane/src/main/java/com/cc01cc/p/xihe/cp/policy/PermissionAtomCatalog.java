@@ -15,7 +15,7 @@ import java.util.Set;
  * <p>Two kinds of atom exist and they are <b>not</b> interchangeable:</p>
  *
  * <ul>
- *   <li><b>Action atoms (41)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
+ *   <li><b>Action atoms (42)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
  *       action classes}. They are the only atoms that may be materialized into
  *       {@code grants.permissions}; {@code GrantIntersectionEvaluator.PermissionAtom} throws for
  *       anything else, so a non-action atom inside a grant would fail every evaluation closed.</li>
@@ -230,7 +230,14 @@ public final class PermissionAtomCatalog {
             // construction (absent from INSTANCE_ONLY_ATOMS below); not agent-forbidden (a
             // teammate is an agent principal; the board is a workspace-domain action, the
             // MANAGE_SKILL_LIBRARY N5-N9 precedent).
-            ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE);
+            ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE,
+            // task-108 / D-1908 rev3 (V178): relaxing a session's permission tier. 41 + 1 = 42
+            // action atoms; the matching role seeds land in Flyway V178 (SUPER_ADMIN mirror /
+            // ADMIN / WS_OWNER / WS_EDITOR). Scope class stays `both` by construction (absent from
+            // INSTANCE_ONLY_ATOMS): the grant names the workspace whose sessions it covers. Not
+            // agent-forbidden — an agent principal holding a workspace editor role may configure
+            // sessions in that workspace, and D-1908 never grants an agent a human's session.
+            ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);

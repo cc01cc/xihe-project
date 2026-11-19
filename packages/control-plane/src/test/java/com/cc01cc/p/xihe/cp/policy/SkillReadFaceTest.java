@@ -38,7 +38,8 @@ class SkillReadFaceTest {
     // atoms (37 → 40).
     // task-188 MVP⑤ (V172): TEAM_TASK_MANAGE joined the vocabulary (40 -> 41). The frozen count is
     // the tripwire, not the authority — the authority is ToolFaceRegistry itself.
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 41;
+    // 41 through V172 (TEAM_TASK_MANAGE) + V178 (task-108: SESSION_PERMISSION_CONFIGURE) = 42.
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 42;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {

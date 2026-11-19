@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -29,8 +30,10 @@ class PolicyControllerModeTest {
     private final SessionApprovalMode sessionApprovalMode = mock(SessionApprovalMode.class);
     private final SessionService sessionService = mock(SessionService.class);
     private final RequesterAuthority requesterAuthority = mock(RequesterAuthority.class);
+    private final SessionPermissionGuard permissionGuard = mock(SessionPermissionGuard.class);
     private final PolicyController controller = new PolicyController(
-            ruleService, faceService, sessionState, sessionApprovalMode, sessionService, requesterAuthority);
+            ruleService, faceService, sessionState, sessionApprovalMode, sessionService, requesterAuthority,
+            permissionGuard);
 
     @AfterEach
     void clearTenant() {
@@ -56,16 +59,71 @@ class PolicyControllerModeTest {
     }
 
     @Test
-    void setModeChecksSessionOwnership() {
+    void setModeChecksPermissionGuardBeforeWriting() {
         TenantContext.setUserId("u1");
         TenantContext.setWorkspaceId("ws1");
+        when(permissionGuard.authorize("u1", "ws1", "s1", SessionPermissionTier.FULL))
+                .thenReturn(new SessionPermissionGuard.Decision(
+                        true, null, null, "full", false, false, Set.of()));
 
         ResponseEntity<?> response = controller.setMode(Map.of("sessionId", "s1", "mode", "auto"));
 
-        verify(sessionService).requireCurrent("s1", "u1", "ws1");
+        // task-108: the write face is the permission guard, not requireCurrent — owner-only would
+        // still let a session creator without the atom relax its own session.
+        verify(permissionGuard).authorize("u1", "ws1", "s1", SessionPermissionTier.FULL);
+        verify(sessionService, never()).requireCurrent(any(), any(), any());
         verify(sessionApprovalMode).setMode("s1", "auto");
         assertEquals(200, response.getStatusCode().value());
         assertEquals("session", ((Map<?, ?>) response.getBody()).get("scope"));
+    }
+
+    @Test
+    void setModeRefusesADeniedWideningWith403AndTheGuardReason() {
+        TenantContext.setUserId("u1");
+        TenantContext.setWorkspaceId("ws1");
+        when(permissionGuard.authorize("u1", "ws1", "s1", SessionPermissionTier.FULL))
+                .thenReturn(new SessionPermissionGuard.Decision(false,
+                        SessionPermissionGuard.REASON_NO_CAPABILITY, "workspace", "full",
+                        false, false, Set.of()));
+
+        ResponseEntity<?> response = controller.setMode(Map.of("sessionId", "s1", "tier", "full"));
+
+        assertEquals(403, response.getStatusCode().value());
+        assertEquals(SessionPermissionGuard.REASON_NO_CAPABILITY,
+                ((Map<?, ?>) response.getBody()).get("code"));
+        verify(sessionApprovalMode, never()).setTier(any(), any());
+        verify(sessionApprovalMode, never()).setMode(any(), any());
+    }
+
+    @Test
+    void setModeRejectsALegacyModeAfterAuthorization() {
+        TenantContext.setUserId("u1");
+        TenantContext.setWorkspaceId("ws1");
+        when(permissionGuard.authorize("u1", "ws1", "s1", SessionPermissionTier.WORKSPACE))
+                .thenReturn(new SessionPermissionGuard.Decision(
+                        true, null, null, "workspace", false, false, Set.of()));
+
+        ResponseEntity<?> response = controller.setMode(Map.of("sessionId", "s1", "mode", "yolo"));
+
+        assertEquals(400, response.getStatusCode().value());
+        verify(sessionApprovalMode, never()).setMode(any(), any());
+    }
+
+    @Test
+    void setModeAcceptsAnIdempotentRewriteByANonCreatorHoldingNoAtom() {
+        // Lead ruling on task-108: re-submitting the stored tier is a no-op, not an escalation, so a
+        // plain participant without the atom gets 200 and the write is idempotent.
+        TenantContext.setUserId("u1");
+        TenantContext.setWorkspaceId("ws1");
+        when(permissionGuard.authorize("u1", "ws1", "s1", SessionPermissionTier.FULL))
+                .thenReturn(new SessionPermissionGuard.Decision(
+                        true, null, "full", "full", false, true, Set.of()));
+
+        ResponseEntity<?> response = controller.setMode(Map.of("sessionId", "s1", "tier", "full"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(sessionApprovalMode).setTier("s1", "full");
+        verify(sessionApprovalMode, never()).setMode(any(), any());
     }
 
     @Test
@@ -74,7 +132,7 @@ class PolicyControllerModeTest {
         TenantContext.setWorkspaceId("ws1");
         when(sessionService.requireReadable("s1", "u1", "ws1"))
                 .thenThrow(new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
-        when(sessionService.requireCurrent("s1", "u1", "ws1"))
+        when(permissionGuard.authorize("u1", "ws1", "s1", SessionPermissionTier.WORKSPACE))
                 .thenThrow(new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
 
         ResponseEntity<?> get = controller.getMode("s1");
@@ -100,7 +158,7 @@ class PolicyControllerModeTest {
         assertEquals(409, set.getStatusCode().value());
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", ((Map<?, ?>) set.getBody()).get("code"));
 
-        verify(sessionService, never()).requireCurrent(any(), any(), any());
+        verify(permissionGuard, never()).authorize(any(), any(), any(), any());
     }
 
     @Test

@@ -202,7 +202,13 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP)))),
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP),
+                                        // task-108 / D-1908 rev3 (V178): an instance administrator may
+                                        // relax any session's tier, but the relaxation still requires the
+                                        // session's own creator (the endpoint checks sessions.user_id) —
+                                        // the atom alone never widens someone else's session.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
@@ -256,7 +262,12 @@ public class SystemAccessRoleCatalog {
                                         // shared team-task board (workspace-domain action; the tree
                                         // sits inside this workspace).
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE)))),
+                                                ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE),
+                                        // task-108 / D-1908 rev3 (V178): the workspace owner administers
+                                        // sessions in this workspace; the relaxation face still pins the
+                                        // actor to the session's creator.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
                 new RoleSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         "Workspace scope: read/write/delete/exec.",
                         List.of(
@@ -287,7 +298,12 @@ public class SystemAccessRoleCatalog {
                                 // task-188 MVP⑤ S2 (V172): an editor may claim/drive board tasks in
                                 // this workspace, same workspace-domain reasoning as the owner.
                                 AtomRef.wildcard(
-                                        ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE))),
+                                        ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE),
+                                // task-108 / D-1908 rev3 (V178): seeded by the V157 "give first, ask
+                                // later" precedent; whether an editor should be able to relax other
+                                // people's sessions is flagged to the lead in the delivery report.
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
