@@ -17,6 +17,7 @@ import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
 import { closeMonitorDockTab, openMockSession } from "./helpers/plan0659";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
+import { collapseDock, dockToggle, openDockPanel } from "../helpers/dock";
 
 // BL-318：本文件自建的 `sessions/{id}/delegation-usage` 桩是 **fail-closed** 的（只回答根会话，
 // 子会话故意 404 —— 子会话没有独立预算投影），逐条放行这两个子会话的 404。
@@ -141,14 +142,14 @@ test.describe("PLAN-0659 T1.4 — 委派 DAG", () => {
         await openMockSession(page, SESSION_ID);
         await closeMonitorDockTab(page);
 
-        // 工具栏入口（与 monitor/members 同构）。
-        const toggle = page.getByTestId("workspace-toolbar-delegation");
-        await expect(toggle).toHaveAttribute("aria-pressed", "false");
-        await toggle.click();
+        // task-137：入口收敛为「行尾开合图标 → 右栏 + → 选类型」；先收起保证起点是折叠态。
+        await collapseDock(page);
+        await expect(dockToggle(page)).toHaveAttribute("aria-pressed", "false");
+        await openDockPanel(page, "delegation");
         await expect(page.getByTestId("dock-tab-delegation")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        await expect(toggle).toHaveAttribute("aria-pressed", "true");
+        await expect(dockToggle(page)).toHaveAttribute("aria-pressed", "true");
 
         const panel = page.getByTestId("delegation-dag");
         await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

@@ -10,6 +10,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { installContextEventStream } from "./helpers/context-events";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const SESSION_ID = "test-session-442",
     RUN_ID = "run-442";
@@ -45,8 +46,7 @@ async function prepare(page: Page, expectComposer = true): Promise<void> {
 }
 
 async function openDock(page: Page): Promise<void> {
-    const toggle = page.getByTestId("workspace-toolbar-code");
-    if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+    await openDockPanel(page, "code");
     await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 }
 

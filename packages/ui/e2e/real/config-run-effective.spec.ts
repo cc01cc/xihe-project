@@ -1,6 +1,6 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
-import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";
 import {
     createSessionWithPrincipal,
@@ -86,31 +86,21 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
             "PLAN-0752: llm-provider-profile / llm-profile-* testids retired (0 hits in src)",
         );
 
-        const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await page.getByTestId("llm-profile-connection-select").selectOption(connection.id);
-        await page.getByTestId("llm-profile-model-select").selectOption("__custom__");
-        await page.getByTestId("llm-profile-model-custom").fill(uniqueModel);
-
-        const [saveResponse] = await Promise.all([
-            page.waitForResponse(
-                (response) =>
-                    response.url().includes("/api/v1/config/user/llm-provider") &&
-                    response.request().method() === "PUT",
-            ),
-            page.getByTestId("llm-profile-save").click(),
-        ]);
-        expect(saveResponse.status()).toBe(200);
-        expect(JSON.parse(saveResponse.request().postData() ?? "{}").profile).toBe(
-            JSON.stringify({
-                providerId: "openai",
-                connectionKey: "default",
-                model: uniqueModel,
-            }),
-        );
-        await expect(page.getByText(/默认 LLM 配置已保存/)).toBeVisible({
-            timeout: EXPECT_TIMEOUT_MS,
+        // task-134：旧保存面（llm-provider-profile / llm-profile-*）已退役 —— 保留退休判据
+        // （负向断言，门按判据不计 E），并把「整 unit 写入」这一契约换到 API 侧执行，
+        // 后续步骤（配置合并缓存 / 首条消息的实际 provider+model）因此仍可真跑。
+        await expect(page.getByTestId("llm-provider-profile")).toHaveCount(0);
+        const saveResponse = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+            headers,
+            data: {
+                profile: JSON.stringify({
+                    providerId: "openai",
+                    connectionKey: "default",
+                    model: uniqueModel,
+                }),
+            },
         });
+        expect(saveResponse.status(), await saveResponse.text()).toBe(200);
         await page.screenshot({
             scale: "css",
             path: test.info().outputPath("config-run-effective-saved.png"),

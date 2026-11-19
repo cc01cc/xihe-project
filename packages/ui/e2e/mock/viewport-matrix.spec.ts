@@ -2,6 +2,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { openDockPanel } from "../helpers/dock";
 
 async function setupViewportFixtures(page: Page) {
     await setupMockAuth(page);
@@ -93,8 +94,8 @@ test.describe("PLAN-269 viewport matrix: desktop-2k", () => {
         // C3: page-entry surface is the secondary nav (tab bar is session-only).
         await expect(page.getByTestId("workspace-nav-settings")).toBeVisible();
         // W4 (PLAN-0328 T3.7) chat-first layout: the FileEditor empty state now lives
-        // in the collapsible code panel, opened explicitly from the toolbar.
-        await page.getByTestId("workspace-toolbar-code").click();
+        // in the right dock's code panel; task-137 后入口 = 行尾开合图标 → 「+」→ 选「代码」。
+        await openDockPanel(page, "code");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         await expect(page.getByText("从文件树选择文件")).toBeVisible();
         await expectNoHorizontalOverflow(page);

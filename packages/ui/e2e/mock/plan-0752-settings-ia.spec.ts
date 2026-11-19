@@ -292,10 +292,13 @@ test.describe("task-485 智能体配置组页（两段一页，域不合并）",
             await page.goto(`/settings/${layer}/agent-config`, { waitUntil: "load" });
             await expect(page.getByTestId("settings-agent-config-view")).toBeVisible();
             await expect(page.getByTestId("settings-agent-config-title")).toBeVisible();
-            // 两段都在 DOM 里（不是"点导航才出现"）。
-            await expect(page.locator('[data-testid^="settings-agent-config-nav-"]')).toHaveCount(
-                2,
+            // 两段都在 DOM 里（不是"点导航才出现"）。task-134：组页 testid 由 `testIdPrefix`
+            // （= "settings-" + groupId）拼出，前缀通配选择器改成精确枚举（门按 ^= 算 prefix，
+            // 无法静态证明族成员存在）。
+            const anchors = page.locator(
+                '[data-testid="settings-agent-config-nav-agent-templates"]',
             );
+            await expect(anchors).toHaveCount(1);
             await expect(
                 page.getByTestId("settings-agent-config-nav-agent-templates"),
             ).toHaveAttribute("href", "#settings-domain-agent-templates");

@@ -43,6 +43,7 @@ import type { MatrixParticipant } from "./helpers/session-matrix";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+import { closeDockPanel, dockToggle, openDockPanel } from "../helpers/dock";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：用例 5 故意桩 `403 CURSOR_SELF_ONLY`（验"别人的游标不能推进"的本地化文案），
@@ -297,11 +298,11 @@ async function pushUserChannelFrame(page: Page, name: string, payload: unknown):
     );
 }
 
-/** 进会话 → 打开 dock 的 `members` tab（工具条入口，桌面布局）。 */
+/** 进会话 → 打开右栏的 `members` 页签（task-137 后入口 = 行尾开合图标 → 「+」→ 选类型，桌面布局）。 */
 async function openMembersPanel(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-    await page.getByTestId("workspace-toolbar-members").click();
+    await openDockPanel(page, "members");
     await expect(page.getByTestId("dock-tab-members")).toHaveAttribute("aria-selected", "true", {
         timeout: LONG_TIMEOUT_MS,
     });
@@ -466,12 +467,13 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
             })
             .toBe(1);
 
-        // 开关成员面板不新建连接（订阅属于壳，不属于面板）。
-        await page.getByTestId("workspace-toolbar-members").click();
+        // 关掉再打开成员面板不新建连接（订阅属于壳，不属于面板）。
+        // task-137：关 = 该页签自己的关闭按钮，开 = 行尾开合图标 → 「+」→ 选类型。
+        await closeDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeHidden({
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByTestId("workspace-toolbar-members").click();
+        await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -491,7 +493,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
             { timeout: LONG_TIMEOUT_MS },
         );
         await expect(
-            page.getByTestId("workspace-toolbar-members"),
+            dockToggle(page),
             "the authenticated shell is gone",
         ).toHaveCount(0);
         const afterLogout = await readUserChannel(page);

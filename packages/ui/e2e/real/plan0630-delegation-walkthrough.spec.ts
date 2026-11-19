@@ -16,6 +16,7 @@ import {
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { workspaceChatPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 /**
  * PLAN-0630 T5.9 — headed real-stack walkthrough (V14):
@@ -509,7 +510,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
 
         await page.goto(workspaceChatPath(wsId, childSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await page.getByTestId("workspace-toolbar-members").click();
+        await openDockPanel(page, "members");
         const primaryBadge = page.getByTestId(`participant-role-badge-${primaryParticipantId}`);
         await expect(primaryBadge, "the members dock shows the PRIMARY badge").toBeVisible({
             timeout: LONG_TIMEOUT_MS,

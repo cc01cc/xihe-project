@@ -28,6 +28,7 @@ import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -266,9 +267,8 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
             timeout: LONG_TIMEOUT_MS,
         });
 
-        // 打开 dock 的「成员」页签（WorkspaceToolbar → dock tab）。
-        await page.getByTestId("workspace-toolbar-members").click();
-        await page.getByTestId("dock-tab-members").click();
+        // 打开右栏的「成员」页签（task-137 后入口 = 行尾开合图标 → 「+」→ 选类型）。
+        await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel"), "成员面板").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

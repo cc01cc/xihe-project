@@ -25,6 +25,7 @@ import {
     LONG_TIMEOUT_MS,
     TEST_TIMEOUT_MS,
 } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const DEMO = process.env.XIHE_E2E_DEMO === "1";
 const SHOT_DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";
@@ -499,11 +500,9 @@ async function pickCc(page: Page, name: string): Promise<void> {
     await expect(menu).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 }
 
-/** A 方案：会话成员面板常开（多主体在席）。 */
+/** A 方案：会话成员面板常开（多主体在席）；task-137 后入口 = 开合图标 → 「+」→ 选类型。 */
 async function openMembersDock(page: Page): Promise<void> {
-    if ((await page.getByTestId("dock-tab-members").count()) === 0) {
-        await page.getByTestId("workspace-toolbar-members").click();
-    }
+    await openDockPanel(page, "members");
     await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
@@ -635,7 +634,7 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
         await page.getByTestId("chat-input").fill("@Planner 排期也一起看一眼。");
         // 用户裁定：会话列表侧栏"不是核心" ⇒ 采集前隐藏侧栏与导航 rail（纯展示隐藏，不改产品）。
         await page.addStyleTag({
-            content: '[data-testid="sidebar"],[data-testid="nav-rail"]{display:none!important}',
+            content: '[data-testid="sidebar"],[data-testid="global-rail"]{display:none!important}',
         });
         await page.waitForTimeout(400);
         await page.screenshot({ path: join(SHOT_DIR, "06-card-visual.png"), scale: "device" });
@@ -644,7 +643,7 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
     test("⑤ 委派 DAG", async ({ page }) => {
         await stubDelegation(page);
         await openSession(page);
-        await page.getByTestId("workspace-toolbar-delegation").click();
+        await openDockPanel(page, "delegation");
         await expect(page.getByTestId("dock-tab-delegation")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });

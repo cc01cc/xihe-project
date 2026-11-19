@@ -3,8 +3,8 @@
  * BL-317 / D-198 —— 移动端成员面板（最小版）：390×844 从**溢出菜单**进 `members`、
  * 入口徽标 = 服务端未读和、三处命中区域 ≥44×44、写能力投影正确。
  *
- * 为什么入口是溢出菜单：桌面那条 `workspace-toolbar-members` 在 `max-md` 下是 hidden
- * （`WorkspaceToolbar.vue` 的桌面 action cluster 是 `max-md:hidden`），移动端真正可达的是
+ * 为什么入口是溢出菜单：桌面那一排面板开关键已整体下线（task-137，唯一入口 = 行尾开合图标
+ * → 右栏「+」→ 选类型，桌面档没有第二组图标），移动端真正可达的是
  * `workspace-toolbar-more-mobile` 溢出菜单 —— 调研（`.local/evidence/bl-317-mobile-research.md`
  * §4-#1）里 5 个有移动端代码的参考仓也是同一形态：**入口在菜单、面板独占一屏**。
  *

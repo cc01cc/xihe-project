@@ -112,8 +112,7 @@ async function pickCc(page: Page, name: string): Promise<void> {
 }
 
 async function openMembersDock(page: Page): Promise<void> {
-    const toggle = page.getByTestId("workspace-toolbar-members");
-    if ((await page.getByTestId("dock-tab-members").count()) === 0) await toggle.click();
+    await openDockPanel(page, "members");
     await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
@@ -310,7 +309,7 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
         await page.waitForTimeout(400);
         // 与 mock 卡一致：隐藏会话列表侧栏与 nav rail（纯展示隐藏，不改产品）。
         await page.addStyleTag({
-            content: '[data-testid="sidebar"],[data-testid="nav-rail"]{display:none!important}',
+            content: '[data-testid="sidebar"],[data-testid="global-rail"]{display:none!important}',
         });
         await page.waitForTimeout(500);
         await page.screenshot({

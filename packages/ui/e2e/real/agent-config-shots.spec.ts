@@ -10,6 +10,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { openAgentsPanel } from "../helpers/agents-panel";
 
 const ENABLED = process.env.XIHE_E2E_AGENT_CONFIG === "1";
 const OUT = process.env.XIHE_AGENT_CONFIG_DIR ?? "";
@@ -56,12 +57,8 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
             (lang) => localStorage.setItem("xihe-language", lang),
             language === "en" ? "en-US" : "zh-CN",
         );
-        await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        await page.getByTestId("workspace-toolbar-agents").click();
-        await expect(page.getByTestId("dock-tab-agents")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        // task-134：工具栏 agents 入口随 D-1538 退役；面板现在只在「成员页 -> 智能体页签」。
+        await openAgentsPanel(page, { workspaceId: state.workspaceId, timeout: LONG_TIMEOUT_MS });
         const toggle = page.locator('[data-testid^="agent-roles-toggle-"]').first();
         await expect(toggle).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await toggle.click();
@@ -87,10 +84,8 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
 
         await page.addInitScript(() => localStorage.setItem("xihe-language", "en-US"));
         await page.reload();
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        await page.getByTestId("workspace-toolbar-agents").click();
+        // 刷新后成员页默认落回「成员」页签（activeTab 不是 URL 状态），需重新选页签。
+        await openAgentsPanel(page, { timeout: LONG_TIMEOUT_MS });
         const toggle = page.locator('[data-testid^="agent-roles-toggle-"]').first();
         await expect(toggle).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await toggle.click();

@@ -15,6 +15,7 @@ import {
 } from "./helpers/agent-principal";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 /**
  * PLAN-0339 T0.4 — workspace checkpoint slice restore, real host stack.
@@ -705,15 +706,21 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         // on this surface, so a reload would drop the run's marker — reported product gap).
         const treeRefresh = page.getByTestId("workspace-file-refresh").first();
         if (await treeRefresh.isVisible().catch(() => false)) await treeRefresh.click();
-        const codeToggle = page.getByTestId("workspace-toolbar-code");
-        await codeToggle.click();
-        await expect(codeToggle).toHaveAttribute("aria-pressed", "true");
+        // task-137：代码面板入口 = 行尾开合图标 → 右栏「+」→ 选「代码」。
+        await openDockPanel(page, "code");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         const fileButton = page.getByRole("button", { name: fileName, exact: true });
         await expect(fileButton).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await fileButton.click();
-        await page.getByRole("button", { name: "源码" }).click();
-        await page.getByTestId("workspace-markdown-source").fill(userContent);
+        // task-134：旧 textarea（workspace-markdown-source）随 CM6 编辑器退役（314146d12）。
+        // MarkdownEditor 默认就是源码态（`showSource = ref(true)`），内容在 contenteditable 的
+        // `.cm-content` 里；容器没有 testid，按产品面板（workspace-aux-panel）收窄（同 mock
+        // full-ui-acceptance.spec.ts:781-788 的既有口径）。
+        const markdownSource = page.getByTestId("workspace-aux-panel").locator(".cm-content");
+        await expect(markdownSource).toHaveAttribute("contenteditable", "true");
+        await markdownSource.click();
+        await page.keyboard.press("Control+A");
+        await page.keyboard.type(userContent);
         await page.getByRole("button", { name: "保存", exact: true }).click();
         await expect(page.getByRole("button", { name: "已保存", exact: true })).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -957,7 +964,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
             "committed baseline\nuser edit after the run\n",
         );
 
-        await page.getByTestId("workspace-toolbar-changes").click();
+        await openDockPanel(page, "changes");
         const panel = page.getByTestId("workspace-changes-panel");
         await expect(panel).toBeVisible();
 

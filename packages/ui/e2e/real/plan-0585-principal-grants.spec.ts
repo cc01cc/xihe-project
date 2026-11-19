@@ -2,6 +2,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { openAgentsPanel } from "../helpers/agents-panel";
 
 /**
  * PLAN-0610 W5c — **retirement spec** (formerly the PLAN-0585 M2 acceptance for the grant page).
@@ -275,8 +276,8 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
 
     test("F-02 guidance points at the role surface, not the retired page", async ({ page }) => {
         seedContext(page, admin, true);
-        await page.goto(`/workspace/${admin.workspaceId}`, { waitUntil: "load" });
-        await page.getByTestId("workspace-toolbar-agents").click();
+        // task-134：入口已从工具栏迁到成员页 -> 智能体页签（D-1538）。
+        await openAgentsPanel(page, { workspaceId: admin.workspaceId, timeout: LONG_TIMEOUT_MS });
 
         const link = page.getByTestId("agent-grant-panel-link");
         await expect(link).toBeVisible({ timeout: LONG_TIMEOUT_MS });

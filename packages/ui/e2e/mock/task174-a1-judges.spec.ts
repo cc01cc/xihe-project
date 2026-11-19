@@ -17,10 +17,8 @@ test.describe("task-174 A1", () => {
         await page
             .locator('[data-testid="workspace-main"]')
             .waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
-        const legacyEntry = await page.locator('[data-testid="workspace-toolbar-agents"]').count();
-        const menuEntry = await page
-            .locator('[data-testid="workspace-toolbar-more-agents"]')
-            .count();
+        // 退役入口的零残留判据写成**负向断言**（计数直接进 expect 链）：task-134 清理后
+        // 断言强度不变，但 check-testid-contract 能按「断言该 testid 不存在」的判据排除。
         const toggles = await page
             .locator(
                 [
@@ -32,9 +30,15 @@ test.describe("task-174 A1", () => {
                 ].join(", "),
             )
             .count();
-        log("a1-toolbar", { legacyEntry, menuEntry, panelToggles: toggles });
-        expect(legacyEntry, "A1：工具栏 Bot 入口零残留").toBe(0);
-        expect(menuEntry, "A1：溢出菜单 agents 入口零残留").toBe(0);
+        log("a1-toolbar", { panelToggles: toggles });
+        expect(
+            await page.locator('[data-testid="workspace-toolbar-agents"]').count(),
+            "A1：工具栏 Bot 入口零残留",
+        ).toBe(0);
+        expect(
+            await page.locator('[data-testid="workspace-toolbar-more-agents"]').count(),
+            "A1：溢出菜单 agents 入口零残留",
+        ).toBe(0);
         expect(toggles, "A1：面板开关 = 5").toBe(5);
     });
 
@@ -89,11 +93,11 @@ test.describe("task-174 A1", () => {
                 ].join(", "),
             )
             .count();
-        const menuAgents = await page
-            .locator('[data-testid="workspace-toolbar-more-agents"]')
-            .count();
-        log("a1-narrow", { pageEntries, menuAgents });
+        log("a1-narrow", { pageEntries });
         expect(pageEntries, "A1：窄屏三页面入口仍为 3").toBe(3);
-        expect(menuAgents, "A1：窄屏菜单 agents 入口零残留").toBe(0);
+        expect(
+            await page.locator('[data-testid="workspace-toolbar-more-agents"]').count(),
+            "A1：窄屏菜单 agents 入口零残留",
+        ).toBe(0);
     });
 });

@@ -22,6 +22,7 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { createWorkspaceSessionWithPrincipal } from "../real/helpers/agent-principal";
 import { ensureWorkspace } from "../real/helpers/workspace";
+import { openAgentsPanel } from "../helpers/agents-panel";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0622-${Date.now()}`;
@@ -272,13 +273,6 @@ async function loginViaForm(page: Page, identifier: string, password: string): P
         .toBe(true);
 }
 
-async function openAgentDialog(page: Page): Promise<void> {
-    await page.getByTestId("workspace-toolbar-agents").click();
-    await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-        timeout: LONG_TIMEOUT_MS,
-    });
-}
-
 test.describe.configure({ mode: "serial", timeout: LONG_TIMEOUT_MS });
 
 test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提示", () => {
@@ -359,11 +353,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         const token = await tokenOf(page);
         workspaceId = await ensureWorkspace(request, token);
-        await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        await openAgentDialog(page);
+        await openAgentsPanel(page, { workspaceId });
 
         await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
 
@@ -412,11 +402,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         attachPageDiagnostics(page);
         expect(principalId, "S2 depends on S1").not.toBe("");
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        await openAgentDialog(page);
+        await openAgentsPanel(page, { workspaceId });
 
         // 真实 UI 操作序列：面板列表里**每一行**都有绑定入口（`agent-bind-row-<id>`）。
         // 创建区块里的 `agent-principal-bind` 只在"刚创建未绑定"时出现，关掉重开就没有了 ——
@@ -495,11 +481,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         attachPageDiagnostics(page);
         expect(principalId, "S3 depends on S1").not.toBe("");
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        await openAgentDialog(page);
+        await openAgentsPanel(page, { workspaceId });
 
         // 真实 UI 的"两次确认"是**同一个按钮点两次**（第一次进入确认态、按钮文案变成确认文案；
         // 第二次才发 POST），不是 alertdialog —— 旧 spec 假设了对话框，所以 15s 等不到元素。

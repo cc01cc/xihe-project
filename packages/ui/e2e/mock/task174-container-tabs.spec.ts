@@ -69,7 +69,6 @@ test.describe("task-174 S2b 容器页签行", () => {
                     '[data-testid="workspace-toolbar-monitor"]',
                     '[data-testid="workspace-toolbar-members"]',
                     '[data-testid="workspace-toolbar-delegation"]',
-                    '[data-testid="workspace-toolbar-agents"]',
                 ].join(", "),
             )
             .count();
@@ -179,9 +178,6 @@ test.describe("task-174 S2b 容器页签行", () => {
                 ].join(", "),
             )
             .count();
-        const menuAgents = await page
-            .locator('[data-testid="workspace-toolbar-more-agents"]')
-            .count();
         const containerRows = await page
             .locator('[data-testid="workspace-container-tabs"]')
             .count();
@@ -193,12 +189,16 @@ test.describe("task-174 S2b 容器页签行", () => {
         };
         log("judge6", {
             pageEntries,
-            menuAgents,
+            // task-134：退役入口零残留由负向断言兜住（见下），日志不再复制一份读数。
             containerRowsMobile: containerRows,
             narrowShell,
             panelTogglesAfterA1: "5",
         });
         expect(pageEntries, "判据6：窄屏三页面入口仍在").toBe(3);
+        expect(
+            await page.locator('[data-testid="workspace-toolbar-more-agents"]').count(),
+            "判据6：窄屏菜单 agents 入口零残留",
+        ).toBe(0);
     });
 
     test("判据 7：键盘等价 BL-561 —— 跨容器/跨页签的键盘路径实测", async ({ page }) => {

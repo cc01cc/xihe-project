@@ -13,6 +13,7 @@ import {
 } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 import { chooseRekaOption } from "./helpers/reka-select";
+import { openAgentsPanel } from "../helpers/agents-panel";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -165,9 +166,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         path: testInfo.outputPath("agent-template-created-in-settings.png"),
     });
 
-    await page.goto(`/workspace/${workspaceA}`, { waitUntil: "load" });
-
-    await page.getByTestId("workspace-toolbar-agents").click();
+    // task-134：智能体面板入口 = 成员页 -> 智能体页签（工具栏入口随 D-1538 退役）。
+    await openAgentsPanel(page, { workspaceId: workspaceA, timeout: LONG_TIMEOUT_MS });
     const dialog = page.getByTestId("workspace-agent-management-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("暂无活动会话")).toHaveCount(0);
@@ -313,7 +313,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(principalGrantsAfter).toBe(principalGrantsBefore);
 
     await page.reload({ waitUntil: "load" });
-    await page.getByTestId("workspace-toolbar-agents").click();
+    // 刷新后备注：成员页默认页签是「成员」，重新选「智能体」。
+    await openAgentsPanel(page, { timeout: LONG_TIMEOUT_MS });
     const reloadedBinding = page.getByTestId(`workspace-agent-${principalId}`);
     await expect(reloadedBinding).toContainText("reports/*");
 
@@ -626,7 +627,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     // ①/④ 实例级 CREATE_ACCOUNT 不足以建工作区 agent：WS_EDITOR 无 MANAGE_WORKSPACE_AGENTS ⇒ 403
     replaceWorkspaceRole(ownerUserId, workspaceA, "WS_EDITOR");
-    await page.getByTestId("workspace-toolbar-agents").click();
+    await openAgentsPanel(page, { timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("agent-principal-name").fill("EditorWithCreateAccountCannotCreate");
     const deniedCreatePromise = page.waitForResponse(
         (response) =>
@@ -646,8 +647,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     // ② 恢复工作区管理权（WS_OWNER 携带 MANAGE_WORKSPACE_AGENTS@workspaceA）⇒ 建 = 201
     replaceWorkspaceRole(ownerUserId, workspaceA, "WS_OWNER");
-    await page.goto(`/workspace/${workspaceA}`, { waitUntil: "load" });
-    await page.getByTestId("workspace-toolbar-agents").click();
+    await openAgentsPanel(page, { workspaceId: workspaceA, timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("agent-principal-name").fill("CreatedButNotBindable");
     const createOnlyResponsePromise = page.waitForResponse(
         (response) =>

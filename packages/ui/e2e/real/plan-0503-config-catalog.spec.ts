@@ -37,6 +37,8 @@ interface LoginResult {
 let adminAuth: LoginResult;
 let userAuth: LoginResult;
 let userConnectionId = "";
+/** V4-user 建的 READY 连接的 connectionKey：V5 手写模型复用同一连接。 */
+let userConnectionKey = "";
 
 async function loginAsAdmin(request: APIRequestContext) {
     const password = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
@@ -171,18 +173,10 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         // PLAN-0752：层在 URL 域段里，实例层默认域页 = llm-provider。
         await page.goto(`${UI_URL}/settings/instance/llm-provider`);
 
-        // V4: the stored connection is no longer visible — the panel keeps the
-        // value visible, labels it and never silently rewrites it.
-        const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue("__stored__");
-        await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible();
-        await expect(page.getByTestId("llm-profile-connection-drift-option")).toContainText(
-            `openai/${DRIFT_CONNECTION_KEY}`,
-        );
-        const modelSelect = page.getByTestId("llm-profile-model-select");
-        await expect(modelSelect).toHaveValue(DRIFT_MODEL);
-        await expect(modelSelect.locator("option")).toHaveCount(3);
+        // BL-137：旧的 llm-provider profile 面板已随 PLAN-0523 并入 provider hub
+        // （provider-hub / provider-default-drift / provider-model-*），本 describe 整体 skip，
+        // UI 段待按新形态重写。这里保留**退休判据**：旧面板不得复活（负向断言，门不计 E）。
+        await expect(page.getByTestId("llm-provider-profile")).toHaveCount(0);
 
         // PLAN-0503 catalog sourcing still holds for the kept provider select.
         const domainPanel = page.getByTestId("config-domain-llm-provider");
@@ -202,25 +196,14 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
             fullPage: true,
         });
 
-        // Re-saving the drifted profile keeps it byte-identical (no rewrite).
-        const [saved] = await Promise.all([
-            page.waitForResponse(
-                (response) =>
-                    response.url().includes("/api/v1/config/instance/llm-provider") &&
-                    response.request().method() === "PUT",
-            ),
-            page.getByTestId("llm-profile-save").click(),
-        ]);
-        expect(saved.status()).toBe(200);
-        expect(JSON.parse(saved.request().postData() ?? "{}").profile).toBe(
-            profileUnit("openai", DRIFT_CONNECTION_KEY, DRIFT_MODEL),
-        );
-
-        // Reload + API read-back: the value survived without any other write.
-        await page.reload();
-        await expect(page.getByTestId("llm-profile-model-select")).toHaveValue(DRIFT_MODEL, {
-            timeout: LONG_TIMEOUT_MS,
+        // 重存同一 unit 不重写内容（原 UI 保存按钮已退役 ⇒ 同一契约走 API 侧）。
+        const saved = await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
+            headers: { Authorization: `Bearer ${adminAuth.accessToken}` },
+            data: { profile: profileUnit("openai", DRIFT_CONNECTION_KEY, DRIFT_MODEL) },
         });
+        expect(saved.status(), await saved.text()).toBe(200);
+
+        // API read-back: the value survived without any other write.
         const readBack = await request.get(
             `${CP_URL}/api/v1/config/llm-provider?layer=instance&includeMeta=true`,
             { headers: { Authorization: `Bearer ${adminAuth.accessToken}` } },
@@ -229,12 +212,9 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         const entries = ((await readBack.json()) as { entries: Record<string, string> }).entries;
         expect(entries.profile).toBe(profileUnit("openai", DRIFT_CONNECTION_KEY, DRIFT_MODEL));
 
-        // Mobile viewport keeps the drift label visible.
+        // 移动视口：旧漂移标注随面板退役，截图只留页面现场（不参与断言）。
         await page.setViewportSize({ width: 390, height: 844 });
         await page.reload();
-        await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
         await page.screenshot({
             scale: "css",
             path: test.info().outputPath("plan0504-instance-drift-mobile.png"),
@@ -248,6 +228,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
     }) => {
         test.setTimeout(TEST_TIMEOUT_MS);
         const connectionKey = `profile-${randomUUID().slice(0, 8)}`;
+        userConnectionKey = connectionKey;
         const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
             headers: { Authorization: `Bearer ${userAuth.accessToken}` },
             data: {
@@ -280,50 +261,24 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
 
         await injectSession(page, userAuth);
         await page.goto(`${UI_URL}/settings/user/llm-provider`);
-        const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        // BL-137：连接/模型选择器随旧 profile 面板退役（新形态 = provider-default-connection /
+        // provider-model-*），本 describe 整体 skip、UI 段待重写。保留退休判据（门不计 E）。
+        await expect(page.getByTestId("llm-provider-profile")).toHaveCount(0);
 
-        // V4: the connection selector lists visible chat-ready connections.
-        const connectionSelect = page.getByTestId("llm-profile-connection-select");
-        const connectionOptions = await connectionSelect
-            .locator("option")
-            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
-        expect(connectionOptions).toContain(userConnectionId);
-        await connectionSelect.selectOption(userConnectionId);
-
-        // V3: ready + chat only (the -asr catalog entry is filtered out).
-        const modelSelect = page.getByTestId("llm-profile-model-select");
-        await expect(modelSelect.locator("option")).toHaveCount(3, { timeout: LONG_TIMEOUT_MS });
-        const optionValues = await modelSelect
-            .locator("option")
-            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
-        expect(optionValues).toEqual(["", "fake-openai", "__custom__"]);
-        await modelSelect.selectOption("fake-openai");
-        await page.screenshot({
-            scale: "css",
-            path: test.info().outputPath("plan0504-user-candidates.png"),
-            fullPage: true,
+        // 保存契约（整 unit 写入）走 API 侧：connection + model 一起落库，再回读确认。
+        const saved = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+            headers: { Authorization: `Bearer ${userAuth.accessToken}` },
+            data: { profile: profileUnit("openai", connectionKey, "fake-openai") },
         });
-
-        // Saving writes the whole profile unit for the selected connection+model.
-        const [saved] = await Promise.all([
-            page.waitForResponse(
-                (response) =>
-                    response.url().includes("/api/v1/config/user/llm-provider") &&
-                    response.request().method() === "PUT",
-            ),
-            page.getByTestId("llm-profile-save").click(),
-        ]);
-        expect(saved.status()).toBe(200);
-        expect(JSON.parse(saved.request().postData() ?? "{}").profile).toBe(
-            profileUnit("openai", connectionKey, "fake-openai"),
+        expect(saved.status(), await saved.text()).toBe(200);
+        const readBack = await request.get(
+            `${CP_URL}/api/v1/config/llm-provider?layer=user&includeMeta=true`,
+            { headers: { Authorization: `Bearer ${userAuth.accessToken}` } },
         );
-        await page.reload();
-        await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue(
-            userConnectionId,
-            { timeout: LONG_TIMEOUT_MS },
-        );
-        await expect(page.getByTestId("llm-profile-model-select")).toHaveValue("fake-openai");
+        expect(readBack.ok()).toBe(true);
+        const savedProfile = ((await readBack.json()) as { entries: Record<string, string> })
+            .entries.profile;
+        expect(savedProfile).toBe(profileUnit("openai", connectionKey, "fake-openai"));
     });
 
     test("V5: a hand-written model saves through the real PUT", async ({ page, request }) => {
@@ -333,21 +288,15 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
 
         await injectSession(page, userAuth);
         await page.goto(`${UI_URL}/settings/user/llm-provider`);
-        const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        // BL-137：旧面板退役，保留退休判据（负向断言，门不计 E）。
+        await expect(page.getByTestId("llm-provider-profile")).toHaveCount(0);
 
-        await page.getByTestId("llm-profile-connection-select").selectOption(userConnectionId);
-        await page.getByTestId("llm-profile-model-select").selectOption("__custom__");
-        await page.getByTestId("llm-profile-model-custom").fill(manualModel);
-        const [saved] = await Promise.all([
-            page.waitForResponse(
-                (response) =>
-                    response.url().includes("/api/v1/config/user/llm-provider") &&
-                    response.request().method() === "PUT",
-            ),
-            page.getByTestId("llm-profile-save").click(),
-        ]);
-        expect(saved.status()).toBe(200);
+        // 手写模型（__custom__ 等价物）整 unit 落库：原 UI 保存按钮已退役 ⇒ 同一 PUT 走 API 侧。
+        const saved = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+            headers: { Authorization: `Bearer ${userAuth.accessToken}` },
+            data: { profile: profileUnit("openai", userConnectionKey, manualModel) },
+        });
+        expect(saved.status(), await saved.text()).toBe(200);
 
         const readBack = await request.get(
             `${CP_URL}/api/v1/config/llm-provider?layer=user&includeMeta=true`,
@@ -376,18 +325,9 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
 
         await injectSession(page, noConnAuth);
         await page.goto(`${UI_URL}/settings/user/llm-provider`);
-        const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-
-        // V7: with no profile the panel prompts for an explicit selection and
-        // offers no implicit fallback model.
-        await expect(page.getByTestId("llm-profile-empty-hint")).toBeVisible();
-        await expect(page.getByTestId("llm-profile-save")).toBeDisabled();
-        const connectionOptions = await page
-            .getByTestId("llm-profile-connection-select")
-            .locator("option")
-            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
-        expect(connectionOptions).toEqual([""]);
+        // BL-137：显式选择提示（llm-profile-empty-hint / save 禁用态）随旧面板退役；
+        // 本 describe 整体 skip、UI 段待按 provider-hub 无连接态重写。保留退休判据。
+        await expect(page.getByTestId("llm-provider-profile")).toHaveCount(0);
 
         // The user-layer readiness gate is unchanged: a profile without a READY
         // connection is rejected by CP (400 INVALID_REQUEST).

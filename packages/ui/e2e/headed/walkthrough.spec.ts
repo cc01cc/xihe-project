@@ -22,6 +22,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { bindToolCapableChat } from "../real/helpers/tool-capable-chat";
 
 import { agentName } from "../real/helpers/agent-name";
+import { membersNavItem, openAgentsPanel } from "../helpers/agents-panel";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-${Date.now()}`;
@@ -275,10 +276,8 @@ async function createWorkspaceViaDialog(
 }
 
 async function createAndBindAgent(page: Page): Promise<string> {
-    await page.getByTestId("workspace-toolbar-agents").click();
-    await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-        timeout: LONG_TIMEOUT_MS,
-    });
+    // task-134：工具栏 agents 入口已退役（D-1538），改走成员页 -> 智能体页签。
+    await openAgentsPanel(page, { timeout: LONG_TIMEOUT_MS });
     await page
         .getByTestId("agent-principal-name")
         .fill(agentName("Headed", randomUUID().slice(0, 8)));
@@ -504,15 +503,14 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
 
         // UI 侧：打开 Agent 管理面板 —— tier scope 写入已彻底退出；普通账号（无
         // MANAGE_WORKSPACE_AGENTS）必须在点击前被禁用，并给出授权提示。
-        const toolbarVisible = await page
-            .getByTestId("workspace-toolbar-agents")
+        // task-134：入口已从工具栏迁到成员页；普通账号照样能进成员页，权限在面板内判。
+        const membersEntryVisible = await membersNavItem(page)
             .isVisible()
             .catch(() => false);
-        expect(toolbarVisible, "the invited member must see the Agent toolbar").toBe(true);
-        await page.getByTestId("workspace-toolbar-agents").click();
-        await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
+        expect(membersEntryVisible, "the invited member must see the members page entry").toBe(
+            true,
+        );
+        await openAgentsPanel(page, { timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
         await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(1);
         await page.getByTestId("agent-principal-name").fill(agentName("HeadedPlain", Date.now()));
@@ -526,7 +524,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         test.info().annotations.push({
             type: "headed-f01-ui",
             description: JSON.stringify({
-                toolbarVisible,
+                membersEntryVisible,
                 scopeSelectCount: 0,
                 forbiddenHintCount: 1,
                 createDisabled: true,
@@ -548,16 +546,12 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             } else {
                 const items = page.locator('[data-testid^="workspace-picker-item-"]');
                 await items.first().click();
-                await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-                    timeout: LONG_TIMEOUT_MS,
-                });
+                await expect(membersNavItem(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
                 workspaceId = page.url().match(/\/workspace\/([0-9a-f-]{36})/i)?.[1] ?? "";
             }
         } else if (landing === "picker") {
             await page.locator('[data-testid^="workspace-picker-item-"]').first().click();
-            await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-                timeout: LONG_TIMEOUT_MS,
-            });
+            await expect(membersNavItem(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             workspaceId = page.url().match(/\/workspace\/([0-9a-f-]{36})/i)?.[1] ?? "";
         } else {
             workspaceId = (await createWorkspaceViaDialog(page, request, "picker")).workspaceId;

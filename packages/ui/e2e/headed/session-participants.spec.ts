@@ -20,6 +20,7 @@ import { prepareConnection } from "../../../../scripts/xihe-cli/prepare-agent-e2
 
 import { agentName } from "../real/helpers/agent-name";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { closeDockPanel, dockToggle, openDockPanel } from "../helpers/dock";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0623/runs", RUN_ID);
 const SHOTS_DIR = path.join(RUN_DIR, "shots");
@@ -36,10 +37,10 @@ type TestIdStatus = "asserted" | "exists-unasserted" | "blocked";
 
 const RECORDED_TESTIDS: Array<{ id: string; scene: string; status: TestIdStatus; note: string }> = [
     {
-        id: "workspace-toolbar-members",
+        id: "workspace-dock-toggle",
         scene: "S1",
         status: "asserted",
-        note: "packages/ui/src/features/workspace/components/WorkspaceToolbar.vue:271（工具栏开关，点击前存在）",
+        note: "packages/ui/src/features/workspace/components/WorkspaceWorkbench.vue（主列页签行尾的右栏开合图标；task-137 后打开 members 面板的唯一入口，`aria-pressed` = 右栏展开态）",
     },
     {
         id: "dock-tab-members",
@@ -640,9 +641,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         ).not.toContain(workspaceId);
 
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
+        await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 前提：自建工作区里**没有会话**（否则面板走"有会话"分支，无会话空态断言不成立）。
         // `workspace-create-session` 只在空态渲染（WorkspaceView.vue 的 v-else 分支）。
@@ -666,7 +665,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             "the members dock tab must not be open by default",
         ).toBe(0);
 
-        await page.getByTestId("workspace-toolbar-members").click();
+        await openDockPanel(page, "members");
         await expect(
             page.getByTestId("session-participants-panel"),
             await participantsDiagnostics(page),
@@ -693,12 +692,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await ensureTwoMemberSession(request);
 
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        if ((await page.getByTestId("dock-tab-members").count()) === 0) {
-            await page.getByTestId("workspace-toolbar-members").click();
-        }
+        await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await openDockPanel(page, "members");
         const panel = page.getByTestId("session-participants-panel");
         await expect(panel, await participantsDiagnostics(page)).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -755,12 +750,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        if ((await page.getByTestId("dock-tab-members").count()) === 0) {
-            await page.getByTestId("workspace-toolbar-members").click();
-        }
+        await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -819,22 +810,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
-        // 入口：speakAs=true ⇒ 渲染；option 数 === 候选数。
-        const bar = page.getByTestId("speak-as-bar");
-        await expect(bar, "speak-as entry must render when the capability is on").toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        const select = page.getByTestId("speak-as-select");
-        const options = select.locator("option");
-        expect(
-            await options.count(),
-            "the select must offer exactly the self-owned, enabled participants",
-        ).toBe(expectedCandidates.length);
-
-        // 选**最后一个**候选（证明不是"默认自己"碰巧通过），断言它就是请求体里的 id。
-        const target = expectedCandidates[expectedCandidates.length - 1];
-        await select.selectOption(target.participantId);
-        await expect(select).toHaveValue(target.participantId);
+        // task-55（D-1882③）：composer 的「代发身份」入口（speak-as-bar / speak-as-select）已整块移除，
+        // 见 src/features/workspace/chat/components/InputArea.vue:1537-1542 的文档块（恢复成本 = 一个 v-if）。
+        // 能力本身仍在 CP（下面 capabilities.speakAs 断言），但 asParticipantId 只由「发送（TO）」栏决定。
+        expect(expectedCandidates.length).toBeGreaterThan(0);
+        await expect(page.getByTestId("speak-as-bar")).toHaveCount(0);
+        await expect(page.getByTestId("speak-as-select")).toHaveCount(0);
 
         await page.getByTestId("chat-input").fill("headed speak-as probe");
         const chatRequest = page.waitForRequest(
@@ -844,17 +825,16 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await page.getByTestId("chat-send-button").click();
         const sent = await chatRequest;
         const body = sent.postDataJSON() as { asParticipantId?: string; content?: string };
-        expect(
-            body.asParticipantId,
-            "the selected participant must travel as asParticipantId",
-        ).toBe(target.participantId);
+        // 未在 TO 栏显式指定 ⇒ 不得凭空代发（TO 栏填 asParticipantId 的覆盖见
+        // e2e/real/plan0630-to-cc.spec.ts:374；mock 侧见 e2e/mock/plan0659-delivery-semantics.spec.ts:109）。
+        expect(body.asParticipantId ?? null, "composer must not invent a 代发 identity").toBe(null);
         expect(body.content).toBe("headed speak-as probe");
 
         await shot(page, {
             id: "S5",
-            name: "s5-speak-as-request-body",
+            name: "s5-speak-as-entry-retired",
             assertion:
-                "speakAs=true 才渲染入口；option 数=候选数；选中的 participantId 出现在 POST /api/v1/chat 的 body.asParticipantId",
+                "speak-as 入口已退役（task-55）：composer 只渲染 chat-input；未指定 TO 时 body.asParticipantId 为空",
         });
     });
     test("S6@host @提及 HUMAN → 发送 → 该成员行出现未读 @N 徽标", async ({ page, request }) => {
@@ -864,7 +844,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 用既有提及按钮插入（格式已由 S3 验证），再补一段可辨识文本。
-        await page.getByTestId("workspace-toolbar-members").click();
+        await openDockPanel(page, "members");
         await page
             .getByTestId("session-participants-panel")
             .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
@@ -889,11 +869,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         );
 
         // 面板的数据在打开那一刻加载 —— 发送后先关再开，让它重新拉取拿到新游标。
-        await page.getByTestId("workspace-toolbar-members").click();
+        // task-137：面板入口不再是工具栏图标 ⇒ 关 = 点该页签的关闭按钮，开 = 走「开合图标 → + → 选类型」。
+        await closeDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeHidden({
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByTestId("workspace-toolbar-members").click();
+        await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -934,7 +915,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
-        await page.getByTestId("workspace-toolbar-members").click();
+        await openDockPanel(page, "members");
         await page
             .getByTestId("session-participants-panel")
             .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
@@ -986,12 +967,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        if ((await page.getByTestId("dock-tab-members").count()) === 0) {
-            await page.getByTestId("workspace-toolbar-members").click();
-        }
+        await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

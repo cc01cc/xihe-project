@@ -35,6 +35,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import type { Page } from "@playwright/test";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
 
@@ -49,7 +50,6 @@ const SEL = {
     dock: '[data-testid="workspace-aux-panel"]',
     main: '[data-testid="workspace-main"]',
     focusToggle: '[data-testid="dock-focus-toggle"]',
-    openCode: '[data-testid="workspace-toolbar-code"]',
     resizer: '[data-testid="dock-resizer"]',
 };
 
@@ -124,9 +124,8 @@ async function measureStable(page: Page): Promise<Frame> {
 /** 打开右栏（未进 focus）—— 先钉「对象在」再钉数。 */
 async function openDock(page: Page): Promise<void> {
     await page.waitForSelector(SEL.workbench, { state: "attached", timeout: EXPECT_TIMEOUT_MS });
-    if (!(await page.$(SEL.focusToggle))) {
-        await page.click(SEL.openCode);
-    }
+    // task-137：唯一入口 = 行尾开合图标 → 右栏「+」→ 选「代码」。
+    if (!(await page.$(SEL.focusToggle))) await openDockPanel(page, "code");
     await page.waitForSelector(SEL.dock, { state: "visible", timeout: EXPECT_TIMEOUT_MS });
     await page.waitForSelector(SEL.focusToggle, { state: "visible", timeout: EXPECT_TIMEOUT_MS });
 }

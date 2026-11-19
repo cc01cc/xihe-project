@@ -17,9 +17,9 @@ import { expect, type Locator, type Page } from "@playwright/test";
  *   是 `v-if` 渲染的，收起时**连标签条都不在 DOM 里**（`dock-tab-*` 计数为 0），所以本帮助器落到
  *   聊天列摘要行这条规范入口（`openDockTab` 会同时展开 dock 并激活目标标签）。
  *
- * 幂等：面板已可见时**只做校验、不再点任何东西**。这点是硬要求 —— dock 上的
- * `workspace-toolbar-members` / `workspace-toolbar-agents` 是**toggle**（点第二次会把面板收起），
- * 所以本帮助器一律不用工具栏入口；标签芯片（`dock-tab-*`）只会"选中"，重复点无副作用。
+ * 幂等：面板已可见时**只做校验、不再点任何东西**。这点是硬要求 —— 页签行上的芯片
+ * （`dock-tab-*`）只会「选中」，重复点无副作用；旧工具栏那一排面板开关键已下线（task-137），
+ * 本帮助器也不自己造第二个入口。
  *
  * 移动端（< 768，无 dock）不走这里：`SessionSettingsPanel` 在 `isMobile` 时仍在聊天 sheet 内就地展开。
  */

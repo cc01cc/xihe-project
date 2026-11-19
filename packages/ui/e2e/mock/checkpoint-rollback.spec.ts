@@ -3,6 +3,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -268,7 +269,7 @@ test.describe("PLAN-0339 workspace slices", () => {
         await expect(page.getByTestId("workspace-conversation")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        await page.getByTestId("workspace-toolbar-changes").click();
+        await openDockPanel(page, "changes");
         const panel = page.getByTestId("workspace-changes-panel");
         await panel.getByTestId("workspace-checkpoint-select-checkpoint-b").click();
         await expect(panel.getByTestId("workspace-checkpoint-timeline")).toContainText(

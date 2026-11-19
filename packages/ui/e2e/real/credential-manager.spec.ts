@@ -231,7 +231,12 @@ test("@host credential manager — UI registration, role block, binding, lease u
     // --- T4.1 ① UI 登记：lease 档 + reveal 档 + key-pair 档各一 ---
     // PLAN-0772 M2：凭据在资源模块，个人层是默认层（`?layer=USER`）。
     await page.goto("/resources/credentials?layer=USER", { waitUntil: "load" });
-    await expect(page.getByTestId("credentials-heading")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    // task-134：`credentials-heading` 随设置页壳退役；凭据资源页（PLAN-0772 M2）的页标题是
+    // `settings-page-title`（CredentialsPanel.vue:157），列表标题是 `credentials-list-heading`。
+    await expect(page.getByTestId("settings-page-title")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.getByTestId("credentials-list-heading")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await createCredentialViaUi(page, {
         label: "e2e-managed-lease",
         tier: "lease",

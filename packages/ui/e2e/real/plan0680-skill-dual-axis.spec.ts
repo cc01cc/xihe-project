@@ -39,6 +39,7 @@ import { CP_URL } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
 import { TEST_TIMEOUT_MS } from "../timeouts";
+import { openAgentsPanel } from "../helpers/agents-panel";
 
 test.describe.configure({ retries: 0 });
 
@@ -376,11 +377,9 @@ test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspac
         }, locale);
         // 徽标宿主是 Workbench dock 的 agents tab 展开技能面板（WorkspaceAgentsPanel.vue:2124），
         // settings 路由没有该面板（r9 实证）⇒ 走工作台路由。
-        await page.goto(`/workspace/${identity.workspaceId}`);
-        // 打开 agents dock tab：点工具栏按钮（PLAN-0667 M3 同口径，agent-config-shots.spec.ts:57-61），
-        // 选这条路而不写 xihe-layout-ws:<id> 布局键——后者要复刻持久化 schema，点击是产品真实入口。
-        await page.getByTestId("workspace-toolbar-agents").click();
-        await expect(page.getByTestId("dock-tab-agents")).toBeVisible();
+        // task-134：智能体面板的宿主已迁到成员页「智能体」页签（task-174 A1 / D-1538），
+        // 工具栏入口与 dock tab 都不再是入口；走产品真实路径（导航项 + 页签点击），不写布局键。
+        await openAgentsPanel(page, { workspaceId: identity.workspaceId });
         // 展开本主体的技能面板（rbacPrincipalId === principalId 才渲染徽标列表）
         await page.getByTestId(`agent-skills-toggle-${principalId}`).click();
         await expect(page.getByTestId("agent-skills-list")).toBeVisible();

@@ -8,6 +8,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -129,11 +130,9 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await page.goto(`/workspace/${auth.workspaceId}`);
 
         // W4 (PLAN-0328 T3.7) chat-first layout: the conversation is the main column now and the
-        // editor lives in the collapsible code panel, opened from the toolbar toggle (same fix
-        // pattern as the mock spec).
-        const codeToggle = page.getByTestId("workspace-toolbar-code");
-        await codeToggle.click();
-        await expect(codeToggle).toHaveAttribute("aria-pressed", "true");
+        // editor lives in the right dock's code panel; task-137 后入口 = 行尾开合图标 →
+        // 右栏「+」→ 选「代码」（与 mock 侧同形）。
+        await openDockPanel(page, "code");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 
         const file = page.getByRole("button", { name: "acceptance.md", exact: true });
@@ -142,9 +141,13 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await expect(page.getByText("Acceptance", { exact: false }).first()).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        await page.getByRole("button", { name: "源码" }).click();
-        const source = page.getByTestId("workspace-markdown-source");
-        await source.fill("# Acceptance\n\nChanged through UI");
+        // task-134：旧 textarea（workspace-markdown-source）随 CM6 编辑器退役（314146d12）。
+        // MarkdownEditor 默认源码态，内容在 contenteditable 的 `.cm-content` 里（同上文 mock 口径）。
+        const source = page.getByTestId("workspace-aux-panel").locator(".cm-content");
+        await expect(source).toHaveAttribute("contenteditable", "true");
+        await source.click();
+        await page.keyboard.press("Control+A");
+        await page.keyboard.type("# Acceptance\n\nChanged through UI");
         const save = page.getByRole("button", { name: "保存", exact: true });
         await expect(save).toBeEnabled();
         await save.click();

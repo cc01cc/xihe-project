@@ -22,6 +22,7 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const EVIDENCE_DIR = evidenceDir("plan-0507-session-monitor"),
     PANEL = '[data-testid="session-monitor-panel"]';
@@ -228,10 +229,10 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
             { timeout: LONG_TIMEOUT_MS },
         );
 
-        // Toggle away and back.
-        await page.locator('[data-testid="workspace-toolbar-changes"]').click();
+        // 切到变更面板再切回 monitor（task-137 后切页签 = 点页签行上的页签芯片）。
+        await openDockPanel(page, "changes");
         await expect(page.locator('[data-testid="workspace-changes-panel"]')).toBeVisible();
-        await page.locator('[data-testid="workspace-toolbar-monitor"]').click();
+        await openDockPanel(page, "monitor");
         await expect(panel).toBeVisible();
         await capture(page, "desktop-monitor-toggle.png");
 
@@ -309,10 +310,10 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
         // PLAN-0560 M3 (cb5651a7) converged the workspace toolbar entries: on
         // mobile the monitor entry lives in the toolbar overflow menu
-        // (`workspace-toolbar-more-mobile` → `workspace-toolbar-more-monitor`),
-        // while the desktop row button (`workspace-toolbar-monitor`) is hidden
-        // below the md breakpoint. Opening it selects the monitor tab by default
-        // (`mobile-aux-tab-monitor`, aria-selected=true).
+        // (`workspace-toolbar-more-mobile` → `workspace-toolbar-more-monitor`).
+        // task-137 下线了桌面那一排面板图标（含监控面板那一颗），
+        // 移动档的 overflow 入口是本 spec 唯一关心的入口；打开后默认选中
+        // monitor 页签（`mobile-aux-tab-monitor`, aria-selected=true）。
         const overflow = page.locator('[data-testid="workspace-toolbar-more-mobile"]');
         await expect(overflow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await overflow.click();

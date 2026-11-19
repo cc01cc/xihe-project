@@ -130,35 +130,16 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
     });
 
     test.describe("DiffViewer", () => {
-        test("renders unified diff with changed files", async ({ page }) => {
+        // task-134：旧体用 page.evaluate 自己造一段 `data-testid="diff-viewer"/"diff-file"` 的 HTML
+        // 再断言它可见 —— 断言对象是测试自己造的东西，产品改名（DiffViewer.vue:113 现为
+        // `workspace-diff-viewer`）后它仍"绿"，属于假覆盖。真实覆盖见
+        // e2e/real/full-ui-acceptance.spec.ts:793（编辑文件 → 「差异」→ workspace-diff-viewer 可见）。
+        test("retires the self-injected diff fixture", async ({ page }) => {
             await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-
-            await page.evaluate(() => {
-                const diffContainer = document.createElement("div");
-                diffContainer.setAttribute("data-testid", "diff-viewer");
-                diffContainer.innerHTML = `
-          <div class="diff-files">
-            <div class="diff-file" data-testid="diff-file">
-              <span class="diff-status modified">M</span>
-              <span class="diff-path">src/main.rs</span>
-              <span class="diff-hash">sha256:abc123</span>
-            </div>
-          </div>
-          <div class="diff-content">
-            <div class="diff-hunk">@@ -1,5 +1,7 @@</div>
-            <div class="diff-line added">+use std::sync::Arc;</div>
-            <div class="diff-line context"> fn main() {</div>
-          </div>
-        `;
-                document.body.appendChild(diffContainer);
-            });
-
-            const viewer = page.locator('[data-testid="diff-viewer"]');
-            await expect(viewer).toBeVisible();
-            await expect(viewer.locator('[data-testid="diff-file"]')).toBeVisible();
-            await expect(viewer.locator("text=src/main.rs")).toBeVisible();
-            await expect(viewer.locator("text=+use std::sync::Arc;")).toBeVisible();
+            // 退休判据：页面里不再存在旧的自造夹具 testid（真要测差异走真实入口）。
+            await expect(page.locator('[data-testid="diff-viewer"]')).toHaveCount(0);
+            await expect(page.locator('[data-testid="diff-file"]')).toHaveCount(0);
         });
     });
 

@@ -11,6 +11,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { openDockPanel } from "../helpers/dock";
 
 const ENABLED = process.env.XIHE_E2E_MENTION_CURSOR === "1";
 const OUT = process.env.XIHE_MENTION_CURSOR_DIR ?? "";
@@ -28,16 +29,10 @@ interface DemoState {
 
 test.describe.configure({ retries: 0 });
 
-/** dock 可能因持久化状态已展开/已折叠：保证 members 页签可见（幂等点击）。 */
+/** 保证 members 页签可见（幂等）：task-137 后入口 = 行尾开合图标 → 「+」→ 选类型。 */
 async function openMembers(page: Page): Promise<void> {
-    const tab = page.getByTestId("dock-tab-members");
-    if ((await tab.count()) === 0) {
-        await page.getByTestId("workspace-toolbar-members").click();
-    }
-    if (!(await tab.isVisible().catch(() => false))) {
-        await page.getByTestId("workspace-toolbar-members").click();
-    }
-    await expect(tab).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await openDockPanel(page, "members");
+    await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {

@@ -11,6 +11,7 @@ import {
     LONG_TIMEOUT_MS,
     TEST_TIMEOUT_MS,
 } from "../timeouts";
+import { dockTab, openDockPanel } from "../helpers/dock";
 
 // BL-318：`invalid login keeps the form and renders a user-safe error` 故意桩 401 登录（验错误文案），
 // 逐条放行登录端点与该行 logger 输出；其它通道不放行。
@@ -567,12 +568,11 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7) chat-first layout: the file tree stays expanded, but the
-        // editor now lives in the collapsible code panel and must be opened from the
-        // toolbar before the editor path is reachable.
+        // editor now lives in the right dock's code panel; task-137 后入口 = 行尾开合图标 →
+        // 右栏「+」→ 选「代码」（旧工具栏六图标已下线）。
         await expect(page.getByTestId("workspace-file-tree")).toBeVisible();
-        const codeToggle = page.getByTestId("workspace-toolbar-code");
-        await codeToggle.click();
-        await expect(codeToggle).toHaveAttribute("aria-pressed", "true");
+        await openDockPanel(page, "code");
+        await expect(dockTab(page, "code")).toHaveAttribute("aria-selected", "true");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 
         const file = page.getByRole("button", { name: "README.md", exact: true });
@@ -707,7 +707,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7): the PDF preview renders inside the code panel.
-        await page.getByTestId("workspace-toolbar-code").click();
+        await openDockPanel(page, "code");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         await page.getByRole("button", { name: "sample.pdf", exact: true }).click();
         try {
@@ -775,7 +775,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7): every FileEditor branch renders inside the code panel.
-        await page.getByTestId("workspace-toolbar-code").click();
+        await openDockPanel(page, "code");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         await page.getByRole("button", { name: "main.ts", exact: true }).click();
         const codeEditor = page.getByTestId("workspace-code-editor");

@@ -16,6 +16,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
 import type { Page } from "@playwright/test";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { closeDockPanel, openDockPanel } from "../helpers/dock";
 
 const SESSION_ID = "bl341-session";
 const WIDTHS = [
@@ -154,10 +155,9 @@ for (const size of WIDTHS) {
                 .not.toBeNull();
             await expectNoHorizontalOverflow(page, messageArea, "消息区容器");
 
-            // 成员面板：桌面由 dock 的 members 标签承担（打开 → 断言 → 关闭）。
-            const membersTab = page.locator('[data-testid="workspace-toolbar-members"]');
-            await expect(membersTab).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-            await membersTab.click();
+            // 成员面板：桌面由 dock 的 members 页签承担（打开 → 断言 → 关闭）。
+            // task-137：入口 = 行尾开合图标 → 右栏「+」→ 选类型；关闭 = 该页签自己的关闭按钮。
+            await openDockPanel(page, "members");
             const panel = page.locator('[data-testid="session-participants-panel"]');
             await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expectNoHorizontalOverflow(
@@ -170,7 +170,7 @@ for (const size of WIDTHS) {
                 '[data-testid="participants-list"]',
                 "成员名单列表",
             );
-            await membersTab.click();
+            await closeDockPanel(page, "members");
 
             await page.screenshot({
                 path: `H:/zeotmp/t56-bl318/bl341-${size.width}.png`,
