@@ -20,6 +20,11 @@
  * `pane:right:<id>`，`parsePaneTab` 对它们返回 `null`（它们不是 pane id）——零迁移、
  * 不重写用户键。写侧只在新开关打开时才产 `pane:*`。</p>
  *
+ * <p>**会话型 view 不进 `pane:`（`D-1912`）**：主栏会话页签的 id 是 `session:<sid>`（`workTabs.ts`），
+ * 容器由 `containerOf` 反推（`session:*` ⇒ main），不需要容器进 id。给 `chat` 也加一个
+ * `pane:main:chat:<sid>` 会让同一会话有两种身份，两种写法同时进 `dockTabs` 就是主栏两份页签 ——
+ * 所以 `paneTabId` 对非 `session-config` 的 view 传 sid 一律返回 `null`（`panelTabs.spec.ts` 有守卫用例）。
+ *
  * <p>**纯函数、零副作用**：不读 `localStorage`、不 import Vue、不 import 组件。
  * 容器归属仍由 `lib/containers.ts` 的 `containerOf` 唯一派生（本文件只提供「从 id 里读容器」）。</p>
  *

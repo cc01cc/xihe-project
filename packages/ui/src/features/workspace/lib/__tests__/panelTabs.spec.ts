@@ -86,6 +86,8 @@ describe("task-138 · panelTabs 容器内页签 id", () => {
             "pane:right:code:extra",
             "pane:right:session-config",
             "pane:right:session-config:",
+            "pane:main:chat:s1",
+            "pane:right:chat:s1",
             "files",
             "code",
             "session:s1:chat",
@@ -96,6 +98,18 @@ describe("task-138 · panelTabs 容器内页签 id", () => {
         expect(isPaneTabId(bad[0])).toBe(false);
         expect(paneTabContainer("files")).toBeNull();
         expect(paneTabView("code")).toBeNull();
+    });
+
+it("会话型 view 归 session: 域，不进 pane:（D-1912）", () => {
+        // 主栏会话页签的 id 是 `session:<sid>`（task-69 workTabs），容器由 containerOf 反推
+        // （session:* ⇒ main）⇒ 不需要容器进 id；再拼一个 pane:main:chat:<sid> 就是同一会话
+        // 的第二身份，两种写法同时进 dockTabs 会让主栏出现两份页签。
+        const chatView = "chat" as unknown as Parameters<typeof paneTabId>[1];
+        expect(paneTabId("main", chatView, "s1")).toBeNull();
+        expect(paneTabId("right", chatView, "s1")).toBeNull();
+        expect(paneTabId("main", chatView)).toBeNull();
+        expect(parsePaneTab("pane:main:chat:s1")).toBeNull();
+        expect(isPaneTabId("pane:main:chat:s1")).toBe(false);
     });
 
     it("旧裸 8 值不被本解析器认领 ⇒ 读侧等价 pane:right:<id>，零迁移不重写用户键", () => {
