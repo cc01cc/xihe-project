@@ -547,6 +547,34 @@ function readOpenTabs(parsed: Partial<WorkspaceLayoutState>): WorkTabId[] {
 }
 
 /**
+ * task-126 / O3（task-85 定因）：**整份写不得回退页签分片**。
+ *
+ * <p>同一把键有两个 writer，各自只拥有自己那一片：页签栏走 `writeWorkspaceOpenTabs` 写
+ * `openTabs`；工作台走 `writeWorkspaceLayout` 写几何。工作台载荷里的 `openTabs` 是它
+ * **挂载时**读到的快照（`WorkspaceWorkbench.initialLayout()`），之后页签栏再写盘也不会回流
+ * ⇒ 任何一次几何变更（开合 dock、拖宽、切栏）都会把过期页签整份写回：关掉的页签刷新后复活，
+ * 新开的页签刷新后丢失（A 支 `[A,B] → []`）。</p>
+ *
+ * <p>所以整份写在这里**放弃自己那一份 `openTabs`**：键里已有的分片原样带上（仍是净化后的
+ * 口径），键或字段不存在时才用载荷里的值（首笔几何写之前没有任何页签 ⇒ 两者都是空集）。</p>
+ *
+ * @returns 已存的分片；键不存在 / 字段缺失 / 脏载荷 ⇒ `null`（调用方回落到载荷值）。
+ */
+function storedOpenTabs(store: Storage, key: string): WorkTabId[] | null {
+    try {
+        const raw = store.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+        const candidate = parsed as Partial<WorkspaceLayoutState>;
+        return Array.isArray(candidate.openTabs) ? readOpenTabs(candidate) : null;
+    } catch (cause) {
+        logger.warn("Failed to read the stored tab set, keeping the full-write payload", cause);
+        return null;
+    }
+}
+
+/**
  * Per-workspace workbench layout. Tabs are de-duplicated, capped at
  * `DOCK_MAX_TABS`, and `activeDockTab` must belong to the open set — a corrupt
  * payload degrades to the defaults instead of rendering an impossible state.
@@ -638,7 +666,11 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 // Mirrors the read-side normalization: never persist "focused" for a dock
                 // that cannot render (collapsed or tabless).
                 dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,
-                openTabs: state.openTabs.filter(isWorkTabId),
+                // task-126 / O3：整份写**不拥有** openTabs（页签栏是它唯一的 writer），否则过期快照
+                // 会把刚关掉的页签写回来。见 `storedOpenTabs`。
+                openTabs:
+                    storedOpenTabs(store, workspaceLayoutKey(workspaceId)) ??
+                    state.openTabs.filter(isWorkTabId),
                 activeColumn: isActiveColumn(state.activeColumn) ? state.activeColumn : "main",
                 // 与读侧镜像：写侧也过滤，避免把越界值落盘（读写两处必须同口径）。
                 openTarget: isOpenTarget(state.openTarget) ? state.openTarget : "main",

@@ -465,9 +465,12 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         // ...and it still preserves whatever geometry is written later.
         writeWorkspaceLayout("ws-1", { ...defaultWorkspaceLayout(), dockCollapsed: false });
         expect(hasWorkspaceLayout("ws-1")).toBe(true);
-        // The later FULL write wins: it carries the default (empty) open set,
-        // which overwrites the slice written above.
-        expect(readWorkspaceLayout("ws-1").openTabs).toEqual([]);
+        // task-126 / O3（口径翻转，原断言写的是「整份写赢、把分片覆盖成空集」）：整份写**不拥有**
+        // openTabs —— 它载荷里的是挂载时的快照，用它覆盖分片正是「关掉的页签刷新后复活」的成因。
+        // 现在整份写只加几何，页签分片原样保留。回归用例见
+        // `stores/__tests__/containerPersistence.spec.ts`。
+        expect(readWorkspaceLayout("ws-1").openTabs).toEqual(["session:s1"]);
+        expect(readWorkspaceLayout("ws-1").dockCollapsed).toBe(false);
     });
 
     it("patches only the openTabs slice instead of clobbering the stored geometry", () => {
