@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-18
+updated: 2026-11-19
 status: active
 ---
 
@@ -350,6 +350,19 @@ Four fixtures, two counter-paired sets, proving the exemption really applies rat
 
 **The probe is mutation-checked too**: delete `overflow-x: auto` from `fixture-b`'s container (a single-line `edit`), and the same fixture flips from GREEN to **RED** (exit 1); after restoring, sha256 is byte-for-byte identical — i.e. "green" is not vacuously true. That is exactly what `D-1767` asks for: **only criteria with a machine judge earn a place in the doc; a criterion without a probe becomes "the doc says no overflow, nobody actually measures" a year later.**
 
+### 11.1 Live evidence must pass review in the same batch (register §4 item 5, `task-24`)
+
+**Constituting boundary**: "live evidence" means any artifact used as proof that something is verified — E2E screenshots, real-run screenshots, probe reading reports, delivered images. "Passed review" means that **in the same batch** the screenshots got at least **four of the six dimensions** (A–F) of this section, each with a dimension name, the criterion sentence, the reading or screenshot path, and a severity (P0/P1/P2/OK). **Does not count as evidence**: a screenshot directory with no conclusions, a `probe-readings.json` with no verdict, green UI unit tests (a unit test is not a real browser), reusing a previous batch review verdict, or one sentence saying it looks fixed.
+
+**Measurement (runnable)**: every piece of live evidence drops a `README.md` in its own evidence directory whose review conclusions are **row-level records** — each row carries a dimension (one or more of A–F), the observed phenomenon with its criterion, the reading (screenshot or probe path) and a severity token (P0/P1/P2/OK), with **at least 4 rows**. Re-run:
+
+```bash
+# review rows (expect >= 4); each row must carry a severity token
+grep -cE "^\|.*\| (P0|P1|P2|OK) \|" internal/A03-xihe/evidence/<batch>/README.md
+```
+
+**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: shipping only a `shots/` directory whose `README.md` has no severity-carrying review rows ⇒ **red (evidence incomplete)**; review rows whose screenshot paths belong to another batch ⇒ red. A correct sample: `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — every row of the §1 defect table carries severity + dimension + page + phenomenon + reading (8 rows match the expression above), §2 gives per-defect readings, `probe.mjs` recomputes, screenshots live in `shots/`. The counter-lesson: the batches before `task-38` shipped screenshots that **never went through review**, and the four defects (two-row top bar, one row per hint, cc unfindable, a second box around the field) were all reported by the user looking at a screenshot — that is why this item exists.
+
 **Severity**: **P0 blocker** (inert control / contradictory data / unreachable path) · **P1 obvious** (hierarchy, consistency, WCAG AA violation) · **P2 polish** (spacing, weight, minor differences). P0/P1 become tasks; P2 accumulates.
 
 **Experience loop (the reason this section exists)**: route findings two ways —
@@ -507,7 +520,7 @@ Likewise **`opacity` breathing may only target non-text, non-icon surfaces** (`b
 
 ### 13.1 The top bar is one row
 
-**Draw the boundary first (this matters more than any number — user ruling 2026-11-19)**:
+**Constituting boundary (draw the boundary first — this matters more than any number; user ruling 2026-11-19)**:
 
 - **The top bar = the single `workspace-secondary-nav` band**, carrying "page navigation + panel toggles".
 - **`workspace-container-tabs` belongs to the content area and is explicitly NOT part of the top bar** (user: "the
@@ -535,10 +548,15 @@ row — that turns a visual card into a structural refactor.
 
 **Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: put the panel toggles
 back into the `workspace-toolbar` content band ⇒ both "nav-actions exists inside the nav band's x range" and
-"toolbar forms no band on desktop" **must go red**. Static guard:
-`packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts`
+"toolbar forms no band on desktop" **must go red**.
+
+Real reading: the §F-1 table in `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — at 1366×768 the chat page measured `workspace-secondary-nav` y0–32 (h=32) + `workspace-toolbar` y32–72 (**h=40**) + container tabs 32 = **3 bands / 104px**, while the other 5 pages show a single 32px band; re-run `node internal/A03-xihe/evidence/2026-11-19-ui-live-review/probe.mjs`, raw readings in `probe-readings.json` beside it.
+
+**The static guard does not exist (stated as fact)**: the `packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts` cited here previously is **not in the repo** — on 2026-11-19 `task-24` checked with `find A03-xihe/packages/ui/src -name "*TopBar*"` and a repo-wide grep, 0 hits; the only real related code is `WorkspaceSecondaryNav.vue:68` (`id="workspace-nav-actions"`) and `WorkspaceToolbar.vue:314` (`<Teleport to="#workspace-nav-actions">`). ⇒ going red currently depends on a real-browser reading alone; do not cite a spec that does not exist.
 
 ### 13.2 Three weight tiers for input fields
+
+**Constituting boundary**: an "input field" here means a field surface the user can type into **on one screen** — the primary input container (the box around the composer textarea), the auxiliary field rows (Send (TO) / Cc (CC) / Send as), and inline affordances (chips, the `+ Cc` pill). **Not covered**: message bodies and sent history (read-only), dock-panel and settings-page forms (not on the composer screen; each is judged within its own screen), controls inside tooltip overlays (the overlay carries its own layering). "Three tiers" is judged as **relative weight on one screen**, not per-component styling: exactly **one** tier-1 box (the primary input), and no auxiliary row may be promoted to tier 1.
 
 **Criterion**: input fields on one screen **must not all be fully boxed** — if everything is important, nothing is.
 
@@ -561,7 +579,11 @@ global `Input.vue` is **forbidden**: it becomes an unowned global switch.
 `borderTopLeftRadius > 0`; TO/CC/Send-as row container `borderTopWidth == 0` and `borderBottomWidth >= 1px`;
 chip `borderTopWidth == 0` and `boxShadow != "none"`.
 
+**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: replace the TO / CC / Send-as rows with the vendor `components/ui/input/Input.vue` (base class `rounded-lg border … h-8`) ⇒ the reading "the TO/CC row container has `borderTopWidth == 0`" turns into `1px` and the inline affordances stop being the only tier-3 form ⇒ **must go red**. Real reading: §F-2 of `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — before the fix the composer was **222px** tall with **88px** of four hint rows above the field; promoting an auxiliary row to a full box grows that footprint, so the two criteria are read as a pair.
+
 ### 13.3 Exactly one focus indicator
+
+**Constituting boundary**: a focus indicator is **the visible ring after a keyboard Tab settles** on the element, and it has exactly two possible sources — the global `*:focus-visible { outline }` in `@layer base` (`main.css:235`) and the component own `focus-visible:ring-*` (including ring layers laid down by `shadow-*` utilities). **Not a focus indicator**: hover state, projection layers such as `shadow-sm`, fully transparent placeholder layers (alpha 0), and mouse `:focus` (`matches(":focus-visible")` is false, so that is not the keyboard state). "One set" means valid ring layers plus valid `outline` layers sum to **≤ 1**; inner vs outer is decided by **box ownership**: the outer element is the box that wraps the focusable child and draws the indicator, and the inner element must not draw its own.
 
 **Criterion**: any focusable element may show **one** focus visual at a time. In nested forms (outer container +
 inner `input`/`textarea`/contenteditable) the indicator is drawn **by the outer element**; the inner element must not
@@ -620,7 +642,11 @@ the target, **settle before reading**, then read `getComputedStyle`:
    the vendor trigger drops `focus-visible:outline-1 focus-visible:outline-ring` (keeping `border-ring + ring-3`,
    this repo's common focus language); the re-run after the fix measures 0.
 
+**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: put back the inner textarea self-drawn `box-shadow … 0 0 0 3px` ring (the pre-fix 2026-11-19 state) ⇒ a `1px` outer rule plus a `3px` inner ring = a double indicator, so item 1 (inner `boxShadow == "none"`) **must go red**. Real readings already exist: §F-4 of `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — **4 focus languages and 4 double indicators on one screen** (`chat-input` inner ring 3px `oklab(0.205 0 0 / 0.5)`; `InputArea.vue:1900` uses `focus-visible:ring-3`, `RecipientField.vue:225` uses `focus-visible:ring-1`, plus two more on the rails and tabs). A second counter-example is **the criterion written wrong**: judging with the literal `boxShadow != "none"` yields 2 false positives and 4 false negatives (measured under the item above) ⇒ red does not prove a fix either.
+
 ### 13.4 Hint copy must not occupy a whole row
+
+**Constituting boundary**: a full-row hint is **a permanent explanation paragraph in the chrome, one per field, occupying a whole row** (the `composer-*-hint` family) — all three features must hold at once: permanent, one per field, full width. **Not covered**: one-shot `role="status"` notices (dismissible, not permanent chrome), the explanation rendered when a control is missing (`composer-workspace-less-hint`, task-547 F-A: an independent session must say why two controls are absent), empty-state and error copy (§11 dimension A), and the tooltip overlay itself. **One change touches four surfaces**: moving a hint into a tooltip changes its copy source, keyboard path, motion tier and AT readability at the same time, so all four must be checked together.
 
 **Criterion**: a field explanation rendered as a **permanent full-width row** is retired — it moves into a tooltip
 (the in-stack `components/ui/tooltip/*`, reka-ui primitives; **no hand-rolled tooltip**), with all four holding:
@@ -637,6 +663,8 @@ session must *say* why two controls are missing) and the one-shot `role="status"
 **Measurement**: Tab to `composer-*-hint-trigger` in a real browser ⇒ `[data-testid="composer-*-hint"]` has
 `getBoundingClientRect().height > 0`; and the count of permanent hint paragraphs in the composer region
 (`[data-testid*="hint"]` `<p>` children of `.space-y-1.5`) is **0**.
+
+**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: turn any `composer-*-hint` from a tooltip back into a permanent `<p>` (its wrapper still `.space-y-1.5`) ⇒ the count of permanent hint paragraphs in the composer region goes from **0** to **1** ⇒ **must go red**. Real readings: §F-2 of `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` (before the fix the composer was **222px** tall with four hint rows = **88px** above the field); §F-5 (`/resources/knowledge` is a whole page of engineering work log) is the counter-example for **scope**: bound to `.space-y-1.5 > p[data-testid*="hint"]` this criterion only covers the composer and cannot see a full-row paragraph 40 lines away, so "not red" does not mean "fine".
 
 ## 14. User-facing copy must not contain reviewer-shaped strings
 

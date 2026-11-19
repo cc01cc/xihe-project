@@ -5,7 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-18
+updated: 2026-11-19
 status: active
 ---
 
@@ -361,6 +361,19 @@ node internal/A03-xihe/scripts/check-ui-overflow.mjs --fixtures
 
 **探针自己也会被变异验证**：把 `fixture-b` 容器的 `overflow-x: auto` 删掉（单行 `edit`），同一份夹具立刻从 GREEN 变 **RED**（exit 1），还原后 sha256 逐字节相同 —— 即「绿」不是恒真的。这就是 `D-1767` 要的东西：**有机器判据才配进文档；没有探针的口径一年后就是「文档说不能溢出、实际没人测」。**
 
+### 11.1 真机证据必须同批过审阅（register §四 第 5 条，`task-24`）
+
+**构成边界**：「真机证据」= 任何以「已验」为验收依据的产物 —— E2E 截图、真机 run 截图、探针读数报告、交付图。「过审阅」= **同一批**里对这批截图按本节六维（A–F）中的**至少四维**各给一条结论（维名 + 判据 + 读数或截图路径 + 分档）。**不构成证据**：只有图没有结论的截图目录、只有 `probe-readings.json` 没有判词的读数、UI 单测绿（单测不是真机）、拿历史批次的审阅结论顶替当批、文档里一句「看起来修好了」。
+
+**度量方式（可复算）**：每份真机证据在自己的 evidence 目录落 `README.md`，审阅结论写成**行级记录** —— 每行含「维（A–F 中的一个或组合）+ 现象（判据原文）+ 读数（截图或探针路径）+ 分档（P0/P1/P2/OK）」，**行数 ≥ 4**。复算：
+
+```bash
+# 审阅结论行数（期望 >= 4）：每行必须带分档 token
+grep -cE "^\|.*\| (P0|P1|P2|OK) \|" internal/A03-xihe/evidence/<批次>/README.md
+```
+
+**反例锚点（判据必须能红，否则是装饰）**：只交 `shots/` 目录、`README.md` 里没有带分档的审阅行 ⇒ **判红（证据不完整）**；审阅行引用的截图路径属于别的批次 ⇒ 判红。做对的样本：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` —— §1 缺陷清单每行带「分档 + 维 + 页面 + 现象 + 读数」（如上式实测匹配 ≥ 4 行），§2 逐条给读数，`probe.mjs` 可复算，截图在 `shots/`。反面教训：`task-38` 之前的多批真机截图**没有过审阅**，四条缺陷（顶栏两行 / 提示各占一行 / 抄送找不到 / 输入框第二套方框）全靠用户看图指出 —— 这就是本条存在的原因。
+
 **分档**：**P0 阻断**（点不动 / 数据矛盾 / 路径不可达）· **P1 明显**（层级、一致性、无障碍 AA 违例）· **P2 打磨**（间距、字重、微差）。P0/P1 一律转卡，P2 攒批。
 
 **经验回流（这条是本节存在的理由）**：审阅发现的问题按两类分流 ——
@@ -514,7 +527,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 ### 13.1 顶栏单行
 
-**先划边界（这条比数值重要 —— 2026-11-19 用户裁定）**：
+**构成边界（先划边界 —— 这条比数值重要，2026-11-19 用户裁定）**：
 
 - **顶栏 = `workspace-secondary-nav` 一条带**，承载「页面导航 + 面板开关」。
 - **`workspace-container-tabs` 属内容区，明确不属于顶栏**（用户原话：「容器标签页仍然是容器的，不是顶栏组件的」）。此前「说了好多次 1 行却落不了地」的根因就是这条边界没定义：读「一行」的人无法判断要不要动容器页签，于是全部停在原地。
@@ -533,9 +546,15 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 **实现约束**：面板开关簇用 Vue 核心 `<Teleport to="#workspace-nav-actions">` 搬进 nav 行右端 —— **props / emits / testid 一律不变**；**不得**为合并把 workbench 的 6 组 props + 6 组 emits 上提到壳层（那会把一张视觉卡变成结构重构）。
 
-**反例锚点（判据必须能红，否则是装饰）**：把面板开关放回 `workspace-toolbar` 那条内容区工具带 ⇒ 上述「nav-actions 存在且落在 nav 带 x 区间内」与「toolbar 桌面不成带」两条**必须同时判红**。静态守卫：`packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts`。
+**反例锚点（判据必须能红，否则是装饰）**：把面板开关放回 `workspace-toolbar` 那条内容区工具带 ⇒ 上述「nav-actions 存在且落在 nav 带 x 区间内」与「toolbar 桌面不成带」两条**必须同时判红**。
+
+真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-1 表 —— 1366×768 实测会话页 `workspace-secondary-nav` y0–32（h=32）+ `workspace-toolbar` y32–72（**h=40**）+ 容器页签 32 = **3 条带 / 104px**，其余 5 页只有 1 条 32px；复算 `node internal/A03-xihe/evidence/2026-11-19-ui-live-review/probe.mjs`，原始读数在同目录 `probe-readings.json`。
+
+**静态守卫尚未存在（照实写）**：本条此前引用的 `packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts` **在仓内不存在** —— 2026-11-19 `task-24` 用 `find A03-xihe/packages/ui/src -name "*TopBar*"` 与全仓 grep 核实均 0 命中；真实相关代码只有 `WorkspaceSecondaryNav.vue:68` 的 `id="workspace-nav-actions"` 与 `WorkspaceToolbar.vue:314` 的 `<Teleport to="#workspace-nav-actions">`。⇒ 本条判红目前只能靠真机读数，别把不存在的单测当已有守卫。
 
 ### 13.2 输入域三级视觉权重
+
+**构成边界**：本节说的「输入域」= **同一屏内**用户可直接输入的字段面 —— 主输入容器（composer 消息正文 textarea 的外框）、辅助字段行容器（发送 TO / 抄送 CC / 代发身份）、行内可点件（chips、`+ 抄送` 胶囊）。**不属于**本节：消息正文与已发送历史（只读）、dock 面板与设置页表单（与 composer 不同屏，各自屏内另判）、tooltip 浮层内的控件（浮层自带层级）。判「三级」看**同一屏的相对权重**，不看单件样式：主输入只能有**一个**一级框，任何辅助行都不得升成一级。
 
 **判据**：同一屏内的输入域**不得同权重全包** —— 什么都重要 = 什么都不重要。三级形态与适用：
 
@@ -551,7 +570,11 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 **度量方式**：真机取 `getComputedStyle` 三处读数 —— 主输入容器 `borderTopWidth == 1px` 且 `borderTopLeftRadius` > 0；TO/CC/代发行容器 `borderTopWidth == 0` 且 `borderBottomWidth` ≥ 1px；chip `borderTopWidth == 0` 且 `boxShadow != "none"`。
 
+**反例锚点（判据必须能红，否则是装饰）**：把 TO / CC / 代发身份行换成 vendor `components/ui/input/Input.vue`（基类 `rounded-lg border … h-8`）⇒ 度量里「TO/CC 行容器 `borderTopWidth == 0`」变成 `1px`，行内可点件也不再是唯一的三级形态 ⇒ **必须判红**。真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-2 —— 修前 composer 整体高 **222px**、进输入框前 4 行 88px；辅助行一旦升成一级框，占屏会同步涨，这两条要同批看。
+
 ### 13.3 焦点指示只许一套
+
+**构成边界**：「焦点指示」= **键盘 Tab 落到元素、settle 之后的**可见环，来源只有两种 —— `@layer base` 的全局 `*:focus-visible { outline }`（`main.css:235`）与组件自带的 `focus-visible:ring-*`（含 `shadow-*` 工具类铺出来的环层）。**不属于**焦点指示：hover 态、`shadow-sm` 这类投影层、alpha 为 0 的透明占位层、鼠标点击后的 `:focus`（`matches(":focus-visible")` 为 false，读到的不是键盘态）。「一套」= 有效环层 + 有效 `outline` 层**合计 ≤ 1**；内外层按**盒子归属**判：外层是包住可聚焦子元素的那个框，指示由它画，内层不得自绘。
 
 **判据**：任一可聚焦元素在同一时刻**只许有一套**焦点视觉。嵌套形态（外层容器 + 内层 `input`/`textarea`/contenteditable）里，焦点指示**由外层画**；内层**不得**自绘 `box-shadow` 环，也**不得**保留 UA / 全局 `outline`。
 
@@ -587,7 +610,11 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
     字面式 `boxShadow != "none"` **不可当判据**（2026-11-19 独立复跑实测：**假阳 2 / 假阴 4**）—— 它把 `dock-tab-files`（5 层全透明，实际只有一套 outline）与 `message-search-toggle`（`shadow-sm` 投影，焦点语言与它无关）记成缺陷，同时漏掉 4 个真双指示的 rail 按钮。
     **用修正式重扫的存量**：4 处 `global-rail-menu-*`（workbench / org-members / resources / settings —— `outline 2px solid` + `ring 2px` 实色环）与页签 `outline-1` + `ring-3` 并存（vendor `components/ui/tabs/TabsTrigger.vue:20`）。两处已同批修掉：rail 补 `focus-visible:outline-none`，vendor 删 `focus-visible:outline-1 focus-visible:outline-ring`（保留 `border-ring + ring-3` = 本仓通用焦点语言），改后复跑为 0。
 
+**反例锚点（判据必须能红，否则是装饰）**：把内层 textarea 自绘的 `box-shadow … 0 0 0 3px` 环放回去（回到 2026-11-19 修前）⇒ 外层 `1px` 淡边框 + 内层 `3px` 环 = 双指示，第 1 条「内层 `boxShadow == "none"`」**必须判红**。已有真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-4 —— 同屏 **4 套焦点语言 + 4 处双指示**（`chat-input` inner 环 3px `oklab(0.205 0 0 / 0.5)`；`InputArea.vue:1900` 的 `focus-visible:ring-3`、`RecipientField.vue:225` 的 `focus-visible:ring-1`，rails 与页签另两套）。第二条反例是**判据本身写错**：用字面式 `boxShadow != "none"` 判会得到假阳 2 / 假阴 4（见本节上条实测）⇒ 红了也不能证明修好。
+
 ### 13.4 提示语不得整幅占行
+
+**构成边界**：「整幅占行的提示语」= **常驻 chrome 里、每个字段一条、独占一整行**的说明段落（`composer-*-hint` 这类）—— 三个特征要同时成立：常驻、每字段一条、占满一行。**不属**本节：一次性 `role="status"` 通知（可关闭、非长期 chrome）、缺控件时的解释句（`composer-workspace-less-hint`，task-547 F-A：独立会话少了两栏**必须说出来**）、空态与错误文案（§11 A 维）、tooltip 浮层本身。**一处改动四个面**：提示语从成行改成 tooltip，等于同时动了文案来源、键盘路径、动效档与 AT 可读性，四条必须一起核。
 
 **判据**：字段说明**长期占一整行**的形态废止 —— 收进 tooltip（栈内 `components/ui/tooltip/*`，reka-ui 原语，**禁止手搓**），并四条同时成立：
 
@@ -599,6 +626,8 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 **例外（照实登记，不是放宽判据）**：`composer-workspace-less-hint`（task-547 F-A：独立会话少了两栏**必须说出来**）与一次性 `role="status"` 提示（`chat-to-empty-hint`、`compose-deeplink-unsat-hint`：带关闭按钮、非长期 chrome）**保持成行**。
 
 **度量方式**：真机 Tab 到 `composer-*-hint-trigger` ⇒ `[data-testid="composer-*-hint"]` 的 `getBoundingClientRect().height > 0`；且 composer 区常驻说明段落计数（`.space-y-1.5 > p` 中 `[data-testid*="hint"]` 者）为 **0**。
+
+**反例锚点（判据必须能红，否则是装饰）**：把任一 `composer-*-hint` 从 tooltip 还原成常驻 `<p>`（外层仍挂 `.space-y-1.5`）⇒「composer 区常驻说明段落计数」从 **0** 变 **1** ⇒ **必须判红**。真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-2（修前 composer 高 **222px**、进输入框前 4 行提示各占一行 = **88px**）；§F-5（`/resources/knowledge` 整页工程工作日志）则是**判据适用面的反例** —— 本条度量式绑在 `.space-y-1.5 > p[data-testid*="hint"]` 上时只覆盖 composer，40 行外的成行段落测不到，「没红」不等于「没问题」。
 
 ## 14. 面向用户的文案不得出现「审查者形态」的字符串
 
