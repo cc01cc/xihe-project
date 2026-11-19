@@ -2081,6 +2081,34 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             await route.fallback();
             return;
         }
+        // task-136：team_tasks 只读投影（D-1821 / task-188 S2，`api.ts:3477` 已调）。缺桩时
+        // 落到下面「sessionId = team-tasks ⇒ 404」分支，page-failures 把它算成真失败
+        // （task-174 两 spec 6 红）。空列表是合法读面（面板空态），不伪造任务行。
+        // task-136：会话权限档位读面（D-1908 rev4 / task-107 落地，`api.ts:4964` 已调）。
+        // 形状必须过 normalize（tier/source/workspaceTier/canConfigure/denyReason/available 全要）。
+        if (parts.at(-1) === "tier" && route.request().method() === "GET") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    tier: "workspace",
+                    source: "workspace",
+                    workspaceTier: "workspace",
+                    canConfigure: false,
+                    denyReason: null,
+                    available: ["view", "workspace", "full"],
+                }),
+            });
+            return;
+        }
+        if (parts.at(-1) === "team-tasks" && route.request().method() === "GET") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ tasks: [] }),
+            });
+            return;
+        }
         const sessionId = parts.at(-1) === "messages" ? parts.at(-2) : parts.at(-1);
         if (!sessionId) {
             await route.fulfill({

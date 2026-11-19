@@ -18,6 +18,9 @@ const messages = {
             ia: {
                 breadcrumbRoot: "设置",
                 breadcrumbLabel: "面包屑",
+                // task-136：组件 :aria-label="t('settings.ia.headerLabel')" 用到的键，夹具漏配
+                // ⇒ 8 条用例全在 expectNoRawI18nKey 上红（产品键在 i18n/index.ts:2436 存在）。
+                headerLabel: "设置区页头",
                 layerInstance: "实例配置",
                 layerUser: "用户配置",
                 layerWorkspaceDefault: "工作区默认配置",

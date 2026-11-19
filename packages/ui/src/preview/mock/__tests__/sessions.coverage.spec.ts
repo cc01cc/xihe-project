@@ -229,6 +229,25 @@ describe("mock 会话夹具被路由消费（task-25 D）", () => {
         ).toEqual(["/export", "/compact"]);
     });
 
+    it("权限档位 / 任务板投影读面已桩（task-136：缺桩时会话页固定两条 404）", async () => {
+        // D-1908 rev4（api.ts:4964）与 D-1821 / task-188 S2（api.ts:3477）：两个只读端点必须
+        // 有合法空/继承态响应，否则 page-failures 门把夹具缺口当产品失败。
+        const tier = await call(handler, `/sessions/${SESSION_ID}/tier`);
+        expect(tier.status).toBe(200);
+        expect(tier.body).toEqual({
+            tier: "workspace",
+            source: "workspace",
+            workspaceTier: "workspace",
+            canConfigure: false,
+            denyReason: null,
+            available: ["view", "workspace", "full"],
+        });
+
+        const tasks = await call(handler, `/sessions/${SESSION_ID}/team-tasks`);
+        expect(tasks.status).toBe(200);
+        expect(tasks.body).toEqual({ tasks: [] });
+    });
+
     it("未知会话子资源仍 404 MOCK_ENDPOINT_MISSING（不做通配 200 掩盖缺口）", async () => {
         const answer = await call(handler, `/sessions/${SESSION_ID}/not-a-face`);
         expect(answer.status).toBe(404);

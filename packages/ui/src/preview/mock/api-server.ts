@@ -748,6 +748,22 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                             ],
                         });
                     }
+                    if (suffix === "/tier" && methodIsGet) {
+                        // task-136：D-1908 rev4 会话权限档位读面（api.ts:4964）；预览按「继承工作区档」呈现。
+                        return respond(200, {
+                            tier: "workspace",
+                            source: "workspace",
+                            workspaceTier: "workspace",
+                            canConfigure: false,
+                            denyReason: null,
+                            available: ["view", "workspace", "full"],
+                        });
+                    }
+                    if (suffix === "/team-tasks") {
+                        // task-136：D-1821 / task-188 S2 只读投影（api.ts:3477 已调）；预览
+                        // 没有任务板数据 ⇒ 合法空列表（面板空态），不伪造行。
+                        return respond(200, { tasks: [] });
+                    }
                     return respond(404, { code: "MOCK_ENDPOINT_MISSING", detail: suffix });
                 }
                 /**

@@ -28,6 +28,8 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
         runMaxTurnsCeiling: 200,
         runMaxElapsedSecondsCeiling: 7200,
         runMaxTokensCeiling: 1000000,
+        // task-136：9a4cffa99 追平 CP schema 时只加了 catalog 未补值 ⇒ task-127 覆盖门 2 红。
+        budgetAccounting: "growth",
         loopRepeatWarn: 3,
         loopRepeatRefuse: 6,
         loopRepeatEscalate: 4,
