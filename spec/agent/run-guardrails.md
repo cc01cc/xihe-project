@@ -50,7 +50,7 @@
 
 | 候选 | 结论 | 去向 |
 |---|---|---|
-| Agent Run 累计/循环预算 | 已实现（PLAN-0492：三维度预算、instance-only 上限、结构化上报与 durable 终态；token 默认已按真实数据标定 38303/51070） | backlog BL-89（实现已落地；标定回填完成 2026-10-13，见 PLAN-0492 evidence/m0-token-calibration.md，含可复采脚本） |
+| Agent Run 累计/循环预算 | 已实现（PLAN-0492：三维度预算、instance-only 上限、结构化上报与 durable 终态；token 默认 2026-11-19 起按用户裁定由 task-99 改为 500000/1000000，≈73 次调用；旧的 38303/51070 只够 ≈5.6 次，六次调用的工作区任务必炸（task-91 实测 ≈6.8k token/次调用）） | backlog BL-89（实现已落地；标定回填完成 2026-10-13，见 PLAN-0492 evidence/m0-token-calibration.md，含可复采脚本） |
 | 语义重复/无进展检测 | 已实现（PLAN-0493：观察窗口 + 级联 2/3/5·3/5·2/5·20、豁免只免检测不免预算、`RUN_NO_PROGRESS` 经 {stop, interrupt} 同管道收敛；M0 真实观测校准全部维持默认；host 车道 passed，2026-10-13） | backlog BL-90（实现已落地；PLAN 收尾归档后闭环） |
 | ChatRun 内 LangGraph 图状态 checkpoint/恢复 | 已交付（PLAN-0510，2026-10-17 归档并合入 develop） | backlog BL-91（已闭环；与 ExecutionJob 续跑、BL-24 区分） |
 | 计划执行预算/重规划上限 | 无生产者 → 触发式候选 | 已有登记 P0-2（PLAN-0330 后置），不新建 |

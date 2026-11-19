@@ -215,19 +215,24 @@ public class ConfigService {
         "job-policy", Map.of(
             "defaultTimeoutSecs", "3600",
             "maxTimeoutSecs", "0"),
-        // PLAN-0492 decision #17/#19/#21: agent-runtime run-budget code defaults —
-        // turns 25 / elapsed 600s (user 2026-10-12); token defaults calibrated
-        // 2026-10-13 from real-provider runs (p95=25535 over 15 runs; see
-        // PLAN-0492 evidence/m0-token-calibration.md): 38303 = p95×1.5,
-        // 51070 = 2×p95. Ceilings 100/3600 clamp turns/elapsed; token ceiling
-        // clamps the calibrated default upward only.
+            // PLAN-0492 decision #17/#19/#21 set the first token pair from the
+            // 2026-10-13 calibration (p95=25535): 38303 = p95×1.5, 51070 = 2×p95.
+            // task-99 (user ruling 2026-11-19) re-based ONLY the token pair: current
+            // models (DeepSeek/Qwen) expose a 1M context, so a 40k-class run budget
+            // stopped being a guardrail — task-91 measured ~6.8k tokens per LLM call,
+            // i.e. 38303 was only ~5.6 calls and every 6-call workspace task died with
+            // RUN_BUDGET_EXHAUSTED. 500000 ≈ 73 calls; the ceiling must sit above the
+            // value (min(value, ceiling) would clamp 500000 back to 51070 and make the
+            // change a no-op), so it moves 51070 -> 1000000 in the same batch. turns and
+            // elapsed keep their PLAN-0492 values on purpose: only the token threshold
+            // changed, not the counting rule (tool-schema trimming is a separate card).
         "agent-runtime", Map.ofEntries(
             Map.entry("runMaxTurns", "25"),
             Map.entry("runMaxElapsedSeconds", "600"),
-            Map.entry("runMaxTokens", "38303"),
+            Map.entry("runMaxTokens", "500000"),
             Map.entry("runMaxTurnsCeiling", "100"),
             Map.entry("runMaxElapsedSecondsCeiling", "3600"),
-            Map.entry("runMaxTokensCeiling", "51070"),
+            Map.entry("runMaxTokensCeiling", "1000000"),
             // PLAN-0493 decision #11/#19: loop/no-progress defaults (M0
             // calibrated 2026-10-13, all kept — evidence/m0-observed-repeats.md);
             // escalate/window ceilings (10/10/10/50) are instance-only and

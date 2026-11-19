@@ -807,9 +807,15 @@ def _resolve_policy_for_model(
 
 
 # PLAN-0492 T2.1: run-budget keys and code defaults for the `agent-runtime`
-# domain (mirrors CP CODE_DEFAULTS). Token defaults calibrated 2026-10-13 from
-# real-provider runs (p95=25535 over 15 runs; PLAN-0492 evidence
-# m0-token-calibration.md): 38303 = p95×1.5, 51070 = 2×p95 (ceiling).
+# domain (mirrors CP CODE_DEFAULTS; the two must move together). The token pair
+# was re-based by task-99 on the user's 2026-11-19 ruling: current models
+# (DeepSeek/Qwen) expose a 1M context, so the 2026-10-13 calibration
+# (38303 = p95×1.5 / 51070 = 2×p95) is no longer a guardrail — task-91 measured
+# ~6.8k tokens per LLM call, i.e. 38303 was only ~5.6 calls. 500000 ≈ 73 calls;
+# the ceiling moves to 1000000 in the same batch because min(value, ceiling)
+# would otherwise clamp the new value back to 51070 and make the change a
+# no-op. turns/elapsed keep their PLAN-0492 values: only the threshold changed
+# here, never the counting rule.
 _RUN_BUDGET_KEYS = {
     "runMaxTurns": "max_turns",
     "runMaxElapsedSeconds": "max_elapsed_seconds",
@@ -823,10 +829,10 @@ _RUN_BUDGET_CEILING_KEYS = {
 _RUN_BUDGET_CODE_DEFAULTS = {
     "runMaxTurns": 25,
     "runMaxElapsedSeconds": 600,
-    "runMaxTokens": 38303,
+    "runMaxTokens": 500000,
     "runMaxTurnsCeiling": 100,
     "runMaxElapsedSecondsCeiling": 3600,
-    "runMaxTokensCeiling": 51070,
+    "runMaxTokensCeiling": 1000000,
 }
 
 
@@ -909,6 +915,14 @@ def _resolve_run_budget(
                 ceiling,
             )
             resolved[value_key] = ceiling
+    logger.info(
+        "[LIFECYCLE] service=agent event=run_budget_resolved maxTurns={} "
+        "maxElapsedSeconds={} maxTokens={} ceilingTokens={}",
+        resolved["runMaxTurns"],
+        resolved["runMaxElapsedSeconds"],
+        resolved["runMaxTokens"],
+        resolved["runMaxTokensCeiling"],
+    )
     return RunBudget(
         max_turns=resolved["runMaxTurns"],
         max_elapsed_seconds=resolved["runMaxElapsedSeconds"],

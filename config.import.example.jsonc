@@ -152,14 +152,17 @@
     // PLAN-0492：ChatRun 累计预算（轮数 / 累计耗时秒 / token；0 = 该维度不启用）。
     // 值键在 user/workspace 层可写；*Ceiling 硬上限仅 instance 层可写（0 = 不钳制），
     // 生效值 = ceiling > 0 ? min(值, ceiling) : 值；被钳制时记 run_budget_clamp 日志。
-    // token 默认值 2026-10-13 真实数据标定（p95=25535 / 15 runs，mimo-v2.5）：
-    // 38303 = p95×1.5，51070 = 2×p95（见 PLAN-0492 evidence/m0-token-calibration.md）。
+    // token 默认值 2026-11-19 按用户裁定改为 500000，同批把硬上限抬到 1000000：
+    // 现役模型（DeepSeek/Qwen）1M 上下文下 40k 级预算不再有护栏意义；task-91 实测
+    // ≈6.8k token/次调用 ⇒ 500000 ≈ 73 次调用（旧 38303/51070 只有 ≈5.6 次，六次调用必炸）。
+    // 上限必须高于值，否则 min(值, 上限) 会把 500000 钳回旧上限，改了等于没改。
+    // 旧标定出处 PLAN-0492 evidence/m0-token-calibration.md（p95=25535 / 15 runs）。
     "runMaxTurns": "25",
     "runMaxElapsedSeconds": "600",
-    "runMaxTokens": "38303",
+    "runMaxTokens": "500000",
     "runMaxTurnsCeiling": "100",
     "runMaxElapsedSecondsCeiling": "3600",
-    "runMaxTokensCeiling": "51070",
+    "runMaxTokensCeiling": "1000000",
     // PLAN-0493：语义重复/无进展检测（观察窗口）阈值与窗口；escalate/window 的
     // ceiling 仅 instance 层可写（0 = 不设上限）；loopExemptTools 只追加内置豁免
     // 清单（轮询/探活类工具），拒绝通配符。
