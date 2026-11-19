@@ -165,6 +165,13 @@ public class ChatRun {
     @Column(name = "token_count", nullable = false)
     private int tokenCount;
 
+    // task-101 (B): the budget-charged amount under the resolved budgetAccounting
+    // mode. Deliberately nullable: NULL means "this run predates B / no accounting
+    // payload" and must never be read as 0 (= "spent nothing"). tokenCount above
+    // keeps the real provider-reported consumption; the two are recorded together.
+    @Column(name = "budget_consumed")
+    private Integer budgetConsumed;
+
     @Column(name = "assistant_chars", nullable = false)
     private int assistantChars;
 
@@ -352,6 +359,8 @@ public class ChatRun {
     public String getErrorDetail() { return errorDetail; }
     public void setErrorDetail(String errorDetail) { this.errorDetail = errorDetail; }
     public int getTokenCount() { return tokenCount; }
+    public Integer getBudgetConsumed() { return budgetConsumed; }
+    public void setBudgetConsumed(Integer budgetConsumed) { this.budgetConsumed = budgetConsumed; }
     public void setTokenCount(int tokenCount) { this.tokenCount = tokenCount; }
     public int getAssistantChars() { return assistantChars; }
     public void setAssistantChars(int assistantChars) { this.assistantChars = assistantChars; }

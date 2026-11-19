@@ -285,7 +285,7 @@ class LangGraphRunner(AgentRunner):
         if continuation_mode != "resume_pending":
             await self._append_prompt_admitted(prompt_events, context)
 
-        usage = RunUsage()
+        usage = RunUsage(budget_accounting=(config.budget.budget_accounting if config.budget else "growth"))
         # PLAN-0660 M5-C: approvals and user questions are both human waits; they share the
         # pause/boundary mechanism below but keep their own event types and their own waiters
         # (each sink only ever publishes its own canonical event — no "is this an approval?"
@@ -498,7 +498,7 @@ class LangGraphRunner(AgentRunner):
                                 budget_dimension = _exceeded_budget_dimension(
                                     budget,
                                     llm_calls=llm_calls,
-                                    total_tokens=usage.total_tokens,
+                                    total_tokens=_budget_charge(usage),
                                     elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
                                 )
                             elif event.type == "done":
@@ -507,16 +507,18 @@ class LangGraphRunner(AgentRunner):
                                 budget_dimension = _exceeded_budget_dimension(
                                     budget,
                                     llm_calls=llm_calls,
-                                    total_tokens=usage.total_tokens,
+                                    total_tokens=_budget_charge(usage),
                                     elapsed_seconds=(now - budget_started_at).total_seconds() - paused_seconds,
                                 )
                             yield _attach_terminal_truncation(event, config.agent_context_truncation)
                         if budget_dimension:
                             logger.info(
-                                "Run budget exhausted: dimension={} llmCalls={} tokens={}",
+                                "Run budget exhausted: dimension={} llmCalls={} budgetConsumed={} realTokens={} accounting={}",
                                 budget_dimension,
                                 llm_calls,
+                                usage.budget_consumed,
                                 usage.total_tokens,
+                                usage.budget_accounting,
                             )
                             break
                         if context.metadata.get(NO_PROGRESS_SIGNAL_KEY):
@@ -817,9 +819,24 @@ class LangGraphRunner(AgentRunner):
                 elif event.type == "token":
                     usage.record_turn()
                 elif event.type == "llm_usage":
-                    usage.record_llm_usage(
+                    charge = usage.record_llm_usage(
                         input_tokens=event.data.get("inputTokens", 0),
                         output_tokens=event.data.get("outputTokens", 0),
+                        # None (key absent) is NOT 0: it means "the provider reports
+                        # no cache counter" -> record_llm_usage charges the full input.
+                        cache_read_tokens=event.data.get("cacheReadInputTokens"),
+                    )
+                    # task-101 (B) per-call audit: the provider numbers, the charge
+                    # this call added, and running charge vs real total.
+                    logger.info(
+                        "Run budget accounting: accounting={} input={} cacheRead={} output={} charge={} budgetConsumed={} realTotal={}",
+                        usage.budget_accounting,
+                        event.data.get("inputTokens", 0),
+                        event.data.get("cacheReadInputTokens", "absent"),
+                        event.data.get("outputTokens", 0),
+                        charge,
+                        usage.budget_consumed,
+                        usage.total_tokens,
                     )
                     usage.source = str(event.data.get("source", "real"))
 
@@ -833,6 +850,18 @@ class LangGraphRunner(AgentRunner):
                     seen_tool_ids.add(run_id)
             result.append(event)
         return result
+
+
+def _budget_charge(usage: RunUsage) -> int:
+    """task-101 (B): the number the tokens dimension is compared against.
+
+    growth -> RunUsage.budget_consumed; cumulative -> RunUsage.total_tokens,
+    byte for byte the pre-B rule (rollback switch). Both numbers are always
+    recorded; only the comparison target moves.
+    """
+    if usage.budget_accounting == "cumulative":
+        return usage.total_tokens
+    return usage.budget_consumed
 
 
 def _exceeded_budget_dimension(

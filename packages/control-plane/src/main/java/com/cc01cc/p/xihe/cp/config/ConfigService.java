@@ -233,6 +233,12 @@ public class ConfigService {
             Map.entry("runMaxTurnsCeiling", "100"),
             Map.entry("runMaxElapsedSecondsCeiling", "3600"),
             Map.entry("runMaxTokensCeiling", "1000000"),
+            // task-101 (B): budget accounting mode. growth charges (input - cache_read)
+            // + output per call so a cached prefix is not re-charged; cumulative keeps
+            // the pre-B rule and exists as the rollback switch. Default growth because a
+            // provider that reports no cache counter is charged in full (fail-open), i.e.
+            // the worst case is byte-identical to cumulative.
+            Map.entry("budgetAccounting", "growth"),
             // PLAN-0493 decision #11/#19: loop/no-progress defaults (M0
             // calibrated 2026-10-13, all kept — evidence/m0-observed-repeats.md);
             // escalate/window ceilings (10/10/10/50) are instance-only and

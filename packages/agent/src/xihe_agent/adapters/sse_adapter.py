@@ -75,17 +75,23 @@ class LangGraphEventAdapter(EventAdapter):
                 # model end so multi-turn tool loops aggregate; the runner's
                 # RunUsage sums the deltas.
                 meta = getattr(output, "usage_metadata", None) or {}
-                events.append(
-                    AgentEvent(
-                        type="llm_usage",
-                        data={
-                            "inputTokens": meta.get("input_tokens", 0),
-                            "outputTokens": meta.get("output_tokens", 0),
-                            "totalTokens": meta.get("total_tokens", 0),
-                            "source": "real",
-                        },
-                    )
-                )
+                usage_data: dict[str, object] = {
+                    "inputTokens": meta.get("input_tokens", 0),
+                    "outputTokens": meta.get("output_tokens", 0),
+                    "totalTokens": meta.get("total_tokens", 0),
+                    "source": "real",
+                }
+                # task-101 (B): the cached-prefix counter rides along PER CALL so
+                # run-level accounting stays recomputable. LangChain surfaces it
+                # under input_token_details.cache_read; when the provider does not
+                # report it the key stays absent (absent -> fail-open full charge),
+                # never replaced by 0, which would silently mean "cache is free".
+                details = meta.get("input_token_details")
+                if isinstance(details, dict):
+                    cache_read = details.get("cache_read")
+                    if isinstance(cache_read, int):
+                        usage_data["cacheReadInputTokens"] = cache_read
+                events.append(AgentEvent(type="llm_usage", data=usage_data))
             if streamed:
                 return events or None
             if isinstance(output, BaseMessage):

@@ -48,12 +48,17 @@ class RunBudget:
       once per ``on_chat_model_end``).
     - ``max_elapsed_seconds``: wall-clock of the run, excluding approval /
       human waits (waiting for a person is not "running away").
-    - ``max_tokens``: cumulative ``RunUsage.total_tokens``.
+    - ``max_tokens``: cumulative budget charge, i.e. ``RunUsage.budget_consumed``
+      under ``budget_accounting`` (task-101/B). With ``cumulative`` it is exactly
+      ``RunUsage.total_tokens`` (the pre-B rule); with ``growth`` a cached input
+      prefix is not re-charged, and a provider that reports no cache counter is
+      charged in full (fail-open: the worst case equals the old rule).
     """
 
     max_turns: int = 0
     max_elapsed_seconds: int = 0
     max_tokens: int = 0
+    budget_accounting: str = "growth"
 
 
 @dataclass(frozen=True)

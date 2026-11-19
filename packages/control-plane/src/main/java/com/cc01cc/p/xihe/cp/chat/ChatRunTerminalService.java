@@ -296,6 +296,10 @@ public class ChatRunTerminalService {
         // settle itself is pending-only and idempotent, so a replay changes nothing.
         userQuestionService.cancelPendingForTerminalRun(runId, request.status());
 
+        // task-101 (B): the budget-charged amount rides in the SAME usage envelope as the
+        // real counts. `run` is managed here, so the dirty field flushes with the terminal
+        // transaction. Absent key => leave NULL (unknown), never 0.
+        run.setBudgetConsumed(budgetConsumedFrom(request.usagePayload()));
         historyWriter.append(request.source().eventType(), request.source().source(), "system",
                 runId, sessionId, fromStatus, request.status(), request.terminalOutcome(),
                 request.errorCode(), budgetHistoryPayload(request.budgetDimension()));
@@ -455,6 +459,27 @@ public class ChatRunTerminalService {
      * retired {@code llm_usage} extension used. No usage data (recovery /
      * CP_RESTARTED / cancel without a relay) writes no event.
      */
+    private static Integer budgetConsumedFrom(Object usagePayload) {
+        if (!(usagePayload instanceof Map<?, ?> envelope)) {
+            return null;
+        }
+        if (!(envelope.get("usage") instanceof Map<?, ?> usage)) {
+            return null;
+        }
+        Object value = usage.get("budgetConsumed");
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     private void writeUsageEvent(ChatRun run, Object usagePayload) {
         if (!(usagePayload instanceof Map<?, ?> envelope) || envelope.isEmpty()) {
             return;
@@ -467,8 +492,9 @@ public class ChatRunTerminalService {
         eventStoreService.append(run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
                 "llm.usage", eventPayload, run.getId().toString());
         Map<?, ?> usage = envelope.get("usage") instanceof Map<?, ?> u ? u : Map.of();
-        logger.info("[LIFECYCLE] service=cp event=llm_usage_persisted runId={} source={} inputTokens={} totalTokens={} cost={} costSource={}",
-                run.getId(), usage.get("source"), usage.get("inputTokens"), usage.get("totalTokens"),
+        logger.info("[LIFECYCLE] service=cp event=llm_usage_persisted runId={} source={} inputTokens={} cacheReadInputTokens={} totalTokens={} budgetConsumed={} accounting={} cost={} costSource={}",
+                run.getId(), usage.get("source"), usage.get("inputTokens"), usage.get("cacheReadInputTokens"),
+                usage.get("totalTokens"), usage.get("budgetConsumed"), usage.get("budgetAccounting"),
                 usage.get("cost"), usage.get("costSource"));
     }
 

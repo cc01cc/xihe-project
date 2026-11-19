@@ -14,6 +14,7 @@
     "runMaxTurnsCeiling": { "type": ["integer", "string"], "minimum": 0, "pattern": "^(0|[1-9][0-9]*)$" },
     "runMaxElapsedSecondsCeiling": { "type": ["integer", "string"], "minimum": 0, "pattern": "^(0|[1-9][0-9]*)$" },
     "runMaxTokensCeiling": { "type": ["integer", "string"], "minimum": 0, "pattern": "^(0|[1-9][0-9]*)$", "description": "Instance-only clamp for runMaxTokens; default 1000000 and must stay above the value, otherwise min(value, ceiling) silently caps it." },
+    "budgetAccounting": { "type": "string", "enum": ["growth", "cumulative"], "description": "Budget accounting mode: growth charges (input - cache_read) + output per call (default); cumulative keeps the pre-B input + output rule as a rollback switch. A provider that reports no cache counter is always charged in full (fail-open)." },
     "loopRepeatWarn": { "type": ["integer", "string"], "minimum": 1, "pattern": "^[1-9][0-9]*$" },
     "loopRepeatRefuse": { "type": ["integer", "string"], "minimum": 1, "pattern": "^[1-9][0-9]*$" },
     "loopRepeatEscalate": { "type": ["integer", "string"], "minimum": 1, "pattern": "^[1-9][0-9]*$" },

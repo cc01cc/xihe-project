@@ -915,18 +915,31 @@ def _resolve_run_budget(
                 ceiling,
             )
             resolved[value_key] = ceiling
+    # task-101 (B): accounting mode is a STRING key, so it is resolved beside the
+    # int keys instead of through _parse_budget_int. Unknown/absent -> growth
+    # (the default; field-missing providers stay fail-open and the worst case
+    # equals the pre-B rule). cumulative is the rollback switch.
+    accounting = (entries.get("budgetAccounting") or "growth").strip().lower()
+    if accounting not in ("growth", "cumulative"):
+        logger.warning(
+            "[LIFECYCLE] service=agent event=run_budget_accounting_invalid value={} fallback=growth",
+            accounting,
+        )
+        accounting = "growth"
     logger.info(
         "[LIFECYCLE] service=agent event=run_budget_resolved maxTurns={} "
-        "maxElapsedSeconds={} maxTokens={} ceilingTokens={}",
+        "maxElapsedSeconds={} maxTokens={} ceilingTokens={} accounting={}",
         resolved["runMaxTurns"],
         resolved["runMaxElapsedSeconds"],
         resolved["runMaxTokens"],
         resolved["runMaxTokensCeiling"],
+        accounting,
     )
     return RunBudget(
         max_turns=resolved["runMaxTurns"],
         max_elapsed_seconds=resolved["runMaxElapsedSeconds"],
         max_tokens=resolved["runMaxTokens"],
+        budget_accounting=accounting,
     )
 
 
