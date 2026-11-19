@@ -25,6 +25,7 @@ import {
 } from "../../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../../stores/session";
 import { workspaceChatPath, workspacePath } from "../../../lib/routes";
+import { isWorkbenchRoute } from "../../../router/workbenchRoute";
 
 /**
  * C3 (task-217) + task-365 D（D-1220 ①）：行1 页签栏**只显示钉住的会话页签** ——
@@ -99,6 +100,10 @@ function currentTabId(): WorkTabId | null {
 // task-365 D：固定页签删了，「不在会话路由上」没有替代高亮 —— 不硬造一个（空页签栏
 // 直接整体隐藏，见模板 v-if）。会话路由上高亮 = 当前钉住的页签。
 const activeId = computed<WorkTabId | null>(() => currentTabId());
+
+// task-110：这条行**只属于工作台页**（workspace / workspace-chat）。判据来自路由表的
+// 纯函数 `isWorkbenchRoute`，不在这里另抄一份路由名清单（见 src/router/workbenchRoute.ts）。
+const onWorkbenchRoute = computed(() => isWorkbenchRoute(route));
 
 /**
  * Persist the open session set. S3a audit P1-1: the workbench distinguishes
@@ -263,10 +268,16 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
     <!--
         task-174（S2b）：顶部全局行**只在没有容器认领时**渲染。工作台的树容器/内容容器各自
         挂一条容器内页签行（`WorkspaceContainerTabs`），它们 mount 时 claim ⇒ 这里整条让位。
-        不在工作台里的路由（成员页/设置页等）没有消费方 ⇒ 行为与重构前逐字节一致。
+
+        task-110（修 S2b 的遗漏）：**claim 只是「容器在不在」的判据，不是「这条行属于哪些路由」的判据**。
+        claim 由 `WorkspaceWorkbench` 发出，而它只挂在 workspace / workspace-chat 两页 ⇒ 其余五个
+        工作区页（环境/定时任务/资源/设置/成员）没有消费方，却也从来没有 claim，于是这条行在那里
+        照样渲染（task-104 实测：正文被下推 32px，点页签还会把用户带离当前页）。S2b 注释当时写的
+        「行为与重构前逐字节一致」正是这个缺陷的形态，不是设计意图。
+        现在路由门是独立的一层：`onWorkbenchRoute`（路由表 SSOT）**且** 无容器认领才渲染。
     -->
     <nav
-        v-if="tabs.length > 0 && tabRowClaims === 0"
+        v-if="onWorkbenchRoute && tabs.length > 0 && tabRowClaims === 0"
         data-testid="workspace-tab-bar"
         :aria-label="t('workspace.tabBarLabel')"
         class="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"
