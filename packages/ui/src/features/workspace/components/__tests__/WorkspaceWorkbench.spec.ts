@@ -76,6 +76,12 @@ const i18n = createI18n({
                 dockFocusExpand: "Expand panel",
                 dockFocusRestore: "Restore layout",
                 dockFocusHint: "Fill the workspace with this panel",
+                // task-88：主列行尾开合图标；右栏「+」菜单/空态文案（本文件挂的是真 WorkspaceDock）。
+                dockToggleOpen: "Expand the right panel",
+                dockToggleClose: "Collapse the right panel",
+                containerPlusNew: "New tab: choose a panel type",
+                dockTabOpen: "Open",
+                dockEmptyHint: "No panels are open yet. Use + above to pick one.",
                 expandFiles: "Expand the file tree",
                 collapseFiles: "Collapse the file tree",
                 mainFloorHint: "Main column below 640px",
@@ -347,7 +353,12 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         });
     });
 
-    it("collapses the dock from the active toolbar toggle but keeps the tab set", async () => {
+    /**
+     * task-88 ③：旧语义「再点已激活的面板图标 = 收起整列」被用户判为缺陷（点自己正在看的面板，
+     * 面板却消失了）。现在面板簇只负责「打开/聚焦」，**收起只有两条显式通道**：行尾开合图标
+     * `workspace-dock-toggle` 与面板关闭按钮 `workspace-aux-close`。
+     */
+    it("重复点已激活的面板图标只聚焦、不收起整列，收起走行尾开合图标（task-88 ③④）", async () => {
         seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
@@ -355,15 +366,51 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
 
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        await expectStored(() => {
+            expect(storedLayout().dockCollapsed).toBe(false);
+            expect(storedLayout().dockTabs).toEqual(["code"]);
+            expect(storedLayout().activeDockTab).toBe("code");
+        });
+
+        // ④：开合图标在主列行尾，展开态 aria-pressed=true；点一次 = 收起（页签保留）。
+        const toggle = wrapper.get('[data-testid="workspace-dock-toggle"]');
+        expect(toggle.attributes("aria-pressed")).toBe("true");
+        await toggle.trigger("click");
+        await flushPromises();
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
         await expectStored(() => {
             expect(storedLayout().dockCollapsed).toBe(true);
             expect(storedLayout().dockTabs).toEqual(["code"]);
         });
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
-        // Re-opening does not duplicate the tab.
+        // 折叠态控件仍在（这就是它落主列而不是右栏内部的原因），再点回来不重复页签。
+        const reopen = wrapper.get('[data-testid="workspace-dock-toggle"]');
+        expect(reopen.attributes("aria-pressed")).toBe("false");
+        await reopen.trigger("click");
+        await flushPromises();
         expect(wrapper.findAll(DOCK_TAB)).toHaveLength(1);
+        await expectStored(() => expect(storedLayout().dockCollapsed).toBe(false));
+    });
+
+    /** task-88 ②：0 页签是可达态 —— 展开右栏必须给空态 + 「+」，而不是「点了没反应」。 */
+    it("0 页签时展开右栏：空态 + 「+」都在，开合图标 aria-pressed 跟随（task-88 ②④）", async () => {
+        seedDesktopDock();
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        await wrapper.get('[data-testid="workspace-dock-toggle"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(wrapper.get('[data-testid="dock-empty-state"]').text()).toContain(
+            "No panels are open yet",
+        );
+        expect(wrapper.get('[data-testid="workspace-container-plus-right"]').exists()).toBe(true);
+        expect(
+            wrapper.get('[data-testid="workspace-dock-toggle"]').attributes("aria-pressed"),
+        ).toBe("true");
     });
 
     it("closes dock tabs and rolls the dock up when the last one closes", async () => {
@@ -774,8 +821,14 @@ describe("WorkspaceWorkbench 破 640 底线（D-1829，取代 task-94 S2/S4 桌�
 
         expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
 
-        // (a) 工具栏 files 再按一次 = 收起（走 toggleDockTab，**不**走 collapseDock —— Lead 点的第一处）。
+        // (a) task-88 ③ 之后旧路径已拆除：工具栏 files 再按一次只是聚焦（不再是收起），
+        // 右栏仍在 —— 收起改走行尾开合图标（D-1829 关心的「绕过 collapseDock 的收起」只剩这一条，
+        // 它写的就是 dockCollapsed，不碰 activeColumn）。
         await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+
+        await wrapper.get('[data-testid="workspace-dock-toggle"]').trigger("click");
         await flushPromises();
 
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
@@ -788,7 +841,7 @@ describe("WorkspaceWorkbench 破 640 底线（D-1829，取代 task-94 S2/S4 桌�
         await expectStored(() => expect(storedLayout().activeColumn).toBe("right"));
 
         // (c) 再开回来 ⇒ 回到右栏（偏好回来了，不是 main）。
-        await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-dock-toggle"]').trigger("click");
         await flushPromises();
         expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
     });

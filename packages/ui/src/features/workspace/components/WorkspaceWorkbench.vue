@@ -4,7 +4,7 @@ import { useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
-import { FolderTree, Plus } from "@lucide/vue";
+import { FolderTree, PanelRightClose, PanelRightOpen, Plus } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
     MAIN_MIN_WIDTH,
@@ -229,12 +229,14 @@ if (typeof window !== "undefined") {
  * the user can still expand it manually (a manual choice wins over the default).
  */
 
-const dockOpen = computed(
-    () =>
-        !layout.value.dockCollapsed &&
-        layout.value.dockTabs.length > 0 &&
-        layout.value.activeDockTab !== null,
-);
+/**
+ * task-88 ②（用户 2026-11-20 23:29 裁定 + Lead 同日裁定）：**未折叠 = 右栏在**。
+ *
+ * <p>旧口径要求「有页签且 active 非空」才算打开 —— 于是「一个页签都没有」时右栏整列消失，
+ * 用户点开合图标什么也看不到。现在折叠态才是唯一隐藏条件：0 页签时右栏渲染**空态** +
+ * 行尾「+」（选类型新建，见 WorkspaceDock）。折叠/展开仍由 dockCollapsed 单一 writer 决定。</p>
+ */
+const dockOpen = computed(() => !layout.value.dockCollapsed);
 const activeDockTab = computed(() => layout.value.activeDockTab);
 const codeOpen = computed(() => dockOpen.value && activeDockTab.value === "code");
 const changesOpen = computed(() => dockOpen.value && activeDockTab.value === "changes");
@@ -686,13 +688,32 @@ function openNewMainTab(): void {
     router.push({ path: workspacePath(props.workspaceId), query: { newChat: "1" } });
 }
 
-/** Toolbar toggles: pressing the active tab collapses the dock but keeps tabs/width. */
+/**
+ * 工具带面板簇（六个图标，task-137 才下线）的切换语义。
+ *
+ * <p>task-88 ③：点**已激活**的面板图标必须只是聚焦它，**不能把整列收起来** —— 那一版
+ * 让「点自己正在看的面板」变成「面板消失」，用户读作丢失。收起只走两条显式通道：
+ * 行尾开合图标（workspace-dock-toggle）或面板关闭按钮（workspace-aux-close）。
+ * 名字保留 toggleDockTab：六处调用点同行在改，改名纯属漂移。</p>
+ */
 function toggleDockTab(id: DockTabId): void {
-    if (dockOpen.value && activeDockTab.value === id) {
-        layout.value.dockCollapsed = true;
+    openDockTab(id);
+}
+
+/**
+ * task-88 ④：主列一级列头的右栏开合图标（D-1907 §4.1 钉的位置，簇右侧）。
+ *
+ * <p>为什么落在这行而不是右栏内部：折叠态右栏整列不渲染（dockOpen 为假），放在右栏里的
+ * 开合控件会跟着消失 —— 那就再也打不开了。主列行头在折叠/展开两态都恒在（focus 态由
+ * 右栏自己的还原按钮兜）。</p>
+ */
+function toggleDock(): void {
+    if (dockOpen.value) {
+        collapseDock();
         return;
     }
-    openDockTab(id);
+    layout.value.dockCollapsed = false;
+    revealRightColumn();
 }
 
 function setActiveDockTab(id: string): void {
@@ -1078,6 +1099,37 @@ defineExpose({ openDockTab });
                                     data-testid="workspace-secondary-nav-actions"
                                     class="flex shrink-0 items-center gap-1"
                                 />
+                                <!--
+                                    task-88 ④（D-1907 §4.1 钉的位置）：右栏开合图标，簇右侧。
+                                    aria-pressed = 右栏当前是否展开；折叠/展开两态图标互换。
+                                    testid 是 canonical workspace-dock-toggle（Lead 2026-11-20 裁定：
+                                    不留第二写法）。它不属于右栏内部 —— 折叠态右栏不渲染，控件必须
+                                    活在这行才可能「折叠后还能打开」。
+                                -->
+                                <button
+                                    type="button"
+                                    data-testid="workspace-dock-toggle"
+                                    class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    :aria-pressed="dockOpen"
+                                    :aria-label="
+                                        dockOpen
+                                            ? t('workspace.dockToggleClose')
+                                            : t('workspace.dockToggleOpen')
+                                    "
+                                    :title="
+                                        dockOpen
+                                            ? t('workspace.dockToggleClose')
+                                            : t('workspace.dockToggleOpen')
+                                    "
+                                    @click="toggleDock"
+                                >
+                                    <PanelRightClose
+                                        v-if="dockOpen"
+                                        class="size-3.5"
+                                        aria-hidden="true"
+                                    />
+                                    <PanelRightOpen v-else class="size-3.5" aria-hidden="true" />
+                                </button>
                             </template>
                         </WorkspaceContainerTabs>
                         <slot name="center" />
@@ -1100,9 +1152,9 @@ defineExpose({ openDockTab });
                 折叠态 `workspace-file-rail` 解析到 **2 个**（DOM 序：壳内 rail + 旧的本块 rail）。
             -->
             <WorkspaceDock
-                v-if="!dockviewEnabled && dockOpen && activeDockTab && rightVisible"
+                v-if="!dockviewEnabled && dockOpen && rightVisible"
                 :tabs="dockTabs"
-                :active-tab="activeDockTab"
+                :active-tab="activeDockTab ?? ''"
                 :width="layout.dockWidth"
                 :fill="containerMode === 'single'"
                 :default-width="DOCK_WIDTH_DEFAULT"

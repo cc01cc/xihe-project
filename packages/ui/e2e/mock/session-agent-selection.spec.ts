@@ -137,6 +137,67 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     });
 });
 
+/**
+ * task-116（方案 A UI 侧）：工作区设了默认智能体时，`?newChat=1` **不再经过选择框**。
+ *
+ * <p>与上一条用例是同一功能的两分支：没有默认值（`isDefault` 缺失）⇒ 弹选择框；有默认值 ⇒
+ * 直接以它建会话。这里桩的列表行只多一个 `isDefault: true`，其余字段与上一条同形，证明判据落在
+ * 「服务端给的默认标记」而不是前端另存的选中态。</p>
+ */
+test("creates a Workspace Session straight from the default Agent without the picker", async ({
+    page,
+}) => {
+    await setupMockAuth(page);
+    await setupMockSessions(page, { sessions: [], createSession: true });
+    await page.route(
+        "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents",
+        async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                // CP task-106（V177）：`GET /agents` 每行带 `isDefault`；缺省 = 不是默认。
+                body: JSON.stringify({
+                    agents: [
+                        {
+                            principalId: "agent-default",
+                            name: "ResearchAgent",
+                            templateId: null,
+                            templateName: "Research",
+                            createdAt: new Date().toISOString(),
+                            bound: true,
+                            disabled: false,
+                            isDefault: true,
+                            permissionsSnapshot: [{ actionClass: "read" }],
+                            hooks: null,
+                            contextPolicy: null,
+                        },
+                    ],
+                }),
+            });
+        },
+    );
+
+    // `?newChat=1` 一落地就建会话 ⇒ 请求监听必须在 `goto` 之前挂上。
+    const createRequestPromise = page.waitForRequest(
+        (request) =>
+            request.method() === "POST" &&
+            /^\/api\/v1\/(workspaces\/[^/]+\/)?sessions$/.test(new URL(request.url()).pathname),
+    );
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111?newChat=1");
+
+    const createRequest = await createRequestPromise;
+    await expect(page).toHaveURL(
+        /\/workspace\/11111111-1111-4111-8111-111111111111\/chat\/mock-session-/,
+        { timeout: EXPECT_TIMEOUT_MS },
+    );
+    // 选择框一次都不渲染：默认值路径不给人多余的一步。
+    await expect(page.getByTestId("workspace-agent-principal-select")).toHaveCount(0);
+    expect(createRequest.postDataJSON()).toEqual({
+        title: "未命名会话",
+        agentPrincipalId: "agent-default",
+    });
+});
+
 test("creates a principal separately, binds an explicit cap, and confirms unbinding", async ({
     page,
 }) => {

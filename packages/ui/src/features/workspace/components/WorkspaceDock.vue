@@ -101,12 +101,17 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const overflowOpen = ref(false);
 /**
- * task-97（D-1754 ②）：右栏「+」= 重开已关闭面板。候选 = `DOCK_TAB_IDS` 减去已打开集合
- * （标签复用既有 `DOCK_TAB_LABEL_KEYS`，不新造 IA）；点击只 emit，布局写入在调用方。
+ * task-88 ②（用户 2026-11-20 23:29 裁定）：右栏「+」从「重开已关闭面板」升级为
+ * **新建页签 → 选类型**的唯一入口 —— 面板类型不再占顶部导航（那六个图标归 task-137 下线）。
+ *
+ * <p>候选恒为全部 `DOCK_TAB_IDS`（标签复用既有 `DOCK_TAB_LABEL_KEYS`，不新造 IA）：
+ * 已打开的项标 `open`，点击 = 聚焦该页签而不是再开第二个 —— **同类型单例**
+ * （Lead 2026-11-20 裁定；不同会话配置可多开是 task-69 三元组/ task-138 的题，本卡不碰）。</p>
+ * <p>点击只 emit `reopen-tab`，布局写入仍归调用方的 `openDockTab`（上限/激活/单栏揭示一处）。</p>
  */
 const reopenOpen = ref(false);
-const closedDockTabs = computed<DockTabId[]>(() =>
-    DOCK_TAB_IDS.filter((id) => !props.tabs.some((tab) => tab.id === id)),
+const dockMenuTabs = computed<{ id: DockTabId; open: boolean }[]>(() =>
+    DOCK_TAB_IDS.map((id) => ({ id, open: props.tabs.some((tab) => tab.id === id) })),
 );
 function reopenTab(id: DockTabId): void {
     reopenOpen.value = false;
@@ -315,7 +320,8 @@ function handleResizeKeydown(event: KeyboardEvent) {
             v-if="!dockviewEnabled"
             container-id="right"
             :tabs="rowTabs"
-            :active-id="activeTab"
+            :active-id="activeTab || null"
+            allow-empty
             testid-prefix="dock-tab-"
             close-testid-prefix="dock-tab-close-"
             close-active-only
@@ -335,28 +341,35 @@ function handleResizeKeydown(event: KeyboardEvent) {
                         type="button"
                         data-testid="workspace-container-plus-right"
                         class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        :aria-label="t('workspace.containerPlusReopen')"
-                        :title="t('workspace.containerPlusReopen')"
+                        :aria-label="t('workspace.containerPlusNew')"
+                        :title="t('workspace.containerPlusNew')"
                         :aria-expanded="reopenOpen"
-                        :disabled="closedDockTabs.length === 0"
                         @click="reopenOpen = !reopenOpen"
                     >
                         <Plus class="size-3.5" aria-hidden="true" />
                     </button>
                     <div
-                        v-if="reopenOpen && closedDockTabs.length > 0"
+                        v-if="reopenOpen"
                         data-testid="dock-reopen-menu"
                         class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
                     >
                         <button
-                            v-for="id in closedDockTabs"
-                            :key="id"
+                            v-for="entry in dockMenuTabs"
+                            :key="entry.id"
                             type="button"
-                            :data-testid="`dock-reopen-item-${id}`"
-                            class="flex w-full min-h-7 items-center rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            @click="reopenTab(id)"
+                            :data-testid="`dock-reopen-item-${entry.id}`"
+                            :aria-current="entry.open ? 'true' : undefined"
+                            class="flex w-full min-h-7 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click="reopenTab(entry.id)"
                         >
-                            {{ t(DOCK_TAB_LABEL_KEYS[id]) }}
+                            <span class="min-w-0 flex-1 truncate">{{
+                                t(DOCK_TAB_LABEL_KEYS[entry.id])
+                            }}</span>
+                            <span
+                                v-if="entry.open"
+                                class="shrink-0 text-xs text-muted-foreground"
+                                >{{ t("workspace.dockTabOpen") }}</span
+                            >
                         </button>
                     </div>
                 </div>
@@ -457,24 +470,37 @@ function handleResizeKeydown(event: KeyboardEvent) {
         </div>
         -->
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <!-- Sticky panels: mounted on first activation, then hidden but alive. -->
+            <!--
+                task-88 ②：0 页签是**可达态**（折叠再展开、或上一次会话把页签全关掉），
+                此时右栏要有空态而不是一片空白：告诉用户去哪儿新建，行尾「+」就紧挨着它。
+            -->
             <div
-                v-for="id in stickyPanels"
-                :key="id"
-                v-show="id === activeTab"
-                :data-testid="`dock-sticky-panel-${id}`"
-                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                v-if="tabs.length === 0"
+                data-testid="dock-empty-state"
+                class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground"
             >
-                <slot :name="id" />
+                <p class="max-w-64">{{ t("workspace.dockEmptyHint") }}</p>
             </div>
-            <!-- Checkers: single active panel, unmounted while inactive (D26-07 A). -->
-            <div
-                v-if="!activeIsSticky"
-                data-testid="dock-active-panel"
-                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-            >
-                <slot :name="activeTab" />
-            </div>
+            <template v-else>
+                <!-- Sticky panels: mounted on first activation, then hidden but alive. -->
+                <div
+                    v-for="id in stickyPanels"
+                    :key="id"
+                    v-show="id === activeTab"
+                    :data-testid="`dock-sticky-panel-${id}`"
+                    class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                >
+                    <slot :name="id" />
+                </div>
+                <!-- Checkers: single active panel, unmounted while inactive (D26-07 A). -->
+                <div
+                    v-if="!activeIsSticky"
+                    data-testid="dock-active-panel"
+                    class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                >
+                    <slot :name="activeTab" />
+                </div>
+            </template>
         </div>
     </aside>
 </template>

@@ -8,7 +8,7 @@ import WorkspaceView from "../pages/WorkspaceView.vue";
 import WorkspaceAgentManagementDialog from "../components/WorkspaceAgentManagementDialog.vue";
 import { useSessionStore } from "../../../stores/session";
 import { useChatStore } from "../chat/stores/chat";
-import { api } from "../../../composables/api";
+import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { openSelect, selectItemValues, setSelectValue } from "../../../test-utils/select";
 // task-52 / batch-02 ②：**真实全局 i18n** —— `stores/session.ts#createSession` 的默认标题读
@@ -118,6 +118,13 @@ const i18n = createI18n({
                 confirmAgentUnbind: "Confirm unbind",
                 cancel: "Cancel",
                 closePanel: "Close",
+                // task-88：主列行尾右栏开合图标 + 右栏「+」/空态文案。
+                dockToggleOpen: "Expand the right panel",
+                dockToggleClose: "Collapse the right panel",
+                containerPlusNew: "New tab: choose a panel type",
+                dockTabOpen: "Open",
+                dockEmptyHint: "No panels are open yet. Use + above to pick one.",
+                containerEmpty: "No tabs in this container",
                 expandFiles: "Expand the file tree",
                 collapseFiles: "Collapse the file tree",
                 toggleCode: "Toggle the code panel",
@@ -348,7 +355,14 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         );
 
         await wrapper.find('[data-testid="workspace-toolbar-changes"]').trigger("click");
-        // Pressing the active tab collapses the dock but keeps the tab set.
+        // task-88 ③（D-1907）：再点已激活页签 = 聚焦它，**不再收起整列** —— 收起只走行尾开合图标
+        // `workspace-dock-toggle`（或面板关闭键）。这是语义变更，不是回归。
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-tab-changes"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+
+        await wrapper.find('[data-testid="workspace-dock-toggle"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
 
         await wrapper.find('[data-testid="workspace-toolbar-monitor"]').trigger("click");
@@ -758,4 +772,103 @@ describe("WorkspaceView usage line copy (task-52 ①)", () => {
         const cost = wrapper.get('[data-testid="workspace-usage-cost"]');
         expect(cost.text()).toBe("—");
     });
+});
+
+// task-116（方案 A UI 侧）：工作区「默认智能体」—— 建会话不再必经选择框。
+//
+// 契约（与 task-106 CP 侧尚在对齐，UI 先按此写）：
+// - `WorkspaceAgentBinding.isDefault` 由 `GET /workspaces/{id}/agents` 的真实响应给出，
+//   UI **不缓存**（每次 loadAgents 重新读），因此改默认后刷新仍要能看到标记。
+// - `POST /sessions` 在不带已选 agent 时由 CP 取工作区默认值；本卡的做法是**读列表里的默认值
+//   显式传参**，因为会话身份必须在创建时确定（PLAN-0689 B3：principal-null 空 Session 不存在）。
+// - 只有「没有可用默认值」这一种情况才回退到选择框（400），其余错误照旧 toast，不弹框 ——
+//   把 500/403 也弹成选择框会让用户以为选一个就能成功。
+function boundAgent(principalId: string, isDefault: boolean) {
+    return {
+        principalId,
+        name: principalId,
+        templateId: null,
+        templateName: null,
+        createdAt: new Date().toISOString(),
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+        isDefault,
+    };
+}
+
+function workspaceSession(id: string, agentPrincipalId: string) {
+    return {
+        id,
+        title: "New Chat",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        workspaceId: "workspace-1",
+        agentPrincipalId,
+        archived: false,
+    };
+}
+
+it("creates the session directly with the default agent and never opens the picker", async () => {
+    // 本文件 beforeEach 不清调用历史（其它用例也会建会话）⇒ 断言次数前自己清一遍。
+    mockedApi.createSession.mockClear();
+    mockedApi.getSessions.mockResolvedValue({ sessions: [] });
+    mockedApi.getWorkspaceAgents.mockResolvedValue([
+        boundAgent("agent-default", true),
+        boundAgent("agent-other", false),
+    ]);
+    mockedApi.createSession.mockResolvedValue(workspaceSession(SESSION_A, "agent-default"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
+    await flushPromises();
+
+    // 承重点 ①：默认值直接进会话 —— 选择框一次都不渲染，用户看不到多余的一步。
+    expect(wrapper.find('[data-testid="workspace-agent-principal-select"]').exists()).toBe(false);
+    // 承重点 ②：用的是**默认**那个 agent，不是列表第一个 bound agent。
+    expect(mockedApi.createSession).toHaveBeenCalledTimes(1);
+    expect(mockedApi.createSession).toHaveBeenCalledWith(
+        "agent-default",
+        globalI18n.global.t("workspace.sessionDefaultTitle"),
+    );
+    expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true);
+});
+
+it("falls back to the agent picker only when the default agent is rejected with 400", async () => {
+    mockedApi.createSession.mockClear();
+    mockedApi.getSessions.mockResolvedValue({ sessions: [] });
+    mockedApi.getWorkspaceAgents.mockResolvedValue([boundAgent("agent-default", true)]);
+    // CP 侧「无默认值 / 默认值不可用」用 400 表达（与 500/403 区分开：后两者不是「换一个就好」）。
+    mockedApi.createSession.mockRejectedValue(
+        new ApiError(
+            {
+                status: 400,
+                code: "WORKSPACE_AGENT_DEFAULT_MISSING",
+                detail: "No default agent configured",
+                requestId: "req-default",
+            },
+            undefined,
+        ),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
+    await flushPromises();
+
+    // 400 ⇒ 退化为手动选择，且**不弹第二个模态**：用户拿到的是同一条现有路径。
+    expect(wrapper.find('[data-testid="workspace-agent-principal-select"]').exists()).toBe(true);
+    expect(mockedApi.createSession).toHaveBeenCalledTimes(1);
+
+    // 选一个再提交仍然能建（回退不是死路）。
+    mockedApi.createSession.mockResolvedValue(workspaceSession(SESSION_A, "agent-default"));
+    await setSelectValue(
+        wrapper,
+        '[data-testid="workspace-agent-principal-select"]',
+        "agent-default",
+    );
+    await wrapper.find('[data-testid="workspace-create-agent-session"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true);
 });

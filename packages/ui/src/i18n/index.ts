@@ -555,6 +555,8 @@ const messages = {
             // B 版（再补「命令以你的系统账户身份运行」）**被否**：+19 列会触发 1024 档折行（卡面停止
             // 条件），且括号里那半句已足以表达「没有沙箱保护」；若后续实测 1024 不折行可另立小卡。
             sandboxEnforcement: "无文件系统授权限制（只限启动目录，不限读写范围）",
+            // task-60 F-1：会话头行内短标签（全文 = sandboxEnforcement；<1536px 只显示图标）。
+            sandboxEnforcementShort: "只限启动目录",
             panelMonitor: "监控",
             // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
             sseSubscriberLimitTitle: "实时更新已停止。",
@@ -604,6 +606,12 @@ const messages = {
             dockFocusExpand: "放大面板",
             dockFocusRestore: "还原面板",
             dockFocusHint: "让面板占满工作台（主内容列隐藏，Esc 还原）",
+            // task-88 ④：主列一级列头的右栏开合图标（aria-pressed = 右栏是否展开）。
+            dockToggleOpen: "展开右栏",
+            dockToggleClose: "收起右栏",
+            // task-88 ②：0 页签时右栏的空态提示 + 「+」菜单里的已打开标记。
+            dockEmptyHint: "右栏还没有页签。点上方的「+」选择要打开的面板。",
+            dockTabOpen: "已打开",
             // task-162 ①连带：dock 形态「手动/自动」两个标签键随字段删除（死键，卡面 5 键之外，报备）。
             treeResize: "调整文件树宽度",
             editorSelectFile: "从文件树选择文件",
@@ -661,6 +669,8 @@ const messages = {
             containerEmpty: "此容器暂无页签",
             // task-97（D-1754 ②）：右栏页签行「+」= 重开已关闭面板（main 行「+」复用 sidebar.newChat）。
             containerPlusReopen: "重开已关闭面板",
+            // task-88 ②：右栏「+」升级为「新建页签 → 选面板类型」的唯一入口（旧语义的重开是它的子集）。
+            containerPlusNew: "新建页签，选择面板类型",
             // task-155：容器页签行溢出下拉触发器（照右栏 dockOverflow 形态，主栏页签语义）。
             containerOverflow: "更多页签",
             // task-184（BL-561 扩展 / D-1600 ③）：跨组移动做不了时的播报。**不做静默 no-op**。
@@ -1511,6 +1521,15 @@ const messages = {
             environmentJobCancelReasonUnknown: "未知取消原因",
             environmentJobCleanupStatusUnknown: "未知清理状态",
             releaseReasonUnknown: "未知释放原因",
+        },
+        workspaceAgents: {
+            setDefault: "设为默认",
+            clearDefault: "取消默认",
+            defaultBadge: "默认",
+            noDefaultHint: "还没有默认智能体：新建会话时会先让你选择一个。",
+            setDefaultFailed: "设为默认智能体失败",
+            clearDefaultFailed: "取消默认智能体失败",
+            actionDisabled: "需要工作区智能体管理权限才能修改默认智能体",
         },
         chat: {
             titleChat: "对话",
@@ -4744,6 +4763,8 @@ const messages = {
             // only constrains the start directory — see the zh comment for the three source anchors.
             sandboxEnforcement:
                 "No filesystem authorization checks (start directory only; read/write scope is not limited)",
+            // task-60 F-1: inline header badge label (full text = sandboxEnforcement; icon-only <1536px).
+            sandboxEnforcementShort: "Start dir only",
             panelMonitor: "Monitor",
             // BL-335: SSE subscriber limit (429) persistent banner.
             sseSubscriberLimitTitle: "Live updates stopped.",
@@ -4801,6 +4822,10 @@ const messages = {
             dockFocusExpand: "Expand panel",
             dockFocusRestore: "Restore layout",
             dockFocusHint: "Fill the workspace with this panel (main column hidden, Esc restores)",
+            dockToggleOpen: "Expand the right panel",
+            dockToggleClose: "Collapse the right panel",
+            dockEmptyHint: "No panels are open yet. Use + above to pick one.",
+            dockTabOpen: "Open",
             treeResize: "Resize the file tree",
             editorSelectFile: "Select a file from the tree",
             editorSave: "Save",
@@ -4851,6 +4876,7 @@ const messages = {
             containerEmpty: "No tabs in this container",
             // task-97 (D-1754 ②): the right-row "+" reopens closed panels (main-row "+" reuses sidebar.newChat).
             containerPlusReopen: "Reopen a closed panel",
+            containerPlusNew: "New tab: choose a panel type",
             // task-155: overflow dropdown trigger for container tab rows (right-row form, main-tab semantics).
             containerOverflow: "More tabs",
             // task-184 (BL-561 extension / D-1600 ③): announced when a cross-container move cannot run.
@@ -5721,6 +5747,16 @@ const messages = {
             environmentJobCancelReasonUnknown: "Unknown cancel reason",
             environmentJobCleanupStatusUnknown: "Unknown cleanup status",
             releaseReasonUnknown: "Unknown release reason",
+        },
+        workspaceAgents: {
+            setDefault: "Set as default",
+            clearDefault: "Clear default",
+            defaultBadge: "Default",
+            noDefaultHint: "No default Agent yet: new chats ask you to pick one.",
+            setDefaultFailed: "Could not set the default Agent",
+            clearDefaultFailed: "Could not clear the default Agent",
+            actionDisabled:
+                "Managing the default Agent requires Workspace Agent management permission",
         },
         chat: {
             titleChat: "Chat",

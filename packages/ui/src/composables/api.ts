@@ -679,6 +679,11 @@ export interface WorkspaceAgentBinding {
     bound: boolean;
     /** 主体被禁用后不能用于新会话。 */
     disabled: boolean;
+    /**
+     * task-116：该主体是本工作区的默认智能体（CP `GET /agents` 透出，迁移 V177）。
+     * 读面唯一来源是这份列表 —— UI 不缓存、不做乐观默认，取消后再新建必须回到选择框。
+     */
+    isDefault?: boolean;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     /** `null`/缺省 = 不限制可用模型集。 */
@@ -3990,6 +3995,8 @@ export const api = {
                 permissionsSnapshot: Array.isArray(snapshot)
                     ? (snapshot as WorkspaceAgentBinding["permissionsSnapshot"])
                     : [],
+                // task-116：默认标记只认 wire 上的布尔（缺字段/畸形一律 false，不猜）。
+                isDefault: agent.isDefault === true,
                 hooks: normalizePrincipalHooks(agent.hooks),
                 // 「启用记忆」开关要读现值并整对象回写，故这里原样保留 CP 的 contextPolicy。
                 contextPolicy: asRecord(agent.contextPolicy) ?? null,
@@ -4551,6 +4558,26 @@ export const api = {
     deleteWorkspaceAgent(workspaceId: string, principalId: string): Promise<void> {
         return request<void>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`,
+            { method: "DELETE" },
+        );
+    },
+    /**
+     * task-116（方案 A UI 侧）：把某个主体设为工作区默认智能体。
+     *
+     * <p>CP 端是 task-106（迁移 V177）的 `PUT .../agents/{pid}/default`。卡面要求 UI 先落、
+     * 端点后到 ⇒ 调用方必须把 404 降级成可读文案，**不许谎报成功**。语义是「工作区唯一默认」，
+     * 由 CP 清旧值；UI 成功后**重读列表**，标记不来自本地改写。</p>
+     */
+    setWorkspaceAgentDefault(workspaceId: string, principalId: string): Promise<void> {
+        return request<void>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/default`,
+            { method: "PUT" },
+        );
+    },
+    /** task-116：取消默认智能体（`DELETE .../default`）。返回后同样以重读列表为准。 */
+    clearWorkspaceAgentDefault(workspaceId: string, principalId: string): Promise<void> {
+        return request<void>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/default`,
             { method: "DELETE" },
         );
     },

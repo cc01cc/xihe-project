@@ -22,8 +22,13 @@ const i18n = createI18n({
                 // aria-label 走容器键（不再用 dockTabs 键）。
                 containerRight: "Right container",
                 containerMain: "Main container",
+                containerEmpty: "No tabs in this container",
                 // task-97（D-1754 ②）：右栏行「+」= 重开已关闭面板；菜单项走 panel* 键。
                 containerPlusReopen: "Reopen a closed panel",
+                // task-88 ②：「+」升级为「新建页签 → 选类型」；0 页签时的空态 + 菜单里的已打开标记。
+                containerPlusNew: "New tab: choose a panel type",
+                dockTabOpen: "Open",
+                dockEmptyHint: "No panels are open yet. Use + above to pick one.",
                 panelFiles: "Files",
                 panelCode: "Code",
                 panelChanges: "Changes",
@@ -453,5 +458,47 @@ describe("WorkspaceDock · 浮窗形态退场后的形态契约（task-94 S1）"
         const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
         expect(panel.attributes("style")).toContain("width: 420px");
         expect(panel.attributes("data-dock-mode")).toBe("pinned");
+    });
+});
+
+/**
+ * task-88 ②（用户 2026-11-20 23:29 裁定）：右栏「+」从「重开已关闭面板」升级为
+ * 「新建页签 → 选面板类型」的唯一入口；0 页签是可达态（折叠再展开 / 关光页签），
+ * 此时右栏要有空态 + 仍可点的「+」，而不是一整片空白。
+ */
+describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () => {
+    it("0 页签时页签行仍渲染（allowEmpty）、给空态提示，「+」不置灰", () => {
+        const wrapper = mountDock({ tabs: [], activeTab: "" });
+
+        expect(wrapper.find('[data-testid="workspace-container-tabs"]').exists()).toBe(true);
+        expect(wrapper.get('[data-testid="dock-empty-state"]').text()).toContain(
+            "No panels are open yet",
+        );
+        expect(wrapper.find('[data-testid="dock-active-panel"]').exists()).toBe(false);
+
+        const plus = wrapper.get('[data-testid="workspace-container-plus-right"]');
+        expect(plus.attributes("disabled")).toBeUndefined();
+        expect(plus.attributes("aria-label")).toBe("New tab: choose a panel type");
+    });
+
+    it("菜单列出全部面板类型，已打开项标 aria-current；点击恒 emit（聚焦/新建归 workbench 判定）", async () => {
+        const wrapper = mountDock();
+        await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
+
+        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(8);
+        const openItem = wrapper.get('[data-testid="dock-reopen-item-code"]');
+        expect(openItem.attributes("aria-current")).toBe("true");
+        expect(openItem.text()).toContain("Open");
+        expect(
+            wrapper.get('[data-testid="dock-reopen-item-files"]').attributes("aria-current"),
+        ).toBeUndefined();
+
+        await wrapper.get('[data-testid="dock-reopen-item-files"]').trigger("click");
+        expect(wrapper.emitted("reopen-tab")).toEqual([["files"]]);
+
+        // 已打开的项走同一条 emit：**组件不复制「已开则聚焦」的判定**（唯一判定在 openDockTab）。
+        await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
+        await wrapper.get('[data-testid="dock-reopen-item-code"]').trigger("click");
+        expect(wrapper.emitted("reopen-tab")).toEqual([["files"], ["code"]]);
     });
 });

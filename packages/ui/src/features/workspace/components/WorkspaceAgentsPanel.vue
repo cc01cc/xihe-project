@@ -70,6 +70,12 @@ const templates = ref<Array<{ layer: string; template: AgentTemplateSummary }>>(
 const saving = ref(false),
     error = ref(""),
     status = ref(""),
+    /**
+     * task-116：默认智能体的写入面。`defaultAgentBusy` 记哪个主体在途（只禁用那一行，
+     * 不整列锁死）；`defaultAgentError` 只存可读文案 —— 错误码与英文 detail 交 logger 留痕。
+     */
+    defaultAgentBusy = ref<string | null>(null),
+    defaultAgentError = ref(""),
     name = ref(""),
     templateId = ref("");
 /**
@@ -279,6 +285,11 @@ const canManageWorkspaceAgents = computed<boolean | null>(() => {
     if (capabilityState.value !== "ready") return null;
     return workspaceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS");
 });
+
+/** 当前默认主体 id（空串 = 列表里没有默认值 ⇒ 显示「还没有默认」提示）。 */
+const defaultAgentId = computed<string>(
+    () => agents.value.find((agent) => agent.isDefault === true)?.principalId ?? "",
+);
 
 /**
  * PLAN-0629 M1-5：记忆写入要 CP 的 `MEMORY_WRITE` 原子（不是角色名、不借用 agent 管理权限）。
@@ -893,6 +904,49 @@ function agentErrorMessage(cause: unknown, forbiddenKey: string, fallbackKey: st
     const detail = problemDetailText(cause, "");
     if (detail) return detail;
     return t(fallbackKey);
+}
+
+/**
+ * task-116（方案 A）：默认智能体写入。**不做乐观更新** —— 成功后重读列表，标记只认服务端
+ * （验收③「刷新后仍在」就是把这条当判据）；失败保留原状态，把可读文案放进
+ * `defaultAgentError`，错误码与英文 detail 只进 `logger.warn`（瞬时面纪律）。
+ */
+async function setDefaultAgent(agent: WorkspaceAgentBinding): Promise<void> {
+    if (saving.value || canManageWorkspaceAgents.value !== true) return;
+    defaultAgentError.value = "";
+    defaultAgentBusy.value = agent.principalId;
+    try {
+        await api.setWorkspaceAgentDefault(props.workspaceId, agent.principalId);
+        await loadAgents();
+    } catch (cause) {
+        logger.warn("Set default Workspace Agent failed", cause);
+        defaultAgentError.value = presentCauseError(
+            t,
+            cause,
+            t("workspaceAgents.setDefaultFailed"),
+        ).copy;
+    } finally {
+        defaultAgentBusy.value = null;
+    }
+}
+
+async function clearDefaultAgent(agent: WorkspaceAgentBinding): Promise<void> {
+    if (saving.value || canManageWorkspaceAgents.value !== true) return;
+    defaultAgentError.value = "";
+    defaultAgentBusy.value = agent.principalId;
+    try {
+        await api.clearWorkspaceAgentDefault(props.workspaceId, agent.principalId);
+        await loadAgents();
+    } catch (cause) {
+        logger.warn("Clear default Workspace Agent failed", cause);
+        defaultAgentError.value = presentCauseError(
+            t,
+            cause,
+            t("workspaceAgents.clearDefaultFailed"),
+        ).copy;
+    } finally {
+        defaultAgentBusy.value = null;
+    }
 }
 
 function readPendingPrincipals(): Record<string, string> {
@@ -1669,6 +1723,22 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
             >
                 {{ t("workspace.agentCapSnapshotHint") }}
             </p>
+            <!-- task-116：工作区还没有默认值时明说会发生什么（新建会话会先问），别让用户以为坏了。 -->
+            <p
+                v-if="!loading && !defaultAgentId"
+                class="text-xs text-muted-foreground"
+                data-testid="workspace-agent-default-hint"
+            >
+                {{ t("workspaceAgents.noDefaultHint") }}
+            </p>
+            <p
+                v-if="defaultAgentError"
+                role="alert"
+                class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                data-testid="workspace-agent-default-error"
+            >
+                {{ defaultAgentError }}
+            </p>
             <p v-if="loading" class="text-sm text-muted-foreground" role="status">
                 {{ t("workspace.loadingAgents") }}
             </p>
@@ -1702,6 +1772,14 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                                 :data-testid="`agent-disabled-badge-${agent.principalId}`"
                             >
                                 {{ t("workspace.agentDisabledBadge") }}
+                            </span>
+                            <!-- task-116：默认标记来自列表读面（isDefault），不是本地选中态。 -->
+                            <span
+                                v-if="agent.isDefault === true"
+                                class="rounded border border-primary/40 px-1.5 py-0.5 text-xs text-primary"
+                                :data-testid="`workspace-agent-default-badge-${agent.principalId}`"
+                            >
+                                {{ t("workspaceAgents.defaultBadge") }}
                             </span>
                         </p>
                         <p
@@ -1743,6 +1821,43 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                         >
                             {{ t("agentPrincipalDetail.details") }}
                         </button>
+                        <!-- task-116：默认智能体的唯一写入口就在行内；已有默认时给「取消」，
+                             否则给「设为默认」。无权限时保持可见但禁用，并写明原因（fail-closed）。 -->
+                        <button
+                            v-if="agent.isDefault === true"
+                            type="button"
+                            class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+                            :data-testid="`workspace-agent-default-clear-${agent.principalId}`"
+                            :disabled="
+                                saving ||
+                                canManageWorkspaceAgents !== true ||
+                                defaultAgentBusy === agent.principalId
+                            "
+                            @click="clearDefaultAgent(agent)"
+                        >
+                            {{ t("workspaceAgents.clearDefault") }}
+                        </button>
+                        <button
+                            v-else
+                            type="button"
+                            class="rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+                            :data-testid="`workspace-agent-default-set-${agent.principalId}`"
+                            :disabled="
+                                saving ||
+                                canManageWorkspaceAgents !== true ||
+                                defaultAgentBusy === agent.principalId
+                            "
+                            @click="setDefaultAgent(agent)"
+                        >
+                            {{ t("workspaceAgents.setDefault") }}
+                        </button>
+                        <p
+                            v-if="canManageWorkspaceAgents !== true"
+                            class="max-w-[12rem] text-right text-xs text-muted-foreground"
+                            :data-testid="`workspace-agent-default-disabled-${agent.principalId}`"
+                        >
+                            {{ t("workspaceAgents.actionDisabled") }}
+                        </p>
                         <!-- 真栈 S2 bug：已有 agent 也必须能在这里绑定到本工作区（幂等 PUT）。 -->
                         <button
                             type="button"

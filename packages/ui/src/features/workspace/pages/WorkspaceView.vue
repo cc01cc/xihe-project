@@ -13,7 +13,7 @@ import { useWorkspaceSSE } from "../composables/useWorkspaceSSE";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
-import { FolderTree } from "@lucide/vue";
+import { FolderTree, ShieldAlert } from "@lucide/vue";
 import { useMediaQuery } from "@vueuse/core";
 import WorkspaceWorkbench from "../components/WorkspaceWorkbench.vue";
 import WorkspaceCreateDialog from "../components/WorkspaceCreateDialog.vue";
@@ -317,42 +317,34 @@ async function selectSessionForWorkspace() {
     }
 }
 
-async function createSessionForWorkspace() {
-    if (!workspaceId.value) await auth.hydrateWorkspace();
-    if (!workspaceId.value) return null;
-    try {
-        await auth.selectWorkspace(workspaceId.value);
-        workspaceAgents.value = await api.getWorkspaceAgents(workspaceId.value);
-        // PLAN-0622 D26/D27：列表是三类并集；未绑定 → CP 403 not bound，已禁用 → CP 409。
-        // 两者都不可选，但**原因不同**，对用户必须分开说（错误归因会让人去重复绑定）。
-        if (boundWorkspaceAgents.value.length === 0) {
-            const anyBound = workspaceAgents.value.some((agent) => agent.bound === true);
-            agentUnavailableReason.value = anyBound ? "all-disabled" : "none-bound";
-            toast.error(t(anyBound ? "workspace.noEnabledAgent" : "workspace.noBoundAgent"));
-            return null;
-        }
-        agentUnavailableReason.value = "";
-        selectedAgentPrincipalId.value = "";
-        showAgentSelection.value = true;
-        return null;
-    } catch (cause) {
-        const message =
-            cause instanceof ApiError ? cause.message : "Failed to load Workspace Agents";
-        logger.error("Load Workspace Agents failed", cause);
-        toast.error(message);
-        return null;
+/**
+ * task-116（方案 A UI 侧）：用某个主体建会话。默认值路径与手动选择路径共用这一份，
+ * 否则 400 回退与工作区上下文恢复很快就会只修好一边。
+ *
+ * <p>`fallbackOnMissingDefault` 只在「拿默认值直接进」这条路上为 true：CP 用 400 表示
+ * 「没有可用的默认值」，那不是故障而是**回退信号**；手动选择路径上的 400 仍按普通失败 toast，
+ * 否则用户会以为再选一次就能成功。其它状态码（403/409/5xx）一律照旧 toast + 上下文恢复。</p>
+ */
+async function submitAgentSession(
+    agentPrincipalId: string,
+    fallbackOnMissingDefault: boolean,
+): Promise<{ id: string | null; missingDefault: boolean }> {
+    if (!workspaceId.value || creatingAgentSession.value) {
+        return { id: null, missingDefault: false };
     }
-}
-
-async function confirmCreateAgentSession() {
-    if (!workspaceId.value || !selectedAgentPrincipalId.value || creatingAgentSession.value) return;
     creatingAgentSession.value = true;
     try {
-        const session = await sessionStore.createSession(selectedAgentPrincipalId.value);
+        const session = await sessionStore.createSession(agentPrincipalId);
         showAgentSelection.value = false;
         await router.push(workspaceChatPath(workspaceId.value, session.id));
-        return session.id;
+        return { id: session.id, missingDefault: false };
     } catch (cause) {
+        const status = cause instanceof ApiError ? cause.problem.status : undefined;
+        if (fallbackOnMissingDefault && status === 400) {
+            // 默认值失效（被取消/被禁用/CP 尚未落库）⇒ 回到手动选择，不算失败。
+            logger.warn("Workspace default Agent rejected; falling back to the picker", cause);
+            return { id: null, missingDefault: true };
+        }
         const message = cause instanceof ApiError ? cause.message : "Failed to create session";
         logger.error("Create session failed", cause);
         toast.error(message);
@@ -368,10 +360,50 @@ async function confirmCreateAgentSession() {
             clearTabWorkspace();
             await router.push({ name: "workspace-home" });
         }
-        return null;
+        return { id: null, missingDefault: false };
     } finally {
         creatingAgentSession.value = false;
     }
+}
+
+async function createSessionForWorkspace() {
+    if (!workspaceId.value) await auth.hydrateWorkspace();
+    if (!workspaceId.value) return null;
+    try {
+        await auth.selectWorkspace(workspaceId.value);
+        workspaceAgents.value = await api.getWorkspaceAgents(workspaceId.value);
+        // PLAN-0622 D26/D27：列表是三类并集；未绑定 → CP 403 not bound，已禁用 → CP 409。
+        // 两者都不可选，但**原因不同**，对用户必须分开说（错误归因会让人去重复绑定）。
+        if (boundWorkspaceAgents.value.length === 0) {
+            const anyBound = workspaceAgents.value.some((agent) => agent.bound === true);
+            agentUnavailableReason.value = anyBound ? "all-disabled" : "none-bound";
+            toast.error(t(anyBound ? "workspace.noEnabledAgent" : "workspace.noBoundAgent"));
+            return null;
+        }
+        agentUnavailableReason.value = "";
+        // task-116（方案 A）：有默认智能体就直接建会话，省掉一步选择；标记只认服务端列表
+        // （`isDefault`），不做本地缓存/乐观默认 —— 取消默认后下一次新建自然回到选择框。
+        const defaultAgent = boundWorkspaceAgents.value.find((agent) => agent.isDefault === true);
+        if (defaultAgent) {
+            const result = await submitAgentSession(defaultAgent.principalId, true);
+            if (!result.missingDefault) return result.id;
+        }
+        selectedAgentPrincipalId.value = "";
+        showAgentSelection.value = true;
+        return null;
+    } catch (cause) {
+        const message =
+            cause instanceof ApiError ? cause.message : "Failed to load Workspace Agents";
+        logger.error("Load Workspace Agents failed", cause);
+        toast.error(message);
+        return null;
+    }
+}
+
+async function confirmCreateAgentSession() {
+    if (!selectedAgentPrincipalId.value) return null;
+    const result = await submitAgentSession(selectedAgentPrincipalId.value, false);
+    return result.id;
 }
 
 watch(
@@ -538,41 +570,11 @@ watch(isMobileViewport, (mobile) => {
                         :on-retry="workspaceEvents.retry"
                     />
                     <!--
-                        task-550（Q-i 第二半，用户裁定）：**会话头常显**「无文件系统授权限制（只限启动目录，不限读写范围）」。
-                        为什么常显而不是 tooltip：这条限制会持续影响「为什么工具能跑但产物不在工作区」这类判断，
-                        藏进 hover 等于只在用户想起来要看的时候才存在。
-                        为什么两行：主文案 24 个汉字 / 48 列（task-7 前是 21 字 / 42 列 —— 旧注释写「22 个汉字」是错数），
-                        塞进 32px 单行头部（`h-8`，D-1842 后）会在窄档被 truncate，而后半句（限定）
-                        恰恰最容易被截掉 ——
-                        它正是防止「以为完全没有边界」的那半句。
-                        task-7（2026-11-15，Lead 裁 A 版）：括号里原写「工作区路径边界仍生效」，读起来像
-                        「文件被限制在工作区内」；实测只约束 cwd（job_engine/mod.rs:1108-1141），故只写「只限启动目录」。
-                        B 版（补「以你的系统账户身份运行」）被否：+19 列会触发 1024 档折行；详见 i18n 侧注释。
+                        task-60 F-1（D-1907 rev10 达标路径）：这条只读提示原来独占一条 28px 带（line-clamp-2），
+                        现在并入下面 h-8 会话头行做行内徽标 —— 常显短标签 + 全文 title/aria-label。
+                        task-550 的裁定是「常显、不藏 hover」，故不改纯 tooltip；窄档（<1536px）只留图标，
+                        aria-label 仍带全文。testid 沿用 session-sandbox-enforcement（既有探针/追溯门引用）。
                     -->
-                    <!--
-                        task-255 / D-1631 —— **这条提示必须限高两行**。
-                        实测（probe-note，4/4 迭代同形）：会话列在 splitter 面板宽度落定前
-                        `clientWidth = 0`，本条 `shrink-0` 提示的内容盒只有 21px 宽，
-                        51 个字符按 12px/19.2px 折成 ~31 行 ⇒ **高 602px**（稳态约 47px）。
-                        它不可压缩，于是把 flex-1 的聊天区挤到 330px、消息视口挤到 **46px**；
-                        产品的「首次贴底」恰好在这个状态下执行，宽度落定后视口变 766px、
-                        滚动位置丢失，且此时 `scrollable.end=true` ⇒ 模式被判 free-scrolling
-                        ⇒ `handleResize` 的贴底守卫不成立 ⇒ 永不恢复（长会话首次进入停在顶部）。
-                        限两行 = 保留 task-7 裁定的两行形态，同时让瞬时窄宽不再吃掉高度。
-                    -->
-                    <div
-                        data-testid="session-sandbox-enforcement"
-                        role="note"
-                        class="line-clamp-2 shrink-0 border-b px-3 py-1 text-xs text-muted-foreground bg-muted/5"
-                    >
-                        <!-- task-16（自审批01 W-2）：原第二句 sandboxEnforcementSnapshot
-                             （「决策快照照冻，仅标注 enforcement=none」）是内部决策快照 / enforcement
-                             调试态，不该泄露到用户面 ⇒ 移除内部段，只保留面向用户的安全说明。
-                             对应 i18n 键暂留（src/i18n 不在本卡写面），不再被任何 t() 引用。 -->
-                        <span class="font-medium text-foreground/80">{{
-                            t("workspace.sandboxEnforcement")
-                        }}</span>
-                    </div>
                     <div
                         class="h-8 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"
@@ -615,6 +617,18 @@ watch(isMobileViewport, (mobile) => {
                             :data-event-state="eventState"
                         >
                             {{ eventLabel }}
+                        </span>
+                        <span
+                            data-testid="session-sandbox-enforcement"
+                            role="note"
+                            class="flex shrink-0 items-center gap-1"
+                            :title="t('workspace.sandboxEnforcement')"
+                            :aria-label="t('workspace.sandboxEnforcement')"
+                        >
+                            <ShieldAlert class="size-3.5" aria-hidden="true" />
+                            <span class="hidden 2xl:inline">{{
+                                t("workspace.sandboxEnforcementShort")
+                            }}</span>
                         </span>
                         <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
                         <div
