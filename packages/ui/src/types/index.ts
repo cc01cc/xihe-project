@@ -629,6 +629,32 @@ export interface PolicyModeUpdateResponse {
     scope: "session";
 }
 
+/**
+ * D-1908（DSD id=1448）会话权限三档。
+ *
+ * 档位下沉到会话：每会话可不同；工作区只给「可用能力」，会话档位与多主体正交、生效取严。
+ * `workspaceTier` = 工作区默认档（无默认值时 null），仅用于「继承」徽标展示来源。
+ */
+export type SessionTier = "view" | "workspace" | "full";
+
+/** 会话档位的来源：会话覆盖 / 工作区默认 / 无默认值（降级为最严 `view`）。 */
+export type SessionTierSource = "session" | "workspace" | "none";
+
+/** 不可配置的原因（决定可见说明文案）；可配置时为 null。 */
+export type SessionTierDenyReason = "viewer" | "not-owner" | "no-atom";
+
+export interface SessionTierState {
+    /** 生效档位（已按「取严」求值）。 */
+    tier: SessionTier;
+    source: SessionTierSource;
+    workspaceTier: SessionTier | null;
+    /** 能力原子 `session:permission:configure` + 会话 owner scope 的合取结果。 */
+    canConfigure: boolean;
+    denyReason: SessionTierDenyReason | null;
+    /** 该工作区执行方式下允许的档位（越层项不在此列，UI 侧须禁选）。 */
+    available: SessionTier[];
+}
+
 /** Persisted policy layers (PLAN-0328 decision #53); `builtin` never holds persisted rules. */
 export type PolicyRuleLayer = "instance" | "user" | "workspace";
 

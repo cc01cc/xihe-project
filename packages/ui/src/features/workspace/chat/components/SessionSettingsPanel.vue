@@ -9,6 +9,7 @@ import { useSessionStore } from "../../../../stores/session";
 import { useAuthStore } from "../../../../stores/auth";
 import type { SessionPolicyMode } from "../../../../types";
 import SessionContextTemplate from "./SessionContextTemplate.vue";
+import SessionTierBadge from "./SessionTierBadge.vue";
 import SessionContextPanel from "../../components/SessionContextPanel.vue";
 
 export interface SettingsBranchOption {
@@ -218,6 +219,13 @@ async function closeAutoApproval() {
                     {{ t("chat.approvalModeLabel") }}
                     <span class="font-medium text-foreground">{{ modeLabel }}</span>
                 </span>
+                <span class="shrink-0 text-muted-foreground" aria-hidden="true">·</span>
+                <!--
+                    D-1908 一：档位 + 继承来源在摘要行上必须是**一个**读数（三态 + 降级子态）。
+                    上面的审批段是过渡期并存项（3 个 e2e 与本次 spec 之外的既有断言仍依赖它），
+                    彻底移除要走单独一张卡 —— 这里只做 additive，不动 policyStore 的加载链。
+                -->
+                <SessionTierBadge :session-id="sessionId" />
                 <span class="shrink-0 text-muted-foreground" aria-hidden="true">·</span>
                 <span
                     class="min-w-0 truncate"

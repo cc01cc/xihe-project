@@ -5,16 +5,21 @@ import { createI18n } from "vue-i18n";
 import { defineComponent, h } from "vue";
 import SessionContextPanel from "../SessionContextPanel.vue";
 import { setOnlySelectValue } from "../../../../test-utils/select";
+import type * as apiModule from "../../../../composables/api";
 import type * as chatModule from "../../chat/stores/chat";
+import type { SessionTierState } from "../../../../types";
 
 // Ids live in the hoisted block: the module factory below runs during the import phase,
 // i.e. before the module body's `const` declarations are initialised.
-const { selectBranch, SESSION_ID, ROOT_BRANCH_ID, CHILD_BRANCH_ID } = vi.hoisted(() => ({
-    selectBranch: vi.fn<(sessionId: string, id: string) => boolean>(),
-    SESSION_ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    ROOT_BRANCH_ID: "44444444-4444-4444-8444-444444444444",
-    CHILD_BRANCH_ID: "55555555-5555-4555-8555-555555555555",
-}));
+const { selectBranch, getSessionTier, SESSION_ID, ROOT_BRANCH_ID, CHILD_BRANCH_ID } = vi.hoisted(
+    () => ({
+        selectBranch: vi.fn<(sessionId: string, id: string) => boolean>(),
+        getSessionTier: vi.fn<(sessionId: string) => Promise<SessionTierState>>(),
+        SESSION_ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ROOT_BRANCH_ID: "44444444-4444-4444-8444-444444444444",
+        CHILD_BRANCH_ID: "55555555-5555-4555-8555-555555555555",
+    }),
+);
 
 vi.mock("../../chat/stores/chat", async (importOriginal) => {
     const actual = await importOriginal<typeof chatModule>();
@@ -32,12 +37,22 @@ vi.mock("../../chat/stores/chat", async (importOriginal) => {
     };
 });
 
+// D-1908: the panel now renders the three-tier control instead of the approval dropdown,
+// so the api module must be stubbed — otherwise the store's GET /tier escapes to fetch().
+vi.mock("../../../../composables/api", async (importOriginal) => {
+    const actual = await importOriginal<typeof apiModule>();
+    return {
+        ...actual,
+        api: { ...actual.api, getSessionTier },
+    };
+});
+
 const i18n = createI18n({
     legacy: false,
     locale: "en",
     messages: {
         en: {
-            workspace: { noSession: "No active session" },
+            workspace: { noSession: "No active session", viewerReadOnly: "Read-only workspace" },
             chat: {
                 approvalModeLabel: "Approval",
                 contextTemplateLabel: "Template",
@@ -45,15 +60,30 @@ const i18n = createI18n({
                 branchMainPath: "Main path",
                 branchPathOption: "Branch",
             },
-            sessionSettings: { title: "Session settings" },
+            sessionSettings: {
+                title: "Session settings",
+                tierLabel: "Permission tier",
+                tierView: "View only",
+                tierWorkspace: "Workspace edits",
+                tierFull: "Full access",
+                tierNoPermission: "Cannot change: {reason}",
+                tierInherited: "Inherited · workspace default: {tier}",
+                tierOverride: "Session override: {tier}",
+                tierNoWorkspaceDefault: "Inherited · no workspace default",
+                tierUnsupported: "{tier} (not supported here)",
+                tierUnsupportedHint: "This workspace caps edits inside the workspace.",
+                tierReasonViewer: "the workspace is read-only",
+                tierReasonNotOwner: "only the session creator can change it",
+                tierReasonNoAtom: "missing session:permission:configure",
+            },
         },
     },
 });
 
-const PolicyStub = defineComponent({
+const TierStub = defineComponent({
     props: { sessionId: { type: String, default: "" } },
     setup: (props) => () =>
-        h("div", { "data-testid": "stub-policy-controls", "data-session": props.sessionId }),
+        h("div", { "data-testid": "stub-tier-controls", "data-session": props.sessionId }),
 });
 const TemplateStub = defineComponent({
     props: { sessionId: { type: String, default: "" } },
@@ -72,7 +102,7 @@ function mountPanel(sessionId: string | null = SESSION_ID) {
         global: {
             plugins: [i18n],
             stubs: {
-                SessionPolicyControls: PolicyStub,
+                SessionTierSelect: TierStub,
                 SessionContextTemplate: TemplateStub,
                 ContextSourcesU1: ContextSourcesStub,
             },
@@ -84,6 +114,15 @@ beforeEach(() => {
     setActivePinia(createPinia());
     selectBranch.mockReset();
     selectBranch.mockReturnValue(true);
+    getSessionTier.mockReset();
+    getSessionTier.mockResolvedValue({
+        tier: "workspace",
+        source: "workspace",
+        workspaceTier: "workspace",
+        canConfigure: true,
+        denyReason: null,
+        available: ["view", "workspace", "full"],
+    });
 });
 
 describe("SessionContextPanel (PLAN-0626 M2)", () => {
@@ -105,7 +144,7 @@ describe("SessionContextPanel (PLAN-0626 M2)", () => {
         }
         expect(wrapper.get('[data-testid="session-branch-select"]').element).toBeTruthy();
         // Every child control receives the panel's session, not a stale one.
-        for (const stub of ["policy-controls", "context-template", "context-sources"]) {
+        for (const stub of ["tier-controls", "context-template", "context-sources"]) {
             expect(wrapper.get(`[data-testid="stub-${stub}"]`).attributes("data-session")).toBe(
                 SESSION_ID,
             );
@@ -120,7 +159,7 @@ describe("SessionContextPanel (PLAN-0626 M2)", () => {
             "No active session",
         );
         expect(wrapper.find('[data-testid="session-settings-expanded"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="stub-policy-controls"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="stub-tier-controls"]').exists()).toBe(false);
         // The branch select must not be rendered with an empty session id.
         expect(wrapper.find('[data-testid="session-branch-select"]').exists()).toBe(false);
     });
@@ -143,7 +182,7 @@ describe("SessionContextPanel (PLAN-0626 M2)", () => {
         expect(wrapper.get('[data-testid="session-branch-select"]').attributes("id")).toBe(
             "session-branch-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         );
-        expect(wrapper.get('[data-testid="stub-policy-controls"]').attributes("data-session")).toBe(
+        expect(wrapper.get('[data-testid="stub-tier-controls"]').attributes("data-session")).toBe(
             "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         );
     });

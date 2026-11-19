@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import SessionPolicyControls from "../chat/components/SessionPolicyControls.vue";
+import SessionTierSelect from "../chat/components/SessionTierSelect.vue";
 import SessionContextTemplate from "../chat/components/SessionContextTemplate.vue";
 import ContextSourcesU1 from "../chat/components/ContextSourcesU1.vue";
 import { useSessionBranches } from "../chat/composables/useSessionBranches";
@@ -61,15 +61,21 @@ const { branchOptions, selectedBranchId, branchSelectionDisabled, selectBranch }
             data-testid="session-settings-expanded"
             class="divide-y divide-border"
         >
+            <!--
+                D-1908（DSD id=1448）二：这一段现在是**权限档位**段，不再是「审批模式」下拉。
+                独立审批下拉已由三档选择器取代（approval_mode 降级为派生值）。
+                testid 保留历史名 `session-settings-section-approval`：既有 spec 与 e2e 用它定位
+                「档位所在的那一行」，改名只会扩大破坏面（D26-09 testid 稳定纪律）。
+            -->
             <div
                 class="flex min-w-0 items-center gap-2 px-3 py-2"
                 data-testid="session-settings-section-approval"
             >
                 <span class="w-16 shrink-0 truncate text-muted-foreground">{{
-                    t("chat.approvalModeLabel")
+                    t("sessionSettings.tierLabel")
                 }}</span>
                 <div class="min-w-0 flex-1">
-                    <SessionPolicyControls :session-id="sessionId" />
+                    <SessionTierSelect :session-id="sessionId" />
                 </div>
             </div>
 

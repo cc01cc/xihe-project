@@ -64,6 +64,9 @@ import type {
     SessionMonitorResponse,
     SessionPolicyMode,
     SessionPolicyModeState,
+    SessionTier,
+    SessionTierDenyReason,
+    SessionTierState,
     WorkspaceGitStatus,
     WorkspaceCheckpoint,
     WorkspaceCheckpointChangedFile,
@@ -2109,6 +2112,40 @@ function normalizePendingApprovalSummary(value: unknown): PendingApprovalSummary
         count: count as number,
         oldestRequestedAt:
             typeof record.oldestRequestedAt === "string" ? record.oldestRequestedAt : "",
+    };
+}
+
+const sessionTiers = ["view", "workspace", "full"] as const,
+    sessionTierSources = ["session", "workspace", "none"] as const,
+    sessionTierDenyReasons = ["viewer", "not-owner", "no-atom"] as const;
+
+/**
+ * D-1908：会话权限档位响应。未知枚举值一律视为契约违约（不静默降级）——
+ * 静默降级会让 UI 显示一个后端从未同意的档位。
+ */
+function normalizeSessionTierState(value: unknown): SessionTierState {
+    const record = asRecord(value);
+    const workspaceTier = record?.workspaceTier ?? null;
+    const denyReason = record?.denyReason ?? null;
+    if (
+        !record ||
+        !isEnumValue(record.tier, sessionTiers) ||
+        !isEnumValue(record.source, sessionTierSources) ||
+        (workspaceTier !== null && !isEnumValue(workspaceTier, sessionTiers)) ||
+        typeof record.canConfigure !== "boolean" ||
+        (denyReason !== null && !isEnumValue(denyReason, sessionTierDenyReasons)) ||
+        !Array.isArray(record.available) ||
+        record.available.some((item: unknown) => !isEnumValue(item, sessionTiers))
+    ) {
+        throw new Error("Invalid session tier response");
+    }
+    return {
+        tier: record.tier,
+        source: record.source,
+        workspaceTier: workspaceTier as SessionTier | null,
+        canConfigure: record.canConfigure,
+        denyReason: denyReason as SessionTierDenyReason | null,
+        available: record.available as SessionTier[],
     };
 }
 
@@ -4917,6 +4954,24 @@ export const api = {
                 body: JSON.stringify({ sessionId, mode }),
             }),
             sessionId,
+        );
+    },
+    /**
+     * D-1908：会话权限档位的读写。契约与先发测试对齐（task-123 →
+     * features/workspace/chat/__tests__/sessionTierControls.spec.ts）；CP 侧
+     * GET/PATCH /sessions/{id}/tier 由 task-107 / task-108 落地。
+     */
+    async getSessionTier(sessionId: string): Promise<SessionTierState> {
+        return normalizeSessionTierState(
+            await request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/tier`),
+        );
+    },
+    async setSessionTier(sessionId: string, tier: SessionTier): Promise<SessionTierState> {
+        return normalizeSessionTierState(
+            await request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/tier`, {
+                method: "PATCH",
+                body: JSON.stringify({ tier }),
+            }),
         );
     },
     /** PLAN-0328 M1: per-domain effective layer and per-layer rule counts. */
