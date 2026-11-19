@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "updated": "2026-11-20",
+  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在 A03-xihe/packages/ui/ 内；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。dsd = DSD decisions.id（台账自 D-1903 冻结后 D 号登记处）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
+  "decisions": [
+    {
+      "id": "D-1904",
+      "rev": 1,
+      "title": "UI 基线 F-1/F-2/F-3 判据与达标路径",
+      "clauses": [
+        {
+          "id": "D-1904/1",
+          "text": "F-2 主判据 = composer 块高占视口比（1920 16.1% / 1366 22.7% / 2560 12.1%）；「1 − 可见消息区/视口」只作诊断不作验收",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "②composer 块高"
+        },
+        {
+          "id": "D-1904/2",
+          "text": "F-3「抄送不渲染」判不成立（cc-expand 三档均渲染 56×23）；改 backlog 前须跨会话抽样 ≥3 例",
+          "status": "pending",
+          "card": "task-73",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "note": "该 spec 内 cc-expand/cc-bar 0 命中，回归守卫未写入；抽样口径待 task-73 定"
+        },
+        {
+          "id": "D-1904/3",
+          "text": "F-1 达标路径 = 去掉 session-sandbox-enforcement(28px)+session-settings-summary(33px) 两条带（157→96px、5→3 条），交 task-60",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "①顶带层数",
+          "note": "门断言 CHROME_MAX_BANDS=3 / CHROME_MAX_CONTENT_TOP=104；96px 定值待 task-82。D-1907 rev9 追加把 session-settings-summary 由「去掉」改为「保留为快捷开关（32px）」⇒ 本条达标路径需按 rev9 重算"
+        }
+      ],
+      "dsd": 1444
+    },
+    {
+      "id": "D-1907",
+      "rev": 10,
+      "title": "UI 基线 v2：A 可见性 / B 右栏 / C 左栏 / D composer / E 焦点环 / F 色板 / G 门 + G-9~G-12",
+      "clauses": [
+        {
+          "id": "D-1907/A-1",
+          "text": "恒常动作（新建会话/新建工作区/导入源/配置工作区/右栏开合）必须有独立可见位、命中区 ≥28px、默认可见",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑥E1a 新建会话命中区"
+        },
+        {
+          "id": "D-1907/A-2",
+          "text": "状态可读：aria-pressed / aria-expanded 反映开合与选中",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑤D1 单一开合图标"
+        },
+        {
+          "id": "D-1907/A-3",
+          "text": "强调预算只约束填充色与字号，不约束有无按钮（supersede D-1220①/D-1229）",
+          "status": "not-testable",
+          "reason": "设计取向陈述：仓库无承载该预算的 token 或 DOM 属性，无渲染可判属性；可测部分已由 A-1/A-2 的可见性与状态断言覆盖"
+        },
+        {
+          "id": "D-1907/B-1",
+          "text": "右栏只留一个开合图标（≥28px、默认可见、折叠态常驻），落顶栏右侧常驻区、不得放右栏内部；折叠态不设 rail",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑤rev5 开合图标落在右栏 DOM 子树内"
+        },
+        {
+          "id": "D-1907/B-2",
+          "text": "点已激活页签不再关整列（现 toggleDockTab 置 dockCollapsed=true 属缺陷）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑤D4 点击已激活页签后整列被关闭"
+        },
+        {
+          "id": "D-1907/B-3",
+          "text": "删顶部工具栏六个面板图标（workspace-toolbar-files|code|changes|monitor|members|delegation）作常规入口",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑤F5' 展开态顶部仍有"
+        },
+        {
+          "id": "D-1907/B-4",
+          "text": "面板类型改由右栏页签行「+」新建时选择",
+          "status": "pending",
+          "card": "task-88",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言"
+        },
+        {
+          "id": "D-1907/C-1",
+          "text": "区头三个常驻可见动作（新建工作区/搜索会话/配置工作区），不采用 hover 才出现；工作区配置入口必须常驻可见",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑥E1' 工作区配置入口不常驻"
+        },
+        {
+          "id": "D-1907/C-2",
+          "text": "动作簇 gap-1.5（6px）+ hover 底 + 固定占位，命中区 32px",
+          "status": "pending",
+          "card": "task-89",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "note": "现 Sidebar.vue:222 gap-1=4px；E1b 行已进 ui-baseline-v2-tests.md 但 spec 未实现"
+        },
+        {
+          "id": "D-1907/C-3",
+          "text": "新建会话移出搜索行、独立成位（判据用 DOM 事实「rail 态左栏不再提供会话检索入口」）",
+          "status": "pending",
+          "card": "task-89",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "note": "task-92 复核：rev3 C 未落地（Sidebar.vue:307-335 仍与搜索框同行），建议补 E1c"
+        },
+        {
+          "id": "D-1907/C-4",
+          "text": "会话行/工作区行次级动作（重命名/删除/打开文件管理器）不得只靠 hover，键盘 focus-visible 同等可见、触摸设备常驻可点",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑥E4② 会话次级动作",
+          "note": "断言口径为「无 hover 即可见」；focus-visible 同等可见未单独断言"
+        },
+        {
+          "id": "D-1907/D-1",
+          "text": "composer mx-auto 居中，居中偏差 ≤2px",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "③a composer 中心偏离主列中心"
+        },
+        {
+          "id": "D-1907/D-2",
+          "text": "composer 宽度按主列 clamp，右死区 ≤40px",
+          "status": "pending",
+          "card": "task-67",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "note": "现 ③b 断言改为左右余量对等（偏差 ≤2px），绝对 ≤40px 未落地；口径待裁"
+        },
+        {
+          "id": "D-1907/D-3",
+          "text": "补 px-4 水平内距（B5：composerRect.left − navRect.right ≥16px，现值 0，InputArea.vue:1476-1478）",
+          "status": "pending",
+          "card": "task-73",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言"
+        },
+        {
+          "id": "D-1907/D-4",
+          "text": "聚焦只画一层（不得 border 与 ring 并现于同一元素）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "④焦点环层数="
+        },
+        {
+          "id": "D-1907/E-1",
+          "text": "同一元素上 border 与 ring 不得并现（判据钉「同一元素」而非「整块」）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "④焦点环容器同时带边框"
+        },
+        {
+          "id": "D-1907/E-2",
+          "text": "--ring 与 --primary 解耦（现 color-shadcn-neutral.css:54 --ring: var(--primary)）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "④B2 --ring 与 --primary 同值"
+        },
+        {
+          "id": "D-1907/E-3",
+          "text": "焦点环对相邻底 ≥3:1（WCAG 1.4.11/2.4.11）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/styles/__tests__/tokenContrast.spec.ts",
+          "title": "ring 的实际渲染形态（50% 合成）对 5 个相邻底最差 ≥ 3.0",
+          "assert": "对 5 个相邻底最差"
+        },
+        {
+          "id": "D-1907/F-1",
+          "text": "默认档由纯中性 neutral（chroma 全 0）改冷中性 slate（hue≈248、chroma 0.006–0.02），并消除 main.css:154「中性冷白」与 chroma=0 的自相矛盾",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/styles/__tests__/tokenContrast.spec.ts",
+          "title": "底色 token 必须有可测到的冷色 chroma",
+          "assert": "冷色 chroma"
+        },
+        {
+          "id": "D-1907/F-2",
+          "text": "对比度门：card/bg ≥1.15、border/bg ≥1.35、muted-foreground/bg ≥4.5（现实测 light 1.091/1.155、dark 1.105/1.252 ⇒ 4 项 FAIL）",
+          "status": "pending",
+          "card": "task-74",
+          "file": "A03-xihe/packages/ui/src/styles/__tests__/tokenContrast.spec.ts",
+          "title": "border / background ≥ 1.15",
+          "note": "现断言 border/bg ≥1.15（tokenContrast.spec.ts:211），未到裁定阈值 1.35；card/bg ≥1.15 无对应断言（现为 card ring ≥1.20）"
+        },
+        {
+          "id": "D-1907/G-1",
+          "text": "门①：扩 focusRingLayer.spec.ts 覆盖 composer 的「容器代为聚焦」形态",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/styles/__tests__/focusRingLayer.spec.ts",
+          "title": "B1 focus 环与常驻 border 不得同画",
+          "assert": "「容器代为聚焦」"
+        },
+        {
+          "id": "D-1907/G-2",
+          "text": "门②：新增 Playwright 真机基线 spec，落点必须是 e2e/real/ui-baseline.spec.ts（playwright.config.ts:100-101 testMatch 只收 mock/real/headed），3 档 × light/dark",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "CHROME_MAX_BANDS = 3"
+        },
+        {
+          "id": "D-1907/G-3",
+          "text": "门③：6 张视觉基线截图",
+          "status": "pending",
+          "card": "task-73",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "note": "截图只落 .tmp/xh/ui-gates/shots，未作为基线入库"
+        },
+        {
+          "id": "D-1907/G-9",
+          "text": "两容器对等：同一容器内既能开会话也能开配置/文件/Git 类组件，DOM 上不出现 data-container=right 专属组件白名单",
+          "status": "pending",
+          "card": "task-69"
+        },
+        {
+          "id": "D-1907/G-10",
+          "text": "会话页不出现工作区级导航项：/chat/:sessionId 下任何 workspace-nav-* 计数必须为 0",
+          "status": "pending",
+          "card": "task-69"
+        },
+        {
+          "id": "D-1907/G-11",
+          "text": "页签「+」选择器存在「会话配置」类组件项，选中后在新页签渲染该会话配置面板；同一容器对两个不同会话各开一份互不影响（作用域 id 生效）",
+          "status": "pending",
+          "card": "task-88"
+        },
+        {
+          "id": "D-1907/G-12",
+          "text": "页签「+」选择器里不存在「工作区配置/设置」类项",
+          "status": "pending",
+          "card": "task-88"
+        },
+        {
+          "id": "D-1907/H-1",
+          "text": "聊天列 session-settings-summary（32px）保留为「快捷开关」：点击在容器里开出 session-config 页签（已开则聚焦、不重复开），不是唯一入口、不再称折叠摘要；aria 文案改「打开会话配置」类；门 = 点摘要条后容器内 session-config 页签恰好 1 个且右栏开合状态不变",
+          "status": "pending",
+          "card": "task-88",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "note": "D-1907 rev9 追加（00:56）；现摘要条仍是「在侧栏打开会话设置」语义，页签与 aria 未改"
+        }
+      ],
+      "dsd": 1447
+    },
+    {
+      "id": "D-1908",
+      "rev": 3,
+      "title": "会话权限三档模型（对外单一选择器 + 继承链 + 原子/owner + 派生列）",
+      "clauses": [
+        {
+          "id": "D-1908/1",
+          "text": "对外只有一个选择器：仅可查看 / 工作区内修改 / 完全权限（三档 = 一个策略对象，决定执行后端+写范围+审批模式），禁止 UI 再暴露独立审批模式下拉",
+          "status": "pending",
+          "card": "task-108"
+        },
+        {
+          "id": "D-1908/2",
+          "text": "继承链 instance 默认档 → workspace 默认档 → 会话档（最终生效）；空=继承；任何层读不到 ⇒ 回落最严 + 明确提示，不静默放宽",
+          "status": "pending",
+          "card": "task-108"
+        },
+        {
+          "id": "D-1908/3",
+          "text": "放宽需能力原子 session:permission:configure 且 调用者 = 会话创建者（sessions.user_id，V92 role 无 OWNER）；两条同时满足才可放宽，收紧任一参与者可做；拒绝面 403+审计（session.permission.escalated），越层放宽 fail-closed",
+          "status": "pending",
+          "card": "task-108",
+          "note": "rev3（00:54）拍板 owner 判据 = 方案 A；task-122 按 A 写 owner 用例"
+        },
+        {
+          "id": "D-1908/4",
+          "text": "sessions.approval_mode 降级为派生列（view/workspace-write⇒manual，full⇒auto），UI 移除 SessionSettingsPanel.vue:62-68 独立下拉；workspace.execution_mode 降级为「可用能力」",
+          "status": "pending",
+          "card": "task-108"
+        },
+        {
+          "id": "D-1908/5",
+          "text": "多主体正交：会话内生效 = 会话档 × run 的 agent_principal_id 档取严（现状无主体维度，DbPolicyContextProvider:86-101 仍「session 覆盖即放宽」短路）",
+          "status": "pending",
+          "card": "task-108"
+        }
+      ],
+      "dsd": 1448
+    }
+  ]
+}

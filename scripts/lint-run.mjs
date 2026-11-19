@@ -36,7 +36,8 @@ import { aggregateExit, parseTaskExits } from "./validate-run.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * 门清单**数据**（镜像 mise.toml 现行 [tasks.lint] depends 的 30 个成员；顺序无执行语义）。
+ * 门清单**数据**（31 个成员；顺序无执行语义）。task-124 起本清单是 lint 的**唯一**门集合来源
+ * （[tasks.lint] 已改为 run 本文件），不再与 mise.toml depends 对账。
  * 新增门只加一行 —— 与 validate-run.mjs 的 GATES 同惯例。
  * ⚠️ 有产物依赖的门**不得**加进来（方案档 §6 反例保护）：
  *   check:api-docs（消费 gen:api-docs 产物，先写后查）、check:mock-baseline（需新鲜报告）。
@@ -72,6 +73,7 @@ export const LINT_GATES = [
     "check:event-keys",
     "check:a11y-refs",
     "check:trace",
+    "check:decision-test-map",
 ];
 
 /**

@@ -681,6 +681,16 @@ alias = "format"
   description = "task-604: selfcheck-plan evidence 指针自检（键名/章节/行号兜底锚点 + !kw 关键词；有问题 exit 1）"
   alias = "check:plan-anchors"
 
+[tasks."check:decision-test-map"]
+  # task-124（用户 2026-11-20 00:50 裁定「决策不能只停在文本」）：D 号条款 → 测试追溯门。
+  # 清单 = config/decision-test-map.json（首批 D-1904 / D-1907 rev10 / D-1908 rev3，36 条 clause）。
+  # covered 必须给 file + title + assert，且三者在源码里**真实存在**（测试改名/删除/断言搬走 ⇒ 本门红）；
+  # pending 必须有承接卡；not-testable 必须写 reason 且占比 ≤20%；台账自 D-1903 冻结 ⇒ D 号按 DSD 库核对 id+revision。
+  # 退出码：0 无硬违规 / 1 有硬违规 / 2 用法或 IO；--enforce 追加「pending>0 即红」；--selftest 8 例自检。
+  run = "node scripts/check-decision-test-map.mjs"
+  description = "task-124: decision → test traceability gate (covered needs real file+title+assert; not-testable ≤20% with reason; D id/revision checked against DSD)"
+  alias = "check:decision-test-map"
+
 [tasks.validate]
 # **task-176 后读法**：以下 task-237 / task-313 / task-266 的「排位 / 同段 / 首个失败」措辞属 **旧 depends 时代** ——
 # 门段接线判据（为什么接、判据是什么）仍适用；但 task-176 起 validate.run 改为聚合执行器（scripts/validate-run.mjs），
