@@ -112,7 +112,7 @@ test.describe("task-118：会话页不挂工作区级导航带", () => {
         await expect(page.locator('[data-testid^="workspace-nav-"]').first()).toBeVisible();
     });
 
-    test("会话页 y=0 是容器页签行（少一条 32px 带），面板开关簇仍在且不落右栏", async ({
+    test("会话页 y=0 是容器页签行（少一条 32px 带），右栏开合图标仍在且不落右栏", async ({
         page,
     }) => {
         await setupFixtures(page);
@@ -128,11 +128,16 @@ test.describe("task-118：会话页不挂工作区级导航带", () => {
         expect(Math.abs((box?.y ?? Number.NaN) - 0)).toBeLessThanOrEqual(1);
         expect(Math.round(box?.height ?? 0)).toBe(32);
 
-        // ② 六面板开关簇必须仍渲染 **且** 落在页签行行尾的宿主里（摘带时最容易漏的一条）。
-        await expect(page.getByTestId("workspace-panel-actions")).toHaveCount(1);
+        // ② 右栏开合图标（task-137 起唯一的面板入口）必须仍渲染 **且** 落在页签行行尾的宿主里
+        //    （摘带时最容易漏的一条）；它不许出现在右栏子树里。
+        //    注意：开合图标是 `#workspace-nav-actions` 宿主的**兄弟**节点（不是它的子节点），
+        //    写成 `#workspace-nav-actions [data-testid=…]` 会解析成 0 —— 那不是回归，是选择器错位。
+        await expect(mainRow.locator('[data-testid="workspace-dock-toggle"]')).toHaveCount(1);
         await expect(
-            mainRow.locator('#workspace-nav-actions [data-testid="workspace-panel-actions"]'),
-        ).toHaveCount(1);
+            page.locator('[data-container="right"] [data-testid="workspace-dock-toggle"]'),
+        ).toHaveCount(0);
+        // 六面板图标簇已整体退役（task-137）：负向判据 = 零残留，强度不降。
+        await expect(page.getByTestId("workspace-panel-actions")).toHaveCount(0);
 
         // ③ 会话设置入口只走聊天列：右栏折叠/不在时它也必须可读，且不在右栏子树里。
         await expect(page.getByTestId("session-settings")).toHaveCount(1);

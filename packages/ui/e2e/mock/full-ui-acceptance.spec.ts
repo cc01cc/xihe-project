@@ -570,14 +570,17 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         // W4 (PLAN-0328 T3.7) chat-first layout: the file tree stays expanded, but the
         // editor now lives in the right dock's code panel; task-137 后入口 = 行尾开合图标 →
         // 右栏「+」→ 选「代码」（旧工具栏六图标已下线）。
+        // D-1777/D-1778 把树搬进右栏 `files` 页签后，树与编辑器**不再并存**（页签切换 =
+        // 面板体挂载/卸载，非 sticky）。所以顺序必须是：先选 files 页签 → 点文件 →
+        // workbench 的 `activeFilePath` watcher 自动打开并激活 `code` 页签（PLAN-0365 root cause B）。
+        await openDockPanel(page, "files");
         await expect(page.getByTestId("workspace-file-tree")).toBeVisible();
-        await openDockPanel(page, "code");
-        await expect(dockTab(page, "code")).toHaveAttribute("aria-selected", "true");
-        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 
         const file = page.getByRole("button", { name: "README.md", exact: true });
         await expect(file).toBeVisible();
         await file.click();
+        await expect(dockTab(page, "code")).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         await expect(page.getByText("README", { exact: false }).first()).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
@@ -707,9 +710,11 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7): the PDF preview renders inside the code panel.
-        await openDockPanel(page, "code");
-        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
+        // 树在 `files` 页签里；先选它再点文件，点完 workbench 自动激活 `code` 页签。
+        await openDockPanel(page, "files");
         await page.getByRole("button", { name: "sample.pdf", exact: true }).click();
+        await expect(dockTab(page, "code")).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         try {
             await expect(page.locator("canvas").first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         } catch (cause) {
@@ -775,9 +780,11 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7): every FileEditor branch renders inside the code panel.
-        await openDockPanel(page, "code");
-        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
+        // 每切一个文件都要先回到 `files` 页签：`code` 激活时树面板体是卸载的（非 sticky）。
+        await openDockPanel(page, "files");
         await page.getByRole("button", { name: "main.ts", exact: true }).click();
+        await expect(dockTab(page, "code")).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         const codeEditor = page.getByTestId("workspace-code-editor");
         await expect(codeEditor).toBeVisible();
         // CM6（314146d12）：代码区是 contenteditable（`.cm-content`），没有 `textarea` 节点。
@@ -792,12 +799,14 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await diffButton.click();
         await expect(page.getByTestId("workspace-diff-viewer")).toBeVisible();
 
+        await openDockPanel(page, "files");
         await page.getByRole("button", { name: "image.png", exact: true }).click();
         await expect(page.getByTestId("workspace-image-preview")).toBeVisible();
         await expect(
             page.getByTestId("workspace-image-preview").getByRole("img", { name: "image.png" }),
         ).toBeVisible();
 
+        await openDockPanel(page, "files");
         await page.getByRole("button", { name: "unknown.bin", exact: true }).click();
         await expect(page.getByTestId("workspace-unknown-file")).toBeVisible();
         // Baseline `plan-269-workspace-editor-branches.png` still captures the pre-W4

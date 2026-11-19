@@ -160,6 +160,26 @@ function mountView(): VueWrapper {
     return mount(WorkspaceView, { global: { plugins: [i18n], stubs } });
 }
 
+/**
+ * task-137（D-1907 图标簇收敛）：打开右栏面板的**唯一入口** —— 主列行尾开合图标
+ * `workspace-dock-toggle` → 右栏页签行「+」→ 类型项 `dock-reopen-item-<id>`。
+ * 旧的六颗工具栏图标（`workspace-toolbar-*`）已整体退役。幂等：已开就只选中。
+ */
+async function openPanel(wrapper: VueWrapper, id: string): Promise<void> {
+    const toggle = wrapper.get('[data-testid="workspace-dock-toggle"]');
+    if (toggle.attributes("aria-pressed") !== "true") await toggle.trigger("click");
+    await settle();
+    const tab = wrapper.find(`[data-testid="dock-tab-${id}"]`);
+    if (tab.exists()) {
+        await tab.trigger("click");
+    } else {
+        await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
+        await wrapper.get(`[data-testid="dock-reopen-item-${id}"]`).trigger("click");
+    }
+    await settle();
+    await flushPromises();
+}
+
 async function settle() {
     await nextTick();
     await nextTick();
@@ -278,11 +298,12 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
-        // 树是右栏面板 ⇒ 右栏没渲染时它也不渲染。重开入口在工具栏（不是树上）。
+        // 树是右栏面板 ⇒ 右栏没渲染时它也不渲染。重开入口在主列行尾的开合图标（不是树上）。
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="workspace-file-rail"]').exists()).toBe(false);
+        // task-137：旧的 files 图标读数改为行尾开合图标的展开态（默认收起 ⇒ false）。
         expect(
-            wrapper.get('[data-testid="workspace-toolbar-files"]').attributes("aria-pressed"),
+            wrapper.get('[data-testid="workspace-dock-toggle"]').attributes("aria-pressed"),
         ).toBe("false");
     });
 
@@ -301,7 +322,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
             // 宽档首启右栏就开着 files（defaultWorkspaceLayoutForViewport ≥1800），树可见。
             expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
             // 再挂上另一个页签，验证折叠后它们仍在行内、仍可达。
-            await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
+            await openPanel(wrapper, "code");
             await settle();
             await wrapper.find('[data-testid="dock-tab-files"]').trigger("click");
             await settle();
@@ -341,11 +362,11 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await settle();
         await flushPromises();
 
-        await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
         // Only the active tab's content is mounted, so opening another one swaps it.
-        await wrapper.find('[data-testid="workspace-toolbar-changes"]').trigger("click");
+        await openPanel(wrapper, "changes");
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="changes-panel-stub"]').exists()).toBe(true);
         // The code tab is still open, just inactive.
@@ -354,7 +375,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
             "true",
         );
 
-        await wrapper.find('[data-testid="workspace-toolbar-changes"]').trigger("click");
+        await openPanel(wrapper, "changes");
         // task-88 ③（D-1907）：再点已激活页签 = 聚焦它，**不再收起整列** —— 收起只走行尾开合图标
         // `workspace-dock-toggle`（或面板关闭键）。这是语义变更，不是回归。
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
@@ -365,7 +386,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="workspace-dock-toggle"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
 
-        await wrapper.find('[data-testid="workspace-toolbar-monitor"]').trigger("click");
+        await openPanel(wrapper, "monitor");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
     });
@@ -392,12 +413,12 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await settle();
         await flushPromises();
 
-        await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         await wrapper.find('[data-testid="workspace-aux-close"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
 
         // Re-opening restores the same tab and the same width (collapse ≠ width loss).
-        await wrapper.find('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
     });

@@ -1,5 +1,6 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, type Page } from "@playwright/test";
+import { closeDockPanel, dockTab, openDockPanel } from "../../helpers/dock";
 import { LONG_TIMEOUT_MS } from "../../timeouts";
 
 /**
@@ -22,9 +23,15 @@ export async function stubDerivedState(page: Page, sessionId: string): Promise<v
 }
 
 export async function closeMonitorDockTab(page: Page): Promise<void> {
-    const close = page.getByTestId("dock-tab-close-monitor");
-    if ((await close.count()) > 0) await close.click();
-    await expect(page.getByTestId("dock-tab-monitor")).toHaveCount(0);
+    if ((await dockTab(page, "monitor").count()) === 0) {
+        await expect(page.getByTestId("dock-tab-monitor")).toHaveCount(0);
+        return;
+    }
+    // 关闭键只在**活动**页签上渲染（`close-active-only`）⇒ 非活动页签先激活再关。
+    // 旧写法直接找 `dock-tab-close-monitor`，monitor 不是活动页签时 count=0 ⇒ 一次都没点，
+    // 断言收到 1（task-137 实测）。这里改走共用帮助器，顺序 = 展开 → 激活 → 关。
+    await openDockPanel(page, "monitor");
+    await closeDockPanel(page, "monitor");
 }
 
 /** 打开会话并等 composer 就绪（readiness，不是时钟）。 */

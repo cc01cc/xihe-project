@@ -197,6 +197,25 @@ function seedWideLayout(overrides: Record<string, unknown> = {}): void {
     );
 }
 
+/**
+ * task-137（D-1907 图标簇收敛）：打开右栏面板的**唯一入口** —— 主列行尾开合图标
+ * `workspace-dock-toggle` → 右栏页签行「+」`workspace-container-plus-right` → 类型项
+ * `dock-reopen-item-<id>`。旧的六颗工具栏图标（`workspace-toolbar-*`）已整体退役。
+ * 幂等：已开就只选中 —— 与产品语义一致（重复触发 = 聚焦，不收起整列）。
+ */
+async function openPanel(wrapper: VueWrapper, id: string): Promise<void> {
+    const toggle = wrapper.get('[data-testid="workspace-dock-toggle"]');
+    if (toggle.attributes("aria-pressed") !== "true") await toggle.trigger("click");
+    const tab = wrapper.find(`[data-testid="dock-tab-${id}"]`);
+    if (tab.exists()) {
+        await tab.trigger("click");
+    } else {
+        await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
+        await wrapper.get(`[data-testid="dock-reopen-item-${id}"]`).trigger("click");
+    }
+    await flushPromises();
+}
+
 /** S3b P2-9: writes are coalesced, so persistence assertions have to poll. */
 async function expectStored(check: () => void): Promise<void> {
     await vi.waitFor(check, { timeout: 2000, interval: 20 });
@@ -252,7 +271,8 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         // D-1777/D-1778：树是右栏容器的 files 面板（不再是中栏里的独立列）。
         expect(wrapper.find('[data-testid="workspace-file-tree"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-tree-stub"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-toolbar-code"]').exists()).toBe(true);
+        // task-137：面板入口 = 主列行尾的开合图标（六颗工具栏图标已退役）。
+        expect(wrapper.find('[data-testid="workspace-dock-toggle"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="dock-tab-files"]').exists()).toBe(true);
         expect(
             wrapper
@@ -261,10 +281,9 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         ).toBe(true);
     });
 
-    it("task-118（D-1907 rev7）：面板开关簇的宿主钉在主列容器页签行、不在右栏子树内", async () => {
-        // 为什么必须有这条：导航带在会话页被摘掉后，宿主若还挂在壳层 nav 里，
-        // 六簇会退回 `WorkspaceToolbar` 的原地分支（桌面 md:hidden）**静默消失** ——
-        // 单测里"点得到按钮"照样绿，因为原地分支也渲染同一份标记。
+    it("task-137：唯一面板入口（行尾开合图标）钉在主列容器页签行、不在右栏子树内", async () => {
+        // 为什么必须有这条：入口若是落在右栏子树里，折叠时整列不渲染 ⇒ 控件跟着消失，
+        // 用户再也没有展开通道（D-1907 rev7 §4.1）。所以它必须挂在**主列**页签行行尾。
         seedWideLayout();
         // 两处都要显式指定：`src/tests/setup.ts:17-19` 把 Teleport 全局换成 `<div><slot /></div>`
         // （要验"真的投进宿主"必须退掉它），而宿主探测读 `document`（不 attachTo 恒 false）。
@@ -280,10 +299,15 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-container="right"] #workspace-nav-actions').exists()).toBe(
             false,
         );
-        // 六簇真的投进这个宿主（同一份标记，不是第二份）—— 计数 1 才同时证明
-        // "投进去了"与"原地分支没有并存"（v-if / v-else 只该有一份）。
-        expect(host.find('[data-testid="workspace-panel-actions"]').exists()).toBe(true);
-        expect(wrapper.findAll('[data-testid="workspace-panel-actions"]').length).toBe(1);
+        // task-137：六簇退役后宿主留空（等 task-118 定稿再决定去留），入口是同一行行尾的
+        // 开合图标 —— 它必须落在主列页签行内，且**不得**出现在右栏子树里。
+        const entry = wrapper.get(
+            '[data-testid="workspace-container-tabs"][data-container="main"] [data-testid="workspace-dock-toggle"]',
+        );
+        expect(entry.attributes("aria-pressed")).toBeDefined();
+        expect(
+            wrapper.find('[data-container="right"] [data-testid="workspace-dock-toggle"]').exists(),
+        ).toBe(false);
     });
 
     it("D4（task-94 S5）：<1800 首启就带 files 页签，不是「树不在这个版本里」", async () => {
@@ -296,7 +320,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
 
         // 但 files 已经在页签集合里（首启默认值给的，不是用户自己找出来的）。
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         await expectStored(() =>
             expect(storedLayout().dockTabs).toEqual(["files", "monitor", "code"]),
         );
@@ -312,41 +336,43 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
 
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        // task-137：旧的「哪颗图标亮着」读数已随图标退役；等价判据 = 右栏处于展开态
+        // （行尾开合图标 aria-pressed）且目标页签是选中的那个。
         expect(
-            wrapper.get('[data-testid="workspace-toolbar-code"]').attributes("aria-pressed"),
+            wrapper.get('[data-testid="workspace-dock-toggle"]').attributes("aria-pressed"),
         ).toBe("true");
         expect(wrapper.find('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
             "true",
         );
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(true);
 
-        await wrapper.get('[data-testid="workspace-toolbar-changes"]').trigger("click");
+        await openPanel(wrapper, "changes");
 
         // Two tabs stay open; the inactive one keeps its tab but not its content.
         expect(wrapper.findAll(DOCK_TAB)).toHaveLength(2);
         expect(wrapper.find('[data-testid="dock-tab-code"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="changes-panel-stub"]').exists()).toBe(true);
-        expect(
-            wrapper.get('[data-testid="workspace-toolbar-code"]').attributes("aria-pressed"),
-        ).toBe("false");
+        expect(wrapper.get('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
+            "false",
+        );
     });
 
-    it("opens the delegation DAG panel from the toolbar toggle (PLAN-0659 T1.4)", async () => {
+    it("opens the delegation DAG panel from the dock type picker (PLAN-0659 T1.4)", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        const toggle = wrapper.get('[data-testid="workspace-toolbar-delegation"]');
-        expect(toggle.attributes("aria-pressed")).toBe("false");
-        await toggle.trigger("click");
+        const entry = wrapper.get('[data-testid="workspace-dock-toggle"]');
+        expect(entry.attributes("aria-pressed")).toBe("false");
+        await openPanel(wrapper, "delegation");
 
         // dock 里多出 delegation tab，且渲染的是委派面板（不是别的面板的槽位）。
         expect(wrapper.get('[data-testid="dock-tab-delegation"]').text()).toContain("Delegation");
         expect(wrapper.find('[data-testid="delegation-dag-stub"]').exists()).toBe(true);
-        expect(toggle.attributes("aria-pressed")).toBe("true");
+        expect(entry.attributes("aria-pressed")).toBe("true");
         await expectStored(() => {
             expect(storedLayout().dockTabs).toContain("delegation");
             expect(storedLayout().activeDockTab).toBe("delegation");
@@ -363,8 +389,8 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
+        await openPanel(wrapper, "code");
 
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
         await expectStored(() => {
@@ -418,8 +444,8 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
-        await wrapper.get('[data-testid="workspace-toolbar-monitor"]').trigger("click");
+        await openPanel(wrapper, "code");
+        await openPanel(wrapper, "monitor");
         expect(wrapper.findAll(DOCK_TAB)).toHaveLength(2);
 
         await wrapper.get('[data-testid="dock-tab-close-monitor"]').trigger("click");
@@ -442,9 +468,9 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await flushPromises();
 
         // Strip order: code, changes, monitor.
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
-        await wrapper.get('[data-testid="workspace-toolbar-changes"]').trigger("click");
-        await wrapper.get('[data-testid="workspace-toolbar-monitor"]').trigger("click");
+        await openPanel(wrapper, "code");
+        await openPanel(wrapper, "changes");
+        await openPanel(wrapper, "monitor");
         expect(wrapper.findAll(DOCK_TAB)).toHaveLength(3);
 
         // Close the middle tab while it is active: its right neighbour takes over.
@@ -474,7 +500,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
             // the reference also proves the column was not remounted.
             center = wrapper.get("[data-main-hidden]");
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
 
         await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
 
@@ -502,7 +528,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         seedDesktopDock();
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         await wrapper.get('[data-testid="dock-resizer"]').trigger("keydown", { key: "End" });
 
         await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
@@ -528,7 +554,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     it("leaves focus on Escape without rolling the dock up (D26-04)", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
 
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -546,7 +572,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     it("clears focus when the dock collapses (D26-05)", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
 
         await wrapper.get('[data-testid="workspace-aux-close"]').trigger("click");
@@ -598,7 +624,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         const wrapper = mountWorkbench();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         await wrapper.get('[data-testid="dock-resizer"]').trigger("keydown", { key: "End" });
         await expectStored(() => expect(storedLayout().dockWidth).toBe(480));
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
@@ -610,7 +636,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         // Collapsing must not rewrite the stored width.
         await expectStored(() => expect(storedLayout().dockWidth).toBe(480));
 
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
             "width: 480px",
         );
@@ -633,7 +659,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     it("swaps to a fresh layout when the workspace changes", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
 
         await wrapper.setProps({ workspaceId: "workspace-2" });
@@ -824,7 +850,7 @@ describe("WorkspaceWorkbench 破 640 底线（D-1829，取代 task-94 S2/S4 桌�
         // (a) task-88 ③ 之后旧路径已拆除：工具栏 files 再按一次只是聚焦（不再是收起），
         // 右栏仍在 —— 收起改走行尾开合图标（D-1829 关心的「绕过 collapseDock 的收起」只剩这一条，
         // 它写的就是 dockCollapsed，不碰 activeColumn）。
-        await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await openPanel(wrapper, "files");
         await flushPromises();
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
 
@@ -866,7 +892,7 @@ describe("WorkspaceWorkbench 破 640 底线（D-1829，取代 task-94 S2/S4 桌�
         await expectStored(() => expect(storedLayout().activeColumn).toBe("right"));
 
         // 重开 files ⇒ 又回到右栏。
-        await wrapper.get('[data-testid="workspace-toolbar-files"]').trigger("click");
+        await openPanel(wrapper, "files");
         await flushPromises();
         expect(wrapper.findAll('[data-testid="workspace-file-tree"]')).toHaveLength(1);
     });
@@ -931,7 +957,7 @@ describe("WorkspaceWorkbench dock Escape（task-94 S1 之后的语义）", () =>
     it("ignores Escape typed inside a field", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
 
         const field = document.createElement("input");
         document.body.appendChild(field);
@@ -948,7 +974,7 @@ describe("WorkspaceWorkbench dock Escape（task-94 S1 之后的语义）", () =>
     it("leaves the dock open while a dialog owns Escape", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();
-        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(wrapper, "code");
 
         const backdrop = document.createElement("div");
         backdrop.setAttribute("data-testid", "modal-backdrop");
@@ -968,9 +994,9 @@ describe("WorkspaceWorkbench dock policy (PLAN-0582 S3b P1-1 audit)", () => {
         const first = mountWorkbench();
         await flushPromises();
         // Open the dock, close it, then open it again (all explicit user actions).
-        await first.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(first, "code");
         await first.get('[data-testid="workspace-aux-close"]').trigger("click");
-        await first.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await openPanel(first, "code");
         await expectStored(() => expect(storedLayout().dockCollapsed).toBe(false));
         first.unmount();
 

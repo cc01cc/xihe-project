@@ -61,17 +61,19 @@ test.describe("task-174 S2b 容器页签行", () => {
         const statusBarAriaCurrent = await page
             .locator('[data-testid="workspace-status-bar"] [aria-current]')
             .count();
+        // task-137：六颗旧图标已退役 ⇒ 不再列字面量（契约门只放行 src 里真实存在的 testid）。
+        // 用「行尾宿主里 workspace-toolbar-* 前缀」读零残留，同时读新唯一入口，两个字段并排：
+        // 读的人能看出「不是没采到，是确实为 0」。
         const panelToggles = await page
+            .locator('#workspace-nav-actions [data-testid^="workspace-toolbar-"]')
+            .count();
+        const dockToggleCount = await page
             .locator(
-                [
-                    '[data-testid="workspace-toolbar-code"]',
-                    '[data-testid="workspace-toolbar-changes"]',
-                    '[data-testid="workspace-toolbar-monitor"]',
-                    '[data-testid="workspace-toolbar-members"]',
-                    '[data-testid="workspace-toolbar-delegation"]',
-                ].join(", "),
+                '[data-testid="workspace-container-tabs"][data-container="main"] [data-testid="workspace-dock-toggle"]',
             )
             .count();
+        expect(panelToggles, "174：六面板图标零残留").toBe(0);
+        expect(dockToggleCount, "174：唯一开合入口 = 1").toBe(1);
 
         log("judge123", {
             containerRows: rowCount,
@@ -81,7 +83,7 @@ test.describe("task-174 S2b 容器页签行", () => {
             perContainer,
             statusBarAriaCurrent,
             panelTogglesThisBatch: panelToggles,
-            panelTogglesAfterA1: "5",
+            dockToggleCount,
         });
 
         expect(rowCount, "判据1：容器数 == 页签行数").toBe(2);
@@ -158,7 +160,7 @@ test.describe("task-174 S2b 容器页签行", () => {
         expect(rowCount).toBe(2);
     });
 
-    test("判据 6：窄屏溢出菜单三入口仍在 + 开关计数（本批 6 / A1 后 5）", async ({ page }) => {
+    test("判据 6：窄屏溢出菜单三入口仍在 + 面板图标零残留", async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "S2b" }] });
@@ -192,7 +194,10 @@ test.describe("task-174 S2b 容器页签行", () => {
             // task-134：退役入口零残留由负向断言兜住（见下），日志不再复制一份读数。
             containerRowsMobile: containerRows,
             narrowShell,
-            panelTogglesAfterA1: "5",
+            // task-137：六颗桌面面板图标已退役 ⇒ 这一格从「A1 后 = 5」改成现场读数（期望 0）。
+            panelIconResidue: await page
+                .locator('#workspace-nav-actions [data-testid^="workspace-toolbar-"]')
+                .count(),
         });
         expect(pageEntries, "判据6：窄屏三页面入口仍在").toBe(3);
         expect(

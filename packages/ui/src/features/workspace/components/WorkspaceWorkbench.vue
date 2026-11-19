@@ -2,10 +2,11 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
-import { FolderTree, PanelRightClose, PanelRightOpen, Plus } from "@lucide/vue";
+import { FolderTree, PanelRightClose, PanelRightOpen } from "@lucide/vue";
 import {
+    DOCK_TAB_IDS,
     DOCK_WIDTH_DEFAULT,
     MAIN_MIN_WIDTH,
     TREE_COLLAPSED_WIDTH,
@@ -27,7 +28,7 @@ import {
     type WorkbenchSqueezeResult,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
-import { workspacePath } from "../../../lib/routes";
+import WorkspaceContainerAddButton from "./WorkspaceContainerAddButton.vue";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
@@ -681,11 +682,35 @@ function openDockTab(id: DockTabId): void {
 }
 
 /**
- * task-97（D-1754 ②）：main 行「+」= 新建会话。与工具栏 `WorkspaceToolbar.newChat()` 同一机制
- * （`?newChat=1` 由 `WorkspaceView` 的 watcher 消费并创建会话），不新造第二条新建路径。
+ * task-140 / D-1907 rev7「两容器 + 对等」：main 行「+」不再是「新建会话」，而是**组件选择器**，
+ * 与右栏「+」接**同一个组件**（`WorkspaceContainerAddButton`）、列**同一组组件**（全部 `DOCK_TAB_IDS`）。
+ *
+ * <p>改判依据：rev7 判据是「两个容器的 + 弹出同一组件集合」，旧的「主栏 + 直接 `?newChat=1`」
+ * 与右栏的重开菜单天然不可能相等；task-125 的 d1907 探针在改判前实测 `main.pickerFound=false`、
+ * `right.optionCount=8`，正是这条不一致。</p>
+ *
+ * <p>选中即 `openDockTab(id)`：布局写入（上限校验 / 激活 / 折叠态 / 揭示右栏）只有那一处 writer。
+ * 已开项 `checked` 是 `dockTabs` 的只读投影（`aria-checked`），点击仍走同一个 open（聚焦语义，
+ * 不开第二份 —— 「同类型多开」是 task-138 三元组的题）。</p>
+ *
+ * <p>新建会话不在这里丢：侧栏 `sidebar-new-chat`、设置页头部、`WorkspaceToolbar`（移动态）
+ * 都走 `?newChat=1`，`WorkspaceView` 的 watcher 照旧消费。</p>
  */
-function openNewMainTab(): void {
-    router.push({ path: workspacePath(props.workspaceId), query: { newChat: "1" } });
+const mainAddEntries = computed<
+    { id: DockTabId; label: string; checked: boolean; testid: string }[]
+>(() =>
+    DOCK_TAB_IDS.map((id) => ({
+        id,
+        label: t(DOCK_TAB_LABEL_KEYS[id]),
+        checked: dockTabs.value.some((tab) => tab.id === id),
+        testid: `workspace-add-item-${id}`,
+    })),
+);
+
+/** 主栏「+」选中某个组件：只转发给 `openDockTab`（单一 writer），不在这里写布局。 */
+function onMainContainerAdd(id: string): void {
+    if (!isDockTabId(id)) return;
+    openDockTab(id);
 }
 
 /**
@@ -736,7 +761,6 @@ function setActiveDockTab(id: string): void {
  * 静默 return 是**有意的**：在手机上强行改桌面布局会把用户的页签集合写坏。</p>
  */
 const route = useRoute();
-const router = useRouter();
 const deepLinkAgentId = computed<string | null>(() => {
     const value = route.query.agent;
     return typeof value === "string" && value.length > 0 ? value : null;
@@ -1068,20 +1092,17 @@ defineExpose({ openDockTab });
                             @row-key="onContainerRowKey"
                         >
                             <!--
-                                task-97（D-1754 ②）：main 行「+」= 新建会话，落在行尾 actions 槽的
-                                簇内首项（紧贴页签右侧）。0 页签时行仍渲染（allowEmpty，D-1757 裁③ 只给 main）。
+                                task-140（D-1907 rev7）：main 行「+」= **组件选择器**，与右栏「+」
+                                同一个组件、同一组选项（`WorkspaceContainerAddButton`）。仍落在行尾
+                                actions 槽的簇内首项（紧贴页签右侧）；0 页签时行仍渲染
+                                （allowEmpty，D-1757 裁③ 只给 main）。
                             -->
                             <template #actions>
-                                <button
-                                    type="button"
-                                    data-testid="workspace-container-plus-main"
-                                    class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                    :aria-label="t('sidebar.newChat')"
-                                    :title="t('sidebar.newChat')"
-                                    @click="openNewMainTab"
-                                >
-                                    <Plus class="size-3.5" aria-hidden="true" />
-                                </button>
+                                <WorkspaceContainerAddButton
+                                    container-id="main"
+                                    :entries="mainAddEntries"
+                                    @select="onMainContainerAdd"
+                                />
                                 <!--
                                     task-118（D-1907 rev7）：**面板开关簇的宿主挂载点**。
                                     它原来在 `WorkspaceSecondaryNav` 的 `#workspace-nav-actions`
@@ -1140,7 +1161,8 @@ defineExpose({ openDockTab });
                 D-1777/D-1778 第 5 行：折叠 ≠ 关闭。折叠 = `treeCollapsed` ⇒ **`files` 面板体**收成
                 TREE_COLLAPSED_WIDTH 的 rail（`workspace-file-rail` 仍在、`workspace-tree-expand` 一键展开，
                 见下方 `#files` slot）；关闭 = files 页签从右栏行关掉（或 dockCollapsed 整列收起），
-                重开走工具栏 workspace-toolbar-files。
+                重开走主列行尾的开合图标 `workspace-dock-toggle` → 右栏「+」→ 选 `files`
+                （task-137：工具栏那六颗图标已整体退役）。
 
                 task-144 ③：**rail 不再与整个右栏二选一** —— 那一版把「折叠树」变成「右栏消失」，
                 monitor/code/changes 一并不可达（实测读数见 `rightRowRendered` 上方注释）。

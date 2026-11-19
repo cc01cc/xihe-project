@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { MoreHorizontal, PanelLeft, Plus } from "@lucide/vue";
 import { Button } from "../../../components/ui/button";
-import WorkspacePanelActions from "./WorkspacePanelActions.vue";
 import {
     workspacePath,
     workspaceScheduledTasksPath,
@@ -47,40 +46,12 @@ const emit = defineEmits<{
 }>();
 
 /**
- * task-38 C1（DEV-011 §13.1）：面板开关簇不待在工具带里，投进**宿主挂载点** `#workspace-nav-actions`。
- * 这六个按钮的状态与回调都归 workbench，**不上提契约**，改用 Vue 核心 `<Teleport>` 把同一份标记
- * 投出去。挂载点不存在时（单测直接挂载本组件、或任何没有工作台的上下文）**留在原地渲染**，
- * 两条路径共用 `WorkspacePanelActions`，不复制第二份标记。
- *
- * <p>task-118：挂载点已从 `WorkspaceSecondaryNav` 的导航带迁到 `WorkspaceWorkbench` 主列页签行，
- * 与 Toolbar **同一个模板**且排在 Toolbar 之后 ⇒ 就绪探测必须等一次 `nextTick`（不依赖「同一 patch
- * 里兄弟节点先可见」这条隐含顺序）。**不用 `defer`**：`v-if="navActionsReady"` 已保证 Teleport 挂载
- * 时目标存在；`defer` 反而让内容晚一帧插入，单测里就得把"等几拍"写进断言（task-118 实测）。</p>
+ * task-137（D-1907 图标簇收敛）：桌面六个面板开关（files/code/changes/monitor/members/delegation）
+ * 已下线，唯一入口 = 主列行行尾的开合图标 `workspace-dock-toggle` → 右栏页签行 `+` → 选面板类型。
+ * 因此这条工具带只剩移动态内容（files / newChat / ⋯ 溢出菜单，均 `md:hidden`）。
+ * `codeOpen` 等六个状态 prop 暂时没有消费方，等 `#workspace-nav-actions` 宿主的后续接线（task-118）
+ * 定稿时一并收；现在保留声明是为了不动 `WorkspaceWorkbench` 的绑定。
  */
-const navActionsReady = ref(false);
-
-onMounted(async () => {
-    await nextTick();
-    navActionsReady.value = document.getElementById("workspace-nav-actions") !== null;
-});
-
-const panelActionProps = computed(() => ({
-        filesOpen: props.filesOpen,
-        codeOpen: props.codeOpen,
-        changesOpen: props.changesOpen,
-        monitorOpen: props.monitorOpen,
-        membersOpen: props.membersOpen,
-        delegationOpen: props.delegationOpen,
-    })),
-    panelActionEvents = {
-        toggleFiles: () => emit("toggleFiles"),
-        toggleCode: () => emit("toggleCode"),
-        toggleChanges: () => emit("toggleChanges"),
-        toggleMonitor: () => emit("toggleMonitor"),
-        toggleMembers: () => emit("toggleMembers"),
-        toggleDelegation: () => emit("toggleDelegation"),
-    };
-
 const { t } = useI18n();
 const router = useRouter(),
     auth = useAuthStore();
@@ -220,8 +191,8 @@ function overflowNav(navigate: () => void) {
                     {{ t("workspace.panelMonitor") }}
                 </button>
                 <!--
-                    BL-317 / D-198：移动端成员面板入口。桌面那条 `workspace-toolbar-members`
-                    在 `max-md` 下是 hidden（桌面 action cluster），所以移动端必须从这个溢出菜单进；
+                    BL-317 / D-198：移动端成员面板入口。桌面入口（task-137 起）是主列行尾开合图标
+                    → 右栏「+」→ `members`，移动档没有右栏 dock，所以移动端必须从这个溢出菜单进；
                     徽标只呈现**服务端**未读数（求和自 store 的 `readCursor.mentionCount`），
                     上限 `@9+`，并带 `aria-label`（不能只靠视觉）。
                 -->
@@ -309,18 +280,5 @@ function overflowNav(navigate: () => void) {
             页签 x 逐个不变 ⇒ 删除零跳动。中段是 flex-1，本来就与外层同宽，变的是内容不是宽度。
         -->
         <div class="min-w-0 flex-1" aria-hidden="true" />
-
-        <!--
-            task-38 C1（DEV-011 §13.1「顶栏单行」）：六个面板开关不再自成一带 —— 桌面投进
-            `#workspace-nav-actions` 宿主（task-118 起 = 主列容器页签行行尾）；挂载点不存在时
-            留在原地（单测 / 没有工作台的上下文）。目标存在性由 `v-if` 保证，不用 `defer`。
-            本条工具带因此只剩移动态内容（files / newChat / ⋯ 溢出菜单，全部 md:hidden 元素），
-            外层已加 `md:hidden` ⇒ 桌面不再成带。窄屏那三个溢出入口是**唯一页面入口**
-            （task-217 C3 护栏），不许当重复面删掉。
-        -->
-        <Teleport v-if="navActionsReady" to="#workspace-nav-actions">
-            <WorkspacePanelActions v-bind="panelActionProps" v-on="panelActionEvents" />
-        </Teleport>
-        <WorkspacePanelActions v-else v-bind="panelActionProps" v-on="panelActionEvents" />
     </div>
 </template>

@@ -10,27 +10,25 @@ function log(tag: string, payload: Record<string, unknown>): void {
 }
 
 test.describe("task-174 A1", () => {
-    test("工具栏零残留 + 开关 6→5", async ({ page }) => {
+    test("工具栏零残留 + 唯一开合入口仍在", async ({ page }) => {
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "A1" }] });
         await page.goto("/workspace/" + WORKSPACE_ID + "/chat/" + SESSION_ID);
         await page
             .locator('[data-testid="workspace-main"]')
             .waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
-        // 退役入口的零残留判据写成**负向断言**（计数直接进 expect 链）：task-134 清理后
-        // 断言强度不变，但 check-testid-contract 能按「断言该 testid 不存在」的判据排除。
+        // task-137（D-1907 图标簇收敛）：六颗桌面面板图标已整体退役，入口收敛为
+        // 「主列行尾开合图标 → 右栏 + → 选类型」。判据从「旧图标存在」翻为「零残留」：
+        // 先数旧簇（期望 0），再为正数新入口（否则 0 == 0 是空断言、真空绿）。
         const toggles = await page
+            .locator('#workspace-nav-actions [data-testid^="workspace-toolbar-"]')
+            .count();
+        const dockToggleCount = await page
             .locator(
-                [
-                    '[data-testid="workspace-toolbar-code"]',
-                    '[data-testid="workspace-toolbar-changes"]',
-                    '[data-testid="workspace-toolbar-monitor"]',
-                    '[data-testid="workspace-toolbar-members"]',
-                    '[data-testid="workspace-toolbar-delegation"]',
-                ].join(", "),
+                '[data-testid="workspace-container-tabs"][data-container="main"] [data-testid="workspace-dock-toggle"]',
             )
             .count();
-        log("a1-toolbar", { panelToggles: toggles });
+        log("a1-toolbar", { panelToggles: toggles, dockToggleCount });
         expect(
             await page.locator('[data-testid="workspace-toolbar-agents"]').count(),
             "A1：工具栏 Bot 入口零残留",
@@ -39,7 +37,9 @@ test.describe("task-174 A1", () => {
             await page.locator('[data-testid="workspace-toolbar-more-agents"]').count(),
             "A1：溢出菜单 agents 入口零残留",
         ).toBe(0);
-        expect(toggles, "A1：面板开关 = 5").toBe(5);
+        expect(toggles, "A1：六面板图标零残留").toBe(0);
+        // 防真空绿：旧簇为 0 的同时，唯一开合入口必须恰好在场（主列页签行行尾宿主内）。
+        expect(dockToggleCount, "A1：唯一开合入口 = 1").toBe(1);
     });
 
     test("成员页「智能体」tab 可切换", async ({ page }) => {
