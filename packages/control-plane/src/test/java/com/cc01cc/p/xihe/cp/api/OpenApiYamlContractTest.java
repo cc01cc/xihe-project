@@ -151,6 +151,43 @@ class OpenApiYamlContractTest {
         }
     }
 
+    /**
+     * task-105 (D-1869 ①): the budget face — both numbers plus the three limit fields — is
+     * contracted in the same wave as the projection. Why assert the null sentence and not just the
+     * key: {@code budgetConsumed: null} means "not recorded", and a client that renders it as 0
+     * would invent consumption that was never accounted (V174: NULL is the honest value).
+     */
+    @Test
+    void openApiContractsTheRunReadFaceBudgetVisibility() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> status = (Map<?, ?>) schemas.get("ChatRunStatusResponse");
+            assertInstanceOf(Map.class, status, "ChatRunStatusResponse is contracted");
+            Map<?, ?> properties = (Map<?, ?>) status.get("properties");
+            List<String> budgetFields = List.of("tokenCount", "budgetConsumed", "runMaxTokens",
+                    "runMaxTokensCeiling", "budgetAccounting");
+            for (String name : budgetFields) {
+                assertInstanceOf(Map.class, properties.get(name), "the run view must contract " + name);
+            }
+            List<?> required = (List<?>) status.get("required");
+            for (String name : budgetFields) {
+                assertTrue(required.contains(name), "required must carry " + name + ": " + required);
+            }
+            Map<?, ?> budgetConsumed = (Map<?, ?>) properties.get("budgetConsumed");
+            String budgetType = String.valueOf(budgetConsumed.get("type"));
+            assertTrue(budgetType.contains("null"), "budgetConsumed is nullable: " + budgetType);
+            String budgetDescription = String.valueOf(budgetConsumed.get("description"));
+            assertTrue(budgetDescription.contains("never 0"),
+                    "the null contract (not recorded, never 0) must be stated: " + budgetDescription);
+            Map<?, ?> accounting = (Map<?, ?>) properties.get("budgetAccounting");
+            String enumValues = String.valueOf(accounting.get("enum"));
+            assertTrue(enumValues.contains("growth") && enumValues.contains("cumulative"),
+                    "budgetAccounting names both bases: " + enumValues);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static void assertSourceEnumContains(Map<?, ?> schemas, String schemaName) {
         Map<?, ?> schema = (Map<?, ?>) schemas.get(schemaName);

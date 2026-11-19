@@ -34,7 +34,8 @@ class ChatRunReadServiceOwnershipTest {
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ChatRunTransportAttemptRepository attempts = mock(ChatRunTransportAttemptRepository.class);
     private final ChatRunReadService service =
-            new ChatRunReadService(runs, attempts, mock(ApprovalService.class), mock(MessageRepository.class));
+            new ChatRunReadService(runs, attempts, mock(ApprovalService.class), mock(MessageRepository.class),
+                    mock(com.cc01cc.p.xihe.cp.config.ConfigService.class));
 
     private ChatRun runOwnedBy(String userId, String workspaceId) {
         ChatRun run = mock(ChatRun.class);

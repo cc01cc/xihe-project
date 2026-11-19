@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ChatRunTransportAttempt;
@@ -22,19 +23,25 @@ import java.util.UUID;
 @Service
 public class ChatRunReadService {
 
+    /** task-105: the config domain that owns runMaxTokens / runMaxTokensCeiling / budgetAccounting. */
+    static final String AGENT_RUNTIME_DOMAIN = "agent-runtime";
+
     private final ChatRunRepository chatRunRepository;
     private final ChatRunTransportAttemptRepository transportAttempts;
     private final ApprovalService approvalService;
     private final com.cc01cc.p.xihe.cp.repository.MessageRepository messages;
+    private final ConfigService configService;
 
     public ChatRunReadService(ChatRunRepository chatRunRepository,
                               ChatRunTransportAttemptRepository transportAttempts,
                               ApprovalService approvalService,
-                              com.cc01cc.p.xihe.cp.repository.MessageRepository messages) {
+                              com.cc01cc.p.xihe.cp.repository.MessageRepository messages,
+                              ConfigService configService) {
         this.chatRunRepository = chatRunRepository;
         this.transportAttempts = transportAttempts;
         this.approvalService = approvalService;
         this.messages = messages;
+        this.configService = configService;
     }
 
     /**
@@ -110,7 +117,65 @@ public class ChatRunReadService {
         // document is a Jackson-2 node, so it leaves through a typed projection (C1); `null` means
         // "this Run captured no snapshot" ({}) and never "this Run had no skills" (D28-40).
         body.put("skillsSnapshot", com.cc01cc.p.xihe.cp.skill.SkillSnapshotView.of(run.getSkillsSnapshot()));
+        putBudgetFace(body, run);
         return body;
+    }
+
+    /**
+     * task-105 (D-1869 ①): the Run's budget face. Both numbers ride together on purpose — a view
+     * that shows only one of them tells half a story:
+     *
+     * <ul>
+     *   <li>{@code tokenCount} — the provider's real cumulative total, straight from
+     *       {@code chat_runs.token_count}; its semantics do not change here.</li>
+     *   <li>{@code budgetConsumed} — the accounting value from {@code chat_runs.budget_consumed}.
+     *       The durable column is nullable (V174, task-101/B) and {@code null} means "not
+     *       recorded", so a historical Run leaves the field null; it is never coerced to 0.</li>
+     *   <li>{@code runMaxTokens} / {@code runMaxTokensCeiling} / {@code budgetAccounting} — the
+     *       limits "adjustable" needs to be visible, resolved from the same
+     *       {@code agent-runtime} scope dispatch used for this Run. {@code chat_runs} keeps no
+     *       per-run config snapshot (PLAN-0590's snapshot lives in the dispatch payload only), so
+     *       these are read-time effective values and the contract says so.</li>
+     * </ul>
+     */
+    private void putBudgetFace(Map<String, Object> body, ChatRun run) {
+        body.put("tokenCount", run.getTokenCount());
+        body.put("budgetConsumed", run.getBudgetConsumed());
+        Map<String, String> runtime = configService
+                .effective(AGENT_RUNTIME_DOMAIN, uuidOrNull(run.getUserId()), uuidOrNull(run.getWorkspaceId()))
+                .entries();
+        body.put("runMaxTokens", nonNegativeLong(runtime.get("runMaxTokens")));
+        body.put("runMaxTokensCeiling", nonNegativeLong(runtime.get("runMaxTokensCeiling")));
+        body.put("budgetAccounting", accountingOf(runtime.get("budgetAccounting")));
+    }
+
+    /** {@code 0} is a real value here (spec execution.md: the dimension is disabled), never "unknown". */
+    private static Long nonNegativeLong(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            long value = Long.parseLong(raw.trim());
+            return value < 0 ? null : value;
+        } catch (NumberFormatException notANumber) {
+            return null;
+        }
+    }
+
+    /** The Agent's default is {@code growth}; an absent or unrecognised value reports that default. */
+    private static String accountingOf(String raw) {
+        return "cumulative".equalsIgnoreCase(raw == null ? null : raw.trim()) ? "cumulative" : "growth";
+    }
+
+    private static UUID uuidOrNull(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException notAUuid) {
+            return null;
+        }
     }
 
     /**

@@ -31,7 +31,8 @@ class ChatRunReadServiceAttachmentsTest {
             chatRuns,
             mock(ChatRunTransportAttemptRepository.class),
             mock(ApprovalService.class),
-            messages);
+            messages,
+            mock(com.cc01cc.p.xihe.cp.config.ConfigService.class));
 
     private ChatRun run(String userMessageId) {
         ChatRun run = new ChatRun();

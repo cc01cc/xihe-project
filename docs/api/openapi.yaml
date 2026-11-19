@@ -8372,7 +8372,7 @@ components:
     ChatRunStatusResponse:
       type: object
       additionalProperties: false
-      required: [runId, sessionId, origin, status, terminalOutcome, leaseExpired, pendingApprovals]
+      required: [runId, sessionId, origin, status, terminalOutcome, leaseExpired, pendingApprovals, tokenCount, budgetConsumed, runMaxTokens, runMaxTokensCeiling, budgetAccounting]
       properties:
         runId: { type: string, format: uuid }
         sessionId: { type: string, format: uuid }
@@ -8381,6 +8381,58 @@ components:
         terminalOutcome: { type: [string, 'null'], enum: [success, error, partial, ambiguous, cancelled] }
         leaseExpired: { type: boolean }
         pendingApprovals: { type: array, items: { $ref: '#/components/schemas/ChatApprovalRequest' } }
+        tokenCount:
+          type: integer
+          description: |
+            task-105: the provider's real cumulative token total of this Run, projected from
+            `chat_runs.token_count` (NOT NULL) and never recomputed on the read path.
+            It stays the real number even when it disagrees with `budgetConsumed`: a provider that
+            counts cache reads, or a Run charged fail-open because its cache counter was missing,
+            makes the two numbers diverge on purpose. Reading either one alone answers half the
+            question, so both are always returned together.
+        budgetConsumed:
+          type: [integer, 'null']
+          description: |
+            task-105 (D-1869 ①): the accounting value of this Run, projected from
+            `chat_runs.budget_consumed` (V174, task-101/B) — the stored charge, never recomputed.
+            What it covers depends on `budgetAccounting`: `growth` charges
+            `(input - cacheRead) + output`, `cumulative` charges `input + output`.
+            **`null` means not recorded, never 0**: the Run predates accounting, reported no
+            `usage` payload, or carried no `budgetConsumed` in it (the Agent's fail-open full
+            charge is a number, not a null). A client renders "not recorded" for `null` and `0` as
+            a real charge of nothing; folding the two together would invent consumption that was
+            never accounted (V174 comment: NULL is the honest value).
+        runMaxTokens:
+          type: [integer, 'null']
+          description: |
+            task-105: the token cap in force for this Run's `(workspace, user)` scope, resolved
+            from `agent-runtime.runMaxTokens` (code default 500000) at read time; `0` = the
+            dimension is disabled. The cap actually applied is
+            `runMaxTokensCeiling > 0 ? min(runMaxTokens, runMaxTokensCeiling) : runMaxTokens`, and
+            both numbers are returned so a reader can see which one binds — that is the whole point
+            of exposing them (the user must be able to see what limits them without a second config
+            call).
+            Provenance is **read-time, not admission-time**: `chat_runs` stores no per-run config
+            snapshot (PLAN-0590's per-run snapshot exists only in the dispatch payload), so a config
+            edit after admission is reflected here. `null` = the key could not be resolved or
+            parsed — again not 0.
+        runMaxTokensCeiling:
+          type: [integer, 'null']
+          description: |
+            task-105: `agent-runtime.runMaxTokensCeiling` for the same scope, read the same way
+            (instance-only key, code default 1000000); `0` = no ceiling. Returned next to
+            `runMaxTokens` so the pair states both the configured value and the bound it cannot
+            exceed.
+        budgetAccounting:
+          type: string
+          enum: [growth, cumulative]
+          description: |
+            task-105: which accounting basis this Run's charges follow —
+            `agent-runtime.budgetAccounting` (code default `growth`), read together with the two
+            limits above so "visible and adjustable" is one view. `growth` = run-progress charge
+            `(input - cacheRead) + output`; `cumulative` = `input + output` (the rollback switch
+            for multi-turn Runs whose input re-counts history). An absent or unrecognised configured
+            value reports the Agent's default, `growth`.
         skillsSnapshot:
           description: |
             PLAN-0628 M2a-③ (D28-42): the skills listing this Run was admitted with, frozen into
