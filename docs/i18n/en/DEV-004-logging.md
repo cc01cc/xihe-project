@@ -248,9 +248,19 @@ Scans for `Bearer`/JWT/PEM/`Authorization:`/JSON sensitive fields. **Scan face (
 ### 6.5 ChatRun and Provider Audit (PLAN-247)
 
 - Chat lifecycle logs carry `requestId`, `runId`, `sessionId`, `outcome`, and the relevant `errorCode`; asynchronous CP workers receive correlation IDs explicitly.
-- Provider logs contain only provider/model/status/duration/errorCode and token/character counts. Prompts, token content, raw responses, and credentials are excluded.
-- Run Trace read projections must not log raw requests, prompts, responses, tool arguments/results, or credentials.
+- Provider logs carry provider/model/status/duration/errorCode and token/character counts; **credential values are excluded** (`Authorization`/Cookie/API key/JWT/PEM/passwords). **Prompt and response bodies do not go into the log stream; they are stored as durable audit records** (§6.5b).
+- Run Trace read projections keep full bodies out of **logs**; bodies live in the §6.5b durable audit record and projections reference only record ids/summaries.
 - ConfigAudit stores only `present`/`missing` plus an irreversible fingerprint for provider secrets. The development Admin raw-read exception must never enter logs, traces, screenshots, or evidence.
+
+### 6.5b Durable recording of provider request/response bodies (user ruling, 2026-11-19)
+
+**Bodies may and should be recorded.** The former prohibition on "untrusted request bodies" is **withdrawn**: the request/response payload does not carry tokens (credentials live in the `Authorization` header and the configuration plane), and refusing to record it makes a call's real input/output unrecoverable, which breaks accounting, budget and audit reproducibility.
+
+- **Where**: durable audit records (`chat_run_provider_requests` and its extensions) — **not the log stream**; logs stay lightweight (ids, summaries, counts).
+- **Redaction before storage is mandatory**: `Authorization` / `Cookie` / `Set-Cookie` / API keys / `sk-*` / JWT / PEM / password fields are replaced with `***` and **counted**; the hit count is stored on the audit row. **A redaction hit never rejects the row** — rejecting would leave the audit incomplete.
+- **Volume and retention**: per-step body caps and total watermarks follow `provider-call-audit-gaps-20261119.md` (≈73 KB/run, 100 runs/day ≈ 7 MB; retention 180 / 30 days; re-inventory above 50 M rows or 20 GB).
+- **Switch**: `providerAudit = full-redacted` (**default**) / `metadata` (counts, hashes, latency only) / `off` (rollback position; body columns are `NULL`, never `0` and never an empty string).
+- **Unchanged red line**: **credentials, keys, private keys and real token values are never stored** — consistent with recording bodies, because credentials appearing inside a body are redacted by the rule above.
 
 ## 7. Error Logging Standards
 
