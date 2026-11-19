@@ -1,4 +1,5 @@
 import type { DockTabId } from "../../../composables/useWorkspaceLayout";
+import { SESSION_CONFIG_VIEW, paneTabSessionId, paneTabView } from "../lib/panelTabs";
 
 /** A dock tab as rendered by `WorkspaceDock` (label already localized). */
 export interface DockTab {
@@ -40,3 +41,37 @@ export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
     agents: "workspace.panelAgents",
     delegation: "workspace.panelDelegation",
 };
+
+/**
+ * task-138：`session-config` 容器页签的 i18n key。
+ *
+ * <p>**与 `workspace.panelContext` 不是一回事**：后者是 context 面板（产品文案「会话设置」
+ * / "Session settings"），这里是被 D-1907 rev10 的摘要条快捷开关开出的「会话配置」页签
+ * （`pane:<container>:session-config:<sid>`）。复用旧 key 会让两个面板同名，故单开一个。</p>
+ */
+export const SESSION_CONFIG_LABEL_KEY = "workspace.panelSessionConfig";
+
+/**
+ * 页签 id → 已本地化标签（task-138 第三形态 `pane:<container>:<view>[:<sid>]`）。
+ *
+ * <p><b>为什么不能直接查 `DOCK_TAB_LABEL_KEYS[id]`</b>：那张表按**面板身份**建键，而 pane id
+ * 带容器与会话后缀 ⇒ 直接查是 `undefined`，`t(undefined)` 会把页签渲染成空标签。</p>
+ *
+ * <p><b>口径</b>：静态 view 按 view 取标签（**容器不参与**，同一组件在两栏同名）；`session-config`
+ * 额外拼上会话 id 前 8 位，否则同一容器里两份会话配置页签完全同名、用户无法分辨。非法/未知 id
+ * 原样回显 —— 宁可露出 id，也不要渲染空标签。</p>
+ */
+export function dockTabLabel(id: string, translate: (key: string) => string): string {
+    const view = paneTabView(id);
+    if (view === null) {
+        const key = (DOCK_TAB_LABEL_KEYS as Record<string, string | undefined>)[id];
+        return key === undefined ? id : translate(key);
+    }
+    if (view === SESSION_CONFIG_VIEW) {
+        const base = translate(SESSION_CONFIG_LABEL_KEY);
+        const sessionId = paneTabSessionId(id);
+        return sessionId === null ? base : `${base} · ${sessionId.slice(0, 8)}`;
+    }
+    const key = (DOCK_TAB_LABEL_KEYS as Record<string, string | undefined>)[view];
+    return key === undefined ? view : translate(key);
+}

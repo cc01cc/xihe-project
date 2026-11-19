@@ -10,6 +10,8 @@ import "dockview-vue/dist/styles/dockview.css";
 import "../../../styles/dockview-theme.css";
 import DockviewPanelHost from "./DockviewPanelHost.vue";
 import { FILES_PANEL_ID } from "../lib/containers";
+// task-138：`pane:<container>:<view>[:<sid>]` 的解析（见下方 `panelIdOf`）。
+import { SESSION_CONFIG_VIEW, paneTabView } from "../lib/panelTabs";
 import {
     DOCK_TAB_IDS,
     DOCK_WIDTH_DEFAULT,
@@ -106,9 +108,42 @@ const TREE_PANEL_ID = "tree";
  * 单一身份原则：**同一时刻同一棵树只能有一个面板身份**。
  */
 const DOCK_PANEL_IDS: readonly string[] = DOCK_TAB_IDS.filter((id) => id !== FILES_PANEL_ID);
-/** 本壳认的 dock 面板（`props.dockTabs` 已剔除 `files` ⇒ 锚点/重建都不会引用不存在的面板）。 */
+/**
+ * task-138（`D-1907` rev7/rev8，Lead 裁定②）：**容器内页签 → dockview 面板 id** 的唯一映射。
+ *
+ * 口径：`pane:<container>:<view>[:<sid>]` ⇒ 面板 `view` —— **容器不参与**（本壳只有一个 dock 组，
+ * 容器语义由 group 的几何位置表达，不由面板 id 表达）；静态 8 值原样返回；
+ * **无组件 view（`session-config`）静默忽略** —— 与 `files` 在本壳的处理同型（:96-112）：
+ * 本壳没有这个面板的组件，硬加只会渲染一个空壳。
+ */
+function panelIdOf(tabId: string): string | null {
+    const view = paneTabView(tabId);
+    if (view === null) return tabId;
+    return view === SESSION_CONFIG_VIEW ? null : view;
+}
+
+/**
+ * 本壳认的 dock 面板（`props.dockTabs` 已剔除 `files` ⇒ 锚点/重建都不会引用不存在的面板）。
+ *
+ * 按**面板 id 去重**：两栏各开的同一个 view（`pane:main:code` + `pane:right:code`）在本壳是
+ * 一个面板（单组投影，容器差异在翻旗路径里不可表达 —— 已在卡面与 README 记边界）。
+ */
 function shellDockTabs(): string[] {
-    return props.dockTabs.filter((id) => DOCK_PANEL_IDS.includes(id));
+    const out: string[] = [];
+    for (const tabId of props.dockTabs) {
+        const panelId = panelIdOf(tabId);
+        if (panelId === null || !DOCK_PANEL_IDS.includes(panelId)) continue;
+        if (out.includes(panelId)) continue;
+        out.push(panelId);
+    }
+    return out;
+}
+
+/** 活动面板 = 活动页签的面板投影（`pane:*` 页签按 view 找面板；找不到就是没有活动面板）。 */
+function activePanelIdOf(): string | null {
+    if (!props.activeDockTab) return null;
+    const panelId = panelIdOf(props.activeDockTab);
+    return panelId !== null && DOCK_PANEL_IDS.includes(panelId) ? panelId : null;
 }
 
 const hostRef = ref<HTMLElement | null>(null);
@@ -195,6 +230,7 @@ function ensureMain(api: NonNullable<typeof dockApi.value>): void {
 function syncDock(api: NonNullable<typeof dockApi.value>): void {
     // task-144 ②：只同步本壳认的面板（`files` 的树身份在本壳归 `tree` 面板，见 DOCK_PANEL_IDS）。
     const open = shellDockTabs();
+    const activePanel = activePanelIdOf();
     // 右栏锚点 = 第一个目标为右栏的打开面板；投到中栏的面板不能当右栏锚点。
     const anchor = open.find((id) => placementOf(id) === "dock") ?? open[0];
     for (const id of open) {
@@ -216,7 +252,7 @@ function syncDock(api: NonNullable<typeof dockApi.value>): void {
                 : id === anchor
                   ? { direction: "right", referencePanel: MAIN_PANEL_ID }
                   : { referencePanel: anchor },
-            inactive: id !== props.activeDockTab,
+            inactive: id !== activePanel,
         });
     }
     for (const id of DOCK_PANEL_IDS) {
@@ -224,7 +260,7 @@ function syncDock(api: NonNullable<typeof dockApi.value>): void {
         const stale = api.getPanel(id);
         if (stale) api.removePanel(stale);
     }
-    const active = props.activeDockTab ? api.getPanel(props.activeDockTab) : null;
+    const active = activePanel ? api.getPanel(activePanel) : null;
     if (active) active.api.setActive();
 }
 
@@ -590,7 +626,9 @@ const PanelAddMenu = defineComponent({
                 : "dock";
         };
         const closedDock = computed(() =>
-            DOCK_PANEL_IDS.filter((id) => !props.dockTabs.includes(id)),
+            // task-138：与 `syncDock` 同口径判断「已开」—— 直接用原始 `props.dockTabs` 比较会把
+            // `pane:right:code` 误判成 `code` 未开（于是菜单里同时出现「已开」与「可重开」）。
+            DOCK_PANEL_IDS.filter((id) => !shellDockTabs().includes(id)),
         );
         const closedTree = computed(() => !props.treeOpen);
         const hasAny = computed(() => closedTree.value || closedDock.value.length > 0);

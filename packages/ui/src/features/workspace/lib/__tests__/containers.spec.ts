@@ -37,6 +37,26 @@ describe("containerOf（D-1545：归属只由 tab 决定，与形态无关）", 
         for (const id of RIGHT_TABS) expect(containerOf(id)).toBe("right");
     });
 
+    /**
+     * task-138（`D-1907` rev7/rev8）：**容器内页签** `pane:<container>:<view>[:<sid>]` 自带容器。
+     *
+     * 判据不是「能解析出容器」，而是「**同一个 view 在两栏的归属不同**」——
+     * 那正是裸 id 表达不了、所以必须把容器写进 id 的那件事。
+     */
+    it("pane:<容器>:<view> 的归属取 id 里的容器，而不是 view 的默认归属", () => {
+        expect(containerOf("pane:main:code")).toBe("main");
+        expect(containerOf("pane:right:code")).toBe("right");
+        // 同一个 view（code）落两栏 ⇒ 归属不同。
+        expect(containerOf("pane:main:code")).not.toBe(containerOf("pane:right:code"));
+        // 会话配置页签必须带 sid；sid 允许含冒号，容器仍取前缀那一段。
+        expect(containerOf("pane:main:session-config:s1")).toBe("main");
+        expect(containerOf("pane:right:session-config:s1:with:colons")).toBe("right");
+        // 非法 pane（未知 view / 未知容器）不被当成右栏面板：回落到旧规则（main）。
+        expect(containerOf("pane:main:not-a-view")).toBe("main");
+        expect(containerOf("pane:left:code")).toBe("main");
+        expect(containerOf("pane:")).toBe("main");
+    });
+
     it("CONTAINER_IDS = 两个容器，顺序 = 渲染顺序（中栏 → 右栏）", () => {
         expect(CONTAINER_IDS).toEqual(["main", "right"]);
     });

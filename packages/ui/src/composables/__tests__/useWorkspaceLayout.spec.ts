@@ -20,6 +20,7 @@ import {
     TREE_WIDTH_MIN,
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
     canOpenDockTab,
+    canOpenPaneTab,
     clampDockWidth,
     clampNavWidth,
     clampNavWidthForViewport,
@@ -39,6 +40,7 @@ import {
     useWorkspaceLayout,
     wasMainFloorHintShown,
     writeGlobalLayout,
+    writeWorkspaceActiveDockTabs,
     writeWorkspaceLayout,
     writeWorkspaceOpenTabs,
 } from "../useWorkspaceLayout";
@@ -135,6 +137,8 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: DOCK_WIDTH_DEFAULT,
             dockTabs: [],
             activeDockTab: null,
+            // task-138：按容器的活动页签默认是空的（读侧才把旧 activeDockTab 归一到 right）。
+            activeDockTabs: { main: null, right: null },
             // task-94 S1：floating 退场后的**存储默认**是 pinned（旧键里的 "floating" 仍能读，
             // 但渲染侧已没有产生它的路径）；这里跟着改成 pinned，别把 impl 的默认当 bug 改回去。
             dockMode: "pinned",
@@ -180,6 +184,8 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            // 写侧两处都写：新字段与旧字段同源（这里只有右栏页签 ⇒ main 为 null）。
+            activeDockTabs: { main: null, right: "monitor" },
             dockMode: "pinned",
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
@@ -193,6 +199,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockWidth: 420,
             dockTabs: ["code", "monitor"],
             activeDockTab: "monitor",
+            activeDockTabs: { main: null, right: "monitor" },
             dockMode: "pinned",
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
@@ -413,7 +420,18 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
     });
 
     it("keeps the persisted active dock tab aligned with the capped tab list (P2-7)", () => {
-        const tabs = ["code", "changes", "monitor", "code", "changes", "monitor", "code"] as const;
+        // 7 个**不同**的右栏面板：去重后仍超上限，这条用例才真在测「截断到 DOCK_MAX_TABS」。
+        // 旧夹具是 3 个 id 重复 7 次，靠旧写侧不去重才凑出 6 条 —— 净化加了去重后只剩 3 条，
+        // 那样的夹具会让本用例变成「恒等于 3」的假绿，所以换成互不相同的 id（task-138）。
+        const tabs = [
+            "files",
+            "code",
+            "changes",
+            "monitor",
+            "members",
+            "context",
+            "delegation",
+        ] as const;
         writeWorkspaceLayout("ws-1", {
             ...defaultWorkspaceLayout(),
             dockTabs: [...tabs],
@@ -889,5 +907,97 @@ describe("D-1829 main-floor hint flag（一次性提示标记）", () => {
     it("treats a corrupted flag payload as not-shown (fail-open: hint may repeat, never vanish)", () => {
         localStorage.setItem(MAIN_FLOOR_HINT_STORAGE_KEY, "not-a-flag");
         expect(wasMainFloorHintShown()).toBe(false);
+    });
+});
+
+/**
+ * task-138：容器页签的动态值域 pane:<container>:<view>[:<sid>]。
+ *
+ * 这些用例钉的是「本卡改了什么」，而不是重新测旧 8 值的既有行为（那部分由上方
+ * PLAN-0582 的用例守）：①活动态按容器分开存、旧键同时写且互为镜像；②容量**按容器**
+ * 限流（旧实现是两栏共用 6 的全局额度）；③非法 pane id 与旧裸 id 的边界；④刷新读回。
+ */
+describe("task-138: dynamic pane tab ids", () => {
+    const pane = (container: "main" | "right", view: string, sid?: string): string =>
+        "pane:" + container + ":" + view + (sid === undefined ? "" : ":" + sid);
+    const rightConfig = pane("right", "session-config", "s1");
+
+    it("round-trips per-container active tabs and mirrors right into the legacy field", () => {
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockTabs: [rightConfig, pane("right", "code")],
+            activeDockTab: pane("right", "code"),
+        });
+        writeWorkspaceActiveDockTabs("ws-1", { main: null, right: rightConfig });
+        const stored = JSON.parse(
+            localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_PREFIX + "ws-1") ?? "{}",
+        ) as { activeDockTab?: string | null; activeDockTabs?: unknown; dockTabs?: string[] };
+        // 兼容期纪律（Q1）：写侧两处都写，旧字段恒等于 right。
+        expect(stored.activeDockTabs).toEqual({ main: null, right: rightConfig });
+        expect(stored.activeDockTab).toBe(rightConfig);
+        // 分片写不碰别的字段。
+        expect(stored.dockTabs).toEqual([rightConfig, pane("right", "code")]);
+
+        const layout = readWorkspaceLayout("ws-1");
+        expect(layout.activeDockTabs).toEqual({ main: null, right: rightConfig });
+        expect(layout.dockTabs).toEqual([rightConfig, pane("right", "code")]);
+    });
+
+    it("caps tabs per container instead of on one global budget", () => {
+        const mainTabs = Array.from({ length: 9 }, (_, i) =>
+            pane("main", "session-config", "m" + i),
+        );
+        const rightTabs = Array.from({ length: 7 }, (_, i) =>
+            pane("right", "session-config", "r" + i),
+        );
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockTabs: [...mainTabs, ...rightTabs],
+            activeDockTab: rightTabs[0],
+        });
+        const layout = readWorkspaceLayout("ws-1");
+        // main 8 / right 6（capFor）；旧实现两栏共用 6 ⇒ 主栏会被右栏挤没。
+        expect(layout.dockTabs.filter((id) => id.startsWith("pane:main:"))).toEqual(
+            mainTabs.slice(0, 8),
+        );
+        expect(layout.dockTabs.filter((id) => id.startsWith("pane:right:"))).toEqual(
+            rightTabs.slice(0, 6),
+        );
+    });
+
+    it("drops malformed pane ids but keeps the legacy bare ids", () => {
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockTabs: [
+                "code",
+                pane("right", "not-a-view"),
+                pane("left", "code"),
+                "pane:",
+                rightConfig,
+            ],
+            activeDockTab: "code",
+        });
+        expect(readWorkspaceLayout("ws-1").dockTabs).toEqual(["code", rightConfig]);
+    });
+
+    it("applies the per-container capacity in canOpenPaneTab", () => {
+        expect(canOpenPaneTab("main", 7)).toBe(true);
+        expect(canOpenPaneTab("main", 8)).toBe(false);
+        expect(canOpenPaneTab("right", 5)).toBe(true);
+        expect(canOpenPaneTab("right", 6)).toBe(false);
+        // 非数值（坏计数）按「还能开」处理，与 canOpenDockTab 同口径。
+        expect(canOpenPaneTab("right", Number.NaN)).toBe(true);
+    });
+
+    it("keeps a pane tab active after a reload (acceptance: 刷新后仍在)", () => {
+        writeWorkspaceLayout("ws-1", {
+            ...defaultWorkspaceLayout(),
+            dockTabs: [rightConfig],
+            activeDockTab: rightConfig,
+        });
+        const reloaded = readWorkspaceLayout("ws-1");
+        expect(reloaded.dockTabs).toEqual([rightConfig]);
+        expect(reloaded.activeDockTab).toBe(rightConfig);
+        expect(reloaded.activeDockTabs.right).toBe(rightConfig);
     });
 });

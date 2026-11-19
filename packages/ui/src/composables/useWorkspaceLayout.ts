@@ -9,6 +9,8 @@ import {
 } from "vue";
 import { useWindowSize } from "@vueuse/core";
 import { logger } from "../lib/logger";
+import { isPaneTabId, paneTabContainer } from "../features/workspace/lib/panelTabs";
+import { capFor } from "../features/workspace/lib/workTabs";
 
 /**
  * PLAN-0582 layout owner: the single writer for the application-level geometry
@@ -108,7 +110,20 @@ export const DOCK_TAB_IDS = [
     "agents",
     "delegation",
 ] as const;
-export type DockTabId = (typeof DOCK_TAB_IDS)[number];
+/** 静态面板 id：`DOCK_TAB_IDS` 的 8 个值（与会话无关的面板 IA）。 */
+export type StaticDockTabId = (typeof DOCK_TAB_IDS)[number];
+
+/**
+ * task-138 / `D-1907` rev7·rev8：**容器内页签 id**（第三形态）`pane:<container>:<view>[:<sid>]`。
+ *
+ * 为什么容器必须进 id：归属今天是**由 id 反推**的（`features/workspace/lib/containers.ts` 的
+ * `containerOf`：裸 8 值 ⇒ right，其余 ⇒ main），而「同一会话的配置页签在两栏各开一份」
+ * 要求同一个 view 能落在不同容器 ⇒ 裸 id 表达不了，只能把容器写进 id。
+ * 解析/构造的唯一实现是 `features/workspace/lib/panelTabs.ts`（本文件只认类型与守卫）。
+ */
+export type PaneTabId = `pane:${ActiveColumn}:${string}`;
+
+export type DockTabId = StaticDockTabId | PaneTabId;
 
 /**
  * C3 (task-217, Lead ruling): the middle tab bar no longer expresses workspace
@@ -160,7 +175,17 @@ export interface WorkspaceLayoutState {
     dockCollapsed: boolean;
     dockWidth: number;
     dockTabs: DockTabId[];
+    /** 右栏活动页签（**兼容期旧字段**）：真源是 `activeDockTabs`，写侧恒与它的 right 同值。 */
     activeDockTab: DockTabId | null;
+    /**
+     * task-138 / `D-1907` rev10：**按容器**的活动页签（主栏 / 右栏各一个）。
+     *
+     * 旧键没有这个字段 ⇒ 读侧把旧 `activeDockTab` 归一到 right（`readWorkspaceLayout`）；
+     * 写侧**两处都写**（旧字段 = right 的值），兼容期不许只写新键。
+     * 声明为可选是为了让尚未接线的消费方（不构造整份 state 的组件）零改动，
+     * 读入口与默认值恒填满它。
+     */
+    activeDockTabs?: ActiveDockTabs;
     /** 恒 `pinned`（task-162 收窄单值）：字段保留只为解析旧键，不再承载两态。 */
     dockMode: DockMode;
     /**
@@ -241,7 +266,47 @@ export function isActiveColumn(value: unknown): value is ActiveColumn {
 }
 
 export function isDockTabId(value: unknown): value is DockTabId {
-    return typeof value === "string" && (DOCK_TAB_IDS as readonly string[]).includes(value);
+    if (typeof value !== "string") return false;
+    // task-138：静态 8 值与 `pane:*`（容器内页签）都合法；未知形态仍然 false（读侧丢垃圾）。
+    return (DOCK_TAB_IDS as readonly string[]).includes(value) || isPaneTabId(value);
+}
+
+/** 按容器计的上限：main 8（与工作台可见上限同源）/ right 6（`DOCK_MAX_TABS`）。 */
+export function capForDockTab(container: ActiveColumn): number {
+    return capFor(container);
+}
+
+/**
+ * 容器内页签的「还能开吗」判据：与 `canOpenDockTab` 同形，但**按容器**计数。
+ *
+ * 两栏是两个独立额度（task-138）：全局 6 的旧口径会让先开的右栏面板吃掉主栏额度。
+ * 保留 `canOpenDockTab` 原样不动（它已有 5 条 spec 钉住 0/5/6/7/NaN 的语义）。
+ */
+export function canOpenPaneTab(container: ActiveColumn, openTabCount: number): boolean {
+    return !Number.isFinite(openTabCount) || openTabCount < capForDockTab(container);
+}
+
+/** 活动页签：主栏 / 右栏各一个（task-138 / Q1 裁定）。 */
+export interface ActiveDockTabs {
+    main: DockTabId | null;
+    right: DockTabId | null;
+}
+
+/**
+ * 净化活动页签：不合法、或不在 `tabs` 里的值一律 `null`（不把已关掉的页签记成活动）。
+ * `tabs` 省略时只做形态校验（写侧先净化页签集合再调用，两者必须同口径）。
+ */
+export function resolveActiveDockTabs(
+    value: Partial<Record<ActiveColumn, DockTabId | null>> | null | undefined,
+    tabs?: readonly DockTabId[],
+): ActiveDockTabs {
+    const pick = (container: ActiveColumn): DockTabId | null => {
+        const candidate = value?.[container];
+        if (!isDockTabId(candidate)) return null;
+        if (tabs && !tabs.includes(candidate)) return null;
+        return candidate;
+    };
+    return { main: pick("main"), right: pick("right") };
 }
 
 /**
@@ -374,6 +439,7 @@ export function defaultWorkspaceLayoutForViewport(viewportWidth: number): Worksp
             // 用户 2026-11-17「右侧容器显示目录树组件」。树是右栏的一个 dock 页签（不占独立容器行）。
             dockTabs: tabs,
             activeDockTab: "files",
+            activeDockTabs: { main: null, right: "files" },
         };
     }
     return {
@@ -381,6 +447,7 @@ export function defaultWorkspaceLayoutForViewport(viewportWidth: number): Worksp
         dockCollapsed: true,
         dockTabs: tabs,
         activeDockTab: "files",
+        activeDockTabs: { main: null, right: "files" },
     };
 }
 
@@ -399,6 +466,75 @@ export function defaultOpenTabs(): WorkTabId[] {
     return [];
 }
 
+/**
+ * 净化页签集合：丢弃非法、去重（保序）、**按容器各自**限流（main 8 / right 6）。
+ *
+ * 与 `lib/workTabs.ts` 的 `normalizeWorkTabs` 同一条纪律（那里管 route 页签，这里管 dock 面板），
+ * 共用 `capFor`：一行满了不该吃掉另一行的额度。
+ */
+function normalizeDockTabs(value: readonly unknown[]): DockTabId[] {
+    const out: DockTabId[] = [];
+    const used: Record<ActiveColumn, number> = { main: 0, right: 0 };
+    for (const raw of value) {
+        if (!isDockTabId(raw) || out.includes(raw)) continue;
+        // pane id 自带容器；裸 8 值恒右栏（D-1777/D-1778：树也是右栏的一个普通面板）。
+        const container = paneTabContainer(raw) ?? "right";
+        if (used[container] >= capFor(container)) continue;
+        used[container] += 1;
+        out.push(raw);
+    }
+    return out;
+}
+
+/** 读分片：`activeDockTabs` 有独立 writer（见 `writeWorkspaceActiveDockTabs`）⇒ 整份写不拥有它。 */
+function storedActiveDockTabs(
+    store: ReturnType<typeof storage>,
+    key: string,
+): Partial<Record<ActiveColumn, DockTabId | null>> | null {
+    if (!store) return null;
+    try {
+        const raw = store.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { activeDockTabs?: unknown } | null;
+        if (!parsed || typeof parsed !== "object") return null;
+        const value = parsed.activeDockTabs;
+        if (!value || typeof value !== "object") return null;
+        return value as Partial<Record<ActiveColumn, DockTabId | null>>;
+    } catch (cause) {
+        logger.warn("Failed to read the stored active dock tabs", cause);
+        return null;
+    }
+}
+
+/**
+ * 分片写：只改 `activeDockTabs`（和它的兼容镜像 `activeDockTab`），其余字段原样保留。
+ *
+ * 为什么需要分片 writer：活动态在**点击页签**时变化，而整份写由拖拽等几何变更驱动 ——
+ * 让整份写拥有它，过期快照就会把激活态冲回挂载时的值（task-126 对 `openTabs` 的同一个根因）。
+ */
+export function writeWorkspaceActiveDockTabs(workspaceId: string, next: ActiveDockTabs): void {
+    const store = storage();
+    if (!workspaceId || !store) return;
+    const key = workspaceLayoutKey(workspaceId);
+    try {
+        const raw = store.getItem(key);
+        const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        if (!parsed || typeof parsed !== "object") return;
+        const resolved = resolveActiveDockTabs(next);
+        store.setItem(
+            key,
+            JSON.stringify({
+                ...parsed,
+                activeDockTabs: resolved,
+                // 旧版本只读这个字段 ⇒ 兼容期必须同步（= right 的值）。
+                activeDockTab: resolved.right,
+            }),
+        );
+    } catch (cause) {
+        logger.warn("Failed to persist the active dock tabs", cause);
+    }
+}
+
 export function defaultWorkspaceLayout(): WorkspaceLayoutState {
     return {
         treeCollapsed: false,
@@ -407,6 +543,7 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         dockWidth: DOCK_WIDTH_DEFAULT,
         dockTabs: [],
         activeDockTab: null,
+        activeDockTabs: { main: null, right: null },
         // task-94 S1 / task-162：floating 退场，存储默认恒 pinned。旧键里的 `"floating"`
         // 在 `isDockMode` 处被归一到 pinned（类型已收窄单值，写它编译失败）。
         dockMode: "pinned",
@@ -588,12 +725,9 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
         if (!raw) return defaults;
         const parsed = JSON.parse(raw) as Partial<WorkspaceLayoutState> | null;
         if (!parsed || typeof parsed !== "object") return defaults;
-        const tabs: DockTabId[] = [];
-        for (const tab of Array.isArray(parsed.dockTabs) ? parsed.dockTabs : []) {
-            if (isDockTabId(tab) && !tabs.includes(tab) && tabs.length < DOCK_MAX_TABS) {
-                tabs.push(tab);
-            }
-        }
+        // task-138：按容器各自限流（main 8 / right 6，见 `normalizeDockTabs`）。
+        // 旧载荷里的裸 8 值恒归右栏 ⇒ 零迁移；未知 id 仍被丢弃。
+        const tabs = normalizeDockTabs(Array.isArray(parsed.dockTabs) ? parsed.dockTabs : []);
         const active =
                 isDockTabId(parsed.activeDockTab) && tabs.includes(parsed.activeDockTab)
                     ? parsed.activeDockTab
@@ -602,6 +736,16 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                 typeof parsed.dockCollapsed === "boolean"
                     ? parsed.dockCollapsed
                     : defaults.dockCollapsed;
+        // task-138：旧键没有 activeDockTabs ⇒ 把旧 activeDockTab 归一到 right（兼容读）；
+        // 新键有它 ⇒ 严格按新键（右栏关光就是 null，不回填）。
+        const storedActiveTabs = resolveActiveDockTabs(parsed.activeDockTabs, tabs);
+        const activeDockTabs: ActiveDockTabs =
+            parsed.activeDockTabs === undefined
+                ? { main: null, right: tabs.length === 0 ? null : active }
+                : {
+                      main: storedActiveTabs.main,
+                      right: storedActiveTabs.right ?? (tabs.length === 0 ? null : active),
+                  };
         return {
             treeCollapsed:
                 typeof parsed.treeCollapsed === "boolean"
@@ -618,6 +762,7 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                     : defaults.dockWidth,
             dockTabs: tabs,
             activeDockTab: tabs.length === 0 ? null : active,
+            activeDockTabs,
             // task-162：旧键的 "floating" 过不了守卫 ⇒ 归一 pinned（归一旧值不是宽容，是删形态）。
             dockMode: isDockMode(parsed.dockMode) ? parsed.dockMode : defaults.dockMode,
             // D26-04: focus is meaningless without a rendered panel, so a payload that says
@@ -644,14 +789,38 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
 export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayoutState): void {
     const store = storage();
     if (!workspaceId || !store) return;
-    // P2-7 (S2 audit): the persisted active tab must be exactly the projection of
-    // the sliced tab set — otherwise the in-memory `active` (e.g. tab #7) and the
-    // stored tabs (6) disagree and a reload silently loses the active tab.
-    const tabs = state.dockTabs.filter(isDockTabId).slice(0, DOCK_MAX_TABS);
-    const active =
-        state.activeDockTab && tabs.includes(state.activeDockTab)
-            ? state.activeDockTab
-            : (tabs[0] ?? null);
+    // P2-7 (S2 audit) + task-138：落盘的页签集合 = 净化 + **按容器**限流后的投影（main 8 / right 6）。
+    // 旧实现按全局 6 截断 —— 两栏共用一个额度时，右栏开满就把主栏的页签挤没了。
+    const tabs = normalizeDockTabs(state.dockTabs);
+    /*
+     * task-138 / Q1：活动页签按容器分开存，旧字段 `activeDockTab` 兼容期中恒等于 right 的值。
+     * **整份写不拥有 activeDockTabs**（与 openTabs 同一模式，task-126）：分片写的值能压过
+     * 挂载期快照，否则几何变更会把用户刚切过的激活态冲回去。
+     *
+     * <p><b>优先级：旧镜像 `activeDockTab` &gt; 内存容器态 &gt; 分片</b>。现有 setter
+     * （`WorkspaceWorkbench` 的 open/close/reopen）只改旧镜像，容器态往往还是挂载时读到的值；
+     * 让容器态恒赢会把刚激活的页签写回旧值（task-138 单测实测：点开 `code`/`delegation`/
+     * `agents` 后落盘的 `activeDockTab` 仍是 `"files"`）。分片放最后是因为它有独立 writer：
+     * 调用方真正走 `writeWorkspaceActiveDockTabs()` 时内存容器态也是新的，分片只在
+     * 「快照完全没有容器态」时才需要兜底。</p>
+     *
+     * <p>反方向的坑同样有：`activeDockTab` 可能指向已被截断掉的页签（容量按容器限流后），
+     * 所以每个候选都必须先过 `tabs.includes`，全落空时回落到**右栏**的第一个页签 —— 不能
+     * 回落到 `tabs[0]`，那可能是主栏页签，旧镜像就再也不是「恒 = right 的值」了。</p>
+     */
+    const storedActive = storedActiveDockTabs(store, workspaceLayoutKey(workspaceId));
+    const memoryActive = resolveActiveDockTabs(state.activeDockTabs, tabs);
+    const fragmentActive = resolveActiveDockTabs(storedActive, tabs);
+    const mirrorActive =
+        state.activeDockTab && tabs.includes(state.activeDockTab) ? state.activeDockTab : null;
+    const firstRightTab =
+        tabs.find((tab) => (paneTabContainer(tab) ?? "right") === "right") ?? null;
+    const rightActive = mirrorActive ?? memoryActive.right ?? fragmentActive.right ?? firstRightTab;
+    const active = rightActive;
+    const persistedActiveDockTabs: ActiveDockTabs = {
+        main: memoryActive.main ?? fragmentActive.main,
+        right: rightActive,
+    };
     try {
         store.setItem(
             workspaceLayoutKey(workspaceId),
@@ -662,6 +831,7 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 dockWidth: clampDockWidth(state.dockWidth),
                 dockTabs: tabs,
                 activeDockTab: active,
+                activeDockTabs: persistedActiveDockTabs,
                 dockMode: isDockMode(state.dockMode) ? state.dockMode : "pinned",
                 // Mirrors the read-side normalization: never persist "focused" for a dock
                 // that cannot render (collapsed or tabless).

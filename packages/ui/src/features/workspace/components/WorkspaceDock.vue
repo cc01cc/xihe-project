@@ -34,7 +34,7 @@ import SashGrip from "../../../components/shared/SashGrip.vue";
 // dockview-capability-demo.md。
 // ─────────────────────────────────────────────────────────────────────────────
 // import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
-import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
+import { dockTabLabel, type DockTab } from "./workspaceDockTabs";
 import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
 import {
     DropdownMenu,
@@ -108,7 +108,7 @@ const overflowOpen = ref(false);
  * task-88 ②（用户 2026-11-20 23:29 裁定）：右栏「+」从「重开已关闭面板」升级为
  * **新建页签 → 选类型**的唯一入口 —— 面板类型不再占顶部导航（那六个图标归 task-137 下线）。
  *
- * <p>候选恒为全部 `DOCK_TAB_IDS`（标签复用既有 `DOCK_TAB_LABEL_KEYS`，不新造 IA）：
+ * <p>候选恒为全部 `DOCK_TAB_IDS`（标签走 `dockTabLabel`（task-138 起 pane id 也认））：
  * 已打开的项标 `open`，点击 = 聚焦该页签而不是再开第二个 —— **同类型单例**
  * （Lead 2026-11-20 裁定；不同会话配置可多开是 task-69 三元组/ task-138 的题，本卡不碰）。</p>
  * <p>点击只 emit `reopen-tab`，布局写入仍归调用方的 `openDockTab`（上限/激活/单栏揭示一处）。</p>
@@ -381,7 +381,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
                             @select="reopenTab(entry.id)"
                         >
                             <span class="min-w-0 flex-1 truncate">{{
-                                t(DOCK_TAB_LABEL_KEYS[entry.id])
+                                dockTabLabel(entry.id, t)
                             }}</span>
                             <span
                                 v-if="entry.open"

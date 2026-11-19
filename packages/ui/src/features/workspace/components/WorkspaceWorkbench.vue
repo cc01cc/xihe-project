@@ -58,11 +58,7 @@ import WorkspaceDockPanelContent from "./WorkspaceDockPanelContent.vue";
 import WorkspaceShellDockview from "./WorkspaceShellDockview.vue";
 import FileTreePanel from "./FileTreePanel.vue";
 import FileEditor from "./FileEditor.vue";
-import {
-    DOCK_TAB_LABEL_KEYS,
-    shouldOpenAgentsDockFromDeepLink,
-    type DockTab,
-} from "./workspaceDockTabs";
+import { dockTabLabel, shouldOpenAgentsDockFromDeepLink, type DockTab } from "./workspaceDockTabs";
 
 /**
  * PLAN-0582 S2: the workspace workbench skeleton. It owns the workspace-scoped
@@ -374,7 +370,7 @@ function onContainerRowKey(payload: ContainerRowKeyPayload): void {
 }
 
 const dockTabs = computed<DockTab[]>(() =>
-    layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
+    layout.value.dockTabs.map((id) => ({ id, label: dockTabLabel(id, t) })),
 );
 
 /**
@@ -701,7 +697,7 @@ const mainAddEntries = computed<
 >(() =>
     DOCK_TAB_IDS.map((id) => ({
         id,
-        label: t(DOCK_TAB_LABEL_KEYS[id]),
+        label: dockTabLabel(id, t),
         checked: dockTabs.value.some((tab) => tab.id === id),
         testid: `workspace-add-item-${id}`,
     })),

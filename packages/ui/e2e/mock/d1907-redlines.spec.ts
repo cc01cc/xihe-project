@@ -505,36 +505,106 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
                 JSON.stringify(mainProbe.optionLabels) +
                 "）",
         ).toBeGreaterThan(0);
-        // 不串台：两个会话各开一份 ⇒ 页签 key 的 id 段应分别是两个 session id。
-        if (!page.url().includes("/chat/")) await page.goto(CHAT_PATH);
-        await page.waitForLoadState("load");
-        const opened = await page.evaluate(
-            (sessionIds: string[]) => {
-                const tabs = Array.from(
-                    document.querySelectorAll(
-                        '[data-testid="workspace-container-tabs"][data-container="main"] [data-tab-id]',
-                    ),
-                ).map((el) => el.getAttribute("data-testid") ?? "");
-                return {
-                    tabTestids: tabs,
-                    perSession: sessionIds.map((id) =>
-                        tabs.filter((testid) => testid.includes(id)),
-                    ),
-                };
+        /*
+         * 第二段（task-138，Lead 2026-11-20 裁定 Q3 选 (a)）：`session-config` 是**容器页签**，
+         * 读的是**右栏**行而不是主栏。旧版本读主栏 `[data-container="main"] [data-tab-id]` 并期望
+         * 两个 session id 同时出现 —— 那测的是「同一时刻两个会话路由页签」= task-69 三元组接线，
+         * 不是本卡的 `session-config`（当时恒红：`perSession=[["…d1907-a"],[]]`）。
+         *
+         * 本段自己种布局：把两份 `pane:right:session-config:<sid>` 直接写进 `dockTabs` 再 reload，
+         * 断言「两份都在、各一份、主栏不串台」，然后点掉一份、reload 复核「关掉不残留」。
+         * 页签 id 契约 = `pane:<container>:<view>[:<sid>]`（`lib/panelTabs.ts`）。
+         */
+        const paneTabs = SESSIONS.map((sid) => "pane:right:session-config:" + sid);
+        await page.addInitScript(
+            ({ key, tabs }: { key: string; tabs: string[] }) => {
+                const raw = localStorage.getItem(key);
+                const layout = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+                localStorage.setItem(
+                    key,
+                    JSON.stringify({
+                        ...layout,
+                        dockCollapsed: false,
+                        dockTabs: tabs,
+                        activeDockTab: tabs[tabs.length - 1],
+                        activeDockTabs: { main: null, right: tabs[tabs.length - 1] },
+                    }),
+                );
             },
-            [...SESSIONS],
+            { key: LAYOUT_KEY, tabs: paneTabs },
         );
-        persist("g11-session-config-tabs", opened);
-        for (const [index, perSession] of opened.perSession.entries()) {
+        await page.reload();
+        await expect(row(page, "right")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await waitForSettledLayout(page);
+        const opened = await page.evaluate(() => {
+            const read = (container: "main" | "right") =>
+                Array.from(
+                    document.querySelectorAll(
+                        '[data-testid="workspace-container-tabs"][data-container="' +
+                            container +
+                            '"] [data-tab-id]',
+                    ),
+                ).map((el) => el.getAttribute("data-tab-id") ?? "");
+            return { rightTabs: read("right"), mainTabs: read("main") };
+        });
+        const perSession = SESSIONS.map((sid) => opened.rightTabs.filter((id) => id.includes(sid)));
+        persist("g11-session-config-tabs", { ...opened, perSession, dockTabIds: paneTabs });
+        console.log("[task125] G-11 第二段读数 " + JSON.stringify({ ...opened, perSession }));
+        for (const [index, hits] of perSession.entries()) {
             expect(
-                perSession.length,
+                hits.length,
                 "会话 " +
                     SESSIONS[index] +
-                    " 的页签 key 应含该会话 id（实测页签=" +
-                    JSON.stringify(opened.tabTestids) +
+                    " 应在右栏各有**恰好一份**会话配置页签（实测=" +
+                    JSON.stringify(opened.rightTabs) +
                     "）",
-            ).toBeGreaterThan(0);
+            ).toBe(1);
         }
+        // 不串台：两份都在**右栏**；主栏行不得出现 session-config 页签。
+        expect(opened.rightTabs.length, "右栏应同时挂两份会话配置页签").toBe(SESSIONS.length);
+        expect(
+            opened.mainTabs.filter((id) => id.includes("session-config")),
+            "会话配置页签不得跑进主栏（实测主栏=" + JSON.stringify(opened.mainTabs) + "）",
+        ).toEqual([]);
+        // 关掉第一份 ⇒ 落盘与 reload 后都不残留。
+        // 先点活它：右栏行只在**当前页签**上渲染关闭按钮（closeActiveOnly），直接点关闭会超时。
+        await page.getByTestId("dock-tab-" + paneTabs[0]).click({ timeout: ACTION_TIMEOUT_MS });
+        await page.getByTestId("dock-tab-close-" + paneTabs[0]).click({
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        const storedTabs = async (): Promise<string[]> =>
+            page.evaluate((key: string) => {
+                const raw = localStorage.getItem(key);
+                const parsed = raw ? (JSON.parse(raw) as { dockTabs?: unknown }) : {};
+                return Array.isArray(parsed.dockTabs) ? (parsed.dockTabs as string[]) : [];
+            }, LAYOUT_KEY);
+        // 落盘是异步的（布局 writer 会攒批）⇒ 不能点完立刻读，必须轮询到收敛。
+        await expect
+            .poll(storedTabs, {
+                timeout: EXPECT_TIMEOUT_MS,
+                message: "关掉的会话配置页签不得留在布局里",
+            })
+            .not.toContain(paneTabs[0]);
+        const afterClose = await storedTabs();
+        // 行内也要立刻少一份（DOM 与落盘同口径）。
+        const remainingTabs = await page.evaluate(() =>
+            Array.from(
+                document.querySelectorAll(
+                    '[data-testid="workspace-container-tabs"][data-container="right"] [data-tab-id]',
+                ),
+            ).map((el) => el.getAttribute("data-tab-id") ?? ""),
+        );
+        persist("g11-session-config-after-close", { afterClose, remainingTabs });
+        console.log("[task125] G-11 关掉后读数 " + JSON.stringify({ afterClose, remainingTabs }));
+        expect(
+            remainingTabs,
+            "关掉后右栏应只剩第二份会话配置（实测=" + JSON.stringify(remainingTabs) + "）",
+        ).toEqual([paneTabs[1]]);
+        /*
+         * 注：「刷新后仍在」**不**在本段做 —— 本文件 `boot()` 的 init script 每次导航都会把固定布局
+         * 重写一遍（隔离用），reload 后看到的不是产品落盘值，而是种子里那两份。刷新往返由单测守：
+         * `useWorkspaceLayout.spec.ts` 的 "keeps a pane tab active after a reload"。
+         */
     });
 
     test("红线 4：workspace-config-reachable-from-workspace-page —— 配置/成员页可达且页内无右容器", async ({

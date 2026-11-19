@@ -25,6 +25,9 @@
  */
 
 import { DOCK_TAB_IDS } from "../../../composables/useWorkspaceLayout";
+// task-138：容器内页签 `pane:<container>:<view>[:<sid>]` 的解析（同一目录，纯函数无副作用）。
+// 反向 import（panelTabs → containers）不存在 ⇒ 这里不会形成初始化期环。
+import { paneTabContainer } from "./panelTabs";
 
 /** 容器只剩两个（`D-1777`：树是右栏的面板，不是第三个容器）。顺序 = 渲染顺序。 */
 export const CONTAINER_IDS = ["main", "right"] as const;
@@ -52,8 +55,16 @@ export const FILES_PANEL_ID = "files";
  */
 const RIGHT_PANEL_IDS: ReadonlySet<string> = new Set(DOCK_TAB_IDS);
 
-/** 面板/页签 → 所属容器。**唯一**映射实现，且与 mode 无关（不变式）。 */
+/**
+ * 面板/页签 → 所属容器。**唯一**映射实现，且与 mode 无关（不变式）。
+ *
+ * task-138（`D-1907` rev7/rev8）：容器内页签 `pane:<container>:<view>[:<sid>]` **自带容器** ——
+ * 同一个 view 可以在两栏各开一份（会话配置页签），所以归属不能再由「view 是谁」反推。
+ * 裸 8 值（`DOCK_TAB_IDS`）的规则不变：恒 right；其余（`session:*` 页面页签等）恒 main。
+ */
 export function containerOf(tabId: string): ContainerId {
+    const paneContainer = paneTabContainer(tabId);
+    if (paneContainer) return paneContainer;
     return RIGHT_PANEL_IDS.has(tabId) ? "right" : "main";
 }
 

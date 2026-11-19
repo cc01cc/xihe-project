@@ -8,6 +8,7 @@ import SessionContextPanel from "./SessionContextPanel.vue";
 import DelegationDagPanel from "../chat/components/DelegationDagPanel.vue";
 import WorkspaceAgentsPanel from "./WorkspaceAgentsPanel.vue";
 import { useI18n } from "vue-i18n";
+import { SESSION_CONFIG_VIEW, paneTabSessionId, paneTabView } from "../lib/panelTabs";
 
 /**
  * task-369 S1：dock 七个面板的**内容**，从 `WorkspaceWorkbench` 的 slot 体里抽出来，
@@ -75,6 +76,15 @@ const { t } = useI18n();
         @mention="emit('mention', $event)"
     />
     <SessionContextPanel v-else-if="id === 'context'" :session-id="sessionId ?? null" />
+    <!--
+        task-138（D-1907 rev10）：容器内的「会话配置」页签。id 是第三形态
+        `pane:<container>:session-config:<sid>`，**开哪份会话的配置由 id 里的 sid 说了算**（不是
+        宿主当前会话），否则两栏各开一份就串台成同一份。非法/缺 sid 才回退宿主 sessionId。
+    -->
+    <SessionContextPanel
+        v-else-if="paneTabView(id) === SESSION_CONFIG_VIEW"
+        :session-id="paneTabSessionId(id) ?? sessionId ?? null"
+    />
     <template v-else-if="id === 'delegation'">
         <DelegationDagPanel v-if="sessionId" :session-id="sessionId" />
         <div v-else class="p-4 text-xs text-muted-foreground">

@@ -577,6 +577,9 @@ const messages = {
             participantMoreAction: "更多",
             panelMembers: "成员",
             panelContext: "会话设置",
+            // task-138：容器内的「会话配置」页签（D-1907 rev10 摘要条快捷开关开出的那份），
+            // 与 panelContext（= context 面板，产品文案「会话设置」）不是同一个面板。
+            panelSessionConfig: "会话配置",
             panelAgents: "智能体",
             panelDelegation: "委派",
             diffTabTimeline: "切片时间线",
@@ -4800,6 +4803,9 @@ const messages = {
             participantMoreAction: "More",
             panelMembers: "Members",
             panelContext: "Session settings",
+            // task-138: in-container "session config" tab (opened by the D-1907 rev10 summary-bar
+            // shortcut); distinct from panelContext, the context panel.
+            panelSessionConfig: "Session config",
             panelAgents: "Agents",
             panelDelegation: "Delegation",
             diffTabTimeline: "Slice timeline",

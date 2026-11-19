@@ -115,7 +115,13 @@ export function containerOfWorkTab(id: WorkTabId): ContainerId {
     return viewOfWorkTab(id) === "chat" ? "main" : "right";
 }
 
-function capFor(container: ContainerId): number {
+/**
+ * 每个容器的页签上限：main 8（`MAIN_MAX_TABS`）/ right 6（`DOCK_MAX_TABS`，右栏页签额度同源）。
+ *
+ * 导出给 `composables/useWorkspaceLayout.ts` 的 dock 页签净化共用（task-138）：
+ * route 页签与 dock 面板是两套 id 空间，但「按容器计额度」这条规则必须只有一份实现。
+ */
+export function capFor(container: ContainerId): number {
     return container === "main" ? MAIN_MAX_TABS : DOCK_MAX_TABS;
 }
 

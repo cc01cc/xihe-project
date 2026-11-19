@@ -6,6 +6,8 @@
  * （`WorkspaceDock.vue`）只做薄粘合，集成验证归 Playwright e2e。
  */
 
+import { SESSION_CONFIG_VIEW, paneTabView } from "../features/workspace/lib/panelTabs";
+
 /** dockview 序列化里一个组（leaf）的 data 形状：`id` = 组 id，views = 打开的面板。 */
 export interface DockviewSerializedLeafData {
     id?: string;
@@ -68,6 +70,20 @@ function viewsOf(group: DockviewSerializedGroup | undefined): string[] | null {
 }
 
 /**
+ * task-138（Lead 裁定②）：XH 的 dock 页签 id → dockview **面板 id**，与 `WorkspaceShellDockview`
+ * 的 `panelIdOf` 同一口径 —— `pane:<container>:<view>[:<sid>]` 取 `view`（容器不参与面板身份）；
+ * 静态 8 值原样；无组件 view（`session-config`）⇒ `null`（本壳没有它的组件，不进面板值域）。
+ *
+ * 为什么放在这里而不是 import 那个 SFC：桥是纯函数层，SFC 是渲染层；两边共用同一条规则，
+ * 规则本身来自 `features/workspace/lib/panelTabs.ts`（唯一解析实现）。
+ */
+function panelIdOf(tabId: string): string | null {
+    const view = paneTabView(tabId);
+    if (view === null) return tabId;
+    return view === SESSION_CONFIG_VIEW ? null : view;
+}
+
+/**
  * 序列化桥：`dockview toJSON()` → XH 布局语义（`dockTabs` / `activeDockTab` / `dockWidth`）。
  * 纯函数、不碰 DOM、不 import dockview —— 可在 jsdom 直接单测。
  *
@@ -107,7 +123,10 @@ export function bridgeDockviewLayout(
         chosen = groups.find((g) => g?.data?.id === options.groupId && viewsOf(g) !== null);
     }
     if (!chosen && options.panelIds && options.panelIds.length > 0) {
-        const allowed = new Set(options.panelIds);
+        // task-138：调用方可能传 XH 的 dock 页签 id（含 `pane:*`）⇒ 先投影成面板 id。
+        const allowed = new Set(
+            options.panelIds.map((id) => panelIdOf(id)).filter((id): id is string => id !== null),
+        );
         chosen = groups.find((g) => {
             const views = viewsOf(g);
             return views !== null && views.every((id) => allowed.has(id));
