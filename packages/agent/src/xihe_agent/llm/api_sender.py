@@ -21,11 +21,22 @@ from loguru import logger
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, strict_json, validate_body
 from xihe_agent.llm.transport_metrics import TransportMetricsCollector
 
-# PLAN-0416 T2.3: provider counters surfaced per API Type. A counter the
-# provider did not return is *unknown* — never a synthesized 0.
+# PLAN-0416 T2.3: provider counters surfaced on the REGULAR usage wire. A counter
+# the provider did not return is *unknown* — never a synthesized 0.
+# task-114: cache_write_input_tokens is deliberately NOT in this set. There is no
+# cacheWriteInputTokens field on the regular usage wire, and provider_unknown is
+# derived from this set; including cache_write here made every normal response
+# report a spurious unknown counter. It is audit-only (see AUDIT_USAGE_COUNTERS).
 NATIVE_USAGE_COUNTERS: frozenset[str] = frozenset(
-    {"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_write_input_tokens"}
+    {"input_tokens", "output_tokens", "cache_read_input_tokens"}
 )
+
+# task-103/task-114: full counter universe captured by the per-step provider audit
+# block. cache_write is recorded there (parse_response maps the provider's
+# cache_creation/cache_write value into provider_usage) but never surfaced on the
+# regular usage wire. AUDIT_ONLY_USAGE_COUNTERS is the audit-only delta.
+AUDIT_ONLY_USAGE_COUNTERS: frozenset[str] = frozenset({"cache_write_input_tokens"})
+AUDIT_USAGE_COUNTERS: frozenset[str] = NATIVE_USAGE_COUNTERS | AUDIT_ONLY_USAGE_COUNTERS
 
 
 @dataclass
