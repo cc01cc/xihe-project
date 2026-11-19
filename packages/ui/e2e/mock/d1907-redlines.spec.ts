@@ -53,12 +53,15 @@ function plus(page: Page, container: "main" | "right") {
 }
 
 /**
- * 「组件选择器」的**形状**还没被产品定义（今天不存在），所以这里不钉一个臆造的 testid，
- * 而是认「点开之后出现的浮层」：menu / listbox / dialog / *-picker。目标态落地后
- * 建议给选择器钉一个稳定 testid，并把这里收窄到它（届时本注释要一起改）。
+ * 「容器「+」产出的浮层」的**形状**：主栏的目标态是组件选择器，右栏今天是重开菜单。
+ * 所以这里认「点开之后出现的浮层」：menu / listbox / dialog / *-picker ——
+ * **外加 `[data-testid="dock-reopen-menu"]`**：右栏菜单在 task-140 换成 reka 原语前是
+ * 裸 `div`（没有 role），task-125 首版只认 role ⇒ 右栏恒被记成 `pickerFound=false`，
+ * 那是**探针漏采**而不是产品没菜单（2026-11-20 复跑实测：`right.dockReopenMenuPresent=true`）。
+ * 目标态落地后应给选择器钉一个稳定 testid，并把这里收窄到它（届时本注释一起改）。
  */
 const PICKER_SELECTOR =
-    '[role="menu"], [role="listbox"], [role="dialog"], [data-testid$="-picker"], [data-testid*="component-picker"]';
+    '[role="menu"], [role="listbox"], [role="dialog"], [data-testid$="-picker"], [data-testid*="component-picker"], [data-testid="dock-reopen-menu"]';
 
 /** 落盘（按 section 合并，后跑的 section 不覆盖先跑的）。 */
 function persist(section: string, payload: unknown): void {
@@ -150,7 +153,17 @@ async function boot(page: Page): Promise<void> {
     });
 }
 
-/** 打开右栏容器（点亮任一存在的面板开关），并等右栏页签行出现。 */
+/**
+ * 打开右栏容器，并等右栏页签行出现。
+ *
+ * 两条路，先 UI 后种子：
+ * ① 点工具栏的面板开关键（`workspace-toolbar-<id>`）—— 这是「用户怎么开」；
+ * ② 种子兜底 —— task-137 已把桌面六个开关**下线**（唯一入口 = 主列行行尾 `workspace-dock-toggle`
+ *    → 右栏 `+` → 选面板类型），所以 ① 在当下源码里恒找不到按钮。本 spec 要测的是
+ *    **右栏页签行里的东西**（「+」的选项集合 / 容器名标签），不关心它怎么被打开的，
+ *    因此在 ① 无果时直接把「右栏开着」写进布局种子再重载，而不是断言入口存在 ——
+ *    入口属于 task-137 的卡，在这里断言会让本 spec 跟着别人的重构反复红。
+ */
 async function openRightContainer(page: Page): Promise<void> {
     const candidates = ["files", "code", "changes", "monitor", "members", "context", "agents"];
     for (const id of candidates) {
@@ -166,6 +179,18 @@ async function openRightContainer(page: Page): Promise<void> {
         )
             return;
     }
+    await page.addInitScript((key: string) => {
+        const layout = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
+        layout.dockCollapsed = false;
+        layout.dockTabs = ["files"];
+        layout.activeDockTab = "files";
+        localStorage.setItem(key, JSON.stringify(layout));
+    }, LAYOUT_KEY);
+    await page.reload();
+    await page.locator('[data-testid="workspace-main"]').waitFor({
+        state: "visible",
+        timeout: EXPECT_TIMEOUT_MS,
+    });
     await expect(row(page, "right")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 }
 
@@ -222,7 +247,9 @@ async function probePicker(page: Page, container: "main" | "right"): Promise<Pic
     probe.pickerFound = true;
     const items = await visiblePicker.evaluate((root) => {
         const nodes = Array.from(
-            root.querySelectorAll('[role="menuitem"], [role="option"], button, li'),
+            root.querySelectorAll(
+                '[role="menuitem"], [role="menuitemcheckbox"], [role="option"], button, li',
+            ),
         );
         return nodes
             .filter((el) => el.getBoundingClientRect().height > 0)
@@ -429,7 +456,14 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
                 }),
         );
 
-        const CONFIG_LIKE = /配置|设置|configure|config|settings/i;
+        // rev8 口径把两类东西分开了：**会话配置/设置 = 容器组件**（合法，G-11 要求它能进「+」）；
+        // **工作区配置/设置 = 工作区页面**（不是组件，绝不能出现在容器选择器里）。
+        // ⇒ 不能一刀切拦 /配置|设置/：右栏那项「会话设置」（dock-reopen-item-context）是合法组件，
+        // 拦它会把这条红线误判成红，反过来也掩盖了真正的问题。只拦「工作区级」字样。
+        const WORKSPACE_WORD = /工作区|workspace/i;
+        const CONFIG_WORD = /配置|设置|configure|config|settings/i;
+        const looksLikeWorkspaceConfig = (text: string) =>
+            WORKSPACE_WORD.test(text) && CONFIG_WORD.test(text);
         for (const probe of [mainProbe, rightProbe]) {
             const tag = probe.container === "main" ? "主栏" : "右栏";
             expect(
@@ -438,12 +472,12 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
             ).toBe(true);
             expect(probe.optionCount, tag + "选择器不得是空列表").toBeGreaterThan(0);
             expect(
-                probe.optionLabels.filter((label) => CONFIG_LIKE.test(label)),
+                probe.optionLabels.filter(looksLikeWorkspaceConfig),
                 tag + "选择器不得出现工作区配置/设置类选项（G-12）",
             ).toEqual([]);
             expect(
-                probe.optionTestids.filter((testid) => CONFIG_LIKE.test(testid)),
-                tag + "选择器不得出现配置类 testid",
+                probe.optionTestids.filter(looksLikeWorkspaceConfig),
+                tag + "选择器不得出现工作区配置类 testid",
             ).toEqual([]);
         }
     });
@@ -459,8 +493,11 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
             mainProbe.pickerFound,
             "主栏「+」应打开组件选择器（候选浮层=" + JSON.stringify(mainProbe.candidates) + "）",
         ).toBe(true);
+        // 措辞按产品现状放宽：面板标题叫「会话设置」（`DOCK_TAB_LABEL_KEYS.context`），
+        // rev8 写的是「会话配置」——同一个东西，两种叫法都认；具体用哪个词由产品定，
+        // 这里只钉「会话级配置是个可开的组件项」。
         const sessionConfigOption = mainProbe.optionLabels.filter((label) =>
-            /会话配置/.test(label),
+            /会话(配置|设置)/.test(label),
         );
         expect(
             sessionConfigOption.length,

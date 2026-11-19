@@ -36,6 +36,12 @@ import SashGrip from "../../../components/shared/SashGrip.vue";
 // import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
+import {
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu";
 import type { ContainerRowKeyPayload } from "../lib/containerTabNav";
 import type { DockTabId } from "../../../composables/useWorkspaceLayout";
 
@@ -108,13 +114,26 @@ const overflowOpen = ref(false);
  * 已打开的项标 `open`，点击 = 聚焦该页签而不是再开第二个 —— **同类型单例**
  * （Lead 2026-11-20 裁定；不同会话配置可多开是 task-69 三元组/ task-138 的题，本卡不碰）。</p>
  * <p>点击只 emit `reopen-tab`，布局写入仍归调用方的 `openDockTab`（上限/激活/单栏揭示一处）。</p>
+ *
+ * <p><b>task-140（D-1907 rev7「两容器 + 行为对等」的前置）：它必须是一个真菜单</b> ——
+ * 裸 `div` + 一串 `<button>` 既没有 `role=menu/menuitem`、也没有 Esc 关闭与上下键移动，
+ * 与主栏将来那个组件选择器不可能对等，138 的动态值域也没有可挂的语义框架。
+ * 因此改用栈内既有件 `components/ui/dropdown-menu`（shadcn-vue / reka-ui 原语）——
+ * 角色、roving focus、Esc、方向键、按下即打开、点击外部关闭全部由原语提供，
+ * 不手搓 keydown（手搓版正是本轮要替换掉的东西）。</p>
+ *
+ * <p><b>已开项用 `aria-checked`（Lead 2026-11-20 裁定）</b>：「已打开」是开关式状态，
+ * 因此项类型必须是 `menuitemcheckbox`（`DropdownMenuCheckboxItem`，reka 自动给
+ * `role=menuitemcheckbox` + `aria-checked`）；不能把 `aria-checked` 挂在普通 `menuitem` 上，
+ * 那是无效组合。**状态真源仍是 `props.tabs`**：`:model-value` 只读投影，点击只 emit
+ * `reopen-tab`，不接 `update:model-value`（否则菜单会自己记一份和第二份真源打架）。</p>
  */
-const reopenOpen = ref(false);
 const dockMenuTabs = computed<{ id: DockTabId; open: boolean }[]>(() =>
     DOCK_TAB_IDS.map((id) => ({ id, open: props.tabs.some((tab) => tab.id === id) })),
 );
 function reopenTab(id: DockTabId): void {
-    reopenOpen.value = false;
+    // 菜单关闭由原语（`DropdownMenuCheckboxItem` 的 select 后 dismiss）负责，
+    // 这里只 emit：布局写入归调用方 `openDockTab`（单一 writer 不变）。
     emit("reopen-tab", id);
 }
 const panelRef = ref<HTMLElement | null>(null);
@@ -336,31 +355,32 @@ function handleResizeKeydown(event: KeyboardEvent) {
                     窗口控件之前；浏览器 tab strip 的 + 语义）。点击走 `reopen-tab` emit，
                     由 workbench 的 `openDockTab` 统一写布局（上限/激活/单栏揭示不在这里重复）。
                 -->
-                <div class="relative shrink-0">
-                    <button
-                        type="button"
-                        data-testid="workspace-container-plus-right"
-                        class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        :aria-label="t('workspace.containerPlusNew')"
-                        :title="t('workspace.containerPlusNew')"
-                        :aria-expanded="reopenOpen"
-                        @click="reopenOpen = !reopenOpen"
-                    >
-                        <Plus class="size-3.5" aria-hidden="true" />
-                    </button>
-                    <div
-                        v-if="reopenOpen"
-                        data-testid="dock-reopen-menu"
-                        class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
-                    >
+                <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
                         <button
+                            type="button"
+                            data-testid="workspace-container-plus-right"
+                            class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            :aria-label="t('workspace.containerPlusNew')"
+                            :title="t('workspace.containerPlusNew')"
+                        >
+                            <Plus class="size-3.5" aria-hidden="true" />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <!--
+                        `data-testid` 一律留在原处（`dock-reopen-menu` / `dock-reopen-item-<id>`）：
+                        66+ 既有消费点与 e2e（`task97-container-plus`、`d1907-redlines` 探针）按
+                        testid 定位，改名只是无收益漂移。菜单内容经 `DropdownMenuPortal` 落到 body
+                        （原语行为）⇒ 单测要查 `document`，不能再 `wrapper.get`。
+                    -->
+                    <DropdownMenuContent align="end" data-testid="dock-reopen-menu" class="w-44">
+                        <DropdownMenuCheckboxItem
                             v-for="entry in dockMenuTabs"
                             :key="entry.id"
-                            type="button"
                             :data-testid="`dock-reopen-item-${entry.id}`"
-                            :aria-current="entry.open ? 'true' : undefined"
-                            class="flex w-full min-h-7 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            @click="reopenTab(entry.id)"
+                            :model-value="entry.open"
+                            class="justify-start gap-2"
+                            @select="reopenTab(entry.id)"
                         >
                             <span class="min-w-0 flex-1 truncate">{{
                                 t(DOCK_TAB_LABEL_KEYS[entry.id])
@@ -370,9 +390,9 @@ function handleResizeKeydown(event: KeyboardEvent) {
                                 class="shrink-0 text-xs text-muted-foreground"
                                 >{{ t("workspace.dockTabOpen") }}</span
                             >
-                        </button>
-                    </div>
-                </div>
+                        </DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
 
                 <div v-if="hasOverflow" class="relative shrink-0">
                     <button

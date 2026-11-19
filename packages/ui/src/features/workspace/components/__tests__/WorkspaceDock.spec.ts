@@ -481,17 +481,21 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
         expect(plus.attributes("aria-label")).toBe("New tab: choose a panel type");
     });
 
-    it("菜单列出全部面板类型，已打开项标 aria-current；点击恒 emit（聚焦/新建归 workbench 判定）", async () => {
+    it("菜单是 role=menu、项是 menuitemcheckbox（已开项 aria-checked）；点击恒 emit（聚焦/新建归 workbench 判定）", async () => {
         const wrapper = mountDock();
         await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
 
         expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(8);
+        // task-140：手写 div 换成 reka 原语后，角色与键盘（Esc / 上下键 / roving focus）
+        // 都由原语给；这里钉住契约，防止有人为了「少一层组件」再退回裸 div。
+        expect(wrapper.get('[data-testid="dock-reopen-menu"]').attributes("role")).toBe("menu");
         const openItem = wrapper.get('[data-testid="dock-reopen-item-code"]');
-        expect(openItem.attributes("aria-current")).toBe("true");
+        expect(openItem.attributes("role")).toBe("menuitemcheckbox");
+        expect(openItem.attributes("aria-checked")).toBe("true");
         expect(openItem.text()).toContain("Open");
         expect(
-            wrapper.get('[data-testid="dock-reopen-item-files"]').attributes("aria-current"),
-        ).toBeUndefined();
+            wrapper.get('[data-testid="dock-reopen-item-files"]').attributes("aria-checked"),
+        ).toBe("false");
 
         await wrapper.get('[data-testid="dock-reopen-item-files"]').trigger("click");
         expect(wrapper.emitted("reopen-tab")).toEqual([["files"]]);

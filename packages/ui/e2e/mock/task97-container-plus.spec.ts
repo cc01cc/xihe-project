@@ -280,12 +280,21 @@ test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
         await boot(page);
         await openDockPanels(page, ["code"]);
 
-        // main 行 +：走既有 ?newChat=1 机制（WorkspaceView watcher 消费）。
-        // 注：mock 未桩 workspace-agents ⇒ 创建会失败并剥掉 query，所以这里只钉
-        // 「点击真实进入新建会话流」（URL 到达 ?newChat=1），不钉创建结果 ——
-        // 那条链路是 WorkspaceView 的用例面，不是本卡判据。
+        // main 行 +：**task-140（D-1907 rev7）起是组件选择器**，不再是 ?newChat=1。
+        // 判据：点击弹出菜单 → 菜单里是组件项（含「会话设置」，G-11）→ Esc 关闭不改布局。
+        // 不在这里点开面板：下面几段按固定布局读数（files/monitor/code），改布局会让后续
+        // 计数断言变成顺序相关的脆断言。
         await plus(page, "main").click({ timeout: ACTION_TIMEOUT_MS });
-        await page.waitForURL(/newChat=1/, { timeout: ACTION_TIMEOUT_MS });
+        const mainMenu = page.getByTestId("workspace-container-add-menu-main");
+        await expect(mainMenu, "main + 应弹出组件选择器（D-1907 rev7）").toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(
+            mainMenu.getByTestId("workspace-add-item-context"),
+            "选择器里应有「会话设置」组件项（G-11）",
+        ).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await page.keyboard.press("Escape");
+        await expect(mainMenu, "Esc 关闭选择器").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
         // right 行 +：菜单列出未打开面板，点击后页签真实出现（自包含，不依赖 API）。
         await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSIONS[0]}`);
