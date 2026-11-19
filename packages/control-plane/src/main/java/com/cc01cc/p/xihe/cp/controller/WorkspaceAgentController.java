@@ -79,6 +79,57 @@ public class WorkspaceAgentController {
     }
 
     /**
+     * task-106 (user ruling 2026-11-20 00:28, option A): make one bound workspace agent the default the
+     * create form pre-selects and the server falls back to when a Session is created without an
+     * {@code agentPrincipalId}. The durable audit ({@code workspace_agent_default_changed}, ids only)
+     * is written by the service, not here, so the CLI/Agent callers are covered by the same record.
+     *
+     * <p>200 answers {@code {workspaceId, principalId, isDefault:true, previousPrincipalId}};
+     * {@code previousPrincipalId} is null when no default was set before. Idempotent: promoting the
+     * current default answers the same body without a second audit row.</p>
+     */
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/{principalId}/default")
+    public ResponseEntity<?> setWorkspaceAgentDefault(@PathVariable String workspaceId,
+                                                      @PathVariable String principalId) {
+        try {
+            String actor = requireActor();
+            UUID workspaceUuid = parseUuid(workspaceId);
+            UUID principalUuid = parseUuid(principalId);
+            UUID previous = agentPrincipalService.setWorkspaceDefaultAgent(
+                    actor, workspaceUuid, principalUuid);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("workspaceId", workspaceUuid.toString());
+            response.put("principalId", principalUuid.toString());
+            response.put("isDefault", true);
+            response.put("previousPrincipalId", previous == null ? null : previous.toString());
+            return ResponseEntity.ok(response);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * task-106: clear the workspace default and record {@code workspace_agent_default_cleared}. 204 in
+     * both the "was the default" and "was not the default" cases (idempotent repeat), so a UI retry
+     * cannot turn into a spurious error; an unbound principal stays a 409
+     * {@code AGENT_PRINCIPAL_NOT_BOUND} because then the flag could never have existed.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @DeleteMapping("/{principalId}/default")
+    public ResponseEntity<?> clearWorkspaceAgentDefault(@PathVariable String workspaceId,
+                                                        @PathVariable String principalId) {
+        try {
+            String actor = requireActor();
+            agentPrincipalService.clearWorkspaceDefaultAgent(
+                    actor, parseUuid(workspaceId), parseUuid(principalId));
+            return ResponseEntity.noContent().build();
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
      * task-448 (D-1286 / ui-2 417 P1-6): the live-cap public read face. Returns the LIVE
      * resolveCapFor evaluation (not the stored snapshot) plus its hit source and grant provenance,
      * so the UI can read the true effective cap. Additive (D-206 reversible); the gate is workspace
@@ -443,6 +494,9 @@ public class WorkspaceAgentController {
         // file shows no commit, i.e. the field was silently dropped since it was introduced. The UI's
         // AgentRoleBindingsSection is designed against it.
         result.put("roleIds", view.roleIds());
+        // task-106: the create form pre-selects this row, and the same flag is the server-side fallback
+        // when a Session arrives without an agentPrincipalId.
+        result.put("isDefault", view.isDefault());
         return result;
     }
 

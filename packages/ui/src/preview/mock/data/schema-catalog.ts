@@ -166,6 +166,11 @@ const CATALOG_JSON = `{
             "type": "json"
         },
         {
+            "key": "defaultAgentPrincipalId",
+            "type": "string",
+            "description": "task-106 (user ruling 2026-11-20 00:28): the agent a new Session gets when the caller sends no agentPrincipalId and the workspace has no default binding (workspace_agents.is_default). Resolved through the D-928 chain workspace > workspace-default > user > instance; a value only counts while the principal is enabled and bound to the workspace, otherwise it is skipped and the next layer wins."
+        },
+        {
             "key": "defaultParticipants",
             "type": "json"
         }

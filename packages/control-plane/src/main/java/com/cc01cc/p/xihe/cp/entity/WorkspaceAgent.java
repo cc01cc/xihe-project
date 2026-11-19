@@ -37,6 +37,17 @@ public class WorkspaceAgent {
     /** D-1109: the cap was derived from the principal's role baseline in this workspace. */
     public static final String CAP_SOURCE_BASELINE = "baseline";
 
+    /**
+     * task-106 (user ruling 2026-11-20 00:28, "方案 A"): the workspace-scoped default agent for new
+     * sessions. Users asked the create form to pre-select "the workspace agent"; the flag lives on
+     * the binding row so the choice is visible in {@code GET .../agents} and survives restarts. At
+     * most one row per workspace may be true — V177 owns the partial unique index
+     * {@code ux_workspace_agents_default}, which is why every switch has to switch a row off before
+     * switching the next one on instead of relying on flush order.
+     */
+    @Column(name = "is_default", nullable = false)
+    private boolean isDefault = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -69,6 +80,9 @@ public class WorkspaceAgent {
 
     public String getCapSource() { return capSource; }
     public void setCapSource(String capSource) { this.capSource = capSource; }
+
+    public boolean isDefault() { return isDefault; }
+    public void setDefault(boolean isDefault) { this.isDefault = isDefault; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

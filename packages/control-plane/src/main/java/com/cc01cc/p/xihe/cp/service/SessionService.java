@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.chat.SessionAgentDefaults;
 import com.cc01cc.p.xihe.cp.chat.SessionProviderDefaults;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
@@ -54,6 +55,10 @@ public class SessionService {
 
     @org.springframework.beans.factory.annotation.Autowired
     private SessionProviderDefaults sessionProviderDefaults;
+
+    /** task-106 (field injection like {@link #sessionProviderDefaults}): default agent for new sessions. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private SessionAgentDefaults sessionAgentDefaults;
 
     private final SessionRepository sessionRepository;
     private final SessionParticipantService sessionParticipantService;
@@ -244,8 +249,13 @@ public class SessionService {
         if (workspaceId != null) {
             requireWorkspace(userId, workspaceId);
         }
+        // task-106 (user ruling 2026-11-20 00:28, option A): a missing agent no longer fails outright.
+        // Resolution order = the workspace default binding, then agent-runtime.defaultAgentPrincipalId
+        // (workspace > workspace-default > user > instance). Every candidate is re-validated, so a stale
+        // default is skipped; when nothing usable is left the 400 keeps its INVALID_REQUEST code and only
+        // the text became actionable (no new error code, no CLI mock churn).
         if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "agentPrincipalId is required");
+            agentPrincipalId = sessionAgentDefaults.resolve(userId, workspaceId);
         }
         // D-686 (workspaceless): the snapshot is null and explicitly not applicable — no owner cap is
         // fabricated, because "no workspace" must not look like "workspace with zero permissions".

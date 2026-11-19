@@ -621,13 +621,136 @@ public class AgentPrincipalService {
         detail.put("authorizationAction", "MANAGE_WORKSPACE_AGENTS");
         detail.put("principalId", principalId.toString());
         detail.set("permissionsBefore", binding.getPermissionsSnapshot().deepCopy());
+        // task-106: an unbound row cannot stay the workspace default — the fallback chain would keep
+        // resolving a principal that no longer has a binding. The clear is recorded on its own so the
+        // two durable facts stay separable in the audit trail.
+        boolean wasDefault = binding.isDefault();
         workspaceAgentRepository.delete(binding);
         // PLAN-0629: revoking the binding revokes the role binding too — otherwise the read path
         // would keep reporting reach for a principal that was just unbound.
         revokeWorkspaceRoleBinding(principalId, workspaceId, actorId);
         auditLogger.recordDurableChange(actorId.toString(), workspaceId.toString(),
                 "workspace_agent_unbound", "agent_principal", principal.getId().toString(), detail.toString());
+        if (wasDefault) {
+            auditLogger.recordDurableChange(actorId.toString(), workspaceId.toString(),
+                    "workspace_agent_default_cleared", "agent_principal", principalId.toString(),
+                    defaultDetail(principalId));
+        }
         return true;
+    }
+
+    /**
+     * task-106 (user ruling 2026-11-20 00:28, option A): make one bound workspace agent the default
+     * for Sessions created without an explicit {@code agentPrincipalId}.
+     *
+     * <p>Serialization: {@link #lockInstanceMutex()} runs first (D-180 lock order: instance mutex →
+     * role rows → principals/bindings), so two switches cannot interleave and trip the partial unique
+     * index {@code ux_workspace_agents_default}; the binding row lock keeps a concurrent unbind of the
+     * same principal deterministic. The switch itself is "clear then set" as two statements because a
+     * single flush holding two {@code is_default=true} rows is rejected by that index regardless of
+     * statement order.</p>
+     *
+     * <p>Idempotent: promoting the current default changes nothing and writes no audit row. Auditing
+     * follows the house shape for binding changes — ids only, never display names — and only a
+     * principal with an existing binding may become the default ({@code 409
+     * AGENT_PRINCIPAL_NOT_BOUND}); otherwise a later session create would resolve an unusable agent.</p>
+     *
+     * @return the principal that was the default before this call, or {@code null} when none was
+     */
+    @Transactional
+    public UUID setWorkspaceDefaultAgent(String actorUserId, UUID workspaceId, UUID principalId) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        lockInstanceMutex();
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
+        requireWorkspaceMember(actorId, workspaceId);
+        requireWorkspaceAgentManagement(actorId, workspaceId);
+        AgentPrincipal principal = requireActivePrincipal(principalId);
+        requireBindingAuthority(actorId, principal);
+        WorkspaceAgent binding = workspaceAgentRepository
+                .findByIdForUpdate(new WorkspaceAgentId(principalId, workspaceId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT, "AGENT_PRINCIPAL_NOT_BOUND",
+                        "Agent principal is not bound to this workspace; bind it before marking it the default"));
+        UUID previous = workspaceDefaultAgentPrincipalId(workspaceId);
+        if (binding.isDefault()) {
+            return previous;
+        }
+        workspaceAgentRepository.clearDefault(workspaceId);
+        workspaceAgentRepository.markDefault(workspaceId, principalId);
+        auditLogger.recordDurableChange(actorId.toString(), workspaceId.toString(),
+                "workspace_agent_default_changed", "agent_principal", principalId.toString(),
+                "principalId=" + AuditLogger.escapeField(principalId.toString())
+                        + ";from=" + AuditLogger.escapeField(previous == null ? null : previous.toString())
+                        + ";to=" + AuditLogger.escapeField(principalId.toString()));
+        return previous;
+    }
+
+    /**
+     * task-106: clear the workspace default. Idempotent (a non-default binding returns {@code null} and
+     * writes no audit row) so the DELETE endpoint can be repeated safely; the gates mirror {@link
+     * #setWorkspaceDefaultAgent(String, UUID, UUID)} — including the {@code 409
+     * AGENT_PRINCIPAL_NOT_BOUND} for an unbound principal, because "clear a flag that cannot exist"
+     * is a caller mistake rather than a no-op.
+     *
+     * @return the principal whose default flag was cleared, or {@code null} when it was not the default
+     */
+    @Transactional
+    public UUID clearWorkspaceDefaultAgent(String actorUserId, UUID workspaceId, UUID principalId) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        lockInstanceMutex();
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
+        requireWorkspaceMember(actorId, workspaceId);
+        requireWorkspaceAgentManagement(actorId, workspaceId);
+        AgentPrincipal principal = requireActivePrincipal(principalId);
+        requireBindingAuthority(actorId, principal);
+        WorkspaceAgent binding = workspaceAgentRepository
+                .findByIdForUpdate(new WorkspaceAgentId(principalId, workspaceId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT, "AGENT_PRINCIPAL_NOT_BOUND",
+                        "Agent principal is not bound to this workspace; bind it before clearing the default"));
+        if (!binding.isDefault()) {
+            return null;
+        }
+        workspaceAgentRepository.clearDefault(workspaceId);
+        auditLogger.recordDurableChange(actorId.toString(), workspaceId.toString(),
+                "workspace_agent_default_cleared", "agent_principal", principalId.toString(),
+                defaultDetail(principalId));
+        return principalId;
+    }
+
+    /** task-106: the workspace's default agent principal, or {@code null} when none is configured. */
+    @Transactional(readOnly = true)
+    public UUID workspaceDefaultAgentPrincipalId(UUID workspaceId) {
+        if (workspaceId == null) {
+            return null;
+        }
+        return workspaceAgentRepository.findByIdWorkspaceIdAndIsDefaultTrue(workspaceId)
+                .map(row -> row.getId().getPrincipalId())
+                .orElse(null);
+    }
+
+    /**
+     * task-106: can {@code principalId} be a Session's agent in this workspace right now — the row
+     * exists, is not disabled, and (when a workspace is given) still holds an active binding. The
+     * default-agent resolution chain uses it to skip stale configuration instead of failing the
+     * create (same "a default must never block creating a session" rule as WorkspacelessDefaultRoster).
+     */
+    @Transactional(readOnly = true)
+    public boolean isSessionAgentUsable(UUID workspaceId, UUID principalId) {
+        if (principalId == null) {
+            return false;
+        }
+        AgentPrincipal principal = agentPrincipalRepository.findById(principalId).orElse(null);
+        if (principal == null || principal.getDisabledAt() != null) {
+            return false;
+        }
+        return workspaceId == null
+                || workspaceAgentRepository.findById(new WorkspaceAgentId(principalId, workspaceId)).isPresent();
+    }
+
+    /** task-106: the durable-audit detail shape for default-flag changes (ids only, escaped). */
+    private static String defaultDetail(UUID principalId) {
+        return "principalId=" + AuditLogger.escapeField(principalId.toString());
     }
 
     /**
@@ -683,7 +806,7 @@ public class AgentPrincipalService {
                                 principal.getContextPolicy() == null
                                         ? null : principal.getContextPolicy().deepCopy(),
                                 rolesByPrincipal.getOrDefault(principal.getId(), List.of()),
-                                binding.getCapSource()))
+                                binding.getCapSource(), binding.isDefault()))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .forEach(view -> merged.put(view.principalId(), view));
@@ -736,7 +859,9 @@ public class AgentPrincipalService {
                 principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy(),
                 roleIds,
                 // no cap binding ⇒ no stored provenance; the view answers null (bound=false).
-                null);
+                null,
+                // task-106: an unbound row can never be the workspace default.
+                false);
     }
 
     /** PLAN-0629: one query per list call — workspace role bindings grouped by principal. */
@@ -1997,7 +2122,9 @@ public class AgentPrincipalService {
                                      // PLAN-0629: the workspace-scoped roles that authorize this row.
                                      java.util.List<UUID> roleIds,
                                      // D-1109: provenance of the frozen cap (null = no cap row).
-                                     String capSource) {}
+                                     String capSource,
+                                     // task-106: the workspace default for new sessions (V177).
+                                     boolean isDefault) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }
