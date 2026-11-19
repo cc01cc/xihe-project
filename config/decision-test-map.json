@@ -190,11 +190,12 @@
         },
         {
           "id": "D-1907/F-1",
-          "text": "默认档由纯中性 neutral（chroma 全 0）改冷中性 slate（hue≈248、chroma 0.006–0.02），并消除 main.css:154「中性冷白」与 chroma=0 的自相矛盾",
+          "text": "色板保真：默认档保持 shadcn 官方 neutral registry 逐键一致（chroma=0 合法），层次由阴影 + 边框表达；「中性冷白」表述作废（用户 2026-11-20 裁定「用阴影与边框」，不换色板）",
           "status": "covered",
           "file": "A03-xihe/packages/ui/src/styles/__tests__/tokenContrast.spec.ts",
-          "title": "底色 token 必须有可测到的冷色 chroma",
-          "assert": "冷色 chroma"
+          "title": "light 档：31 键与 shadcn neutral registry 一致",
+          "assert": "registry",
+          "note": "task-132 把原 C2「必须有冷色 chroma」改判为色板保真门（tokenContrast.spec.ts:505/:509：light 31 键/3 组有意偏离、dark 31 键/2 组有意偏离）；原「改冷中性 slate」条款由用户 2026-11-20 裁定作废"
         },
         {
           "id": "D-1907/F-2",
@@ -268,7 +269,7 @@
     },
     {
       "id": "D-1908",
-      "rev": 3,
+      "rev": 4,
       "title": "会话权限三档模型（对外单一选择器 + 继承链 + 原子/owner + 派生列）",
       "clauses": [
         {
@@ -301,6 +302,13 @@
           "text": "多主体正交：会话内生效 = 会话档 × run 的 agent_principal_id 档取严（现状无主体维度，DbPolicyContextProvider:86-101 仍「session 覆盖即放宽」短路）",
           "status": "pending",
           "card": "task-108"
+        },
+        {
+          "id": "D-1908/6",
+          "text": "UI↔CP 档位契约（rev4）：GET/PATCH /sessions/{id}/tier 返回 tier(view|workspace|full) + source(session|workspace|none) + workspaceTier + canConfigure + denyReason(viewer|not-owner|no-atom|null) + available[]；PATCH 单档语义、失败回滚且文案不含错误码；UI 六个 testid（session-tier-select/badge/readonly/unsupported/fallback/error），旧 session-policy-mode 在 task-109 落地后移除",
+          "status": "pending",
+          "card": "task-109",
+          "note": "task-123 已按此契约写先红 spec（features/workspace/chat/__tests__/sessionTierControls.spec.ts）；api.getSessionTier/setSessionTier 客户端在 src/composables/api.ts；CP 端 GET/PATCH 由 task-107/108"
         }
       ],
       "dsd": 1448
