@@ -1,6 +1,21 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import { useRoute } from "vue-router";
 import WorkspaceSecondaryNav from "../components/WorkspaceSecondaryNav.vue";
 import WorkspaceStatusBar from "../components/WorkspaceStatusBar.vue";
+
+/**
+ * task-118（D-1907 rev7）：**会话页不渲染工作区级导航带**。
+ *
+ * <p>会话页是工作台容器内部页（从会话列表进入，没有自己的导航入口），一条「会话 / 环境 / 任务 /
+ * 资源 / 成员 / 设置」的横带挂在它头顶，等于把「换页」摆在「换会话」的位置上。判据由路由 meta
+ * 声明（`workspaceSecondaryNav: false`），壳层只读结果——壳不按 `route.name` 判死，
+ * 以后新增容器内页只加一行 meta。</p>
+ *
+ * <p>注意：状态栏（含面包屑）**仍留在会话页**（D-1527），本卡只摘导航带。</p>
+ */
+const route = useRoute();
+const showSecondaryNav = computed(() => route.meta?.workspaceSecondaryNav !== false);
 
 /**
  * 工作区路由外壳（PLAN-0773 `M4-4` / `task-190`）：把一行导航放在**所有工作区子页之上**，
@@ -21,7 +36,7 @@ import WorkspaceStatusBar from "../components/WorkspaceStatusBar.vue";
 
 <template>
     <div data-testid="workspace-shell" class="flex h-full min-h-0 flex-col">
-        <WorkspaceSecondaryNav />
+        <WorkspaceSecondaryNav v-if="showSecondaryNav" />
         <div class="min-h-0 flex-1 overflow-y-auto">
             <RouterView />
         </div>

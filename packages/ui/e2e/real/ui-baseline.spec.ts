@@ -89,8 +89,12 @@ const COMPOSER_CENTER_BASELINE: Record<string, number> = {
     "1440x900": 70.3,
     "1600x900": 150.6,
 };
-/** ① 首带必须常驻顶部导航（带名集合随断点变化，故只钉首带，不硬编码整条带名序列） */
-const FIRST_CHROME_BAND_KEY = "workspace-secondary-nav";
+/** ① 首带必须是常驻 chrome 带。**task-118（D-1907 rev7）改了这里的口径**：会话页不再挂工作区级
+ *  导航带（`workspace-secondary-nav` 只出现在工作区自己的页面），会话页 y=0 起就是容器页签行
+ *  `workspace-container-tabs`。真机读数：`.tmp/xh/ui-gates/task-118/chrome-readings.json` —— 1920 会话页
+ *  y=0 页签行 32px，同一工作区 /members 页 y=0 仍是导航带 32px（⇒ 会话页少一条 32px 带）。
+ *  带名集合仍随断点变化，故只钉首带、不硬编码整条序列。 */
+const FIRST_CHROME_BAND_KEY = "workspace-container-tabs";
 /** ④ 同层焦点环上限（现状 border 1px + ring 2px 双层） */
 const FOCUS_RING_MAX_LAYERS = 1;
 /** ⑥ 左栏图标最小命中区（现状 28×28 恰好卡线，故比较用 <） */
@@ -826,8 +830,8 @@ async function runMatrix(
             )
             .toBeLessThanOrEqual(BAND_SCAN_TOLERANCE_PX);
 
-        // ① 首带必须是常驻顶部导航（task-98 ②）：窄断点会把 secondary-nav 换行成 workspace-nav-* 条目，
-        //    带名集合随断点变化 ⇒ 只钉首带，不硬编码整条带名序列。
+        // ① 首带必须是常驻 chrome 带（task-98 ② 的会话页口径由 task-118 改写）：会话页没有工作区级
+        //    导航带，首带 = 容器页签行；带名集合随断点变化 ⇒ 只钉首带，不硬编码整条带名序列。
         expect
             .soft(
                 layout.chromeBands[0]?.key,

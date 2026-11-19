@@ -38,6 +38,9 @@ vi.mock("vue-router", () => ({
             path: `/workspace/${WORKSPACE_ID}/environment`,
             params: { workspaceId: WORKSPACE_ID },
             query: {},
+            // task-118：壳按 **meta** 判「这条路由要不要工作区级导航带」，
+            // mock 不带 meta 就等于所有路由都当普通页 ⇒ 聊天页那条用例会假绿。
+            meta: routeState.routeName === "workspace-chat" ? { workspaceSecondaryNav: false } : {},
         }) as unknown as RouteLocationNormalizedLoaded,
     useRouter: () => ({
         resolve: (to: { name?: string; params?: Record<string, string> }) => ({
@@ -108,6 +111,21 @@ describe("WorkspaceShell 壳层（task-264 / S2a）", () => {
         const breadcrumb = wrapper.find('[data-testid="workspace-breadcrumb"]');
         expect(breadcrumb.findAll('[data-slot="breadcrumb-item"]').length).toBe(3);
         expect(breadcrumb.find('[data-slot="breadcrumb-page"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("task-118（D-1907 rev7）：会话页不渲染工作区级导航带，状态栏照旧", async () => {
+        // 聊天路由 = 工作台容器内部页。判据是「导航带整条不在」，不是「链接不可见」：
+        // 留一条空带仍然多占 32px（卡面要求会话页少一条 32px 带）。
+        routeState.routeName = "workspace-chat";
+        const wrapper = await mountShell();
+
+        expect(wrapper.find('[data-testid="workspace-shell"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-secondary-nav"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid^="workspace-nav-"]').length).toBe(0);
+
+        // 状态栏（含面包屑）不属于本卡：会话页仍要有当前页指示（D-1527）。
+        expect(wrapper.find('[data-testid="workspace-status-bar"]').exists()).toBe(true);
         wrapper.unmount();
     });
 

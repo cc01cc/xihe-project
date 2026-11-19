@@ -132,6 +132,11 @@ function mountWorkbench(
         sessionId: string | null;
         isMobile: boolean;
     }> = {},
+    // task-118：宿主探测走 `document.getElementById`（Teleport 目标必须真在 document 里），
+    // 不 attachTo 的话 jsdom 里探测恒 false ⇒ 六簇走原地分支，用例会红在"投没投进去"之外的地方。
+    // `realTeleport`：`src/tests/setup.ts:17-19` 把 Teleport 全局换成 `<div><slot /></div>`，
+    // 要验"真的投进宿主"必须逐次退掉这个 stub（VTU 支持 `Teleport: false`）。
+    mountOptions: { attachTo?: HTMLElement; realTeleport?: boolean } = {},
 ) {
     const wrapper = mount(WorkspaceWorkbench, {
         props: {
@@ -140,7 +145,11 @@ function mountWorkbench(
             isMobile: false,
             ...props,
         },
-        global: { plugins: [i18n], stubs },
+        global: {
+            plugins: [i18n],
+            stubs: mountOptions.realTeleport ? { ...stubs, Teleport: false } : stubs,
+        },
+        ...(mountOptions.attachTo ? { attachTo: mountOptions.attachTo } : {}),
     }) as VueWrapper;
     mountedWrappers.push(wrapper);
     return wrapper;
@@ -244,6 +253,31 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
                 .get('[data-testid="workspace-container-tabs"][data-container="right"]')
                 .exists(),
         ).toBe(true);
+    });
+
+    it("task-118（D-1907 rev7）：面板开关簇的宿主钉在主列容器页签行、不在右栏子树内", async () => {
+        // 为什么必须有这条：导航带在会话页被摘掉后，宿主若还挂在壳层 nav 里，
+        // 六簇会退回 `WorkspaceToolbar` 的原地分支（桌面 md:hidden）**静默消失** ——
+        // 单测里"点得到按钮"照样绿，因为原地分支也渲染同一份标记。
+        seedWideLayout();
+        // 两处都要显式指定：`src/tests/setup.ts:17-19` 把 Teleport 全局换成 `<div><slot /></div>`
+        // （要验"真的投进宿主"必须退掉它），而宿主探测读 `document`（不 attachTo 恒 false）。
+        const wrapper = mountWorkbench({}, { attachTo: document.body, realTeleport: true });
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const host = wrapper.get(
+            '[data-testid="workspace-container-tabs"][data-container="main"] #workspace-nav-actions',
+        );
+        expect(host.exists()).toBe(true);
+        // 右栏折叠后开关必须仍在 ⇒ 宿主不得落在右栏子树（D-1907 rev5 / §4.1）。
+        expect(wrapper.find('[data-container="right"] #workspace-nav-actions').exists()).toBe(
+            false,
+        );
+        // 六簇真的投进这个宿主（同一份标记，不是第二份）—— 计数 1 才同时证明
+        // "投进去了"与"原地分支没有并存"（v-if / v-else 只该有一份）。
+        expect(host.find('[data-testid="workspace-panel-actions"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid="workspace-panel-actions"]').length).toBe(1);
     });
 
     it("D4（task-94 S5）：<1800 首启就带 files 页签，不是「树不在这个版本里」", async () => {

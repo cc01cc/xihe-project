@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
@@ -47,14 +47,20 @@ const emit = defineEmits<{
 }>();
 
 /**
- * task-38 C1（DEV-011 §13.1）：顶栏 = `workspace-secondary-nav` 一条带，面板开关必须落在那条带里。
+ * task-38 C1（DEV-011 §13.1）：面板开关簇不待在工具带里，投进**宿主挂载点** `#workspace-nav-actions`。
  * 这六个按钮的状态与回调都归 workbench，**不上提契约**，改用 Vue 核心 `<Teleport>` 把同一份标记
- * 投进壳层 nav 行的挂载点 `#workspace-nav-actions`。挂载点不存在时（单测直接挂载本组件、或任何
- * 没有工作区壳的上下文）**留在原地渲染**，两条路径共用 `WorkspacePanelActions`，不复制第二份标记。
+ * 投出去。挂载点不存在时（单测直接挂载本组件、或任何没有工作台的上下文）**留在原地渲染**，
+ * 两条路径共用 `WorkspacePanelActions`，不复制第二份标记。
+ *
+ * <p>task-118：挂载点已从 `WorkspaceSecondaryNav` 的导航带迁到 `WorkspaceWorkbench` 主列页签行，
+ * 与 Toolbar **同一个模板**且排在 Toolbar 之后 ⇒ 就绪探测必须等一次 `nextTick`（不依赖「同一 patch
+ * 里兄弟节点先可见」这条隐含顺序）。**不用 `defer`**：`v-if="navActionsReady"` 已保证 Teleport 挂载
+ * 时目标存在；`defer` 反而让内容晚一帧插入，单测里就得把"等几拍"写进断言（task-118 实测）。</p>
  */
 const navActionsReady = ref(false);
 
-onMounted(() => {
+onMounted(async () => {
+    await nextTick();
     navActionsReady.value = document.getElementById("workspace-nav-actions") !== null;
 });
 
@@ -306,7 +312,8 @@ function overflowNav(navigate: () => void) {
 
         <!--
             task-38 C1（DEV-011 §13.1「顶栏单行」）：六个面板开关不再自成一带 —— 桌面投进
-            `workspace-secondary-nav` 右端的挂载点；挂载点不存在时留在原地（单测/无壳上下文）。
+            `#workspace-nav-actions` 宿主（task-118 起 = 主列容器页签行行尾）；挂载点不存在时
+            留在原地（单测 / 没有工作台的上下文）。目标存在性由 `v-if` 保证，不用 `defer`。
             本条工具带因此只剩移动态内容（files / newChat / ⋯ 溢出菜单，全部 md:hidden 元素），
             外层已加 `md:hidden` ⇒ 桌面不再成带。窄屏那三个溢出入口是**唯一页面入口**
             （task-217 C3 护栏），不许当重复面删掉。

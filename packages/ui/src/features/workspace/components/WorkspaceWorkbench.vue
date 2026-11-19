@@ -1061,6 +1061,23 @@ defineExpose({ openDockTab });
                                 >
                                     <Plus class="size-3.5" aria-hidden="true" />
                                 </button>
+                                <!--
+                                    task-118（D-1907 rev7）：**面板开关簇的宿主挂载点**。
+                                    它原来在 `WorkspaceSecondaryNav` 的 `#workspace-nav-actions`
+                                    （task-38 C1 把六簇从工具带投进那条带的右端）；会话页摘掉导航带后
+                                    那条带不存在，宿主必须跟着走，否则六簇退回原地分支（桌面 md:hidden）
+                                    ⇒ 桌面会话页六个面板开关整体消失。
+                                    为什么落这里：这是**主列的一级列头**，正是 D-1907 §4.1 给右栏开合图标
+                                    钉的位置（簇右侧接 `workspace-dock-toggle`），且右栏折叠后本行仍在。
+                                    顺序：`+` 紧贴页签右侧（task-97）→ 面板簇 → 将来的开合图标。
+                                    `id` / `data-testid` **保持原样不改名**：`WorkspaceToolbar` 用
+                                    `getElementById("workspace-nav-actions")` 定位，改名只是无收益漂移。
+                                -->
+                                <div
+                                    id="workspace-nav-actions"
+                                    data-testid="workspace-secondary-nav-actions"
+                                    class="flex shrink-0 items-center gap-1"
+                                />
                             </template>
                         </WorkspaceContainerTabs>
                         <slot name="center" />

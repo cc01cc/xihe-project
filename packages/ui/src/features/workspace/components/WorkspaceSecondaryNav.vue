@@ -59,15 +59,11 @@ const { items, active } = useWorkspaceNav();
             </li>
         </ul>
         <!--
-            task-38 C1（DEV-011 §13.1「顶栏单行」）：顶栏 = 这一条带，承载「页面导航 + 面板开关」。
-            面板开关簇原本在 WorkspaceToolbar 那条**内容区**工具带里（桌面 h-40，与 nav 分行），
-            由那边用 <Teleport> 搬进这个挂载点 —— props/emits/testid 一律不变，不为此上提
-            workbench 契约。判据的度量方式见 DEV-011 §13.1（getBoundingClientRect + 反例锚点）。
+            task-118（D-1907 rev7）：面板开关簇的挂载点 `#workspace-nav-actions` 已迁到
+            `WorkspaceWorkbench.vue` 主列容器页签行的 `#actions` 槽（一级列头右侧）。
+            原因：会话页摘掉本导航带后，若挂载点还在这里，`WorkspaceToolbar` 的就绪探测取不到宿主，
+            六簇会退回它自己的原地分支（桌面 `md:hidden`）⇒ 桌面会话页的六个面板开关整体消失。
+            本带从此只承载**页面导航**（task-38 C1 的另一半），不再有空挂载点。
         -->
-        <div
-            id="workspace-nav-actions"
-            data-testid="workspace-secondary-nav-actions"
-            class="ml-auto flex shrink-0 items-center gap-1"
-        />
     </nav>
 </template>

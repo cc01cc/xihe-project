@@ -1,0 +1,155 @@
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
+import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+
+/**
+ * task-118（D-1907 rev7 红线）：**会话页不挂工作区级导航带**。
+ *
+ * <p>为什么断言必须落在 e2e：这条改动的失败形态是「静默消失」——
+ * 挂载点 `#workspace-nav-actions` 若随导航带一起被摘掉，六面板开关会退回
+ * `WorkspaceToolbar` 的原地分支（`md:hidden`，桌面不可见），而单测里"点得到按钮"照样绿。
+ * 同理"会话页没有导航带"也不能只靠单元测试（路由 meta + 壳层 v-if 两处都可能被改回）。
+ *
+ * <p>断言口径（真机读数见 `.tmp/xh/ui-gates/task-118/chrome-readings.json`，2026-11-20 实测）：
+ * 会话页 y=0 起就是容器页签行（`workspace-container-tabs`），同一工作区的 `/members` 页
+ * y=0 仍是 32px 导航带（`workspace-secondary-nav`）⇒ 会话页比它**少一条 32px 带**。
+ */
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+const CHAT_PATH = `/workspace/${WORKSPACE_ID}/chat/session-1`;
+
+/** 与会话页同一套桩（沿用 viewport-matrix 的口径：config/provider/mcp/environment 全给显式桩）。 */
+async function setupFixtures(page: Page) {
+    await setupMockAuth(page);
+    await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Chrome Test" }] });
+    await page.addInitScript(() => {
+        localStorage.setItem("xihe-mock-filetree", JSON.stringify([]));
+    });
+    await page.route("**/api/v1/config/**", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) }),
+    );
+    await page.route("**/api/v1/provider-catalog", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ catalogRevision: "chrome", providers: [] }),
+        }),
+    );
+    await page.route("**/api/v1/provider-connections", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ connections: [] }),
+        }),
+    );
+    await page.route("**/api/v1/mcp", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                result: { content: [{ type: "text", text: JSON.stringify({ entries: [] }) }] },
+            }),
+        }),
+    );
+    await page.route(`**/api/v1/workspaces/${WORKSPACE_ID}/environment`, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                workspaceId: WORKSPACE_ID,
+                status: "ready",
+                storageBackend: "host_directory",
+                storageRef: WORKSPACE_ID,
+                executionSpec: {
+                    status: "assigned",
+                    generation: 1,
+                    sandboxSpecHash: "chrome-spec",
+                },
+                runtime: { status: "ready", deviceId: "chrome-device", lastHeartbeatAt: "now" },
+            }),
+        }),
+    );
+    // task-188 S2 / task-107：聊天列的两个只读端点（team_tasks 投影、权限档位）在 mock 夹具里一直没桩，
+    // 会话页因此固定两条 404，被 page-failures 门当「夹具缺陷」抓住（task-118 同期补齐）。
+    // 形状必须过 `api.ts` 的 normalize：team-tasks 少了 `tasks[]` 会抛错；tier 的枚举/布尔缺一个也抛。
+    await page.route("**/api/v1/sessions/*/team-tasks", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ tasks: [] }),
+        }),
+    );
+    await page.route("**/api/v1/sessions/*/tier", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                tier: "workspace",
+                source: "workspace",
+                workspaceTier: "workspace",
+                canConfigure: false,
+                denyReason: null,
+                available: ["view", "workspace", "full"],
+            }),
+        }),
+    );
+}
+
+test.describe("task-118：会话页不挂工作区级导航带", () => {
+    test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+
+    test("会话页 workspace-nav-* 计数为 0，且顶带首行是容器页签行", async ({ page }) => {
+        await setupFixtures(page);
+        await page.goto(CHAT_PATH);
+
+        // ① 导航带本体不渲染：整族 testid 一个都不许出现（`workspace-nav-actions` 已迁走，不在这族里）。
+        await expect(page.getByTestId("workspace-secondary-nav")).toHaveCount(0);
+        await expect(page.locator('[data-testid^="workspace-nav-"]')).toHaveCount(0);
+        // 反证：同一个工作区的成员页仍有导航带（否则"0"可能只是页面没加载完）。
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`);
+        await expect(page.getByTestId("workspace-secondary-nav")).toBeVisible();
+        await expect(page.locator('[data-testid^="workspace-nav-"]').first()).toBeVisible();
+    });
+
+    test("会话页 y=0 是容器页签行（少一条 32px 带），面板开关簇仍在且不落右栏", async ({
+        page,
+    }) => {
+        await setupFixtures(page);
+        await page.goto(CHAT_PATH);
+
+        const mainRow = page.locator(
+            '[data-testid="workspace-container-tabs"][data-container="main"]',
+        );
+        await expect(mainRow).toBeVisible();
+        const box = await mainRow.boundingBox();
+        expect(box, "容器页签行必须可见").not.toBeNull();
+        // 会话页顶带少一条 32px 带 ⇒ 页签行贴顶。改回（导航带回来）时这里读到 32 ⇒ 红。
+        expect(Math.abs((box?.y ?? Number.NaN) - 0)).toBeLessThanOrEqual(1);
+        expect(Math.round(box?.height ?? 0)).toBe(32);
+
+        // ② 六面板开关簇必须仍渲染 **且** 落在页签行行尾的宿主里（摘带时最容易漏的一条）。
+        await expect(page.getByTestId("workspace-panel-actions")).toHaveCount(1);
+        await expect(
+            mainRow.locator('#workspace-nav-actions [data-testid="workspace-panel-actions"]'),
+        ).toHaveCount(1);
+
+        // ③ 会话设置入口只走聊天列：右栏折叠/不在时它也必须可读，且不在右栏子树里。
+        await expect(page.getByTestId("session-settings")).toHaveCount(1);
+        await expect(
+            page.locator('[data-container="right"] [data-testid="session-settings"]'),
+        ).toHaveCount(0);
+    });
+
+    test("工作区自己的页面入口不变：/members 与 /settings 均可达（深链合法）", async ({ page }) => {
+        await setupFixtures(page);
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`);
+        // 导航项来自路由表（useWorkspaceNav），本卡只保证导航带仍在、两个入口仍在。
+        const navItems = page.locator('[data-testid^="workspace-nav-"]');
+        await expect(navItems.first()).toBeVisible();
+        expect(await navItems.count()).toBeGreaterThanOrEqual(6);
+        await expect(page.getByTestId("workspace-nav-settings")).toBeVisible();
+        await page.getByTestId("workspace-nav-settings").click();
+        await expect(page).toHaveURL(new RegExp(`/workspace/${WORKSPACE_ID}/settings`));
+    });
+});
