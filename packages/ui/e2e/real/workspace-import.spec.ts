@@ -7,6 +7,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
+import { clickSidebarActionMenuItem } from "./helpers/sidebar-menu";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -89,7 +90,8 @@ test.describe("@host Workspace import", () => {
         options: { read?: boolean } = {},
     ) {
         await page.goto(`/workspace/${user.wsId}`, { waitUntil: "load" });
-        await page.getByTestId("sidebar-import-source").click();
+        // task-149：菜单项在 DropdownMenuContent 内，未展开时不在 DOM ⇒ 必须先展开区头菜单。
+        await clickSidebarActionMenuItem(page, "sidebar-import-source");
         const dialog = page.getByRole("dialog");
         await expect(dialog).toBeVisible();
         await dialog.getByPlaceholder("Runtime 可访问的目录路径").fill(source);
@@ -202,7 +204,8 @@ test.describe("@host Workspace import", () => {
 
         // Disconnect (reload) mid-import; the durable record must restore the in-flight import.
         await page.reload({ waitUntil: "load" });
-        await page.getByTestId("sidebar-import-source").click();
+        // task-149：reload 后菜单是关的，同样要先展开区头菜单再点菜单项。
+        await clickSidebarActionMenuItem(page, "sidebar-import-source");
         await expect(page.getByTestId("workspace-import-recovered")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

@@ -122,6 +122,16 @@ const DOCK_TOGGLE_TESTID = "workspace-dock-toggle";
 const DOCK_TOGGLE_LEGACY_TESTID = "dock-open";
 /** E1 区头动作簇最小命中区（D-1907 C：动作簇 ≥32×32；恒常动作下限仍是 HIT_MIN_PX = 28） */
 const ACTION_CLUSTER_MIN_PX = 32;
+/**
+ * ⑥ **浮层菜单行**（`role=menuitem`）命中区下限（task-149，Lead 2026-11-20 裁定）。
+ *
+ * <p><b>为什么不套上面那两条</b>：`HIT_MIN_PX` / `ACTION_CLUSTER_MIN_PX` 是**常驻 chrome 的
+ * 可点面积门**（防图标退化成 1×1 点不到）；下拉菜单行不是常驻动作，套同一阈值测的是另一件事
+ * （触摸目标尺寸），本项目没有该 D 级口径 —— shadcn/reka 菜单行默认行高 ~28px，真机实测
+ * 27.7px 属 border-box 级差，不是产品缺口。20px = 鼠标可稳定命中的下限，120px 保证不是窄条。
+ */
+const MENU_ROW_MIN_HEIGHT_PX = 20;
+const MENU_ROW_MIN_WIDTH_PX = 120;
 /** A2 带层扫描容差：Σ(chromeBands.h) 与 chromeHeight 之差超此值即视为扫描被截断 */
 const BAND_SCAN_TOLERANCE_PX = 1;
 
@@ -1247,18 +1257,86 @@ async function runMatrix(
         //    E4① 会话区头、E4② 会话/工作区次级动作常驻入口。
         //    F-6：旧「新建会话与搜索框纵向不重叠」立论已撤（D-1236/task-373 起该键就是两项菜单触发器），删除。
         //    可见性一律用 count/isVisible 判（F-7：不按 rect 猜）。
-        const { newChat, addWs } = layout.sidebar;
-        // task-120 F-8：Playwright 未配 use.actionTimeout（playwright.config.ts），boundingBox() 对 0 匹配
-        // 元素会无限等待且 .catch() 永不触发（实测 DEBUG=pw:api 卡死到 test.slow 后 180s 被杀）⇒ 先 count 再取 box。
-        // 注意：sidebar-import-source 在 Sidebar.vue:284-297 的 DropdownMenuContent 内，菜单未展开时不在 DOM，
-        // 这里按「取不到 ⇒ null」保留原容错语义（与改动前一致，不新增红）。
-        const importSource = page.locator('[data-testid="sidebar-import-source"]');
-        const importSourceBox =
-            (await importSource.count()) > 0 ? await importSource.first().boundingBox() : null;
+        const { newChat } = layout.sidebar;
+        // task-149（取代 task-120 F-8 的 count 兜底）：sidebar-new-workspace（Sidebar.vue:275）是区头**恒常**
+        // 触发器；它的两个菜单项 sidebar-add-workspace（:285）/ sidebar-import-source（:292）在
+        // DropdownMenuContent（:283）内，菜单未展开时**不在 DOM** ⇒ 旧写法按当前 DOM 取值结构性永远取不到
+        // （add-workspace 永久假红、import-source 空覆盖）。现在：展开菜单 → 量两项 → 立刻关闭，
+        // 并断言关闭后菜单项已离开 DOM，不留开着的弹层污染后续断言。
+        const trigger = page.locator('[data-testid="sidebar-new-workspace"]');
+        const triggerCount = await trigger.count();
+        expect
+            .soft(
+                triggerCount,
+                `${tag} ⑥未找到 [data-testid=sidebar-new-workspace]（区头恒常动作触发器，Sidebar.vue:275）`,
+            )
+            .toBe(1);
+        const triggerBox = triggerCount > 0 ? await trigger.first().boundingBox() : null;
         expect.soft(newChat, `${tag} ⑥未找到 [data-testid=sidebar-new-chat]`).not.toBeNull();
-        expect.soft(addWs, `${tag} ⑥未找到 [data-testid=sidebar-add-workspace]`).not.toBeNull();
 
-        // E1a：恒常动作下限 28×28（sidebar-new-chat / sidebar-import-source）
+        // E1 / E1a：展开区头动作菜单后量 menu 项命中区（命中区 ≥32×32，恒常下限 28×28），断完即关。
+        const menuItem = (testId: string) => page.locator(`[data-testid="${testId}"]`);
+        let addWsBox: { width: number; height: number } | null = null;
+        let importSourceBox: { width: number; height: number } | null = null;
+        let addWsEnabled = false;
+        let importSourceEnabled = false;
+        if (triggerBox) {
+            await trigger
+                .first()
+                .click({ timeout: 5000 })
+                .catch(() => {});
+            await menuItem("sidebar-add-workspace")
+                .first()
+                .waitFor({ state: "visible", timeout: 5000 })
+                .catch(() => {});
+            addWsBox = await menuItem("sidebar-add-workspace")
+                .first()
+                .boundingBox()
+                .catch(() => null);
+            importSourceBox = await menuItem("sidebar-import-source")
+                .first()
+                .boundingBox()
+                .catch(() => null);
+            addWsEnabled = await menuItem("sidebar-add-workspace")
+                .first()
+                .isEnabled()
+                .catch(() => false);
+            importSourceEnabled = await menuItem("sidebar-import-source")
+                .first()
+                .isEnabled()
+                .catch(() => false);
+            expect
+                .soft(
+                    { addWsBox, importSourceBox: importSourceBox !== null },
+                    `${tag} ⑥E1 展开 sidebar-new-workspace 菜单后仍取不到 sidebar-add-workspace / sidebar-import-source（菜单内容未渲染，属空覆盖 ⇒ 必须红）`,
+                )
+                .toEqual({ addWsBox: expect.anything(), importSourceBox: true });
+            await page.keyboard.press("Escape").catch(() => {});
+            await menuItem("sidebar-add-workspace")
+                .first()
+                .waitFor({ state: "detached", timeout: 5000 })
+                .catch(() => {});
+            const menuStillOpen = await menuItem("sidebar-add-workspace").count();
+            expect
+                .soft(
+                    menuStillOpen,
+                    `${tag} ⑥E1 区头动作菜单未关闭（实测菜单项计数 ${menuStillOpen}，阈值 0：开着的弹层会污染后续断言）`,
+                )
+                .toBe(0);
+        }
+
+        // ── ⑥ 判定表（task-149，Lead 2026-11-20 裁定；类别 → 阈值 → 为什么）────────────────────────
+        // 类别              | 例子                                            | 阈值
+        // 常驻动作（chrome） | sidebar-new-chat / sidebar-new-workspace        | ≥28×28（E1a）；
+        //                   |                                                 | 区头动作簇 ≥32×32（E1，D-1907 C）
+        // 浮层菜单行         | sidebar-add-workspace / sidebar-import-source    | 可见 + 可用 + 高 ≥20px + 宽 ≥120px
+        //
+        // 为什么按类分开：28/32 是**常驻 chrome 的可点面积门**，防的是「图标退化成点不到」；下拉菜单行不是
+        // 常驻动作，套同一阈值测的是另一件事（触摸目标尺寸），而本项目没有该 D 级口径 —— 菜单行 =
+        // DropdownMenuContent（Sidebar.vue:283，class="w-56"）里的 DropdownMenuItem，shadcn/reka 默认
+        // 行高 ~28px，真机实测 27.7px 属 border-box 级差。20px = 鼠标可稳定命中下限，120px 防窄条。
+        // 菜单项在菜单未展开时不在 DOM（见上方展开/关闭流程），这里量的都是「真展开后」的盒子。
+        // E1a：常驻动作下限 28×28（sidebar-new-chat）
         if (newChat) {
             const newChatMin = Math.min(newChat.w, newChat.h);
             expect
@@ -1268,30 +1346,44 @@ async function runMatrix(
                 )
                 .toBeGreaterThanOrEqual(HIT_MIN_PX);
         }
-        if (importSourceBox) {
-            const importMin = Math.min(importSourceBox.width, importSourceBox.height);
+        // E1（浮层菜单行口径，见判定表）：可见 + 可用 + 高 ≥20 + 宽 ≥120 —— **不再套** 28/32。
+        // 这三项原来套的是常驻动作的 28/32，且因旧写法取不到元素而**从未真正执行**（空覆盖）；task-149
+        // 修好展开流程后它们首次执行，暴露的是「27.7px < 28」这种跨类误判，故按 Lead 裁定改成按类判定。
+        const menuRows = [
+            {
+                testId: "sidebar-add-workspace",
+                label: "新建工作区",
+                box: addWsBox,
+                enabled: addWsEnabled,
+            },
+            {
+                testId: "sidebar-import-source",
+                label: "导入源",
+                box: importSourceBox,
+                enabled: importSourceEnabled,
+            },
+        ];
+        for (const row of menuRows) {
+            const rowHeight = row.box?.height ?? 0;
+            const rowWidth = row.box?.width ?? 0;
             expect
                 .soft(
-                    importMin,
-                    `${tag} ⑥E1a 导入源命中区 ${fmt(importSourceBox.width)}×${fmt(importSourceBox.height)}（实测 min=${fmt(importMin)}，阈值 ≥${HIT_MIN_PX}×${HIT_MIN_PX} 归属卡 task-73 E1a）`,
+                    { visible: row.box !== null, enabled: row.enabled },
+                    `${tag} ⑥E1 浮层菜单行 ${row.testId} 不可用（可见=${row.box !== null}，enabled=${row.enabled}；口径：浮层行须同时可见且可用）`,
                 )
-                .toBeGreaterThanOrEqual(HIT_MIN_PX);
-            // E1：区头动作簇 ≥32×32（D-1907 C）
+                .toEqual({ visible: true, enabled: true });
             expect
                 .soft(
-                    importMin,
-                    `${tag} ⑥E1 导入源命中区 ${fmt(importSourceBox.width)}×${fmt(importSourceBox.height)}（实测 min=${fmt(importMin)}，阈值 ≥${ACTION_CLUSTER_MIN_PX}×${ACTION_CLUSTER_MIN_PX}，恒常下限 ${HIT_MIN_PX} 归属卡 task-73 E1）`,
+                    rowHeight,
+                    `${tag} ⑥E1 浮层菜单行 ${row.testId}（${row.label}）高 ${fmt(rowHeight)}px（阈值 ≥${MENU_ROW_MIN_HEIGHT_PX}px：鼠标可稳定命中的下限；**不套**常驻动作的 ${HIT_MIN_PX}/${ACTION_CLUSTER_MIN_PX}，见判定表）`,
                 )
-                .toBeGreaterThanOrEqual(ACTION_CLUSTER_MIN_PX);
-        }
-        if (addWs) {
-            const addWsMin = Math.min(addWs.w, addWs.h);
+                .toBeGreaterThanOrEqual(MENU_ROW_MIN_HEIGHT_PX);
             expect
                 .soft(
-                    addWsMin,
-                    `${tag} ⑥E1 新建工作区命中区 ${fmtRect(addWs)}（实测 min=${fmt(addWsMin)}，阈值 ≥${ACTION_CLUSTER_MIN_PX}×${ACTION_CLUSTER_MIN_PX}，恒常下限 ${HIT_MIN_PX} 归属卡 task-73 E1）`,
+                    rowWidth,
+                    `${tag} ⑥E1 浮层菜单行 ${row.testId}（${row.label}）宽 ${fmt(rowWidth)}px（阈值 ≥${MENU_ROW_MIN_WIDTH_PX}px：菜单行不得退化成窄条）`,
                 )
-                .toBeGreaterThanOrEqual(ACTION_CLUSTER_MIN_PX);
+                .toBeGreaterThanOrEqual(MENU_ROW_MIN_WIDTH_PX);
         }
 
         // E2'：新建会话必须在首个会话行之上（Sidebar.vue:279-337 现状仍在搜索行 ⇒ 改前必红）

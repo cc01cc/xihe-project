@@ -34,6 +34,12 @@ const baseEnv = Object.fromEntries(
     Object.entries(process.env).filter(([, value]) => value !== undefined),
 ) as Record<string, string>;
 
+// task-149：**有限 actionTimeout**（本卡唯一允许的配置改动）。缺省不设时 locator 动作对 0 匹配元素
+// 会**无限等待**：ui-baseline.spec.ts 的 ⑥ 曾因此在 `boundingBox()` 上挂到 test.slow 的 180s 才被杀，
+// 而 `.catch(() => null)` 永不触发（Playwright 的 locator 等待无自带上限，见实测 DEBUG=pw:api 日志
+// internal/A03-xihe/evidence/2026-11-20-task120-a2-gap/）。5000ms 大于页面 settle/帧门窗口，又远小于
+// 测试超时 ⇒ 同型问题会**快速失败**而不是假死。
+const ACTION_TIMEOUT_MS = 5000;
 const browserChannel = process.env.XIHE_E2E_BROWSER_CHANNEL;
 const viewport = (() => {
     const match = /^(\d+)x(\d+)$/.exec(process.env.XIHE_E2E_VIEWPORT ?? "");
@@ -105,6 +111,7 @@ export default defineConfig({
     retries: 1,
     use: {
         baseURL: `http://localhost:${UI_PORT}`,
+        actionTimeout: ACTION_TIMEOUT_MS,
         headless: !headed,
         ...(browserChannel ? { channel: browserChannel } : {}),
         viewport,
