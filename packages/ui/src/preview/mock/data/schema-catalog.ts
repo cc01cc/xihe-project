@@ -72,7 +72,8 @@ const CATALOG_JSON = `{
         },
         {
             "key": "runMaxTokens",
-            "type": "integer"
+            "type": "integer",
+            "description": "Cumulative run token budget; default 500000 (~73 LLM calls at the task-91 measured ~6.8k/call). 0 disables this dimension."
         },
         {
             "key": "runMaxTurnsCeiling",
@@ -84,7 +85,17 @@ const CATALOG_JSON = `{
         },
         {
             "key": "runMaxTokensCeiling",
-            "type": "integer"
+            "type": "integer",
+            "description": "Instance-only clamp for runMaxTokens; default 1000000 and must stay above the value, otherwise min(value, ceiling) silently caps it."
+        },
+        {
+            "key": "budgetAccounting",
+            "type": "enum",
+            "options": [
+                "growth",
+                "cumulative"
+            ],
+            "description": "Budget accounting mode: growth charges (input - cache_read) + output per call (default); cumulative keeps the pre-B input + output rule as a rollback switch. A provider that reports no cache counter is always charged in full (fail-open)."
         },
         {
             "key": "loopRepeatWarn",
