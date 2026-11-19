@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,7 +23,28 @@ from xihe_agent.llm.transport_metrics import TransportMetricsCollector
 
 # PLAN-0416 T2.3: provider counters surfaced per API Type. A counter the
 # provider did not return is *unknown* — never a synthesized 0.
-NATIVE_USAGE_COUNTERS: frozenset[str] = frozenset({"input_tokens", "output_tokens", "cache_read_input_tokens"})
+NATIVE_USAGE_COUNTERS: frozenset[str] = frozenset(
+    {"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_write_input_tokens"}
+)
+
+
+@dataclass
+class AttemptAudit:
+    """task-103: the verbatim bytes and timings of one dispatch attempt.
+
+    Filled by ``ApiSender.stream`` and read by the adapter after the attempt ends, so the
+    per-step provider event can carry the exact bytes exchanged. Nothing here is derived
+    from a re-rendered body or a parsed response: the request bytes are the serialized
+    payload handed to the transport, the response bytes are the raw wire bytes.
+    """
+
+    request_bytes: bytes | None = None
+    response_bytes: bytes | None = None
+    error_bytes: bytes | None = None
+    http_status: int | None = None
+    streamed: bool = False
+    ttft_ms: int | None = None
+    total_ms: int | None = None
 
 
 @dataclass
@@ -195,6 +218,7 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
                 ("input_tokens", "input_tokens"),
                 ("output_tokens", "output_tokens"),
                 ("cache_read_input_tokens", "cache_read_input_tokens"),
+                ("cache_write_input_tokens", "cache_creation_input_tokens"),
             ),
         )
         result.usage = _langchain_usage(result.provider_usage)
@@ -446,6 +470,33 @@ def vision_route_supported(api_type_id: str, vision_supported: bool) -> bool:
     return vision_supported and api_type_id in VISION_RENDERERS
 
 
+async def _recording_lines(
+    response: httpx.Response, audit: AttemptAudit, started: float
+) -> AsyncIterator[str]:
+    """Yield SSE lines while recording the exact response bytes (task-103).
+
+    Line semantics match httpx's ``aiter_lines`` (split on LF, strip a trailing CR) so the
+    SSE state machine is unchanged; the difference is that every raw chunk is also kept,
+    giving the audit the byte-for-byte body the provider sent.
+    """
+    pending = b""
+    raw = bytearray()
+    try:
+        async for chunk in response.aiter_bytes():
+            if audit.ttft_ms is None:
+                audit.ttft_ms = int((time.monotonic() - started) * 1000)
+            raw += chunk
+            pending += chunk
+            while True:
+                index = pending.find(b"\n")
+                if index < 0:
+                    break
+                line, pending = pending[:index], pending[index + 1 :]
+                yield line.rstrip(b"\r").decode("utf-8", errors="replace")
+    finally:
+        audit.response_bytes = bytes(raw)
+
+
 class ApiSender:
     def __init__(
         self,
@@ -459,6 +510,9 @@ class ApiSender:
         self.request_id = request_id
         self.timeout = timeout
         self._collector = collector
+        # task-103: the last attempt's verbatim capture, read by the adapter once the
+        # attempt ends (never shared across attempts - a new one is created per call).
+        self.audit: AttemptAudit | None = None
         # PLAN-0591: fail-closed capability gate. Missing key = unsupported.
         if "toolsSupported" not in grant:
             logger.warning(
@@ -511,6 +565,8 @@ class ApiSender:
 
     async def stream(self, body: dict[str, Any]) -> AsyncIterator[tuple[str, str, NativeResponse | None]]:
         validate_body(body, self.api_type)
+        # task-103: a rejected attempt must not leave the previous attempt's capture visible.
+        self.audit = None
         # PLAN-0591: capability gate BEFORE the transport attempt opens, so a
         # rejected request never counts as an outbound attempt and never reaches
         # the provider.
@@ -525,14 +581,26 @@ class ApiSender:
             raise ApiRequestError("LLM_VISION_ROUTE_UNSUPPORTED")
         # PLAN-0508: one bounded progress/terminal attempt per HTTP dispatch.
         probe = self._collector.begin_attempt() if self._collector is not None else None
+        # task-103: capture the exact request bytes. The body is serialized here (the same
+        # encoding httpx uses for json=) and sent as content, so the recorded bytes are
+        # provably the bytes on the wire, not a second possibly-different render.
+        audit = AttemptAudit()
+        self.audit = audit
+        started = time.monotonic()
+        payload = json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        audit.request_bytes = payload
         # No retry loop, redirect replay or SDK retry. Total deadline covers reading
         # the entire response, independently of HTTPX's per-hop timeout.
         try:
             async with asyncio.timeout(self.timeout), httpx.AsyncClient(follow_redirects=False) as client:  # noqa: SIM117 -- client owns nested streamed response
                 async with client.stream(
-                    "POST", self.url, headers=self.headers, json=body, timeout=self.timeout
+                    "POST", self.url, headers=self.headers, content=payload, timeout=self.timeout
                 ) as response:
+                    audit.http_status = response.status_code
                     if not 200 <= response.status_code < 300:
+                        # task-103: the provider's original error body belongs in the
+                        # record, so read it before raising instead of discarding it.
+                        audit.error_bytes = await response.aread()
                         code = (
                             "LLM_CREDENTIALS_INVALID"
                             if response.status_code in {401, 403}
@@ -543,6 +611,8 @@ class ApiSender:
                         raise ApiRequestError(code, 502)
                     if not body.get("stream", False):
                         raw = await response.aread()
+                        audit.streamed = False
+                        audit.response_bytes = raw
                         try:
                             result = parse_response(strict_json(raw.decode("utf-8")), self.api_type)
                         except ApiRequestError as exc:
@@ -558,10 +628,11 @@ class ApiSender:
                         return
                     if "text/event-stream" not in response.headers.get("content-type", ""):
                         raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
+                    audit.streamed = True
                     parser = StreamParser(self.api_type)
                     event = ""
                     data: list[str] = []
-                    async for line in response.aiter_lines():
+                    async for line in _recording_lines(response, audit, started):
                         if line == "":
                             if data:
                                 text, reasoning = parser.feed(event, "\n".join(data))
@@ -610,6 +681,7 @@ class ApiSender:
                 probe.failed(exc)
             raise
         finally:
+            audit.total_ms = int((time.monotonic() - started) * 1000)
             if probe is not None:
                 probe.close()
 

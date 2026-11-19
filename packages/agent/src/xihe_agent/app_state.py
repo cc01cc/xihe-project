@@ -880,6 +880,36 @@ def _resolve_provider_fingerprint_enabled(
     return True
 
 
+# task-103: verbatim provider audit tier. full = bodies stored, metadata = hashes only,
+# off = fingerprint only. Fail-open: unknown values keep the default (full) with a warning.
+_PROVIDER_AUDIT_KEY = "providerAudit"
+
+
+def _resolve_provider_audit_tier(
+    snapshot: RunConfigSnapshot,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    workspace_overrides: dict[str, dict[str, str]] | None = None,
+) -> str:
+    """Effective task-103 audit tier for this run (missing/unrecognized -> full)."""
+    from xihe_agent.llm.provider_audit import DEFAULT_AUDIT_TIER, normalize_tier
+
+    entries = snapshot.merge("agent-runtime", user_overrides, workspace_overrides)
+    raw = entries.get(_PROVIDER_AUDIT_KEY)
+    if raw is None or not raw.strip():
+        return DEFAULT_AUDIT_TIER
+    tier = normalize_tier(raw)
+    if tier == DEFAULT_AUDIT_TIER:
+        raw_tier = raw.strip().lower()
+        known = raw_tier in ("full", "metadata", "off")
+        if not known:
+            logger.warning(
+                "Ignoring invalid {} config value {!r} (keeping {})",
+                _PROVIDER_AUDIT_KEY,
+                raw,
+                DEFAULT_AUDIT_TIER,
+            )
+    return tier
+
 def _resolve_run_budget(
     snapshot: RunConfigSnapshot,
     user_overrides: dict[str, dict[str, str]] | None = None,

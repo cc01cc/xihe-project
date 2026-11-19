@@ -7044,6 +7044,14 @@ components:
             - {type: 'null'}
         request:
           oneOf: [{ $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }, {type: 'null'}]
+        steps:
+          type: array
+          description: |
+            task-103 (D-1869①): every captured provider step of this run, in provider order. The
+            request block above stays the first step's (v1 shape); `steps` is what makes a retry
+            countable — attempts = steps.length, retries = steps.length - 1. Absent when no row
+            exists; body content itself is not echoed (the durable row keeps the verbatim bytes).
+          items: { $ref: '#/components/schemas/ProviderRequestFingerprintStep' }
     ProviderRequestFingerprintDocument:
       type: object
       description: |
@@ -7099,6 +7107,52 @@ components:
         systemSources:
           type: object
           description: 'Source summary (template id/version, slot fill state, component counts).'
+    ProviderRequestFingerprintStep:
+      type: object
+      description: |
+        task-103: one provider step record. The durable row keeps the request/response/error bytes
+        VERBATIM (user ruling 2026-11-19, DEV-004 6.5b: no redaction, no rewriting); this view
+        exposes the sha256 + byte count of those bytes, never the bytes themselves.
+      required: [providerStep, request, audit]
+      properties:
+        providerStep: { type: integer, minimum: 1 }
+        request: { $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }
+        audit: { $ref: '#/components/schemas/ProviderRequestFingerprintAudit' }
+    ProviderRequestFingerprintAudit:
+      type: object
+      description: |
+        Attempt facts measured by the Agent for this step. Every nullable field is null when the
+        provider did not report it — NULL is 'not reported', never 0 (0 would poison averages and
+        would claim a cache hit that did not happen).
+      required: [tier, streamed]
+      properties:
+        tier:
+          type: string
+          enum: [full, metadata, off]
+          description: |
+            `full` keeps the verbatim bytes in the row; `metadata` keeps sha256/byte counts only;
+            `off` keeps no body at all (body columns NULL, never 0 and never an empty string).
+        httpStatus: { type: [integer, 'null'], description: 'Provider HTTP status of the attempt.' }
+        streamed: { type: [boolean, 'null'] }
+        finishReason:
+          type: [string, 'null']
+          description: 'Provider-reported finish/stop reason; null when it reported none.'
+        ttftMs: { type: [integer, 'null'], description: 'Time to first byte, milliseconds.' }
+        totalMs: { type: [integer, 'null'], description: 'Attempt wall time measured by the Agent.' }
+        requestSha256: { type: [string, 'null'], description: 'sha256 of the stored request bytes.' }
+        requestBytes: { type: [integer, 'null'], format: int64 }
+        responseSha256: { type: [string, 'null'], description: 'sha256 of the stored response bytes/SSE stream.' }
+        responseBytes: { type: [integer, 'null'], format: int64 }
+        errorSha256: { type: [string, 'null'], description: 'sha256 of the stored provider error body.' }
+        errorBytes: { type: [integer, 'null'], format: int64 }
+        cacheReadInputTokens: { type: [integer, 'null'], format: int64, description: 'Cache hit tokens; null when the provider reported none.' }
+        cacheWriteInputTokens: { type: [integer, 'null'], format: int64 }
+        requestParams:
+          type: [object, 'null']
+          description: 'Parameter values as sent (model/stream/max_tokens/...); null under tier=off.'
+        toolSurface:
+          type: [object, 'null']
+          description: 'Rendered tool surface hash + count; null under tier=off.'
     ProviderRequestFingerprintDiffView:
       type: object
       required: [againstRunId, runId, status]

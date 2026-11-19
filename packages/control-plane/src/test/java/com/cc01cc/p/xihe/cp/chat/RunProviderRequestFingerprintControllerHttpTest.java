@@ -16,7 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -97,6 +97,15 @@ class RunProviderRequestFingerprintControllerHttpTest {
         row.setRoleHistogram(histogram);
         row.setSystemSources(objectMapper.createObjectNode());
         row.setFingerprint(document);
+        // task-103: the step row also carries the attempt facts; bodies stay in the row, only
+        // sha256/byte counts are echoed by the read view.
+        row.setTier("full");
+        row.setHttpStatus(200);
+        row.setStreamed(true);
+        row.setRequestSha256("f".repeat(64));
+        row.setRequestBytes(652L);
+        row.setCacheReadInputTokens(7L);
+        row.setProviderAudit(objectMapper.createObjectNode().put("tier", "full"));
         return row;
     }
 
@@ -142,7 +151,7 @@ class RunProviderRequestFingerprintControllerHttpTest {
         ChatRun ownedRun = run(RUN_ID, "session-1");
         when(readService.requireOwnedRun(any(), eq(USER), eq(WS))).thenReturn(ownedRun);
         when(sessionService.requireCurrent(anyString(), eq(USER), eq(WS))).thenReturn(mock(Session.class));
-        when(repository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.empty());
+        when(repository.findByRunIdOrderByProviderStepAsc(UUID.fromString(RUN_ID))).thenReturn(List.of());
 
         mvc.perform(get(PATH, RUN_ID))
                 .andExpect(status().isOk())
@@ -157,7 +166,7 @@ class RunProviderRequestFingerprintControllerHttpTest {
         ChatRun ownedRun = run(RUN_ID, "session-1");
         when(readService.requireOwnedRun(any(), eq(USER), eq(WS))).thenReturn(ownedRun);
         when(sessionService.requireCurrent(anyString(), eq(USER), eq(WS))).thenReturn(mock(Session.class));
-        when(repository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(row()));
+        when(repository.findByRunIdOrderByProviderStepAsc(UUID.fromString(RUN_ID))).thenReturn(List.of(row()));
 
         mvc.perform(get(PATH, RUN_ID))
                 .andExpect(status().isOk())
@@ -165,7 +174,12 @@ class RunProviderRequestFingerprintControllerHttpTest {
                 .andExpect(jsonPath("$.fingerprint.algo").value("sha256"))
                 .andExpect(jsonPath("$.fingerprint.layers.history.count").value(3))
                 .andExpect(jsonPath("$.request.model").value("openai/gpt-5"))
-                .andExpect(jsonPath("$.request.messageCount").value(5));
+                .andExpect(jsonPath("$.request.messageCount").value(5))
+                .andExpect(jsonPath("$.steps.length()").value(1))
+                .andExpect(jsonPath("$.steps[0].providerStep").value(1))
+                .andExpect(jsonPath("$.steps[0].audit.tier").value("full"))
+                .andExpect(jsonPath("$.steps[0].audit.requestBytes").value(652))
+                .andExpect(jsonPath("$.steps[0].audit.cacheReadInputTokens").value(7));
     }
 
     @Test
@@ -175,9 +189,10 @@ class RunProviderRequestFingerprintControllerHttpTest {
         when(readService.requireOwnedRun(any(), eq(USER), eq(WS)))
                 .thenReturn(currentRun, baselineRun);
         when(sessionService.requireCurrent(anyString(), eq(USER), eq(WS))).thenReturn(mock(Session.class));
-        when(repository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(row()));
-        when(repository.findById(UUID.fromString(AGAINST_ID)))
-                .thenReturn(Optional.of(rowWithDocument(document("different"))));
+        when(repository.findByRunIdOrderByProviderStepAsc(UUID.fromString(RUN_ID)))
+                .thenReturn(List.of(row()));
+        when(repository.findByRunIdOrderByProviderStepAsc(UUID.fromString(AGAINST_ID)))
+                .thenReturn(List.of(rowWithDocument(document("different"))));
 
         mvc.perform(get(PATH, RUN_ID).param("against", AGAINST_ID))
                 .andExpect(status().isOk())

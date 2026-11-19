@@ -23,6 +23,13 @@ from xihe_agent.interfaces.message import Message
 from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME, BaseAgentTool
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, render_request
 from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, NativeResponse
+from xihe_agent.llm.provider_audit import (
+    DEFAULT_AUDIT_TIER,
+    audit_block,
+    normalize_tier,
+    request_params,
+    tool_surface,
+)
 from xihe_agent.llm.provider_fingerprint import (
     PROVIDER_FINGERPRINT_EVENT,
     build_fingerprint_document,
@@ -220,6 +227,10 @@ class ApiChatModel(BaseChatModel):
     _fingerprint_enabled: bool = PrivateAttr(default=True)
     _fingerprint_sink: TransportEventSink | None = PrivateAttr(default=None)
     _provider_step: int = PrivateAttr(default=0)
+    # task-103: providerAudit tier (full | metadata | off) and the step frozen at
+    # dispatch, emitted with its verbatim bytes once the attempt ends.
+    _audit_tier: str = PrivateAttr(default=DEFAULT_AUDIT_TIER)
+    _pending_step: dict[str, Any] | None = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -236,6 +247,7 @@ class ApiChatModel(BaseChatModel):
         sampling_overrides: dict[str, Any] | None = None,
         image_data_urls: list[str] | None = None,
         fingerprint_enabled: bool = True,
+        audit_tier: str = DEFAULT_AUDIT_TIER,
     ):
         super().__init__(cache=False)
         # PLAN-0605 decision B: renderer post-transform payload. Data URLs live in
@@ -250,6 +262,7 @@ class ApiChatModel(BaseChatModel):
         # (default true during development); the sink is reused, not re-created.
         self._fingerprint_sink = transport_sink
         self._fingerprint_enabled = bool(fingerprint_enabled)
+        self._audit_tier = normalize_tier(audit_tier)
         self._base = render_request(body_source, api_type, values)
         self._body_source = body_source
         self._values = copy.deepcopy(values)
@@ -355,13 +368,14 @@ class ApiChatModel(BaseChatModel):
         replayed from the result.
 
         PLAN-0679 D2: this is also the only point that sees the complete
-        first-step provider body, so the request fingerprint is taken here
-        (computed per step, emitted for step 1 only). Neither the returned body
-        nor the estimation behaviour changes.
+        provider body, so the request fingerprint is taken here. task-103 moved
+        the emission after the attempt (every step, with its verbatim bytes),
+        so this method only freezes the document. Neither the returned body nor
+        the estimation behaviour changes.
         """
         body = self._body(messages)
         self._provider_step += 1
-        self._emit_provider_fingerprint(body)
+        self._stage_provider_step(body)
         if self._token_estimator is None:
             return body
         estimated = self._token_estimator(body)
@@ -374,12 +388,13 @@ class ApiChatModel(BaseChatModel):
         )
         return body
 
-    def _emit_provider_fingerprint(self, body: dict[str, Any]) -> None:
-        """Publish the six-layer request fingerprint for the first dispatched step (D2/D4).
+    def _stage_provider_step(self, body: dict[str, Any]) -> None:
+        """Freeze this step's fingerprint document and request facts until the attempt ends.
 
-        Fail-open by construction: telemetry is a side channel, so a missing sink,
-        a disabled switch or a failing sink must never disturb the dispatch. The
-        document carries only hashes/counts/bytes and configuration key names.
+        task-103: the provider event is emitted once per step after the response returns, so
+        it can carry the verbatim bytes and attempt timings in the same payload as the
+        fingerprint. The document is still built here - the only place that sees the complete
+        rendered body - and is never re-derived later.
         """
         if self._fingerprint_sink is None or not self._fingerprint_enabled:
             return
@@ -392,29 +407,69 @@ class ApiChatModel(BaseChatModel):
             image_part_count=len(self._image_data_urls),
             provider_step=self._provider_step,
         )
-        if self._provider_step != 1:
-            return
         records = body.get(self._api_type.input_field)
         rendered = records if isinstance(records, list) else []
         tools = body.get("tools")
+        self._pending_step = {
+            "step": self._provider_step,
+            "document": document,
+            "messageCount": len(rendered),
+            "toolCount": len(tools) if isinstance(tools, list) else 0,
+            "roleHistogram": role_histogram(rendered),
+            "params": request_params(body),
+            "toolSurface": tool_surface(body),
+        }
+
+    def _emit_provider_audit(self, response: NativeResponse | None) -> None:
+        """Publish one event per dispatched step: fingerprint + verbatim audit (task-103).
+
+        Fail-open by construction: telemetry is a side channel, so a missing sink, a disabled
+        switch or a failing sink never disturbs the dispatch. A step the capability gate
+        rejected before dispatch records nothing - there was no request to record.
+        """
+        pending, self._pending_step = self._pending_step, None
+        if pending is None or self._fingerprint_sink is None or not self._fingerprint_enabled:
+            return
+        attempt = self._sender.audit
+        if attempt is None or attempt.request_bytes is None:
+            return
         try:
-            self._fingerprint_sink(
-                PROVIDER_FINGERPRINT_EVENT,
-                fingerprint_event_payload(
-                    document,
-                    api_type_id=self._api_type.id,
-                    api_type_version=self._api_type.version,
-                    model=str(self._values.get("model") or ""),
-                    message_count=len(rendered),
-                    tool_count=len(tools) if isinstance(tools, list) else 0,
-                    role_histogram=role_histogram(rendered),
-                ),
+            usage = response.provider_usage if response is not None else {}
+            model = str(self._values.get("model") or "")
+            payload = fingerprint_event_payload(
+                pending["document"],
+                api_type_id=self._api_type.id,
+                api_type_version=self._api_type.version,
+                model=model,
+                message_count=pending["messageCount"],
+                tool_count=pending["toolCount"],
+                role_histogram=pending["roleHistogram"],
             )
+            payload["audit"] = audit_block(
+                provider_step=pending["step"],
+                dispatch_attempt=1,
+                api_type_id=self._api_type.id,
+                api_type_version=self._api_type.version,
+                model=model,
+                tier=self._audit_tier,
+                http_status=attempt.http_status,
+                streamed=attempt.streamed,
+                ttft_ms=attempt.ttft_ms,
+                total_ms=attempt.total_ms,
+                request_bytes=attempt.request_bytes,
+                response_bytes=attempt.response_bytes,
+                error_bytes=attempt.error_bytes,
+                cache_read=usage.get("cache_read_input_tokens"),
+                cache_write=usage.get("cache_write_input_tokens"),
+                params=pending["params"],
+                tool_snapshot=pending["toolSurface"],
+            )
+            self._fingerprint_sink(PROVIDER_FINGERPRINT_EVENT, payload)
         except Exception:
             logger.opt(exception=True).warning(
-                "provider fingerprint sink failed requestId={} step={}",
+                "provider audit sink failed requestId={} step={}",
                 self._sender.request_id,
-                self._provider_step,
+                pending["step"],
             )
 
     def _check_response(self, response: NativeResponse) -> None:
@@ -444,9 +499,14 @@ class ApiChatModel(BaseChatModel):
         # sse_adapter.on_chat_model_stream). Kept explicit so a future "wire complete() into
         # the chat path" change cannot quietly drop reasoning.
         result = None
-        async for _text, _reasoning, final in self._sender.stream(self._dispatch_body(messages)):
-            if final is not None:
-                result = final
+        try:
+            async for _text, _reasoning, final in self._sender.stream(self._dispatch_body(messages)):
+                if final is not None:
+                    result = final
+        finally:
+            # task-103: emit after the attempt ends (success or failure) so the record
+            # carries the bytes the wire actually saw.
+            self._emit_provider_audit(result)
         if result is None:
             raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
         self._check_response(result)
@@ -468,45 +528,51 @@ class ApiChatModel(BaseChatModel):
         secrets = self._credential_handoff.secrets_for_stream_filter() if self._credential_handoff else ()
         text_redactor = StreamingSecretRedactor(secrets)
         reasoning_redactor = StreamingSecretRedactor(secrets)
-        async for text, reasoning, result in self._sender.stream(self._dispatch_body(messages)):
-            if result is not None:
-                # A complete provider response can contain a credential even
-                # when its stream chunks did not; reject it before callbacks or
-                # graph state observe the final message.
-                self._check_response(result)
-            safe_text = text_redactor.feed(text or "")
-            safe_reasoning = reasoning_redactor.feed(reasoning or "")
-            if safe_text or safe_reasoning:
-                yield ChatGenerationChunk(
-                    message=AIMessageChunk(
-                        content=safe_text or safe_reasoning,
-                        response_metadata={"reasoning_content": safe_reasoning} if safe_reasoning else {},
+        # task-103: the audit event is emitted once the attempt ends (success, provider
+        # error or cancellation), so the record carries the bytes the wire actually saw.
+        result: NativeResponse | None = None
+        try:
+            async for text, reasoning, result in self._sender.stream(self._dispatch_body(messages)):
+                if result is not None:
+                    # A complete provider response can contain a credential even
+                    # when its stream chunks did not; reject it before callbacks or
+                    # graph state observe the final message.
+                    self._check_response(result)
+                safe_text = text_redactor.feed(text or "")
+                safe_reasoning = reasoning_redactor.feed(reasoning or "")
+                if safe_text or safe_reasoning:
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(
+                            content=safe_text or safe_reasoning,
+                            response_metadata={"reasoning_content": safe_reasoning} if safe_reasoning else {},
+                        )
                     )
-                )
-            if result is not None:
-                # Native records include thinking/signature/reasoning and provider
-                # IDs. One final chunk supplies tool calls without re-emitting text.
-                yield ChatGenerationChunk(
-                    message=AIMessageChunk(
-                        content="",
-                        usage_metadata=cast(UsageMetadata, result.usage),
-                        additional_kwargs={
-                            "nativeRecords": result.records,
-                            "apiTypeId": self._api_type.id,
-                            "apiTypeVersion": self._api_type.version,
-                        },
-                        tool_call_chunks=[
-                            {
-                                "name": call["name"],
-                                "args": json.dumps(call["args"], ensure_ascii=False),
-                                "id": call["id"],
-                                "index": index,
-                                "type": "tool_call_chunk",
-                            }
-                            for index, call in enumerate(result.calls)
-                        ],
+                if result is not None:
+                    # Native records include thinking/signature/reasoning and provider
+                    # IDs. One final chunk supplies tool calls without re-emitting text.
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(
+                            content="",
+                            usage_metadata=cast(UsageMetadata, result.usage),
+                            additional_kwargs={
+                                "nativeRecords": result.records,
+                                "apiTypeId": self._api_type.id,
+                                "apiTypeVersion": self._api_type.version,
+                            },
+                            tool_call_chunks=[
+                                {
+                                    "name": call["name"],
+                                    "args": json.dumps(call["args"], ensure_ascii=False),
+                                    "id": call["id"],
+                                    "index": index,
+                                    "type": "tool_call_chunk",
+                                }
+                                for index, call in enumerate(result.calls)
+                            ],
+                        )
                     )
-                )
+        finally:
+            self._emit_provider_audit(result)
         safe_text_tail = text_redactor.finish()
         safe_reasoning_tail = reasoning_redactor.finish()
         if safe_text_tail or safe_reasoning_tail:

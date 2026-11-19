@@ -48,7 +48,24 @@ public final class ProviderRequestFingerprintReadService {
      * @param metadata  the row's request metadata (never prompt content); null iff absent
      */
     public record View(String runId, String sessionId, boolean available, String reason,
-                       JsonNode document, Metadata metadata) {}
+                       JsonNode document, Metadata metadata, List<Step> steps) {}
+
+    /**
+     * One captured provider step (task-103): the request metadata of that step plus the attempt facts
+     * the Agent measured - tier, HTTP status, timings, finish reason, cache counters, parameter values
+     * and the sha256/byte count of the verbatim bodies held in the record.
+     *
+     * <p>Body content is not echoed here; the durable row keeps it verbatim. {@code requestSha256}
+     * + {@code requestBytes} are what makes "the stored bytes are the received bytes" checkable.
+     */
+    public record Step(int providerStep, Metadata metadata, Audit audit) {}
+
+    /** Attempt facts for one step; every nullable field is NULL when the provider did not report it. */
+    public record Audit(String tier, Integer httpStatus, Boolean streamed, String finishReason,
+                        Integer ttftMs, Integer totalMs, String requestSha256, Long requestBytes,
+                        String responseSha256, Long responseBytes, String errorSha256, Long errorBytes,
+                        Long cacheReadInputTokens, Long cacheWriteInputTokens,
+                        JsonNode requestParams, JsonNode toolSurface) {}
 
     /**
      * Request metadata persisted next to the document (design 4.3): api type, resolved model,
@@ -60,19 +77,26 @@ public final class ProviderRequestFingerprintReadService {
 
     /** Envelope for a run with a stored row. */
     public static View captured(String runId, String sessionId, JsonNode document, Metadata metadata) {
+        return captured(runId, sessionId, document, metadata, List.of());
+    }
+
+    /** Envelope for a run with a stored row and its captured steps (task-103). */
+    public static View captured(String runId, String sessionId, JsonNode document, Metadata metadata,
+                                List<Step> steps) {
         requireText(runId, "runId");
         requireText(sessionId, "sessionId");
         if (document == null) {
             throw new IllegalArgumentException("document must not be null when available");
         }
-        return new View(runId, sessionId, true, null, document, metadata);
+        List<Step> captured = steps == null ? List.of() : List.copyOf(steps);
+        return new View(runId, sessionId, true, null, document, metadata, captured);
     }
 
     /** Envelope for a run without a row: absence is named, never re-encoded (two-level model). */
     public static View absent(String runId, String sessionId) {
         requireText(runId, "runId");
         requireText(sessionId, "sessionId");
-        return new View(runId, sessionId, false, REASON_NOT_CAPTURED, null, null);
+        return new View(runId, sessionId, false, REASON_NOT_CAPTURED, null, null, List.of());
     }
 
     /** Single-run response body: {@code {runId, available, reason?, fingerprint?, request?}}. */
@@ -89,7 +113,66 @@ public final class ProviderRequestFingerprintReadService {
         if (view.metadata() != null) {
             node.set("request", metadataNode(view.metadata()));
         }
+        if (!view.steps().isEmpty()) {
+            ArrayNode steps = node.putArray("steps");
+            for (Step step : view.steps()) {
+                ObjectNode stepNode = steps.addObject();
+                stepNode.put("providerStep", step.providerStep());
+                stepNode.set("request", metadataNode(step.metadata()));
+                stepNode.set("audit", step.audit() == null ? NODES.nullNode() : auditNode(step.audit()));
+            }
+        }
         return node;
+    }
+
+    /** Attempt facts of one step; nullable fields are emitted as explicit nulls, never as 0. */
+    private static ObjectNode auditNode(Audit audit) {
+        ObjectNode node = NODES.objectNode();
+        node.put("tier", audit.tier());
+        putNullable(node, "httpStatus", audit.httpStatus());
+        if (audit.streamed() == null) {
+            node.putNull("streamed");
+        } else {
+            node.put("streamed", audit.streamed());
+        }
+        putNullable(node, "finishReason", audit.finishReason());
+        putNullable(node, "ttftMs", audit.ttftMs());
+        putNullable(node, "totalMs", audit.totalMs());
+        putNullable(node, "requestSha256", audit.requestSha256());
+        putNullable(node, "requestBytes", audit.requestBytes());
+        putNullable(node, "responseSha256", audit.responseSha256());
+        putNullable(node, "responseBytes", audit.responseBytes());
+        putNullable(node, "errorSha256", audit.errorSha256());
+        putNullable(node, "errorBytes", audit.errorBytes());
+        putNullable(node, "cacheReadInputTokens", audit.cacheReadInputTokens());
+        putNullable(node, "cacheWriteInputTokens", audit.cacheWriteInputTokens());
+        node.set("requestParams", audit.requestParams() == null ? NODES.nullNode() : audit.requestParams());
+        node.set("toolSurface", audit.toolSurface() == null ? NODES.nullNode() : audit.toolSurface());
+        return node;
+    }
+
+    private static void putNullable(ObjectNode node, String field, Integer value) {
+        if (value == null) {
+            node.putNull(field);
+        } else {
+            node.put(field, value);
+        }
+    }
+
+    private static void putNullable(ObjectNode node, String field, Long value) {
+        if (value == null) {
+            node.putNull(field);
+        } else {
+            node.put(field, value);
+        }
+    }
+
+    private static void putNullable(ObjectNode node, String field, String value) {
+        if (value == null) {
+            node.putNull(field);
+        } else {
+            node.put(field, value);
+        }
     }
 
     /** Two runs from different sessions have no comparable layer semantics (design D6 → HTTP 409). */

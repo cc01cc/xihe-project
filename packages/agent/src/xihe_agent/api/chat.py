@@ -38,6 +38,7 @@ from xihe_agent.app_state import (
     _normalize_tool_timeouts,
     _resolve_loop_guard,
     _resolve_policy_for_model,
+    _resolve_provider_audit_tier,
     _resolve_provider_fingerprint_enabled,
     _resolve_run_budget,
     _validate_run_overrides,
@@ -829,6 +830,9 @@ async def chat(request: Request):
                     include_initial_messages=continuation is not None,
                     image_data_urls=image_data_urls,
                     fingerprint_enabled=_resolve_provider_fingerprint_enabled(
+                        config_snapshot, user_overrides, workspace_overrides
+                    ),
+                    audit_tier=_resolve_provider_audit_tier(
                         config_snapshot, user_overrides, workspace_overrides
                     ),
                 )

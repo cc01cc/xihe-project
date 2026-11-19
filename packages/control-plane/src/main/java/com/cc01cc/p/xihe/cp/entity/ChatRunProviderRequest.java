@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -13,40 +14,44 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * PLAN-0679 (design D1): the per-run final provider-request fingerprint.
+ * PLAN-0679 (design D1) + task-103 (D-1869①): one provider request record per (run, provider step).
  *
- * <p>Written once per run (SQL {@code INSERT ... ON CONFLICT (run_id) DO NOTHING}); a
- * context-overflow re-dispatch cannot replace the first document (design D2). Absence of a row is
- * named by the read-side envelope as {@code not_captured} — never re-encoded as
- * {@code disabled}/{@code error} (two-level model, design D5).</p>
+ * <p>v1 stored a single write-once document per run; task-103 lifts the V132 B-6 reservation into
+ * the primary key {@code (run_id, provider_step)} so a re-dispatched run keeps every step, and the
+ * retry count becomes row count - 1.</p>
  *
- * <p>Kept as a separate table rather than another {@code chat_runs} column (design D1): the row
- * carries the request metadata (apiType/model/counts/source summary) that would otherwise widen an
- * already-wide row, and v2 can grow to per-step rows without touching chat_runs (B-6).</p>
+ * <p><b>Verbatim bytes (user ruling 2026-11-19, DEV-004 6.5b):</b> {@code request_body} /
+ * {@code response_body} / {@code error_body} are the raw wire bytes as captured by the Agent - not
+ * redacted, not rewritten. {@code sha256} + byte count travel next to them so byte equality is
+ * checkable. {@code providerAudit=off} leaves them NULL: never 0, never an empty string.</p>
+ *
+ * <p>Absence of a row is named by the read-side envelope as {@code not_captured}; a present row with
+ * NULL bodies is named by {@code tier=off} - the two are different facts and are never merged.</p>
  */
 @Entity
 @Table(name = "chat_run_provider_requests")
+@IdClass(ChatRunProviderRequestId.class)
 public class ChatRunProviderRequest {
 
-    /** v1 writes exactly one document per run; the columns stay explicit for the v2 per-step shape. */
+    /** v1 wrote exactly one document per run; per-step rows arrive with task-103. */
     public static final int V1_DISPATCH_ATTEMPT = 1;
     public static final int V1_PROVIDER_STEP = 1;
 
-    /**
-     * The run this fingerprint belongs to; also the primary key (v1: one document per run).
-     *
-     * <p>Typed {@code UUID} like every other entity PK — {@code UuidStringConverter} is the
-     * <b>non-PK</b> column convention (String attributes for API/SSE/JSON boundaries).</p>
-     */
+    /** Audit tier that captured the bodies ({@code full} / {@code metadata} / {@code off}). */
+    public static final String TIER_FULL = "full";
+    public static final String TIER_METADATA = "metadata";
+    public static final String TIER_OFF = "off";
+
     @Id
     @Column(name = "run_id", columnDefinition = "uuid")
     private UUID runId;
 
-    @Column(name = "dispatch_attempt", nullable = false)
-    private Integer dispatchAttempt = V1_DISPATCH_ATTEMPT;
-
+    @Id
     @Column(name = "provider_step", nullable = false)
     private Integer providerStep = V1_PROVIDER_STEP;
+
+    @Column(name = "dispatch_attempt", nullable = false)
+    private Integer dispatchAttempt = V1_DISPATCH_ATTEMPT;
 
     @Column(name = "api_type_id", nullable = false, length = 64)
     private String apiTypeId;
@@ -67,12 +72,12 @@ public class ChatRunProviderRequest {
     @Column(name = "bytes_total", nullable = false)
     private Long bytesTotal;
 
-    /** Counts only ({@code {"human":1,...}}) — never message bodies (design D5). */
+    /** Counts only ({@code {"human":1,...}}) - never message bodies. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "role_histogram", nullable = false, columnDefinition = "jsonb")
     private JsonNode roleHistogram;
 
-    /** Source summary (template id/version, slot fill state, component counts) — metadata only. */
+    /** Source summary (template id/version, slot fill state, component counts) - metadata only. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "system_sources", nullable = false, columnDefinition = "jsonb")
     private JsonNode systemSources;
@@ -81,6 +86,84 @@ public class ChatRunProviderRequest {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "fingerprint", nullable = false, columnDefinition = "jsonb")
     private JsonNode fingerprint;
+
+    /** {@code full} (bodies kept) / {@code metadata} (sha+counts only) / {@code off} (nothing). */
+    @Column(name = "tier", nullable = false, length = 16)
+    private String tier = TIER_METADATA;
+
+    @Column(name = "http_status")
+    private Integer httpStatus;
+
+    @Column(name = "streamed")
+    private Boolean streamed;
+
+    /** Provider-reported finish/stop reason; NULL means the provider did not report one. */
+    @Column(name = "finish_reason", length = 64)
+    private String finishReason;
+
+    /** Time to first byte, milliseconds. */
+    @Column(name = "ttft_ms")
+    private Integer ttftMs;
+
+    @Column(name = "total_ms")
+    private Integer totalMs;
+
+    @Column(name = "request_sha256", length = 64)
+    private String requestSha256;
+
+    @Column(name = "request_bytes")
+    private Long requestBytes;
+
+    /** Verbatim request wire bytes; NULL when the tier did not keep bodies. */
+    @JdbcTypeCode(SqlTypes.VARBINARY)
+    @Column(name = "request_body", columnDefinition = "bytea")
+    private byte[] requestBody;
+
+    @Column(name = "response_sha256", length = 64)
+    private String responseSha256;
+
+    @Column(name = "response_bytes")
+    private Long responseBytes;
+
+    /** Verbatim response bytes (whole body or the raw SSE stream). */
+    @JdbcTypeCode(SqlTypes.VARBINARY)
+    @Column(name = "response_body", columnDefinition = "bytea")
+    private byte[] responseBody;
+
+    @Column(name = "error_sha256", length = 64)
+    private String errorSha256;
+
+    @Column(name = "error_bytes")
+    private Long errorBytes;
+
+    /** Verbatim provider error body (undecoded, as received). */
+    @JdbcTypeCode(SqlTypes.VARBINARY)
+    @Column(name = "error_body", columnDefinition = "bytea")
+    private byte[] errorBody;
+
+    /** Cache hit tokens; NULL when the provider reported none (0 would poison averages). */
+    @Column(name = "cache_read_input_tokens")
+    private Long cacheReadInputTokens;
+
+    /** Cache write tokens; NULL when the provider reported none. */
+    @Column(name = "cache_write_input_tokens")
+    private Long cacheWriteInputTokens;
+
+    /** Request parameter values as sent (model/stream/max_tokens/...), not hashed. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "request_params", columnDefinition = "jsonb")
+    private JsonNode requestParams;
+
+    /** Rendered tool surface hash + count (schema text never stored as text). */
+    @JdbcTypeCode(SqlTypes.JSON)
+  
+    @Column(name = "tool_surface", columnDefinition = "jsonb")
+    private JsonNode toolSurface;
+
+    /** The Agent's audit block for this attempt, verbatim (tier/status/timings/params/...). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "provider_audit", nullable = false, columnDefinition = "jsonb")
+    private JsonNode providerAudit;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -96,10 +179,10 @@ public class ChatRunProviderRequest {
 
     public UUID getRunId() { return runId; }
     public void setRunId(UUID runId) { this.runId = runId; }
-    public Integer getDispatchAttempt() { return dispatchAttempt; }
-    public void setDispatchAttempt(Integer dispatchAttempt) { this.dispatchAttempt = dispatchAttempt; }
     public Integer getProviderStep() { return providerStep; }
     public void setProviderStep(Integer providerStep) { this.providerStep = providerStep; }
+    public Integer getDispatchAttempt() { return dispatchAttempt; }
+    public void setDispatchAttempt(Integer dispatchAttempt) { this.dispatchAttempt = dispatchAttempt; }
     public String getApiTypeId() { return apiTypeId; }
     public void setApiTypeId(String apiTypeId) { this.apiTypeId = apiTypeId; }
     public Integer getApiTypeVersion() { return apiTypeVersion; }
@@ -118,6 +201,46 @@ public class ChatRunProviderRequest {
     public void setSystemSources(JsonNode systemSources) { this.systemSources = systemSources; }
     public JsonNode getFingerprint() { return fingerprint; }
     public void setFingerprint(JsonNode fingerprint) { this.fingerprint = fingerprint; }
+    public String getTier() { return tier; }
+    public void setTier(String tier) { this.tier = tier; }
+    public Integer getHttpStatus() { return httpStatus; }
+    public void setHttpStatus(Integer httpStatus) { this.httpStatus = httpStatus; }
+    public Boolean getStreamed() { return streamed; }
+    public void setStreamed(Boolean streamed) { this.streamed = streamed; }
+    public String getFinishReason() { return finishReason; }
+    public void setFinishReason(String finishReason) { this.finishReason = finishReason; }
+    public Integer getTtftMs() { return ttftMs; }
+    public void setTtftMs(Integer ttftMs) { this.ttftMs = ttftMs; }
+    public Integer getTotalMs() { return totalMs; }
+    public void setTotalMs(Integer totalMs) { this.totalMs = totalMs; }
+    public String getRequestSha256() { return requestSha256; }
+    public void setRequestSha256(String requestSha256) { this.requestSha256 = requestSha256; }
+    public Long getRequestBytes() { return requestBytes; }
+    public void setRequestBytes(Long requestBytes) { this.requestBytes = requestBytes; }
+    public byte[] getRequestBody() { return requestBody; }
+    public void setRequestBody(byte[] requestBody) { this.requestBody = requestBody; }
+    public String getResponseSha256() { return responseSha256; }
+    public void setResponseSha256(String responseSha256) { this.responseSha256 = responseSha256; }
+    public Long getResponseBytes() { return responseBytes; }
+    public void setResponseBytes(Long responseBytes) { this.responseBytes = responseBytes; }
+    public byte[] getResponseBody() { return responseBody; }
+    public void setResponseBody(byte[] responseBody) { this.responseBody = responseBody; }
+    public String getErrorSha256() { return errorSha256; }
+    public void setErrorSha256(String errorSha256) { this.errorSha256 = errorSha256; }
+    public Long getErrorBytes() { return errorBytes; }
+    public void setErrorBytes(Long errorBytes) { this.errorBytes = errorBytes; }
+    public byte[] getErrorBody() { return errorBody; }
+    public void setErrorBody(byte[] errorBody) { this.errorBody = errorBody; }
+    public Long getCacheReadInputTokens() { return cacheReadInputTokens; }
+    public void setCacheReadInputTokens(Long cacheReadInputTokens) { this.cacheReadInputTokens = cacheReadInputTokens; }
+    public Long getCacheWriteInputTokens() { return cacheWriteInputTokens; }
+    public void setCacheWriteInputTokens(Long cacheWriteInputTokens) { this.cacheWriteInputTokens = cacheWriteInputTokens; }
+    public JsonNode getRequestParams() { return requestParams; }
+    public void setRequestParams(JsonNode requestParams) { this.requestParams = requestParams; }
+    public JsonNode getToolSurface() { return toolSurface; }
+    public void setToolSurface(JsonNode toolSurface) { this.toolSurface = toolSurface; }
+    public JsonNode getProviderAudit() { return providerAudit; }
+    public void setProviderAudit(JsonNode providerAudit) { this.providerAudit = providerAudit; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 }
