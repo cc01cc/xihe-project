@@ -22,6 +22,7 @@ import type { ApiTypePair, ProviderConnection } from "../types/providerConnectio
 import type {
     AgentRoleBinding,
     ApiBindingSet,
+    api,
     ApiRole,
     WorkspaceAgentBinding,
     WorkspaceAgentMemory,
@@ -691,6 +692,38 @@ export const mockProviderFingerprintError: ProviderRequestFingerprintView = {
     fingerprint: { status: "error", reasonCode: "FINGERPRINT_TOO_LARGE" },
     request: mockFingerprintRequestMeta,
 };
+/**
+ * task-112：`RunBudgetSummary` 的 fixture —— 与 `api.getChatRunStatus` 的返回类型同形。
+ *
+ * 取**真机读数**的形状而非整数占位：`tokenCount` 13166 / `budgetConsumed` 1262 来自 stack-5 上
+ * run `cd378844-802c-4e92-a05c-1734c584ac4d` 的 `GET /api/v1/chat/runs/{id}`（2026-11-19 实测），
+ * 两个数**故意不相等**：它们本来就是两个口径，取等会让读者以为是一个数的两种叫法。
+ * `runMaxTokens` 500000 < `ceiling` 1000000 ⇒ 生效上限由单回合上限钳制，预览因此能看到钳制徽标。
+ */
+export const mockChatRunStatus: Awaited<ReturnType<typeof api.getChatRunStatus>> = {
+    runId: PREVIEW_FINGERPRINT_RUN_ID,
+    sessionId: PREVIEW_SESSION_ID,
+    origin: "user_submission",
+    status: "succeeded",
+    terminalOutcome: "succeeded",
+    errorCode: null,
+    leaseExpired: false,
+    pendingApprovals: [],
+    tokenCount: 13166,
+    budgetConsumed: 1262,
+    runMaxTokens: 500000,
+    runMaxTokensCeiling: 1000000,
+    budgetAccounting: "growth",
+};
+
+/** 同一块的第二份读数：历史回合（`budgetConsumed` 未记录）—— 预览的两态对照。 */
+export const mockChatRunStatusUnrecorded: Awaited<ReturnType<typeof api.getChatRunStatus>> = {
+    ...mockChatRunStatus,
+    budgetConsumed: null,
+    budgetAccounting: null,
+    tokenCount: 5952,
+};
+
 /**
  * task-83 第三腿：`SessionMonitorPanel` 的 fixture（供 preview 挂真面板量行宽）。
  *

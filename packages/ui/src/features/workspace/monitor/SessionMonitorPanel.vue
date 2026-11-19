@@ -14,6 +14,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import ProviderRequestFingerprintPanel from "./ProviderRequestFingerprintPanel.vue";
+import RunBudgetSummary from "./RunBudgetSummary.vue";
 import RunTraceTimeline from "./RunTraceTimeline.vue";
 import type {
     ChatTransportAttempt,
@@ -54,12 +55,18 @@ const props = withDefaults(
          * diagnoseRunId 并取 trace/指纹** —— 预览只注入上面的 fetcher 挡不住这两条请求。
          */
         fingerprintFetcher?: typeof api.getRunProviderRequestFingerprint;
+        /**
+         * task-112：回合用量/预算块（`RunBudgetSummary`）自己读 `GET /chat/runs/{runId}`，
+         * 与上面四条不是同一个端点 —— 预览只挡四条时这一条仍会打到真 CP，所以单列一个 seam。
+         */
+        runStatusFetcher?: typeof api.getChatRunStatus;
     }>(),
     {
         monitorFetcher: undefined,
         attemptsFetcher: undefined,
         traceFetcher: undefined,
         fingerprintFetcher: undefined,
+        runStatusFetcher: undefined,
     },
 );
 const { t, te } = useI18n();
@@ -865,6 +872,8 @@ const connectionChipClass = computed(() => {
                             </SelectContent>
                         </Select>
                     </label>
+                    <!-- task-112: 选中回合的用量/预算读数（run 级，与 trace 事件级 usage 不同轴）。 -->
+                    <RunBudgetSummary :run-id="selectedTraceRunId" :fetcher="runStatusFetcher" />
                     <RunTraceTimeline
                         :trace="trace"
                         :loading="traceLoading"

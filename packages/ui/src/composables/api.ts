@@ -5561,6 +5561,18 @@ export const api = {
         errorCode?: string | null;
         leaseExpired: boolean;
         pendingApprovals: ApprovalRequest[];
+        /**
+         * task-105 (D-1869 ①) budget face, projected by CP `ChatRunReadService.putBudgetFace`.
+         * Both numbers ride together on purpose, and `null` always means **not recorded**
+         * (a historical Run predating V174) — it is never coerced to 0.
+         */
+        tokenCount: number | null;
+        budgetConsumed: number | null;
+        /** Read-time effective limits; `0` is a real value here (dimension disabled ⇒ no limit). */
+        runMaxTokens: number | null;
+        runMaxTokensCeiling: number | null;
+        /** Which accounting mode charged `budgetConsumed`; CP defaults to `growth`. */
+        budgetAccounting: "growth" | "cumulative" | null;
     }> {
         const payload = await request<unknown>(`/chat/runs/${encodeURIComponent(runId)}`, {
                 method: "GET",
@@ -5579,6 +5591,18 @@ export const api = {
                     approval ? { ...approval, runId: approval.runId || runId } : null,
                 )
                 .filter((approval): approval is ApprovalRequest => approval !== null);
+        // task-105 (D-1869 ①): the budget face is a read-only projection — an absent or
+        // unrecognised accounting mode stays null instead of defaulting to "growth" here;
+        // CP already resolved its Agent default, so UI never invents one.
+        const budgetAccounting = isEnumValue(record.budgetAccounting, [
+                "growth",
+                "cumulative",
+            ] as const)
+                ? record.budgetAccounting
+                : null,
+            budgetConsumed = nullableCount(record.budgetConsumed),
+            runMaxTokens = nullableCount(record.runMaxTokens),
+            runMaxTokensCeiling = nullableCount(record.runMaxTokensCeiling);
         return {
             runId: typeof record.runId === "string" ? record.runId : runId,
             sessionId: record.sessionId,
@@ -5594,6 +5618,11 @@ export const api = {
                     : undefined,
             leaseExpired: record.leaseExpired === true,
             pendingApprovals,
+            tokenCount: nullableCount(record.tokenCount),
+            budgetConsumed,
+            runMaxTokens,
+            runMaxTokensCeiling,
+            budgetAccounting,
         };
     },
     /** Workspace checkpoint timeline; expired rows are removed by the normalizer. */

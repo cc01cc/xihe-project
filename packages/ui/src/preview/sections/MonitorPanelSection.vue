@@ -15,7 +15,12 @@
  */
 import SectionShell from "../SectionShell.vue";
 import SessionMonitorPanel from "../../features/workspace/monitor/SessionMonitorPanel.vue";
-import { mockProviderFingerprintView, mockSessionMonitor } from "../mockData";
+import {
+    mockChatRunStatus,
+    mockChatRunStatusUnrecorded,
+    mockProviderFingerprintView,
+    mockSessionMonitor,
+} from "../mockData";
 import type {
     ProviderRequestFingerprintView,
     RunTraceResponse,
@@ -109,6 +114,14 @@ const traceFetcher = async (runId: string): Promise<RunTraceResponse> => ({
 
 const fingerprintFetcher = async (): Promise<ProviderRequestFingerprintView> =>
     mockProviderFingerprintView;
+
+/**
+ * task-112：`RunBudgetSummary` 自己读 `GET /chat/runs/{runId}`，与上面四条不是同一个端点 ——
+ * 只挡那四条时它仍会打到真 CP。三档宽度刻意给**两种读数**：320 用「有记账值」的样例，
+ * 480 用「`budgetConsumed` 未记录」的历史回合样片，正好把 null ≠ 0 的分辨摆在同一屏。
+ */
+const recordedRunStatusFetcher = async () => mockChatRunStatus;
+const unrecordedRunStatusFetcher = async () => mockChatRunStatusUnrecorded;
 </script>
 
 <template>
@@ -138,6 +151,9 @@ const fingerprintFetcher = async (): Promise<ProviderRequestFingerprintView> =>
                         :attempts-fetcher="attemptsFetcher"
                         :trace-fetcher="traceFetcher"
                         :fingerprint-fetcher="fingerprintFetcher"
+                        :run-status-fetcher="
+                            width === 480 ? unrecordedRunStatusFetcher : recordedRunStatusFetcher
+                        "
                     />
                 </div>
             </div>

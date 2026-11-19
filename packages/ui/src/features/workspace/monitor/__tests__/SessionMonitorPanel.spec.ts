@@ -37,13 +37,20 @@ vi.mock("../../../../composables/api", () => ({
                     options?: { against?: string },
                 ) => Promise<ProviderRequestFingerprintView>
             >(),
+        // task-112: the budget block (`RunBudgetSummary`) also fetches on mount; like the
+        // fingerprint block it is not what this spec is about, so it gets a fixed reading here.
+        getChatRunStatus: vi.fn<(runId: string) => Promise<ChatRunStatus>>(),
     },
 }));
+
+/** task-112: the budget block's wire shape, taken from the product fetcher (never re-typed here). */
+type ChatRunStatus = Awaited<ReturnType<typeof api.getChatRunStatus>>;
 
 const getSessionMonitor = vi.mocked(api.getSessionMonitor);
 const getRunAttempts = vi.mocked(api.getRunAttempts);
 const getRunTrace = vi.mocked(api.getRunTrace);
 const getRunProviderRequestFingerprint = vi.mocked(api.getRunProviderRequestFingerprint);
+const getChatRunStatus = vi.mocked(api.getChatRunStatus);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const SECOND_RUN_ID = "66666666-6666-4666-8666-666666666666";
@@ -190,6 +197,26 @@ function traceResponse(overrides: Partial<RunTraceResponse> = {}): RunTraceRespo
     };
 }
 
+function runStatusResponse(overrides: Partial<ChatRunStatus> = {}): ChatRunStatus {
+    return {
+        runId: RUN_ID,
+        sessionId: SESSION_ID,
+        origin: "user_submission",
+        status: "running",
+        terminalOutcome: null,
+        errorCode: null,
+        leaseExpired: false,
+        pendingApprovals: [],
+        // task-112: the two numbers are deliberately different (they are two accounting views).
+        tokenCount: 13166,
+        budgetConsumed: 1262,
+        runMaxTokens: 500000,
+        runMaxTokensCeiling: 1000000,
+        budgetAccounting: "growth",
+        ...overrides,
+    };
+}
+
 function traceEvent(eventId: string, status: "started" | "succeeded" = "started") {
     return {
         eventId,
@@ -228,6 +255,7 @@ beforeEach(() => {
         available: false,
         reason: "not_captured",
     });
+    getChatRunStatus.mockResolvedValue(runStatusResponse());
 });
 
 function mountPanel(): VueWrapper {
