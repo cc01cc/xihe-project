@@ -185,7 +185,9 @@ describe("B1 focus 环与常驻 border 不得同画", () => {
 
     it("合规判定自检：border-ring 与 border-0 都放行，裸 border 必须报", () => {
         // 正例 ②：显式零宽（composer 形态）
-        expect(hasNoConstantBorder("rounded-lg border-0 px-3 ring-1 ring-border ring-2")).toBe(true);
+        expect(hasNoConstantBorder("rounded-lg border-0 px-3 ring-1 ring-border ring-2")).toBe(
+            true,
+        );
         // 负例：只写 `border`，或写成 `border-t`/`border-b`，都不算显式零宽
         expect(hasNoConstantBorder("rounded-lg border px-3 has-[input:focus-visible]:ring-2")).toBe(
             false,

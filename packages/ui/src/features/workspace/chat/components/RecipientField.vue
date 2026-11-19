@@ -214,7 +214,7 @@ function focusInput(): void {
         键盘焦点时才亮），内层不再自绘环 ⇒ 同一时刻只有一套焦点视觉。
     -->
     <div
-        class="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-2 py-0.5 transition-shadow has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring/50"
+        class="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-2 py-0.5 transition-[box-shadow,border-color] has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring/50"
         :data-testid="testid"
     >
         <span class="shrink-0 text-xs text-muted-foreground">{{ label }}</span>

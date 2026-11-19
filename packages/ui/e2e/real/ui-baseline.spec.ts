@@ -58,14 +58,24 @@ const CHROME_ROW_HEIGHT_PX = 32;
 const CHROME_MAX_CONTENT_TOP = CHROME_MAX_BANDS * CHROME_ROW_HEIGHT_PX + 8; // 104
 /** ② composer 块高 / 视口高（现状 16.1%@1920、22.7%@1366、12.1%@2560） */
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.15;
-/** ③ composer 居中容差与右侧死区上限。
- *  死区不是常数：InputArea.vue:1481 是 w-full max-w-4xl（896）且无 mx-auto ⇒ 死区 = 主列宽 − composer 宽。
- *  2026-11-19 1920 展开态实测：内盒 896 起于主列左缘（主列 1157.6）⇒ 右侧死区 261.6；1440/1600 折叠态 0/0。
- *  断言一律用计算式，不钉 261.6。
- *  「内盒 / 主列宽占比」不设断言：实测 0.774（1920）/ 1.0（1440）/ 0.964（1600），绝对值由 max-w-4xl 与列宽决定，
- *  真正表达「偏左」的是居中偏差与死区两项，再钉一个占比只会多一条永绿的假判据。 */
+/**
+ * ③ composer 居中容差（**task-67 r5 口径**，Lead 2026-11-20 00:46 裁定；取代 rev0 的
+ * `COMPOSER_MAX_RIGHT_DEAD_ZONE_PX = 40`）。
+ *
+ * <p><b>为什么废掉「右死区 ≤40px」</b>：那条门在 896 定宽下**数学不可达** —— 内盒
+ * `InputArea.vue:1481` 是 `w-full max-w-4xl`（896），1920 展开态主列 1157.61 ⇒ 居中后最小死区恒
+ * (1157.61 − 896) / 2 = **130.81**（task-67 实测 130.81 / 70.31 / 150.64，三个视口是「完全居中」的
+ * 对称余量，不是偏左）。一条永远过不了的门只会逼下一个人去改设计宽度。</p>
+ *
+ * <p><b>现行两条判据（都只判「偏差」，不判绝对值）</b>：
+ * ① ③a 居中：内盒中心 vs `workspace-main` 中心偏差 ≤ 2px；
+ * ② ③b 死区平衡：右死区 vs (主列宽 − 内盒宽) / 2 偏差 ≤ 2px（左右余量相等）。
+ * 两条都是「钉算法不钉结果」：`max-w-4xl` 或列宽变了，判据不用跟着改。</p>
+ *
+ * <p>「内盒 / 主列宽占比」仍不设断言：它的绝对值由 max-w-4xl 与列宽决定，真正表达「偏左」的
+ * 是上面两条。</p>
+ */
 const COMPOSER_CENTER_TOLERANCE_PX = 2;
-const COMPOSER_MAX_RIGHT_DEAD_ZONE_PX = 40;
 /** ⑤ D-1907 **rev5**（2026-11-19 Lead 改判，取代 rev3 的「唯一 + 可见 + 可开」三条）：
  *  - rev3：旧口径「折叠态留 40±2px rail 把手」作废，判据 = 开合图标唯一 + 折叠态可见 + 点已激活页签不关整列
  *    + 顶部不再有六面板图标；
@@ -905,30 +915,29 @@ async function runMatrix(
                 .toBeNull();
         }
 
-        // ③b 右侧死区（B3-②，Lead 修订：只在 1920 + 右栏展开态判；1440/1600 折叠态实测死区 0/0，不断言）
-        // 展开态判据（task-102 F-4）：旧写法用「页面上任意 aria-pressed=true」判展开，
-        // 会被侧栏折叠按钮等无关控件污染 ⇒ 限定到开合图标本身。
-        const dockTogglePressedTrue = await page
-            .locator(`[data-testid="${DOCK_TOGGLE_TESTID}"][aria-pressed="true"]`)
-            .count();
-        const dockExpanded = layout.rightTabs > 0 || dockTogglePressedTrue > 0;
-        if (layout.composerInner && mainUsable && vp.name === "1920x1080" && dockExpanded) {
+        // ③b 死区平衡（B3-②，**task-67 r5 口径**，Lead 2026-11-20 00:46 裁定）：
+        // 旧口径「1920 展开态右死区 ≤40px」在 896 定宽下数学不可达（最小 130.81），已废；
+        // 现在只判「右死区 ≈ (主列宽 − 内盒宽) / 2」⇒ 左右余量相等。居中本身由 ③a 判，
+        // 这条判的是「余量没有全堆在右边 / 没有贴左」。三档视口都判，不再依赖「1920 必须展开右栏」。
+        if (layout.composerInner && mainUsable) {
             const box = layout.composerInner;
             const rightDeadZone = main.x + main.w - (box.x + box.w);
+            const balancedDeadZone = (main.w - box.w) / 2;
+            const deadZoneDeviation = Math.abs(rightDeadZone - balancedDeadZone);
             expect
                 .soft(
-                    rightDeadZone,
-                    `${tag} ③b composer 右侧死区 ${fmt(rightDeadZone)}px（期望≤${COMPOSER_MAX_RIGHT_DEAD_ZONE_PX}）内盒 ${fmtRect(box)}，主列 ${fmtRect(main)}，右栏展开=${dockExpanded}`,
+                    deadZoneDeviation,
+                    `${tag} ③b 右死区 ${fmt(rightDeadZone)}px 对等分余量 ${fmt(balancedDeadZone)}px（= (${fmt(main.w)} − ${fmt(box.w)}) / 2）偏差 ${fmt(deadZoneDeviation)}px，期望≤${COMPOSER_CENTER_TOLERANCE_PX}（task-67 r5：不判绝对上限；内盒 ${fmtRect(box)}，主列 ${fmtRect(main)}）`,
                 )
-                .toBeLessThanOrEqual(COMPOSER_MAX_RIGHT_DEAD_ZONE_PX);
-        } else if (vp.name === "1920x1080") {
-            // 1920 只见折叠态时无法验死区，明确暴露而非静默跳过
+                .toBeLessThanOrEqual(COMPOSER_CENTER_TOLERANCE_PX);
+        } else {
+            // 取不到内盒/主列时明确 fail（不 skip），与 ③a 同口径
             expect
                 .soft(
-                    dockExpanded,
-                    `${tag} ③b 1920 右栏未展开（rightTabs=${layout.rightTabs}，开合图标 aria-pressed=true 命中 ${dockTogglePressedTrue}），死区断言无法验证（不 skip，按 fail 暴露）`,
+                    { composerInner: layout.composerInner, main },
+                    `${tag} ③b 取不到 composer 内盒或 workspace-main 主列（rect.w>0 校验失败）`,
                 )
-                .toBe(true);
+                .toBeNull();
         }
 
         // ④ 焦点环层数（B1；只用键盘进入，现状 border 1px + ring 2px 双层）

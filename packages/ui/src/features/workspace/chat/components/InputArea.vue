@@ -1475,10 +1475,10 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
     <div
         ref="composerRoot"
-        class="min-w-0 border-t bg-background pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
+        class="min-w-0 border-t bg-background px-4 pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
         data-testid="chat-composer"
     >
-        <div class="w-full max-w-4xl space-y-1.5">
+        <div class="mx-auto w-full max-w-4xl space-y-1.5">
             <!--
                 task-55（D-1882③）：这里原本渲染「代发身份」RecipientField（testid="speak-as" /
                 data-testid="speak-as-bar"；PLAN-0623 D23-27 → PLAN-0630 M5b D30-14 → 2026-11-04 改为
@@ -1878,9 +1878,15 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 （task-30 当年因此拒绝过容器环）。内层 textarea 不再自绘 3px 环（实测：内层
                 `oklab(0.205 0 0 / 0.5) 0 0 0 3px` 与外层 1px `oklch(0.922 0 0)` 边框是两套框）。
                 宽度取 §10 状态矩阵的 2px 档，与同屏其它控件的焦点语言一致。
+                task-67 B1（D-1907 E 项「环与常驻 border 不得同画」）：常驻 1px 描边**不再用 border**，
+                改用 `ring-1 ring-border` —— ring 画在同一位置（offset 0），几何等价，但聚焦时不会
+                再出现「浅灰 border + 2px 焦点环」两层边；`border-0` 是**显式**声明（不是省掉），
+                让静态门与读代码的人都能看出这层确实没有 border。
+                判据出处：真机 1920 展开态 focus 后该层 `borderWidth` 必须为 0
+                （`e2e/real/ui-baseline.spec.ts` ④ 的 ringer.borderWidthPx）。
             -->
             <div
-                class="rounded-lg border bg-muted/30 px-3 py-2 transition-shadow has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
+                class="rounded-lg border-0 bg-muted/30 px-3 py-2 ring-1 ring-border transition-[box-shadow,border-color] has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
             >
                 <textarea
                     ref="textareaRef"
