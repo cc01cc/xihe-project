@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -63,6 +64,7 @@ public class ProviderRequestFingerprintRecorder {
      *                relay); never null, may be malformed
      * @param runId   run identity from the relay's authorized context, never from the payload
      */
+    @Transactional
     public void recordFirstDispatch(Map<?, ?> payload, String runId) {
         try {
             UUID runUuid = UUID.fromString(runId);

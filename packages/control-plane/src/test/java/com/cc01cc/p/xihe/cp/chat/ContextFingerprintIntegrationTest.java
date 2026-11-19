@@ -16,6 +16,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +57,9 @@ class ContextFingerprintIntegrationTest extends AbstractReusableIntegrationTest 
 
     @Autowired
     private ContextFingerprintRecorder recorder;
+
+    @Autowired
+    private ProviderRequestFingerprintRecorder providerRequestRecorder;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -137,6 +145,29 @@ class ContextFingerprintIntegrationTest extends AbstractReusableIntegrationTest 
     }
 
     @Test
+    void providerAuditFullRowPersistsThroughSpringProxiedRecorder() {
+        // task-14 regression: without a transaction on the Spring-proxied recorder, the
+        // @Modifying native INSERT was refused ("No active transaction for update or
+        // delete query") and the fail-open WARN left zero rows for a full-tier run.
+        byte[] requestBytes = "{\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
+                .getBytes(StandardCharsets.UTF_8);
+        providerRequestRecorder.recordFirstDispatch(providerAuditPayload(requestBytes), runId);
+
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT tier, octet_length(request_body) AS body_bytes, "
+                        + "encode(sha256(request_body), 'hex') AS sha, request_bytes "
+                        + "FROM chat_run_provider_requests "
+                        + "WHERE run_id = ?::uuid AND provider_step = 1",
+                runId);
+        assertEquals(1, rows.size(), "the proxied recorder must persist one real PG row");
+        Map<String, Object> row = rows.getFirst();
+        assertEquals("full", row.get("tier"));
+        assertEquals(requestBytes.length, ((Number) row.get("body_bytes")).intValue());
+        assertEquals(requestBytes.length, ((Number) row.get("request_bytes")).intValue());
+        assertEquals(sha256Hex(requestBytes), row.get("sha"));
+    }
+
+    @Test
     void writeOnceGuardReadsByPrimaryKey() {
         String plan = jdbcTemplate.queryForList(
                 "EXPLAIN UPDATE chat_runs SET context_fingerprint = '{}'::jsonb, "
@@ -144,6 +175,54 @@ class ContextFingerprintIntegrationTest extends AbstractReusableIntegrationTest 
                 String.class, runId).toString();
         System.out.println("[PLAN-0666] update plan=" + plan);
         assertTrue(plan.contains("Scan"), "the guarded update must be a plain scan path, got: " + plan);
+    }
+
+    private Map<String, Object> providerAuditPayload(byte[] requestBytes) {
+        Map<String, Object> layers = new LinkedHashMap<>();
+        layers.put("systemTemplate", Map.of("hash", "a", "bytes", 100));
+        layers.put("userInput", Map.of("hash", "b", "bytes", 40));
+        Map<String, Object> document = new LinkedHashMap<>();
+        document.put("algo", "sha256");
+        document.put("dispatchAttempt", 1);
+        document.put("providerStep", 1);
+        document.put("layers", layers);
+        document.put("outbound", Map.of("hash", "c", "bytes", requestBytes.length));
+
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("apiTypeId", "openai-chat-completions");
+        request.put("apiTypeVersion", 1);
+        request.put("model", "openai/gpt-5");
+        request.put("messageCount", 1);
+        request.put("toolCount", 0);
+        request.put("bytesTotal", requestBytes.length);
+        request.put("roleHistogram", Map.of("user", 1));
+        request.put("systemSources", Map.of("slots", Map.of("user_input", true)));
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("bodyB64", Base64.getEncoder().encodeToString(requestBytes));
+        body.put("sha256", sha256Hex(requestBytes));
+        body.put("bytes", requestBytes.length);
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("tier", "full");
+        audit.put("request", body);
+        audit.put("httpStatus", 200);
+        audit.put("streamed", false);
+        audit.put("finishReason", "stop");
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("runId", runId);
+        payload.put("document", document);
+        payload.put("request", request);
+        payload.put("audit", audit);
+        return payload;
+    }
+
+    private static String sha256Hex(byte[] body) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
     }
 
     private ContextFingerprintRecorder.RecordInput input(String content) {
