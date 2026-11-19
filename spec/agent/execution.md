@@ -53,13 +53,21 @@ Agent Run 相关护栏（Context 预算、工具超时/输出、循环与无进�
 
 PLAN-0492 实现。预算只约束「本次 Run 的累计消耗」，与输入窗口预算、per-tool 超时/输出上限相互独立（分类见 [Agent Run 护栏总览](./run-guardrails.md)）。
 
-1. **维度与配置键**：`turns`（`agent-runtime.runMaxTurns`，一轮 = 一次完成的 LLM 调用）、`elapsed`（`runMaxElapsedSeconds`，累计墙钟，审批/人工等待暂停计时）、`tokens`（`runMaxTokens`）。值键在 user/workspace 层可写；硬上限键 `runMaxTurnsCeiling` / `runMaxElapsedSecondsCeiling` / `runMaxTokensCeiling` 仅 instance 层可写（`0` = 不钳制），生效值 = `ceiling > 0 ? min(值, ceiling) : 值`，钳制时记 `run_budget_clamp` 日志。任一维度值 `0` = 该维度不启用（仍计数与上报，不停止 Run）。
+1. **维度与配置键**：`turns`（`agent-runtime.runMaxTurns`，一轮 = 一次完成的 LLM 调用）、`elapsed`（`runMaxElapsedSeconds`，累计墙钟，审批/人工等待暂停计时）、`tokens`（`runMaxTokens`，**比较对象是记账值**：`growth` 口径下每次调用记 `(input − cache_read) + output` 的累计，见下「记账口径」）。值键在 user/workspace 层可写；硬上限键 `runMaxTurnsCeiling` / `runMaxElapsedSecondsCeiling` / `runMaxTokensCeiling` 仅 instance 层可写（`0` = 不钳制），生效值 = `ceiling > 0 ? min(值, ceiling) : 值`，钳制时记 `run_budget_clamp` 日志。任一维度值 `0` = 该维度不启用（仍计数与上报，不停止 Run）。
 2. **计算与执行归属**：Agent 从 CP 配置（合并链 + 随 run 的层覆盖）解析生效预算并在消费时执行；CP 拥有配置面与 durable 终态，不重复计算。
 3. **触发与上报**：任一维度超限时 Agent MUST 停止执行并发出结构化 `error` 事件 `code=RUN_BUDGET_EXHAUSTED` + `dimension`（`turns` / `elapsed` / `tokens`），不得静默停止或本地宣称成功。
 4. **终态与可读性**：CP relay MUST 将 `dimension` 记入 durable 终态（`errorDetail=budgetDimension=<dim>`、run history payload），Run 收敛为 `failed`（若已有助手内容则 `partial`）；UI 以本地化原因呈现耗尽维度，接管走普通发送/Follow-up Queue，不恢复旧 Run 图状态、不新增接管机制。
 5. **不变式**：预算耗尽 MUST NOT 替代授权/审批/沙盒门禁；预算上限 MUST NOT 被非 instance 层扩大（键级锁 + 钳制）。
 
-验证映射：Agent `tests/unit/test_langgraph_runner_budget.py`、`tests/unit/test_run_budget_resolution.py`、`tests/unit/test_chat_budget_error_sse.py`；CP `ConfigServiceTest`（预算键/越权/默认）、`ChatIntegrationTest#budgetExhaustedConvergesToFailedWithDurableDimension`；host E2E `packages/ui/e2e/real/run-budget-exhaustion.spec.ts`（`--batch=run-budget`）。
+## 记账口径与两个数（task-101/B，2026-11-19）
+
+1. **两个数并存**：`totalTokens` 是 provider 报的**真实消费**（语义不变），`budgetConsumed` 是**口径内记账**。预算判定只用后者；两者同批写入，缺一不可。
+2. **`budgetAccounting` 配置键**（`growth` 默认 / `cumulative` 回滚开关）：`growth` = 每次 `(input − cache_read) + output`（缓存命中的前缀不重复计费）；`cumulative` = `input + output`（B 之前的规则，逐字节一致）。
+3. **字段缺失 fail-open**：provider 不报 cache 计数（字段 `absent`）⇒ 按 `input + output` 全额计，**绝不当 0 计**；上报 `0` 是真实未命中，同样全额计但记 `0` 的 cache。判据是「字段在不在」，不是「值是不是 0」。**禁止自算 tokenizer**。
+4. **与单次闸分工**：预算闸管**累计**，`CONTEXT_OVERFLOW` 单次闸管**峰值**，互不替代、阈值不改。缓存全命中的 900k 上下文可能只记账 2k，此时只有单次闸能拦下。
+5. **可复算恒等式**：`Σ(旧口径 − B 口径) = Σ cache_read`（按 run 逐次调用对齐）；durable 面为 `context_events` 的 `llm.usage`（带 `inputTokens` / `cacheReadInputTokens` / `outputTokens` / `budgetConsumed`）与 `chat_runs.budget_consumed`（可空；历史行 NULL，**不是 0**）。
+
+验证映射：Agent `tests/unit/test_run_budget_accounting.py`、`tests/unit/test_langgraph_runner_budget.py`、`tests/unit/test_run_budget_resolution.py`、`tests/unit/test_chat_budget_error_sse.py`；CP `ConfigServiceTest`（预算键/越权/默认）、`ChatIntegrationTest#budgetExhaustedConvergesToFailedWithDurableDimension`；host E2E `packages/ui/e2e/real/run-budget-exhaustion.spec.ts`（`--batch=run-budget`）。
 
 ## Agent Run 语义重复与无进展检测
 
