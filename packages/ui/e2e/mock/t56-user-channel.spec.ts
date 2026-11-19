@@ -492,10 +492,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
             /\/(login|onboarding|register)/,
             { timeout: LONG_TIMEOUT_MS },
         );
-        await expect(
-            dockToggle(page),
-            "the authenticated shell is gone",
-        ).toHaveCount(0);
+        await expect(dockToggle(page), "the authenticated shell is gone").toHaveCount(0);
         const afterLogout = await readUserChannel(page);
         // 防真空通过：`[].every()` 也是 true，所以先钉住"仍是同一文档 + 恰好 1 条连接"。
         // （若登出变成整页重载，records 会被重置为空数组，那就什么也证明不了。）
