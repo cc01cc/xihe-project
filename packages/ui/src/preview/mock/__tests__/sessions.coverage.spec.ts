@@ -12,6 +12,7 @@ import {
     sessionsOfWorkspace,
     workspacelessSessions,
 } from "../data/sessions";
+import { mockTeamTasks } from "../data/teamTasks";
 
 /**
  * task-25 D（`D-1175` 收窄重开）的机器判据：**新夹具真的被路由消费**，且形状照契约。
@@ -243,9 +244,38 @@ describe("mock 会话夹具被路由消费（task-25 D）", () => {
             available: ["view", "workspace", "full"],
         });
 
+        // task-146：S1 有非空 team-tasks 夹具（看板真挂载读数用），形状必须过 api.ts:447 的 14 字段；
+        // 无夹具的会话仍回合法空集 —— 两条都钉，否则「造了数据没人用」或「用空集掩盖缺口」都会漏。
         const tasks = await call(handler, `/sessions/${SESSION_ID}/team-tasks`);
         expect(tasks.status).toBe(200);
-        expect(tasks.body).toEqual({ tasks: [] });
+        const taskRows = (tasks.body as { tasks: Array<Record<string, unknown>> }).tasks;
+        expect(taskRows.length).toBe(mockTeamTasks[SESSION_ID]?.length ?? 0);
+        for (const row of taskRows) {
+            for (const field of [
+                "taskId",
+                "teamRootSessionId",
+                "taskNo",
+                "revision",
+                "subject",
+                "description",
+                "status",
+                "ready",
+                "ownerSessionId",
+                "ownerName",
+                "blockedBy",
+                "writeScopeWarnings",
+                "createdBySessionId",
+                "createdAt",
+                "updatedAt",
+            ]) {
+                expect(Object.keys(row), field).toContain(field);
+            }
+            expect(["pending", "in_progress", "completed", "deleted"]).toContain(row.status);
+            expect(row.teamRootSessionId).toBe(SESSION_ID);
+        }
+        const otherSession = mockSessions.find((item) => !(item.id in mockTeamTasks))!;
+        const emptyTasks = await call(handler, `/sessions/${otherSession.id}/team-tasks`);
+        expect(emptyTasks.body).toEqual({ tasks: [] });
     });
 
     it("未知会话子资源仍 404 MOCK_ENDPOINT_MISSING（不做通配 200 掩盖缺口）", async () => {

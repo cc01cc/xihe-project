@@ -21,6 +21,8 @@ import {
     sessionsOfWorkspace,
     workspacelessSessions,
 } from "./data/sessions";
+// task-146：team-board 真挂载读数夹具（真栈无写端点 ⇒ 只能在预览车道造非空投影）。
+import { teamTasksOfSession } from "./data/teamTasks";
 // task-449 / D-1287（D-1281 同形）：工作区智能体夹具 —— capSource 四态 + 记忆/角色绑定 + 写面判定。
 import { handleWorkspaceAgentResource } from "./data/workspaceAgents";
 // task-191：个人主体列表夹具（行内「配置」入口 + 详情抽屉在 mock 车道的唯一数据源）。
@@ -760,9 +762,10 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         });
                     }
                     if (suffix === "/team-tasks") {
-                        // task-136：D-1821 / task-188 S2 只读投影（api.ts:3477 已调）；预览
-                        // 没有任务板数据 ⇒ 合法空列表（面板空态），不伪造行。
-                        return respond(200, { tasks: [] });
+                        // task-136：D-1821 / task-188 S2 只读投影（api.ts:3477 已调）。
+                        // task-146：S1 给非空夹具（看板的真挂载读数需要 hasContent 成立）；
+                        // 其余会话仍回合法空集 —— 空态是真实形态，不因造样本而被抹掉。
+                        return respond(200, { tasks: teamTasksOfSession(sessionId) });
                     }
                     return respond(404, { code: "MOCK_ENDPOINT_MISSING", detail: suffix });
                 }
