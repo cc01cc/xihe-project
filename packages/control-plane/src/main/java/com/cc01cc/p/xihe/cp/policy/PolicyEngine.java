@@ -92,7 +92,9 @@ public class PolicyEngine {
                 ? builtinRegistry
                 : new ToolFaceRegistry(context.extraFaces());
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
-        PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
+        // DSD-1500 R1 (task-115): the request carries every domain the tool touches, not just the
+        // face's primary class -- a delete must reach HardGuard as "delete", a move as both.
+        PolicyRequest request = new PolicyRequest(toolName, registry.actionClassesOf(toolName),
                 declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
                 face.shape(), userId, workspaceId, sessionId);
         var hardDeny = hardGuard.checkWorkspaceResources(toolName, request.resources())
@@ -261,7 +263,7 @@ public class PolicyEngine {
                 : new ToolFaceRegistry(context.extraFaces());
 
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
-        PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
+        PolicyRequest request = new PolicyRequest(toolName, registry.actionClassesOf(toolName),
                 declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
                 face.shape(), userId, workspaceId, sessionId);
 
@@ -306,8 +308,11 @@ public class PolicyEngine {
         //            asks here (D27-20 ③: the dedicated principal remains approval-gated).
         // The browser write path (WorkspaceFileController -> Runtime) never runs this engine,
         // so a user editing their own AGENTS.md in the UI is unaffected by this branch.
+        // task-115: the mutation vocabulary is write OR delete -- reclassifying the delete tools
+        // must not open a quieter path to AGENTS.md (delete AGENTS.md asks exactly like rewriting
+        // it; the hard guard still owns .git-style paths upstream).
         if (verdict.effect() == PolicyEffect.ALLOW
-                && ToolFaceRegistry.ACTION_WRITE.equals(face.actionClass())
+                && ToolFaceRegistry.isMutationActionClass(face.actionClass())
                 && ToolFaceRegistry.mutatesProtectedFile(request.resources())) {
             verdict = PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, effectiveMode,
                     "protected file requires approval: " + ToolFaceRegistry.PROTECTED_WRITE_FILENAMES);

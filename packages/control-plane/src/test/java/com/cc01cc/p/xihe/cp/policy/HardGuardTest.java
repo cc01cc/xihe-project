@@ -31,6 +31,33 @@ class HardGuardTest {
         assertEquals(HardGuard.Kind.CRITICAL_PATH_DELETION, deny.get().kind());
     }
 
+    /**
+     * DSD-1500 R1 (task-115): the form a tool actually receives is workspace-relative, so the
+     * root-level `.git` / `.xihe-shadow` / `.xihe-data` shape is the one that matters. The
+     * pre-task-115 match required a leading separator ("/.git") and never saw it.
+     */
+    @Test
+    void blocksRootLevelCriticalPathDeletion() {
+        for (String path : List.of(".git", ".git/config", ".git/", ".git\\config",
+                ".xihe-shadow/refs", ".xihe-data/store", "sub/.git/config")) {
+            var deny = guard.check(request("delete", path));
+            assertTrue(deny.isPresent(), "expected deletion refusal for " + path);
+            assertEquals(HardGuard.Kind.CRITICAL_PATH_DELETION, deny.get().kind(), path);
+            assertTrue(deny.get().reason().startsWith("critical path is protected"),
+                    "reason should name the critical-path rule: " + deny.get().reason());
+        }
+    }
+
+    /** Segment equality, not substring: lookalike names are ordinary files and stay deletable. */
+    @Test
+    void criticalSegmentMatchIsNotASubstringMatch() {
+        for (String path : List.of(".gitignore", ".gitkeep", "docs/.gitignore", "src/gitignore.md",
+                ".github/workflows/ci.yml", ".xihe-shadowing/file")) {
+            assertTrue(guard.check(request("delete", path)).isEmpty(),
+                    "must not treat a lookalike as a critical path: " + path);
+        }
+    }
+
     @Test
     void readingCriticalPathIsNotADeletion() {
         assertTrue(guard.check(request("read", "/workspace/sub/.gitignore")).isEmpty());

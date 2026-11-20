@@ -149,15 +149,21 @@ class ProtectedFileWritePolicyTest {
     }
 
     @Test
-    void hardGuardSemanticsAreUntouchedByTheProtectedFileRule() {
-        // delete_file is classified as ACTION_WRITE in this codebase and `write` is on the
-        // default ask list, so auto bypasses it exactly as before this change. What matters
-        // here is non-interference: the new branch must not fire and must not deny; critical
-        // path denials stay with HardGuard (deliberately not modified by PLAN-0627).
-        PolicyVerdict result = verdict("delete_file", writeBody(".git/config"), "auto");
-        assertEquals(PolicyEffect.ALLOW, result.effect());
-        assertFalse(result.reason() != null && result.reason().startsWith("protected file"),
+    void hardGuardOwnsCriticalPathDenialsAndThisRuleNeverProducesThem() {
+        // task-115: delete_file carries the `delete` atom now, so HardGuard's critical-path floor
+        // finally runs and owns the refusal. The pin here is non-interference: the protected-file
+        // branch must not be what denied, and an ordinary deletion keeps the unchanged auto path.
+        PolicyVerdict denied = verdict("delete_file", writeBody(".git/config"), "auto");
+        assertEquals(PolicyEffect.DENY, denied.effect());
+        assertTrue(denied.reason().startsWith("hard guard: "),
+                "the hard guard owns the critical-path refusal, got: " + denied.reason());
+        assertFalse(denied.reason().contains("protected file"),
                 "protected-file rule must stay scoped to protected file names");
+
+        PolicyVerdict ordinary = verdict("delete_file", writeBody("src/old.ts"), "auto");
+        assertEquals(PolicyEffect.ALLOW, ordinary.effect());
+        assertTrue(ordinary.allowedBy() != null && ordinary.allowedBy().startsWith("auto@"),
+                "an ordinary deletion keeps the pre-existing auto bypass: " + ordinary.allowedBy());
     }
 
     // ---- boundary pin: the UI/user write path is unrestricted ---------------------------

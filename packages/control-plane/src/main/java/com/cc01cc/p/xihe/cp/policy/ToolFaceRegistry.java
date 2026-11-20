@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -190,8 +191,31 @@ public class ToolFaceRegistry {
             "git_status", "git_diff", "git_log");
 
     private static final Set<String> WRITE_TOOLS = Set.of(
-            "write_file", "edit_file", "delete_file", "delete_directory",
-            "move_file", "copy_file", "mkdir", "apply_patch");
+            "write_file", "edit_file", "copy_file", "mkdir", "apply_patch");
+
+    /**
+     * DSD-1500 R1 (task-115): the face of an irreversible deletion.
+     *
+     * <p>These three used to sit in WRITE_TOOLS, so a delete request carried only the write atom.
+     * Every write-side gate then decided on write, while HardGuard's critical-path branch (the L0
+     * "never delete .git" floor) is keyed on ACTION_DELETE and never ran: the door existed,
+     * nobody walked through it. The atom a delete consumes must be the atom the guard and the
+     * grants speak about.
+     */
+    private static final Set<String> DELETE_TOOLS = Set.of(
+            "delete_file", "delete_directory", "move_file");
+
+    /**
+     * Extra action domains a single tool also touches, on top of its face's primary class.
+     *
+     * <p>move_file is a delete AND a write: it unlinks the source (irreversible without the source
+     * bytes) and creates the destination. The strictest reading wins: every touched domain must be
+     * granted, so a principal holding only write still cannot move a file out of a directory it
+     * may not delete from (and vice versa). That is why PolicyRequest is multi-class and the
+     * verdicts combine as "any DENY wins".
+     */
+    private static final Map<String, List<String>> EXTRA_ACTION_CLASSES = Map.of(
+            "move_file", List.of(ACTION_WRITE));
 
     private static final Set<String> EXEC_TOOLS = Set.of(
             "execute_command", "start_background_process", "cancel_background_process");
@@ -243,6 +267,9 @@ public class ToolFaceRegistry {
 
     private final Map<String, Face> faces;
 
+    // Extra domains per tool; an explicitly classified face (extraFaces) inherits none.
+    private final Map<String, List<String>> extraActionClasses;
+
     public ToolFaceRegistry() {
         this(Map.of());
     }
@@ -252,6 +279,7 @@ public class ToolFaceRegistry {
         var builder = new java.util.HashMap<String, Face>();
         READ_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_READ, ToolShape.STRUCTURED)));
         WRITE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_WRITE, ToolShape.STRUCTURED)));
+        DELETE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_DELETE, ToolShape.STRUCTURED)));
         NETWORK_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
         EXEC_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_EXEC, ToolShape.INTERPRETER)));
         builder.put("spawn_agent", new Face(ACTION_SPAWN_AGENT, ToolShape.STRUCTURED));
@@ -267,7 +295,12 @@ public class ToolFaceRegistry {
         // STRUCTURED; authorization runs the credential_use evaluation on the
         // credential:<id> resource extracted from the tool arguments.
         builder.put("acquire_credential", new Face(ACTION_CREDENTIAL_USE, ToolShape.STRUCTURED));
+        // Built before the override so an explicitly classified tool keeps exactly the class it
+        // declares, with no inherited extra domains from the built-in table.
+        var extras = new java.util.HashMap<String, List<String>>(EXTRA_ACTION_CLASSES);
         builder.putAll(extraFaces);
+        extras.keySet().removeAll(extraFaces.keySet());
+        this.extraActionClasses = Map.copyOf(extras);
         this.faces = Map.copyOf(builder);
     }
 
@@ -279,6 +312,35 @@ public class ToolFaceRegistry {
     public Face faceOf(String tool) {
         Face face = tool == null ? null : faces.get(tool);
         return face != null ? face : new Face(PolicyLayer.UNCLASSIFIED_ACTION, ToolShape.OPAQUE);
+    }
+
+    /**
+     * Every action class the tool's request must be authorized for: the face's primary class plus
+     * the domains the operation also touches (move_file = delete + write).
+     *
+     * <p>Callers building a PolicyRequest for a tool must use this instead of
+     * List.of(face.actionClass()) -- the latter drops the extra domains, and a dropped domain is a
+     * dropped check.
+     */
+    public List<String> actionClassesOf(String tool) {
+        Face face = faceOf(tool);
+        List<String> extra = tool == null ? null : extraActionClasses.get(tool);
+        if (extra == null || extra.isEmpty()) {
+            return List.of(face.actionClass());
+        }
+        var classes = new java.util.LinkedHashSet<String>();
+        classes.add(face.actionClass());
+        classes.addAll(extra);
+        return List.copyOf(classes);
+    }
+
+    /**
+     * True for the action classes whose effect is a filesystem mutation: write (rewrite, truncate)
+     * and delete (unlink). The protected-file ask tier (PLAN-0627) is keyed on this pair -- deleting
+     * AGENTS.md must not be quieter than rewriting it.
+     */
+    public static boolean isMutationActionClass(String actionClass) {
+        return ACTION_WRITE.equals(actionClass) || ACTION_DELETE.equals(actionClass);
     }
 
     public Optional<Face> configuredFace(String tool) {

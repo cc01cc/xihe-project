@@ -44,9 +44,19 @@ public class HardGuard {
     /**
      * Critical path segments whose irreversible deletion is never allowed, regardless of mode.
      * Deliberately code-built and non-configurable.
+     *
+     * <p>DSD-1500 R1 (task-115): compared segment by segment after normalisation, not as a
+     * substring that carries a leading separator. The old {@code "/.git"} form could only match a
+     * path whose text contained {@code "/.git"} -- so a workspace-relative root-level
+     * {@code .git/...} (or bare {@code .git}) never matched, although those are exactly the paths
+     * this floor exists to protect. Absolute paths are refused before this point by
+     * {@link #checkWorkspaceResources}. Segment equality also keeps {@code .gitignore} and
+     * {@code .gitkeep} out without a special case.
+     *
+     * <p>{@code .xihe-data} is named by DSD-1500 R1 as a third protected directory. It has no
+     * reference in this repository today, so the entry is defence in depth, not a live path.
      */
-    private static final List<String> CRITICAL_SEGMENTS = List.of(
-            "/.git", "\\.git", "/.xihe-shadow", "\\.xihe-shadow");
+    private static final Set<String> CRITICAL_SEGMENTS = Set.of(".git", ".xihe-shadow", ".xihe-data");
 
     /**
      * Credential-like patterns precise enough to avoid flagging ordinary words (e.g. {@code task-notes}
@@ -114,8 +124,8 @@ public class HardGuard {
                 return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "resource escapes workspace: " + resource));
             }
             if (deletion) {
-                for (String critical : CRITICAL_SEGMENTS) {
-                    if (normalized.contains(critical.replace('\\', '/').toLowerCase())) {
+                for (String segment : normalized.split("/", -1)) {
+                    if (CRITICAL_SEGMENTS.contains(segment)) {
                         return Optional.of(new HardDeny(Kind.CRITICAL_PATH_DELETION,
                                 "critical path is protected from irreversible deletion: " + resource));
                     }
