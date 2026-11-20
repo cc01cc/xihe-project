@@ -350,6 +350,18 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             }
             await route.fallback();
         });
+        // task-146（DSD-1512）：连接弹窗的密钥来源已改成「凭据引用」，打开即读候选凭据列表。
+        // 本用例只走内联新建，给一条空集即可；不桩就会命中「未桩端点」404 并按失败门禁判红。
+        // 用正则而不是 glob：`**/api/v1/credentials**` 会顺带吃掉 /credentials/{id}/references。
+        await page.route(/\/api\/v1\/credentials(\?|$)/, (route) =>
+            route.request().method() === "GET"
+                ? route.fulfill({
+                      status: 200,
+                      contentType: "application/json",
+                      body: JSON.stringify({ credentials: [], count: 0 }),
+                  })
+                : route.fallback(),
+        );
         await page.route("**/api/v1/provider-connections/*", async (route) => {
             if (route.request().method() === "DELETE") {
                 connection = null;
@@ -403,8 +415,10 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
 
         const form = page.getByTestId("provider-connection-modal");
         await expect(form).toBeVisible();
-        await form.locator("input").nth(0).fill("Test OpenAI");
-        await form.locator('input[type="password"]').fill("sk-test-key");
+        await form.getByTestId("provider-connection-form-label").fill("Test OpenAI");
+        // task-146：默认「绑定已有凭据」态没有 key 输入框 ⇒ 先切「内联新建」。
+        await form.getByTestId("provider-credential-mode-inline").click();
+        await form.getByTestId("provider-credential-api-key").fill("sk-test-key");
         await form.getByRole("button", { name: "验证并保存" }).click();
         await expect(form).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         // The label now renders both on the connection card and in the layer

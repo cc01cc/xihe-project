@@ -72,8 +72,11 @@ async function createConnection(page: Page, input: NewConnection) {
     await expect(modal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await modal.getByTestId("provider-connection-form-label").fill(input.label);
     await modal.getByTestId("provider-connection-form-key").fill(input.key);
-    // apiKey 输入框没有 testid（`:2215-2225`），按 type=password 定位。
-    await modal.locator('input[type="password"]').fill("mock-key-for-e2e");
+    // task-146：新建连接默认是「绑定已有凭据」态，没有 key 输入框 ⇒ 先切「内联新建」再填。
+    await modal
+        .getByTestId("provider-credential-mode-inline")
+        .click({ timeout: ACTION_TIMEOUT_MS });
+    await modal.getByTestId("provider-credential-api-key").fill("mock-key-for-e2e");
     await modal
         .getByTestId("provider-connection-field-discovery")
         .click({ timeout: ACTION_TIMEOUT_MS });

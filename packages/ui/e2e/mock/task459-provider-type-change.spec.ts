@@ -92,7 +92,11 @@ async function createEmbeddingConnection(page: Page, key: string, label: string)
     await expect(modal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await modal.getByTestId("provider-connection-form-label").fill(label);
     await modal.getByTestId("provider-connection-form-key").fill(key);
-    await modal.locator('input[type="password"]').fill("mock-key-for-e2e");
+    // task-146：新建连接默认「绑定已有凭据」态，inline key 必须先切模式。
+    await modal.getByTestId("provider-credential-mode-inline").click({
+        timeout: ACTION_TIMEOUT_MS,
+    });
+    await modal.getByTestId("provider-credential-api-key").fill("mock-key-for-e2e");
     // 新建时切成 embedding：此时还没有 existing 连接 ⇒ changedType=false ⇒ 保存门不要求模板。
     await switchToAnotherApiType(page);
     await modal.getByTestId("provider-connection-field-discovery").click({

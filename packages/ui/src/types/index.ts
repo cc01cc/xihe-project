@@ -1569,7 +1569,8 @@ export const ThemeInjectionKey: InjectionKey<ThemeContext> = Symbol("theme");
 
 export type CredentialKind = "token" | "key_pair";
 export type CredentialDeliveryTier = "lease" | "reveal";
-export type CredentialOwnerType = "USER" | "WORKSPACE";
+/** task-146：INSTANCE 层凭据由 CP 的 CredentialAdminService.normalizeOwnerType 接受（需 instance:admin）。 */
+export type CredentialOwnerType = "USER" | "WORKSPACE" | "INSTANCE";
 export type CredentialStatus = "active" | "disabled";
 
 /** Sanitized credential metadata — never carries ciphertext, suffixes or values. */

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Eye, EyeOff, LoaderCircle } from "@lucide/vue";
@@ -17,18 +17,30 @@ import { api, ApiError, type ApiWorkspace } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useCredentialsStore } from "../../../stores/credentials";
 import { credentialErrorText } from "./errorText";
-import type { CredentialDeliveryTier, CredentialKind, CredentialOwnerType } from "../../../types";
+import type {
+    CredentialDeliveryTier,
+    CredentialKind,
+    CredentialOwnerType,
+    CredentialSummary,
+} from "../../../types";
 
 const props = withDefaults(
     defineProps<{
         open: boolean;
+        /**
+         * task-146：从 ProviderHub 打开时由调用方定作用域（USER / WORKSPACE / INSTANCE），
+         * 并锁住归属选择 —— 用户是在「给这条连接建凭据」，不是在管理页里自由选层。
+         */
+        defaultOwnerType?: CredentialOwnerType;
+        defaultWorkspaceId?: string;
     }>(),
-    { open: false },
+    { open: false, defaultOwnerType: undefined, defaultWorkspaceId: "" },
 );
 
 const emit = defineEmits<{
     close: [];
-    created: [];
+    /** task-146：带上新建出来的行，调用方要拿 id 直接回填绑定。 */
+    created: [credential: CredentialSummary];
 }>();
 
 const { t } = useI18n(),
@@ -52,12 +64,21 @@ const label = ref(""),
 const workspaces = ref<ApiWorkspace[]>([]),
     workspacesLoading = ref(false);
 
+/** task-146：调用方锁定作用域时的只读展示。 */
+const ownerScopeLabel = computed(() =>
+    ownerType.value === "INSTANCE"
+        ? t("credentials.ownerInstance")
+        : ownerType.value === "WORKSPACE"
+          ? t("credentials.ownerWorkspace")
+          : t("credentials.ownerUser"),
+);
+
 function reset() {
     label.value = "";
     kind.value = "token";
     deliveryTier.value = "lease";
-    ownerType.value = "USER";
-    workspaceId.value = "";
+    ownerType.value = props.defaultOwnerType ?? "USER";
+    workspaceId.value = props.defaultWorkspaceId ?? "";
     token.value = "";
     accessKey.value = "";
     secretKey.value = "";
@@ -115,19 +136,21 @@ async function submit() {
     submitting.value = true;
     serverErrors.value = {};
     try {
-        await store.create({
+        const created = await store.create({
             label: label.value.trim(),
             kind: kind.value,
             deliveryTier: deliveryTier.value,
             ...(ownerType.value === "WORKSPACE"
                 ? { ownerType: ownerType.value, ownerId: workspaceId.value }
                 : {}),
+            // INSTANCE 层不接受 ownerId（CP normalizeOwnerId 会判 400），只带作用域。
+            ...(ownerType.value === "INSTANCE" ? { ownerType: ownerType.value } : {}),
             ...(kind.value === "token"
                 ? { token: token.value }
                 : { accessKey: accessKey.value, secretKey: secretKey.value }),
         });
         toast.success(t("credentials.createSuccess"));
-        emit("created");
+        emit("created", created);
         emit("close");
     } catch (e) {
         serverErrors.value = { __form: credentialErrorText(e, t) };
@@ -236,7 +259,15 @@ async function submit() {
                         <FieldLabel class="text-sm font-medium">
                             {{ t("credentials.owner") }}
                         </FieldLabel>
+                        <p
+                            v-if="props.defaultOwnerType"
+                            data-testid="credentials-create-owner-locked"
+                            class="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-sm"
+                        >
+                            {{ ownerScopeLabel }}
+                        </p>
                         <Select
+                            v-else
                             :model-value="ownerType"
                             @update:model-value="
                                 (value) => (ownerType = String(value) as CredentialOwnerType)

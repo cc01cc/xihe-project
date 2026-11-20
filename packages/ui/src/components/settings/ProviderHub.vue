@@ -9,10 +9,14 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
 import { formatApiType } from "../../lib/apiTypeLabels";
-import { ApiError, request } from "../../composables/api";
+import { ApiError, api, request } from "../../composables/api";
 import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
+import CredentialCreateDialog from "./credentials/CredentialCreateDialog.vue";
+import { resourceDetailPath } from "../../lib/resourceDetail";
+import type { ResourceLayer } from "../../lib/settingsIa";
+import type { CredentialOwnerType, CredentialSummary } from "../../types";
 import { Button } from "../ui/button";
 import { profileReadiness } from "./llmProfileNotices";
 import { Search } from "@lucide/vue";
@@ -596,6 +600,8 @@ async function loadModels() {
 const form = reactive({
     label: "",
     apiKey: "",
+    /** task-146：绑定已有凭据时提交的 credentialId（与 apiKey 互斥，只会发一个）。 */
+    credentialId: "",
     baseUrl: "",
     connectionKey: "default",
     modelDiscovery: "remote-models" as ProviderDefinition["modelDiscovery"],
@@ -699,6 +705,116 @@ function formatVerifiedAt(value?: string | null): string {
     return t("settings.providerHub.daysAgo", { count: Math.floor(diff / 86_400_000) });
 }
 
+/* task-146（DSD-1512）：连接的密钥在 CP 侧是**凭据引用**，不是连接行上的字符串 ——
+   ProviderConnectionService.resolveCredentialLink 对 apiKey 会新建一条 USER 层 lease 凭据，
+   对 credentialId 只做可用性校验，且两者互斥（同时给 = 400）。因此表单把密钥来源拆成三态：
+   keep 保留当前绑定（PATCH 不带任何密钥键）/ bind 绑定已有凭据（只发 credentialId）/
+   inline 内联新建（只发 apiKey，服务端再建一条凭据并绑定）。互斥由 UI 保证，后端 400 原文照显示。 */
+const credentialChoice = ref<"keep" | "bind" | "inline">("bind");
+const credentialOptions = ref<CredentialSummary[]>([]);
+const credentialsLoading = ref(false);
+const credentialsError = ref("");
+const createCredentialOpen = ref(false);
+
+const credentialOwnerType = computed<CredentialOwnerType>(() => {
+    if (formScope.value === "WORKSPACE") return "WORKSPACE";
+    if (formScope.value === "INSTANCE") return "INSTANCE";
+    return "USER";
+});
+/** INSTANCE 层凭据不接受 ownerId（CP normalizeOwnerId 会判 400），只有 WORKSPACE 需要带工作区。 */
+const credentialOwnerId = computed(() =>
+    credentialOwnerType.value === "WORKSPACE" ? (props.workspaceId ?? "") : "",
+);
+const selectedCredential = computed<CredentialSummary | null>(
+    () => credentialOptions.value.find((item) => item.id === form.credentialId) ?? null,
+);
+const boundCredential = computed<CredentialSummary | null>(() => {
+    const linkedId = editingConnection.value?.credentialId ?? "";
+    if (!linkedId) return null;
+    return credentialOptions.value.find((item) => item.id === linkedId) ?? null;
+});
+/** 详情卡：把连接上的 credentialId 解析成可读 label / 指纹 / revision；解析不到就如实说不出来。 */
+const detailCredential = computed<CredentialSummary | null>(() => {
+    const linkedId = activeConnection.value?.credentialId ?? "";
+    if (!linkedId) return null;
+    return credentialOptions.value.find((item) => item.id === linkedId) ?? null;
+});
+const credentialLink = computed(() => {
+    const connection = activeConnection.value;
+    const linkedId = connection?.credentialId ?? "";
+    if (!connection || !linkedId) return "";
+    const layer: ResourceLayer =
+        connection.scope === "INSTANCE"
+            ? "INSTANCE"
+            : connection.scope === "WORKSPACE"
+              ? "WORKSPACE"
+              : "USER";
+    return resourceDetailPath("credentials", layer, linkedId);
+});
+
+function shortFingerprint(value: string): string {
+    const trimmed = value.trim();
+    return trimmed.length > 12 ? trimmed.slice(0, 12) + "…" : trimmed;
+}
+
+/** 下拉行文案：label · 指纹前段 · revision（卡面 A-① 要求三项都看得见）。 */
+function credentialOptionLabel(credential: CredentialSummary): string {
+    const parts = [credential.label];
+    if (credential.fingerprint) parts.push(shortFingerprint(credential.fingerprint));
+    parts.push("rev " + credential.revision);
+    return parts.join(" · ");
+}
+
+/** 按表单所属层拉候选凭据；失败只影响下拉，不阻断表单（错误原文照显示）。 */
+async function loadCredentialOptions() {
+    const ownerType = credentialOwnerType.value;
+    const ownerId = credentialOwnerId.value;
+    if (ownerType === "WORKSPACE" && !ownerId) {
+        credentialOptions.value = [];
+        credentialsError.value = t("settings.providerHub.credentialWorkspaceMissing");
+        return;
+    }
+    credentialsLoading.value = true;
+    credentialsError.value = "";
+    try {
+        const response = await api.listCredentials({
+            ownerType,
+            ...(ownerId ? { ownerId } : {}),
+        });
+        credentialOptions.value = response.credentials ?? [];
+    } catch (cause) {
+        credentialOptions.value = [];
+        credentialsError.value =
+            cause instanceof Error ? cause.message : t("settings.providerHub.credentialLoadFailed");
+        logger.warn("Provider Hub credential options failed", cause);
+    } finally {
+        credentialsLoading.value = false;
+    }
+}
+
+function beginReplaceCredential() {
+    credentialChoice.value = "bind";
+    form.credentialId = "";
+}
+
+function chooseBindMode() {
+    credentialChoice.value = "bind";
+    form.apiKey = "";
+}
+
+function chooseInlineMode() {
+    credentialChoice.value = "inline";
+    form.credentialId = "";
+}
+
+/** 快捷新建凭据成功后直接选中它 —— 用户刚建的凭据就是想去绑的那条。 */
+function onCredentialCreated(credential: CredentialSummary) {
+    createCredentialOpen.value = false;
+    credentialChoice.value = "bind";
+    form.credentialId = credential.id;
+    void loadCredentialOptions();
+}
+
 function resetForm(provider: ProviderDefinition, connection?: ProviderConnection) {
     selectedProvider.value = provider;
     editingConnection.value = connection ?? null;
@@ -710,6 +826,11 @@ function resetForm(provider: ProviderDefinition, connection?: ProviderConnection
         connection?.label ??
         t("settings.providerHub.connectionNameFallback", { name: provider.displayName });
     form.apiKey = "";
+    form.credentialId = "";
+    // 编辑态默认「保留当前绑定」：用户不做动作就不动凭据；新建态默认「绑定已有凭据」。
+    credentialChoice.value = connection ? "keep" : "bind";
+    credentialsError.value = "";
+    void loadCredentialOptions();
     form.apiType =
         (connection?.apiTypeId ?? provider.defaultApiType.apiTypeId) +
         "@" +
@@ -871,7 +992,18 @@ async function save() {
         toast.error(t("settings.providerHub.toastTypePreviewRequired"));
         return;
     }
-    if (provider.credential.required && !editingConnection.value && !form.apiKey.trim()) {
+    // task-146（DSD-1512）：密钥来源互斥 —— credentialId 与 apiKey 永远只发一个。
+    const inlineKey = form.apiKey.trim();
+    const linkedCredentialId = form.credentialId.trim();
+    const keepingBinding =
+        credentialChoice.value === "keep" && !!editingConnection.value?.credentialId;
+    if (
+        provider.credential.required &&
+        !keepingBinding &&
+        !editingConnection.value &&
+        !linkedCredentialId &&
+        !inlineKey
+    ) {
         toast.error(t("settings.providerHub.toastApiKeyRequired"));
         return;
     }
@@ -909,7 +1041,11 @@ async function save() {
                           : {}),
                   }
                 : {}),
-            ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}),
+            // task-146：绑定已有凭据只发 credentialId；内联新建才发 apiKey（服务端会另建一条凭据）。
+            ...(credentialChoice.value === "bind" && linkedCredentialId
+                ? { credentialId: linkedCredentialId }
+                : {}),
+            ...(credentialChoice.value === "inline" && inlineKey ? { apiKey: inlineKey } : {}),
             baseUrl: form.baseUrl.trim(),
             modelDiscovery: form.modelDiscovery,
             manualModels: form.manualModels
@@ -1429,6 +1565,33 @@ onMounted(() => {
                                           ? t("settings.providerHub.credentialConfigured")
                                           : t("settings.providerHub.credentialMissing")
                                 }}
+                            </dd>
+                            <!-- task-146（DSD-1512）：连接存的是凭据引用，这里显示 label / 指纹前段 / revision，
+                                 并给一条到「资源 › 凭据」引用面的深链。 -->
+                            <dd
+                                v-if="activeConnection.credentialId && detailCredential"
+                                class="mt-1 break-all text-xs text-muted-foreground"
+                                data-testid="provider-credential-detail"
+                            >
+                                {{ credentialOptionLabel(detailCredential) }}
+                            </dd>
+                            <dd
+                                v-else-if="activeConnection.credentialId"
+                                class="mt-1 break-all text-xs text-muted-foreground"
+                                data-testid="provider-credential-detail-unresolved"
+                            >
+                                {{ t("settings.providerHub.credentialUnresolved") }}
+                            </dd>
+                            <dd
+                                v-if="activeConnection.credentialId && credentialLink"
+                                class="mt-1 text-xs"
+                            >
+                                <a
+                                    data-testid="provider-credential-link"
+                                    class="text-primary underline-offset-2 hover:underline"
+                                    :href="credentialLink"
+                                    >{{ t("settings.providerHub.credentialReferences") }}</a
+                                >
                             </dd>
                             <button
                                 v-if="
@@ -2237,25 +2400,163 @@ onMounted(() => {
                             t("settings.providerHub.keyHint")
                         }}</span>
                     </label>
-                    <label class="mt-4 block">
+                    <!-- task-146（DSD-1512）：密钥来源三态 —— 保留当前绑定 / 绑定已有凭据 / 内联新建一条凭据。 -->
+                    <div v-if="selectedProvider.credential.type !== 'none'" class="mt-4">
                         <span class="mb-1.5 block text-xs font-semibold">{{
-                            t("settings.providerHub.fieldApiKey")
+                            t("settings.providerHub.fieldCredentialSource")
                         }}</span>
-                        <input
-                            v-model="form.apiKey"
-                            class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                            type="password"
-                            :placeholder="
-                                editingConnection
-                                    ? t('settings.providerHub.keyPlaceholderKeep')
-                                    : selectedProvider.credential.placeholder ||
-                                      t('settings.providerHub.optional')
-                            "
-                        />
-                        <span class="mt-1.5 block text-xs text-muted-foreground">{{
-                            t("settings.providerHub.keySaveHint")
-                        }}</span>
-                    </label>
+                        <div
+                            v-if="editingConnection && credentialChoice === 'keep'"
+                            class="rounded-md border bg-muted/30 px-3 py-2.5"
+                            data-testid="provider-credential-current"
+                        >
+                            <p class="text-xs text-muted-foreground">
+                                {{ t("settings.providerHub.credentialCurrent") }}
+                            </p>
+                            <p
+                                v-if="boundCredential"
+                                class="mt-0.5 break-all font-mono text-xs"
+                                data-testid="provider-credential-current-value"
+                            >
+                                {{ credentialOptionLabel(boundCredential) }}
+                            </p>
+                            <p
+                                v-else-if="editingConnection.credentialId"
+                                class="mt-0.5 break-all font-mono text-xs"
+                                data-testid="provider-credential-current-unresolved"
+                            >
+                                {{ t("settings.providerHub.credentialUnresolved") }}
+                            </p>
+                            <p v-else class="mt-0.5 text-xs">
+                                {{ t("settings.providerHub.credentialMissing") }}
+                            </p>
+                            <p
+                                v-if="boundCredential?.status === 'disabled'"
+                                class="mt-1 text-xs text-amber-600 dark:text-amber-400"
+                                data-testid="provider-credential-current-disabled"
+                            >
+                                {{ t("settings.providerHub.credentialDisabledWarning") }}
+                            </p>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                class="mt-2"
+                                data-testid="provider-credential-replace"
+                                @click="beginReplaceCredential"
+                            >
+                                {{ t("settings.providerHub.credentialReplace") }}
+                            </Button>
+                        </div>
+                        <template v-else>
+                            <div class="flex flex-wrap gap-2">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    :variant="credentialChoice === 'bind' ? 'default' : 'outline'"
+                                    data-testid="provider-credential-mode-bind"
+                                    @click="chooseBindMode"
+                                >
+                                    {{ t("settings.providerHub.credentialBindMode") }}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    :variant="credentialChoice === 'inline' ? 'default' : 'outline'"
+                                    data-testid="provider-credential-mode-inline"
+                                    @click="chooseInlineMode"
+                                >
+                                    {{ t("settings.providerHub.credentialInlineMode") }}
+                                </Button>
+                            </div>
+                            <div v-if="credentialChoice === 'bind'" class="mt-2 space-y-2">
+                                <Select
+                                    :model-value="form.credentialId"
+                                    @update:model-value="
+                                        (value) => (form.credentialId = String(value ?? ''))
+                                    "
+                                >
+                                    <SelectTrigger
+                                        data-testid="provider-credential-select"
+                                        class="w-full"
+                                        :aria-label="
+                                            t('settings.providerHub.fieldCredentialSource')
+                                        "
+                                    >
+                                        <SelectValue
+                                            :placeholder="
+                                                t(
+                                                    'settings.providerHub.credentialSelectPlaceholder',
+                                                )
+                                            "
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem
+                                            v-for="option in credentialOptions"
+                                            :key="option.id"
+                                            :value="option.id"
+                                            :data-testid="'provider-credential-option-' + option.id"
+                                        >
+                                            {{ credentialOptionLabel(option) }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <p
+                                    v-if="credentialsLoading"
+                                    class="text-xs text-muted-foreground"
+                                    data-testid="provider-credential-loading"
+                                >
+                                    {{ t("settings.providerHub.credentialLoading") }}
+                                </p>
+                                <p
+                                    v-else-if="credentialsError"
+                                    class="text-xs text-destructive"
+                                    data-testid="provider-credential-error"
+                                >
+                                    {{ credentialsError }}
+                                </p>
+                                <p
+                                    v-else-if="credentialOptions.length === 0"
+                                    class="text-xs text-muted-foreground"
+                                    data-testid="provider-credential-empty"
+                                >
+                                    {{ t("settings.providerHub.credentialEmpty") }}
+                                </p>
+                                <p
+                                    v-if="selectedCredential?.status === 'disabled'"
+                                    class="text-xs text-amber-600 dark:text-amber-400"
+                                    data-testid="provider-credential-disabled"
+                                >
+                                    {{ t("settings.providerHub.credentialDisabledWarning") }}
+                                </p>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid="provider-credential-create"
+                                    @click="createCredentialOpen = true"
+                                >
+                                    {{ t("settings.providerHub.credentialCreate") }}
+                                </Button>
+                            </div>
+                            <div v-else class="mt-2">
+                                <input
+                                    v-model="form.apiKey"
+                                    data-testid="provider-credential-api-key"
+                                    class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                                    type="password"
+                                    :placeholder="
+                                        selectedProvider.credential.placeholder ||
+                                        t('settings.providerHub.optional')
+                                    "
+                                />
+                                <span class="mt-1.5 block text-xs text-muted-foreground">{{
+                                    t("settings.providerHub.credentialInlineHint")
+                                }}</span>
+                            </div>
+                        </template>
+                    </div>
                     <label v-if="selectedProvider.supports.customBaseUrl" class="mt-4 block">
                         <span class="mb-1.5 block text-xs font-semibold"
                             >{{ t("settings.providerHub.fieldBaseUrl") }}
@@ -2355,5 +2656,13 @@ onMounted(() => {
                 </footer>
             </form>
         </div>
+        <!-- task-146：快捷新建凭据，成功后直接回填到下拉里（emit 载荷是新建出来的 CredentialSummary）。 -->
+        <CredentialCreateDialog
+            :open="createCredentialOpen"
+            :default-owner-type="credentialOwnerType"
+            :default-workspace-id="credentialOwnerId"
+            @created="onCredentialCreated"
+            @close="createCredentialOpen = false"
+        />
     </section>
 </template>

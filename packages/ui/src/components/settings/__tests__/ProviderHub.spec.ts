@@ -11,6 +11,7 @@ import type {
     SupportedApiTypeEntry,
 } from "../../../types/providerConnection";
 import {
+    createProviderConnection,
     deleteProviderConnection,
     getDeleteImpact,
     listProviderCatalog,
@@ -18,7 +19,9 @@ import {
     updateProviderConnection,
     verifyProviderConnection,
 } from "../../../services/providerConnectionService";
-import { ApiError, request } from "../../../composables/api";
+import { ApiError, api, request } from "../../../composables/api";
+import type { CredentialSummary } from "../../../types";
+import CredentialCreateDialog from "../credentials/CredentialCreateDialog.vue";
 import { toast } from "vue-sonner";
 import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../stores/config";
@@ -56,10 +59,16 @@ vi.mock("../../../services/providerConnectionService", async (importOriginal) =>
         vi.fn<typeof providerConnectionServiceModule.deleteProviderConnection>(),
     getDeleteImpact: vi.fn<typeof providerConnectionServiceModule.getDeleteImpact>(),
 }));
-vi.mock("../../../composables/api", async (importOriginal) => ({
-    ...(await importOriginal<typeof apiModule>()),
-    request: vi.fn<typeof request>(),
-}));
+vi.mock("../../../composables/api", async (importOriginal) => {
+    const actual = await importOriginal<typeof apiModule>();
+    return {
+        ...actual,
+        request: vi.fn<typeof request>(),
+        // task-146：ProviderHub 的凭据候选走 api.listCredentials。其余 api 面保持真实现
+        // （既有断言只看 request 的调用），只把这一个方法换成替身，避免 jsdom 里打真网络。
+        api: { ...actual.api, listCredentials: vi.fn<typeof actual.api.listCredentials>() },
+    };
+});
 vi.mock("../../../lib/logger", () => ({ logger: { warn: vi.fn<(...args: unknown[]) => void>() } }));
 vi.mock("vue-sonner", () => ({
     toast: {
@@ -138,6 +147,8 @@ beforeEach(() => {
             [workspace.id]: { connectionId: workspace.id, models: [{ name: "workspace-model" }] },
         },
     });
+    vi.mocked(createProviderConnection).mockResolvedValue(user);
+    vi.mocked(api.listCredentials).mockResolvedValue({ credentials: [], count: 0 });
     vi.mocked(updateProviderConnection).mockResolvedValue(user);
     vi.mocked(verifyProviderConnection).mockResolvedValue({ connection: user, models: [] });
 });
@@ -244,7 +255,9 @@ describe("ProviderHub master-detail", () => {
             .find((button) => button.text() === i18n.global.t("settings.providerHub.manage"))!
             .trigger("click");
         const modal = wrapper.get('[data-testid="provider-connection-modal"]');
-        expect(modal.get<HTMLInputElement>('input[type="password"]').element.value).toBe("");
+        // task-146：编辑既有连接默认停在「保留当前绑定」，密钥输入框根本不渲染 ⇒ 无从预填。
+        expect(modal.find('input[type="password"]').exists()).toBe(false);
+        expect(modal.get('[data-testid="provider-credential-current"]').exists()).toBe(true);
         // BL-476 L1 pilot: discovery is the vendored reka `Select` now, so the
         // modal no longer holds a native <select>; the closed trigger must still
         // surface the stored value instead of rendering empty.
@@ -460,12 +473,18 @@ describe("ProviderHub master-detail", () => {
     it("clears a cancelled replacement key without writing the connection", async () => {
         const wrapper = await mountHub();
         await wrapper.get('[data-testid="provider-connection-detail"] button').trigger("click");
-        await wrapper.get('input[type="password"]').setValue("replacement-for-test");
+        // task-146：替换密钥要先显式选「替换凭据」，再选「内联新建密钥」两态。
+        await wrapper.get('[data-testid="provider-credential-replace"]').trigger("click");
+        await wrapper.get('[data-testid="provider-credential-mode-inline"]').trigger("click");
+        await wrapper
+            .get('[data-testid="provider-credential-api-key"]')
+            .setValue("replacement-for-test");
         await wrapper
             .get('button[aria-label="' + i18n.global.t("settings.providerHub.close") + '"]')
             .trigger("click");
         await wrapper.get('[data-testid="provider-connection-detail"] button').trigger("click");
-        expect(wrapper.get<HTMLInputElement>('input[type="password"]').element.value).toBe("");
+        // 重开回到 keep 态：内联输入不再渲染，填过的密钥没有残留。
+        expect(wrapper.find('[data-testid="provider-credential-api-key"]').exists()).toBe(false);
         expect(updateProviderConnection).not.toHaveBeenCalled();
         wrapper.unmount();
     });
@@ -1059,6 +1078,193 @@ describe("ProviderHub connection resource limits (PLAN-0622)", () => {
         await flushPromises();
 
         expect(updateProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+});
+
+// ── task-146（DSD-1512）：连接的密钥来源三态 = 保留绑定 / 绑定已有凭据 / 内联新建 ──────────────
+describe("ProviderHub credential binding (task-146)", () => {
+    type Hub = Awaited<ReturnType<typeof mountHub>>;
+
+    function credentialRow(over: Partial<CredentialSummary> = {}): CredentialSummary {
+        return {
+            id: "cred-a",
+            label: "Team key",
+            kind: "token",
+            deliveryTier: "lease",
+            ownerType: "USER",
+            ownerId: "user-1",
+            status: "active",
+            fingerprint: "fp-aaaaaaaaaaaa",
+            revision: 3,
+            createdAt: "2026-11-20T00:00:00Z",
+            replacedAt: null,
+            referenceCount: 0,
+            ...over,
+        };
+    }
+
+    /** 走真实入口打开「新建连接」表单（connect → picker），并填好必填的 label / connectionKey。 */
+    async function openCreate(wrapper: Hub) {
+        await wrapper.get('[data-testid="provider-hub-connect"]').trigger("click");
+        await wrapper.get('[data-testid="provider-picker-example"]').trigger("click");
+        await flushPromises();
+        const modal = wrapper.get('[data-testid="provider-connection-modal"]');
+        await modal.get('[data-testid="provider-connection-form-label"]').setValue("Bound key");
+        await modal.get('[data-testid="provider-connection-form-key"]').setValue("bound-key");
+        return modal;
+    }
+
+    async function openManage(wrapper: Hub) {
+        const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
+        await row
+            .findAll("button")
+            .find((button) => button.text() === i18n.global.t("settings.providerHub.manage"))!
+            .trigger("click");
+        await flushPromises();
+        return wrapper.get('[data-testid="provider-connection-modal"]');
+    }
+
+    it("binds an existing credential and sends only credentialId", async () => {
+        vi.mocked(api.listCredentials).mockResolvedValue({
+            credentials: [credentialRow()],
+            count: 1,
+        });
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        // 候选按表单所属层拉：USER 层不带 ownerId。
+        expect(api.listCredentials).toHaveBeenCalledWith({ ownerType: "USER" });
+        // 候选已到手 ⇒ 空态提示不该出现（空态 = 当前作用域没有可用凭据）。
+        expect(modal.find('[data-testid="provider-credential-empty"]').exists()).toBe(false);
+        await setSelectValue(wrapper, '[data-testid="provider-credential-select"]', "cred-a");
+        await flushPromises();
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        const input = vi.mocked(createProviderConnection).mock.calls[0]![0]!;
+        expect(input.credentialId).toBe("cred-a");
+        // 互斥由 UI 保证：绑定态绝不把 apiKey 再送一遍（否则 CP 400）。
+        expect(input).not.toHaveProperty("apiKey");
+        wrapper.unmount();
+    });
+
+    it("sends only apiKey when the key is created inline", async () => {
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        await modal.get('[data-testid="provider-credential-mode-inline"]').trigger("click");
+        await modal.get('[data-testid="provider-credential-api-key"]').setValue("sk-inline-123");
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        const input = vi.mocked(createProviderConnection).mock.calls[0]![0]!;
+        expect(input.apiKey).toBe("sk-inline-123");
+        expect(input).not.toHaveProperty("credentialId");
+        wrapper.unmount();
+    });
+
+    it("blocks a provider that requires a key when neither a credential nor a key is given", async () => {
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        expect(toast.error).toHaveBeenCalledWith(
+            i18n.global.t("settings.providerHub.toastApiKeyRequired"),
+        );
+        expect(createProviderConnection).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("echoes the currently bound credential when editing", async () => {
+        const bound = { ...user, credentialId: "cred-a" };
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [bound] });
+        vi.mocked(api.listCredentials).mockResolvedValue({
+            credentials: [credentialRow()],
+            count: 1,
+        });
+        const wrapper = await mountHub();
+        const modal = await openManage(wrapper);
+        const current = modal.get('[data-testid="provider-credential-current"]');
+        expect(current.text()).toContain("Team key");
+        expect(current.text()).toContain("rev 3");
+        // keep 态不渲染密钥输入框：编辑不会把旧密钥回显出来。
+        expect(modal.find('input[type="password"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("replaces the bound credential with another one", async () => {
+        const bound = { ...user, credentialId: "cred-a" };
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [bound] });
+        vi.mocked(api.listCredentials).mockResolvedValue({
+            credentials: [
+                credentialRow(),
+                credentialRow({ id: "cred-b", label: "Spare key", revision: 1 }),
+            ],
+            count: 2,
+        });
+        const wrapper = await mountHub();
+        const modal = await openManage(wrapper);
+        await modal.get('[data-testid="provider-credential-replace"]').trigger("click");
+        await setSelectValue(wrapper, '[data-testid="provider-credential-select"]', "cred-b");
+        await flushPromises();
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        const input = vi.mocked(updateProviderConnection).mock.calls[0]![1]!;
+        expect(input.credentialId).toBe("cred-b");
+        expect(input).not.toHaveProperty("apiKey");
+        wrapper.unmount();
+    });
+
+    it("warns when the selected credential is disabled", async () => {
+        vi.mocked(api.listCredentials).mockResolvedValue({
+            credentials: [credentialRow({ status: "disabled" })],
+            count: 1,
+        });
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        await setSelectValue(wrapper, '[data-testid="provider-credential-select"]', "cred-a");
+        await flushPromises();
+        expect(modal.get('[data-testid="provider-credential-disabled"]').text()).toContain(
+            i18n.global.t("settings.providerHub.credentialDisabledWarning"),
+        );
+        wrapper.unmount();
+    });
+
+    it("fills the binding from a credential created in the shortcut dialog", async () => {
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        await modal.get('[data-testid="provider-credential-create"]').trigger("click");
+        await flushPromises();
+        const dialog = wrapper.findComponent(CredentialCreateDialog);
+        expect(dialog.exists()).toBe(true);
+        dialog.vm.$emit("created", credentialRow({ id: "cred-new", label: "Fresh key" }));
+        await flushPromises();
+        await modal.get("form").trigger("submit");
+        await flushPromises();
+        expect(vi.mocked(createProviderConnection).mock.calls[0]![0]!.credentialId).toBe(
+            "cred-new",
+        );
+        wrapper.unmount();
+    });
+
+    it("surfaces the raw credential list failure instead of an empty picker", async () => {
+        vi.mocked(api.listCredentials).mockRejectedValue(
+            new Error("403 FORBIDDEN: no credential read"),
+        );
+        const wrapper = await mountHub();
+        const modal = await openCreate(wrapper);
+        expect(modal.get('[data-testid="provider-credential-error"]').text()).toContain(
+            "403 FORBIDDEN: no credential read",
+        );
+        wrapper.unmount();
+    });
+
+    it("refuses to list workspace credentials without a workspace context", async () => {
+        const wrapper = mount(ProviderHub, { props: { scope: "WORKSPACE" } });
+        await flushPromises();
+        const modal = await openCreate(wrapper);
+        expect(modal.get('[data-testid="provider-credential-error"]').text()).toContain(
+            i18n.global.t("settings.providerHub.credentialWorkspaceMissing"),
+        );
+        // 没有工作区就根本不发请求（而不是发一个 ownerType=WORKSPACE 的空查询）。
+        expect(api.listCredentials).not.toHaveBeenCalled();
         wrapper.unmount();
     });
 });
