@@ -133,6 +133,35 @@ Three principles: (1) **inverted pyramid** — an H1 lead-in (audience + what is
 
 > Project exception: the workspace DOC-002 rule asks for pure ASCII without emoji. This series keeps the four markers ✅/⚠️/❌/→ for scanability and consistency with existing documents; everything else still follows DOC-002 (no other emoji or decorative characters).
 
+### 6.1 Diagram selection (2026-11-20)
+
+The "Diagrams" line in §6 becomes executable here: **structure / layering / comparison** use **inline SVG**; **flows / sequences / states** stay on mermaid.
+
+| Content shape | First choice | Note |
+| --- | --- | --- |
+| Structure, layering, region naming, comparison matrices | inline SVG (raw HTML) | one picture says what sits where; no renderer plugin needed |
+| Flows, sequences, state machines | mermaid | the existing 28 blocks across 15 documents stay as they are; natively supported |
+| Directory trees, level overviews | ASCII | mermaid has no better type (§6 original rule) |
+
+**Three hard rules**:
+
+1. **Inline SVG only, never a linked bitmap**: the doc site ingests documents through FB02's `walkMd` (`packages/apps/api/src/lib/project-doc-importer.ts:143`), which only takes `.md` ⇒ `![](assets/x.png)` never ships with the docs and 404s in production.
+2. **Sanctioned names only**: every label inside a diagram comes from the owning document's name table (for example DEV-010 §10.1.1); diagrams never coin vocabulary.
+3. **Both languages in the same batch**: zh and en receive the same diagram in one change (labels localised too), otherwise the heading pairing in `check:dev-i18n-drift` gains hits.
+
+**Copyable skeleton** (`viewBox` for the ratio, `width="100%"` to stay inside the body column, `role="img"` + `<title>` for accessibility):
+
+```html
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>diagram title</title>
+  <rect x="12" y="12" width="200" height="48" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="112" y="41" font-size="12" fill="#374151" text-anchor="middle">sanctioned name</text>
+  <path d="M212 36 L260 36" stroke="#9ca3af"/>
+</svg>
+```
+
+> Do not wrap the markup in an `svg` code fence: the fence-language whitelist (`packages/libs/utils/src/code-fence.ts:12`) has no `svg`, so it is highlighted as plain text and printed as code. Keep it as raw inline HTML.
+
 ## 7. Documentation Ownership (PLAN-239 drift gate)
 
 Every document has an owning module; a PLAN that changes that module's code must update the owning document in the same batch (see the wrap-up checklist in `A03-xihe/AGENTS.md`).

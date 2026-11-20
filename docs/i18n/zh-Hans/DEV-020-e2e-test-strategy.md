@@ -83,6 +83,32 @@ e2e/
 | real / compose | Docker Compose 的 CP/Agent/Runtime/PG + host UI | `mise run test:e2e:compose` 自动管理 Compose **[已冻结 2026-10-07]** | 默认排除 `@host` 用例 |
 | real / host | Windows native CP/Agent/Runtime/UI + 每轮隔离 PostgreSQL/host root/Sandbox | Host E2E runner 按每轮 `e2eRunId` 编排隔离环境 | 执行 `@host` 用例；禁止连接长期 dev DB |
 
+三条车道的取舍（内联 SVG，口径见 DEV-030 §6.1）：
+
+<svg viewBox="0 0 660 220" width="100%" role="img">
+  <title>E2E 三条车道与取舍</title>
+  <rect x="10" y="52" width="180" height="96" rx="6" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="100" y="74" font-size="13" fill="#374151" text-anchor="middle">mock 车道</text>
+  <text x="100" y="96" font-size="11" fill="#6b7280" text-anchor="middle">无外部依赖</text>
+  <text x="100" y="114" font-size="11" fill="#6b7280" text-anchor="middle">自动起 Vite</text>
+  <text x="100" y="132" font-size="11" fill="#6b7280" text-anchor="middle">界面回归</text>
+  <rect x="240" y="52" width="180" height="96" rx="6" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="330" y="74" font-size="13" fill="#312e81" text-anchor="middle">real / host</text>
+  <text x="330" y="96" font-size="11" fill="#4338ca" text-anchor="middle">Windows 四模块</text>
+  <text x="330" y="114" font-size="11" fill="#4338ca" text-anchor="middle">每轮隔离 PG</text>
+  <text x="330" y="132" font-size="11" fill="#4338ca" text-anchor="middle">实际验收</text>
+  <rect x="470" y="52" width="180" height="96" rx="6" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="4 4"/>
+  <text x="560" y="70" font-size="13" fill="#6b7280" text-anchor="middle">real /</text>
+  <text x="560" y="86" font-size="13" fill="#6b7280" text-anchor="middle">compose</text>
+  <text x="560" y="106" font-size="11" fill="#6b7280" text-anchor="middle">Compose 四服务</text>
+  <text x="560" y="114" font-size="11" fill="#6b7280" text-anchor="middle">已冻结 10-07</text>
+  <text x="560" y="132" font-size="11" fill="#6b7280" text-anchor="middle">仅历史参考</text>
+  <path d="M190 100 L232 100" stroke="#9ca3af" fill="none"/>
+  <path d="M428 100 L462 100" stroke="#9ca3af" fill="none"/>
+  <text x="330" y="32" font-size="12" fill="#374151" text-anchor="middle">一条现役，一条冻结</text>
+  <text x="330" y="180" font-size="11" fill="#6b7280" text-anchor="middle">三条车道必须串行执行</text>
+</svg>
+
 ### 1.2 Playwright 配置
 
 ```typescript

@@ -28,6 +28,33 @@ flowchart LR
     AG -.-> LLM["LLM Providers<br/>(scheduled by CP)"]
 ```
 
+Layering and call path of the four modules (structure diagrams are inline SVG, see DEV-030 §6.1):
+
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>Four modules: layering and main call path</title>
+  <rect x="160" y="18" width="340" height="34" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
+  <text x="330" y="40" font-size="13" fill="#374151" text-anchor="middle">entry points</text>
+  <rect x="40" y="84" width="180" height="52" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="130" y="106" font-size="13" fill="#374151" text-anchor="middle">UI module</text>
+  <text x="130" y="124" font-size="11" fill="#6b7280" text-anchor="middle">human UI</text>
+  <rect x="440" y="84" width="180" height="52" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="530" y="106" font-size="13" fill="#374151" text-anchor="middle">Agent</text>
+  <text x="530" y="124" font-size="11" fill="#6b7280" text-anchor="middle">planner</text>
+  <rect x="160" y="168" width="340" height="52" rx="5" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="330" y="190" font-size="13" fill="#312e81" text-anchor="middle">CP module</text>
+  <text x="330" y="208" font-size="11" fill="#4338ca" text-anchor="middle">routing</text>
+  <rect x="160" y="250" width="180" height="40" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="250" y="275" font-size="13" fill="#374151" text-anchor="middle">Runtime</text>
+  <rect x="380" y="250" width="120" height="40" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="440" y="275" font-size="12" fill="#374151" text-anchor="middle">PostgreSQL</text>
+  <path d="M130 136 L130 158 L165 158 L165 168" stroke="#9ca3af" fill="none"/>
+  <path d="M530 136 L530 158 L495 158 L495 168" stroke="#9ca3af" fill="none"/>
+  <path d="M300 220 L300 250" stroke="#9ca3af" fill="none"/>
+  <path d="M380 270 L330 270" stroke="#9ca3af" fill="none"/>
+  <path d="M330 52 L330 64" stroke="#9ca3af" fill="none"/>
+  <text x="330" y="78" font-size="11" fill="#6b7280" text-anchor="middle">both feed CP</text>
+</svg>
+
 ### 1.1. UI Module — Vue/TypeScript
 
 **Responsibility**: The entry point for human user interaction, covering Web, TUI, and potential future IDE Extension across multiple terminals.

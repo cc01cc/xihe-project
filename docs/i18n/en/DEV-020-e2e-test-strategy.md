@@ -64,6 +64,34 @@ e2e/
 | mock | None | `webServer` auto-starts Vite dev | 66 |
 | real | Docker Compose (CP/Agent/Runtime/PG) | Requires `docker compose up -d` first | 37 |
 
+How the three lanes relate (inline SVG, see DEV-030 §6.1): the `real / compose` lane was frozen on 2026-10-07, so acceptance runs on the `real / host` lane (`mise run test:e2e:host`).
+
+<svg viewBox="0 0 660 220" width="100%" role="img">
+  <title>E2E lanes and how they relate</title>
+  <rect x="10" y="52" width="180" height="96" rx="6" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="100" y="74" font-size="13" fill="#374151" text-anchor="middle">mock lane</text>
+  <text x="100" y="96" font-size="11" fill="#6b7280" text-anchor="middle">no deps</text>
+  <text x="100" y="114" font-size="11" fill="#6b7280" text-anchor="middle">Vite dev via</text>
+  <text x="100" y="130" font-size="11" fill="#6b7280" text-anchor="middle">webServer</text>
+  <text x="100" y="146" font-size="11" fill="#6b7280" text-anchor="middle">UI checks</text>
+  <rect x="240" y="52" width="180" height="96" rx="6" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="330" y="74" font-size="13" fill="#312e81" text-anchor="middle">real / host</text>
+  <text x="330" y="96" font-size="11" fill="#4338ca" text-anchor="middle">Win modules</text>
+  <text x="330" y="114" font-size="11" fill="#4338ca" text-anchor="middle">isolated PG</text>
+  <text x="330" y="130" font-size="11" fill="#4338ca" text-anchor="middle">per run</text>
+  <text x="330" y="146" font-size="11" fill="#4338ca" text-anchor="middle">acceptance</text>
+  <rect x="470" y="52" width="180" height="96" rx="6" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="4 4"/>
+  <text x="560" y="70" font-size="13" fill="#6b7280" text-anchor="middle">real /</text>
+  <text x="560" y="86" font-size="13" fill="#6b7280" text-anchor="middle">compose</text>
+  <text x="560" y="106" font-size="11" fill="#6b7280" text-anchor="middle">Compose 4</text>
+  <text x="560" y="114" font-size="11" fill="#6b7280" text-anchor="middle">frozen 10-07</text>
+  <text x="560" y="130" font-size="11" fill="#6b7280" text-anchor="middle">history only</text>
+  <path d="M190 100 L232 100" stroke="#9ca3af" fill="none"/>
+  <path d="M428 100 L462 100" stroke="#9ca3af" fill="none"/>
+  <text x="330" y="32" font-size="12" fill="#374151" text-anchor="middle">lanes today</text>
+  <text x="330" y="180" font-size="11" fill="#6b7280" text-anchor="middle">run serially</text>
+</svg>
+
 ### 1.2 Playwright Configuration
 
 ```typescript

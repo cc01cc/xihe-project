@@ -143,6 +143,35 @@ INDEX.md 等纯导航文件不需要特殊设置——LYJ 端自动排除。
 
 > 项目例外声明：workspace DOC-002 要求全 ASCII、无 emoji。本系列因扫描可读性与存量一致，保留 ✅/⚠️/❌/→ 四个标记，其余仍遵守 DOC-002（无其他 emoji/装饰字符）。
 
+### 6.1 示意图选用（2026-11-20）
+
+§6 的「图」一条在此落成可执行口径：**结构 / 分层 / 对照**用**内联 SVG**；**流程 / 时序 / 状态**继续用 mermaid。
+
+| 内容形态 | 首选 | 说明 |
+| --- | --- | --- |
+| 结构、分层、区域命名、对照矩阵 | 内联 SVG（裸 HTML） | 一张图答「谁在哪一层、谁挨着谁」，不依赖渲染器插件 |
+| 流程、时序、状态机 | mermaid | 存量 15 篇 28 块不动；管线原生支持 |
+| 目录树、层级一览 | ASCII | mermaid 无更优类型（§6 原口径） |
+
+**三条硬约束**：
+
+1. **只做内联 SVG，禁外链位图**：文档站经 FB02 的 `walkMd`（`packages/apps/api/src/lib/project-doc-importer.ts:143`）只收 `.md` ⇒ `![](assets/x.png)` 不会随文档进站，线上必 404。
+2. **只用正名**：图内文字一律取归属文档的正名表（如 DEV-010 §10.1.1），图上不造新词。
+3. **双语同批**：zh / en 同批加同一张图（图内文字各自本地化），否则 `check:dev-i18n-drift` 的小节标题对拍会多出命中。
+
+**可复制骨架**（`viewBox` 定比例、`width="100%"` 不超正文宽、`role="img"` + `<title>` 供无障碍）：
+
+```html
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>示意图标题</title>
+  <rect x="12" y="12" width="200" height="48" rx="6" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="112" y="41" font-size="12" fill="#374151" text-anchor="middle">正名</text>
+  <path d="M212 36 L260 36" stroke="#9ca3af"/>
+</svg>
+```
+
+> 不要包成 `svg` 围栏：代码围栏语言白名单（`packages/libs/utils/src/code-fence.ts:12`）没有 `svg`，会被按纯文本高亮成代码块并原样打印；必须是裸内联 HTML。
+
 ## 7. 文档归属制（PLAN-239 防漂移门禁）
 
 每篇文档指定归属模块；修改该模块代码的 PLAN 收尾必须同步其归属文档（见 A03-xihe/AGENTS.md 收尾检查清单）：

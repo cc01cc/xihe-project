@@ -203,6 +203,33 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 3. **主区（模块舞台内）顶部** = **工作台页签栏** `Workspace Tab Bar`（`WorkspaceTabBar.vue`，i18n `tabBarLabel`「工作台页签」）：它是**路由投影**，不新增路由。
 4. **页面**（下面两类之一）。
 
+四层与容器归属（内联 SVG，口径见 DEV-030 §6.1）：
+
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>工作台四层结构与两类页面的容器归属</title>
+  <rect x="8" y="16" width="48" height="268" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
+  <text x="32" y="150" font-size="11" fill="#374151" text-anchor="middle">全局条</text>
+  <rect x="64" y="16" width="104" height="268" rx="5" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="116" y="42" font-size="12" fill="#374151" text-anchor="middle">导航</text>
+  <text x="116" y="58" font-size="12" fill="#374151" text-anchor="middle">面板</text>
+  <rect x="176" y="16" width="476" height="268" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="414" y="10" font-size="11" fill="#6b7280" text-anchor="middle">工作区 / 会话</text>
+  <rect x="184" y="28" width="460" height="32" rx="4" fill="#f3f4f6" stroke="#9ca3af"/>
+  <text x="414" y="49" font-size="12" fill="#374151" text-anchor="middle">工作台页签栏</text>
+  <rect x="184" y="74" width="460" height="90" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="414" y="96" font-size="12" fill="#374151" text-anchor="middle">工作区页面 · 5 个</text>
+  <rect x="196" y="108" width="436" height="26" rx="4" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="414" y="126" font-size="11" fill="#6b7280" text-anchor="middle">二级导航带</text>
+  <text x="414" y="152" font-size="11" fill="#6b7280" text-anchor="middle">无容器</text>
+  <rect x="184" y="178" width="460" height="94" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="414" y="200" font-size="12" fill="#374151" text-anchor="middle">会话页面 · 2 条路由</text>
+  <rect x="196" y="212" width="300" height="48" rx="4" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="346" y="241" font-size="12" fill="#312e81" text-anchor="middle">主栏容器</text>
+  <rect x="508" y="212" width="124" height="48" rx="4" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="570" y="241" font-size="12" fill="#312e81" text-anchor="middle">右栏容器</text>
+  <text x="414" y="288" font-size="11" fill="#6b7280" text-anchor="middle">容器只在会话页面</text>
+</svg>
+
 **两类页面 —— 关键修正：容器不是页面级概念，是工作台组件的结构**：
 
 | 页面类别 | 几条 | 组件链 | 有容器吗 | 有二级导航带 |

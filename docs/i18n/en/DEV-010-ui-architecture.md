@@ -197,6 +197,38 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 
 **Four layers** (top to bottom, the only sanctioned names): 1. 全局条 **Global Rail** (`GlobalRail.vue`, 56px, icon-only ↔ icon + label); 2. 导航面板 **Navigation Panel** (`Sidebar.vue`, 280px, resizable 220–360); 3. **主区顶部** = 工作台页签栏 **Workspace Tab Bar** (`WorkspaceTabBar.vue`, i18n `tabBarLabel`) — it is a projection of the route, not a new route; 4. 页面 = one of the two classes below.
 
+Layers and container ownership (inline SVG, see DEV-030 §6.1):
+
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>Workbench: four layers, and which page class owns the containers</title>
+  <rect x="8" y="16" width="48" height="268" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
+  <text x="32" y="150" font-size="10" fill="#374151" text-anchor="middle">Global Rail</text>
+  <rect x="64" y="16" width="104" height="268" rx="5" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="116" y="40" font-size="11" fill="#374151" text-anchor="middle">Navigation</text>
+  <text x="116" y="56" font-size="11" fill="#374151" text-anchor="middle">Panel</text>
+  <rect x="176" y="16" width="476" height="268" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="414" y="10" font-size="11" fill="#6b7280" text-anchor="middle">workspace</text>
+  <rect x="184" y="28" width="460" height="32" rx="4" fill="#f3f4f6" stroke="#9ca3af"/>
+  <text x="414" y="42" font-size="11" fill="#374151" text-anchor="middle">Workspace</text>
+  <text x="414" y="55" font-size="11" fill="#374151" text-anchor="middle">Tab Bar</text>
+  <rect x="184" y="74" width="460" height="90" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="414" y="92" font-size="12" fill="#374151" text-anchor="middle">Workspace</text>
+  <text x="414" y="106" font-size="11" fill="#374151" text-anchor="middle">Page · 5</text>
+  <rect x="196" y="108" width="436" height="26" rx="4" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="414" y="126" font-size="11" fill="#6b7280" text-anchor="middle">Nav Strip</text>
+  <text x="414" y="152" font-size="11" fill="#6b7280" text-anchor="middle">none here</text>
+  <rect x="184" y="178" width="460" height="94" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="414" y="196" font-size="12" fill="#374151" text-anchor="middle">Session</text>
+  <text x="414" y="210" font-size="11" fill="#374151" text-anchor="middle">Page · 2</text>
+  <rect x="196" y="212" width="300" height="48" rx="4" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="346" y="235" font-size="11" fill="#312e81" text-anchor="middle">Main</text>
+  <text x="346" y="249" font-size="11" fill="#312e81" text-anchor="middle">Container</text>
+  <rect x="508" y="212" width="124" height="48" rx="4" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="570" y="235" font-size="11" fill="#312e81" text-anchor="middle">Right</text>
+  <text x="570" y="249" font-size="11" fill="#312e81" text-anchor="middle">Container</text>
+  <text x="414" y="288" font-size="11" fill="#6b7280" text-anchor="middle">session only</text>
+</svg>
+
 **Two page classes — the key correction: a container is not a page-level concept, it is the structure of the Workbench component.**
 
 | Page class | How many | Component chain | Containers | Secondary nav strip |
