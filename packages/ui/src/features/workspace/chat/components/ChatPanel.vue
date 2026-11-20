@@ -581,15 +581,41 @@ function mapRawMessages(rawMessages: ApiSessionMessage[]): Message[] {
     }));
 }
 
+/**
+ * task-158：「正在途的首屏拉取」对应的 `sessionId:branchId`。
+ *
+ * <p>首屏 `watch(() => props.sessionId, …, { immediate: true })` 调本函数解析分支，解析结果写回
+ * chat store 后立刻触发 `watch(selectedBranchId)` ⇒ 同一条
+ * `GET /sessions/:id/messages?branchId=…&limit=50` 在一拍里发两次（真栈实测 t=1453 / t=1455）。
+ * 分支 watcher 用这个键判断「同参数已经在途」，从而不再重复发；用户真的切到别的分支时键不同，
+ * 照常加载。</p>
+ */
+let inFlightMessageLoadKey: string | null = null;
+
+/** task-158：`loadSessionBranches` 在途的会话 id —— 分支解析窗内分支 watcher 必须让路（见下方用法）。 */
+let branchesResolvingForSession: string | null = null;
+
 async function loadSessionMessages(sessionId: string, requiredMessageIds?: ReadonlySet<string>) {
     const requestId = ++messageLoadRequestId;
+    let loadKey: string | null = null;
     try {
         let branchId = chatStore.getSelectedBranchId(sessionId);
         if (!branchId) {
-            await chatStore.loadSessionBranches(sessionId);
+            // task-158：这一段是竞态窗。解析分支会把 selectedBranchId 写回 store，而该写入触发的
+            // `watch(selectedBranchId)` 早于本函数恢复执行 ⇒ 分支 watcher 在键被设上之前就再发一条
+            // 同参数 `GET /sessions/:id/messages?branchId=…&limit=50`（真栈实测 t=1984 / t=1986）。
+            // 整段标成「本会话正在解析分支」，让分支 watcher 让路；解析完成后本函数自己发那一次。
+            branchesResolvingForSession = sessionId;
+            try {
+                await chatStore.loadSessionBranches(sessionId);
+            } finally {
+                if (branchesResolvingForSession === sessionId) branchesResolvingForSession = null;
+            }
             branchId = chatStore.getSelectedBranchId(sessionId);
         }
         if (!branchId) return;
+        loadKey = `${sessionId}:${branchId}`;
+        inFlightMessageLoadKey = loadKey;
         const rawPage = await api.getMessages(sessionId, branchId, {
             limit: MESSAGE_PAGE_SIZE,
         });
@@ -634,6 +660,9 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
         logger.error("Failed to load session messages", cause);
         // BL-288：413 PAGINATION_REQUIRED 的 detail 带条数/上限/建议，不能再静默吞掉。
         toast.error(problemDetailText(cause, t("chat.loadMessagesFailed")));
+    } finally {
+        // 只清自己那一次的键：更晚的加载已经改写键时不能误清，否则又放行一次重复请求。
+        if (loadKey !== null && inFlightMessageLoadKey === loadKey) inFlightMessageLoadKey = null;
     }
 }
 
@@ -1040,6 +1069,10 @@ onBeforeUnmount(() => {
 
 watch(selectedBranchId, (branchId, previousBranchId) => {
     if (branchId && branchId !== previousBranchId && props.sessionId) {
+        // task-158：这次分支变化若是首屏加载自己解析出来的（正在解析窗内，或同 sessionId:branchId
+        // 已在途），交给那一次请求，不再发第二条同参数请求。用户真的切分支时两者都不成立。
+        if (branchesResolvingForSession === props.sessionId) return;
+        if (inFlightMessageLoadKey === `${props.sessionId}:${branchId}`) return;
         void loadSessionMessages(props.sessionId);
     }
 });
@@ -1155,7 +1188,20 @@ async function handleFollowUpQueue(
     const fileIds = (attachments ?? [])
         .map((attachment) => attachment.fileId)
         .filter((fileId): fileId is string => Boolean(fileId));
-    const binding = configStore.getEffectiveModel(sessionId);
+    // task-140（J4）：幂等签名里的模型必须与 chip / 发送侧读**同一份来源判定** ——
+    // 否则「换了来源导致真的换模型」不会进签名，重试键会跨两次不同的发送被复用。
+    // 这里只读 store（不 await）：签名是本地同步计算，且上面的发送路径已经把数据补齐。
+    const modelSource = configStore.getChatModelSource(
+        sessionId,
+        authStore.currentWorkspaceId ?? null,
+    );
+    // 判定还在进行时回落到兼容层（本地同步拿得到的会话/profile 那两层），
+    // 不做"因为不确定就发空"——那会让一次正常发送少带字段。
+    const fallbackModel = configStore.getEffectiveModel(sessionId);
+    const wireProvider =
+        modelSource.status === "ready" ? modelSource.provider : (fallbackModel?.provider ?? null);
+    const wireModel =
+        modelSource.status === "ready" ? modelSource.model : (fallbackModel?.model ?? null);
     const signature = JSON.stringify([
         branchId,
         content,
@@ -1164,8 +1210,8 @@ async function handleFollowUpQueue(
         draftRevision ?? 0,
         fileIds,
         props.toolMode,
-        binding?.provider ?? null,
-        binding?.model ?? null,
+        wireProvider ?? null,
+        wireModel ?? null,
     ]);
     // task-125：只有在「同一份草稿 + 还在保留窗口内」时才复用键（= 真重试）；否则是新动作。
     const previousAttempt = pendingFollowUpKey.get(sessionId);
@@ -1187,8 +1233,8 @@ async function handleFollowUpQueue(
                 ...(fileIds.length > 0 ? { attachments: fileIds } : {}),
                 branchId,
                 toolMode: props.toolMode,
-                ...(binding?.provider ? { provider: binding.provider } : {}),
-                ...(binding?.model ? { model: binding.model } : {}),
+                ...(wireProvider ? { provider: wireProvider } : {}),
+                ...(wireModel ? { model: wireModel } : {}),
             },
             idempotencyKey,
         );

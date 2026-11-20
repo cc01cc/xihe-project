@@ -94,6 +94,16 @@ const messages = {
                 speed: "{value} tok/s",
                 tokens: "{used} / {limit}",
                 cacheHit: "缓存命中 {percent}",
+                // task-140：chip 三态来源文案（夹具跟产品走，断言不放宽）。
+                modelSourceSession: "会话覆盖",
+                modelSourcePrincipal: "主体默认",
+                modelSourceProfile: "全局配置",
+                modelSourceNone: "无可用来源",
+                modelSourceHint: "来源：{source} · {model}",
+                modelSourceResolving: "正在判定模型来源…",
+                modelOutOfCatalogBadge: "本地清单未发现",
+                modelOutOfCatalogHint:
+                    "本地模型清单里没有它；发送口径仍以来源为准，清单只用于候选项与角标。",
             },
             placeholder: "输入消息...",
             send: "发送",

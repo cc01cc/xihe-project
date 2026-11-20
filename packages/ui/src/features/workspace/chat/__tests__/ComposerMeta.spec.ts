@@ -33,6 +33,23 @@ const modelBinding = vi.hoisted(() => ({
     value: null as null | { provider?: string; model: string },
 }));
 
+/** task-140：chip 的来源判定来自 config store 的 getChatModelSource；替身只提供可写的返回面。 */
+const modelSource = vi.hoisted(() => ({
+    value: {
+        status: "ready",
+        provider: null,
+        model: null,
+        source: "none",
+        inDiscoveredList: null,
+    } as {
+        status: "loading" | "ready";
+        provider: string | null;
+        model: string | null;
+        source: "session" | "agent-principal" | "llm-profile" | "none";
+        inDiscoveredList: boolean | null;
+    },
+}));
+
 /** 档位 store 的最小替身：真 store 的 load 会打 /api/v1/sessions/:id/tier，jsdom 里没有 origin。 */
 const tierMock = vi.hoisted(() => ({
     state: {
@@ -53,7 +70,14 @@ const tierMock = vi.hoisted(() => ({
 
 vi.mock("../../../../stores/config", async (importOriginal) => {
     const actual = await importOriginal<typeof ConfigModule>();
-    return { ...actual, useConfigStore: () => ({ getEffectiveModel: () => modelBinding.value }) };
+    return {
+        ...actual,
+        useConfigStore: () => ({
+            getEffectiveModel: () => modelBinding.value,
+            getChatModelSource: () => modelSource.value,
+            ensureChatModelSource: async () => {},
+        }),
+    };
 });
 
 vi.mock("../../../../stores/sessionTier", () => ({
@@ -115,6 +139,16 @@ const messages = {
                 speed: "{value} tok/s",
                 tokens: "{used} / {limit}",
                 cacheHit: "缓存命中 {percent}",
+                // task-140：chip 的来源文案（夹具跟产品走，断言不放宽）。
+                modelSourceSession: "会话覆盖",
+                modelSourcePrincipal: "主体默认",
+                modelSourceProfile: "全局配置",
+                modelSourceNone: "无可用来源",
+                modelSourceHint: "来源：{source} · {model}",
+                modelSourceResolving: "正在判定模型来源…",
+                modelOutOfCatalogBadge: "本地清单未发现",
+                modelOutOfCatalogHint:
+                    "本地模型清单里没有它；发送口径仍以来源为准，清单只用于候选项与角标。",
             },
         },
         sessionSettings: {
@@ -163,9 +197,28 @@ async function mountWithUsage(usage: Record<string, number | null>) {
     return wrapper;
 }
 
+/** task-140：造一个 ready 的来源判定结果（status 固定 ready，只改来源面）。 */
+function readySource(partial: Partial<typeof modelSource.value>) {
+    modelSource.value = {
+        status: "ready",
+        provider: null,
+        model: null,
+        source: "none",
+        inDiscoveredList: null,
+        ...partial,
+    };
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     modelBinding.value = null;
+    modelSource.value = {
+        status: "ready",
+        provider: null,
+        model: null,
+        source: "none",
+        inDiscoveredList: null,
+    };
     tierMock.loads.length = 0;
     tierMock.changes.length = 0;
 });
@@ -236,31 +289,100 @@ describe("task-133 元信息行：有值才渲染", () => {
     });
 });
 
-describe("task-133 模型 chip：未绑定警示 / 已绑定中性 / 点开去设置", () => {
-    it("已绑定时是中性态 provider · model，点击把设置交给宿主页", async () => {
-        modelBinding.value = { provider: "openai", model: "gpt-5" };
+describe("task-140 模型 chip：来源三态化，清单只做角标", () => {
+    it("会话覆盖命中时按 session 来源出文案，点击把设置交给宿主页", async () => {
+        readySource({
+            provider: "openai",
+            model: "gpt-5",
+            source: "session",
+            inDiscoveredList: true,
+        });
         const wrapper = mountInputArea();
         const chip = wrapper.find(CHIP);
         expect(chip.exists()).toBe(true);
-        expect(chip.text()).toBe("openai · gpt-5");
+        expect(chip.text()).toBe("openai · gpt-5 · 会话覆盖");
         expect(chip.attributes("data-bound")).toBe("true");
-        expect(chip.attributes("title")).toBe("模型 · 路由: openai · gpt-5");
+        expect(chip.attributes("data-source")).toBe("session");
+        expect(chip.attributes("data-in-catalog")).toBe("true");
+        expect(chip.attributes("title")).toBe("来源：会话覆盖 · openai · gpt-5");
+        expect(chip.attributes("aria-label")).toContain("openai · gpt-5 · 会话覆盖");
         expect(chip.classes()).not.toContain("border-dashed");
         await chip.trigger("click");
         expect(wrapper.emitted("settings")).toHaveLength(1);
     });
 
-    it("未绑定时是警示态：虚线 + amber，aria 写明发送前需绑定", async () => {
+    it("会话覆盖的模型不在本地清单时仍可发送：加中性角标，不禁用不转警示态", async () => {
+        readySource({
+            provider: "anthropic",
+            model: "claude-experimental",
+            source: "session",
+            inDiscoveredList: false,
+        });
+        const wrapper = mountInputArea();
+        const chip = wrapper.find(CHIP);
+        expect(chip.text()).toBe("anthropic · claude-experimental · 会话覆盖 · 本地清单未发现");
+        expect(chip.attributes("data-bound")).toBe("true");
+        expect(chip.attributes("data-in-catalog")).toBe("false");
+        // J3：清单外不得变成不可发送 —— 警示态 class 与 disabled 都不许出现。
+        expect(chip.classes()).not.toContain("border-dashed");
+        expect(chip.attributes("disabled")).toBeUndefined();
+        expect(chip.attributes("title")).toContain("本地模型清单里没有它");
+    });
+
+    it("主体默认与全局配置各自出对应来源文案（同一份解析结果）", async () => {
+        readySource({
+            provider: "deepseek",
+            model: "deepseek-flash",
+            source: "agent-principal",
+            inDiscoveredList: true,
+        });
+        const wrapper = mountInputArea();
+        expect(wrapper.find(CHIP).text()).toBe("deepseek · deepseek-flash · 主体默认");
+        expect(wrapper.find(CHIP).attributes("data-source")).toBe("agent-principal");
+
+        readySource({
+            provider: "google",
+            model: "gemini-2.0-flash",
+            source: "llm-profile",
+            inDiscoveredList: null,
+        });
+        // 替身是普通对象（非响应式），换来源后重新挂载一次即可重新求值 computed。
+        const profileWrapper = mountInputArea();
+        expect(profileWrapper.find(CHIP).text()).toBe("google · gemini-2.0-flash · 全局配置");
+        expect(profileWrapper.find(CHIP).attributes("data-source")).toBe("llm-profile");
+        expect(profileWrapper.find(CHIP).attributes("data-in-catalog")).toBe("unknown");
+    });
+
+    it("全无来源时是警示态：虚线 + amber，aria 写明发送前需绑定", async () => {
         const wrapper = mountInputArea();
         const chip = wrapper.find(CHIP);
         expect(chip.text()).toBe("未绑定模型");
         expect(chip.attributes("data-bound")).toBe("false");
+        expect(chip.attributes("data-source")).toBe("none");
         expect(chip.classes()).toContain("border-dashed");
         expect(chip.classes()).toContain("border-amber-500/60");
-        expect(chip.attributes("title")).toBe("发送前需绑定 provider 连接（点此打开模型设置）");
+        expect(chip.attributes("title")).toBe(
+            "来源：无可用来源 · 未绑定模型 发送前需绑定 provider 连接（点此打开模型设置）",
+        );
         expect(chip.attributes("aria-label")).toContain("发送前需绑定 provider 连接");
         await chip.trigger("click");
         expect(wrapper.emitted("settings")).toHaveLength(1);
+    });
+
+    it("判定中不画成未绑定：文案是「正在判定模型来源…」，且没有 amber", () => {
+        modelSource.value = {
+            status: "loading",
+            provider: null,
+            model: null,
+            source: "none",
+            inDiscoveredList: null,
+        };
+        const wrapper = mountInputArea();
+        const chip = wrapper.find(CHIP);
+        expect(chip.text()).toBe("正在判定模型来源…");
+        expect(chip.attributes("data-bound")).toBe("true");
+        expect(chip.attributes("data-source")).toBe("loading");
+        expect(chip.classes()).not.toContain("border-dashed");
     });
 });
 

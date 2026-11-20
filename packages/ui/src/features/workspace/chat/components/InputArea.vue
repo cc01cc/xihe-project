@@ -243,7 +243,7 @@ watch(
 );
 /** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
 const chatStore = useChatStore();
-/** task-135：右槽模型·路由 chip 的只读来源（与发送侧同源 getEffectiveModel）。 */
+/** task-135 / task-140：模型·路由 chip 的来源判定（`getChatModelSource`，与发送侧同一份）。 */
 const configStore = useConfigStore();
 /** 无 router 的组件单测里注入结果为空 ⇒ 判定为「非独立会话」（见 workspaceLess.ts 注释）。 */
 const route = inject(routeLocationKey, null);
@@ -568,8 +568,19 @@ watch(
         // task-126 F3：深链「不可满足」提示同理 —— 它是给**这次**深链的读者看的，换会话即失效。
         unsatRecipients.value = [];
         void participantsStore.ensureLoaded(id ?? null);
+        // task-140：来源判定要"名册 + 工作区主体默认"两块数据；名册上面已经在拉，
+        // 这里幂等补齐后面那一块（失败只记日志 ⇒ 回落 profile，不阻塞输入）。
+        void configStore.ensureChatModelSource(id ?? null, authStore.currentWorkspaceId);
     },
     { immediate: true },
+);
+
+// 工作区切换后主体默认模型会变（同一会话在不同工作区里的 To 主体默认不同）⇒ 重新判定。
+watch(
+    () => authStore.currentWorkspaceId,
+    (workspaceId) => {
+        void configStore.ensureChatModelSource(props.sessionId, workspaceId ?? null);
+    },
 );
 
 // task-55（D-1882③）：D30-14 的「默认代发 = PRIMARY 行」watch 随入口移除 ——
@@ -832,8 +843,9 @@ const sendDisabled = computed(() => {
 /**
  * task-135（composer 三层容器）第 2+3 层的数据源与口径。
  *
- * - 模型·路由 chip 走 `configStore.getEffectiveModel`，与发送侧（ChatPanel.vue 的发送签名）同源，
- *   只做只读展示；未绑定时退回占位文案，不显示「看起来已绑」的名字（C1 口径）。
+ * - 模型·路由 chip 走 `configStore.getChatModelSource`（task-140：会话覆盖 → To 主体默认 → 全局 profile，
+ *   与 CP `ChatModelResolutionService` 同构），与发送侧（SSEStream）和 ChatPanel 的发送签名读同一份；
+ *   本地模型清单只做中性角标，不参与「能不能发」的裁决（C1 的「不装作已绑」语义保留：来源为空即警示态）。
  * - token 用量走 chat store 的 `getSessionLastUsage`（SSE `usage.recorded` 写入）。
  * - 轮 / 步 / tok-s 与缓存命中：UI 侧**没有**数据源（全 src 无字段）⇒ 取值为 null、该项不渲染
  *   （task-133 改）；待 CP 补录字段后接线即显示，不许用估算值假装成读数。
@@ -878,25 +890,72 @@ const composerMetaNumberFormat = new Intl.NumberFormat("en-US");
  * - 已绑定：中性态，`provider · model`，点开去用户层 llm-provider 域核对（只读展示才真的没法查）；
  * - 未绑定：警示态（虚线边框 + amber）+ `aria-label` 写明「发送前需绑定 provider 连接」——
  *   在此之前未绑定只是一个灰字，用户点不动也看不出这是发送失败的根因（22:57 第二问）。
- * - 解析顺序不动：`configStore.getEffectiveModel`（config.ts:502-527 是唯一解析点）。
+ *
+ * task-140（J1~J4，DSD-1508）：**来源判定换成 `configStore.getChatModelSource`**，
+ * 与 CP `ChatModelResolutionService` 同构（会话覆盖 → To 主体默认 → 全局 profile），并且
+ * **不再用本地模型清单否决来源** —— 清单只做中性角标、绝不禁用发送。旧实现在 `/models`
+ * 缓存过期时把已绑定的会话显示成"未绑定"，而 CP 照常发送成功，展示与事实相反。
+ *
+ * 三个消费方（本 chip / `SSEStream` 发送 / `ChatPanel` 幂等签名）读同一份解析结果，
+ * 这里不再自己拼来源（J4：禁止各自算）。
  */
+const composerModelSource = computed(() =>
+    configStore.getChatModelSource(props.sessionId, authStore.currentWorkspaceId),
+);
+
+const MODEL_SOURCE_LABEL_KEYS = {
+    session: "chat.composerMeta.modelSourceSession",
+    "agent-principal": "chat.composerMeta.modelSourcePrincipal",
+    "llm-profile": "chat.composerMeta.modelSourceProfile",
+    none: "chat.composerMeta.modelSourceNone",
+} as const;
+
 const composerModelChip = computed(() => {
-    const binding = configStore.getEffectiveModel(props.sessionId);
-    const label = [binding?.provider, binding?.model].filter(Boolean).join(" · ");
-    if (label) {
+    const resolved = composerModelSource.value;
+    if (resolved.status === "loading") {
+        // 加载中 ≠ 未绑定：把"还没读到"画成"没有来源"正是本卡要修的假否定。
         return {
-            label,
+            label: t("chat.composerMeta.modelSourceResolving"),
             bound: true,
-            title: `${t("chat.composerMeta.model")}: ${label}`,
-            ariaLabel: `${t("chat.composerMeta.model")}: ${label}. ${t("chat.composerMeta.modelChangeHint")}`,
+            source: "loading",
+            inCatalog: null as boolean | null,
+            title: t("chat.composerMeta.modelSourceResolving"),
+            ariaLabel: t("chat.composerMeta.modelSourceResolving"),
             className:
                 "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
         };
     }
+
+    const sourceLabel = t(MODEL_SOURCE_LABEL_KEYS[resolved.source]);
+    if (resolved.source !== "none" && resolved.provider && resolved.model) {
+        const label = [resolved.provider, resolved.model].filter(Boolean).join(" · ");
+        const outOfCatalog = resolved.inDiscoveredList === false;
+        const parts = [label, sourceLabel];
+        if (outOfCatalog) parts.push(t("chat.composerMeta.modelOutOfCatalogBadge"));
+        const title = [
+            t("chat.composerMeta.modelSourceHint", { source: sourceLabel, model: label }),
+            outOfCatalog ? t("chat.composerMeta.modelOutOfCatalogHint") : "",
+        ]
+            .filter(Boolean)
+            .join(" ");
+        return {
+            label: parts.join(" · "),
+            bound: true,
+            source: resolved.source,
+            inCatalog: resolved.inDiscoveredList,
+            title,
+            ariaLabel: `${t("chat.composerMeta.model")}: ${parts.join(" · ")}. ${t("chat.composerMeta.modelChangeHint")}`,
+            className:
+                "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
+        };
+    }
+
     return {
         label: t("chat.composerMeta.modelUnbound"),
         bound: false,
-        title: t("chat.composerMeta.modelUnboundHint"),
+        source: "none",
+        inCatalog: null as boolean | null,
+        title: `${t("chat.composerMeta.modelSourceHint", { source: sourceLabel, model: t("chat.composerMeta.modelUnbound") })} ${t("chat.composerMeta.modelUnboundHint")}`,
         ariaLabel: `${t("chat.composerMeta.modelUnbound")}. ${t("chat.composerMeta.modelUnboundHint")}`,
         className:
             "hidden min-w-0 max-w-56 items-center truncate rounded-md border border-dashed border-amber-500/60 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 sm:inline-flex hover:bg-amber-500/20 dark:text-amber-300",
@@ -1065,6 +1124,14 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
             class: composerModelChip.value.className,
             "data-testid": "composer-model-chip",
             "data-bound": composerModelChip.value.bound ? "true" : "false",
+            // task-140：来源与角标也进 DOM —— 单测要断言"同一份解析结果"，不能只比文案。
+            "data-source": composerModelChip.value.source,
+            "data-in-catalog":
+                composerModelChip.value.inCatalog === null
+                    ? "unknown"
+                    : composerModelChip.value.inCatalog
+                      ? "true"
+                      : "false",
             "aria-label": composerModelChip.value.ariaLabel,
             title: composerModelChip.value.title,
             onClick: openModelSettings,

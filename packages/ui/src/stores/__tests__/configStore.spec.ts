@@ -7,6 +7,9 @@ import {
     LAYER_DOMAINS,
     isDomainReadableWithoutAdmin,
 } from "../config";
+import { api } from "../../composables/api";
+import { useSessionParticipantsStore } from "../../features/workspace/stores/sessionParticipants";
+import type { SessionParticipantView } from "../../types/participant";
 
 beforeEach(() => {
     setActivePinia(createPinia());
@@ -24,6 +27,30 @@ function seedReadyModel(store: ReturnType<typeof useConfigStore>, provider: stri
             },
         },
     };
+}
+
+/** task-140：名册是"来源判定"的第二块数据，直接写 store 状态（不 mock 网络）。 */
+function seedRoster(
+    participants: SessionParticipantView[] | null,
+    extra: { forbidden?: boolean; error?: string } = {},
+) {
+    const roster = useSessionParticipantsStore();
+    roster.participants = participants;
+    roster.forbidden = extra.forbidden ?? false;
+    roster.error = extra.error ?? "";
+}
+
+function primaryAgent(principalId: string): SessionParticipantView {
+    return {
+        participantId: `p-${principalId}`,
+        principalKind: "AGENT",
+        principalId,
+        role: "PRIMARY",
+        orderIndex: 10,
+        wakePolicy: "ALL_MESSAGES",
+        respondPolicy: "ALWAYS",
+        capabilities: { view: true, manage: true, mention: true, speakAs: false },
+    } as SessionParticipantView;
 }
 
 describe("useConfigStore", () => {
@@ -190,12 +217,19 @@ describe("useConfigStore", () => {
                 connectionId: "connection-a",
                 connectionRevision: 3,
             });
+            // task-140（J1）：清单状态不再否决来源 —— 变的是"角标"，不是"会不会发"。
+            // 旧实现在这里连 unreachable / 未登记连接一律返回 undefined，于是 UI 说未绑定、
+            // CP 却照常按会话列发送（展示与事实反了）。
             store.setSessionModel("s1", "openai", "gpt-4o", "connection-b");
-            expect(store.getEffectiveModel("s1")).toBeUndefined();
+            expect(store.getEffectiveModel("s1")?.model).toBe("gpt-4o");
             store.setSessionModel("s1", "openai", "gpt-4o", "missing-connection");
-            expect(store.getEffectiveModel("s1")).toBeUndefined();
+            expect(store.getEffectiveModel("s1")?.provider).toBe("openai");
+            // 会话行的 provider 就是权威（不是连接 UUID）：deepseek + gpt-4o 仍是 deepseek。
             store.setSessionModel("s1", "deepseek", "gpt-4o", "connection-a");
-            expect(store.getEffectiveModel("s1")).toBeUndefined();
+            expect(store.getEffectiveModel("s1")).toMatchObject({
+                provider: "deepseek",
+                model: "gpt-4o",
+            });
         });
 
         it("keeps provider-based callers and unbound defaults on real provider IDs", () => {
@@ -269,7 +303,7 @@ describe("useConfigStore", () => {
             expect(store.getEffectiveModel("s1")).toBeUndefined();
         });
 
-        it("does not substitute a provider default when the profile model is unavailable", () => {
+        it("keeps the profile source even when its model is absent from the local catalog", () => {
             const store = useConfigStore();
             seedReadyModel(store, "anthropic", "claude-sonnet-4-20250514");
             store.mergedConfig = {
@@ -282,7 +316,12 @@ describe("useConfigStore", () => {
                 },
             };
 
-            expect(store.getEffectiveModel("s1")).toBeUndefined();
+            // task-140（J1）：profile 是 CP 链路的第三层，它不查 UI 的清单缓存；
+            // 清单里没有只该显示"本地清单未发现"角标，不该把来源判成不存在。
+            expect(store.getEffectiveModel("s1")).toEqual({
+                provider: "anthropic",
+                model: "gone-model",
+            });
         });
 
         it("returns undefined when no binding or config exists", () => {
@@ -351,6 +390,168 @@ describe("useConfigStore", () => {
             store.setSessionModel("s1", "", "gpt-4o");
 
             expect(store.getEffectiveModel("s1")).toEqual({ provider: "openai", model: "gpt-4o" });
+        });
+    });
+
+    describe("chat model source (task-140)", () => {
+        it("reports the session override without waiting for the roster", () => {
+            const store = useConfigStore();
+            seedRoster(null);
+            store.setSessionModel("s1", "deepseek", "deepseek-chat");
+
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                status: "ready",
+                provider: "deepseek",
+                model: "deepseek-chat",
+                source: "session",
+            });
+        });
+
+        it("keeps a session override whose model is absent from the local catalog", () => {
+            const store = useConfigStore();
+            seedReadyModel(store, "deepseek", "deepseek-chat");
+            seedRoster(null);
+            store.setSessionModel("s1", "deepseek", "gone-model");
+
+            const source = store.getChatModelSource("s1", "ws-1");
+            expect(source.source).toBe("session");
+            // J3：清单外只给角标，不否决 —— provider/model 仍然给得出来（能发）。
+            expect(source.inDiscoveredList).toBe(false);
+            expect(source.provider).toBe("deepseek");
+            expect(source.model).toBe("gone-model");
+        });
+
+        it("stays loading instead of reporting no source while the roster is missing", () => {
+            const store = useConfigStore();
+            seedRoster(null);
+
+            // 名册没到 ⇒ 还不知道 To 主体是谁 ⇒ loading ≠ none。
+            expect(store.getChatModelSource("s1", "ws-1").status).toBe("loading");
+        });
+
+        it("waits for the workspace default before claiming there is no source", () => {
+            const store = useConfigStore();
+            seedRoster([primaryAgent("agent-1")]);
+
+            // 主体默认模型没读到（没缓存）⇒ 同样不能断言"没有来源"。
+            expect(store.getChatModelSource("s1", "ws-1").status).toBe("loading");
+        });
+
+        it("falls back to the PRIMARY agent workspace default", async () => {
+            const store = useConfigStore();
+            const agents = vi.spyOn(api, "getWorkspaceAgents").mockResolvedValue([
+                {
+                    principalId: "agent-1",
+                    defaultModelProvider: "deepseek",
+                    defaultModelName: "deepseek-flash",
+                } as never,
+            ]);
+            seedRoster([primaryAgent("agent-1")]);
+
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+            expect(agents).toHaveBeenCalledWith("ws-1");
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                status: "ready",
+                provider: "deepseek",
+                model: "deepseek-flash",
+                source: "agent-principal",
+            });
+        });
+
+        it("falls back to the llm profile when the PRIMARY agent has no default", async () => {
+            const store = useConfigStore();
+            vi.spyOn(api, "getWorkspaceAgents").mockResolvedValue([
+                {
+                    principalId: "agent-1",
+                    defaultModelProvider: null,
+                    defaultModelName: null,
+                } as never,
+            ]);
+            seedRoster([primaryAgent("agent-1")]);
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
+            };
+
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                provider: "openai",
+                model: "gpt-4o",
+                source: "llm-profile",
+            });
+        });
+
+        it("reports none when every layer is empty", async () => {
+            const store = useConfigStore();
+            vi.spyOn(api, "getWorkspaceAgents").mockResolvedValue([]);
+            seedRoster([]);
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+
+            expect(store.getChatModelSource("s1", "ws-1")).toEqual({
+                status: "ready",
+                provider: null,
+                model: null,
+                source: "none",
+                inDiscoveredList: null,
+            });
+        });
+
+        it("treats a not-yet-fetched catalog as unknown, not as a miss", () => {
+            const store = useConfigStore();
+            seedRoster(null);
+            store.setSessionModel("s1", "deepseek", "deepseek-chat");
+
+            // 清单还没拉到 ⇒ 角标未知（null），而不是 false（那会显示"本地清单未发现"）。
+            expect(store.getChatModelSource("s1", "ws-1").inDiscoveredList).toBeNull();
+        });
+
+        it("drops to the agent default as soon as the session override is cleared", async () => {
+            const store = useConfigStore();
+            vi.spyOn(api, "getWorkspaceAgents").mockResolvedValue([
+                {
+                    principalId: "agent-1",
+                    defaultModelProvider: "deepseek",
+                    defaultModelName: "deepseek-flash",
+                } as never,
+            ]);
+            seedRoster([primaryAgent("agent-1")]);
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+            store.setSessionModel("s1", "openai", "gpt-4o");
+            expect(store.getChatModelSource("s1", "ws-1").source).toBe("session");
+
+            // 会话覆盖被清掉（legacy 迁移会留下 provider ""）⇒ 立刻回落到主体默认。
+            store.setSessionModel("s1", "", "");
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                source: "agent-principal",
+                model: "deepseek-flash",
+            });
+        });
+
+        it("keeps the compat layer in step with the resolver", () => {
+            const store = useConfigStore();
+            seedRoster(null);
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "anthropic",
+                        connectionKey: "default",
+                        model: "claude-sonnet-4-20250514",
+                    }),
+                },
+            };
+            expect(store.getEffectiveModel("s1")).toEqual(
+                expect.objectContaining({ provider: "anthropic" }),
+            );
+            store.setSessionModel("s1", "deepseek", "deepseek-reasoner");
+            const source = store.getChatModelSource("s1", "ws-1");
+            expect(store.getEffectiveModel("s1")).toEqual(
+                expect.objectContaining({ provider: source.provider, model: source.model }),
+            );
         });
     });
 

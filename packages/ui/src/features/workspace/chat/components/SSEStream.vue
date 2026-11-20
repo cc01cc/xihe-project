@@ -6,6 +6,7 @@ import { useStreamParser } from "../composables/useStreamParser.ts";
 import { useChatStore } from "../stores/chat.ts";
 import { useAgentStore } from "../../../../stores/agent";
 import { useConfigStore } from "../../../../stores/config";
+import { useAuthStore } from "../../../../stores/auth";
 import { useWorkspaceAgentSync } from "../../composables/useWorkspaceAgentSync";
 import { toast } from "vue-sonner";
 import { logger } from "../../../../lib/logger";
@@ -28,6 +29,7 @@ const emit = defineEmits<{
 }>();
 
 const chatStore = useChatStore(),
+    authStore = useAuthStore(),
     agentStore = useAgentStore(),
     configStore = useConfigStore();
 const { t } = useI18n();
@@ -329,14 +331,33 @@ async function handleSend(
         }
     }
 
-    const binding = configStore.getEffectiveModel(sessionId),
-        model = binding?.model ?? "";
+    // task-140（J4）：**发送口径与 composer chip 读同一份来源判定**。
+    //
+    // 先幂等补齐数据（名册 + 工作区主体默认；都已加载时是一次内存检查），再取解析结果：
+    // 返回 `ready` 就用它的 (provider, model) —— 这正是 CP `ChatModelResolutionService` 会选的；
+    // 只有还在判定中（loading）才回落到兼容层，避免为了"等判定"把一次发送卡住。
+    //
+    // 注意：wire 上的 provider/model 在本 MVP 被 CP 忽略（B-3 未裁），所以这里的价值是
+    // 「UI 说的和 CP 做的一致」，而不是"靠这个字段挑模型"。
+    //
+    // 也**不能 await**：名册/主体默认是网络读，等它就把一次发送挂在"读元数据"上 ——
+    // 名册慢或失败时会直接把消息卡住（单测里 fetch 被挂住即复现）。发送只读"此刻已知"的结果。
+    void configStore.ensureChatModelSource(sessionId, authStore.currentWorkspaceId ?? null);
+    const chatModelSource = configStore.getChatModelSource(
+        sessionId,
+        authStore.currentWorkspaceId ?? null,
+    );
+    const fallbackBinding = configStore.getEffectiveModel(sessionId);
+    const model =
+        (chatModelSource.status === "ready" ? chatModelSource.model : fallbackBinding?.model) ?? "";
+    const provider =
+        chatModelSource.status === "ready" ? chatModelSource.provider : fallbackBinding?.provider;
     const epochBeforeSend = terminalEpoch;
     const result = await sendMessage({
         content,
         branchId: options.branchId,
         model,
-        provider: binding?.provider,
+        provider: provider ?? undefined,
         toolMode: options?.toolMode ?? props.toolMode,
         idempotencyKey: crypto.randomUUID(),
         sessionId,

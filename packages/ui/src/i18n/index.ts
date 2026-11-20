@@ -1773,6 +1773,18 @@ const messages = {
                 speed: "{value} tok/s",
                 tokens: "{used} / {limit}",
                 cacheHit: "缓存命中 {percent}",
+                // task-140（J1~J3）：模型 chip 现在报「来源」而不只是模型名 ——
+                // 会话覆盖 / 主体默认 / 全局配置三档与 CP ChatModelResolutionService 同序，
+                // 全无时用 modelSourceNone；清单里没发现只加中性角标（不拦发送）。
+                modelSourceSession: "会话覆盖",
+                modelSourcePrincipal: "主体默认",
+                modelSourceProfile: "全局配置",
+                modelSourceNone: "无可用来源",
+                modelSourceHint: "来源：{source} · {model}",
+                modelSourceResolving: "正在判定模型来源…",
+                modelOutOfCatalogBadge: "本地清单未发现",
+                modelOutOfCatalogHint:
+                    "本地模型清单里没有它；发送口径仍以来源为准，清单只用于候选项与角标。",
             },
             followUpQueueTitle: "接下来",
             followUpCount: "{count} / {capacity} 项未结束",
@@ -5945,6 +5957,19 @@ const messages = {
                 speed: "{value} tok/s",
                 tokens: "{used} / {limit}",
                 cacheHit: "cache hit {percent}",
+                // task-140 (J1~J3): the chip now names the SOURCE, not just the model —
+                // session override / agent default / global profile in the same order as
+                // CP ChatModelResolutionService; all-empty falls back to modelSourceNone.
+                // A model missing from the local catalog only earns a neutral badge.
+                modelSourceSession: "session override",
+                modelSourcePrincipal: "agent default",
+                modelSourceProfile: "global profile",
+                modelSourceNone: "no source",
+                modelSourceHint: "Source: {source} · {model}",
+                modelSourceResolving: "Resolving the model source…",
+                modelOutOfCatalogBadge: "not in local catalog",
+                modelOutOfCatalogHint:
+                    "The local model catalog does not list it; the source still decides what is sent — the catalog only feeds candidates and this badge.",
             },
             followUpQueueTitle: "Up next",
             followUpCount: "{count} / {capacity} unfinished",

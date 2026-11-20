@@ -4,9 +4,16 @@ import { useLocalStorage } from "@vueuse/core";
 import { type ModelCache } from "../types/provider";
 import type { SessionModelBinding, ModelFavorite } from "../types";
 import type { ProviderConnection } from "../types/providerConnection";
-import { request } from "../composables/api";
+import { api, request } from "../composables/api";
 import { listProviderConnections } from "../services/providerConnectionService";
 import { parseLlmProfileValue } from "../services/llmProviderProfile";
+import { logger } from "../lib/logger";
+import {
+    primaryAgentPrincipalId,
+    resolveChatModelSource,
+    type ChatModelSourceKind,
+} from "../features/workspace/chat/modelDisplay";
+import { useSessionParticipantsStore } from "../features/workspace/stores/sessionParticipants";
 
 /**
  * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**全局设置不再暴露 workspace 层** ——
@@ -195,6 +202,21 @@ const MODEL_CACHE_KEY = "xihe-model-cache",
     SESSION_MODELS_KEY = "xihe-session-models",
     MODEL_FAVORITES_KEY = "xihe-model-favorites",
     MERGED_CONFIG_KEY = "xihe-config-merged";
+
+/**
+ * task-140：模型来源判定的结果。`loading` 与 `none` 必须分开 ——
+ * 前者是"数据还没到，不确定"，后者是"链路上确实没有来源"；把前者渲染成后者
+ * 会让用户在正常加载时看到"未绑定模型"的告警态。
+ */
+export type ChatModelSourceStatus = "loading" | "ready";
+
+export interface ChatModelSourceResolution {
+    status: ChatModelSourceStatus;
+    provider: string | null;
+    model: string | null;
+    source: ChatModelSourceKind;
+    inDiscoveredList: boolean | null;
+}
 
 export const useConfigStore = defineStore("config", () => {
     const mergedConfig = useLocalStorage<Record<string, Record<string, string>>>(
@@ -462,6 +484,21 @@ export const useConfigStore = defineStore("config", () => {
         });
     }
 
+    /**
+     * task-140：工作区智能体列表里的**默认模型**，key = workspaceId。
+     *
+     * 为什么不用参与者 view 上的 `defaultModelProvider/Name`：那是 CP 联表直读
+     * （`SessionParticipantService.java:911-912`），**没有工作区 binding 门**；而真正决定
+     * dispatch 的 `AgentPrincipalService#defaultModel` 要求主体在该工作区有 active binding。
+     * 用 view 会对着一个"其实没绑上"的默认模型显示来源，所以这里按工作区读一遍
+     * `GET /workspaces/{id}/agents`（与 CP 的 binding 门同构），缓存按 workspaceId 隔离
+     * （切工作区天然失效，不需要 watch）。
+     */
+    const workspaceAgentDefaults = ref<
+        Record<string, Record<string, { provider: string; model: string } | null>>
+    >({});
+    const workspaceAgentDefaultsInflight = new Map<string, Promise<void>>();
+
     function getActiveModel(sessionId: string): SessionModelBinding | undefined {
         return sessionModels.value[sessionId];
     }
@@ -499,31 +536,23 @@ export const useConfigStore = defineStore("config", () => {
         ];
     }
 
+    /**
+     * task-140：薄兼容层 —— 保留旧名字与旧签名给既有调用方，内部转调唯一解析器。
+     *
+     * 与旧实现的差异只有一条：**不再用本地模型清单否决来源**（清单只做角标）。
+     * 旧实现在 `/models` 缓存过期时会把会话绑定判成不可用，于是 UI 说"未绑定"、CP 却照常
+     * 成功发送 —— 展示与事实反了。来源链（会话 → 主体默认 → profile）与 CP 完全一致。
+     *
+     * 这里不读主体默认（那是 `getChatModelSource` 的职责）：调用方要么已经拿到 store 里的
+     * 解析结果，要么只需要"会话或 profile"这一层的兜底值。
+     */
     function getEffectiveModel(sessionId: string): SessionModelBinding | undefined {
         const sessionBinding = sessionModels.value[sessionId];
-        // PLAN-0503 review P2: legacy migrated bindings may carry provider "" —
-        // availability is unverifiable for them, so fall through to the merged
-        // defaults (restores the pre-union semantics for that population).
-        if (
-            sessionBinding?.provider &&
-            isChatModelAvailable(
-                sessionBinding.provider,
-                sessionBinding.model,
-                sessionBinding.connectionId,
-            )
-        ) {
-            return sessionBinding;
-        }
-
-        // PLAN-0504: the default identity is the whole resolved profile unit.
-        // With no profile there is no implicit fallback model (decision #10) —
-        // callers prompt for an explicit selection instead.
         const profile = parseLlmProfileValue(mergedConfig.value["llm-provider"]?.profile);
-        if (profile && isChatModelAvailable(profile.providerId, profile.model)) {
-            return { provider: profile.providerId, model: profile.model };
-        }
-
-        return undefined;
+        const resolved = resolveChatModelSource({ sessionBinding, profile });
+        if (!resolved.provider || !resolved.model) return undefined;
+        if (resolved.source === "session" && sessionBinding) return sessionBinding;
+        return { provider: resolved.provider, model: resolved.model };
     }
 
     function setSessionModel(
@@ -537,6 +566,123 @@ export const useConfigStore = defineStore("config", () => {
             ...sessionModels.value,
             [sessionId]: { provider, model, connectionId, connectionRevision },
         };
+    }
+
+    /** 读一次工作区智能体默认模型（幂等；失败只记日志 ⇒ 来源回落 profile，不阻塞发送）。 */
+    async function ensureWorkspaceAgentDefaults(workspaceId: string | null): Promise<void> {
+        if (!workspaceId) return;
+        if (workspaceAgentDefaults.value[workspaceId]) return;
+        const inflight = workspaceAgentDefaultsInflight.get(workspaceId);
+        if (inflight) return inflight;
+        const task = (async () => {
+            try {
+                const agents = await api.getWorkspaceAgents(workspaceId);
+                const defaults: Record<string, { provider: string; model: string } | null> = {};
+                for (const agent of agents) {
+                    const provider = (agent.defaultModelProvider ?? "").trim();
+                    const model = (agent.defaultModelName ?? "").trim();
+                    defaults[agent.principalId] = provider && model ? { provider, model } : null;
+                }
+                workspaceAgentDefaults.value = {
+                    ...workspaceAgentDefaults.value,
+                    [workspaceId]: defaults,
+                };
+            } catch (cause) {
+                // 读面失败 ≠ 主体没有默认：宁可回落 profile 并把失败留在日志里，
+                // 也不要把"没读到"渲染成"未绑定"（那正是 task-140 要修的那类假否定）。
+                logger.warn(
+                    "workspace agent defaults read failed; model source falls back to the profile layer",
+                    cause,
+                );
+                workspaceAgentDefaults.value = {
+                    ...workspaceAgentDefaults.value,
+                    [workspaceId]: {},
+                };
+            } finally {
+                workspaceAgentDefaultsInflight.delete(workspaceId);
+            }
+        })();
+        workspaceAgentDefaultsInflight.set(workspaceId, task);
+        return task;
+    }
+
+    /** 主体默认模型被改过后失效（抽屉保存时调用；不传 = 全部失效）。 */
+    function invalidateWorkspaceAgentDefaults(workspaceId?: string): void {
+        if (!workspaceId) {
+            workspaceAgentDefaults.value = {};
+            return;
+        }
+        const next = { ...workspaceAgentDefaults.value };
+        delete next[workspaceId];
+        workspaceAgentDefaults.value = next;
+    }
+
+    function discoveredChatModels(provider: string | null): string[] | null {
+        // 清单未就绪（没有任何 provider catalog）⇒ `null` = 角标未知。
+        // 绝不能把"清单还没拉到"当成"清单里没有它"（那会把角标变成假否定）。
+        if (!provider || Object.keys(modelCache.value.providers ?? {}).length === 0) return null;
+        return getChatModels(provider);
+    }
+
+    /**
+     * task-140（J1/J4）：**运行期模型来源**的唯一判定入口。
+     *
+     * 三个消费方（composer chip / SSEStream 发送 / ChatPanel 幂等签名）都读这一份，
+     * 解析本身在 `chat/modelDisplay.ts` 的 `resolveChatModelSource`（与 CP 同构）。
+     * 这里只做"数据够不够"的判断：名册没到 / 主体默认没读到 ⇒ `loading`，
+     * 让调用方知道"现在还不知道"，而不是显示成"没有来源"。
+     */
+    function getChatModelSource(
+        sessionId: string,
+        workspaceId: string | null,
+    ): ChatModelSourceResolution {
+        const roster = useSessionParticipantsStore();
+        const participants = roster.participants;
+        const principalId = primaryAgentPrincipalId(participants);
+        const sessionBinding = sessionModels.value[sessionId];
+        const sessionBound = Boolean(
+            (sessionBinding?.provider ?? "").trim() && (sessionBinding?.model ?? "").trim(),
+        );
+        const profile = parseLlmProfileValue(mergedConfig.value["llm-provider"]?.profile);
+        const pending = (): ChatModelSourceResolution => ({
+            status: "loading",
+            provider: null,
+            model: null,
+            source: "none",
+            inDiscoveredList: null,
+        });
+
+        // 会话覆盖优先 ⇒ 名册还没到也不影响答案（它只会影响第 2 步）。
+        if (!sessionBound) {
+            if (participants === null && !roster.forbidden && !roster.error) return pending();
+            if (principalId && workspaceId && !workspaceAgentDefaults.value[workspaceId]) {
+                return pending();
+            }
+        }
+
+        const defaults = workspaceId ? workspaceAgentDefaults.value[workspaceId] : undefined;
+        const principalDefault = principalId ? (defaults?.[principalId] ?? null) : null;
+        const base = resolveChatModelSource({ sessionBinding, principalDefault, profile });
+        const resolved = resolveChatModelSource({
+            sessionBinding,
+            principalDefault,
+            profile,
+            discoveredModels: discoveredChatModels(base.provider),
+        });
+        return { status: "ready", ...resolved };
+    }
+
+    /** 幂等补齐 `getChatModelSource` 需要的数据（名册 + 工作区主体默认）。 */
+    async function ensureChatModelSource(
+        sessionId: string,
+        workspaceId: string | null,
+    ): Promise<void> {
+        if (!sessionId) return;
+        const roster = useSessionParticipantsStore();
+        await roster.ensureLoaded(sessionId);
+        if (workspaceId && primaryAgentPrincipalId(roster.participants)) {
+            await ensureWorkspaceAgentDefaults(workspaceId);
+        }
     }
 
     function toggleFavorite(provider: string, model: string) {
@@ -566,6 +712,9 @@ export const useConfigStore = defineStore("config", () => {
         providerConnections.value = [];
         providerConnectionsLoaded.value = false;
         providerConnectionsError.value = false;
+        // task-140：主体默认模型是"某个工作区里某个主体的"数据，换用户必须一起丢。
+        workspaceAgentDefaults.value = {};
+        workspaceAgentDefaultsInflight.clear();
     }
 
     async function fetchModels() {
@@ -614,6 +763,10 @@ export const useConfigStore = defineStore("config", () => {
         importConfig,
         getActiveModel,
         getEffectiveModel,
+        getChatModelSource,
+        ensureChatModelSource,
+        ensureWorkspaceAgentDefaults,
+        invalidateWorkspaceAgentDefaults,
         findProviderForModel,
         isChatModelAvailable,
         getChatModels,
