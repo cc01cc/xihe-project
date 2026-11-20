@@ -1704,6 +1704,9 @@ const messages = {
             composerMeta: {
                 model: "模型 · 路由",
                 modelUnbound: "未绑定模型",
+                // task-133（DSD-1507 ④）：未绑定 chip 是警示态且可点，这两句进 title / aria-label。
+                modelUnboundHint: "发送前需绑定 provider 连接（点此打开模型设置）",
+                modelChangeHint: "点此打开模型设置",
                 rounds: "轮 {value}",
                 steps: "步 {value}",
                 speed: "{value} tok/s",
@@ -3141,6 +3144,18 @@ const messages = {
             rolesEditorDisplayNameRequired: "请填写显示名",
             rolesEditorAtomsRequired: "请至少选择一个原子",
             rolesEditorCatalogUnavailable: "原子目录未加载，无法编辑原子。",
+            /* task-126：资源前缀（task-81 收窄写面）—— 只做省粘贴，不做本地预校验，
+               否则 CP 的 400/404/403 原文到不了用户。 */
+            rolesEditorResourceLabel: "资源前缀",
+            rolesEditorResourcePlaceholder: "fs:<workspace-uuid>[/<relative/path>]",
+            rolesEditorResourceHint:
+                "留空表示整个工作区（提交裸原子名，与旧客户端一致）。唯一合法形态是 fs:<workspace-uuid>[/<relative/path>]：不收通配符、点段、反斜杠或前导斜杠；这里不预校验，服务端拒绝的原文会显示在页面上。",
+            rolesEditorResourceUseWorkspace: "用当前工作区",
+            rolesEditorResourceEffective: "当前生效的资源前缀",
+            rolesEditorCapabilityNoResource:
+                "能力原子不能带资源前缀：它描述的是实例级操作，带上会被服务端拒绝。",
+            rolesEditorInstanceNoResource:
+                "仅实例作用域的原子不能被工作区路径收窄，带上会被服务端拒绝。",
             rolesBindingsScope: "作用域",
             rolesBindingsScopeInstance: "实例",
             rolesBindingsScopeWorkspace: "工作区",
@@ -3189,6 +3204,8 @@ const messages = {
                 invalidRoleName: "角色标识格式不合法。",
                 invalidRoleAtoms: "原子列表不合法或为空。",
                 invalidScope: "作用域参数不合法。",
+                invalidGrantResource:
+                    "资源前缀不合法：只接受 fs:<workspace-uuid>[/<relative/path>] 形态。",
                 workspaceNotFound: "工作区不存在。",
                 invalidBinding: "绑定内容不合法。",
                 userDeleted: "该账号已删除，无法绑定。",
@@ -5774,6 +5791,10 @@ const messages = {
             composerMeta: {
                 model: "Model · route",
                 modelUnbound: "No model bound",
+                // task-133 (DSD-1507 ④): the unbound chip is a warning state and is clickable.
+                modelUnboundHint:
+                    "Bind a provider connection before sending (click to open model settings)",
+                modelChangeHint: "Click to open model settings",
                 rounds: "rounds {value}",
                 steps: "steps {value}",
                 speed: "{value} tok/s",
@@ -7237,6 +7258,18 @@ const messages = {
             rolesEditorAtomsRequired: "Select at least one atom.",
             rolesEditorCatalogUnavailable:
                 "The atom catalog is not loaded; atoms cannot be edited.",
+            /* task-126: workspace resource prefix (task-81 write surface). Paste helper only —
+               no local pre-validation, or the CP's 400/404/403 detail never reaches the user. */
+            rolesEditorResourceLabel: "Resource prefix",
+            rolesEditorResourcePlaceholder: "fs:<workspace-uuid>[/<relative/path>]",
+            rolesEditorResourceHint:
+                "Leave empty for the whole workspace (the bare atom name is sent, as before). The only accepted form is fs:<workspace-uuid>[/<relative/path>]: no wildcards, dot segments, backslashes or leading slash. Nothing is pre-validated here — the server's refusal is shown verbatim above.",
+            rolesEditorResourceUseWorkspace: "Use current workspace",
+            rolesEditorResourceEffective: "Currently effective resource prefix",
+            rolesEditorCapabilityNoResource:
+                "A capability atom cannot carry a resource prefix: it describes an instance-level action and the server rejects it.",
+            rolesEditorInstanceNoResource:
+                "An instance-scope-only atom cannot be narrowed by a workspace path; the server rejects it.",
             rolesBindingsScope: "Scope",
             rolesBindingsScopeInstance: "Instance",
             rolesBindingsScopeWorkspace: "Workspace",
@@ -7287,6 +7320,8 @@ const messages = {
                 invalidRoleName: "The role identifier is not valid.",
                 invalidRoleAtoms: "The atom list is invalid or empty.",
                 invalidScope: "The scope parameter is not valid.",
+                invalidGrantResource:
+                    "The resource prefix is not valid; only fs:<workspace-uuid>[/<relative/path>] is accepted.",
                 workspaceNotFound: "The workspace does not exist.",
                 invalidBinding: "The binding content is not valid.",
                 userDeleted: "That account is deleted and cannot be bound.",

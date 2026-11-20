@@ -19,6 +19,7 @@ import FileUpload from "../../../../components/multimodal/FileUpload.vue";
 import ScreenshotCapture from "../../../../components/multimodal/ScreenshotCapture.vue";
 import VoiceInput from "../../../../components/multimodal/VoiceInput.vue";
 import RecipientField from "./RecipientField.vue";
+import SessionTierSelect from "./SessionTierSelect.vue";
 // task-38 C2/C3（DEV-011 §13.4）：说明与「空候选」解释都走栈内 tooltip 原语（reka-ui），不手搓浮层。
 import {
     Tooltip,
@@ -102,6 +103,12 @@ const emit = defineEmits<{
         draftRevision?: number,
     ];
     stop: [];
+    /**
+     * task-133（DSD-1507 ④）：模型 chip 成了可点入口 —— 未绑定去绑定连接、已绑定去核对当前路由。
+     * 落点不由本组件拼路由：`settingsIa.settingsDomainPath("user", "llm-provider")` 是唯一稳妥的
+     * 构造方式，宿主页（ChatPanel 的 openProviderSettings）已经用过它一次。
+     */
+    settings: [];
 }>();
 
 const { t } = useI18n();
@@ -828,8 +835,8 @@ const sendDisabled = computed(() => {
  * - 模型·路由 chip 走 `configStore.getEffectiveModel`，与发送侧（ChatPanel.vue 的发送签名）同源，
  *   只做只读展示；未绑定时退回占位文案，不显示「看起来已绑」的名字（C1 口径）。
  * - token 用量走 chat store 的 `getSessionLastUsage`（SSE `usage.recorded` 写入）。
- * - 轮 / 步 / tok-s 与缓存命中：UI 侧**没有**数据源（全 src 无字段）⇒ 恒 "—"，待 CP 补录，
- *   不许用估算值假装成读数。
+ * - 轮 / 步 / tok-s 与缓存命中：UI 侧**没有**数据源（全 src 无字段）⇒ 取值为 null、该项不渲染
+ *   （task-133 改）；待 CP 补录字段后接线即显示，不许用估算值假装成读数。
  * - 分母（task-154 / M-5）：优先取当前 run 的 `usage.windowTokens`——CP 已随 usage 事件带回
  *   （契约见 `docs/api/openapi.yaml:2955`，字段名逐字对齐；CP 侧读同名键做上下文预算）。
  *   缺读数时才回落下面的兜底常量。
@@ -849,15 +856,57 @@ function formatContextWindowLabel(tokens: number): string {
 const COMPOSER_CONTEXT_WINDOW_FALLBACK_LABEL = formatContextWindowLabel(
     COMPOSER_CONTEXT_WINDOW_FALLBACK_TOKENS,
 );
-const META_PLACEHOLDER = "—";
+/**
+ * task-133（DSD-1508 ①②）：元信息行由「恒显四项占位」改为「有值才显示、全空整行不渲染」。
+ *
+ * 用户 22:57 截图三问之一：一轮 run 还没数据时，`轮 — · 步 — · — tok/s ｜ — / 200k ｜ 缓存命中 —`
+ * 也照样占位——既占宽度，又让人以为那是读数。现在的口径：
+ * - token 用量是**今天唯一有数据源**的项（`chatStore.getSessionLastUsage`）；没有 usage ⇒ 不渲染；
+ * - 轮 / 步 / tok-s / 缓存命中保留格式化路径与 `chat.composerMeta.*` 文案，值为 null 即不渲染 ——
+ *   CP 补录字段后只需把下面四个 ref 接上数据源，模板与判据都不用再改；
+ * - 四项全空 ⇒ `hasComposerMeta` 为 false，整行消失（工具条高度不变，task-9 的 36px 预算不破）。
+ */
+const composerRounds = ref<number | null>(null);
+const composerSteps = ref<number | null>(null);
+const composerTokensPerSecond = ref<number | null>(null);
+const composerCacheHitPercent = ref<number | null>(null);
+const composerMetaNumberFormat = new Intl.NumberFormat("en-US");
 
+/**
+ * task-133（DSD-1507 ④）：模型·路由 chip 从「只读展示」改成**按钮**。
+ *
+ * - 已绑定：中性态，`provider · model`，点开去用户层 llm-provider 域核对（只读展示才真的没法查）；
+ * - 未绑定：警示态（虚线边框 + amber）+ `aria-label` 写明「发送前需绑定 provider 连接」——
+ *   在此之前未绑定只是一个灰字，用户点不动也看不出这是发送失败的根因（22:57 第二问）。
+ * - 解析顺序不动：`configStore.getEffectiveModel`（config.ts:502-527 是唯一解析点）。
+ */
 const composerModelChip = computed(() => {
     const binding = configStore.getEffectiveModel(props.sessionId);
     const label = [binding?.provider, binding?.model].filter(Boolean).join(" · ");
-    return label
-        ? { label, title: `${t("chat.composerMeta.model")}: ${label}` }
-        : { label: t("chat.composerMeta.modelUnbound"), title: t("chat.composerMeta.model") };
+    if (label) {
+        return {
+            label,
+            bound: true,
+            title: `${t("chat.composerMeta.model")}: ${label}`,
+            ariaLabel: `${t("chat.composerMeta.model")}: ${label}. ${t("chat.composerMeta.modelChangeHint")}`,
+            className:
+                "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
+        };
+    }
+    return {
+        label: t("chat.composerMeta.modelUnbound"),
+        bound: false,
+        title: t("chat.composerMeta.modelUnboundHint"),
+        ariaLabel: `${t("chat.composerMeta.modelUnbound")}. ${t("chat.composerMeta.modelUnboundHint")}`,
+        className:
+            "hidden min-w-0 max-w-56 items-center truncate rounded-md border border-dashed border-amber-500/60 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 sm:inline-flex hover:bg-amber-500/20 dark:text-amber-300",
+    };
 });
+
+/** 图内跳转交给宿主页：路径构造在 `settingsIa.settingsDomainPath`，composer 不自己拼路由。 */
+function openModelSettings(): void {
+    emit("settings");
+}
 
 const composerTokensUsed = computed<number | null>(() => {
     const usage = chatStore.getSessionLastUsage(props.sessionId);
@@ -866,12 +915,6 @@ const composerTokensUsed = computed<number | null>(() => {
     if (usage.inputTokens == null && usage.outputTokens == null) return null;
     return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
 });
-
-const composerTokensUsedLabel = computed(() =>
-    composerTokensUsed.value == null
-        ? META_PLACEHOLDER
-        : new Intl.NumberFormat("en-US").format(composerTokensUsed.value),
-);
 
 /** 当前 run 的真实上下文窗口（token）；缺失或非正数 ⇒ null，由标签回落兜底常量。 */
 const composerContextWindowTokens = computed<number | null>(() => {
@@ -884,6 +927,67 @@ const composerContextWindowLabel = computed(() =>
         ? COMPOSER_CONTEXT_WINDOW_FALLBACK_LABEL
         : formatContextWindowLabel(composerContextWindowTokens.value),
 );
+
+/** 轮 · 步 · tok/s 合成一段；三段都无值 ⇒ null（该项不渲染）。 */
+const composerMetaRun = computed<string | null>(() => {
+    const parts: string[] = [];
+    if (composerRounds.value !== null) {
+        parts.push(
+            t("chat.composerMeta.rounds", {
+                value: composerMetaNumberFormat.format(composerRounds.value),
+            }),
+        );
+    }
+    if (composerSteps.value !== null) {
+        parts.push(
+            t("chat.composerMeta.steps", {
+                value: composerMetaNumberFormat.format(composerSteps.value),
+            }),
+        );
+    }
+    if (composerTokensPerSecond.value !== null) {
+        parts.push(
+            t("chat.composerMeta.speed", {
+                value: composerMetaNumberFormat.format(composerTokensPerSecond.value),
+            }),
+        );
+    }
+    return parts.length ? parts.join(" · ") : null;
+});
+
+/** token 用量：没有 usage 就整项不渲染（不再凑 "— / 200k" 这种半真半假的组合）。 */
+const composerMetaTokens = computed<string | null>(() => {
+    const used = composerTokensUsed.value;
+    if (used === null) return null;
+    return t("chat.composerMeta.tokens", {
+        used: composerMetaNumberFormat.format(used),
+        limit: composerContextWindowLabel.value,
+    });
+});
+
+const composerMetaCache = computed<string | null>(() =>
+    composerCacheHitPercent.value === null
+        ? null
+        : t("chat.composerMeta.cacheHit", {
+              percent: composerMetaNumberFormat.format(composerCacheHitPercent.value),
+          }),
+);
+
+interface ComposerMetaItem {
+    key: string;
+    testid: string;
+    text: string;
+}
+
+/** 有值的槽位（顺序固定，全空即空数组 ⇒ 整行不渲染）。 */
+const composerMetaItems = computed<ComposerMetaItem[]>(() =>
+    [
+        { key: "run", testid: "composer-meta-run", text: composerMetaRun.value },
+        { key: "tokens", testid: "composer-meta-tokens", text: composerMetaTokens.value },
+        { key: "cache", testid: "composer-meta-cache", text: composerMetaCache.value },
+    ].filter((item): item is ComposerMetaItem => item.text !== null),
+);
+const hasComposerMeta = computed(() => composerMetaItems.value.length > 0);
 
 const toolbarActions = computed<ToolbarAction[]>(() => [
     {
@@ -938,14 +1042,32 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         visible: !workspaceLess.value && !props.queueMode,
     },
     {
-        // task-135 第 2 层右槽：模型·路由 chip（只读展示，不是控件；未绑定时显示占位）。
+        // task-133（DSD-1508 ②）：权限三档 chip 进工具条。
+        //
+        // task-134 要删设置面板顶部那行「审批模式」摘要段 ⇒ 档位的入口只能在这里，
+        // 所以**不做档位/可见性收窄**：任何档位、任何会话都渲染这颗 chip。
+        // 紧凑形态（compact）由 SessionTierSelect 自己处理：行内 28px 高、提示文案进 sr-only，
+        // 不新增行高（task-9 定死的 36px 工具条预算），也不抢 model chip 的位置。
+        key: "tier",
+        position: "right",
+        component: markRaw(SessionTierSelect),
+        props: { sessionId: props.sessionId, compact: true },
+    },
+    {
+        // task-133（DSD-1507 ④）：模型·路由 chip —— 由只读 div 改成按钮。
+        // 未绑定是警示态（虚线 + amber），点开去用户层 llm-provider 域；已绑定是中性态，
+        // 点开同样去那一页核对（「我在用哪个模型/这条路对不对」需要可查，只读灰字查不到）。
         key: "model",
         position: "right",
-        component: "div",
+        component: "button",
         props: {
-            class: "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex",
+            type: "button",
+            class: composerModelChip.value.className,
             "data-testid": "composer-model-chip",
+            "data-bound": composerModelChip.value.bound ? "true" : "false",
+            "aria-label": composerModelChip.value.ariaLabel,
             title: composerModelChip.value.title,
+            onClick: openModelSettings,
         },
         label: composerModelChip.value.label,
     },
@@ -2018,37 +2140,31 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                         }}</span>
                     </button>
                     <!--
-                        task-135 第 3 层（task-9 挪位）：元信息行（轮·步·tok/s ｜ token 用量 ｜ 缓存命中）。
+                        task-135 第 3 层（task-9 挪位；task-133 改渲染判据）：元信息行
+                        （轮·步·tok/s ｜ token 用量 ｜ 缓存命中）。
                         原来它独占一行（20 + 6 列间距 = 26px）；task-9 收进工具条这一行**右端** ——
                         工具条只放按钮，右端本来就空着，元信息与按钮同处一水平线不额外抢注意力。
-                        数据来源只有 token 用量（chat store 的 sessionLastUsage）；轮/步/tok/s 与缓存命中
-                        UI 侧没有数据源 ⇒ 恒 "—"（见脚本里 composerModelChip 上方注释）。
+
+                        task-133：**有值才渲染**。四项全空时整行不出现（第一版四项恒显 "—"，
+                        用户 22:57 截图把它当成了假读数）。今天有源的只有 token 用量，所以
+                        没有 usage 的会话根本看不到这一行；轮/步/tok-s/缓存命中的格式化路径与
+                        i18n key 都留着，接上数据源即显示（见脚本里 composerMetaItems 上方注释）。
+
                         抗抖动：min-h-4 + leading-4 + tabular-nums —— 数字变化只改字形不改行高，
-                        判据是「连续三次 token 变化 composer 高度差 0」。注意 ComposerMeta.spec.ts:120-128
+                        判据是「连续三次 token 变化 composer 高度差 0」。注意 ComposerMeta.spec.ts
                         钉着 min-h-4 / flex / flex-wrap / leading-4 / tabular-nums 五条 class，别顺手删。
                     -->
                     <div
+                        v-if="hasComposerMeta"
                         class="ml-auto flex min-h-4 min-w-0 flex-wrap items-center justify-end gap-x-3 px-1 text-[11px] leading-4 tabular-nums text-muted-foreground/80"
                         data-testid="composer-meta"
                     >
-                        <span data-testid="composer-meta-run">
-                            {{ t("chat.composerMeta.rounds", { value: META_PLACEHOLDER }) }}
-                            ·
-                            {{ t("chat.composerMeta.steps", { value: META_PLACEHOLDER }) }}
-                            ·
-                            {{ t("chat.composerMeta.speed", { value: META_PLACEHOLDER }) }}
-                        </span>
-                        <span data-testid="composer-meta-tokens">
-                            {{
-                                t("chat.composerMeta.tokens", {
-                                    used: composerTokensUsedLabel,
-                                    limit: composerContextWindowLabel,
-                                })
-                            }}
-                        </span>
-                        <span data-testid="composer-meta-cache">
-                            {{ t("chat.composerMeta.cacheHit", { percent: META_PLACEHOLDER }) }}
-                        </span>
+                        <span
+                            v-for="item in composerMetaItems"
+                            :key="item.key"
+                            :data-testid="item.testid"
+                            >{{ item.text }}</span
+                        >
                     </div>
                 </div>
             </div>

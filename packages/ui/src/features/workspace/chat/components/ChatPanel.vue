@@ -1917,6 +1917,7 @@ watch(
             @send="onInputSend"
             @queue="handleFollowUpQueue"
             @stop="stopStreaming"
+            @settings="openProviderSettings"
         />
 
         <ApprovalModal

@@ -87,6 +87,8 @@ const messages = {
             composerMeta: {
                 model: "模型 · 路由",
                 modelUnbound: "未绑定模型",
+                modelUnboundHint: "发送前需绑定 provider 连接（点此打开模型设置）",
+                modelChangeHint: "点此打开模型设置",
                 rounds: "轮 {value}",
                 steps: "步 {value}",
                 speed: "{value} tok/s",
@@ -126,7 +128,27 @@ const messages = {
             },
             delegation: { button: "委派", reasonUnknown: "未知原因" },
         },
-        workspace: { participantUnknownName: "未知用户" },
+        // D-1908 / task-133：composer 工具行的权限档位 chip 复用 SessionTierSelect，
+        // 它引用的键也必须在夹具里（缺键时挂载期的裸键护栏会判红）。
+        sessionSettings: {
+            tierLabel: "权限档位",
+            tierView: "仅可查看",
+            tierWorkspace: "工作区内修改",
+            tierFull: "完全权限",
+            tierInherited: "继承中 · 工作区默认：{tier}",
+            tierOverride: "会话覆盖：{tier}",
+            tierNoPermission: "无权限修改：{reason}",
+            tierNoWorkspaceDefault: "继承中 · 工作区未设默认值",
+            tierUnsupported: "{tier}（工作区不支持）",
+            tierUnsupportedHint: "该工作区以 MXC 收容方式运行，最高只能到「工作区内修改」。",
+            tierReasonViewer: "工作区只读",
+            tierReasonNotOwner: "只有会话创建者可改",
+            tierReasonNoAtom: "缺少 session:permission:configure",
+        },
+        workspace: {
+            participantUnknownName: "未知用户",
+            viewerReadOnly: "当前工作区为只读（VIEWER），无法修改内容",
+        },
         multimodal: { image: "图片", screenshot: "截取屏幕", voice: "语音输入" },
         common: { cancel: "取消" },
     },

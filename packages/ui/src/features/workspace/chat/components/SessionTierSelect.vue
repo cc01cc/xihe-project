@@ -27,8 +27,17 @@ import type { SessionTier } from "../../../../types";
  *
  * 落点在 dock 的 `SessionContextPanel`（桌面端摘要行不承载选择器，见
  * `SessionSettingsPanel.vue` 的移动端说明）。
+ *
+ * **task-133（DSD-1508 ②）：第二落点 = composer 工具行，用 `compact` 形态。**
+ * 两种形态共享同一份 store 状态与四道守卫，只差渲染：
+ * - `compact` 行内 28px 高、最多 128px 宽、无 id（避免与面板里的 `<label for>` 撞 id），
+ *   `data-testid` 用 `composer-tier-chip`（**与面板的 `session-tier-select` 分开** ——
+ *   同一页两处都挂选择器，共用 testid 会让既有 e2e 的严格定位报 strict violation）；
+ * - 面板里的四段**常显**说明（只读原因 / 越层 / 无工作区回落 / 错误）在 compact 形态下
+ *   合并进一段 `sr-only` 文本并由 trigger 的 `aria-describedby` 指向 —— 工具行只有 36px，
+ *   多一行就破 task-9 的高度预算；信息没丢，只是不再视觉占位。
  */
-const props = defineProps<{ sessionId: string }>();
+const props = defineProps<{ sessionId: string; compact?: boolean }>();
 
 const { t } = useI18n();
 const tierStore = useSessionTierStore();
@@ -80,6 +89,28 @@ const readonlyText = computed(() => {
 const triggerLabel = computed(() => (tier.value ? t(LABEL_KEYS[tier.value]) : null));
 const errorMessage = computed(() => state.value?.error ?? null);
 
+/** compact：四段常显说明压成一句（只读原因 → 越层 → 无工作区回落 → 错误），全空则不渲染提示节点。 */
+const compactHintText = computed<string | null>(() => {
+    const parts: string[] = [];
+    if (readonlyText.value) parts.push(readonlyText.value);
+    if (unsupported.value.length) parts.push(t("sessionSettings.tierUnsupportedHint"));
+    if (state.value?.source === "none" && state.value?.loaded) {
+        parts.push(t("sessionSettings.tierNoWorkspaceDefault"));
+    }
+    if (errorMessage.value) parts.push(errorMessage.value);
+    return parts.length ? parts.join(" · ") : null;
+});
+/** 同一页 composer 与 dock 面板会同时在树上 ⇒ id 只能给面板那一份。 */
+const triggerId = computed(() =>
+    props.compact ? undefined : `session-tier-select-${props.sessionId}`,
+);
+const hintId = computed(() => `composer-tier-chip-hint-${props.sessionId}`);
+const triggerClass = computed(() =>
+    props.compact
+        ? "h-7 max-w-32 min-w-0 truncate rounded-md border bg-background px-1.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+        : "w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+);
+
 async function handleChange(value: unknown): Promise<void> {
     const next = value as SessionTier | undefined;
     const current = state.value;
@@ -104,10 +135,11 @@ async function handleChange(value: unknown): Promise<void> {
             @update:model-value="handleChange"
         >
             <SelectTrigger
-                :id="`session-tier-select-${sessionId}`"
-                data-testid="session-tier-select"
-                class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                :id="triggerId"
+                :data-testid="compact ? 'composer-tier-chip' : 'session-tier-select'"
+                :class="triggerClass"
                 :aria-label="t('sessionSettings.tierLabel')"
+                :aria-describedby="compact && compactHintText ? hintId : undefined"
                 :title="readonlyText ?? triggerLabel ?? t('sessionSettings.tierLabel')"
             >
                 <SelectValue :placeholder="t('sessionSettings.tierLabel')" />
@@ -128,8 +160,12 @@ async function handleChange(value: unknown): Promise<void> {
                 </SelectItem>
             </SelectContent>
         </Select>
+        <!-- task-133：composer 行内形态 —— 说明压成一句 sr-only，靠 aria-describedby 关联，不占行高。 -->
+        <span v-if="compact" :id="hintId" data-testid="composer-tier-chip-hint" class="sr-only">{{
+            compactHintText ?? t("sessionSettings.tierLabel")
+        }}</span>
         <p
-            v-if="readonlyText"
+            v-if="!compact && readonlyText"
             data-testid="session-tier-readonly"
             class="mt-1 line-clamp-2 text-xs text-muted-foreground"
         >
@@ -137,7 +173,7 @@ async function handleChange(value: unknown): Promise<void> {
         </p>
         <!-- 常显说明：禁选项为什么点不了，不该靠悬停才知道（D-1908 三）。 -->
         <p
-            v-if="unsupported.length"
+            v-if="!compact && unsupported.length"
             data-testid="session-tier-unsupported"
             class="mt-1 line-clamp-2 text-xs text-muted-foreground"
         >
@@ -145,14 +181,14 @@ async function handleChange(value: unknown): Promise<void> {
         </p>
         <!-- 无工作区默认值 ⇒ 回落最严档，且必须说出来（不静默降级，D-1908 一）。 -->
         <p
-            v-if="state?.source === 'none' && state?.loaded"
+            v-if="!compact && state?.source === 'none' && state?.loaded"
             data-testid="session-tier-fallback"
             class="mt-1 line-clamp-2 text-xs text-amber-800 dark:text-amber-300"
         >
             {{ t("sessionSettings.tierNoWorkspaceDefault") }}
         </p>
         <p
-            v-if="errorMessage"
+            v-if="!compact && errorMessage"
             data-testid="session-tier-error"
             class="mt-1 line-clamp-2 text-xs text-destructive"
             role="alert"

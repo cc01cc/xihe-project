@@ -204,7 +204,10 @@ describe("InputArea slash commands (PLAN-0635 M1)", () => {
         const listbox = wrapper.find('[role="listbox"]');
         expect(listbox.attributes("aria-label")).toBe("Commands");
 
-        const options = wrapper.findAll('[role="option"]');
+        // task-133：composer 工具行多了权限档位 chip（reka Select），它在 DOM 里带一份
+        // 原生 <select> 兜底（每个 <option> 隐式 role=option）⇒ 全 wrapper 计数会被污染。
+        // 这里要钉的是**斜杠菜单自己的**选项，所以限定在它的 listbox 内。
+        const options = listbox.findAll('[role="option"]');
         expect(options.length).toBe(2);
         expect(options[0]!.attributes("aria-selected")).toBe("true");
         expect(options[1]!.attributes("aria-selected")).toBe("false");
