@@ -471,7 +471,7 @@ interface Measurement {
         color: string;
         backgrounds: string[];
     };
-    control: { borderRadiusPx: number; background: string; color: string };
+    control: { borderRadiusPx: number; heightPx: number; background: string; color: string };
     listRowHeightPx: number | null;
     focus: {
         tag: string;
@@ -580,6 +580,9 @@ async function measure(
                 },
                 control: {
                     borderRadiusPx: px(controlStyle.borderTopLeftRadius),
+                    // task-16 跟改：圆形控件的 computed radius 是 `calc(infinity * 1px)`，
+                    // Chromium clamp 成 2^25 ⇒ 只能配合高度做语义判据（见 `expectCircularControl`）。
+                    heightPx: Number(controlElement.getBoundingClientRect().height.toFixed(1)),
                     background: controlStyle.backgroundColor,
                     color: controlStyle.color,
                 },
@@ -591,6 +594,32 @@ async function measure(
         },
         { textSelector, controlSelector, listRowSelector, withFocus },
     );
+}
+
+/**
+ * 圆角判据（task-16 跟改，2026-11-20）。
+ *
+ * 改前：`expect(result.control.borderRadiusPx).toBeCloseTo(variant.controlRadiusPx)` —— 期望 8/10px，
+ * 实收 **33554400**，失败消息形如
+ * `expect(received).toBeCloseTo(expected)\n\nExpected: 10\nReceived: 33554400`。
+ *
+ * 根因是**判据把旧 class 当成了不变量**：`c88b674a1`（refactor(ui): 收敛 composer 块高）把发送按钮
+ * 改成 `size-9 ... rounded-full`，Tailwind v4 的 `rounded-full` 编译成
+ * `border-radius: calc(infinity * 1px)`，Chromium 把它 clamp 到 2^25（33554400）。
+ * 所以「圆角 = --radius（rounded-lg）」对发送按钮已不成立 —— 它不是方角控件，而是**圆形**控件。
+ *
+ * 改后钉语义：圆形控件的计算圆角必须 ≥ 高度的一半（36px 高 ⇒ ≥17px；取 -1 容差给亚像素）。
+ * 密度/配色判据不放松：字号、行高、对比度、间距 token 全部原样保留。
+ */
+function expectCircularControl(control: Measurement["control"], context: string): void {
+    expect(
+        control.heightPx,
+        `${context}：控件高度必须 > 0（否则下面的比值无意义）`,
+    ).toBeGreaterThan(0);
+    expect(
+        control.borderRadiusPx,
+        `${context}：rounded-full ⇒ 计算圆角 ≥ 高的一半（实测 ${control.borderRadiusPx}px / 高 ${control.heightPx}px）`,
+    ).toBeGreaterThanOrEqual(control.heightPx / 2 - 1);
 }
 
 function writeMeasure(name: string, payload: unknown): void {
@@ -702,7 +731,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             expect(result.variant, "opt-in 属性必须真的投影到 <html>").toBe(variant.param);
             expect(result.text.fontSizePx).toBeCloseTo(variant.bodyFontPx, 0);
             expect(result.text.lineHeightPx).toBeCloseTo(variant.lineHeightPx, 0);
-            expect(result.control.borderRadiusPx).toBeCloseTo(variant.controlRadiusPx, 0);
+            expectCircularControl(result.control, `opt-in ${variant.id} 发送按钮`);
             expect(bodyContrast, "正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
             expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
             expect(brandContrast, "强调色上的文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
@@ -881,11 +910,9 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             DEFAULT_B.lineHeightPx,
             1,
         );
-        expect(result.control.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(
-            DEFAULT_B.controlRadiusPx,
-            1,
-        );
+        expectCircularControl(result.control, "default B 发送按钮");
         expect(result.tokens.spacing, "B 间距 4px 步进（上游默认）").toBe(DEFAULT_B.spacing);
+        // `--radius` 本身仍是 rounded-lg 控件（表单/域名卡）的圆角来源，token 判据保留在 settings 用例。
         expect(result.tokens.radius, "B --radius = 10px（A″ 固化）").toBe(DEFAULT_B.radius);
         expect(result.tokens.textSm, "B 正文阶梯 14px").toBe(DEFAULT_B.textSm);
         expect(result.tokens.brand, "B 唯一强调色 = 官方 --primary").toBe(DEFAULT_B.primary);

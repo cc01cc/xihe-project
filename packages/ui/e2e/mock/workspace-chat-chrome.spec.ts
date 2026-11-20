@@ -210,6 +210,8 @@ test.describe("task-118：会话页不挂工作区级导航带", () => {
         const configTab = page.getByTestId("dock-tab-pane:right:session-config:session-1");
         await expect(configTab).toBeVisible();
         await expect(configTab).toHaveAttribute("aria-selected", "true");
-        await expect(page.locator('[data-testid^="dock-tab-pane:right:session-config:"]')).toHaveCount(1);
+        await expect(
+            page.locator('[data-testid^="dock-tab-pane:right:session-config:"]'),
+        ).toHaveCount(1);
     });
 });

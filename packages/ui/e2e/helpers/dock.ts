@@ -7,17 +7,21 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * 这个帮助器把「打开某个面板」收敛成一步，返回时右栏可见且目标页签已选中：
  * - dock 已收起（`aria-pressed === "false"`）⇒ 先点开合图标展开；
  * - 目标类型的页签已在行上 ⇒ 只选中它（页签点击无 toggle 副作用）；
- * - 页签不在行上 ⇒ 点右栏 `+`，在菜单里选该类型（`dock-reopen-item-<id>`，8 类型恒可用）。
+ * - 页签不在行上 ⇒ 点右栏 `+`，在菜单里选该类型（`dock-reopen-item-<id>`，7 类型恒可用）。
  */
 
-/** dock 面板类型 = `WorkspaceDock.vue` 右页签行「+」菜单的 8 个可选类型。 */
+/**
+ * dock 面板类型 = `WorkspaceDock.vue` 右页签行「+」菜单的 **7** 个可选类型。
+ *
+ * task-6（D1453 / N-6 选 A）起静态 `context` 页签退役：context 信息只留在 session-config
+ * 面板（`dock-tab-pane:right:session-config:<sid>`，它不是静态类型，不属本联合）。
+ */
 export type DockPanelId =
     | "files"
     | "code"
     | "changes"
     | "monitor"
     | "members"
-    | "context"
     | "agents"
     | "delegation";
 

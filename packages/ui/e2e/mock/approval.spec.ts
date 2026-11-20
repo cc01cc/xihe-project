@@ -7,7 +7,7 @@ import { workspaceWire } from "./helpers/workspace-fixture";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
-import { expectTriggerLabel, selectByLocator } from "../helpers/select";
+import { selectByLocator } from "../helpers/select";
 
 // BL-328 家族：`expired decision` 用例**故意**让 decision 端点回 410（验"过期后卡片不关闭 + 可见错误"），
 // 逐条放行该端点与它的 logger 输出；其余通道不放行。
@@ -473,7 +473,9 @@ test.describe("Chat approval flow", () => {
         );
     });
 
-    test("shows auto mode warning and closes it through the mode control", async ({ page }) => {
+    test("shows auto mode warning and closes it through the auto-approval banner", async ({
+        page,
+    }) => {
         await page.unroute("**/api/v1/policy/mode*");
         let mode: "auto" | "manual" = "auto",
             postResponse: Record<string, unknown> | null = null;
@@ -504,11 +506,16 @@ test.describe("Chat approval flow", () => {
         await autoBanner.locator('[data-testid="session-policy-auto-close"]').click();
         await expect(autoBanner).toBeHidden();
         await expect(settingsSummary).toContainText("手动审批");
-        // PLAN-0626 M2: the mode select moved into the dock `context` tab; the
-        // summary row is only the entry, so open the panel explicitly (the helper
-        // asserts visibility — no waitForTimeout after the click).
+        // PLAN-0626 M2: the summary row is only the entry, so open the panel
+        // explicitly (the helper asserts visibility — no waitForTimeout after the click).
         await openContextPanel(page);
-        await expectTriggerLabel(page, "session-policy-mode", "manual");
+        // task-16 跟改（D-1908 二）：面板里的独立审批模式下拉 `session-policy-mode` 已退役
+        // （唯一持有者 `SessionPolicyControls.vue` 无任何 import，模式降级为档位的派生值）；
+        // 模式现在只有「横幅里的关闭自动放行」这一条写路径，所以这里反向钉住「面板不再承载
+        // 模式写入口」，而不是去读一个不存在的 trigger。
+        await expect(page.getByTestId("session-policy-mode")).toHaveCount(0);
+        await expect(page.getByTestId("session-policy-mode-readonly")).toHaveCount(0);
+        await expect(settingsSummary).toContainText("手动审批");
         expect(postResponse).toEqual({ sessionId: SESSION_ID, mode: "manual", scope: "session" });
     });
 

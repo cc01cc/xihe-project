@@ -28,6 +28,7 @@
 // **不写成「满足」**（D-1782：没测到的判据不能算通过）。
 import { expect, test, type Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { dockPlus, type DockPanelId } from "../helpers/dock";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
@@ -62,13 +63,93 @@ async function boot(page: Page): Promise<void> {
     });
 }
 
-/** 挨个点亮右栏面板开关（`aria-pressed` 已是 true 就不再点，避免关掉）。 */
-async function openDockPanels(page: Page, ids: readonly string[]): Promise<void> {
+/**
+ * 按顺序把右栏面板铺成指定形态（幂等：已开就只激活）。
+ *
+ * **task-16 跟改（2026-11-20）**：原实现点 `workspace-toolbar-<id>` 图标开关，而 task-137
+ * （D-1907 图标簇收敛，`1407521e3`）已把桌面六个 `workspace-toolbar-*` 图标下线，唯一入口收敛为
+ * 「主列行尾开合图标 → 右栏页签行 `+` → 选面板类型」。改前失败消息：
+ * `Test timeout … waiting for getByTestId('workspace-toolbar-code')`。跟改后走全仓统一入口
+ * `openDockPanel`（`e2e/helpers/dock.ts`，19 个既有消费点同款语义），判据（几何/溢出/计数）一字未改。
+ */
+async function openDockPanels(page: Page, ids: readonly DockPanelId[]): Promise<void> {
     for (const id of ids) {
-        const toggle = page.getByTestId(`workspace-toolbar-${id}`);
-        if ((await toggle.getAttribute("aria-pressed")) !== "true") {
-            await toggle.click({ timeout: ACTION_TIMEOUT_MS });
+        const chip = page.getByTestId(`dock-tab-${id}`);
+        if ((await chip.count()) > 0) {
+            // 已开：只激活（页签点击无 toggle 副作用）。
+            if ((await chip.getAttribute("aria-selected")) !== "true") {
+                await chip.click({ timeout: ACTION_TIMEOUT_MS });
+            }
+            continue;
         }
+        // 诊断读数（判据 b 的证据面）：点「+」之前行内几何 + 命中测试。
+        log(
+            "openDockPanels",
+            await page.evaluate(() => {
+                const plus = document.querySelector(
+                    '[data-testid="workspace-container-plus-right"]',
+                );
+                const nav = plus?.closest('[data-testid="workspace-container-tabs"]') ?? null;
+                const box = (element: Element | null) => {
+                    const rect = element?.getBoundingClientRect();
+                    return rect
+                        ? {
+                              x: Math.round(rect.x),
+                              right: Math.round(rect.right),
+                              width: Math.round(rect.width),
+                          }
+                        : null;
+                };
+                const plusBox = plus?.getBoundingClientRect();
+                const hit = plusBox
+                    ? document.elementFromPoint(
+                          plusBox.x + plusBox.width / 2,
+                          plusBox.y + plusBox.height / 2,
+                      )
+                    : null;
+                return {
+                    plus: box(plus),
+                    row: box(nav),
+                    hitAtPlusCenter: hit
+                        ? { tag: hit.tagName, testId: hit.getAttribute("data-testid") }
+                        : null,
+                    chips: Array.from(document.querySelectorAll('[data-testid^="dock-tab-"]')).map(
+                        (element) => ({ id: element.getAttribute("data-testid"), ...box(element) }),
+                    ),
+                    navScroll: nav
+                        ? {
+                              scrollWidth: nav.scrollWidth,
+                              clientWidth: nav.clientWidth,
+                              overflowX: getComputedStyle(nav).overflowX,
+                          }
+                        : null,
+                };
+            }),
+        );
+        // 「+」用键盘激活（focus + Enter）而不是鼠标点击：鼠标进入页签行会让每个芯片显示出关闭按钮
+        // （+28px），而行宽固定 ⇒ 「+」被瞬时挤到最后一个芯片下面，鼠标点击卡在
+        // "… intercepts pointer events" 上重试到超时（实测 + 的 x 在 hover 前后 1810→1769）。
+        // 键盘是同样合法的用户路径，且不受 hover 布局漂移影响（判据 b 的 + 命中测试仍在用例里单独跑）。
+        await dockPlus(page).focus();
+        await page.keyboard.press("Enter");
+        const item = page.getByTestId(`dock-reopen-item-${id}`);
+        await expect(item, `右栏「+」菜单里应能新建 ${id} 面板`).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await item.click({ timeout: ACTION_TIMEOUT_MS });
+        // 右栏页签行只同时显示 `maxVisibleTabs`（3）个芯片，其余落进溢出桶 ⇒ **不要求芯片可见**，
+        // 但必须能证明"页签真的加上了"：要么芯片出现，要么溢出触发器出现（判据 b 的非空前提就是它）。
+        await expect
+            .poll(
+                async () => {
+                    if ((await chip.count()) > 0) return "chip";
+                    if ((await page.getByTestId("dock-overflow-trigger").count()) > 0)
+                        return "overflow";
+                    return "pending";
+                },
+                { timeout: EXPECT_TIMEOUT_MS },
+            )
+            .not.toBe("pending");
     }
     await expect(page.getByTestId("workspace-aux-panel")).toBeVisible({
         timeout: EXPECT_TIMEOUT_MS,

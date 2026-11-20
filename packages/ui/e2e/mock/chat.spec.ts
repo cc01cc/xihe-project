@@ -2,6 +2,7 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
+import { copyForKey } from "../helpers/select";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
@@ -239,7 +240,21 @@ test.describe("Chat", () => {
             timeout: EXPECT_TIMEOUT_MS,
         });
         await expect(usageLine.getByText("$0.012")).toBeVisible();
-        await expect(usageLine.getByText("real", { exact: true })).toBeVisible();
+        // task-16 跟改（2026-11-20）：用量行的来源徽标渲染的是 **i18n 文案**，不是 wire 原值 ——
+        // `WorkspaceView.vue:82-86` 的 `USAGE_SOURCE_KEY`（real → `workspace.usageSourceReal`）经
+        // `:112-117` 的 `usageSourceLabel` 映射后渲染（zh「真实计费」/ en "Real billing"）。
+        // 改前失败消息：`expect(usageLine.getByText("real", { exact: true })).toBeVisible:
+        // element(s) not found`（断言的是从未存在过的字面值）。
+        // 改后两个方向都不放松：wire 原值仍在 DOM 上（`:data-source="usageSource"`，`:659`），
+        // 文案则从语言包取（`copyForKey`，不抄副本 —— 见 `e2e/helpers/select.ts` 头注释 task-210）。
+        const sourceBadge = usageLine.getByTestId("workspace-usage-source");
+        await expect(sourceBadge).toHaveAttribute("data-source", "real");
+        const realCopy = copyForKey("workspace.usageSourceReal");
+        expect(
+            realCopy,
+            "语言包必须提供 workspace.usageSourceReal（i18n 键缺了要红）",
+        ).not.toBeNull();
+        await expect(sourceBadge).toContainText(realCopy!);
     });
 
     test("stops streaming on user request", async ({ page }) => {

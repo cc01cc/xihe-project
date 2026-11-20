@@ -21,7 +21,15 @@ export const SELECT_LABEL_KEYS: Record<string, Record<string, string>> = {
         interpreter: "chat.approvalShapeInterpreter",
         opaque: "chat.approvalShapeOpaque",
     },
-    "session-policy-mode": { manual: "chat.approvalModeManual", auto: "chat.approvalModeAuto" },
+    /**
+     * task-16（D-1908 二）：会话设置面板里的独立审批模式下拉 `session-policy-mode` 已退役
+     * （写入口换成会话权限三档），映射随之删掉；档位选择器是它的替代写入口。
+     */
+    "session-tier-select": {
+        view: "sessionSettings.tierView",
+        workspace: "sessionSettings.tierWorkspace",
+        full: "sessionSettings.tierFull",
+    },
     "settings-audit-status": { failed: "settings.auditStatusLabels.failed" },
     "settings-audit-type": { chat_run: "settings.auditTypeChatRun" },
     "ws-members-add-role": {
