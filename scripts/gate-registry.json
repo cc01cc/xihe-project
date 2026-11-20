@@ -66,10 +66,11 @@
   {
    "root": "research",
    "kind": "workspace-dir",
-   "gates": [],
+   "gates": [
+    "scripts/check-md-tables.mjs"
+   ],
    "owner": "one",
-   "gap": "D-1843 / task-104：research/ 有 25 个 tracked .md，不在 md-tables 五根（AGENTS.md/internal/docs/tools/plans）内 ⇒ 现无任何结构门覆盖",
-   "note": "本门 2026-11-20 首次跑出的真实缺口（非假设）"
+   "note": "task-104 首次点名的缺口；task-112 修门：md-tables 加 research 根（存量 2 行已修）"
   },
   {
    "root": "A01-cmtx/docs",
@@ -103,10 +104,11 @@
    "root": "A03-xihe/spec",
    "kind": "spec-corpus",
    "gates": [
+    "scripts/check-md-tables.mjs",
     "scripts/check-terminology-identifiers.mjs"
    ],
    "owner": "A03-xihe",
-   "note": "仅标识符轴（check-terminology-identifiers 的 CORPORA spec 行）；结构类 md 门 0 覆盖 ⇒ 卡面背景论点"
+   "note": "标识符轴（check-terminology-identifiers CORPORA spec）+ task-112 起 md-tables 结构轴"
   },
   {
    "root": "A04-agent-exo/docs",
@@ -156,10 +158,11 @@
   {
    "root": "A08-xingshu/spec",
    "kind": "spec-corpus",
-   "gates": [],
+   "gates": [
+    "scripts/check-md-tables.mjs"
+   ],
    "owner": "A08-xingshu",
-   "gap": "D-1843 / task-104：spec 面无结构类 Markdown 门（md-tables 五根不含、md-emphasis SCOPES 无 spec）",
-   "note": "spec 面结构门 0 覆盖"
+   "note": "task-104 首次点名的缺口；task-112 修门：md-tables 加该 spec 根"
   },
   {
    "root": "A09-ledger-loom/docs",
@@ -182,10 +185,11 @@
   {
    "root": "A11-telemetry/spec",
    "kind": "spec-corpus",
-   "gates": [],
+   "gates": [
+    "scripts/check-md-tables.mjs"
+   ],
    "owner": "A11-telemetry",
-   "gap": "D-1843 / task-104：spec 面无结构类 Markdown 门（md-tables 五根不含、md-emphasis SCOPES 无 spec）",
-   "note": "spec 面结构门 0 覆盖"
+   "note": "task-104 首次点名的缺口；task-112 修门：md-tables 加该 spec 根"
   },
   {
    "root": "A12-DSH-decision/docs",
@@ -208,10 +212,11 @@
   {
    "root": "FB02-ember-works/spec",
    "kind": "spec-corpus",
-   "gates": [],
+   "gates": [
+    "scripts/check-md-tables.mjs"
+   ],
    "owner": "FB02-ember-works",
-   "gap": "D-1843 / task-104：spec 面无结构类 Markdown 门（md-tables 五根不含、md-emphasis SCOPES 无 spec）",
-   "note": "spec 面结构门 0 覆盖"
+   "note": "task-104 首次点名的缺口；task-112 修门：md-tables 加该 spec 根"
   }
  ],
  "gateScriptDirs": [
