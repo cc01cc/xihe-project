@@ -1044,15 +1044,17 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 
 ### 17.10 Criteria status and executors
 
-| Item | Machine-checkable today | Smallest executable shape | Proposed owner |
-| --- | --- | --- | --- |
-| 17.1 | yes (static) | `check-form-contract.mjs` rule A: editable section matches a two-column grid | new gate draft |
-| 17.2 | yes (component test) | assert `label[for]` resolves and placeholder differs from label | component spec |
-| 17.3 | yes (static) | rule B: a Switch / Checkbox and a save testid inside one section | new gate draft |
-| 17.4 | no, needs the real stack | Playwright: edit a field, dirty indicator, intercept on close | real-stack spec |
-| 17.5 | partly (static + real stack) | rule C: an `ErrorBlock` call site without retry is red; offline retry on the real stack | new gate draft + real stack |
-| 17.6 | yes (static) | rule D: an enum field whose testid lands on a text input is red | new gate draft |
-| 17.7 | yes (component test) | layered selector must expose inherit plus effective value, at least five cases | component spec |
-| 17.8 | yes (static) | rule E: more than six top-level sections inside a dialog | new gate draft |
+| Item | Machine-checkable today | Smallest executable shape | Proposed owner | Executor and measured reading (`check-form-contract.mjs`, 2026-11-21) |
+| --- | --- | --- | --- | --- |
+| 17.1 | yes (static) | `check-form-contract.mjs` rule A: an editable section matching a two-column grid | new gate draft | **landed** = `F1` 2 violations / 2 debt, `F2` 2 / 0 |
+| 17.2 | yes (component test) | assert label[for] resolves and placeholder differs from label | component spec | static face = `F11` 11 / 0 (write controls without an associated label); component cases for a placeholder restating its label still missing |
+| 17.3 | yes (static) | rule B: a Switch / Checkbox and a save testid inside one section | new gate draft | this family is `F7` and measured 0 (0 / 0): the rule needs the switch and the save button in one section without a form root, and real call sites are not shaped like that, so **the criterion is dead** — rule-1 must redo the shape test; never cite it as machine-checked |
+| 17.4 | no, needs the real stack | Playwright: edit a field, dirty indicator, intercept on close | real-stack spec | **no executor**: `ui-baseline.spec.ts` has no executor at all today (registered in task-156 §4); the wiring is the follow-up `task-176` (six `@host` cases plus a single-spec mise lane) |
+| 17.5 | partly (static + real stack) | rule C: an ErrorBlock call site without retry is red; offline retry on the real stack | new gate draft + real stack | static face landed = `F3` 10 / 2 and `F8` 3 / 0 (save button with no disabled guard); the offline-then-retry round trip still needs the real stack |
+| 17.6 | yes (static) | rule D: an enum field whose testid lands on a text input is red | new gate draft | **landed** = `F4` 4 / 0, `F5` 4 / 0, `F6` 23 (20 enum roots + 3 length) / 32 |
+| 17.7 | yes (component test) | layered selector must expose inherit plus effective value, at least five cases | component spec | static face = `F9` 0 / 10 (a bare input with no tier hint); component face is only the `lockLayered` case in `ConfigDomainPanel.spec.ts`, which pins that the locked tier renders no tier control; the effective-value and inherit-entry cases follow `task-155` |
+| 17.8 | yes (static) | rule E: more than six top-level sections inside a dialog | new gate draft | the section count shares the `F7` shape test and likewise measures 0 ⇒ **not landed**, rule-1 must add the counting rule |
 
-> Rule bodies, positive and negative self-tests and false-positive boundaries are in §2 of the evidence file; this section only records who owns which item. Until the static gate lands, these five rules are executed manually during review, and the review record must name the rule that fired.
+> Rule bodies, positive and negative self-tests and false-positive boundaries are in `internal/A03-xihe/evidence/2026-11-21-form-contract-gate/README.md`; this section only records who owns which item and what runs it today. Until a rule is landed, the reviewer runs the unlanded items by hand and writes the rule number into the review record.
+
+> Reading convention for the executor column (measured 2026-11-21 04:1x): the gate is `internal/A03-xihe/scripts/check-form-contract.mjs`, report-only, wired as `check:form-contract` in `one/mise.toml`, not in the commit path; `--selftest` passes 42/42; the whole tree of 602 files reports 26 violations / 36 debt / 2 `NOT_STATIC`. The `F6` count moves with whatever files concurrent batches touch (rule-1 handed over at 27 violations and `F6` 24, this card re-measured 26 and `F6` 23; the difference sits in the length family, not in a changed criterion). **A zero from `F7` does not mean the repository is clean** — the shape never matched, which is how this table is worded.
