@@ -13,6 +13,12 @@ import org.springframework.web.client.RestTemplate;
 
 import java.io.IOException;
 
+// task-118 (DSD-1502): this lane is NOT a merge-safety net any more — it is kept only for the
+// 56 classes whose fixtures live entirely inside JPA-created tables. The org_units family (V162–V167)
+// has no entity, so create-drop cannot build it: RequesterAuthority's org-unit lookup throws, every
+// atom resolves to the empty set, and instance-scope gates answer 403 while 404s appear where a
+// caller is really visible. Eight such classes were moved to AbstractIntegrationTest; new tests that
+// touch instance atoms, org units or workspace roles belong on the PostgreSQL lane as well.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("h2")
 // PLAN-0612 M4: see AbstractWireMockTest — `.env.dev` sets the frozen default as a system property,
