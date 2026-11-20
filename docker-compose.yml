@@ -22,7 +22,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "${XIHE_PG_PORT:-12634}:5432"
+      # DSD-1491 第①条（task-97，2026-11-20）：开发栈 PG 免密（trust + 空口令）是既定裁定，
+      # 但无前缀的端口发布会绑到 0.0.0.0，等于把免密库暴露给同网段任意主机。
+      # 这里只绑回环：本机进程（CP/agent 走 localhost）照旧可用，别的机器连不上。
+      - "127.0.0.1:${XIHE_PG_PORT:-12634}:5432"
     mem_limit: 512m
     volumes:
       - pgdata:/var/lib/postgresql/data

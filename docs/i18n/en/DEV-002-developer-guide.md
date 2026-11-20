@@ -240,6 +240,8 @@ Starts all 4 services: `postgres` + `control-plane` + `agent` + `runtime`.
 
 CP connects to `postgres:5432` via Docker internal network `xihe-net`. PostgreSQL username/password is defined by `POSTGRES_USER` / `POSTGRES_PASSWORD` in `docker-compose.yml`.
 
+The development-stack PostgreSQL is **passwordless** (`POSTGRES_HOST_AUTH_METHOD: trust` plus an empty `POSTGRES_PASSWORD`, kept deliberately per DSD-1491) and its published port is **loopback-only**: `docker-compose.yml` maps `127.0.0.1:${XIHE_PG_PORT:-12634}:5432`, so `localhost:12634` still works on this machine while hosts on the same subnet cannot connect (task-97, 2026-11-20).
+
 Verification:
 
 ```bash
