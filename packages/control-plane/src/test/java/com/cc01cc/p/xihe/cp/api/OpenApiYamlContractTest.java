@@ -989,6 +989,54 @@ class OpenApiYamlContractTest {
         }
     }
 
+    /**
+     * task-83 / D-1488: the session tier face the UI has called since task-107. The point of this
+     * gate is the KEY SET, not the route: the UI normalizer
+     * ({@code normalizeSessionTierState}, packages/ui/src/composables/api.ts) validates the six
+     * values but ignores extra keys, so a seventh key would pass the UI silently — only
+     * {@code additionalProperties: false} plus this exact required[] catches it.
+     */
+    @Test
+    void openApiContractsTheSessionTierFaceWithItsExactlySixKeys() throws Exception {
+        Map<?, ?> document = parseContract();
+        Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+        Map<?, ?> tier = (Map<?, ?>) paths.get("/api/v1/sessions/{sessionId}/tier");
+        assertInstanceOf(Map.class, tier, "the session tier route is contracted");
+        assertInstanceOf(Map.class, tier.get("get"), "the read face is contracted");
+        assertInstanceOf(Map.class, tier.get("patch"), "the write face is contracted");
+
+        Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+        Map<?, ?> state = (Map<?, ?>) schemas.get("SessionTierState");
+        assertInstanceOf(Map.class, state, "SessionTierState is contracted");
+        assertEquals(Set.of("tier", "source", "workspaceTier", "canConfigure", "denyReason", "available"),
+                requiredOf(state), "the state carries exactly the six keys the UI normalizer reads");
+        assertEquals(false, ((Map<?, ?>) state).get("additionalProperties"),
+                "additionalProperties: false is what stops a seventh key from passing silently");
+
+        Map<?, ?> properties = (Map<?, ?>) state.get("properties");
+        assertEquals(Set.of("tier", "source", "workspaceTier", "canConfigure", "denyReason", "available"),
+                new HashSet<>(properties.keySet().stream().map(String::valueOf).collect(Collectors.toSet())),
+                "no property outside required[] may exist");
+
+        assertEquals(Set.of("view", "workspace", "full"),
+                enumValuesOf(resolved(document, ((Map<?, ?>) properties).get("tier"))),
+                "tier reuses the PermissionTier vocabulary");
+        assertEquals(Set.of("view", "workspace", "full"),
+                enumValuesOf(resolved(document,
+                        ((Map<?, ?>) ((Map<?, ?>) properties).get("available")).get("items"))),
+                "available carries the same vocabulary item by item");
+        assertEquals(Set.of("session", "workspace", "none"),
+                enumValuesOf(resolved(document, ((Map<?, ?>) properties).get("source"))),
+                "source ∈ session | workspace | none");
+        assertEquals(Set.of("viewer", "not-owner", "no-atom"),
+                enumValuesOf(resolved(document, ((Map<?, ?>) properties).get("denyReason"))),
+                "denyReason is the UI vocabulary, never the guard's raw code");
+
+        Map<?, ?> update = (Map<?, ?>) schemas.get("SessionTierUpdateRequest");
+        assertInstanceOf(Map.class, update, "SessionTierUpdateRequest is contracted");
+        assertEquals(Set.of("tier"), requiredOf(update), "the patch body carries tier and nothing else");
+    }
+
     /** The producer source is the only acceptable source of truth (D-1409). */
     private static Set<String> producerStatusLiterals() throws Exception {
         Path producer = Path.of("..", "..", "packages", "agent", "src", "xihe_agent", "llm", "models.py");
@@ -1016,6 +1064,27 @@ class OpenApiYamlContractTest {
      * exactly the kind of gate that "passes" because it never looked. Accept a List, and fall back
      * to a quoted/literal string so the helper cannot silently read nothing.
      */
+    /**
+     * Follows a local {@code $ref} so a vocabulary borrowed from another schema stays readable.
+     * Without this, {@code tier: {$ref: PermissionTier}} reads as an empty set and the assertion
+     * below would pass vacuously (the task-55 failure mode this file already warns about).
+     */
+    private static Object resolved(Map<?, ?> document, Object node) {
+        Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+        Object current = node;
+        for (int hop = 0; hop < 8; hop++) {
+            if (!(current instanceof Map<?, ?> map)) {
+                return current;
+            }
+            Object ref = map.get("$ref");
+            if (!(ref instanceof String text) || !text.startsWith("#/components/schemas/")) {
+                return current;
+            }
+            current = schemas.get(text.substring("#/components/schemas/".length()));
+        }
+        return current;
+    }
+
     private static Set<String> enumValuesOf(Object schemaProperty) {
         Set<String> values = new HashSet<>();
         if (schemaProperty instanceof Map<?, ?> property) {
