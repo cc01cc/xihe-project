@@ -1678,6 +1678,68 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: SESSION_NOT_FOUND / TEAM_TASK_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/tier:
+    get:
+      tags: [session]
+      operationId: getSessionTier
+      summary: Session permission tier read face (task-83 / D-1488); the shape the UI normalizer validates
+      description: |
+        The route the UI has called since task-107 (packages/ui/src/composables/api.ts
+        getSessionTier/setSessionTier) and that the control-plane did not serve until task-83, so every
+        read answered 404. Read = owner or enabled invited HUMAN participant (BL-299, the same rule
+        GET /api/v1/policy/mode uses for its tier field); anyone else is 404 SESSION_NOT_FOUND,
+        never a distinguishable forbidden. The response has exactly six keys and no others:
+        tier / source / workspaceTier / canConfigure / denyReason / available.
+        tier is never null — an absent or unreadable stored tier reports the fail-closed
+        view (SessionPermissionTier.FAIL_CLOSED_TIER), because the UI rejects null.
+        source ∈ session (the session row carries the tier) | workspace (inherited from the
+        approval-policy workspace layer) | none (no layer supplies one, including a fail-closed read).
+        workspaceTier is null until task-107b turns the workspace layer into view/workspace/full;
+        available is therefore the whole vocabulary, as there is no ceiling to intersect with yet.
+        canConfigure answers the widening question only (widening needs the
+        session:permission:configure atom AND the session creator; tightening is every participant's
+        right), evaluated through the guard's non-auditing preview so a read never appends a
+        session.permission.escalated row. denyReason ∈ viewer | not-owner | no-atom, null when the
+        caller may configure.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Six-key SessionTierState, content: { application/json: { schema: { $ref: '#/components/schemas/SessionTierState' } } } }
+        '400': { description: 'INVALID_REQUEST — sessionId is not a UUID (checked before visibility)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: SESSION_NOT_FOUND — unknown, archived or not readable by the caller (one code, no existence oracle), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
+    patch:
+      tags: [session]
+      operationId: setSessionTier
+      summary: Session permission tier write face (task-83 / D-1488); same six-key response as the read
+      description: |
+        Body {tier} only. Authorization is entirely SessionPermissionGuard: a widening (towards full)
+        requires the session:permission:configure atom AND the session creator, a tightening or a no-op
+        rewrite is open to any participant (D-1908 rev3) — the controller adds no check of its own,
+        so this route cannot drift from POST /api/v1/policy/mode. A refusal is 403 carrying the
+        guard's code as the problem code plus denyReason (viewer | not-owner | no-atom) for the UI
+        badge. The tier is written to sessions.permission_tier (V176, source of truth) and
+        sessions.approval_mode is derived from it inside the same write (view/workspace -> manual,
+        full -> auto), never the reverse; the response re-reads the state, so it is the effective
+        tier after the write, not an echo of the request. 409 WORKSPACE_CONTEXT_REQUIRED is checked
+        before the guard (BL-181). Note this path is not in WorkspaceWriteGuard's workspace-write
+        list, so a VIEWER is not refused by the interceptor; the guard's own 403 is the gate.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionTierUpdateRequest' }
+      responses:
+        '200': { description: Six-key SessionTierState after the write, content: { application/json: { schema: { $ref: '#/components/schemas/SessionTierState' } } } }
+        '400': { description: 'INVALID_REQUEST — tier missing/blank, or not one of view/workspace/full', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'NOT_SESSION_OWNER | NO_CAPABILITY | TIER_UNREADABLE (the guard code itself) plus denyReason for the UI', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SESSION_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
   /api/v1/sessions/{sessionId}/delegation-spawn:
     post:
       tags: [session]
@@ -7497,7 +7559,7 @@ components:
         name: { type: string }
         scopeClass: { type: string, enum: [instance, both] }
         capability: { type: boolean, description: 'true for instance:super / instance:admin / workspace:admin — resolved as cap:<atom> authorities, never materialized (decision #23)' }
-        resource: { type: string, description: 'Canonical resource pattern of a wildcard atom (* or credential:*)' }
+        resource: { type: string, description: 'Resource pattern stored for the atom. Historically always the canonical form (* or credential:*); task-81 (G-1, DSD-1485) lets the write face narrow a workspace-domain atom to a path prefix, spelled fs:<workspaceId>[/<relative path>] (normal form: lowercase, / separators, no trailing slash). The intersection kernel resolves both sides to a physical key, so fs:<ws> as a grant covers fs:<ws>/src/a.ts.' }
         displayName: { type: string, description: 'PLAN-0651 D51-37: human label resolved server-side from ?locale (zh-CN default, en-US supported). Always non-empty; the UI renders this instead of the wire name so it keeps no atom vocabulary of its own.' }
         agentPrincipalForbidden: { type: boolean, description: 'task-415 (RBAC P0-1): true when AGENT_FORBIDDEN_ATOMS contains this atom, i.e. it can never be bound to an agent principal (the only-subtract cap). PermissionAtomCatalog already computed it; before task-415 the view dropped it, so a binding UI could offer a role the CP would refuse. The UI pre-disables instead of walking into the refusal.' }
     RoleCatalogView:
@@ -7527,6 +7589,14 @@ components:
         system: { type: boolean, description: 'Seeded by V87; only the display name is editable' }
         atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
         bindingCount: { type: integer, minimum: 0 }
+    RoleAtomInput:
+      type: object
+      description: 'task-81 (G-1, DSD-1485): one atom on the role write face. A bare string ("read") keeps the historical meaning and stores the atom canonical pattern, so existing clients are unchanged; the object form is the only way to narrow a workspace-domain atom to a path prefix.'
+      required: [actionClass]
+      properties:
+        actionClass: { type: string, description: 'Atom name from GET /api/v1/roles/catalog' }
+        name: { type: string, description: 'Alias of actionClass (both are accepted; the deserializer keeps the last one seen)' }
+        resource: { type: [string, 'null'], description: 'Optional pattern; absent/null/blank means the atom canonical pattern. Capability atoms and instance-scoped atoms refuse a pattern, credential atoms only accept credential:* or credential:<uuid>, every other atom accepts * or fs:<workspaceId>[/<relative path>]. Rejected values are 400 INVALID_GRANT_RESOURCE; a non-existent or deleted fs: root is 404 WORKSPACE_NOT_FOUND; a workspace the caller cannot administer bindings in is 403 (RequesterAuthority.requireWorkspaceBindingAuthority).' }
     RoleCreateRequest:
       type: object
       required: [name, atoms]
@@ -7534,7 +7604,14 @@ components:
         name: { type: string, description: 'Matches ^[A-Z][A-Z0-9_]{1,63}$ (V87 ck_roles_name_format); 400 INVALID_ROLE_NAME otherwise' }
         displayName: { type: [string, 'null'], description: 'Defaults to name; 1..200 characters' }
         description: { type: [string, 'null'] }
-        atoms: { type: array, minItems: 1, items: { type: string } }
+        atoms:
+          type: array
+          minItems: 1
+          description: 'Atom names (strings) or atom objects (RoleAtomInput); both may be mixed in one request.'
+          items:
+            oneOf:
+              - type: string
+              - $ref: '#/components/schemas/RoleAtomInput'
     RoleUpdateRequest:
       type: object
       description: 'Every field is optional; null/absent means unchanged. On a system role only displayName may be present.'
@@ -7542,7 +7619,14 @@ components:
         name: { type: string }
         displayName: { type: string }
         description: { type: [string, 'null'] }
-        atoms: { type: array, minItems: 1, items: { type: string } }
+        atoms:
+          type: array
+          minItems: 1
+          description: 'Replaces the whole atom set; items are atom names or RoleAtomInput objects (task-81).'
+          items:
+            oneOf:
+              - type: string
+              - $ref: '#/components/schemas/RoleAtomInput'
     BindingView:
       type: object
       description: 'PLAN-0610 W3-2a: one role binding row with the role name resolved.'
@@ -8755,6 +8839,41 @@ components:
         mode: { $ref: '#/components/schemas/PolicyMode' }
         tier: { type: [string, 'null'], enum: [view, workspace, full, null], description: 'the stored tier after the write (mode above is its derived value)' }
         scope: { type: string, enum: [session] }
+    SessionTierSource:
+      type: string
+      enum: [session, workspace, none]
+      description: |
+        Where the effective tier came from: the session row (session), the inherited approval-policy
+        workspace layer (workspace), or nowhere (none — including a fail-closed read, which must not
+        be attributed to the workspace).
+    SessionTierDenyReason:
+      type: string
+      enum: [viewer, not-owner, no-atom]
+      description: |
+        UI vocabulary for why canConfigure is false: viewer (the caller cannot even read the session /
+        the tier could not be read), not-owner (widening refused: the caller did not create the
+        session), no-atom (widening refused: the caller lacks session:permission:configure).
+        It is never the guard's raw refusal code — that code stays the problem code on a 403.
+    SessionTierState:
+      type: object
+      additionalProperties: false
+      description: |
+        Exactly the six keys SessionTierState in packages/ui/src/types carries and
+        normalizeSessionTierState validates — a seventh or missing key breaks the UI normalizer.
+      required: [tier, source, workspaceTier, canConfigure, denyReason, available]
+      properties:
+        tier: { $ref: '#/components/schemas/PermissionTier' }
+        source: { $ref: '#/components/schemas/SessionTierSource' }
+        workspaceTier: { type: [string, 'null'], enum: [view, workspace, full, null], description: 'the workspace-layer default; null until task-107b gives that layer a tier' }
+        canConfigure: { type: boolean, description: 'the widening question only: atom AND session creator; tightening is every participant''s right' }
+        denyReason: { type: [string, 'null'], enum: [viewer, not-owner, no-atom, null], description: 'null when canConfigure is true' }
+        available: { type: array, items: { $ref: '#/components/schemas/PermissionTier' }, description: 'the tiers this workspace allows; the whole vocabulary until task-107b supplies a ceiling' }
+    SessionTierUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [tier]
+      properties:
+        tier: { $ref: '#/components/schemas/PermissionTier' }
     Tier1ChainStatus:
       type: object
       additionalProperties: false

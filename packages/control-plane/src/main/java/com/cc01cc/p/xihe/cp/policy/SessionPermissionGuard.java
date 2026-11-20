@@ -97,6 +97,21 @@ public class SessionPermissionGuard {
      *         actor in this workspace (404/409, the historical session-read shapes)
      */
     public Decision authorize(String actorId, String workspaceId, String sessionId, String targetTier) {
+        return decide(actorId, workspaceId, sessionId, targetTier, false);
+    }
+
+    /**
+     * The same rules as {@link #authorize}, without the audit record and without the refusal warn
+     * line. The tier read face ({@code GET /api/v1/sessions/{sessionId}/tier}) asks "may this caller
+     * widen?" on every load, and a read must not append one {@code session.permission.escalated}
+     * row per GET. Nothing else differs: a preview answer is never a permission.
+     */
+    public Decision preview(String actorId, String workspaceId, String sessionId, String targetTier) {
+        return decide(actorId, workspaceId, sessionId, targetTier, true);
+    }
+
+    private Decision decide(String actorId, String workspaceId, String sessionId, String targetTier,
+                            boolean preview) {
         String toTier = SessionPermissionTier.normalize(targetTier)
                 .orElseThrow(() -> new IllegalArgumentException("unsupported permission tier: " + targetTier));
         SessionReadAccess.Resolved resolved = sessionReadAccess.resolve(actorId, workspaceId, sessionId);
@@ -109,7 +124,7 @@ public class SessionPermissionGuard {
             log.error("[POLICY] event=session_permission_tier_unreadable actor={} session={}",
                     actorId, sessionId, e);
             return deny(actorId, workspaceId, sessionId, null, toTier, false, false,
-                    REASON_TIER_UNREADABLE, Set.of());
+                    REASON_TIER_UNREADABLE, Set.of(), preview);
         }
         // Three states, not two: the write changes nothing (no-op), it narrows the session
         // (tightening), or it widens it (needs atom + creator). A stored tier equal to the target
@@ -121,22 +136,23 @@ public class SessionPermissionGuard {
         if (noop || tightening) {
             if (!resolved.access().readAllowed()) {
                 return deny(actorId, workspaceId, sessionId, fromTier, toTier, tightening, noop,
-                        REASON_NOT_SESSION_OWNER, Set.of());
+                        REASON_NOT_SESSION_OWNER, Set.of(), preview);
             }
-            return allow(actorId, workspaceId, sessionId, fromTier, toTier, tightening, noop, Set.of());
+            return allow(actorId, workspaceId, sessionId, fromTier, toTier, tightening, noop, Set.of(),
+                    preview);
         }
 
         boolean capability = holdsConfigureAtom(actorId, workspaceId);
         Set<String> sources = capability ? atomSources(actorId, workspaceId) : Set.of();
         if (!capability) {
             return deny(actorId, workspaceId, sessionId, fromTier, toTier, false, false,
-                    REASON_NO_CAPABILITY, sources);
+                    REASON_NO_CAPABILITY, sources, preview);
         }
         if (!resolved.access().owner()) {
             return deny(actorId, workspaceId, sessionId, fromTier, toTier, false, false,
-                    REASON_NOT_SESSION_OWNER, sources);
+                    REASON_NOT_SESSION_OWNER, sources, preview);
         }
-        return allow(actorId, workspaceId, sessionId, fromTier, toTier, false, false, sources);
+        return allow(actorId, workspaceId, sessionId, fromTier, toTier, false, false, sources, preview);
     }
 
     /**
@@ -174,18 +190,25 @@ public class SessionPermissionGuard {
     }
 
     private Decision allow(String actorId, String workspaceId, String sessionId, String fromTier,
-                           String toTier, boolean tightening, boolean noop, Set<String> sources) {
-        audit(actorId, workspaceId, sessionId, "allowed", null, fromTier, toTier, tightening, noop, sources);
+                           String toTier, boolean tightening, boolean noop, Set<String> sources,
+                           boolean preview) {
+        if (!preview) {
+            audit(actorId, workspaceId, sessionId, "allowed", null, fromTier, toTier, tightening, noop,
+                    sources);
+        }
         return new Decision(true, null, fromTier, toTier, tightening, noop, sources);
     }
 
     private Decision deny(String actorId, String workspaceId, String sessionId, String fromTier,
                           String toTier, boolean tightening, boolean noop, String reason,
-                          Set<String> sources) {
-        log.warn("[POLICY] event=session_permission_denied reason={} actor={} session={} from={} to={}"
-                        + " tightening={} noop={}",
-                reason, actorId, sessionId, fromTier, toTier, tightening, noop);
-        audit(actorId, workspaceId, sessionId, "denied", reason, fromTier, toTier, tightening, noop, sources);
+                          Set<String> sources, boolean preview) {
+        if (!preview) {
+            log.warn("[POLICY] event=session_permission_denied reason={} actor={} session={} from={} to={}"
+                            + " tightening={} noop={}",
+                    reason, actorId, sessionId, fromTier, toTier, tightening, noop);
+            audit(actorId, workspaceId, sessionId, "denied", reason, fromTier, toTier, tightening, noop,
+                    sources);
+        }
         return new Decision(false, reason, fromTier, toTier, tightening, noop, sources);
     }
 

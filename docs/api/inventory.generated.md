@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**368** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 264 · 服务间 104
+- 规模：**370** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 266 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（368 / 368 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（370 / 370 个操作带 tag）。
 
-## public（264 operations · 公开 · 17 tags）
+## public（266 operations · 公开 · 17 tags）
 
 ### auth（12）
 
@@ -131,7 +131,7 @@
 | `DELETE /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories/{memoryId}` | `deleteWorkspaceAgentMemory` | `bearerAuth` | [DEPRECATED] Archive (soft-delete) one agent memory assertion (subject-level route preferred) | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/agents/{principalId}/spawn-sessions` | `listWorkspaceAgentSpawnSessions` | `bearerAuth` | List the child sessions this Workspace Agent has been delegated (workspace-level honest count) | 公开 |
 
-### session（34）
+### session（36）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -168,6 +168,8 @@
 | `PATCH /api/v1/sessions/{sessionId}/participants/{participantId}/cursor` | `advanceParticipantCursor` | `bearerAuth` | Advance the caller's own read cursor for this session | 公开 |
 | `GET /api/v1/sessions/{sessionId}/team-tasks` | `getSessionTeamTasks` | `bearerAuth` | Read-only team-task board projection of the tree that owns this session (task-188 MVP⑤ S2) | 公开 |
 | `GET /api/v1/sessions/{sessionId}/team-tasks/{taskId}` | `getSessionTeamTask` | `bearerAuth` | One board card (same wire shape as a board row; the UI consumes the list row's expansion instead) | 公开 |
+| `GET /api/v1/sessions/{sessionId}/tier` | `getSessionTier` | `bearerAuth` | Session permission tier read face (task-83 / D-1488); the shape the UI normalizer validates | 公开 |
+| `PATCH /api/v1/sessions/{sessionId}/tier` | `setSessionTier` | `bearerAuth` | Session permission tier write face (task-83 / D-1488); same six-key response as the read | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/sessions` | `createWorkspaceSession` | `bearerAuth` | Create a session under an explicit workspace (PLAN-0608) | 公开 |
 
 ### chat（18）
