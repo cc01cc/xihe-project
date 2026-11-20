@@ -6,6 +6,9 @@
  *
  * PLAN-0614 M2：注册不再自动建工作区 ⇒ 空态必须可操作（「创建你的第一个工作区」→ 既有创建
  * 对话框 → 建成后刷新列表并进入新工作区）。这里把"空态 → 建 → 进入"整条链固化成用例。
+ *
+ * task-38（用户 2026-11-20 11:32 裁定）：本页升级成**工作台详情页** —— 主操作两枚（新建会话 /
+ * 新建工作区）、最近的独立会话（实数据索引，最多 5 条）、全局跳转三入口。新增面在文件末尾成组覆盖。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
@@ -15,11 +18,13 @@ import type * as vueRouterModule from "vue-router";
 import type * as apiModule from "../../composables/api";
 import type * as workspaceContextModule from "../../lib/workspaceContext";
 import type * as vueI18nModule from "vue-i18n";
+import { standaloneChatPath } from "../../lib/routes";
 
 const mocks = vi.hoisted(() => ({
     replace: vi.fn<(to: unknown) => Promise<void>>(),
     push: vi.fn<(to: unknown) => Promise<void>>(),
     listWorkspaces: vi.fn<() => Promise<unknown[]>>(),
+    getWorkspacelessSessions: vi.fn<() => Promise<unknown>>(),
     writeTabWorkspace: vi.fn<(ws: unknown) => void>(),
     clearTabWorkspace: vi.fn<() => void>(),
     tabWorkspaceId: { value: null as string | null },
@@ -53,7 +58,10 @@ vi.mock("../../composables/api", async () => {
     const actual = await vi.importActual<typeof apiModule>("../../composables/api");
     return {
         ...actual,
-        api: { listWorkspaces: () => mocks.listWorkspaces() },
+        api: {
+            listWorkspaces: () => mocks.listWorkspaces(),
+            getWorkspacelessSessions: () => mocks.getWorkspacelessSessions(),
+        },
     };
 });
 
@@ -88,9 +96,22 @@ const CreateDialogStub = {
     template: '<div data-testid="create-dialog-stub" :data-open="String(open)" />',
 };
 
+/** task-38：独立会话对话框与左栏「新建会话（独立）」是同一个组件 ⇒ 同样只桩契约点。 */
+const StandaloneDialogStub = {
+    name: "StandaloneSessionDialog",
+    props: { show: { type: Boolean, default: false } },
+    emits: ["close", "created"],
+    template: '<div data-testid="standalone-dialog-stub" :data-show="String(show)" />',
+};
+
 function mountPicker() {
     return mount(WorkspacePicker, {
-        global: { stubs: { WorkspaceCreateDialog: CreateDialogStub } },
+        global: {
+            stubs: {
+                WorkspaceCreateDialog: CreateDialogStub,
+                StandaloneSessionDialog: StandaloneDialogStub,
+            },
+        },
     });
 }
 
@@ -102,6 +123,8 @@ describe("WorkspacePicker", () => {
         mocks.replace.mockReset().mockResolvedValue(undefined);
         mocks.push.mockReset().mockResolvedValue(undefined);
         mocks.listWorkspaces.mockReset();
+        // task-38：默认「没有独立会话」—— 本文件大部分用例不关心那一块，空数组让它整块不渲染。
+        mocks.getWorkspacelessSessions.mockReset().mockResolvedValue({ sessions: [] });
         mocks.writeTabWorkspace.mockReset();
         mocks.clearTabWorkspace.mockReset();
         mocks.tabWorkspaceId.value = null;
@@ -278,5 +301,127 @@ describe("WorkspacePicker", () => {
         await wrapper.get('[data-testid="workspace-picker-clear-search"]').trigger("click");
         expect(wrapper.findAll("li").length).toBe(2);
         expect(wrapper.find('[data-testid="workspace-picker-search-empty"]').exists()).toBe(false);
+    });
+    // ── task-38：工作台详情页（用户 2026-11-20 11:32 裁定）────────────────────────
+    it("task-38: 页头用工作台文案，主操作给「新建会话」并复用独立会话对话框", async () => {
+        mocks.listWorkspaces.mockResolvedValue([{ id: NEW_ID, name: "Only one" }]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("workspacePicker.workbenchTitle");
+        const newSession = wrapper.get('[data-testid="workspace-picker-new-session"]');
+        expect(newSession.text()).toBe("workspacePicker.newSession");
+        // 与「新建工作区」并列，两枚都在主操作区里（不是散落各处）。
+        expect(
+            wrapper
+                .get('[data-testid="workspace-picker-actions"]')
+                .find('[data-testid="workspace-picker-new-session"]')
+                .exists(),
+        ).toBe(true);
+        expect(wrapper.get('[data-testid="standalone-dialog-stub"]').attributes("data-show")).toBe(
+            "false",
+        );
+
+        await newSession.trigger("click");
+        expect(wrapper.get('[data-testid="standalone-dialog-stub"]').attributes("data-show")).toBe(
+            "true",
+        );
+
+        // 建成 → 关对话框并进入该会话；路径由 routes.ts 唯一决定（task-33 改名时本用例不该跟着红）。
+        wrapper.getComponent(StandaloneDialogStub).vm.$emit("created", "sess-1");
+        await flushPromises();
+        expect(mocks.push).toHaveBeenCalledWith(standaloneChatPath("sess-1"));
+        expect(wrapper.get('[data-testid="standalone-dialog-stub"]').attributes("data-show")).toBe(
+            "false",
+        );
+    });
+
+    it("task-38: 最近独立会话过滤已归档、按更新时间降序、最多 5 条，点击可进入", async () => {
+        mocks.listWorkspaces.mockResolvedValue([{ id: NEW_ID, name: "Only one" }]);
+        mocks.getWorkspacelessSessions.mockResolvedValue({
+            sessions: [
+                { id: "s-old", title: "Oldest", updatedAt: "2026-11-01T00:00:00Z" },
+                { id: "s-new", title: "Newest", updatedAt: "2026-11-20T00:00:00Z" },
+                { id: "s-mid", title: "Middle", updatedAt: "2026-11-10T00:00:00Z" },
+                {
+                    id: "s-archived",
+                    title: "Archived",
+                    updatedAt: "2026-11-19T00:00:00Z",
+                    archived: true,
+                },
+                { id: "s-a", title: "", updatedAt: "2026-11-05T00:00:00Z" },
+                { id: "s-b", title: "B", updatedAt: "2026-11-04T00:00:00Z" },
+                { id: "s-c", title: "C", updatedAt: "2026-11-03T00:00:00Z" },
+            ],
+        });
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        const block = wrapper.get('[data-testid="workspace-picker-standalone"]');
+        const ids = block
+            .findAll('[data-testid^="workspace-picker-standalone-item-"]')
+            .map((item) =>
+                item.attributes("data-testid")!.replace("workspace-picker-standalone-item-", ""),
+            );
+        // 降序前 5：s-new / s-mid / s-a / s-b / s-c（s-archived 被过滤、s-old 被上限截掉）。
+        expect(ids).toEqual(["s-new", "s-mid", "s-a", "s-b", "s-c"]);
+        // 没有标题的会话回落显示 id，不留空按钮。
+        expect(
+            wrapper.get('[data-testid="workspace-picker-standalone-item-s-a"]').text(),
+        ).toContain("s-a");
+
+        await wrapper
+            .get('[data-testid="workspace-picker-standalone-item-s-new"]')
+            .trigger("click");
+        await flushPromises();
+        expect(mocks.push).toHaveBeenCalledWith(standaloneChatPath("s-new"));
+    });
+
+    it("task-38: 没有独立会话时整块不渲染（不占位、不留空标题）", async () => {
+        mocks.listWorkspaces.mockResolvedValue([{ id: NEW_ID, name: "Only one" }]);
+        mocks.getWorkspacelessSessions.mockResolvedValue({ sessions: [] });
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-picker-standalone"]').exists()).toBe(false);
+        // 反向对照：工作区列表照常渲染 —— 索引块缺席不该影响主路径。
+        expect(wrapper.find(`[data-testid="workspace-picker-item-${NEW_ID}"]`).exists()).toBe(true);
+    });
+
+    it("task-38: 独立会话请求失败时整块消失，但工作区列表不受影响", async () => {
+        mocks.listWorkspaces.mockResolvedValue([{ id: NEW_ID, name: "Only one" }]);
+        mocks.getWorkspacelessSessions.mockRejectedValue(new Error("boom"));
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-picker-standalone"]').exists()).toBe(false);
+        expect(wrapper.find(`[data-testid="workspace-picker-item-${NEW_ID}"]`).exists()).toBe(true);
+        // 失败不升级成页面级错误条：错误面只在工作区加载失败时出现。
+        expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    });
+
+    it("task-38: 全局跳转三入口给出 href 且点击走 SPA 路由", async () => {
+        mocks.listWorkspaces.mockResolvedValue([]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        const links = wrapper.get('[data-testid="workspace-picker-links"]');
+        expect(links.get('[data-testid="workspace-picker-link-members"]').attributes("href")).toBe(
+            "/members",
+        );
+        expect(
+            links.get('[data-testid="workspace-picker-link-resources"]').attributes("href"),
+        ).toBe("/resources");
+        expect(links.get('[data-testid="workspace-picker-link-settings"]').attributes("href")).toBe(
+            "/settings",
+        );
+
+        await links.get('[data-testid="workspace-picker-link-settings"]').trigger("click");
+        expect(mocks.push).toHaveBeenCalledWith("/settings");
     });
 });

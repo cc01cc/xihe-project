@@ -6,16 +6,31 @@
  * wrote the fallback into the tab context and every request followed it, while
  * a 409 had nowhere to go but a toast. The picker makes "not chosen yet" a real
  * state and gives the user a working path to any workspace they belong to.
+ *
+ * task-38（用户 2026-11-20 11:32 裁定）：`/workbench` 从「选择工作区」升级成**工作台详情页** ——
+ * 原文「这个页面也能选择已有的工作区之类的，就是一个工作台的详情页，然后能做一些简单的操作或者
+ * 跳转索引」。所以本页现在四个面：① 页头 + 主操作（新建会话 / 新建工作区）；② 已有工作区
+ * （列表 / 搜索 / 空态，既有 testid 全部保留）；③ 最近的独立会话（实数据索引）；④ 全局跳转
+ * （成员 / 资源 / 设置）。
+ *
+ * <p><b>「最近的独立会话」取不到就整块不渲染</b>：它是索引、不是主路径。用一个错误条把「其实
+ * 能建会话」的页面变成故障现场，比少一个块更糟；失败只留 `logger.warn` 的 cause。</p>
+ *
+ * <p><b>全局跳转为什么是 `<a href>` + `@click.prevent` 而不是 RouterLink</b>：`href` 是这一行的
+ * 事实（可右键新开、可复制、e2e 直接断言），跳转仍走 `router.push` 保持 SPA 语义；顺带让本页的
+ * 单测不依赖 vue-router 的组件注册（那份 spec 把 vue-router 整块替身掉了）。</p>
  */
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { api, ApiError, type ApiWorkspace } from "../composables/api";
+import { api, ApiError, type ApiWorkspace, type SessionResponse } from "../composables/api";
+import { standaloneChatPath } from "../lib/routes";
 import { clearTabWorkspace, readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
 import { logger } from "../lib/logger";
-import { FolderPlus } from "@lucide/vue";
+import { Boxes, FolderPlus, MessageSquarePlus, Settings, Users } from "@lucide/vue";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
 import WorkspaceCreateDialog from "../features/workspace/components/WorkspaceCreateDialog.vue";
+import StandaloneSessionDialog from "./sidebar/StandaloneSessionDialog.vue";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -70,6 +85,31 @@ const filteredWorkspaces = computed(() => {
     );
 });
 
+/**
+ * task-38 ③：最近的独立会话。`api.getWorkspacelessSessions()` = `GET /sessions?scope=workspaceless`
+ * 加**显式空** `X-Workspace-Id`（独立会话本来就没有工作区上下文，见 `api.ts` 该方法注释）。
+ *
+ * <p>条数上限 5 是产品口径（详情页是索引，不是会话列表的第二份实现）；排序按 `updatedAt` 降序，
+ * 缺时间戳的排在最后（不能用 `Date.parse` 静默当 0，那会把"没有时间"排成"最旧"）。</p>
+ */
+const RECENT_STANDALONE_LIMIT = 5;
+const standaloneSessions = ref<SessionResponse[]>([]);
+const standaloneOpen = ref(false);
+
+async function loadStandaloneSessions(): Promise<void> {
+    try {
+        const page = await api.getWorkspacelessSessions();
+        standaloneSessions.value = (page.sessions ?? [])
+            .filter((session) => !session.archived)
+            .slice()
+            .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""))
+            .slice(0, RECENT_STANDALONE_LIMIT);
+    } catch (cause) {
+        logger.warn("Load workspaceless sessions failed", cause);
+        standaloneSessions.value = [];
+    }
+}
+
 async function openWorkspace(workspace: ApiWorkspace): Promise<void> {
     if (selecting.value) return;
     selecting.value = workspace.id;
@@ -109,6 +149,27 @@ async function handleCreated(workspaceId: string): Promise<void> {
     await openWorkspace(created);
 }
 
+/**
+ * task-38 ②：新建独立会话**复用左栏那个对话框**（同一个 `StandaloneSessionDialog`），只把
+ * "建成之后去哪"换成独立会话地址 —— 选主体的逻辑（0/1/多个三态）不复制第二份。
+ */
+function handleStandaloneCreated(sessionId: string): void {
+    standaloneOpen.value = false;
+    void router.push(standaloneChatPath(sessionId));
+}
+
+function openStandalone(sessionId: string): void {
+    void router.push(standaloneChatPath(sessionId));
+}
+
+/**
+ * task-38 ④：全局跳转。三条都是**不需要工作区上下文**的全局路由（刻意不拼 workspaceId）：
+ * `/members`、`/resources`、`/settings`。
+ */
+function goGlobal(path: string): void {
+    void router.push(path);
+}
+
 onMounted(async () => {
     // BL-172: this view must never be able to sit on the loading state forever.
     // The old early-return branch below redirected and returned *before* the `finally`
@@ -133,7 +194,8 @@ onMounted(async () => {
         }
     }
     try {
-        await refreshWorkspaces();
+        // task-38 ③：两块数据互相独立 —— 工作区失败不影响会话索引，反之亦然（各自 try/catch）。
+        await Promise.all([refreshWorkspaces(), loadStandaloneSessions()]);
     } finally {
         loading.value = false;
     }
@@ -141,7 +203,7 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div class="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6" data-testid="workspace-picker">
+    <div class="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6" data-testid="workspace-picker">
         <!--
             task-537：链接无效必须说清「这是链接的问题、不是你没有工作区」，并给下一步。
             放在标题上方而不是 toast：toast 会消失，而用户此刻正需要知道**为什么**回到了列表页。
@@ -163,9 +225,14 @@ onMounted(async () => {
                 {{ t("workspacePicker.invalidLinkDismiss") }}
             </button>
         </div>
-        <header class="flex items-start justify-between gap-3">
+
+        <!-- ① 页头 + 主操作。task-38：本页是「工作台详情页」，标题不再只是「选择工作区」。 -->
+        <header class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 space-y-1">
-                <h1 class="text-lg font-semibold">{{ t("workspacePicker.title") }}</h1>
+                <h1 class="text-lg font-semibold">{{ t("workspacePicker.workbenchTitle") }}</h1>
+                <p class="text-sm text-muted-foreground">
+                    {{ t("workspacePicker.workbenchSubtitle") }}
+                </p>
                 <!--
                 BL-540：副标题原文是「你的账号属于多个工作区」，单工作区账号看到的就是假话。
                 选择面本来只在「需要一个选择动作」时才有意义，所以按事实条件渲染：只有真的
@@ -175,101 +242,197 @@ onMounted(async () => {
                     {{ t("workspacePicker.subtitle") }}
                 </p>
             </div>
-            <!-- task-169 / F-02：有工作区时也要有一个「新建」入口（原先只有空态才有）。 -->
-            <button
-                v-if="!loading && !error && workspaces.length > 0"
-                type="button"
-                class="shrink-0 rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-accent"
-                data-testid="workspace-picker-new"
-                @click="createOpen = true"
-            >
-                {{ t("workspacePicker.create") }}
-            </button>
-        </header>
-
-        <p v-if="loading" class="text-sm text-muted-foreground">
-            {{ t("workspacePicker.loading") }}
-        </p>
-        <p v-else-if="error" class="text-sm text-destructive" role="alert">{{ error }}</p>
-        <template v-else>
-            <input
-                v-if="workspaces.length > 1"
-                v-model="query"
-                type="search"
-                :placeholder="t('workspacePicker.searchPlaceholder')"
-                :aria-label="t('workspacePicker.searchPlaceholder')"
-                data-testid="workspace-picker-search"
-                class="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-            />
-            <Empty v-if="workspaces.length === 0" data-testid="workspace-picker-empty">
-                <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                        <FolderPlus class="size-4" aria-hidden="true" />
-                    </EmptyMedia>
-                    <EmptyTitle>{{ t("workspacePicker.empty") }}</EmptyTitle>
-                </EmptyHeader>
-                <EmptyContent>
-                    <!--
-                PLAN-0631 反馈②（注意力预算 2026-11-03 用户裁定）：「新建工作区」低频、
-                可逆、位置固定，不配主按钮层级 —— 降级为中性 ghost（透明底 + 1px 边 +
-                常规字重），不用 --action 填充。对话框里的「创建」确认按钮保持主层级。
+            <!--
+                task-38 ②：主操作两枚。**新建工作区只在已有工作区时出现在这里** —— 0 个工作区时
+                同一个动作由空态里的「创建你的第一个工作区」承担（既有 testid
+                `workspace-picker-create`，plan-0631-color 在捏它的样式），两处同时给入口就是
+                「语义重复的第二个入口」（DEV-011 五维）。
             -->
-                    <button
-                        type="button"
-                        class="rounded-lg border px-4 py-2.5 text-sm font-normal text-foreground transition-colors hover:bg-accent"
-                        data-testid="workspace-picker-create"
-                        @click="createOpen = true"
-                    >
-                        {{ t("workspacePicker.createFirst") }}
-                    </button>
-                </EmptyContent>
-            </Empty>
-
-            <!-- 搜索无结果 ≠ 没有工作区：给「清除搜索」出口，别让用户以为数据没了。 -->
             <div
-                v-else-if="filteredWorkspaces.length === 0"
-                class="flex items-center justify-between gap-3 rounded-lg border-dashed border px-4 py-3"
-                data-testid="workspace-picker-search-empty"
+                class="flex shrink-0 flex-wrap items-center gap-2"
+                data-testid="workspace-picker-actions"
             >
-                <p class="text-sm text-muted-foreground">{{ t("workspacePicker.searchEmpty") }}</p>
                 <button
                     type="button"
-                    class="shrink-0 text-sm underline underline-offset-4"
-                    data-testid="workspace-picker-clear-search"
-                    @click="query = ''"
+                    class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
+                    data-testid="workspace-picker-new-session"
+                    @click="standaloneOpen = true"
                 >
-                    {{ t("workspacePicker.clearSearch") }}
+                    <MessageSquarePlus class="size-4" aria-hidden="true" />
+                    {{ t("workspacePicker.newSession") }}
+                </button>
+                <!-- task-169 / F-02：有工作区时也要有一个「新建」入口（原先只有空态才有）。 -->
+                <button
+                    v-if="!loading && !error && workspaces.length > 0"
+                    type="button"
+                    class="shrink-0 rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+                    data-testid="workspace-picker-new"
+                    @click="createOpen = true"
+                >
+                    {{ t("workspacePicker.create") }}
                 </button>
             </div>
+        </header>
 
-            <ul v-else class="flex flex-col gap-2">
-                <li v-for="workspace in filteredWorkspaces" :key="workspace.id">
+        <!-- ③ 最近的独立会话：空/失败整块不渲染（索引不是主路径）。 -->
+        <section
+            v-if="standaloneSessions.length > 0"
+            class="space-y-2"
+            data-testid="workspace-picker-standalone"
+        >
+            <h2 class="text-sm font-medium">{{ t("workspacePicker.recentStandalone") }}</h2>
+            <ul class="flex flex-col gap-1.5">
+                <li v-for="session in standaloneSessions" :key="session.id">
                     <button
                         type="button"
-                        class="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
-                        :disabled="selecting !== null"
-                        :data-testid="`workspace-picker-item-${workspace.id}`"
-                        @click="openWorkspace(workspace)"
+                        class="flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                        :data-testid="`workspace-picker-standalone-item-${session.id}`"
+                        @click="openStandalone(session.id)"
                     >
-                        <span class="flex flex-col">
-                            <span class="text-sm font-medium">{{
-                                workspace.name || workspace.id
-                            }}</span>
-                            <span class="text-xs text-muted-foreground">{{ workspace.id }}</span>
-                        </span>
-                        <span v-if="workspace.workspaceRole" class="text-xs text-muted-foreground">
-                            {{ workspace.workspaceRole }}
+                        <span class="min-w-0 truncate">{{ session.title || session.id }}</span>
+                        <span class="shrink-0 text-xs text-muted-foreground">
+                            {{ t("workspacePicker.standaloneEntry") }}
                         </span>
                     </button>
                 </li>
             </ul>
-        </template>
+        </section>
+
+        <!-- ② 已有的工作区：列表 / 搜索 / 空态，既有 testid 与语义全部保留。 -->
+        <section class="space-y-3">
+            <h2 class="text-sm font-medium">{{ t("workspacePicker.title") }}</h2>
+            <p v-if="loading" class="text-sm text-muted-foreground">
+                {{ t("workspacePicker.loading") }}
+            </p>
+            <p v-else-if="error" class="text-sm text-destructive" role="alert">{{ error }}</p>
+            <template v-else>
+                <input
+                    v-if="workspaces.length > 1"
+                    v-model="query"
+                    type="search"
+                    :placeholder="t('workspacePicker.searchPlaceholder')"
+                    :aria-label="t('workspacePicker.searchPlaceholder')"
+                    data-testid="workspace-picker-search"
+                    class="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                />
+                <Empty v-if="workspaces.length === 0" data-testid="workspace-picker-empty">
+                    <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                            <FolderPlus class="size-4" aria-hidden="true" />
+                        </EmptyMedia>
+                        <EmptyTitle>{{ t("workspacePicker.empty") }}</EmptyTitle>
+                    </EmptyHeader>
+                    <EmptyContent>
+                        <!--
+                PLAN-0631 反馈②（注意力预算 2026-11-03 用户裁定）：「新建工作区」低频、
+                可逆、位置固定，不配主按钮层级 —— 降级为中性 ghost（透明底 + 1px 边 +
+                常规字重），不用 --action 填充。对话框里的「创建」确认按钮保持主层级。
+            -->
+                        <button
+                            type="button"
+                            class="rounded-lg border px-4 py-2.5 text-sm font-normal text-foreground transition-colors hover:bg-accent"
+                            data-testid="workspace-picker-create"
+                            @click="createOpen = true"
+                        >
+                            {{ t("workspacePicker.createFirst") }}
+                        </button>
+                    </EmptyContent>
+                </Empty>
+
+                <!-- 搜索无结果 ≠ 没有工作区：给「清除搜索」出口，别让用户以为数据没了。 -->
+                <div
+                    v-else-if="filteredWorkspaces.length === 0"
+                    class="flex items-center justify-between gap-3 rounded-lg border-dashed border px-4 py-3"
+                    data-testid="workspace-picker-search-empty"
+                >
+                    <p class="text-sm text-muted-foreground">
+                        {{ t("workspacePicker.searchEmpty") }}
+                    </p>
+                    <button
+                        type="button"
+                        class="shrink-0 text-sm underline underline-offset-4"
+                        data-testid="workspace-picker-clear-search"
+                        @click="query = ''"
+                    >
+                        {{ t("workspacePicker.clearSearch") }}
+                    </button>
+                </div>
+
+                <ul v-else class="flex flex-col gap-2">
+                    <li v-for="workspace in filteredWorkspaces" :key="workspace.id">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
+                            :disabled="selecting !== null"
+                            :data-testid="`workspace-picker-item-${workspace.id}`"
+                            @click="openWorkspace(workspace)"
+                        >
+                            <span class="flex flex-col">
+                                <span class="text-sm font-medium">{{
+                                    workspace.name || workspace.id
+                                }}</span>
+                                <span class="text-xs text-muted-foreground">{{
+                                    workspace.id
+                                }}</span>
+                            </span>
+                            <span
+                                v-if="workspace.workspaceRole"
+                                class="text-xs text-muted-foreground"
+                            >
+                                {{ workspace.workspaceRole }}
+                            </span>
+                        </button>
+                    </li>
+                </ul>
+            </template>
+        </section>
+
+        <!-- ④ 全局跳转索引：三条全局路由（不需要工作区上下文），href 是可直接断言的事实。 -->
+        <nav
+            class="flex flex-wrap items-center gap-4 border-t pt-4 text-sm"
+            data-testid="workspace-picker-links"
+            :aria-label="t('workspacePicker.linksTitle')"
+        >
+            <a
+                href="/members"
+                data-testid="workspace-picker-link-members"
+                class="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                @click.prevent="goGlobal('/members')"
+            >
+                <Users class="size-4" aria-hidden="true" />
+                {{ t("workspacePicker.linkMembers") }}
+            </a>
+            <a
+                href="/resources"
+                data-testid="workspace-picker-link-resources"
+                class="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                @click.prevent="goGlobal('/resources')"
+            >
+                <Boxes class="size-4" aria-hidden="true" />
+                {{ t("workspacePicker.linkResources") }}
+            </a>
+            <a
+                href="/settings"
+                data-testid="workspace-picker-link-settings"
+                class="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                @click.prevent="goGlobal('/settings')"
+            >
+                <Settings class="size-4" aria-hidden="true" />
+                {{ t("workspacePicker.linkSettings") }}
+            </a>
+        </nav>
 
         <!-- PLAN-0614 T2.1：空态入口复用既有创建对话框（不新增页面/路由）。 -->
         <WorkspaceCreateDialog
             :open="createOpen"
             @close="createOpen = false"
             @created="handleCreated"
+        />
+        <!-- task-38 ②：独立会话对话框与左栏「新建会话（独立）」是同一个组件。 -->
+        <StandaloneSessionDialog
+            :show="standaloneOpen"
+            @close="standaloneOpen = false"
+            @created="handleStandaloneCreated"
         />
     </div>
 </template>
