@@ -341,7 +341,6 @@ test.describe("Config Settings (three layers)", () => {
             "false",
         );
 
-
         // 域落点**从 DOM 取**、期望集合**从 SSOT 取**（`LAYER_DOMAINS.workspace`），再对撞：
         // spec 里不另抄一份域名清单（抄的那份一定会漂，且漂了没人知道）。
         // 注意 4 个域是**专用分区**而不是通用面板（`ConfigLayerPanels.vue`）：llm-provider 走

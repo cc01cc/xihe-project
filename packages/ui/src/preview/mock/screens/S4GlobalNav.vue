@@ -140,7 +140,7 @@ const toggleExpanded = () => {
                                 type="button"
                                 data-testid="s4-toggle-collapsed"
                                 class="ml-auto grid size-7 place-items-center rounded-md border border-border text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                :aria-label="collapsedOpen ? '展开全局条' : '折叠全局条'"
+                                :aria-label="collapsedOpen ? '展开全局导航' : '折叠全局导航'"
                                 @click="toggleCollapsed"
                             >
                                 <ChevronsRight v-if="collapsedOpen" class="size-4" />
@@ -152,7 +152,7 @@ const toggleExpanded = () => {
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <p class="pt-1 mk-caption leading-5 text-muted-foreground">
-                                [裁定 PLAN-0762 T2.3 / DEV-010 §10.2] 全局条 MVP
+                                [裁定 PLAN-0762 T2.3 / DEV-010 §10.2] 全局导航 MVP
                                 <strong>只放两个模块</strong>：主体工作区 /
                                 设置页，<strong>不加第三个</strong>；第三个模块何时进、进什么，[裁定]
                                 待用户裁定（DEV-010 §10.6）。 [引用 M3] M3 建议 collapsed rail 放
@@ -276,7 +276,7 @@ const toggleExpanded = () => {
                                 type="button"
                                 data-testid="s4-toggle-expanded"
                                 class="ml-auto grid size-7 place-items-center rounded-md border border-border text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                :aria-label="expandedOpen ? '展开全局条' : '折叠全局条'"
+                                :aria-label="expandedOpen ? '展开全局导航' : '折叠全局导航'"
                                 @click="toggleExpanded"
                             >
                                 <ChevronsRight v-if="expandedOpen" class="size-4" />
