@@ -461,6 +461,14 @@ run = "node scripts/xihe.mjs test real"
 description = "Run one explicit real-MiMo host spec; pass the spec and --route after --"
 alias = "test:e2e:host:real"
 
+# task-176：DEV-011 17.4 三条判据的执行者。需真栈 / 独占静窗（e2e-host 自起一次性原生栈与 PG），
+# 窗内只 --list 收集不执行；report-only，不进 lint-run / validate-run 数组（D-1005 同口径：接进提交路径
+# 会把并发 lane 的运行面变红）。--expect-tests=6 钉住收集数，误收矩阵三条即显形。跑法：mise run e2e:ui-baseline
+[tasks."e2e:ui-baseline"]
+run = "node scripts/e2e-host.mjs --expect-tests=6 e2e/real/ui-baseline.spec.ts"
+description = "DEV-011 17.4 leave-guard suite: the six @host cases against a dedicated native stack (report-only, not wired into lint-run or validate-run)"
+alias = "e2e:ui-baseline"
+
 [tasks."test:integration"]
 depends = ["test:integration:t2", "test:integration:t3"]
 description = "Run backend integration tests — T2 (no Docker) + T3 (auto Docker partial stack)"

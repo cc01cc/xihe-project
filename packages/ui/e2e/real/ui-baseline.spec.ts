@@ -1963,6 +1963,17 @@ async function runMatrix(
                         `${tag} ⑥E1' 工作区页导航缺「成员」项（实测 visible=${membersNavVisible}；task-150 起成员页只能从工作区页导航进入）`,
                     )
                     .toBe(true);
+                // task-150 / DSD-1515：工作区配置入口从导航面板区头删除后不得再常驻。
+                // 追溯门（check-decision-test-map）D-1907/C-1 的断言锚点就是下一句的开头。
+                const configEntryCount = await page
+                    .locator('[data-testid^="sidebar-workspace-config"]')
+                    .count();
+                expect
+                    .soft(
+                        configEntryCount,
+                        `${tag} ⑥E1' 工作区配置入口不常驻（实测 ${configEntryCount}，期望 0；DSD-1515 已删 sidebar-workspace-config，归属卡 task-150 / task-176）`,
+                    )
+                    .toBe(0);
             }
         }
 
@@ -2015,4 +2026,166 @@ test("设置页顶带（A4/F1）待 task-78 取证", async () => {
         true,
         "A4/F1 设置页顶带口径待 task-78 真机取证（D-1907 F1 未定）：取回读数前禁止在此写断言，见 task-102 F-5",
     );
+});
+
+// ---- task-176：DEV-011 17.4「dirty 指示 + 离开策略」的 @host 车道用例（3 正 + 3 负）----
+// 口径：
+//   1. 三条判据 = beforeunload 监听 / 路由离开守卫 / 浮层关闭确认。正例脏化后必须被拦住，
+//      负例不脏化必须照常放行（负例今天即绿，作用是防「为修红把离开一律拦死」这种反做）。
+//   2. 正例今天为红 = 产品现状：全仓 grep beforeunload / onBeforeRouteLeave 在
+//      AgentPrincipalDetailDrawer.vue 与设置页面上都是 0 命中（2026-11-21 实测），
+//      关闭抽屉走 closeDrawer() 直接 emit，草稿随 resetDrafts 丢弃。缺陷本体归 task-151。
+//   3. 脏化只写本地草稿：抽屉走钩子新增行（apd-hooks-add 只改前端 advisors 数组），
+//      设置页走 config-text 输入框且绝不点 config-save。六条都只开成员页/设置页，
+//      不触发会话或工作区资源创建（Lead 裁 1a）。
+//   4. 零数据一律 fail 不 skip，理由写在抛错文本里（Lead 裁 3，与 discoverSession 同口径）。
+const MEMBERS_PAGE_PATH = "/members";
+const SETTINGS_PAGE_PATH = "/settings";
+const PRINCIPAL_CONFIGURE_SEL = '[data-testid^="agent-principals-configure-"]';
+const APD_DRAWER_SEL = '[data-testid="agent-principal-detail-drawer"]';
+const APD_HOOKS_KIND_SEL = '[data-testid="apd-hooks-kind"]';
+const APD_HOOKS_ADD_SEL = '[data-testid="apd-hooks-add"]';
+const APD_HOOKS_SAVE_SEL = '[data-testid="apd-hooks-save"]';
+const APD_HOOKS_ROW_SEL = '[data-testid^="apd-hooks-remove-"]';
+const CONFIG_TEXT_SEL = '[data-testid^="config-text-"]';
+const ALERT_DIALOG_SEL = '[role="alertdialog"]';
+const NO_PRINCIPAL_MSG =
+    "成员页没有可配置的 agent principal：需实例层 ≥1 个 principal（task-148 首启种子落地后具备）；判 fail 不判 skip，与 discoverSession 同口径";
+const NO_CONFIG_TEXT_MSG =
+    "设置页没有可编辑文本项：config-text-* 未出现（该层可能全为 env 锁定项），17.4 用例无脏化落点；判 fail 不判 skip";
+
+/** 打开第一个 principal 的可编辑抽屉；draft 非空时加一条本地钩子草稿（不点保存、不发请求）。 */
+async function openAgentDrawerWithDraft(page: Page, draft: string | null): Promise<void> {
+    await loginViaForm(page);
+    await page.goto(MEMBERS_PAGE_PATH, { waitUntil: "load" });
+    if (
+        !(await waitReadyFor(page, PRINCIPAL_CONFIGURE_SEL, "visible", SESSION_SURFACE_DEADLINE_MS))
+    ) {
+        throw new Error(NO_PRINCIPAL_MSG);
+    }
+    await page.locator(PRINCIPAL_CONFIGURE_SEL).first().click({ timeout: 5_000 });
+    if (!(await waitReadyFor(page, APD_DRAWER_SEL, "visible", SESSION_SURFACE_DEADLINE_MS))) {
+        throw new Error("抽屉未打开：agent-principal-detail-drawer 未在当前 20s 窗口内可见");
+    }
+    if (draft === null) return;
+    if (!(await waitReadyFor(page, APD_HOOKS_KIND_SEL, "visible", 8_000))) {
+        throw new Error(
+            "钩子分区不可写：apd-hooks-kind 未渲染（editableSections 不含 hooks 或该 principal 无写权）",
+        );
+    }
+    await page.locator(APD_HOOKS_KIND_SEL).fill(draft, { timeout: 5_000 });
+    const rowsBefore = await page.locator(APD_HOOKS_ROW_SEL).count();
+    await page.locator(APD_HOOKS_ADD_SEL).click({ timeout: 5_000 });
+    const rowsAfter = await page.locator(APD_HOOKS_ROW_SEL).count();
+    expect(
+        rowsAfter,
+        "脏化步骤本身失效：advisors 行数没有 +1（前 " + rowsBefore + " 后 " + rowsAfter + "）",
+    ).toBe(rowsBefore + 1);
+    const saveEnabled = await page.locator(APD_HOOKS_SAVE_SEL).isEnabled();
+    expect(saveEnabled, "加草稿后保存键仍禁用：无法证明存在未保存状态").toBe(true);
+}
+
+/** 打开设置页并（可选）在第一个可编辑文本项里留下本地草稿（不保存）。 */
+async function openSettingsWithDraft(page: Page, draft: string | null): Promise<void> {
+    await loginViaForm(page);
+    await page.goto(SETTINGS_PAGE_PATH, { waitUntil: "load" });
+    if (!(await waitReadyFor(page, CONFIG_TEXT_SEL, "attached", SESSION_SURFACE_DEADLINE_MS))) {
+        throw new Error(NO_CONFIG_TEXT_MSG);
+    }
+    if (draft === null) return;
+    const fields = page.locator(CONFIG_TEXT_SEL);
+    const total = await fields.count();
+    for (let index = 0; index < total; index += 1) {
+        const field = fields.nth(index);
+        const inner = field.locator("input, textarea").first();
+        const target = (await inner.count()) > 0 ? inner : field;
+        if (!(await target.isVisible().catch(() => false))) continue;
+        if (!(await target.isEnabled().catch(() => false))) continue;
+        await target.fill(draft, { timeout: 5_000 });
+        expect(await target.inputValue(), "脏化步骤本身失效：填写后读回不是草稿").toBe(draft);
+        return;
+    }
+    throw new Error(NO_CONFIG_TEXT_MSG + "（可见且可用的输入框为 0）");
+}
+
+async function countDialogsOfType(page: Page, type: string): Promise<number> {
+    const seen: string[] = [];
+    page.on("dialog", async (dialog) => {
+        seen.push(dialog.type());
+        // accept = 「离开站点」：让导航照常走完，本用例只判弹框有没有出现
+        await dialog.accept().catch(() => {});
+    });
+    await page.reload({ waitUntil: "load" });
+    return seen.filter((entry) => entry === type).length;
+}
+
+test.describe("DEV-011 17.4 未保存状态与离开策略（task-176）", () => {
+    test("@host 17.4 正例：抽屉带未保存草稿刷新页面必须触发 beforeunload", async ({ page }) => {
+        await openAgentDrawerWithDraft(page, "e2e-17-4-draft");
+        const fired = await countDialogsOfType(page, "beforeunload");
+        expect(
+            fired,
+            "带未保存草稿刷新页面没有任何 beforeunload 提示（DEV-011 17.4；缺陷本体归 task-151）",
+        ).toBeGreaterThan(0);
+    });
+
+    test("@host 17.4 负例：抽屉无草稿时刷新不得触发 beforeunload", async ({ page }) => {
+        await openAgentDrawerWithDraft(page, null);
+        const fired = await countDialogsOfType(page, "beforeunload");
+        expect(fired, "无未保存状态却拦刷新：离开策略过头").toBe(0);
+    });
+
+    test("@host 17.4 正例：设置页带未保存草稿走路由导航必须被拦住", async ({ page }) => {
+        await openSettingsWithDraft(page, "e2e-17-4-draft");
+        await page.goBack({ waitUntil: "load" });
+        expect(
+            page.url(),
+            "带未保存草稿仍能直接换路由：缺离开守卫或离开确认（DEV-011 17.4；缺陷本体归 task-151）",
+        ).toContain(SETTINGS_PAGE_PATH);
+    });
+
+    test("@host 17.4 负例：设置页无草稿时路由导航不得拦截", async ({ page }) => {
+        await openSettingsWithDraft(page, null);
+        await page.goBack({ waitUntil: "load" });
+        expect(page.url(), "无未保存状态也被拦在设置页：离开策略误伤").not.toContain(
+            SETTINGS_PAGE_PATH,
+        );
+    });
+
+    test("@host 17.4 正例：抽屉带未保存草稿关闭必须先确认", async ({ page }) => {
+        await openAgentDrawerWithDraft(page, "e2e-17-4-draft");
+        await page.keyboard.press("Escape");
+        const confirmVisible = await page
+            .locator(ALERT_DIALOG_SEL)
+            .first()
+            .isVisible()
+            .catch(() => false);
+        const drawerStillOpen = await page
+            .locator(APD_DRAWER_SEL)
+            .first()
+            .isVisible()
+            .catch(() => false);
+        expect(
+            confirmVisible || drawerStillOpen,
+            "按 Esc 直接丢弃未保存草稿：既无确认层也未留住抽屉（DEV-011 17.4；缺陷本体归 task-151）",
+        ).toBe(true);
+    });
+
+    test("@host 17.4 负例：抽屉无草稿时 Esc 直接关闭且不得弹确认", async ({ page }) => {
+        await openAgentDrawerWithDraft(page, null);
+        await page.keyboard.press("Escape");
+        const gone = await page
+            .locator(APD_DRAWER_SEL)
+            .first()
+            .waitFor({ state: "detached", timeout: 8_000 })
+            .then(() => true)
+            .catch(() => false);
+        expect(gone, "无草稿也拦着不让关抽屉：离开策略误伤").toBe(true);
+        const confirmVisible = await page
+            .locator(ALERT_DIALOG_SEL)
+            .first()
+            .isVisible()
+            .catch(() => false);
+        expect(confirmVisible, "无草稿也弹确认层：打扰用户").toBe(false);
+    });
 });
