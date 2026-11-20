@@ -28,8 +28,19 @@ const selectedKey = ref<string | null>(null);
  *
  * <p><b>抽 helper 的人请先看这里</b>：\`16/8\` 目前有**三个副本**（上述两个文件 + 本页），
  * 统一抽走要另立卡（本卡写面只到 org-members），别只改一处。</p>
+ *
+ * <p>task-135（用户截图报障「组织树列表也没有缩进」）：16px 步长在**真实数据**下只有一档
+ * （默认组织 + task42probe，深度 0/1），而行容器自带 px-2、左侧又固定让出 28px chevron 列，
+ * 16px 的位移被这两样稀释掉，肉眼看等于没有缩进。两件事一起改：</p>
+ * <ul>
+ *   <li>步长 16 → <b>24</b>（判据 ≥20；三层读数是 8 / 32 / 56）；</li>
+ *   <li>每层补 <b>1px 引导线</b>（--border），落在**祖先缩进带的中点**
+ *       （8 + i*24 + 12 ⇒ 20 / 44 / …），让「谁是谁的子节点」不再只靠文字起点差。</li>
+ * </ul>
+ * <p>引导线绝对定位在 label 内、pointer-events-none，行首底色与 chevron 列都不受影响
+ * （与 task-33「缩进挂 label、不包容器」同一约束）。</p>
  */
-const INDENT_STEP = 16;
+const INDENT_STEP = 24;
 const INDENT_BASE = 8;
 /**
  * reka 的 `flattenItems` 给的是 **1 基** `level`（根节点 = 1，实测：根行按 `level * 16` 得到
@@ -37,6 +48,16 @@ const INDENT_BASE = 8;
  * 写成 `level - 1` 而不是改模板里的调用点：调用点三处都只说"第几层"，换算只在这里做。
  */
 const indentOf = (level: number) => INDENT_BASE + (level - 1) * INDENT_STEP;
+/**
+ * 引导线偏移（task-135）：第 level 层有 level - 1 条线，第 i 条（0 基）落在**第 i 层缩进带的中点**。
+ * 8 + i*24 + 12 ⇒ level 2 = [20]，level 3 = [20, 44]，与 label 的 padding-left（8 / 32 / 56）同源同常量，
+ * 模板里不出现 20/44 字面量（单测钉的就是这个同源关系）。
+ */
+const guideLinesOf = (level: number) =>
+    Array.from(
+        { length: Math.max(level - 1, 0) },
+        (_, i) => INDENT_BASE + i * INDENT_STEP + INDENT_STEP / 2,
+    );
 
 /**
  * 展开 = 懒加载的扳机。reka 把展开态写进 expandedIds ⇒ 对每个**新展开**的节点
@@ -266,11 +287,20 @@ function retryChildren(item: OrgTreeItem) {
                             -->
                             <button
                                 type="button"
-                                class="min-w-0 flex-1 truncate text-left"
+                                class="relative min-w-0 flex-1 truncate text-left"
                                 :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                                 :data-testid="'org-tree-label-' + fi.value.key"
                                 @click.stop="pick(fi.value, handleSelect)"
                             >
+                                <!-- task-135：每层一条 1px 引导线（祖先缩进带中点）。-->
+                                <span
+                                    v-for="left in guideLinesOf(fi.level)"
+                                    :key="left"
+                                    aria-hidden="true"
+                                    data-guide-line
+                                    class="pointer-events-none absolute top-0 bottom-0 w-px bg-border"
+                                    :style="{ left: left + 'px' }"
+                                />
                                 {{ fi.value.label }}
                             </button>
                         </template>

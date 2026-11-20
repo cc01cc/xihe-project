@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as apiModule from "../../../composables/api";
 import { api } from "../../../composables/api";
@@ -82,7 +83,11 @@ function selfPermissions(options: {
 }
 
 function mountPanel() {
-    return mount(AgentPrincipalsPanel, { global: { plugins: [i18n] }, attachTo: document.body });
+    // task-138 起详情抽屉在 setup 读配置 store（选连接）⇒ 面板 spec 必须给 pinia，否则整文件红。
+    return mount(AgentPrincipalsPanel, {
+        global: { plugins: [i18n, createPinia()] },
+        attachTo: document.body,
+    });
 }
 
 beforeEach(() => {
@@ -236,6 +241,40 @@ describe("AgentPrincipalsPanel — 绑定动作 (T3.2)", () => {
         // CP 的 holdsActionAtom 求值是「实例行 ∪ 工作区行」，UI 必须照抄，否则藏掉真实可绑入口。
         expect(wrapper.find('[data-testid="agent-principals-bind-denied"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="agent-principals-bind-p-1"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-135 J4：用户截图报障「智能体主体」标题在 /members 上出现**两次** —— 一次是页面 h2，
+ * 一次是本面板的 eyebrow + h1。面板因此加 embedded：嵌入时不渲染自己的标题，改由宿主插槽给；
+ * 默认 false ⇒ 独立挂载（设置域历史形态）一个字节都不变，这两例成对钉住。
+ */
+describe("AgentPrincipalsPanel — 嵌入模式（task-135 J4 标题去重）", () => {
+    it("embedded：不自渲染 eyebrow + h1，标题走 #heading 插槽，动作入口仍在", async () => {
+        const wrapper = mount(AgentPrincipalsPanel, {
+            props: { embedded: true },
+            slots: { heading: '<h2 data-testid="host-heading">宿主标题</h2>' },
+            global: { plugins: [i18n, createPinia()] },
+            attachTo: document.body,
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-principals-heading"]').exists()).toBe(false);
+        expect(wrapper.text()).not.toContain(i18n.global.t("settings.eyebrow.agentPrincipals"));
+        expect(wrapper.find('[data-testid="host-heading"]').text()).toBe("宿主标题");
+        // 去重不是砍入口：刷新/创建仍可发现（面板右侧动作区不随标题一起去掉）。
+        expect(wrapper.find('[data-testid="agent-principals-refresh"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-principals-create-button"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("默认（独立挂载）仍渲染自己的 eyebrow + h1 —— 既有调用点行为不变", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-principals-heading"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain(i18n.global.t("settings.eyebrow.agentPrincipals"));
         wrapper.unmount();
     });
 });

@@ -41,8 +41,20 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
          task-81：本页直挂 ModuleStage（上方没有 layout 给 main），故页面根由 section 改为 **main**，
          给出顶层 landmark（W3C ARIA APG · Main Landmark：每页一个、应为顶层地标、用 main 元素定义）。
          class 与 data-testid 一字未动 ⇒ 盒子与既有选择器不变；旧注释那句「本页没有 <main>」已随本次改动过期，
-         留着会让下一个人照着它再判一次缺。 -->
-    <main id="main-content" tabindex="-1" class="min-h-full bg-card" data-testid="org-members-page">
+         留着会让下一个人照着它再判一次缺。
+
+         task-135（用户截图报障「组织成员页都没法滚动」）：本页是**直挂 ModuleStage 的顶层路由页**
+         （router/index.ts 的 /members 记录无 layout），而 ModuleStage 是 overflow-hidden 的裁剪盒
+         ⇒ 页面根不声明滚动就永远滚不动（改前实测 1920×1080：main 高 1080 / 内容 4123 /
+         overflowY=visible，滚的是外层 module-stage）。故本 main 自己当滚动容器：
+         flex-1 拿满舞台高度、min-h-0 允许收缩、overflow-y-auto 承担滚动。
+         结构门 internal/A03-xihe/scripts/check-ui-route-scroll.mjs 钉的就是这条判据。 -->
+    <main
+        id="main-content"
+        tabindex="-1"
+        class="flex min-h-0 flex-1 flex-col overflow-y-auto bg-card"
+        data-testid="org-members-page"
+    >
         <header class="border-b">
             <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
                 <h1
@@ -72,8 +84,20 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
                 <p class="w-full text-xs text-muted-foreground">{{ t("orgMembers.writeHint") }}</p>
             </div>
         </div>
+        <!--
+            task-135 J4：lg 下两栏同高、各自内部滚动。
+            面板根是 flex h-full（OrgUnitTreePanel.vue:143 / OrgUnitMemberList.vue:99），
+            但 h-full 只有在**行高确定**时才生效；此前 grid 行高是 auto ⇒ 树随内容塌、
+            右栏比树高，两栏高度对不上（用户截图的那三个问题之一）。
+            修法：lg 下给容器一个**确定行高** 420px（卡面允许的下限值），两格各自
+            h-full + 内部 overflow-y-auto ⇒ 同高、各自滚；矮屏也不会把两栏挤成一条缝。
+            `shrink-0` 是必须的：页面根是 flex 列容器（为了自持滚动），grid 作为 flex item
+            默认 flex-shrink:1，下方智能体段有几十行（实测 3726px）会把它压到 min-height 上
+            —— 首次实测就踩到了：写出 calc(100dvh-19rem)=776px，量到的是 420px（=min-height）。
+            lg 断点以下不设高 ⇒ 单列仍按内容高度，页面滚动即可。
+        -->
         <div
-            class="mx-auto grid w-full max-w-6xl grid-cols-1 gap-0 px-6 pb-6 lg:grid-cols-[320px_1fr]"
+            class="mx-auto grid w-full max-w-6xl grid-cols-1 gap-0 px-6 pb-6 lg:h-[420px] lg:shrink-0 lg:grid-cols-[320px_1fr]"
         >
             <div class="min-h-0 rounded-md border lg:me-4" data-testid="org-tree-scope">
                 <OrgUnitTreePanel @select="onSelect" />
@@ -95,14 +119,25 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
             裸键护栏当成渲染结果（实测踩到一次）。键的去留见 task-91 收口。
         -->
         <div class="mx-auto w-full max-w-6xl px-6 pb-8" data-testid="org-members-agents">
-            <h2
-                data-testid="org-members-agents-title"
-                class="text-lg leading-tight font-semibold tracking-tight"
-            >
-                {{ t("settings.ia.resourceAgentPrincipals") }}
-            </h2>
+            <!--
+                task-135 J4：面板以 embedded 挂载 ⇒ 它不再自渲染 eyebrow + h1，标题由这里的
+                #heading 插槽给：页面上「智能体主体」只剩**一处**可见文本（h2 保留原 testid），
+                而面板右侧的刷新/创建入口仍在（入口不能随标题一起消失）。
+            -->
             <div class="mt-3 rounded-md border">
-                <AgentPrincipalsPanel />
+                <AgentPrincipalsPanel embedded>
+                    <template #heading>
+                        <h2
+                            data-testid="org-members-agents-title"
+                            class="text-lg leading-tight font-semibold tracking-tight"
+                        >
+                            {{ t("settings.ia.resourceAgentPrincipals") }}
+                        </h2>
+                        <p class="mt-1 max-w-3xl text-sm text-muted-foreground">
+                            {{ t("agentPrincipals.desc") }}
+                        </p>
+                    </template>
+                </AgentPrincipalsPanel>
             </div>
         </div>
     </main>

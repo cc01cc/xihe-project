@@ -44,6 +44,14 @@ import AgentPrincipalDetailDrawer, {
 
 const { t } = useI18n();
 
+/**
+ * 嵌入模式（task-135 J4）：宿主页已经给了段标题时，面板不再自渲染 eyebrow + h1 + desc。
+ * 否则页面上的「智能体主体」**出现两次**（用户 2026-11-20 实测截图报的就是这个）：一次是页面 h2，
+ * 一次是本面板的 h1。嵌入时标题改由宿主用 #heading 插槽给；右侧刷新/创建入口照旧渲染
+ * （可发现性不能跟着标题一起去掉）。默认 false ⇒ 独立挂载（设置域历史形态）行为一字不变。
+ */
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+
 const agents = ref<AgentPrincipalSummary[]>([]);
 const loading = ref(true);
 const loadError = ref("");
@@ -308,7 +316,11 @@ onMounted(refresh);
 <template>
     <div data-testid="agent-principals-panel">
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
-            <div>
+            <!-- task-135：嵌入模式下标题由宿主插槽给（页面已有 h2），面板只保留动作区。 -->
+            <div v-if="props.embedded" class="min-w-0">
+                <slot name="heading" />
+            </div>
+            <div v-else>
                 <p class="mb-1 text-xs tracking-widest text-muted-foreground">
                     {{ t("settings.eyebrow.agentPrincipals") }}
                 </p>
@@ -518,7 +530,7 @@ onMounted(refresh);
             :open="bindTarget !== null"
             @update:open="(value: boolean) => !value && closeBind()"
         >
-            <DialogContent data-testid="agent-principals-bind-dialog" class="max-w-md sm:max-w-md">
+            <DialogContent width="form" data-testid="agent-principals-bind-dialog">
                 <DialogHeader>
                     <DialogTitle>
                         {{ t("agentPrincipals.bindTitle", { name: bindTarget?.name ?? "" }) }}

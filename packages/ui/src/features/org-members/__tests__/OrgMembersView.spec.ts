@@ -73,12 +73,25 @@ function happyHandler(url: URL) {
     return { status: 200, body: { nodes: [], members: [] } };
 }
 
+/**
+ * 面板替身：task-135 起页面用 embedded + #heading 插槽给标题（去重后页面上只剩一处
+ * 「智能体主体」），故 stub 必须**渲染 heading 插槽**才能钉住标题落点；
+ * 旧的 true 形态浅 stub 会把插槽内容整块吞掉（改后第一次跑就是
+ * Unable to get [data-testid=org-members-agents-title]）。
+ */
+const panelStub = {
+    name: "AgentPrincipalsPanel",
+    // 必须声明成 Boolean：数组形式不做布尔转换，`<AgentPrincipalsPanel embedded>` 会传成空串。
+    props: { embedded: { type: Boolean, default: false } },
+    template: '<div data-testid="agent-principals-panel-stub"><slot name="heading" /></div>',
+};
+
 async function mountView() {
     const { default: OrgMembersView } = await import("../pages/OrgMembersView.vue");
     const wrapper = mount(OrgMembersView, {
         // task-91：成员页现在承载个人智能体主体的落点。面板自己有取数面与判据，
         // 本文件只钉「落点挂上了」——它的请求不该混进本文件对 happyHandler 的调用清单。
-        global: { plugins: [i18n], stubs: { AgentPrincipalsPanel: true } },
+        global: { plugins: [i18n], stubs: { AgentPrincipalsPanel: panelStub } },
         attachTo: document.body,
     });
     await flushPromises();
@@ -108,7 +121,14 @@ describe("OrgMembersView — 个人智能体主体落点（task-91）", () => {
         const section = wrapper.get('[data-testid="org-members-agents"]');
         expect(section.get('[data-testid="org-members-agents-title"]').text()).toBe("智能体主体");
         // 面板本体（取数、创建门）的判据在 components/settings/__tests__/AgentPrincipalsPanel.spec.ts。
-        expect(section.findComponent({ name: "AgentPrincipalsPanel" }).exists()).toBe(true);
+        const panel = section.findComponent({ name: "AgentPrincipalsPanel" });
+        expect(panel.exists()).toBe(true);
+        // task-135 J4（用户报障「标题出现两次」）：面板改成 embedded 后不再自渲染 eyebrow + h1，
+        // 标题只由页面 #heading 插槽给 ⇒ 整页可见文本里「智能体主体」必须只出现一次。
+        expect((wrapper.text().match(/智能体主体/g) ?? []).length).toBe(1);
+        expect(panel.props("embedded")).toBe(true);
+        // 插槽里保留了描述行（去重不是删信息）。
+        expect(section.text()).toContain(i18n.global.t("agentPrincipals.desc"));
         wrapper.unmount();
     });
 });
@@ -336,7 +356,9 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         await flushPromises();
     }
 
-    it("缩进随层级递增：8 / 24 / 40 px，相邻差 = 一个步长（16）", async () => {
+    // task-135 J3：步长 16 → 24。真实数据只有深度 0/1 两档（默认组织 + task42probe），
+    // 16px 的位移被行容器 px-2 与 28px chevron 列稀释掉，肉眼看不出缩进（用户截图报障）。
+    it("缩进随层级递增：8 / 32 / 56 px，相邻差 = 一个步长（24，判据 ≥20）", async () => {
         mockFetch(deepHandler);
         const wrapper = await mountView();
         await expandAll(wrapper);
@@ -346,8 +368,48 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
 
         // 缩进挂在 label 上（不包容器）：行容器已有 px-2，包容器会让 hover/选中底色与文字脱开。
         expect(leftOf("d-root")).toContain("padding-left: 8px");
-        expect(leftOf("d-child")).toContain("padding-left: 24px");
-        expect(leftOf("d-grand")).toContain("padding-left: 40px");
+        expect(leftOf("d-child")).toContain("padding-left: 32px");
+        expect(leftOf("d-grand")).toContain("padding-left: 56px");
+        wrapper.unmount();
+    });
+
+    // task-135 J3 后半：层级光靠文字起点差不够（同色同重的文字在窄树里仍然糊），
+    // 每层再加一条 1px 引导线，落在**祖先缩进带的中点**：8 + i*24 + 12 ⇒ 20 / 44。
+    // 数值必须与 INDENT_STEP/INDENT_BASE 同源——这条断言就是防"改步长忘了改线"。
+    it("每层一条引导线：8 + i*24 + 12 ⇒ 20 / 44，根层没有线", async () => {
+        mockFetch(deepHandler);
+        const wrapper = await mountView();
+        await expandAll(wrapper);
+
+        const guidesOf = (key: string) =>
+            wrapper
+                .get(`[data-testid="org-tree-label-${key}"]`)
+                .findAll("[data-guide-line]")
+                .map((el) => el.attributes("style") ?? "");
+
+        expect(guidesOf("d-root")).toHaveLength(0);
+        expect(guidesOf("d-child")).toEqual([expect.stringContaining("left: 20px")]);
+        expect(guidesOf("d-grand")).toEqual([
+            expect.stringContaining("left: 20px"),
+            expect.stringContaining("left: 44px"),
+        ]);
+        // 线是装饰：对 AT 隐藏、不吃指针，否则点标签被线吞掉、读屏会念无意义的 span。
+        for (const key of ["d-child", "d-grand"]) {
+            const lines = wrapper
+                .get(`[data-testid="org-tree-label-${key}"]`)
+                .findAll("[data-guide-line]");
+            for (const line of lines) {
+                expect(line.attributes("aria-hidden")).toBe("true");
+                expect(line.classes()).toEqual(
+                    expect.arrayContaining([
+                        "pointer-events-none",
+                        "absolute",
+                        "w-px",
+                        "bg-border",
+                    ]),
+                );
+            }
+        }
         wrapper.unmount();
     });
 
@@ -399,6 +461,43 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         // tabindex="-1" 的语义是「可编程聚焦、不进 Tab 序」：focus() 后必须真的拿到焦点。
         (main.element as HTMLElement).focus();
         expect(document.activeElement).toBe(main.element);
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-135：本页是**直挂 ModuleStage 的顶层路由页**（router/index.ts 的 /members 记录无 layout），
+ * 而 ModuleStage 是 overflow-hidden 的裁剪盒 ⇒ 页面根不声明滚动就永远滚不动（用户报障 ①）。
+ * 两条判据都是**结构契约**；jsdom 不求值 Tailwind，故这里钉类名，真实几何（scrollTop 可动、
+ * scrollHeight > clientHeight、两栏 rect 等高）由 evidence/2026-11-20-org-members-layout 的真机读数
+ * 与 e2e 复核——在 jsdom 里假造 scrollHeight 只会得到一条永远绿的假断言。
+ */
+describe("OrgMembersView — 自持滚动与两栏等高（task-135）", () => {
+    it("页面根自己扛滚动：flex-1 + min-h-0 + overflow-y-auto，且不再用 min-h-full", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        const main = wrapper.get('[data-testid="org-members-page"]');
+        expect(main.classes()).toEqual(
+            expect.arrayContaining(["flex", "flex-col", "flex-1", "min-h-0", "overflow-y-auto"]),
+        );
+        // 改前的 min-h-full 是「盒子随内容长」：舞台 overflow-hidden，照样裁掉且没有滚动条。
+        expect(main.classes()).not.toContain("min-h-full");
+        wrapper.unmount();
+    });
+
+    it("两栏在 lg 下同高：容器给确定行高，两格是 min-h-0 栅格单元", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        const treeScope = wrapper.get('[data-testid="org-tree-scope"]');
+        const grid = treeScope.element.parentElement as HTMLElement;
+        expect(grid.className).toContain("lg:h-[420px]");
+        // shrink-0 不是装饰：页面根是 flex 列容器，grid 作为 flex item 默认会收缩，
+        // 下方智能体段（实测 3726px）能把它压到 min-height 上 —— 真机首测就量到 420 而非 776。
+        expect(grid.className).toContain("lg:shrink-0");
+        expect(grid.className).toContain("lg:grid-cols-[320px_1fr]");
+        // 面板根是 h-full：行高不确定时它退化成内容高（改前树随内容塌、两栏不等高）。
+        expect(treeScope.classes()).toContain("min-h-0");
+        expect(wrapper.get('[data-testid="org-member-list"]').classes()).toContain("h-full");
         wrapper.unmount();
     });
 });

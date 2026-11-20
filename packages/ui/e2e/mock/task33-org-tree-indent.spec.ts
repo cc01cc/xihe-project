@@ -32,22 +32,46 @@ async function expandThreeLevels(page: Page) {
     await page.waitForSelector('[data-testid="org-tree-label-ou-storage"]');
 }
 
-type RowReading = { key: string; boxLeft: number; textLeft: number; paddingLeft: string };
+/**
+ * task-135：行读数加两样 —— 引导线的**条数**与每条相对盒左缘的 x。
+ * 引导线是绝对定位在 label 内的 1px 竖线（`[data-guide-line]`），因此它的位置也只有在
+ * 真浏览器里才量得出来；jsdom 里 `getBoundingClientRect` 恒为 0，量了也是假绿。
+ */
+type RowReading = {
+    key: string;
+    boxLeft: number;
+    textLeft: number;
+    paddingLeft: string;
+    guideCount: number;
+    guideOffsets: number[];
+};
 
-/** 读一行：**盒左缘**与**文字起点**分开量（两者不是一回事，见头注释）。 */
+/** 读一行：**盒左缘**、**文字起点**与**引导线**分开量（盒左缘不是判据，见头注释）。 */
 async function readRow(page: Page, key: string): Promise<RowReading> {
     return page.evaluate((rowKey) => {
         const label = document.querySelector(`[data-testid="org-tree-label-${rowKey}"]`);
         if (!(label instanceof HTMLElement)) throw new Error(`缺少行 ${rowKey}`);
         const box = label.getBoundingClientRect();
+        // 只量**文字节点**的起点：task-135 起 label 内还有绝对定位的引导线 span，
+        // selectNodeContents(label) 会把它们的矩形并进 union，文字起点被引导线拉回左边（实测差 12 而非 24）。
+        const textNode = Array.from(label.childNodes).find(
+            (node) =>
+                node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim().length > 0,
+        );
+        if (!textNode) throw new Error("行 " + rowKey + " 里没有文字节点");
         const range = document.createRange();
-        range.selectNodeContents(label);
+        range.selectNodeContents(textNode);
         const textRect = range.getBoundingClientRect();
+        const guides = Array.from(label.querySelectorAll("[data-guide-line]")).map(
+            (el) => Math.round((el.getBoundingClientRect().left - box.left) * 100) / 100,
+        );
         return {
             key: rowKey,
             boxLeft: Math.round(box.left * 100) / 100,
             textLeft: Math.round(textRect.left * 100) / 100,
             paddingLeft: getComputedStyle(label).paddingLeft,
+            guideCount: guides.length,
+            guideOffsets: guides,
         };
     }, key);
 }
@@ -128,7 +152,7 @@ test.describe("task-33 组织树层级缩进（真浏览器）", () => {
         await page.waitForSelector(BASE_LABEL);
     });
 
-    test("文字起点相邻差 = 16；且盒左缘三行相同（盒左缘不能当判据）", async ({ page }) => {
+    test("文字起点相邻差 = 24；且盒左缘三行相同（盒左缘不能当判据）", async ({ page }) => {
         await expandThreeLevels(page);
 
         const depth0 = await readRow(page, "ou-rd");
@@ -143,15 +167,24 @@ test.describe("task-33 组织树层级缩进（真浏览器）", () => {
             depth0.boxLeft,
             depth0.boxLeft,
         ]);
-        // ② 文字起点：基准 8 + 深度 × 16（见 OrgUnitTreePanel 的 INDENT_BASE / INDENT_STEP）。
-        expect(depth1.textLeft - depth0.textLeft).toBe(16);
-        expect(depth2.textLeft - depth1.textLeft).toBe(16);
-        // ③ 绝对差值也对上：8 / 24 / 40 的 padding 落在文字起点上。
+        // ② 文字起点：基准 8 + 深度 × 24（见 OrgUnitTreePanel 的 INDENT_BASE / INDENT_STEP）。
+        //    task-135 把步长 16 → 24：真数据只有 2 个 org 单元（默认组织 + task42probe，深度 0/1），
+        //    一档 16px 在 px-2 行容器 + 固定 28px chevron 列的稀释下肉眼几乎看不出缩进，卡面判据是 ≥20。
+        expect(depth1.textLeft - depth0.textLeft).toBe(24);
+        expect(depth2.textLeft - depth1.textLeft).toBe(24);
+        // ③ 绝对差值也对上：8 / 32 / 56 的 padding 落在文字起点上。
         expect([depth0.paddingLeft, depth1.paddingLeft, depth2.paddingLeft]).toEqual([
             "8px",
-            "24px",
-            "40px",
+            "32px",
+            "56px",
         ]);
+        // ④ 引导线：每层一条 1px 竖线，位置 = 基准 8 + i × 24 + 半步长 12 ⇒ 20 / 44；
+        //    根层没有线。它同样只能在真浏览器量（绝对定位元素的 rect 在 jsdom 里恒为 0）。
+        expect(depth0.guideCount).toBe(0);
+        expect(depth1.guideCount).toBe(1);
+        expect(depth1.guideOffsets).toEqual([20]);
+        expect(depth2.guideCount).toBe(2);
+        expect(depth2.guideOffsets).toEqual([20, 44]);
     });
 
     test("aria-level = 1 / 2 / 3（reka 由 level 派生，页面只钉不覆盖）", async ({ page }) => {
