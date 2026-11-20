@@ -1,7 +1,20 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigLockRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +28,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -36,10 +50,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       keeps this from passing because the catalog says false for everything.</li>
  * </ul>
  *
- * <p>Real stack, no mocks: {@link AbstractH2Test} boots the app on a random port and every call
- * below goes through HTTP, security, ConfigController and ConfigService.</p>
+ * <p>task-120 (H2 coverage blind spot): the two <b>atom gates</b> that sit above this controller had
+ * never been executed on the H2 lane. The atom judgement reads org-unit grants through native
+ * ltree SQL, and the H2 schema carries no org_units family, so the evaluation threw and the policy
+ * layer fell back to an empty atom set — every atom branch answered "false" for reasons unrelated
+ * to the caller. The cases below run on PostgreSQL (the real dialect) and each door is covered by a
+ * pair: the same request with and without the atom.</p>
+ *
+ * <p>Real stack, no mocks: {@link AbstractIntegrationTest} boots the app on a random port against a
+ * freshly migrated database and every call below goes through HTTP, security, ConfigController,
+ * ConfigService and the policy layer.</p>
  */
-class UserPreferenceLayoutContractTest extends AbstractH2Test {
+class UserPreferenceLayoutContractTest extends AbstractIntegrationTest {
 
     private static final String WS = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
@@ -67,6 +89,24 @@ class UserPreferenceLayoutContractTest extends AbstractH2Test {
 
     @Autowired
     private ConfigLockRepository lockRepo;
+
+    @Autowired
+    private AccessRoleRepository accessRoleRepository;
+
+    @Autowired
+    private AccessRolePermissionRepository permissionRepository;
+
+    @Autowired
+    private AccessRoleBindingRepository roleBindingRepository;
+
+    @Autowired
+    private RoleGrantMaterializer materializer;
+
+    @Autowired
+    private AuthzContext authzContext;
+
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
 
     @BeforeEach
     void cleanLayoutRows() {
@@ -156,9 +196,122 @@ class UserPreferenceLayoutContractTest extends AbstractH2Test {
         assertFalse(lockRepo.findAll().iterator().hasNext(), "no lock row may be created for layout keys");
     }
 
+    // ------------------------------------------------------------------
+    // task-120: the instance read door (L5) and the workspace write door
+    // (H1) above this controller. Each pair answers the same request twice,
+    // once without and once with the atom.
+    // ------------------------------------------------------------------
+
+    @Test
+    void theInstanceLayerReadIsRefusedWithoutTheReadInstanceContentAtom() {
+        Actor plain = registerActor("layout-plain");
+
+        ResponseEntity<Map> refused = restTemplate.exchange(
+                url("/api/v1/config/user-preference?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders(plain.token())), Map.class);
+
+        assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode(),
+                "an instance layer read is gated by READ_INSTANCE_CONTENT: " + refused.getBody());
+        assertNotNull(refused.getBody());
+        assertEquals("FORBIDDEN", refused.getBody().get("code"));
+        assertEquals("Instance config is not readable by this user", refused.getBody().get("detail"));
+    }
+
+    @Test
+    void theInstanceLayerReadOpensForTheHolderOfTheReadInstanceContentAtom() {
+        Actor reader = registerActor("layout-instance-reader");
+        seedInstanceAtom(reader.id(), ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT);
+
+        ResponseEntity<Map> allowed = restTemplate.exchange(
+                url("/api/v1/config/user-preference?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders(reader.token())), Map.class);
+
+        assertEquals(HttpStatus.OK, allowed.getStatusCode(),
+                "holding READ_INSTANCE_CONTENT must open the very request that 403s above: "
+                        + allowed.getBody());
+        assertNotNull(allowed.getBody());
+        assertFalse(allowed.getBody().containsKey("code"),
+                "a layer view is a key/value map, not a problem document: " + allowed.getBody());
+    }
+
+    /**
+     * The tenant interceptor rejects a VIEWER's write before the controller runs
+     * ({@code TenantContextInterceptor.enforceWorkspaceRole} → {@code WorkspaceWriteGuard}), so a
+     * read-only member never reaches the atom gate at all and the body is the tenant's
+     * WORKSPACE_READ_ONLY, not the door's FORBIDDEN. Recorded here so the ordering is pinned: if
+     * the tenant gate ever stops covering this route, this case turns red instead of silently
+     * letting a viewer's write through to the later gates.
+     */
+    @Test
+    void aViewerMemberIsStoppedByTheTenantReadOnlyGate() {
+        UUID workspaceId = newOwnedWorkspace();
+        Actor viewer = registerActor("layout-viewer");
+        workspaceFixture.bindWorkspaceRole(workspaceId, UUID.fromString(viewer.id()), WorkspaceRole.VIEWER);
+
+        ResponseEntity<Map> refused = putWorkspacePreferences(viewer.token(), workspaceId);
+
+        assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode(),
+                "a read-only member cannot write workspace config: " + refused.getBody());
+        assertNotNull(refused.getBody());
+        assertEquals("WORKSPACE_READ_ONLY", refused.getBody().get("code"));
+        assertEquals("Viewer cannot modify this workspace", refused.getBody().get("detail"));
+        assertTrue(configRepo.findByWorkspaceIdAndDomain(workspaceId, "user-preference").isEmpty(),
+                "a refused 403 must not leave a workspace-layer row behind");
+    }
+
+    @Test
+    void anEditorMemberPassesTheWorkspaceWriteAtomGateAndIsStoppedByTheDomainRule() {
+        UUID workspaceId = newOwnedWorkspace();
+        Actor editor = registerActor("layout-editor");
+        workspaceFixture.bindWorkspaceRole(workspaceId, UUID.fromString(editor.id()), WorkspaceRole.EDITOR);
+
+        ResponseEntity<Map> refused = putWorkspacePreferences(editor.token(), workspaceId);
+
+        // The discriminator that proves the atom was actually evaluated: writeLayer's layer/domain
+        // guard runs AFTER the atom gate, so this 400 can only be reached by a caller that passed
+        // it. A 403 here would mean the atom branch was short-circuited to false.
+        assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(),
+                "an editor holds WRITE_WORKSPACE_CONTENT, so the refusal must be the domain rule: "
+                        + refused.getBody());
+        assertNotNull(refused.getBody());
+        assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", refused.getBody().get("code"));
+        assertEquals("Domain is not writable at the workspace layer: user-preference",
+                refused.getBody().get("detail"));
+        assertTrue(configRepo.findByWorkspaceIdAndDomain(workspaceId, "user-preference").isEmpty(),
+                "user-preference stays unwritable at the workspace layer, atom or no atom");
+    }
+
+    /**
+     * A non-member is rejected by the tenant gate with the generic 403 WORKSPACE_FORBIDDEN — the
+     * same body the interceptor produces for any workspace it will not resolve — and it happens
+     * before {@code requireAccessibleWorkspace} and before the atom gate. The assertion on the
+     * generic detail (not a workspace-shaped one) is the point: the refusal must not tell a
+     * stranger whether the id exists.
+     */
+    @Test
+    void aNonMemberIsStoppedByTheTenantGateBeforeTheController() {
+        UUID workspaceId = newOwnedWorkspace();
+        Actor stranger = registerActor("layout-stranger");
+
+        ResponseEntity<Map> refused = putWorkspacePreferences(stranger.token(), workspaceId);
+
+        assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode(),
+                "the tenant gate answers before the controller: " + refused.getBody());
+        assertNotNull(refused.getBody());
+        assertEquals("WORKSPACE_FORBIDDEN", refused.getBody().get("code"));
+        assertEquals("Workspace access denied", refused.getBody().get("detail"));
+    }
+
     private ResponseEntity<Map> putPreferences(String token, Map<String, String> body) {
         return restTemplate.exchange(url("/api/v1/config/user/user-preference"), HttpMethod.PUT,
                 new HttpEntity<>(body, authHeaders(token)), Map.class);
+    }
+
+    private ResponseEntity<Map> putWorkspacePreferences(String token, UUID workspaceId) {
+        HttpHeaders headers = authHeaders(token);
+        headers.set("X-Workspace-Id", workspaceId.toString());
+        return restTemplate.exchange(url("/api/v1/config/workspace/user-preference"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of(WS_KEY, SEMANTIC_LAYOUT), headers), Map.class);
     }
 
     private Map<String, Object> readUserLayer(String token) {
@@ -176,13 +329,7 @@ class UserPreferenceLayoutContractTest extends AbstractH2Test {
     }
 
     private String userToken() {
-        ResponseEntity<Map> reg = restTemplate.postForEntity(
-                url("/api/v1/auth/register"),
-                Map.of("email", "layout-user-" + System.nanoTime() + "@test.com",
-                        "password", TestDataFactory.PASSWORD, "name", "LayoutUser"),
-                Map.class);
-        assertEquals(HttpStatus.CREATED, reg.getStatusCode());
-        return (String) reg.getBody().get("accessToken");
+        return registerActor("layout-user").token();
     }
 
     private String adminToken() {
@@ -192,5 +339,49 @@ class UserPreferenceLayoutContractTest extends AbstractH2Test {
                 Map.class);
         assertEquals(HttpStatus.OK, login.getStatusCode());
         return (String) login.getBody().get("accessToken");
+    }
+
+    private Actor registerActor(String prefix) {
+        ResponseEntity<Map> registration = restTemplate.postForEntity(
+                url("/api/v1/auth/register"),
+                Map.of("email", prefix + "-" + System.nanoTime() + "@test.com",
+                        "password", TestDataFactory.PASSWORD, "name", "LayoutUser"),
+                Map.class);
+        assertEquals(HttpStatus.CREATED, registration.getStatusCode(),
+                "registration failed: " + registration.getBody());
+        assertNotNull(registration.getBody());
+        Map<?, ?> user = (Map<?, ?>) registration.getBody().get("user");
+        assertNotNull(user, "registration must return the created user: " + registration.getBody());
+        return new Actor(String.valueOf(user.get("id")),
+                String.valueOf(registration.getBody().get("accessToken")));
+    }
+
+    private UUID newOwnedWorkspace() {
+        Actor owner = registerActor("layout-owner");
+        return workspaceFixture.createOwnedWorkspace("layout-ws-" + System.nanoTime(), owner.id())
+                .getId();
+    }
+
+    /**
+     * One atom at instance scope, granted the way the production path grants it: a role row, the
+     * permission row, the binding row, then {@code RoleGrantMaterializer} (the atom judgement reads
+     * materialized {@code source='role'} grants, not the bare binding) and a cache invalidation.
+     * The role name must satisfy ck_roles_name_format (V87).
+     */
+    private void seedInstanceAtom(String userId, String atom) {
+        UUID subject = UUID.fromString(userId);
+        UUID roleId = UUID.randomUUID();
+        accessRoleRepository.saveAndFlush(new AccessRole(roleId,
+                "TEST_LAYOUT_" + roleId.toString().replace("-", "").substring(0, 10).toUpperCase(),
+                "Layout atom role", "test-only role for the instance config read atom (task-120)", false));
+        permissionRepository.saveAndFlush(new AccessRolePermission(roleId, atom,
+                PermissionAtomCatalog.WILDCARD));
+        roleBindingRepository.saveAndFlush(new AccessRoleBinding(roleId, "user", subject,
+                AccessScope.INSTANCE, null, subject));
+        materializer.materializeSubject("user", subject, subject, null);
+        authzContext.invalidate(subject);
+    }
+
+    private record Actor(String id, String token) {
     }
 }
