@@ -1,0 +1,1647 @@
+{
+  "version": 1,
+  "generatedBy": "task-110 (DSD-1497 ②决策表 golden 基线)",
+  "source": "policy/GrantIntersectionEvaluator.java:98-121 交集求值 + PermissionAtomCatalog.requireScopeCompatible:438-445 scope 门 + PermissionAtom:18-34 capability/词汇表门",
+  "fieldGuide": {
+    "row": "id / category / intent / gate / shape / levels / request / atom / scopeType / expect",
+    "gate_intersection": "默认；levels 是从外到内的 principals（实例快照 → 工作区快照 → 会话快照），逐级取交集",
+    "gate_scope": "断言 PermissionAtomCatalog.requireScopeCompatible(atom, scopeType) 是否放行绑定",
+    "gate_capability": "断言 capability 原子不能当 grant 原子（PermissionAtom 构造即抛）"
+  },
+  "scopes": {
+    "ws-root": {
+      "kind": "WORKSPACE",
+      "path": "H:/ws"
+    },
+    "inst-root": {
+      "kind": "INSTANCE",
+      "path": "H:/"
+    }
+  },
+  "rows": [
+    {
+      "id": "S01",
+      "category": "single-level",
+      "intent": "单级授予 read 通配即放行 read 请求",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "S02",
+      "category": "single-level",
+      "intent": "只有 write 原子，read 请求必须拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "a.txt"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "S03",
+      "category": "single-level",
+      "intent": "前缀授予 src/** 覆盖子树文件",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "src/main/App.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "S04",
+      "category": "single-level",
+      "intent": "前缀授予 src/** 不覆盖子树外文件",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "docs/x.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "S05",
+      "category": "single-level",
+      "intent": "多动作请求在同一级全部命中即放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            },
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "apply_patch",
+        "actionClasses": [
+          "read",
+          "write"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "S06",
+      "category": "single-level",
+      "intent": "多动作请求缺一个动作即拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            },
+            {
+              "actionClass": "delete",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "apply_patch",
+        "actionClasses": [
+          "read",
+          "write"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "S07",
+      "category": "single-level",
+      "intent": "空白资源名不可评估，按拒绝处理",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          ""
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "S08",
+      "category": "single-level",
+      "intent": "delete 原子自身可评估（工具面把删除算 write 是另一层问题）",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "delete",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "delete_file",
+        "actionClasses": [
+          "delete"
+        ],
+        "resources": [
+          "build/out.bin"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "S09",
+      "category": "single-level",
+      "intent": "多资源请求逐个资源求覆盖",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            },
+            {
+              "actionClass": "write",
+              "resource": "src/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "apply_patch",
+        "actionClasses": [
+          "read",
+          "write"
+        ],
+        "resources": [
+          "src/a.java",
+          "src/b.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "S10",
+      "category": "single-level",
+      "intent": "通配资源名覆盖任意具体资源",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "delete",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "delete_file",
+        "actionClasses": [
+          "delete"
+        ],
+        "resources": [
+          "build/out.bin"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "P01",
+      "category": "parent-chain",
+      "intent": "父链两级都命中才放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "P02",
+      "category": "parent-chain",
+      "intent": "仅第 1 级命中、第 2 级缺 read 必须拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "P03",
+      "category": "parent-chain",
+      "intent": "仅第 2 级命中、第 1 级缺 read 必须拒绝（顺序无关的对称证明）",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "P04",
+      "category": "parent-chain",
+      "intent": "两级前缀都覆盖同一请求路径",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "src/a.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "P05",
+      "category": "parent-chain",
+      "intent": "第 2 级前缀不含请求路径即拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/a.java"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "src/b.java"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "P06",
+      "category": "parent-chain",
+      "intent": "三级链全部命中才放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/a.java"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "src/a.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "P07",
+      "category": "parent-chain",
+      "intent": "三级链中间一级缺失即拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "src/a.java"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "P08",
+      "category": "parent-chain",
+      "intent": "上级通配 + 下级前缀共同覆盖",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "src/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "src/deep/x.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "P09",
+      "category": "parent-chain",
+      "intent": "四级链全命中仍放行（链长无上限）",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "level-1",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "level-2",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "level-3",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "level-4",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "a/b/c/d.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "F01",
+      "category": "fs-prefix",
+      "intent": "fs 声明键 a/b 覆盖子树 a/b/c",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root/a/b"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "F02",
+      "category": "fs-prefix",
+      "intent": "fs 声明键 a/b 不覆盖同层 ax（前缀必须是完整段）",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root/a/b"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/ax"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "F03",
+      "category": "fs-prefix",
+      "intent": "授予工作区根即覆盖其下任意路径",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "F04",
+      "category": "fs-prefix",
+      "intent": "实例级与工作区级两种声明写法指向同一物理目录仍相交",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:inst-root/H:/ws/a/b"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "F05",
+      "category": "fs-prefix",
+      "intent": "不同物理目录的声明键不得相交",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:inst-root/H:/other"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "F06",
+      "category": "fs-prefix",
+      "intent": "通配授予对 fs 声明键请求仍走原匹配器并放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "F07",
+      "category": "fs-prefix",
+      "intent": "两级 fs 前缀分别落在 a/b 与 a/c，请求 a/b/c 因第 2 级不覆盖而拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root/a/b"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root/a/c"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "F08",
+      "category": "fs-prefix",
+      "intent": "授予与请求为同一 fs 声明键即放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root/a/b/c"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a/b/c"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "F09",
+      "category": "fs-prefix",
+      "intent": "授予目录自身即覆盖目录自身作为请求",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "fs:ws-root/a"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "list_directory",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "fs:ws-root/a"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "E01",
+      "category": "empty-grants",
+      "intent": "父链中存在空原子集必须拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": []
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "a.txt"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "E02",
+      "category": "empty-grants",
+      "intent": "空父链（没有任何一层）必须拒绝",
+      "shape": "STRUCTURED",
+      "levels": [],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "a.txt"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "E03",
+      "category": "empty-grants",
+      "intent": "两级全空必须拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": []
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": []
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "a.txt"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "E04",
+      "category": "empty-grants",
+      "intent": "空授予集连通配资源也不能放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": []
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "E05",
+      "category": "empty-grants",
+      "intent": "空授予集与多动作请求仍拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": []
+        }
+      ],
+      "request": {
+        "tool": "apply_patch",
+        "actionClasses": [
+          "read",
+          "write"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "D01",
+      "category": "snapshot-drift",
+      "intent": "实例快照与工作区快照一致时放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            },
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            },
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "D02",
+      "category": "snapshot-drift",
+      "intent": "只有工作区快照含 write、实例快照过期缺项即拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            },
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "D03",
+      "category": "snapshot-drift",
+      "intent": "只有实例快照含 write、工作区快照缺项即拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            },
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "D04",
+      "category": "snapshot-drift",
+      "intent": "两层快照收窄到同一前缀时放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/**"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "src/x.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "D05",
+      "category": "snapshot-drift",
+      "intent": "实例快照比工作区快照更窄，请求落在窄侧之外即拒绝",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/**"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "docs/x.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "D06",
+      "category": "snapshot-drift",
+      "intent": "两层各收窄到不同前缀但都覆盖请求即放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/**"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/a/**"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "src/a/x.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "D07",
+      "category": "snapshot-drift",
+      "intent": "两层快照同一具体资源即放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/a.java"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "src/a.java"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "write_file",
+        "actionClasses": [
+          "write"
+        ],
+        "resources": [
+          "src/a.java"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "I01",
+      "category": "instance-only-scope",
+      "intent": "instance-only 原子 MANAGE_ROLES 在工作区 scope 绑定必须被拒",
+      "gate": "scope",
+      "atom": "MANAGE_ROLES",
+      "scopeType": "workspace",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "I02",
+      "category": "instance-only-scope",
+      "intent": "instance-only 原子 GRANT_ANY_ATOM 在工作区 scope 绑定必须被拒",
+      "gate": "scope",
+      "atom": "GRANT_ANY_ATOM",
+      "scopeType": "workspace",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "I03",
+      "category": "instance-only-scope",
+      "intent": "credential_use 在工作区 scope 绑定必须被拒",
+      "gate": "scope",
+      "atom": "credential_use",
+      "scopeType": "workspace",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "I04",
+      "category": "instance-only-scope",
+      "intent": "MANAGE_ROLES 在 instance scope 绑定放行（instance-only 只在实例级可绑）",
+      "gate": "scope",
+      "atom": "MANAGE_ROLES",
+      "scopeType": "instance",
+      "shape": "STRUCTURED",
+      "expect": "allow"
+    },
+    {
+      "id": "I05",
+      "category": "instance-only-scope",
+      "intent": "MANAGE_AGENT_PRINCIPALS 在 instance scope 绑定放行",
+      "gate": "scope",
+      "atom": "MANAGE_AGENT_PRINCIPALS",
+      "scopeType": "instance",
+      "shape": "STRUCTURED",
+      "expect": "allow"
+    },
+    {
+      "id": "I06",
+      "category": "instance-only-scope",
+      "intent": "both 类原子 read 在工作区 scope 可绑（与 instance-only 形成对照）",
+      "gate": "scope",
+      "atom": "read",
+      "scopeType": "workspace",
+      "shape": "STRUCTURED",
+      "expect": "allow"
+    },
+    {
+      "id": "C01",
+      "category": "capability-atom",
+      "intent": "capability 原子 instance:admin 不是 grant 可写原子，构造即拒绝",
+      "gate": "capability",
+      "atom": "instance:admin",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "C02",
+      "category": "capability-atom",
+      "intent": "capability 原子 workspace:admin 不是 grant 可写原子，构造即拒绝",
+      "gate": "capability",
+      "atom": "workspace:admin",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "C03",
+      "category": "capability-atom",
+      "intent": "capability 原子 instance:super 不是 grant 可写原子，构造即拒绝",
+      "gate": "capability",
+      "atom": "instance:super",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "C04",
+      "category": "capability-atom",
+      "intent": "capability authority 串 cap:instance:admin 不能当原子名",
+      "gate": "capability",
+      "atom": "cap:instance:admin",
+      "shape": "STRUCTURED",
+      "expect": "deny"
+    },
+    {
+      "id": "C05",
+      "category": "capability-atom",
+      "intent": "求交只看 action 原子，1 个 read 原子即可放行 read 请求（capability 缺席无影响）",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "a.txt"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "R01",
+      "category": "resource-shape",
+      "intent": "exec 解释器形态下通配授予放行任意命令",
+      "shape": "INTERPRETER",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "execute_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "git status"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "R02",
+      "category": "resource-shape",
+      "intent": "解释器形态下命令前缀 git 通配覆盖 git status",
+      "shape": "INTERPRETER",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "git *"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "execute_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "git status"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "R03",
+      "category": "resource-shape",
+      "intent": "解释器形态下命令前缀 git 不覆盖 npm install",
+      "shape": "INTERPRETER",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "git *"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "execute_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "npm install"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "R04",
+      "category": "resource-shape",
+      "intent": "未分类工具落到 unclassified 动作类时不在词汇表内，按拒绝处理",
+      "shape": "OPAQUE",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "third_party_tool",
+        "actionClasses": [
+          "unclassified"
+        ],
+        "resources": [
+          "*"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "R05",
+      "category": "resource-shape",
+      "intent": "credential:* 授予覆盖具体 credential:<uuid> 请求",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "credential_use",
+              "resource": "credential:*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "acquire_credential",
+        "actionClasses": [
+          "credential_use"
+        ],
+        "resources": [
+          "credential:6f1d9b0e-3c2a-4f7b-9d61-0a1b2c3d4e5f"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "R06",
+      "category": "resource-shape",
+      "intent": "具体 credential 授予不覆盖另一个 credential 请求",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "credential_use",
+              "resource": "credential:11111111-1111-4111-8111-111111111111"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "acquire_credential",
+        "actionClasses": [
+          "credential_use"
+        ],
+        "resources": [
+          "credential:22222222-2222-4222-8222-222222222222"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "R07",
+      "category": "resource-shape",
+      "intent": "网络原子通配授予放行任意 URL",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "network",
+              "resource": "*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "web_fetch",
+        "actionClasses": [
+          "network"
+        ],
+        "resources": [
+          "https://example.com/doc"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "R08",
+      "category": "resource-shape",
+      "intent": "credential:* 授予覆盖 credential_reveal 的具体 uuid 请求",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "credential_reveal",
+              "resource": "credential:*"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "reveal_credential",
+        "actionClasses": [
+          "credential_reveal"
+        ],
+        "resources": [
+          "credential:33333333-3333-4333-8333-333333333333"
+        ]
+      },
+      "expect": "allow"
+    }
+  ]
+}
