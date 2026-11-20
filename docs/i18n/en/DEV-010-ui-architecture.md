@@ -189,6 +189,52 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 2. **"Bar" only for a collapsible or resizable vertical container**; pure navigation is called a **nav** (`XxxNav`), never a bar.
 3. **Four words, no overlap**: `Rail` = icon strip · `Nav` = navigation list · `Pane` = content column · `Stage` = container.
 
+### 10.1.1 Workbench component names (user ruling 2026-11-20, DSD `D1468`)
+
+> This subsection **supplements** §10.1, it does not replace the four-row table above: §10.1 governs the **layout skeleton** (global rail / module stage / in-module nav / content column), this subsection governs **each part inside the Workbench component**. Where the two disagree, this subsection wins, and the four rows stay. The `ListPane` / `MainPane` / `ContextPane` columns remain the **not implemented** proposal in that table — do not mix them with the two containers defined here.
+
+**Four layers** (top to bottom, the only sanctioned names): 1. 全局条 **Global Rail** (`GlobalRail.vue`, 56px, icon-only ↔ icon + label); 2. 导航面板 **Navigation Panel** (`Sidebar.vue`, 280px, resizable 220–360); 3. **主区顶部** = 工作台页签栏 **Workspace Tab Bar** (`WorkspaceTabBar.vue`, i18n `tabBarLabel`) — it is a projection of the route, not a new route; 4. 页面 = one of the two classes below.
+
+**Two page classes — the key correction: a container is not a page-level concept, it is the structure of the Workbench component.**
+
+| Page class | How many | Component chain | Containers | Secondary nav strip |
+| --- | --- | --- | --- | --- |
+| 工作区内容页 Workspace content page | 5 (environment / scheduled tasks / resources / members / settings) | `pages/WorkspaceShell.vue` = `WorkspaceSecondaryNav` (judged by `route.meta?.workspaceSecondaryNav !== false`) + a scroll container holding `RouterView` + the workspace status bar (shared by all six pages, `D-1527`) | **none** — no right row either: none of the five imports a container or `WorkspaceWorkbench` | yes |
+| 工作台承载页 Workbench-hosted page (2 routes, one component) | 2: `/workspace/:id` (name `workspace`, the "sessions" entry in the nav) and `/workspace/:id/chat/:sessionId` (name `workspace-chat`, `meta.workspaceSecondaryNav = false`) | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **two**: `CONTAINER_IDS = ["main","right"]` (`features/workspace/lib/containers.ts:32-33`); the right row renders only when `dockOpen = !layout.dockCollapsed` (`WorkspaceWorkbench.vue:239`, `:499`) | no (`D-1907` rev7 / `task-118`) |
+
+Therefore "the workspace page also has the two containers" is **wrong**: the two containers belong to the **Workbench component** and appear only on the two routes it hosts.
+
+**Name table** (sanctioned name / English / code anchor / what never to say, and why):
+
+| # | 正名 | English | Anchor | Never say, and why |
+| --- | --- | --- | --- | --- |
+| 1 | 工作台 | `Workbench` | `sidebar.workbench`, `D-924` | "工作区" for the module: module name vs object name (`D-924` fixed exactly this) |
+| 2 | 工作区 | `Workspace` | `/workspace/:workspaceId` | "project" / "space": not our vocabulary |
+| 3 | 工作区页面 | `Workspace Page` | `WorkspaceShell.vue` + `meta.workspacePage` | "workbench home" / "workspace detail page": sounds like a different page |
+| 4 | 会话页面 (会话页) | `Session Page` | router name `workspace-chat`, `chat/:sessionId` | "chat page" / "conversation page": three names for one thing; "对话" is already a tab label |
+| 5 | 主栏容器 | `Main Container` | `CONTAINER_IDS[0] = "main"` | "中栏容器" (there are two columns, so "middle" is meaningless), "主区" / "内容区" (collides with the outer main area) |
+| 6 | 右栏容器 | `Right Container` | `CONTAINER_IDS[1] = "right"` | bare "右栏" / "侧栏" (§10.1 discipline 1), "dock" (an implementation name, not a UI name) |
+| 7 | 面板 | `Panel` | `DOCK_TAB_IDS`, `pane:<container>:<view>` | calling a panel a container: per `D-1777` the two columns are containers, a panel is the content of a tab inside one |
+| 8 | 容器页签行 | `Container Tab Row` | `WorkspaceContainerTabs.vue` | "second-level tabs" / "top tab row": not the same level as the Workspace Tab Bar |
+| 9 | 工作台页签栏 | `Workspace Tab Bar` | `WorkspaceTabBar.vue` | "middle tab bar" / "top tabs": describes position, not identity |
+| 10 | 全局条 | `Global Rail` | `GlobalRail.vue` | "left bar", "rail bar" |
+| 11 | 导航面板 | `Navigation Panel` | `Sidebar.vue` | bare "左栏" / "侧边栏" / "sidebar": sidebar is the component name, and the panel holds both workspaces and sessions |
+| 12 | 区头 | `Section Header` | `sidebar-workspaces-header`, `sidebar-sessions-header` | "group title" / "list header": a section header carries actions and a count |
+| 13 | 会话行 / 工作区行 | `Session Row` / `Workspace Row` | `WorkspaceSessionGroups.vue` | "session item" / "workspace item": "item" is too vague |
+| 14 | 摘要行 | `Session Settings Summary` | `session-settings-summary` (`D1450` / `D1463`) | "top settings entry": that entry was removed |
+| 15 | 二级导航带 | `Workspace Nav Strip` | `workspace-nav-*` (must count 0 on a session page) | "workspace tab" / "second-level tab": collides with both the tab bar and the container tab row |
+
+**Additional prohibitions** (on top of the three disciplines in §10.1):
+
+- Never use "container" and "panel" interchangeably: a container is one of the two rows; a panel is a tab's content inside a container.
+- Never say "中栏 / middle column": desktop has exactly `main` and `right`; on narrow screens `activeColumn` only switches which row is visible (`containers.ts:41`) and does not create a third column.
+- Never write a bare "right bar" / "side bar": either "right container" or "right session-config panel" (panel level).
+- "主栏" is the short UI label (used as the tab-row label); **in documentation the sanctioned name is always 主栏容器**.
+
+**Relationship to the four-row table in §10.1**: it is extended, never deleted; the "content column" current state (nav panel / file tree / main area / dock) is the **not implemented** `ListPane`-to-`ContextPane` plan, while the two containers here are the **landed** `main` / `right` — different layers, never substitute one for the other.
+
+**i18n alignment (landed in the same batch; this subsection only records the wording)**: `containerMain` "内容" → "主栏" and `containerRight` "右栏" → "右栏容器" (English `Content` → `Main column`, `Right panel` → `Right container`). Rationale: "内容" does not hold for the main column (it can host the file tree and other panels too; per `D-1777` / `D-1778` the two containers are equivalent), and "右栏" violates §10.1 discipline 1.
+
 ### 10.2 Three-level layout model and MVP scope
 
 - **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: Workbench and Settings** (user ruling 2026-11-10, "these two first"; the module name was corrected 2026-11-11 by **D-924** — it is *Workbench*, not *Workspace*, so that it stays distinct from a workspace object). Extending the module list is **pending a ruling** (§10.6).

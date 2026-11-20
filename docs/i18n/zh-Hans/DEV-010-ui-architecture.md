@@ -192,6 +192,57 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 2. **「栏」只用于可折叠或可调宽的竖向容器**；纯导航叫「导航」（`XxxNav`），不叫「栏」。
 3. **四词分工**：`Rail` = 图标条 · `Nav` = 导航列表 · `Pane` = 内容列 · `Stage` = 容器；不混用。
 
+### 10.1.1 工作台组件称呼（2026-11-20 用户裁定，DSD `D1468`）
+
+> 本节是 §10.1 的**补充**，不替换上面那张四行「区域命名表」：那张表管**布局骨架**（全局导航条 / 模块舞台 / 模块内导航 / 内容列），本节管**工作台组件里每个具体部件的称呼**。两者冲突时以本节为准，**旧四行保留**；「内容列 `ListPane` / `MainPane` / `ContextPane`」仍是 §10.1 现状列标明的**未落地设想**，不要与本节的两栏容器混为一谈。
+
+**四层结构**（自上而下，唯一正名）：
+
+1. **全局条** `Global Rail`（`GlobalRail.vue`，56px ↔ 图标+文字）：跨模块最左端的唯一入口。
+2. **导航面板** `Navigation Panel`（`Sidebar.vue`，280px，可拖 220–360）。
+3. **主区（模块舞台内）顶部** = **工作台页签栏** `Workspace Tab Bar`（`WorkspaceTabBar.vue`，i18n `tabBarLabel`「工作台页签」）：它是**路由投影**，不新增路由。
+4. **页面**（下面两类之一）。
+
+**两类页面 —— 关键修正：容器不是页面级概念，是工作台组件的结构**：
+
+| 页面类别 | 几条 | 组件链 | 有容器吗 | 有二级导航带 |
+| --- | --- | --- | --- | --- |
+| 工作区内容页 | 5 个（环境 / 定时任务 / 资源 / 成员 / 设置） | `pages/WorkspaceShell.vue` = 二级导航带 `WorkspaceSecondaryNav`（判据 `route.meta?.workspaceSecondaryNav !== false`）+ `<div class="min-h-0 flex-1 overflow-y-auto"><RouterView /></div>` + 工作区状态栏（六页共有，`D-1527`） | **没有容器、没有右栏**：这 5 页不 import 任何容器或 `WorkspaceWorkbench` ⇒ 没有容器行 | 有 |
+| 工作台承载页（2 条路由，同一个组件） | 2 条：`/workspace/:id`（`name` `workspace`，即导航里的「会话」页，带 `meta.workspacePage`）与 `/workspace/:id/chat/:sessionId`（`name` `workspace-chat`，`meta.workspaceSecondaryNav = false`） | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **有**，两栏：`CONTAINER_IDS = ["main","right"]`（`features/workspace/lib/containers.ts:32-33`）；右栏行仅在 `dockOpen = !layout.dockCollapsed` 时渲染（`WorkspaceWorkbench.vue:239`、`:499`） | 无（会话页面连壳层那一条也不画，`D-1907` rev7 / `task-118`） |
+
+⇒ 因此「工作区页面也设两栏容器」是**错的说法**：两栏容器属于**工作台组件**，只出现在它承载的会话导航页与会话页面这两条路由上。
+
+**称呼表**（正名 / 英文 / 代码锚点 / 禁用说法及原因）：
+
+| # | 正名 | 英文 | 代码锚点 | 禁用说法及原因 |
+| --- | --- | --- | --- | --- |
+| 1 | 工作台 | `Workbench` | `sidebar.workbench`、`D-924` | 禁用「工作区」：模块名与对象名混用（`D-924` 改的正是这一处） |
+| 2 | 工作区 | `Workspace` | `/workspace/:workspaceId` | 禁用「项目」「空间」：非本系统术语 |
+| 3 | 工作区页面 | `Workspace Page` | `WorkspaceShell.vue` + `meta.workspacePage` | 禁用「工作台首页」「工作区详情页」：听起来像另一个页面 |
+| 4 | 会话页面（会话页） | `Session Page` | router: `workspace-chat`，`chat/:sessionId` | 禁用「聊天页」「chat 页」「对话页」：三说法混用，「对话」已是页签名 |
+| 5 | 主栏容器 | `Main Container` | `CONTAINER_IDS[0] = "main"` | 禁用「中栏容器」（只有两栏，「中」无意义）、「主区」「内容区」（与上层主区撞名） |
+| 6 | 右栏容器 | `Right Container` | `CONTAINER_IDS[1] = "right"` | 禁用「右栏」「侧栏」「dock」：§10.1 纪律 1 禁无定语栏名；dock 是实现名不是界面名 |
+| 7 | 面板 | `Panel` | `DOCK_TAB_IDS`、`pane:<container>:<view>` | 禁用把面板叫容器：`D-1777` 两栏是容器，面板是容器内页签内容 |
+| 8 | 容器页签行 | `Container Tab Row` | `WorkspaceContainerTabs.vue` | 禁用「二级页签」「上排页签」：与工作台页签栏不在同一层级 |
+| 9 | 工作台页签栏 | `Workspace Tab Bar` | `WorkspaceTabBar.vue` | 禁用「中间标签栏」「顶部页签」：描述位置而非身份 |
+| 10 | 全局条 | `Global Rail` | `GlobalRail.vue` | 禁用「左侧栏」「rail 栏」 |
+| 11 | 导航面板 | `Navigation Panel` | `Sidebar.vue` | 禁用「左栏」「侧边栏」「sidebar」：sidebar 是组件名，面板里既有工作区也有会话 |
+| 12 | 区头 | `Section Header` | `sidebar-workspaces-header`、`sidebar-sessions-header` | 禁用「分组标题」「列表头」：区头带动作与计数 |
+| 13 | 会话行 / 工作区行 | `Session Row`、`Workspace Row` | `WorkspaceSessionGroups.vue` | 禁用「会话项」「工作区项」：item 太泛 |
+| 14 | 摘要行 | `Session Settings Summary` | `session-settings-summary`（`D1450` / `D1463`） | 禁用「顶部设置入口」：该入口已取消 |
+| 15 | 二级导航带 | `Workspace Nav Strip` | `workspace-nav-*`（会话页面计数须为 0） | 禁用「工作区 tab」「二级 tab」：与页签栏、容器页签行三者撞名 |
+
+**补充禁用词表**（在 §10.1 三条纪律之上）：
+
+- 禁把「容器」说成「面板」或反之：容器 = 一行两栏之一；面板 = 容器里的页签内容。
+- 禁「中栏 / 中栏容器」：桌面只有 main / right 两栏，窄屏 `activeColumn` 只是可见性切换（`containers.ts:41`），不产生第三栏。
+- 禁无定语的「右栏 / 侧栏」：要么「右栏容器」，要么「右栏会话配置面板」（面板级）。
+- 「主栏」是界面短称（页签行标签用），**文档正名一律「主栏容器」**。
+
+**与 §10.1 既有四行表的关系**：新增补充、不删旧行；「内容列」四段现状（导航面板 / 文件树 / 主区 / dock）是**未落地**的 `ListPane`-`MainPane`-`ContextPane` 设想，本节的两栏容器是**已落地**的 `main` / `right`，两者不是同一层东西，不得互相替换引用。
+
+**附：i18n 两处对齐（同批另行落地，本节只登记口径）**：`containerMain`「内容」→「主栏」、`containerRight`「右栏」→「右栏容器」（英文 `Content`→`Main column`、`Right panel`→`Right container`）；理由 =「内容」在主栏里不成立（主栏也可承载文件树等面板，`D-1777`/`D-1778` 两容器等价），「右栏」违反 §10.1 纪律 1。同步点见 `D1468` §五。
+
 ### 10.2 三层布局模型与 MVP 范围
 
 - **全局层**：`GlobalRail` + `ModuleStage`。**MVP 的全局条只放两个模块：工作台 / 设置页**（2026-11-10 用户裁定「先这俩」；2026-11-11 命名修正 D-924：**模块名改「工作台」，避免与「工作区」混淆**）。模块清单扩展**待裁定**（§10.6）。
