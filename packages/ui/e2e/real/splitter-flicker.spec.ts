@@ -1,3 +1,4 @@
+// lane: 真栈回归（profile=all，经 scripts/e2e-real-stack.mjs --stack <n> 直跑）—— Splitter 首帧逐帧采样，需真机帧时序（不可见窗口 rAF 不推进），不进 host 车道（T-2318 分类表）。
 /**
  * Splitter 首帧闪光回归门（task-127；定因见 task-93 结论）。
  *

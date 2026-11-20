@@ -1,6 +1,9 @@
 // UI 基线真机门禁（task-73 / D-1907 UI 基线 v2；task-102 二轮加固：修 8 条假绿 + 补覆盖 + 口径对齐）。
 // 断言口径来自 internal/A03-xihe/evidence/2026-11-19-ui-live-review 的真机读数（A1/A3/B1/B3/D1/D2/E1/E2 六类缺陷），
 // 每条断言在改代码之前必须为红：红 = 产品现状，绿 = 该缺陷已修复。
+// lane: 真栈基线 / 取证 —— 无 XIHE_E2E_PROFILE（profile=all）时经 `node scripts/e2e-real-stack.mjs --stack <n>`
+// 直跑，需要真栈登录态（.local/dev/admin-password）。不进 host 车道（grep /@host/，T-2318 口径）：一次登录后
+// 串行拍 3 视口 × 2 主题共 6 屏并写读数 JSON / 截图，属基线取证，不是 host 回归用例。
 //
 // 与旧探针（probe.mjs）的方法学差异（A2 已确认旧探针误判）：
 //   1. 顶带扫描不写死 `y < 120`（那是旧探针把 5 条带截成 4 条的原因），下界改取「会话容器带
@@ -170,6 +173,17 @@ const MENU_ROW_MIN_WIDTH_PX = 120;
 const NAV_YIELD_MAX_PX = 100;
 /** A2 带层扫描容差：Σ(chromeBands.h) 与 chromeHeight 之差超此值即视为扫描被截断 */
 const BAND_SCAN_TOLERANCE_PX = 1;
+
+/**
+ * 首屏就位探针预算（task-19）。
+ *
+ * <p>真栈冷启首屏 P95≈12s，超过 Playwright 单 action 10s 上限（scripts/check-e2e-timeouts.mjs 的
+ * ACTION_CAP_MS），所以这里**不抬 `timeout:` 字面量**，而是把等待拆成「短步探针 + 显式 deadline」：
+ * 每步 ≤5s，命中即返回（稳态 1–2 帧就出现），到 deadline 才判未就位。</p>
+ */
+const READY_PROBE_STEP_MS = 5_000;
+const SESSION_SURFACE_DEADLINE_MS = 20_000;
+const CHAT_INPUT_DEADLINE_MS = 15_000;
 
 const THEMES = ["light", "dark"] as const;
 type Theme = (typeof THEMES)[number];
@@ -446,6 +460,32 @@ async function discoverSession(
     throw new Error("会话发现失败（重试 3 次）：" + lastError);
 }
 
+/** 首屏就位探针（task-19）：按 READY_PROBE_STEP_MS 步长轮询到 deadline。
+ *  命中返回 true、到 deadline 返回 false（调用方决定 fail 还是只记账）。deadline 写成
+ *  `Date.now() + 常量` 形态 —— 静态门（check-e2e-timeouts.mjs）认作显式声明；单次 waitFor 恒
+ *  ≤5s，不越 10s action 上限，也就不需要 timeout-exempt。 */
+async function waitReadyFor(
+    page: Page,
+    selector: string,
+    state: "attached" | "visible",
+    deadlineMs: number,
+): Promise<boolean> {
+    const deadline = Date.now() + deadlineMs;
+    while (Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        try {
+            await page
+                .locator(selector)
+                .first()
+                .waitFor({ state, timeout: Math.min(READY_PROBE_STEP_MS, remaining) });
+            return true;
+        } catch {
+            /* 本步未就位：进入下一段，直到 deadline */
+        }
+    }
+    return false;
+}
+
 /** 打开一个已有消息的会话页并返回其 URL：已知 URL 就直达，未知才走 API 发现。
  *  不点侧栏 —— 点侧栏会开出多个容器页签，多页签 SSE 订阅会弹订阅上限横幅并污染顶带读数。 */
 async function openChatSurface(page: Page, target: string | null): Promise<string> {
@@ -473,15 +513,20 @@ async function openChatSurface(page: Page, target: string | null): Promise<strin
     await page.goto("/workspace/" + picked.workspaceId + "/chat/" + picked.sessionId, {
         waitUntil: "load",
     });
-    await expect(
-        page.locator('[data-testid="message-scroller-viewport"]').first(),
-        "会话页应渲染消息视口（" + String(picked.title) + "）",
-    ).toBeAttached({ timeout: 20_000 });
-    await expect(page.locator('[data-testid="chat-input"]'), "会话页应出现 chat-input").toBeVisible(
-        {
-            timeout: 15_000,
-        },
+    const surfaceOk = await waitReadyFor(
+        page,
+        '[data-testid="message-scroller-viewport"]',
+        "attached",
+        SESSION_SURFACE_DEADLINE_MS,
     );
+    expect(surfaceOk, "会话页应渲染消息视口（" + String(picked.title) + "）").toBe(true);
+    const inputOk = await waitReadyFor(
+        page,
+        '[data-testid="chat-input"]',
+        "visible",
+        CHAT_INPUT_DEADLINE_MS,
+    );
+    expect(inputOk, "会话页应出现 chat-input").toBe(true);
     return page.url();
 }
 
@@ -502,13 +547,8 @@ async function waitForNoticeGone(page: Page, waitMs: number): Promise<boolean> {
 async function ensureZeroNotice(page: Page): Promise<{ cleared: boolean; reloaded: boolean }> {
     if (await waitForNoticeGone(page, 4_000)) return { cleared: true, reloaded: false };
     await page.reload({ waitUntil: "load" });
-    try {
-        await page
-            .locator('[data-testid="chat-input"]')
-            .waitFor({ state: "visible", timeout: 15_000 });
-    } catch {
-        /* reload 后没回到会话页时，由后续读数与断言的 fail 暴露 */
-    }
+    // 探针本身不抛：reload 后没回到会话页时，由后续读数与断言的 fail 暴露（原 try/catch 语义保留）
+    await waitReadyFor(page, '[data-testid="chat-input"]', "visible", CHAT_INPUT_DEADLINE_MS);
     // 残留订阅要等服务端心跳超时才回收（实测 reload 后 8s 仍可能挂着）⇒ 放宽到 20s 再判
     return { cleared: await waitForNoticeGone(page, 20_000), reloaded: true };
 }

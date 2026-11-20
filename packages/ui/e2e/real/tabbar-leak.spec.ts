@@ -1,3 +1,4 @@
+// lane: 真栈回归（profile=all，经 scripts/e2e-real-stack.mjs --stack <n> 直跑，需真栈登录态）—— 全局页签行归属的路由矩阵，不进 host 车道（T-2318 分类表）。
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";

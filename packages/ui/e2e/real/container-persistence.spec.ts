@@ -1,3 +1,4 @@
+// lane: 真栈回归（profile=all，经 scripts/e2e-real-stack.mjs --stack <n> 直跑，需真栈登录态）—— 容器页签持久化 + 30 次 reload 矩阵，耗时与 IO 重，不进 host 车道（T-2318 分类表）。
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
