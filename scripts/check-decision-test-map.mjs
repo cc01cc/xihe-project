@@ -12,7 +12,15 @@
  *      ⇒ 测试被改名/删除/断言搬走时本门立刻红，而不是「文档里说测了」
  *   3) pending ⇒ 必须有 card（承接卡号）；给了 file 就必须给 title
  *   4) not-testable ⇒ 必须有 reason（≥10 字），且占比 ≤ 20%
- *   5) file 必须落在 A03-xihe/packages/ui/ 内且是测试文件（禁止 .tmp/.local 副本误绿）
+ *   5) file 白名单（四类前缀，task-53 放宽；越界仍报 E_PATH_OUTSIDE）：
+ *        A03-xihe/packages/ui/** · A12-DSH-decision/packages/dsh-decision/tests/** ·
+ *        internal/A03-xihe/scripts/** · scripts/**（one 仓仓库级门禁脚本的自测）
+ *      且必须是测试文件（禁止 .tmp/.local/node_modules 副本误绿）。
+ *      为什么放开这四类：门**本身**的判据只能挂在自己的测试上 —— DSD-1474（D 号/DSD 前缀解析）与
+ *      DSD-1475（投影缺失自愈）的判据分别落在 one 根 scripts/ 与 internal/A03-xihe/scripts/ 的 .test.mjs，
+ *      只允许 ui/ 时这两类条款根本登记不进来（只能人工读文本，等于「决策只停在文本」）。
+ *      为什么**不**放开 A03-xihe/scripts/**：当前没有任何登记需要它；每多一个前缀就多一片「测试可被算作判据」的面，
+ *      等真有卡需要再加，加的时候同批补越界反例（自检里已有一条断言它仍然越界）。
  *   6) D 号登记：台账未冻结 ⇒ 须在 lead-decisions-ledger.md 命中；台账已冻结（D-1903 起登记处迁 DSD）
  *      ⇒ 须给 decisions[].dsd（DSD decisions.id），并尽力核对 revision（库不可读则 SKIP 不判红）
  *
@@ -20,8 +28,8 @@
  *   node scripts/check-decision-test-map.mjs [--map <json>] [--root <one 根>]
  *        [--json] [--enforce] [--selftest] [--quiet]
  *   --enforce  追加「pending > 0 即红」（条款全部落地后的严格档）
- *   --selftest 内存内 8 例自检（基线绿 / title 错 / assert 错 / pending 缺 card /
- *              not-testable 缺 reason / clause id 重复 / 路径越界 / 比例超限）
+ *   --selftest 内存内自检（基线绿 / title 错 / assert 错 / pending 缺 card / not-testable 缺 reason /
+ *              clause id 重复 / 路径越界 / 比例超限 + file 白名单四类正向 + 缺文件 / 非测试文件 / DSD 号不存在反例）
  *
  * 退出码：0 无硬违规；1 有硬违规（或 --enforce 下 pending > 0、--selftest 失败）；2 用法或 IO 错。
  */
@@ -39,7 +47,14 @@ const A03_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const ONE_ROOT = path.resolve(A03_ROOT, '..')
 const DEFAULT_MAP = path.join(A03_ROOT, 'config', 'decision-test-map.json')
 const LEDGER = path.join('internal', 'A03-xihe', 'docs', 'lead-decisions-ledger.md')
-const TEST_PREFIX = 'A03-xihe/packages/ui/'
+// file 白名单（task-53）：四类前缀。放宽的判据不是「路径更像测试就能算判据」，而是「这条判据的测试就在它该在的地方」。
+const TEST_PREFIXES = [
+    'A03-xihe/packages/ui/',
+    'A12-DSH-decision/packages/dsh-decision/tests/',
+    'internal/A03-xihe/scripts/',
+    'scripts/'
+]
+const isAllowedPath = (rel) => TEST_PREFIXES.some((p) => rel.startsWith(p))
 const TEST_FILE_RE = /\.(spec|test)\.[cm]?[jt]sx?$/
 const NT_RATIO_MAX = 0.2
 const NT_REASON_MIN = 10
@@ -169,7 +184,7 @@ export function validate(map, opts = {}) {
                 if (!file) add('E_COVERED_NO_FILE', where, 'covered 必须给 file')
                 if (!title) add('E_COVERED_NO_TITLE', where, 'covered 必须给 title（用例标题子串）')
                 if (!norm(c?.assert)) add('E_COVERED_NO_ASSERT', where, 'covered 必须给 assert（断言锚点子串）')
-                if (file && !file.startsWith(TEST_PREFIX)) add('E_PATH_OUTSIDE', where, 'file 必须落在 ' + TEST_PREFIX + ' 内，实为 ' + file)
+                if (file && !isAllowedPath(file)) add('E_PATH_OUTSIDE', where, 'file 必须落在 ' + TEST_PREFIXES.join(' | ') + ' 内，实为 ' + file)
                 if (file && /(^|\/)(\.tmp|\.local|node_modules)\//.test(file)) add('E_PATH_OUTSIDE', where, '禁止指向临时/副本目录（会误绿）：' + file)
                 if (file && !TEST_FILE_RE.test(file)) add('E_NOT_TEST_FILE', where, 'file 必须是 *.{spec,test}.[cm]?[jt]sx?：' + file)
                 if (file && title) {
@@ -186,7 +201,7 @@ export function validate(map, opts = {}) {
                 totals.pending++
                 if (!norm(c?.card)) add('E_PENDING_NO_CARD', where, 'pending 必须给 card（承接卡号）')
                 if (file && !title) add('E_PENDING_NO_TITLE', where, 'pending 给了 file 就必须给 title（预期落点）')
-                if (file && !file.startsWith(TEST_PREFIX)) add('E_PATH_OUTSIDE', where, 'file 必须落在 ' + TEST_PREFIX + ' 内，实为 ' + file)
+                if (file && !isAllowedPath(file)) add('E_PATH_OUTSIDE', where, 'file 必须落在 ' + TEST_PREFIXES.join(' | ') + ' 内，实为 ' + file)
             } else {
                 totals.notTestable++
                 const reason = norm(c?.reason)
@@ -267,6 +282,28 @@ function selftest() {
             if (c.status === 'covered' && n < 8) { c.status = 'not-testable'; c.reason = '自检占位：设计取向陈述无渲染可判属性'; delete c.file; delete c.title; delete c.assert; n++ }
         }
     }, (r) => has(r, 'E_NT_RATIO'))
+    // —— task-53：file 白名单四类（正向逐类各一例）+ 越界/缺文件/DSD 号不存在反例 ——
+    // 定位判据：白名单不是「路径里出现 test 就算」，而是「这条条款的测试住在它该住的目录里」。
+    // 每加一类前缀就必须有一条正向用例钉住它真的能登记，同时留一条「没开放的前缀仍然红」。
+    const pointTo = (m, file, title, assert) => { const c = findCovered(m); c.file = file; c.title = title; c.assert = assert }
+    run('白名单：A12 tests/** 可登记', (m) => {
+        pointTo(m, 'A12-DSH-decision/packages/dsh-decision/tests/host/tools.test.mjs', 'T2.1: the six tools register in contract order with distinct names', 'distinct names')
+    }, (r) => r.violations.length === 0)
+    run('白名单：internal/A03-xihe/scripts/** 可登记', (m) => {
+        pointTo(m, 'internal/A03-xihe/scripts/trace-check.test.mjs', 'task-44: missing projection + working exporter => auto-regenerate once, then exit clean', '投影缺失，已自动重生成')
+    }, (r) => r.violations.length === 0)
+    run('白名单：scripts/** 可登记', (m) => {
+        pointTo(m, 'scripts/check-commit-msg.test.mjs', '③-d 投影缺失（默认落点）+ 导出器可用 ⇒ 自动重生成一次、exit 0，且真的写出投影', '投影缺失，已自动重生成')
+    }, (r) => r.violations.length === 0)
+    run('白名单外：A03-xihe/scripts/**（未开放）仍红', (m) => {
+        pointTo(m, 'A03-xihe/scripts/check-decision-test-map.mjs', 'x', 'x')
+    }, (r) => has(r, 'E_PATH_OUTSIDE'))
+    run('covered 指向不存在的测试文件 ⇒ 红', (m) => {
+        pointTo(m, 'scripts/__no-such-test__.test.mjs', 'x', 'x')
+    }, (r) => has(r, 'E_FILE_MISSING'))
+    run('登记了 DSD 库不存在的号 ⇒ 红', (m) => {
+        m.decisions.push({ id: 'D-9999', rev: 1, dsd: 999999, clauses: [{ id: 'D-9999/1', text: '自检占位条款', status: 'pending', card: 'task-53' }] })
+    }, (r) => has(r, 'E_DSD_MISSING'))
     let failed = 0
     for (const c of cases) {
         if (!c.ok) failed++

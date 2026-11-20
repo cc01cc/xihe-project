@@ -1,7 +1,7 @@
 {
   "version": 1,
   "updated": "2026-11-20",
-  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在 A03-xihe/packages/ui/ 内；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。dsd = DSD decisions.id（台账自 D-1903 冻结后 D 号登记处）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
+  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在四类白名单内（A03-xihe/packages/ui/ · A12-DSH-decision/packages/dsh-decision/tests/ · internal/A03-xihe/scripts/ · scripts/；task-53 放宽）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。dsd = DSD decisions.id（台账自 D-1903 冻结后 D 号登记处）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
   "decisions": [
     {
       "id": "D-1904",
@@ -178,7 +178,8 @@
           "status": "covered",
           "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
           "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
-          "assert": "④B2 --ring 与 --primary 同值"
+          "assert": "④B2 --ring 必须等于 --primary",
+          "note": "断言锚点在 6280e7d2f（判定对齐 D1462）里由「④B2 --ring 与 --primary 同值」改成「必须等于 --primary」的模板字面，登记未跟 ⇒ 门自该提交起报 E_ASSERT_MISSING。task-53 只重锚到现存字面（判据与断言强度未变），不改条款语义"
         },
         {
           "id": "D-1907/E-3",
@@ -324,6 +325,38 @@
         }
       ],
       "dsd": 1448
+    },
+    {
+      "id": "D-1474",
+      "rev": 1,
+      "title": "D 号引用口径：新裁定写 DSD-NNNN，台账旧号保持 D-####，门脚本兼认两种前缀",
+      "clauses": [
+        {
+          "id": "D-1474/1",
+          "text": "门脚本（check-decision-refs / validate-handoff / check-commit-msg）的 D 号解析同时接受 D-#### 与 DSD-NNNN；DSD- 前缀只解析 DSD 侧、D- 前缀按现行并集解析；撞号（DSD id 1461 vs 台账 D-1461）须报警而非静默合并",
+          "status": "pending",
+          "card": "task-49",
+          "note": "task-53 只想登记、不代写实现：当天实测 grep DSD 前缀解析实现 0 命中（check-decision-refs.mjs:76 仍是只认台账号的 D 加数字形态、check-commit-msg.mjs:375 同上、validate-handoff.mjs 的 D 号正则也仍只认台账号），前缀解析测试因此无处可挂 ⇒ 按 pending + 承接卡 task-49 登记；实现与测试落地后把本条款改 covered 并补 file/title/assert"
+        }
+      ],
+      "dsd": 1474
+    },
+    {
+      "id": "D-1475",
+      "rev": 1,
+      "title": "台账投影快照不入 git：.gitignore + 索引移除，由 ledger:export / 门内 auto-regen 就地重建",
+      "clauses": [
+        {
+          "id": "D-1475/1",
+          "text": "三处运行时门（check-commit-msg / validate-handoff / trace-check）在投影文件缺失时按既有 auto-regen 路径重生成，不得因缺文件直接红；重生成失败仍须红并给出原命令",
+          "status": "covered",
+          "file": "internal/A03-xihe/scripts/trace-check.test.mjs",
+          "title": "task-44: missing projection + working exporter => auto-regenerate once, then exit clean",
+          "assert": "投影缺失，已自动重生成",
+          "note": "task-44 落地该行为并写了这条用例（缺失 + 导出器可用 ⇒ 重生成恰好一次后 exit clean）；三处门的一致性另由实跑取证（evidence/2026-11-20-projection-autoregen/README.md）。.gitignore 与索引移除部分由 task-45 落地"
+        }
+      ],
+      "dsd": 1475
     }
   ]
 }
