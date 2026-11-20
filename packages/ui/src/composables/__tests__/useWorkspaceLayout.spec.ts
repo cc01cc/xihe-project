@@ -778,7 +778,7 @@ describe("PLAN-0623 members dock tab", () => {
     });
 });
 
-// task-6（D1453 / N-6 选 A）：静态 context 页签已退役 —— 会话信息只经右栏
+// task-6（DSD-1453 / N-6 选 A）：静态 context 页签已退役 —— 会话信息只经右栏
 // `pane:<container>:session-config:<sid>` 页签（本体仍是同一份 SessionContextPanel）。
 describe("task-6：静态 context 页签退役", () => {
     it("no longer treats context as a dock tab id", () => {

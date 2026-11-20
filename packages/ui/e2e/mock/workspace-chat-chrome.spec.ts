@@ -159,13 +159,13 @@ test.describe("task-118：会话页不挂工作区级导航带", () => {
     });
 
     /**
-     * task-5（D1450 / Q-65）：**会话页顶部不再有「设置」入口**，会话设置只经摘要行（右栏 `session-config`）。
+     * task-5（DSD-1450 / Q-65）：**会话页顶部不再有「设置」入口**，会话设置只经摘要行（右栏 `session-config`）。
      *
      * <p>为什么必须落 e2e：这条改动的失败形态是「入口悄悄长回来」——导航项由路由表 `meta.workspacePage`
      * 派生，壳层只要重新 `showSecondaryNav` 就会在会话页顶部多出一条带；单测里「路由 meta 还在」照样绿。
      * 证据（真机读数、三带口径、范围边界）见 `internal/A03-xihe/evidence/2026-11-20-session-settings-entry/`。</p>
      */
-    test("task-5（D1450）：顶部 64px 内没有「设置」入口，会话设置只经摘要行进 session-config", async ({
+    test("task-5（DSD-1450）：顶部 64px 内没有「设置」入口，会话设置只经摘要行进 session-config", async ({
         page,
     }) => {
         await setupFixtures(page);

@@ -4,7 +4,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * 会话设置面板（`SessionContextPanel.vue`：审批模式 / 上下文模板 / 上下文源 / 分支）
  * 的「打开并校验」封装，返回时**面板已可见且（页签在标签条上时）目标标签选中**。
  *
- * ## task-6（`D1453` / N-6 选 A）之后的入口只剩一个页签
+ * ## task-6（`DSD-1453` / N-6 选 A）之后的入口只剩一个页签
  * 静态 `context` 页签已退役（值域、渲染分支、标题键一并删除）。会话设置面板现在**只**经右栏
  * 容器内页签 `pane:right:session-config:<sid>` 打开 —— 面板体仍是同一份 `SessionContextPanel`，
  * 所以「面板可见」这条判据**认不出页签**，要判"开的是哪个页签"必须看芯片的 `aria-selected`。

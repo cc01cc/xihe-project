@@ -1,7 +1,7 @@
 /**
- * task-151 / task-6（承 D-1907 / D-1453）：**会话设置面板只有一条页签路，静态 `context` 页签已退役**。
+ * task-151 / task-6（承 D-1907 / DSD-1453）：**会话设置面板只有一条页签路，静态 `context` 页签已退役**。
  *
- * <p>task-151 时这里钉的是「helper 开的是 `context` 页签、不是会话配置」；task-6（D1453 / N-6 选 A）
+ * <p>task-151 时这里钉的是「helper 开的是 `context` 页签、不是会话配置」；task-6（DSD-1453 / N-6 选 A）
  * 把静态 `context` 页签整个退役后，会话设置面板只经 `pane:right:session-config:<sid>` 打开，
  * helper 也随之改为「固定开 session-config」。本 spec 因此钉三件事：</p>
  *

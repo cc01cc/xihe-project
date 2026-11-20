@@ -405,7 +405,7 @@ describe("task-145 ②：指向死工作区的上一跳被忘掉（下一次冷�
         expect(window.location.pathname, "下一次冷启不得落在死工作区").toBe("/workbench");
     });
 });
-describe("task-34（D1476 ②）：会话页与 6 个内容页都进上一跳，/workbench 不覆盖记录", () => {
+describe("task-34（DSD-1476 ②）：会话页与 6 个内容页都进上一跳，/workbench 不覆盖记录", () => {
     it("7 条落点逐一入账（会话页 + 6 个内容页）", async () => {
         const cases = [
             {
@@ -430,7 +430,7 @@ describe("task-34（D1476 ②）：会话页与 6 个内容页都进上一跳，
             });
         }
         process.stdout.write(
-            "[D1476/②-a] 7 条落点入账完毕 last=" + JSON.stringify(readLastLocation()) + "\n",
+            "[DSD-1476/②-a] 7 条落点入账完毕 last=" + JSON.stringify(readLastLocation()) + "\n",
         );
     });
 
@@ -445,7 +445,7 @@ describe("task-34（D1476 ②）：会话页与 6 个内容页都进上一跳，
         await navigate("/workbench");
         const after = localStorage.getItem(LAST_LOCATION_KEY);
         process.stdout.write(
-            "[D1476/②-b] in-app /workbench landed=" +
+            "[DSD-1476/②-b] in-app /workbench landed=" +
                 window.location.pathname +
                 " route=" +
                 String(router.currentRoute.value.name) +

@@ -13,7 +13,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 /**
  * dock 面板类型 = `WorkspaceDock.vue` 右页签行「+」菜单的 **7** 个可选类型。
  *
- * task-6（D1453 / N-6 选 A）起静态 `context` 页签退役：context 信息只留在 session-config
+ * task-6（DSD-1453 / N-6 选 A）起静态 `context` 页签退役：context 信息只留在 session-config
  * 面板（`dock-tab-pane:right:session-config:<sid>`，它不是静态类型，不属本联合）。
  */
 export type DockPanelId =

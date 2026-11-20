@@ -159,7 +159,7 @@ describe("lastLocation 键形与读写（task-111 / 裁② A 案；task-34 加 p
         }
     });
 
-    it("task-34（D1476 ①）：6 个内容页 + 会话页逐一写读回环（页维度不丢、不串页）", () => {
+    it("task-34（DSD-1476 ①）：6 个内容页 + 会话页逐一写读回环（页维度不丢、不串页）", () => {
         // 每个内容页：写入 ⇒ 读回 ⇒ 解析成地址，三处必须指向同一页。
         for (const page of WORKSPACE_PAGE_IDS) {
             const written = writeLastLocation({

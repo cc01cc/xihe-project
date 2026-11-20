@@ -575,14 +575,14 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
 });
 
 /**
- * task-172 / `D-1464`：会话区头 + 会话计数。
+ * task-172 / `DSD-1464`：会话区头 + 会话计数。
  *
  * 判据与 e2e ⑥E4① 同源（`ui-baseline.spec.ts:1465-1473` 断言 `sidebar-sessions-header`
  * count === 1），这里再加三条产品口径：① 计数是**独立节点**（数字不拼进 `t()` 译文）；
  * ② 计数 = 左栏**当前渲染**的会话行数（独立会话区 + 已展开的工作区分组）；
  * ③ 随搜索与折叠同步 —— 折叠组与过滤掉的行**不计入**（不是「store 里存了多少条」）。
  */
-describe("Sidebar sessions section header (task-172 / D-1464)", () => {
+describe("Sidebar sessions section header (task-172 / DSD-1464)", () => {
     function seedRow(id: string, title: string) {
         return {
             id,
@@ -655,14 +655,14 @@ describe("Sidebar sessions section header (task-172 / D-1464)", () => {
 });
 
 /**
- * task-173 / `D-1464`：rail（折叠）态检索入口，形态 A（图标按钮 + reka-ui Popover）。
+ * task-173 / `DSD-1464`：rail（折叠）态检索入口，形态 A（图标按钮 + reka-ui Popover）。
  *
  * <p>这里守的是三条用户可见行为：①折叠态确有检索入口且展开控件没被顶掉（e2e ⑥E2 同时断言两者）；
  * ②打开后焦点**直接**落在输入框（不是容器上再让用户 Tab）；③Esc 关闭后焦点回到触发器。
  * testid 复用 `sidebar-session-search` 是本卡口径，所以每条都顺手断言「同态只有一个」——
  * 复用 id 最怕的就是两态同时挂载出两个同名节点，让 `.get()` 与 e2e 的 count 变成掷骰子。</p>
  */
-describe("Sidebar · rail 检索入口（task-173 / D-1464）", () => {
+describe("Sidebar · rail 检索入口（task-173 / DSD-1464）", () => {
     it("折叠态渲染恰好一个检索入口，展开控件仍在，输入框未打开时不挂载", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ open: false });

@@ -4,7 +4,7 @@
  * 与 `workspaceContext.ts`（**逐 tab**，sessionStorage）成对：本模块是**跨 tab**
  * （localStorage）的最后落点记录，唯一用途是「进入 /workbench 时回到上次停下的地方」。
  *
- * <p><b>task-34 / D1472 ② 的分工</b>（用户 m01702：「会记录上一次落在的路由，进入工作台默认
+ * <p><b>task-34 / DSD-1472 ② 的分工</b>（用户 m01702：「会记录上一次落在的路由，进入工作台默认
  * 进入之前落的路由上；没有的话则是工作台的空态页面」）：本模块负责**停在哪一页**（页级，
  * 含 6 个工作区二级页与缩放后的 sessionId），`workspaceContext.ts` 负责**本 tab 属于哪个
  * 工作区**。守卫里的合成判据：tab 上下文存在且与上一跳同工作区 ⇒ 按上一跳恢复页级；属于
@@ -18,7 +18,7 @@
  * 四条不变式（卡面已裁，不许改）：
  *  1. **键形**：`xihe-last-location` = `{ kind, workspaceId, sessionId, page, at }`。
  *     `kind` 是页面种类判别字段 —— 新增可恢复页面种类 = 加一个 kind，不动键形。
- *     `page` 是**工作区二级页 id**（`meta.workspacePage.id`，task-34 / D1472 ②）：裸工作区
+ *     `page` 是**工作区二级页 id**（`meta.workspacePage.id`，task-34 / DSD-1472 ②）：裸工作区
  *     必须指名停在哪一页；会话页的位置由 `sessionId` 表达、独立会话没有页维度 ⇒ 两者恒 `null`。
  *     **旧键形（无 `page` 键）按 fail-closed 丢弃，不做迁移** —— 用户 m01702 ① 已裁「不做任何
  *     旧形态兼容」，迁移等于把旧语义猜一遍写回去。
@@ -71,7 +71,7 @@ export interface LastLocation {
     /** null = 裸工作区（停在某个工作区页，绝不编造会话）。 */
     sessionId: string | null;
     /**
-     * 工作区二级页 id（`meta.workspacePage.id`，task-34 / D1472 ②）。
+     * 工作区二级页 id（`meta.workspacePage.id`，task-34 / DSD-1472 ②）。
      * 恒 null 的两种情形：会话页（位置由 `sessionId` 表达）、独立会话（无工作区段）。
      */
     page: WorkspacePageId | null;
@@ -210,7 +210,7 @@ export function clearLastLocation(): void {
 /**
  * 路由名 → 上一跳条目（H2 写点的取值来源）。
  *
- * <p><b>task-34 / D1472 ②：记到页级。</b>可恢复面 = 会话页 + 独立会话 + **全部带
+ * <p><b>task-34 / DSD-1472 ②：记到页级。</b>可恢复面 = 会话页 + 独立会话 + **全部带
  * `meta.workspacePage` 的工作区二级页**（sessions / environment / scheduled-tasks /
  * resources / members / settings）。页 id **从 meta 取**（路由表是唯一来源），只有裸工作区那条
  * （`name === "workspace"`）额外保留一个按名字的显式分支 —— 它既是会话列表页、又是

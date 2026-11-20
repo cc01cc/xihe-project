@@ -1580,12 +1580,12 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 「重要通知」、不作答。默认空集 = 旧单响应者路径。
             -->
             <!--
-                task-9（D1458 实施 / D-1904 F-2）：收件人（发送）栏与抄送栏**合并为同一行**。
+                task-9（DSD-1458 实施 / D-1904 F-2）：收件人（发送）栏与抄送栏**合并为同一行**。
                 原来两栏各占一行：实测 30.19（to-targets-bar）+ 6（列间距）+ 23.19（抄送行）+ 6
                 ⇒ 合并后行高只取较高的那一栏，直接省 29.2px；功能一个不丢 —— TO 多选 chips 在左
                 （flex-1 吃掉剩余宽度），抄送入口 / 展开态在右。允许合并的理由：两者都是「本条消息的
                 投递对象」，同一语义族、同一视线高度；分两行的唯一后果是 composer 多啃一截消息视口，
-                而 D-1458 的门量的就是这个（composer 块高 ≤15% 视口高）。
+                而 DSD-1458 的门量的就是这个（composer 块高 ≤15% 视口高）。
             -->
             <div class="flex min-w-0 items-center gap-2" data-testid="composer-recipient-row">
                 <RecipientField

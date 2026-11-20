@@ -154,7 +154,7 @@ const router = createRouter({
                         {
                             // 会话页属于工作台容器内部（不进二级导航：它没有独立入口，
                             // 入口是会话列表），所以**不带** `meta.workspacePage`。
-                            // task-33（D1472）：name 与路径段一并用 `session`（与页名「会话」同心），
+                            // task-33（DSD-1472）：name 与路径段一并用 `session`（与页名「会话」同心），
                             // **不做**旧形态兼容（书签/深链/上一跳恢复都不认旧地址）。
                             // task-118（D-1907 rev7）：会话页连**壳层那一条工作区导航带**也不要
                             // （`workspace-nav-*` 计数必须为 0）。用 meta 表达页面语义、由壳层读，
@@ -649,7 +649,7 @@ router.beforeEach(async (to, from) => {
             writeTabWorkspaceId(routeWorkspaceId);
         } else if (to.name === "workspace-home") {
             const tabWorkspaceId = readTabWorkspaceId();
-            // task-34 ④（D1472 ②）：tab 上下文负责「本 tab 属于哪个工作区」，上一跳负责
+            // task-34 ④（DSD-1472 ②）：tab 上下文负责「本 tab 属于哪个工作区」，上一跳负责
             // 「停在哪一页」。两条同时成立才合成页级落点：
             //  - 上一跳**同工作区** ⇒ 按它恢复页级（会话页/环境/定时任务/资源/成员/设置）；
             //  - 上一跳**属于别的工作区** ⇒ 上下文优先，落本工作区的会话列表页

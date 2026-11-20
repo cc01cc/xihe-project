@@ -63,7 +63,7 @@ const CHROME_MAX_BANDS = 3;
 /** 行高基数：xs 行 32px；内容区起点允许 3 行 + 8px 边框内距 */
 const CHROME_ROW_HEIGHT_PX = 32;
 const CHROME_MAX_CONTENT_TOP = CHROME_MAX_BANDS * CHROME_ROW_HEIGHT_PX + 8; // 104
-/** ② composer 块高 / 视口高。task-9（D-1465）收敛后现状 = **12.33%@1920×1080 / 14.80%@1440×900**（composer 133.2px；
+/** ② composer 块高 / 视口高。task-9（DSD-1465）收敛后现状 = **12.33%@1920×1080 / 14.80%@1440×900**（composer 133.2px；
  *  改前 206.4px = 19.11%@1080 / 22.93%@900，读数见 internal/A03-xihe/evidence/2026-11-20-composer-height/README.md）。
  *  900 档是本门的绑定档：0.15 × 900 = 135px。 */
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.15;
@@ -782,7 +782,7 @@ async function readLayout(page: Page): Promise<LayoutReading> {
     return { ...(reading as Omit<LayoutReading, "frameGate">), frameGate };
 }
 
-// ── ⑥E2' 锚点取样（task-13 / D1466）────────────────────────────────────────────
+// ── ⑥E2' 锚点取样（task-13 / DSD-1466）────────────────────────────────────────────
 // 红值（new-chat 底边 95.0 vs 首个会话行顶边 76.0，倒挂 19.0px）是**两个采样缺陷叠加**，不是布局重叠：
 //   ① 首个会话行在 [data-testid="sidebar-workspace-groups"]（WorkspaceSessionGroups.vue:352，
 //      min-h-0 flex-1 overflow-y-auto）里，前序步骤（会话导航 / ⑥E1 开浮层）会把该容器滚走；
@@ -857,8 +857,8 @@ async function readNewChatAnchor(page: Page): Promise<NewChatAnchorReading> {
 // （独立会话区 + 各工作区分组内会话合计，随搜索/过滤同步），单独渲染、不拼进 t() 文案。
 //
 // 为什么不能只 `count()` 了事：0 条会话时区头照样在（恒常），所以「区头命中 1」与「计数对」是
-// 两条不同判据 —— 前者是 task-73 E4① 的可见性，后者是 D-1464 的读数一致性。
-// 取样口径沿用 readNewChatAnchor（D1466/task-13）：先等组头就位 → 过帧门 → 列表 scrollTop 归零 →
+// 两条不同判据 —— 前者是 task-73 E4① 的可见性，后者是 DSD-1464 的读数一致性。
+// 取样口径沿用 readNewChatAnchor（DSD-1466/task-13）：先等组头就位 → 过帧门 → 列表 scrollTop 归零 →
 // **一次 evaluate（rAF 对齐、连续两帧一致）**同帧读数，避免「文本早帧 / 行数晚帧」的跨帧假红。
 // 行被滚出容器的情形不影响计数（按 DOM 节点数，不按 rect）。
 interface SessionsCountReading {
@@ -1155,11 +1155,11 @@ async function runMatrix(
             )
             .toBeLessThanOrEqual(COMPOSER_MAX_VIEWPORT_RATIO);
 
-        // ②C3（doc:44）：composer 块的**不透明底盘** + 内层 tint 对齐 token（D1462 裁定后的判据形态）。
-        //    D1462 定性：容器 bg-muted/30（alpha 0.3）是刻意设计——浅灰 tint 叠在不透明底盘上，属同一方案包，不按缺口修。
+        // ②C3（doc:44）：composer 块的**不透明底盘** + 内层 tint 对齐 token（DSD-1462 裁定后的判据形态）。
+        //    DSD-1462 定性：容器 bg-muted/30（alpha 0.3）是刻意设计——浅灰 tint 叠在不透明底盘上，属同一方案包，不按缺口修。
         //    所以 doc:44 真正要守的东西拆成两层，任意一层漂移都会红（不是把阈值抹掉）：
         //      a) composer 根（data-testid=chat-composer）背景 alpha 必须 = 1 —— 块本身不透，消息列表不会从 composer 下方透出；
-        //      b) 内层 tint 必须是 --muted 的 30%（bg-muted/30）—— 对齐 D1462 方案包，改成 /10、/60 或换 token 都算偏离设计。
+        //      b) 内层 tint 必须是 --muted 的 30%（bg-muted/30）—— 对齐 DSD-1462 方案包，改成 /10、/60 或换 token 都算偏离设计。
         //    现状 InputArea.vue:1985 的 bg-muted/30 与根 bg-background 都在；行号历史 :1883 → :1970 → :1985（定位不稳按类名 bg-muted/30 grep）。
         const composerBgs = await page
             .evaluate(() => {
@@ -1185,13 +1185,13 @@ async function runMatrix(
         expect
             .soft(
                 composerRootAlpha,
-                `${tag} ②C3a composer 根背景必须不透明：实测 ${String(composerBgs?.rootColor ?? "取不到")}（alpha ${String(composerRootAlpha)}，期望 1；D1462 后内层 tint 允许半透明，底盘不允许）`,
+                `${tag} ②C3a composer 根背景必须不透明：实测 ${String(composerBgs?.rootColor ?? "取不到")}（alpha ${String(composerRootAlpha)}，期望 1；DSD-1462 后内层 tint 允许半透明，底盘不允许）`,
             )
             .toBe(1);
         expect
             .soft(
                 composerTintAlpha,
-                `${tag} ②C3b composer 内层 tint 必须等于设计值 0.3（bg-muted/30，D1462）：实测 ${String(composerBgs?.tint?.color ?? "无 tint 层")}（alpha ${String(composerTintAlpha)}，第 ${String(composerBgs?.tint?.depth ?? "-")} 层 ${String(composerBgs?.tint?.tid ?? "-")}）`,
+                `${tag} ②C3b composer 内层 tint 必须等于设计值 0.3（bg-muted/30，DSD-1462）：实测 ${String(composerBgs?.tint?.color ?? "无 tint 层")}（alpha ${String(composerTintAlpha)}，第 ${String(composerBgs?.tint?.depth ?? "-")} 层 ${String(composerBgs?.tint?.tid ?? "-")}）`,
             )
             .toBeCloseTo(0.3, 1);
 
@@ -1320,8 +1320,8 @@ async function runMatrix(
                         `${tag} ④焦点环容器同时带边框（border ${ringer?.borderTop ?? "n/a"}，shadow ${ringer?.boxShadow ?? "n/a"}）`,
                     )
                     .toBe(0);
-                // B2（doc:38 前半）：--ring 必须**等于** --primary —— 这是 D1462 裁定的设计意图，不是把判据放宽。
-                //    为什么「相等」才是真判据（D1462 / 2026-11-11 用户裁定「统一 5 个官方 base color」）：
+                // B2（doc:38 前半）：--ring 必须**等于** --primary —— 这是 DSD-1462 裁定的设计意图，不是把判据放宽。
+                //    为什么「相等」才是真判据（DSD-1462 / 2026-11-11 用户裁定「统一 5 个官方 base color」）：
                 //      · 官方默认 --ring = oklch(0.708 0 0)，对 --background 只有 2.58–2.63:1，低于焦点指示要求的 3:1；
                 //      · 统一到 --primary 后（src 内 10 处定义全部 var(--primary)），浅色主题焦点环对比约 17:1，反而更满足可见性；
                 //      · 因此判据从「两者不等」翻转成「两者相等」：有人把 --ring 改回官方灰、或只调其中一个不同步，本条立刻红。
@@ -1335,13 +1335,13 @@ async function runMatrix(
                 expect
                     .soft(
                         ringTokens.ring,
-                        `${tag} ④B2 --ring 读不到值（实测 --ring=${ringTokens.ring || "空"}，--primary=${ringTokens.primary || "空"}；D1462 要求 --ring 统一为 var(--primary)，两边都必须有值）`,
+                        `${tag} ④B2 --ring 读不到值（实测 --ring=${ringTokens.ring || "空"}，--primary=${ringTokens.primary || "空"}；DSD-1462 要求 --ring 统一为 var(--primary)，两边都必须有值）`,
                     )
                     .not.toBe("");
                 expect
                     .soft(
                         ringTokens.ring,
-                        `${tag} ④B2 --ring 必须等于 --primary（D1462：焦点环统一到 primary；实测 --ring=${ringTokens.ring || "空"}，--primary=${ringTokens.primary || "空"}）`,
+                        `${tag} ④B2 --ring 必须等于 --primary（DSD-1462：焦点环统一到 primary；实测 --ring=${ringTokens.ring || "空"}，--primary=${ringTokens.primary || "空"}）`,
                     )
                     .toBe(ringTokens.primary);
             }
@@ -1686,7 +1686,7 @@ async function runMatrix(
 
             // E2'：新建会话必须在首个会话行之上（Sidebar.vue:373-413 现状仍在搜索行 ⇒ 改前必红）
             //      task-9 注释漂移修正：旧注 :279-337 已是失效行号。
-            //      task-13（D1466）：判据/采样口径加固，红值来源与取样口径见 readNewChatAnchor 注释。
+            //      task-13（DSD-1466）：判据/采样口径加固，红值来源与取样口径见 readNewChatAnchor 注释。
             //      A 判据（底边 − 顶边 ≤ 0）**不得单独使用** —— 只挪数字就能骗过它；必须与
             //      B（new-chat 底边 ≤ 列表容器顶边）和 C（首行落在容器可视区内）在同一帧、同一
             //      scrollTop 状态下同时成立。task-120 F-8 的「0 条会话时 boundingBox 无限等待」

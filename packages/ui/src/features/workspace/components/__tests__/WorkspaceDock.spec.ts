@@ -336,7 +336,7 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
     it("keeps a sticky panel mounted across tab switches (D26-07 A)", async () => {
         // M2 spike outcome: a dynamic `<slot :name>` inside a `v-show` wrapper keeps the
         // form panel — and its editing state — alive while another tab is active.
-        // task-6（D1453）：context 退役后 sticky 只剩 agents（它同样持有创建表单）。
+        // task-6（DSD-1453）：context 退役后 sticky 只剩 agents（它同样持有创建表单）。
         const tabs = [
                 { id: "agents", label: "Agents" },
                 { id: "monitor", label: "Monitor" },
@@ -367,7 +367,7 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
     });
 
     it("no longer keeps a context panel sticky (the static tab is retired)", async () => {
-        // task-6（D1453）：退役后即使旧载荷把 "context" 塞进 tabs，也不再获得 sticky 记忆 ——
+        // task-6（DSD-1453）：退役后即使旧载荷把 "context" 塞进 tabs，也不再获得 sticky 记忆 ——
         // 否则会留下一个「看不见但一直挂着」的 SessionContextPanel 副本。
         const tabs = [
                 { id: "context", label: "context" },
@@ -537,7 +537,7 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
         const wrapper = mountDock();
         await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
 
-        // task-6（D1453）：静态面板 7 个（context 退役）+ 无会话 ⇒ 不列会话配置。
+        // task-6（DSD-1453）：静态面板 7 个（context 退役）+ 无会话 ⇒ 不列会话配置。
         expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(7);
         // task-140：手写 div 换成 reka 原语后，角色与键盘（Esc / 上下键 / roving focus）
         // 都由原语给；这里钉住契约，防止有人为了「少一层组件」再退回裸 div。

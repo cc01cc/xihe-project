@@ -41,7 +41,7 @@ export function workspaceMembersPath(workspaceId: string): string {
 }
 
 /**
- * task-34 / D1472 ②：工作区**页级**地址（页 id 取自路由 `meta.workspacePage.id`）。
+ * task-34 / DSD-1472 ②：工作区**页级**地址（页 id 取自路由 `meta.workspacePage.id`）。
  *
  * <p><b>为什么这里要有一份页 id 清单</b>：上一跳（`lib/lastLocation.ts`）必须能把「停在哪一页」
  * 复原成地址，而它跑在 router 之外（router 反过来 import 它）⇒ 不能读 `router.resolve`。

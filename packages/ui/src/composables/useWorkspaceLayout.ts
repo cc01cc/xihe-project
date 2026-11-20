@@ -81,7 +81,7 @@ export const DOCK_INLINE_MIN_VIEWPORT = 1800;
 /**
  * Dock tabs that have a panel implementation today (S3 adds `approval`).
  *
- * task-6（`D1453` / N-6 选 A）：`context`（会话设置的静态面板页签）**已退役** —— 会话设置
+ * task-6（`DSD-1453` / N-6 选 A）：`context`（会话设置的静态面板页签）**已退役** —— 会话设置
  * 只经 `pane:<container>:session-config:<sid>` 容器页签（摘要行 / 右栏重开菜单 / 中栏「+」
  * 三条入口开的都是它），面板本体仍是同一份 `SessionContextPanel`。`approval` stays a
  * reserved name: approvals keep the modal (D26-14).

@@ -724,7 +724,7 @@ function activateDockTab(id: DockTabId, container: ContainerId): void {
 
 /** Opening a tab that is already open keeps it, activates it and expands the dock. */
 function openDockTab(id: DockTabId): void {
-    // task-6（D1453）：静态 context 页签退役后，任何按旧 id 的调用（旧载荷回放、exposed
+    // task-6（DSD-1453）：静态 context 页签退役后，任何按旧 id 的调用（旧载荷回放、exposed
     // 手写调用）都不许把页签塞回页签行 —— 值域校验是这条红线的唯一落点。
     if (!isDockTabId(id)) return;
     const tabs = layout.value.dockTabs;
@@ -972,7 +972,7 @@ watch(
 
 /**
  * D-1907 rev10：聊天列摘要行（`session-settings-summary`）是**会话配置页签的快捷开关**，
- * 不再是 context 面板的本体入口（task-6 / D1453 起该静态页签已退役）—— 点一下在右栏容器里开
+ * 不再是 context 面板的本体入口（task-6 / DSD-1453 起该静态页签已退役）—— 点一下在右栏容器里开
  * `pane:right:session-config:<sid>`，也就是会话设置今天唯一的面板页签。
  *
  * <p>「已开则聚焦、不重复开」**不在这里判**：`openDockTab` 的 `tabs.includes` 就是唯一判定

@@ -187,7 +187,7 @@ const hasAnyVisibleSession = computed(
 );
 
 /**
- * task-172 / `D-1464`：左栏**当前渲染**的会话行总数（Sidebar 的会话区头计数只读这一个值）。
+ * task-172 / `DSD-1464`：左栏**当前渲染**的会话行总数（Sidebar 的会话区头计数只读这一个值）。
  *
  * <p>纯派生：不取数、不改状态，逐条镜像本模板的分支条件 —— 只有「真的渲染出 `SessionList`
  * 的那几支」才计行，所以：① 顶层四块（loading / error / 无工作区且无独立会话 / 搜索零命中）
@@ -343,7 +343,7 @@ defineExpose({
     isExpanded,
     standaloneExpanded,
     loadStandalone,
-    // task-172 / `D-1464`：左栏会话区头的计数源（纯派生读数，见上面的注释）。
+    // task-172 / `DSD-1464`：左栏会话区头的计数源（纯派生读数，见上面的注释）。
     renderedSessionCount,
 });
 </script>

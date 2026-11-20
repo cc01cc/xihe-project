@@ -67,7 +67,7 @@ const i18n = createI18n({
                 panelAgents: "Agents",
                 panelDelegation: "Delegation",
                 // task-129（D-1907 rev10）/ task-6：会话配置容器页签的标签键；旧静态 context 页签的
-                // panelContext 已随页签退役删除（task-6 / D1453）。
+                // panelContext 已随页签退役删除（task-6 / DSD-1453）。
                 panelSessionConfig: "Session config",
                 toggleDelegation: "Toggle delegation",
                 closePanel: "Close the auxiliary panel",
@@ -588,7 +588,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         });
     });
 
-    it("no longer opens a context tab through openDockTab (task-6 / D1453)", async () => {
+    it("no longer opens a context tab through openDockTab (task-6 / DSD-1453)", async () => {
         // task-6：静态 context 页签退役 ⇒ 值域外 id 一律拒绝。判据是「页签行里不出现、
         // 也没有 hidden 的 sticky 副本」——会话信息只走 pane:right:session-config:<sid>。
         const wrapper = mountWorkbench();

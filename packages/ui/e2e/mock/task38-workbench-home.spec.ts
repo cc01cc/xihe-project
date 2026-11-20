@@ -142,7 +142,7 @@ test.describe("workbench detail page (task-38)", () => {
     });
 });
 /**
- * task-34（D1472 ②）：`/workbench` 恢复的是**上一跳落下的那一页**（页级，不是「工作区根」）。
+ * task-34（DSD-1472 ②）：`/workbench` 恢复的是**上一跳落下的那一页**（页级，不是「工作区根」）。
  *
  * <p>四个面各一条：① 裸工作区上一跳（page = environment）⇒ 落在该工作区环境页；② 会话页上一跳
  * ⇒ 落在会话页；③ 上一跳属于别的工作区而本 tab 上下文是 A ⇒ **上下文优先**，落 A 的工作区页
@@ -283,7 +283,7 @@ test.describe("workbench landing restores the last visited workspace page (task-
         await expect(page).toHaveURL(/\/workbench$/);
     });
 });
-test.describe("task-34（D1476 ③）：真导航进内容页 ⇒ 回 /workbench 落回该页", () => {
+test.describe("task-34（DSD-1476 ③）：真导航进内容页 ⇒ 回 /workbench 落回该页", () => {
     test("环境页 ⇒ 冷启 /workbench 仍停在环境页（不是会话页、也不是 picker）", async ({ page }) => {
         await openWorkbenchWithSeed(page, {});
         await expect(page.getByTestId("workspace-picker")).toBeVisible({

@@ -44,7 +44,7 @@ export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
 /**
  * task-138：`session-config` 容器页签的 i18n key。
  *
- * <p>task-6（`D1453` / N-6 选 A）之后它是**会话设置唯一的面板页签**：旧的静态 `context`
+ * <p>task-6（`DSD-1453` / N-6 选 A）之后它是**会话设置唯一的面板页签**：旧的静态 `context`
  * 页签（与 `workspace.panelContext`）已退役，两者本体本就是同一份 `SessionContextPanel`。
  * 名字仍单独一条而**不是**复用旧 key ——`panelContext` 已随页签删除（i18n 无残留），
  * 产品文案也一直分称「会话设置」（页签内标题）/「会话配置」（页签标签）。</p>

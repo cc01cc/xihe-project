@@ -77,7 +77,7 @@ describe("task-69 · workTabs 三元组 id", () => {
             ":chat",
             "panel:",
             "panel:bogus",
-            // task-6（D1453）：context 视图随静态页签退役，旧 id 不再是合法三元组。
+            // task-6（DSD-1453）：context 视图随静态页签退役，旧 id 不再是合法三元组。
             "session:s1:context",
             "environment",
             "settings",
