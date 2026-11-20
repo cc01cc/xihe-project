@@ -8,7 +8,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
-import { expectRekaValue } from "./helpers/reka-select";
+import { copyForKey } from "../helpers/select";
 
 /**
  * PLAN-0337 M1 真实链路验收（@host）：
@@ -97,6 +97,27 @@ async function resolvedApprovalMode(request: APIRequestContext, auth: Auth): Pro
         value = body.mode;
     return typeof value === "string" ? value : "";
 }
+
+/**
+ * 语言包文案（task-24 / D-1908 二）：模式读数改钉摘要行后，断言文案从 i18n 取**当前语言副本**
+ * （e2e/helpers/select.ts 的 copyForKey），不再抄中文/英文常量 —— 语言包改词时这里跟着变，
+ * 硬编码副本会在改词后静默假绿（copyForKey 返回 null 时本函数直接抛，不会退化成空串匹配）。
+ */
+function copyOf(key: string): string {
+    const text = copyForKey(key);
+    if (!text) {
+        throw new Error("语言包缺键 " + key + "（e2e/helpers/select.ts copyForKey 返回 null）");
+    }
+    return text;
+}
+
+/** 档位三档文案的 i18n 键（sessionSettings.tierView|tierWorkspace|tierFull）：
+ *  D-1908 二之后面板里的活写入口只剩三档选择器 `session-tier-select`，它的读数是这三者之一。 */
+const TIER_COPY_KEYS = [
+    "sessionSettings.tierView",
+    "sessionSettings.tierWorkspace",
+    "sessionSettings.tierFull",
+] as const;
 
 test.describe.configure({ retries: 0 });
 
@@ -201,9 +222,30 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
     // PLAN-0626 M2：模式选择器迁进右侧 dock 的 `context` 标签，聊天列摘要行只是入口；
     // 帮助器返回时面板已可见，不再需要点完再等。
     await openContextPanel(page);
-    // BL-547（task-175）：模式控件是 reka Select，触发器是 button —— `toHaveValue` 会以
-    // "Not an input element" 失败。改为断言触发器可见文本（= 当前选中项标签）。
-    await expectRekaValue(page.getByTestId("session-policy-mode"), /自动放行|Auto allow/);
+    // task-24（D-1908 二）跟改：面板里的独立审批模式下拉 `session-policy-mode` 已退役 ——
+    // 唯一持有者 SessionPolicyControls.vue 无任何 import（死组件），模式降级为**档位的派生值**，
+    // 页面上的读数落在 32px 摘要行 `session-settings-summary-approval`
+    // （SessionSettingsPanel.vue:219 渲染 chat.approvalModeLabel + modeLabel，:66-67 由 mode 派生）。
+    // 断言没有放宽：文案仍是「当前模式副本」（copyOf 从语言包取，键不存在直接抛），只是从已经不渲染的
+    // trigger 换到真正承载该值的节点；同时反向钉住「面板不再承载模式写入口」。
+    const modeReading = page.getByTestId("session-settings-summary-approval");
+    await expect(modeReading).toContainText(copyOf("chat.approvalModeAuto"), {
+        timeout: EXPECT_TIMEOUT_MS,
+    });
+    // ② 面板内活的写入口 = 三档选择器 `session-tier-select`（D-1908 二：模式下拉退役后它接手写面；
+    //    读数只可能是三档文案之一 —— 面板开出来但控件没渲染 / 渲染成空壳都会红）。
+    const tierSelect = page.getByTestId("session-tier-select");
+    await expect(tierSelect, "面板内活的写入口 = 三档选择器（取代已退役的模式下拉）").toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
+    const tierText = (await tierSelect.innerText()).trim();
+    expect(
+        TIER_COPY_KEYS.map((key) => copyOf(key)),
+        "档位选择器读数应命中三档文案之一（实测 " + JSON.stringify(tierText) + "）",
+    ).toContain(tierText);
+    // ③ 反向钉住「面板不再承载独立模式写入口」：两个退役 testid 必须 0 命中（task-25 删文件本体后仍然成立）。
+    await expect(page.getByTestId("session-policy-mode")).toHaveCount(0);
+    await expect(page.getByTestId("session-policy-mode-readonly")).toHaveCount(0);
     await expect(page.getByTestId("session-policy-auto-banner")).toBeVisible();
 
     await page.screenshot({
@@ -221,7 +263,14 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
         timeout: LONG_TIMEOUT_MS,
     });
     await openContextPanel(page);
-    await expectRekaValue(page.getByTestId("session-policy-mode"), /手动审批|Manual approval/);
+    // 同上（task-24）：reload 后从 DB 读回的 manual 必须体现在摘要行读数上；
+    // 活写入口（三档选择器）仍在位，两个退役 testid 仍须 0 命中。
+    await expect(modeReading).toContainText(copyOf("chat.approvalModeManual"), {
+        timeout: EXPECT_TIMEOUT_MS,
+    });
+    await expect(tierSelect).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    await expect(page.getByTestId("session-policy-mode")).toHaveCount(0);
+    await expect(page.getByTestId("session-policy-mode-readonly")).toHaveCount(0);
     await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0);
 
     await page.screenshot({

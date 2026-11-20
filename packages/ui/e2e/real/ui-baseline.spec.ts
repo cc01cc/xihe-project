@@ -112,7 +112,12 @@ const HIT_MIN_PX = 28;
  *  SSE limit 横幅是运行态提示而非常驻 chrome。两者都照原样记进 bands 供诊断，但不算顶带层数/高度。 */
 const CHROME_EXCLUDED_KEYS = ["session-settings-summary", "sse-subscriber-limit-notice"];
 /**
- * ⑤F5'（task-9）：桌面六颗面板图标的 testid —— D-1907 图标簇收敛后**已全仓退役**（src 内 0 命中）。
+ * ⑤F5'（task-9 建，task-24 复核）：桌面**历史**面板图标 testid 清单，六个 id **全部**由
+ * 1407521e3（refactor(ui): 面板图标入口收敛到右栏「+」(task-137/D-1907)）一次性从 src 删除，
+ * 现 src 内 0 命中 ⇒ 本清单是**墓碑**：期望计数恒 = 0，作用是「旧 id 不得复活」这条回归。
+ * task-24 复核口径：不按 id 逐个裁撤（六个同属一个退役提交，只删其中一颗会让清单既不全也不一致），
+ * 改为在 ⑤F5' 里**同时**补正向锚点「唯一开合入口 workspace-dock-toggle = 1」——
+ * 墓碑门挡不住「换一套新图标簇回来」，正向锚点挡得住（见 :1394 附近断言）。
  * 判据只数这六个精确 id：前缀 workspace-toolbar-* 不能当口径 —— 它同时命中 3 个移动态控件
  * （WorkspaceToolbar.vue:121 files-mobile / :132 new-chat-mobile / :147 more-mobile，父容器 :100-103 带 md:hidden）
  * 与 FileTreePanel.vue:367 面板内折叠钮（workspace-toolbar-toggle-tree），DOM 恒 ≥4 个 ⇒ 前缀计数门恒红，
@@ -750,8 +755,9 @@ async function readLayout(page: Page): Promise<LayoutReading> {
             ).length,
             // 右栏展开态的第二个判据：D-1907 rev3 要求开合由「唯一 aria-pressed 图标」表达（现状是六面板图标）
             ariaPressedTrue: document.querySelectorAll('[aria-pressed="true"]').length,
-            // 顶部六面板图标（files/code/changes/monitor/members/delegation；D-1907 后 src 内已退役，
-            // 这里保留字面量清单给 rect 可见读数用，判据清单见 RETIRED_PANEL_ICON_IDS）
+            // 顶部历史面板图标（files/code/changes/monitor/members/delegation；六个 id 由 1407521e3
+            // task-137/D-1907 一次性删除，src 内 0 命中）。这里保留字面量清单只为 rect 可见读数
+            // （诊断打印，现状恒空）；判据与墓碑口径见 RETIRED_PANEL_ICON_IDS 注释。
             visiblePanelIcons: [
                 "workspace-toolbar-files",
                 "workspace-toolbar-code",
@@ -1391,6 +1397,22 @@ async function runMatrix(
                     `${tag} ⑤F5' 展开态顶部仍有 ${panelIconCount} 个已退役面板图标（阈值 0；前缀 workspace-toolbar-* 的 DOM 共 ${toolbarPrefixDomCount} 个 = 移动态控件 + 文件面板折叠钮，不计入判据；rect 可见读数 ${layout.visiblePanelIcons.join(",") || "无"} 归属卡 task-102 F5'）`,
                 )
                 .toBe(0);
+            // task-24（D-1907）：墓碑门（数已退役 id = 0）天然趋于恒真 —— id 删干净后就永远为 0，
+            // 挡不住「换一套新图标簇回来」。故配一条**正向**锚点：展开态唯一开合入口
+            // [data-testid=workspace-dock-toggle] 恰好 1 个且 aria-pressed="true"（= 右栏当前展开；
+            // 控件由 WorkspaceWorkbench.vue:1241 渲染，:aria-pressed="dockOpen"）。
+            // 与 task-137 mock 侧「唯一开合入口 = 1」同口径：入口被复制成两个、被换成第二套面板图标簇、
+            // 或 aria-pressed 与展开态脱钩，本条立刻红。
+            const expandedToggle = page.locator(
+                `[data-testid="${DOCK_TOGGLE_TESTID}"][aria-pressed="true"]`,
+            );
+            const expandedToggleCount = await expandedToggle.count();
+            expect
+                .soft(
+                    expandedToggleCount,
+                    `${tag} ⑤F5' 展开态唯一开合入口 [data-testid=${DOCK_TOGGLE_TESTID}][aria-pressed=true] 命中 ${expandedToggleCount} 个（阈值 =1；D-1907 图标簇收敛后唯一入口 = 该开合图标，旧六图标 testid 见 RETIRED_PANEL_ICON_IDS 期望 0；归属卡 task-24）`,
+                )
+                .toBe(1);
             // D4：点已激活的 right 页签不得关整列
             const activeTab = page.locator('[data-testid^="dock-tab-"][aria-selected="true"]');
             const activeTabHit = await activeTab.count();
