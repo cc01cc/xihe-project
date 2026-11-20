@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigLockRepository;
@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PLAN-0556: the admin-only HTTP surface — catalog, lock/unlock, revision
  * conflict, NOT_LOCKABLE, and the non-admin 403 that must not leak key names.
  */
-class ConfigLockControllerTest extends AbstractH2Test {
+class ConfigLockControllerTest extends AbstractIntegrationTest {
 
     @Autowired
     private ConfigLockRepository lockRepo;

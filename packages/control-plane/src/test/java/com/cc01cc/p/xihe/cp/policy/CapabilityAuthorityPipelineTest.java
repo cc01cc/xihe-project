@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -51,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code canWorkspaceAdmin} back to false inside the same request window, because the materializer
  * invalidates the cache while it writes instead of letting the 30 s TTL expire.</p>
  */
-class CapabilityAuthorityPipelineTest extends AbstractH2Test {
+class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
 
     private static final String INTERNAL_TOKEN = "dev-token-not-secure";
 

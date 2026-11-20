@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 400 DOMAIN_NOT_WORKSPACE_WRITABLE on a non-writable domain, DELETE clearing one
  * row so the chain inherits again, and the raw layer read for non-admins.
  */
-class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
+class ConfigWorkspaceDefaultLayerTest extends AbstractIntegrationTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.config.JwtTokenProvider jwtTokenProvider;

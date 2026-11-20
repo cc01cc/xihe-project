@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -35,8 +35,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>{@code follow-ups}, {@code monitor} and {@code /events} are deliberately NOT opened; the
  * reasons are recorded in {@code DEV-014} (BL-299).
+ *
+ * <p>task-118 (DSD-1502, this class moved from the H2 lane to the PostgreSQL lane): the write face
+ * answered {@code 404 SESSION_NOT_FOUND} on H2 because {@code SessionReadAccess.resolve} fails closed
+ * there (the {@code org_unit_members} lookup behind {@code RequesterAuthority} has no table in the
+ * H2 shim, so every atom resolves to the empty set and the session looks invisible). On PostgreSQL
+ * the caller is visible, so task-108's guard answers {@code 403 NOT_SESSION_OWNER}; that is the
+ * intended contract now and the assertions below read it.
  */
-class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
+class SessionAuxReadFacesParticipantTest extends AbstractIntegrationTest {
 
     private static final String SESSION_NOT_FOUND = "SESSION_NOT_FOUND";
 
@@ -141,8 +148,10 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
      * answer different questions:
      * <ul>
      *   <li><b>EDITOR non-owner</b> (write-capable workspace member, not the session owner): the
-     *       session owner-only guard answers the single {@code 404 SESSION_NOT_FOUND}, so the face
-     *       is not an existence oracle;</li>
+     *       session permission guard (task-108) answers {@code 403 NOT_SESSION_OWNER} — the caller
+     *       may see the session but may not widen it. Before task-108 this face used
+     *       {@code requireCurrent} and answered {@code 404 SESSION_NOT_FOUND}; that 404 is what the
+     *       H2 lane still produced (fail-closed, not the contract);</li>
      *   <li><b>VIEWER</b> (read-only workspace): the workspace write gate answers
      *       {@code 403 WORKSPACE_READ_ONLY} before the controller runs, which is the actionable
      *       answer for that caller.</li>
@@ -155,7 +164,10 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
         Reply refused = send(participantToken, "POST", "/api/v1/policy/mode",
                 """
                 {"sessionId":"%s","mode":"auto"}""".formatted(sessionId), workspaceId);
-        assertNotFound(refused);
+        assertEquals(403, refused.status(), refused.body().toString());
+        assertEquals("NOT_SESSION_OWNER", refused.body().path("code").asText(),
+                "task-108: widening a session is owner-only, and the refusal carries the guard's own "
+                        + "reason code: " + refused.body());
 
         Reply viewerRefused = send(viewerToken, "POST", "/api/v1/policy/mode",
                 """
@@ -208,7 +220,7 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
     private static void assertNotFound(Reply reply) {
         assertEquals(404, reply.status(), reply.body().toString());
         assertEquals(SESSION_NOT_FOUND, reply.body().path("code").asText(),
-                "the not-区分 404 must not become an existence oracle: " + reply.body());
+                "the non-owner 404 must not become an existence oracle: " + reply.body());
     }
 
     private Reply send(String token, String method, String path, String body, String workspace)

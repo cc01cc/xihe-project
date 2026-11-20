@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -54,7 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * kernel uses). Each test keeps the positive control so the fix cannot be mistaken for "the gate
  * now denies everything".</p>
  */
-class CrossWorkspaceGrantGateTest extends AbstractH2Test {
+class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
 
     private static final String REFUSED_CODE = "FORBIDDEN";
 
@@ -134,10 +134,12 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
     @Test
     void scopedRowsAreVisibleInSqlSoTheFixIsProvable() {
         Fixture fixture = fixture("sql");
-        UUID ownerRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_OWNER)
-                .orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(ownerRoleId, "user", fixture.userId(),
-                AccessScope.WORKSPACE, fixture.workspaceA(), fixture.userId()));
+        // task-118: the fixture already owns workspace A, so re-binding here must stay idempotent.
+        // The previous hand-rolled bindingRepository.save() produced a SECOND workspace binding row
+        // for the same (user, workspace) pair: H2's create-drop has no uq_role_bindings, so it
+        // passed there, while PostgreSQL rejects the duplicate key. bindWorkspaceRole() deletes the
+        // existing workspace-scope binding first, so the intended post-state is identical.
+        workspaceFixture.bindWorkspaceRole(fixture.workspaceA(), fixture.userId(), WorkspaceRole.OWNER);
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
 
         List<AuthorizationGrant> inA = grantRepository.findScopedGrants("user", fixture.userId(),
@@ -178,14 +180,10 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         workspaceFixture.bindWorkspaceRole(workspaceA.getId().toString(), owner, WorkspaceRole.OWNER);
         workspaceFixture.bindWorkspaceRole(workspaceB.getId().toString(), owner, WorkspaceRole.VIEWER);
 
-        UUID ownerRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_OWNER)
-                .orElseThrow().getId();
-        UUID viewerRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_VIEWER)
-                .orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(ownerRoleId, "user", user.getId(),
-                AccessScope.WORKSPACE, workspaceA.getId(), user.getId()));
-        bindingRepository.save(new AccessRoleBinding(viewerRoleId, "user", user.getId(),
-                AccessScope.WORKSPACE, workspaceB.getId(), user.getId()));
+        // task-118: bindWorkspaceRole() above already wrote (and materialized) the OWNER binding in A
+        // and the VIEWER binding in B. The extra manual saves that used to sit here added duplicate
+        // rows for the same pairs -- invisible on H2 (no uq_role_bindings) and a duplicate-key error
+        // on PostgreSQL. The materialization below is kept because later assertions read the rows.
         materializer.materializeSubject("user", user.getId(), user.getId(), null);
 
         assertFalse(grantRepository.findScopedGrants("user", user.getId(),
@@ -197,8 +195,13 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
     }
 
     private void bindAtomInWorkspace(UUID userId, UUID workspaceId, String actionClass) {
+        // task-118 (DSD-1502): the role name must satisfy ck_roles_name_format
+        // (V87__dynamic_access_roles.sql:26: ^[A-Z][A-Z0-9_]{1,63}$). H2 has no such constraint, so the
+        // old "GATE_" + actionClass + roleId spelling only blew up once this class moved to the PG lane.
         UUID roleId = UUID.randomUUID();
-        accessRoleRepository.save(new AccessRole(roleId, "GATE_" + actionClass + "_" + roleId,
+        String roleSuffix = actionClass.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9_]", "_");
+        String roleToken = roleId.toString().replace("-", "").substring(0, 8).toUpperCase(java.util.Locale.ROOT);
+        accessRoleRepository.save(new AccessRole(roleId, "GATE_" + roleSuffix + "_" + roleToken,
                 "Gate test role", "test-only role carrying one 'both' atom", false));
         permissionRepository.save(new AccessRolePermission(roleId, actionClass,
                 PermissionAtomCatalog.WILDCARD));

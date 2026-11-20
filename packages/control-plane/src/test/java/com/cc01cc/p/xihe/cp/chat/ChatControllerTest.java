@@ -23,13 +23,12 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.TaskScheduler;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
-import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
@@ -95,8 +94,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("h2")
-class ChatControllerTest extends AbstractH2Test {
+class ChatControllerTest extends AbstractIntegrationTest {
 
     @Autowired
     private UserRepository userRepository;
@@ -588,7 +586,16 @@ class ChatControllerTest extends AbstractH2Test {
         Message assistantMsg = messages.stream().filter(m -> m.getRole() == MessageRole.ASSISTANT).findFirst().orElse(null);
         assertNotNull(assistantMsg, "Assistant reply should be persisted");
         assertEquals("hello", assistantMsg.getContent());
-        ChatRun run = chatRunRepository.findById(UUID.fromString((String) response.getBody().get("runId"))).orElseThrow();
+        // task-118 (DSD-1502): the terminal commits the run status right after the assistant message,
+        // so one immediate read raced on the PG lane (this body never executed on H2: setUp threw).
+        // Await the same terminal state the class pins elsewhere, then keep every downstream assertion.
+        String attachedRunId = (String) response.getBody().get("runId");
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            ChatRun settled = chatRunRepository.findById(UUID.fromString(attachedRunId)).orElseThrow();
+            assertEquals("succeeded", settled.getStatus());
+            assertEquals("success", settled.getTerminalOutcome());
+        });
+        ChatRun run = chatRunRepository.findById(UUID.fromString(attachedRunId)).orElseThrow();
         assertEquals("succeeded", run.getStatus());
         assertEquals("success", run.getTerminalOutcome());
         assertEquals(userMsg.getId().toString(), run.getUserMessageId());
@@ -965,9 +972,14 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.NOT_FOUND, malformed.getStatusCode());
         assertEquals("RUN_NOT_FOUND", malformed.getBody().get("code"));
 
-        ChatRun foreign = new ChatRun(UUID.randomUUID().toString(), sessionId, UUID.randomUUID().toString(),
-                workspaceId, "foreign-" + UUID.randomUUID(), "hash-foreign", "custom-openai-compatible",
-                "wire-model", "none", "running");
+        // task-118: a real user row for the foreign run. A random UUID satisfied H2 (create-drop has
+        // no fk_chat_runs_user) and PostgreSQL refuses it with
+        // "insert or update on table \"chat_runs\" violates foreign key constraint \"fk_chat_runs_user\"".
+        User foreignOwner = userRepository.save(new User(
+                "chat-ctrl-foreign-" + UUID.randomUUID() + "@test.com", "hash", "Foreign Owner"));
+        ChatRun foreign = new ChatRun(UUID.randomUUID().toString(), sessionId,
+                foreignOwner.getId().toString(), workspaceId, "foreign-" + UUID.randomUUID(),
+                "hash-foreign", "custom-openai-compatible", "wire-model", "none", "running");
         foreign.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
         chatRunRepository.saveAndFlush(foreign);
         ResponseEntity<Map> forbidden = restTemplate.exchange(
@@ -1626,9 +1638,15 @@ class ChatControllerTest extends AbstractH2Test {
 
         List<Message> messages = pollMessages(5000);
         assertTrue(messages.stream().anyMatch(message -> "possibly charged".equals(message.getContent())));
-        ChatRun run = chatRunRepository.findById(UUID.fromString((String) first.getBody().get("runId"))).orElseThrow();
-        assertEquals("ambiguous", run.getStatus());
-        assertEquals("ambiguous", run.getTerminalOutcome());
+        // task-118 (DSD-1502): the ambiguous terminal is committed asynchronously after the last
+        // message lands, so a single read raced on the PG lane (this body was dead on H2: setUp threw).
+        // Await the same terminal state; neither expected value changes, only the read stops racing.
+        String ambiguousRunId = (String) first.getBody().get("runId");
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            ChatRun settled = chatRunRepository.findById(UUID.fromString(ambiguousRunId)).orElseThrow();
+            assertEquals("ambiguous", settled.getStatus());
+            assertEquals("ambiguous", settled.getTerminalOutcome());
+        });
 
         ResponseEntity<Map> duplicate = restTemplate.exchange(
                 baseUrl + "/api/v1/chat", HttpMethod.POST,
@@ -1720,10 +1738,17 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.BAD_REQUEST, missing.getStatusCode());
         assertEquals("ATTACHMENT_NOT_FOUND", missing.getBody().get("code"));
 
+        // task-118: a real second Session row. A random UUID satisfied H2 (create-drop has no
+        // fk_files_session), while PostgreSQL refuses the orphan attachment with
+        // "insert or update on table \"files\" violates foreign key constraint \"fk_files_session\"".
+        com.cc01cc.p.xihe.cp.entity.Session otherSession =
+                new com.cc01cc.p.xihe.cp.entity.Session(workspaceId, userId, "Other session");
+        otherSession.setId(UUID.randomUUID());
+        UUID otherSessionId = sessionRepository.saveAndFlush(otherSession).getId();
         com.cc01cc.p.xihe.cp.entity.File otherSessionFile =
                 new com.cc01cc.p.xihe.cp.entity.File(userId, "other-session.txt", "unused-path");
         otherSessionFile.setWorkspaceId(workspaceId);
-        otherSessionFile.setSessionId(UUID.randomUUID().toString());
+        otherSessionFile.setSessionId(otherSessionId.toString());
         otherSessionFile.setMimeType("text/plain");
         otherSessionFile.setSizeBytes(1);
         otherSessionFile = fileRepository.save(otherSessionFile);
@@ -1959,6 +1984,30 @@ class ChatControllerTest extends AbstractH2Test {
         }
     }
 
+    /**
+     * task-118: {@code jsonb::text} on PostgreSQL re-inserts a space after every ':' and ',' (H2's
+     * PostgreSQL mode prints the compact form), so assertions written as
+     * {@code contains("\"costSource\":\"price_table\"")} silently stop matching when the class
+     * moves off H2. Re-serialising through Jackson yields the same compact text the assertions were
+     * written against, without loosening any of them.
+     */
+    private String compactJson(String raw) {
+        try {
+            return objectMapper.writeValueAsString(objectMapper.readTree(raw));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("payload is not JSON: " + raw, e);
+        }
+    }
+
+    /** Cost as a decimal from the persisted llm.usage payload (jsonb text may render it as 6.54E-5). */
+    private java.math.BigDecimal usageCost(String payload) {
+        try {
+            return objectMapper.readTree(payload).path("usage").path("cost").decimalValue();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("usage payload is not JSON: " + payload, e);
+        }
+    }
+
     /** PLAN-0464 T1.4: reads the run-scoped llm.usage ContextEvent written at terminal. */
     private String usageEventPayload(String runId) {
         String payload = jdbcTemplate.query(
@@ -1966,7 +2015,7 @@ class ChatControllerTest extends AbstractH2Test {
                         + "WHERE correlation_id = ? AND event_type = 'llm.usage'",
                 rs -> rs.next() ? rs.getString(1) : null, runId);
         assertNotNull(payload, "the terminal must have written the llm.usage ContextEvent");
-        return payload;
+        return compactJson(payload);
     }
 
     private List<Message> pollMessages(long timeoutMs) {
@@ -2088,7 +2137,12 @@ class ChatControllerTest extends AbstractH2Test {
             String payload = usageEventPayload(runId);
             assertTrue(payload.contains("\"costSource\":\"price_table\""),
                     "mapped payload must carry costSource=price_table");
-            assertTrue(payload.contains("\"cost\":0.0"), "mapped payload must carry computed cost");
+            // task-118 (DSD-1502): the cost assertion used to read contains("\"cost\":0.0"), which this
+            // class never exercised on the H2 lane. The real product computes 120 tok x 0.27/MTok +
+            // 30 tok x 1.10/MTok = 0.0000654 and jsonb renders it as 6.54E-5, so compare numerically
+            // instead of matching text: this pins the same value the price table implies, no loosening.
+            assertEquals(0, new java.math.BigDecimal("0.0000654").compareTo(usageCost(payload)),
+                    "mapped payload must carry the computed cost: " + payload);
             assertTrue(payload.contains("deepseek/deepseek-v4-flash"),
                     "mapped payload must carry the model key");
         });
@@ -2883,8 +2937,9 @@ class ChatControllerTest extends AbstractH2Test {
     /** Number of durable {@code wake_dispatch} rows for one participant with one outcome. */
     private java.util.List<String> wakeDispatchPayloads() {
         return jdbcTemplate.queryForList(
-                "SELECT payload::text FROM context_events WHERE event_type = 'wake_dispatch' "
-                        + "AND CAST(session_id AS VARCHAR) = ?", String.class, sessionId);
+                        "SELECT payload::text FROM context_events WHERE event_type = 'wake_dispatch' "
+                                + "AND CAST(session_id AS VARCHAR) = ?", String.class, sessionId)
+                .stream().map(this::compactJson).toList();
     }
 
     private long wakeDispatchRows(String participantId, String outcome) {
@@ -3114,6 +3169,7 @@ class ChatControllerTest extends AbstractH2Test {
                 String.valueOf(body.get("messageId")));
         java.util.Objects.requireNonNull(delivery,
                 "②：发送者自己那条消息必须带上投影；NULL 就是改之前那种「只有日志」的静默行为");
+        delivery = compactJson(delivery);
         assertTrue(delivery.contains("\"unresolved\""),
                 "打错的名字必须出现在发送者那条消息上，实际=" + delivery);
         assertTrue(delivery.contains("@GhostWriterZ"),
