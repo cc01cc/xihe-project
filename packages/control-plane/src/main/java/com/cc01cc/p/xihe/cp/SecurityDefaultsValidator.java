@@ -56,6 +56,9 @@ public final class SecurityDefaultsValidator {
         return property != null ? property : System.getenv(key);
     }
 
+    /** DSD-1491 ②: explicit dev-stack opt-out; ignored once {@code XIHE_ENV=prod}. */
+    private static final String DATASOURCE_PASSWORD_OPT_OUT = "XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK";
+
     static List<String> collectViolations(Function<String, String> lookup) {
         List<String> violations = new ArrayList<>();
         String jwtSecret = lookup.apply("XIHE_CP_JWT_SECRET");
@@ -99,10 +102,27 @@ public final class SecurityDefaultsValidator {
             violations.add("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY: required in prod "
                     + "(provide a base64 32-byte HMAC key)");
         }
+        // DSD-1491 ② (task-98): the packaged launcher always injects XIHE_CP_DATASOURCE_PASSWORD
+        // (Launcher cpEnv); the dev stack keeps PostgreSQL passwordless (host auth `trust`) and
+        // must opt out explicitly. The opt-out never applies in prod.
+        if (isBlank(lookup.apply("XIHE_CP_DATASOURCE_PASSWORD")) && !devOnlyBlankPasswordOptOut(lookup)) {
+            violations.add("XIHE_CP_DATASOURCE_PASSWORD: required in prod "
+                    + "(provide the database password the control plane connects with)");
+        }
         return violations;
     }
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /**
+     * DSD-1491 ②: development stacks run PostgreSQL passwordless ({@code POSTGRES_HOST_AUTH_METHOD:
+     * trust}), so a blank database password is normal there and only silenced through an explicit
+     * switch. In prod the switch is ignored: {@code XIHE_CP_DATASOURCE_PASSWORD} stays mandatory.
+     */
+    private static boolean devOnlyBlankPasswordOptOut(Function<String, String> lookup) {
+        return !PROD_ENV_NAME.equals(lookup.apply("XIHE_ENV"))
+                && "true".equalsIgnoreCase(lookup.apply(DATASOURCE_PASSWORD_OPT_OUT));
     }
 }

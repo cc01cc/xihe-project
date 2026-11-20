@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,9 @@ class SecurityDefaultsValidatorTest {
         "XIHE_CP_PROVIDER_CREDENTIALS_KEY",
         "XIHE_CP_CREDENTIALS_KEY",
         "XIHE_CP_CREDENTIALS_KEY_RING",
-        "XIHE_CP_CREDENTIALS_FINGERPRINT_KEY"
+        "XIHE_CP_CREDENTIALS_FINGERPRINT_KEY",
+        "XIHE_CP_DATASOURCE_PASSWORD",
+        "XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK"
     };
 
     @AfterEach
@@ -47,8 +50,9 @@ class SecurityDefaultsValidatorTest {
                     "XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "true");
             return values.get(key);
         });
-        // 6 explicit insecure values + 4 empty-required secrets.
-        assertEquals(10, violations.size());
+        // 6 explicit insecure values + 5 empty-required secrets (the last one is the database
+        // password, DSD-1491 ② / task-98: optional only in dev, mandatory in prod).
+        assertEquals(11, violations.size());
     }
 
     @Test
@@ -75,6 +79,7 @@ class SecurityDefaultsValidatorTest {
         System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
         System.setProperty("XIHE_CP_CREDENTIALS_KEY", "base64-key");
         System.setProperty("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", "base64-key");
+        System.setProperty("XIHE_CP_DATASOURCE_PASSWORD", "pg-password");
 
         SecurityDefaultsValidator.enforce();
     }
@@ -127,10 +132,63 @@ class SecurityDefaultsValidatorTest {
         env.put("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key");
         env.put("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
         env.put("XIHE_CP_CREDENTIALS_KEY", "base64-key");
+        env.put("XIHE_CP_DATASOURCE_PASSWORD", "pg-password");
 
         List<String> violations = SecurityDefaultsValidator.collectViolations(env::get);
         assertEquals(1, violations.size(), "only the fingerprint key is missing");
         assertTrue(violations.get(0).startsWith("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY"));
+    }
+
+    /** DSD-1491 ② (task-98 正1): a prod start without the database password is refused. */
+    @Test
+    void prodWithBlankDatasourcePasswordRefusesToStart() {
+        System.setProperty("XIHE_ENV", "prod");
+        System.setProperty("XIHE_CP_JWT_SECRET", "a-real-random-secret");
+        System.setProperty("XIHE_CP_API_TOKEN", "strong-service-token");
+        System.setProperty("XIHE_AGENT_API_TOKEN", "strong-service-token");
+        System.setProperty("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "false");
+        System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        System.setProperty("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        System.setProperty("XIHE_CP_OAUTH_ENCRYPTION_KEY", "base64-key");
+        System.setProperty("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "base64-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_KEY", "base64-key");
+        System.setProperty("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", "base64-key");
+
+        List<String> violations = SecurityDefaultsValidator.collectViolations(SecurityDefaultsValidator::value);
+        assertEquals(1, violations.size(), "only the database password is missing");
+        assertTrue(violations.get(0).startsWith("XIHE_CP_DATASOURCE_PASSWORD"));
+        assertThrows(IllegalStateException.class, SecurityDefaultsValidator::enforce);
+    }
+
+    /**
+     * DSD-1491 ② (task-98 反1): the dev stack runs PostgreSQL passwordless and opts out with an
+     * explicit switch; the very same switch must not silence the prod gate (正2: a real password
+     * needs no switch at all).
+     */
+    @Test
+    void datasourcePasswordOptOutIsHonoredOnlyOutsideProd() {
+        Map<String, String> dev = new HashMap<>();
+        dev.put("XIHE_ENV", "dev");
+        dev.put("XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK", "true");
+        assertFalse(datasourcePasswordViolation(dev).isPresent(), "the dev stack must be able to opt out");
+
+        Map<String, String> prodWithSwitch = new HashMap<>();
+        prodWithSwitch.put("XIHE_ENV", "prod");
+        prodWithSwitch.put("XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK", "true");
+        assertTrue(datasourcePasswordViolation(prodWithSwitch).isPresent(),
+                "the opt-out must never apply in prod");
+
+        Map<String, String> prodWithPassword = new HashMap<>();
+        prodWithPassword.put("XIHE_ENV", "prod");
+        prodWithPassword.put("XIHE_CP_DATASOURCE_PASSWORD", "pg-password");
+        assertFalse(datasourcePasswordViolation(prodWithPassword).isPresent(),
+                "a configured database password satisfies the prod gate");
+    }
+
+    private static Optional<String> datasourcePasswordViolation(Map<String, String> env) {
+        return SecurityDefaultsValidator.collectViolations(env::get).stream()
+                .filter(item -> item.startsWith("XIHE_CP_DATASOURCE_PASSWORD"))
+                .findFirst();
     }
 
     @Test
