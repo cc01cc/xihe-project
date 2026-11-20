@@ -34,7 +34,7 @@ test.describe("task-174 S2b 容器页签行", () => {
     test("判据 1/2/3：每容器 1 行 · 顶部无全局行 · aria-current 按容器分别报", async ({ page }) => {
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "S2b" }] });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await page.locator('[data-testid="workspace-main"]').waitFor({
             state: "visible",
             timeout: EXPECT_TIMEOUT_MS,
@@ -108,7 +108,7 @@ test.describe("task-174 S2b 容器页签行", () => {
     test("判据 5：刷新后布局还原（键不变）+ 旧键载荷可读", async ({ page }) => {
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "S2b" }] });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await page.locator('[data-testid="workspace-container-tabs"]').first().waitFor({
             state: "visible",
             timeout: EXPECT_TIMEOUT_MS,
@@ -164,7 +164,7 @@ test.describe("task-174 S2b 容器页签行", () => {
         await page.setViewportSize({ width: 390, height: 844 });
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "S2b" }] });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         const more = page.locator('[data-testid="workspace-toolbar-more-mobile"]');
         await expect(more).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await more.click();
@@ -214,7 +214,7 @@ test.describe("task-174 S2b 容器页签行", () => {
                 { id: "task174-session-2", title: "S2b-2" },
             ],
         });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await page
             .locator('[data-testid="workspace-container-tabs"][data-container="main"] [role="tab"]')
             .first()
@@ -287,7 +287,7 @@ test.describe("task-174 S2b 容器页签行", () => {
         await page.setViewportSize({ width: 1920, height: 1080 });
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "S2b" }] });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         const rows = page.locator('[data-testid="workspace-container-tabs"]');
         await rows.first().waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
 

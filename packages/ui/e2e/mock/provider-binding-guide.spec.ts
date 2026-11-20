@@ -80,7 +80,7 @@ test.describe("C1: provider binding guide before send", () => {
             });
         });
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         const textarea = page.locator('[data-testid="chat-input"]');
         await expect(textarea).toBeVisible();
         await textarea.fill("hello from c1");
@@ -134,7 +134,7 @@ test.describe("C1: provider binding guide before send", () => {
             }),
         );
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         const textarea = page.locator('[data-testid="chat-input"]');
         await expect(textarea).toBeVisible();
         await textarea.fill("hello from settings entry");

@@ -24,7 +24,7 @@ import {
     type WorkTabId,
 } from "../../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../../stores/session";
-import { workspaceChatPath, workspacePath } from "../../../lib/routes";
+import { workspaceSessionPath, workspacePath } from "../../../lib/routes";
 import { isWorkbenchRoute } from "../../../router/workbenchRoute";
 
 /**
@@ -57,7 +57,7 @@ interface RouteTab {
 
 const chatPath = computed(() =>
     props.sessionId
-        ? workspaceChatPath(props.workspaceId, props.sessionId)
+        ? workspaceSessionPath(props.workspaceId, props.sessionId)
         : workspacePath(props.workspaceId),
 );
 
@@ -83,7 +83,7 @@ const tabs = computed<RouteTab[]>(() => {
         list.push({
             id,
             label: sessionTabLabel(id),
-            path: workspaceChatPath(props.workspaceId, sessionIdFromWorkTab(id)),
+            path: workspaceSessionPath(props.workspaceId, sessionIdFromWorkTab(id)),
             testid: `workspace-tab-session-${sessionIdFromWorkTab(id)}`,
             closable: true,
         });
@@ -92,7 +92,7 @@ const tabs = computed<RouteTab[]>(() => {
 });
 
 function currentTabId(): WorkTabId | null {
-    if (route?.name !== "workspace-chat") return null;
+    if (route?.name !== "workspace-session") return null;
     const sid = route.params.sessionId;
     return typeof sid === "string" && sid ? workTabIdForSession(sid) : null;
 }
@@ -101,7 +101,7 @@ function currentTabId(): WorkTabId | null {
 // 直接整体隐藏，见模板 v-if）。会话路由上高亮 = 当前钉住的页签。
 const activeId = computed<WorkTabId | null>(() => currentTabId());
 
-// task-110：这条行**只属于工作台页**（workspace / workspace-chat）。判据来自路由表的
+// task-110：这条行**只属于工作台页**（workspace / workspace-session）。判据来自路由表的
 // 纯函数 `isWorkbenchRoute`，不在这里另抄一份路由名清单（见 src/router/workbenchRoute.ts）。
 const onWorkbenchRoute = computed(() => isWorkbenchRoute(route));
 
@@ -270,7 +270,7 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
         挂一条容器内页签行（`WorkspaceContainerTabs`），它们 mount 时 claim ⇒ 这里整条让位。
 
         task-110（修 S2b 的遗漏）：**claim 只是「容器在不在」的判据，不是「这条行属于哪些路由」的判据**。
-        claim 由 `WorkspaceWorkbench` 发出，而它只挂在 workspace / workspace-chat 两页 ⇒ 其余五个
+        claim 由 `WorkspaceWorkbench` 发出，而它只挂在 workspace / workspace-session 两页 ⇒ 其余五个
         工作区页（环境/定时任务/资源/设置/成员）没有消费方，却也从来没有 claim，于是这条行在那里
         照样渲染（task-104 实测：正文被下推 32px，点页签还会把用户带离当前页）。S2b 注释当时写的
         「行为与重构前逐字节一致」正是这个缺陷的形态，不是设计意图。

@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useSessionStore } from "../../stores/session";
 import { ArrowLeft } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
-import { workspaceChatPath, workspacePath } from "../../lib/routes";
+import { workspaceSessionPath, workspacePath } from "../../lib/routes";
 import { Button } from "../ui/button";
 
 const router = useRouter();
@@ -38,7 +38,7 @@ function chatTargetPath(): string {
     const id = sessionStore.currentSessionId;
     if (id) {
         const workspaceId = sessionStore.currentSession?.workspaceId ?? auth.currentWorkspaceId;
-        return workspaceId ? workspaceChatPath(workspaceId, id) : "/workbench";
+        return workspaceId ? workspaceSessionPath(workspaceId, id) : "/workbench";
     }
     const workspaceId = auth.currentWorkspaceId;
     return workspaceId ? workspacePath(workspaceId) : "/workbench";

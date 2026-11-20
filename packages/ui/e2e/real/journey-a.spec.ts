@@ -96,7 +96,7 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         const sessionId = await createWorkspaceSessionWithPrincipal(page, principalId),
             chatInput = page.locator('[data-testid="chat-input"]');
         await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(page).toHaveURL(new RegExp(`/workspace/${wsId}/chat/${sessionId}$`));
+        await expect(page).toHaveURL(new RegExp(`/workspace/${wsId}/session/${sessionId}$`));
         const modal = page.locator('[data-testid="modal-content"]');
 
         // --- A1+A2: approve write_file → FS change ---

@@ -47,7 +47,7 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
                 { id: STANDALONE_B, title: "独立会话乙" },
             ],
         });
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
 
         const group = page.getByTestId("sidebar-standalone-group");
         await expect(group).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
@@ -102,7 +102,7 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
         });
 
         // 先从工作区会话页进入（此时 tab 上下文里有工作区），再点开独立会话 —— 正是审计的路径。
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
         await expect(page.getByTestId("sidebar-standalone-group")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -122,7 +122,7 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
         );
 
         // 反向控制：工作区会话的读取必须带工作区头，证明上面那条不是因为「从不发头」而空过。
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
         await expect
             .poll(() => reads.find((row) => row.url.endsWith("/" + WS_SESSION))?.workspaceHeader, {
                 timeout: LONG_TIMEOUT_MS,
@@ -134,7 +134,7 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
         await setupMockSessions(page, {
             sessions: [{ id: WS_SESSION, title: "工作区会话" }],
         });
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
         await expect(page.getByTestId("sidebar-workspace-group-" + WS_ID)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -169,7 +169,7 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
             workspacelessSessions: [{ id: STANDALONE_A, title: "独立会话甲" }],
             createSession: true,
         });
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
 
         await page.getByTestId("sidebar-new-chat").click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page.getByTestId("sidebar-new-chat-workspace")).toBeVisible({
@@ -224,7 +224,7 @@ test.describe("standalone sessions on a small viewport (task-373)", () => {
             sessions: [{ id: WS_SESSION, title: "工作区会话" }],
             workspacelessSessions: [{ id: STANDALONE_A, title: "独立会话甲" }],
         });
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
         await page.getByTestId("mobile-sidebar-toggle").click({ timeout: ACTION_TIMEOUT_MS });
 
         const group = page.getByTestId("sidebar-standalone-group");

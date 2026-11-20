@@ -51,7 +51,7 @@ test.describe("BL-339 深链预填", () => {
             sessionId: SESSION_ID,
         });
         await page.goto(
-            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${compose}`,
+            `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?compose=${compose}`,
         );
 
         const input = page.getByTestId("chat-input");
@@ -84,7 +84,7 @@ test.describe("BL-339 深链预填", () => {
 
         // `text` 缺失 ⇒ 整条忽略。
         await page.goto(
-            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${encodeCompose({ to: ["x"] })}`,
+            `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?compose=${encodeCompose({ to: ["x"] })}`,
         );
 
         await expect(page.getByTestId("chat-input")).toHaveValue("", { timeout: LONG_TIMEOUT_MS });
@@ -132,7 +132,7 @@ test.describe("BL-339 深链预填", () => {
         // 那会变成「部分命中」，与本用例要证的「名册未到」混在一起（两个原因都该 blocked，但读数会混）。
         const compose = encodeCompose({ text: TEXT, sessionId: SESSION_ID, to: [TO_ID] });
         await page.goto(
-            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${compose}`,
+            `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?compose=${compose}`,
         );
 
         // 正文已预填 ⇒ 深链确实被消费过（否则下面「参数还在」无从谈起）
@@ -207,7 +207,7 @@ test.describe("BL-339 深链预填", () => {
         const GHOST = "participant-ghost-not-in-roster";
         const compose = encodeCompose({ text: TEXT, sessionId: SESSION_ID, to: [KNOWN, GHOST] });
         await page.goto(
-            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${compose}`,
+            `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?compose=${compose}`,
         );
 
         await expect(page.getByTestId("chat-input")).toHaveValue(TEXT, {
@@ -273,7 +273,7 @@ test.describe("BL-339 深链预填", () => {
         });
         const compose = encodeCompose({ text: TEXT, sessionId: SESSION_ID, to: [TO_ID] });
         await page.goto(
-            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${compose}`,
+            `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?compose=${compose}`,
         );
         const input = page.getByTestId("chat-input");
         await expect(input).toHaveValue(TEXT, { timeout: LONG_TIMEOUT_MS });

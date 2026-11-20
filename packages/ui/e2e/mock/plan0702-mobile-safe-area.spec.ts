@@ -30,7 +30,7 @@ test("390 composer stays inside viewport before and after the keyboard opens", a
     const failures = collectPageFailures(page);
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Safe area" }] });
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
 
     // At 390px the chat lives in the bottom sheet; open it through the mobile entry.
     await page.getByTestId("mobile-chat-open").first().click();
@@ -100,7 +100,7 @@ test("dark theme evidence screenshots at 1920x1080@2x", async ({ page }) => {
     const outDir = process.env.XIHE_0702_SHOT_DIR ?? join(tmpdir(), "xihe-0702-shots");
     mkdirSync(outDir, { recursive: true });
 
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     await expect(page.getByTestId("chat-composer")).toBeVisible();
     await page.screenshot({ path: join(outDir, "dark-chat-1920x1080.png") });
 

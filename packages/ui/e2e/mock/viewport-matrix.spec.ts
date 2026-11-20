@@ -110,7 +110,7 @@ test.describe("PLAN-269 viewport matrix: desktop-1080p", () => {
 
     test("chat composer and sidebar remain usable at 1080p", async ({ page }) => {
         await setupViewportFixtures(page);
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-1");
         await expect(page.getByTestId("chat-input")).toBeVisible();
         await expect(page.getByTestId("sidebar")).toBeVisible();
         await expectNoHorizontalOverflow(page);

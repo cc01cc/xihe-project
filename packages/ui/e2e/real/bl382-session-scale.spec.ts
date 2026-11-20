@@ -56,7 +56,7 @@ import {
 } from "./helpers/agent-principal";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { registerJourneyUser, seedPage, waitForControlPlaneAgentReady } from "./helpers/journey";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const TIERS = { "1k": 1_000, "5k": 5_000, "20k": 20_000 } as const;
@@ -680,7 +680,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
         const pages = trackMessagePages(page);
         try {
             await seedPage(page, ctx);
-            await page.goto(workspaceChatPath(wsId, targetSessionId));
+            await page.goto(workspaceSessionPath(wsId, targetSessionId));
             await expect(page.getByTestId("message-list")).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });

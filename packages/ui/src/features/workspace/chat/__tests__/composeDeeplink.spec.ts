@@ -133,8 +133,8 @@ describe("BL-339 深链工具函数", () => {
     });
 
     it("stripComposeQuery 只去掉 compose，保留其它参数与 hash", () => {
-        expect(stripComposeQuery("/workspace/ws-1/chat/s-1?compose=abc&tab=chat#tail")).toBe(
-            "/workspace/ws-1/chat/s-1?tab=chat#tail",
+        expect(stripComposeQuery("/workspace/ws-1/session/s-1?compose=abc&tab=chat#tail")).toBe(
+            "/workspace/ws-1/session/s-1?tab=chat#tail",
         );
         expect(stripComposeQuery("/workspace/ws-1?compose=abc")).toBe("/workspace/ws-1");
     });

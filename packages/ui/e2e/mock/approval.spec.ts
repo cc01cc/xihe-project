@@ -113,7 +113,7 @@ async function installPolicyModeRoute(page: Page) {
 }
 
 async function openApprovalChat(page: Page) {
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
         timeout: EXPECT_TIMEOUT_MS,
     });
@@ -160,7 +160,7 @@ test.describe("Chat approval flow", () => {
         // `helpers/workspace-fixture.ts#fulfillWorkspaceDetail`，那张表的语义是「只有
         // `KNOWN_WORKSPACE_IDS` 里的 id 算存在，其余一律 404」（D-1178）—— 本 spec 的 id 不在表里
         // ⇒ 恒 404 ⇒ `stores/auth.ts:544-550` 的 catch 分支清掉页签上下文 ⇒ 工作区为 null
-        // ⇒ `/workspace/<id>/chat/<sid>` 渲染不出 `chat-input`，23 条用例连锁全红（每条还带
+        // ⇒ `/workspace/<id>/session/<sid>` 渲染不出 `chat-input`，23 条用例连锁全红（每条还带
         // 2 条 `404 @ /api/v1/workspaces/cccccccc-…` 的 console error）。
         // 修法：**同一份 wire 形状**（`workspaceWire`，不另编 `{id,name}`）给这个 id 补网络层桩；
         // 后注册优先，所以必须在 `setupMockAuth` 之后。判据与断言一个字不动。
@@ -469,7 +469,7 @@ test.describe("Chat approval flow", () => {
         await banner.locator('[data-testid="global-pending-approval-go-to"]').click();
 
         await expect(page).toHaveURL(
-            new RegExp(`/workspace/${WORKSPACE_ID}/chat/${SECOND_SESSION_ID}$`),
+            new RegExp(`/workspace/${WORKSPACE_ID}/session/${SECOND_SESSION_ID}$`),
         );
     });
 
@@ -709,7 +709,7 @@ test.describe("Chat approval flow", () => {
             timeout: ACTION_TIMEOUT_MS,
         });
         await pushApproval(page, approvalEvent(REQUEST_ID));
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SECOND_SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SECOND_SESSION_ID}`);
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });

@@ -203,9 +203,9 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
             workspace.id,
         );
         // Workspace IA convergence (PLAN-0560 / `cb5651a7`): chat now lives at
-        // `/workspace/:workspaceId/chat/:sessionId`; the flat `/chat/:sessionId`
+        // `/workspace/:workspaceId/session/:sessionId`; the flat `/chat/:sessionId`
         // is a legacy redirect (src/router/index.ts:135).
-        await page.goto(`/workspace/${workspace.id}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspace.id}/session/${sessionId}`, { waitUntil: "load" });
         // Explicit Session binding: CP now rejects POST /api/v1/chat with 409
         // API_TYPE_REBIND_REQUIRED ("Explicit Session binding is required",
         // ApiRequestTemplateService.java:399-403) when the Session row has no

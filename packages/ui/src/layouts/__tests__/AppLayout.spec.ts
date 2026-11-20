@@ -45,7 +45,7 @@ function createTestRouter() {
         history: createMemoryHistory(),
         routes: [
             {
-                path: "/workspace/:workspaceId/chat/:sessionId",
+                path: "/workspace/:workspaceId/session/:sessionId",
                 component: { template: '<div data-testid="route-view" />' },
             },
             { path: "/workspace", component: { template: '<div data-testid="route-view" />' } },
@@ -60,7 +60,7 @@ function createTestRouter() {
 
 async function mountLayout(
     router: ReturnType<typeof createTestRouter>,
-    path = "/workspace/workspace-1/chat/current",
+    path = "/workspace/workspace-1/session/current",
 ) {
     await router.push(path);
     await router.isReady();
@@ -146,7 +146,7 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", 
 
     it("exposes the stored width as px aria range values on the first frame (fallthrough)", async () => {
         const router = createTestRouter();
-        await router.push("/workspace/workspace-1/chat/current");
+        await router.push("/workspace/workspace-1/session/current");
         await router.isReady();
         const wrapper = mount(AppLayout, {
             global: {
@@ -209,7 +209,7 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", 
         const { default: FreshAppLayout } = await import("../AppLayout.vue");
         const { default: FreshSidebar } = await import("../../components/sidebar/Sidebar.vue");
         const router = createTestRouter();
-        await router.push("/workspace/workspace-1/chat/current");
+        await router.push("/workspace/workspace-1/session/current");
         await router.isReady();
         const wrapper = mount(FreshAppLayout, {
             global: {
@@ -316,7 +316,7 @@ describe("AppLayout pending approval indicators", () => {
         await flushPromises();
 
         expect(router.currentRoute.value.fullPath).toBe(
-            "/workspace/workspace-1/chat/other-session",
+            "/workspace/workspace-1/session/other-session",
         );
         expect(api.decideChatApproval).not.toHaveBeenCalled();
     });

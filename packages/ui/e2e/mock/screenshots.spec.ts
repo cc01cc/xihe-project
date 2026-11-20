@@ -22,8 +22,8 @@ const allRoutes: Route[] = [
     { path: "/register", name: "register", requiresAuth: false },
     { path: "/workspace", name: "workspace-default", requiresAuth: true },
     {
-        path: "/workspace/11111111-1111-4111-8111-111111111111/chat/test-session",
-        name: "workspace-chat-session",
+        path: "/workspace/11111111-1111-4111-8111-111111111111/session/test-session",
+        name: "workspace-session",
         requiresAuth: true,
     },
     {
@@ -64,7 +64,7 @@ const readinessLandmarks: Record<string, { testId: string } | { selector: string
     // 无 tab 上下文时的选择面（PLAN-0608 C′）。
     "workspace-default": { testId: "workspace-picker" },
     // 聊天面：composer 只在会话投影落地后挂载。
-    "workspace-chat-session": { testId: "chat-input" },
+    "workspace-session": { testId: "chat-input" },
     // 实例层域页：层与域都解析完才出现标题。
     "settings-config": { testId: "settings-domain-title" },
     // 知识库缺口页（G3：无实体/无列表/无详情，只解释缺口并给出口）。
@@ -113,7 +113,7 @@ for (const route of allRoutes) {
             });
         }
 
-        if (route.path === "/workspace/11111111-1111-4111-8111-111111111111/chat/test-session") {
+        if (route.path === "/workspace/11111111-1111-4111-8111-111111111111/session/test-session") {
             await page.addInitScript(() => {
                 localStorage.setItem(
                     "xihe-sessions",

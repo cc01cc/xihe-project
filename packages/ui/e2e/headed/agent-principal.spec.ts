@@ -612,7 +612,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             });
         });
 
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         if (
             await page
                 .getByTestId("workspace-agent-principal-select")

@@ -49,7 +49,7 @@ vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({ currentWorkspaceId: sessionState.workspaceId }),
 }));
 
-const CHAT_PATH = "/workspace/ws-1/chat/s-1";
+const CHAT_PATH = "/workspace/ws-1/session/s-1";
 const WORKSPACE_PATH = "/workspace/ws-1";
 
 /**
@@ -78,7 +78,7 @@ beforeEach(() => {
 
 describe("BackToChatButton history handling (task-36 ②)", () => {
     it("uses router.back() when the previous entry is the chat page (no history pile-up)", async () => {
-        routerState.back = "/workspace/ws-1/chat/s-1";
+        routerState.back = "/workspace/ws-1/session/s-1";
         const wrapper = mountButton();
 
         await wrapper.get('[data-testid="settings-back-to-chat"]').trigger("click");

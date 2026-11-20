@@ -186,7 +186,7 @@ async function sendChat(
 
 async function openWorkspace(page: Page, token: string, wsId: string): Promise<void> {
     seedPage(page, token, wsId);
-    await page.goto(`/workspace/${wsId}/chat/${rollbackSessionId}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${wsId}/session/${rollbackSessionId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });

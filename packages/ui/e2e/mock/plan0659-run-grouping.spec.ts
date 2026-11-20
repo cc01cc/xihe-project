@@ -110,7 +110,7 @@ async function setupRunsRoute(
 }
 
 async function openSession(page: Page, sessionId: string): Promise<void> {
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${sessionId}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${sessionId}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });

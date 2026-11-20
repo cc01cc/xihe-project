@@ -13,7 +13,7 @@ import {
     sendChat,
     seedPage,
 } from "./helpers/journey";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
@@ -495,7 +495,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     const parentSessionTitle =
         createdParent.title ??
         queryIsolatedPostgres(`SELECT title FROM sessions WHERE id = '${parentSessionId}'::uuid`);
-    await expect(page).toHaveURL(workspaceChatPath(workspaceId, parentSessionId));
+    await expect(page).toHaveURL(workspaceSessionPath(workspaceId, parentSessionId));
     await expect(page.getByTestId("chat-input")).toBeVisible();
     await expect
         .poll(
@@ -767,7 +767,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
 
         const derivedResponsesBeforeReconnect = derivedStateResponses.length;
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await page.goto(workspaceChatPath(workspaceId, parentSessionId), { waitUntil: "load" });
+        await page.goto(workspaceSessionPath(workspaceId, parentSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("derived-terminal-notice")).toContainText(childName);
         await expect
             .poll(
@@ -1015,8 +1015,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                 new URL(response.url()).pathname === childDelegationUsagePath,
             { timeout: LONG_TIMEOUT_MS },
         );
-        await page.goto(workspaceChatPath(workspaceId, childSessionId), { waitUntil: "load" });
-        await expect(page).toHaveURL(workspaceChatPath(workspaceId, childSessionId));
+        await page.goto(workspaceSessionPath(workspaceId, childSessionId), { waitUntil: "load" });
+        await expect(page).toHaveURL(workspaceSessionPath(workspaceId, childSessionId));
         await expect(page.getByTestId("chat-input")).toBeVisible();
         await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({
             timeout: LONG_TIMEOUT_MS,

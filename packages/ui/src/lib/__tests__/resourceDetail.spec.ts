@@ -36,7 +36,7 @@ describe("resourceDetailPath（资源详情深链）", () => {
 describe("shouldUseBrowserBack（返回栈：后退优先）", () => {
     it("有应用内历史（history.state.back 非空）⇒ 用浏览器后退", () => {
         expect(shouldUseBrowserBack("/resources/skills?layer=WORKSPACE")).toBe(true);
-        expect(shouldUseBrowserBack("/workspace/ws-1/chat/s-1")).toBe(true);
+        expect(shouldUseBrowserBack("/workspace/ws-1/session/s-1")).toBe(true);
     });
 
     it("无历史（直接粘 URL / 新标签页）⇒ 不用后退（否则会把人送出应用）", () => {

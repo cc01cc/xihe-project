@@ -116,7 +116,9 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         await tightenTokenBudget(page);
 
         // 2. First run exhausts the token budget.
-        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         const textarea = page.locator("textarea");
         await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const firstMarker = `budget-first-${Date.now()}`;
@@ -163,7 +165,9 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         // Reuse the same user/workspace as the desktop pass (Agent single-workspace
         // MCP binding); the token budget is already 1 from the first pass.
         await installAuth(page, auth);
-        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         await page.setViewportSize({ width: 390, height: 844 });
         // At 390px the app shell defaults to the Files pane; the chat composer is
         // reachable through the "Open chat" toggle (same entry as the queue mobile spec).

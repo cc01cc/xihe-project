@@ -30,7 +30,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
@@ -293,7 +293,7 @@ test.describe("@host PLAN-0658 R3 三角色会话可见性", () => {
             const context = await browser.newContext();
             const page = await context.newPage();
             await seedPage(page, item.account, item.role);
-            await page.goto(workspaceChatPath(ownerWorkspaceId, sessionId));
+            await page.goto(workspaceSessionPath(ownerWorkspaceId, sessionId));
             // 页面必须挂载（不崩）——用路由视口做判据。
             await expect(
                 page.getByTestId("workspace-route-viewport"),

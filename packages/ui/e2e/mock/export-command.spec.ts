@@ -159,7 +159,7 @@ test("`/export` downloads the artifact and takes the filename from Content-Dispo
 
     const probe = await setupExportChat(page, `attachment; filename="${HEADER_FILENAME}"`);
     const branchesReady = branchProjectionLoaded(page);
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`, {
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`, {
         waitUntil: "domcontentloaded",
     });
     await branchesReady;
@@ -190,7 +190,7 @@ test("`/export` falls back to `session-<sessionId>.md` when the response has no 
 }) => {
     const probe = await setupExportChat(page, null);
     const branchesReady = branchProjectionLoaded(page);
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`, {
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`, {
         waitUntil: "domcontentloaded",
     });
     await branchesReady;

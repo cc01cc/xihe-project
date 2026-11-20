@@ -222,7 +222,7 @@ async function runPlainChat(
     sessionId: string,
 ): Promise<PlainChatResult> {
     await seedPage(page, ctx);
-    await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${ctx.workspaceId}/session/${sessionId}`, { waitUntil: "load" });
     await page
         .locator('[data-testid="chat-input"]')
         .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });

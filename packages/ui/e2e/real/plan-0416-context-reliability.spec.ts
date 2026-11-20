@@ -188,7 +188,7 @@ async function publishAndOpen(
     });
     expect(session.status()).toBe(201);
     const { id } = await session.json();
-    await page.goto(`/workspace/${fixture.auth.workspaceId}/chat/${id}`);
+    await page.goto(`/workspace/${fixture.auth.workspaceId}/session/${id}`);
     await expect(page.getByTestId("chat-input")).toBeVisible();
     return id;
 }

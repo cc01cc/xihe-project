@@ -106,7 +106,7 @@ async function useLocale(page: Page, locale: string): Promise<void> {
 }
 
 async function openAndSend(page: Page, content: string): Promise<void> {
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
     await expect(input, "composer mounts").toBeVisible();
     await input.fill(content);

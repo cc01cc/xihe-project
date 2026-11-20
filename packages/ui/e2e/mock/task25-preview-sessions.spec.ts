@@ -1,6 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { MOCK_SESSION_WORKSPACE_ID, mockSessions } from "../../src/preview/mock/data/sessions";
 
 /**
@@ -106,9 +106,9 @@ test.describe("preview mock sessions (task-25 D)", () => {
         // （首跑实测 `<div class="fixed inset-0 z-30 bg-black/50"> intercepts pointer events`，
         // 且该抽屉不是 reka Dialog ⇒ Esc 不收）。分开测各自稳定，判据也更清楚。
         test("390×844：深链会话 + 聊天壳能挂出消息体", async ({ page }) => {
-            // 走产品自己的深链（router:84 `chat/:sessionId`），不在抽屉里点行 —— 抽屉会在
+            // 走产品自己的深链（router `session/:sessionId`），不在抽屉里点行 —— 抽屉会在
             // 加载完成后自动收起，点击撞动画（实测 not stable → not visible）。
-            await page.goto(workspaceChatPath(WS_ID, mockSessions[0]!.id));
+            await page.goto(workspaceSessionPath(WS_ID, mockSessions[0]!.id));
             await page.getByTestId("mobile-chat-open").click({ timeout: ACTION_TIMEOUT_MS });
             await expect
                 .poll(async () => page.getByTestId("message-item").count(), {
@@ -118,7 +118,7 @@ test.describe("preview mock sessions (task-25 D)", () => {
         });
 
         test("390×844：导航抽屉里能看到夹具会话（列表不是空态）", async ({ page }) => {
-            await page.goto(workspaceChatPath(WS_ID, mockSessions[0]!.id));
+            await page.goto(workspaceSessionPath(WS_ID, mockSessions[0]!.id));
             await page.getByTestId("mobile-sidebar-toggle").click({ timeout: ACTION_TIMEOUT_MS });
             await expect(
                 page.getByRole("button", { name: SESSION_TITLE, exact: false }).first(),

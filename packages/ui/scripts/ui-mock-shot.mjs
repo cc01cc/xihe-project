@@ -495,7 +495,7 @@ function loadDirtyProofs(proofPath, dirtyPaths, repoRoot) {
  *
  * <p>写法：字段用 `;` 分隔、`key=value`；**值里的 `:` 不会被拆坏**（`focus=:focus-visible`、
  * `expectFocus=a[href^="http:"]` 都行）。示例：<br>
- * `--extra-shot 't40:focus:/workspace/<uuid>/chat/<sid>:focus=[data-testid=chat-input];tab=2'`</p>
+ * `--extra-shot 't40:focus:/workspace/<uuid>/session/<sid>:focus=[data-testid=chat-input];tab=2'`</p>
  */
 function parseExtraShot(spec) {
     // 先按 `;` 切字段段：第一段是 id:name:path[:key=value]，其余段都是 key=value。
@@ -623,7 +623,7 @@ function parseArgs(argv) {
                 [
                     "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--extra-shot <id>:<name>:<path>[;focus=<sel>][;tab=<n>][;expectFocus=<sel>] …] [--allow-dirty] [--dirty-proof <json>] [--selftest]",
                     "--extra-shot 可重复传：临时加拍一镜（真路由真组件、同样双拍比 sha），不进 SHOTS 批次定义；manifest 里该镜带 adHoc: true。",
-                    "  焦点步骤可写在同一个参数里，字段用 ; 分隔：--extra-shot 't40:focus:/workspace/<uuid>/chat/<sid>:focus=[data-testid=chat-input];tab=2'（值里的 : 不会被拆坏）。",
+                    "  焦点步骤可写在同一个参数里，字段用 ; 分隔：--extra-shot 't40:focus:/workspace/<uuid>/session/<sid>:focus=[data-testid=chat-input];tab=2'（值里的 : 不会被拆坏）。",
                     "  三种焦点字段：focus=<CSS 选择器>（脚本聚焦，可重复）／tab=<整数>（键盘路径，与 focus 互斥）／expectFocus=<CSS 选择器>（拍前断言 activeElement 命中）。",
                     "  视口字段：viewport=<宽>x<高>（如 900x1400）—— 导航前生效，且**同时决定输出画布**（图就是 900x1400）；用于拍 lg:hidden 的抽屉/Sheet 触发器。",
                     "  点击字段：expand=<CSS 选择器>（可重复，按序连点）—— 抽屉/Sheet 这类「要先点开才有」的画面必须用它。",
@@ -1208,7 +1208,7 @@ async function applyFocusSteps(page, shot) {
     const plan = focusPlan(shot);
     for (const selector of plan.focus) {
         // task-40 rev8（2026-11-15 实测）：`#app` 有子节点 ≠ 目标页已挂载 —— 直接 `count()` 判存在
-        // 会在首帧就报「目标不存在」（实测 /settings 与 /workspace/…/chat/… 两条都是这样，
+        // 会在首帧就报「目标不存在」（实测 /settings 与 /workspace/…/session/… 两条都是这样，
         // 而探针显示那两个选择器明明在页面上）。所以这里**有界等待**它挂载，超时才判不存在：
         // 判据仍是"不许沉默"，只是把"来不及"和"真的没有"分开 —— 前者等，后者报。
         await waitForAttached(page, selector, shot.id, "focus");

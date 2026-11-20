@@ -140,7 +140,10 @@ function makeRouter(): Router {
         routes: [
             ...SETTINGS_ROUTE_PATHS.map((path) => ({ path, component: { template: "<div />" } })),
             { path: "/workspace", component: { template: "<div />" } },
-            { path: "/workspace/:workspaceId/chat/:sessionId", component: { template: "<div />" } },
+            {
+                path: "/workspace/:workspaceId/session/:sessionId",
+                component: { template: "<div />" },
+            },
             { path: "/:pathMatch(.*)*", component: { template: "<div />" } },
         ],
     });

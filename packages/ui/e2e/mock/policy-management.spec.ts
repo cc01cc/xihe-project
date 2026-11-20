@@ -527,7 +527,7 @@ test.describe("Policy management (desktop)", () => {
         await installApprovalSSE(page);
         const calls = installDecisionRoute(page);
 
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -616,7 +616,7 @@ test.describe("Policy management (mobile)", () => {
         await installApprovalSSE(page);
         const calls = installDecisionRoute(page);
 
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await page.getByTestId("mobile-chat-open").click();
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,

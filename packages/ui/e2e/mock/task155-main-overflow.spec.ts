@@ -40,7 +40,7 @@ async function boot(page: Page): Promise<void> {
 /** 逐个点开全部会话 ⇒ openTabs 累积成多页签（同一 workspace 布局键）。 */
 async function openAllSessions(page: Page): Promise<void> {
     for (const id of SESSIONS) {
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${id}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${id}`);
         await page.locator('[data-testid="workspace-main"]').waitFor({
             state: "visible",
             timeout: EXPECT_TIMEOUT_MS,

@@ -12,7 +12,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
  *    modal kept alongside the dock, or a `v-show`-hidden copy) makes every testid resolve
  *    twice: the 2026-11-02 incident produced strict-mode violations *and* long-lived false
  *    passes because assertions silently resolved to the hidden copy.
- * 2. **Deep links survive** — `/workspace/:id/chat/:sessionId` still renders the real
+ * 2. **Deep links survive** — `/workspace/:id/session/:sessionId` still renders the real
  *    conversation route when entered directly; moving the panel into the dock must not
  *    replace the routed whole pages (that is exactly the rejected option B).
  * 3. **PLAN-0629 C's read-only memory section** is still inside the panel (the migration
@@ -253,7 +253,7 @@ test.describe("PLAN-0626 M3: deep links keep reaching the whole-page routes", ()
 
     // task-206：标题里原来的「…and the agents tab opens there」已随 A1 失效（打开面板必然离开会话页，
     // 详见用例末尾注释）⇒ 标题同步收窄到**仍然成立**的那半句，避免标题承诺一个不存在的断言。
-    test("a direct /workspace/:id/chat/:sessionId load still renders that session", async ({
+    test("a direct /workspace/:id/session/:sessionId load still renders that session", async ({
         page,
     }) => {
         const pageErrors: string[] = [];
@@ -279,14 +279,14 @@ test.describe("PLAN-0626 M3: deep links keep reaching the whole-page routes", ()
         });
 
         // Direct entry (no in-app navigation) — the deep-link contract from D26-05.
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${DEEP_SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${DEEP_SESSION_ID}`);
 
         await expect(page.getByTestId("workspace-conversation")).toBeVisible();
         // The routed session id was actually used (not the workspace fallback).
         await expect(page.getByTestId("workspace-session-title")).toContainText("Deep Session");
         await expect(page.getByTestId("chat-input")).toBeVisible();
         await expect(page).toHaveURL(
-            new RegExp(`/workspace/${WORKSPACE_ID}/chat/${DEEP_SESSION_ID}$`),
+            new RegExp(`/workspace/${WORKSPACE_ID}/session/${DEEP_SESSION_ID}$`),
         );
 
         // task-206（Lead 裁定 A，2026-11-15）：**意图二在这里消失，且不是删掉了事**。

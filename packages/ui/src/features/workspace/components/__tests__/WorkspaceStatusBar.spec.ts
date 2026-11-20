@@ -204,7 +204,7 @@ describe("WorkspaceStatusBar 面包屑（task-160 从导航行搬来）", () => 
      */
     it("chat 页（无独立页名）只有两段且没有 aria-current —— 设计如此，判据只对多级页面成立", async () => {
         await setAuthWorkspace(WORKSPACE_ID, WORKSPACE_NAME);
-        routeState.routeName = "workspace-chat";
+        routeState.routeName = "workspace-session";
         const wrapper = await mountBar();
 
         // 数 `breadcrumb-item`（vendor 的 `li` 会同时承载条目与分隔符 ⇒ 直接数 `li` 会多一个）。

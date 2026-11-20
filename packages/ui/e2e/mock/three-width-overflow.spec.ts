@@ -109,7 +109,7 @@ async function openChat(page: Page): Promise<void> {
             }),
         });
     });
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     // 具体信号：工作台宿主必须已挂载（`WorkspaceWorkbench.vue:664`）。`body` 可见只证明 HTML 到了，
     // 应用还没挂完就采样正是 task-250 #27-29 的假红来源。
     await expect(page.getByTestId("workspace-workbench")).toBeVisible({ timeout: LONG_TIMEOUT_MS });

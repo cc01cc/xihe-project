@@ -16,7 +16,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
@@ -128,7 +128,7 @@ test.describe("@host PLAN-0670 M2d first-paint probe", () => {
             seedMessages(sessionId, branchId, tier.count);
             const { firstPaintMs, rendered } = await measureFirstPaint(
                 page,
-                workspaceChatPath(wsId, sessionId),
+                workspaceSessionPath(wsId, sessionId),
             );
             results.push({
                 label: tier.label,

@@ -13,9 +13,9 @@ import {
 const { pushSpy, routeState } = vi.hoisted(() => ({
     pushSpy: vi.fn<Router["push"]>(),
     routeState: {
-        name: "workspace-chat",
-        path: "/workspace/workspace-1/chat/session-1",
-        fullPath: "/workspace/workspace-1/chat/session-1",
+        name: "workspace-session",
+        path: "/workspace/workspace-1/session/session-1",
+        fullPath: "/workspace/workspace-1/session/session-1",
         params: { workspaceId: "workspace-1", sessionId: "session-1" },
     },
 }));
@@ -56,9 +56,9 @@ function mountBar() {
 }
 
 function gotoSession(sessionId: string): void {
-    routeState.name = "workspace-chat";
-    routeState.path = `/workspace/workspace-1/chat/${sessionId}`;
-    routeState.fullPath = `/workspace/workspace-1/chat/${sessionId}`;
+    routeState.name = "workspace-session";
+    routeState.path = `/workspace/workspace-1/session/${sessionId}`;
+    routeState.fullPath = `/workspace/workspace-1/session/${sessionId}`;
     routeState.params = { workspaceId: "workspace-1", sessionId };
 }
 
@@ -113,7 +113,7 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
 
         await wrapper.get('[data-testid="workspace-tab-session-other"]').trigger("click");
 
-        expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/chat/other");
+        expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/session/other");
         // Exactly one push: the tab bar never intercepts or re-dispatches navigation.
         expect(pushSpy).toHaveBeenCalledTimes(1);
     });
@@ -125,7 +125,7 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
 
         await wrapper.get('[data-testid="workspace-tab-close-session:session-2"]').trigger("click");
 
-        expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/chat/session-1");
+        expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/session/session-1");
         expect(readWorkspaceLayout("workspace-1").openTabs).not.toContain("session:session-2");
     });
 

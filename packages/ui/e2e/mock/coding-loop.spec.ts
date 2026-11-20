@@ -67,7 +67,9 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
         });
 
         test("approval_request event triggers approval modal with tool info", async ({ page }) => {
-            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+            await page.goto(
+                `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`,
+            );
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(
@@ -98,7 +100,9 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
         });
 
         test("approval modal shows approve and reject buttons", async ({ page }) => {
-            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+            await page.goto(
+                `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`,
+            );
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(
@@ -135,7 +139,9 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
         // `workspace-diff-viewer`）后它仍"绿"，属于假覆盖。真实覆盖见
         // e2e/real/full-ui-acceptance.spec.ts:793（编辑文件 → 「差异」→ workspace-diff-viewer 可见）。
         test("retires the self-injected diff fixture", async ({ page }) => {
-            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+            await page.goto(
+                `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`,
+            );
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
             // 退休判据：页面里不再存在旧的自造夹具 testid（真要测差异走真实入口）。
             await expect(page.locator('[data-testid="diff-viewer"]')).toHaveCount(0);
@@ -153,7 +159,9 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
                 });
             });
 
-            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+            await page.goto(
+                `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`,
+            );
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Verify route is registered by making a fetch from page context
@@ -185,7 +193,9 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
                 });
             });
 
-            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+            await page.goto(
+                `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`,
+            );
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // fixture-only: 该路由已被本用例 page.route 拦截（见上），此 fetch 只验证 409 mock 契约，不触达真实后端

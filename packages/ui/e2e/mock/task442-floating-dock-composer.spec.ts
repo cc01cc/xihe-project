@@ -39,7 +39,7 @@ async function prepare(page: Page, expectComposer = true): Promise<void> {
     await setupMockParticipants(page, SESSION_ID);
     await setupMockProviderBinding(page, SESSION_ID);
     await installContextEventStream(page);
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     // 移动端 composer 在 Sheet 里，路由落地时不挂载 ⇒ 由调用方先开 Sheet 再等
     if (expectComposer) {
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({

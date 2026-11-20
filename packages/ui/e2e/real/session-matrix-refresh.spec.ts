@@ -22,7 +22,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
@@ -231,7 +231,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
 
     test("R8-1 OWNER 刷新：消息恰好一条、run 在 durable 读面终态", async ({ page, request }) => {
         seedOwnerPage(page);
-        await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -273,7 +273,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
 
     test("R8-2 CC 语境刷新：composer 不残留 cc chips，消息仍一条", async ({ page }) => {
         seedOwnerPage(page);
-        await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -293,7 +293,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
     // 受邀人类参与者刷新后读不到消息。本项记录**期望行为**：读面加参与者分支后自动转绿。
     test("R8-3 第二人类账户刷新后应能看到同一条消息（BL-237）", async ({ page }) => {
         await loginMemberInBrowser(page);
-        await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

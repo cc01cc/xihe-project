@@ -40,7 +40,10 @@ vi.mock("vue-router", () => ({
             query: {},
             // task-118：壳按 **meta** 判「这条路由要不要工作区级导航带」，
             // mock 不带 meta 就等于所有路由都当普通页 ⇒ 聊天页那条用例会假绿。
-            meta: routeState.routeName === "workspace-chat" ? { workspaceSecondaryNav: false } : {},
+            meta:
+                routeState.routeName === "workspace-session"
+                    ? { workspaceSecondaryNav: false }
+                    : {},
         }) as unknown as RouteLocationNormalizedLoaded,
     useRouter: () => ({
         resolve: (to: { name?: string; params?: Record<string, string> }) => ({
@@ -117,7 +120,7 @@ describe("WorkspaceShell 壳层（task-264 / S2a）", () => {
     it("task-118（D-1907 rev7）：会话页不渲染工作区级导航带，状态栏照旧", async () => {
         // 聊天路由 = 工作台容器内部页。判据是「导航带整条不在」，不是「链接不可见」：
         // 留一条空带仍然多占 32px（卡面要求会话页少一条 32px 带）。
-        routeState.routeName = "workspace-chat";
+        routeState.routeName = "workspace-session";
         const wrapper = await mountShell();
 
         expect(wrapper.find('[data-testid="workspace-shell"]').exists()).toBe(true);

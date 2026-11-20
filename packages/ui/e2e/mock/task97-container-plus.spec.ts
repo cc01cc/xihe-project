@@ -56,7 +56,7 @@ async function boot(page: Page): Promise<void> {
     await setupMockSessions(page, {
         sessions: SESSIONS.map((id) => ({ id, title: id })),
     });
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSIONS[0]}`);
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSIONS[0]}`);
     await page.locator('[data-testid="workspace-main"]').waitFor({
         state: "visible",
         timeout: EXPECT_TIMEOUT_MS,
@@ -372,7 +372,7 @@ test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
 
         // 再进两个会话 ⇒ openTabs 累积成多页签（同一个 workspace 键）。
         for (const id of SESSIONS.slice(1, 3)) {
-            await page.goto(`/workspace/${WORKSPACE_ID}/chat/${id}`);
+            await page.goto(`/workspace/${WORKSPACE_ID}/session/${id}`);
             await page.locator('[data-testid="workspace-main"]').waitFor({
                 state: "visible",
                 timeout: EXPECT_TIMEOUT_MS,
@@ -447,7 +447,7 @@ test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
         await expect(mainMenu, "Esc 关闭选择器").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
         // right 行 +：菜单列出未打开面板，点击后页签真实出现（自包含，不依赖 API）。
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSIONS[0]}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSIONS[0]}`);
         await page
             .locator('[data-testid="workspace-main"]')
             .waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });

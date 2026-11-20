@@ -19,7 +19,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeou
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
-const CHAT_URL = "/workspace/" + WORKSPACE_ID + "/chat/" + SESSION_ID;
+const CHAT_URL = "/workspace/" + WORKSPACE_ID + "/session/" + SESSION_ID;
 const TEXT = "清空发送栏但保留抄送";
 const TO_ID = "part-agent-alpha";
 const CC_ID = "part-agent-beta";

@@ -55,7 +55,7 @@ test.describe("Session switch between chat and workspace", () => {
     });
 
     test("chat and workspace share the same session messages", async ({ page }) => {
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`);
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`);
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -74,7 +74,7 @@ test.describe("Session switch between chat and workspace", () => {
             .getByTestId("session-item")
             .filter({ hasText: sessionTitle })
             .click();
-        await page.waitForURL(`**/workspace/${workspaceId}/chat/${sessionId}`);
+        await page.waitForURL(`**/workspace/${workspaceId}/session/${sessionId}`);
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -103,7 +103,7 @@ test.describe("Session switch between chat and workspace", () => {
             .getByTestId("session-item")
             .filter({ hasText: "Other Session" })
             .click();
-        await page.waitForURL(`**/workspace/${workspaceId}/chat/other-session`);
+        await page.waitForURL(`**/workspace/${workspaceId}/session/other-session`);
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -182,10 +182,10 @@ test.describe("Session switch between chat and workspace", () => {
         const firstHistory = page.waitForResponse((response) =>
             response.url().includes(`/api/v1/sessions/${firstSession}/messages`),
         );
-        await page.goto(`/workspace/${firstWorkspace}/chat/${firstSession}`);
+        await page.goto(`/workspace/${firstWorkspace}/session/${firstSession}`);
         await firstHistory;
         await expect(page.getByText(firstMessage)).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await page.goto(`/workspace/${secondWorkspace}/chat/${secondSession}`);
+        await page.goto(`/workspace/${secondWorkspace}/session/${secondSession}`);
         await expect(page.getByText(secondMessage)).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(page.getByText(firstMessage)).toHaveCount(0);
         expect(
@@ -239,7 +239,7 @@ test.describe("Session switch between chat and workspace", () => {
         const firstHistory = page.waitForResponse((response) =>
             response.url().includes(`/api/v1/sessions/${firstSession}/messages`),
         );
-        await page.goto(`/workspace/${firstWorkspace}/chat/${firstSession}`);
+        await page.goto(`/workspace/${firstWorkspace}/session/${firstSession}`);
         await firstHistory;
         const input = page.locator('[data-testid="chat-input"]');
         await input.fill("start a long run");
@@ -248,11 +248,11 @@ test.describe("Session switch between chat and workspace", () => {
             timeout: EXPECT_TIMEOUT_MS,
         });
 
-        await page.goto(`/workspace/${secondWorkspace}/chat/${secondSession}`);
+        await page.goto(`/workspace/${secondWorkspace}/session/${secondSession}`);
         const returnedHistory = page.waitForResponse((response) =>
             response.url().includes(`/api/v1/sessions/${firstSession}/messages`),
         );
-        await page.goto(`/workspace/${firstWorkspace}/chat/${firstSession}`);
+        await page.goto(`/workspace/${firstWorkspace}/session/${firstSession}`);
         await returnedHistory;
         expect(historyReads).toBeGreaterThanOrEqual(2);
         await expect(page.getByText("replayed response")).toBeVisible({

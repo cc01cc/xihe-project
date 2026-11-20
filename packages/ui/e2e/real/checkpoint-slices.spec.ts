@@ -399,7 +399,7 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
     // PLAN-0361 checkpoint E2E bootstrap fix: sessions need a bound Agent principal,
     // so open the bootstrapped session's chat route directly rather than relying on
     // the removed auto-create path that left the workspace on its empty state.
-    await page.goto(`/workspace/${ctx.workspaceId}/chat/${checkpointSessionId}`, {
+    await page.goto(`/workspace/${ctx.workspaceId}/session/${checkpointSessionId}`, {
         waitUntil: "load",
     });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({

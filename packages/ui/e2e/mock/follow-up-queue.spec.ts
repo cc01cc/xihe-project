@@ -218,7 +218,7 @@ test("active desktop ChatRun queues the draft and keeps the transcript unchanged
     page.on("pageerror", (error) => pageErrors.push(error.message));
     const { enqueueRequests, chatPostCount } = await setupFollowUpChat(page);
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`, {
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`, {
         waitUntil: "domcontentloaded",
     });
 
@@ -293,7 +293,7 @@ test("paused queue exposes explicit Continue and resumes in FIFO order on mobile
     paused.items = [item("paused"), item("paused", 2)];
     await setupFollowUpChat(page, paused);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`, {
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`, {
         waitUntil: "domcontentloaded",
     });
 

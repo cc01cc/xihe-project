@@ -10,10 +10,10 @@ import { isWorkbenchRoute, isWorkbenchRouteName, WORKBENCH_ROUTE_NAMES } from ".
  * 五个非工作台页又冒出 32px 全局行（task-104 的缺陷形态）。</p>
  */
 describe("workbenchRoute（task-110：全局页签行只属于工作台页）", () => {
-    it("判定函数只认 workspace 与 workspace-chat", () => {
-        expect(WORKBENCH_ROUTE_NAMES).toEqual(["workspace", "workspace-chat"]);
+    it("判定函数只认 workspace 与 workspace-session", () => {
+        expect(WORKBENCH_ROUTE_NAMES).toEqual(["workspace", "workspace-session"]);
         expect(isWorkbenchRouteName("workspace")).toBe(true);
-        expect(isWorkbenchRouteName("workspace-chat")).toBe(true);
+        expect(isWorkbenchRouteName("workspace-session")).toBe(true);
         // 工作区壳内但**不挂工作台**的五页
         expect(isWorkbenchRouteName("workspace-environment")).toBe(false);
         expect(isWorkbenchRouteName("workspace-scheduled-tasks")).toBe(false);
@@ -25,7 +25,7 @@ describe("workbenchRoute（task-110：全局页签行只属于工作台页）", 
         expect(isWorkbenchRouteName(undefined)).toBe(false);
         expect(isWorkbenchRouteName(null)).toBe(false);
         expect(isWorkbenchRoute(undefined)).toBe(false);
-        expect(isWorkbenchRoute({ name: "workspace-chat" })).toBe(true);
+        expect(isWorkbenchRoute({ name: "workspace-session" })).toBe(true);
     });
 
     it("路由表里命中该判定的记录恰好两条，且就是工作台两页", () => {
@@ -33,11 +33,11 @@ describe("workbenchRoute（task-110：全局页签行只属于工作台页）", 
         expect(records).toHaveLength(2);
         expect(records.map((record) => record.name).sort()).toEqual([
             "workspace",
-            "workspace-chat",
+            "workspace-session",
         ]);
         expect(records.map((record) => record.path).sort()).toEqual([
             "/workspace/:workspaceId",
-            "/workspace/:workspaceId/chat/:sessionId",
+            "/workspace/:workspaceId/session/:sessionId",
         ]);
     });
 });

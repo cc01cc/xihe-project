@@ -195,7 +195,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
 
 async function openChat(page: Page): Promise<void> {
     seedPage(page, ctx);
-    const chatUrl = `/workspace/${ctx.workspaceId}/chat/${sessionId}`;
+    const chatUrl = `/workspace/${ctx.workspaceId}/session/${sessionId}`;
     // Vite dev 首次深路由会撞上依赖预打包窗口：pageError「Failed to fetch dynamically
     // imported module: …/AppLayout.vue」（2026-11-04 T1.1 首跑 trace 实测，network 同时
     // 在拉 /node_modules/.vite/deps/*）。预打包结束后要么 Vite 自动 full-reload、要么需要

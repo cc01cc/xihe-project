@@ -222,7 +222,9 @@ test.describe("@host PLAN-0493 loop guard", () => {
         });
         await installAuth(page, auth);
 
-        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         const textarea = page.locator("textarea");
         await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // PLAN-0439 admission: bind the session before the first send (fake key).
@@ -275,7 +277,9 @@ test.describe("@host PLAN-0493 loop guard", () => {
         // Reuse the same user/workspace as the desktop pass (Agent single-workspace
         // MCP binding).
         await installAuth(page, auth);
-        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         await page.setViewportSize({ width: 390, height: 844 });
         // At 390px the app shell defaults to the Files pane; the chat composer is
         // reachable through the "Open chat" toggle (same entry as queue mobile spec).

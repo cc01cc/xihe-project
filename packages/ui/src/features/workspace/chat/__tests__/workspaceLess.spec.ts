@@ -16,10 +16,10 @@ describe("isWorkspaceLessRoute", () => {
         expect(isWorkspaceLessRoute(route("/chat/4d5c013b", { sessionId: "4d5c013b" }))).toBe(true);
     });
 
-    it("工作区会话 /workspace/:workspaceId/chat/:sessionId ⇒ false（不能被误降级）", () => {
+    it("工作区会话 /workspace/:workspaceId/session/:sessionId ⇒ false（不能被误降级）", () => {
         expect(
             isWorkspaceLessRoute(
-                route("/workspace/ws-1/chat/s-1", { workspaceId: "ws-1", sessionId: "s-1" }),
+                route("/workspace/ws-1/session/s-1", { workspaceId: "ws-1", sessionId: "s-1" }),
             ),
         ).toBe(false);
     });

@@ -300,7 +300,7 @@ async function pushUserChannelFrame(page: Page, name: string, payload: unknown):
 
 /** 进会话 → 打开右栏的 `members` 页签（task-137 后入口 = 行尾开合图标 → 「+」→ 选类型，桌面布局）。 */
 async function openMembersPanel(page: Page): Promise<void> {
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await openDockPanel(page, "members");
     await expect(page.getByTestId("dock-tab-members")).toHaveAttribute("aria-selected", "true", {

@@ -9,7 +9,7 @@ import type { RouteLocationNormalizedLoaded } from "vue-router";
  * 而组合器此前对这些控件**零降级** ⇒ 用户先选主体再发送，第三步才失败。</p>
  *
  * <p>判定口径 = 路由事实，不是 store 推断：独立会话走 `/chat/:sessionId`（无 workspaceId 段），
- * 工作区会话走 `/workspace/:workspaceId/chat/:sessionId`。两者共用 `ChatPanel`，所以只能按路由判。</p>
+ * 工作区会话走 `/workspace/:workspaceId/session/:sessionId`。两者共用 `ChatPanel`，所以只能按路由判。</p>
  */
 /**
  * `route` 可以缺席：组件单测常不装 router（`useRoute()` 会直接抛）。缺席 = 不是独立会话，

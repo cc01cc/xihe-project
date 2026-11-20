@@ -92,7 +92,7 @@ describe("H1：tab 上下文（sessionStorage）优先于上一跳（localStorag
         await navigate("/workbench");
         const landed = window.location.pathname;
         process.stdout.write(`[H1-B] last=${WS_LAST}/${SESS_LAST} landed=${landed}\n`);
-        expect(landed).toBe(`/workspace/${WS_LAST}/chat/${SESS_LAST}`);
+        expect(landed).toBe(`/workspace/${WS_LAST}/session/${SESS_LAST}`);
     });
 
     it("standalone 上一跳恢复到 /chat/<sid>", async () => {
@@ -106,18 +106,18 @@ describe("H1：tab 上下文（sessionStorage）优先于上一跳（localStorag
 
 describe("H2：写点必须是 afterEach —— redirect 目标不得写入上一跳", () => {
     it("A 面：指向非 UUID 工作区的深链被守卫弹走，不写上一跳", async () => {
-        await navigate("/workspace/not-a-uuid/chat/sess-1");
+        await navigate("/workspace/not-a-uuid/session/sess-1");
         const landed = window.location.pathname + window.location.search,
             written = localStorage.getItem(LAST_LOCATION_KEY);
         process.stdout.write(
-            `[H2-A] deep-link=/workspace/not-a-uuid/chat/sess-1 landed=${landed} written=${written}\n`,
+            `[H2-A] deep-link=/workspace/not-a-uuid/session/sess-1 landed=${landed} written=${written}\n`,
         );
         expect(written).toBeNull();
         expect(landed.startsWith("/workbench")).toBe(true);
     });
 
     it("B 面（正读数）：真正落地的会话页/裸工作区/独立会话都写入", async () => {
-        await navigate(`/workspace/${WS_LAST}/chat/${SESS_LAST}`);
+        await navigate(`/workspace/${WS_LAST}/session/${SESS_LAST}`);
         let written = readLastLocation();
         process.stdout.write(
             `[H2-B1] landed=${window.location.pathname} written=${JSON.stringify(written)}\n`,
@@ -202,7 +202,7 @@ describe("H4-c：冷启显式进 picker 不恢复（冷启 /workbench 仍恢复 
                 "\n",
         );
         expect(landed, "冷启 /workbench 的原语义不许跟着废掉").toBe(
-            `/workspace/${WS_LAST}/chat/${SESS_LAST}`,
+            `/workspace/${WS_LAST}/session/${SESS_LAST}`,
         );
         // 机制读数：恢复发生后才有的这层 redirect，来源是 `/workbench`（不是 picker 入口）。
         expect(router.currentRoute.value.redirectedFrom?.path).toBe("/workbench");
@@ -225,7 +225,7 @@ describe("H4-c：冷启显式进 picker 不恢复（冷启 /workbench 仍恢复 
 describe("task-145 ①：站内到达 workspace-home 一律不恢复", () => {
     it("删工作区/无权的回弹：清 tab 上下文后回 picker ⇒ 落在 picker，不被上一跳送回原工作区", async () => {
         // 真实链路起手：冷启先落在该工作区的会话页（= 恢复落点，或用户直接打开深链）。
-        await navigate(`/workspace/${WS_LAST}/chat/${SESS_LAST}`);
+        await navigate(`/workspace/${WS_LAST}/session/${SESS_LAST}`);
         expect(localStorage.getItem(LAST_LOCATION_KEY), "前置：上一跳必须已写入").not.toBeNull();
         // 页面发现该工作区不可用（WORKSPACE_FORBIDDEN / NOT_FOUND / 已被删除）：
         // 三处真实调用点同形 —— WorkspaceView.vue:368、WorkspaceSettingsView.vue:322、:231
@@ -241,7 +241,7 @@ describe("task-145 ①：站内到达 workspace-home 一律不恢复", () => {
                 String(router.currentRoute.value.name) +
                 "\n",
         );
-        // 变异判据：删掉「非冷启一律不恢复」⇒ 落在 /workspace/WS/chat/SESS（被劫持）⇒ 红。
+        // 变异判据：删掉「非冷启一律不恢复」⇒ 落在 /workspace/WS/session/SESS（被劫持）⇒ 红。
         expect(landed, "站内到 picker 不得被上一跳送回原工作区").toBe("/workbench");
         expect(router.currentRoute.value.name).toBe("workspace-home");
     });

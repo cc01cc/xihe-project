@@ -562,7 +562,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         const boundPrincipalId = await createAndBindAgent(page);
 
         // 会话经 CP 路径端点创建（`POST /api/v1/workspaces/{id}/sessions`，agentPrincipalId 必填，
-        // 探针实测：缺字段 400、带正确 id 201），再进 `/workspace/<ws>/chat/<sid>`；
+        // 探针实测：缺字段 400、带正确 id 201），再进 `/workspace/<ws>/session/<sid>`；
         // UI 侧的 agent 选择弹窗是 Reka 组合框（`workspace-create-agent-session` 在其内），
         // 点选不稳定，故 S6 的 UI 覆盖点放在 composer / 发送 / 回复（会话创建本身由 S4/S6 的 API 断言覆盖）。
         const token = await tokenOf(page);
@@ -575,7 +575,9 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         );
         expect(createdSessionResponse.status(), await createdSessionResponse.text()).toBe(201);
         const headedSessionId = ((await createdSessionResponse.json()) as { id: string }).id;
-        await page.goto(`/workspace/${workspaceId}/chat/${headedSessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${headedSessionId}`, {
+            waitUntil: "load",
+        });
 
         // 进入工作区时 UI 已自动开了一个对话（`/workspace/<ws>` 内联 chat）。刷新一次拿干净状态，
         // 若仍弹出「选择 Agent」modal，用 Esc 关闭（本轮的 Agent 绑定已由 createAndBindAgent 完成）。

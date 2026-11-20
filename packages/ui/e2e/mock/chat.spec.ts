@@ -52,7 +52,7 @@ test.describe("Chat", () => {
     });
 
     test("empty chat page renders correctly", async ({ page }) => {
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/test-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/test-session");
         // Explicit lane budget: the composer mounts after the session/branch projections resolve,
         // and the default 5 s expect timeout loses that race when the lane runs many browsers.
         await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -93,7 +93,7 @@ test.describe("Chat", () => {
                 response.status() === 200,
         );
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/test-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/test-session");
         await messagesLoaded;
         await expect(page.locator("text=What is TypeScript?")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -126,7 +126,7 @@ test.describe("Chat", () => {
             ],
         });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/sid-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/sid-1");
 
         await expect(page.locator("aside >> text=TypeScript Help")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -155,7 +155,7 @@ test.describe("Chat", () => {
             sessions: [{ id: "stream-session", title: "Stream Test" }],
         });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/stream-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/stream-session");
 
         const textarea = page.locator("textarea");
         await textarea.fill("Show me markdown");
@@ -196,7 +196,7 @@ test.describe("Chat", () => {
             }),
         );
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/context-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/context-session");
         // PLAN-0626 M2: the context-sources block lives in the dock `context` tab
         // (`SessionContextPanel` → `SessionSettingsPanel` → `ContextSourcesU1`) and is not mounted
         // in the chat column, so the panel has to be opened before the block exists at all.
@@ -223,7 +223,7 @@ test.describe("Chat", () => {
         });
         await setupMockSessions(page, { sessions: [{ id: "usage-session", title: "Usage line" }] });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/usage-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/usage-session");
         await page.getByTestId("chat-input").fill("show usage");
         await page.getByTestId("chat-input").press("Enter");
         // task-327：同一串 wire 文案现在同屏出现两处 —— 会话列头部的 run-terminal 用量行
@@ -266,7 +266,7 @@ test.describe("Chat", () => {
         });
         await setupMockSessions(page, { sessions: [{ id: "stop-session", title: "Stop Test" }] });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/stop-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/stop-session");
 
         const textarea = page.locator("textarea");
         await textarea.fill("Keep going");
@@ -299,7 +299,7 @@ test.describe("Chat", () => {
         });
         await setupMockSessions(page, { sessions: [{ id: "retry-session", title: "Retry Test" }] });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/retry-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/retry-session");
         const textarea = page.locator("textarea");
         await textarea.fill("Try again");
         await textarea.press("Enter");
@@ -342,7 +342,7 @@ test.describe("Chat", () => {
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: "voice-session", title: "Voice Test" }] });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/voice-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/voice-session");
         const voiceButton = page.getByTitle("语音输入");
         await expect(voiceButton).toBeVisible();
         await voiceButton.click();
@@ -393,7 +393,7 @@ test.describe("Chat", () => {
             );
 
             await page.goto(
-                "/workspace/11111111-1111-4111-8111-111111111111/chat/upload-failure-session",
+                "/workspace/11111111-1111-4111-8111-111111111111/session/upload-failure-session",
             );
             await page.getByTestId("file-upload-input").setInputFiles({
                 name: "notes.md",
@@ -424,7 +424,7 @@ test.describe("Chat", () => {
             sessions: [{ id: "anchor-session", title: "Anchor Test" }],
         });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/anchor-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/anchor-session");
 
         const textarea = page.locator("textarea");
         await textarea.fill("Anchor me");

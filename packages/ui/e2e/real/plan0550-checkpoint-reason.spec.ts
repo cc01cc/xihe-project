@@ -144,7 +144,7 @@ async function startRun(
     text: string,
 ): Promise<string> {
     seedPage(page, ctx);
-    await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${ctx.workspaceId}/session/${sessionId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });

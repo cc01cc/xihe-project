@@ -45,7 +45,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
@@ -464,7 +464,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     }) => {
         // 真实登录（BL-237 seed 修复）：假 storage seed 与真实登录不等价，会让本 spec 永远红。
         await loginMemberInBrowser(page);
-        await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "member composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

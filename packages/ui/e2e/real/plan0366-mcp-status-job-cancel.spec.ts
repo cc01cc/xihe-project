@@ -475,7 +475,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         seedPage(page, sharedAuth, sharedWs);
         // cad8e727/0401 后 fresh workspace 无零会话 composer；直接进 beforeAll
         // bootstrap 出的会话路由（session-branch 同路径），chat-input 在会话路由渲染。
-        await page.goto("/workspace/" + sharedWs + "/chat/" + suiteSessionId, {
+        await page.goto("/workspace/" + sharedWs + "/session/" + suiteSessionId, {
             waitUntil: "load",
         });
 
@@ -494,7 +494,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         // 重进会话路由：消息 DTO 带回 jobSummary（0344 口径；SSE 结束时卡片尚无档案）。
         // 工具调用会双份渲染（流式 parts + 持久化 tool-result 消息），且重载后 arguments
         // 不返回，因此用档案 jobId（面板可见）定位卡片，只取带 job-status 徽章的持久化卡。
-        await page.goto("/workspace/" + sharedWs + "/chat/" + sessionId, {
+        await page.goto("/workspace/" + sharedWs + "/session/" + sessionId, {
             waitUntil: "load",
         });
         const summaries = await jobSummaries(request, sessionId);

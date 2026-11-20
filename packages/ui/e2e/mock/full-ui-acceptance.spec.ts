@@ -156,7 +156,7 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
 
         const routes = [
             {
-                path: "/workspace/11111111-1111-4111-8111-111111111111/chat/session-1",
+                path: "/workspace/11111111-1111-4111-8111-111111111111/session/session-1",
                 marker: page.locator("textarea"),
             },
             {
@@ -202,7 +202,7 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-1");
         // D-1229：栏头不再是工作区名按钮 ⇒ 导航走 rail 的「工作台」模块（激活态也钉在它上面）。
         await page.getByTestId("global-rail-module-workbench").click();
         await expect(page).toHaveURL(/\/workspace\/11111111-1111-4111-8111-111111111111$/);
@@ -281,7 +281,7 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
                 ],
             },
         });
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-search");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-search");
         await expect(page.getByText("keep this result")).toBeVisible();
         await page.getByTestId("message-search-toggle").click();
         await page.getByPlaceholder("搜索消息…").fill("keep");
@@ -842,7 +842,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
                 },
             });
         });
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-1");
         await expect(page.locator("textarea")).toBeVisible();
         await page.getByTitle("截取屏幕").click();
         await expect(page.getByTestId("selected-attachment")).toBeVisible({

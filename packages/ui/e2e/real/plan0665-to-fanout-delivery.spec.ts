@@ -17,7 +17,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
@@ -269,7 +269,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
 
         // 从 UI 打开该会话（seedPage 写入 token/workspace；路由与产品入口一致）。
         await seedPage(page, ctx);
-        await page.goto(workspaceChatPath(wsId, sessionId));
+        await page.goto(workspaceSessionPath(wsId, sessionId));
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await ensureChatReady(page);
 

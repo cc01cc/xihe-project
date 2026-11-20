@@ -54,7 +54,7 @@ function createTestRouter() {
         history: createMemoryHistory(),
         routes: [
             {
-                path: "/workspace/:workspaceId/chat/:sessionId",
+                path: "/workspace/:workspaceId/session/:sessionId",
                 component: { template: '<div data-testid="route-view" />' },
             },
             { path: "/workspace", component: { template: '<div data-testid="route-view" />' } },
@@ -115,7 +115,7 @@ let pinia: Pinia;
 
 async function mountLayout() {
     const router = createTestRouter();
-    await router.push("/workspace/workspace-1/chat/current");
+    await router.push("/workspace/workspace-1/session/current");
     await router.isReady();
     const wrapper = mount(AppLayout, {
         global: {

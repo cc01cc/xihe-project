@@ -166,7 +166,7 @@ test.describe("BL-340 判 2：滚动跟随语义", () => {
             });
         });
         await installChatSsePush(page);
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-scroller-viewport"]').first()).toBeVisible(
             { timeout: LONG_TIMEOUT_MS },
         );

@@ -15,7 +15,7 @@ interface Route {
     useRegisteredWorkspace?: boolean;
     /**
      * 用 register 返回的真实 workspaceId + 一个**必然不存在**的 sessionId 打 chat 路由。
-     * 真栈没有「创建会话」夹具（BL 已登记），此前写死 `/workspace/workspace-1/chat/test-session`
+     * 真栈没有「创建会话」夹具（BL 已登记），此前写死 `/workspace/workspace-1/session/test-session`
      * 的 id 在真库不存在 ⇒ 页面永远是「暂无活动会话」空壳，`chat-input` 永不出现。
      * 本用例改为诚实地拍这张空壳：基线名带 `no-session`，landmark 用工作区视口。
      */
@@ -27,8 +27,8 @@ const allRoutes: Route[] = [
     { path: "/register", name: "real-register", requiresAuth: false },
     { path: "/workspace", name: "real-workspace-default", requiresAuth: true },
     {
-        path: "/workspace/workspace-1/chat/test-session",
-        name: "real-workspace-chat-route-no-session",
+        path: "/workspace/workspace-1/session/test-session",
+        name: "real-workspace-session-route-no-session",
         requiresAuth: true,
         chatWithoutSession: true,
     },
@@ -59,7 +59,7 @@ const readinessLandmarks: Record<string, { testId: string } | { selector: string
     "real-login": { selector: "form[aria-busy]" },
     "real-register": { selector: "form[aria-busy]" },
     "real-workspace-default": { testId: "workspace-picker" },
-    "real-workspace-chat-route-no-session": { testId: "workspace-route-viewport" },
+    "real-workspace-session-route-no-session": { testId: "workspace-route-viewport" },
     "real-settings-user-llm-provider": { testId: "settings-domain-title" },
     "real-resources-knowledge": { testId: "resources-knowledge-gap" },
     "real-settings-data": {
@@ -91,7 +91,7 @@ for (const route of allRoutes) {
         const NO_SUCH_SESSION = "00000000-0000-0000-0000-000000000000";
         const routePath =
             route.chatWithoutSession && registeredWorkspaceId
-                ? `/workspace/${registeredWorkspaceId}/chat/${NO_SUCH_SESSION}`
+                ? `/workspace/${registeredWorkspaceId}/session/${NO_SUCH_SESSION}`
                 : route.useRegisteredWorkspace && registeredWorkspaceId
                   ? `/workspace/${registeredWorkspaceId}`
                   : route.path;

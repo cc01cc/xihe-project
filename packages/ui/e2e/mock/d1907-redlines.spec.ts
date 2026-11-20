@@ -33,7 +33,7 @@ const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const LAYOUT_KEY = "xihe-layout-ws:" + WORKSPACE_ID;
 /** 两个会话夹具：G-11「两会话各开一份不串台」需要两个不同 session id。 */
 const SESSIONS = ["d1907-a", "d1907-b"] as const;
-const CHAT_PATH = "/workspace/" + WORKSPACE_ID + "/chat/" + SESSIONS[0];
+const CHAT_PATH = "/workspace/" + WORKSPACE_ID + "/session/" + SESSIONS[0];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** packages/ui/e2e/mock → A03-xihe（与 e2e/real 同深度） */
@@ -419,7 +419,7 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
         await waitForSettledLayout(page);
         const mainProbe = await probePicker(page, "main");
         // 主栏「+」今天会离开会话页（?newChat=1）⇒ 回到会话页再探右栏，否则右栏行根本不在。
-        if (!page.url().includes("/chat/")) await page.goto(CHAT_PATH);
+        if (!page.url().includes("/session/")) await page.goto(CHAT_PATH);
         await page.locator('[data-testid="workspace-main"]').waitFor({
             state: "visible",
             timeout: EXPECT_TIMEOUT_MS,
@@ -469,7 +469,7 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
         await openRightContainer(page);
         await waitForSettledLayout(page);
         const mainProbe = await probePicker(page, "main");
-        if (!page.url().includes("/chat/")) await page.goto(CHAT_PATH);
+        if (!page.url().includes("/session/")) await page.goto(CHAT_PATH);
         await page.locator('[data-testid="workspace-main"]').waitFor({
             state: "visible",
             timeout: EXPECT_TIMEOUT_MS,
@@ -686,7 +686,7 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
                 return Array.isArray(parsed.openTabs) ? (parsed.openTabs as string[]) : [];
             }, LAYOUT_KEY);
         const gotoChat = async (sid: string): Promise<void> => {
-            await page.goto("/workspace/" + WORKSPACE_ID + "/chat/" + sid);
+            await page.goto("/workspace/" + WORKSPACE_ID + "/session/" + sid);
             await page.locator('[data-testid="workspace-main"]').waitFor({
                 state: "visible",
                 timeout: EXPECT_TIMEOUT_MS,
@@ -719,7 +719,7 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
         await page
             .getByTestId("workspace-container-tab-main-" + tabIdOf(SESSIONS[0]))
             .click({ timeout: ACTION_TIMEOUT_MS });
-        await page.waitForURL(new RegExp("/chat/" + SESSIONS[0] + "$"), {
+        await page.waitForURL(new RegExp("/session/" + SESSIONS[0] + "$"), {
             timeout: EXPECT_TIMEOUT_MS,
         });
         const switched = { row: await readMainRow(), stored: await readStored() };
@@ -734,7 +734,7 @@ test.describe("task-125：D-1907 rev7 红线断言组（mock 车道，现在应�
         await page
             .getByTestId("workspace-container-tab-main-" + tabIdOf(SESSIONS[1]))
             .click({ timeout: ACTION_TIMEOUT_MS });
-        await page.waitForURL(new RegExp("/chat/" + SESSIONS[1] + "$"), {
+        await page.waitForURL(new RegExp("/session/" + SESSIONS[1] + "$"), {
             timeout: EXPECT_TIMEOUT_MS,
         });
 

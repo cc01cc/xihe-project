@@ -57,7 +57,7 @@ import { join } from "node:path";
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import {
     CP_URL,
     awaitLatestChatRunCompleted,
@@ -177,7 +177,7 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
         persist();
 
         await seedPage(page, ctx);
-        await page.goto(workspaceChatPath(wsId, sessionId));
+        await page.goto(workspaceSessionPath(wsId, sessionId));
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await ensureChatReady(page);
 

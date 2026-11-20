@@ -215,7 +215,7 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
         .poll(() => readSessionMode(request, auth, sessionId), { timeout: EXPECT_TIMEOUT_MS })
         .toBe("auto");
 
-    await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });

@@ -41,7 +41,7 @@ import {
     writeStandaloneSessionOrder,
 } from "../../../../composables/useWorkspaceLayout";
 import { writeTabWorkspace } from "../../../../lib/workspaceContext";
-import { workspaceChatPath, workspacePath, workspaceSettingsPath } from "../../../../lib/routes";
+import { workspaceSessionPath, workspacePath, workspaceSettingsPath } from "../../../../lib/routes";
 import { logger } from "../../../../lib/logger";
 import {
     DropdownMenu,
@@ -282,7 +282,7 @@ function openForeignSession(workspace: ApiWorkspace, sessionId: string): void {
         name: workspace.name,
         workspaceRole: workspace.workspaceRole ?? null,
     });
-    void router.push(workspaceChatPath(workspace.id, sessionId));
+    void router.push(workspaceSessionPath(workspace.id, sessionId));
 }
 
 /** 跨工作区动作：先写 tab 上下文（写入必须落在那个工作区），再跳。 */

@@ -24,7 +24,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
@@ -225,7 +225,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             },
             { accessToken: token, ws: workspaceId },
         );
-        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -320,7 +320,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             },
             { accessToken: token, ws: workspaceId },
         );
-        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -467,7 +467,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             },
             { accessToken: token, ws: workspaceId },
         );
-        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

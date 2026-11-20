@@ -27,7 +27,7 @@ function createTestRouter() {
         history: createMemoryHistory(),
         routes: [
             {
-                path: "/workspace/:workspaceId/chat/:sessionId",
+                path: "/workspace/:workspaceId/session/:sessionId",
                 component: { setup: () => () => null },
             },
         ],
@@ -131,7 +131,7 @@ describe("SessionList current-session fork action", () => {
         ]);
 
         const router = createTestRouter();
-        await router.push(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await router.push(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await router.isReady();
         const wrapper = mount(SessionList, {
             global: { plugins: [i18n, router], stubs: { Teleport: true } },
@@ -204,7 +204,9 @@ describe("SessionList current-session fork action", () => {
         );
         expect(forkSession.mock.calls[1]?.[2]).toBe(forkSession.mock.calls[0]?.[2]);
         expect(sessionStore.currentSessionId).toBe(CHILD_ID);
-        expect(router.currentRoute.value.path).toBe(`/workspace/${WORKSPACE_ID}/chat/${CHILD_ID}`);
+        expect(router.currentRoute.value.path).toBe(
+            `/workspace/${WORKSPACE_ID}/session/${CHILD_ID}`,
+        );
         expect(toastSuccess).toHaveBeenCalledWith("已创建并打开分叉会话");
         wrapper.unmount();
     });

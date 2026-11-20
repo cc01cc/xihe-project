@@ -42,7 +42,7 @@ describe("工作区二级导航 SSOT（路由 meta 派生）", () => {
     });
 
     it("聊天页不是二级导航项（它没有独立入口）", () => {
-        const chat = router.getRoutes().find((record) => record.name === "workspace-chat");
+        const chat = router.getRoutes().find((record) => record.name === "workspace-session");
         expect(chat).toBeDefined();
         expect(workspacePageOfMeta(chat?.meta)).toBeUndefined();
     });

@@ -152,13 +152,15 @@ const router = createRouter({
                             },
                         },
                         {
-                            // 聊天页属于工作台容器内部（不进二级导航：它没有独立入口，
+                            // 会话页属于工作台容器内部（不进二级导航：它没有独立入口，
                             // 入口是会话列表），所以**不带** `meta.workspacePage`。
+                            // task-33（D1472）：name 与路径段一并用 `session`（与页名「会话」同心），
+                            // **不做**旧形态兼容（书签/深链/上一跳恢复都不认旧地址）。
                             // task-118（D-1907 rev7）：会话页连**壳层那一条工作区导航带**也不要
                             // （`workspace-nav-*` 计数必须为 0）。用 meta 表达页面语义、由壳层读，
                             // 而不是在壳里按 name 判死——这样以后加「容器内页」只加一行 meta。
-                            path: "chat/:sessionId",
-                            name: "workspace-chat",
+                            path: "session/:sessionId",
+                            name: "workspace-session",
                             component: () =>
                                 import("../features/workspace/pages/WorkspaceView.vue"),
                             meta: { workspaceSecondaryNav: false },

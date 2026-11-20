@@ -179,7 +179,7 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
                 },
                 { token: auth.accessToken, workspaceId: auth.workspaceId },
             );
-            await page.goto(`/workspace/${auth.workspaceId}/chat/${overlayBody.id}`);
+            await page.goto(`/workspace/${auth.workspaceId}/session/${overlayBody.id}`);
             const input = page.getByTestId("chat-input");
             await expect(input).toBeVisible();
             await input.fill("resolver matrix ping");

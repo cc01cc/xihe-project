@@ -127,3 +127,8 @@ nohup.out
 # 他人 lane 残留的确定性生成副本（与 packages/ui/src/preview/mock/data/schema-catalog.ts 逐字节相同，
 # 仓内零引用、非构建产物；task-18 裁定：不删不碰，只忽略，避免长期污染脏文件读数）
 packages/.tmp-ignore
+
+# 视觉基线改名后仍有两个 linux 文件有仓库消费者（CI 视觉车道按用例标题派生文件名，
+# packages/ui/e2e/helpers/visual.ts:37；task-33 路由改名 chat->session）⇒ 显式放行。
+!packages/ui/e2e/mock/screenshots.spec.ts-snapshots/workspace-session-linux.png
+!packages/ui/e2e/real/screenshots.spec.ts-snapshots/real-workspace-session-route-no-session-linux.png

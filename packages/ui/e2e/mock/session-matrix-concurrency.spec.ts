@@ -57,7 +57,7 @@ test("运行中再发送：排队 affordance + follow-ups wire（不产生第二
         });
     });
 
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
     await expect(input, "composer mounts").toBeVisible({ timeout: LONG_TIMEOUT_MS });
 

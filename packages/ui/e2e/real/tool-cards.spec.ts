@@ -445,7 +445,7 @@ async function gotoSession(
     workspaceId: string,
     fixture: SessionFixture,
 ): Promise<void> {
-    await page.goto(`/workspace/${workspaceId}/chat/${fixture.id}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${workspaceId}/session/${fixture.id}`, { waitUntil: "load" });
     await openChatSurface(page);
     await expect(
         page.locator('[data-testid="tool-card"]').first(),

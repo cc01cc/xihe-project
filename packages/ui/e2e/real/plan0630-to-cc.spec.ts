@@ -14,7 +14,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
@@ -323,7 +323,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         const displayB = participantB!.displayName ?? "PLAN0630-AgentB";
 
         seedPage(page, ctx);
-        await page.goto(workspaceChatPath(wsId, sessionId), { waitUntil: "load" });
+        await page.goto(workspaceSessionPath(wsId, sessionId), { waitUntil: "load" });
         // A cold mount can drop the session view (the workspace page may repaint into an empty state);
         // one reload re-enters the same session route (never 新建对话 — that would switch sessions).
         if (

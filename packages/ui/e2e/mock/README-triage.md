@@ -12,7 +12,7 @@
 | 修复后整车道（05:35） | 161 | 24 | 4 | 14 |
 
 - 用户给的基线是 134/50/5（同一 commit，flaky 抽样不同；差异 2 条在 `chat`/`workspace-files`/`screenshots` 三处翻转）。
-- 修掉 25 条基线红点；新增 1 条红点：`screenshots.spec.ts › workspace-chat-session renders with 0 console errors`
+- 修掉 25 条基线红点；新增 1 条红点：`screenshots.spec.ts › workspace-session renders with 0 console errors`
   （该文件在基线里本来就是失败文件，失败用例从 `settings-monitoring` 换成了这条；原因见 §4，属该 spec 自身夹具缺口，
   与本次改动无关，见 §5 的说明）。
 

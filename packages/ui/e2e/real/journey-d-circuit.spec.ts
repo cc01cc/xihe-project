@@ -92,7 +92,9 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
             },
             { timeout: LONG_TIMEOUT_MS },
         );
-        await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${ctx.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         await sseReady;
 
         // Public compact triggers applyRecoveryBand → SSE circuit open → U4 toast.

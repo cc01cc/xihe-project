@@ -291,7 +291,7 @@ for (const wire of cases) {
                 const session = await sessionResponse.json();
                 expect(session.contextTemplateId).toBe(template.id);
                 expect(session.contextTemplateVersion).toBe(template.version);
-                await page.goto(`/workspace/${auth.workspaceId}/chat/${session.id}`);
+                await page.goto(`/workspace/${auth.workspaceId}/session/${session.id}`);
                 await expect(page.getByTestId("session-context-template-current")).toContainText(
                     templateName,
                 );

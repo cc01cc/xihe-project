@@ -80,7 +80,7 @@ test("ws-less 上下文请求头审计（task-585 余项）", async ({ page }) =
 
     // task-222：预热在本 spec 的落点页上做（要预热的正是它接下来要加载的模块图）；
     // 必须在 `page.on("request")` 之前，否则预热那次导航会被审计记录污染 boundary。
-    await warmUpDepsOrFail(page, "/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+    await warmUpDepsOrFail(page, "/workspace/" + WS_ID + "/session/" + WS_SESSION);
 
     const rows: Row[] = [];
     page.on("request", (request) => {
@@ -96,7 +96,7 @@ test("ws-less 上下文请求头审计（task-585 余项）", async ({ page }) =
     });
 
     // 从工作区会话页进入（上下文里有工作区），再点开独立会话 —— 与 task-585 的真实路径一致。
-    await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+    await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
     await expect(
         page.getByTestId("sidebar-standalone-group"),
         "standalone group visible",
@@ -180,7 +180,7 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
         // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
         // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
         await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -209,7 +209,7 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
             sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_ID }],
             workspacelessSessions: [{ id: STANDALONE, title: "独立会话甲" }],
         });
-        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
         await expect(page.getByTestId("sidebar-standalone-group")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -487,7 +487,7 @@ async function stubInstrumentProbe(page: Page): Promise<void> {
 /**
  * 会话**详情**桩（`GET /api/v1/sessions/{id}`）。
  *
- * <p>`setupMockSessions` 只桩列表；深链 `/workspace/B/chat/<SESSION_B>` 时子组件要读详情，
+ * <p>`setupMockSessions` 只桩列表；深链 `/workspace/B/session/<SESSION_B>` 时子组件要读详情，
  * 未桩 ⇒ 默认夹具 404（`helpers/workspace-fixture.ts` 的「静默 404」同族）。同一条 URL 重复 404
  * 会污染失败守卫的输出（task-192 ② 的**夹具缺口**，补桩）。</p>
  */
@@ -539,13 +539,13 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
         // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
         await stubInstrumentProbe(page);
-        await page.goto("/workspace/" + WS_A + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_A + "/session/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "A 的 composer 挂载").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
         const boundary = rows.length;
         // 真栈窗口下这里换成产品路径（点进 B）；mock 里没有该控件，故本态保持 skip。
-        await page.goto("/workspace/" + WS_B + "/chat/" + SESSION_B);
+        await page.goto("/workspace/" + WS_B + "/session/" + SESSION_B);
         await expect.poll(() => page.url(), { timeout: LONG_TIMEOUT_MS }).toContain(WS_B);
         const product = rows.slice(boundary);
         expect(
@@ -598,7 +598,7 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
         // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
         await stubInstrumentProbe(page);
-        await page.goto("/workspace/" + WS_A + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_A + "/session/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "A 的 composer 挂载").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -606,7 +606,7 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         const boundaryAt = Date.now();
 
         // 深链边界：同一 tab 切到 B（守卫先写 tab 上下文 = B，再挂视图）。
-        await page.goto("/workspace/" + WS_B + "/chat/" + SESSION_B);
+        await page.goto("/workspace/" + WS_B + "/session/" + SESSION_B);
         await expect.poll(() => page.url(), { timeout: LONG_TIMEOUT_MS }).toContain(WS_B);
 
         // 等满一个轮询周期（有界等待，不是固定 sleep）：审批轮询一跳 10 s，覆盖到才能说「这一屏没有」。
@@ -817,7 +817,7 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
  * 为什么它必须是主用例（`D-1516`）：深链整页导航会把 A 的在途请求随页面卸载丢掉，
  * 于是「在途落地」永绿；而 P1 是 **SPA 内切换**，窗口真实存在，且**确定性存在**：
  *   `WorkspaceSessionGroups.vue:205-213 openForeignSession()` 的执行顺序是
- *     `writeTabWorkspace(B)` → `router.push(workspaceChatPath(B, sessionId))`
+ *     `writeTabWorkspace(B)` → `router.push(workspaceSessionPath(B, sessionId))`
  *   ⇒ 从写上下文那一刻起，**新发请求带 B 头**，而路由仍是 A、`auth.workspace` 仍是 A、
  *     `loadTree()` 入口捕获的 `currentWorkspaceId`（`stores/workspace.ts:347`）仍是 A
  *   ⇒ 「**头=B ∧ 路由/参数=A**」是每次切换都必然出现的一小段，不是概率竞态。
@@ -862,7 +862,7 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         // （`composables/api.ts:3254-3260`）；`setupMockSessions` 已桩该路径，两组拿到同一份列表即够用。
         /* D-1582：逐会话声明归属 —— A 的会话归 A、另加一条**属于 B** 的会话给 B 组。
          * 以前这里只有 `{ id: WS_SESSION }`，`mapSession` 把它静默归到 WS_A，于是「B 组的会话」
-         * 其实是 A 的会话，点开就造出 `/workspace/B/chat/<A 的会话>`（生产 404，D-1583），
+         * 其实是 A 的会话，点开就造出 `/workspace/B/session/<A 的会话>`（生产 404，D-1583），
          * `headBParamA` 读到的就是这个夹具混态而不是产品行为。 */
         await setupMockSessions(page, {
             strictSessionWorkspaces: true,
@@ -875,7 +875,7 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
         // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
         await stubInstrumentProbe(page);
-        await page.goto("/workspace/" + WS_A + "/chat/" + WS_SESSION);
+        await page.goto("/workspace/" + WS_A + "/session/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "A 的 composer 挂载").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -904,7 +904,7 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         await expect(bodyB, "B 组展开").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         /* D-1582：不能点 `.first()`。列表桩对所有工作区返回同一份数组（本文件 795-796 的老注释已说明），
          * 所以「B 组的第一个」取决于种子顺序 —— 以前种子里只有 A 的会话，点下去就是
-         * `/workspace/B/chat/<A 的会话>`，那个混态是**夹具造的**，真实 CP 在这里回 404（D-1583）。
+         * `/workspace/B/session/<A 的会话>`，那个混态是**夹具造的**，真实 CP 在这里回 404（D-1583）。
          * 现在按标题显式取 B 的会话，点击路径与生产一致：B 的会话在 B 的路由下。 */
         const foreignItem = bodyB
             .getByTestId("session-item")

@@ -166,7 +166,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         const seededSessionId = ((await sessionRes.json()) as { id: string }).id;
 
         seedPage(page, { authToken: ctx.authToken, workspaceId: wsId, headers });
-        await page.goto("/workspace/" + wsId + "/chat/" + seededSessionId, {
+        await page.goto("/workspace/" + wsId + "/session/" + seededSessionId, {
             waitUntil: "load",
         });
         await ensureChatReady(page);

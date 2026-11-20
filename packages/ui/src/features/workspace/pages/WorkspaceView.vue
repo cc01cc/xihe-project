@@ -25,7 +25,7 @@ import FileImportDialog from "../components/FileImportDialog.vue";
 import WorkspaceSourceImportDialog from "../components/WorkspaceSourceImportDialog.vue";
 import ChatPanel from "../chat/components/ChatPanel.vue";
 import SseSubscriberLimitNotice from "../components/SseSubscriberLimitNotice.vue";
-import { workspaceChatPath } from "../../../lib/routes";
+import { workspaceSessionPath } from "../../../lib/routes";
 import BaseModal from "../../../components/shared/BaseModal.vue";
 import {
     Select,
@@ -340,7 +340,7 @@ async function submitAgentSession(
     try {
         const session = await sessionStore.createSession(agentPrincipalId);
         showAgentSelection.value = false;
-        await router.push(workspaceChatPath(workspaceId.value, session.id));
+        await router.push(workspaceSessionPath(workspaceId.value, session.id));
         return { id: session.id, missingDefault: false };
     } catch (cause) {
         const status = cause instanceof ApiError ? cause.problem.status : undefined;

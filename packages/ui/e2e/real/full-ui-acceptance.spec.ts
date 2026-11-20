@@ -231,7 +231,7 @@ test.describe("@host PLAN-269 full UI acceptance: real mobile flows", () => {
             title: "Mobile Sheets Session",
         });
         await installAuth(page, auth);
-        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`);
+        await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`);
         await page.reload();
 
         await page.getByTestId("workspace-toolbar-files-mobile").click();

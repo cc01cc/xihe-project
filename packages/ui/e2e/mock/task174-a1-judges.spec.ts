@@ -13,7 +13,7 @@ test.describe("task-174 A1", () => {
     test("工具栏零残留 + 唯一开合入口仍在", async ({ page }) => {
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "A1" }] });
-        await page.goto("/workspace/" + WORKSPACE_ID + "/chat/" + SESSION_ID);
+        await page.goto("/workspace/" + WORKSPACE_ID + "/session/" + SESSION_ID);
         await page
             .locator('[data-testid="workspace-main"]')
             .waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
@@ -80,7 +80,7 @@ test.describe("task-174 A1", () => {
         await page.setViewportSize({ width: 390, height: 844 });
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "A1" }] });
-        await page.goto("/workspace/" + WORKSPACE_ID + "/chat/" + SESSION_ID);
+        await page.goto("/workspace/" + WORKSPACE_ID + "/session/" + SESSION_ID);
         const more = page.locator('[data-testid="workspace-toolbar-more-mobile"]');
         await expect(more).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await more.click();

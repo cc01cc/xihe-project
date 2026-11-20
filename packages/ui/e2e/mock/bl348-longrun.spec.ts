@@ -80,7 +80,7 @@ test.describe("BL-348 长跑探针", () => {
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-348 longrun" }] });
         await stubSessionProjections(page, SESSION_ID);
         await stubLongSession(page);
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

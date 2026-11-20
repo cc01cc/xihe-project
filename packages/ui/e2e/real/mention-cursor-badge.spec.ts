@@ -70,7 +70,7 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
             },
             { id: state.workspaceId, name: "产品交付线" },
         );
-        await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
+        await page.goto(`/workspace/${state.workspaceId}/session/${state.sessionId}`);
         await expect(page.locator("textarea").first(), "composer").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

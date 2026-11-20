@@ -52,7 +52,7 @@ test.describe("task-43 RSI observation receipt", () => {
         await setupMockProviderBinding(page, SESSION_ID);
         await installChatSessionEventStream(page);
 
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         const composer = page.getByTestId("chat-input");
         await expect(composer, "composer mounts").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await composer.fill("只读取仓库根目录 README.md 第一段并一句话总结");

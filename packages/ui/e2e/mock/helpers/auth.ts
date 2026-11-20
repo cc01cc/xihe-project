@@ -193,7 +193,7 @@ export interface MockSessionRecord {
     /**
      * 会话的**归属工作区**。多工作区夹具（左栏按工作区分组、A→B 切换）必须逐会话写死：
      * 不写就会被 `MOCK_DEFAULT_WORKSPACE_ID` 静默归到 A（`D-1582` 的 `headBParamA` 就是这么造出来的
-     * —— 「B 组的会话」其实是 A 的会话，点开就是真实 CP 不会有的 `/workspace/B/chat/<A 的会话>`，
+     * —— 「B 组的会话」其实是 A 的会话，点开就是真实 CP 不会有的 `/workspace/B/session/<A 的会话>`，
      * 生产里那是 404，见 `D-1583`）。
      */
     workspaceId?: string;
@@ -1881,7 +1881,7 @@ export const MOCK_DEFAULT_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 /**
  * `D-1582`：混合形态（部分会话声明了 `workspaceId`、部分没有）是**夹具缺陷的形状** ——
  * 没声明的那些会被静默归到 `MOCK_DEFAULT_WORKSPACE_ID`，于是「B 组的会话」其实是 A 的会话；
- * 点开后路由是 `/workspace/B/chat/<A 的会话>`，真实 CP 在这里回 404（`D-1583` 的三层防线），
+ * 点开后路由是 `/workspace/B/session/<A 的会话>`，真实 CP 在这里回 404（`D-1583` 的三层防线），
  * 而 mock 会一路放行 ⇒ 用例读到的是「夹具造出来的混态」，不是产品行为。
  *
  * <p>存量靠隐式默认的 83 个 spec **不会**命中这条（它们一处 declaration 都没有）；只有真在写
@@ -1900,7 +1900,7 @@ function diagnoseUndeclaredSessionWorkspaces(options: MockSessionOptions): void 
         "）；未声明的会被静默归到 " +
         MOCK_DEFAULT_WORKSPACE_ID +
         " —— D-1582：那样「别组的会话」其实是 A 的会话，点开就是真实 CP 不会有的 " +
-        "/workspace/B/chat/<A 的会话>（生产 404，D-1583）。请给每个会话显式写 workspaceId。";
+        "/workspace/B/session/<A 的会话>（生产 404，D-1583）。请给每个会话显式写 workspaceId。";
     if (options.strictSessionWorkspaces) throw new Error(detail);
     console.warn(detail);
 }

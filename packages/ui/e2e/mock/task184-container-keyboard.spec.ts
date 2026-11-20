@@ -41,7 +41,7 @@ test.describe("task-184 容器页签行键盘契约（BL-561 扩展）", () => {
                 log.push({ combo: build(event), prevented: event.defaultPrevented });
             });
         });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         const mainTab = page
             .locator('[data-testid="workspace-container-tabs"][data-container="main"] [role="tab"]')
             .first();
@@ -86,7 +86,7 @@ test.describe("task-184 容器页签行键盘契约（BL-561 扩展）", () => {
     test("移动/建组键今天不可执行 ⇒ **不静默**：polite 播报理由，且不改焦点", async ({ page }) => {
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "kb" }] });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         const mainTab = page
             .locator('[data-testid="workspace-container-tabs"][data-container="main"] [role="tab"]')
             .first();
@@ -113,7 +113,7 @@ test.describe("task-184 容器页签行键盘契约（BL-561 扩展）", () => {
     test("焦点不在页签行里时按 F6：产品不接管（不 preventDefault）", async ({ page }) => {
         await setupMockAuth(page, {});
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "kb" }] });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
         await page
             .locator('[data-testid="workspace-container-tabs"][data-container="main"] [role="tab"]')
             .first()

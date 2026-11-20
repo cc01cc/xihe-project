@@ -147,7 +147,7 @@ test.describe("Context templates (PLAN-0414)", () => {
             });
         });
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, {
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`, {
             waitUntil: "load",
         });
 

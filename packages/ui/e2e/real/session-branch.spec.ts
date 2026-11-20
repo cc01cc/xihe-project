@@ -173,7 +173,7 @@ test.describe("@host Session branch path", () => {
             }
         });
 
-        await page.goto(`/workspace/${journey.workspaceId}/chat/${sessionId}`, {
+        await page.goto(`/workspace/${journey.workspaceId}/session/${sessionId}`, {
             waitUntil: "load",
         });
         await page
@@ -388,7 +388,7 @@ test.describe("@host Session branch path", () => {
         const childId = forkedSession.id;
         await expect
             .poll(() => new URL(page.url()).pathname)
-            .toBe(`/workspace/${journey.workspaceId}/chat/${childId}`);
+            .toBe(`/workspace/${journey.workspaceId}/session/${childId}`);
         await page
             .locator('[data-testid="chat-input"]')
             .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
@@ -611,7 +611,7 @@ test.describe("@host Session branch path", () => {
             workspaceHeaders,
         );
 
-        await page.goto(`/workspace/${journey.workspaceId}/chat/${compactSessionId}`, {
+        await page.goto(`/workspace/${journey.workspaceId}/session/${compactSessionId}`, {
             waitUntil: "load",
         });
         await page
@@ -688,7 +688,7 @@ test.describe("@host Session branch path", () => {
         const childId = ((await forkResponse.json()) as { id: string }).id;
         await expect
             .poll(() => new URL(page.url()).pathname)
-            .toBe(`/workspace/${journey.workspaceId}/chat/${childId}`);
+            .toBe(`/workspace/${journey.workspaceId}/session/${childId}`);
 
         // Compressed seed: summary slot present alongside the projected messages.
         const childDb = readSessionSnapshot(childId);

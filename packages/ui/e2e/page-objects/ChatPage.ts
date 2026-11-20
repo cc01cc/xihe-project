@@ -36,7 +36,7 @@ export class ChatPage {
         sessionId?: string,
         workspaceId = "11111111-1111-4111-8111-111111111111",
     ): Promise<void> {
-        const path = sessionId ? `/workspace/${workspaceId}/chat/${sessionId}` : "/workspace";
+        const path = sessionId ? `/workspace/${workspaceId}/session/${sessionId}` : "/workspace";
         await this.page.goto(path);
         await this.input.waitFor({ state: "visible" });
     }

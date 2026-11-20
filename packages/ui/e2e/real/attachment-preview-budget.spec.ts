@@ -42,7 +42,7 @@ import { expect, test } from "@playwright/test";
 import type { APIRequestContext, Page, Request, Response } from "@playwright/test";
 import { captureEvidence } from "../helpers/evidence";
 import { ChatPage } from "../page-objects/ChatPage";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { agentName } from "./helpers/agent-name";
 import {
     createSessionWithPrincipal,
@@ -517,7 +517,7 @@ async function prepareFixture(request: APIRequestContext, page: Page): Promise<v
     // ② 真 UI 上传两个附件并发送，让 CP 自己写 messages.attachments。
     const chat = new ChatPage(page);
     seedPage(page, journey);
-    await page.goto(`${UI_URL}${workspaceChatPath(workspaceId, sessionId)}`);
+    await page.goto(`${UI_URL}${workspaceSessionPath(workspaceId, sessionId)}`);
     // 新会话 messages 为空时 ChatPanel 不挂 MessageList（`v-if="messages.length > 0"`），
     // 空态只有欢迎语 + composer ⇒ 就绪探针只能用 composer；首条消息落库后 message-list 才出现。
     await expect(chat.input).toBeVisible({ timeout: LONG_TIMEOUT_MS });

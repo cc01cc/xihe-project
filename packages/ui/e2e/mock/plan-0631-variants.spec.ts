@@ -680,7 +680,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             await mockSessionProjections(page, SESSION_ID);
 
             await page.goto(
-                `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?variant=${variant.param}`,
+                `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?variant=${variant.param}`,
                 {
                     waitUntil: "load",
                 },
@@ -862,7 +862,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         });
         await mockSessionProjections(page, SESSION_ID);
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, {
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`, {
             waitUntil: "load",
         });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -1042,7 +1042,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         });
         await mockSessionProjections(page, SESSION_ID);
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, {
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`, {
             waitUntil: "load",
         });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -1071,7 +1071,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
 
         // `?variant=b` 是「默认」的别名：不投影属性，渲染仍是 B。
         await page.goto(
-            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?variant=b`,
+            `/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}?variant=b`,
             {
                 waitUntil: "load",
             },

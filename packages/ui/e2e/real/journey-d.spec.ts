@@ -178,7 +178,7 @@ test.describe("@host Journey D — context pipeline", () => {
             { principalId, title: "Journey D real boundary" },
         );
         seedPage(page, { authToken, workspaceId: wsId, headers });
-        await page.goto(`/workspace/${wsId}/chat/${realSessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${wsId}/session/${realSessionId}`, { waitUntil: "load" });
         await ensureChatBinding(page, realSessionId);
         await page.reload({ waitUntil: "load" });
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({

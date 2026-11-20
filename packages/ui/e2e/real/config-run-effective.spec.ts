@@ -135,7 +135,9 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
             principalId,
             title: "P0504 profile default",
         });
-        await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const marker = `p0504-${Date.now()}`;

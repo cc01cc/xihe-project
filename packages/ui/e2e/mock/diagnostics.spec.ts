@@ -12,7 +12,7 @@ test.describe("PLAN-0378 B: diagnostics UI rendering", () => {
     });
 
     test("renders structured diagnostics and keeps raw output collapsed", async ({ page }) => {
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible();
 
         await page.locator('[data-testid="chat-input"]').fill("run diagnostics");

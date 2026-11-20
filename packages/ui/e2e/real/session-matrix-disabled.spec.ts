@@ -26,7 +26,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { openDockPanel } from "../helpers/dock";
 
@@ -219,7 +219,7 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
 
     test("R5-2 UI 候选：停用主体不出现在「发送」候选中", async ({ page }) => {
         seedOwnerPage(page);
-        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -262,7 +262,7 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
 
     test("R5-3 UI 成员行：停用行保留但带停用徽标", async ({ page }) => {
         seedOwnerPage(page);
-        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await page.goto(workspaceSessionPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

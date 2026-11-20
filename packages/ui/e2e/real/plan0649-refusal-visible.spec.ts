@@ -385,7 +385,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
 
         // ── Step 1: one run, two spawn_agent calls, the second refused by the budget ──
         seedPage(page, ctx);
-        await page.goto(`/workspace/${wsId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${wsId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
         // sendChat (shared helper) asserts on an optimistic DOM bubble; after the 0645 SSE M2

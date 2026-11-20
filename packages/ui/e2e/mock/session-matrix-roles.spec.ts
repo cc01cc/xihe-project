@@ -83,7 +83,7 @@ test.describe("会话矩阵 M4 — 三角色渲染", () => {
         await setupMockSessions(page, {
             sessions: [{ id: "viewer-session", title: "Viewer Chat" }],
         });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/viewer-session`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/viewer-session`);
         await expect(page.getByTestId("chat-input"), "composer available for VIEWER").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

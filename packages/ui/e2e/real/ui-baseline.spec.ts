@@ -13,7 +13,7 @@
 //      transition 落定后再读计算样式（立即读会读到过渡前的空值，曾导致假绿）。
 //
 // 另两处工程口径（都出自真机踩坑）：
-//   - 会话入口用 CP API 挑「有消息的会话」再直达 /workspace/{ws}/chat/{sid}，不点侧栏：
+//   - 会话入口用 CP API 挑「有消息的会话」再直达 /workspace/{ws}/session/{sid}，不点侧栏：
 //     点侧栏会为每条会话开一个容器页签，多页签会触发 SSE 订阅上限横幅，污染顶带读数。
 //     空会话不挂 MessageScrollerViewport，所以「有消息」是能读到 transcript 的前提。
 //   - 页面若仍带着该横幅（测试产物，非产品 chrome），读数里 chromeNotice 显式记账，
@@ -503,7 +503,7 @@ async function openChatSurface(page: Page, target: string | null): Promise<strin
             await page
                 .locator('[data-testid="chat-input"]')
                 .waitFor({ state: "visible", timeout: Math.min(timeoutMs, 15_000) });
-            return page.url().includes("/chat/");
+            return page.url().includes("/session/");
         } catch {
             return false;
         }
@@ -515,7 +515,7 @@ async function openChatSurface(page: Page, target: string | null): Promise<strin
     }
     await page.goto("/workspace", { waitUntil: "load" });
     const picked = await discoverSession(page);
-    await page.goto("/workspace/" + picked.workspaceId + "/chat/" + picked.sessionId, {
+    await page.goto("/workspace/" + picked.workspaceId + "/session/" + picked.sessionId, {
         waitUntil: "load",
     });
     const surfaceOk = await waitReadyFor(

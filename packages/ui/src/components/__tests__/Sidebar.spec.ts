@@ -38,8 +38,8 @@ const { pushSpy, routeState } = vi.hoisted(() => ({
     pushSpy: vi.fn<Router["push"]>(),
     routeState: {
         params: {} as Record<string, string>,
-        name: "workspace-chat",
-        path: "/workspace/ws-test/chat/session-1",
+        name: "workspace-session",
+        path: "/workspace/ws-test/session/session-1",
     },
 }));
 
@@ -88,8 +88,8 @@ beforeEach(() => {
     sessionStorage.clear();
     pushSpy.mockClear();
     vi.restoreAllMocks();
-    routeState.name = "workspace-chat";
-    routeState.path = "/workspace/ws-test/chat/session-1";
+    routeState.name = "workspace-session";
+    routeState.path = "/workspace/ws-test/session/session-1";
     routeState.params = {};
     //
     // task-352 / `D-1206`：左栏现在是「工作区分组 + 会话项」，它自己要两个取数面 ——

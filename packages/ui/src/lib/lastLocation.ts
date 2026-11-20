@@ -29,7 +29,7 @@ import type { RouteLocationNormalized } from "vue-router";
 import { isUuid } from "./uuid";
 import {
     standaloneChatPath,
-    workspaceChatPath,
+    workspaceSessionPath,
     workspacePath,
     WORKSPACE_PICKER_PATH,
 } from "./routes";
@@ -169,7 +169,7 @@ export function lastLocationForRoute(
     const workspaceId = typeof to.params.workspaceId === "string" ? to.params.workspaceId : null;
     const sessionId = typeof to.params.sessionId === "string" ? to.params.sessionId : null;
     switch (to.name) {
-        case "workspace-chat":
+        case "workspace-session":
             return { kind: "workspace", workspaceId, sessionId };
         case "workspace":
             return { kind: "workspace", workspaceId, sessionId: null };
@@ -194,7 +194,7 @@ export function resolveLastLocationTarget(last: LastLocation | null): string | n
     if (!last.workspaceId || !isUuid(last.workspaceId)) return null;
     if (last.sessionId) {
         return isUuid(last.sessionId)
-            ? workspaceChatPath(last.workspaceId, last.sessionId)
+            ? workspaceSessionPath(last.workspaceId, last.sessionId)
             : workspacePath(last.workspaceId);
     }
     return workspacePath(last.workspaceId);

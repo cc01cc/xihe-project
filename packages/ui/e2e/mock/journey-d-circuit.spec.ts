@@ -12,7 +12,7 @@ test.describe("PLAN-0378 B: Journey D circuit surface", () => {
     });
 
     test("shows the auto-compaction circuit warning toast", async ({ page }) => {
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible();
         await pushContextEvent(page, "context_compaction_circuit", {
             state: "open",

@@ -76,7 +76,7 @@ test.describe("左栏工作区分组（task-352 / D-1206）", () => {
             { id: "s-b1", title: "Beta 会话", workspaceId: WS_B, agentPrincipalId: null },
         ]);
 
-        await page.goto(`/workspace/${WS_A}/chat/s-a1`);
+        await page.goto(`/workspace/${WS_A}/session/s-a1`);
 
         // ① 两个分组头都渲染出来（未做时只有当前那一个）
         await expect(page.getByTestId(`sidebar-workspace-group-${WS_A}`)).toBeVisible({

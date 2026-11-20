@@ -12,7 +12,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * 五个「工作区壳内、工作台未挂载」的页面多渲染一条 32px 全局页签行，把正文整体下推 32px，
  * 且点它会把用户带离当前页。根因是两道门都不判「当前路由是不是工作台」：
  * AppLayout.vue:206-211 只看路径前缀，WorkspaceTabBar.vue:268 只看容器有没有认领 ——
- * 而 claim 只有 WorkspaceWorkbench 发，它只在 workspace / workspace-chat 两页挂载。</p>
+ * 而 claim 只有 WorkspaceWorkbench 发，它只在 workspace / workspace-session 两页挂载。</p>
  *
  * <p>判据是**自校准**的：同一页先在「无页签」下量基线，再种上 openTabs 重量，两条读数必须
  * 一致（容差 1px）。这样「该页本来就有别的顶部元素」不会变成假红/假绿，而「多出一条 32px
@@ -221,7 +221,7 @@ test.describe("task-110 全局页签行只属于工作台页", () => {
 
     test("工作台聊天页保持容器行 2 / 工作台 1 / 全局行 0", async () => {
         await seedOpenTabs(page, workspaceId, [sessionId]);
-        await page.goto("/workspace/" + workspaceId + "/chat/" + sessionId, {
+        await page.goto("/workspace/" + workspaceId + "/session/" + sessionId, {
             waitUntil: "domcontentloaded",
         });
         await page

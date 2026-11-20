@@ -40,7 +40,9 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
         });
 
         seedPage(page, ctx);
-        await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${ctx.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API。

@@ -50,8 +50,8 @@ beforeEach(() => {
                 component: { setup: () => () => null },
             },
             {
-                path: "/workspace/:workspaceId/chat/:sessionId",
-                name: "workspace-chat",
+                path: "/workspace/:workspaceId/session/:sessionId",
+                name: "workspace-session",
                 component: { setup: () => () => null },
             },
         ],
@@ -108,7 +108,7 @@ describe("StandaloneChatView (task-373 / D-1228)", () => {
     it("sends a session that belongs to a workspace back to its workspace chat route", async () => {
         vi.spyOn(api, "getSession").mockResolvedValue(row(WORKSPACE_ID) as never);
         const wrapper = await mountPage();
-        expect(router.currentRoute.value.name).toBe("workspace-chat");
+        expect(router.currentRoute.value.name).toBe("workspace-session");
         expect(router.currentRoute.value.params.workspaceId).toBe(WORKSPACE_ID);
         // 本页是独立挂载（不经 router-view），跳转不会卸载它 ⇒ 判据取「没有把这条会话
         // 当成独立会话应用」，而不是判 DOM 卸载（真应用里路由切换会卸载本页）。

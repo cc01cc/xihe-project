@@ -172,7 +172,7 @@ async function setupTierLane(
  * 面板本体一律用可见过滤的那份 —— `session-context-panel` 可能出现两份副本（dock + 移动 sheet）。
  */
 async function openTierPanel(page: Page): Promise<void> {
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
     await openContextPanel(page);
     await expect(page.getByTestId("session-tier-select")).toBeVisible({
         timeout: LONG_TIMEOUT_MS,

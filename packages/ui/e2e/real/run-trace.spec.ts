@@ -570,7 +570,9 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
     }) => {
         const headers = { ...ctx.headers, "X-Workspace-Id": ctx.workspaceId };
         seedPage(page, { ...ctx, headers });
-        await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${ctx.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
         await ensureChatReady(page);
 
         // The route-matched real connection was reused or verified from the

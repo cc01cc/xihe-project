@@ -51,7 +51,7 @@ async function seed(page: Page) {
             { id: C, title: "独立会话丙" },
         ],
     });
-    await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+    await page.goto("/workspace/" + WS_ID + "/session/" + WS_SESSION);
     await expect(page.getByTestId("sidebar-standalone-group")).toBeVisible({
         timeout: EXPECT_TIMEOUT_MS,
     });

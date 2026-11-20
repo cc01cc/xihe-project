@@ -27,7 +27,7 @@ import ChatPanel from "../../features/workspace/chat/components/ChatPanel.vue";
 import { api, ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { useSessionStore } from "../../stores/session";
-import { workspaceChatPath } from "../../lib/routes";
+import { workspaceSessionPath } from "../../lib/routes";
 import { logger } from "../../lib/logger";
 
 const route = useRoute();
@@ -49,7 +49,7 @@ async function load(id: string): Promise<void> {
         const record = await api.getSession(id);
         if (record.workspaceId) {
             // 这条会话其实属于某个工作区：送它回该去的地方，而不是在这里渲染一个半残页。
-            void router.replace(workspaceChatPath(record.workspaceId, id));
+            void router.replace(workspaceSessionPath(record.workspaceId, id));
             return;
         }
         sessionStore.applySessionRecord(record);

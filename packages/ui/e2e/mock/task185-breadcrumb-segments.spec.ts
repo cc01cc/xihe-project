@@ -19,7 +19,7 @@ test.describe("task-185 chat 页面包屑段结构", () => {
         const reads: Record<string, unknown> = {};
 
         for (const target of [
-            { name: "chat", path: "/workspace/" + WORKSPACE_ID + "/chat/task185-session" },
+            { name: "chat", path: "/workspace/" + WORKSPACE_ID + "/session/task185-session" },
             { name: "scheduled", path: "/workspace/" + WORKSPACE_ID + "/scheduled-tasks" },
         ]) {
             await page.goto(target.path);

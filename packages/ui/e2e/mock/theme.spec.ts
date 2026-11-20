@@ -70,7 +70,7 @@ test.describe("Theme Switching", () => {
                 ]),
             );
         });
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/test-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/test-session");
         await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(page.locator("html")).not.toHaveClass(/dark/);
         await expectPlatformScreenshot(page, "theme-default-light.png");

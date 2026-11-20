@@ -26,7 +26,7 @@ function standaloneRoute(): FakeRoute {
 }
 function workspaceRoute(): FakeRoute {
     return {
-        path: "/workspace/11111111-1111-4111-8111-111111111111/chat/session-1",
+        path: "/workspace/11111111-1111-4111-8111-111111111111/session/session-1",
         params: { workspaceId: "11111111-1111-4111-8111-111111111111" },
         query: {},
     };

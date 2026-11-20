@@ -20,7 +20,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "task129-session";
-const CHAT_PATH = "/workspace/" + WORKSPACE_ID + "/chat/" + SESSION_ID;
+const CHAT_PATH = "/workspace/" + WORKSPACE_ID + "/session/" + SESSION_ID;
 const LAYOUT_KEY = "xihe-layout-ws:" + WORKSPACE_ID;
 /** 138 的三元组值域：容器 + view + 会话 id 都在里面（两栏/两会话各一份不会撞）。 */
 const CONFIG_TAB_ID = "pane:right:session-config:" + SESSION_ID;

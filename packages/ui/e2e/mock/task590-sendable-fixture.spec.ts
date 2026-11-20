@@ -16,7 +16,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeou
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
-const CHAT_URL = "/workspace/" + WORKSPACE_ID + "/chat/" + SESSION_ID;
+const CHAT_URL = "/workspace/" + WORKSPACE_ID + "/session/" + SESSION_ID;
 const TEXT = "夹具自证一次";
 
 type Reads = { chat: number; bindDefaults: number; posts: string[] };

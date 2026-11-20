@@ -77,7 +77,7 @@ async function measureWindow(
 
     await setupMockAuth(page, { workspaceEventsScenario: scenario });
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: label }] });
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer 挂载").toBeVisible({ timeout: 10_000 });
 
     const startedAt = Date.now();

@@ -256,7 +256,7 @@ async function openApprovalOnBothPages(browser: Browser, request: APIRequestCont
         (workspace) => localStorage.setItem("xihe-workspace", JSON.stringify(workspace)),
         { id: session.workspaceId, name: "Default Workspace" },
     );
-    await pageB.goto(`/workspace/${session.workspaceId}/chat/${session.sessionId}`, {
+    await pageB.goto(`/workspace/${session.workspaceId}/session/${session.sessionId}`, {
         waitUntil: "domcontentloaded",
     });
     await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -333,7 +333,7 @@ test("@host BL-333 判据③ 远端决定后他页 chat-input 草稿保留（草
         (workspace) => localStorage.setItem("xihe-workspace", JSON.stringify(workspace)),
         { id: session.workspaceId, name: "Default Workspace" },
     );
-    await pageB.goto(`/workspace/${session.workspaceId}/chat/${session.sessionId}`, {
+    await pageB.goto(`/workspace/${session.workspaceId}/session/${session.sessionId}`, {
         waitUntil: "domcontentloaded",
     });
     await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });

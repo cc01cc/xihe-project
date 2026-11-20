@@ -156,7 +156,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
         }
     });
 
-    await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+    await page.goto(`/workspace/${auth.workspaceId}/session/${sessionId}`, { waitUntil: "load" });
     const textarea = page.locator("textarea");
     await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect

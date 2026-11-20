@@ -20,7 +20,7 @@ import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
 import { useWorkspaceStore } from "../features/workspace/stores/workspace";
-import { workspaceChatPath } from "../lib/routes";
+import { workspaceSessionPath } from "../lib/routes";
 import {
     NAV_WIDTH_DEFAULT,
     NAV_WIDTH_KEYBOARD_STEP,
@@ -189,7 +189,7 @@ watch(
 
 /**
  * S3a: the route tab bar is part of the workspace shell. It renders for the four
- * sibling workspace routes only (`/workspace/:ws`, `/chat/:sid`, `/environment`,
+ * sibling workspace routes only (`/workspace/:ws`, `/session/:sid`, `/environment`,
  * `/scheduled-tasks`, `/settings`), never for the global `/settings/config` pages
  * or on mobile (the mobile flow keeps its sheets).
  */
@@ -261,7 +261,7 @@ function goToFirstPendingSession() {
     const currentWorkspaceId =
         (route.params.workspaceId as string | undefined) ?? auth.currentWorkspaceId;
     if (pending && currentWorkspaceId) {
-        void router.push(workspaceChatPath(currentWorkspaceId, pending.sessionId));
+        void router.push(workspaceSessionPath(currentWorkspaceId, pending.sessionId));
     }
 }
 

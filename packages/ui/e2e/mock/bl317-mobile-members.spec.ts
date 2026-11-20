@@ -139,7 +139,7 @@ async function setupLane(
 
 /** 打开移动端溢出菜单（入口族：`workspace-toolbar-more-mobile`）。 */
 async function openOverflowMenu(page: Page): Promise<void> {
-    await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/${WORKSPACE_ID}/session/${SESSION_ID}`);
     const more = page.getByTestId("workspace-toolbar-more-mobile");
     await expect(more).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await more.click();

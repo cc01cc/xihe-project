@@ -123,7 +123,7 @@ describe("resolveLastLocationTarget（守卫恢复的唯一读法）", () => {
                 sessionId: SESS,
                 at: "",
             }),
-        ).toBe(`/workspace/${WS}/chat/${SESS}`);
+        ).toBe(`/workspace/${WS}/session/${SESS}`);
         expect(
             resolveLastLocationTarget({
                 kind: "workspace",
@@ -219,7 +219,7 @@ describe("isExplicitPickerEntry（H4-c 判据：显式进 picker 不是恢复入
         expect(isExplicitPickerEntry({ redirectedFrom: { path: "/workbench" } })).toBe(false);
         expect(
             isExplicitPickerEntry({
-                redirectedFrom: { path: `/workspace/${WS}/chat/${SESS}` },
+                redirectedFrom: { path: `/workspace/${WS}/session/${SESS}` },
             }),
         ).toBe(false);
         expect(isExplicitPickerEntry({ redirectedFrom: { path: "/workspaces" } })).toBe(false);
@@ -274,7 +274,7 @@ describe("lastLocationForRoute（H2 写点的取值来源）", () => {
     it("三种可恢复页面映射到条目", () => {
         expect(
             lastLocationForRoute({
-                name: "workspace-chat",
+                name: "workspace-session",
                 params: { workspaceId: WS, sessionId: SESS },
             }),
         ).toEqual({ kind: "workspace", workspaceId: WS, sessionId: SESS });

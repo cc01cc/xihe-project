@@ -40,7 +40,7 @@ test("workspace SSE 重连按指数退避，不是恒速重连", async ({ page }
     // 那时它照样"绿"，但什么都没测到 —— 那种绿不携带信息。
     await setupMockAuth(page, { workspaceEventsScenario: { kind: "closeSoon" } });
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "reconnect backoff" }] });
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer 挂载").toBeVisible({ timeout: 10_000 });
 
     await expect

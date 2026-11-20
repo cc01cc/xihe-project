@@ -16,7 +16,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
@@ -216,7 +216,7 @@ test.describe("@host PLAN-0670 M2d middle-anchor prepend", () => {
         seedHistory(sessionId, branchId);
 
         await seedPage(page, ctx);
-        await page.goto(workspaceChatPath(wsId, sessionId));
+        await page.goto(workspaceSessionPath(wsId, sessionId));
         await expect(page.getByTestId("message-list")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => await page.locator("[data-message-role]").count(), {

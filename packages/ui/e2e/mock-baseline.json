@@ -60,7 +60,7 @@
         "login renders with 0 console errors",
         "register renders with 0 console errors",
         "workspace-default renders with 0 console errors",
-        "workspace-chat-session renders with 0 console errors",
+        "workspace-session renders with 0 console errors",
         "settings-config renders with 0 console errors",
         "resources-knowledge renders with 0 console errors",
         "settings-data renders with 0 console errors",

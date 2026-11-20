@@ -93,7 +93,7 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
         const sessionId = ((await sessionRes.json()) as { id: string }).id;
 
         seedPage(page, ctx);
-        await page.goto(`/workspace/${wsId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${wsId}/session/${sessionId}`, { waitUntil: "load" });
         await ensureChatReady(page);
 
         await sendChat(page, "XIHE-E2E-READ README.md");

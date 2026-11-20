@@ -27,7 +27,7 @@ test.describe("task-174 定向读数", () => {
         const reads: Record<string, unknown> = {};
 
         for (const target of [
-            { name: "chat", path: `/workspace/${WORKSPACE_ID}/chat/targeted-session` },
+            { name: "chat", path: `/workspace/${WORKSPACE_ID}/session/targeted-session` },
             { name: "scheduled", path: `/workspace/${WORKSPACE_ID}/scheduled-tasks` },
         ]) {
             await page.goto(target.path);
@@ -61,15 +61,15 @@ test.describe("task-174 定向读数", () => {
             ],
         });
         // 先钉两个会话页签（openTabs 有内容 ⇒ TabBar 的 v-if 为真）。
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/targeted-a`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/targeted-a`);
         await page
             .locator('[data-testid="workspace-main"]')
             .waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/targeted-b`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/targeted-b`);
         await page
             .locator('[data-testid="workspace-main"]')
             .waitFor({ state: "visible", timeout: EXPECT_TIMEOUT_MS });
-        await page.goto(`/workspace/${WORKSPACE_ID}/chat/targeted-a`);
+        await page.goto(`/workspace/${WORKSPACE_ID}/session/targeted-a`);
         await page
             .locator('[data-testid="workspace-container-tabs"]')
             .first()

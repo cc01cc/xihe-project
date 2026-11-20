@@ -47,7 +47,7 @@ test.describe("Run budget exhaustion surface", () => {
             if (new URL(request.url()).pathname === "/api/v1/chat") chatPosts.push(request.url());
         });
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         const input = page.locator('[data-testid="chat-input"]');
         await expect(input).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await input.fill("keep looping until the budget stops you");
@@ -108,7 +108,7 @@ test.describe("Run budget exhaustion surface", () => {
             sessions: [{ id: SESSION_ID, title: "Budget" }],
         });
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
         // 390 视口下聊天在 `MobileChatSheet` 内：必须先点「Open chat」触发器，否则输入框根本不在可见层
         // （与 `checkpoint-rollback.spec.ts` / `approval.spec.ts` 的移动端写法一致）。
         if ((page.viewportSize()?.width ?? 1920) < 768) {

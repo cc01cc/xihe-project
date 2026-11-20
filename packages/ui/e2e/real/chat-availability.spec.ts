@@ -110,7 +110,7 @@ async function openChat(
         },
         { token: auth.accessToken, workspaceId: auth.workspaceId },
     );
-    await page.goto(`/workspace/${auth.workspaceId}/chat/${chatSessionId}`, {
+    await page.goto(`/workspace/${auth.workspaceId}/session/${chatSessionId}`, {
         waitUntil: "load",
     });
     await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });

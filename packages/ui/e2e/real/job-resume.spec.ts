@@ -163,7 +163,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         await waitForControlPlaneAgentReady(request, sharedHeaders);
         seedPage(page, sharedAuth, sharedWs);
         const eventStream = waitForChatEventStream(page, suiteSessionId);
-        await page.goto("/workspace/" + sharedWs + "/chat/" + suiteSessionId, {
+        await page.goto("/workspace/" + sharedWs + "/session/" + suiteSessionId, {
             waitUntil: "load",
         });
         expect((await eventStream).status()).toBe(200);
@@ -248,7 +248,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const eventStream = waitForChatEventStream(page, suiteSessionId);
         // cad8e727/0401 后 fresh workspace 无零会话 composer；直接进 beforeAll
         // bootstrap 出的会话路由（session-branch 同路径）。
-        await page.goto("/workspace/" + sharedWs + "/chat/" + suiteSessionId, {
+        await page.goto("/workspace/" + sharedWs + "/session/" + suiteSessionId, {
             waitUntil: "load",
         });
         expect((await eventStream).status()).toBe(200);
@@ -310,7 +310,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const jobId = summary?.jobId ?? "",
             jobWorkspaceId = summary?.workspaceId ?? sharedWs;
 
-        await page.goto("/workspace/" + sharedWs + "/chat/" + sessionId, { waitUntil: "load" });
+        await page.goto("/workspace/" + sharedWs + "/session/" + sessionId, { waitUntil: "load" });
         const card = page
             .locator('[data-testid="tool-card-toggle"]')
             .filter({ hasText: "start_background_process" })

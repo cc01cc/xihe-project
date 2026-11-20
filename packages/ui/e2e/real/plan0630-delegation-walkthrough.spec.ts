@@ -14,7 +14,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
-import { workspaceChatPath } from "../../src/lib/routes";
+import { workspaceSessionPath } from "../../src/lib/routes";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { openDockPanel } from "../helpers/dock";
 
@@ -368,7 +368,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         persist();
 
         seedPage(page, ctx);
-        await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
+        await page.goto(workspaceSessionPath(wsId, parentSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
         /**
@@ -508,7 +508,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             "child PRIMARY participantId",
         );
 
-        await page.goto(workspaceChatPath(wsId, childSessionId), { waitUntil: "load" });
+        await page.goto(workspaceSessionPath(wsId, childSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openDockPanel(page, "members");
         const primaryBadge = page.getByTestId(`participant-role-badge-${primaryParticipantId}`);
@@ -583,7 +583,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         // The first spawn of this run still asks (and gets) the modal; once its child is in flight the
         // second spawn is refused by the precheck — it must NOT open a second modal, and it must not
         // leave a pending approval row behind (that residue is what BL-240 hit).
-        await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
+        await page.goto(workspaceSessionPath(wsId, parentSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await waitForIdleSession(request, headers, parentSessionId);
         const spawnInvocationsBefore = scalar(

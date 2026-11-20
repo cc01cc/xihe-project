@@ -15,7 +15,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
  * y=0 仍是 32px 导航带（`workspace-secondary-nav`）⇒ 会话页比它**少一条 32px 带**。
  */
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
-const CHAT_PATH = `/workspace/${WORKSPACE_ID}/chat/session-1`;
+const CHAT_PATH = `/workspace/${WORKSPACE_ID}/session/session-1`;
 
 /** 与会话页同一套桩（沿用 viewport-matrix 的口径：config/provider/mcp/environment 全给显式桩）。 */
 async function setupFixtures(page: Page) {

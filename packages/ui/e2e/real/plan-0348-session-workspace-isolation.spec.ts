@@ -149,7 +149,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
         title: "PLAN-0588 Workspace A",
     });
     seedPage(page, a);
-    await page.goto(`/workspace/${a.workspaceId}/chat/${sessionA}`);
+    await page.goto(`/workspace/${a.workspaceId}/session/${sessionA}`);
     await expect(page.getByTestId("chat-input")).toBeVisible();
     await bindToolCapableChat(
         request,
@@ -194,7 +194,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
     try {
         const pageB = await contextB.newPage();
         seedPage(pageB, b);
-        await pageB.goto(`/workspace/${b.workspaceId}/chat/${sessionB}`);
+        await pageB.goto(`/workspace/${b.workspaceId}/session/${sessionB}`);
         await ensureChatReady(pageB);
         await bindToolCapableChat(
             request,

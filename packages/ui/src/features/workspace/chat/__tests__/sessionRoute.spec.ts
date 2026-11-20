@@ -9,7 +9,7 @@ import { chatSessionRoute } from "../sessionRoute";
 describe("chatSessionRoute (task-1 A5.1)", () => {
     it("names the workspace chat route and carries the target session id", () => {
         expect(chatSessionRoute("child-a")).toEqual({
-            name: "workspace-chat",
+            name: "workspace-session",
             params: { sessionId: "child-a" },
         });
     });

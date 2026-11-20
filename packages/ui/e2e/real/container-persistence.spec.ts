@@ -172,7 +172,7 @@ async function seedOpenTabs(
 }
 
 async function openChat(page: Page, workspaceId: string, sessionId: string): Promise<void> {
-    await page.goto("/workspace/" + workspaceId + "/chat/" + sessionId, {
+    await page.goto("/workspace/" + workspaceId + "/session/" + sessionId, {
         waitUntil: "domcontentloaded",
     });
     await page

@@ -41,7 +41,7 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
             permissionAtoms: permissionAtomsWithout("MANAGE_ROLES"),
         });
 
-        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-1");
         const rail = page.getByTestId("global-rail-module-resources");
         await expect(rail).toBeVisible();
         // task-350：计数从 3 改 4（原因见文件头）。**不只改数字**——单独一个计数下次还会过期，

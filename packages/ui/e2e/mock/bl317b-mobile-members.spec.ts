@@ -89,7 +89,7 @@ async function openChat(page: Page, mobile = true) {
     // 聊天列挂载会拉 derived-state / follow-ups / commands：走公共桩，不手写第二份。
     await stubSessionProjections(page, SESSION_ID);
     await installRoster(page);
-    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/session/${SESSION_ID}`);
     if (mobile) {
         // 390 下聊天在 `MobileChatSheet` 里（底栏文件树默认在前）—— 成员入口就在它的头里。
         await expect(page.locator('[data-testid="workspace-toolbar-more-mobile"]')).toBeVisible({

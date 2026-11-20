@@ -44,7 +44,11 @@ vi.mock("vue-router", async (importOriginal) => {
     return {
         ...actual,
         useRouter: () => ({ push: pushSpy }),
-        useRoute: () => ({ params: {}, name: "workspace-chat", path: "/workspace/ws/chat/s" }),
+        useRoute: () => ({
+            params: {},
+            name: "workspace-session",
+            path: "/workspace/ws/session/s",
+        }),
     };
 });
 

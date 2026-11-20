@@ -60,7 +60,10 @@ function makeMountRouter(): Router {
             { path: "/settings/config", component: { template: "<div />" } },
             { path: "/settings/roles", component: { template: "<div />" } },
             { path: "/workspace", component: { template: "<div />" } },
-            { path: "/workspace/:workspaceId/chat/:sessionId", component: { template: "<div />" } },
+            {
+                path: "/workspace/:workspaceId/session/:sessionId",
+                component: { template: "<div />" },
+            },
             { path: "/:pathMatch(.*)*", component: { template: "<div />" } },
         ],
     });

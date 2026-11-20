@@ -173,7 +173,7 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
             ),
         );
 
-        await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
+        await page.goto(`/workspace/${state.workspaceId}/session/${state.sessionId}`);
         await page.waitForTimeout(3000);
         await page.screenshot({ path: join(SHOT_DIR, "_debug-boot.png"), scale: "css" });
         const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 300));
@@ -291,7 +291,7 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
                 return (body.runs ?? []).length;
             }, state.sessionId);
 
-        await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
+        await page.goto(`/workspace/${state.workspaceId}/session/${state.sessionId}`);
         await expect(page.locator("textarea").first(), "composer").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

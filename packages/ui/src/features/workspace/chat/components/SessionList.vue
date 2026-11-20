@@ -12,7 +12,7 @@ import type { Session } from "../../../../types";
 import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
 import SessionItem from "./SessionItem.vue";
-import { standaloneChatPath, workspaceChatPath } from "../../../../lib/routes";
+import { standaloneChatPath, workspaceSessionPath } from "../../../../lib/routes";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { moveInList, orderIds, type MoveAction } from "../orderPure";
@@ -236,7 +236,7 @@ function handleSelect(id: string) {
     sessionStore.selectSession(id);
     const session = listSessions.value.find((item) => item.id === id);
     const workspaceId = session?.workspaceId ?? auth.currentWorkspaceId;
-    if (workspaceId) router.push(workspaceChatPath(workspaceId, id));
+    if (workspaceId) router.push(workspaceSessionPath(workspaceId, id));
 }
 
 function handleRename(id: string, title: string) {
@@ -387,7 +387,7 @@ async function handleFork(id: string) {
         if (!workspaceId) throw new Error("Forked Session is missing its Workspace");
 
         sessionStore.selectSession(child.id);
-        await router.push(workspaceChatPath(workspaceId, child.id));
+        await router.push(workspaceSessionPath(workspaceId, child.id));
         pendingForkKeys.delete(keyScope);
         toast.success(t("sidebar.forkCreated"));
     } catch (cause) {

@@ -691,7 +691,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
 
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openDockPanel(page, "members");
         const panel = page.getByTestId("session-participants-panel");
@@ -749,7 +749,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     test("S3@host 提及：输入框出现 @displayName，且没有发出 chat", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
@@ -807,7 +807,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         ).toBeGreaterThan(0);
         expect(listedBody.capabilities.speakAs, "owner must carry capabilities.speakAs").toBe(true);
 
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // task-55（D-1882③）：composer 的「代发身份」入口（speak-as-bar / speak-as-select）已整块移除，
@@ -840,7 +840,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     test("S6@host @提及 HUMAN → 发送 → 该成员行出现未读 @N 徽标", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 用既有提及按钮插入（格式已由 S3 验证），再补一段可辨识文本。
@@ -912,7 +912,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await openDockPanel(page, "members");
@@ -966,7 +966,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
         await expect(dockToggle(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openDockPanel(page, "members");
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
@@ -1019,7 +1019,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
-        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await page.goto(`/workspace/${workspaceId}/session/${sessionId}`, { waitUntil: "load" });
 
         const input = page.getByTestId("chat-input");
         const menu = page.getByTestId("chat-input-trigger-menu");
