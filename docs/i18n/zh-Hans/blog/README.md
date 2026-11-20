@@ -1,6 +1,6 @@
 ---
 title: 开发博客（叙事）
-category: blog
+category: dev-guide
 lang: zh-Hans
 sidebar_order: 90
 ---

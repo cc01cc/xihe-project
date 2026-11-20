@@ -1,6 +1,7 @@
 ---
 title: "xihe-control-plane"
 category: api
+url_slug: packages-control-plane
 sidebar_group: "@xihe/control-plane"
 sidebar_order: 2
 lang: zh-Hans

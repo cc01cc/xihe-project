@@ -119,10 +119,10 @@ status: active
 
 - [ ] `login-page` — 登录页完整渲染
 - [ ] `register-page` — 注册页完整渲染
-- [ ] `chat-empty` — 空聊天页 + sidebar
-- [ ] `chat-with-messages` — 有消息的聊天页
+- [ ] `chat-empty` — 空会话页面 + sidebar
+- [ ] `chat-with-messages` — 有消息的会话页面
 - [ ] `theme-default-light` — 浅色主题页
-- [ ] `theme-dark-persisted-chat` — 深色模式聊天页
+- [ ] `theme-dark-persisted-chat` — 深色模式会话页面
 - [ ] `workspace-3col-1920` — 工作台三栏（rail + 面板 + 树/主/dock）@1920
 - [ ] `workspace-dock-overlay-1440` — dock 浮层态 @1440（含阴影，主列不参与 flex）
 - [ ] `workspace-rail-collapsed` — 导航面板收起后的 rail 态
@@ -530,8 +530,8 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 **构成边界（先划边界 —— 这条比数值重要，2026-11-19 用户裁定）**：
 
 - **顶栏 = `workspace-secondary-nav` 一条带**，承载「页面导航 + 面板开关」。
-- **`workspace-container-tabs` 属内容区，明确不属于顶栏**（用户原话：「容器标签页仍然是容器的，不是顶栏组件的」）。此前「说了好多次 1 行却落不了地」的根因就是这条边界没定义：读「一行」的人无法判断要不要动容器页签，于是全部停在原地。
-- **`workspace-toolbar` 不是顶栏的一部分**：它是内容区（工作台）的工具带，桌面态**不得成带**。
+- **`workspace-container-tabs` 属容器页签行**（主栏容器自己的 chrome）**，明确不属于顶栏**（用户原话：「容器标签页仍然是容器的，不是顶栏组件的」）。此前「说了好多次 1 行却落不了地」的根因就是这条边界没定义：读「一行」的人无法判断要不要动容器页签，于是全部停在原地。
+- **`workspace-toolbar` 不是顶栏的一部分**：它是工作台（主栏容器内）的工具带，桌面态**不得成带**。
 
 **判据**：桌面态（≥ `md`）顶栏**只有一条**，即 `workspace-secondary-nav`；六个面板开关（files / code / changes / monitor / members / delegation）落在这条带的 x 区间内。
 
@@ -546,7 +546,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 **实现约束**：面板开关簇用 Vue 核心 `<Teleport to="#workspace-nav-actions">` 搬进 nav 行右端 —— **props / emits / testid 一律不变**；**不得**为合并把 workbench 的 6 组 props + 6 组 emits 上提到壳层（那会把一张视觉卡变成结构重构）。
 
-**反例锚点（判据必须能红，否则是装饰）**：把面板开关放回 `workspace-toolbar` 那条内容区工具带 ⇒ 上述「nav-actions 存在且落在 nav 带 x 区间内」与「toolbar 桌面不成带」两条**必须同时判红**。
+**反例锚点（判据必须能红，否则是装饰）**：把面板开关放回 `workspace-toolbar` 那条工作台工具带 ⇒ 上述「nav-actions 存在且落在 nav 带 x 区间内」与「toolbar 桌面不成带」两条**必须同时判红**。
 
 真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-1 表 —— 1366×768 实测会话页 `workspace-secondary-nav` y0–32（h=32）+ `workspace-toolbar` y32–72（**h=40**）+ 容器页签 32 = **3 条带 / 104px**，其余 5 页只有 1 条 32px；复算 `node internal/A03-xihe/evidence/2026-11-19-ui-live-review/probe.mjs`，原始读数在同目录 `probe-readings.json`。
 

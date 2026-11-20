@@ -14,7 +14,8 @@ import { useWorkspaceNav } from "../composables/useWorkspaceNav";
  *   <li>面包屑整段搬进底部状态栏（`WorkspaceStatusBar.vue`），这里只剩导航项；
  *       搬走的理由见设计 `internal/A03-xihe/docs/workspace-shell-refresh-design.md` §3.2。</li>
  *   <li>单行化：去掉 `flex-wrap` 与 `justify-between`（面包屑走后不再需要左右两栏），
- *       高度钉 `h-8`（8 × `--spacing` 3.5 = **28 px**，与 `packages/ui/AGENTS.md` 的 spacing 轴口径一致）。</li>
+ *       高度钉 `h-8`（8 × `--spacing` 4 = **32 px**；`D-1842` 前 3.5px 栅格时代曾是 28 px。与 `packages/ui/AGENTS.md`
+ *       的 spacing 轴口径一致）。</li>
  *   <li>**去掉 `aria-current="page"`**：面包屑末段的 `BreadcrumbPage` 自带它，一页只能有一个
  *       「当前页」。导航项是 `role="tab"` + `aria-selected`，那是对 tablist 的正确语义，不需要再叠 aria-current。</li>
  *   <li>**用户裁定：导航行不是浮窗**（「导航行不应该是浮窗，导航行只是提供了快捷键」）。

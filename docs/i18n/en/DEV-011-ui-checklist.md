@@ -115,10 +115,10 @@ status: active
 
 - [ ] `login-page` — Login page full render
 - [ ] `register-page` — Register page full render
-- [ ] `chat-empty` — Empty chat page + sidebar
-- [ ] `chat-with-messages` — Chat page with messages
+- [ ] `chat-empty` — Empty session page + sidebar
+- [ ] `chat-with-messages` — Session page with messages
 - [ ] `theme-default-light` — Light theme page
-- [ ] `theme-dark-persisted-chat` — Dark mode chat page
+- [ ] `theme-dark-persisted-chat` — Dark-mode session page
 - [ ] `workspace-3col-1920` — Workbench three columns (rail + panel + tree/main/dock) @1920
 - [ ] `workspace-dock-overlay-1440` — Dock overlay mode @1440 (shadow, main column not part of flex)
 - [ ] `workspace-rail-collapsed` — Rail state after the navigation panel is collapsed
@@ -538,11 +538,11 @@ Likewise **`opacity` breathing may only target non-text, non-icon surfaces** (`b
 **Constituting boundary (draw the boundary first — this matters more than any number; user ruling 2026-11-19)**:
 
 - **The top bar = the single `workspace-secondary-nav` band**, carrying "page navigation + panel toggles".
-- **`workspace-container-tabs` belongs to the content area and is explicitly NOT part of the top bar** (user: "the
+- **`workspace-container-tabs` belongs to the container tab row** (the main container's own chrome) **and is explicitly NOT part of the top bar** (user: "the
   container tabs are still the container's, not a top-bar component"). The reason "one row" was said many times and
   never landed is exactly this undefined boundary: whoever read "one row" could not decide whether the container tabs
   had to move, so everyone stayed put.
-- **`workspace-toolbar` is not part of the top bar**: it is the workbench (content area) tool band, and on desktop it
+- **`workspace-toolbar` is not part of the top bar**: it is the workbench (inside the main container) tool band, and on desktop it
   **must not form a band**.
 
 **Criterion**: on desktop (≥ `md`) there is exactly **one** top bar — `workspace-secondary-nav` — and the six panel
@@ -565,7 +565,7 @@ row — that turns a visual card into a structural refactor.
 back into the `workspace-toolbar` content band ⇒ both "nav-actions exists inside the nav band's x range" and
 "toolbar forms no band on desktop" **must go red**.
 
-Real reading: the §F-1 table in `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — at 1366×768 the chat page measured `workspace-secondary-nav` y0–32 (h=32) + `workspace-toolbar` y32–72 (**h=40**) + container tabs 32 = **3 bands / 104px**, while the other 5 pages show a single 32px band; re-run `node internal/A03-xihe/evidence/2026-11-19-ui-live-review/probe.mjs`, raw readings in `probe-readings.json` beside it.
+Real reading: the §F-1 table in `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — at 1366×768 the session page measured `workspace-secondary-nav` y0–32 (h=32) + `workspace-toolbar` y32–72 (**h=40**) + container tabs 32 = **3 bands / 104px**, while the other 5 pages show a single 32px band; re-run `node internal/A03-xihe/evidence/2026-11-19-ui-live-review/probe.mjs`, raw readings in `probe-readings.json` beside it.
 
 **The static guard does not exist (stated as fact)**: the `packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts` cited here previously is **not in the repo** — on 2026-11-19 `task-24` checked with `find A03-xihe/packages/ui/src -name "*TopBar*"` and a repo-wide grep, 0 hits; the only real related code is `WorkspaceSecondaryNav.vue:68` (`id="workspace-nav-actions"`) and `WorkspaceToolbar.vue:314` (`<Teleport to="#workspace-nav-actions">`). ⇒ going red currently depends on a real-browser reading alone; do not cite a spec that does not exist.
 

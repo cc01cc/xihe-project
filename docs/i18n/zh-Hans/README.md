@@ -201,7 +201,7 @@ mise run test:e2e:host        # Host E2E：先停 dev:host（见 DEV-002 §5）�
 
 ## 6. 文档
 
-完整索引见 [INDEX.md](INDEX.md)。中文、英文文档各自维护编号与索引。
+完整索引见 [INDEX.md](INDEX.md)（INDEX.md 由文档站按 `DEV-030` 的规则排除，不在站点上渲染，只能在仓库内阅读）。中文、英文文档各自维护编号与索引。
 
 | 文档 | 内容 |
 |---|---|

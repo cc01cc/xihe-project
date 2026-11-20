@@ -1,6 +1,6 @@
 ---
 title: Engineering Blog (Narrative)
-category: blog
+category: dev-guide
 lang: en
 sidebar_order: 90
 ---

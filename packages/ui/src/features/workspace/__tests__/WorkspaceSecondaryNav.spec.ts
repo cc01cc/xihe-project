@@ -13,7 +13,7 @@ import WorkspaceSecondaryNav from "../components/WorkspaceSecondaryNav.vue";
  *   <li>面包屑**已经不在这里**（它搬去了底部状态栏；断言面在
  *       `components/__tests__/WorkspaceStatusBar.spec.ts`）—— 这条防止「两边都渲染」或「两边都没有」；</li>
  *   <li>单行：根 `<nav>` 不带 `flex-wrap` / `justify-between`，且钉了 `h-8` 与 `shrink-0`
- *       （`h-8` = 8 × `--spacing` 3.5 = 28 px）；</li>
+ *       （`h-8` = 8 × `--spacing` 4 = 32 px；`D-1842` 前曾是 28 px）；</li>
  *   <li>导航项仍是 `role="tab"` + `aria-selected`，但**不再带 `aria-current="page"`** ——
  *       一页只能有一个「当前页」，那个由状态栏面包屑末段持有。</li>
  * </ol>

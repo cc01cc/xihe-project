@@ -295,7 +295,7 @@ Production and the everyday host stack keep rate limiting on by default (not inj
 
 The 2026-10-31 rule "`test:e2e:host` is the only exemption" **was superseded by PLAN-0618 (user ruling 2026-11-01)**: the test surface is frozen together with the product surface and the defaults.
 
-- The runner no longer injects `XIHE_WORKSPACE_DOCKER_BACKEND=enabled` "so the docker cases can run"; CP walks its default `disabled` (`POST /api/v1/workspaces` without `storageMode` → `400 INVALID_REQUEST`, explicit `managed_import` → `409 BACKEND_DISABLED`, an existing docker workspace → `503`; see [DEV-014 §8b](DEV-014-control-plane-architecture.md), [DEV-003 §2](DEV-003-config-management.md)).
+- The runner no longer injects `XIHE_WORKSPACE_DOCKER_BACKEND=enabled` "so the docker cases can run"; CP walks its default `disabled` (`POST /api/v1/workspaces` without `storageMode` → `400 INVALID_REQUEST`, explicit `managed_import` → `409 BACKEND_DISABLED`, an existing docker workspace → `503`; see [DEV-014 §8b](../zh-Hans/DEV-014-control-plane-architecture.md), [DEV-003 §2](../zh-Hans/DEV-003-config-management.md); both documents exist in the zh-Hans set only, there is no English translation yet).
 - Specs that genuinely need containers are dropped from the batches; restore collection with `--include-docker-frozen` (**the criterion was finalised by PLAN-0618 M3** and this document follows it).
 - The frozen list (which specs, why, what to verify after unfreezing) lives only in `plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md`; this document does not copy the entries. The three-surface freeze scope and unfreeze steps are in [DEV-018 (zh)](../zh-Hans/DEV-018-known-issues.md).
 
