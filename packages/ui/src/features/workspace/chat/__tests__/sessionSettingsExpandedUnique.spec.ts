@@ -111,7 +111,7 @@ function sessionSettingsTestIds(root: Element | null): string[] {
 }
 
 /**
- * task-52 / DSD-1463（`D-1450` + `D-1907` rev10）· 唯一入口判据。
+ * task-52 / DSD-1463（`DSD-1450` + `D-1907` rev10）· 唯一入口判据。
  *
  * 裁定原文：会话设置唯一入口 = 摘要行（`session-settings-summary`），**不新增行内入口**。
  * 摘要行下的 `session-settings-summary-approval` / `-branch` / `session-settings-risk-*` 是它的
@@ -250,7 +250,7 @@ describe("session-settings-expanded is unique in the DOM (task-90)", () => {
  *
  * 本段判什么：
  * ① 真实组合里，带 `session-settings` 前缀的**可激活节点**恰好 1 个，且必须是
- *    `session-settings-summary`（桌面 / 移动两分支都判）—— 这就是 D-1450 取消顶部入口、
+ *    `session-settings-summary`（桌面 / 移动两分支都判）—— 这就是 DSD-1450 取消顶部入口、
  *    D-1907 rev10 把摘要行定为快捷开关之后，「同一面板不得有两个入口」的负向断言；
  * ② 入口唯一 ⇒ 打开动作唯一：桌面点摘要行只 emit **一次** `open-context-panel`，且它指向的右栏
  *    容器页签就是 `pane:right:session-config:<sid>`（`dock-tab-` 前缀的页签 testid 契约，
@@ -312,7 +312,7 @@ describe("session-settings has exactly one entry (task-52 / DSD-1463)", () => {
     });
 
     it("negative fixture: a second entry in the family makes the assertion fail", async () => {
-        // 假夹具：摘要行 + 行内设置按钮（D-1450 取消过、DSD-1463 明令禁止的形态）。
+        // 假夹具：摘要行 + 行内设置按钮（DSD-1450 取消过、DSD-1463 明令禁止的形态）。
         const TwoEntries = defineComponent({
             setup: () => () =>
                 h("section", { "data-testid": "session-settings" }, [

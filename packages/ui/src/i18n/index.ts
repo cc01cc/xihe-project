@@ -307,7 +307,7 @@ const messages = {
             // D-1220 ②（task-365 B）：左栏「工作区」区头 —— 一级列表自己的动作（新建工作区 /
             // 导入源）放在区头，不放在页内右上角、也不混进工作区行上的 `+`（那是新建会话）。
             workspacesSection: "工作区",
-            // task-172 / `D-1464`：会话区头的区名。计数**不**进这个 key —— 数字单独渲染
+            // task-172 / `DSD-1464`：会话区头的区名。计数**不**进这个 key —— 数字单独渲染
             //（随数据变，写进译文会漂移；两侧同批加，无占位）。
             sessionsSection: "会话",
             settings: "设置",
@@ -580,7 +580,7 @@ const messages = {
             participantMoreAction: "更多",
             panelMembers: "成员",
             // task-138：容器内的「会话配置」页签（D-1907 rev10 摘要条快捷开关开出的那份）。
-            // task-6（D1453）：旧静态 context 页签与其 panelContext 文案已退役，本键是会话
+            // task-6（DSD-1453）：旧静态 context 页签与其 panelContext 文案已退役，本键是会话
             // 设置唯一的面板页签文案。
             panelSessionConfig: "会话配置",
             panelAgents: "智能体",
@@ -4363,7 +4363,7 @@ const messages = {
             groupSnapshotHint:
                 "Loaded on expand; if this workspace changes elsewhere, reload the page to see the latest list",
             workspacesSection: "Workspaces",
-            // task-172 / `D-1464`: session-list section header; the count is rendered separately.
+            // task-172 / `DSD-1464`: session-list section header; the count is rendered separately.
             sessionsSection: "Sessions",
             settings: "Settings",
             workbench: "Workbench",
@@ -4633,7 +4633,7 @@ const messages = {
             participantMoreAction: "More",
             panelMembers: "Members",
             // task-138: in-container "session config" tab (opened by the D-1907 rev10 summary-bar
-            // shortcut). task-6 (D1453): the old static context tab and its panelContext label are
+            // shortcut). task-6 (DSD-1453): the old static context tab and its panelContext label are
             // retired — this is now the only session-settings panel tab.
             panelSessionConfig: "Session config",
             panelAgents: "Agents",
