@@ -18,6 +18,7 @@ import {
     Sheet,
     SheetContent,
     SheetDescription,
+    SheetFooter,
     SheetHeader,
     SheetTitle,
 } from "../../../components/ui/sheet";
@@ -248,7 +249,10 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
                 class="flex flex-col gap-5 px-4 pb-8"
                 data-testid="org-member-detail"
             >
-                <!-- 身份 + 所属单元：0 次额外请求（orgUnitId 由成员视图自带） -->
+                <!--
+                    身份与归属 = 同一族（task-182 J1 合并）：归属由成员视图自带的 orgUnitId 派生，
+                    0 次额外请求，因此它不是独立语义组，而是身份组内的子块。
+                -->
                 <section data-testid="org-member-detail-identity">
                     <p class="text-base font-semibold" data-testid="org-member-detail-name">
                         {{ member.displayName ?? "—" }}
@@ -265,19 +269,18 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
                             member.memberId
                         }}</span>
                     </p>
-                </section>
-
-                <section class="border-t pt-4" data-testid="org-member-detail-unit">
-                    <h3 class="text-sm font-semibold">{{ t("orgMembers.detailUnitLabel") }}</h3>
-                    <p class="mt-1 text-sm" data-testid="org-member-detail-unit-name">
-                        {{ unitName }}
-                    </p>
-                    <p
-                        class="mt-1 text-xs text-muted-foreground"
-                        data-testid="org-member-detail-unit-cost"
-                    >
-                        {{ t("orgMembers.detailUnitCost") }}
-                    </p>
+                    <div class="mt-3 border-t pt-3" data-testid="org-member-detail-unit">
+                        <h3 class="text-sm font-semibold">{{ t("orgMembers.detailUnitLabel") }}</h3>
+                        <p class="mt-1 text-sm" data-testid="org-member-detail-unit-name">
+                            {{ unitName }}
+                        </p>
+                        <p
+                            class="mt-1 text-xs text-muted-foreground"
+                            data-testid="org-member-detail-unit-cost"
+                        >
+                            {{ t("orgMembers.detailUnitCost") }}
+                        </p>
+                    </div>
                 </section>
 
                 <!--
@@ -544,8 +547,12 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
                     </a>
                 </section>
 
-                <!-- 动作：task-136 起两个入口都接真实契约 —— 点击后关抽屉，由页面写窗口执行 -->
-                <section class="border-t pt-4" data-testid="org-member-detail-actions">
+                <!--
+                    动作：task-136 起两个入口都接真实契约 —— 点击后关抽屉，由页面写窗口执行。
+                    task-182 J1：这里是**页脚操作区**（SheetFooter 是 div），不再占顶级语义组名额；
+                    两个入口与两条原因文案一条都没删。
+                -->
+                <SheetFooter class="mt-4 border-t p-0 pt-4" data-testid="org-member-detail-actions">
                     <h3 class="text-sm font-semibold">{{ t("orgMembers.detailActionsTitle") }}</h3>
                     <div class="mt-2 flex flex-wrap items-center gap-2">
                         <Button
@@ -581,7 +588,7 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
                     >
                         {{ t("orgMembers.detailActionsAdminReason") }}
                     </p>
-                </section>
+                </SheetFooter>
             </div>
 
             <p

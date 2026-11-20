@@ -387,3 +387,79 @@ describe("task-44 agent 深链文案：不把实现事实写给用户", () => {
         expectNoInternalFacts(copy, "orgMembers.agentOpen{Desc,Cost}");
     });
 });
+
+// ── task-182（DEV-011 §17.8 / F4）：顶级语义组收敛到 ≤6，且不许靠删信息达标 ──────────
+// 判据：① 容器直接子 `<section data-testid>` 数量 ≤6（与 check-form-contract F4 同一形状）
+// ② 原 7 组每一条字段都还有落点（归属并入身份组、动作降为页脚操作区）③ 页脚不是 section。
+describe("task-182 顶级语义组 ≤6（§17.8）", () => {
+    const topSectionTestids = () => {
+        const container = q("org-member-detail");
+        expect(container).toBeTruthy();
+        return Array.from(container!.querySelectorAll(":scope > section[data-testid]")).map((el) =>
+            el.getAttribute("data-testid"),
+        );
+    };
+
+    it("智能体成员（组数最多的一支）：顶级组恰好 5 个，且不超过 6", async () => {
+        mountSheet(BOT);
+        await flushPromises();
+
+        const ids = topSectionTestids();
+        expect(ids.length).toBeLessThanOrEqual(6);
+        expect(ids).toEqual([
+            "org-member-detail-identity",
+            "org-member-detail-agent-open",
+            "org-member-detail-workspace-role",
+            "org-member-detail-access-role",
+            "org-member-detail-atoms",
+        ]);
+    });
+
+    it("人类成员：顶级组 4 个（少一支深链段）", async () => {
+        mountSheet(ALICE);
+        await flushPromises();
+
+        expect(topSectionTestids()).toEqual([
+            "org-member-detail-identity",
+            "org-member-detail-workspace-role",
+            "org-member-detail-access-role",
+            "org-member-detail-atoms",
+        ]);
+    });
+
+    it("收敛是合并不是删除：原 7 组的字段逐条仍在，归属并入身份组、动作落在页脚", async () => {
+        mountSheet(ALICE);
+        await flushPromises();
+
+        // 原 identity：名称 / 类型 / id
+        expect(q("org-member-detail-name")?.textContent?.trim()).toBe("alice");
+        expect(q("org-member-detail-kind")).toBeTruthy();
+        expect(q("org-member-detail-id")?.textContent).toContain("m-alice");
+        // 原 unit（旧第 2 组）：并入 identity 之后仍在，且确实在 identity 之内
+        expect(q("org-member-detail-unit-name")?.textContent).toContain("研发部");
+        expect(q("org-member-detail-unit-cost")?.textContent).toContain("逐级查询");
+        expect(
+            document.querySelector(
+                '[data-testid="org-member-detail-identity"] [data-testid="org-member-detail-unit"]',
+            ),
+        ).toBeTruthy();
+        // 原 actions（旧第 7 组）：降为 SheetFooter（div），标题 + 两个入口 + 两条原因一条不少
+        const actions = q("org-member-detail-actions");
+        expect(actions?.getAttribute("data-slot")).toBe("sheet-footer");
+        expect(
+            document.querySelector(
+                '[data-testid="org-member-detail"] > section[data-testid="org-member-detail-actions"]',
+            ),
+        ).toBeNull();
+        expect(actions?.textContent).toContain(i18n.global.t("orgMembers.detailActionsTitle"));
+        expect(q("org-member-detail-change-role")).toBeTruthy();
+        expect(q("org-member-detail-remove")).toBeTruthy();
+        expect(q("org-member-detail-action-reason-batch")).toBeTruthy();
+        expect(q("org-member-detail-action-reason-admin")).toBeTruthy();
+        // 其余三组本身没动：段① 代价句与按需展开入口、段② 绑定行、段③ 自投影链接
+        expect(q("org-member-detail-workspace-role-cost")).toBeTruthy();
+        expect(q("org-member-detail-workspace-role-load")).toBeTruthy();
+        expect(q("org-member-detail-access-role-rows")?.textContent).toContain("WS_OWNER");
+        expect(q("org-member-detail-atoms-self-link")).toBeTruthy();
+    });
+});
