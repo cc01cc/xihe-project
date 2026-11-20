@@ -1,22 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import type { Router } from "vue-router";
-import { LAST_LOCATION_KEY, readLastLocation } from "../../lib/lastLocation";
-import { WORKSPACE_PICKER_PATH } from "../../lib/routes";
+import { LAST_LOCATION_KEY, readLastLocation, type LastLocationKind } from "../../lib/lastLocation";
+import { WORKSPACE_PICKER_PATH, workspacePagePath, WORKSPACE_PAGE_IDS } from "../../lib/routes";
+import { workspacePageOfMeta } from "../../lib/workspacePages";
 import { clearTabWorkspace } from "../../lib/workspaceContext";
 
 /**
- * task-111（H1 / H2 / H4-c）+ task-145（① / ②）的**真路由**读数。
+ * task-111（H1 / H2 / H4-c）+ task-145（① / ②）+ **task-34（页级恢复）** 的**真路由**读数。
  *
  * 驱动 `router/index.ts` 真模块（守卫 + 模块级 afterEach 都是真实现），不替身：
  *  - H1 两侧：sessionStorage 有 tab 上下文时必须回本 tab 落点（即使上一跳是别处）；
  *    无 tab 上下文时上一跳必须真的生效（证明读数不是「两边都不恢复」的假绿）。
  *  - H2 两侧：被守卫 redirect 的深链（非 UUID workspaceId ⇒ 弹 workspace-home）不得写入；
- *    真正落地的会话页必须写入（证明写点本身活着）。
+ *    真正落地的工作区页/会话页必须写入（证明写点本身活着）。
  *  - H4-c 两侧：**冷启显式**进 picker（`/workspace` → redirect → `workspace-home`）不得恢复；
  *    冷启 `/workbench`（无 `redirectedFrom`）必须仍恢复 —— 这是 ①② 都不许废掉的真控制。
  *  - task-145 ①：站内到达 `workspace-home` 一律不恢复（删工作区/无权/上下文冲突的回弹）。
  *  - task-145 ②：站内从死工作区回弹时，指向它的上一跳被忘掉 ⇒ 下一次冷启不落在死工作区。
+ *  - **task-34 ④**：tab 上下文负责「哪个工作区」、上一跳负责「哪一页」；两者同工作区 ⇒ 恢复页级，
+ *    别的工作区 ⇒ 上下文优先（不许把本 tab 拖进别的工作区）。
  *
  * **每个用例一个全新 router**（`vi.resetModules()` + 重新 import）：恢复只在冷启发生，而
  * 「冷启」的判据是 `from = START_LOCATION`（`matched.length === 0`）——只有全新实例的
@@ -28,6 +31,8 @@ import { clearTabWorkspace } from "../../lib/workspaceContext";
  *  - H4-c：若删掉「冷启 + 显式 picker」判据 ⇒ A/A2 落在 WS_LAST/chat ⇒ 红。
  *  - ①：若删掉冷启判据 ⇒ ① 用例被恢复送回 WS_LAST/chat ⇒ 红。
  *  - ②：若删掉 `forgetLastLocationForWorkspace` ⇒ ② 用例的键仍在、下一次冷启又回死工作区 ⇒ 红。
+ *  - task-34：若把页级记录降回「裸工作区」⇒ P1/P2 落在 /workspace/<id> 而非该页 ⇒ 红；
+ *    若 tab 上下文与上一跳异工作区时仍按上一跳恢复 ⇒ P4 落在 WS_LAST 的工作区 ⇒ 红。
  */
 
 const WS_TAB = "11111111-1111-4111-8111-111111111111",
@@ -38,13 +43,14 @@ const WS_TAB = "11111111-1111-4111-8111-111111111111",
 let router: Router;
 
 function seedLastLocation(
-    kind: string,
+    kind: LastLocationKind,
     workspaceId: string | null,
     sessionId: string | null,
+    page: string | null = null,
 ): void {
     localStorage.setItem(
         LAST_LOCATION_KEY,
-        JSON.stringify({ kind, workspaceId, sessionId, at: new Date().toISOString() }),
+        JSON.stringify({ kind, workspaceId, sessionId, page, at: new Date().toISOString() }),
     );
 }
 
@@ -86,6 +92,26 @@ describe("H1：tab 上下文（sessionStorage）优先于上一跳（localStorag
         expect(landed).toBe(`/workspace/${WS_TAB}`);
     });
 
+    it("A2 面（task-34 ④ 正面）：上一跳与本 tab 同工作区 ⇒ 恢复页级", async () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WS_TAB }));
+        seedLastLocation("workspace", WS_TAB, null, "environment");
+        await navigate("/workbench");
+        const landed = window.location.pathname;
+        process.stdout.write(`[H1-A2] tab=${WS_TAB} last=${WS_TAB}/environment landed=${landed}\n`);
+        expect(landed, "同工作区的页级落点必须被恢复").toBe(`/workspace/${WS_TAB}/environment`);
+    });
+
+    it("A3 面（task-34 ④ 反面）：上一跳属于别的工作区 ⇒ 上下文优先，落本工作区会话页", async () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WS_TAB }));
+        seedLastLocation("workspace", WS_LAST, null, "scheduled-tasks");
+        await navigate("/workbench");
+        const landed = window.location.pathname;
+        process.stdout.write(
+            `[H1-A3] tab=${WS_TAB} last=${WS_LAST}/scheduled-tasks landed=${landed}\n`,
+        );
+        expect(landed, "别的工作区的页级落点不得劫持本 tab").toBe(`/workspace/${WS_TAB}`);
+    });
+
     it("B 面（反面读数）：冷启无 tab 上下文时上一跳真的生效", async () => {
         // sessionStorage 空 = 另一个 tab / 冷启场景；上一跳必须被读到，否则 A 面是假绿。
         seedLastLocation("workspace", WS_LAST, SESS_LAST);
@@ -104,6 +130,56 @@ describe("H1：tab 上下文（sessionStorage）优先于上一跳（localStorag
     });
 });
 
+describe("task-34：/workbench 恢复上一次落下的**工作区页**（页级）", () => {
+    it("P1：上一跳停环境页 ⇒ 冷启 /workbench 落环境页", async () => {
+        seedLastLocation("workspace", WS_LAST, null, "environment");
+        await navigate("/workbench");
+        const landed = window.location.pathname;
+        process.stdout.write(`[P1] last=${WS_LAST}/environment landed=${landed}\n`);
+        expect(landed, "页级落点原样恢复").toBe(`/workspace/${WS_LAST}/environment`);
+        // 写点仍只有 afterEach：恢复落地后，上一跳被重写成同一个页（不是 picker 或别的条目）。
+        expect(readLastLocation()).toMatchObject({
+            kind: "workspace",
+            workspaceId: WS_LAST,
+            sessionId: null,
+            page: "environment",
+        });
+    });
+
+    it("P2：上一跳停定时任务页 ⇒ 冷启 /workbench 落定时任务页（第二个页级样本，排除「恰好只有一页」）", async () => {
+        seedLastLocation("workspace", WS_LAST, null, "scheduled-tasks");
+        await navigate("/workbench");
+        const landed = window.location.pathname;
+        process.stdout.write(`[P2] last=${WS_LAST}/scheduled-tasks landed=${landed}\n`);
+        expect(landed).toBe(`/workspace/${WS_LAST}/scheduled-tasks`);
+    });
+
+    it("P3：无记录 / 旧键形（无 page）⇒ 工作台空态 picker，且不崩", async () => {
+        await navigate("/workbench");
+        expect(window.location.pathname, "无记录 = 空态").toBe("/workbench");
+        expect(router.currentRoute.value.name).toBe("workspace-home");
+        // 旧键形：task-34 之前写下的 {kind,workspaceId,sessionId,at}（没有 page）。
+        localStorage.setItem(
+            LAST_LOCATION_KEY,
+            JSON.stringify({
+                kind: "workspace",
+                workspaceId: WS_LAST,
+                sessionId: SESS_LAST,
+                at: new Date().toISOString(),
+            }),
+        );
+        await freshRouter();
+        await navigate("/workbench");
+        const landed = window.location.pathname + window.location.search;
+        process.stdout.write(
+            `[P3] legacy-key landed=${landed} keyAfter=${localStorage.getItem(LAST_LOCATION_KEY)}\n`,
+        );
+        expect(landed, "旧键形 fail-closed：不恢复、也不崩").toBe("/workbench");
+        expect(router.currentRoute.value.name).toBe("workspace-home");
+        expect(localStorage.getItem(LAST_LOCATION_KEY), "读到即清").toBeNull();
+    });
+});
+
 describe("H2：写点必须是 afterEach —— redirect 目标不得写入上一跳", () => {
     it("A 面：指向非 UUID 工作区的深链被守卫弹走，不写上一跳", async () => {
         await navigate("/workspace/not-a-uuid/session/sess-1");
@@ -116,7 +192,7 @@ describe("H2：写点必须是 afterEach —— redirect 目标不得写入上�
         expect(landed.startsWith("/workbench")).toBe(true);
     });
 
-    it("B 面（正读数）：真正落地的会话页/裸工作区/独立会话都写入", async () => {
+    it("B 面（正读数）：真正落地的工作区页/会话页/独立会话都写入（页级）", async () => {
         await navigate(`/workspace/${WS_LAST}/session/${SESS_LAST}`);
         let written = readLastLocation();
         process.stdout.write(
@@ -126,6 +202,7 @@ describe("H2：写点必须是 afterEach —— redirect 目标不得写入上�
             kind: "workspace",
             workspaceId: WS_LAST,
             sessionId: SESS_LAST,
+            page: null,
         });
 
         await navigate(`/workspace/${WS_LAST}`);
@@ -133,17 +210,35 @@ describe("H2：写点必须是 afterEach —— redirect 目标不得写入上�
         process.stdout.write(
             `[H2-B2] landed=${window.location.pathname} written=${JSON.stringify(written)}\n`,
         );
-        expect(written).toMatchObject({ kind: "workspace", workspaceId: WS_LAST, sessionId: null });
+        expect(written).toMatchObject({
+            kind: "workspace",
+            workspaceId: WS_LAST,
+            sessionId: null,
+            page: "sessions",
+        });
 
-        await navigate(`/chat/${SESS_LAST}`);
+        await navigate(`/workspace/${WS_LAST}/members`);
         written = readLastLocation();
         process.stdout.write(
             `[H2-B3] landed=${window.location.pathname} written=${JSON.stringify(written)}\n`,
         );
         expect(written).toMatchObject({
+            kind: "workspace",
+            workspaceId: WS_LAST,
+            sessionId: null,
+            page: "members",
+        });
+
+        await navigate(`/chat/${SESS_LAST}`);
+        written = readLastLocation();
+        process.stdout.write(
+            `[H2-B4] landed=${window.location.pathname} written=${JSON.stringify(written)}\n`,
+        );
+        expect(written).toMatchObject({
             kind: "standalone",
             workspaceId: null,
             sessionId: SESS_LAST,
+            page: null,
         });
     });
 });
@@ -222,6 +317,36 @@ describe("H4-c：冷启显式进 picker 不恢复（冷启 /workbench 仍恢复 
     });
 });
 
+describe("task-34：页清单三处同源（路由表 meta ↔ routes.ts 页 id 清单 ↔ 地址生成器）", () => {
+    it("路由表里每个 meta.workspacePage 都在这份清单里，且 resolve 出来的路径与 workspacePagePath 逐字节相同", () => {
+        const pages = router
+            .getRoutes()
+            .filter((record) => workspacePageOfMeta(record.meta))
+            .map((record) => ({ record, id: workspacePageOfMeta(record.meta)!.id }));
+        process.stdout.write(
+            "[page-table] router pages=" +
+                JSON.stringify(pages.map((p) => p.id).sort()) +
+                " lib=" +
+                JSON.stringify([...WORKSPACE_PAGE_IDS].sort()) +
+                "\n",
+        );
+        expect(pages.map((p) => p.id).sort()).toEqual([...WORKSPACE_PAGE_IDS].sort());
+        for (const { record, id } of pages) {
+            expect(record.name, "带 meta 的页必须有 name（上一跳按 name 记）").toBeTruthy();
+            const resolved = router.resolve({
+                name: record.name as string,
+                params: { workspaceId: WS_LAST },
+            });
+            expect(resolved.path, "page=" + id + " 的地址必须与 workspacePagePath 同源").toBe(
+                workspacePagePath(WS_LAST, id),
+            );
+            expect(resolved.name, "page=" + id + " 的落地路由不得被 redirect 到别处").toBe(
+                record.name,
+            );
+        }
+    });
+});
+
 describe("task-145 ①：站内到达 workspace-home 一律不恢复", () => {
     it("删工作区/无权的回弹：清 tab 上下文后回 picker ⇒ 落在 picker，不被上一跳送回原工作区", async () => {
         // 真实链路起手：冷启先落在该工作区的会话页（= 恢复落点，或用户直接打开深链）。
@@ -249,11 +374,11 @@ describe("task-145 ①：站内到达 workspace-home 一律不恢复", () => {
 
 describe("task-145 ②：指向死工作区的上一跳被忘掉（下一次冷启不落在死工作区）", () => {
     it("恢复落在死工作区 → 回弹时清键 → 下一次冷启落在 picker", async () => {
-        seedLastLocation("workspace", WS_DEAD, null);
-        // 冷启 ⇒ 被恢复到那个（已删除/无权的）工作区：读点没错，错在键没被清。
+        seedLastLocation("workspace", WS_DEAD, null, "settings");
+        // 冷启 ⇒ 被恢复到那个（已删除/无权的）工作区的设置页：读点没错，错在键没被清。
         await navigate("/workbench");
         expect(window.location.pathname, "前置：冷启必须真的恢复到该工作区").toBe(
-            `/workspace/${WS_DEAD}`,
+            `/workspace/${WS_DEAD}/settings`,
         );
         // 页面判定它不可用：清 tab 上下文 + 回 picker（WorkspaceSettingsView.vue:322-326 同形）。
         clearTabWorkspace();
@@ -278,5 +403,66 @@ describe("task-145 ②：指向死工作区的上一跳被忘掉（下一次冷�
         process.stdout.write("[②-cold] next cold start landed=" + window.location.pathname + "\n");
         // 变异判据：② 未做 ⇒ 冷启又被恢复回 /workspace/WS_DEAD ⇒ 红。
         expect(window.location.pathname, "下一次冷启不得落在死工作区").toBe("/workbench");
+    });
+});
+describe("task-34（D1476 ②）：会话页与 6 个内容页都进上一跳，/workbench 不覆盖记录", () => {
+    it("7 条落点逐一入账（会话页 + 6 个内容页）", async () => {
+        const cases = [
+            {
+                path: `/workspace/${WS_LAST}/session/${SESS_LAST}`,
+                sessionId: SESS_LAST,
+                page: null as string | null,
+            },
+            ...WORKSPACE_PAGE_IDS.map((page) => ({
+                path: workspacePagePath(WS_LAST, page),
+                sessionId: null,
+                page: page as string | null,
+            })),
+        ];
+        for (const item of cases) {
+            await navigate(item.path);
+            expect(window.location.pathname, "落点必须是 " + item.path).toBe(item.path);
+            expect(readLastLocation(), item.path + " 必须写入上一跳").toMatchObject({
+                kind: "workspace",
+                workspaceId: WS_LAST,
+                sessionId: item.sessionId,
+                page: item.page,
+            });
+        }
+        process.stdout.write(
+            "[D1476/②-a] 7 条落点入账完毕 last=" + JSON.stringify(readLastLocation()) + "\n",
+        );
+    });
+
+    it("站内进 /workbench 不覆盖记录，也不把详情页记成上一跳", async () => {
+        // 真实链路起手：先落在有记录的页（members），记录由 afterEach 写入。
+        await navigate(`/workspace/${WS_LAST}/members`);
+        const before = localStorage.getItem(LAST_LOCATION_KEY);
+        expect(readLastLocation()).toMatchObject({ page: "members" });
+
+        // 站内进 /workbench：tab 上下文分支会把导航弹回本工作区（task-145 ①：站内到达
+        // workspace-home 不恢复）；本条只钉「记录不被改写、也不被清」，以及「详情页没被记成上一跳」。
+        await navigate("/workbench");
+        const after = localStorage.getItem(LAST_LOCATION_KEY);
+        process.stdout.write(
+            "[D1476/②-b] in-app /workbench landed=" +
+                window.location.pathname +
+                " route=" +
+                String(router.currentRoute.value.name) +
+                " keyUnchanged=" +
+                String(after === before) +
+                "\n",
+        );
+        expect(
+            router.currentRoute.value.name,
+            "/workbench 不得成为当前路由（不恢复详情页）",
+        ).not.toBe("workspace-home");
+        expect(after, "/workbench 不覆盖已有上一跳").toBe(before);
+        expect(readLastLocation(), "记录仍是 members 页").toMatchObject({
+            kind: "workspace",
+            workspaceId: WS_LAST,
+            sessionId: null,
+            page: "members",
+        });
     });
 });

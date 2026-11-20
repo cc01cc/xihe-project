@@ -649,7 +649,17 @@ router.beforeEach(async (to, from) => {
             writeTabWorkspaceId(routeWorkspaceId);
         } else if (to.name === "workspace-home") {
             const tabWorkspaceId = readTabWorkspaceId();
+            // task-34 ④（D1472 ②）：tab 上下文负责「本 tab 属于哪个工作区」，上一跳负责
+            // 「停在哪一页」。两条同时成立才合成页级落点：
+            //  - 上一跳**同工作区** ⇒ 按它恢复页级（会话页/环境/定时任务/资源/成员/设置）；
+            //  - 上一跳**属于别的工作区** ⇒ 上下文优先，落本工作区的会话列表页
+            //    —— 上一跳是跨 tab 的，拿它定位会把本 tab 拖进另一个工作区。
+            const last = readLastLocation();
             if (tabWorkspaceId) {
+                if (last && last.kind === "workspace" && last.workspaceId === tabWorkspaceId) {
+                    const restored = resolveLastLocationTarget(last);
+                    if (restored) return { path: restored, query: to.query };
+                }
                 return { path: `/workspace/${tabWorkspaceId}`, query: to.query };
             }
             // task-145 ①（Lead 2026-11-17 裁定）：**站内到达 `workspace-home` 一律不恢复**。
@@ -681,7 +691,7 @@ router.beforeEach(async (to, from) => {
             // 本 tab 重载必须回本 tab 的落点，不能被另一 tab 的最后写点拖走。
             // `resolveLastLocationTarget` 对坏值 fail-closed（非 UUID 不恢复），不会把
             // 守卫弹进 invalid-workspace 反弹。
-            const restored = resolveLastLocationTarget(readLastLocation());
+            const restored = resolveLastLocationTarget(last);
             if (restored) {
                 return { path: restored, query: to.query };
             }

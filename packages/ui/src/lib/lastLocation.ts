@@ -2,8 +2,13 @@
  * task-111 / D-1754 ①（裁② A 案）：跨 tab 的「上一跳」记录。
  *
  * 与 `workspaceContext.ts`（**逐 tab**，sessionStorage）成对：本模块是**跨 tab**
- * （localStorage）的最后落点记录，唯一用途是「冷启进入 /workbench 且本 tab 没有
- * 上下文时，回到上次停下的地方」。
+ * （localStorage）的最后落点记录，唯一用途是「进入 /workbench 时回到上次停下的地方」。
+ *
+ * <p><b>task-34 / D1472 ② 的分工</b>（用户 m01702：「会记录上一次落在的路由，进入工作台默认
+ * 进入之前落的路由上；没有的话则是工作台的空态页面」）：本模块负责**停在哪一页**（页级，
+ * 含 6 个工作区二级页与缩放后的 sessionId），`workspaceContext.ts` 负责**本 tab 属于哪个
+ * 工作区**。守卫里的合成判据：tab 上下文存在且与上一跳同工作区 ⇒ 按上一跳恢复页级；属于
+ * 别的工作区 ⇒ 上下文优先（落本工作区会话页，不把用户拖进别的工作区）。</p>
  *
  * **恢复只有一个入口：冷启**（task-145 ①）。站内到达 `workspace-home` 的任何导航都是
  * 显式意图（删工作区/无权/上下文冲突的回弹也在此列）—— 判据点见
@@ -11,8 +16,12 @@
  * 那时用户要的就是选择面（H4-c，`isExplicitPickerEntry`）。
  *
  * 四条不变式（卡面已裁，不许改）：
- *  1. **键形**：`xihe-last-location` = `{ kind, workspaceId, sessionId, at }`。
+ *  1. **键形**：`xihe-last-location` = `{ kind, workspaceId, sessionId, page, at }`。
  *     `kind` 是页面种类判别字段 —— 新增可恢复页面种类 = 加一个 kind，不动键形。
+ *     `page` 是**工作区二级页 id**（`meta.workspacePage.id`，task-34 / D1472 ②）：裸工作区
+ *     必须指名停在哪一页；会话页的位置由 `sessionId` 表达、独立会话没有页维度 ⇒ 两者恒 `null`。
+ *     **旧键形（无 `page` 键）按 fail-closed 丢弃，不做迁移** —— 用户 m01702 ① 已裁「不做任何
+ *     旧形态兼容」，迁移等于把旧语义猜一遍写回去。
  *  2. **单一写点**：`router/index.ts` 的 `router.afterEach`（H2 —— redirect 目标
  *     不会被写进去）。本模块不提供「路由触发」之外的写入口。
  *  3. **nullable，不编造**：`workspaceId`/`sessionId` 可为 null（裸工作区）；
@@ -28,11 +37,14 @@
 import type { RouteLocationNormalized } from "vue-router";
 import { isUuid } from "./uuid";
 import {
+    isWorkspacePageId,
     standaloneChatPath,
+    workspacePagePath,
     workspaceSessionPath,
-    workspacePath,
     WORKSPACE_PICKER_PATH,
+    type WorkspacePageId,
 } from "./routes";
+import { workspacePageOfMeta } from "./workspacePages";
 
 export const LAST_LOCATION_KEY = "xihe-last-location";
 
@@ -56,8 +68,13 @@ export interface LastLocation {
     kind: LastLocationKind;
     /** null = 独立会话 / 不适用。 */
     workspaceId: string | null;
-    /** null = 裸工作区（停在 `/workspace/<id>`，绝不编造会话）。 */
+    /** null = 裸工作区（停在某个工作区页，绝不编造会话）。 */
     sessionId: string | null;
+    /**
+     * 工作区二级页 id（`meta.workspacePage.id`，task-34 / D1472 ②）。
+     * 恒 null 的两种情形：会话页（位置由 `sessionId` 表达）、独立会话（无工作区段）。
+     */
+    page: WorkspacePageId | null;
     /** ISO 8601 UTC；读方仅用于判失效。 */
     at: string;
 }
@@ -67,6 +84,7 @@ export interface LastLocationInput {
     kind: LastLocationKind;
     workspaceId: string | null;
     sessionId: string | null;
+    page: WorkspacePageId | null;
 }
 
 function storage(): Storage | null {
@@ -83,6 +101,31 @@ function asNullableString(value: unknown): string | null | undefined {
 }
 
 /**
+ * 校验 `page`（task-34）：返回值 `undefined` = 这条数据不合规，读/写两侧都 fail-closed。
+ *
+ * <p>三种合规形状，其余一律拒：① 会话页 / 独立会话 ⇒ `page === null`（位置由 sessionId 表达）；
+ * ② 裸工作区 ⇒ `page` 是已登记的工作区页 id。**缺 `page` 键 = 旧键形**（task-34 之前的记录只有
+ * kind/workspaceId/sessionId）⇒ 拒，且**不迁移**（用户 m01702 ①：不做任何旧形态兼容；迁移等于
+ * 把旧语义猜一遍写回去）。</p>
+ */
+function normalizePage(
+    v: Record<string, unknown>,
+    kind: LastLocationKind,
+    sessionId: string | null,
+): WorkspacePageId | null | undefined {
+    if (!("page" in v)) return undefined;
+    const raw = v.page;
+    const isSessionPosition = kind !== "workspace" || sessionId !== null;
+    if (raw === null || raw === undefined) {
+        // 会话页/独立会话没有页维度；裸工作区必须指名页（否则就是旧形态的「裸工作区」）。
+        return isSessionPosition ? null : undefined;
+    }
+    if (!isWorkspacePageId(raw)) return undefined;
+    // 页维度只属于裸工作区：会话页带 page 是自相矛盾的数据。
+    return isSessionPosition ? undefined : raw;
+}
+
+/**
  * 校验键形（不含 `at` 时效）。不合格返回 `undefined`（无法区分「缺字段」与
  * 「字段类型错」，两种都不写/不恢复）。standalone 的 `workspaceId` 一律归 null。
  */
@@ -92,15 +135,21 @@ function normalizeEntry(raw: unknown): LastLocationInput | undefined {
     if (typeof v.kind !== "string" || !KNOWN_KINDS.has(v.kind as LastLocationKind)) {
         return undefined;
     }
+    const kind = v.kind as LastLocationKind;
     const workspaceId = asNullableString(v.workspaceId);
     const sessionId = asNullableString(v.sessionId);
     if (workspaceId === undefined || sessionId === undefined) return undefined;
-    if (v.kind === "standalone") {
+    const page = normalizePage(v, kind, sessionId);
+    if (page === undefined) return undefined;
+    if (kind === "standalone") {
         // 独立会话没有工作区段；没有 sessionId 的 standalone 无可恢复目标。
-        return sessionId ? { kind: "standalone", workspaceId: null, sessionId } : undefined;
+        if (page !== null) return undefined;
+        return sessionId
+            ? { kind: "standalone", workspaceId: null, sessionId, page: null }
+            : undefined;
     }
     // workspace：必须有 workspaceId（裸工作区 = sessionId null，不是 workspaceId null）。
-    return workspaceId ? { kind: "workspace", workspaceId, sessionId } : undefined;
+    return workspaceId ? { kind: "workspace", workspaceId, sessionId, page } : undefined;
 }
 
 export function readLastLocation(now: number = Date.now()): LastLocation | null {
@@ -159,24 +208,38 @@ export function clearLastLocation(): void {
 }
 
 /**
- * 路由名 → 上一跳条目（H2 写点的取值来源）。只登记**可恢复**的三种页面；
- * picker（workspace-home）/设置/登录等一律不记 —— 上一跳回答的是「上次停在哪个
- * 会话/工作区」，一个非会话页面不该覆盖这份记忆。
+ * 路由名 → 上一跳条目（H2 写点的取值来源）。
+ *
+ * <p><b>task-34 / D1472 ②：记到页级。</b>可恢复面 = 会话页 + 独立会话 + **全部带
+ * `meta.workspacePage` 的工作区二级页**（sessions / environment / scheduled-tasks /
+ * resources / members / settings）。页 id **从 meta 取**（路由表是唯一来源），只有裸工作区那条
+ * （`name === "workspace"`）额外保留一个按名字的显式分支 —— 它既是会话列表页、又是
+ * 「进工作区」的落地路由，靠名字直读比依赖 meta 更稳（meta 缺失时也照样记得住）。</p>
+ *
+ * <p>picker（`workspace-home`）/登录/设置区/独立会话之外的一切**不记**：上一跳回答的是
+ * 「上次停在哪个工作区的哪一页」，一个非工作区页面不该覆盖这份记忆。</p>
  */
 export function lastLocationForRoute(
-    to: Pick<RouteLocationNormalized, "name" | "params">,
+    to: Pick<RouteLocationNormalized, "name" | "params"> & {
+        meta?: RouteLocationNormalized["meta"];
+    },
 ): LastLocationInput | null {
     const workspaceId = typeof to.params.workspaceId === "string" ? to.params.workspaceId : null;
     const sessionId = typeof to.params.sessionId === "string" ? to.params.sessionId : null;
     switch (to.name) {
         case "workspace-session":
-            return { kind: "workspace", workspaceId, sessionId };
+            return { kind: "workspace", workspaceId, sessionId, page: null };
         case "workspace":
-            return { kind: "workspace", workspaceId, sessionId: null };
+            // 裸工作区 = 「会话」页（`meta.workspacePage.id === "sessions"`，无独立路径段）。
+            return { kind: "workspace", workspaceId, sessionId: null, page: "sessions" };
         case "standalone-chat":
-            return { kind: "standalone", workspaceId: null, sessionId };
-        default:
-            return null;
+            return { kind: "standalone", workspaceId: null, sessionId, page: null };
+        default: {
+            // 其余工作区二级页：页 id 一律从路由 meta 取（本文件不持有第二份页面清单）。
+            const page = workspacePageOfMeta(to.meta)?.id;
+            if (!page || !workspaceId) return null;
+            return { kind: "workspace", workspaceId, sessionId: null, page };
+        }
     }
 }
 
@@ -195,9 +258,11 @@ export function resolveLastLocationTarget(last: LastLocation | null): string | n
     if (last.sessionId) {
         return isUuid(last.sessionId)
             ? workspaceSessionPath(last.workspaceId, last.sessionId)
-            : workspacePath(last.workspaceId);
+            : workspacePagePath(last.workspaceId, "sessions");
     }
-    return workspacePath(last.workspaceId);
+    // 裸工作区：页 id 必填（`normalizeEntry` 已保证）；手搓的坏对象退一格回会话列表页，
+    // 不抛也不编造新页（与 sessionId 非 UUID 退一格同一条「不进行死路」原则）。
+    return workspacePagePath(last.workspaceId, last.page ?? "sessions");
 }
 
 /**
