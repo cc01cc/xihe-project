@@ -59,6 +59,12 @@ const props = defineProps<{
      * 不传 = 未加载 —— 面板据此**不画**徽标，而不是画成「没有覆盖」（见 userOverrideActive）。
      */
     userEntries?: Record<string, string>;
+    /**
+     * task-155：该域的**跨层生效值**（`GET /config/{domain}` 的合并读面），由调用方按域传入。
+     * 不传 = 未加载 / 加载失败 —— 面板据此维持原渲染（空），**不画**「未设置」：
+     * 「不知道」不能画成「没有生效值」（与本组件 userEntries 同一条纪律）。
+     */
+    effective?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -521,6 +527,64 @@ function isDrifted(field: DomainField): boolean {
     return !fieldCandidates(field).some((option) => option.value === value);
 }
 
+/**
+ * task-155：本层草稿是否「未覆盖」。
+ *
+ * <p>层读面（`GET /config/{domain}?layer=`）**只返回显式覆盖行**，所以「entries 里没有这个键」
+ * 是常态（继承），不等于「这个键没有值」。旧实现把两者都渲染成空 `<SelectValue />`，
+ * 用户既看不出继承了什么，也看不出到底有没有配置（task-139 D1 实测 16 个下拉全空白）。</p>
+ */
+function draftUnset(field: DomainField): boolean {
+    return (editing.value[field.key] ?? "") === "";
+}
+
+/**
+ * task-155：生效值。
+ *
+ * @returns `undefined` = 调用方没给这个域的合并读面（未加载 / 失败）；`""` = 给了，但该键
+ *          确实没有生效值。两者必须分开 —— 前者维持旧渲染，后者才画「未设置」。
+ */
+function effectiveValue(field: DomainField): string | undefined {
+    if (!props.effective) return undefined;
+    return props.effective[field.key] ?? "";
+}
+
+/** 生效值的显示文案：候选里有就用 label；不在候选（目录漂移 / 非法值）原样显示，绝不留空。 */
+function effectiveLabel(field: DomainField, value: string): string {
+    const hit = fieldCandidates(field).find((option) => option.value === value);
+    return hit ? hit.label : value;
+}
+
+/**
+ * task-155：空草稿时 trigger 的占位文案 —— 继承态的唯一入口（模板只读这一个值）。
+ *
+ * <p>三种可见结果与卡面第 3 条一一对应：① 有生效值 ⇒「生效值（来源短语）」，例如
+ * `INFO（代码默认）`；② 有合并读面但该键无生效值 ⇒「未设置」；③ 没有合并读面（未传 /
+ * 加载失败）⇒ 维持旧渲染：`allowCustom` 给「未设置」，其余留空。</p>
+ *
+ * <p>模板侧配套：`:model-value` **不再拿 `__unset__` 当哨兵**（那会让空草稿命中「未设置」
+ * 选项、trigger 渲染选项文案而不是继承值），统一送空串，两支都由这里的 placeholder 表达。</p>
+ */
+function selectPlaceholder(field: DomainField): string {
+    if (!draftUnset(field)) return "";
+    const effective = effectiveValue(field);
+    if (effective === undefined) return field.allowCustom ? t("settings.notSet") : "";
+    if (effective === "") return t("settings.notSet");
+    const label = effectiveLabel(field, effective);
+    // 来源短语取「来源类型短语」面（实例默认 / 工作区覆盖 / 代码默认），与继承行 badge 同一词表；
+    // meta 缺失或来源是 none（本键没有值）时不硬贴来源，只显示值本身。
+    const source = sourceText(field.key, "badge");
+    if (!source || source === t("settings.configSourceNone")) return label;
+    return t("settings.configSelectInherited", { value: label, source });
+}
+
+/** task-155：下拉里的「未设置」项 —— 有生效值时写明继承了什么，避免与同名具体值混淆。 */
+function unsetOptionLabel(field: DomainField): string {
+    const effective = effectiveValue(field);
+    if (!effective) return t("settings.notSet");
+    return t("settings.configSelectUnsetInherited", { value: effectiveLabel(field, effective) });
+}
+
 function onSelectChange(field: DomainField, value: string) {
     if (field.allowCustom && value === CUSTOM_OPTION) {
         customMode.value = { ...customMode.value, [field.key]: true };
@@ -782,11 +846,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                     />
                     <Select
                         v-else
-                        :model-value="
-                            field.allowCustom && !editing[field.key]
-                                ? '__unset__'
-                                : editing[field.key]
-                        "
+                        :model-value="editing[field.key] ?? ''"
                         :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                         @update:model-value="
                             (value) =>
@@ -801,11 +861,11 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                             :data-testid="`config-select-${domain}-${field.key}`"
                             class="min-w-0 flex-1"
                         >
-                            <SelectValue />
+                            <SelectValue :placeholder="selectPlaceholder(field)" />
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem v-if="field.allowCustom" value="__unset__">{{
-                                t("settings.notSet")
+                                unsetOptionLabel(field)
                             }}</SelectItem>
                             <SelectItem
                                 v-if="isDrifted(field) && editing[field.key] !== ''"

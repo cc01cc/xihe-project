@@ -538,6 +538,81 @@ watch(
     { immediate: true },
 );
 
+/**
+ * task-155：**生效值**读面（`GET /config/{domain}` 合并结果），按域补一次。
+ *
+ * <p>设置页只调 `loadLayerDomains(layer)`，而层读面**只含显式覆盖行** ⇒ 没有本层行的键在下拉里
+ * 一片空白：用户看不出继承了什么，也看不出这个域到底配没配（task-139 D1 实测 19 个下拉里 17 个空）。</p>
+ *
+ * <p>与 task-386 的 `ensureOwnCredentialFaces` 同一条纪律：按域 inflight 去重、写回 store 的
+ * `mergedConfig`（与 `loadAllDomains` 同一落点，不引入第二份状态）、**失败不画** ——
+ * 把「不知道」画成「没有生效值」就是本卡要修的同一类缺陷。命中 `mergedConfig` 缓存则不发请求。</p>
+ */
+const effectiveByDomain = ref<Record<string, Record<string, string>>>({});
+const effectiveInFlight = new Set<string>();
+/** 走专用面板、没有通用下拉的域：不预取（llm-provider 由上面那条 ensure 负责）。 */
+const NO_GENERIC_SELECT_DOMAINS: ReadonlySet<string> = new Set([
+    "llm-provider",
+    "embedding",
+    "agent-templates",
+    "api-request-templates",
+]);
+
+/**
+ * 合并读面里的键与面板字段键可能不同构：`context-policy` 存的是 `defaults` 这一个 JSON，
+ * 而字段键是 `defaults.<leaf>`（`ctxPolicyFields()` 由 `defaultsLeaves()` 展开）。
+ * 这里用与保存侧同一个 `decomposeDefaults` 展平，避免两处各写一份拆解逻辑。
+ */
+function flattenEffective(domain: string, raw: Record<string, string>): Record<string, string> {
+    if (domain !== CONTEXT_POLICY_DOMAIN) return { ...raw };
+    const flat: Record<string, string> = {};
+    for (const [key, value] of Object.entries(raw)) {
+        if (key !== DEFAULTS_KEY) flat[key] = value;
+    }
+    for (const [leaf, value] of Object.entries(decomposeDefaults(raw[DEFAULTS_KEY]))) {
+        flat[DEFAULTS_PREFIX + leaf] = value;
+    }
+    return flat;
+}
+
+async function ensureEffective(domain: string): Promise<void> {
+    if (effectiveByDomain.value[domain] || effectiveInFlight.has(domain)) return;
+    if (NO_GENERIC_SELECT_DOMAINS.has(domain)) return;
+    const cached = configStore.mergedConfig[domain];
+    if (cached) {
+        effectiveByDomain.value = {
+            ...effectiveByDomain.value,
+            [domain]: flattenEffective(domain, cached),
+        };
+        return;
+    }
+    effectiveInFlight.add(domain);
+    try {
+        const entries = await configStore.fetchDomain(domain);
+        configStore.mergedConfig[domain] = entries;
+        effectiveByDomain.value = {
+            ...effectiveByDomain.value,
+            [domain]: flattenEffective(domain, entries),
+        };
+    } catch (e: unknown) {
+        logger.warn(`config ${domain} merged read failed, effective value stays unlabelled`, e);
+    } finally {
+        effectiveInFlight.delete(domain);
+    }
+}
+
+/**
+ * 传给 `ConfigDomainPanel` 的生效值：`undefined` = 还没拿到（未加载 / 失败 / 无此面板），
+ * 面板据此维持旧渲染；空对象 = 拿到了但该域没有任何生效值，面板显示「未设置」而不是空白。
+ */
+function effectiveFor(domain: string): Record<string, string> | undefined {
+    return effectiveByDomain.value[domain];
+}
+
+watchEffect(() => {
+    for (const domain of visibleDomains.value) void ensureEffective(domain);
+});
+
 const llmOwnCredentialNote = computed(() => {
     if (props.layer === "instance" || !ownCredentialFacesLoaded.value) return false;
     const meta = configStore.layerMeta[props.layer]?.["llm-provider"]?.profile;
@@ -943,6 +1018,7 @@ async function handleReset(domain: string, key: string) {
             :layer="layer"
             :readonly="readonly"
             :user-entries="userEntriesFor(domain)"
+            :effective="effectiveFor(domain)"
             @save="handleSave(domain, $event)"
             @reset="handleReset(domain, $event)"
         />
