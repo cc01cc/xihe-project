@@ -5,7 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-19
+updated: 2026-11-21
 status: active
 ---
 
@@ -20,11 +20,11 @@ status: active
 ## 0.1 清单总览（两列分域）
 
 <svg viewBox="0 0 660 300" width="100%" role="img" aria-labelledby="dev011-overview">
-  <title id="dev011-overview">DEV-011 清单总览：§1–§9 逐项核对，§10–§16 判据族</title>
+  <title id="dev011-overview">DEV-011 清单总览：§1–§9 逐项核对，§10–§17 判据族</title>
   <rect x="16" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
   <rect x="332" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
   <text x="32" y="42" font-size="12" fill="#374151">逐项核对 §1–§9</text>
-  <text x="348" y="42" font-size="12" fill="#374151">判据族 §10–§16</text>
+  <text x="348" y="42" font-size="12" fill="#374151">判据族 §10–§17</text>
   <rect x="336" y="50" width="304" height="22" fill="#eef2ff"/>
   <text x="32" y="68" font-size="12" fill="#374151">§1　页面渲染</text>
   <text x="32" y="90" font-size="12" fill="#374151">§2　图标渲染</text>
@@ -46,7 +46,7 @@ status: active
   <text x="348" y="236" font-size="12" fill="#374151">§16　地标嵌套与唯一</text>
 </svg>
 
-> 图注：左列 §1–§9 为逐项勾选清单（页面渲染 → E2E 截图基准），右列 §10–§16 为门可判的判据族。两条阶梯只在右列：§10 用 L0–L4（层级阶梯），§12 用 M0–M3（动效预算，与 §10 并排读，见 §12.2）。锚点即各节 H2 标题。
+> 图注：左列 §1–§9 为逐项勾选清单（页面渲染 → E2E 截图基准），右列 §10–§17 为门可判的判据族。两条阶梯只在右列：§10 用 L0–L4（层级阶梯），§12 用 M0–M3（动效预算，与 §10 并排读，见 §12.2）。锚点即各节 H2 标题。
 
 ## 1. 页面渲染
 
@@ -103,7 +103,7 @@ status: active
 ### 6.1 rail（`GlobalRail`，双态：折叠 56px 纯图标 ↔ 展开图标 + 文字）
 
 - [ ] **双态**（`GlobalRail.vue:77`：`--sidebar-width-icon: 3.5rem` = 折叠 56px、`--sidebar-width: 12rem` = 展开，`collapsible="icon"`）：折叠态纯图标无文字标签、展开态图标 + 文字；每个图标有 `aria-label` 且 hover 有 tooltip
-- [ ] 收起/展开入口**不只在导航面板头、也不只靠快捷键**：全局条自带 `SidebarRail` hover 切换（`GlobalRail.vue:190`）+ `⌘/Ctrl+B`（`SidebarProvider`）；导航面板折叠态另渲染一条 56px 折叠条（`Sidebar.vue:154-157`，`sidebar-collapsed-strip`，只含展开控件）；`<1024` 时全局条整条隐藏（`App.vue:29-36`）
+- [ ] 收起/展开入口**不只在导航面板头、也不只靠快捷键**：全局导航自带 `SidebarRail` hover 切换（`GlobalRail.vue:190`）+ `⌘/Ctrl+B`（`SidebarProvider`）；导航面板折叠态另渲染一条 56px 折叠条（`Sidebar.vue:154-157`，`sidebar-collapsed-strip`，只含展开控件）；`<1024` 时全局导航整条隐藏（`App.vue:29-36`）
 
 ### 6.2 三处栏宽与夹取（PLAN-0582）
 
@@ -824,3 +824,182 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 - **构成边界**：门的「改前」读数**可跨卡复用**，但**必须两条同时成立**：① 同一 `lease`（`dev-stack.mjs status` 的 `startedAt` 一致）；② `git diff --name-only <recorded-HEAD>..HEAD -- <scope>`（即读数里记录的那个 HEAD） **= 0**。只满足一条就是拿不同字节比。**`session` 面即使同窗也不可跨时间比**：它跟服务端会话数据漂移、与代码无关（实测 464 / 430 / 430 / 464 四点，跨窗与同窗都变过）。
 - **度量方式**：报告生成器的差集基准**必须钉在读数里记录的 `HEAD`**；拿当下 `HEAD` 作基准 ⇒ 本卡提交一落地，那条判据就永远复现不了（`task-89` 被自己这条绊过一次，改成钉 `census.A03HEAD`）。门的其它读数照旧：`findings` 恒 0、portal 命中 0、`--portals-enforce` 关。
 - **反例锚点**：把「同窗」当「可比」⇒ `task-89` 交出 16/17 面逐字段相同、只有 `session` 面 464 → 430，噪声被误读成回归；把「跨卡复用」当无条件 ⇒ 上卡读数落在旧 `lease`，比出来的是两份不同字节。
+
+## 17. 表单设计规范（2026-11-21 用户裁定，`task-172`）
+
+> 起因：对「智能体配置」弹窗的四问 —— 这是新 UI 吗 / shadcn-vue 有没有表单推荐 / 业界经验怎么说 / 这个 UI 合适吗。本节只把「表单」这一面钉成可判条目；配色、焦点环、动效仍按 §10 / §12 / §13 判，不在这里重写。
+>
+> 反例全部取自 `A03-xihe/packages/ui/src/components/settings/AgentPrincipalDetailDrawer.vue`（下文简称 `APD`，行号 2026-11-21 实测）与同目录字段组件；机器化形态与门草案见 `internal/A03-xihe/evidence/2026-11-21-form-design-standard/README.md`。
+
+| 条 | 一句话判据 | 今天的状态 |
+| --- | --- | --- |
+| 17.1 | 单列优先：左标签列只留给 ≤3 个只读键 | 六块全走两列，其中四块可编辑面 |
+| 17.2 | 标签在输入框上方；必填/可选显式标注 | 部分字段只有 hint 一句，placeholder 与标签同字 |
+| 17.3 | 同语义组一个提交点；纯布尔开关即时生效 | 同一弹窗四个保存按钮，记忆开关另配保存 |
+| 17.4 | 未保存改动要有 dirty 指示 + 离开策略 | 有 dirty 计算但无指示、无拦截 |
+| 17.5 | 错误就地、按区块降级，错误块必须可重试 | 错误块就地但无重试，404 不落空态 |
+| 17.6 | 枚举字段必须是选择器，禁裸文本输入 | 钩子 advisor kind 是自由文本 + placeholder |
+| 17.7 | 「留空 = 继承默认」必须显式化为选项 | 配置层选择器空值即是「继承」，无显式项 |
+| 17.8 | >6 语义组或跨组校验 ⇒ 整页 / 分节导航 | 单个 768px 弹窗塞 8 个语义组 |
+
+### 17.1 单列优先
+
+**判据**
+
+- 可编辑面一律单列：控件独占一行（或一行内最多两个同组短控件），标签放在控件上方，区块名用 `<h3>`。
+- 左标签列只允许出现在只读键块，且该块键数 ≤3。
+- 机器口径：可编辑 `<section>` 的类名不得命中双列 grid 模板（今天是 `.apd-two-col`）。
+
+**现状反例**
+
+- `APD:1078-1083` 的 `.apd-two-col` = `grid-template-columns: 7.5rem minmax(0, 1fr)`（注释 `APD:1075` 写明是 `task-137` 为 config 档 768px 引入），被 `apd-identity:646`、`apd-persona:685`、`apd-model:702`、`apd-delegation:827`、`apd-memory:862`、`apd-hooks:895` 六块全量套用，其中四块是可编辑面。
+- 只读块内还嵌了第二层标签列：`APD:652` 与 `APD:676` 的 `dt class="w-20"`（80px），块内键 = 名称 / 状态徽标 `APD:660` / 归属徽标 `APD:664` / 创建时间 `APD:676` 共 4 个，超了 ≤3 的线。
+
+**改后判据**
+
+- 六块中可编辑的四块（model / delegation / memory / hooks）不再命中双列模板；只读块允许保留标签列，但键数压到 ≤3（例如状态与归属合并成一个「状态」键）。
+- 静态门可判：扫组件源码里「同时出现 `grid-template-columns` 与可编辑控件（`Input` / `Select` / `Switch` / `Textarea`）」的 `<section>`。
+
+### 17.2 标签在上 + 必填/可选显式
+
+**判据**
+
+- 每个可编辑控件都有可见标签，且用 `<Label :for>` 绑到控件 id；标签文案不得与 placeholder 逐字相同。
+- 必填字段显式标注；可选字段写「可选」（i18n 已有 `optional` 键，见 `i18n/index.ts:2816`）。
+- placeholder 只作示例，不承载唯一说明；说明走 hint 文本或 `aria-describedby`。
+
+**现状反例**
+
+- `DelegationPolicyFields.vue:84` 整块只有一句 hint，没有任何字段级标签 ⇒ 读者只能靠 hint 猜每个输入是什么。
+- `AgentModelBindingFields.vue` 有 `<Label :for>`（`:200`、`:229`、`:260`），但同一文案又被塞进 `SelectValue` 的 placeholder（`:214`、`:244`、`:277`）⇒ 空态看起来像已经选好（同族缺陷 `task-139` D7 已登记）。
+- 钩子 kind 只有 placeholder（`APD:925-932`，文案 `i18n/index.ts:3970`「advisor 类型，例如 guard」），既无标签也无必填/可选标注。
+
+**改后判据**
+
+- 组件单测：每个可编辑控件 `label[for]` 命中，且 placeholder 与标签文案不同；可选字段出现「可选」字样。
+
+### 17.3 一组改动一个提交点
+
+**判据**
+
+- 一个语义组只有一个提交动作：要么整组 Save，要么整组即时生效，不许同一组里既有开关又有保存按钮。
+- 纯布尔开关（Switch / Checkbox）必须即时生效并即时报错，不配保存按钮。
+- 判据可静态化：同一 `<section>` 内同时出现 `Switch|Checkbox` 与 Save 类按钮（`data-testid` 以 `-save` 结尾）⇒ 红。
+
+**现状反例**
+
+- `APD` 一个弹窗里四个并列保存按钮：`apd-model-save:812`、`apd-delegation-save:847`、`apd-memory-save:880`、`apd-hooks-save:947` ⇒ 用户要判断「我刚才改的那项按哪个」。
+- 记忆是纯布尔，却要另点保存：`apd-memory-switch:867`（`Switch`）与 `apd-memory-save:880` 并存（`APD:876-886` 整段）。
+
+**改后判据**
+
+- 每个可编辑区块 ≤1 个提交动作；`Switch` 所在区块不再出现 Save testid。
+- 若坚持分区保存，必须在同一行注释里给出「为什么不能即时生效」的理由（评审可读）。
+
+### 17.4 未保存改动：dirty 指示 + 离开策略
+
+**判据**
+
+- 有未保存改动时，页面或区块要有可见 dirty 指示（文案或标记），不能只靠按钮从 disabled 变 enabled。
+- 离开动作（关抽屉 / 切主体 / 换路由 / 刷新）必须二选一：拦截并确认，或在界面上明写「不保存直接丢弃」。
+
+**现状反例**
+
+- `APD` 有 `modelDirty`（`:302`）与 `modelSaveBlocked`（`:304`），但只用于禁用保存按钮；全文件 grep `beforeunload` / `onBeforeRouteLeave` / 离开确认 = 0 命中。
+- 关抽屉直接丢草稿（`resetDrafts` `:221` 在 open 变化时重算）⇒ 用户改了模型没保存、点遮罩关闭，改动无声消失。
+
+**改后判据**
+
+- Playwright 真栈可判：改一个字段 → 断言 dirty 指示可见 → 关闭弹窗 → 断言出现拦截提示，或（若裁定不拦截）断言关闭前有「未保存」明写文案。
+- 纯静态门判不了这条，必须真栈。
+
+### 17.5 错误就地、按区块降级
+
+**判据**
+
+- 错误提示落在出错区块内，不影响其他区块的可用性；错误块必须带重试动作。
+- 404 / 空数据走空态文案（「暂无」「未找到」）加重试，禁止把原始错误码或后端 message 红卡糊在表单中间。
+- 判据可静态化：`ErrorBlock` 类组件调用点必须同时出现重试回调或 `retry` 字样。
+
+**现状反例**
+
+- `apd-roles-error:973-977`：只读能力块一旦报错，整块列表被 `ErrorBlock` 替换，没有重试按钮；同一块的 loading（`:966-972`）与空态（`:978-983`）分支是齐的，唯独错误分支既无重试也不降级。
+- 区块级错误变量用 `sectionError(cause, t(K + "saveFailed"))` 生成（`:499`、`:535`、`:560`、`:594`）⇒ 后端码被映射成一句「保存失败」，映射表在 `:420-449`，缺的是「重试」这一步。
+
+**改后判据**
+
+- 每个 `ErrorBlock` 调用点都要有 `@retry` 或相邻重试按钮；真栈可判「断网 → 保存 → 出现重试 → 恢复网络 → 重试成功」。
+
+### 17.6 枚举必须选择器
+
+**判据**
+
+- 取值来自有限集合的字段一律用选择器（`Select` / `RadioGroup` / `Combobox`），禁止裸文本输入；受控词表由常量或 i18n 键定义，不由用户手打。
+- 机器口径：字段 testid 对应元素 `tagName` 不是 `INPUT`（`type=text`），且选项集合有单一来源。
+
+**现状反例**
+
+- 钩子 advisor kind 是自由文本：`apd-hooks-kind:927` 的 `Input` 加 placeholder（`i18n/index.ts:3970`），`newAdvisorKind` 直接 `trim()` 后入列表（`APD:568-570`）⇒ 打错一个字就是另一个「类型」；而 on 白名单今天只有 `approval.ask`（`APD:909` 硬写徽标），说明取值本就有限。
+- 侧栏/设置页那批裸机器枚举（domain slug、action 英文）同属本条的镜像缺陷，详见 `task-139` D3 与 `check-ui-rulings` 的 R 规则族。
+
+**改后判据**
+
+- 该字段不再是文本输入；选项来源可枚举（组件内常量 / i18n 数组 / 服务端目录）。
+- 组件单测：该 testid 元素的 `tagName` 不是 `INPUT`。
+
+### 17.7 「留空 = 继承默认」必须显式化
+
+**判据**
+
+- 分层配置里「本层未设置 ⇒ 继承上层」必须是一个显式选项（如「继承（= X）」/「未设置」），不许靠空值、空 placeholder 或空白选项暗示。
+- 当前生效值必须可见（即使不可编辑），且标出来源层。
+
+**现状反例**
+
+- `ConfigDomainPanel.vue:786-798`、`:807`、`:817-819`：层内未覆盖时 `entries` 为空，选择器渲染空白，既无「继承」项也无 placeholder；`__unset__` 兜底项只在 `allowCustom` 时出现 ⇒ 16 个设置页下拉打开前是一片空白（`task-139` D1，P0）。
+- 同一病灶的旁证：「未选」与「字段标签」逐字相同（`AgentModelBindingFields.vue:214` 等），空态被读成已选。
+
+**改后判据**
+
+- 每个分层选择器都有显式继承项，且生效值可见；组件单测 ≥5 例（空层 / 继承 / 覆盖 / 清空回继承 / 跨层来源标注）。
+
+### 17.8 复杂度阈值
+
+**判据**
+
+- 单个弹窗 / 抽屉承载的语义组 ≤6；超过 6 组，或存在跨组联动校验，必须改成整页或分节导航。
+- 判据可静态化：单文件里顶级 `<section data-testid="...">` 数量 >6 且容器是 `Dialog` / `Sheet` ⇒ 红。
+
+**现状反例**
+
+- `APD` 一个 768px 弹窗里 8 个语义组：identity `:646` / persona `:685` / model `:702` / delegation `:827` / memory `:862` / hooks `:895` / capabilities `:962` / danger `:1011`，外加四个保存按钮与两处二次确认（`APD:1042`、`:1061`）。
+
+**改后判据**
+
+- 该弹窗拆成「主体概览 / 模型 / 授权与钩子 / 危险区」两到三个承载面，或改成独立设置页；拆分后每面 ≤6 组且组间无跨组校验。
+
+### 17.9 业界对照（只摘与上述判据相关条目）
+
+| 系统 | 与本节对应的做法 | 对应条目 |
+| --- | --- | --- |
+| GOV.UK Design System（question pages / error summary / check answers） | 一问一页、标签在输入上方、hint 与 error 就近、提交前汇总核对 | 17.1 / 17.2 / 17.8 |
+| NN/g 表单可用性（web form design） | 单列布局、标签可见不靠 placeholder、错误就地在字段旁 | 17.1 / 17.2 / 17.5 |
+| Material 3 text field（label / supporting text / error text 三段式） | 标签 + 支持文本 + 错误文本三段；错误替代支持文本而非叠加 | 17.2 / 17.5 |
+| Atlassian Design System、Salesforce Lightning 设置页（section + autosave） | 区块化加即时保存，不设分区 Save | 17.3 / 17.8 |
+
+> 来源为各家公开设计系统文档（GOV.UK Design System、NN/g、Material 3、Atlassian Design System、Lightning Design System），逐条链接在证据档 §3 列出；条文改写自各系统对外口径，具体页面以 2026-11-21 版本为准（文档声称，未逐页复验）。
+
+### 17.10 判据现状与执行者
+
+| 条 | 今天能否机判 | 最小可执行形态 | 建议归属 |
+| --- | --- | --- | --- |
+| 17.1 | 可（静态） | `check-form-contract.mjs` 规则 A：可编辑 section 命中双列 grid | 新门草案 |
+| 17.2 | 可（组件单测） | 每个可编辑控件断言 label[for] 命中且 placeholder 不等于 label | 组件 spec |
+| 17.3 | 可（静态） | 规则 B：同一 section 内 Switch / Checkbox 与 Save testid 并存 | 新门草案 |
+| 17.4 | 不可静态，需真栈 | Playwright：改字段 → dirty 指示 → 关闭拦截 | 真栈 spec |
+| 17.5 | 半可（静态 + 真栈） | 规则 C：ErrorBlock 调用点缺 retry 即红；断网重试走真栈 | 新门草案 + 真栈 |
+| 17.6 | 可（静态） | 规则 D：枚举字段 testid 落在文本输入即红 | 新门草案 |
+| 17.7 | 可（组件单测） | 分层选择器必须有继承项与生效值，≥5 例 | 组件 spec |
+| 17.8 | 可（静态） | 规则 E：弹窗内顶级 section 超过 6 个 | 新门草案 |
+
+> 门草案的判据正文、正反自测与误报边界见证据档 §2；本节只登记「哪条归谁」。静态门落地前，这五条按评审清单人工执行，评审记录里要写出命中的规则编号。

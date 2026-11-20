@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-19
+updated: 2026-11-21
 status: active
 ---
 
@@ -16,11 +16,11 @@ status: active
 ## 0.1 Checklist map (two columns)
 
 <svg viewBox="0 0 660 300" width="100%" role="img" aria-labelledby="dev011-overview-en">
-  <title id="dev011-overview-en">DEV-011 checklist map: §1–§9 item by item, §10–§16 criteria families</title>
+  <title id="dev011-overview-en">DEV-011 checklist map: §1–§9 item by item, §10–§17 criteria families</title>
   <rect x="16" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
   <rect x="332" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
   <text x="32" y="42" font-size="12" fill="#374151">Checklist §1–§9</text>
-  <text x="348" y="42" font-size="12" fill="#374151">Criteria §10–§16</text>
+  <text x="348" y="42" font-size="12" fill="#374151">Criteria §10–§17</text>
   <rect x="336" y="50" width="304" height="22" fill="#eef2ff"/>
   <text x="32" y="68" font-size="12" fill="#374151">§1　Page render</text>
   <text x="32" y="90" font-size="12" fill="#374151">§2　Icon render</text>
@@ -42,7 +42,7 @@ status: active
   <text x="348" y="236" font-size="12" fill="#374151">§16　Nesting</text>
 </svg>
 
-> Caption: the left column is the item-by-item checklist (§1–§9, page rendering → E2E baselines); the right column is the criteria families readable by a gate (§10–§16). Two ladders live only in the right column: §10 uses L0–L4 (layer ladder), §12 uses M0–M3 (motion budget, read alongside §10, see §12.2). Anchors are the H2 titles of each section.
+> Caption: the left column is the item-by-item checklist (§1–§9, page rendering → E2E baselines); the right column is the criteria families readable by a gate (§10–§17). Two ladders live only in the right column: §10 uses L0–L4 (layer ladder), §12 uses M0–M3 (motion budget, read alongside §10, see §12.2). Anchors are the H2 titles of each section.
 
 ## 1. Page Rendering
 
@@ -877,3 +877,182 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 - **Boundary**: the “before” reading of a gate **may be reused across cards**, but **both conditions must hold**: ① the same `lease` (`dev-stack.mjs status` reports an identical `startedAt`); ② `git diff --name-only <recorded-HEAD>..HEAD -- <scope>` **= 0**. Satisfying only one of them compares different bytes. **The `session` face cannot be compared across time even inside one window**: it drifts with server-side session data and has nothing to do with code (measured 464 / 430 / 430 / 464 across four points — it moved both across and within windows).
 - **Measurement**: the report generator's diff basis **must be pinned to the `HEAD` recorded in the reading**; using the current `HEAD` as the basis means the criterion can never be reproduced once the card's own commit lands (this bit `task-89` once on its own output, and the fix was to pin `census.A03HEAD`). The gate's other readings stay as they were: `findings` always 0, portal hits 0, `--portals-enforce` off.
 - **Counter-example anchor**: treating “the same window” as “comparable” ⇒ `task-89` reported 16/17 surfaces field-for-field identical with only the `session` face moving 464 → 430, and that noise was misread as a regression; treating cross-card reuse as unconditional ⇒ the earlier card's reading sits on an old `lease` and the comparison spans two different sets of bytes.
+
+## 17. Form design standard (user ruling 2026-11-21, `task-172`)
+
+> Origin: four questions about the "agent configuration" dialog — is this new UI / does shadcn-vue ship a form recommendation / what does industry practice say / is this UI acceptable. This section only turns the *form* face into checkable items; colour, focus and motion still follow §10 / §12 / §13.
+>
+> All counterexamples come from `A03-xihe/packages/ui/src/components/settings/AgentPrincipalDetailDrawer.vue` (called `APD` below; line numbers measured 2026-11-21) and its sibling field components. Machine-checkable shapes and the draft gate rules live in `internal/A03-xihe/evidence/2026-11-21-form-design-standard/README.md`.
+
+| Item | One-line criterion | State today |
+| --- | --- | --- |
+| 17.1 | Single column first: a label column is only for ≤3 read-only keys | six blocks use two columns, four of them editable |
+| 17.2 | Label above the input; required/optional stated explicitly | some fields carry only one hint line; placeholder duplicates the label |
+| 17.3 | One commit point per semantic group; plain booleans apply instantly | four save buttons in one dialog, the memory switch still needs saving |
+| 17.4 | Unsaved changes need a dirty indicator + a leave policy | dirty is computed but never shown, never intercepted |
+| 17.5 | Errors inline and per-block; an error block must be retryable | error is inline but not retryable, 404 does not fall back to empty state |
+| 17.6 | Enum fields must be selectors, never raw text input | the hook advisor kind is free text plus a placeholder |
+| 17.7 | "Blank means inherit" must be an explicit option | a blank layered select *is* the inherit state, with no explicit item |
+| 17.8 | >6 semantic groups or cross-group validation ⇒ full page / sectioned navigation | one 768px dialog carries eight semantic groups |
+
+### 17.1 Single column first
+
+**Criteria**
+
+- Editable surfaces are single column: a control owns its row (at most two short controls of the same group per row), with the label above it and the block title in an `<h3>`.
+- A left label column is allowed only inside a read-only key block, and that block holds at most 3 keys.
+- Machine shape: an editable `<section>` must not match a two-column grid template (today `.apd-two-col`).
+
+**Counterexamples**
+
+- `.apd-two-col` at `APD:1078-1083` is `grid-template-columns: 7.5rem minmax(0, 1fr)`; the comment at `APD:1075` records that `task-137` introduced it for the 768px config dialog. It is applied to all six blocks — `apd-identity:646`, `apd-persona:685`, `apd-model:702`, `apd-delegation:827`, `apd-memory:862`, `apd-hooks:895` — four of which are editable.
+- The read-only block adds a second label column of its own: `dt class="w-20"` (80px) at `APD:652` and `APD:676`. The block holds four keys — name, state badge `APD:660`, ownership badge `APD:664`, created at `APD:676` — one over the ≤3 line.
+
+**Acceptance**
+
+- The four editable blocks (model / delegation / memory / hooks) no longer match the two-column template; the read-only block may keep its label column but drops to ≤3 keys (for example state and ownership merged into one "state" key).
+- A static gate can decide this: find `<section>` elements whose source combines `grid-template-columns` with an editable control (`Input` / `Select` / `Switch` / `Textarea`).
+
+### 17.2 Label above, required/optional explicit
+
+**Criteria**
+
+- Every editable control has a visible label bound with `<Label :for>`; the label text must not be byte-identical to the placeholder.
+- Required fields are marked explicitly; optional fields say "optional" (the i18n key `optional` exists at `i18n/index.ts:2816`).
+- A placeholder is an example only and never the sole explanation; explanations live in hint text or `aria-describedby`.
+
+**Counterexamples**
+
+- `DelegationPolicyFields.vue:84` renders a single hint line and no field-level labels at all, so readers have to guess what each input means.
+- `AgentModelBindingFields.vue` does have `<Label :for>` (`:200`, `:229`, `:260`), but the same text is also pushed into the `SelectValue` placeholder (`:214`, `:244`, `:277`), so an empty state looks already chosen (same family as `task-139` D7).
+- The hook kind has only a placeholder (`APD:925-932`, text at `i18n/index.ts:3970`, "advisor kind, e.g. guard"), with neither a label nor a required/optional mark.
+
+**Acceptance**
+
+- Component unit test: every editable control resolves `label[for]`, and the placeholder differs from the label text; optional fields show the "optional" wording.
+
+### 17.3 One commit point per change group
+
+**Criteria**
+
+- A semantic group has exactly one commit action: either the whole group saves, or the whole group applies instantly. One group must not hold both a toggle and a save button.
+- Plain booleans (Switch / Checkbox) apply instantly and report errors instantly, without a save button.
+- The criterion is static-checkable: if one `<section>` holds both `Switch|Checkbox` and a save button (a `data-testid` ending in `-save`), it is red.
+
+**Counterexamples**
+
+- One `APD` dialog ships four parallel save buttons — `apd-model-save:812`, `apd-delegation-save:847`, `apd-memory-save:880`, `apd-hooks-save:947` — so users must work out which one commits the field they just changed.
+- Memory is a plain boolean yet needs a second click: `apd-memory-switch:867` (a `Switch`) sits next to `apd-memory-save:880` (whole block `APD:876-886`).
+
+**Acceptance**
+
+- Each editable block has at most one commit action; the block holding a `Switch` no longer renders a save testid.
+- If split saving is kept, the same-line comment must state why instant application is impossible, so reviewers can read the reason.
+
+### 17.4 Unsaved changes: dirty indicator + leave policy
+
+**Criteria**
+
+- When there are unsaved edits, the page or block shows a visible dirty indicator (wording or marker); a save button flipping from disabled to enabled is not enough.
+- Leaving (closing the drawer, switching principal, changing route, reloading) is one of two things: intercepted with a confirmation, or clearly stated as "discard without saving".
+
+**Counterexamples**
+
+- `APD` computes `modelDirty` (`:302`) and `modelSaveBlocked` (`:304`) but uses them only to disable the save button; grep over the whole file finds no `beforeunload`, no `onBeforeRouteLeave` and no leave confirmation.
+- Closing the drawer discards the draft (`resetDrafts` at `:221` recomputes on open change), so a model edit that was never saved vanishes silently when the overlay is clicked.
+
+**Acceptance**
+
+- A Playwright run against the real stack can decide it: change a field, assert the dirty indicator is visible, close the dialog, assert either an intercept prompt or the explicit "unsaved" wording.
+- No static gate can decide this one; it needs the real stack.
+
+### 17.5 Inline errors, per-block degradation
+
+**Criteria**
+
+- An error appears inside the failing block and does not block the other blocks; the error block must offer a retry action.
+- 404 / empty data use empty-state copy ("nothing here", "not found") plus retry; raw error codes or backend messages must not be pasted as a red card into the middle of a form.
+- Static-checkable: every `ErrorBlock` call site must also carry a retry callback or the word `retry`.
+
+**Counterexamples**
+
+- `apd-roles-error:973-977`: when the read-only capabilities block fails, the whole list is replaced by an `ErrorBlock` with no retry button. The loading (`:966-972`) and empty (`:978-983`) branches exist, but the error branch neither retries nor degrades.
+- Section errors are produced by `sectionError(cause, t(K + "saveFailed"))` (`:499`, `:535`, `:560`, `:594`), so a backend code collapses into "save failed". The mapping table at `:420-449` is good; what is missing is the retry step.
+
+**Acceptance**
+
+- Every `ErrorBlock` call site has `@retry` or an adjacent retry button; the real stack can decide it end to end: cut the network, save, see retry, restore, retry succeeds.
+
+### 17.6 Enums must be selectors
+
+**Criteria**
+
+- A field whose values come from a finite set uses a selector (`Select` / `RadioGroup` / `Combobox`) and never raw text input; the controlled vocabulary comes from a constant or i18n key, not from typing.
+- Machine shape: the element behind the field testid is not an `INPUT` of `type=text`, and its options have a single source.
+
+**Counterexamples**
+
+- The hook advisor kind is free text: an `Input` at `apd-hooks-kind:927` plus a placeholder (`i18n/index.ts:3970`), and `newAdvisorKind` is `trim()`-ed straight into the list (`APD:568-570`), so one misspelling becomes another "kind". The `on` whitelist is only `approval.ask` today (badge hard-coded at `APD:909`), which shows the value set is finite to begin with.
+- The bare machine enums in settings and the sidebar (domain slugs, English action names) are the mirror image of this rule; see `task-139` D3 and the R rule family in `check-ui-rulings`.
+
+**Acceptance**
+
+- The field is no longer a text input, and its option source is enumerable (component constant / i18n array / server catalogue).
+- Component unit test: the tagName behind that testid is not `INPUT`.
+
+### 17.7 "Blank means inherit" must be explicit
+
+**Criteria**
+
+- In layered configuration, "this layer is unset, so inherit from above" must be an explicit option (for example "inherit (= X)" or "not set"); a blank value, blank placeholder or blank option must not imply it.
+- The effective value is always visible even when not editable, and states which layer it comes from.
+
+**Counterexamples**
+
+- `ConfigDomainPanel.vue:786-798`, `:807`, `:817-819`: when a layer has no override, `entries` is empty, the selector renders blank, and there is neither an "inherit" item nor a placeholder; the `__unset__` fallback item only appears when `allowCustom` is set. Sixteen settings selects therefore open blank (`task-139` D1, P0).
+- A related symptom: the "not selected" text and the field label are byte-identical (`AgentModelBindingFields.vue:214` and siblings), so the empty state reads as already chosen.
+
+**Acceptance**
+
+- Every layered selector has an explicit inherit item and shows the effective value; at least five component unit tests (empty layer / inherited / overridden / cleared back to inherit / cross-layer source shown).
+
+### 17.8 Complexity threshold
+
+**Criteria**
+
+- A single dialog or drawer carries at most six semantic groups; with more than six, or with cross-group validation, it must become a full page or use sectioned navigation.
+- Static-checkable: more than six top-level `<section data-testid="...">` elements in one file whose container is a `Dialog` / `Sheet` is red.
+
+**Counterexamples**
+
+- One 768px `APD` dialog holds eight semantic groups — identity `:646`, persona `:685`, model `:702`, delegation `:827`, memory `:862`, hooks `:895`, capabilities `:962`, danger `:1011` — plus four save buttons and two second confirmations (`APD:1042`, `:1061`).
+
+**Acceptance**
+
+- The dialog is split into two or three surfaces ("principal overview / model / grants and hooks / danger zone") or becomes its own settings page; afterwards each surface holds at most six groups with no cross-group validation.
+
+### 17.9 Industry references (only the entries the criteria rely on)
+
+| System | Practice that maps here | Items |
+| --- | --- | --- |
+| GOV.UK Design System (question pages / error summary / check answers) | one question per page, labels above inputs, hint and error adjacent, check answers before submit | 17.1 / 17.2 / 17.8 |
+| NN/g form usability (web form design) | single-column layout, visible labels instead of placeholders, errors beside the field | 17.1 / 17.2 / 17.5 |
+| Material 3 text field (label / supporting text / error text) | three parts; the error replaces the supporting text instead of stacking under it | 17.2 / 17.5 |
+| Atlassian Design System and Salesforce Lightning settings (section + autosave) | block-based pages that save instantly, without per-section save buttons | 17.3 / 17.8 |
+
+> Sources are the public design-system documents of GOV.UK, NN/g, Material 3, Atlassian Design System and Lightning Design System; per-item links are listed in §3 of the evidence file. The wording here paraphrases their published guidance and reflects the versions as of 2026-11-21 (documented claim, not re-verified page by page).
+
+### 17.10 Criteria status and executors
+
+| Item | Machine-checkable today | Smallest executable shape | Proposed owner |
+| --- | --- | --- | --- |
+| 17.1 | yes (static) | `check-form-contract.mjs` rule A: editable section matches a two-column grid | new gate draft |
+| 17.2 | yes (component test) | assert `label[for]` resolves and placeholder differs from label | component spec |
+| 17.3 | yes (static) | rule B: a Switch / Checkbox and a save testid inside one section | new gate draft |
+| 17.4 | no, needs the real stack | Playwright: edit a field, dirty indicator, intercept on close | real-stack spec |
+| 17.5 | partly (static + real stack) | rule C: an `ErrorBlock` call site without retry is red; offline retry on the real stack | new gate draft + real stack |
+| 17.6 | yes (static) | rule D: an enum field whose testid lands on a text input is red | new gate draft |
+| 17.7 | yes (component test) | layered selector must expose inherit plus effective value, at least five cases | component spec |
+| 17.8 | yes (static) | rule E: more than six top-level sections inside a dialog | new gate draft |
+
+> Rule bodies, positive and negative self-tests and false-positive boundaries are in §2 of the evidence file; this section only records who owns which item. Until the static gate lands, these five rules are executed manually during review, and the review record must name the rule that fired.
