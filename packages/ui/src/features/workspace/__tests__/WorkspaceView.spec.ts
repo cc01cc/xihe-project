@@ -67,7 +67,6 @@ const i18n = createI18n({
                 panelCode: "Code",
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
-                panelContext: "Session settings",
                 chatHeader: "Workspace chat",
                 noSession: "No active session",
                 createSession: "New chat",

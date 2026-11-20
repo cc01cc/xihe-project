@@ -289,10 +289,16 @@ test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
         await expect(mainMenu, "main + 应弹出组件选择器（D-1907 rev7）").toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
+        // task-6（D1453 / N-6 选 A）：静态 `context` 页签退役 ⇒ 选择器里的「会话设置」组件项
+        // 只剩会话配置这一项；旧 id 若复活，这里立刻红（本文件是「+ 选择器内容」的既有守护点）。
+        await expect(
+            mainMenu.getByTestId("workspace-add-item-session-config"),
+            "选择器里应有会话配置组件项（G-11；task-6 后它是会话设置的唯一面板入口）",
+        ).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(
             mainMenu.getByTestId("workspace-add-item-context"),
-            "选择器里应有「会话设置」组件项（G-11）",
-        ).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+            "静态 context 页签已退役，选择器里不得再出现它（task-6 / D1453）",
+        ).toHaveCount(0);
         await page.keyboard.press("Escape");
         await expect(mainMenu, "Esc 关闭选择器").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 

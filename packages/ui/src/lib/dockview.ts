@@ -72,7 +72,7 @@ function viewsOf(group: DockviewSerializedGroup | undefined): string[] | null {
 /**
  * task-138（Lead 裁定②）：XH 的 dock 页签 id → dockview **面板 id**，与 `WorkspaceShellDockview`
  * 的 `panelIdOf` 同一口径 —— `pane:<container>:<view>[:<sid>]` 取 `view`（容器不参与面板身份）；
- * 静态 8 值原样；无组件 view（`session-config`）⇒ `null`（本壳没有它的组件，不进面板值域）。
+ * 静态 7 值原样；无组件 view（`session-config`）⇒ `null`（本壳没有它的组件，不进面板值域）。
  *
  * 为什么放在这里而不是 import 那个 SFC：桥是纯函数层，SFC 是渲染层；两边共用同一条规则，
  * 规则本身来自 `features/workspace/lib/panelTabs.ts`（唯一解析实现）。

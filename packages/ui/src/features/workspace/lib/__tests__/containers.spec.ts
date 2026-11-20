@@ -18,14 +18,16 @@ import {
  * 否则下一个 lane 会把 `tree` 塞回 `CONTAINER_IDS` 而不红。</p>
  */
 const PAGE_TABS = ["session:s1", "environment", "settings"];
-/** 右栏面板值域 = `DOCK_TAB_IDS`（含 `files`；树的面板身份）。 */
+/**
+ * 右栏面板值域 = `DOCK_TAB_IDS`（含 `files`；树的面板身份）。
+ * task-6（D1453）：静态 `context` 页签已退役，不再是右栏值域成员。
+ */
 const RIGHT_TABS = [
     FILES_PANEL_ID,
     "code",
     "changes",
     "monitor",
     "members",
-    "context",
     "agents",
     "delegation",
 ];

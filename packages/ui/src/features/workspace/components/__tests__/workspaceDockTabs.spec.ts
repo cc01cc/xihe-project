@@ -22,8 +22,11 @@ describe("dockTabLabel (task-138)", () => {
         expect(label).not.toBe(dockTabLabel("pane:right:session-config:other-999", echo));
     });
 
-    it("does not reuse panelContext for session-config (two different panels)", () => {
-        expect(SESSION_CONFIG_LABEL_KEY).not.toBe("workspace.panelContext");
+    it("session-config owns the only session-settings label (panelContext retired with the tab)", () => {
+        // task-6（D1453）：静态 context 页签退役 ⇒ panelContext 键已删，标签键只剩这一个。
+        expect(SESSION_CONFIG_LABEL_KEY).toBe("workspace.panelSessionConfig");
+        // 退役 id 没有 label 映射：原样回显，不会被静默翻成「会话设置」。
+        expect(dockTabLabel("context", echo)).toBe("context");
     });
 
     it("echoes unknown ids instead of rendering an empty label", () => {

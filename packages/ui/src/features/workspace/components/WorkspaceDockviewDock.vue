@@ -13,7 +13,8 @@ import type { DockTab } from "./workspaceDockTabs";
  * 单测**；集成验证归 Playwright e2e（决策 #18）。`proportionalLayout:false` 见 `lib/dockview.ts`；
  * `markRaw(api)` 由 dockview-vue 内部完成（dockview.vue:481-494 官方注释要求）。
  *
- * 面板内容经 **静态** `#panel-<id>` slot 注入（`DOCK_TAB_IDS` 是冻结的 7 项集合）；
+ * 面板内容经 **静态** `#panel-<id>` slot 注入（`DOCK_TAB_IDS` 去掉本壳不管的 `files`
+ * 是冻结的 6 项集合；`context` 已随 task-6 退役）；
  * dockview-vue 的 `hasSlot()` 读 `$slots[name]`，动态 slot 名在该检查点上不可靠。
  */
 const props = defineProps<{
@@ -89,11 +90,6 @@ watch([() => props.tabs, () => props.activeTab], syncDockPanels);
         <template #panel-members>
             <DockviewPanelHost tab-id="members">
                 <slot name="members" />
-            </DockviewPanelHost>
-        </template>
-        <template #panel-context>
-            <DockviewPanelHost tab-id="context">
-                <slot name="context" />
             </DockviewPanelHost>
         </template>
         <template #panel-agents>

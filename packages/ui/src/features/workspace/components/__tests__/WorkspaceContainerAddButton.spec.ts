@@ -18,7 +18,7 @@ const i18n = createI18n({
 
 const ENTRIES = [
     { id: "files", label: "Files", checked: true, testid: "workspace-add-item-files" },
-    { id: "context", label: "Context", checked: false, testid: "workspace-add-item-context" },
+    { id: "agents", label: "Agents", checked: false, testid: "workspace-add-item-agents" },
 ];
 
 /**
@@ -66,18 +66,18 @@ describe("WorkspaceContainerAddButton（task-140 / D-1907 rev7）", () => {
             expect(files.text()).toContain("Open");
 
             // 未开项：aria-checked=false，且不带「已开」标记。
-            const context = wrapper.get('[data-testid="workspace-add-item-context"]');
-            expect(context.attributes("aria-checked")).toBe("false");
-            expect(context.text()).not.toContain("Open");
+            const agents = wrapper.get('[data-testid="workspace-add-item-agents"]');
+            expect(agents.attributes("aria-checked")).toBe("false");
+            expect(agents.text()).not.toContain("Open");
         },
     );
 
     it("选中项只 emit select（写入语义归调用方的单一 writer）", async () => {
         const wrapper = await openMenu(mountButton("main"));
 
-        await wrapper.get('[data-testid="workspace-add-item-context"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-add-item-agents"]').trigger("click");
 
-        expect(wrapper.emitted("select")).toEqual([["context"]]);
+        expect(wrapper.emitted("select")).toEqual([["agents"]]);
         // 不接 update:model-value ⇒ 组件不自己记第二份真源。
         expect(wrapper.emitted("update:modelValue")).toBeUndefined();
     });

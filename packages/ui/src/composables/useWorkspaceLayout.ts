@@ -79,12 +79,12 @@ export const DOCK_MAX_TABS = 6;
 export const DOCK_INLINE_MIN_VIEWPORT = 1800;
 
 /**
- * Dock tabs that have a panel implementation today (S3 adds `context`/`approval`).
+ * Dock tabs that have a panel implementation today (S3 adds `approval`).
  *
- * PLAN-0626 M2: `context` (会话设置) landed as the first *sticky* panel — mounted on
- * first activation and kept alive afterwards, because it holds form state the user is
- * editing (the mount policy lives with the dock, `WorkspaceDock.vue`). `approval` stays
- * a reserved name: approvals keep the modal (D26-14).
+ * task-6（`D1453` / N-6 选 A）：`context`（会话设置的静态面板页签）**已退役** —— 会话设置
+ * 只经 `pane:<container>:session-config:<sid>` 容器页签（摘要行 / 右栏重开菜单 / 中栏「+」
+ * 三条入口开的都是它），面板本体仍是同一份 `SessionContextPanel`。`approval` stays a
+ * reserved name: approvals keep the modal (D26-14).
  *
  * PLAN-0626 M3 (D26-05): `agents` (工作区 Agent 管理) extends the same value domain — no
  * second tab array, no second tab-id type. Its panel is sticky too (it owns a create form);
@@ -106,11 +106,10 @@ export const DOCK_TAB_IDS = [
     "changes",
     "monitor",
     "members",
-    "context",
     "agents",
     "delegation",
 ] as const;
-/** 静态面板 id：`DOCK_TAB_IDS` 的 8 个值（与会话无关的面板 IA）。 */
+/** 静态面板 id：`DOCK_TAB_IDS` 的 7 个值（与会话无关的面板 IA；`context` 已退役，见上）。 */
 export type StaticDockTabId = (typeof DOCK_TAB_IDS)[number];
 
 /**
@@ -267,7 +266,7 @@ export function isActiveColumn(value: unknown): value is ActiveColumn {
 
 export function isDockTabId(value: unknown): value is DockTabId {
     if (typeof value !== "string") return false;
-    // task-138：静态 8 值与 `pane:*`（容器内页签）都合法；未知形态仍然 false（读侧丢垃圾）。
+    // task-138：静态 7 值（task-6 删 context）与 `pane:*`（容器内页签）都合法；未知形态仍然 false（读侧丢垃圾）。
     return (DOCK_TAB_IDS as readonly string[]).includes(value) || isPaneTabId(value);
 }
 

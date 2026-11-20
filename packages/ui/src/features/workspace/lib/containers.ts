@@ -60,7 +60,7 @@ const RIGHT_PANEL_IDS: ReadonlySet<string> = new Set(DOCK_TAB_IDS);
  *
  * task-138（`D-1907` rev7/rev8）：容器内页签 `pane:<container>:<view>[:<sid>]` **自带容器** ——
  * 同一个 view 可以在两栏各开一份（会话配置页签），所以归属不能再由「view 是谁」反推。
- * 裸 8 值（`DOCK_TAB_IDS`）的规则不变：恒 right；其余（`session:*` 页面页签等）恒 main。
+ * 裸 7 值（`DOCK_TAB_IDS`）的规则不变：恒 right；其余（`session:*` 页面页签等）恒 main。
  */
 export function containerOf(tabId: string): ContainerId {
     const paneContainer = paneTabContainer(tabId);

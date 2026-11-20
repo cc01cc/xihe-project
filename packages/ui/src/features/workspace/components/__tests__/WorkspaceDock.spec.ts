@@ -34,7 +34,6 @@ const i18n = createI18n({
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
                 panelMembers: "Members",
-                panelContext: "Context",
                 panelAgents: "Agents",
                 panelDelegation: "Delegation",
                 // task-129（D-1907 rev10）：会话配置容器页签的标签键。
@@ -69,7 +68,7 @@ function mountDock(
             code: '<div data-testid="dock-code-content" />',
             changes: '<div data-testid="dock-changes-content" />',
             monitor: '<div data-testid="dock-monitor-content" />',
-            context: '<div data-testid="dock-context-content" />',
+            agents: '<div data-testid="dock-agents-content" />',
             alpha: '<div data-testid="dock-alpha-content" />',
             beta: '<div data-testid="dock-beta-content" />',
         },
@@ -335,33 +334,49 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
     it("keeps a sticky panel mounted across tab switches (D26-07 A)", async () => {
         // M2 spike outcome: a dynamic `<slot :name>` inside a `v-show` wrapper keeps the
         // form panel — and its editing state — alive while another tab is active.
+        // task-6（D1453）：context 退役后 sticky 只剩 agents（它同样持有创建表单）。
         const tabs = [
-                { id: "context", label: "Session settings" },
+                { id: "agents", label: "Agents" },
                 { id: "monitor", label: "Monitor" },
             ],
-            wrapper = mountDock({ tabs, activeTab: "context" });
+            wrapper = mountDock({ tabs, activeTab: "agents" });
 
-        expect(wrapper.find('[data-testid="dock-context-content"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-agents-content"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-sticky-panel-agents"]').exists()).toBe(true);
 
         await wrapper.setProps({ activeTab: "monitor" });
 
         // Still mounted, merely hidden — and the checker panel is the active one.
         // `v-show` is asserted through the inline style (`display: none`): that is the
         // exact mechanism, and it stays deterministic in jsdom.
-        expect(wrapper.find('[data-testid="dock-context-content"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-agents-content"]').exists()).toBe(true);
         expect(
-            wrapper.get('[data-testid="dock-sticky-panel-context"]').attributes("style"),
+            wrapper.get('[data-testid="dock-sticky-panel-agents"]').attributes("style"),
         ).toContain("display: none");
         expect(wrapper.find('[data-testid="dock-monitor-content"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="dock-active-panel"]').exists()).toBe(true);
 
-        await wrapper.setProps({ activeTab: "context" });
+        await wrapper.setProps({ activeTab: "agents" });
         expect(
-            wrapper.get('[data-testid="dock-sticky-panel-context"]').attributes("style") ?? "",
+            wrapper.get('[data-testid="dock-sticky-panel-agents"]').attributes("style") ?? "",
         ).not.toContain("display: none");
         // The checker unmounted again (no sticky memory for it).
         expect(wrapper.find('[data-testid="dock-monitor-content"]').exists()).toBe(false);
+    });
+
+    it("no longer keeps a context panel sticky (the static tab is retired)", async () => {
+        // task-6（D1453）：退役后即使旧载荷把 "context" 塞进 tabs，也不再获得 sticky 记忆 ——
+        // 否则会留下一个「看不见但一直挂着」的 SessionContextPanel 副本。
+        const tabs = [
+                { id: "context", label: "context" },
+                { id: "monitor", label: "Monitor" },
+            ],
+            wrapper = mountDock({ tabs, activeTab: "context" });
+
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
+
+        await wrapper.setProps({ activeTab: "monitor" });
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
     });
 
     it("unmounts an inactive checker panel instead of keeping it sticky", async () => {
@@ -372,25 +387,25 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="dock-code-content"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="dock-monitor-content"]').exists()).toBe(true);
         // Sticky bookkeeping stays empty: no hidden panel was created for a checker.
-        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="dock-sticky-panel-agents"]').exists()).toBe(false);
     });
 
     it("drops a sticky panel from memory once its tab is closed", async () => {
         const tabs = [
-                { id: "context", label: "Session settings" },
+                { id: "agents", label: "Agents" },
                 { id: "monitor", label: "Monitor" },
             ],
-            wrapper = mountDock({ tabs, activeTab: "context" });
-        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
+            wrapper = mountDock({ tabs, activeTab: "agents" });
+        expect(wrapper.find('[data-testid="dock-sticky-panel-agents"]').exists()).toBe(true);
 
-        // Closing the tab must not leave a hidden context panel (and its watchers) alive.
+        // Closing the tab must not leave a hidden agents panel (and its watchers) alive.
         await wrapper.setProps({
             tabs: [{ id: "monitor", label: "Monitor" }],
             activeTab: "monitor",
         });
 
-        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="dock-context-content"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="dock-sticky-panel-agents"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="dock-agents-content"]').exists()).toBe(false);
     });
 
     it("keeps the configured width as an inline style so widths are independent of mode", () => {
@@ -520,7 +535,8 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
         const wrapper = mountDock();
         await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
 
-        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(8);
+        // task-6（D1453）：静态面板 7 个（context 退役）+ 无会话 ⇒ 不列会话配置。
+        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(7);
         // task-140：手写 div 换成 reka 原语后，角色与键盘（Esc / 上下键 / roving focus）
         // 都由原语给；这里钉住契约，防止有人为了「少一层组件」再退回裸 div。
         expect(wrapper.get('[data-testid="dock-reopen-menu"]').attributes("role")).toBe("menu");
@@ -542,7 +558,7 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
     });
 
     /**
-     * task-129（D-1907 rev10）：会话配置是**容器组件**，与 8 个静态面板同列在一张选择器里；
+     * task-129（D-1907 rev10）：会话配置是**容器组件**，与静态面板同列在一张选择器里（task-6 后 7 个）；
      * id 走 138 的三元组（容器 + 会话），**testid 不能拼 id**（里面带 `:sid`，会变成每次会话
      * 都不同的选择器），故用稳定的 `dock-reopen-item-session-config`。
      */
@@ -550,7 +566,8 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
         const wrapper = mountDock({ sessionId: "sess-a" });
         await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
 
-        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(9);
+        // 7 个静态面板 + 会话配置 = 8。
+        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(8);
         const item = wrapper.get('[data-testid="dock-reopen-item-session-config"]');
         expect(item.text()).toContain("Session config");
         expect(item.attributes("aria-checked")).toBe("false");
@@ -563,7 +580,7 @@ describe("WorkspaceDock · task-88 ②：「+」选类型 + 0 页签空态", () 
         const wrapper = mountDock({ sessionId: null });
         await wrapper.get('[data-testid="workspace-container-plus-right"]').trigger("click");
 
-        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(8);
+        expect(wrapper.findAll('[data-testid^="dock-reopen-item-"]')).toHaveLength(7);
         expect(wrapper.find('[data-testid="dock-reopen-item-session-config"]').exists()).toBe(
             false,
         );

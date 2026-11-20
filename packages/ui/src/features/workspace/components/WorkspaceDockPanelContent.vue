@@ -11,7 +11,7 @@ import { useI18n } from "vue-i18n";
 import { SESSION_CONFIG_VIEW, paneTabSessionId, paneTabView } from "../lib/panelTabs";
 
 /**
- * task-369 S1：dock 七个面板的**内容**，从 `WorkspaceWorkbench` 的 slot 体里抽出来，
+ * task-369 S1：dock 各面板的**内容**，从 `WorkspaceWorkbench` 的 slot 体里抽出来，
  * 让手写 dock（`WorkspaceDock` 的具名 slot）与 dockview 壳（`WorkspaceShellDockview`
  * 的 `panel-<id>` slot）**共用同一份**，避免两条渲染路径各写一遍而漂移。
  * 只搬位置，不改内容：每个分支的 props / emits / 空态与搬迁前逐字相同。
@@ -75,7 +75,6 @@ const { t } = useI18n();
         :session-id="sessionId ?? null"
         @mention="emit('mention', $event)"
     />
-    <SessionContextPanel v-else-if="id === 'context'" :session-id="sessionId ?? null" />
     <!--
         task-138（D-1907 rev10）：容器内的「会话配置」页签。id 是第三形态
         `pane:<container>:session-config:<sid>`，**开哪份会话的配置由 id 里的 sid 说了算**（不是

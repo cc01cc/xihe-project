@@ -486,7 +486,7 @@ const filesPanelOpen = computed(() => layout.value.dockTabs.includes("files"));
  * 行是否存在只由 `dockOpen` 决定。</p>
  *
  * <p>为什么改：此前 rail 被提到整栏位置、与 `WorkspaceDock` 做 `v-if`/`v-else-if` 互斥 ⇒
- * 折叠树把**整个右栏**（行 + monitor/code/changes/members/context/agents/delegation）换成 40px rail。
+ * 折叠树把**整个右栏**（行 + monitor/code/changes/members/agents/delegation）换成 40px rail。
  * 真浏览器实测（1920×1080，手写路径，dockTabs=[files,monitor,code]）折叠后：
  * `workspace-container-tabs[data-container="right"]` false、`workspace-aux-panel` false、
  * `dock-active-panel` false、`dock-tab-code|monitor` 命中 **0** ⇒「折叠树」等于「右栏消失」，
@@ -724,6 +724,9 @@ function activateDockTab(id: DockTabId, container: ContainerId): void {
 
 /** Opening a tab that is already open keeps it, activates it and expands the dock. */
 function openDockTab(id: DockTabId): void {
+    // task-6（D1453）：静态 context 页签退役后，任何按旧 id 的调用（旧载荷回放、exposed
+    // 手写调用）都不许把页签塞回页签行 —— 值域校验是这条红线的唯一落点。
+    if (!isDockTabId(id)) return;
     const tabs = layout.value.dockTabs;
     const container = containerOfDockTab(id);
     if (!tabs.includes(id)) {
@@ -765,7 +768,7 @@ const mainAddEntries = computed<
             checked: dockTabs.value.some((tab) => tab.id === id),
             testid: `workspace-add-item-${id}`,
         }));
-    // task-129 / D-1907 rev10：会话配置是**容器组件**，与 8 个静态面板同列在一张选择器里
+    // task-129 / D-1907 rev10：会话配置是**容器组件**，与静态面板同列在一张选择器里（task-6 后 7 个）
     // （rev7「两容器 + 弹出同一组组件」）。id 走 138 的三元组（带容器 + 会话）⇒ 同一会话在
     // 两栏各开一份就是两个不同 id；无会话时不列（没有 sid 构造不出合法 id）。
     const configId = sessionConfigTabId.value;
@@ -969,7 +972,8 @@ watch(
 
 /**
  * D-1907 rev10：聊天列摘要行（`session-settings-summary`）是**会话配置页签的快捷开关**，
- * 不再是 context 面板的本体入口 —— 点一下在右栏容器里开 `pane:right:session-config:<sid>`。
+ * 不再是 context 面板的本体入口（task-6 / D1453 起该静态页签已退役）—— 点一下在右栏容器里开
+ * `pane:right:session-config:<sid>`，也就是会话设置今天唯一的面板页签。
  *
  * <p>「已开则聚焦、不重复开」**不在这里判**：`openDockTab` 的 `tabs.includes` 就是唯一判定
  * （与右键「+」选同一项走的是同一条路）。复制一份判定 = 两处会漂的真源。</p>
@@ -1376,15 +1380,6 @@ defineExpose({ openDockTab, openSessionConfigTab });
                         @mention="emit('mention', $event)"
                     />
                 </template>
-                <template #context>
-                    <WorkspaceDockPanelContent
-                        id="context"
-                        :session-id="sessionId"
-                        :workspace-id="workspaceId"
-                        @close="collapseDock"
-                        @mention="emit('mention', $event)"
-                    />
-                </template>
                 <template #delegation>
                     <WorkspaceDockPanelContent
                         id="delegation"
@@ -1406,7 +1401,7 @@ defineExpose({ openDockTab, openSessionConfigTab });
                 </template>
                 <!--
                     task-129：pane 形态页签（今天只有 `pane:right:session-config:<sid>`）的面板体。
-                    `WorkspaceDock` 的面板体来自父级具名 slot（`<slot :name="activeTab">`），静态 8 值
+                    `WorkspaceDock` 的面板体来自父级具名 slot（`<slot :name="activeTab">`），静态 7 值
                     各自写了一份；pane id 是动态的 ⇒ 只能在这里按当前页签集合 v-for 生成。
                     内容仍走 `WorkspaceDockPanelContent`（138 已实现 session-config 分支），两条渲染
                     路径（手写 dock / dockview 壳）共用同一份，不在这里另写一遍。

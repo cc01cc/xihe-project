@@ -1,7 +1,7 @@
 /**
  * task-138 / `D-1907` rev7·rev8·rev10：**容器内页签 id** 的第三形态 `pane:<container>:<view>[:<sid>]`。
  *
- * <p>为什么需要它：`DOCK_TAB_IDS` 是**固定 8 值枚举**（`composables/useWorkspaceLayout.ts:101-110`），
+ * <p>为什么需要它：`DOCK_TAB_IDS` 是**固定 7 值枚举**（`composables/useWorkspaceLayout.ts:101-110`），
  * 装不下「同一会话的配置页签在两栏各开一份」。而容器归属今天是**由 id 反推**的
  * （`lib/containers.ts` 的 `containerOf`：id ∈ `DOCK_TAB_IDS` ⇒ right，否则 main）——
  * 裸 id 反推不出「这个页签开在哪一栏」，所以容器必须进 id。</p>

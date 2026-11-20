@@ -15,7 +15,6 @@ import type { ContainerId } from "./containers";
 /** 会话视图：必须绑定一个会话。`chat` 落 main，其余落 right。 */
 export const SESSION_VIEWS = [
     "chat",
-    "context",
     "monitor",
     "members",
     "changes",

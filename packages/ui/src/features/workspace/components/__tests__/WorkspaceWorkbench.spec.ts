@@ -64,10 +64,10 @@ const i18n = createI18n({
                 panelCode: "Code",
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
-                panelContext: "Session settings",
                 panelAgents: "Agents",
                 panelDelegation: "Delegation",
-                // task-129（D-1907 rev10）：会话配置容器页签的标签键（与 panelContext 刻意不同名）。
+                // task-129（D-1907 rev10）/ task-6：会话配置容器页签的标签键；旧静态 context 页签的
+                // panelContext 已随页签退役删除（task-6 / D1453）。
                 panelSessionConfig: "Session config",
                 toggleDelegation: "Toggle delegation",
                 closePanel: "Close the auxiliary panel",
@@ -588,20 +588,23 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         });
     });
 
-    it("opens the context panel through the exposed openDockTab (PLAN-0626 M2)", async () => {
-        // The chat column is the page's slot content, so the page reaches the dock here.
+    it("no longer opens a context tab through openDockTab (task-6 / D1453)", async () => {
+        // task-6：静态 context 页签退役 ⇒ 值域外 id 一律拒绝。判据是「页签行里不出现、
+        // 也没有 hidden 的 sticky 副本」——会话信息只走 pane:right:session-config:<sid>。
         const wrapper = mountWorkbench();
         await flushPromises();
 
         (wrapper.vm as unknown as { openDockTab: (id: string) => void }).openDockTab("context");
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="dock-tab-context"]').attributes("aria-selected")).toBe(
+        expect(wrapper.find('[data-testid="dock-tab-context"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
+        // 反证：同一个入口对合法 id 仍然生效（不是把 openDockTab 整个禁掉）。
+        (wrapper.vm as unknown as { openDockTab: (id: string) => void }).openDockTab("agents");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="dock-tab-agents"]').attributes("aria-selected")).toBe(
             "true",
         );
-        expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
-        // Sticky panel wrapper proves it is mounted through the dock's slot path.
-        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
     });
 
     it("opens the agents panel through openDockTab and mounts exactly one copy (PLAN-0626 M3)", async () => {

@@ -37,7 +37,6 @@ export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
     changes: "workspace.panelChanges",
     monitor: "workspace.panelMonitor",
     members: "workspace.panelMembers",
-    context: "workspace.panelContext",
     agents: "workspace.panelAgents",
     delegation: "workspace.panelDelegation",
 };
@@ -45,9 +44,10 @@ export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
 /**
  * task-138：`session-config` 容器页签的 i18n key。
  *
- * <p>**与 `workspace.panelContext` 不是一回事**：后者是 context 面板（产品文案「会话设置」
- * / "Session settings"），这里是被 D-1907 rev10 的摘要条快捷开关开出的「会话配置」页签
- * （`pane:<container>:session-config:<sid>`）。复用旧 key 会让两个面板同名，故单开一个。</p>
+ * <p>task-6（`D1453` / N-6 选 A）之后它是**会话设置唯一的面板页签**：旧的静态 `context`
+ * 页签（与 `workspace.panelContext`）已退役，两者本体本就是同一份 `SessionContextPanel`。
+ * 名字仍单独一条而**不是**复用旧 key ——`panelContext` 已随页签删除（i18n 无残留），
+ * 产品文案也一直分称「会话设置」（页签内标题）/「会话配置」（页签标签）。</p>
  */
 export const SESSION_CONFIG_LABEL_KEY = "workspace.panelSessionConfig";
 

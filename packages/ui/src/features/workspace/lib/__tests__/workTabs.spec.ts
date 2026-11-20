@@ -29,19 +29,19 @@ import {
 describe("task-69 · workTabs 三元组 id", () => {
     it("写入口只产三元组：session 视图带 view 段，默认 chat", () => {
         expect(workTabIdForSession("s1")).toBe("session:s1:chat");
-        expect(workTabIdForSession("s1", "context")).toBe("session:s1:context");
+        expect(workTabIdForSession("s1", "monitor")).toBe("session:s1:monitor");
         expect(workTabIdForSession("s1", "delegation")).toBe("session:s1:delegation");
         expect(workTabIdForPanel("files")).toBe("panel:files");
     });
 
     it("同一会话的不同视图是两个 id（并存的结构前提，不等于 UI 已达成）", () => {
         const chat = workTabIdForSession("s1", "chat");
-        const context = workTabIdForSession("s1", "context");
-        expect(chat).not.toBe(context);
+        const monitor = workTabIdForSession("s1", "monitor");
+        expect(chat).not.toBe(monitor);
         expect(sessionIdOfWorkTab(chat)).toBe("s1");
-        expect(sessionIdOfWorkTab(context)).toBe("s1");
+        expect(sessionIdOfWorkTab(monitor)).toBe("s1");
         expect(viewOfWorkTab(chat)).toBe("chat");
-        expect(viewOfWorkTab(context)).toBe("context");
+        expect(viewOfWorkTab(monitor)).toBe("monitor");
     });
 
     it("工作区视图没有 session 维度", () => {
@@ -77,6 +77,8 @@ describe("task-69 · workTabs 三元组 id", () => {
             ":chat",
             "panel:",
             "panel:bogus",
+            // task-6（D1453）：context 视图随静态页签退役，旧 id 不再是合法三元组。
+            "session:s1:context",
             "environment",
             "settings",
             "scheduled-tasks",

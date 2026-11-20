@@ -19,8 +19,8 @@ import SessionContextPanel from "../components/SessionContextPanel.vue";
  *
  * - **同一个 `mount`** 里同时存在两个宿主：
  *   ① 移动替身 `MobileChatSheet`（真组件）；
- *   ② 桌面 dock 宿主 —— `SessionContextPanel`（`WorkspaceWorkbench.vue:806-808` 的 `#context` 槽
- *      挂的就是它）。
+ *   ② 桌面 dock 宿主 —— 右栏 `pane:*:session-config:*` 页签的面板体（`WorkspaceDockPanelContent`
+ *      的 session-config 分支挂的就是 `SessionContextPanel`；task-6 起静态 `#context` 槽已退役）。
  * - **不 mock 被测正文**：`ChatPanel` / `SessionSettingsPanel` / `SessionContextPanel` 全真挂
  *   （移动替身的正文链是 `MobileChatSheet → ChatPanel(isMobile) → SessionSettingsPanel →
  *   SessionContextPanel`，见 `SessionSettingsPanel.vue:318-327`）。

@@ -256,11 +256,14 @@ const hasOverflow = computed(() => overflowTabs.value.length > 0);
  * The mount policy lives here rather than in the layout composable: it is a rendering
  * concern of this component, not persisted layout state.
  *
- * PLAN-0626 M3: `agents` joins `context` as a sticky panel — it owns a create form (the
- * same reason `context` is sticky), so switching to another tab must not discard it.
+ * PLAN-0626 M3: `agents` is a sticky panel — it owns a create form, so switching to
+ * another tab must not discard it.
+ *
+ * task-6（`D1453`）：`context` 曾与本面板同为 sticky，随静态页签退役一并移除 ——
+ * 会话设置改走 `pane:*:session-config:*`（`pane:` 页签按设计非 sticky、切走即卸载）。
  */
 const stickyPanels = ref<string[]>([]),
-    stickyTabIds: ReadonlySet<string> = new Set(["context", "agents"]),
+    stickyTabIds: ReadonlySet<string> = new Set(["agents"]),
     activeIsSticky = computed(() => stickyTabIds.has(props.activeTab));
 
 function rememberStickyPanel(id: string): void {

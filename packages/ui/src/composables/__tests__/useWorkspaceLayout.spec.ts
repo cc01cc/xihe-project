@@ -429,7 +429,7 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
             "changes",
             "monitor",
             "members",
-            "context",
+            "agents",
             "delegation",
         ] as const;
         writeWorkspaceLayout("ws-1", {
@@ -778,11 +778,14 @@ describe("PLAN-0623 members dock tab", () => {
     });
 });
 
-// PLAN-0626 M2：context 是第一个"粘性"面板（切走不卸载，策略在 WorkspaceDock）。
-describe("PLAN-0626 context dock tab", () => {
-    it("knows the context tab id without treating reserved names as tabs", () => {
-        expect(DOCK_TAB_IDS).toContain("context");
-        expect(isDockTabId("context")).toBe(true);
+// task-6（D1453 / N-6 选 A）：静态 context 页签已退役 —— 会话信息只经右栏
+// `pane:<container>:session-config:<sid>` 页签（本体仍是同一份 SessionContextPanel）。
+describe("task-6：静态 context 页签退役", () => {
+    it("no longer treats context as a dock tab id", () => {
+        expect(DOCK_TAB_IDS).not.toContain("context");
+        expect(isDockTabId("context")).toBe(false);
+        // 退役后静态值域 = 7 个（files/code/changes/monitor/members/agents/delegation）。
+        expect(DOCK_TAB_IDS).toHaveLength(7);
         // Reserved name, no panel yet (approvals stay a modal, D26-14).
         expect(isDockTabId("approval")).toBe(false);
     });

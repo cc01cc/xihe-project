@@ -18,7 +18,8 @@ import MobileChatSheet from "../components/MobileChatSheet.vue";
  *   照常渲染并 teleport 到 body。
  * - 于是「移动端打开会话设置 → 视口拉宽到 ≥768」会同时留下两份 `SessionContextPanel`：
  *   ① 本 sheet 内 `ChatPanel(isMobile=true)` → `SessionSettingsPanel` → 正文；
- *   ② 桌面分支 `WorkspaceWorkbench` 的 dock `#context` 槽 → 另一份正文。
+ *   ② 桌面分支右栏 `pane:*:session-config:*` 页签的面板体 → 另一份正文（task-6 起静态 `#context`
+ *      槽已退役）。
  *   两份正文都带 `data-testid="session-settings-expanded"`（`:61`）。
  * - 判据与 `WorkspaceView` 里 agent 管理弹窗那条同源（「once the viewport is wide enough for the
  *   dock, drop it so a resize can never leave two hosts eligible」），只是那条当时漏了本组件。
