@@ -101,7 +101,7 @@ ChatRun links to Messages via `runId`; server-returned `runStatus`, `terminalOut
 ## 4. View embedding and switching conventions
 
 - `ChatPanel` (`features/workspace/chat/components/ChatPanel.vue`) is the embedded conversation component for Workspace Chat (message list + input + SSEStream, with no full-screen layout header); the full-screen `ChatView` is removed, and other features never embed Chat UI directly.
-- Switching convention: Workspace is the default entry; the Sidebar "New Chat" creates a Session in the current Workspace through the Agent principal picker; Workspace routes may exist without a Session, and once selected the route is `/workspace/:workspaceId/chat/:sessionId`. The WorkspaceToolbar session dropdown keeps the Workspace route when switching Sessions, never mistaking a Workspace switch for a Session switch.
+- Switching convention: Workspace is the default entry; the Sidebar "New Chat" creates a Session in the current Workspace through the Agent principal picker; Workspace routes may exist without a Session, and once selected the route is `/workspace/:workspaceId/session/:sessionId`. The WorkspaceToolbar session dropdown keeps the Workspace route when switching Sessions, never mistaking a Workspace switch for a Session switch.
 - Message history is always read via `chatStore.getMessages(sessionId)` for cross-view consistency; attachments are shared via `currentSessionAttachments`.
 - Route table and component layering are in DEV-010 §1-2; the SSE transport layer is DEV-010 §4.
 

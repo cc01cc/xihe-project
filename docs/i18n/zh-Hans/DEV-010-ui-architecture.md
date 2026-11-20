@@ -40,7 +40,7 @@ updated: 2026-10-31
 | `/` | redirect | → `/workspace` |
 | `/workspace` | `WorkspacePicker`（AppLayout 内，无 tab 上下文时） | **显式工作区选择面**（PLAN-0608）：角色取 `GET /workspaces` 权威值；已有 tab 上下文时守卫重定向到 `/workspace/{id}` |
 | `/workspace/:workspaceId` | WorkspaceView（AppLayout 内） | 工作台（文件树 / 主区 / dock 三栏）；可处于无 Session 空态 |
-| `/workspace/:workspaceId/chat/:sessionId` | WorkspaceView（AppLayout 内） | 选中该 Workspace 内的 Session 并显示 Chat |
+| `/workspace/:workspaceId/session/:sessionId` | WorkspaceView（AppLayout 内） | 选中该 Workspace 内的 Session 并显示会话页面 |
 | `/workspace/:workspaceId/environment` | WorkspaceEnvironmentView（AppLayout 内） | Workspace 执行环境 |
 | `/workspace/:workspaceId/settings` | WorkspaceSettingsView（AppLayout 内，PLAN-0560） | 四个**真 tab**：配置（per-workspace 层域）/ 本工作区 MCP / 本工作区技能 / 常规（OWNER 可改名/删除）；成员已升为一级页（`task-236`），旧 `?tab=members` 重定向过去；旧 `?tab=credentials\|knowledge` 回落「常规」并给迁移提示条（不 404、不静默跳走）；MCP 与技能的本工作区层由 `D-1432` / task-41 搬回本页 |
 | `/workspace/:workspaceId/scheduled-tasks` | ScheduledTasksView（AppLayout 内） | 定时任务；作为**中间标签栏**的一个标签参与路由投影（`router/index.ts`） |
@@ -55,7 +55,7 @@ updated: 2026-10-31
 - **GuidancePanel**（`features/workspace/chat/components/GuidancePanel.vue` + `composables/useGuidance.ts`，PLAN-0530）：运行中 Run 的独立「指导当前运行」面，与 Send/Follow-up/Stop 完全分离（独立 i18n 命名空间 `chat.guidance*`）。数据唯一源自 CP 快照 `GET /api/v1/chat/runs/{runId}/guidance`（无 Guidance SSE 事件，裁定候选①）；提交走 `POST .../guidance` + `Idempotency-Key`。按 CP `sequence` 升序展示来源/时间/状态（`pending`/`consumed`/`terminal_expired`）。输入仅当 UI 投影状态 ∈ `{executing, thinking, awaiting_approval}` 时可用（映射 CP `{running, streaming, awaiting_approval}`）；Run 终态后输入隐藏但 **列表保留**（`ChatPanel.lastRunId`），切换 Session 时清空。刷新时机：挂载、提交后、streaming 停止、`runRecovery` 信号、会话 SSE 重连（`handleDerivedStateRefresh`）。终态收敛见 `spec/session/chat-run-operation.md` §Run Guidance。错误恢复（PLAN-0536）：`409 GUIDANCE_RUN_NOT_ACTIVE` → 内联横幅 + **清空草稿**（`useGuidance.submit` 返回 `ok|clear|keep` 判别结果）；其余错误保留草稿。前者无法在浏览器断言（409 到达时 Run 已非活跃、输入按 §3.1 卸载），由 `__tests__/GuidancePanel.spec.ts` 覆盖。
 - **WorkspaceToolbar**：只保留**聊天级**控件（上传/刷新等）；**会话下拉已删除**（PLAN-0582 T4.1/S1）——会话切换只走导航面板；页面级入口（Environment / Settings / 定时任务）改由**中间标签栏**承接（`WorkspaceTabBar`，S3a），不再在工具栏按路由整页跳转；移动端收敛为 ＋ 新建对话 + ⋯ 溢出菜单。
 - **FileNodeMenu**（`features/workspace/components/FileNodeMenu.vue`）：reka-ui `ContextMenu` 封装；文件：Rename/Move/Duplicate/Copy Path/Delete；目录：New File/New Directory/Rename/Move；文本走 `write_file` MCP，二进制走 `POST /api/v1/files/upload` FormData（PLAN-262 M0/B-3）。
-- **Sidebar（导航面板）**：面板头 = **工作区行**（当前工作区名/切换/新建/导入/成员入口）+ 新建对话 + 会话搜索框 + 会话树；「New Chat」在当前 Workspace 打开创建 Session 流程；Session 列表点击跳 `/workspace/:workspaceId/chat/:sessionId`。**底部孤立「Workspace」导航项已删除**（PLAN-0582 S1）：工作区入口只在面板头，`<1024` 时面板变 sheet 抽屉；缺失工作区时 fail-closed。
+- **Sidebar（导航面板）**：面板头 = **工作区行**（当前工作区名/切换/新建/导入/成员入口）+ 新建对话 + 会话搜索框 + 会话树；「New Chat」在当前 Workspace 打开创建 Session 流程；Session 列表点击跳 `/workspace/:workspaceId/session/:sessionId`。**底部孤立「Workspace」导航项已删除**（PLAN-0582 S1）：工作区入口只在面板头，`<1024` 时面板变 sheet 抽屉；缺失工作区时 fail-closed。
 
 ## 3. 五组件族
 

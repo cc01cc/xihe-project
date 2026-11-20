@@ -101,7 +101,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 ## 4. 视图嵌入与切换约定
 
 - `ChatPanel`（`features/workspace/chat/components/ChatPanel.vue`）是 Workspace Chat 的内嵌对话组件（消息列表 + 输入框 + SSEStream，无全屏布局头）；全屏 `ChatView` 已移除，不从其他 feature 直接嵌入 Chat UI。
-- 视图切换约定：Workspace 是默认入口；Sidebar「New Chat」在当前 Workspace 通过 Agent principal picker 创建 Session；Workspace 路由可以没有 Session，选中后 route 为 `/workspace/:workspaceId/chat/:sessionId`。WorkspaceToolbar 的 Session 下拉切换 Session 时保留 Workspace route，不把 Workspace 切换误写成 Session 切换。
+- 视图切换约定：Workspace 是默认入口；Sidebar「New Chat」在当前 Workspace 通过 Agent principal picker 创建 Session；Workspace 路由可以没有 Session，选中后 route 为 `/workspace/:workspaceId/session/:sessionId`。WorkspaceToolbar 的 Session 下拉切换 Session 时保留 Workspace route，不把 Workspace 切换误写成 Session 切换。
 - 消息历史一律经 `chatStore.getMessages(sessionId)` 读取，跨视图一致；附件经 `currentSessionAttachments` 共享。
 - 路由表与组件分层见 DEV-010 §1-2；SSE 传输层见 DEV-010 §4。
 
