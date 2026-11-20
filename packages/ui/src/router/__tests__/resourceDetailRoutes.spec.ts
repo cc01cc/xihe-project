@@ -72,7 +72,9 @@ describe("?layer= 强制（缺省/非法都落到默认层并 replace 回 URL）
         const redirect = normalizeResourceLayerQuery("mcp")(
             location("resources-mcp-detail", { layer: "SESSION" }),
         );
-        expect(redirect).toMatchObject({ query: { layer: "WORKSPACE" }, replace: true });
+        // task-145 / DSD-1511：mcp 的 WORKSPACE 层已迁到「工作区设置」，资源区只剩 INSTANCE
+        // ⇒ 默认（回落）层从 WORKSPACE 变为 INSTANCE。
+        expect(redirect).toMatchObject({ query: { layer: "INSTANCE" }, replace: true });
     });
 
     it("小写写法规范化为大写 wire 值（?layer=user ⇒ USER）", () => {
@@ -86,7 +88,8 @@ describe("?layer= 强制（缺省/非法都落到默认层并 replace 回 URL）
         const redirect = normalizeResourceLayerQuery("mcp")(
             location("resources-mcp-detail", { layer: "USER" }),
         );
-        expect(redirect).toMatchObject({ query: { layer: "WORKSPACE" }, replace: true });
+        // 同上：mcp 可见层只剩 INSTANCE（task-145 / DSD-1511），默认层不再是 WORKSPACE。
+        expect(redirect).toMatchObject({ query: { layer: "INSTANCE" }, replace: true });
     });
 
     it("规范化层时保留其余 query 与 hash", () => {

@@ -91,7 +91,10 @@ const NEUTRAL = {
     foreground: "oklch(0.145 0 0)",
     mutedForeground: "oklch(0.53 0 0)",
     border: "oklch(0.922 0 0)",
-    destructive: "oklch(0.577 0.245 27.325)",
+    // task-187：shadcn 官方 light 值是 0.577，本仓在 `1e0ace9c8`（2026-11-16「destructive 对比度提到
+    // 4.5:1，按钮改中性底红边」）刻意压到 0.55 以满足正文对比度 ⇒ 基准取现树
+    // （`src/styles/themes/color-shadcn-*.css` 五套全部 0.55），不再是官方字面量。
+    destructive: "oklch(0.55 0.245 27.325)",
     /** `data-xh-color` 恒被设置（含默认）。 */
     scheme: "neutral",
 } as const;
@@ -526,7 +529,14 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
             expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
             expect(body.lineHeightPx, "B 正文行高 20px（上游默认 1.4286）").toBeCloseTo(20, 0);
-            expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
+            // task-187：发送按钮在 task-135（`5829a5cf5`）改成圆形图标钮（`size-9` + `rounded-full`，
+            // `InputArea.vue:1146`）⇒ 判据从「圆角 10px」换成「仍是圆钮（计算圆角 ≥ 高的一半）」。
+            // 咬住的是「色板改动顺手把控制件改成直角/矩形」；密度判据仍由上面的字号/行高承担。
+            expect(send.rect.height, "发送按钮仍是 36px 图标钮").toBeCloseTo(36, 0);
+            expect(
+                send.borderRadiusPx,
+                "发送按钮仍是圆钮（rounded-full：计算圆角 ≥ 高的一半）",
+            ).toBeGreaterThanOrEqual(send.rect.height / 2 - 1);
 
             // 颜色必须真的落官方 neutral（旧 c1/c3 只剩迁移入口，见文件头 NEUTRAL）。
             // primary：发送按钮（`InputArea.vue:707` bg-primary）+ 用户气泡
@@ -705,8 +715,14 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             expect(badgeContrast, "徽标文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
             expect(createContrast, "主按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
             // B 的表格行：`tr { height: 32px }` 是下限，13px 正文 + py-1 + 1px 边实际落 36px。
+            // task-187：行高构成 = td `py-1`（4+4）+ 行内最高的 vendor `Button size="icon"`
+            // （`size-8` = 32px）+ `border-t` 1px = 41px（实测，见本卡证据）。原上限 40 是迁移前
+            // 按「13px 正文 + py-1 + 1px 边 ≈ 36px」推算的，不是实测值 ⇒ 新语义 = 「仍是一屏多行的
+            // 密集档：行高 ≤ 42px（≈2.1× 正文行高 20px）」，咬住的是改成 44+ 的松弛档。
             expect(row.rect.height, "B 表格行高（≥32 下限）").toBeGreaterThanOrEqual(31);
-            expect(row.rect.height, "B 表格行高仍是一屏多行的密集档").toBeLessThanOrEqual(40);
+            expect(row.rect.height, "B 表格行高仍是一屏多行的密集档（≤42）").toBeLessThanOrEqual(
+                42,
+            );
 
             writeMeasure(`${item.id}-settings`, {
                 scheme: item.id,
@@ -817,7 +833,12 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
         expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
         expect(body.lineHeightPx, "B 正文行高 20px（上游默认 1.4286）").toBeCloseTo(20, 0);
-        expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
+        // task-187：同前 —— 发送按钮是 task-135 之后的圆形图标钮，判「圆钮」而不是「圆角 10px」。
+        expect(send.rect.height, "发送按钮仍是 36px 图标钮").toBeCloseTo(36, 0);
+        expect(
+            send.borderRadiusPx,
+            "发送按钮仍是圆钮（rounded-full：计算圆角 ≥ 高的一半）",
+        ).toBeGreaterThanOrEqual(send.rect.height / 2 - 1);
 
         expect(tokens.primary, "--primary").toBe(NEUTRAL.primary);
         expect(tokens.secondary, "--secondary").toBe(NEUTRAL.secondary);
@@ -995,8 +1016,10 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         expect(badgeContrast, "徽标文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         expect(createContrast, "主按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         // B 的表格行：`tr { height: 32px }` 是下限，13px 正文 + py-1 + 1px 边实际落 36px。
+        // task-187：行高 41px = td `py-1`(8) + vendor `Button size="icon"` `size-8`(32) + `border-t`(1)；
+        // 新语义 = 「仍是一屏多行的密集档：≤ 42px」，咬住的是改成 44+ 的松弛档。
         expect(row.rect.height, "B 表格行高（≥32 下限）").toBeGreaterThanOrEqual(31);
-        expect(row.rect.height, "B 表格行高仍是一屏多行的密集档").toBeLessThanOrEqual(40);
+        expect(row.rect.height, "B 表格行高仍是一屏多行的密集档（≤42）").toBeLessThanOrEqual(42);
 
         writeMeasure("default2-settings", {
             scheme: DEFAULT_CASE.id,

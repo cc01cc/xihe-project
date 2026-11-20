@@ -354,13 +354,18 @@ describe("ResourceDetailView — 技能/知识库（未接线诚实态）", () =
     });
 
     it("工作区层缺工作区上下文 ⇒ 未接线（说明是「没有上下文」，不是产品缺口）", async () => {
-        setRoute({ resourceId: "skills", layer: "WORKSPACE", pk: "skill-1" });
+        // task-145 / DSD-1511：skills / mcp 的 WORKSPACE 层已迁到「工作区设置」，资源区里**只剩
+        // credentials 还有 WORKSPACE 层** ⇒ 「缺工作区上下文」这条语义现在由它承载（技能/技能页
+        // 的 WORKSPACE 深链会被 resolveResourceLayer 归一成 USER，不再进无上下文分支）。
+        setRoute({ resourceId: "credentials", layer: "WORKSPACE", pk: "cred-1" });
         const wrapper = mountView();
         await flushPromises();
 
         expect(wrapper.get('[data-testid="resource-detail-unwired"]').text()).toContain(
             "没有工作区上下文",
         );
+        // 缺上下文 ⇒ 一个数据请求都不发（守卫只在 store.load 一处，本页只消费裁决）。
+        expect(apiMock.listCredentials).not.toHaveBeenCalled();
         expect(apiMock.getWorkspaceSkills).not.toHaveBeenCalled();
     });
 
@@ -380,23 +385,35 @@ describe("ResourceDetailView — 技能/知识库（未接线诚实态）", () =
 
 // task-96：智能体详情（三层）随资源区摘除一并删除 —— 该资源不再有详情页，
 // 旧 URL 在 `router/index.ts` 里 302 到新落点（判据在 `router/__tests__/agentLandingRoutes.spec.ts`）。
-describe("ResourceDetailView — MCP", () => {
-    it("MCP 工作区层：配置来自 stdio-servers、运行状态来自 mcp/servers", async () => {
-        setRoute({ resourceId: "mcp", layer: "WORKSPACE", pk: "fs-server", workspace: "ws-1" });
-        apiMock.getStdioServers.mockResolvedValue({
-            generation: 1,
-            hash: "h-1",
-            servers: { "fs-server": { command: "npx", args: ["-y", "fs-mcp"] } },
-        });
-        apiMock.getMcpServerStatus.mockResolvedValue({
+describe("ResourceDetailView — MCP（全平台层；本工作区层已迁）", () => {
+    /**
+     * task-145 / DSD-1511：mcp 的 WORKSPACE 层已迁到「工作区设置」，资源区里只剩 INSTANCE
+     * ⇒ 深链 `?layer=WORKSPACE` 会被 `resolveResourceLayer` 归一成 INSTANCE（同批判据见
+     * `router/__tests__/resourceDetailRoutes.spec.ts` 的两条回落断言）。
+     *
+     * <p>所以这两条用例从「工作区层两个读面」改为「全平台层一条读面」，并用**负断言**钉住
+     * 迁移的后果：`getStdioServers` / `getMcpServerStatus` 不再被这一页调用。</p>
+     */
+    it("MCP 全平台层：读面来自 listInstanceMcpServers，按 id 或 name 命中", async () => {
+        setRoute({ resourceId: "mcp", layer: "INSTANCE", pk: "fs-server" });
+        instanceMock.listInstanceMcpServers.mockResolvedValue({
             servers: [
                 {
-                    serverId: "fs-server",
-                    state: "ready",
-                    attempt: 1,
-                    lastError: null,
-                    sinceMs: 1_760_000_000_000,
-                    epoch: 2,
+                    id: "srv-1",
+                    name: "fs-server",
+                    transport: "stdio",
+                    url: null,
+                    enabled: true,
+                    credentialId: null,
+                    createdAt: "2026-11-01T00:00:00Z",
+                    states: {
+                        name: "value",
+                        transport: "value",
+                        url: "empty",
+                        enabled: "value",
+                        credentialId: "empty",
+                        createdAt: "value",
+                    },
                 },
             ],
             count: 1,
@@ -406,14 +423,18 @@ describe("ResourceDetailView — MCP", () => {
         await flushPromises();
 
         expect(wrapper.get('[data-testid="resource-detail-title"]').text()).toBe("fs-server");
-        expect(wrapper.get('[data-testid="resource-detail-fields"]').text()).toContain("ready");
-        expect(wrapper.get('[data-testid="resource-detail-block"]').text()).toContain("npx");
+        expect(wrapper.get('[data-testid="resource-detail-layer"]').text()).toBe("全平台 MCP");
+        expect(wrapper.get('[data-testid="resource-detail-field-transport"]').text()).toContain(
+            "stdio",
+        );
+        // 反证：本工作区读面（stdio-servers / mcp status）不再被这一页调用。
+        expect(apiMock.getStdioServers).not.toHaveBeenCalled();
+        expect(apiMock.getMcpServerStatus).not.toHaveBeenCalled();
     });
 
-    it("MCP 工作区层两个读面都没有该 pk ⇒ 404", async () => {
-        setRoute({ resourceId: "mcp", layer: "WORKSPACE", pk: "missing", workspace: "ws-1" });
-        apiMock.getStdioServers.mockResolvedValue({ servers: {} });
-        apiMock.getMcpServerStatus.mockResolvedValue({ servers: [], count: 0 });
+    it("MCP 全平台层没有该 pk ⇒ 404（读面成功但不在该层）", async () => {
+        setRoute({ resourceId: "mcp", layer: "INSTANCE", pk: "missing" });
+        instanceMock.listInstanceMcpServers.mockResolvedValue({ servers: [], count: 0 });
 
         const wrapper = mountView();
         await flushPromises();
@@ -440,24 +461,38 @@ describe("ResourceDetailView — 错误态与返回栈", () => {
     });
 
     it("无应用内历史 ⇒ 返回列表（回落到当前层）", async () => {
-        setRoute({ resourceId: "skills", layer: "WORKSPACE", pk: "skill-1", workspace: "ws-1" });
-        apiMock.getWorkspaceSkills.mockResolvedValue([
-            { skillId: "skill-1", name: "部署技能", definitionScope: { type: "workspace" } },
-        ]);
+        // 回落到「当前层」的判据要看**真的还存在的层**：skills 的 WORKSPACE 已迁（DSD-1511）⇒
+        // 用 credentials 的 WORKSPACE 层承载这条语义。
+        setRoute({
+            resourceId: "credentials",
+            layer: "WORKSPACE",
+            pk: "cred-1",
+            workspace: "ws-1",
+        });
+        apiMock.listCredentials.mockResolvedValue({ credentials: [credentialRow], count: 1 });
+        apiMock.getCredentialReferences.mockResolvedValue({ references: [] });
+        apiMock.getCredentialEvents.mockResolvedValue({ events: [] });
         const wrapper = mountView();
         await flushPromises();
 
         await wrapper.get('[data-testid="resource-detail-back"]').trigger("click");
         expect(backMock).not.toHaveBeenCalled();
-        expect(pushMock).toHaveBeenCalledWith("/resources/skills?layer=WORKSPACE");
+        expect(pushMock).toHaveBeenCalledWith("/resources/credentials?layer=WORKSPACE");
     });
 
     it("有应用内历史 ⇒ 后退优先（不 push 列表页）", async () => {
-        setRoute({ resourceId: "skills", layer: "WORKSPACE", pk: "skill-1", workspace: "ws-1" });
-        routerMock.options = { history: { state: { back: "/resources/skills?layer=WORKSPACE" } } };
-        apiMock.getWorkspaceSkills.mockResolvedValue([
-            { skillId: "skill-1", name: "部署技能", definitionScope: { type: "workspace" } },
-        ]);
+        setRoute({
+            resourceId: "credentials",
+            layer: "WORKSPACE",
+            pk: "cred-1",
+            workspace: "ws-1",
+        });
+        routerMock.options = {
+            history: { state: { back: "/resources/credentials?layer=WORKSPACE" } },
+        };
+        apiMock.listCredentials.mockResolvedValue({ credentials: [credentialRow], count: 1 });
+        apiMock.getCredentialReferences.mockResolvedValue({ references: [] });
+        apiMock.getCredentialEvents.mockResolvedValue({ events: [] });
         const wrapper = mountView();
         await flushPromises();
 

@@ -135,18 +135,35 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         );
         await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText("工作区");
     });
-    test("MCP：只有两层（后端没有个人层）", async ({ page }) => {
+    test("MCP：只剩全平台一层（无个人层 + 本工作区层已迁）", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // 兜底桩不认 `/api/v1/instance/mcp`（task-64：没有宽松放行口）⇒ 这条读面必须显式给响应，
+        // 形状照 `src/services/instanceResources.ts:510-521`（servers[] + count）。
+        let instanceMcpHits = 0;
+        await page.route("**/api/v1/instance/mcp", (route) => {
+            instanceMcpHits += 1;
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    servers: [
+                        { id: "mcp-1", name: "fs-server", transport: "stdio", enabled: true },
+                    ],
+                    count: 1,
+                }),
+            });
+        });
         await page.goto("/resources/mcp");
 
-        // G1：`mcp_remote_servers.workspace_id NOT NULL` ⇒ 不存在「我的 MCP」。
-        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(2);
-        await expect(page.getByTestId("resource-layer-tab-USER")).toHaveCount(0);
-        // 默认层是本工作区（实体归属），而不是实例层。
-        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toHaveAttribute(
-            "aria-selected",
-            "true",
-        );
+        // 两条依据叠加：①G1 后端没有个人层（`mcp_remote_servers.workspace_id NOT NULL`）；
+        // ②task-145 / DSD-1511：WORKSPACE 层迁到「工作区设置」⇒ 资源区可见层只剩 INSTANCE
+        // （SSOT：`src/lib/settingsIa.ts:498-502` `visibleLayersForResource`）。
+        // 默认层随可见层回落：INSTANCE（`settingsIa.ts:504-517` `defaultLayerForResource`）。
+        // task-162：页签条只在 `layers.length > 1` 时渲染 ⇒ 单层可见时计数 0 是**预期**，不是缺页签。
+        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(0);
+        // 层的正面证据只剩读面：页面必须真的打到 `/api/v1/instance/mcp`（INSTANCE 分支）——
+        // 实测「不带 `?layer=` 的列表 URL 不会被改写」，所以地址栏不能当层证据（详见本卡证据 README）。
+        await expect.poll(() => instanceMcpHits).toBeGreaterThan(0);
     });
 
     test("实例层门槛是能力位：没有 instance:admin 时置灰 + 理由，不是隐藏", async ({ page }) => {
@@ -184,11 +201,32 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await expect(page).toHaveURL(/layer=INSTANCE$/);
     });
 
-    test("技能：三层 tab 都在，个人层**不因原子置灰**（读面不挂原子）", async ({ page }) => {
+    test("技能：可见两层（个人 + 全平台），个人层**不因原子置灰**（读面不挂原子）", async ({
+        page,
+    }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // 可见层变成 [USER, INSTANCE] 后默认层从 WORKSPACE 回落成 USER ⇒ 首屏渲染的是个人层，
+        // 它的读面 `GET /skills?definitionScope=user` 兜底桩不认（task-64）⇒ 显式给一条空列表桩
+        // （后注册者优先；只影响本用例）。
+        const skillReads: string[] = [];
+        await page.route(/\/api\/v1\/skills(\?|$)/, (route) => {
+            skillReads.push(route.request().url());
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ items: [] }),
+            });
+        });
         await page.goto("/resources/skills");
 
-        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
+        // task-145 / DSD-1511：WORKSPACE 层迁到「工作区设置 → 技能」（本文件下一条用例）
+        // ⇒ 资源区可见层 = [USER, INSTANCE]（`settingsIa.ts:498-502`），默认层 = USER（:504-517）。
+        // 默认层的正面证据 = 首屏读面带 `definitionScope=user`（列表路由不把默认层写回 URL，实测）。
+        await expect
+            .poll(() => skillReads.some((url) => url.includes("definitionScope=user")))
+            .toBe(true);
+        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(2);
+        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toHaveCount(0);
         // `T2b.3`：个人层读面不挂 `MANAGE_PERSONAL_SKILLS`（P-189-3）⇒ tab 照常可点；
         // 置灰整页会让无原子用户看不到自己已存的技能。写面才置灰（见下一条用例）。
         await expect(page.getByTestId("resource-layer-tab-USER")).toBeEnabled();
