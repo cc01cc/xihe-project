@@ -921,6 +921,16 @@ run = "node scripts/check-ports-parity.mjs --require-mirror"
 description = "Compare the built-in xihe port table with ONE's allocation table (fail-closed: a missing ONE workspace exits 2 instead of looking green; a standalone clone should run the bare script without --require-mirror)"
 alias = "check:ports"
 
+# task-88（用户 2026-11-20 指出 CP 包下 target-b/target-c 等一次性构建缓存无用）：report-only 巡查。
+# 判据：候选 = target-*/ build-*/ dist-*/ 与字面 .cache（裸 target/ dist/ build/ 不算）；stale = 最新文件
+# mtime ≥ --age-days（默认 7）**且** 目录名在引用语料（mise.toml/package.json/pom.xml + scripts/**）里找不到。
+# **刻意不接 validate.depends**：这是「该人判该不该删」的巡查，不是可阻断的契约（D-1046 同款理由）。
+# 输出只是清单与回收站建议命令，本门不执行删除；stale 存在时也 exit 0，要红得自己看表或加 --json 判。
+[tasks."check:stale-build-dirs"]
+run = "node scripts/check-stale-build-dirs.mjs"
+description = "Report-only sweep for stale per-runner build dirs (target-*/build-*/dist-*/.cache): lists size, newest mtime, reference source and keep/stale verdict, plus recycle-bin commands to run by hand. Never fails; NOT in validate.depends"
+alias = "check:stale-build-dirs"
+
 # BL-303 Phase 3: 事件名扫描器（默认 report-only，永不非零退出；观察期结束后再考虑接入 validate）。
 # 基线/语义登记见 config/event-keys-baseline.json / config/event-keys-semantics.json。
 [tasks."check:event-keys"]

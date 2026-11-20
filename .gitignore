@@ -6,8 +6,14 @@ packages/ui/e2e/.mock-report.json
 packages/ui/e2e/.mock-report.subset.json
 # task-179: flaky 历史（判据 ④「连续 ≥3 轮」的输入）；本机运行产物，不入库。
 packages/ui/e2e/.mock-flaky-history.json
-# D32-26 T2: mvn -Dxihe.build.suffix=-b builds into 	arget-b/; keep every per-runner build dir ignored.
+# D32-26 T2: mvn -Dxihe.build.suffix builds into target-<suffix>/ (target-b/, target-c/, …);
+# keep every per-runner and tool-specific build dir ignored.
+# task-88: 同族的 build-*/dist-* 与字面 .cache 一并挡住 —— 此前只有 dist/ 与 build/ 两条精确规则，
+# 于是 build-old/、dist-cjs/、.cache/ 一旦出现就会污染 git status（巡查脚本 check-stale-build-dirs.mjs 同批）。
 **/target-*/
+**/build-*/
+**/dist-*/
+**/.cache/
 **/Cargo.lock
 **/*.rs.bk
 
