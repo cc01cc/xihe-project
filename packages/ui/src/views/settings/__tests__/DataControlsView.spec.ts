@@ -69,7 +69,7 @@ const mockedApi = vi.mocked(api, true),
             settings: {
                 dataControls: "数据控制",
                 exportSettings: "导出设置",
-                exportChats: "导出聊天",
+                exportChats: "导出会话",
                 import: "导入",
                 configTab: "配置管理",
                 knowledge: "知识库",
@@ -192,7 +192,7 @@ describe("DataControlsView", () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
         await flushPromises();
-        expect(wrapper.text()).toContain("导出聊天");
+        expect(wrapper.text()).toContain("导出会话");
     });
 
     it("renders import button", async () => {

@@ -101,7 +101,8 @@ const i18n = createI18n({
                 // task-175 A：读面/树错误态其余键，值镜像真源 en locale，防夹具再漂移。
                 diffPendingLoading: "Reading git status…",
                 diffPendingCountUnit: "file(s)",
-                treeLoadFailed: "The file tree failed to load. Retry, or keep chatting meanwhile.",
+                treeLoadFailed:
+                    "The file tree failed to load. Retry, or continue in the session meanwhile.",
                 treeLoadFailedRuntime:
                     "The workspace runtime is unreachable. Start the service and retry; contact an admin if it keeps failing.",
                 treeLoadFailedTool:

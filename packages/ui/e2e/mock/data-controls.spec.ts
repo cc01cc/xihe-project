@@ -47,7 +47,7 @@ test.describe("Data Controls", () => {
         await page.goto("/settings/data", { waitUntil: "load" });
         await page.waitForTimeout(1000);
         await expect(page.locator('button:has-text("导出设置")')).toBeVisible();
-        await expect(page.locator('button:has-text("导出聊天")')).toBeVisible();
+        await expect(page.locator('button:has-text("导出会话")')).toBeVisible();
         await expect(page.locator('button:has-text("导入")')).toBeVisible();
         await expectPlatformScreenshot(page, "data-controls-buttons.png");
     });

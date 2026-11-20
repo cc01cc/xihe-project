@@ -493,7 +493,9 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             buffer: Buffer.from(JSON.stringify({ chats: [{ messages: [{ content: "hello" }] }] })),
         });
         await expect(page.getByText("import.json")).toBeVisible();
-        await expect(page.getByText("聊天会话")).toBeVisible();
+        await expect(
+            page.getByTestId("modal-content").getByText("会话", { exact: true }),
+        ).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-data-import-preview.png");
     });
 
