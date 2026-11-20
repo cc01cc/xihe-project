@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**370** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 266 · 服务间 104
+- 规模：**372** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 268 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（370 / 370 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（372 / 372 个操作带 tag）。
 
-## public（266 operations · 公开 · 17 tags）
+## public（268 operations · 公开 · 17 tags）
 
 ### auth（12）
 
@@ -203,7 +203,7 @@
 | `GET /api/v1/user-events` | `userEvents` | `bearerAuth` | Subscribe to the user-level persistent SSE channel | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/events` | `workspaceEvents` | `bearerAuth` | Subscribe to workspace-scoped file and lifecycle SSE | 公开 |
 
-### config（27）
+### config（29）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -213,6 +213,8 @@
 | `PUT /api/v1/config-locks/{domain}/{key}` | `lockConfigKey` | `bearerAuth` | Lock one config key and pin its instance value (PLAN-0556) | 公开 |
 | `DELETE /api/v1/config-locks/{domain}/{key}` | `unlockConfigKey` | `bearerAuth` | Unlock one config key (PLAN-0556) | 公开 |
 | `GET /api/v1/config/api-request-templates` | `listApiRequestTemplates` | `bearerAuth` | List API request templates of the caller's scope | 公开 |
+| `GET /api/v1/config/bundle/export` | `exportConfigBundle` | `bearerAuth` | Export the instance config as a zip bundle | 公开 |
+| `POST /api/v1/config/bundle/import` | `importConfigBundle` | `bearerAuth` | Import a zip bundle of the instance config | 公开 |
 | `GET /api/v1/config/embedding/effective` | `getEmbeddingEffectiveProfile` | `bearerAuth` | Read-only effective embedding profile for the settings surface | 公开 |
 | `POST /api/v1/config/embedding/test` | `testEmbeddingProfile` | `bearerAuth` | Probe the resolved embedding profile through the Agent | 公开 |
 | `GET /api/v1/config/export` | `exportConfig` | `bearerAuth` | Export the config bundle | 公开 |

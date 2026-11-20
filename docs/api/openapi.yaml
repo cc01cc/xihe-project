@@ -4022,6 +4022,62 @@ paths:
         '413': { $ref: '#/components/responses/Problem' }
   /api/v1/config/export:
     get: { tags: [config], operationId: exportConfig, summary: Export the config bundle, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: 'Raw JSONC configuration text (plaintext secrets unless includeSecrets=false); CP serves it with Cache-Control: no-store.' } } }
+  /api/v1/config/bundle/export:
+    get:
+      tags: [config]
+      operationId: exportConfigBundle
+      summary: Export the instance config as a zip bundle
+      description: >-
+        task-84 (DSD-1480). Management plane, instance layer only, same authority as
+        /api/v1/config/export (cap:instance:admin). Returns a zip archive holding
+        manifest.json (formatVersion, layer, generator, files[path,sha256,bytes]) and
+        config/instance.jsonc. The JSONC entry is byte-identical to what
+        /api/v1/config/export serves for the same includeSecrets value; the manifest
+        records its sha256 and byte count. The response carries Cache-Control: no-store
+        and the archive is bounded to 1 MiB (413 beyond that).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: layer, required: false, schema: { type: string, enum: [instance], default: instance } }
+        - { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }
+      responses:
+        '200':
+          description: Zip bundle served with Content-Disposition attachment.
+          content: { application/zip: { schema: { type: string, format: binary } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+  /api/v1/config/bundle/import:
+    post:
+      tags: [config]
+      operationId: importConfigBundle
+      summary: Import a zip bundle of the instance config
+      description: >-
+        task-84 (DSD-1480). Management plane, instance layer only, requires
+        WRITE_INSTANCE_CONTENT. The archive is verified end to end before anything is
+        written: manifest.json must exist with formatVersion 1 and layer instance; every
+        declared file must match its sha256 and byte count; unknown, missing, absolute,
+        traversal and symlink entries are rejected; the config section must be
+        config/instance.jsonc. Any mismatch answers 400 MANIFEST_MISMATCH,
+        INVALID_BUNDLE_ENTRY or UNSUPPORTED_BUNDLE_VERSION and leaves the config store
+        untouched. provider-connections are never restored from a bundle; they are
+        reported in skipped with a warning.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Import report
+          content: { application/json: { schema: { $ref: '#/components/schemas/ConfigImportReport' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
   # /api/v1/providers removed (PLAN-0307 T2.22): use /api/v1/provider-connections + /api/v1/provider-catalog
   /api/v1/sessions/{sessionId}/messages:
     get:

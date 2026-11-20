@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -56,6 +58,7 @@ public class ConfigController {
     private final AgentTemplateService agentTemplateService;
     private final ContextTemplateService contextTemplateService;
     private final RequesterAuthority requesterAuthority;
+    private final ConfigBundleService configBundleService;
 
     public ConfigController(ConfigService configService,
                             WorkspaceService workspaceService,
@@ -64,7 +67,8 @@ public class ConfigController {
                             com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger,
                             AgentTemplateService agentTemplateService,
                             ContextTemplateService contextTemplateService,
-                            RequesterAuthority requesterAuthority) {
+                            RequesterAuthority requesterAuthority,
+                            ConfigBundleService configBundleService) {
         this.configService = configService;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
@@ -73,6 +77,7 @@ public class ConfigController {
         this.agentTemplateService = agentTemplateService;
         this.contextTemplateService = contextTemplateService;
         this.requesterAuthority = requesterAuthority;
+        this.configBundleService = configBundleService;
     }
 
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
@@ -646,6 +651,73 @@ public class ConfigController {
             .header("Content-Type", "application/json")
             .header("Cache-Control", "no-store")
             .body(jsonc);
+    }
+
+    // ------------------------------------------------------------------
+    // task-84 (DSD-1480): zip bundle transport. The two single-JSONC endpoints above are the
+    // compatibility light path and are deliberately left untouched: this pair is additive.
+    // ------------------------------------------------------------------
+
+    /**
+     * Exports the instance layer as a zip bundle: {@code manifest.json} (formatVersion, createdAt,
+     * layer, per-file sha256/bytes) plus {@code config/instance.jsonc} carrying the bytes of
+     * {@link ConfigService#exportJsonc} verbatim.
+     */
+    @PreAuthorize("hasAuthority('cap:instance:admin')")
+    @GetMapping("/api/v1/config/bundle/export")
+    public ResponseEntity<byte[]> exportConfigBundle(
+            @RequestParam(value = "layer", defaultValue = "instance") String layer,
+            @RequestParam(value = "includeSecrets", defaultValue = "true") boolean includeSecrets) {
+        if (!"instance".equals(layer)) {
+            // A streaming return type (ResponseEntity<byte[]>) cannot carry a problem body, so this
+            // face fails the same way the service layer does: the handler renders the RFC 9457 body.
+            throw new CpApiException(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Only the instance layer can be exported");
+        }
+        byte[] bundle = configBundleService.exportBundle(includeSecrets);
+        // Same audit face as the JSONC export (PLAN-0307 T2.25): actor/time/has-secrets, body never logged.
+        auditLogger.recordConfigExport(
+            TenantContext.getUserId(), "instance", includeSecrets,
+            configService.countProviderConnections());
+        return ResponseEntity.ok()
+            .header("Content-Type", "application/zip")
+            .header("Content-Disposition", "attachment; filename=\"xihe-config-bundle.zip\"")
+            .header("Cache-Control", "no-store")
+            .body(bundle);
+    }
+
+    /**
+     * Imports a zip bundle. Verification is complete before the first write (see
+     * {@link ConfigBundleService#importBundle}), so a rejected bundle changes nothing; the response
+     * shape matches the single-JSONC import exactly ({@code status/imported/skipped/warnings}).
+     */
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
+    @PostMapping(path = "/api/v1/config/bundle/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> importConfigBundle(
+            @RequestParam("file") MultipartFile file) {
+        UUID actorId = currentUserId();
+        if (actorId == null) {
+            return ProblemDetailsHandler.missingPrincipal("User context is required");
+        }
+        byte[] bundle;
+        try {
+            bundle = file.getBytes();
+        } catch (java.io.IOException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_BUNDLE", "Bundle upload could not be read");
+        }
+        try {
+            ConfigService.ImportReport report = configBundleService.importBundle(bundle, actorId);
+            log.info("Config bundle imported: {} bytes ({} chars of config payload)",
+                    bundle.length, report.imported());
+            return ResponseEntity.ok(Map.of(
+                "status", "ok",
+                "imported", report.imported(),
+                "skipped", report.skipped(),
+                "warnings", report.warnings()));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
     }
 
     // ------------------------------------------------------------------
