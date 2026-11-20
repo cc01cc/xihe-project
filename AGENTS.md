@@ -40,6 +40,9 @@
 - 配置边界见 [`DEV-003`](docs/i18n/zh-Hans/DEV-003-config-management.md)：bootstrap/deployment env 与 ConfigService 业务配置不是同一层；凭证只走受控加密通道，secret 不得写入仓库或日志；env/DB 冲突必须显式呈现。
 - 沙盒后端与生命周期契约见 [`DEV-031`](docs/i18n/zh-Hans/DEV-031-sandbox-backend-contract.md)：未知 Workspace、后端不可用或超时必须显式失败，MXC/Docker 故障不得自动回退到宿主执行；`windows-host/unrestricted` 只能由用户显式选择；Runtime 实现字段（pid/wrapperPid/policyPath/mxcTier）不得透传到 API，CP/API view 必须显式过滤（DEV-031 §5）。
 - Workspace/Session、ChatRun、Workspace Job 与 MCP invocation 不变量见 [`DEV-017`](docs/i18n/zh-Hans/DEV-017-session-architecture.md)、DEV-014 和对应 SPEC；模块间变更必须按下方跨协议门禁同步。
+- **CP 包结构：两套并存，新代码按「能力切片优先」落（`D-1493`，task-87 实测）**。现状：`packages/control-plane/src/main` 704 个 tracked `.java` = 34 个顶层包 + 4 个根文件；技术层包 229（`controller` 29 / `entity` 71 / `repository` 68 / `service` 61）与能力切片包 445 并存，另 26 个技术设施；真 `@RestController` 94 个（另 2 个是 `@RestControllerAdvice`），其中只有 23 个在 `controller/`（24%），`chat`/`policy`/`plugin`/`provider`/`config` 等能力包内自带控制器。
+- **选择判据：能力切片优先**——新增类型优先落所属能力包；技术层包只收「跨能力复用」的 `entity`/`repository`；控制器不再强制进 `controller/`。正确性由 `CpArchitectureRules` 注解级规则 + `CpModuleAssignment` 类名前缀矩阵兜住（两者按注解/类名而非包名分类），所以先立约定、暂不迁包（`D-1493` 已裁全迁 A 不做、只迁 `controller/` 的 B 列为可选）。`spec/architecture/module-boundaries.md` 冻结的是四模块顶层边界，不扩到 CP 子包；逐包清单与一句话说明见 `packages/control-plane/AGENTS.md`，本段只给选择判据。
+- **`architectureprobe` 单文件包是刻意形态，不得挪动**：`packages/control-plane/src/test/java/com/cc01cc/p/xihe/architectureprobe/CpArchitectureProbeFixtures.java:15` 注释写明 outside CpApplication's component/entity scan so negative probes cannot become runtime beans；`.../cp/architecture/CpArchitectureRuleProbeTest.java:107-115` 用四条断言钉住该位置（`CpApplication` 的 `scanBasePackages`/`scanBasePackageClasses` 均为空 + `GoodController`/`ProbeEntity` 包名不以 CpApplication 包为前缀）。
 
 ## SPEC Contract Layer
 
