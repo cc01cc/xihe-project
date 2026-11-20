@@ -315,6 +315,9 @@ const messages = {
             // D-1220 ②（task-365 B）：左栏「工作区」区头 —— 一级列表自己的动作（新建工作区 /
             // 导入源）放在区头，不放在页内右上角、也不混进工作区行上的 `+`（那是新建会话）。
             workspacesSection: "工作区",
+            // task-172 / `D-1464`：会话区头的区名。计数**不**进这个 key —— 数字单独渲染
+            //（随数据变，写进译文会漂移；两侧同批加，无占位）。
+            sessionsSection: "会话",
             settings: "设置",
             // PLAN-0762 T2.3 / D-924：模块名只能是「工作台」；「工作区」只是工作台模块内的对象。
             workbench: "工作台",
@@ -576,9 +579,9 @@ const messages = {
             mobileMembersHint: "点「更多」看策略、模型与移除。",
             participantMoreAction: "更多",
             panelMembers: "成员",
-            panelContext: "会话设置",
-            // task-138：容器内的「会话配置」页签（D-1907 rev10 摘要条快捷开关开出的那份），
-            // 与 panelContext（= context 面板，产品文案「会话设置」）不是同一个面板。
+            // task-138：容器内的「会话配置」页签（D-1907 rev10 摘要条快捷开关开出的那份）。
+            // task-6（D1453）：旧静态 context 页签与其 panelContext 文案已退役，本键是会话
+            // 设置唯一的面板页签文案。
             panelSessionConfig: "会话配置",
             panelAgents: "智能体",
             panelDelegation: "委派",
@@ -4544,6 +4547,8 @@ const messages = {
             groupSnapshotHint:
                 "Loaded on expand; if this workspace changes elsewhere, reload the page to see the latest list",
             workspacesSection: "Workspaces",
+            // task-172 / `D-1464`: session-list section header; the count is rendered separately.
+            sessionsSection: "Sessions",
             settings: "Settings",
             workbench: "Workbench",
             orgMembers: "Org members",
@@ -4802,9 +4807,9 @@ const messages = {
             mobileMembersHint: "Open “More” for policy, model and removal.",
             participantMoreAction: "More",
             panelMembers: "Members",
-            panelContext: "Session settings",
             // task-138: in-container "session config" tab (opened by the D-1907 rev10 summary-bar
-            // shortcut); distinct from panelContext, the context panel.
+            // shortcut). task-6 (D1453): the old static context tab and its panelContext label are
+            // retired — this is now the only session-settings panel tab.
             panelSessionConfig: "Session config",
             panelAgents: "Agents",
             panelDelegation: "Delegation",
