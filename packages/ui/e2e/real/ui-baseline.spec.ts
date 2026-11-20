@@ -1271,8 +1271,10 @@ async function runMatrix(
             }
         }
 
-        // ⑤ 右栏折叠态的开合控件（D1 修正：有六键工具栏 WorkspaceToolbar.vue:70-75 → WorkspacePanelActions，
-        //    能逐个开合面板，缺的是**单一 toggle**；D2：折叠后整列含页签行不渲染、无展开把手 ⇒ dock-open 命中 0）
+        // ⑤ 右栏折叠态的开合控件（D1 修正沿革：当时以为缺的是**单一 toggle**，逐面板开合图标簇曾是
+        //    独立组件；该图标簇随 task-137 / D-1907 整体退场（组件本体一并删除）—— 面板开合
+        //    只剩右栏容器 WorkspaceDock.vue 的页签行与 `workspace-dock-toggle`（WorkspaceWorkbench.vue:1241
+        //    渲染），本段判据即按这两处判。D2：折叠后整列含页签行不渲染、无展开把手 ⇒ dock-open 命中 0）
         // D-1907 rev5 判据（取代 rev3 的「唯一 + 可见 + 可开」三项，rev4 更正 rail 内只剩 28px 展开按钮）：
         // 折叠态 ⇒ 开合图标唯一、可见、可点开，且**必须位于顶栏右侧常驻区、不得落在右栏 DOM 子树内**；
         // 展开态 ⇒ 顶部六面板图标退场，且点已激活页签不关整列。

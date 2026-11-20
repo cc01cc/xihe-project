@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, inject, markRaw, nextTick, onBeforeUnmount, watch } from "vue";
-import { useElementSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -380,7 +379,7 @@ const toTargetsPayload = computed(() => {
  *
  * <p>为什么是「一次性」而不是常驻：这句话教的是**语义**（清空 TO 等于谁都不通知），学会一次就够；
  * 常驻会同时违反两条判据 —— ①每屏多一行常驻警示（注意力预算），②常驻高度会进 composer 高度链
- * （`--xh-composer-h` 被浮动态 dock 依赖）。也不走 sonner toast：那条通道是**错误**通道
+ * （当时 `--xh-composer-h` 被浮动态 dock 依赖；该依赖随 `D-1754 ④` 退场，发布点已由 task-23 删除）。也不走 sonner toast：那条通道是**错误**通道
  * （`发送失败`），把「本条不通知任何人」混进去会让用户以为发送失败。</p>
  *
  * <p>三条判据（缺一不算完成）：①动过定向栏且最终为空 ⇒ 提示 1 次、`send` 第 5 参仍 `[]`；
@@ -1516,26 +1515,11 @@ function prefillDraft(next: {
     return applied ? "applied" : "idle";
 }
 
-/**
- * task-442（F-14 / D-1276 C1）：把 composer 的**实测高度**发布成 `--xh-composer-h`，
- * 供浮动 dock 把底边让开（`WorkspaceDock.vue` 的 `panelStyle`）。
- *
- * 为什么用 `useElementSize`（`@vueuse/core`，栈内已有依赖）而不是自研 ResizeObserver：
- * 用户裁定「复杂组件优先栈内库」；高度随附件/多行/移动端安全区变化，写死内距是魔数。
- * 发布目标是**最近的 workbench 根**（浮动 dock 的包含块），不是 `:root` —— 避免离开会话面后
- * 留下陈旧值把别的页面的 dock 底边抬高；卸载时显式归零。移动端没有该根 ⇒ 天然 no-op。
- */
-const composerRoot = ref<HTMLElement | null>(null);
-// border-box：composer 自带 px/pt/pb 内距，content-box 会少算约 16px ⇒ 面板底边仍压住 composer 顶。
-const { height: composerHeight } = useElementSize(composerRoot, undefined, {
-    box: "border-box",
-});
-function publishComposerHeight(px: number) {
-    const host = composerRoot.value?.closest('[data-testid="workspace-workbench"]');
-    if (host instanceof HTMLElement) host.style.setProperty("--xh-composer-h", `${px}px`);
-}
-watch(composerHeight, (h) => publishComposerHeight(h), { immediate: true });
-onBeforeUnmount(() => publishComposerHeight(0));
+/* task-23：task-442 的 composer 高度发布（`--xh-composer-h`）已删除 —— 它是**唯一消费方**
+ * 浮动态 dock 的底边让位用的，而浮动 dock 随 `D-1754 ④` 退场（task-94 S1 / task-162）。
+ * 判据：全仓 grep `xh-composer-h` 只剩历史注释与本章节说明，无 CSS/TS 读取方；据此按
+ * 「无消费方即删」处置，而不是给它补一个假消费方。composer 自身高度由模板内边距决定，
+ * 不再向外发布实测值（测量链随之一起删除：`useElementSize` 仅此处使用）。 */
 
 /**
  * task-113 A 步：名册「已加载 / 还没加载」—— 深链用它当**重试信号**。
@@ -1552,7 +1536,6 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
 <template>
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
     <div
-        ref="composerRoot"
         class="min-w-0 border-t bg-background pt-1.5 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.375rem)]"
         data-testid="chat-composer"
     >
