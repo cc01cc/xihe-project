@@ -157,4 +157,59 @@ test.describe("task-118：会话页不挂工作区级导航带", () => {
         await page.getByTestId("workspace-nav-settings").click();
         await expect(page).toHaveURL(new RegExp(`/workspace/${WORKSPACE_ID}/settings`));
     });
+
+    /**
+     * task-5（D1450 / Q-65）：**会话页顶部不再有「设置」入口**，会话设置只经摘要行（右栏 `session-config`）。
+     *
+     * <p>为什么必须落 e2e：这条改动的失败形态是「入口悄悄长回来」——导航项由路由表 `meta.workspacePage`
+     * 派生，壳层只要重新 `showSecondaryNav` 就会在会话页顶部多出一条带；单测里「路由 meta 还在」照样绿。
+     * 证据（真机读数、三带口径、范围边界）见 `internal/A03-xihe/evidence/2026-11-20-session-settings-entry/`。</p>
+     */
+    test("task-5（D1450）：顶部 64px 内没有「设置」入口，会话设置只经摘要行进 session-config", async ({
+        page,
+    }) => {
+        await setupFixtures(page);
+        await page.goto(CHAT_PATH);
+        await expect(page.getByTestId("session-settings-summary")).toBeVisible();
+
+        // ① 工作区导航带整族为 0：会话页顶部不许出现工作区级的「设置」入口。
+        //    反证在第三条用例：工作区页上 workspace-nav-settings 仍存在且可点（D-1907 的入口没被误删）。
+        await expect(page.locator('[data-testid^="workspace-nav-"]')).toHaveCount(0);
+
+        // ② 顶部 64px（容器页签行 32px + 会话标题行 32px）内没有任何「设置」文本 / aria-label / title。
+        //    边界卡 64 而不是 96：摘要行正好落在 y=64，它自己就是会话设置的唯一入口（aria「打开会话配置」），
+        //    把它算进扫描区会让断言与裁定互相矛盾。
+        const offenders = await page.evaluate(() => {
+            const hits: { testid: string | null; text: string; top: number }[] = [];
+            for (const el of Array.from(document.querySelectorAll<HTMLElement>("body *"))) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) continue;
+                if (rect.top >= 64) continue;
+                const own = Array.from(el.childNodes)
+                    .filter((node) => node.nodeType === Node.TEXT_NODE)
+                    .map((node) => (node.textContent ?? "").trim())
+                    .join(" ");
+                const hay = `${own} ${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("title") ?? ""}`;
+                if (hay.includes("设置")) {
+                    hits.push({
+                        testid: el.dataset.testid ?? null,
+                        text: hay.trim(),
+                        top: Math.round(rect.top),
+                    });
+                }
+            }
+            return hits;
+        });
+        expect(
+            offenders,
+            `会话页顶部 64px 内不得有「设置」入口，实际命中：${JSON.stringify(offenders)}`,
+        ).toEqual([]);
+
+        // ③ 唯一入口：点摘要行 ⇒ 右栏恰好开出一个 pane:right:session-config:<sid>，且它被选中。
+        await page.getByTestId("session-settings-summary").click();
+        const configTab = page.getByTestId("dock-tab-pane:right:session-config:session-1");
+        await expect(configTab).toBeVisible();
+        await expect(configTab).toHaveAttribute("aria-selected", "true");
+        await expect(page.locator('[data-testid^="dock-tab-pane:right:session-config:"]')).toHaveCount(1);
+    });
 });
