@@ -16,7 +16,7 @@ tags:
 
 # DEV-037: 授权模型详解（交集授权）
 
-> 名称状态：**LEAD 推荐，待用户最终确认（2026-11-20）**。改名单点只有三处：本篇标题、§1 的结论句、`A03-xihe/docs/i18n/zh-Hans/DEV-032-terminology.md` 的词条。
+> 名称状态：**已定名（DSD-1499，2026-11-20 用户拍定）**。「交集授权（Intersection-grant Authorization）」由用户选定，非待定；改名单点只有三处：本篇标题、§1 的结论句、`A03-xihe/docs/i18n/zh-Hans/DEV-032-terminology.md` 的词条。
 > 读者：要判断「这条路径能不能走」的开发者、要审「PEP（执行点）有没有漏」的审查者、要决定「要不要换现成件」的决策者。
 > 事实口径：判据以 `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/` 的源码为准（2026-11-20 工作树读数）；证据等级标注沿用 `fact-verification` 的 [实测] / [源码] / [文档]。
 > 决策记录：定名见 DSD-1492，换型阈值见 DSD-1497。
@@ -29,7 +29,7 @@ tags:
 
 | 候选 | 主张 | 结论 |
 |---|---|---|
-| **交集授权（Intersection-grant Authorization）** | 名字直接指向不变式：两轴交集 + 缺省拒 | **采纳**（LEAD 推荐，待用户确认） |
+| **交集授权（Intersection-grant Authorization）** | 名字直接指向不变式：两轴交集 + 缺省拒 | **采纳**（DSD-1499，2026-11-20 用户拍定） |
 | 能力边界授权（Capability-boundary Authorization） | 强调「主体派生链每级都有上限」 | 备选：只说清 ceiling 一侧，没表达资源轴交集 |
 | 原子授权 / 逐原子授权（Atom-grant） | 强调判据单位是原子 | 备选：容易被读成 ABAC 的「属性原子」 |
 
