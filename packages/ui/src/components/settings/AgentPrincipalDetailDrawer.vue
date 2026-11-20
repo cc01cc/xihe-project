@@ -6,7 +6,6 @@ import { LoaderCircle, Plus, RotateCcw, X } from "@lucide/vue";
 import { api, ApiError, type AgentModelRef, type AgentRoleBinding } from "../../composables/api";
 import { presentCauseError, type ErrorPresentation } from "../../lib/errorMessages";
 import { formatDate } from "../../lib/dateFormat";
-import { shallowClone } from "../../lib/shallowClone";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -21,6 +20,11 @@ import {
     AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Switch } from "../ui/switch";
+import AgentModelBindingFields, {
+    type AgentModelBindingDraft,
+} from "./AgentModelBindingFields.vue";
+import { useConfigStore } from "../../stores/config";
+import { chatModelNamesOf } from "../../services/providerConnectionService";
 import DelegationPolicyFields from "./DelegationPolicyFields.vue";
 import ErrorBlock from "./AgentPrincipalDetailErrorBlock.vue";
 import {
@@ -112,19 +116,50 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const K = "agentPrincipalDetail.";
 
+const configStore = useConfigStore();
+
+/** 可用 chat 连接 —— 与 AgentModelBindingFields 同一份来源（不建第二份连接状态）。 */
+const chatConnections = computed(() =>
+    configStore.providerConnections.filter((item) => item.operation === "chat" && item.enabled),
+);
+
+/** 存量 provider+model 能映射到哪条可见 chat 连接；映射不到 = 存量裸串（只警示，不改写）。 */
+function resolveConnectionId(provider: string, model: string): string {
+    if (!provider || !model) return "";
+    const match = chatConnections.value.find(
+        (item) =>
+            item.providerId === provider &&
+            chatModelNamesOf(item, configStore.modelCache.providers).includes(model),
+    );
+    return match?.id ?? "";
+}
+
 // ---- 工作副本与基准（dirty 判定用） --------------------------------------------------------
 
+/** 白名单行草稿：连接 id 只用于在本页挑模型，不上 wire（契约：主体不持有连接）。 */
+interface AllowedModelDraft {
+    provider: string;
+    connectionId: string;
+    model: string;
+}
 interface ModelDraft {
     provider: string;
+    /** 本地挑模型用的连接（task-138）；wire 仍然只写 provider + model。 */
+    connectionId: string;
     model: string;
-    allowedModels: AgentModelRef[];
+    allowedModels: AllowedModelDraft[];
 }
 interface HookAdvisorDraft {
     kind: string;
     on: string[];
 }
 
-const modelDraft = reactive<ModelDraft>({ provider: "", model: "", allowedModels: [] });
+const modelDraft = reactive<ModelDraft>({
+    provider: "",
+    connectionId: "",
+    model: "",
+    allowedModels: [],
+});
 const modelBaseline = ref("");
 const delegationDraft = ref<DelegationPolicyValue>({ maxCount: null, maxDepth: null });
 const delegationBaseline = ref<DelegationPolicyValue>({ maxCount: null, maxDepth: null });
@@ -172,7 +207,15 @@ function parseAdvisors(doc: Record<string, unknown> | null): HookAdvisorDraft[] 
 }
 
 function snapshotModel(draft: ModelDraft): string {
-    return JSON.stringify([draft.provider.trim(), draft.model.trim(), draft.allowedModels]);
+    // 连接只是挑选态，不进快照 —— 换个等价连接不算脏。
+    return JSON.stringify([
+        draft.provider.trim(),
+        draft.model.trim(),
+        draft.allowedModels.map((entry) => ({
+            provider: entry.provider.trim(),
+            model: entry.model.trim(),
+        })),
+    ]);
 }
 
 function resetDrafts() {
@@ -180,7 +223,12 @@ function resetDrafts() {
     if (!principal) return;
     modelDraft.provider = principal.defaultModelProvider ?? "";
     modelDraft.model = principal.defaultModelName ?? "";
-    modelDraft.allowedModels = (principal.allowedModels ?? []).map((entry) => shallowClone(entry));
+    modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
+    modelDraft.allowedModels = (principal.allowedModels ?? []).map((entry) => ({
+        provider: entry.provider,
+        model: entry.model,
+        connectionId: resolveConnectionId(entry.provider, entry.model),
+    }));
     modelBaseline.value = snapshotModel(modelDraft);
     delegationDraft.value = parseDelegationPolicy(principal.delegationPolicy);
     delegationBaseline.value = { ...delegationDraft.value };
@@ -257,6 +305,98 @@ const modelSaveBlocked = computed(
     () => props.readonly || !modelDirty.value || !modelValid.value || modelSaving.value,
 );
 
+/** 当前 provider 名下的可用 chat 连接（诊断徽标口径，和建会话时后端现查的那组同源）。 */
+const modelProviderConnections = computed(() =>
+    chatConnections.value.filter((item) => item.providerId === modelDraft.provider.trim()),
+);
+
+/**
+ * task-138 J2：连接诊断三态。文案对应后端真实后果 —— 建会话时
+ * SessionService.bindProviderConnection 按 provider 现查可用 chat 连接：0 条 ⇒ 400
+ * PROVIDER_REQUIRED；恰 1 条才自动绑定；≥2 条 ⇒ 400 PROVIDER_CONNECTION_AMBIGUOUS
+ * （detail: "Multiple usable chat connections (N); pass providerConnectionId explicitly"）。
+ */
+const modelDiagnostic = computed<null | {
+    state: "none" | "single" | "ambiguous";
+    count: number;
+    name: string;
+}>(() => {
+    const provider = modelDraft.provider.trim();
+    if (!provider) return null;
+    const candidates = modelProviderConnections.value;
+    if (candidates.length === 0) return { state: "none", count: 0, name: "" };
+    if (candidates.length === 1) {
+        const only = candidates[0]!;
+        return { state: "single", count: 1, name: only.label || only.connectionKey || provider };
+    }
+    return { state: "ambiguous", count: candidates.length, name: "" };
+});
+
+const modelDiagnosticText = computed(() => {
+    const diagnostic = modelDiagnostic.value;
+    if (!diagnostic) return "";
+    if (diagnostic.state === "single")
+        return t(K + "modelDiagnosticSingle", { name: diagnostic.name });
+    if (diagnostic.state === "ambiguous") {
+        return t(K + "modelDiagnosticAmbiguous", { count: diagnostic.count });
+    }
+    return t(K + "modelDiagnosticNone", { provider: modelDraft.provider.trim() });
+});
+
+/** 存量裸串：有 provider+model 但映射不到任何可见连接 ⇒ 只警示（保留原值可继续保存）。 */
+const modelLegacyUnmapped = computed(
+    () =>
+        Boolean(modelDraft.provider.trim() && modelDraft.model.trim()) &&
+        modelDraft.connectionId === "",
+);
+
+/** 存量意图：让组件把 provider+model 预填到三段（映射不到就留空，另显示「当前：…」）。 */
+const modelIntent = computed(() =>
+    props.principal?.defaultModelProvider && props.principal?.defaultModelName
+        ? {
+              provider: props.principal.defaultModelProvider,
+              model: props.principal.defaultModelName,
+          }
+        : null,
+);
+
+/** AgentModelBindingFields 草稿（restrict 在详情抽屉不使用）。 */
+const modelBinding = computed<AgentModelBindingDraft>({
+    get: () => ({
+        provider: modelDraft.provider,
+        connectionId: modelDraft.connectionId,
+        model: modelDraft.model,
+        restrict: false,
+    }),
+    set: (value) => {
+        modelDraft.provider = value.provider;
+        modelDraft.connectionId = value.connectionId;
+        modelDraft.model = value.model;
+    },
+});
+
+/** 白名单行 ↔ 组件草稿：连接只用于本页挑模型。 */
+function allowedBinding(entry: AllowedModelDraft): AgentModelBindingDraft {
+    return {
+        provider: entry.provider,
+        connectionId: entry.connectionId,
+        model: entry.model,
+        restrict: false,
+    };
+}
+
+function applyAllowedModel(index: number, value: AgentModelBindingDraft): void {
+    const entry = modelDraft.allowedModels[index];
+    if (!entry) return;
+    entry.provider = value.provider;
+    entry.connectionId = value.connectionId;
+    entry.model = value.model;
+}
+
+function addAllowedModel(): void {
+    modelDraft.allowedModels.push({ provider: "", connectionId: "", model: "" });
+}
+
 const delegationDirty = computed(() =>
     delegationPolicyDirty(delegationBaseline.value, delegationDraft.value),
 );
@@ -324,25 +464,28 @@ async function saveModel() {
     try {
         const provider = modelDraft.provider.trim();
         const model = modelDraft.model.trim();
+        // 连接只要挑模型，落 wire 的仍是 {provider, model}（契约：主体不持有连接）。
+        const wireAllowedModels = modelDraft.allowedModels.map((entry) => ({
+            provider: entry.provider.trim(),
+            model: entry.model.trim(),
+        }));
         const view = await api.updateAgentPrincipal(principalId, {
             ...(provider !== baseline[0] ? { defaultModelProvider: provider || null } : {}),
             ...(model !== baseline[1] ? { defaultModelName: model || null } : {}),
-            ...(JSON.stringify(modelDraft.allowedModels) !== JSON.stringify(baseline[2])
-                ? {
-                      allowedModels: modelDraft.allowedModels.length
-                          ? modelDraft.allowedModels.map((entry) => ({
-                                provider: entry.provider.trim(),
-                                model: entry.model.trim(),
-                            }))
-                          : null,
-                  }
+            ...(JSON.stringify(wireAllowedModels) !== JSON.stringify(baseline[2])
+                ? { allowedModels: wireAllowedModels.length ? wireAllowedModels : null }
                 : {}),
         });
         // 守卫：等待期间可能已关闭抽屉/切换主体 —— 不回填就能把旧抽屉复活（vue skill 硬约束）。
         if (!principalGuard(principalId)) return;
         modelDraft.provider = view.defaultModelProvider ?? "";
         modelDraft.model = view.defaultModelName ?? "";
-        modelDraft.allowedModels = (view.allowedModels ?? []).map((entry) => shallowClone(entry));
+        modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
+        modelDraft.allowedModels = (view.allowedModels ?? []).map((entry) => ({
+            provider: entry.provider,
+            model: entry.model,
+            connectionId: resolveConnectionId(entry.provider, entry.model),
+        }));
         modelBaseline.value = snapshotModel(modelDraft);
         emit("changed", {
             principalId,
@@ -364,7 +507,12 @@ function resetModel() {
     const baseline = JSON.parse(modelBaseline.value) as [string, string, AgentModelRef[]];
     modelDraft.provider = baseline[0];
     modelDraft.model = baseline[1];
-    modelDraft.allowedModels = baseline[2].map((entry) => shallowClone(entry));
+    modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
+    modelDraft.allowedModels = baseline[2].map((entry) => ({
+        provider: entry.provider,
+        model: entry.model,
+        connectionId: resolveConnectionId(entry.provider, entry.model),
+    }));
     sectionErrors.model = null;
 }
 
@@ -478,8 +626,9 @@ function closeDrawer() {
 <template>
     <Dialog :open="open" @update:open="(value: boolean) => !value && closeDrawer()">
         <DialogContent
+            width="config"
             data-testid="agent-principal-detail-drawer"
-            class="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+            class="max-h-[85vh] overflow-y-auto"
         >
             <DialogHeader>
                 <DialogTitle data-testid="agent-principal-detail-title">
@@ -494,8 +643,10 @@ function closeDrawer() {
 
             <div v-if="principal" class="space-y-6">
                 <!-- 身份（只读） -->
-                <section data-testid="apd-identity" class="space-y-2">
-                    <h3 class="text-sm font-medium">{{ t(K + "sectionIdentity") }}</h3>
+                <section data-testid="apd-identity" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionIdentity") }}
+                    </h3>
                     <dl class="space-y-1 text-sm">
                         <div class="flex items-center gap-2">
                             <dt class="w-20 shrink-0 text-muted-foreground">
@@ -531,8 +682,10 @@ function closeDrawer() {
                 </section>
 
                 <!-- 人设（Q1：创建时钉住，只读） -->
-                <section data-testid="apd-persona" class="space-y-2">
-                    <h3 class="text-sm font-medium">{{ t(K + "sectionPersona") }}</h3>
+                <section data-testid="apd-persona" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionPersona") }}
+                    </h3>
                     <p class="text-sm">
                         {{
                             principal.templateName
@@ -546,9 +699,11 @@ function closeDrawer() {
                 </section>
 
                 <!-- 模型意图（可写；instance 层只读） -->
-                <section data-testid="apd-model" class="space-y-3">
-                    <div class="flex items-center justify-between">
-                        <h3 class="text-sm font-medium">{{ t(K + "sectionModel") }}</h3>
+                <section data-testid="apd-model" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionModel") }}
+                    </h3>
+                    <div class="flex justify-end">
                         <Button
                             v-if="canEdit('model') && modelDirty"
                             type="button"
@@ -561,31 +716,39 @@ function closeDrawer() {
                             {{ t(K + "reset") }}
                         </Button>
                     </div>
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div class="space-y-1.5">
-                            <label class="text-sm font-medium" for="apd-model-provider">
-                                {{ t(K + "modelProvider") }}
-                            </label>
-                            <Input
-                                id="apd-model-provider"
-                                v-model="modelDraft.provider"
-                                :disabled="!canEdit('model')"
-                                data-testid="apd-model-provider"
-                                autocomplete="off"
-                            />
-                        </div>
-                        <div class="space-y-1.5">
-                            <label class="text-sm font-medium" for="apd-model-name">
-                                {{ t(K + "modelName") }}
-                            </label>
-                            <Input
-                                id="apd-model-name"
-                                v-model="modelDraft.model"
-                                :disabled="!canEdit('model')"
-                                data-testid="apd-model-name"
-                                autocomplete="off"
-                            />
-                        </div>
+                    <div class="space-y-2">
+                        <AgentModelBindingFields
+                            v-model="modelBinding"
+                            field-prefix="apd-model-binding"
+                            hint-prefix="apd-model-binding-hint"
+                            :intent="modelIntent"
+                            :disabled="!canEdit('model')"
+                        />
+                        <p
+                            v-if="modelDiagnostic"
+                            class="text-xs"
+                            :class="
+                                modelDiagnostic.state === 'single'
+                                    ? 'text-muted-foreground'
+                                    : 'text-destructive'
+                            "
+                            :data-state="modelDiagnostic.state"
+                            data-testid="apd-model-diagnostic"
+                        >
+                            {{ modelDiagnosticText }}
+                        </p>
+                        <p
+                            v-if="modelLegacyUnmapped"
+                            class="text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="apd-model-legacy"
+                        >
+                            {{
+                                t(K + "modelLegacyUnmapped", {
+                                    provider: modelDraft.provider,
+                                    model: modelDraft.model,
+                                })
+                            }}
+                        </p>
                     </div>
                     <p v-if="bothOrNeitherError" class="text-xs text-destructive" role="alert">
                         {{ t(K + "modelBothOrNeither") }}
@@ -598,35 +761,29 @@ function closeDrawer() {
                         <div
                             v-for="(entry, index) in modelDraft.allowedModels"
                             :key="index"
-                            class="grid grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_1fr_auto]"
+                            class="space-y-1"
                         >
-                            <Input
-                                v-model="entry.provider"
+                            <AgentModelBindingFields
+                                :model-value="allowedBinding(entry)"
+                                :field-prefix="'apd-allowed-' + index"
+                                :hint-prefix="'apd-allowed-hint-' + index"
                                 :disabled="!canEdit('model')"
-                                :data-testid="'apd-allowed-provider-' + index"
-                                :aria-label="t(K + 'modelProvider')"
-                                :placeholder="t(K + 'modelProvider')"
-                                autocomplete="off"
-                            />
-                            <Input
-                                v-model="entry.model"
-                                :disabled="!canEdit('model')"
-                                :data-testid="'apd-allowed-model-' + index"
-                                :aria-label="t(K + 'modelName')"
-                                :placeholder="t(K + 'modelName')"
-                                autocomplete="off"
+                                hide-restrict
+                                @update:model-value="
+                                    (value: AgentModelBindingDraft) =>
+                                        applyAllowedModel(index, value)
+                                "
                             />
                             <Button
                                 v-if="canEdit('model')"
                                 type="button"
                                 variant="ghost"
-                                size="icon"
-                                class="shrink-0 justify-self-end sm:justify-self-auto"
+                                size="sm"
                                 :data-testid="'apd-allowed-remove-' + index"
-                                :aria-label="t(K + 'allowedModelsRemove')"
                                 @click="modelDraft.allowedModels.splice(index, 1)"
                             >
                                 <X class="size-3.5" aria-hidden="true" />
+                                {{ t(K + "allowedModelsRemove") }}
                             </Button>
                         </div>
                         <Button
@@ -635,7 +792,7 @@ function closeDrawer() {
                             variant="outline"
                             size="sm"
                             data-testid="apd-allowed-add"
-                            @click="modelDraft.allowedModels.push({ provider: '', model: '' })"
+                            @click="addAllowedModel"
                         >
                             <Plus class="size-3.5" aria-hidden="true" />
                             {{ t(K + "allowedModelsAdd") }}
@@ -667,8 +824,10 @@ function closeDrawer() {
                 </section>
 
                 <!-- 委派预算（可写；instance 层只读） -->
-                <section data-testid="apd-delegation" class="space-y-3">
-                    <h3 class="text-sm font-medium">{{ t(K + "sectionDelegation") }}</h3>
+                <section data-testid="apd-delegation" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionDelegation") }}
+                    </h3>
                     <p
                         v-if="isUnknown('delegation')"
                         class="text-xs text-muted-foreground"
@@ -700,9 +859,11 @@ function closeDrawer() {
                 </section>
 
                 <!-- 记忆（可写；instance 层只读） -->
-                <section data-testid="apd-memory" class="space-y-3">
-                    <div class="flex items-center justify-between">
-                        <h3 class="text-sm font-medium">{{ t(K + "sectionMemory") }}</h3>
+                <section data-testid="apd-memory" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionMemory") }}
+                    </h3>
+                    <div class="flex justify-end">
                         <Switch
                             v-model="memoryEnabled"
                             :disabled="!canEdit('memory') || memorySaving"
@@ -731,8 +892,10 @@ function closeDrawer() {
                 </section>
 
                 <!-- 钩子订阅（可写；on 白名单今天只有 approval.ask，UI 固定之） -->
-                <section data-testid="apd-hooks" class="space-y-3">
-                    <h3 class="text-sm font-medium">{{ t(K + "sectionHooks") }}</h3>
+                <section data-testid="apd-hooks" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionHooks") }}
+                    </h3>
                     <p v-if="advisors.length === 0" class="text-sm text-muted-foreground">
                         {{ t(K + "hooksEmpty") }}
                     </p>
@@ -796,8 +959,10 @@ function closeDrawer() {
                 </section>
 
                 <!-- 能力（只读；授权在 CP，UI 不复制判定） -->
-                <section data-testid="apd-capabilities" class="space-y-2">
-                    <h3 class="text-sm font-medium">{{ t(K + "sectionCapabilities") }}</h3>
+                <section data-testid="apd-capabilities" class="apd-two-col">
+                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                        {{ t(K + "sectionCapabilities") }}
+                    </h3>
                     <p
                         v-if="rolesLoading"
                         class="flex items-center gap-2 text-sm text-muted-foreground"
@@ -905,3 +1070,20 @@ function closeDrawer() {
         </DialogContent>
     </Dialog>
 </template>
+
+<style scoped>
+/* task-137：config 档（768px）下 agent 配置弹窗改成「标签列 + 内容列」两列布局 —— 7.5rem 标签列，
+   其余子项统一落第二列；<640px 仍是单列堆叠，与旧 512px 形态一致（不引入新断点语义）。 */
+@media (min-width: 40rem) {
+    .apd-two-col {
+        display: grid;
+        grid-template-columns: 7.5rem minmax(0, 1fr);
+        column-gap: 1.5rem;
+        row-gap: 0.5rem;
+    }
+
+    .apd-two-col > :not(h3) {
+        grid-column: 2;
+    }
+}
+</style>

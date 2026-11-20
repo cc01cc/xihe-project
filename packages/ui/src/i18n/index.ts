@@ -3865,6 +3865,13 @@ const messages = {
             modelBothOrNeither: "Provider 与模型必须同时填写或同时清空。",
             allowedModels: "允许模型白名单",
             allowedModelsHint: "留空 = 不限制；给了白名单后该主体只能使用列出的模型。",
+            modelDiagnosticNone:
+                "新建会话会失败：provider「{provider}」没有可用的 chat 连接（后端会返回 400 PROVIDER_REQUIRED）。",
+            modelDiagnosticSingle: "新建会话会自动绑定连接「{name}」。",
+            modelDiagnosticAmbiguous:
+                "新建会话会失败：该 provider 有 {count} 条可用连接，后端会给 400 PROVIDER_CONNECTION_AMBIGUOUS（要求显式传 providerConnectionId）。请只保留一条，或改用实例/工作区模型 profile。",
+            modelLegacyUnmapped:
+                "当前：{provider} / {model} —— 不在已登记连接中；保留原值可以直接保存，也可以在上面重新选择。",
             allowedModelsAdd: "添加模型",
             allowedModelsRemove: "移除该模型",
             modelSave: "保存模型",
@@ -8018,6 +8025,13 @@ const messages = {
             allowedModels: "Allowed-models whitelist",
             allowedModelsHint:
                 "Empty = unrestricted; with a whitelist this principal may only use the listed models.",
+            modelDiagnosticNone:
+                'New sessions will fail: provider "{provider}" has no usable chat connection (the backend returns 400 PROVIDER_REQUIRED).',
+            modelDiagnosticSingle: 'New sessions will bind connection "{name}" automatically.',
+            modelDiagnosticAmbiguous:
+                "New sessions will fail: this provider has {count} usable connections and the backend answers 400 PROVIDER_CONNECTION_AMBIGUOUS (it wants an explicit providerConnectionId). Keep only one, or switch to an instance/workspace model profile.",
+            modelLegacyUnmapped:
+                "Current: {provider} / {model} — not in any registered connection; keeping the value saves as-is, or pick again above.",
             allowedModelsAdd: "Add model",
             allowedModelsRemove: "Remove this model",
             modelSave: "Save model",

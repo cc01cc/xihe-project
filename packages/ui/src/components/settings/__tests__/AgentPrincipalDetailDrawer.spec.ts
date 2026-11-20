@@ -7,6 +7,43 @@ import { i18n } from "../../../i18n";
 import AgentPrincipalDetailDrawer, {
     type AgentPrincipalDetail,
 } from "../AgentPrincipalDetailDrawer.vue";
+import { Select } from "../../ui/select";
+import { selectModelValue, setSelectValue } from "../../../test-utils/select";
+
+/**
+ * task-138：模型段改成「连接 → 模型」三级选择（复用 AgentModelBindingFields），
+ * 数据只来自既有 config store（连接 + /models 目录）。这里给同形替身，`chatModelNamesOf`
+ * 保持真实现（目录优先/manual 回退的策略必须被真跑到）。
+ */
+const configState = vi.hoisted(() => ({
+    providerConnections: [] as Array<Record<string, unknown>>,
+    providerConnectionsError: false,
+    modelError: null as string | null,
+    modelCache: { providers: {} as Record<string, unknown> },
+    loadProviderConnections: vi.fn<() => Promise<void>>(async () => {}),
+    fetchModels: vi.fn<() => Promise<void>>(async () => {}),
+}));
+
+vi.mock("../../../stores/config", () => ({
+    useConfigStore: () => configState,
+}));
+
+vi.mock("../../../services/providerConnectionService", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return {
+        ...actual,
+        listProviderCatalog: vi.fn<() => Promise<{ providers: unknown[] }>>(async () => ({
+            providers: [],
+        })),
+    };
+});
+
+vi.mock("vue-sonner", () => ({
+    toast: {
+        success: vi.fn<(message: string) => void>(),
+        error: vi.fn<(message: string) => void>(),
+    },
+}));
 
 /**
  * task-191 · 主体详情抽屉（user 层可写口径）。
@@ -71,6 +108,22 @@ async function click(testid: string): Promise<void> {
     await nextTick();
 }
 
+type DrawerWrapper = ReturnType<typeof mountDrawer>;
+
+/** 选中三段中的一段（reka Select 在 jsdom 里走 emit，与 test-utils/select 同口径）。 */
+async function pick(wrapper: DrawerWrapper, testid: string, value: string): Promise<void> {
+    await setSelectValue(wrapper as never, `[data-testid="${testid}"]`, value);
+    await flushPromises();
+    await nextTick();
+}
+
+/** 把默认模型改成 anthropic/claude-x（三段都要点，否则组件会判半组）。 */
+async function pickAnthropic(wrapper: DrawerWrapper): Promise<void> {
+    await pick(wrapper, "apd-model-binding-provider", "anthropic");
+    await pick(wrapper, "apd-model-binding-connection", "conn-anthropic");
+    await pick(wrapper, "apd-model-binding-model-name", "claude-x");
+}
+
 function forbidden(code: string): ApiError {
     return new ApiError({
         status: 403,
@@ -84,6 +137,42 @@ beforeEach(() => {
     document.body.innerHTML = "";
     vi.restoreAllMocks();
     vi.spyOn(api, "getAgentRoles").mockResolvedValue([]);
+    configState.providerConnections = [
+        {
+            id: "conn-anthropic",
+            providerId: "anthropic",
+            connectionKey: "anthropic-main",
+            operation: "chat",
+            label: "Claude 主连接",
+            enabled: true,
+        },
+        {
+            id: "conn-openai",
+            providerId: "openai",
+            connectionKey: "openai-main",
+            operation: "chat",
+            label: "GPT 主连接",
+            enabled: true,
+        },
+    ];
+    configState.providerConnectionsError = false;
+    configState.modelError = null;
+    configState.modelCache = {
+        providers: {
+            "conn-anthropic": {
+                providerId: "anthropic",
+                connectionId: "conn-anthropic",
+                status: "ready",
+                models: [{ name: "claude-x", capabilities: { chat: true } }],
+            },
+            "conn-openai": {
+                providerId: "openai",
+                connectionId: "conn-openai",
+                status: "ready",
+                models: [{ name: "gpt-4o-mini", capabilities: { chat: true } }],
+            },
+        },
+    };
 });
 
 describe("AgentPrincipalDetailDrawer", () => {
@@ -115,8 +204,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         const wrapper = mountDrawer();
         await flushPromises();
 
-        await setName("apd-model-provider", "anthropic");
-        await setName("apd-model-name", "claude-x");
+        await pickAnthropic(wrapper);
         await click("apd-model-save");
 
         expect(update).toHaveBeenCalledTimes(1);
@@ -135,12 +223,12 @@ describe("AgentPrincipalDetailDrawer", () => {
         });
     });
 
-    it("Provider 与模型成对：半填时保存被挡住、不发请求", async () => {
+    it("Provider 与模型成对：只选 provider 不选模型时保存被挡住、不发请求", async () => {
         const update = vi.spyOn(api, "updateAgentPrincipal");
-        mountDrawer();
+        const wrapper = mountDrawer();
         await flushPromises();
 
-        await setName("apd-model-name", "");
+        await pick(wrapper, "apd-model-binding-provider", "anthropic");
         const save = q<HTMLButtonElement>('[data-testid="apd-model-save"]');
         expect(save.disabled).toBe(true);
         save.click();
@@ -225,10 +313,10 @@ describe("AgentPrincipalDetailDrawer", () => {
         ["AGENT_PRINCIPAL_OWNER_MISMATCH", "创建者"],
     ])("403 %s ⇒ 可操作文案 + 折叠技术详情（无原始英文 detail）", async (code, hint) => {
         vi.spyOn(api, "updateAgentPrincipal").mockRejectedValue(forbidden(code));
-        mountDrawer();
+        const wrapper = mountDrawer();
         await flushPromises();
 
-        await setName("apd-model-name", "claude-x");
+        await pickAnthropic(wrapper);
         await click("apd-model-save");
 
         const error = q('[data-testid="apd-model-error"]');
@@ -240,14 +328,18 @@ describe("AgentPrincipalDetailDrawer", () => {
     });
 
     it("只读档（instance 层 Q2）：不给保存键、输入全部 disabled", async () => {
-        mountDrawer({ readonly: true, editableSections: [] });
+        const wrapper = mountDrawer({ readonly: true, editableSections: [] });
         await flushPromises();
 
         expect(maybe('[data-testid="apd-model-save"]')).toBeNull();
         expect(maybe('[data-testid="apd-delegation-save"]')).toBeNull();
         expect(maybe('[data-testid="apd-memory-save"]')).toBeNull();
         expect(maybe('[data-testid="apd-hooks-save"]')).toBeNull();
-        expect(q<HTMLInputElement>('[data-testid="apd-model-provider"]').disabled).toBe(true);
+        // 三段选择器全部 disabled（不是靠隐藏假装只读）。
+        expect(wrapper.findAllComponents(Select)[0]!.props("disabled")).toBe(true);
+        expect(
+            selectModelValue(wrapper as never, '[data-testid="apd-model-binding-provider"]'),
+        ).toBe("openai");
         expect(maybe('[data-testid="apd-disable"]')).toBeNull();
     });
 
@@ -290,7 +382,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         const wrapper = mountDrawer();
         await flushPromises();
 
-        await setName("apd-model-name", "claude-x");
+        await pickAnthropic(wrapper);
         q('[data-testid="apd-model-save"]').click();
         await nextTick();
 
@@ -307,5 +399,127 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         expect(wrapper.emitted("changed")).toBeUndefined();
+    });
+
+    it("连接诊断 · 0 条：告警新建会话会失败，并点名后端 PROVIDER_REQUIRED", async () => {
+        configState.providerConnections = configState.providerConnections.filter(
+            (item) => item.providerId !== "openai",
+        );
+        mountDrawer();
+        await flushPromises();
+
+        const diagnostic = q('[data-testid="apd-model-diagnostic"]');
+        expect(diagnostic.dataset.state).toBe("none");
+        expect(diagnostic.textContent).toContain("新建会话会失败");
+        // 与 SessionService.bindProviderConnection 的 400 PROVIDER_REQUIRED 同义。
+        expect(diagnostic.textContent).toContain("PROVIDER_REQUIRED");
+    });
+
+    it("连接诊断 · 1 条：告知会绑定哪条连接", async () => {
+        mountDrawer();
+        await flushPromises();
+
+        const diagnostic = q('[data-testid="apd-model-diagnostic"]');
+        expect(diagnostic.dataset.state).toBe("single");
+        expect(diagnostic.textContent).toContain("GPT 主连接");
+    });
+
+    it("连接诊断 · N 条：文案对齐后端 400 PROVIDER_CONNECTION_AMBIGUOUS 的后果", async () => {
+        // 后端原文（SessionService.java:596-604）：
+        // Multiple usable chat connections (N); pass providerConnectionId explicitly. Candidates: …
+        configState.providerConnections = [
+            ...configState.providerConnections,
+            {
+                id: "conn-openai-second",
+                providerId: "openai",
+                connectionKey: "openai-second",
+                operation: "chat",
+                label: "GPT 备连接",
+                enabled: true,
+            },
+        ];
+        mountDrawer();
+        await flushPromises();
+
+        const diagnostic = q('[data-testid="apd-model-diagnostic"]');
+        expect(diagnostic.dataset.state).toBe("ambiguous");
+        expect(diagnostic.textContent).toContain("PROVIDER_CONNECTION_AMBIGUOUS");
+        expect(diagnostic.textContent).toContain("2");
+        expect(diagnostic.textContent).toContain("新建会话会失败");
+    });
+
+    it("存量裸串：值不在任何已登记连接里 ⇒ 只警示、不清空、不改写", async () => {
+        mountDrawer({
+            principal: principal({
+                defaultModelProvider: "legacy-provider",
+                defaultModelName: "gpt-3.5-legacy",
+                allowedModels: null,
+            }),
+        });
+        await flushPromises();
+
+        const legacy = q('[data-testid="apd-model-legacy"]');
+        expect(legacy.textContent).toContain("legacy-provider");
+        expect(legacy.textContent).toContain("gpt-3.5-legacy");
+        // 原值仍在草稿里（选择器显示的就是它），没有被替换成空或自动改指某条连接。
+        const wrapper = mountDrawer({
+            principal: principal({
+                defaultModelProvider: "legacy-provider",
+                defaultModelName: "gpt-3.5-legacy",
+                allowedModels: null,
+            }),
+        });
+        await flushPromises();
+        expect(
+            selectModelValue(wrapper as never, '[data-testid="apd-model-binding-provider"]'),
+        ).toBe("legacy-provider");
+        expect(
+            selectModelValue(wrapper as never, '[data-testid="apd-model-binding-model-name"]'),
+        ).toBe("gpt-3.5-legacy");
+    });
+
+    it("白名单成对校验：新加的空行挡住保存、不发请求", async () => {
+        const update = vi.spyOn(api, "updateAgentPrincipal");
+        mountDrawer();
+        await flushPromises();
+
+        await click("apd-allowed-add");
+        const save = q<HTMLButtonElement>('[data-testid="apd-model-save"]');
+        expect(save.disabled).toBe(true);
+        save.click();
+        await flushPromises();
+        expect(update).not.toHaveBeenCalled();
+    });
+
+    it("白名单落库：连接只用于挑模型，wire 仍是成对 {provider, model}", async () => {
+        const update = vi.spyOn(api, "updateAgentPrincipal").mockResolvedValue({
+            principalId: "p-1",
+            defaultModelProvider: "openai",
+            defaultModelName: "gpt-4o-mini",
+            allowedModels: [
+                { provider: "openai", model: "gpt-4o-mini" },
+                { provider: "anthropic", model: "claude-x" },
+            ],
+            hooks: null,
+            contextPolicy: null,
+            delegationPolicy: null,
+        });
+        const wrapper = mountDrawer();
+        await flushPromises();
+
+        await click("apd-allowed-add");
+        await pick(wrapper, "apd-allowed-1-provider", "anthropic");
+        await pick(wrapper, "apd-allowed-1-connection", "conn-anthropic");
+        await pick(wrapper, "apd-allowed-1-model-name", "claude-x");
+        await click("apd-model-save");
+
+        const body = update.mock.calls[0]![1] as Record<string, unknown>;
+        expect(Object.keys(body)).toEqual(["allowedModels"]);
+        expect(body.allowedModels).toEqual([
+            { provider: "openai", model: "gpt-4o-mini" },
+            { provider: "anthropic", model: "claude-x" },
+        ]);
+        // 连接 id 不上 wire（契约：主体不持有 provider connection）。
+        expect(JSON.stringify(body.allowedModels)).not.toContain("conn-");
     });
 });

@@ -43,12 +43,19 @@ const props = withDefaults(
         intent?: { provider: string; model: string } | null;
         /** 测试 id 前缀：创建与编辑两个弹窗同屏装配，必须可区分。 */
         fieldPrefix?: string;
+        /**
+         * 白名单行复用本组件时隐藏 restrict 开关（task-138）：白名单本身已经是「限制」语义，
+         * 再给一个「只允许这个模型」的复选只会让用户以为有两层限制。默认 false ⇒
+         * InstanceAgentsPanel 的创建/编辑两处行为一字不变。
+         */
+        hideRestrict?: boolean;
         hintPrefix?: string;
         disabled?: boolean;
     }>(),
     {
         fieldPrefix: "instance-agents-form",
         hintPrefix: "instance-agents-model",
+        hideRestrict: false,
         disabled: false,
     },
 );
@@ -63,36 +70,59 @@ const loading = ref(false);
 const chatConnections = computed(() =>
     configStore.providerConnections.filter((item) => item.operation === "chat" && item.enabled),
 );
-const providerOptions = computed(() =>
-    [...new Set(chatConnections.value.map((item) => item.providerId))].map((id) => ({
+const providerOptions = computed(() => {
+    const ids = [...new Set(chatConnections.value.map((item) => item.providerId))];
+    // task-138 J3：存量意图的提供方可能已一条连接都不剩，仍要把它显示出来 —— 否则选择框
+    // 渲染成空占位，用户看不出「当前保留的是哪个 provider」。
+    const current = props.modelValue.provider;
+    if (current && !ids.includes(current)) ids.push(current);
+    return ids.map((id) => ({
         id,
         label:
             providerDefs.value.find((item) => item.id === id)?.displayName ??
             getProviderInfo(id)?.name ??
             id,
-    })),
-);
+    }));
+});
 const connectionOptions = computed(() =>
     chatConnections.value.filter((item) => item.providerId === props.modelValue.provider),
 );
 const selectedConnection = computed(
     () => chatConnections.value.find((item) => item.id === props.modelValue.connectionId) ?? null,
 );
-const modelOptions = computed(() =>
-    selectedConnection.value
+const modelOptions = computed(() => {
+    const names = selectedConnection.value
         ? chatModelNamesOf(selectedConnection.value, configStore.modelCache.providers)
-        : [],
-);
+        : [];
+    const current = props.modelValue.model;
+    // 同上：存量模型名不在当前目录里（或根本没有连接）时也要显示，保留原值才不是瞎猜。
+    return current && !names.includes(current) ? [current, ...names] : names;
+});
 const unavailable = computed(
     () => configStore.providerConnectionsError || Boolean(configStore.modelError),
 );
 /** 半组选择不是合法载荷：要么三个都空（沿用平台默认），要么三个都有。 */
+/**
+ * 存量「裸 provider+model」（写入时还没有连接这个概念）不是半填：它与 `intent` 完全一致时
+ * 只是没有连接可映射，草稿保留原值即可（task-138 J3：只警示、不清空、不自动改写）。
+ */
+const legacyPair = computed(() => {
+    const { provider, connectionId, model } = props.modelValue;
+    return Boolean(
+        provider &&
+        model &&
+        !connectionId &&
+        props.intent?.provider === provider &&
+        props.intent?.model === model,
+    );
+});
 const incomplete = computed(() => {
     const picked = [
         props.modelValue.provider,
         props.modelValue.connectionId,
         props.modelValue.model,
     ].filter(Boolean);
+    if (legacyPair.value) return false;
     return picked.length === 1 || picked.length === 2;
 });
 
@@ -276,7 +306,11 @@ onMounted(async () => {
         >
             {{ t("settings.instanceResources.agents.modelIncomplete") }}
         </p>
-        <label v-if="modelValue.model" class="flex items-center gap-2 text-xs">
+        <label
+            v-if="modelValue.model && !hideRestrict"
+            class="flex items-center gap-2 text-xs"
+            :data-testid="`${fieldPrefix}-restrict-label`"
+        >
             <Checkbox
                 :model-value="modelValue.restrict"
                 :disabled="disabled"
