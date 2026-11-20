@@ -195,14 +195,14 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 
 > This subsection **supplements** §10.1, it does not replace the four-row table above: §10.1 governs the **layout skeleton** (global rail / module stage / in-module nav / content column), this subsection governs **each part inside the Workbench component**. Where the two disagree, this subsection wins, and the four rows stay. The `ListPane` / `MainPane` / `ContextPane` columns remain the **not implemented** proposal in that table — do not mix them with the two containers defined here.
 
-**Four layers** (top to bottom, the only sanctioned names): 1. 全局条 **Global Rail** (`GlobalRail.vue`, 56px, icon-only ↔ icon + label); 2. 导航面板 **Navigation Panel** (`Sidebar.vue`, 280px, resizable 220–360); 3. **主区顶部** = 工作台页签栏 **Workspace Tab Bar** (`WorkspaceTabBar.vue`, i18n `tabBarLabel`) — it is a projection of the route, not a new route; 4. 页面 = one of the two classes below.
+**Four layers** (top to bottom, the only sanctioned names): 1. 全局导航 **Global navigation** (`GlobalRail.vue`, 56px, icon-only ↔ icon + label); 2. 导航面板 **Navigation Panel** (`Sidebar.vue`, 280px, resizable 220–360); 3. **主区顶部** = 工作台页签栏 **Workspace Tab Bar** (`WorkspaceTabBar.vue`, i18n `tabBarLabel`) — it is a projection of the route, not a new route; 4. 页面 = one of the two classes below.
 
 Layers and container ownership (inline SVG, see DEV-030 §6.1):
 
 <svg viewBox="0 0 660 300" width="100%" role="img">
   <title>Workbench: four layers, and which page class owns the containers</title>
   <rect x="8" y="16" width="48" height="268" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
-  <text x="32" y="150" font-size="10" fill="#374151" text-anchor="middle">Global Rail</text>
+  <text x="32" y="150" font-size="10" fill="#374151" text-anchor="middle">Global navigation</text>
   <rect x="64" y="16" width="104" height="268" rx="5" fill="#f9fafb" stroke="#9ca3af"/>
   <text x="116" y="40" font-size="11" fill="#374151" text-anchor="middle">Navigation</text>
   <text x="116" y="56" font-size="11" fill="#374151" text-anchor="middle">Panel</text>
@@ -215,7 +215,7 @@ Layers and container ownership (inline SVG, see DEV-030 §6.1):
   <text x="414" y="92" font-size="12" fill="#374151" text-anchor="middle">Workspace</text>
   <text x="414" y="106" font-size="11" fill="#374151" text-anchor="middle">Page · 5</text>
   <rect x="196" y="108" width="436" height="26" rx="4" fill="#f9fafb" stroke="#d1d5db"/>
-  <text x="414" y="126" font-size="11" fill="#6b7280" text-anchor="middle">Nav Strip</text>
+  <text x="414" y="126" font-size="11" fill="#6b7280" text-anchor="middle">Workspace nav</text>
   <text x="414" y="152" font-size="11" fill="#6b7280" text-anchor="middle">none here</text>
   <rect x="184" y="178" width="460" height="94" rx="5" fill="#ffffff" stroke="#9ca3af"/>
   <text x="414" y="196" font-size="12" fill="#374151" text-anchor="middle">Session</text>
@@ -231,7 +231,7 @@ Layers and container ownership (inline SVG, see DEV-030 §6.1):
 
 **Two page classes — the key correction: a container is not a page-level concept, it is the structure of the Workbench component.**
 
-| Page class | How many | Component chain | Containers | Secondary nav strip |
+| Page class | How many | Component chain | Containers | Workspace nav |
 | --- | --- | --- | --- | --- |
 | 工作区内容页 Workspace content page | 5 (environment / scheduled tasks / resources / members / settings) | `pages/WorkspaceShell.vue` = `WorkspaceSecondaryNav` (judged by `route.meta?.workspaceSecondaryNav !== false`) + a scroll container holding `RouterView` + the workspace status bar (shared by all six pages, `D-1527`) | **none** — no right row either: none of the five imports a container or `WorkspaceWorkbench` | yes |
 | 会话页面 Session page (2 routes, one component, one page class) | 2: `/workspace/:id` (name `workspace`, the "sessions" entry in the nav; without `:sessionId` the id falls back to `sessionStore.currentSession`, see `pages/WorkspaceView.vue:234-243`) and `/workspace/:id/session/:sessionId` (name `workspace-session`, `meta.workspaceSecondaryNav = false`) | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **two**: `CONTAINER_IDS = ["main","right"]` (`features/workspace/lib/containers.ts:32-33`); the right row renders only when `dockOpen = !layout.dockCollapsed` (`WorkspaceWorkbench.vue:239`, `:499`) | no (`D-1907` rev7 / `task-118`) |
@@ -251,12 +251,13 @@ So two separate statements must be kept apart: (a) "the workspace page also carr
 | 7 | 面板 | `Panel` | `DOCK_TAB_IDS`, `pane:<container>:<view>` | calling a panel a container: per `D-1777` the two columns are containers, a panel is the content of a tab inside one |
 | 8 | 容器页签行 | `Container Tab Row` | `WorkspaceContainerTabs.vue` | "second-level tabs" / "top tab row": not the same level as the Workspace Tab Bar |
 | 9 | 工作台页签栏 | `Workspace Tab Bar` | `WorkspaceTabBar.vue` | "middle tab bar" / "top tabs": describes position, not identity |
-| 10 | 全局条 | `Global Rail` | `GlobalRail.vue` | "left bar", "rail bar" |
+| 10 | 全局导航 | `Global navigation` | `GlobalRail.vue` | "全局条" (a short form missing the 导航 root - navigation parts are always named "qualifier + 导航", `DSD-1490`; a form suffix such as 栏 / 条 / 带 is fine in prose but is never a name-table entry), "left bar", "rail bar" |
 | 11 | 导航面板 | `Navigation Panel` | `Sidebar.vue` | bare "左栏" / "侧边栏" / "sidebar": sidebar is the component name, and the panel holds both workspaces and sessions |
 | 12 | 区头 | `Section Header` | `sidebar-workspaces-header`, `sidebar-sessions-header` | "group title" / "list header": a section header carries actions and a count |
 | 13 | 会话行 / 工作区行 | `Session Row` / `Workspace Row` | `WorkspaceSessionGroups.vue` | "session item" / "workspace item": "item" is too vague |
 | 14 | 摘要行 | `Session Settings Summary` | `session-settings-summary` (`D1450` / `D1463`) | "top settings entry": that entry was removed |
-| 15 | 二级导航带 | `Workspace Nav Strip` | `workspace-nav-*` (must count 0 on a session page) | "workspace tab" / "second-level tab": collides with both the tab bar and the container tab row |
+| 15 | 工作区导航 | `Workspace Nav Strip` | `workspace-nav-*` (must count 0 on a session page) | "二级导航带": a form description, the sanctioned name is 工作区导航 (`DSD-1490`); "workspace tab" / "second-level tab": collides with both the tab bar and the container tab row |
+| 16 | 工作台导航 | `Workspace tab bar` | `WorkspaceTabBar.vue`, i18n `workspace.tabBarLabel` ("工作台页签", unchanged) | Same part as row 9: row 9 records the **form** (页签栏), this row the **structural name** (导航); the UI label stays `workspace.tabBarLabel` "工作台页签" and is not changed |
 
 **Additional prohibitions** (on top of the three disciplines in §10.1):
 
@@ -265,6 +266,7 @@ So two separate statements must be kept apart: (a) "the workspace page also carr
 - Never write a bare "right bar" / "side bar": either "right container" or "right session-config panel" (panel level).
 - "主栏" is the short UI label (used as the tab-row label); **in documentation the sanctioned name is always 主栏容器**.
 - **Never say "workbench-hosted page" / "carrier page" / "hosted page"**: there is no such page class. There are exactly two — 工作区页面 (5 content pages, no containers) and 会话页面 (2 routes, with containers). Naming the latter a "hosted page" blurs the conclusion that containers live only on the session page (user correction 2026-11-20 ⇒ `D1469`).
+- **Never use the short form "全局条"** (`DSD-1490`, user ruling 2026-11-20): navigation parts are always named "qualifier + 导航" (全局导航 / 工作台导航 / 工作区导航). A form suffix (栏 / 条 / 带 / panel) only describes the shape - usable in prose, never a name-table entry.
 
 **Relationship to the four-row table in §10.1**: it is extended, never deleted; the "content column" current state (nav panel / file tree / main area / dock) is the **not implemented** `ListPane`-to-`ContextPane` plan, while the two containers here are the **landed** `main` / `right` — different layers, never substitute one for the other.
 

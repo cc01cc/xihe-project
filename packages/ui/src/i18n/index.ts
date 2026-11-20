@@ -212,7 +212,7 @@ const messages = {
         workspaceNav: {
             // PLAN-0773 M4-4（task-190）：工作区内部二级导航与面包屑的文案。
             // 页面清单不在这里 —— 标签 key 挂在路由 `meta.workspacePage.labelKey` 上。
-            ariaLabel: "工作区页面导航",
+            ariaLabel: "工作区导航",
             breadcrumbLabel: "工作区导航位置",
             workspaceContainer: "工作区",
             // task-217（用户 10:5x）：工作区**内部这一页**是会话列表 ⇒ 页名「会话」。
@@ -4279,7 +4279,7 @@ const messages = {
                 "Even once writes open, this needs an administrator capability on the target workspace; an instance administrator covers every workspace.",
         },
         workspaceNav: {
-            ariaLabel: "Workspace page navigation",
+            ariaLabel: "Workspace navigation",
             breadcrumbLabel: "Workspace location",
             workspaceContainer: "Workspace",
             sessions: "Sessions",

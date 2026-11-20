@@ -175,14 +175,14 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 >
 > **实现状态 `partial`**（2026-11-11 回填）：§10.3 的分隔条交互在工作区三列**已实现**（下给 `file:line`）；§10.1 的 `GlobalRail` / `ModuleStage` 正名与 §10.2 的全局两级结构**已落地**（`f97bdf039`，T2.1/T2.2）；`ListPane` / `MainPane` / `ContextPane` 三列正名与悬停「三点抓手」**尚未落地**（逐行见「现状」列与 §10.6）。
 >
-> **与 PLAN-0582 S2 的关系**：`composables/useWorkspaceLayout.ts:18-20` 的 S2 注释（fixed 56px icon-only / `48<->176` dual state gone）**就全局导航条而言被本节 supersede** —— 2026-10-31 的 S2 约束的是**工作区内部那条 rail**；2026-11-10 用户要的是**跨模块的全局条**要双态，两者不是同一条。工作区导航面板（`NavPanel`）的折叠语义**不变**。该 S2 代码注释在 **PLAN-0762 M1 落地时同批更新**；本卡只改文档，不动源码。
+> **与 PLAN-0582 S2 的关系**：`composables/useWorkspaceLayout.ts:18-20` 的 S2 注释（fixed 56px icon-only / `48<->176` dual state gone）**就全局导航条而言被本节 supersede** —— 2026-10-31 的 S2 约束的是**工作区内部那条 rail**；2026-11-10 用户要的是**跨模块的全局导航**要双态，两者不是同一条。工作区导航面板（`NavPanel`）的折叠语义**不变**。该 S2 代码注释在 **PLAN-0762 M1 落地时同批更新**；本卡只改文档，不动源码。
 
 ### 10.1 区域命名表（唯一正名）
 
 | 中文正名 | 英文/代码 | testid | 判据 | 现状（2026-11-11 回填） |
 | --- | --- | --- | --- | --- |
 | 全局导航条 | `GlobalRail` | `global-rail` | 唯一、最左、切模块、可折叠（56px 图标 ↔ 图标+文字） | **已落地**（`f97bdf039`，T2.1）：`components/sidebar/GlobalRail.vue` —— `SidebarProvider` + `collapsible="icon"` + `SidebarRail` 双态（持久化键 `xihe-global-rail-open`）、testid `global-rail`；`App.vue:65` 常驻。旧 `components/sidebar/NavRail.vue` **产品零挂载**（唯一 import = 无入口引用的设计稿 `src/preview/mock/screens/S1SettingsAfter.vue` + 单测 `NavRail.spec.ts`；两者已随本次删除移除），且已违反 D-933（admin 入口）/ D-899（语言入口）⇒ **已删除**（`38c5b833`，5 文件 −1,369 行；task-38 只读判定 + 用户 2026-11-11 批准；证据见 `internal/A03-xihe/evidence/2026-11-11-navrail-residue/removal.md`） |
-| 模块舞台 | `ModuleStage` | `module-stage` | 全局条右侧容器，一次只装一个模块 | **已落地**（`f97bdf039`，T2.2）：`layouts/ModuleStage.vue:13`（testid `module-stage`），`App.vue:66-68` 包裹唯一 `router-view`；模块内部布局仍归各模块自己的 layout（`AppLayout` / `SettingsLayout`） |
+| 模块舞台 | `ModuleStage` | `module-stage` | 全局导航右侧容器，一次只装一个模块 | **已落地**（`f97bdf039`，T2.2）：`layouts/ModuleStage.vue:13`（testid `module-stage`），`App.vue:66-68` 包裹唯一 `router-view`；模块内部布局仍归各模块自己的 layout（`AppLayout` / `SettingsLayout`） |
 | 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | 模块内部的分区/列表导航 | **部分**：`settings-nav-*` 已符合（`components/settings/SettingsResourceNav.vue`）；工作区侧无 `workspace-nav` |
 | 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | 可折叠、可调宽的数据列 | **未落地**：现分四段 —— 导航面板（`sidebar-resizer`）/ 文件树（`tree-resizer`）/ 主区（路由容器 `workspace-route-viewport`）/ dock（`dock-resizer`，即 `ContextPane`） |
 
@@ -198,7 +198,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 **四层结构**（自上而下，唯一正名）：
 
-1. **全局条** `Global Rail`（`GlobalRail.vue`，56px ↔ 图标+文字）：跨模块最左端的唯一入口。
+1. **全局导航** `Global Rail`（`GlobalRail.vue`，56px ↔ 图标+文字）：跨模块最左端的唯一入口。
 2. **导航面板** `Navigation Panel`（`Sidebar.vue`，280px，可拖 220–360）。
 3. **主区（模块舞台内）顶部** = **工作台页签栏** `Workspace Tab Bar`（`WorkspaceTabBar.vue`，i18n `tabBarLabel`「工作台页签」）：它是**路由投影**，不新增路由。
 4. **页面**（下面两类之一）。
@@ -208,7 +208,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 <svg viewBox="0 0 660 300" width="100%" role="img">
   <title>工作台四层结构与两类页面的容器归属</title>
   <rect x="8" y="16" width="48" height="268" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
-  <text x="32" y="150" font-size="11" fill="#374151" text-anchor="middle">全局条</text>
+  <text x="32" y="150" font-size="11" fill="#374151" text-anchor="middle">全局导航</text>
   <rect x="64" y="16" width="104" height="268" rx="5" fill="#f9fafb" stroke="#9ca3af"/>
   <text x="116" y="42" font-size="12" fill="#374151" text-anchor="middle">导航</text>
   <text x="116" y="58" font-size="12" fill="#374151" text-anchor="middle">面板</text>
@@ -219,7 +219,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
   <rect x="184" y="74" width="460" height="90" rx="5" fill="#ffffff" stroke="#9ca3af"/>
   <text x="414" y="96" font-size="12" fill="#374151" text-anchor="middle">工作区页面 · 5 个</text>
   <rect x="196" y="108" width="436" height="26" rx="4" fill="#f9fafb" stroke="#d1d5db"/>
-  <text x="414" y="126" font-size="11" fill="#6b7280" text-anchor="middle">二级导航带</text>
+  <text x="414" y="126" font-size="11" fill="#6b7280" text-anchor="middle">工作区导航</text>
   <text x="414" y="152" font-size="11" fill="#6b7280" text-anchor="middle">无容器</text>
   <rect x="184" y="178" width="460" height="94" rx="5" fill="#ffffff" stroke="#9ca3af"/>
   <text x="414" y="200" font-size="12" fill="#374151" text-anchor="middle">会话页面 · 2 条路由</text>
@@ -232,9 +232,9 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 **两类页面 —— 关键修正：容器不是页面级概念，是工作台组件的结构**：
 
-| 页面类别 | 几条 | 组件链 | 有容器吗 | 有二级导航带 |
+| 页面类别 | 几条 | 组件链 | 有容器吗 | 有工作区导航 |
 | --- | --- | --- | --- | --- |
-| 工作区内容页 | 5 个（环境 / 定时任务 / 资源 / 成员 / 设置） | `pages/WorkspaceShell.vue` = 二级导航带 `WorkspaceSecondaryNav`（判据 `route.meta?.workspaceSecondaryNav !== false`）+ `<div class="min-h-0 flex-1 overflow-y-auto"><RouterView /></div>` + 工作区状态栏（六页共有，`D-1527`） | **没有容器、没有右栏**：这 5 页不 import 任何容器或 `WorkspaceWorkbench` ⇒ 没有容器行 | 有 |
+| 工作区内容页 | 5 个（环境 / 定时任务 / 资源 / 成员 / 设置） | `pages/WorkspaceShell.vue` = 工作区导航 `WorkspaceSecondaryNav`（判据 `route.meta?.workspaceSecondaryNav !== false`）+ `<div class="min-h-0 flex-1 overflow-y-auto"><RouterView /></div>` + 工作区状态栏（六页共有，`D-1527`） | **没有容器、没有右栏**：这 5 页不 import 任何容器或 `WorkspaceWorkbench` ⇒ 没有容器行 | 有 |
 | 会话页面（2 条路由，同一个组件、同一个页面类别） | 2 条：`/workspace/:id`（`name` `workspace`，即导航里的「会话」入口，带 `meta.workspacePage`；无 `:sessionId` 时 `sessionId` 回退到 `sessionStore.currentSession`，见 `pages/WorkspaceView.vue:234-243`）与 `/workspace/:id/session/:sessionId`（`name` `workspace-session`，`meta.workspaceSecondaryNav = false`） | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **有**，两栏：`CONTAINER_IDS = ["main","right"]`（`features/workspace/lib/containers.ts:32-33`）；右栏行仅在 `dockOpen = !layout.dockCollapsed` 时渲染（`WorkspaceWorkbench.vue:239`、`:499`） | 无（会话页面连壳层那一条也不画，`D-1907` rev7 / `task-118`） |
 
 ⇒ 因此两件事必须分开说：①「工作区页面也设两栏容器」是**错的说法** —— 容器属于**工作台组件**，不在工作区页面里；②「会话页面」也不是第二类「承载页」 —— 上面那片页面类别本来就叫**会话页面**，那 2 条路由只是它的两个入口（带 `:sessionId` 与不带），**不存在「工作台承载页 / 承载页 / 承接页」这个类别**（2026-11-20 用户纠正，见 `D1469`）。
@@ -252,12 +252,13 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 | 7 | 面板 | `Panel` | `DOCK_TAB_IDS`、`pane:<container>:<view>` | 禁用把面板叫容器：`D-1777` 两栏是容器，面板是容器内页签内容 |
 | 8 | 容器页签行 | `Container Tab Row` | `WorkspaceContainerTabs.vue` | 禁用「二级页签」「上排页签」：与工作台页签栏不在同一层级 |
 | 9 | 工作台页签栏 | `Workspace Tab Bar` | `WorkspaceTabBar.vue` | 禁用「中间标签栏」「顶部页签」：描述位置而非身份 |
-| 10 | 全局条 | `Global Rail` | `GlobalRail.vue` | 禁用「左侧栏」「rail 栏」 |
+| 10 | 全局导航 | `Global navigation` | `GlobalRail.vue` | 禁用「全局条」：导航类部件正名一律「定语 + 导航」，缺「导航」词根的短称不许用（`DSD-1490`）；「栏 / 条 / 带」这类形态后缀在行文里可用，但不作称呼表条目名。另禁「左侧栏」「rail 栏」 |
 | 11 | 导航面板 | `Navigation Panel` | `Sidebar.vue` | 禁用「左栏」「侧边栏」「sidebar」：sidebar 是组件名，面板里既有工作区也有会话 |
 | 12 | 区头 | `Section Header` | `sidebar-workspaces-header`、`sidebar-sessions-header` | 禁用「分组标题」「列表头」：区头带动作与计数 |
 | 13 | 会话行 / 工作区行 | `Session Row`、`Workspace Row` | `WorkspaceSessionGroups.vue` | 禁用「会话项」「工作区项」：item 太泛 |
 | 14 | 摘要行 | `Session Settings Summary` | `session-settings-summary`（`D1450` / `D1463`） | 禁用「顶部设置入口」：该入口已取消 |
-| 15 | 二级导航带 | `Workspace Nav Strip` | `workspace-nav-*`（会话页面计数须为 0） | 禁用「工作区 tab」「二级 tab」：与页签栏、容器页签行三者撞名 |
+| 15 | 工作区导航 | `Workspace Nav Strip` | `workspace-nav-*`（会话页面计数须为 0） | 禁用「二级导航带」：形态称法，正名取「工作区导航」（`DSD-1490`）；禁用「工作区 tab」「二级 tab」：与页签栏、容器页签行三者撞名 |
+| 16 | 工作台导航 | `Workspace tab bar` | `WorkspaceTabBar.vue`、i18n `workspace.tabBarLabel`（「工作台页签」，不改） | 与第 9 行同指一个部件：第 9 行记的是**形态名**（页签栏），本行记的是**结构正名**（导航）；界面标签仍用 `workspace.tabBarLabel`「工作台页签」，不改 |
 
 **补充禁用词表**（在 §10.1 三条纪律之上）：
 
@@ -266,6 +267,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 - 禁无定语的「右栏 / 侧栏」：要么「右栏容器」，要么「右栏会话配置面板」（面板级）。
 - 「主栏」是界面短称（页签行标签用），**文档正名一律「主栏容器」**。
 - **禁「工作台承载页 / 承载页 / 承接页 / 托管页」**：这不是新的页面类别。两类页面只有「工作区页面（5 个内容页，无容器）」与「会话页面（2 条路由，有容器）」；把后者叫「承载页」会让「容器只在会话页面」这条结论重新变模糊（2026-11-20 用户纠正 ⇒ `D1469`）。
+- **禁「全局条」这一短称**（`DSD-1490`，2026-11-20 用户裁定）：导航类部件的正名一律「定语 + 导航」（全局导航 / 工作台导航 / 工作区导航）；形态后缀（栏 / 条 / 带 / 面板）只是描述形态，行文里可用、**不作称呼表条目名**。
 
 **与 §10.1 既有四行表的关系**：新增补充、不删旧行；「内容列」四段现状（导航面板 / 文件树 / 主区 / dock）是**未落地**的 `ListPane`-`MainPane`-`ContextPane` 设想，本节的两栏容器是**已落地**的 `main` / `right`，两者不是同一层东西，不得互相替换引用。
 
@@ -273,10 +275,10 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 ### 10.2 三层布局模型与 MVP 范围
 
-- **全局层**：`GlobalRail` + `ModuleStage`。**MVP 的全局条只放两个模块：工作台 / 设置页**（2026-11-10 用户裁定「先这俩」；2026-11-11 命名修正 D-924：**模块名改「工作台」，避免与「工作区」混淆**）。模块清单扩展**待裁定**（§10.6）。
+- **全局层**：`GlobalRail` + `ModuleStage`。**MVP 的全局导航只放两个模块：工作台 / 设置页**（2026-11-10 用户裁定「先这俩」；2026-11-11 命名修正 D-924：**模块名改「工作台」，避免与「工作区」混淆**）。模块清单扩展**待裁定**（§10.6）。
 - **工作台模块**：承载**会话（含不属于任何工作区的会话）+ 工作区**（工作区列表/切换/新建/导入/成员）。「工作区」只是工作台下的一个对象，不是模块名。
 - **主体工作区**：左（会话/任务列表 `ListPane`）+ 中（`MainPane`）+ 右（`ContextPane`，即现 dock）；左右可折叠。
-- **设置页**：左 = 设置导航（`SettingsNav`，**不是**全局条）+ 右 = 内容。**MVP 两栏，不做右栏**（见 §10.5）。
+- **设置页**：左 = 设置导航（`SettingsNav`，**不是**全局导航）+ 右 = 内容。**MVP 两栏，不做右栏**（见 §10.5）。
 
 ### 10.3 折叠与拖拽交互规格（Sash 模式，2026-11-10 用户明确要求）
 
@@ -288,7 +290,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 - **双击复位**：双击边界回到该列默认宽。
 - **折叠按钮只切开关**：展开回**上次记忆宽度**（不是默认宽）；折叠态与宽度**分开持久化**。
 - **键盘可达（禁止抄漏）**：`role="separator"` + `aria-valuenow/min/max`、`←/→` ±16px、`Home`/`End` 到边界。VS Code 的 sash 键盘不可达，我们**必须**保留此能力（WCAG）。
-- **全局条例外**：全局条是「图标 ↔ 图标+文字」双态（`shadcn-vue Sidebar` 的 `collapsible="icon"` + `⌘/Ctrl+B` + `SidebarRail` hover），**不提供自由拖拽** —— 中间宽度无信息价值（VS Code 活动栏同理固定）。
+- **全局导航例外**：全局导航是「图标 ↔ 图标+文字」双态（`shadcn-vue Sidebar` 的 `collapsible="icon"` + `⌘/Ctrl+B` + `SidebarRail` hover），**不提供自由拖拽** —— 中间宽度无信息价值（VS Code 活动栏同理固定）。
 
 **现状**（逐项核对，HEAD `4204d7be8`）：
 
@@ -302,7 +304,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 | 折叠态与宽度分开持久化 | 已实现 | `composables/useWorkspaceLayout.ts:26-27`（`xihe-layout-global` / `xihe-layout-ws:<id>`）、`:88-99`（`navOpen` / `treeCollapsed` / `dockCollapsed` 与各自宽度分开） |
 | 窄屏夹取不写回 | 已实现 | `composables/useSplitterPanelBridge.ts:24`（stored-width clamp 只作用于 keyboard/dblclick/release）；`clampNavWidthForViewport` 同口径 |
 | **hover 竖向三点抓手** | **未落地** | 仅注释提到 `GripVertical`（`WorkspaceWorkbench.vue:673`），`src` 无实际引入；现状是 hover 背景高亮 |
-| **全局条双态 / `SidebarRail` / `⌘B`** | **已落地**（`f97bdf039`） | `components/ui/sidebar/` 已 vendor **26 个文件（24 个 `.vue` + `index.ts`/`utils.ts`）**（计数命令见证据）—— **原理由「`shadcn-vue Sidebar` 组件族尚未 vendor」已不成立**；`SidebarProvider.vue:57-62` 即 `⌘/Ctrl+B`，`SidebarRail.vue` hover 切换，`GlobalRail.vue:62-71` 在用；单测 `components/__tests__/GlobalRail.spec.ts:118-130` |
+| **全局导航双态 / `SidebarRail` / `⌘B`** | **已落地**（`f97bdf039`） | `components/ui/sidebar/` 已 vendor **26 个文件（24 个 `.vue` + `index.ts`/`utils.ts`）**（计数命令见证据）—— **原理由「`shadcn-vue Sidebar` 组件族尚未 vendor」已不成立**；`SidebarProvider.vue:57-62` 即 `⌘/Ctrl+B`，`SidebarRail.vue` hover 切换，`GlobalRail.vue:62-71` 在用；单测 `components/__tests__/GlobalRail.spec.ts:118-130` |
 
 **复用而非新建**：布局几何的唯一 owner 是 `composables/useWorkspaceLayout.ts`（常量 `:24-51`、状态接口 `:88-99`）与 `composables/useSplitterPanelBridge.ts`；新增列一律走这套，**不另建第二份布局状态**。
 
@@ -318,9 +320,9 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 下列三项中标「待裁定」的实施方不得自行选择；已裁定项就地标注裁定来源与日期（见第 3 条）：
 
-1. **全局条后续模块清单**：MVP 只放「工作台 / 设置页」两个；第三个模块何时进、进什么，待用户裁定。（模块命名 D-924）
+1. **全局导航后续模块清单**：MVP 只放「工作台 / 设置页」两个；第三个模块何时进、进什么，待用户裁定。（模块命名 D-924）
 2. **设置页右栏参数**：`ContextPane` 挂什么、默认宽、是否可折叠 —— 与 §10.5 的「不做」配套，等桌面 MVP 验收后另定。
-3. ~~**`shadcn-vue Sidebar` 三档固定宽 vs 现有 220–360 自由拖拽**~~ → **已裁定：全局条采 `Sidebar`**（来源：PLAN-0762「已消解冲突」+ 决策 1，2026-11-10 用户裁定「可全量用 `Sidebar`、可固定宽」；落地 `f97bdf039`，2026-11-11）。**边界（不得扩读）**：仅全局条与设置页左导航走 `Sidebar` 的 CSS 变量档宽；**工作区内部 220–360 连续拖拽模型不变**，三列几何仍归 `useWorkspaceLayout.ts` 单一 owner。
+3. ~~**`shadcn-vue Sidebar` 三档固定宽 vs 现有 220–360 自由拖拽**~~ → **已裁定：全局导航采 `Sidebar`**（来源：PLAN-0762「已消解冲突」+ 决策 1，2026-11-10 用户裁定「可全量用 `Sidebar`、可固定宽」；落地 `f97bdf039`，2026-11-11）。**边界（不得扩读）**：仅全局导航与设置页左导航走 `Sidebar` 的 CSS 变量档宽；**工作区内部 220–360 连续拖拽模型不变**，三列几何仍归 `useWorkspaceLayout.ts` 单一 owner。
 
 ### 10.7 存量表述待对齐（分批）
 
