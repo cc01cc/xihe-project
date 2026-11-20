@@ -154,6 +154,21 @@ Before colouring a new element, ask three questions: how often is it used, how i
 
 Decision question: **if this element disappeared, would the user take a wrong action?** Yes → L3/L4; no → L2, no colour.
 
+### State matrix (each state may use only its channel — never express a state by recolouring)
+
+| State | Correct treatment | Forbidden |
+|---|---|---|
+| hover | add a very light wash only (one step darker than the surface); text and border unchanged | hover turning brand colour / turning blue |
+| **focus (keyboard)** | ring outline (2px ring + offset), **visually distinguishable from hover** | the same background change as hover (keyboard users cannot tell where focus is) |
+| active/pressed | a slight sink or one more step of background | filling with brand colour |
+| selected | **2px left indicator bar + light background**, text one weight heavier | filling the whole row with brand colour |
+| disabled | lower contrast but **≥3:1** readable + `cursor: not-allowed` | so faint it looks like a rendering bug |
+| danger | red **only on the element that is actually dangerous**, never the whole block | a full-width red background |
+
+### Discoverability exception
+
+All-neutral does not mean nothing can be found. Low-frequency actions stay discoverable through **a fixed position + a text label + empty-state guidance**, not through colour; once colour is gone those channels must still be there.
+
 ### Focus-state evidence discipline (2026-11-15, `D-1435`; measured in `task-40`)
 
 When capturing an acceptance shot of a focus ring, **use only the keyboard path (Tab / `tab=<n>`); never scripted `focus()`, and never a mouse-driven step inside the same shot**. This is not a preference — it is what was measured:
@@ -168,7 +183,7 @@ When capturing an acceptance shot of a focus ring, **use only the keyboard path 
 
 **Two hard constraints**: (1) a focus image must go through `tab`; (2) `focus=` is allowed only when the target sits behind dozens of tab stops (measured: 53 Tab presses on one page), and it **must not share a shot with `expand`/`hover`** (the script hard-blocks this). **A fake focus image is the worst class of evidence: `:focus=true`, an activeElement present, a PNG written — it looks entirely normal.**
 
-### Danger red: two orthogonal axes, judged separately
+### Danger red: two orthogonal axes, judged separately (2026-11-17, `task-109` judgement + `check-danger-entry.mjs`)
 
 The ladder's "red only at the confirmation step" (axis B) and "only mistakes deserve colour" (axis A) are **independent**.
 Collapsing them into one judgement produces the classic error: reading "this should have had a confirmation" as "this should not be red".
@@ -182,7 +197,7 @@ Collapsing them into one judgement produces the classic error: reading "this sho
 the finding is **missing confirmation**, not "should not be red". Recolouring at that point **hides** the dangerous action
 (neutral colour plus a one-click irreversible delete) and is worse than the status quo. Correct order: **build the confirmation surface first, so the red has a place to land**.
 
-### Axis B: four states, machine-checkable
+#### Axis B: four states, machine-checkable
 
 The unit of judgement is **an element in a stage** — not a component, not an action. The entry control and the confirm control of one action
 are two separate judgements with different verdicts.
@@ -194,13 +209,13 @@ are two separate judgements with different verdicts.
 | `HOVER_ONLY` | the only red token is in an interaction segment (`hover:` / `focus:` / `active:` / `peer-*:` …) | compliant | `text-muted-foreground hover:text-destructive` |
 | `STATE_GATED` | red appears only in a dynamic conditional branch | compliant | `:class="pending ? 'text-destructive' : 'text-muted-foreground'"` |
 
-### Three boundaries that are easy to get wrong (each pinned by a counter-fixture)
+#### Three boundaries that are easy to get wrong (each pinned by a counter-fixture)
 
 1. **Visibility gating is not colour gating.** `opacity-0 group-hover:opacity-100` only makes the control *visible* on hover; the colour itself is still a static red ⇒ `ENTRY_STATIC`. The criterion is **which body the colour token sits in**, not when it becomes visible.
 2. **A red confirmation surface does not excuse a red entry.** If one action has both, the entry still violates.
 3. **A conditional branch must be reachable both ways.** An object-literal `:class` key whose value is the **literal `true`** (`{ 'text-destructive': true }`) is not a branch ⇒ `ENTRY_STATIC`; only a ternary or a variable-keyed object with **both branches reachable** counts as `STATE_GATED`.
 
-### Executable criterion (`internal/A03-xihe/scripts/check-danger-entry.mjs`)
+#### Executable criterion (`internal/A03-xihe/scripts/check-danger-entry.mjs`)
 
 The criterion text is the script's exported `CRITERION` constant, kept word-for-word identical to this section (`D-1767`: only document what a machine can check).
 **Verbatim source (do not reword the punctuation or arrows — these lines *are* the machine criterion)**:
@@ -471,7 +486,7 @@ Likewise **`opacity` breathing may only target non-text, non-icon surfaces** (`b
 
 > The three candidates on the task card (bubble enter/exit, state text, existing hover wash) are **all kept**; items 4–6 are the same criterion applied to virtual scrolling and streaming (the high-frequency surfaces such as `MessageItem` / `MessageScrollerViewport`).
 
-### 12.7 `prefers-reduced-motion` is a hard requirement
+### 12.7 prefers-reduced-motion is a hard requirement
 
 **Requirement**: any new motion **must fall inside the existing media queries**; do not introduce a second switch.
 

@@ -50,6 +50,10 @@ sidebar_order: 0
 - [DEV-034: 四类规范契约地图](DEV-034-spec-contract-map.md)
 - [DEV-035: API 设计标准](DEV-035-api-design.md)
 
+### 英文册（缺口与约定）
+
+英文册 [`en/`](../en/INDEX.md) 目前只收录已翻译的 19 篇；其余 10 篇（DEV-003/012/013/014/015/018/019/023/025 与 README）**保留中文原册**：英文页需要时链接到中文文件并标 `(zh)`，不维护过期英文残稿（约定见 DEV-033、DEV-034）。缺口普查、逐篇决定与翻译 backlog 记在 [PLAN-0763 证据](../../../../plans/PLAN-0763-XH-api-contract-docs/evidence/en-docs-gap.md)。
+
 ## 项目级 SPEC（Agent/GitHub-only）
 
 - `spec/README.md`：XH 项目级契约入口（仓库根目录，不进入文档站）

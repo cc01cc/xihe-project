@@ -131,7 +131,24 @@ Agent → CP /mcp (tool_name, args)
 
 True-chain evidence (allow/deny probes + audit read-back) belongs to PLAN-0686 T2.3 and is not claimed here; write tools (commit/branch) are out of v1.
 
-### 3.3. Tool mapping lifecycle (PLAN-0583 / BL-124)
+### 3.3. Failure classification (PLAN-0557 / BL-109)
+
+CP must not disguise an **upstream dependency failure** as "unknown tool". The error contract for `tools/list` and `tools/call`:
+
+| Scenario | HTTP | code | Diagnostic fields |
+|---|---|---|---|
+| System tool catalog fetched successfully, the name is genuinely absent | 400 | `UNKNOWN_TOOL` | none (audit `unknown_tool`) |
+| Runtime connection refused / DNS refusal | 503 | `RUNTIME_UNAVAILABLE` | `dependency=runtime`, `reason=unreachable`, `retryable=true` |
+| Runtime read timeout or upstream 408/504 | 503 | `RUNTIME_UNAVAILABLE` | `reason=timeout`, `retryable=true` |
+| CP service credential rejected by Runtime (401/403) | 503 | `RUNTIME_UNAVAILABLE` | `reason=auth_failed`, `retryable=false` |
+| Any other non-2xx upstream / unparseable response | 503 | `RUNTIME_UNAVAILABLE` | `reason=upstream_error` |
+| The caller itself is unauthenticated / unauthorized / awaiting approval | existing 4xx | unchanged | — |
+
+- The `reason` enum is frozen as `unreachable|timeout|auth_failed|upstream_error`; dependency failures are audited as the action `dependency_unavailable`, accounted separately from `unknown_tool`.
+- When the system catalog is unreachable, `tools/list` answers **503 as a whole** and never a partial 200 carrying only the CP-owned tools; `tools/call` for the CP-owned `spawn_agent` / `acquire_credential` is still dispatched locally by the CP.
+- `ModelsProxyController` follows the same rule: an upstream failure returns 503 `AGENT_UNAVAILABLE` + `dependency=agent`, and a descriptor assembly error no longer reports the Agent as unavailable.
+- The detail is fixed copy: no internal URL, port, token or upstream raw body.
+### 3.4. Tool mapping lifecycle (PLAN-0583 / BL-124)
 
 The `tool_name → server_id` mapping is an in-process cache with exactly three rules:
 
@@ -143,67 +160,138 @@ Error semantics stay as established by PLAN-0557: rebuilt but still absent → `
 Evidence logs: `event=tool_map_miss` and `event=tool_map_refresh` (`rebuilt` / `outcome` / `durationMs` / fan-out counts).
 The TTL defaults to 300s; `cp.mcp.toolmap.ttl-seconds` is a test/stack override channel only — not a business config key, not surfaced in the UI.
 
+### 3.5. Correlation headers and execution-domain accounting (PLAN-0463 frozen contract)
+
+The cross-service correlation headers of one `tools/call` (full contract in
+`plans/PLAN-0463-xh-mcp-execution-domain/evidence/wire-contract.md`):
+
+| Header | Direction | Meaning |
+|---|---|---|
+| `X-Chat-Run-Id` | Agent→CP→Runtime | ChatRun ID (lease check + log correlation) |
+| `X-Tool-Call-Id` | Agent→CP→Runtime | canonical MCP tool-call ID (a non-UUID value is normalised by the CP via `nameUUIDFromBytes`) |
+| `X-Mcp-Invocation-Id` | CP→Runtime | `mcp_invocations.id`, used to correlate a late termination |
+| `X-Job-Id` | CP→Runtime | optional correlation to the Workspace Job domain ID |
+
+- **Correlation rules**: the Runtime in-flight/cancel key is `toolCallId`; the Job backend handle is a separate `runtimeJobId` and must not be confused with the Workspace Job domain `jobId`.
+- **Write path**: the gate creates the `mcp_invocations` row (`source=agent`) before the grant check; the SSE relay's `agent_tool` attempt and the Proxy's `cp_forward` attempt land in `mcp_attempts`, and transitions append to `mcp_dispatch_history`; an uncertain dispatch network result is recorded as `unknown` and a late confirmation as `unknown → late_confirmed`.
+- **Grant check**: the only main path is `ChatRun lease + invocation active + scope`; a missing invocation row or an owner mismatch always fails closed.
+- **Late termination**: `POST /internal/v1/mcp/invocations/{invocationId}/late-termination`; the Runtime must supply the MCP invocation ID, and there is no compatibility fallback route.
+
 ## 4. Key Technical Decisions
 
 | Decision | Choice | Reason |
-|----------|--------|--------|
+|------|------|------|
 | MCP transport | Streamable HTTP | MCP community has deprecated SSE |
-| STDIO bridging method | Rust bridge binary | Shell cannot handle JSON-RPC streaming |
-| Bridge deployment | Host bind mount | Fast iteration during development; production can switch to multi-stage build |
-| Routing strategy | Tool-name based | Agent doesn't need to know server_id |
-| Tool conflict | System priority + warning | Ensure platform tool availability |
-| Config format | Claude Desktop JSON textarea | Industry standard, users can copy-paste directly |
-| Config storage | PostgreSQL JSONB | Type validation + index support |
-| Workspace isolation | Task-local (not env var) | Supports multiple workspaces in single process |
-| Backward compatibility | None | All components upgrade simultaneously |
-| LLM visibility | workspace_id transparent | Infrastructure concerns don't leak to LLM layer |
+| STDIO carrier | host `exec attach` long-lived session (PLAN-0347) | an HTTP+port bridge is Docker-only leakage and unreachable on native Windows; a session is transparent to the MCP protocol |
+| STDIO deployment | no in-container component (the session talks to the MCP server process directly) | one less in-image binary and one less hop |
+| Routing strategy | tool-name based (three routes: system / stdio / remote; a `McpServer` table hit means remote) | the Agent need not know `server_id` |
+| Tool conflicts | sticky: bare system names win, only a newcomer gets a `serverId__` prefix, and the persisted mapping never upgrades | zero renames without conflicts; history replays by `(serverId, backendName, generation)` |
+| serverId source | dual: STDIO passes the user config key through, remote uses an `mcp_remote_servers` row | no id generator; a table hit outranks a JSON key |
+| remote execution | identity check (does the spec exist + authorization), no container; unknown fails explicitly | prevents privilege and billing escapes; SSRF is bounded by allowlist + DNS |
+| remote auth | `authMode: oauth/no-auth`; no-auth skips the broker (a redundant Bearer is ignored, measured) | public servers need no OAuth |
+| spawn state | retired (410 `MCP_SESSION_ENDPOINT_RETIRED`); sessions are managed by a 30s poll + lazy per-invocation creation | PLAN-0347 decisions #12/#18; no known caller |
+| Config format | Claude Desktop JSON textarea (the mixed `mcp-config` entry splits by field: stdio / remote) | industry standard, users copy-paste directly |
+| Config storage | `mcp_stdio_servers` (workspace_id + name + config JSONB, decision #27) | type validation + index support; decoupled from the three config layers |
+| workspace isolation | task-local (not an env var) | supports several workspaces in one process |
+| Backward compatibility | none | all components upgrade together |
+| LLM visibility | workspace_id transparent | infrastructure concerns never leak into the LLM layer |
 
-## 5. Bridge Binary Design Points
+## 5. stdio session design points (PLAN-0347)
 
-`xihe-mcp-bridge` is a lightweight HTTP server inside the container, responsible for exposing STDIO subprocesses as HTTP endpoints.
+`mcp_session.rs` maintains one long-lived `exec attach` session per `(workspace, serverId)`, running the MCP server process directly.
 
-- Each subprocess is protected by a `Mutex`, serializing STDIO access
-- Responses are streaming (`tokio::sync::mpsc` + `Body::from_stream`), flushing line by line
-- 30s read timeout (after timeout, reader is discarded; after pipe closes, subprocess receives SIGPIPE)
-- 1MB buffer limit
-- Management endpoints: `/_spawn`, `/_kill/{id}`, `/_health`
-- User endpoints: `POST /{server_id}`
+- State machine: `starting / ready / restarting(n) / failed / stopped`; every transition writes the structured log `mcp_session_transition`.
+- Retry: a budget of 3 per failure cycle, backoff 1/5/15s; past the budget ⇒ `failed` + a 5-minute cooldown (half-open).
+- Concurrency: FIFO single-flight per key; queueing past the cap ⇒ `MCP_SESSION_BUSY`; cancelling one call only affects that call and never kills the session (decision #20).
+- Pairing: responses pair by JSON-RPC `id`; id-less notifications (e.g. `notifications/tools/list_changed`) are recorded on a side channel.
+- Termination: a fixed-string `ps` match inside the container + `kill` (SIGTERM → SIGKILL); `inspect_exec` pids live in the host namespace and cannot be used to kill inside the container; EOF does not guarantee exit.
+- Reclamation: container rebuild/evict/destroy ⇒ `cleanup_workspace`; the Runtime start-up `cleanup_orphans` pass is the safety net.
+- Boundaries: 1 MiB frame cap in both directions; stderr is redacted into the log; a session is never reused across workspaces.
+
+**Retired (historical note)**: the former `xihe-mcp-bridge` design (an in-container HTTP server exposing STDIO subprocesses: `Mutex` per subprocess, streaming `Body::from_stream`, 30s read timeout, 1MB buffer, `/_spawn`, `/_kill/{id}`, `/_health`, `POST /{server_id}`) was retired by PLAN-0347 in favour of the session model above; the image no longer builds a bridge binary.
 
 ## 6. Configuration Synchronization
 
 ```
-User → UI textarea → PUT /api/v1/workspaces/{wsId}/mcp-config
-  → CP: Validate JSON → Write to config table (JSONB)
-  → Runtime every 30s: GET /internal/v1/config/workspaces/{workspaceId}/mcp-config (Bearer service token)
-  → Runtime: Diff current bridge list → spawn/stop
+user → UI workspace-level MCP editor → PUT /api/v1/workspaces/{wsId}/mcp-config (mixed entry)
+  → CP: validate JSON → split by field: stdio writes mcp_stdio_servers; remote goes to mcp_remote_servers
+  → Runtime every 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers (generation/hash/servers, Bearer service token)
+  → Runtime: reconcile sessions (spec changed/removed → stop; first invocation creates the session lazily)
 ```
+
+The public/internal contract for stdio config (`generation` optimistic lock + `hash`) is in `docs/api/openapi.yaml` and `docs/api/inventory.md`; remote servers use the `mcp_remote_servers` table (the class name `McpServer.java` stays, decision #38②): `workspaceId/name/endpoint/authConfig/enabled/authMode`, the CP routes by table lookups, and the Runtime fetches a short-lived token through the CP broker (no-auth skips it). The read side of the mixed entry returns non-sensitive fields only (remote returns just `url`/`type`; OAuth metadata is never returned).
+
+### 6.1 OAuth token broker (PLAN-0349)
+
+`POST /internal/v1/oauth/token` is served by the CP `OAuthCredentialService` + `OAuthTokenBroker`; the Runtime only ever consumes a short-lived access token:
+
+- **Cache and single-flight**: the access token is cached in-process per `(userId, workspaceId, serverId)` with TTL = `clamp(expires_in − 60, 0, 300)` seconds (300s conservative default when the provider omits `expires_in`; `ttl = 0` returns without caching); concurrent calls for the same key trigger one provider refresh, and waiters share the same result or the same failure.
+- **Rotation write-back**: refreshes run inside the credential row lock (`SELECT ... FOR UPDATE` + the PLAN-0346 `SET LOCAL lock_timeout`), so concurrent refreshes consume the rotation chain serially instead of invalidating each other; a lock wait timeout ⇒ 503 `OPERATION_LOCK_TIMEOUT`.
+- **Two error tiers**: 401 `OAUTH_REAUTH_REQUIRED` (missing credential / state not AUTHORIZED / scope mismatch / an explicit provider refusal such as 4xx or `invalid_grant`); 503 `OAUTH_TOKEN_UNAVAILABLE` (provider unreachable / timeout / 5xx). The Runtime consumes by HTTP status and never parses the problem code.
+- **Revocation**: set `REVOKED` locally + invalidate the cache immediately, and after commit notify the provider best-effort (RFC 7009; the revocation endpoint is discovered via RFC 8414 / OpenID metadata, and a missing endpoint or a failure is only logged).
+- **Observability**: structured events `oauth_token_hit` / `oauth_token_miss` / `oauth_token_refresh` / `oauth_token_merge` / `oauth_token_revoke` / `oauth_token_failure` (with `requestId` and the three-part ids); neither the plaintext token nor the provider response body is ever logged.
+
+### 6.2 stdio session visibility (PLAN-0366)
+
+`GET /api/v1/workspaces/{workspaceId}/mcp/servers` is a thin CP proxy (visible to members): it calls the Runtime `GET /internal/v1/runtime/workspaces/{ws_id}/mcp/servers` and performs the **single explicit key mapping** on the CP side (`server_id/state/attempt/last_error/since_ms/epoch` → `serverId/state/attempt/lastError/sinceMs/epoch`; `state` keeps the Runtime lowercase literal), without recomputing state semantics or changing the Runtime back (decisions #2/#13). Error table: the Runtime 404 `WORKSPACE_NOT_FOUND` / 409 `WORKSPACE_DESTROYING|WORKSPACE_BUSY` / 503 `WORKSPACE_MATERIALIZATION_FAILED` allowlist is passed through; unreachable, timeout, unparseable response or an unknown code ⇒ 502 `RUNTIME_UNAVAILABLE`. The Runtime handler calls `ensure_workspace` first, so the first query may trigger materialisation (an accepted side effect; later queries are pure registry reads).
+
+The workspace tab of the settings page merges rows from `stdio-servers` (config name) ∪ this endpoint (snapshot `server_id`): five-state badges (starting/ready/restarting/failed/stopped) + a "no record" row + the failure reason; fetch on open + manual refresh + a 30s poll (paused while the page is hidden; on failure the last state is kept and marked "state may be stale", with no automatic retry storm).
+
+The same wave fixed the CP `toolServerCache` invalidation: when a forwarded stdio `tools/list` answers non-2xx, **all** old mappings for that serverId are dropped (a warn records wsId/serverId/status), and a partial failure does not affect the mappings or tool merge of other servers — so `tools/call` never keeps routing to an unavailable server (the call side prefers "unknown tool"). The planning-rework section (§3.4) **reuses that eviction semantics verbatim**: a server whose rebuild failed leaves no stale route behind.
 
 ## 7. Test Strategy
 
 | Layer | Content | Command |
-|-------|---------|---------|
-| Unit | bridge spawn/conflict/kill | `cargo test --bin xihe-mcp-bridge` |
-| Unit | Gateway route forwarding | `cargo test --lib` (83 tests) |
-| Unit | CP McpProxyController | `mvn test -Dtest=McpProxyTest` (8 tests) |
-| Unit | MCPSettings Vue | `pnpm vitest run` (206 tests) |
-| Integration | Real bridge process | `cargo test --test bridge_integration_test` |
-| E2E | Settings page screenshot | `npx playwright test e2e/real/settings-visual.spec.ts` |
+|------|---------|------|
+| Unit | session state machine / budget / pairing / kill command | `cargo test --lib -- mcp_session::` |
+| Unit | Gateway route forwarding | `cargo test --lib` (counts as measured) |
+| Unit | CP McpProxyController | `mvn test -Dtest=McpProxyTest` |
+| Unit | MCP configuration (ConfigSettings) | `pnpm vitest run` |
+| Integration | real container session (lazy create / self-heal / cleanup) | `cargo test --test mcp_session_test` |
+| E2E | settings page screenshot | `npx playwright test e2e/real/settings-visual.spec.ts` |
+
+### 7.1. Agent manual verification runbook (PLAN-242 addendum)
+
+For an Agent operator verifying that a remote tool is reachable end to end (a no-auth public server as the example):
+
+1. Register: insert one `mcp_remote_servers` row (`workspaceId`, `name=deepwiki`, `endpoint=https://mcp.deepwiki.com/mcp`, `authMode=no-auth`, `enabled=true`).
+2. Discover: `POST /api/v1/mcp` with `tools/list`; confirm the response contains the remote tool names (bare names when there is no conflict).
+3. Invoke: `tools/call` with the tool name from the previous step; confirm the result is passed through.
+4. Audit: check the audit log; `detail` carries the four-part `serverId/deepwiki backendName/<original name> generation=<n>`.
+5. No-container assertion: `docker ps` shows no new workspace container (remote tools create none).
+6. Smoke (not a gate): call the endpoint directly with `initialize` (both with and without a Bearer should answer 200, see M1.3).
 
 ## 8. Related Files
 
 | File | Description |
 |------|-------------|
 | `packages/agent/.../mcp_client.py` | Agent MCP client (StreamableHttpConnection) |
-| `packages/runtime/src/mcp_bridge.rs` | In-container xihe-mcp-bridge binary |
-| `packages/runtime/src/container_runtime.rs` | In-container xihe-container-runtime binary (file ops + command execution) |
-| `docker/images/workspace/Dockerfile` | xihe/workspace container image multi-stage build |
-| `packages/runtime/src/mcp_process.rs` | Gateway-side STDIO management |
-| `packages/runtime/src/workspace.rs` | Container + bridge lifecycle |
+| `packages/runtime/src/mcp_session.rs` | stdio MCP session (direct `exec attach`; replaces the retired bridge) |
+| `packages/runtime/src/container_runtime.rs` | In-container xihe-container-runtime binary (file ops + command execution, oneshot) |
+| `docker/images/workspace/Dockerfile` | xihe/workspace container image multi-stage build (no bridge since PLAN-0347) |
+| `packages/runtime/src/workspace.rs` | Container lifecycle (bridge machinery deleted) |
 | `packages/runtime/src/main.rs` | Route registration + config polling |
-| `packages/control-plane/.../McpProxyController.java` | CP layer routing proxy |
-| `packages/control-plane/.../ConfigController.java` | MCP config API |
-| `packages/ui/.../MCPSettings.vue` | MCP config UI |
-## 9. Runtime MCP tool catalog (snapshot; the handshake is authoritative)
+| `packages/control-plane/.../McpProxyController.java` | CP layer routing proxy (three-way split + sticky merge) |
+| `packages/control-plane/.../entity/McpServer.java` (table `mcp_remote_servers`, `authMode`) | remote server row (carries the no-auth marker; the class name stays, decision #38②) |
+| `packages/control-plane/.../entity/McpStdioServer.java` (table `mcp_stdio_servers`) | stdio server row (workspace scoped, decision #27) |
+| `packages/control-plane/.../entity/McpToolAlias.java` | Persisted sticky aliases (`workspace_id + issued_name` primary key) |
+| `packages/control-plane/.../ConfigController.java` | MCP config API (stdio-servers public/internal endpoints + mixed `mcp-config` split) |
+| `packages/ui/src/views/settings/ConfigSettings.vue` (workspace-level MCP editor + `saveMcpConfig`) | MCP config UI (a workspace settings entry since PLAN-0307 T2.17) |
+
+## 9. Appendix: retirement of the session signature (PLAN-0537)
+
+> The historical chapter "MCP Session-id Signing Rule" was retired by PLAN-0537. It required a session-id to be HMAC-SHA256 signed with a deployment-injected key and verified server-side — that described the session model before PLAN-0308 decision #34.
+
+Current state (since 2026-10-19):
+
+- The logical MCP is served with **no session** semantics (wire protocol version `2026-07-28`; the two-layer version semantics are in §1 "protocol version notes"), and the CP **never issues, echoes or forwards** `mcp-session-id`.
+- An inbound request that carries that header is **always 403 `MCP_SESSION_INVALID`**; no signing key is involved.
+- That HMAC signing key has been removed from code, config, scripts and deployment templates.
+- `mcp-session-id` between the Runtime and an upstream remote MCP server is unaffected — it is a different boundary (see `packages/runtime/src/remote_mcp.rs`).
+
+The full module-to-module authentication chain and key matrix are in [DEV-024 module authentication and key matrix](DEV-024-authentication-matrix.md).
+
+## 10. Runtime MCP tool catalog (snapshot; the handshake is authoritative)
 
 The tool catalog is a **runtime property**, not a static contract: it is decided by the `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` and declared to callers by the `tools/list` handshake. The catalog itself lives in [`docs/api/mcp-tools.md`](../../api/mcp-tools.md).
 

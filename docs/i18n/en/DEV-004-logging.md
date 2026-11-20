@@ -135,9 +135,9 @@ File output is JSONL (`fmt().json()`), no ANSI color codes (`.with_ansi(false)`)
 
 Sub-binaries (`xihe-container-runtime`, `xihe-mcp-bridge`) use the same `XIHE_*` environment variable system, not depending on `RUST_LOG`.
 
-### 3.4. UI (TypeScript/Vue) — 3-Way Parallel
+### 3.4. UI (TypeScript/Vue) — Output Channels
 
-Browser-side `logger` (`lib/logger.ts`) outputs in parallel ways (the telemetry batch targets the local CP sink; the central TLM relay is opt-in, see §4):
+Browser-side `logger` (`lib/logger.ts`) output channels (the telemetry batch targets the local CP sink of the same instance; the central TLM relay is off by default, see §4):
 
 ```typescript
 import { logger } from '../lib/logger'
@@ -272,3 +272,75 @@ Core principles:
 - Every catch must have logging
 - Exception logs must include stacktrace (`exc_info=True` / `e` as parameter / `{e:?}`)
 - Forbidden: `except: pass` / `catch {}` / `catch (Exception ignored)`
+
+## 8. Logging Rules (LogRecord v1, PLAN-245)
+
+### 8.1 Field Contract
+
+Every cross-module structured log line (JSONL) carries at least the required fields; contextual fields are added when relevant:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `timestamp` | yes | RFC 3339 UTC (or Unix milliseconds) |
+| `level` | yes | trace/debug/info/warn/error |
+| `service` | yes | cp / agent / runtime / ui |
+| `event` | yes | Stable event name (snake_case, e.g. `channel_connected`) |
+| `requestId` | contextual | Request-chain correlation (generated at the CP entry) |
+| `runId` | contextual | Chat run correlation |
+| `sessionId` / `workspaceId` / `deviceId` | contextual | Tenant/device context |
+| `operation` | contextual | Name of the executed operation |
+| `outcome` | contextual | ok / failed / cancelled |
+| `durationMs` | contextual | Elapsed time |
+| `errorCode` | on failure | Stable error code (upper case, e.g. `AGENT_TIMEOUT`) |
+
+### 8.2 When to Use Each Level
+
+| Level | Use |
+| --- | --- |
+| `trace` | Runtime internals (frame parsing, intermediate exec states) |
+| `debug` | Parse fallbacks, connection details, expected cancellations, sampled high-frequency events |
+| `info` | Startup/readiness, state changes, successful operations, connections opening/closing |
+| `warn` | Retries, degradations, recoverable failures, user rejections, heartbeat timeouts |
+| `error` | Failed operations, unhandled exceptions, persistence failures |
+
+### 8.3 Exception Classification
+
+| Exception class | Level | Requirement |
+| --- | --- | --- |
+| Expected cancellation / client disconnect | info/debug | Stable event plus reason, no stacktrace |
+| Expected validation failure (4xx-like) | warn | Stable `errorCode` plus redacted detail |
+| Recoverable external-call failure | warn | Attempt/retry context; never the raw body |
+| Unexpected exception | error | Must carry a stacktrace |
+| Any exception | — | Silent swallowing is forbidden (`catch {}` / `except: pass`) |
+
+### 8.4 Forbidden List (Red Lines)
+
+- Tokens, cookies, passwords, raw `Authorization` headers, API keys (**log stream only**; **durable audit records keep them verbatim**, see §6.5b).
+- **(Obsolete, user ruling 2026-11-19)** The former ban on "prompt / message body / raw tool arguments / stdout content" **no longer applies to durable audit records**: request/response bodies, tool arguments and results **may be persisted**, see §6.5b; the **log stream only** still never stores full bodies.
+- Host absolute paths, container IPs, full environments.
+- Raw provider error bodies: **the log records status plus `errorCode` only**; the **full error body may go to the durable audit record** (§6.5b) and is redacted before it is stored.
+
+## 9. Log Collection Boundary (external collectors, PLAN-245)
+
+### 9.1 Architecture
+
+```text
+module stdout / local JSONL (LogRecord v1 fields)
+   -> external collector (tails files or container stdout)
+   -> local disk buffer / batching / compression / retries
+   -> HTTPS / OTLP / vendor log service
+```
+
+CP is not a log hub: no CP log-aggregation endpoint is added; `/api/v1/logs` and `/api/v1/telemetry/logs` are client-event entry points only. Collection failures must never block business requests; delivery is at-least-once and downstream deduplicates by log ID. (Narrow PLAN-0522 exception: for UI structured events that already arrive through the client telemetry entry, an explicitly enabled per-instance downstream relay is allowed; no aggregation endpoint and no tailing of its own/Agent/Runtime logs.)
+
+### 9.2 Collection Paths
+
+| Mode | Source | Description |
+| --- | --- | --- |
+| `dev:host` | `logs/cp.log`, `logs/agent.log`, `logs/runtime.log.*` | The collector tails files and keeps its offset; after rotation (Runtime rotates daily) it reads the new file |
+| Compose | Container stdout/stderr, or a read-only log-directory mount | Prefer container stdout (mount a read-only volume when `XIHE_LOG_DIR=/logs` is already written) |
+| Production | Platform collector (DaemonSet/sidecar/host agent) | TLS + service auth + disk buffer; the collector is chosen per deployment (OTLP-compatible recommended) |
+
+### 9.3 Double Redaction
+
+Application-side redaction (the existing RedactingWriter / RedactingLogstashEncoder / log_redact patcher) is the first boundary; the collector should add drop/rewrite rules as a second one. `node scripts/scan-log-secrets.mjs` is the final gate and covers channel and LogRecord JSON fields.

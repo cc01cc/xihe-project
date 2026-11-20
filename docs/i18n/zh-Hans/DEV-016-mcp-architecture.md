@@ -150,7 +150,7 @@ TTL 默认 300s；`cp.mcp.toolmap.ttl-seconds` 只作为测试/栈的覆盖通�
 - `ModelsProxyController` 同口径：上游故障返回 503 `AGENT_UNAVAILABLE` + `dependency=agent`，descriptor 组装异常不再报 Agent 不可用。
 - detail 为固定文案，不含内部 URL、端口、token 或上游原始 body。
 
-### 3.4. 关联头与执行域记账（PLAN-0463 冻结契约）
+### 3.5. 关联头与执行域记账（PLAN-0463 冻结契约）
 
 一次 `tools/call` 的跨服务关联 header（完整契约见
 `plans/PLAN-0463-xh-mcp-execution-domain/evidence/wire-contract.md`）：

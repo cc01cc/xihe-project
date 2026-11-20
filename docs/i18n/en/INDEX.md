@@ -12,26 +12,36 @@ General-purpose Agent tool platform.
 
 ## Developer Guides
 
+### Basic
+
 - [DEV-001: System Architecture](DEV-001-system-architecture.md)
 - [DEV-002: Developer Guide](DEV-002-developer-guide.md)
 - [DEV-004: Logging](DEV-004-logging.md)
+
+### Modules
+
 - [DEV-010: UI Architecture](DEV-010-ui-architecture.md)
 - [DEV-011: UI Visual Checklist](DEV-011-ui-checklist.md)
 - [DEV-016: MCP Architecture](DEV-016-mcp-architecture.md)
 - [DEV-017: Session Architecture](DEV-017-session-architecture.md)
+- [DEV-024: Module Authentication and Key Matrix](DEV-024-authentication-matrix.md)
+- [RFC-001: Session Domain Model](RFC-001-session-domain-model.md)
+- [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
+
+### Testing
+
 - [DEV-020: E2E Test Strategy](DEV-020-e2e-test-strategy.md)
 - [DEV-021: Integration Test Strategy](DEV-021-integration-test-strategy.md)
 - [DEV-022: Unit Test Strategy](DEV-022-unit-test-strategy.md)
-- [DEV-024: Module Authentication and Key Matrix](DEV-024-authentication-matrix.md)
+
+### Standards
+
 - [DEV-030: Documentation Layout and Frontmatter](DEV-030-documentation-layout-and-frontmatter.md)
 - [DEV-031: Sandbox Backend Contract](DEV-031-sandbox-backend-contract.md)
 - [DEV-032: Terminology (Polysemy and Synonyms)](DEV-032-terminology.md)
 - [DEV-033: First Run (Gold Path)](DEV-033-first-run-gold-path.md)
 - [DEV-034: Contract Map for the Four Spec Surfaces](DEV-034-spec-contract-map.md)
 - [DEV-035: API Design Standard](DEV-035-api-design.md)
-- [RFC-001: Session Domain Model](RFC-001-session-domain-model.md)
-- [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
-
 ## Project SPEC (Agent/GitHub-only)
 
 - `spec/README.md`: XH project contract entry at repository root; excluded from the documentation site
@@ -52,6 +62,16 @@ These guides exist only as Chinese originals in [`zh-Hans`](../zh-Hans/) today. 
 - [DEV-025: Agent Evaluation](../zh-Hans/DEV-025-agent-evaluation.md)
 
 The Chinese [README](../zh-Hans/README.md) is **intentionally** zh-only: the repository root `README.md` is the English GitHub facade and the Chinese docs page is a separate artefact (DEV-030 §layout).
+
+## Contract Entry (PLAN-0328)
+
+- [API OpenAPI](../../api/openapi.yaml) and [API inventory](../../api/inventory.md) are the canonical contract for current public/internal routes and JSON fields.
+- Approval, checkpoint and revert evidence for PLAN-0328 lives in [M3 evidence](../../../../plans/archive/20260918/PLAN-0328-XH-change-safety-net/evidence/m3-revert-and-ui-2026-09-16.md); this index does not duplicate design details.
+- The sandbox backend contract (DEV-031) and terminology (DEV-032) are listed under "Standards"; PLAN narrative wording follows DEV-032.
+
+## User Guide
+
+- [USER-001: User Guide](USER-001-user-guide.md)
 
 ## Engineering Blog (narrative)
 

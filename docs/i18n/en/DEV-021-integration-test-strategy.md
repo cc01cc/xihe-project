@@ -153,6 +153,49 @@ async fn test_config_client_fetch() {
 }
 ```
 
+**The two shapes actually exercised in T2** (both come from PLAN-0307's config contract; the generic pair above only shows the mechanics):
+
+```python
+@pytest.mark.integration
+class TestConfigClientWithStub:
+    async def test_sync_effective_domains(self, httpx_mock):
+        # PLAN-0307: the Agent consumes a single effective config only (no layer concept)
+        httpx_mock.add_callback(lambda request: httpx.Response(200, json={
+            "entries": {"profile": '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'}
+            if request.url.path.endswith("llm-provider") else {}
+        }))
+        client = ConfigClient(cp_url="http://localhost:12631", api_token="test")
+        await client.sync()
+        assert client.get_domain("llm-provider")["profile"] == (
+            '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'
+        )
+```
+
+```rust
+#[tokio::test]
+async fn test_mcp_poll_config_parses_stdio_servers() {
+    let mut mock_server = MockServer::new().await;
+
+    // Arrange: stub the CP stdio-servers contract (generation + entries, PLAN-0307 decision #27)
+    Mock::given(method("GET"))
+        .and(path("/internal/v1/workspaces/ws-1/stdio-servers"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"generation": 1, "servers": []}))
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Act
+    let url = format!("{}/internal/v1/workspaces/ws-1/stdio-servers", mock_server.uri());
+    let result = poll_config_with_generation("ws-1", &url, TEST_TOKEN).await;
+
+    // Assert
+    assert!(result.is_ok());
+}
+```
+
 ### 2.3 T3: Cross-module Real Integration
 
 > 🧊 **Lane frozen (2026-10-07 user ruling; reinforced 2026-10-09)**: T3's Docker Compose partial-stack lane is discontinued together with the **service-containerization freeze** (only PostgreSQL stays containerized; CP/Agent/Runtime/UI all run as host processes; `mise run test:e2e:compose` / `test:e2e` are commented out in `mise.toml`). The diagram and command blocks in this section are kept as **historical reference**; current acceptance runs on the **host lane**: Windows-native services + per-round isolated PostgreSQL (T2 via `mise run test:integration:t2`; real-stack T3 runs against host processes — see "Host lane" below).
@@ -351,6 +394,8 @@ verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
 **Stub tests that only verify status=200 are prohibited**. Every T2 test must use `verify()` to assert that CP's outgoing request body/headers contain correct fields — this is the verification value of T2.
 
 ### 4.1 PLAN-247 ChatRun and tool boundary coverage
+
+CP `/api/v1/chat` must pass the readiness / SSE / per-session-run-cap gate (`maxConcurrentRunsPerSession`, default 2; cap reached → `409 CHAT_IN_PROGRESS`, `PLAN-0645`) **before** it creates the `ChatRun` and the user `Message`; a repeated `Idempotency-Key` must not start the Agent again, and the same key with a different payload must return `IDEMPOTENCY_KEY_CONFLICT`.
 
 The CP integration contract includes durable `ChatRun` state, `(userId, sessionId, Idempotency-Key)` deduplication, request-hash conflicts, and conditional terminal transitions. A stream that ends without a terminal `done` is `ambiguous`; it is never auto-retried. Normal Chat uses `toolMode=none` and must not call MCP discovery, while Workspace actions explicitly use `toolMode=workspace`.
 

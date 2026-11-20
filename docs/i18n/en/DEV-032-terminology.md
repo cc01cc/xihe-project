@@ -29,6 +29,9 @@ updated: 2026-11-06
 |---|---|---|---|---|
 | **owner** | RBAC role on workspace | `workspace role owner` | bare `owner` for operation-lock holder | |
 | | Lifecycle operation-lock holder | **`workspace operation lock holder`** | bare `owner` / unqualified `active owner`; `execution lease holder` (retired name) | |
+| | C. **Resource ownership** (which name a connection, workspace or session sits under) | **resource ownership owner** (*resource owner*; fields `owner_type` / `owner_id`) | bare `owner` for ownership; mixing ownership with "workspace role owner" | connection ownership ≠ member role; the target state may allow `AGENT` in `owner_type` (see §1.1) |
+| | D. **Instance ownership** (which ADMIN owns this instance; a singleton that can be transferred) | **instance owner** (table `instance_owner`, field `owner_user_id`) | bare `owner`; `super admin` / `SUPER_ADMIN` (that role does not exist) | PLAN-0580; the capability set and the ownership cardinality are separate: the owner is **not** a third platform role, it is still `ADMIN` |
+| **tv** | access token epoch (the `users.token_version` copied at issue time) | **access-token epoch** (claim name fixed as `tv`) | blending with JWT `iat`/`exp`; calling `token_version` a "password version" | PLAN-0580 §4.1; a role change bumps it, so an old token gets 401 on its next request |
 | **L1/L2/L3** | Context injection slots | **`context L1`** | bare `L1` | |
 | | Diagnostics layers | **`diagnostic L0/L1/L2`** | bare `L1` | |
 | | Checkpoint restore layers | **`checkpoint L1`** | bare `L1` | |
@@ -40,6 +43,9 @@ updated: 2026-11-06
 | **runtimeBootId** | Runtime per-process boot id | **`runtimeBootId`** | treat as a business identity | |
 | **job** | Current background job | **`durable job`** | mix with deleted table | |
 | | Historical table | **`runtime_jobs` (legacy, deleted)** | treat as live | |
+| **ledger** | A. The retired Operation Ledger (`ledger_operations` family, retired by V56) | **`Operation Ledger (retired)`** | bare "ledger" for the current mechanism; presenting the retired lineage as live fact | PLAN-0464/0467/0486 |
+| | B. The live `DiagnosticsLedger` (in-process dedupe of diagnostic items across feedback rounds) | **`DiagnosticsLedger`**; when citing its contract say "in-process, non-authoritative, eviction only loses detection" | presenting `DiagnosticsLedger` as a durable ledger or an authoritative record | PLAN-0342 |
+| | C. Any new runtime record structure in general | **Forbidden**: pass the concept-inflation gate first (can an existing concept / native mechanism express it?) and only then name it; the canonical name for structures such as observation windows is **`observation window`** | naming a new structure "ledger" (e.g. the PLAN-0493 observation window) | PLAN-0493 T4.2 canonical name |
 | **snapshot** | Current pre-write restore point | **`checkpoint`** | active docs using `snapshot` for restore point | |
 | | Retired mechanism | **`legacy snapshot`** | blend with checkpoint | |
 | **收敛 / 收口** | Many paths → one authority | **converge** | use “close” for state-machine merge | |
@@ -51,24 +57,26 @@ updated: 2026-11-06
 | | E. State / field mapping | **`state mapping` / `field mapping`** | projection fold-back, capability projection | 0426 |
 | | F1. Length/time-bounded presentation | **`bounded preview`** | verbatim projection | 0426 |
 | | F2. Permission/field-redacted presentation | **`redacted summary`** | security projection | 0426; F1 and F2 may stack, not exclusive |
-| **ChatRun** | Machine-readable execution entity: one execution | **`ChatRun` / `run`** (code/API/DB stay `run`; never renamed) | renaming `ChatRun`/`chat_runs` to `round`; bare `Run` in primary UI copy | **Why "run"**: `chat_runs` exists since the first migration (`V1__init_schema.sql`), the original design name; one execution spans multiple LLM calls, tool calls, messages, checkpoints, budget and lease, and can continue as a **child run** from an `ambiguous`/`CP_RESTARTED` source (`docs/api/openapi.yaml:1624 continueChatRun`); rename cost = 113 files for the table / 253 for the class / 82 event keys — only for a nicer name. User-facing wording: next row |
-| **turn** | One complete user-perceived interaction (their message → a readable result) | **`turn`** (zh: 回合) | treating a run as a turn; coining another synonym; `Run` in primary UI narrative | **Why "turn"**: it is the unit users perceive, matching the existing “本轮” wording; **mapping and exceptions**: commonly **1 turn = 1 run**, while continuation / wake / follow-up / retry may span several runs; keep `Run #id` as a detail/hover footnote only |
+| **ChatRun** | Machine-readable execution entity: one execution | **`ChatRun` / `run`** (code/API/DB stay `run`; never renamed) | renaming `ChatRun`/`chat_runs` to `round`; bare `Run` in primary UI copy | PLAN-0674; **why "run"**: `chat_runs` exists since the first migration (`V1__init_schema.sql`), the original design name; one execution spans multiple LLM calls, tool calls, messages, checkpoints, budget and lease, and can continue as a **child run** from an `ambiguous`/`CP_RESTARTED` source (`docs/api/openapi.yaml:1624 continueChatRun`); rename cost = 113 files for the table / 253 for the class / 82 event keys — only for a nicer name. User-facing wording: next row |
+| **turn** | One complete user-perceived interaction (their message → a readable result) | **`turn`** (zh: 回合) | treating a run as a turn; coining another synonym; `Run` in primary UI narrative | PLAN-0674; **why "turn"**: it is the unit users perceive, matching the existing “本轮” wording; **mapping and exceptions**: commonly **1 turn = 1 run**, while continuation / wake / follow-up / retry may span several runs; keep `Run #id` as a detail/hover footnote only |
 
-### 1.1 Workspace storage and checkpoints (2026-10-25)
+### 1.1 Principals and roles (2026-09-17)
 
-| Bare token | Sense | **Canonical** | Do not |
+XH's target shape is **multi-principal collaboration**: the Agent is an independent principal (with its own account and role permissions) that **collaborates** with developers and is **not bound to one user**. **Collaboration ≠ delegation** — "the Agent executes on behalf of some user" is not the target model; if a trust relationship is genuinely needed, it becomes an explicit *delegation* concept.
+
+This section describes the target model. The current user-only schema and independent Agent principals still differ, and the unified contract for authentication, principals, authorization, capability policy, approval and audit lives in the root-level `spec/security/` (PLAN-0386, currently proposed).
+
+| Term | Canonical | Values / notes | Do not |
 |---|---|---|---|
-| **root** | Runtime process storage base | **host root**; `XIHE_WORKSPACE_HOST_ROOT` is a historical name | bare `root` for one workspace directory |
-| | managed workspace content directory | **workspace path** (`<hostRoot>/<storageRef>`) | call host root a workspace path |
-| | multiple physical roots in one Workspace | **multi-root (BL-94)** | fake it with multiple Workspaces |
-| **storage mode** | XH-owned copy | **`managed_import`** | describe it as opening a user directory in place |
-| | user directory mounted in place | **`direct_attach`** | call it a subdirectory of host root |
-| **reason** | Runtime capture reason | **capture reason** | bare `reason` mixed with gate/durable |
-| | CP `unrollable_reason` value | **durable reason** | treat capture reason as durable |
-| | CP gate verdict reason | **gate reason** (`EXPIRED`/`MISSING`/`DEGRADED`/`TOO_LARGE`) | put gate reasons in the capture allowlist |
-| **absolute path** | configured source value | **source path** (may be relative; launcher resolves) | require absolute paths in config files |
-| | value injected into Runtime | **resolved host root (absolute)** | treat a relative value as a normal contract |
-### 1.1a Principals, session participants and policies (2026-11-02; 0622 backfill + 0623)
+| principal | **principal** | `human` (developer / user), `agent` (own account and roles), `service` (CP/Agent/Runtime internal pipeline, not a collaborator); `system` = platform-triggered, not a login-able principal | call an Agent "an actor acting for `user`"; use `user` as a generic word for principal |
+| membership | **membership** | `principal × workspace + role`; Agents and developers are both workspace members. **Implementation (2026-11-02 reconciliation)**: there is no standalone membership table — the carrier is `role_bindings` (`entity/AccessRoleBinding.java:13,25`, role × subject × scope, role values `WS_OWNER` / `WS_EDITOR` / `WS_VIEWER`); `workspace_users` was dropped by V89 and `policy/WorkspaceMembershipService.java:42,52` is only a role projection | hard-code the membership table / field as `user_id`; look for a `memberships` table that does not exist |
+| role | **platform role / workspace role** | see the `role` rows in the §1 table | bare `role` without a domain |
+| ownership | **resource ownership owner** | `(owner_type, owner_id)`; the target state may include `AGENT` | confuse it with workspace-role owner or the lifecycle operation-lock holder |
+
+Historical shapes (they do not block the target, but new code must not deepen them): `sessions.user_id`, `workspace_users.user_id` and `provider_connections.owner_id` are all user-only; `ledger_operations.actor_type` (historical table name `session_operations`, renamed by V33) already includes `agent` (`V2`), so its direction agrees.
+
+The constraints and the landing entry point are unchanged: `xh-backlog-and-debt.md` BL-18 "identity and permission model" in the workspace internal repo (not distributed); on 2026-09-23 G2 froze BL-18 into PLAN-0407 (in progress, not finished).
+#### 1.1a Principals, session participants and policies (2026-11-02; PLAN-0622 backfill + PLAN-0623)
 
 > The Chinese edition grew this section in PLAN-0622 and this English edition had not been backfilled; the 0622 rows are added here together with the 0623 ones so both editions stay aligned. **English/code identifiers are the only source of vocabulary for code, CLI and field names** — do not coin a second translation.
 
@@ -87,7 +95,7 @@ updated: 2026-11-06
 | principal scope | `principal scope` (`agent_principals.scope`, values **`PERSONAL` / `WORKSPACE` / `INSTANCE`**; **REMOVED** — D-174 2026-11-05 / V126 dropped the column and both CHECKs; the row stays only to keep connection scope distinct) | Three-tier ownership/visibility label; **not** an authorization scope carried by the principal (BL-29 binding-style scope) | "the principal's own permission range" (effective range = binding ∩ grants); authorization/OAuth scopes; a fourth tier |
 | PRIMARY participant | `PRIMARY participant` (`role=PRIMARY`; partial unique index `uq_session_participants_primary`, one per session) | The session's default conversation partner: seeded automatically with the session (cursor included); **cannot be removed or transferred** | `membership` OWNER (D23-02: session roles never use OWNER); "session owner"; "transfer PRIMARY to another participant" |
 | member / guard | `MEMBER` / `GUARD` (`role` enum, constraint `ck_session_participants_role`) | In 0623 the two are **one surface**: mentionable, policy-editable, removable; GUARD-specific constraints belong to 0625 (D23-24) | claiming GUARD has extra powers in 0623; adding a fourth session role |
-| participant cursor | `participant cursor` (`session_participant_cursors`; `lastReadEventSeq` / `mentionCount`) | Server-side read position: **a pointer, not a counter** (counts recompute from `context_events`); the client never accumulates; `readCursor=null` when no row exists | treating client-side read state as truth; "unread count" as the stored truth; `{}` instead of `null` |
+| participant cursor | `participant cursor` (`session_participant_cursors`; `lastReadEventSeq` is the only stored fact, `mentionCount` is derived at read time — PLAN-0660 T5.3 / V112 dropped that column) | Server-side read position: **a pointer, not a counter** (counts recompute from `context_events`); the client never accumulates; `readCursor=null` when no row exists | treating client-side read state as truth; "unread count" as the stored truth; `{}` instead of `null` |
 | soft disable | `soft disable` (`disabledAt`; `DELETE` or `PATCH` `disabled=true`) | Removing a participant only **disables** it: row, cursor and audit stay, `GET` still returns it (with `disabledAt`); not a hard delete (D23-26) | "delete participant"/hard delete; assuming the row disappears; Workspace member removal (`role_bindings`) |
 | display name | `displayName` (**derived at read time, never stored**; no `display_name` column) | AGENT → `agent_principals.name`; HUMAN → the account `username` (NOT NULL since V82; the **sole** display source after PLAN-0684/D-183 — the legacy `name` and the email are never projected); `null` when unresolvable ⇒ UI shows "unknown user" | using a UUID as a person name; an editable field; falling back to `name` or the email (single source: username, no fallback chain) |
 | speak as | `speakAs` (`capabilities`) / `asParticipantId` (request) / `selfOwned` (per-row projection) | **Speaking as ≠ mentioning**: speaking as **sends a message as** that participant; mentioning only points the topic at them (`@name`). An admin may add participants but **not** speak as them (D23-08); `speakAs` = at least one row with `selfOwned=true` (same predicate; the UI must not decide itself) | "mention"/"@"; assuming `manage` implies speaking as; "switch speaker" as an authorization concept |
@@ -111,7 +119,22 @@ updated: 2026-11-06
 
 Caution: do not read "membership equivalence" as "fully interchangeable" — a human can join the table, be @-addressed, hold a cursor and act as responder, but **cannot spawn**; this is exactly the `D-1780` model (equivalence surface = being addressed; non-equivalence surface = being able to multiply).
 
-### 1.1b User questions and refresh hints (2026-11-06)
+### 1.2 Workspace storage and checkpoints (2026-10-25)
+
+| Bare token | Sense | **Canonical** | Do not |
+|---|---|---|---|
+| **root** | Runtime process storage base | **host root**; `XIHE_WORKSPACE_HOST_ROOT` is a historical name | bare `root` for one workspace directory |
+| | managed workspace content directory | **workspace path** (`<hostRoot>/<storageRef>`) | call host root a workspace path |
+| | multiple physical roots in one Workspace | **multi-root (BL-94)** | fake it with multiple Workspaces |
+| **storage mode** | XH-owned copy | **`managed_import`** (**frozen, restored after unfreezing**: since PLAN-0618 it cannot be used to create or execute) | describe it as opening a user directory in place |
+| | user directory mounted in place | **`direct_attach`** | call it a subdirectory of host root |
+| **reason** | Runtime capture reason | **capture reason** | bare `reason` mixed with gate/durable |
+| | CP `unrollable_reason` value | **durable reason** | treat capture reason as durable |
+| | CP gate verdict reason | **gate reason** (`EXPIRED`/`MISSING`/`DEGRADED`/`TOO_LARGE`) | put gate reasons in the capture allowlist |
+| **absolute path** | configured source value | **source path** (may be relative; launcher resolves) | require absolute paths in config files |
+| | value injected into Runtime | **resolved host root (absolute)** | treat a relative value as a normal contract |
+
+### 1.3 User questions and refresh hints (2026-11-06)
 
 | Term | English / code identifier | One-line definition | **Counter-example: do not use it for** |
 |---|---|---|---|
@@ -142,14 +165,14 @@ Caution: do not read "membership equivalence" as "fully interchangeable" — a h
 | Concept | **Canonical** | Retired | PLAN |
 |---|---|---|---|
 | Pre-write restore point | **checkpoint** | `revert_snapshot`, active snapshot restore | 0356 |
-| Old snapshot surface | **legacy snapshot** (retirement prose only) | blending with checkpoint | 0357 |
+| Old snapshot surface | **legacy snapshot** (retirement prose only) | blending with checkpoint | PLAN-0357 |
 
 ### 2.3 Confusable but **not** synonyms (do not merge)
 
 | A | B |
 |---|---|
 | Ledger single-writer (0326) | ensure single-flight (M-3) |
-| ensure single-flight | chat `409 CHAT_IN_PROGRESS` |
+| ensure single-flight | chat `409 CHAT_IN_PROGRESS` — sandbox readiness vs the per-session concurrent-run cap (since PLAN-0645 this is `maxConcurrentRunsPerSession`, default 2; only a full cap yields 409, and setting it back to 1 restores single-flight) |
 | workspace operation lock holder | workspace role owner; retired alias: `execution lease holder` |
 | run resume | unpause |
 | **durable job continuation** | **Workspace `unpause` / `run resume`** — reading existing Job output (`job-output`, read-only cursor) is not reactivating execution |
@@ -170,6 +193,7 @@ Caution: do not read "membership equivalence" as "fully interchangeable" — a h
 | Phase | Action |
 |---|---|
 | 2026-09-16 | Align unstarted XH PLAN README/spec to §1–§3 |
+| 2026-09-17 | Add §1.1 (principal / membership / collaboration ≠ delegation), the third sense of `owner` (resource ownership) and the `role` split; unstarted PLANs and docs follow the new canonical names; implementation stays with backlog BL-18 (originally not implemented; on 2026-09-23 G2 froze it into PLAN-0407, in progress) |
 | 2026-09-21 | Add `scope` / `interrupted` / `runtimeBootId`; §2.3 separates **durable job continuation** from Workspace `unpause` / `run resume` (PLAN-0390) |
 | 2026-09-30 (PLAN-0426) | Add `projection` six senses (A durable record / B read model / C response view / D UI local view / E mapping / F1 bounded preview / F2 redacted summary); scope extended to root-level `spec/`; bare `projection` banned in prose, identifiers and history excepted |
 | 2026-10-10 (PLAN-0474) | Rename the Runtime concept to workspace operation lock in this glossary and the proposed Security/Workspace glossary; no authorization semantics change |
@@ -182,4 +206,4 @@ Caution: do not read "membership equivalence" as "fully interchangeable" — a h
 
 ## 5. Related
 
-DEV-031 / PLAN-0329 (`ensure`); PLAN-0345 (workspace operation lock, unpause); PLAN-0341 (prune, compaction); PLAN-0356 (checkpoint); DEV-030 (doc layout); PLAN-0390 + `spec/workspace/execution-job.md` (`job scope` / `interrupted` / `runtimeBootId`).
+Principals / membership / ownership and Agent principalization: workspace internal `xh-backlog-and-debt.md` BL-18 (not distributed; carried by PLAN-0407, in progress); DEV-031 / PLAN-0329 (`ensure`); PLAN-0345 (workspace operation lock, unpause); PLAN-0341 (prune, compaction); PLAN-0356 (checkpoint); DEV-030 (doc layout); PLAN-0390 + `spec/workspace/execution-job.md` (`job scope` / `interrupted` / `runtimeBootId`).

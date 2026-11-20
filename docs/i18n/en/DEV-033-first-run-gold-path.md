@@ -168,10 +168,12 @@ Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](
 | Symptom | Cause | Fix |
 |---|---|---|
 | `dev:host` fails to come up, ports busy | 12630-12634 occupied by another stack/process | `mise run dev:host:check`; or use another slot via `--stack 2` |
-| CP exits at startup complaining local mode needs loopback | `XIHE_LOCAL_MODE=true` was set (the key is removed with PLAN-0758; there is no local-mode gate any more) | drop the environment variable. |
+| CP exits at startup complaining local mode needs loopback | `XIHE_LOCAL_MODE=true` was set (the key is removed with PLAN-0758; there is no local-mode gate any more) | drop the environment variable. **Local mode is deprecated**: this symptom only appears in the §5 E2E lane or in historical archives |
 | After login you get a blank screen with no workspace | **Expected** (since 0614 no workspace is auto-created) | click "create your first workspace" (§4 step 1) |
 | The creation dialog cannot read the directory | the path is not a Runtime-visible host directory, or the backend is unavailable | use a real host directory; call `POST /api/v1/workspaces/capabilities/preflight` first and read `reason` when `available=false` |
 | Creating a workspace returns `409 BACKEND_DISABLED` | `managed_import` selected (docker backend frozen) | switch to `direct_attach` |
+| Creating a workspace returns `400 INVALID_REQUEST` | the request carries no `storageMode` (the field is **required**, no default — `PLAN-0618`) | send `direct_attach` + `hostPath` + `executionMode` explicitly; the UI dialog already defaults to `direct_attach` |
+| Sending a message / creating a session returns `503 BACKEND_DISABLED` | the target workspace is a pre-existing docker (`managed_import`) workspace and the execution backend is frozen | create a `direct_attach` workspace and continue there (see [DEV-018 (zh)](../zh-Hans/DEV-018-known-issues.md)) |
 | Sending a message returns `503 LLM_NOT_CONFIGURED` | no usable model/connection (`missing_credentials`) | create a connection and verify to `READY`; this is exactly the G4-a status quo (BL-152), not a failure of this path |
 | Sending returns `409 API_TYPE_REBIND_REQUIRED` | the session did not pin "connection + template triple" | create the session through the UI, or send the triple explicitly via API |
 | `POST /local-login` returns 404 | the endpoint was removed with PLAN-0758 | use `POST /api/v1/auth/login` (password is required). |

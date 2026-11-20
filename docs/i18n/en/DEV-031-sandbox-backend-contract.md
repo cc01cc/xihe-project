@@ -12,6 +12,17 @@ created: 2026-09-15
 
 > For Runtime developers and backend-swap evaluations: the `SandboxBackend` required interface (verbs plus the capability query), capability declaration, and cross-backend semantic constraints (§1–5); the three-tier mapping for long-running stdio MCP (§6); and the Docker backend status map (§7). Capability snapshots also distinguish stable backend identity, maturity, Runtime/execution platforms, and provider version. Design principles live in the `sandbox-backend-abstraction` skill; the leak audit record is in PLAN-0329.
 
+> PLAN-0389 Workspace/Sandbox proposed SPEC only cites this contract's capability/fail-closed semantics; it does not treat the current Docker implementation as Windows MXC/host evidence.
+
+## Runtime ExecutionRoot and Backend Policy
+
+The Runtime's unified execution abstraction uses `ExecutionRoot`/`ExecutionRoots`/`ExecutionSpec`, not MXC's `binding`.
+
+- `workspace` is the default `ExecutionRoot`; additional directories must be configured explicitly by Runtime/CP and carry read/readwrite permissions.
+- The Runtime side owns root/path preflight, capability, policy assembly, worker lifecycle and audit; the execution backend only receives the translated policy.
+- MXC maps ExecutionRoots to `readwritePaths`/`readonlyPaths`; Docker maps them to mounts; Host only performs path guards and must not claim process-level isolation.
+- `ExecutionRoot` and host absolute paths must not leak into the Agent/UI public contract; expose capability/availability summaries (permission-trimmed responses) and workspace-relative paths instead.
+- In v1 a cross-ExecutionRoot `move/copy` returns `UNSUPPORTED`; long-running watchers, PDF transforms and the Docker file worker are owned by BL-62, the follow-up transform plan and PLAN-0380 respectively.
 ## 1. Scope and Boundaries
 
 - The contract describes *how upper layers request an execution environment*; Docker, port publishing, and in-sandbox HTTP never cross this layer.
@@ -131,7 +142,7 @@ Status: the current MCP bridge depends on an in-sandbox HTTP service plus a publ
 
 Current backend direction: PLAN-0379 owns `windows-mxc`, reported with `maturity: "experimental"`; `windows-host/unrestricted` is an explicitly user-selected host-execution fallback and does not claim workspace-outside write protection; `docker` remains the stable backend identity, while the Docker volume/guard line is deferred by PLAN-0377/0380. All three share `contractVersion: "v1"`; consumers branch on `available/reason` and execution mode, while platform/provider versions remain diagnostics, not on backend-specific transport names.
 
-`docker` is not retired: it remains the only execution backend for `managed_import`; the service-containerization freeze only affects deployment form and image builds, not workspace backend availability. See USER-001 §2.6 for the user-facing entry (creating direct-attach workspaces, mounting existing directories, MXC vs host capability/risk, and the non-convertibility of managed workspaces).
+`docker` is not retired but is **currently unavailable**: it remains the only execution backend for `managed_import` (backend identity kept, code not deleted), yet PLAN-0618 (user ruling, 2026-11-01) **freezes it completely** — product surface (create/execute/chat), test surface and defaults are frozen together, CP fails closed with `503/409 BACKEND_DISABLED`, and there is no silent fallback to the host. Unfreezing restores the previous behaviour (set `XIHE_WORKSPACE_DOCKER_BACKEND` and re-enable the frozen test group; see [DEV-018](DEV-018-known-issues.md) "docker backend freeze scope"). See USER-001 §2.6 for the user-facing entry (creating direct-attach workspaces, mounting existing directories, MXC vs host capability/risk, and the non-convertibility of managed workspaces).
 
 ## 8. Change Rules
 

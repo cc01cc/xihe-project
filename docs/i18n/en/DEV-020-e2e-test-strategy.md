@@ -82,6 +82,16 @@ All page navigations use `load`/`domcontentloaded` plus concrete DOM visibility 
 
 xihe uses a single Playwright project (chromium). Desktop coverage is complemented by explicit mobile viewport specs; host-only scenarios are marked `@host` and run against an isolated native stack.
 
+### 1.3a Session termination: the E2E criterion (PLAN-0581)
+
+Once an account is disabled / soft-deleted / password-reset by an administrator, **both channels fail at once** (the access `tv` and the refresh `sv`), so the checkable chain is fixed:
+
+1. a business request in the user context → the network layer sees **401** (`code=AUTHORIZATION_REQUIRED`, coming from the access channel, not a new error code);
+2. the frontend's silent refresh (0546 `ensureRefreshed`) hits `/api/v1/auth/refresh` → the **refresh fails** (the refresh channel's `sv` no longer matches);
+3. the page lands on `/login`, and all three `localStorage` keys `xihe-token` / `xihe-refresh-token` / `xihe-user` are cleared.
+
+The reverse control must exist in the same batch: **a role change does not log the user out** (access 401 → refresh succeeds → replay, with the refreshed access carrying the new `role`), which proves the two channels were not wrongly merged into one switch. Both are `browserConsumer` evidence and belong to L1/L2 batches; the API-level equivalent lives in the CP integration test `UserAdminIntegrationTest`.
+
 ## 2. Screenshot and Visual Regression Plan
 
 ### 2.1 Baseline Tracking
@@ -153,7 +163,7 @@ pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwrig
 > ② a `--llm-mode` (or `XIHE_E2E_LLM_MODE`) that differs from the batch `llmMode` in `scripts/e2e-batches.jsonc` **refuses to start** (the declared lane must not be silently overridden); cross-lane debugging needs the explicit `--allow-llm-mode-override`;
 > ③ `--retries` is Playwright's per-test retry, `XIHE_E2E_RETRY_ROUNDS` is a whole-run replay (with a DB reset between rounds); when both are set the total attempts = rounds × (1 + retries); evidence runs should use `--retries=0` plus `XIHE_E2E_RETRY_ROUNDS=1` so a retry cannot mask a real failure;
 > ④ pre-flight your arguments without booting anything: `node scripts/e2e-host.mjs --batch=<name> [--only=…] --check-cli`.
-> ⑤ phase-order self-check (no rebuild, no window, no stack): `node scripts/e2e-host.mjs --plan-only` — it runs the real `enter()` statements in `main()` and prints `declared` (plan) vs `executed` (actual order); a mismatch exits 1, and combining it with `XIHE_E2E_EXTERNAL_SERVER=1` is refused (see §3.1a).
+> ⑤ phase-order self-check (no rebuild, no window, no stack): `node scripts/e2e-host.mjs --plan-only` — it runs the real `enter()` statements in `main()` and prints `declared` (plan) vs `executed` (actual order); a mismatch exits 1, and combining it with `XIHE_E2E_EXTERNAL_SERVER=1` is refused (see §3.1c).
 
 If Linux validation is authorized in future work, the local candidate workflow uses these two screenshot specs:
 
@@ -178,7 +188,30 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 
 `missing` omits credentials, `invalid` makes the fake provider return 401, `success` emits at least two SSE tokens, and `disconnect` closes after the first token. Set `XIHE_E2E_HEADED=1` and `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` for Chrome Beta headed runs. Each run uses isolated database, host root, ports, and evidence output.
 
-### 3.1a `--plan-only` dry run: phase order only (PLAN-0680)
+### 3.1b Headed walkthrough batch (PLAN-0621)
+
+The headed walkthrough is a batch of scenarios a **human can re-check** (every step is a `test.step` + screenshot + assertion). It is **never collected together with the headless batches**: it lives in `packages/ui/e2e/headed/`, while `mock-full` / `real-full` collect the directory `e2e/real`, so the default batches always exclude it (`--batch=headed` is the only way to run it).
+
+```powershell
+# 1) start the persistent isolated stack (important: pass --bootstrap-user=register, otherwise the Agent
+#    reports llmReady=missing_credentials and the runner judges the stack not ready)
+node scripts/e2e-host.mjs --persistent --llm-mode=mock --first-run=local --bootstrap-user=register
+
+# 2) headed walkthrough (reuse that stack; Chrome Beta is single-window per machine, so make sure no other
+#    headed session is running)
+$env:XIHE_E2E_EXTERNAL_SERVER="1"; $env:XIHE_E2E_HEADED="1"; $env:XIHE_E2E_BROWSER_CHANNEL="chrome-beta"
+node scripts/e2e-host.mjs --batch=headed --retries=0
+
+# 3) tear down
+node scripts/e2e-host.mjs --teardown
+```
+
+- **Where the evidence lands**: `packages/ui/.tmp/xh-headed-walkthrough/runs/<XIHE_E2E_RUN_ID>/` (`shots/NN-*.png` + `report.json` with per-step step/URL/assertion/screenshot + `console-errors.log`). Screenshots are local artefacts and are **not committed**.
+- **Why `--bootstrap-user=register` is required**: without it the stack does come up, but no account imports the fake provider profile ⇒ the Agent reports `llmReady=missing_credentials` ⇒ the runner judges the stack not ready and no spec can run. Measured 2026-11-02.
+- **Not part of the regular gates**: it needs a real display plus Chrome Beta, is slow and environment-sensitive; `mise run validate` and the smoke/mock-full baselines exclude headed (proof: `npx playwright test e2e/real --list` = 213 tests / 83 files with 0 headed hits; `npx playwright test e2e/headed --list` = 8 tests / 1 file).
+- **Findings are banked before being fixed**: findings go to `plans/PLAN-0621-*/evidence/findings.md`, and every fix must first add a reproducing assertion (see that plan's design §4).
+
+### 3.1c `--plan-only` dry run: phase order only (PLAN-0680)
 
 ```bash
 # healthy wiring: declared == executed == [cp-boot-plan, preflight-gate], exit 0
@@ -195,14 +228,63 @@ It answers exactly one question: **are the boot steps in `main()` still entered 
 - **Unavailable modes fail loudly**: combining it with `XIHE_E2E_EXTERNAL_SERVER=1` (reuse an already-running stack) is **refused** — a reuse run has no rebuild phase, hence no "gate must come after the rebuild" order to verify; refusing beats degrading silently.
 - **It is not a safety exit**: `--plan-only` does not verify artifact identity (the jar sidecar / sha256 / build-info match against HEAD lives in `resolveCpBootPlan()` and `runPreflightGate()`), and it never stands in for window acceptance. Exit 0 says "the wiring has not drifted", not "you may open a window".
 
-### 3.2 Time Budget and Network Classification (PLAN-0586)
+### 3.2 E2E-only timing barrier (PLAN-0536)
+
+When a test needs a deterministic ordering between "the browser request has reached CP" and "the real state change", do **not** mock the server response — that proves nothing about the real state check. CP ships a `@Profile("e2e")` run-scoped barrier (`/internal/v1/e2e/guidance-barrier`) that only the host runner's service token may call; `dev`/`prod` never activate that profile, so the route does not exist there.
+
+```bash
+node scripts/e2e-host-detached.mjs --timeout-min 45 \
+  e2e/real/plan0536-guidance-race.spec.ts --llm-mode=approval --retries=0
+```
+
+Constraints (measured; details in `plans/archive/PLAN-0536-xh-guidance-race-error-e2e/spec/e2e-guidance-barrier.md`):
+
+- The barrier must hang **outside** the controller/service transaction. Inside the service transaction it locks the Session and then the Run (the same order as the cancel path), so parking there makes cancel hit the lock and time out (503) — the race can never be constructed.
+- The start order is fixed: arm → `state=reached` → real state change → release → the production check returns the original error code.
+- A timeout returns `503 E2E_GUIDANCE_BARRIER_TIMEOUT` and writes nothing; `try/finally` releases unconditionally.
+- When asserting on the console, the 4xx that the test **deliberately triggers** comes with one browser resource-error log line — allow that single line exactly, do not widen the filter.
+
+### 3.3 Auth rate-limit lane (PLAN-0566 D6, dual stack)
+
+The runner picks how CP's auth rate-limit env is injected with `--auth-lane=<exempt|ratelimit>` (default `exempt`); every key reuses the existing `XIHE_CP_AUTH_*` set (`application.properties` §0558), so product code is untouched — no shell/mise global preset is allowed:
+
+| Lane | Injected keys (CP serviceEnv) | Purpose |
+|---|---|---|
+| `exempt` (default, whole matrix) | `XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS=0` (dimension disabled, the service returns immediately) | register calls inside journey/mock-full batches cannot be broken by a 429 |
+| `ratelimit` (rate-limit assertion stack) | `XIHE_CP_AUTH_LOGIN_REGISTER_MAX_ATTEMPTS=6`, `XIHE_CP_AUTH_TRUSTED_PROXIES=127.0.0.1/32,::1/128` (a loopback remote counts as trusted ⇒ a non-loopback XFF literal takes effect), `XIHE_CP_AUTH_LOGIN_ACCOUNT_MAX_FAILURES=3`, `XIHE_CP_AUTH_LOGIN_ACCOUNT_LOCK_SECONDS=6` | wires up `auth-rate-limit.spec.ts` (reverse assertions: 429 + `AUTH_RATE_LIMITED` + `Retry-After`) and `auth-lockout.spec.ts` (`@host`, uses the identifier selector for login) |
+
+```bash
+node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
+  e2e/real/auth-rate-limit.spec.ts e2e/real/auth-lockout.spec.ts --llm-mode=mock
+```
+
+Production and the everyday host stack keep rate limiting on by default (not injecting = the existing defaults); the `XIHE_E2E_EXTERNAL_SERVER=1` reuse mode is outside this lane's judgement. The product-side root cause behind rate limiting (IPv6 loopback exemption not working) is tracked in PLAN-0571.
+
+### 3.3b Workspace docker backend freeze (PLAN-0612 M4 → **PLAN-0618 full freeze**)
+
+The 2026-10-31 rule "`test:e2e:host` is the only exemption" **was superseded by PLAN-0618 (user ruling 2026-11-01)**: the test surface is frozen together with the product surface and the defaults.
+
+- The runner no longer injects `XIHE_WORKSPACE_DOCKER_BACKEND=enabled` "so the docker cases can run"; CP walks its default `disabled` (`POST /api/v1/workspaces` without `storageMode` → `400 INVALID_REQUEST`, explicit `managed_import` → `409 BACKEND_DISABLED`, an existing docker workspace → `503`; see [DEV-014 §8b](DEV-014-control-plane-architecture.md), [DEV-003 §2](DEV-003-config-management.md)).
+- Specs that genuinely need containers are dropped from the batches; restore collection with `--include-docker-frozen` (**the criterion was finalised by PLAN-0618 M3** and this document follows it).
+- The frozen list (which specs, why, what to verify after unfreezing) lives only in `plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md`; this document does not copy the entries. The three-surface freeze scope and unfreeze steps are in [DEV-018 (zh)](../zh-Hans/DEV-018-known-issues.md).
+
+### 3.4 Time Budget and Network Classification (PLAN-0586)
 
 - **Batch budget**: the mock-full wall clock baseline moved from 7.5 min to 6.7 min after PLAN-0586 (402.8 s, 82 passed / 0 unexpected / 0 flaky; evidence `plans/PLAN-0586-XH-e2e-runtime-slim/evidence/m4-final-ab.md`). New changes must not push the batch back above 7.5 min.
 - **Network classification**: waits in E2E fall into three buckets — (1) deterministic HTTP/SSE waits (`waitForResponse` / event assertions); (2) process readiness (Agent restart, Runtime heartbeat) via `expect.poll` with an explicit terminal state; (3) uncertain external dependencies, which must use explicit timeouts or mocks, never fixed sleeps. A fixed `waitForTimeout` is a defect (V4).
 - **Agent readiness measurement**: under full-batch load `spawn → health+llmReady` measured 5.1–7.6 s across 6 samples (with n=6, p95 equals the max 7.6 s); the 30 s default budget stays (override with `XIHE_E2E_AGENT_READY_TIMEOUT_MS`), and failures must report waited time + last state + agent log path.
 - **Cleanup cost**: a workspace DELETE with an import job takes ≈11 s (29 ms when idle); batch cleanups must run concurrently, not serially. The runner's zero-residue teardown check is unchanged.
 
-### 3.3 E2E Build Roots and Parallel Runs (PLAN-0656 R2)
+### 3.5 Isolated-stack reuse discipline (added 2026-11-05 from measurement)
+
+A `--persistent` isolated stack is **not** a sandbox you can re-mode freely: the `llm-provider` profile and the fake connection both live in that stack's own PG rows, so switching the profile once contaminates every later round.
+
+- **A real-provider round and a fake-fixture round must never run one after the other on the same stack.** Measured (right after PLAN-0630 S6's real-key round, then `real/agent-spawn-caller`): the real round replaced the instance-layer profile with a real model (`mimo-v2.6-flash`), while the fake fixture connection had only registered `fake-openai` ⇒ creating a session returned `400 "Model is not registered under this Connection"`; switching the other way (real→fake) additionally produced a transient `POST /chat 503`. **Either use another stack, or re-run `--first-run=local --bootstrap-user=register` without the real key to re-import the fake profile, and wait for the agent to report `llmReady=ready`.**
+- **Rebuild CP and stamp it after every code change**: the rebuild branch of `scripts/e2e-host.mjs` writes `build-info.properties` after a successful package (`gitHead()` reads the current worktree HEAD) and, since task-90, writes the jar fingerprint manifest in the same batch (§3.6.1); for a hand-run `mvn -q -DskipTests clean package -Dxihe.target.dir=<target>` see §3.6.1 Migration for who produces the manifest and how to supply it — an external reuse stack (`XIHE_E2E_EXTERNAL_SERVER=1`) fails fast against `build-info`.
+- **Browser network transients are not product defects**: on the first start after a merge Vite runs `Re-optimizing dependencies`, and in that window `net::ERR_NO_BUFFER_SPACE` can appear once (a plain GET through the dev proxy, not SSE). Criterion = not reproducible on the same stack + no stream-drop logs on CP/agent ⇒ record as an observation; **never** add it to an allow-list or relax an assertion.
+- When `XIHE_EVIDENCE_DIR` is unset on the mock lane, `e2e/helpers/evidence.ts` falls back to `<repo>/.local/evidence/e2e-auto` and warns once (4 cases went red over this earlier; it is an environment prerequisite, not a regression).
+
+### 3.6 E2E Build Roots and Parallel Runs (PLAN-0656 R2)
 
 The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-63`, the default itself on `:62`; an explicit `XIHE_CP_TARGET_DIR` wins). It skips a 2–3 min cold build per run, at the price that **one build root serves one run at a time** (what concurrent repackaging does is in the window protocol §5 and is not repeated here).
 
@@ -229,7 +311,7 @@ The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-
     $env:XIHE_MOCK_REPORT = "1"
     ```
 
-### 3.3.1 CP jar fingerprint (BL-477 / task-90)
+### 3.6.1 CP jar fingerprint (BL-477 / task-90)
 
 The identity of the shared CP jar is no longer taken from mtime, and no longer from the jar's own `META-INF/build-info.properties`: that stamp is generated during the Spring Boot package phase and *rewritten afterwards* by `scripts/stack-run.mjs`, so the copy inside the jar lags the artifact by a measured **77 minutes** (its `commit` was 11 CP files behind the tree the jar was actually built from) — using it as the criterion manufactures a new false red. The criterion is now a manifest **next to** the jar, `<jar>.buildinfo.json` (e.g. `control-plane-<version>.jar.buildinfo.json`), written **atomically** (temp file + rename) by the same code path that produces the jar, immediately after packaging:
 
@@ -260,7 +342,7 @@ Read priority (`scripts/lib/cp-jar-sidecar.mjs`, step 0 of the preflight artifac
 - **Triage order** (when stuck at "create session"): ① READY provider → ② request path/headers (`X-Workspace-Id`) → **only then** suspect lane capability. Both the mock and approval lanes were measured to **support** UI session creation (control probes returned 201 in both).
 
 
-### 3.3.2 Mock count-baseline maintenance semantics (task-250, model "C")
+### 3.6.2 Mock count-baseline maintenance semantics (task-250, model "C")
 
 `counts.expected` / `counts.skipped` in `packages/ui/e2e/mock-baseline.json` **follow the actual collected counts automatically** via `scripts/check-mock-baseline.mjs`; both numbers and that run's `sourceRun` come from the **same** `summarizeReport` result, so judging and writing can never cross runs.
 

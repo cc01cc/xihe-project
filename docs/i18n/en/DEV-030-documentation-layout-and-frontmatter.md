@@ -121,3 +121,53 @@ INDEX.md and other pure navigation files don't need special settings — LYJ sid
 
 - `CMTX docs/i18n/zh-Hans/DEV-010-documentation-layout-and-frontmatter.md` — CMTX original spec (with full research background)
 - `LingYiJu/packages/project/generate-config.ts` — LYJ side scanning and exclusion logic
+
+## 6. Style System (PLAN-241 readability baseline)
+
+Three principles: (1) **inverted pyramid** — an H1 lead-in (audience + what is covered + prerequisites), conclusion before detail; (2) **tables first** — comparisons, matrices and checklists go into tables, not paragraphs; (3) **progressive disclosure** — keep conclusions and common paths in the body, move provenance, history and exhaustive lists into an appendix.
+
+- Headings: exactly one H1, H2/H3 numbered, no H4+ (split into a table or an appendix instead).
+- Diagrams: pick by content, not "mermaid by default" — flows/sequences/states use mermaid (subgraphs carry detail), directory trees and level overviews stay ASCII (mermaid has no better type); a converted diagram must map one-to-one onto the original information (PLAN-241 Decision 7: compressing conversions lose information); every diagram notes the code anchor. No new ASCII flowcharts.
+- Duplicated content: each document keeps a summary plus a pointer to the owning document (transport owner DEV-010, attachment domain owner DEV-017) so every page stays self-contained.
+- Symbols: keep the ✅/⚠️/❌/→ scanning markers (project exception, see below); Chinese/English terminology is paired on first use, Chinese afterwards.
+
+> Project exception: the workspace DOC-002 rule asks for pure ASCII without emoji. This series keeps the four markers ✅/⚠️/❌/→ for scanability and consistency with existing documents; everything else still follows DOC-002 (no other emoji or decorative characters).
+
+## 7. Documentation Ownership (PLAN-239 drift gate)
+
+Every document has an owning module; a PLAN that changes that module's code must update the owning document in the same batch (see the wrap-up checklist in `A03-xihe/AGENTS.md`).
+
+| Module | Owning document |
+| --- | --- |
+| Global architecture/protocol | DEV-001 |
+| Environment/runtime/debugging | DEV-002 |
+| Configuration | DEV-003 |
+| Logging | DEV-004 |
+| UI | DEV-010/011/012 |
+| Agent | DEV-013 |
+| CP | DEV-014 |
+| Runtime | DEV-015 |
+| MCP | DEV-016 |
+| Session | DEV-017 |
+| DB schema | DEV-019 |
+| Testing | DEV-020/021/022/023 |
+| Authentication/security | DEV-024 |
+| User-visible behaviour | USER-001 |
+
+## Appendix: Glossary (series-wide; Chinese/English paired on first use)
+
+| English | Chinese | Note |
+| --- | --- | --- |
+| materialization | 物化 | Runtime creates a Sandbox / loads a Workspace on demand |
+| ExecutionSpec | 执行规格 | Workspace execution description issued by CP; the Runtime fetches it by `workspaceId` |
+| storageRef | 存储引用 | Persistent locator of a WorkspaceStorage |
+| generation | 连接代数 | Monotonic version of an SSE connection, isolating old and new emitters |
+| run / runId | 轮次 | One model execution triggered by `POST /api/v1/chat` |
+| MessagePart | 消息分区 | Content unit of a streaming message (text/reasoning/citation/artifact) |
+| tool namespace | 工具命名空间 | On-demand isolation via a `serverId__` prefix (sticky and persisted, never promoted; see DEV-016 §4) |
+| serverId | 服务标识 | Routing key: STDIO uses the top-level key of the user config, remote uses the `mcp_servers` row |
+| tool generation | 工具代数 | Incremented per merged `tools/list`, recorded with the audit tuple for historical replay |
+| no-auth remote | 免鉴权远端 | Public remote server with `authMode=no-auth`; skips the CP token broker |
+| Sandbox | 沙盒 | Per-workspace Docker container execution surface |
+| bridge (xihe-mcp-bridge) | 桥 | Process bridging an in-container STDIO MCP server to HTTP |
+| profile (Strict/Coding/Isolated) | 画像 | Workspace isolation level; since PLAN-235 everything executes inside a Sandbox |

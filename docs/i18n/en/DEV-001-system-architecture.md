@@ -10,16 +10,25 @@ status: active
 
 # DEV-001: xihe Agent System Architecture
 
-> xihe is a general-purpose Agent runtime platform that provides multi-Agent orchestration, tool invocation, sandbox execution, permission control, and other capabilities.
+> Newcomer-oriented: 5 minutes to build a mental model of the whole system (four-module split + two flows + protocol table). Module details live in DEV-010/013/014/015/016/017.
+>
+> xihe is a general-purpose Agent runtime platform providing multi-Agent orchestration, tool invocation, sandbox execution, permission control, and other capabilities. Four-module Hub-Module architecture: each module evolves, deploys, and uses its own technology stack independently; the core design philosophy is **decoupling**. Module deep-dives: UI in DEV-010, Agent in DEV-013, CP in DEV-014, Runtime in DEV-015, MCP in DEV-016, Session in DEV-017. This document keeps the overview and the implementation navigation; frozen cross-module contracts live in the root `spec/architecture/` and `spec/protocol/`.
+>
 > The project uses exam preparation (postgraduate entrance exam) as its initial entry point, but the architectural design is not limited to this — any scenario requiring Agent capabilities can use xihe.
 
-## 1. Architecture Overview
+## 1. Four modules in detail
 
-xihe adopts a **four-module Hub-Module architecture**. The core design philosophy is **decoupling** — each module evolves, deploys, and uses its own technology stack independently.
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    UI["UI<br/>(human operations)"] --> CP["Control Plane<br/>(management)"]
+    AG["Agent<br/>(Agent operations)"] --> CP
+    CP --> RT["Runtime<br/>(infrastructure)"]
+    CP --> PG[("PostgreSQL")]
+    AG -.-> LLM["LLM Providers<br/>(scheduled by CP)"]
+```
 
-## 2. Four Modules in Detail
-
-### 2.1. UI Module — Vue/TypeScript
+### 1.1. UI Module — Vue/TypeScript
 
 **Responsibility**: The entry point for human user interaction, covering Web, TUI, and potential future IDE Extension across multiple terminals.
 
@@ -46,7 +55,7 @@ xihe adopts a **four-module Hub-Module architecture**. The core design philosoph
 - Control Plane → UI (status updates, execution results, approval requests)
 - Control Plane → UI (Agent's intermediate thinking/decision streams)
 
-### 2.2. Agent Module — Python / LangChain
+### 1.2. Agent Module — Python / LangChain
 
 **Responsibility**: LLM invocation, multi-Agent orchestration, tool selection, planning decisions.
 
@@ -64,10 +73,10 @@ xihe adopts a **four-module Hub-Module architecture**. The core design philosoph
 - Multi-Agent: Supports delegation, parallel execution, and result merging between Agents
 - Memory/Context: Session management (Control Plane assisted / self-owned storage)
 - MCP Integration: Agent uses `langchain-mcp-adapters`'s `StreamableHTTPConnection` to treat CP as a unified MCP entry point. All tool calls (Runtime built-in tools + user-configured STDIO MCP servers) go through CP's three-layer routing (CP authentication → Runtime Gateway per-workspace dispatch → in-container `xihe-mcp-bridge` STDIO bridging). Agent only needs to configure one MCP endpoint (CP address) and is unaware of backend tool distribution. See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md)
-- **LLM Provider Management**: Unified encapsulation via `langchain-litellm` (`ChatLiteLLM(BaseChatModel)`), with `litellm` automatically routing to 100+ Providers (OpenAI, DeepSeek, Anthropic, Xiaomi MiMo, Ollama, etc.) at the bottom layer. Adding new Providers requires no Agent code changes — add a record to the CP provider catalog (`packages/control-plane/src/main/resources/provider-catalog/providers.json`, served by `GET /api/v1/provider-catalog`). The UI `BUILTIN_PROVIDERS` list is an offline fallback only and no longer carries model defaults (PLAN-0531).
+- **LLM Provider Management**: Unified encapsulation via `langchain-litellm` (`ChatLiteLLM(BaseChatModel)`), with `litellm` automatically routing to 100+ Providers (OpenAI, DeepSeek, Anthropic, Xiaomi MiMo, Ollama, etc.) at the bottom layer. Adding new Providers requires no Agent code changes — add a record to the CP provider catalog (`packages/control-plane/src/main/resources/provider-catalog/providers.json`, served by `GET /api/v1/provider-catalog`). The UI `BUILTIN_PROVIDERS` list is an offline fallback only and no longer carries model defaults.
 - **Internal Freedom**: LangChain ecosystem, custom Agents, new framework replacements — none affect other modules
 
-### 2.3. Runtime Module — Rust
+### 1.3. Runtime Module — Rust
 
 **Responsibility**: Sandbox execution environment for low-level system capabilities, exposing two sets of interfaces externally.
 
@@ -100,7 +109,7 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 
 | Endpoint | Consumer | Purpose |
 |----------|----------|---------|
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | Read file content (optional `max_bytes` truncation; `200 {found,content,truncated}` with `found:false` for absent paths — PLAN-0427) |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/read` | CP → Runtime | Read file content (optional `max_bytes` truncation; `200 {found,content,truncated}` with `found:false` for absent paths) |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/write/{path}` | CP → Runtime | Write file (binary body) |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/list` | CP → Runtime | List directory |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/delete` | CP → Runtime | Delete file |
@@ -131,7 +140,7 @@ Tool names are mapped by CP reverse proxy when building the tool→server mappin
 
 **State Flow Maintains MCP**: Runtime state changes (file events, etc.) are sent via MCP notifications, not REST. CP transparently forwards notifications to Agent (MCP) and UI (SSE). See §3.2.
 
-### 2.4. Control Plane Module — System Core
+### 1.4. Control Plane Module — System Core
 
 **Responsibility**: Control Plane (abbreviated CP) is the heart of the system, responsible for routing + permission control + data processing + state broadcasting + session management + **unified configuration management**. Abbreviated as CP in the chain diagrams and protocol examples below.
 
@@ -179,7 +188,7 @@ See Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`.
 | **CP ↔ Runtime (MCP)** | **MCP Streamable HTTP** | Agent's tool calls reverse-proxied through CP to Runtime MCP Server. Runtime state changes notified to CP via MCP notifications |
 | CP ↔ External MCP Server | MCP Streamable HTTP | External tools (websearch, etc.) transparently proxied by CP; Agent is unaware of external addresses |
 
-### 2.5. Communication Protocol Summary
+### 1.5. Communication Protocol Summary
 
 MVP uses the following protocols, each with a clear purpose:
 
@@ -194,7 +203,7 @@ MVP uses the following protocols, each with a clear purpose:
 >
 > MVP uses zero additional infrastructure (no message queues, no WebSocket gateway). Modules connect directly through HTTP endpoints. Enterprise-grade cluster scaling can later introduce message middleware like Centrifugo as needed.
 
-### 2.6. Design Notes
+### 1.6. Design Notes
 
 **Unified MCP Reverse Proxy** — Agent directs all MCP calls to CP's single entry point. CP determines the target backend (Runtime / external service) based on tool name prefix, performs permission checks, and forwards. Agent is unaware of backend tool distribution; external tool passthrough can be switched to authenticated mode at any time. See Sprint 1 `DESIGN-007-mcp-gateway-reverse-proxy.md`.
 
@@ -204,16 +213,14 @@ MVP uses the following protocols, each with a clear purpose:
 
 **Zero MCP SDK Dependency (CP Side)** — CP acts as a pure HTTP reverse proxy with no dependency on any MCP SDK. CP directly parses JSON-RPC request bodies to extract `method`/`params`, performs permission checks and rewriting, then forwards. See Sprint 1 `DESIGN-001-decisions.md` §4.
 
-## 3. Two-Flow Model
+## 2. Two-flow model
 
 All inter-module communication falls into two types of flows:
 
 1. **Command Flow** — Module A requests Module B to execute, with a complete request → execute → response lifecycle
 2. **State Flow** — Modules asynchronously broadcast state changes, with no response expected, one-to-many distribution
 
-### 3.1. Command Flow
-
-**Definition**: RPC pattern. Module A requests Module B to perform an operation. B can be any module — RT (tool), Agent (task), UI (human interaction). Responses are divided into **one-shot** (complete result) and **streaming** (token-by-token output, real-time stdout) types.
+**Command flow** — RPC pattern. Module A requests Module B to perform an operation. B can be any module — RT (tool), Agent (task), UI (human interaction). Responses are divided into **one-shot** (complete result) and **streaming** (token-by-token output, real-time stdout) types.
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -267,9 +274,7 @@ sequenceDiagram
   CP->>Agent: User decision
 ```
 
-### 3.2. State Flow
-
-**Definition**: Asynchronous state changes actively broadcast by modules. All modules are both publishers and subscribers, distributed through CP based on subscriptions.
+**State flow** — asynchronous state changes actively broadcast by modules. All modules are both publishers and subscribers, distributed through CP based on subscriptions.
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -291,7 +296,9 @@ sequenceDiagram
   CP-->>UI: SSE /v1/events
 ```
 
-## 4. Architectural Advantages
+State flow: Runtime/Workspace storage watcher → CP `POST /internal/v1/runtime/workspaces/{workspaceId}/events` → UI Workspace SSE (`GET /api/v1/workspaces/{workspaceId}/events`); ChatRun still goes through its own Session SSE (`GET /api/v1/events?sessionId=`). File bodies and directory trees continue over HTTP/MCP and do not enter the event stream.
+
+## 3. Architectural advantages
 
 1. **Multi-process Decoupling** — Compared to the single-process monoliths of Codex/OpenCode/PI/Kimi, xihe's modules can be independently deployed, scaled, and isolated. Agent crashes don't affect UI; Runtime OOM doesn't affect Agent.
 2. **Multi-language Best-of-Breed** — Vue for UI (most mature web ecosystem), LangChain/Python for Agent (richest AI ecosystem), Java + Spring Boot for Control Plane (most mature server ecosystem, GraalVM native startup). Codex is locked to all-Rust (changing LLM requires modifying two crate layers), OpenCode/PI are locked to all-TS (no performance-sensitive layer).
@@ -300,9 +307,7 @@ sequenceDiagram
 5. **Sandbox is First-Class** — Rust namespace/cgroup/seccomp is written into the architecture from day one, not added as a patch afterward. Compared to OpenCode/PI's no-sandbox design, xihe has native defense against LLM "hallucination execution."
 6. **Native Multi-terminal Support** — Web, TUI, and mobile apps only need to implement Control Plane's protocol, without concerning themselves with backend language and implementation.
 
-### 4.1. File Loading Degradation Strategy
-
-Loading large files entirely to the frontend causes OOM (PDF >10MB pdfjs.render and text >10MB JSON parse).
+**File loading degradation** — loading large files entirely to the frontend causes OOM (PDF >10MB pdfjs.render and text >10MB JSON parse).
 
 **Strategy Matrix**:
 
@@ -324,107 +329,24 @@ Loading large files entirely to the frontend causes OOM (PDF >10MB pdfjs.render 
 
 ---
 
-## 5. Protocol Definition (Draft)
+## 4. Unified session and attachments (summary — see DEV-017)
 
-All inter-module communication follows a unified **message contract**:
+Chat and workspace can collaborate in the same work surface, but Workspace is an independent resource and Session is only an optional binding and context layer:
 
-```typescript
-interface Message {
-  id: string
-  type: 'EXEC_REQ' | 'EXEC_RES' | 'STATE_SYNC'
-  source: 'ui' | 'cp' | 'agent' | 'runtime'
-  target: 'ui' | 'cp' | 'agent' | 'runtime' | 'broadcast'
-  timestamp: number
-  payload: unknown
-}
-```
+- Chat uses `/chat/:sessionId`, Workspace uses `/workspace/:workspaceId`.
+- A Workspace may have no Session; when chatting is needed, select or create a Session bound to that Workspace.
+- `useSessionStore` carries a UI-local view over server-side Session data; `useChatStore`/`useWorkspaceStore` are view-layer state.
+- Attachments persist into a backend per-Session space (`{base}/{sessionId}/{fileId}`) and still render after a refresh.
+- The domain model, store boundaries, branch/follow-up contracts, and the attachment read-only convention live in DEV-017.
 
-> Detailed protocol in `DEV-002-message-protocol.md` (to be written).
+## 5. Remote MCP and OAuth boundaries (summary — see DEV-016/DEV-014)
 
----
+- The UI starts Authorization Code + PKCE; CP stores encrypted refresh tokens and issues short-lived access tokens scoped to user/workspace/server.
+- The Agent connects only to the CP logical MCP endpoint; the Runtime host-side connector owns remote-MCP egress; workspace sandboxes do not reach the network directly.
+- Fake OAuth/Fake MCP are real integration/E2E fixtures only.
+- The frozen data path, fields, and error codes live in DEV-016 (MCP) and DEV-014 (CP).
 
-## 6. Chat UI Component Architecture
-
-The chat interface is implemented as a layered component library in `packages/ui/src/components/ui/`:
-
-| Component Family | Purpose | Key Features |
-|-----------------|---------|-------------|
-| `message-scroller/` | Scroll container | Anchor / auto-follow / prepend preservation / message-level jump / visibility tracking |
-| `message/` | Message card | Message / MessageGroup / MessageAvatar / MessageContent / MessageHeader / MessageFooter |
-| `bubble/` | Message bubble | user / assistant / system variants managed by cva |
-| `attachment/` | Attachment display | Media / file / action buttons with state / size / orientation variants |
-| `marker/` | Time / status marker | Divider variant managed by cva |
-
-Scroll behavior core is in `packages/ui/src/composables/messageScroller*.ts` and `packages/ui/src/lib/messageScrollerGeometry.ts`:
-
-- **Mode state machine**: `following-bottom` → `free-scrolling` → `anchored-to-message` → `settling-jump`
-- **User scroll intent**: Listens to wheel / touchmove / PageUp/PageDown/Home/End keys
-- **New turn anchoring**: Scrolls to top of anchored item when new messages arrive, preserving previous context via `scrollPreviousItemPeek`
-- **Prepend preservation**: `preserveScrollOnPrepend` keeps the current viewport anchor when history is prepended
-- **Visibility tracking**: Lazy `IntersectionObserver` subscription provides `currentAnchorId` and `visibleMessageIds`
-- **Performance strategy**: `shallowRef` + manual `data-*` attribute sync avoids full Vue subtree reactivity during high-frequency scroll updates
-
-ChatView integration:
-
-- `ChatView.vue` wraps `MessageList` with `MessageScrollerProvider`
-- `MessageList.vue` replaces the old `@tanstack/vue-virtual` container with `MessageScroller` / `Viewport` / `Content` / `Item`
-- User message `MessageScrollerItem` binds `:scroll-anchor="true"` as the scroll anchor for new turns
-- When SSE streaming starts, `chatStore.createStreamingMessage()` immediately creates a real assistant message; `appendToken()` appends directly to that message's `content`, eliminating the separate `streamingContent` pseudo-message
-
-See `plans/PLAN-024-XH-chat-components.md` and `plans/PLAN-025-XH-chat-integration.md` for details.
-
-## 7. Unified Session and Attachment Persistence Architecture
-
-As chat and workspace capabilities converge, Xihe introduces a **cross-view unified Session layer** to avoid duplicating concepts such as Agent, RAG, MCP, and attachments across chat and workspace.
-
-### 7.1 Unified Session Layer
-
-- Chat and Workspace can coexist in one work surface, but Workspace is an independent resource and may exist without a Session. Chat uses `/chat/:sessionId`, while Workspace uses `/workspace/:workspaceId`; a Session ID must not be used as a Workspace ID.
-- A Session may optionally bind to a Workspace for Chat/Agent context; Workspace lifecycle and Workspace-level events do not depend on a Session.
-- `useSessionStore` carries server-projected Session metadata and view references; Agent/RAG/MCP context, attachments, and file content follow their CP/Runtime API contracts, and business Session/Message data is not persisted in localStorage.
-- `useChatStore` and `useWorkspaceStore` are reduced to view-layer state: the former retains message flow and UI state; the latter retains file tree, editor, and upload queue.
-- workspace reuses chat conversation capabilities through the embeddable `ChatPanel.vue` without duplicating the component tree.
-
-See detailed design in:
-- [RFC-001-session-domain-model.md](RFC-001-session-domain-model.md)
-- [ADR-001-session-store-boundary.md](ADR-001-session-store-boundary.md)
-- [DEV-017-session-architecture.md](DEV-017-session-architecture.md)
-- `plans/PLAN-029-XH-unified-session-architecture.md`
-
-### 7.2 Message Attachment Persistence
-
-Early chat attachments used `URL.createObjectURL` to produce Blob URLs, which expired after page refresh. PLAN-030/031 implement end-to-end attachment persistence:
-
-**Backend (PLAN-030)**
-
-- Extended `File` entity: added `sessionId`, `messageId`; `workspaceId` changed to nullable. Physical storage is at `{cp.attachments-base-path}/{sessionId}/{fileId}`, isolated from the workspace file tree.
-- Extended `Message` entity: added `attachments` JSON column storing `{ fileId, name, type, size }[]`.
-- New APIs:
-  - `POST /api/v1/sessions/{sessionId}/attachments` — batch multipart upload with partial-success response
-  - `GET /files/{fileId}` — serve historical attachment stream
-  - `GET /api/v1/sessions/{sessionId}/messages` — load message history (with attachments)
-  - `DELETE /api/v1/sessions/{sessionId}/messages/{messageId}` — delete a message
-- Security and lifecycle: whitelist extension validation, 500MB per-file limit, cross-session access protection, session-deletion cascade cleanup, and orphan attachment cleanup after 24 hours.
-- `/chat` receives `attachments: fileId[]` and forwards attachment metadata to the Agent.
-
-**Frontend (PLAN-031)**
-
-- `AttachmentService` centralizes batch upload, frontend whitelist/size validation, reactive upload task state, deletion, and metadata fetching.
-- `InputArea.vue` validates selected files and uploads them in batch; if text exists, it merges text and attachments into one message; otherwise it sends a pure-attachment message.
-- `MessageItem.vue` renders persisted attachments using `/files/{fileId}` and supports deleting messages.
-- `ChatView.vue` loads history from the backend on mount and overwrites localStorage, ensuring attachments remain visible after refresh.
-
-See `plans/PLAN-030-XH-chat-attachment-backend.md` and `plans/PLAN-031-XH-chat-attachment-frontend.md`.
-
-## 8. Remote MCP and OAuth Boundaries
-
-- The UI starts Authorization Code + PKCE. The Control Plane stores encrypted refresh tokens and issues short-lived access tokens scoped to user, workspace, and server.
-- The Agent connects only to the Control Plane logical MCP endpoint. It does not connect directly to Runtime, workspace bridges, or remote MCP servers.
-- The Runtime host-side connector performs remote MCP initialize, tools/list, tools/call, and controlled egress. Workspace sandboxes do not directly access the public network.
-- Fake OAuth and Fake MCP are real integration/E2E fixtures. They must verify PKCE, Bearer authentication, refresh/revoke, MCP protocol behavior, and cleanup.
-- PLAN-190 owns the remote MCP/OAuth data path. PLAN-191 owns the later unified API paths, fields, errors, and service boundaries.
-
-## 9. ChatRun and Tool Boundary (PLAN-247)
+## 6. ChatRun and tool boundary (PLAN-247)
 
 - `POST /api/v1/chat` is the only chat submission endpoint; `GET /api/v1/events?sessionId=` is persistent session SSE and `done` terminates only the current run.
 - After the CP gate passes, CP persists a `ChatRun` and user `Message`, deduplicated by `(userId, sessionId, Idempotency-Key)`; the request hash includes the selected `branchId`, which is persisted on Run/Message; `Message.runId` links the durable terminal outcome.
