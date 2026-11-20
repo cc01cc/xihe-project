@@ -55,6 +55,14 @@
 
 **现状锚点**：派生会话的**终态通知**已落地（Inbox 表 + `/api/v1/user-events` 读面，PLAN-0408）；上文"发布 / 通道 / 双向订阅（人 ↔ Agent）"均未做。
 
+**成员操作事件记录器（面向多主体的可查事件面）**：多主体协作（上文第一性原则）与决策守卫（§2）都要求一个「谁在什么时候做了什么、依据什么规则」的统一事件面；现有四类记录都不满足（见三条现状锚点）。定位是**只读事件面**，不是新增写入路径。
+
+- 与 §2 守卫的关系：§2 已写「守卫的自动决策同样进入审计账本（谁拍板、依据何种规则可查）」——本项是让这句话可兑现的观测源：守卫负责拍板，本项只负责留痕与可查，不参与判定。
+- 现状锚点三条：① `audit_logs` 覆盖管理面变更（`cp/audit/AuditLogger.java` 的 `recordDurableChange`，80 个调用点），但**只写不读**——`AuditLogRepository` 两个 finder 在主代码零调用，对外读面 `/api/v1/audit/entries` 读的是 `v_audit_entries` 视图（四类来源 `chat_run` / `workspace_job` / `mcp_invocation` / `approval`），不含 `audit_logs`。② 四域 append-only history（`chat_run_history` / `approval_history` / `workspace_job_history` / `mcp_dispatch_history`）各有唯一写者、可经审计详情读到 timeline，但**按域切碎**，且 actor 是 `actor_type` 枚举（`system` / `agent` / `cp` / `user` / `runtime` / `answerer`）而非主体身份。③ `context_events` 最接近事件流（CP 唯一 choke point + 类型闭合表），但**作用域只有会话内**（`UNIQUE (session_id, sequence)`）；Runtime 侧文件写入（`packages/runtime/src/fs.rs` 的 `write_file`）**完全不留记录**，旁路只有零深度内存 fan-out，重连即 `snapshot_required`、不可回放。
+- 缺口四条：① 无跨会话、跨工作区的统一事件面（上面三条各自为界）；② actor 维度只有 `user_id`（`audit_logs.user_id` / `mcp_invocations.user_id` / `workspace_jobs.user_id` / `approval_requests.user_id` 均为 user 外键），**没有 agent principal 维度**，多主体协作无法归因到主体；③ 文件系统写入无事件（Runtime `write_file` 无审计、无事件、无日志）；④ 无保留策略（`audit_logs` 无 TTL、无分区、无 `created_at` 索引，只增不减）。
+- 分期建议：P0 = 只读聚合读面（在现有四域 history 与 `audit_logs` 之上做统一查询，不新增写入路径，先让「谁改了什么」可查）；P1 = principal 维度（写入侧补主体身份，需先定 actor 模型）；P2 = 文件写入事件（Runtime 侧发布、CP 侧落库，含保留策略）。三期均未开工。
+- 与 §1「审计账本」的区别：§1 那条是**工具事实账本**（工具调用按 stage 记录、带来源通道标识、操作行锁下串行，PLAN-0326），服务「工具事实可追溯」；本项是**成员操作事件**（人与 Agent 主体的配置变更与动作），服务「多主体协作可归因」。两者共享「审计」一词，但存储、写者、读面都不同，不合并。
+
 ## 4. 开发体验与多版本管理 [INFO]
 
 - **多版本管理（跨仓库统一版本管理）**：这一层更合适的名字是"多版本管理"而非"多 Git 管理"。背景问题有两个：
