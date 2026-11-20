@@ -1,13 +1,13 @@
 # XH 授权模型
 
-> 契约状态：`proposed`；实现状态：`implemented`（PLAN-0610，2026-11-01）；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 / PLAN-0610 写回；更新：2026-11-01。
+> 契约状态：`proposed`；实现状态：`implemented`（PLAN-0610，2026-11-01）；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 / PLAN-0610 写回；更新：2026-11-20（补正名「交集授权」与原子数口径，判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md`）。
 > 消费者：CP 授权/policy、Workspace API、MCP 工具调用门、UI 授权结果
 >
 > **supersede**：本文取代 PLAN-0580 §4「实例角色只有两种、MUST NOT 引入第三角色」与 PLAN-0585「grant 写入只有唯一受审计管理面 `/api/v1/principal-grants`」。二者均随 PLAN-0610 退役。
 
 ## 1. 决策输入
 
-授权决策至少包含：`principal`、**访问角色绑定**（角色 × 主体 × 作用域）、**能力原子**、`actionClass`、`resource`、workspace membership、approval 策略与 revision。
+授权决策至少包含：`principal`、**访问角色绑定**（角色 × 主体 × 作用域）、**能力原子**、`actionClass`、`resource`、workspace membership、approval 策略与 revision；判据本体与九族成熟模型对比见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md`。
 
 ## 2. 当前评估链
 
@@ -16,7 +16,7 @@
 3. **能力解析**：实例作用域绑定 → `cap:instance:super` / `cap:instance:admin`；工作区作用域 → `cap:workspace:admin`（按 workspace 判定，不进入全局 authority）；
 4. Tool face / action class；
 5. built-in hard guard（L0，任何模式/规则不可覆盖）；
-6. **带作用域的 grants 一跳查表**：主体 `source ∈ {role, spawn, template, credential_binding, agent_default}` 且 `(scope_type='instance' OR (scope_type='workspace' AND scope_id=当前 ws))` 的原子并集 → path intersection；命中 → 过，未命中 → deny（制度拒，**不进入 approval、不建 pending approval**）；
+6. **带作用域的 grants 一跳查表**：主体 `source ∈ {role, spawn, template, credential_binding, agent_default}` 且 `(scope_type='instance' OR (scope_type='workspace' AND scope_id=当前 ws))` 的原子并集 并按 `(actionClass × resource)` 逐对求值，**主体派生链每一级都必须持有该原子，任一级缺即拒**（path intersection；`policy/GrantIntersectionEvaluator.java:97` 的 javadoc 与 `:103-120` 三重循环一致）；命中 → 过，未命中 → deny（制度拒，**不进入 approval、不建 pending approval**）。另有**写入期**前置上限：绑定 cap 必须 ⊆ 主体已持原子且 ⊆ 操作者已持原子，越界 403 `AGENT_PERMISSION_SCOPE_EXCEEDED`（`service/AgentPrincipalService.java:539-563`）——这是落库前的边界校验，**不是读期语义**；判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md` §4；
 7. **approval-policy `askActionClasses[]`**：在册且 `mode=manual` → `ASK`；`mode=auto` → 放行并记 `allowed_by`；不在册 → 授权过后直过；
 8. audit：grant 决策与 `allowed_by` 记录。
 
@@ -24,8 +24,8 @@
 
 | 对象 | 语义 |
 |---|---|
-| `roles` | 全局权限目录（与作用域**无关**）：`SUPER_ADMIN`/`ADMIN`/`USER`（实例级）与 `WS_OWNER`/`WS_EDITOR`/`WS_VIEWER`（工作区级），`is_system` 者不可删/不可改权限 |
-| `role_permissions` | 角色 → 原子（15 动作原子 + 3 能力原子）；原子目录的唯一来源是代码 `PermissionAtomCatalog` |
+| `roles` | 全局权限目录（与作用域**无关**）：`SUPER_ADMIN`/`ADMIN`/`USER`（实例级）与 `WS_OWNER`/`WS_EDITOR`/`WS_VIEWER`（工作区级）与 `AGENT_DELEGATOR`/`AGENT_USER`（代理种子，`SystemAccessRoleCatalog.java:321`、`:330`），`is_system` 者不可删/不可改权限 |
+| `role_permissions` | 角色 → 原子（**42 动作原子 + 3 能力原子**，2026-11-20 枚举实测；旧文写「15」已过期）；原子目录的唯一来源是代码 `PermissionAtomCatalog` |
 | `role_bindings` | (角色, 主体, **作用域**)：`scope_type ∈ {instance, workspace}`；**作用域在绑定上，不在角色上**；显式**不继承** |
 | `grants` | 带作用域的有效原子物化表（`scope_type`/`scope_id`），仅由物化器写入 `source='role'` |
 | 原子 `scope_class` | `instance`（仅实例作用域可绑：`instance:super`/`instance:admin`/`CREATE_ACCOUNT`/`MANAGE_ROLES`/`SPAWN_AGENT`/`CREATE_TEMPLATE`/`credential_*`）或 `both`（其余，含 `workspace:admin`） |

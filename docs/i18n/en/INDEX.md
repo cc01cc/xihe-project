@@ -61,6 +61,7 @@ These guides exist only as Chinese originals in [`zh-Hans`](../zh-Hans/) today. 
 - [DEV-023: Test Mock Strategy](../zh-Hans/DEV-023-test-mock-strategy.md)
 - [DEV-025: Agent Evaluation](../zh-Hans/DEV-025-agent-evaluation.md)
 - [DEV-036: Lead Workflow on DSH](../zh-Hans/DEV-036-lead-workflow-on-dsh.md) (zh)
+- [DEV-037: Authorization Model](../zh-Hans/DEV-037-authorization-model.md) (zh)
 
 The Chinese [README](../zh-Hans/README.md) is **intentionally** zh-only: the repository root `README.md` is the English GitHub facade and the Chinese docs page is a separate artefact (DEV-030 §layout).
 

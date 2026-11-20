@@ -198,6 +198,24 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | **问答响应视图** | `UserQuestionView`（形状口径 `<对象> 响应视图`，见 §1 `projection` C 行） | `GET /{id}` 与 `answer` 返回的投影：对 addressee 与会话可见读者**字段完全一致** | 不要写成 `<对象> projection`；不要说「读者看到裁剪版」（契约无字段级裁剪，差异只在作答权，D-197） |
 | **子 run 拒绝** | `SUBAGENT_QUESTION_REFUSED`（`code` 字段） | 非 root run 调 `ask_user` 的固定拒绝码：CP relay 门与 Agent 前置门同码 | 不要另造「子智能体不能提问」之类自由文案当错误码；不要只在 UI 判（服务端 fail-closed） |
 
+**1.4 授权模型正名（2026-11-20 增补）**（不设三级标题：英文册无对侧小节，避免制造标题分叉）
+
+| 术语（中文） | 英文 / 代码标识 | 一句话定义 | **反例：不要用它指什么** |
+|---|---|---|---|
+| **交集授权** | `Intersection-grant Authorization` | 一次判定要求 (动作原子 × 资源前缀) 两轴同时被显式授予、缺省拒；角色只是把原子物化进 grants 的通道 | 不要写 `RBAC`、`基于角色的权限系统`（改角色不改授权面）；不要写 `作用域交集`（作用域是 `scope_type` 的 instance / workspace 两档，与资源前缀无关） |
+| **动作原子** | `PermissionAtom(actionClass, resource)` | 判据的最小单位，固定两字段；`resource` 是资源前缀（`*`、`credential:*` 或 `fs:` 声明键） | 不要与**能力原子**混用；不要把 `resource` 说成「作用域」 |
+| **能力原子** | 能力位（`instance:super`、`instance:admin`、`workspace:admin`） | 认证期由绑定解析成 authority 的能力位，**不物化进 grants**，也不是可授予动作 | 不要写进 `role_permissions`；不要当第三种「角色」 |
+| **写入期上限** | ceiling（绑定 cap ⊆ 主体已持原子 且 ⊆ 操作者已持原子） | 收窄发生在写绑定那一刻，求值期不再逐级求交 | 不要说成「求值期每一级都必须授予」（那只是 javadoc 的旧说法，实现是任一级命中即过） |
+
+四条分清（本词条同时回答「与 scope_type / 角色 / 能力原子怎么区分」）：
+
+- **与 `scope_type`**：`scope_type` 只有 `instance` / `workspace` 两档，落在 `role_bindings` 上且显式不继承；它与「资源前缀」是两回事，不可互称。
+- **与角色**：角色决定**原子集合**（`role_permissions`），不决定「哪些资源」；加角色不放大资源面，资源面只由 grant 的 `resource` 决定。
+- **与能力原子**：能力原子不进 grants、不参与工具面授权，只回答「这个主体是不是实例/工作区管理员」。
+- **出现场合**：`A03-xihe/spec/security/authorization.md`（契约）、`DEV-014-control-plane-architecture.md` §8e / §8e-2（架构）、`DEV-037-authorization-model.md`（判据本体与逐维对比），以及任务卡与 decision 记录里描述授权模型时。
+
+论证与依据：`DEV-037-authorization-model.md` 给出正名理由、三条「为什么不是 RBAC」反例与九族成熟模型对比。
+
 ## 2. 多词一义 → 正名与别名
 
 ### 2.1 仍存活、待统一（未实施/实施中 PLAN 按正名写）

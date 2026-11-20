@@ -224,18 +224,21 @@ flowchart LR
 
 ## 8e-2. 访问角色与绑定 API（PLAN-0610 W3-2a）
 
-- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（**31 原子 = 28 动作 + 3 能力**；PLAN-0651 增 N1–N10，PLAN-0673 M2 增 `GRANT_ANY_ATOM`）；API 不复制词表，新增原子自动出现在目录与写入校验里。
+- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（**45 原子 = 42 动作 + 3 能力**，2026-11-20 枚举实测，口径见 `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`；旧文写「31 = 28 + 3」已过期。PLAN-0651 增 N1–N10，PLAN-0673 M2 增 `GRANT_ANY_ATOM`）；API 不复制词表，新增原子自动出现在目录与写入校验里。
 - **门是动作原子，不是 authority**：`/roles*` 与 `/bindings` 的 `@PreAuthorize` 写 `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')`——`MANAGE_ROLES` 是动作原子，按决策 #23 只有**能力原子**才成为 `cap:<atom>` authority（`instance:super`/`instance:admin`/`workspace:admin`），因此它从 `source='role'` 的 grant 行用评估内核同一套 scoped 读评估（`RequesterAuthority`）。**PLAN-0673 D-168（V125）起 ADMIN 默认也持 `MANAGE_ROLES`**，即 ADMIN 可管理角色/绑定，但每一次授予都必须通过子集闸门（见下）；工作区作用域的绑定写入还要求该工作区的 `MANAGE_WORKSPACE_AGENTS`。
 - **agent 主体绑定面（PLAN-0667）与 cap 硬上限（BL-287）**：`/api/v1/agent-principals/{id}/roles|skills` 的绑定/解绑同事务重物化该主体 grants，但 agent 的**工作区 cap**（`WorkspaceAgent.permissionsSnapshot`，会话创建时写入 `Session.agentPermissionsSnapshot`）是授权交集的一环：角色原子超出 cap ⇒ 绑定入口返回 **409 `ROLE_BINDING_EXCEEDS_CAP`**（detail 只列超限原子名），不静默接受一个注定无效的绑定；`isSystem` 只表示 seed 绑定（V122 `role_bindings.is_seed`），用户自绑系统角色可解绑。
 - **写入语义**：角色改原子 = 同事务 `RoleGrantMaterializer.materializeRole`（重算全部持有者 `source='role'` 行、能力缓存「立即 + afterCompletion」双失效、原子集真变化的持有者 `token_version+1`）；`PUT /bindings` 是**全量替换**（diff 写入，同 body 重发为真 no-op），提交前校验作用域兼容（400 `ROLE_SCOPE_MISMATCH`）、最小权限（403 `PRIVILEGE_ESCALATION`，只对**新增**绑定对判定）、以及实例「仍有 ≥1 个可用超管」（409 `LAST_SUPER_ADMIN`）。锁序沿用 `instance_owner → users`（角色编辑在 `instance_owner` 之后取 role 行锁，物化器再按 id 升序锁 users）。
 - **错误映射**：并发死锁/序列化失败（`40P01`/`40001`）在 API 边缘统一映射为 409 `CONCURRENT_MODIFICATION`（可重试），与锁等待超时（`55P03` → 503 `OPERATION_LOCK_TIMEOUT`）区分开——两者都是 `PessimisticLockingFailureException` 的子类，靠异常类型特异性保序。
 - **作用域判定统一**：`AccessScopeResolver` 的成员校验新增 `AuthzContext.canWorkspaceAdmin` 回落（round-4 P2），使「实例管理员不是工作区成员」不再被成员门挡住；回落本身不授权，后续原子评估仍决定动作是否放行。
 - **`users.role` 清零（PLAN-0610 W4a，V89 前置）**：账号实体不再映射该列，产品代码 0 读 0 写——建号（注册/管理员建号/`DataSeeder`）只写账号行，实例 tier 由 `GrantDefaultService.ensureUserDefault` 写 `USER` 绑定（本地单用户的 `SUPER_ADMIN` 仍由 `AuthController`/`DataSeeder` 的 bootstrap 路径绑定）；`GrantDefaultService.ensureInstanceTierBinding` 只补空缺、**不再按列改 tier**（tier 变更只走绑定 API 或 owner 交接）；`AgentTemplateService` 实例层模板 ACL 由 `actor.getRole()==ADMIN` 改为 `AuthzContext.isInstanceAdmin(actorId)`（round-3 P1-4），超管因 `SUPER_ADMIN` 种子含全部能力原子同样满足；`UserAdminService` 的「最后一个可用管理员」守卫改判**实例 `ADMIN`/`SUPER_ADMIN` 绑定的 ACTIVE 持有者计数**（`countActiveUsersWithInstanceRoles`）。副作用（已写进测试断言）：活跃调用者自身的管理员绑定必然计入，因此经该 API 已无法把实例降到 0 个可用管理员，`409 LAST_ADMIN` 保留为对陈旧能力/绕过写入的纵深防御。列本身与 `ck_users_role` 由 V89 删除。
+- **模型正名与对比**：本模型的判据本体（原子两字段、资源前缀、写入期上限）、命名理由与九族成熟模型逐维对比见 [`DEV-037-authorization-model.md`](DEV-037-authorization-model.md)；术语口径见 [`DEV-032-terminology.md`](DEV-032-terminology.md) §1「1.4 授权模型正名」。
 
-### 权限模型定位：scoped RBAC + ARBAC，不是 plain RBAC（2026-11-05）
+### 权限模型定位：作用域交集授权（Scoped intersection grant）
 
-**一句话**：本系统权限模型是 **带作用域的 RBAC（scoped RBAC）+ 管理型 RBAC（ARBAC）+ 每主体边界（permissions boundary）**，
-不是教科书里"角色 → 权限"的 flat RBAC0。读权限相关章节前请先建立这个心智模型。
+> 旧称见 DSD-1492（2026-11-20 正名：角色是分发机制，不是判据本体）。本节以下段落保留 2026-11-05 的对照写法（NIST RBAC / ARBAC 逐条对照、以及结尾「仍是 RBAC」一句），一律按历史记录读；正式口径以 `spec/security/authorization.md` 与 [`DEV-037-authorization-model.md`](DEV-037-authorization-model.md) 为准。
+
+**2026-11-05 的一句话（历史记录）**：当时的判断是本系统权限模型为 **带作用域的 RBAC（scoped RBAC）+ 管理型 RBAC（ARBAC）+ 每主体边界（permissions boundary）**，
+不是教科书里"角色 → 权限"的 flat RBAC0。**DSD-1492（2026-11-20）起**该说法只作历史：现口径见本节标题与文末「2026-11-20 更正」段——作用域交集授权，角色只是分发通道。
 
 **对照 NIST RBAC（ANSI INCITS 359-2004）**
 
@@ -276,7 +279,9 @@ flowchart LR
 改 ADMIN 默认集时两者同时变化，需同批复核。
 
 **什么时候才算 ABAC**：当授权决策开始依赖**请求上下文属性**（时间/IP/资源标签/风险评分/MFA）或**资源属性**时。
-当前决策只依赖"角色 → 原子 + 作用域"，**因此仍是 RBAC**；引入条件表达式前必须先补模型说明与测试基建。
+2026-11-05 的判断是：当时决策只依赖「角色 → 原子 + 作用域」，**因此仍是 RBAC**；引入条件表达式前必须先补模型说明与测试基建。
+**DSD-1492（2026-11-20）更正**：该判断建立在「角色即判据」的前提上；现口径是**作用域交集授权**——判据本体是 (动作原子 × 资源前缀) 的逐级求交，角色只是分发通道，改角色不改授权面（判据在 `policy/GrantIntersectionEvaluator.java:97`、`:103-120`）。详见 [`DEV-037-authorization-model.md`](DEV-037-authorization-model.md)。
+
 ### 权限原子默认授予集（PLAN-0651，2026-11-05；V125 扩充）
 
 N1–N10 + `GRANT_ANY_ATOM`（PLAN-0673，V125）在**代码侧**的默认集（`SystemAccessRoleCatalog` 是权威，
