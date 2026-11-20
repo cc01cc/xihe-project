@@ -4,9 +4,20 @@
  * ContextTemplatesPanel。**改该组件的人请 grep 组件名而不是文件名**，否则会误判「没有单测」。
  * （runtime-1 在 task-409 复核时照出；重命名文件会动 import 路径，另批再做。）
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import Panel from "../ContextTemplatesPanel.vue";
+
+// jsdom 没有布局引擎：reka 的 listbox 开层时会对选项调 scrollIntoView。只在本文件替换并还原。
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+
+beforeAll(() => {
+    Element.prototype.scrollIntoView = vi.fn<(argCount?: number) => void>();
+});
+
+afterAll(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+});
 import { listApiInputTypes } from "../../../services/providerConnectionService";
 import { readTemplateConfig, validateTemplate } from "../../../services/apiRequestTemplates";
 import { jsonDocText, jsonEditorView, setJsonDoc } from "./jsonEditorAsserts";
@@ -379,6 +390,44 @@ describe("API request template empty state · task-409 P2-2", () => {
         await flushPromises();
         const cta = wrapper.get('[data-testid="api-request-empty-create"]');
         expect(cta.attributes("disabled")).toBeDefined();
+        wrapper.unmount();
+    });
+});
+/**
+ * task-152 / task-198：`api-request-type` 只有 4 个类型（不属「> 8 项」站点）⇒ 保留 `Select`，
+ * 但把面板下限提到 240px（`min-w-60`）：最长选项名 191px（Anthropic Messages 协议@1）在 155px
+ * 触发器下必裁，实测 208px 面板的文本区只有 162px 仍裁 2 项，240px 才裁 0。
+ * 这条断言钉的是「面板下限还在」——它是最容易被当成随手 class 删掉的东西
+ * （负向自证：删掉 `min-w-60` 本条即红，读数见 evidence/2026-11-21-select-contract/README.md §10）。
+ */
+describe("API request template · task-152 面板下限", () => {
+    it("api-request-type 的面板带 240px 下限（min-w-60），四类选项全部渲染", async () => {
+        vi.mocked(listApiInputTypes).mockResolvedValue({
+            types: [
+                { apiTypeId: "openai-chat-completions", version: 1, operation: "chat" },
+                { apiTypeId: "openai-responses", version: 1, operation: "chat" },
+                { apiTypeId: "anthropic-messages", version: 1, operation: "chat" },
+                { apiTypeId: "gemini-generate-content", version: 1, operation: "chat" },
+            ],
+        } as Awaited<ReturnType<typeof listApiInputTypes>>);
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+            },
+            attachTo: document.body,
+        });
+        await flushPromises();
+        // jsdom 里 reka Select 只认键盘开层：pointerdown 路径需要 pointer capture，测试环境拿不到。
+        await wrapper.get('[data-testid="api-request-type"]').trigger("keydown", { key: "Enter" });
+        await flushPromises();
+
+        const content = wrapper.find('[data-slot="select-content"]');
+        expect(content.exists()).toBe(true);
+        expect(content.classes()).toContain("min-w-60");
+        // 组件里还有第二个 Select（:363），role=option 要按面板作用域数，不能全局数。
+        expect(content.findAll('[role="option"]')).toHaveLength(4);
         wrapper.unmount();
     });
 });

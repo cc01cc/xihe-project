@@ -1,7 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { i18n } from "../../../i18n";
 import ConfigLocksView from "../ConfigLocksView.vue";
+
+// jsdom 没有布局引擎：reka 的 listbox 在开层/高亮时会对选项调 scrollIntoView。
+// 只在本文件替换，结束后还原（同 src/components/__tests__/Select.spec.ts 的做法）。
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+
+beforeAll(() => {
+    Element.prototype.scrollIntoView = vi.fn<(argCount?: number) => void>();
+});
+
+afterAll(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+});
 
 const request = vi.fn<(path: string, options?: RequestInit) => Promise<unknown>>();
 const admin = { value: true };
@@ -195,5 +208,86 @@ describe("ConfigLocksView", () => {
             "/config-locks/rag/chunkSize?revision=111&clearValue=true",
             expect.objectContaining({ method: "DELETE" }),
         );
+    });
+});
+/**
+ * task-152 / task-198：域选择器由 shadcn `Select` 换成可搜索的 `SearchableCombobox`
+ * （12 个域超过「> 8 项就别用 Select」阈值）。这一节只钉**迁移带来的新行为**：
+ * 旧 Select 没有任何搜索框，所以「展开后输入即可收敛」这条在迁移前必然红
+ * （负向自证读数见 evidence/2026-11-21-select-contract/README.md §10）。
+ */
+describe("ConfigLocksView · task-152 域选择器迁移", () => {
+    beforeEach(() => {
+        admin.value = true;
+        request.mockReset();
+        stubApi();
+    });
+
+    /** combobox 展开/选中都走 pointer 事件，脱离 body 挂载时 reka 不会开层。 */
+    async function mountAttached() {
+        const wrapper = mount(ConfigLocksView, {
+            global: { plugins: [i18n] },
+            attachTo: document.body,
+        });
+        await flushPromises();
+        return wrapper;
+    }
+
+    async function openDomainPicker(wrapper: Awaited<ReturnType<typeof mountAttached>>) {
+        await wrapper.get('[data-testid="config-lock-domain"]').trigger("click");
+        await flushPromises();
+        await nextTick();
+    }
+
+    function searchBox(wrapper: Awaited<ReturnType<typeof mountAttached>>) {
+        return wrapper.find('[data-testid="searchable-combobox-input"]');
+    }
+
+    it("展开后才有搜索框，输入即收敛到唯一域", async () => {
+        const wrapper = await mountAttached();
+        // 收起态不挂搜索框（新载体不常驻，旧 Select 更是从来没有）
+        expect(searchBox(wrapper).exists()).toBe(false);
+
+        await openDomainPicker(wrapper);
+        const input = searchBox(wrapper);
+        expect(input.exists()).toBe(true);
+        expect(wrapper.findAll('[role="option"]')).toHaveLength(12);
+
+        await input.setValue("job");
+        await flushPromises();
+        await nextTick();
+
+        const options = wrapper.findAll('[role="option"]');
+        expect(options).toHaveLength(1);
+        expect(options[0]!.text()).toContain("job-policy");
+        wrapper.unmount();
+    });
+
+    it("选中后按新域重取目录（update:model-value → watch(domain) → load）", async () => {
+        const wrapper = await mountAttached();
+        expect(request).toHaveBeenCalledWith(
+            expect.stringContaining("/config-locks?domain=rag"),
+            undefined,
+        );
+
+        await openDomainPicker(wrapper);
+        await searchBox(wrapper).setValue("job");
+        await flushPromises();
+        await nextTick();
+
+        const target = wrapper
+            .findAll('[role="option"]')
+            .find((option) => option.text().includes("job-policy"));
+        expect(target).toBeTruthy();
+        await target!.trigger("click");
+        await flushPromises();
+
+        expect(request).toHaveBeenCalledWith(
+            expect.stringContaining("/config-locks?domain=job-policy"),
+            undefined,
+        );
+        // 选中后面板收起：搜索框不再存在
+        expect(searchBox(wrapper).exists()).toBe(false);
+        wrapper.unmount();
     });
 });
