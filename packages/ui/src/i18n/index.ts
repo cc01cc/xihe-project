@@ -671,7 +671,7 @@ const messages = {
             tabClose: "关闭页签",
             // task-174（S2b）：容器内页签行的容器名（每个容器一行页签）。
             containerTree: "文件树",
-            containerMain: "内容",
+            containerMain: "主栏",
             containerEmpty: "此容器暂无页签",
             // task-97（D-1754 ②）：右栏页签行「+」= 重开已关闭面板（main 行「+」复用 sidebar.newChat）。
             containerPlusReopen: "重开已关闭面板",
@@ -682,7 +682,7 @@ const messages = {
             // task-184（BL-561 扩展 / D-1600 ③）：跨组移动做不了时的播报。**不做静默 no-op**。
             containerMoveNoNeighbor: "没有可移入的相邻容器",
             // task-174 / D-1545：窄屏切换「显示哪一栏」与右栏容器名。
-            containerRight: "右栏",
+            containerRight: "右栏容器",
             containerSwitcherLabel: "显示哪一栏",
             containerMoveModelPending: "当前布局不支持把面板移到其它容器（等容器化布局启用）",
             // task-174 A1（D-1538）：成员页一级 tab —— 成员 / 智能体（工具栏 Bot 入口移除后归这里）。
@@ -4893,7 +4893,7 @@ const messages = {
             tabClose: "Close tab",
             // task-174 (S2b): container names for the per-container tab rows.
             containerTree: "Files",
-            containerMain: "Content",
+            containerMain: "Main column",
             containerEmpty: "No tabs in this container",
             // task-97 (D-1754 ②): the right-row "+" reopens closed panels (main-row "+" reuses sidebar.newChat).
             containerPlusReopen: "Reopen a closed panel",
@@ -4903,7 +4903,7 @@ const messages = {
             // task-184 (BL-561 extension / D-1600 ③): announced when a cross-container move cannot run.
             containerMoveNoNeighbor: "No adjacent container to move into",
             // task-174 / D-1545: narrow-screen column switcher and the right column name.
-            containerRight: "Right panel",
+            containerRight: "Right container",
             containerSwitcherLabel: "Which column to show",
             containerMoveModelPending: "This layout cannot move panels between containers yet",
             // task-174 A1 (D-1538): members-page tabs — members / agents.

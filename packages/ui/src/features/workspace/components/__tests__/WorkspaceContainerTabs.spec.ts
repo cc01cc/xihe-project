@@ -11,7 +11,7 @@ const i18n = createI18n({
         "zh-CN": {
             workspace: {
                 containerTree: "文件树",
-                containerMain: "内容",
+                containerMain: "主栏",
                 containerEmpty: "此容器暂无页签",
                 // task-155：溢出下拉触发器。
                 containerOverflow: "更多页签",
@@ -85,7 +85,7 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
     it("只读面板（closable=false）没有关闭按钮", () => {
         const wrapper = mountRow({
             containerId: "main",
-            tabs: [{ id: "main", label: "内容", closable: false }],
+            tabs: [{ id: "main", label: "主栏", closable: false }],
             activeId: "main",
         });
         expect(wrapper.find('[data-testid^="workspace-container-tab-close-"]').exists()).toBe(
@@ -98,16 +98,16 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         // 同形用例改挂 main 容器 + 与容器同名的单 tab。
         const wrapper = mountRow({
             containerId: "main",
-            tabs: [{ id: "main", label: "内容", closable: false }],
+            tabs: [{ id: "main", label: "主栏", closable: false }],
             activeId: "main",
         });
         expect(wrapper.find('[data-testid="workspace-container-label"]').exists()).toBe(false);
         expect(wrapper.get('[data-testid="workspace-container-tab-main-main"]').text()).toBe(
-            "内容",
+            "主栏",
         );
         expect(
             wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
-        ).toBe("内容");
+        ).toBe("主栏");
     });
 
     it("task-17 W-1 反向：单 tab 但与容器不同名 ⇒ 容器标签保留（task-100 后 = DOM 保留、视觉隐藏）", () => {
@@ -116,12 +116,12 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
             tabs: [{ id: "session:s1", label: "S1", closable: true }],
             activeId: "session:s1",
         });
-        expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("内容");
+        expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("主栏");
     });
 
     it("task-17 W-1 反向：多 tab ⇒ 容器标签保留（task-100 后 = DOM 保留、视觉隐藏）", () => {
         const wrapper = mountRow({ containerId: "main", tabs: TABS, activeId: "session:s1" });
-        expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("内容");
+        expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("主栏");
     });
 
     /**
@@ -134,10 +134,10 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         const label = wrapper.get('[data-testid="workspace-container-label"]');
         expect(label.classes()).toContain("sr-only");
         expect(label.classes()).not.toContain("text-xs");
-        expect(label.text()).toBe("内容");
+        expect(label.text()).toBe("主栏");
         expect(
             wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
-        ).toBe("内容");
+        ).toBe("主栏");
     });
 
     /**

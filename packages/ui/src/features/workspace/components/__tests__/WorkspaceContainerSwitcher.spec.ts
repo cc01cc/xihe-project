@@ -17,8 +17,8 @@ const i18n = createI18n({
     messages: {
         "zh-CN": {
             workspace: {
-                containerMain: "内容",
-                containerRight: "右栏",
+                containerMain: "主栏",
+                containerRight: "右栏容器",
                 containerSwitcherLabel: "显示哪一栏",
             },
         },
