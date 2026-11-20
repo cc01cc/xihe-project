@@ -17,6 +17,37 @@ status: active
 >
 > 涉及 UI 变更的 PR 必须逐项核对本清单。发现的问题均来自实际 E2E 截图审查。
 
+## 0.1 清单总览（两列分域）
+
+<svg viewBox="0 0 660 300" width="100%" role="img" aria-labelledby="dev011-overview">
+  <title id="dev011-overview">DEV-011 清单总览：§1–§9 逐项核对，§10–§16 判据族</title>
+  <rect x="16" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
+  <rect x="332" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="32" y="42" font-size="12" fill="#374151">逐项核对 §1–§9</text>
+  <text x="348" y="42" font-size="12" fill="#374151">判据族 §10–§16</text>
+  <rect x="336" y="50" width="304" height="22" fill="#eef2ff"/>
+  <text x="32" y="68" font-size="12" fill="#374151">§1　页面渲染</text>
+  <text x="32" y="90" font-size="12" fill="#374151">§2　图标渲染</text>
+  <text x="32" y="112" font-size="12" fill="#374151">§3　主题切换</text>
+  <text x="32" y="134" font-size="12" fill="#374151">§4　登录/注册页</text>
+  <text x="32" y="156" font-size="12" fill="#374151">§5　聊天界面</text>
+  <text x="32" y="178" font-size="12" fill="#374151">§6　Sidebar</text>
+  <text x="32" y="200" font-size="12" fill="#374151">§7　暗色模式对比度</text>
+  <text x="32" y="222" font-size="12" fill="#374151">§8　i18n</text>
+  <text x="32" y="244" font-size="12" fill="#374151">§9　E2E 截图基准</text>
+  <text x="348" y="68" font-size="12" fill="#312e81">§10　注意力预算</text>
+  <text x="630" y="68" font-size="10" fill="#4f46e5" text-anchor="end">L0–L4</text>
+  <text x="348" y="96" font-size="12" fill="#374151">§11　UI 审阅维度</text>
+  <text x="348" y="124" font-size="12" fill="#374151">§12　动效判据</text>
+  <text x="630" y="124" font-size="10" fill="#4f46e5" text-anchor="end">M0–M3</text>
+  <text x="348" y="152" font-size="12" fill="#374151">§13　顶栏与输入域</text>
+  <text x="348" y="180" font-size="12" fill="#374151">§14　文案禁审查者形态</text>
+  <text x="348" y="208" font-size="12" fill="#374151">§15　main 地标</text>
+  <text x="348" y="236" font-size="12" fill="#374151">§16　地标嵌套与唯一</text>
+</svg>
+
+> 图注：左列 §1–§9 为逐项勾选清单（页面渲染 → E2E 截图基准），右列 §10–§16 为门可判的判据族。两条阶梯只在右列：§10 用 L0–L4（层级阶梯），§12 用 M0–M3（动效预算，与 §10 并排读，见 §12.2）。锚点即各节 H2 标题。
+
 ## 1. 页面渲染
 
 - [ ] 页面无空白/白屏（Vue inline template 不渲染 → 必须用 SFC）
@@ -647,7 +678,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 | **在哪量** | 两把轴：① `document.querySelector("main").innerText`（判红轴，老账不变）；② `document.body` 直接子层里**不含 `main`** 的每棵子树（portal 族）逐块取 `innerText`，**每块带身份**（默认只报不判红，`--portals-enforce` 才并账）。取文根优先级 `main` → 面声明的 `container` → `body` 兜底，**实际用了哪一把必须落进读数**：`/members` 按设计没有 `<main>`（`OrgMembersView.vue:40`），旧版静默落 body，2937 字符里混着整条导航 chrome，报告却只写字符数。**不用 `textContent`** —— 它把 `sr-only`、`display:none` 子树与脚本串一起吞进来 ⇒ 假阳 |
 | **在哪些层读** | ① **渲染文本层 = 唯一判据层**；② 组件源码层（`t()` 键引用完整性，归 `lint:i18n`）；③ i18n 源层（**仅供定位，不作判据**）。**读数必须写明读的是哪一层** |
 | **何时量** | 路由 `networkidle` 后 **+ 逐个展开 `role=tab`**；一次性 `role="status"` 与 toast **不计**（按设计是临时的） |
-| **红的样子** | 逐条点名「面 / 正则名 / 命中串」，例：`条目 noDocList 命中「类名」形态：RagProxyController`。**必须能红**：`task-47` 已做变异验证 —— 把 `RagProxyController` 注回正文，2 条断言转红、其余 6 绿。`task-75` 再加**反例锚点** `--anchor`：把一条只在 portal 内可见的泄露串注入 body 级子树，判据两侧都钉 —— 改前（`main` 一把根）必须 0 命中（证盲区真实存在），改后（portal 轴）必须报出（证收敛）**。「改后 0 命中」不算通过 |
+| **红的样子** | 逐条点名「面 / 正则名 / 命中串」，例：`条目 noDocList 命中「类名」形态：RagProxyController`。**必须能红**：`task-47` 已做变异验证 —— 把 `RagProxyController` 注回正文，2 条断言转红、其余 6 绿。`task-75` 再加**反例锚点** `--anchor`：把一条只在 portal 内可见的泄露串注入 body 级子树，判据两侧都钉 —— 改前（`main` 一把根）必须 0 命中（证盲区真实存在），改后（portal 轴）必须报出（证收敛）。「改后 0 命中」不算通过 |
 
 盲区是**视口 + 交互两个条件**一起决定的（`task-75` 实测）：同一段代码在 1920 与 390 下挂载位置不同（移动变更 Sheet 挂 `document.body`，桌面 dock 在 `main` 内），而 portal **只在被点开之后存在**。所以矩阵加三个可选字段：
 

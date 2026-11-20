@@ -52,6 +52,51 @@ tags:
 
 > 按域拆成 6 张 `erDiagram`（单图塞全部表会挤成一团）。基数记法：`||--o{` 1 对 0..N，`||--|{` 1 对 1..N，`}o--||` N..0 对 1。无边实体（独立/弱关联表）单独标注。跨域关系在所属域内展示（如 `sessions → context_events` 属配置域视角）。
 
+下图是 §2 各 `erDiagram` 的分域索引（分区名对应 §2 子节标题；完整 53 张业务表见附录 A）：
+
+<svg viewBox="0 0 660 300" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>DEV-019 库表分域索引：§2 各 erDiagram 的分域、§3 表详情与 §4 迁移对照</title>
+  <rect x="0" y="0" width="660" height="300" fill="#ffffff"/>
+  <rect x="12" y="40" width="204" height="70" rx="5" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="26" y="62" font-size="10" fill="#4f46e5">§2.1</text>
+  <text x="26" y="83" font-size="13" fill="#312e81">身份协作</text>
+  <text x="26" y="102" font-size="10" fill="#4338ca">sessions</text>
+  <rect x="228" y="40" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="242" y="62" font-size="10" fill="#9ca3af">§2.2</text>
+  <text x="242" y="83" font-size="13" fill="#374151">Workspace 执行</text>
+  <text x="242" y="102" font-size="10" fill="#6b7280">checkpoints</text>
+  <rect x="444" y="40" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="458" y="62" font-size="10" fill="#9ca3af">§2.3</text>
+  <text x="458" y="83" font-size="13" fill="#374151">MCP·Provider</text>
+  <text x="458" y="102" font-size="10" fill="#6b7280">mcp_servers</text>
+  <rect x="12" y="122" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="26" y="144" font-size="10" fill="#9ca3af">§2.4</text>
+  <text x="26" y="165" font-size="13" fill="#374151">配置与 RAG</text>
+  <text x="26" y="184" font-size="10" fill="#6b7280">config</text>
+  <rect x="228" y="122" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="242" y="144" font-size="10" fill="#9ca3af">§2.5</text>
+  <text x="242" y="165" font-size="13" fill="#374151">文件审计</text>
+  <text x="242" y="184" font-size="10" fill="#6b7280">audit_logs</text>
+  <rect x="444" y="122" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="458" y="144" font-size="10" fill="#9ca3af">§2.6</text>
+  <text x="458" y="165" font-size="13" fill="#374151">全局视角</text>
+  <text x="458" y="184" font-size="10" fill="#6b7280">25 条关系</text>
+  <rect x="12" y="204" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="26" y="226" font-size="10" fill="#9ca3af">§2.7</text>
+  <text x="26" y="247" font-size="13" fill="#374151">任务连续性</text>
+  <text x="26" y="266" font-size="10" fill="#6b7280">task_plans</text>
+  <rect x="228" y="204" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="242" y="226" font-size="10" fill="#9ca3af">§3</text>
+  <text x="242" y="247" font-size="13" fill="#374151">按域表详情</text>
+  <text x="242" y="266" font-size="10" fill="#6b7280">16 小节</text>
+  <rect x="444" y="204" width="204" height="70" rx="5" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="458" y="226" font-size="10" fill="#9ca3af">§4</text>
+  <text x="458" y="247" font-size="13" fill="#374151">迁移对照</text>
+  <text x="458" y="266" font-size="10" fill="#6b7280">V1~V75</text>
+</svg>
+
+代码锚点：分区名 = `## 2.` 下的子节标题，强调色格对应 §2.1 主链；`sessions` / `checkpoints` / `mcp_servers` / `config` / `audit_logs` / `task_plans` 为各域代表表（`25 条关系` = §2.6 总览图的实测条数）；表数口径（53 张 Flyway 业务表 + `flyway_schema_history` + 只读 view `v_audit_entries`）见 §1「表数口径（V75）」。
+
 ### 2.1 身份协作（主链）
 
 ```mermaid

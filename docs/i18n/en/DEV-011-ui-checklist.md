@@ -13,6 +13,37 @@ status: active
 
 > PRs involving UI changes must verify each item in this checklist. Issues found are from actual E2E screenshot reviews.
 
+## 0.1 Checklist map (two columns)
+
+<svg viewBox="0 0 660 300" width="100%" role="img" aria-labelledby="dev011-overview-en">
+  <title id="dev011-overview-en">DEV-011 checklist map: §1–§9 item by item, §10–§16 criteria families</title>
+  <rect x="16" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
+  <rect x="332" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="32" y="42" font-size="12" fill="#374151">Checklist §1–§9</text>
+  <text x="348" y="42" font-size="12" fill="#374151">Criteria §10–§16</text>
+  <rect x="336" y="50" width="304" height="22" fill="#eef2ff"/>
+  <text x="32" y="68" font-size="12" fill="#374151">§1　Page render</text>
+  <text x="32" y="90" font-size="12" fill="#374151">§2　Icon render</text>
+  <text x="32" y="112" font-size="12" fill="#374151">§3　Theme switch</text>
+  <text x="32" y="134" font-size="12" fill="#374151">§4　Sign-in page</text>
+  <text x="32" y="156" font-size="12" fill="#374151">§5　Chat view</text>
+  <text x="32" y="178" font-size="12" fill="#374151">§6　Sidebar</text>
+  <text x="32" y="200" font-size="12" fill="#374151">§7　Dark mode</text>
+  <text x="32" y="222" font-size="12" fill="#374151">§8　i18n</text>
+  <text x="32" y="244" font-size="12" fill="#374151">§9　E2E baseline</text>
+  <text x="348" y="68" font-size="12" fill="#312e81">§10　Attention</text>
+  <text x="630" y="68" font-size="10" fill="#4f46e5" text-anchor="end">L0–L4</text>
+  <text x="348" y="96" font-size="12" fill="#374151">§11　UI review</text>
+  <text x="348" y="124" font-size="12" fill="#374151">§12　Motion</text>
+  <text x="630" y="124" font-size="10" fill="#4f46e5" text-anchor="end">M0–M3</text>
+  <text x="348" y="152" font-size="12" fill="#374151">§13　Top bar</text>
+  <text x="348" y="180" font-size="12" fill="#374151">§14　Copy wording</text>
+  <text x="348" y="208" font-size="12" fill="#374151">§15　Landmark</text>
+  <text x="348" y="236" font-size="12" fill="#374151">§16　Nesting</text>
+</svg>
+
+> Caption: the left column is the item-by-item checklist (§1–§9, page rendering → E2E baselines); the right column is the criteria families readable by a gate (§10–§16). Two ladders live only in the right column: §10 uses L0–L4 (layer ladder), §12 uses M0–M3 (motion budget, read alongside §10, see §12.2). Anchors are the H2 titles of each section.
+
 ## 1. Page Rendering
 
 - [ ] Page has no blank/white screen (Vue inline template not rendering → must use SFC)
