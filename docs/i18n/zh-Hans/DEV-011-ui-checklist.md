@@ -124,6 +124,8 @@ status: active
 
 ### 7.1 亮色模式层级（PLAN-0582 新增判据）
 
+页面画布键 `--background` = `oklch(0.985 0 0)` ≈ `rgb(250,250,250)`（DSD-1521 方案 B，用户 2026-11-21 拍定），与下表的 `--surface-canvas = var(--sidebar)` 是两条通道；不要用本表的 hex 反推 `--background`。
+
 | 元素 | 期望 |
 |------|------|
 | canvas（rail / 导航面板 / 文件树 / dock） | `--surface-canvas` = `#f7f7f8` |
@@ -912,6 +914,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 - Playwright 真栈可判：改一个字段 → 断言 dirty 指示可见 → 关闭弹窗 → 断言出现拦截提示，或（若裁定不拦截）断言关闭前有「未保存」明写文案。
 - 纯静态门判不了这条，必须真栈。
+- 执行者 = `mise run e2e:ui-baseline`（`e2e-host` 自起一次性原生栈，跑 `e2e/real/ui-baseline.spec.ts` 里本卡新增的 6 条 `@host` 用例：beforeunload / 路由离开守卫 / 抽屉关闭确认，各一正一负，收集数由 `--expect-tests=6` 钉住）。本卡只新增这 6 条；上面矩阵三条仍按 T-2318 人工或预览跑，不进 host 车道。前半「可见 dirty 指示」今天仓库里没有对象：**等到 `task-151` 定 testid，本卡补断言；在此之前该判据为 UNCOVERED（不是 PASS）**。
 
 ### 17.5 错误就地、按区块降级
 
@@ -996,7 +999,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 | 17.1 | 可（静态） | `check-form-contract.mjs` 规则 A：可编辑 section 命中双列 grid | 新门草案 | **已落地** = `F1` 违规 2 / 债 2、`F2` 违规 2 / 债 0 |
 | 17.2 | 可（组件单测） | 每个可编辑控件断言 label[for] 命中且 placeholder 不等于 label | 组件 spec | 静态面 = `F11` 违规 11 / 债 0（写控件缺关联 label）；「placeholder 复述标签」的组件正反例仍缺 |
 | 17.3 | 可（静态） | 规则 B：同一 section 内 Switch / Checkbox 与 Save testid 并存 | 新门草案 | 该族 = `F7`，实测恒 0（违规 0 / 债 0）：判据要求开关与保存键同在一个 section 且无表单根，真实站点不是这个形状 ⇒ **判据失效**，待 rule-1 重做形状判定；不得当作「已机判」引用 |
-| 17.4 | 不可静态，需真栈 | Playwright：改字段 → dirty 指示 → 关闭拦截 | 真栈 spec | **无执行者**：`ui-baseline.spec.ts` 今天没有任何执行者（task-156 §4 已登记）；接线 = 本卡续篇 `task-176`（6 条 `@host` 用例 + mise 单 spec 车道） |
+| 17.4 | 不可静态，需真栈 | Playwright：改字段 → dirty 指示 → 关闭拦截 | 真栈 spec | **执行者已接（2026-11-21）**：`mise run e2e:ui-baseline`（任务 `[tasks."e2e:ui-baseline"]` 在 `A03-xihe/mise.toml:467`，`--expect-tests=6`，report-only，不进 lint-run / validate-run）跑本文件 6 条 `@host` 用例；同批补 `⑥E1'` 断言锚点后 `check-decision-test-map` 违规 1 → 0。6 条窗内未真跑，窗后一次性栈实跑才收口；「可见 dirty 指示」= **UNCOVERED（不是 PASS）**，等到 `task-151` 定 testid 再补断言 |
 | 17.5 | 半可（静态 + 真栈） | 规则 C：ErrorBlock 调用点缺 retry 即红；断网重试走真栈 | 新门草案 + 真栈 | 静态面已落地 = `F3` 违规 10 / 债 2、`F8` 违规 3 / 债 0（保存按钮无 disabled 兜底）；断网 → 重试成功的端到端仍需真栈 |
 | 17.6 | 可（静态） | 规则 D：枚举字段 testid 落在文本输入即红 | 新门草案 | **已落地** = `F4` 违规 4 / 债 0、`F5` 违规 4 / 债 0、`F6` 违规 23（枚举词根 20 + 长度 3）/ 债 32 |
 | 17.7 | 可（组件单测） | 分层选择器必须有继承项与生效值，≥5 例 | 组件 spec | 静态面 = `F9` 违规 0 / 债 10（只有输入框、无档位提示）；组件面只有 `ConfigDomainPanel.spec.ts` 的 `lockLayered` 一条（钉「锁死面不渲染档位控件」），生效值 + 继承项正例随 `task-155` |

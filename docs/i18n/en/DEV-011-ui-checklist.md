@@ -120,6 +120,8 @@ status: active
 
 ### 7.1 Light-mode layering (PLAN-0582 new criterion)
 
+The page canvas token `--background` = `oklch(0.985 0 0)` ≈ `rgb(250,250,250)` (DSD-1521 option B, decided by the user on 2026-11-21) is a separate channel from `--surface-canvas = var(--sidebar)` in the table below; do not back-derive `--background` from the hex values in this table.
+
 | Element | Expected |
 |---------|----------|
 | canvas (rail / navigation panel / file tree / dock) | `--surface-canvas` = `#f7f7f8` |
@@ -965,6 +967,7 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 
 - A Playwright run against the real stack can decide it: change a field, assert the dirty indicator is visible, close the dialog, assert either an intercept prompt or the explicit "unsaved" wording.
 - No static gate can decide this one; it needs the real stack.
+- Executor = `mise run e2e:ui-baseline` (`e2e-host` boots a throwaway native stack and runs the six `@host` cases this card adds to `e2e/real/ui-baseline.spec.ts`: beforeunload, the route-leave guard, the drawer close confirmation, one positive and one negative each, with the collected count pinned by `--expect-tests=6`). This card adds only those six; the three matrix cases above still run by hand or in preview per T-2318 and stay out of the host lane. The first half, a visible dirty indicator, has no object in the repository today: **it waits for `task-151` to name the testid, then this card adds the assertion; until then that criterion is UNCOVERED (not PASS)**.
 
 ### 17.5 Inline errors, per-block degradation
 
@@ -1049,7 +1052,7 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 | 17.1 | yes (static) | `check-form-contract.mjs` rule A: an editable section matching a two-column grid | new gate draft | **landed** = `F1` 2 violations / 2 debt, `F2` 2 / 0 |
 | 17.2 | yes (component test) | assert label[for] resolves and placeholder differs from label | component spec | static face = `F11` 11 / 0 (write controls without an associated label); component cases for a placeholder restating its label still missing |
 | 17.3 | yes (static) | rule B: a Switch / Checkbox and a save testid inside one section | new gate draft | this family is `F7` and measured 0 (0 / 0): the rule needs the switch and the save button in one section without a form root, and real call sites are not shaped like that, so **the criterion is dead** — rule-1 must redo the shape test; never cite it as machine-checked |
-| 17.4 | no, needs the real stack | Playwright: edit a field, dirty indicator, intercept on close | real-stack spec | **no executor**: `ui-baseline.spec.ts` has no executor at all today (registered in task-156 §4); the wiring is the follow-up `task-176` (six `@host` cases plus a single-spec mise lane) |
+| 17.4 | no, needs the real stack | Playwright: edit a field, dirty indicator, intercept on close | real-stack spec | **executor wired (2026-11-21)**: `mise run e2e:ui-baseline` (`A03-xihe/mise.toml:467`, `--expect-tests=6`, report-only, kept out of lint-run and validate-run) runs the six `@host` cases in this file; adding the `⑥E1'` anchor took `check-decision-test-map` from 1 violation to 0. The six were not executed inside the window — the throwaway-stack run closes this out; the visible dirty indicator is **UNCOVERED (not PASS)**, pending the testid from `task-151` |
 | 17.5 | partly (static + real stack) | rule C: an ErrorBlock call site without retry is red; offline retry on the real stack | new gate draft + real stack | static face landed = `F3` 10 / 2 and `F8` 3 / 0 (save button with no disabled guard); the offline-then-retry round trip still needs the real stack |
 | 17.6 | yes (static) | rule D: an enum field whose testid lands on a text input is red | new gate draft | **landed** = `F4` 4 / 0, `F5` 4 / 0, `F6` 23 (20 enum roots + 3 length) / 32 |
 | 17.7 | yes (component test) | layered selector must expose inherit plus effective value, at least five cases | component spec | static face = `F9` 0 / 10 (a bare input with no tier hint); component face is only the `lockLayered` case in `ConfigDomainPanel.spec.ts`, which pins that the locked tier renders no tier control; the effective-value and inherit-entry cases follow `task-155` |
