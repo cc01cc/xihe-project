@@ -41,9 +41,15 @@ const SURFACES = ["--background", "--card", "--popover", "--muted", "--sidebar"]
 const MIN_RATIO = 3.1;
 
 /** 浏览器实测值（2026-11-13，Chromium，canvas 合成 + WCAG 相对亮度，取 5 底面最差）。
- *  它们的作用是**校验本文件里的色彩数学**：算错了这里先红，而不是等有人拿它去挡真回归。 */
+ *  它们的作用是**校验本文件里的色彩数学**：算错了这里先红，而不是等有人拿它去挡真回归。
+ *
+ *  <p>2026-11-21 DSD-1521 方案 B（用户 02:33 批）改了默认档 neutral 的浅色画布与状态填充
+ *  （--background 0.97→0.985、--muted / --accent 0.93→0.97），同一套 canvas 重新实测十组：
+ *  **只有 light/neutral 变了，3.136 → 3.525** —— 最差底面仍然是 --muted，是它自己从 0.93
+ *  抬回官方 0.97 之后与 --input 的差变小了；其余九组逐条复测与原值一致，原样保留。
+ *  读数与脚本：internal/A03-xihe/evidence/2026-11-21-palette-b/（browser-measure.json）。</p> */
 const MEASURED: Record<string, number> = {
-    "light/neutral": 3.136,
+    "light/neutral": 3.525,
     "light/gray": 3.184,
     "light/slate": 3.14,
     "light/stone": 3.182,

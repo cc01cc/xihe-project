@@ -27,8 +27,9 @@ import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const APPEARANCE_PATH = "/settings/user/user-preference";
 const THEME_KEY = "xihe-theme";
-/** neutral 官方值：浅色 `--background`（`a2a24caf3` 的「面差」批把 1 档降到 0.97）/ 暗色。 */
-const LIGHT_BACKGROUND = "oklch(0.97 0 0)";
+/** neutral 浅色 `--background`：`a2a24caf3` 的「面差」批把官方 1 降到 0.97，2026-11-21 按 DSD-1521 方案 B 提到 0.985
+ *  （= rgb(250,250,250)，分层职责交回 `--border` 与阴影）；暗色档不变。 */
+const LIGHT_BACKGROUND = "oklch(0.985 0 0)";
 const DARK_BACKGROUND = "oklch(0.145 0 0)";
 
 const SOURCE = readFileSync(fileURLToPath(import.meta.url), "utf8");

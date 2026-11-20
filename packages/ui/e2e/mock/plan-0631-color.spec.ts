@@ -86,7 +86,8 @@ const NEUTRAL = {
     /** 徽标 = `Badge variant=secondary`（`--badge` 撤后落官方 secondary）。 */
     secondary: "oklch(0.97 0 0)",
     secondaryForeground: "oklch(0.205 0 0)",
-    background: "oklch(0.97 0 0)",
+    /** 2026-11-21 DSD-1521 方案 B：画布键 0.97 → 0.985；上一行 `--secondary` 未参与本批。 */
+    background: "oklch(0.985 0 0)",
     foreground: "oklch(0.145 0 0)",
     mutedForeground: "oklch(0.53 0 0)",
     border: "oklch(0.922 0 0)",

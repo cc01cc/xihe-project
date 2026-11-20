@@ -14,20 +14,24 @@
  *   <li>卡片**可见边界**（Card.vue 的 ring-foreground/10：10% 的 --foreground 画成卡片外圈的
  *       1px box-shadow，压着的是**页面底**）对 --background ≥ 1.20 —— 层次第二层，
  *       卡片与背景同色时仍能看见轮廓；</li>
- *   <li>--border 装饰线**不回退**：≥ 1.15（现状值，亮 1.155 / 暗 1.252）。</li>
+ *   <li>--border 装饰线**不回退**：≥ 1.15（现状值，亮 1.207 / 暗 1.252；亮色旧画布 0.97 时是 1.155）。</li>
  * </ol>
  *
  * <p>关于 ② 与 --border 的区别（读完再改阈值）：Lead m01168 的「border 门降 1.20」用的是
- * **slate** 读数（1.232 / 1.252），而默认档是 **neutral**，其亮色 --border/bg 只有 **1.155**，
- * 按 1.20 判会在默认档亮色**恒红**；同时 --border 本身不属 WCAG 1.4.11（装饰线，Lead
+ * **slate** 读数（1.232 / 1.252），而默认档是 **neutral**，其亮色 --border/bg 在旧画布 0.97 下
+ * 只有 **1.155**（2026-11-21 DSD-1521 B 案把画布提到 0.985 之后是 1.207），按 1.20 判曾在默认档
+ * 亮色**恒红**；同时 --border 本身不属 WCAG 1.4.11（装饰线，Lead
  * 2026-11-13 裁定不动，见 color-shadcn-neutral.css:47-52），1.35 是 task-74 自拍值。
- * 故：1.20 只判**卡片实际可见边界**（环对页面底：亮 1.240 / 暗 1.245，四 palette 全过；
+ * 故：1.20 只判**卡片实际可见边界**（环对页面底：亮 1.241 / 暗 1.245，四 palette 全过；
  * 真机像素 1.253 / 1.223），--border 保留 1.15 的不回退下限。改这里之前先把这两条读完。</p>
  *
  * <p>两档都要判（Lead task-74 补口径 ①）：亮色与暗色各一套 boundary / border / muted-fg。
  * 浏览器侧实测锚（Chromium + 真机 12640 的 /preview.html，task-119 取证目录
  * internal/A03-xihe/evidence/2026-11-20-card-shadow-gate/，含两份截图与像素采样 readings.json）：
- * light 环对页面底 1.240（像素实测 1.253：#dcdcdc 对 #f5f5f5）/ border 1.155 / muted-fg 4.841；
+ * light 环对页面底 1.240（像素实测 1.253：#dcdcdc 对 #f5f5f5）/ border 1.155 / muted-fg 4.841。
+ * 2026-11-21 DSD-1521 B 案（画布 0.985、--muted / --accent 回 0.97）之后用同一套 canvas 复测：
+ * 环对页面底 1.253 / border 1.207 / muted-fg 对底 5.031、对 --muted 4.816 —— 读数见
+ * internal/A03-xihe/evidence/2026-11-21-palette-b/browser-measure.json；
  * dark 1.245（像素 1.223：#202020 对 #090909）/ 1.252 / 7.633。
  * 本文件的数由 8bit 通道四舍五入后计算，与实测差 ≤0.03（--muted-foreground 最明显 4.816 vs 4.841）。</p>
  *
@@ -39,7 +43,7 @@
  * 等于要求改色值 —— 那不是回归门，是设计偏好。故 C2 改为<b>色板保真门</b>：31 个中性 token
  * 逐个与 registry cssVarsV4 比对（oklch 数值一致 + 中性键 chroma = 0），并把文件头已声明的
  * <b>有意偏离</b>写成显式白名单（--ring/--sidebar-ring → var(--primary)、--input、
- * 「面差」5 键、--destructive 的 task-89 解 L）。本门只防漂移、不表达设计偏好；
+ * 「面差」键、--destructive 的 task-89 解 L）。本门只防漂移、不表达设计偏好；
  * 任何擅自改色值、加 chroma、换 palette 都会红。官方值取自
  * https://www.shadcn-vue.com/r/colors/neutral.json 的 cssVarsV4（2026-11-20 核对）。</p>
  *
@@ -49,7 +53,7 @@
  *
  * <p>实现说明：不手写 CSS parser（postcss 是 vite 的硬依赖，按 vite 的位置解析它）；
  * 色彩数学全在 ./helpers/colorMath.ts，与 input-contrast.spec.ts 共用同一份，
- * 并由本文件最后两例与浏览器实测 3.136 对账 —— 算错了先在这里红。</p>
+ * 并由本文件最后两例与浏览器实测 3.525 对账（B 案之前的锚是 3.136）—— 算错了先在这里红。</p>
  */
 
 import { createRequire } from "node:module";
@@ -212,7 +216,7 @@ describe("C1 层次：卡片阴影 + 可见边界（task-119 改判，默认档 
         }
     });
 
-    it("卡片可见边界（ring-foreground/10 对页面底 --background）≥ 1.20（今天 1.240；真机像素实测 1.253）", () => {
+    it("卡片可见边界（ring-foreground/10 对页面底 --background）≥ 1.20（今天 1.241；canvas 实测 1.253）", () => {
         const ratio = cardBoundary(light);
         expect(
             ratio,
@@ -227,7 +231,7 @@ describe("C1 层次：卡片阴影 + 可见边界（task-119 改判，默认档 
         ).toBeGreaterThanOrEqual(MIN_CARD_BOUNDARY);
     });
 
-    it("border / background ≥ 1.15（装饰线不回退；今天 1.155 刚过线，浏览器实测 1.155）", () => {
+    it("border / background ≥ 1.15（装饰线不回退；今天 1.207，浏览器实测 1.207）", () => {
         const bg = surface("--background");
         const border = compositeOver(tokenToRgba(light.decls, "--border"), bg);
         const ratio = round3(contrastRatio(border, bg));
@@ -242,11 +246,12 @@ describe("C1 层次：卡片阴影 + 可见边界（task-119 改判，默认档 
                 " < " +
                 MIN_BORDER_OVER_BG +
                 "；注意 1.20 是对**卡片可见边界**（ring 合成）的判据，不是 --border —— " +
-                "默认档 neutral 亮色的 --border 只有 1.155，按 1.20 判会恒红，且 --border 属装饰线不归 WCAG 1.4.11（Lead 2026-11-13 裁定）",
+                "默认档 neutral 亮色的 --border 在旧画布 0.97 下只有 1.155（B 案后 1.207），按 1.20 判会恒红，" +
+                "且 --border 属装饰线不归 WCAG 1.4.11（Lead 2026-11-13 裁定）",
         ).toBeGreaterThanOrEqual(MIN_BORDER_OVER_BG);
     });
 
-    it("muted-foreground / background ≥ 4.5（WCAG 1.4.3 正文；今天 4.816 已达标）", () => {
+    it("muted-foreground / background ≥ 4.5（WCAG 1.4.3 正文；今天 5.031 已达标，对 --muted 4.816）", () => {
         const bg = surface("--background");
         const fg = tokenToRgb(light.decls, "--muted-foreground");
         const ratio = round3(contrastRatio(fg, bg));
@@ -267,7 +272,7 @@ describe("C1 层次：卡片阴影 + 可见边界（task-119 改判，默认档 
 });
 
 describe("B1/B2 focus ring 的可视强度", () => {
-    it("ring 的实际渲染形态（50% 合成）对 5 个相邻底最差 ≥ 3.0（今天最差 3.223）", () => {
+    it("ring 的实际渲染形态（50% 合成）对 5 个相邻底最差 ≥ 3.0（今天最差 3.339）", () => {
         const ring = tokenToRgba(light.decls, "--ring");
         const rendered = { ...ring, alpha: RING_ALPHA };
         const rows = SURFACES.map((name) => {
@@ -380,13 +385,11 @@ const OFFICIAL_NEUTRAL: Record<Theme, Record<string, string>> = {
 const INTENTIONAL_DEVIATIONS: Record<Theme, Record<string, { value: string; why: string }>> = {
     light: {
         background: {
-            value: "oklch(0.97 0 0)",
-            why: "面差 5 键（用户 2026-11-12 批 a2a24caf3）；官方 1",
+            value: "oklch(0.985 0 0)",
+            why: "画布键（用户 2026-11-21 02:33 批 DSD-1521 方案 B；2026-11-12 批 a2a24caf3 取 0.97）；官方 1",
         },
-        muted: { value: "oklch(0.93 0 0)", why: "面差 5 键；官方 0.97" },
-        "muted-foreground": { value: "oklch(0.53 0 0)", why: "面差 5 键；官方 0.556" },
-        accent: { value: "oklch(0.93 0 0)", why: "面差 5 键；官方 0.97" },
-        "sidebar-accent": { value: "oklch(0.94 0 0)", why: "面差 5 键；官方 0.97" },
+        "muted-foreground": { value: "oklch(0.53 0 0)", why: "画布键同批；官方 0.556" },
+        "sidebar-accent": { value: "oklch(0.94 0 0)", why: "画布键同批；官方 0.97" },
         destructive: {
             value: "oklch(0.55 0.245 27.325)",
             why: "task-89：官方 0.577 落浅底仅 4.38:1，只解 L 到 0.55",
@@ -502,7 +505,7 @@ function checkPalette(theme: Theme): void {
 }
 
 describe("C2 色板保真（task-132：只防漂移，不表达设计偏好）", () => {
-    it("light 档：31 键与 shadcn neutral registry 一致，仅文件头声明的 3 组有意偏离（9 处）", () => {
+    it("light 档：31 键与 shadcn neutral registry 一致，仅文件头声明的 3 组有意偏离（7 处）", () => {
         checkPalette("light");
     });
 
@@ -512,10 +515,10 @@ describe("C2 色板保真（task-132：只防漂移，不表达设计偏好）",
 });
 
 describe("色彩数学自检（与浏览器实测对账）", () => {
-    it("--input 对 5 底面的最差 = 浏览器实测 3.136（同 input-contrast.spec.ts 的 MEASURED）", () => {
+    it("--input 对 5 底面的最差 = 浏览器实测 3.525（同 input-contrast.spec.ts 的 MEASURED）", () => {
         const input = tokenToRgb(light.decls, "--input");
         const worst = Math.min(...SURFACES.map((n) => contrastRatio(input, surface(n))));
-        expect(round3(worst)).toBeCloseTo(3.136, 2);
+        expect(round3(worst)).toBeCloseTo(3.525, 2);
     });
 
     it("阈值会咬：把 --foreground 覆写成 --background 的值 ⇒ 边界 1.0 < 1.20（证明卡片边界门不是恒定绿）", () => {
