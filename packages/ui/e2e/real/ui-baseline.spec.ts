@@ -736,6 +736,74 @@ async function readLayout(page: Page): Promise<LayoutReading> {
     return { ...(reading as Omit<LayoutReading, "frameGate">), frameGate };
 }
 
+// ── ⑥E2' 锚点取样（task-13 / D1466）────────────────────────────────────────────
+// 红值（new-chat 底边 95.0 vs 首个会话行顶边 76.0，倒挂 19.0px）是**两个采样缺陷叠加**，不是布局重叠：
+//   ① 首个会话行在 [data-testid="sidebar-workspace-groups"]（WorkspaceSessionGroups.vue:352，
+//      min-h-0 flex-1 overflow-y-auto）里，前序步骤（会话导航 / ⑥E1 开浮层）会把该容器滚走；
+//      boundingBox() 对**已滚出容器可视区**的子元素仍返回视口坐标（76 就是被裁掉的位置）。
+//   ② newChat 取自 readLayout（早帧），firstSessionRow 是后补一次 boundingBox（晚帧）⇒ 跨帧比较。
+// 取样口径：等组头就位 → 过帧门 → 列表 scrollTop 归零 → **一次 evaluate（rAF 对齐）**同帧取
+// newChat / 首个会话行 / 列表容器 rect + scrollTop；读数同时进 annotation 供证据档引用。
+interface NewChatAnchorReading {
+    scrollTopBefore: number;
+    scrollTop: number;
+    frames: number;
+    stable: boolean;
+    container: Rect | null;
+    newChat: Rect | null;
+    firstRow: Rect | null;
+}
+
+async function readNewChatAnchor(page: Page): Promise<NewChatAnchorReading> {
+    // 会话行只在组容器里渲染（WorkspaceSessionGroups.vue:352）；组头未就位时首行位置仍是过渡态。
+    await page
+        .locator(
+            '[data-testid^="sidebar-workspace-group-toggle-"], [data-testid="sidebar-standalone-group-toggle"]',
+        )
+        .first()
+        .waitFor({ state: "visible", timeout: 5000 })
+        .catch(() => {
+            /* 0 组时由下面的 fail 分支暴露「取不到首个会话行」 */
+        });
+    await settleLayoutFrames(page);
+    return page.evaluate(async () => {
+        const box = (el: Element | null) => {
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { x: r.x, y: r.y, w: r.width, h: r.height };
+        };
+        const container = document.querySelector<HTMLElement>(
+            '[data-testid="sidebar-workspace-groups"]',
+        );
+        const scrollTopBefore = container?.scrollTop ?? 0;
+        if (container && container.scrollTop !== 0) container.scrollTop = 0;
+        const nextFrame = () =>
+            new Promise<void>((resolve) => {
+                requestAnimationFrame(() => resolve());
+            });
+        const snapshot = () => ({
+            container: box(container),
+            newChat: box(document.querySelector('[data-testid="sidebar-new-chat"]')),
+            firstRow: box(document.querySelector('[data-testid="session-item"]')),
+            scrollTop: container?.scrollTop ?? 0,
+        });
+        // 归零后连续两帧读数一致才算就位（虚拟列表 / 折叠动画可能滞后一帧），最多 30 帧。
+        await nextFrame();
+        let prev = snapshot();
+        let frames = 1;
+        for (let i = 0; i < 30; i += 1) {
+            await nextFrame();
+            frames += 1;
+            const next = snapshot();
+            if (JSON.stringify(next) === JSON.stringify(prev)) {
+                return { scrollTopBefore, frames, stable: true, ...next };
+            }
+            prev = next;
+        }
+        return { scrollTopBefore, frames, stable: false, ...prev };
+    });
+}
+
 /** 只用键盘 Tab 站到 chat-input，避免脚本 focus() 造出产品里不存在的焦点态。 */
 async function tabToChatInput(page: Page, maxPresses = 400): Promise<number> {
     for (let i = 1; i <= maxPresses; i += 1) {
@@ -1478,23 +1546,70 @@ async function runMatrix(
 
             // E2'：新建会话必须在首个会话行之上（Sidebar.vue:373-413 现状仍在搜索行 ⇒ 改前必红）
             //      task-9 注释漂移修正：旧注 :279-337 已是失效行号。
-            // task-120 F-8：同上，0 条会话时 first().boundingBox() 会无限等待 ⇒ 先 count。
-            const sessionRows = page.locator('[data-testid="session-item"]');
-            const firstSessionRow =
-                (await sessionRows.count()) > 0 ? await sessionRows.first().boundingBox() : null;
-            if (newChat && firstSessionRow) {
-                const newChatBottom = newChat.y + newChat.h;
+            //      task-13（D1466）：判据/采样口径加固，红值来源与取样口径见 readNewChatAnchor 注释。
+            //      A 判据（底边 − 顶边 ≤ 0）**不得单独使用** —— 只挪数字就能骗过它；必须与
+            //      B（new-chat 底边 ≤ 列表容器顶边）和 C（首行落在容器可视区内）在同一帧、同一
+            //      scrollTop 状态下同时成立。task-120 F-8 的「0 条会话时 boundingBox 无限等待」
+            //      由 querySelector 返回 null 天然规避（不再需要先 count）。
+            const anchor = await readNewChatAnchor(page);
+            testInfo.annotations.push({
+                type: "newchat-anchor",
+                description: `${tag} scrollTop ${fmt(anchor.scrollTopBefore)}→${fmt(anchor.scrollTop)} 容器 ${fmtRect(anchor.container)} newChat ${fmtRect(anchor.newChat)} firstRow ${fmtRect(anchor.firstRow)} frames=${anchor.frames} stable=${anchor.stable}`,
+            });
+            console.log(
+                `[task-174] ${tag} ⑥E2' 锚点 container=${fmtRect(anchor.container)} newChat=${fmtRect(anchor.newChat)} firstRow=${fmtRect(anchor.firstRow)} scrollTop ${fmt(anchor.scrollTopBefore)}→${fmt(anchor.scrollTop)} frames=${anchor.frames} stable=${anchor.stable}`,
+            );
+            if (anchor.newChat && anchor.firstRow && anchor.container) {
+                const newChatBottom = anchor.newChat.y + anchor.newChat.h;
+                const containerTop = anchor.container.y;
+                const containerBottom = containerTop + anchor.container.h;
+                const firstRowBottom = anchor.firstRow.y + anchor.firstRow.h;
+                const anchorMsg = `容器 ${fmtRect(anchor.container)}｜newChat ${fmtRect(anchor.newChat)}｜firstRow ${fmtRect(anchor.firstRow)}｜scrollTop ${fmt(anchor.scrollTopBefore)}→${fmt(anchor.scrollTop)}（容器=${'[data-testid="sidebar-workspace-groups"]'}）`;
+                // A（原判据，保留但不单独使用）：new-chat 底边不得低于首个会话行顶边。
                 expect
                     .soft(
-                        newChatBottom - firstSessionRow.y,
-                        `${tag} ⑥E2' 新建会话底边 ${fmt(newChatBottom)} 未高于首个会话行顶边 ${fmt(firstSessionRow.y)}（差值 ${fmt(newChatBottom - firstSessionRow.y)}px，阈值 ≤0 归属卡 task-73 E2'）`,
+                        newChatBottom - anchor.firstRow.y,
+                        `${tag} ⑥E2' A 新建会话底边 ${fmt(newChatBottom)} 未高于首个会话行顶边 ${fmt(anchor.firstRow.y)}（差值 ${fmt(newChatBottom - anchor.firstRow.y)}px，阈值 ≤0 归属卡 task-13 E2'）｜${anchorMsg}`,
                     )
                     .toBeLessThanOrEqual(0);
+                // B（新增·结构性）：new-chat 行必须在列表容器**之上**，不能浮在列表内部。
+                expect
+                    .soft(
+                        newChatBottom - containerTop,
+                        `${tag} ⑥E2' B 新建会话底边 ${fmt(newChatBottom)} 未落在列表容器顶边 ${fmt(containerTop)} 之上（差值 ${fmt(newChatBottom - containerTop)}px，阈值 ≤0 归属卡 task-13 E2'）｜${anchorMsg}`,
+                    )
+                    .toBeLessThanOrEqual(0);
+                // C（新增·杀掉采样假象）：首行必须落在容器可视区内 —— 滚出容器的元素即使 y 更小也不算数。
+                expect
+                    .soft(
+                        anchor.firstRow.y - containerTop,
+                        `${tag} ⑥E2' C 首个会话行顶边 ${fmt(anchor.firstRow.y)} 在列表容器顶边 ${fmt(containerTop)} 之上（越界 ${fmt(anchor.firstRow.y - containerTop)}px，阈值 ≥-0.5：首行必须落在容器可视区内，滚出容器的元素不算读数 归属卡 task-13 E2'）｜${anchorMsg}`,
+                    )
+                    .toBeGreaterThanOrEqual(-0.5);
+                expect
+                    .soft(
+                        firstRowBottom - containerBottom,
+                        `${tag} ⑥E2' C 首个会话行底边 ${fmt(firstRowBottom)} 越出列表容器底边 ${fmt(containerBottom)}（越界 ${fmt(firstRowBottom - containerBottom)}px，阈值 ≤0.5 归属卡 task-13 E2'）｜${anchorMsg}`,
+                    )
+                    .toBeLessThanOrEqual(0.5);
+                // 归零必须真的生效：读取时容器仍被滚走 ⇒ 上面的 rect 不可信（读数本身不作数）。
+                expect
+                    .soft(
+                        anchor.scrollTop,
+                        `${tag} ⑥E2' 取样时列表容器 scrollTop ${fmt(anchor.scrollTop)} ≠ 0（归零未生效或取样期间被重新滚走，读数不可信 归属卡 task-13 E2'）｜${anchorMsg}`,
+                    )
+                    .toBe(0);
             } else {
                 expect
                     .soft(
-                        { newChat, firstSessionRow },
-                        `${tag} ⑥E2' 取不到新建会话或首个会话行（不 skip，按 fail 暴露 归属卡 task-73 E2'）`,
+                        {
+                            container: anchor.container,
+                            newChat: anchor.newChat,
+                            firstRow: anchor.firstRow,
+                            scrollTop: anchor.scrollTop,
+                            stable: anchor.stable,
+                        },
+                        `${tag} ⑥E2' 同帧取样取不到列表容器 / 新建会话 / 首个会话行（不 skip，按 fail 暴露 归属卡 task-13 E2'；frames=${anchor.frames} stable=${anchor.stable}）`,
                     )
                     .toBeNull();
             }
