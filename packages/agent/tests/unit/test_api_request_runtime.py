@@ -3,13 +3,14 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from xihe_agent.adapters.api_chat_model import ApiChatModel
 from xihe_agent.llm.api_request import ApiRequestError, chat_type, render_request, strict_json, validate_snapshot
-from xihe_agent.llm.api_sender import ApiSender
+from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, parse_response
 from xihe_agent.llm.transport_metrics import STAGE_ATTEMPT_STARTED, TransportMetricsCollector
 
 TYPES = ["openai-chat-completions", "anthropic-messages", "mimo-responses"]
@@ -1158,6 +1159,74 @@ async def test_usage_wire_separates_estimate_from_provider_counters():
     assert unreported["providerUnknownFields"] == ["cache_read_input_tokens", "input_tokens", "output_tokens"]
     assert unreported["source"] == "estimated"
     assert unreported["estimatedInputTokens"] == 9
+
+
+DASHSCOPE_NATIVE = "dashscope-generation"
+
+
+def dashscope_payload(cached=None):
+    """Native text-generation response (PLAN-0624 D24-04); cached=None omits the details block."""
+    usage = {"input_tokens": 3019, "output_tokens": 101, "total_tokens": 3120}
+    if cached is not None:
+        usage["prompt_tokens_details"] = {"cached_tokens": cached}
+    return {
+        "output": {
+            "finish_reason": "stop",
+            "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "answer"}}],
+        },
+        "usage": usage,
+    }
+
+
+@pytest.mark.parametrize("cached", [2048, 0])
+def test_dashscope_native_reported_cached_tokens_reach_the_usage(cached):
+    """task-162: native usage.prompt_tokens_details.cached_tokens is a provider counter, 0 included."""
+    result = parse_response(dashscope_payload(cached), chat_type(DASHSCOPE_NATIVE, 1))
+
+    assert result.provider_usage == {
+        "input_tokens": 3019,
+        "output_tokens": 101,
+        "cache_read_input_tokens": cached,
+    }
+    assert result.usage["input_token_details"] == {"cache_read": cached}
+
+
+def test_dashscope_native_absent_cached_tokens_stays_unknown():
+    """task-162: no details block means the counter is unknown, never a synthesized 0."""
+    result = parse_response(dashscope_payload(), chat_type(DASHSCOPE_NATIVE, 1))
+
+    assert result.provider_usage == {"input_tokens": 3019, "output_tokens": 101}
+    assert "input_token_details" not in result.usage
+
+
+@pytest.mark.parametrize("cached", [2048, 0, None])
+def test_usage_wire_keeps_a_reported_zero_cache_read_and_drops_a_missing_one(cached):
+    """task-162: chat.py writes a wire field only when the counter was reported, so a reported 0
+    must survive while a missing counter turns into providerUnknownFields."""
+    from xihe_agent.api.chat import _apply_provider_usage
+
+    result = parse_response(dashscope_payload(cached), chat_type(DASHSCOPE_NATIVE, 1))
+    # Mirrors ApiChatModel's three read-only properties (adapters/api_chat_model.py:295-307);
+    # the native body never goes through render_request, so this wire test stays model-free.
+    model = SimpleNamespace(
+        provider_reported=set(result.provider_usage),
+        provider_usage_totals=dict(result.provider_usage),
+        provider_unknown=NATIVE_USAGE_COUNTERS - set(result.provider_usage),
+    )
+    usage = {"estimatedInputTokens": 1234, "source": "estimated"}
+    _apply_provider_usage(usage, model)
+
+    if cached is None:
+        assert "cacheReadInputTokens" not in usage
+        assert usage["providerUnknownFields"] == ["cache_read_input_tokens"]
+    else:
+        assert usage["cacheReadInputTokens"] == cached
+        assert "providerUnknownFields" not in usage
+    assert usage["inputTokens"] == 3019
+    assert usage["outputTokens"] == 101
+    assert usage["totalTokens"] == 3120
+    assert usage["estimatedInputTokens"] == 1234
+    assert usage["source"] == "real"
 
 
 @pytest.mark.parametrize("type_id", TYPES)

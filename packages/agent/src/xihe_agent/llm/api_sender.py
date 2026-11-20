@@ -223,6 +223,16 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
             usage,
             (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")),
         )
+        # task-162: the native shape reports the implicit-cache hit in the same
+        # nested place as the OpenAI family (usage.prompt_tokens_details.cached_tokens;
+        # Alibaba context-cache doc, "DashScope" tab), and that value is part of
+        # usage.input_tokens. Dropping it here made every native call look like a
+        # provider that reports no cache at all.
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            cached = _counter(details, "cached_tokens")
+            if cached is not None:
+                result.provider_usage["cache_read_input_tokens"] = cached
         result.usage = _langchain_usage(result.provider_usage)
     elif api_type.id == "anthropic-messages":
         blocks = _array(data.get("content"))

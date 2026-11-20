@@ -1042,6 +1042,8 @@ export interface ChatRunUsage {
      * 做上下文预算）。provider 未返回时为缺失或 null —— 调用方必须自带兜底。
      */
     windowTokens?: number | null;
+    /** task-162: provider-reported cache-hit counter (native and OpenAI-family usage); absent = provider did not report it. */
+    cacheReadInputTokens?: number | null;
 }
 
 // ── PLAN-0339: workspace checkpoint slices ───────────────────────────────────
