@@ -21,15 +21,23 @@
  *      只允许 ui/ 时这两类条款根本登记不进来（只能人工读文本，等于「决策只停在文本」）。
  *      为什么**不**放开 A03-xihe/scripts/**：当前没有任何登记需要它；每多一个前缀就多一片「测试可被算作判据」的面，
  *      等真有卡需要再加，加的时候同批补越界反例（自检里已有一条断言它仍然越界）。
- *   6) D 号登记：台账未冻结 ⇒ 须在 lead-decisions-ledger.md 命中；台账已冻结（D-1903 起登记处迁 DSD）
- *      ⇒ 须给 decisions[].dsd（DSD decisions.id），并尽力核对 revision（库不可读则 SKIP 不判红）
+ *   6) 决策号两条登记处（task-59）：DSD-1474 起新裁定一律写 `DSD-NNNN`，历史台账号保持 `D-####`。
+ *      · `D-####`：台账未冻结 ⇒ 须在 lead-decisions-ledger.md 命中；台账已冻结（D-1903 起登记处迁 DSD）
+ *        ⇒ 须给 decisions[].dsd（DSD decisions.id），并尽力核对 revision（库不可读则 SKIP 不判红）
+ *      · `DSD-NNNN`：**不做台账查重**（DSD 库与台账是两套独立登记处且号段重叠，互判红等于把
+ *        DSD-1461 与台账 D-1461 当成同一裁定 —— 与 scripts/check-decision-refs.mjs 的 DSD- 只解析
+ *        DSD 侧同口径）。dsd 字段**可省略**，省略时由 id 里的 NNNN 推导；给了就必须等于 NNNN
+ *        （不等报 E_DSD_ID_MISMATCH）；库可读时仍核对 revision（E_DSD_REV_MISMATCH），不可读 SKIP。
+ *   7) clause id 跟随决策 id 形态：必须是决策 id 本身或 `<决策 id>/<子标签>`（DSD-1463/1、D-1907/A-1），
+ *      否则 E_CLAUSE_ID_PREFIX（否则「条款挂在哪个决策下」只能靠人眼）
  *
  * 用法：
  *   node scripts/check-decision-test-map.mjs [--map <json>] [--root <one 根>]
  *        [--json] [--enforce] [--selftest] [--quiet]
  *   --enforce  追加「pending > 0 即红」（条款全部落地后的严格档）
  *   --selftest 内存内自检（基线绿 / title 错 / assert 错 / pending 缺 card / not-testable 缺 reason /
- *              clause id 重复 / 路径越界 / 比例超限 + file 白名单四类正向 + 缺文件 / 非测试文件 / DSD 号不存在反例）
+ *              clause id 重复 / 路径越界 / 比例超限 + file 白名单四类正向 + 缺文件 / 非测试文件 / DSD 号不存在反例
+ *              + DSD- 号正向（dsd 省略可推导）、DSD 与 dsd 不一致、DSD- 号不被台账判红、clause id 前缀不符）
  *
  * 退出码：0 无硬违规；1 有硬违规（或 --enforce 下 pending > 0、--selftest 失败）；2 用法或 IO 错。
  */
@@ -59,6 +67,12 @@ const TEST_FILE_RE = /\.(spec|test)\.[cm]?[jt]sx?$/
 const NT_RATIO_MAX = 0.2
 const NT_REASON_MIN = 10
 const STATUSES = ['covered', 'pending', 'not-testable']
+// 决策 id 两种形态（task-59）：历史台账号 D-<3~4 位>，DSD-1474 起新裁定 DSD-<3~5 位>。
+const DECISION_ID_RE = /^(?:D-\d{3,4}|DSD-\d{3,5})$/
+const dsdNumFromId = (did) => {
+    const m = /^DSD-(\d{3,5})$/.exec(did)
+    return m ? Number(m[1]) : null
+}
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim()
 
@@ -113,6 +127,25 @@ function probeDsd() {
 
 function checkRegistration(d, did, ctx) {
     const { ledgerText, ledgerFrozen, dsd } = ctx
+    // —— DSD- 号：只解析 DSD 侧（task-59）。台账已冻结/缺失都不影响这条分支 ——
+    const fromId = dsdNumFromId(did)
+    if (fromId !== null) {
+        const declared = d?.dsd
+        if (declared != null && norm(declared) !== '' && Number(declared) !== fromId) {
+            return {
+                code: 'E_DSD_ID_MISMATCH',
+                msg: 'id=' + did + ' 与 dsd=' + declared + ' 不一致（DSD- 前缀号的 NNNN 必须与 dsd 字段同值；也可省掉 dsd 由 id 推导）'
+            }
+        }
+        if (!dsd.open) return { skip: true }
+        const row = dsd.get(fromId)
+        if (!row) return { code: 'E_DSD_MISSING', msg: 'DSD 库（decision.sqlite）无 id=' + fromId }
+        if (d.rev != null && Number(row.revision) !== Number(d.rev)) {
+            return { code: 'E_DSD_REV_MISMATCH', msg: 'map rev=' + d.rev + ' 与 DSD id=' + fromId + ' 的 revision=' + row.revision + ' 不一致（决策已改版，条款需重新核对）' }
+        }
+        return {}
+    }
+    // —— D- 号：现行并集解析（台账冻结前查台账文本，冻结后查 DSD 库）——
     if (!ledgerText) return { skip: true }
     if (!ledgerFrozen) {
         return ledgerText.includes(did) ? {} : { code: 'E_DECISION_UNREGISTERED', msg: '台账里找不到该 D 号（' + LEDGER + '）' }
@@ -157,7 +190,7 @@ export function validate(map, opts = {}) {
     for (const d of map.decisions ?? []) {
         const did = norm(d?.id)
         const counts = { covered: 0, pending: 0, 'not-testable': 0 }
-        if (!/^D-\d{3,4}$/.test(did)) add('E_DECISION_ID', String(did), 'D 号格式应为 D-<3~4 位数字>')
+        if (!DECISION_ID_RE.test(did)) add('E_DECISION_ID', String(did), '决策号应为 D-<3~4 位数字>（历史台账号）或 DSD-<3~5 位数字>（DSD-1474 起的新裁定）')
         if (!Array.isArray(d?.clauses) || d.clauses.length === 0) add('E_NO_CLAUSES', did, '决策下必须有 clause')
         const reg = checkRegistration(d, did, { ledgerText, ledgerFrozen, dsd })
         if (reg.code) add(reg.code, did, reg.msg)
@@ -168,7 +201,13 @@ export function validate(map, opts = {}) {
             const where = cid || did
             if (!cid) add('E_CLAUSE_ID', did, 'clause 缺 id')
             else if (seen.has(cid)) add('E_DUP_CLAUSE', cid, 'clause id 重复')
-            else seen.add(cid)
+            else {
+                seen.add(cid)
+                // clause id 跟随决策 id 形态：<决策 id> 或 <决策 id>/<子标签>（task-59）
+                if (did && cid !== did && !cid.startsWith(did + '/')) {
+                    add('E_CLAUSE_ID_PREFIX', cid, 'clause id 必须以决策 id（' + did + '）开头，如 ' + did + '/1')
+                }
+            }
             if (!norm(c?.text)) add('E_CLAUSE_TEXT', where, 'clause 缺 text（条款正文摘要）')
             const status = norm(c?.status)
             if (!STATUSES.includes(status)) {
@@ -230,7 +269,7 @@ function report(res, opts) {
     }
     if (res.ledger === 'absent') lines.push('  SKIP 台账缺失（' + LEDGER + '），未校验 D 号登记')
     else if (res.ledger === 'frozen' && res.dsd === 'unreadable') lines.push('  SKIP DSD 库不可读，仅校验 decisions[].dsd 字段存在')
-    else if (res.ledger === 'frozen') lines.push('  台账已冻结（D-1903）⇒ D 号登记按 DSD 库核对（id + revision）')
+    else if (res.ledger === 'frozen') lines.push('  台账已冻结（D-1903）⇒ D 号登记按 DSD 库核对（id + revision）；DSD- 号只解析 DSD 侧，不做台账查重（task-59）')
     if (res.violations.length) {
         lines.push('  违规 ' + res.violations.length + ' 条：')
         for (const v of res.violations) lines.push('    [' + v.code + '] ' + v.where + ' — ' + v.msg)
@@ -279,7 +318,7 @@ function selftest() {
     run('not-testable 比例超 20%', (m) => {
         let n = 0
         for (const d of m.decisions) for (const c of d.clauses) {
-            if (c.status === 'covered' && n < 8) { c.status = 'not-testable'; c.reason = '自检占位：设计取向陈述无渲染可判属性'; delete c.file; delete c.title; delete c.assert; n++ }
+            if (c.status === 'covered' && n < 9) { c.status = 'not-testable'; c.reason = '自检占位：设计取向陈述无渲染可判属性'; delete c.file; delete c.title; delete c.assert; n++ }
         }
     }, (r) => has(r, 'E_NT_RATIO'))
     // —— task-53：file 白名单四类（正向逐类各一例）+ 越界/缺文件/DSD 号不存在反例 ——
@@ -304,6 +343,32 @@ function selftest() {
     run('登记了 DSD 库不存在的号 ⇒ 红', (m) => {
         m.decisions.push({ id: 'D-9999', rev: 1, dsd: 999999, clauses: [{ id: 'D-9999/1', text: '自检占位条款', status: 'pending', card: 'task-53' }] })
     }, (r) => has(r, 'E_DSD_MISSING'))
+    // —— task-59：DSD- 号形态（正向 + 三条反向）——
+    // 夹具用清单里**没有**的号（DSD-1470 rev1 真在库里），否则会撞上真实条目的 clause id。
+    // 正向钉「新裁定真能登记进来」：省略 dsd 由 id 推导、clause 指向真存在的 covered 判据。
+    run('DSD-NNNN 号可登记（省略 dsd 由 id 推导）', (m) => {
+        m.decisions.push({
+            id: 'DSD-1470', rev: 1,
+            clauses: [{
+                id: 'DSD-1470/1', text: '自检占位条款（真实条目见清单）', status: 'covered',
+                file: 'A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionSettingsExpandedUnique.spec.ts',
+                title: 'desktop: the summary row is the only activate-able node in the family',
+                assert: '会话设置入口应为 1 个且必须是 session-settings-summary'
+            }]
+        })
+    }, (r) => r.violations.length === 0)
+    run('DSD-NNNN 与 dsd 字段不一致 ⇒ E_DSD_ID_MISMATCH', (m) => {
+        m.decisions.push({ id: 'DSD-1470', rev: 1, dsd: 1463, clauses: [{ id: 'DSD-1470/1', text: '自检占位条款', status: 'pending', card: 'task-59' }] })
+    }, (r) => has(r, 'E_DSD_ID_MISMATCH'))
+    // 反向钉「两个登记处互不判红」：台账文本里根本没有 DSD-1470 这个字面（台账是 D-#### 号段），
+    // 若哪天有人给 DSD- 号补一条「须在台账命中」的判据，这条会立刻红。
+    run('DSD-NNNN 号不被台账判红（两个登记处互不查重）', (m) => {
+        m.decisions.push({ id: 'DSD-1470', rev: 1, clauses: [{ id: 'DSD-1470/1', text: '自检占位条款', status: 'pending', card: 'task-59' }] })
+    }, (r) => !r.violations.some((v) => v.code === 'E_DECISION_UNREGISTERED'))
+    // 反向钉 clause id 前缀判据（否则改了决策号而 clause 号没跟，只能靠人眼发现）
+    run('clause id 不以决策 id 开头 ⇒ E_CLAUSE_ID_PREFIX', (m) => {
+        findCovered(m).id = 'D-9999/1'
+    }, (r) => has(r, 'E_CLAUSE_ID_PREFIX'))
     let failed = 0
     for (const c of cases) {
         if (!c.ok) failed++

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "updated": "2026-11-20",
-  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在四类白名单内（A03-xihe/packages/ui/ · A12-DSH-decision/packages/dsh-decision/tests/ · internal/A03-xihe/scripts/ · scripts/；task-53 放宽）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。dsd = DSD decisions.id（台账自 D-1903 冻结后 D 号登记处）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
+  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在四类白名单内（A03-xihe/packages/ui/ · A12-DSH-decision/packages/dsh-decision/tests/ · internal/A03-xihe/scripts/ · scripts/；task-53 放宽）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。决策号两种形态（task-59）：\"DSD-NNNN\" = DSD-1474 起的新裁定（只解析 DSD 侧、不做台账查重，dsd 可省略由 id 推导、给了就必须同值），\"D-####\" = 历史台账号（台账自 D-1903 冻结后按 DSD 库核对）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
   "decisions": [
     {
       "id": "D-1904",
@@ -327,12 +327,12 @@
       "dsd": 1448
     },
     {
-      "id": "D-1474",
+      "id": "DSD-1474",
       "rev": 1,
       "title": "D 号引用口径：新裁定写 DSD-NNNN，台账旧号保持 D-####，门脚本兼认两种前缀",
       "clauses": [
         {
-          "id": "D-1474/1",
+          "id": "DSD-1474/1",
           "text": "门脚本（check-decision-refs / validate-handoff / check-commit-msg）的 D 号解析同时接受 D-#### 与 DSD-NNNN；DSD- 前缀只解析 DSD 侧、D- 前缀按现行并集解析；撞号（DSD id 1461 vs 台账 D-1461）须报警而非静默合并",
           "status": "pending",
           "card": "task-49",
@@ -342,12 +342,12 @@
       "dsd": 1474
     },
     {
-      "id": "D-1475",
+      "id": "DSD-1475",
       "rev": 1,
       "title": "台账投影快照不入 git：.gitignore + 索引移除，由 ledger:export / 门内 auto-regen 就地重建",
       "clauses": [
         {
-          "id": "D-1475/1",
+          "id": "DSD-1475/1",
           "text": "三处运行时门（check-commit-msg / validate-handoff / trace-check）在投影文件缺失时按既有 auto-regen 路径重生成，不得因缺文件直接红；重生成失败仍须红并给出原命令",
           "status": "covered",
           "file": "internal/A03-xihe/scripts/trace-check.test.mjs",
@@ -357,6 +357,76 @@
         }
       ],
       "dsd": 1475
+    },
+    {
+      "id": "DSD-1463",
+      "rev": 1,
+      "dsd": 1463,
+      "title": "会话设置不设行内入口：唯一入口 = 摘要行（session-settings-summary），右栏 session-config 页签",
+      "clauses": [
+        {
+          "id": "DSD-1463/1",
+          "text": "会话设置的唯一入口 = 会话摘要行（session-settings-summary，打开 pane:right:session-config）；顶部入口已由 D1450 取消，不得再新增行内设置按钮（同一面板出现两个入口即违背裁定）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionSettingsExpandedUnique.spec.ts",
+          "title": "desktop: the summary row is the only activate-able node in the family",
+          "assert": "会话设置入口应为 1 个且必须是 session-settings-summary",
+          "note": "task-52 落地（30b6d90f9）。判据按**激活面**筛家族节点（button/a/role=button|link|tab|menuitem/带 aria-expanded），不数 testid —— 拆成两个不同名入口也能抓到；桌面/移动两分支都判"
+        },
+        {
+          "id": "DSD-1463/2",
+          "text": "反向用例：把摘要行拆成两个入口的假夹具必须让唯一入口断言报红（否则该判据只对「现产品形态」成立，改回两入口时静默放行）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionSettingsExpandedUnique.spec.ts",
+          "title": "negative fixture: a second entry in the family makes the assertion fail",
+          "assert": "实测 2 个 \\[session-settings-summary, session-settings-inline\\]",
+          "note": "两条反向夹具：① 追加 session-settings-inline 按钮 ⇒ 报「实测 2 个」；② 把唯一入口改名 ⇒ 报「实测 1 个 [session-settings-entry]」（不是放行）。assert 取源码正则里逐字存在的转义字面"
+        }
+      ]
+    },
+    {
+      "id": "DSD-1464",
+      "rev": 1,
+      "dsd": 1464,
+      "title": "ui-baseline 新增产品元素 10 条拆 3 卡 + 两条口径（计数 = 左栏渲染总数；rail 检索取图标 + Popover）",
+      "clauses": [
+        {
+          "id": "DSD-1464/1",
+          "text": "口径①：区头计数 = 左栏列表**当前渲染的会话总数**（独立会话区 + 各工作区分组内会话合计，随搜索/过滤同步），不做「仅当前工作区」；计数单独渲染，不拼进 t() 文案",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/components/__tests__/Sidebar.spec.ts",
+          "title": "counts standalone + expanded workspace rows, following search and collapse",
+          "assert": "expect(count()).toBe(\"2\");",
+          "note": "卡面原写「spec 侧只覆盖默认态」，实测该用例（HEAD 已有）已覆盖两种「随渲染同步」：搜索过滤掉行 3→2、分组折叠后行不再渲染 →1；且恒为「DOM 渲染数」而非 store 计数。「计数单独渲染」由同文件 renders exactly one header and puts the count in its own node 判据钉住（sidebar-sessions-count 独立节点）"
+        },
+        {
+          "id": "DSD-1464/2",
+          "text": "同口径的 e2e 读数一致性：⑥E4① 区头计数文本必须是可解析整数、等于列表实际渲染的 session-item 行数、空态读 0（区头恒在 ⇒「区头命中 1」与「计数对」是两条不同判据）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/e2e/real/ui-baseline.spec.ts",
+          "title": "UI 基线 · ${theme} · 3 视口 × 6 类断言",
+          "assert": "⑥E4① 区头计数",
+          "note": "task-52 在同文件加 readSessionsCount（:875，rAF 对齐同帧取样）+ 四条 soft 断言（:1796 不可解析整数 / :1802 与渲染行数不等 / :1810 空态非 0 / :1818 取不到 sidebar-workspace-groups 容器）"
+        },
+        {
+          "id": "DSD-1464/3",
+          "text": "口径②：rail（折叠）态检索形态取方案 A = rail 内检索图标按钮 + reka-ui Popover 弹出检索框（触发器复用 testid sidebar-session-search，Popover 内输入框 sidebar-session-search-input）；否决「点击即展开并聚焦」（点击语义歧义：算展开还是算搜索）",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/components/__tests__/Sidebar.spec.ts",
+          "title": "点检索按钮弹出 Popover：输入框获焦，且写的就是展开态那一个 searchQuery",
+          "assert": "expect(document.activeElement).toBe(input.element);",
+          "note": "task-173 落地，三条用户可见行为各一例（折叠态恰一个触发器且输入框未打开不挂载 / 打开后焦点直接落输入框且写的是同一个 searchQuery / Esc 关闭后焦点回触发器）。e2e ⑥E2（ui-baseline.spec.ts:1896）只判「rail 态检索入口 ≥1 且展开按钮仍可见」，形态细节由这三条单测承担 —— 所以这条按 covered 登记，不是 not-testable"
+        },
+        {
+          "id": "DSD-1464/4",
+          "text": "testid 复用（sidebar-session-search 两态同 id）不得产生同态双节点：任一态下该 testid 恰 1 个，否则 .get() 与 e2e 的 count 变成掷骰子",
+          "status": "covered",
+          "file": "A03-xihe/packages/ui/src/components/__tests__/Sidebar.spec.ts",
+          "title": "展开态仍然只有那一个 sidebar-session-search（复用 id 不产生同态双节点）",
+          "assert": "expect(wrapper.findAll('[data-testid=\"sidebar-session-search\"]')).toHaveLength(1);",
+          "note": "同族另有一例判折叠态（折叠态渲染恰好一个检索入口，展开控件仍在，输入框未打开时不挂载）。单列一条的理由：testid 复用是口径 A 的代价，计数器让「两态同时挂载」这种回归立刻红"
+        }
+      ]
     }
   ]
 }
