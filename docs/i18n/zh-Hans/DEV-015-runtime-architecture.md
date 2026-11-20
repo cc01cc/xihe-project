@@ -15,20 +15,23 @@ updated: 2026-10-08
 >
 > PLAN-0389 Workspace/Sandbox/Storage/Import/Events proposed SPEC：[`spec/workspace/`](../../../spec/workspace/)。Runtime 在宿主机上的进程/沙盒/宿主资源结构示意见根级 `spec/architecture/runtime-topology.md`（proposed）。本 DEV 和 Runtime 源码是当前实现事实；SPEC 不把 Runtime canonical state 与 CP/UI 状态映射层合并。
 
-## 1. 两 binary
+## 1. 四 binary
 
 | Binary | 位置 | 职责 |
 |--------|------|------|
-| `xihe-runtime` | host Gateway 主进程 | 注册 `/workspace/{ws_id}/mcp` 等路由；Workspace 操作经 `WorkspaceExecutionRouter` 转 per-request Docker exec；stdio MCP 会话经 `mcp_session.rs`（exec attach 直连，PLAN-0347） |
+| `xihe-runtime` | host Gateway 主进程 | 注册 `/workspaces/{ws_id}/mcp` 等路由；Workspace 操作按 `ExecutionSpec.executionMode` 经 `WorkspaceExecutionRouter` 分派——`docker` per-request exec / `windows-mxc` MXC 受限沙盒 / `windows-host` 宿主直连（能力缺失显式 `UNSUPPORTED`，不静默回退）；stdio MCP 会话经 `mcp_session.rs`（docker 后端下为 exec attach 直连，PLAN-0347） |
 | `xihe-container-runtime` | 容器内（镜像预装） | `--oneshot` 模式：stdin 单 operation JSON → stdout 单 result JSON；宿主读取首个完整 result JSON 后关闭 stdin，EOF 是清理边界；处理文件/命令工具与 `/tmp/xihe-jobs` 后台任务（HTTP daemon 已退役） |
+| `xihe-stdio-fixture` | 测试夹具 | stdio 回显进程，只给 `tests/mcp_session_test.rs` 一类用例用，不是产品 binary |
+| `xihe-plugin-fixture` | 测试夹具 | 插件 T2.4a 工艺样本，只给 `tests/plugin_runner_test.rs` 用，不是产品插件 |
 
 > `xihe-mcp-bridge` 已随 PLAN-0347 退役（容器内 HTTP 服务 + 发布端口/容器 IP 全部删除）：stdio MCP 改为宿主 `exec attach` 长驻会话直连（状态机/预算/按 id 配对/kill 回收见 `mcp_session.rs` 与 `spec/session-lifecycle.md`）。remote MCP 不进容器，走 host 出网（身份校验，不建容器）。
 
-## 2. 执行边界（PLAN-235）
+## 2. 执行边界（三后端）
 
-- Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部在 Sandbox 内执行**，Runtime host 进程不直接读写 WorkspaceStorage，无 container failure → host fallback。
+- **执行面按 `executionMode` 分三种后端**（CP `WorkspaceService` 校验白名单 `docker` / `windows-mxc` / `windows-host`，direct_attach 缺省 `windows-mxc`）：`docker` 走容器内 `xihe-container-runtime --oneshot` 的 per-request exec；`windows-mxc` 走宿主侧 `wxc-exec.exe <policy.json>`（policy 的 `readwritePaths`/`readonlyPaths` 是文件系统边界）；`windows-host` 直通宿主执行，只做路径守卫、`canIsolateFilesystem=false`。三者共用 `WorkspaceExecutionRouter` 与 `SandboxBackend` 接缝，按能力声明分支；未实现的能力显式 `UNSUPPORTED`（如 direct_attach 下的 `watch_directory` / `extract_pdf_text`），**无 container failure → host fallback**。
+- **历史沿革（PLAN-235）**：早期执行模型是「Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作全部在 Sandbox 内执行，Runtime host 进程不直接读写 WorkspaceStorage」。此后 MXC / host 两条后端路径承接执行面（PLAN-0393/0394/0395），三 profile 现只作用于 docker 路径（`SecurityProfile` 仍由 docker 容器创建消费）。
 - **Docker 后端冻结（PLAN-0612 M4 门禁 → PLAN-0618 完全冻结）**：Runtime 侧行为不变（Docker 实现按 2026-10-25 裁定不在内部改功能）；冻结门在**外层**——CP 用静态开关 `XIHE_WORKSPACE_DOCKER_BACKEND`（默认 `disabled`）在创建时拒绝（缺 `storageMode` → `400 INVALID_REQUEST`；显式 `managed_import` → `409 BACKEND_DISABLED`）、在既有 docker 工作区的执行/文件/环境/**会话/聊天**操作前 `503 BACKEND_DISABLED`，CLI `xihe dev check` 与 `xihe verify` 给出同口径预检；**测试面豁免已取消**（PLAN-0618 三面一起冻结，恢复口径见 [DEV-018](DEV-018-known-issues.md)「docker 后端冻结范围」，车道细节见 [DEV-020](DEV-020-e2e-test-strategy.md)）。Runtime 自身仍按「未知 Workspace/后端不可用必须显式失败、不得回退宿主」处理（见 [DEV-031](DEV-031-sandbox-backend-contract.md)）。
-- 传输模型：统一 per-request Docker exec；**无** HTTP container-runtime 通道、instance token、长驻 worker、NDJSON 多路复用（exec 本身即认证边界：只有 Runtime 能调 Docker Engine API）。
+- 传输模型（docker 后端）：统一 per-request Docker exec；**无** HTTP container-runtime 通道、instance token、长驻 worker、NDJSON 多路复用（exec 本身即认证边界：只有 Runtime 能调 Docker Engine API）。非 docker 后端不进容器，直接走宿主侧 adapter，见 §3.1。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -43,8 +46,8 @@ sequenceDiagram
   C-->>R: stdout 首个完整 result JSON → 宿主关闭 stdin，EOF 为清理边界
 ```
 
-锚点：`executor.rs: create_exec→start_exec` + `container_runtime.rs: --oneshot`。
-- 三 profile 隔离矩阵：
+锚点：`executor.rs: create_exec→start_exec` + `container_runtime.rs: --oneshot`。非 docker 后端不经上图的 Docker Engine / container-runtime 两跳：`executor.rs` 的 `execute_direct_attach_operation` 在 `execution_mode == "windows-mxc"` 时调 `execute_mxc_file_operation`（`process_guard::build_mxc_policy` → `wxc-exec.exe <policy.json>`），其余 direct_attach 模式走宿主 `fs::*` 直连并在非 primary root 上按读写方向拒绝（`PER_ROOT_WRITE_UNSUPPORTED` / `PER_ROOT_READ_UNSUPPORTED:<mode>`）。
+- 三 profile 隔离矩阵（**仅 docker 后端**有此维度；windows-mxc 由 policy 路径白名单隔离，windows-host 无进程级隔离）：
 
 | | Strict | Coding | Isolated |
 |---|---|---|---|

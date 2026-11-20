@@ -93,42 +93,47 @@ flowchart LR
 
 ### 1.3. Runtime 模块 — Rust
 
-职责：沙盒化执行环境。Rust + cargo；文件系统、Shell、进程管理。
+职责：Agent 的本地执行面——文件系统、Shell、命令、后台 Job、stdio MCP 会话、checkpoint 与远程 MCP 出网。Rust + cargo。
 
-**执行模型（PLAN-235）**：Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作**全部经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行**。详见 DEV-015。
+**执行后端（现实现）**：Workspace 操作按 `ExecutionSpec.executionMode` 分三种后端——`docker`（容器内 `xihe-container-runtime --oneshot` 的 per-request exec）、`windows-mxc`（宿主侧 MXC 受限沙盒，`wxc-exec` + policy 的 `readwritePaths`/`readonlyPaths`）、`windows-host`（宿主直连，仅路径守卫、`canIsolateFilesystem=false`）。三者共用 `WorkspaceExecutionRouter` 与 `SandboxBackend` 接缝，消费方按能力声明分支，缺失能力显式 `UNSUPPORTED`、不静默回退（见 DEV-031）。**`docker` 已冻结**（PLAN-0612 M4 自 2026-10-31 起门禁、PLAN-0618 于 2026-11-01 裁定完全冻结：CP 侧 `XIHE_WORKSPACE_DOCKER_BACKEND` 默认 disabled，以 `409/503 BACKEND_DISABLED` fail-closed，见 DEV-014 §8b）。历史沿革：PLAN-235 时执行模型是「Strict / Coding / Isolated 三 profile 的 Workspace 文件、命令、PDF、后台操作全部经 `WorkspaceExecutionRouter` 以 per-request Docker exec 在 Sandbox 内执行」；此后 MXC / host 两条后端路径承接执行面，三 profile 现只作用于 docker 路径（`sandbox.rs` 的 `SecurityProfile` 仍由 docker 容器创建消费）。详见 DEV-015。
 
 | 约束 | 说明 |
 |------|------|
-| 无 host fallback | Runtime host 进程不直接读写 WorkspaceStorage |
-| 无旁路通道 | 无 HTTP 通道 / instance token / 长驻 worker |
-| Strict 隔离 | `network_mode=none`，不发布端口 |
+| 无静默回退 | 后端不可用 / 未知 workspace 显式失败（`UNSUPPORTED` / `BACKEND_DISABLED`），不得自动降级到宿主 |
+| 无旁路通道 | 无 HTTP container-runtime 通道 / instance token / 长驻 worker；容器内 `exec attach` 本身即认证边界 |
+| 隔离按后端分级 | docker：namespace/cgroup/seccomp + `network_mode` none/bridge、不发布端口；`windows-mxc`：`wxc-exec` policy 的路径白名单；`windows-host`：`canIsolateFilesystem=false`，只做路径守卫 |
 
-三 binary：
+四 binary：
 
 | Binary | 角色 |
 |--------|------|
-| `xihe-runtime` | Gateway 主进程 |
+| `xihe-runtime` | Gateway 主进程 + MCP server |
 | `xihe-container-runtime` | 容器内执行器（`--oneshot` 单帧 EOF） |
-| `xihe-mcp-bridge` | 容器内 STDIO bridge |
+| `xihe-stdio-fixture` | 测试用 stdio 回显进程（非产品 binary） |
+| `xihe-plugin-fixture` | 插件 T2.4a 工艺样本，只给 `tests/plugin_runner_test.rs` 用（不是产品插件） |
 
-CP→Runtime REST 端点（Axum，`/internal/v1/runtime/...`）：
+> `xihe-mcp-bridge` 已随 PLAN-0347 退役：容器内 HTTP bridge、发布端口与容器 IP 解析全部删除，stdio MCP 改为宿主 `exec attach` 长驻会话直连（见 DEV-016 §5）。
+
+CP→Runtime REST 端点（Axum，`/internal/v1/runtime/...`）——完整路由表见 `packages/runtime/src/main.rs` 的 `build_app_router`：
 
 | 用途 | 方法 | 路径 |
 |------|------|------|
 | 创建 / 删除 workspace | POST | `workspaces` / `workspaces/delete` |
-| workspace 状态 | GET | `workspaces/{ws_id}/status` |
-| MCP 调用 | any | `workspaces/{ws_id}/mcp`，`/remote-mcp/...` |
-| bridge 管理 | POST / GET / DELETE | `mcp/spawn`、`mcp/spawn/{server_id}`、`mcp/stdio/{server_id}` |
-| 文件操作 | POST（body 传参） | `files/{read,list,delete,mkdir,stat}` |
+| workspace 状态 / 物化 / 释放 / 导入 | GET / POST | `workspaces/{ws_id}/{status,materialize,release,imports}` |
+| MCP 调用 | any / POST | `workspaces/{ws_id}/mcp`（系统工具）、`workspaces/{ws_id}/mcp/stdio/{server_id}`（stdio 会话）、`remote-mcp/{workspace_id}/{server_id}/call`（host 出网） |
+| MCP 会话管理 | GET / DELETE | `workspaces/{ws_id}/mcp/servers`（会话快照）、`workspaces/{ws_id}/mcp/servers/{server_id}`（停单个会话）；`mcp/spawn` 已退役，固定返回 `410 MCP_SESSION_ENDPOINT_RETIRED` |
+| 文件操作 | POST（body 传参） | `files/{read,list,delete,mkdir,stat,search}` |
 | 文件写入 | POST（二进制，路径参数） | `files/write/{*path}` |
+| checkpoint / git / jobs | POST / GET | `checkpoints/*`、`git-status`/`git-diff`/`git-log`/`git-facts`、`jobs/{start,status,output,cancel,cleanup,capabilities}` |
+| 能力探针 / 诊断 | POST / GET | `capabilities/direct-attach/probe`、`diagnostics` |
 | 健康 | GET | `/health`、`/ready` |
 
-MCP 工具（rmcp `#[tool]`，24 个）：
+MCP 工具（rmcp `#[tool]`，`main.rs` 共 23 个）：
 
 | 组 | 工具 |
 |----|------|
-| 文件 | read_file、read_file_range、write_file、list_directory、get_file_info、mkdir、delete_file、delete_directory、move_file、copy_file |
-| 检索 | glob、grep、edit_file、extract_pdf_text、web_fetch |
+| 文件 | read_file、read_file_range、write_file、list_directory、get_file_info、mkdir、delete_file、delete_directory、move_file、copy_file、edit_file、apply_patch |
+| 检索 | glob、grep、extract_pdf_text、web_fetch |
 | 命令 | execute_command、read_command_output、watch_directory |
 | 后台 | start_background_process、list_background_processes、get_background_process、cancel_background_process |
 
@@ -198,7 +203,7 @@ sequenceDiagram
   Note over Human,RT: 场景 B: 工具调用 (Agent → CP → RT, MCP 反向代理)
   Agent->>CP: MCP tools/call (JSON-RPC over HTTP)
   CP->>CP: 提取工具名 → 权限检查 → 请求改写
-  CP->>RT: 转发改写后请求 (per-request Docker exec 进 Sandbox)
+  CP->>RT: 转发改写后请求（按 executionMode：docker per-request exec / windows-mxc / windows-host）
   RT->>CP: MCP 响应
   CP->>Agent: MCP 响应
 
@@ -217,8 +222,8 @@ sequenceDiagram
 1. **多进程解耦** — 模块独立部署/扩缩/故障隔离；Agent Crash 不影响 UI，Runtime OOM 不影响 Agent。
 2. **多语言各取所长** — Vue（Web 生态）、LangChain/Python（AI 生态）、Java + Spring Boot（服务端生态）。
 3. **显式消息路由** — CP 是唯一通信枢纽，消息路径全程可追踪、可拦截、可 replay。
-4. **原生多租户** — 多进程 + Linux namespace 操作系统级隔离。
-5. **沙盒一等设计** — namespace/cgroup/seccomp + PLAN-235 全 profile 进 Sandbox，对 LLM"幻觉执行"原生防御。
+4. **多租户与隔离分级** — 多进程边界 + 按后端声明的隔离等级（docker namespace、MXC policy、宿主路径守卫）。
+5. **执行后端接缝** — `SandboxBackend` + `WorkspaceExecutionRouter` 把执行面抽象成能力声明，后端可替换（docker / windows-mxc / windows-host）；缺失能力显式失败，对 LLM「幻觉执行」按后端分级防御。
 6. **多终端天然支持** — Web/TUI/App 只需实现 CP 协议。
 
 ## 4. 统一 Session 与附件（摘要，详见 DEV-017）

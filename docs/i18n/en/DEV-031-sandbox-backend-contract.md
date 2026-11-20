@@ -119,7 +119,7 @@ When the sandbox files and workspace storage diverge, workspace storage wins. `w
 
 ## 6. Long-Running stdio MCP: Three Tiers
 
-> stdio (standard input/output pipes) is the default MCP transport for local processes; these MCP server processes run **inside the workspace container** (they need the container's files and environment), so the host side needs a channel to talk to them. "Three tiers" below means the support level the contract defines for such long-running processes.
+> stdio (standard input/output pipes) is the default MCP transport for local processes; these MCP server processes need the files and environment of the execution environment they live in. The current implementation is **docker-only**: the host starts the process inside the hydrated workspace container with `exec attach` (`mcp_session.rs` `start_process` calls `create_exec(container_name(ws), ...)`), and the `windows-mxc` / `windows-host` backends have no equivalent process carrier, so they do not declare the session capability. "Three tiers" below means the support level the contract defines for such long-running processes.
 
 | Tier | Condition | Behavior |
 |---|---|---|
@@ -127,7 +127,7 @@ When the sandbox files and workspace storage diverge, workspace storage wins. `w
 | 2. per-call execute | Only `execute` | A new process per call (MCP itself carries no session state; the cost is cold start and no in-process state) |
 | 3. Unsupported | Neither | Returns `UNSUPPORTED` (fail-closed; no silent rerouting) |
 
-Status: the current MCP bridge depends on an in-sandbox HTTP service plus a published port and container-IP resolution; it works only on the Docker backend, is not a general `session` capability, and is listed as "to be migrated". On native Windows its dynamic port is unreachable (measured), so this form is unusable there.
+Status: the `session` tier is live on the docker backend (since PLAN-0347 the host attaches an `exec` to a long-lived session directly; the in-container HTTP bridge, published port and container-IP resolution are deleted); the `windows-mxc` / `windows-host` backends do not declare `session` yet, so stdio MCP is unavailable there — tier 3 fail-closed with `UNSUPPORTED`, never a silent downgrade to per-call execute.
 
 ## 7. Docker Backend Status Map
 
@@ -135,14 +135,14 @@ Status: the current MCP bridge depends on an in-sandbox HTTP service plus a publ
 |---|---|---|
 | `execute` | per-request exec (`xihe-container-runtime --oneshot`) | Above the seam already |
 | `ensure` / `destroy` | Container lifecycle + hydration rebuild; `WorkspaceManager`/`Registry` dual path | Convergence owned by the workspace lifecycle initiative |
-| `session` | bridge (HTTP + published port) | "To be migrated" in the leak inventory |
-| `endpoint(port)` | 39001 publish + random host port | "Vestigial" (left over with no consumers) |
+| `session` | long-lived `exec attach` session (`mcp_session.rs`); the former in-container bridge was deleted by PLAN-0347 | declared by the docker backend only; MXC/host have no equivalent carrier |
+| `endpoint(port)` | no published port (the former 39001 publish scheme is retired) | "Vestigial" |
 | `network(policy)` | `network_mode` none/bridge + proxy env | Below-seam implementation |
 | Snapshot/rollback | Not in the sandbox layer (belongs to the workspace file-change layer, owned by PLAN-0328) | Kept separate from the execution entity |
 
 Current backend direction: PLAN-0379 owns `windows-mxc`, reported with `maturity: "experimental"`; `windows-host/unrestricted` is an explicitly user-selected host-execution fallback and does not claim workspace-outside write protection; `docker` remains the stable backend identity, while the Docker volume/guard line is deferred by PLAN-0377/0380. All three share `contractVersion: "v1"`; consumers branch on `available/reason` and execution mode, while platform/provider versions remain diagnostics, not on backend-specific transport names.
 
-`docker` is not retired but is **currently unavailable**: it remains the only execution backend for `managed_import` (backend identity kept, code not deleted), yet PLAN-0618 (user ruling, 2026-11-01) **freezes it completely** — product surface (create/execute/chat), test surface and defaults are frozen together, CP fails closed with `503/409 BACKEND_DISABLED`, and there is no silent fallback to the host. Unfreezing restores the previous behaviour (set `XIHE_WORKSPACE_DOCKER_BACKEND` and re-enable the frozen test group; see [DEV-018](DEV-018-known-issues.md) "docker backend freeze scope"). See USER-001 §2.6 for the user-facing entry (creating direct-attach workspaces, mounting existing directories, MXC vs host capability/risk, and the non-convertibility of managed workspaces).
+`docker` is not retired but is **currently unavailable**: it remains the only execution backend for `managed_import` (backend identity kept, code not deleted), yet PLAN-0618 (user ruling, 2026-11-01) **freezes it completely** — product surface (create/execute/chat), test surface and defaults are frozen together, CP fails closed with `503/409 BACKEND_DISABLED`, and there is no silent fallback to the host. Unfreezing restores the previous behaviour (set `XIHE_WORKSPACE_DOCKER_BACKEND` and re-enable the frozen test group; see [DEV-018 (zh)](../zh-Hans/DEV-018-known-issues.md) "docker backend freeze scope"). See USER-001 §2.6 for the user-facing entry (creating direct-attach workspaces, mounting existing directories, MXC vs host capability/risk, and the non-convertibility of managed workspaces).
 
 ## 8. Change Rules
 

@@ -26,7 +26,7 @@ xihe/
 │   ├── agent/                 # Python 3.12 + LangChain/LangGraph + uv
 │   │   └── src/xihe_agent/    # interfaces / agent_runner / adapters / context / tools / llm / rag / registry
 │   └── runtime/               # Rust 1.97.1 edition 2024 + cargo
-│       └── src/               # main / executor / workspace / container_runtime / fs / sandbox / mcp_bridge / hydrate
+│       └── src/               # main / executor / backend / mcp_session / workspace / container_runtime / fs / sandbox / hydrate
 ├── docs/i18n/{zh-Hans,en}/    # 公开文档（编号规则见 DEV-030）
 ├── scripts/                   # dev-host / reset-admin / scan-log-secrets 等辅助脚本
 ├── docker/images/workspace/   # xihe/workspace 容器镜像

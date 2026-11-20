@@ -1,6 +1,6 @@
 ---
 title: DEV-016 - MCP Three-Layer Routing Architecture
-description: Three-layer routing design for MCP requests from Agent to Runtime, including CP routing, Gateway dispatch, and in-container bridge execution.
+description: Routing design for MCP requests from Agent to Runtime, including CP routing, Gateway dispatch, and stdio session execution (the in-container bridge was retired by PLAN-0347).
 category: dev-guide
 lang: en
 sidebar_group: "Developer Guide"
@@ -25,7 +25,7 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 
 1. **CP McpProxyController** — Authentication + tool-name-based routing
 2. **Runtime Gateway** — Per-workspace dispatch
-3. **In-container bridge** — STDIO subprocess management
+3. **stdio session (PLAN-0347)** — the host attaches an exec straight to the in-container MCP server process (no in-container HTTP bridge; a session is a state machine plus a budget and FIFO single-flight)
 
 > **Protocol version note (2026-11-10 erratum: read it as two layers)**
 >
@@ -37,59 +37,33 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 
 ## 2. Architecture Diagram
 
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TD
+    subgraph AG["Agent (Python)"]
+        A1["StreamableHTTPConnection (Bearer headers)<br/>POST /api/v1/mcp {jsonrpc, method, params}"]
+    end
+    subgraph CP["CP McpProxyController (Java)"]
+        C1["1. Verify Bearer identity + resolve workspace claim<br/>any mcp-session-id is 403"]
+        C2["2. tools/list: merge system tools + each STDIO server + each remote server<br/>tool_name to server_id mapping (5min TTL) + sticky alias table<br/>written by tools/list; a tools/call miss rebuilds once per ws (single-flight)"]
+        C3["3. tools/call: route by tool name (stdio / remote / system)"]
+        C4["4. Sticky naming: system bare names win, only newcomers get a server prefix<br/>the mapping is persisted and never promoted (mcp_tool_aliases)"]
+    end
+    subgraph GW["Runtime Gateway (Rust / Axum)"]
+        G1["/mcp (any): system tool invocation"]
+        G2["/remote-mcp/{ws}/{server}/call (POST): remote MCP (identity check, no container)"]
+        G3["/mcp/servers (GET snapshot) · /mcp/servers/{id} (DELETE stop session)<br/>/mcp/stdio/{id} (POST call, exec attach forwarding)"]
+        G4["Config poll every 30s: GET /internal/v1/workspaces/{wsId}/stdio-servers, reconcile sessions"]
+    end
+    subgraph SB["Container xihe-workspace-ws_{id}"]
+        S1["container-runtime --oneshot<br/>stdin single operation JSON to stdout single result JSON<br/>host closes stdin after the first frame, EOF is the cleanup boundary · file ops + explicit Shell + /tmp/xihe-jobs<br/>no HTTP server / no published port / no instance token"]
+        S2["stdio MCP session: exec attach (non-TTY, newline JSON-RPC)<br/>state machine · budgeted backoff/cooldown · FIFO single-flight · ps fixed-string kill<br/>no HTTP server / no published port / no pid file"]
+        S3["STDIO subprocesses (npx, docker, python, etc.)"]
+    end
+    A1 --> C1 --> C2 --> C3 --> C4 --> G1 & G2 & G3 --> S1 & S2 --> S3
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent (Python)                                             │
-│  StreamableHTTPConnection(Bearer headers)                   │
-│  └─→ POST /mcp { jsonrpc, method, params }                 │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  CP McpProxyController (Java)                               │
-│                                                             │
-│  1. Verify Bearer + resolve workspace claim (403 on sid)    │
-│  2. tools/list: Merge system tools + STDIO server tools     │
-│     Record tool_name → server_id mapping (5min TTL cache)   │
-│     Only tools/list writes it; a tools/call miss rebuilds   │
-│     once per workspace (single-flight)                      │
-│  3. tools/call: Lookup table routing by tool name           │
-│  4. System tools take priority (same-name user tools skipped + warned) │
-│                                                             │
-│  Routing rules:                                             │
-│  ├─ System tools → POST /api/v1/mcp (CP logical endpoint)   │
-│  └─ User tools → POST /api/v1/mcp (CP tool routing)         │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  Runtime Gateway (Rust / Axum, configured by XIHE_RUNTIME_PORT) │
-│                                                             │
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp             │  POST system tool call
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn       │  POST spawn bridge (no serverId)
-│  ├─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId} │  DELETE stop bridge (kill, with serverId)
-│  └─ /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId} │  POST user STDIO tool call
-│                                                             │
-│  Config polling: Reads mcpServers JSON from CP every 30s,   │
-│  diff then manage                                           │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  Per-workspace Docker Container (xihe/workspace image)      │
-│  xihe-workspace-ws_{ws_id}                                  │
-│                                                             │
-│  xihe-container-runtime (Rust binary, pre-installed in image)│
-│  ├─ POST /fs/* → File operations (read/write/glob/grep/etc) │
-│  ├─ POST /exec → One-shot command execution                 │
-│  └─ GET  /health → Health check                             │
-│                                                             │
-│  xihe-mcp-bridge (Rust binary, pre-installed in image)      │
-│  ├─ POST /{server_id} → STDIN → STDOUT → streaming resp    │
-│  ├─ Health check (every 5s)                                 │
-│  ├─ Auto-restart (max 3 times)                              │
-│  └─ 30s timeout / 1MB buffer                                │
-│                                                             │
-│  STDIO subprocesses (npx, docker, python, etc.)             │
-└─────────────────────────────────────────────────────────────┘
-```
+
+Anchors: `McpProxyController.java`, `main.rs: route registration`, `mcp_session.rs` (CONFIG_POLL_INTERVAL / state machine), `spec/session-lifecycle.md`. There is no HTTP container-runtime channel and no instance token (exec itself is the authentication boundary, PLAN-235); there is no in-container bridge and no published port or container IP (PLAN-0347).
 
 ## 3. Data Transfer Flow
 
@@ -115,7 +89,7 @@ Agent → CP /mcp (tool_name, args)
   ├─ System tools → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp
   │               → XiheRuntime executes Rust function
   └─ User tools → Runtime: POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}
-                  → xihe-mcp-bridge: STDIN → STDOUT → Result returned
+                  → stdio session: exec attach → newline JSON-RPC → Result returned
   CP → Agent: Passthrough result
 ```
 

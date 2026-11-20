@@ -58,7 +58,7 @@ sidebar_group: "开发指南"
 |------|------|------|-----------|
 | CP (Java) | AuthIntegrationTest, SessionIntegrationTest, ChatIntegrationTest, WorkspaceIsolationTest, ConfigControllerTest, ChatControllerNpeTest | Spring MockMvc + H2 或 Testcontainers PG | H2: ❌ / PG: ✅ |
 | Agent (Python) | test_vector_store.py, test_registry_integration.py | pytest + real PG | ✅ |
-| Runtime (Rust) | sandbox_test.rs, bridge_integration_test.rs | cargo test + Docker | ✅ |
+| Runtime (Rust) | sandbox_test.rs, mcp_session_test.rs | cargo test + Docker | ✅ |
 
 ### 2.2 T2: 跨模块 Stub 集成
 
@@ -272,12 +272,12 @@ tests/
 ├── mcp_tools_test.rs                     ← unit
 ├── unit_tools_test.rs                    ← unit
 ├── sandbox_test.rs                       ← T1 (Docker)
-├── bridge_integration_test.rs            ← T1 (Docker)
-├── mcp_multi_workspace_test.rs           ← T1 (Docker)
-└── crossmodule/                     ← T2 + T3 新增
-    ├── cp_stub_integration_test.rs       ← T2 (mockito/wiremock)
-    └── cp_real_integration_test.rs       ← T3 (real CP Docker)
-```
+├── mcp_session_test.rs                   ← T1 (Docker，PLAN-0347 起为 exec attach 长驻会话)
+├── job_engine_process_test.rs            ← T1 (宿主 Job 引擎，非 Docker)
+├── file_worker_mxc.rs / m1c_strict_test.rs  ← T1 (MXC / Strict 后端能力)
+├── checkpoint_*_test.rs                  ← T1 (host-side shadow git)
+├── cp_stub_integration_test.rs            ← T2 (stub CP，无 Docker)
+└── cp_real_integration_test.rs            ← T3 (real CP)
 
 ### 3.4 目录位置设计决策
 

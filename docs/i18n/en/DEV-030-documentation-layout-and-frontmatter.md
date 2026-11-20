@@ -197,6 +197,6 @@ Every document has an owning module; a PLAN that changes that module's code must
 | serverId | 服务标识 | Routing key: STDIO uses the top-level key of the user config, remote uses the `mcp_servers` row |
 | tool generation | 工具代数 | Incremented per merged `tools/list`, recorded with the audit tuple for historical replay |
 | no-auth remote | 免鉴权远端 | Public remote server with `authMode=no-auth`; skips the CP token broker |
-| Sandbox | 沙盒 | Per-workspace Docker container execution surface |
-| bridge (xihe-mcp-bridge) | 桥 | Process bridging an in-container STDIO MCP server to HTTP |
-| profile (Strict/Coding/Isolated) | 画像 | Workspace isolation level; since PLAN-235 everything executes inside a Sandbox |
+| Sandbox | 沙盒 | Execution-entity abstraction the agent operates on (`SandboxBackend` seam): the docker backend is a per-workspace container, while `windows-mxc` / `windows-host` are host-side execution surfaces |
+| bridge (retired) | 桥 | The former in-container process bridging a STDIO MCP server to HTTP, deleted by PLAN-0347; now a long-lived host `exec attach` session (see DEV-016 §5) |
+| profile (Strict/Coding/Isolated) | 画像 | Container isolation level of the docker backend; MXC/host backends have no such dimension (MXC uses a policy path allowlist, host has no process-level isolation) |

@@ -48,7 +48,10 @@ xihe/
 │       │       └── llm/           # LLM abstraction (ChatLiteLLM wrapper, 100+ Providers)
 │   └── runtime/               # Rust + rmcp + Tokio + Axum
 │       └── src/
-│           ├── main.rs        # MCP Server (8 tools)
+│           ├── main.rs        # rmcp MCP server (23 tools) + Axum router
+│           ├── executor.rs    # WorkspaceExecutionRouter (docker / windows-mxc / windows-host)
+│           ├── backend.rs     # SandboxBackend seam + capability snapshot
+│           ├── mcp_session.rs # long-lived stdio sessions (exec attach)
 │           ├── fs.rs          # File operations (ignore/walkdir/globset)
 │           ├── sandbox.rs     # Docker sandbox (bollard)
 │           └── error.rs       # Error types
@@ -529,7 +532,7 @@ Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an 
 
 - UI ↔ CP: HTTP + SSE, for chat message streaming
 - Agent ↔ CP: HTTP + SSE, for Agent streaming responses
-- CP ↔ Runtime: a per-request Runtime executor boundary for tool invocation; the tracked executor owns process readiness and health probing.
+- CP ↔ Runtime: a per-request Runtime executor boundary for tool invocation; the tracked executor owns process readiness and health probing. The boundary is backend-agnostic — the same HTTP call dispatches to `docker` / `windows-mxc` / `windows-host` inside Runtime by `ExecutionSpec.executionMode` (see DEV-001 §1.3).
 
 ### 3.2. MCP Reverse Proxy
 

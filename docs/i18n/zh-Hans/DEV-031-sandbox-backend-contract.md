@@ -120,7 +120,7 @@ capabilities() -> { available, reason, diagnostics? }
 
 ## 6. 长驻 stdio MCP 三档映射
 
-> stdio（标准输入输出管道）是 MCP 连接本地进程的默认传输方式；这类 MCP server 进程运行在**工作区容器内**（需要容器内的文件与环境），宿主侧需要通过一个通道与它通信。本节「三档」指契约对这类长驻进程的支持等级。
+> stdio（标准输入输出管道）是 MCP 连接本地进程的默认传输方式；这类 MCP server 进程需要它所在执行环境内的文件与环境。当前实现是 **docker 后端专用**：宿主用 `exec attach` 在已物化的 workspace 容器内拉起该进程（`mcp_session.rs` 的 `start_process` 调 `create_exec(container_name(ws), ...)`），`windows-mxc` / `windows-host` 后端没有等价进程承载，会话能力未声明。本节「三档」指契约对这类长驻进程的支持等级。
 
 | 档 | 条件 | 行为 |
 |---|---|---|
@@ -128,7 +128,7 @@ capabilities() -> { available, reason, diagnostics? }
 | 2. per-call execute | 仅有 `execute` | 每次调用启动一个新进程（MCP 本身无会话状态；代价是冷启动、无进程内状态） |
 | 3. 不支持 | 两者皆无 | 返回 `UNSUPPORTED`（fail-closed，不静默改走其他方式） |
 
-现状：当前 MCP bridge 依赖「沙盒内 HTTP 服务 + 端口发布 + 容器 IP 解析」，只能在 Docker 后端工作，不构成通用的 session 能力，列为「待迁移」；native Windows 上动态端口不可达（已实测），该方式不可用。
+现状：`session` 档已在 docker 后端落地（PLAN-0347 起宿主 `exec attach` 长驻会话直连，容器内 HTTP bridge、端口发布与容器 IP 解析已删除）；`windows-mxc` / `windows-host` 后端尚未声明 `session`，stdio MCP 在它们上面不可用——按第 3 档 fail-closed 返回 `UNSUPPORTED`，不会静默改走 per-call execute。
 
 ## 7. 现状映射（Docker 后端）
 
@@ -136,8 +136,8 @@ capabilities() -> { available, reason, diagnostics? }
 |---|---|---|
 | `execute` | per-request exec（`xihe-container-runtime --oneshot`） | 已在接缝上 |
 | `ensure` / `destroy` | 容器生命周期 + 物化重建；`WorkspaceManager`/`Registry` 双路径 | 双路径收敛归工作区生命周期专项 |
-| `session` | bridge（HTTP + 端口发布） | 泄漏清单「待迁移」 |
-| `endpoint(port)` | 39001 发布 + 宿主随机端口 | 「vestigial（残留、已无消费者）」 |
+| `session` | 长驻 `exec attach` 会话（`mcp_session.rs`）；原容器内 bridge 已随 PLAN-0347 删除 | 仅 docker 后端声明；MXC/host 无等价承载 |
+| `endpoint(port)` | 无端口发布（原 39001 发布方案已退役） | 「vestigial（残留、已无消费者）」 |
 | `network(policy)` | `network_mode` none/bridge + 代理 env | 接缝下实现 |
 | 快照/回滚 | 不在沙盒层（属工作区文件变更层，归 PLAN-0328 范围） | 与执行实体解耦 |
 

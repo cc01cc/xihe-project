@@ -137,14 +137,16 @@ tracing::error!("Failed to X: {e:?}");
 
 文件输出为 JSONL（`fmt().json()`），无 ANSI 颜色码（`.with_ansi(false)`）。
 
-子二进制（`xihe-container-runtime`、`xihe-mcp-bridge`）使用同一 `XIHE_*` 环境变量体系，不依赖 `RUST_LOG`。
+子二进制（`xihe-container-runtime`）使用同一 `XIHE_*` 环境变量体系，不依赖 `RUST_LOG`；`xihe-mcp-bridge` 已随 PLAN-0347 退役，容器内不再有 HTTP bridge 与发布端口（见 DEV-016 §5）。
 
-Workspace 执行事件（PLAN-235 约定，`WorkspaceExecutionRouter` + oneshot exec，`info` 级，全经 `RedactingWriter`）：
+Workspace 执行事件（`info` 级，全经 `RedactingWriter`；三后端 docker / windows-mxc / windows-host 共用同一执行分派，但下列两条来自 docker collect 通道）：
 
 | 事件 | 结构化字段 |
 |------|-----------|
-| exec 开始 / 成功 / 失败 | `workspaceId`、`profile`、`operation`、`requestId`、`durationMs`、`errorCode` |
-| job start / cancel / cleanup | `workspaceId`、`jobId`、`status` |
+| `tool exec wait`（`target: "timeout"`） | `operation`、`workspace_id`、生效超时签名；关联键 `toolCallId` / `runId` / `requestId` / `invocationId` / `jobId`（PLAN-0308 M1，随请求头透传） |
+| `tool exec abort`（`target: "timeout"`，`warn`） | 同上 + `reason`（`cancel` / `timeout`） |
+| 执行模式切换终止 | `workspace_id`、`previous_mode`、`current_mode`、`jobs`、`inflight`（PLAN-0379 T3.5：跨模式残留执行必须终止） |
+| job cleanup | `workspace_id`、`cleaned`（周期清理回收的过期 Job 数） |
 
 `command`/`args`/`stdout` 与 `/tmp/xihe-jobs` 输出内容永不进入明文日志，由**打印方脱敏纪律**（`RedactingWriter` / `RedactingLogstashEncoder` / `log_redact`）保证。`scan-log-secrets` 门禁（task-174 起）**只扫 git 跟踪的 log 类文件**（仓库卫生面），不再扫 gitignored 运行时日志——运行时日志若混入 secret 是打印方的缺陷，不是靠扫日志文件来补（见 §6.4）。
 

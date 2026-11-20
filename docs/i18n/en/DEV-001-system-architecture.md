@@ -99,20 +99,28 @@ Layering and call path of the four modules (structure diagrams are inline SVG, s
 - Tool selection: Obtains the tool list registered by Runtime through Control Plane, then sends instructions to Control Plane after making decisions
 - Multi-Agent: Supports delegation, parallel execution, and result merging between Agents
 - Memory/Context: Session management (Control Plane assisted / self-owned storage)
-- MCP Integration: Agent uses `langchain-mcp-adapters`'s `StreamableHTTPConnection` to treat CP as a unified MCP entry point. All tool calls (Runtime built-in tools + user-configured STDIO MCP servers) go through CP's three-layer routing (CP authentication → Runtime Gateway per-workspace dispatch → in-container `xihe-mcp-bridge` STDIO bridging). Agent only needs to configure one MCP endpoint (CP address) and is unaware of backend tool distribution. See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md)
+- MCP Integration: Agent uses `langchain-mcp-adapters`'s `StreamableHTTPConnection` to treat CP as a unified MCP entry point. All tool calls (Runtime built-in tools + user-configured STDIO MCP servers) go through CP's three-layer routing (CP authentication → Runtime Gateway per-workspace dispatch → stdio session `exec attach` or built-in tool dispatch). Agent only needs to configure one MCP endpoint (CP address) and is unaware of backend tool distribution. See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md)
 - **LLM Provider Management**: Unified encapsulation via `langchain-litellm` (`ChatLiteLLM(BaseChatModel)`), with `litellm` automatically routing to 100+ Providers (OpenAI, DeepSeek, Anthropic, Xiaomi MiMo, Ollama, etc.) at the bottom layer. Adding new Providers requires no Agent code changes — add a record to the CP provider catalog (`packages/control-plane/src/main/resources/provider-catalog/providers.json`, served by `GET /api/v1/provider-catalog`). The UI `BUILTIN_PROVIDERS` list is an offline fallback only and no longer carries model defaults.
 - **Internal Freedom**: LangChain ecosystem, custom Agents, new framework replacements — none affect other modules
 
 ### 1.3. Runtime Module — Rust
 
-**Responsibility**: Sandbox execution environment for low-level system capabilities, exposing two sets of interfaces externally.
+**Responsibility**: Agent-side local execution surface — file system, Shell, commands, background jobs, stdio MCP sessions, checkpoints, and remote MCP egress.
+
+**Execution backends (current implementation)**: every workspace operation dispatches on `ExecutionSpec.executionMode` to one of three backends — `docker` (per-request exec of `xihe-container-runtime --oneshot` inside the container), `windows-mxc` (host-side MXC restricted sandbox: `wxc-exec` plus a policy file carrying `readwritePaths`/`readonlyPaths`), `windows-host` (host-direct with path guards only, `canIsolateFilesystem=false`). All three share the `WorkspaceExecutionRouter` and the `SandboxBackend` seam; consumers branch on declared capabilities and a missing capability fails explicitly with `UNSUPPORTED` (see DEV-031). `docker` is frozen — gated by PLAN-0612 M4 from 2026-10-31 and frozen completely by PLAN-0618 on 2026-11-01: CP defaults `XIHE_WORKSPACE_DOCKER_BACKEND` to `disabled` and fails closed with `409/503 BACKEND_DISABLED` (see DEV-014 §8b). Historical note: under PLAN-235 the model was "the Strict / Coding / Isolated profiles of every workspace file, command, PDF and background operation executed through `WorkspaceExecutionRouter` as a per-request Docker exec inside the Sandbox"; MXC and host have since taken over the execution surface, and the three profiles now apply to the docker path only (`SecurityProfile` in `sandbox.rs` is still consumed by docker container creation).
+
+Constraints that hold across all three backends:
+
+- **No silent fallback**: an unavailable backend or unknown workspace fails explicitly (`UNSUPPORTED` / `BACKEND_DISABLED`); never degrade to the host automatically.
+- **No bypass channel**: no HTTP container-runtime channel, instance token or long-lived worker; inside the container the `exec attach` itself is the authentication boundary.
+- **Isolation graded per backend**: docker = namespace/cgroup/seccomp plus `network_mode` none/bridge and no published ports; `windows-mxc` = the `wxc-exec` policy path allowlist; `windows-host` = `canIsolateFilesystem=false`, path guards only.
 
 | Aspect | Decision |
 |--------|----------|
 | Tech Stack | Rust |
 | Build Tool | cargo |
 | Core | File system operations, Shell execution, process management |
-| Security | Sandbox isolation (namespace/cgroup/seccomp), supports multi-tenancy. Only `execute_command` subprocesses enter the sandbox; the Runtime main process runs outside the sandbox |
+| Security | Isolation is declared per backend and enforced per capability: `docker` (namespace/cgroup/seccomp, `network_mode` none/bridge, no published ports), `windows-mxc` (`wxc-exec` policy with `readwritePaths`/`readonlyPaths`), `windows-host` (host-direct with path guards only, `canIsolateFilesystem=false`). Backends never fall back to each other silently; a missing capability fails explicitly with `UNSUPPORTED` |
 | Deployment | Independent process (Axum), simultaneously exposes REST API + MCP Server interfaces |
 
 **Dual Interface Design**:
@@ -142,28 +150,37 @@ Both interfaces share underlying core functions like `fs.rs` — the same busine
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/delete` | CP → Runtime | Delete file |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/mkdir` | CP → Runtime | Create directory |
 | `POST /internal/v1/runtime/workspaces/{workspaceId}/files/stat` | CP → Runtime | File metadata |
-| `GET /health` | CP | Health check |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/files/search` | CP → Runtime | Search files inside the workspace |
+| `GET /health`, `GET /ready` | CP | Health / readiness check |
 | `POST /api/v1/mcp` | Agent/UI | CP logical MCP tool invocation |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | Start in-container STDIO MCP bridge |
-| `DELETE /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn/{serverId}` | CP → Runtime | Stop STDIO MCP bridge |
-| `GET /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` | CP → Runtime | List active STDIO servers |
-| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}` | CP → Runtime | Route to in-container STDIO bridge |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp` | CP → Runtime | Built-in MCP tool invocation |
+| `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/stdio/{serverId}` | CP → Runtime | Call a user-configured STDIO MCP server through its long-lived session |
+| `GET /internal/v1/runtime/workspaces/{workspaceId}/mcp/servers` | CP → Runtime | Session snapshot of active stdio MCP servers |
+| `DELETE /internal/v1/runtime/workspaces/{workspaceId}/mcp/servers/{serverId}` | CP → Runtime | Stop one stdio MCP session |
+| `POST /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call` | CP → Runtime | Remote MCP egress from the host side |
 | `POST /internal/v1/runtime/workspaces` | CP → Runtime | Create workspace |
-| `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | Delete workspace (including bridge cleanup) |
+| `POST /internal/v1/runtime/workspaces/delete` | CP → Runtime | Delete workspace |
 
-**MCP Server** (`rmcp` SDK + `#[tool]` macro): Automatically generates JSON Schema. Runtime has three binaries:
-- `xihe-runtime`: Gateway main process, registers `/internal/v1/runtime/workspaces/{ws_id}/mcp` series routes; workspace operations run inside the Sandbox via per-request Docker exec through `WorkspaceExecutionRouter` (PLAN-235, no HTTP channel, no instance token, no long-lived worker)
-- `xihe-container-runtime`: In-container executor with `--oneshot` CLI mode (single operation JSON on stdin → single result JSON on stdout, EOF-delimited); handles built-in file/command tools and `/tmp/xihe-jobs` state-file background jobs
-- `xihe-mcp-bridge`: In-container STDIO bridge, exposes user-configured STDIO MCP servers as HTTP endpoints
+> `POST /internal/v1/runtime/workspaces/{workspaceId}/mcp/spawn` is retired: it is still routed but always answers `410 MCP_SESSION_ENDPOINT_RETIRED` (stdio sessions are managed lazily by configuration polling plus first call, PLAN-0347).
+
+**MCP Server** (`rmcp` SDK + `#[tool]` macro): Automatically generates JSON Schema. Runtime has four binaries:
+- `xihe-runtime`: Gateway main process, registers `/internal/v1/runtime/workspaces/{ws_id}/mcp` series routes; workspace operations are dispatched by `ExecutionSpec.executionMode` through `WorkspaceExecutionRouter` — `docker` (per-request exec inside the Sandbox), `windows-mxc` (host-side MXC restricted sandbox), `windows-host` (host-direct with path guards only). All three share the `SandboxBackend` seam and branch on declared capabilities (no HTTP channel, no instance token, no long-lived worker)
+- `xihe-container-runtime`: In-container executor with `--oneshot` CLI mode (single operation JSON on stdin → single result JSON on stdout, EOF-delimited); handles built-in file/command tools
+- `xihe-stdio-fixture`: Test-only stdio echo process (not a product binary)
+- `xihe-plugin-fixture`: Plugin T2.4a craft sample, only used by `tests/plugin_runner_test.rs` (not a product plugin)
+
+> `xihe-mcp-bridge` was retired by PLAN-0347: the in-container HTTP bridge, published ports, and container-IP resolution are gone, and stdio MCP now runs as a long-lived `exec attach` session from the host side (see [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md) §5).
 
 Tool names are mapped by CP reverse proxy when building the tool→server mapping table. When Agent calls a tool, CP looks up the table for routing. See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md).
 
-| Tool Category | Examples |
-|---------------|----------|
-| File System | read_file, list_directory, glob, grep, read_media |
-| Shell | execute_command (subprocess enters sandbox, with timeout) |
-| Process | spawn, kill, signal |
-| Environment | env vars, workspace info |
+| Tool Category | Tools |
+|---------------|-------|
+| File System | read_file, read_file_range, write_file, list_directory, get_file_info, mkdir, delete_file, delete_directory, move_file, copy_file, edit_file, apply_patch |
+| Search / extraction | glob, grep, extract_pdf_text, web_fetch |
+| Shell | execute_command (subprocess, with timeout), read_command_output, watch_directory |
+| Background | start_background_process, list_background_processes, get_background_process, cancel_background_process |
+
+The MCP tool set is fixed at 23 tools in `main.rs`; the public surface is frozen by `GatewayToolRegistryContractTest`.
 
 **State Flow Maintains MCP**: Runtime state changes (file events, etc.) are sent via MCP notifications, not REST. CP transparently forwards notifications to Agent (MCP) and UI (SSE). See §3.2.
 
@@ -197,7 +214,7 @@ Tool names are mapped by CP reverse proxy when building the tool→server mappin
 - **MCP Reverse Proxy Channel** (`POST /mcp`): Agent's MCP tool calls parsed by CP as JSON-RPC → tool name extracted → permission check → request rewriting → three-layer routing forwarding:
   - **Layer 1 (CP)**: Authentication + tool-name routing, system tools → Runtime `/internal/v1/runtime/workspaces/{ws_id}/mcp`, user STDIO tools → `/internal/v1/runtime/workspaces/{ws_id}/mcp/stdio/{server_id}`
   - **Layer 2 (Runtime Gateway)**: Per-workspace dispatch, `CURRENT_WS_ID` task-local injection
-  - **Layer 3 (In-container bridge)**: `xihe-mcp-bridge` manages STDIO subprocesses, HTTP ↔ STDIN/STDOUT bridging
+  - **Layer 3 (Runtime dispatch)**: built-in tools go to the in-container executor (docker) or the host-side backend (MXC/host); user STDIO tools go to a long-lived stdio session owned by `mcp_session.rs` (state machine, budgeted backoff, single-flight FIFO, `ps`-based kill, 1 MiB frame limit)
   - See [DEV-016-mcp-architecture.md](DEV-016-mcp-architecture.md)
 - **State Distribution Channel**: Runtime MCP notifications distributed through CP to UI (SSE) and Agent (MCP notification passthrough)
 
@@ -330,8 +347,8 @@ State flow: Runtime/Workspace storage watcher → CP `POST /internal/v1/runtime/
 1. **Multi-process Decoupling** — Compared to the single-process monoliths of Codex/OpenCode/PI/Kimi, xihe's modules can be independently deployed, scaled, and isolated. Agent crashes don't affect UI; Runtime OOM doesn't affect Agent.
 2. **Multi-language Best-of-Breed** — Vue for UI (most mature web ecosystem), LangChain/Python for Agent (richest AI ecosystem), Java + Spring Boot for Control Plane (most mature server ecosystem, GraalVM native startup). Codex is locked to all-Rust (changing LLM requires modifying two crate layers), OpenCode/PI are locked to all-TS (no performance-sensitive layer).
 3. **Explicit Message Routing** — Control Plane is the sole communication hub, naturally providing observability (audit logging, traffic monitoring). Compared to Codex/OpenCode's in-process implicit calls, xihe's message paths are fully traceable, interceptable, and replayable.
-4. **Native Multi-tenancy** — Multi-process + Linux namespace is OS-level tenant isolation with zero overhead. Codex's sandbox is strong but designed only for single-user.
-5. **Sandbox is First-Class** — Rust namespace/cgroup/seccomp is written into the architecture from day one, not added as a patch afterward. Compared to OpenCode/PI's no-sandbox design, xihe has native defense against LLM "hallucination execution."
+4. **Multi-tenancy and graded isolation** — Multi-process boundaries plus a per-backend declared isolation level (docker namespaces, MXC policy, host path guards); isolation strength comes from capability declaration, not convention.
+5. **Execution backend seam** — `SandboxBackend` + `WorkspaceExecutionRouter` abstract the execution surface into capability declarations, so backends are replaceable (docker / windows-mxc / windows-host); a missing capability fails explicitly, giving graded defense against LLM "hallucination execution".
 6. **Native Multi-terminal Support** — Web, TUI, and mobile apps only need to implement Control Plane's protocol, without concerning themselves with backend language and implementation.
 
 **File loading degradation** — loading large files entirely to the frontend causes OOM (PDF >10MB pdfjs.render and text >10MB JSON parse).

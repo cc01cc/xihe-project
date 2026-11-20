@@ -133,7 +133,16 @@ tracing::error!("Failed to X: {e:?}");
 
 File output is JSONL (`fmt().json()`), no ANSI color codes (`.with_ansi(false)`).
 
-Sub-binaries (`xihe-container-runtime`, `xihe-mcp-bridge`) use the same `XIHE_*` environment variable system, not depending on `RUST_LOG`.
+Sub-binaries (`xihe-container-runtime`) use the same `XIHE_*` environment variable system, not depending on `RUST_LOG`; `xihe-mcp-bridge` was retired by PLAN-0347 (no in-container HTTP bridge and no published ports, see DEV-016 §5).
+
+Workspace execution events (`info` level, always through `RedactingWriter`; the three backends docker / windows-mxc / windows-host share one dispatch, but the two `timeout`-target records below come from the docker collect path):
+
+| Event | Structured fields |
+|-------|-------------------|
+| `tool exec wait` (`target: "timeout"`) | `operation`, `workspace_id`, effective timeout signature; correlation keys `toolCallId` / `runId` / `requestId` / `invocationId` / `jobId` (PLAN-0308 M1, propagated from request headers) |
+| `tool exec abort` (`target: "timeout"`, `warn`) | same as above plus `reason` (`cancel` / `timeout`) |
+| Execution-mode switch termination | `workspace_id`, `previous_mode`, `current_mode`, `jobs`, `inflight` (PLAN-0379 T3.5: executions left over from the previous mode must be terminated) |
+| job cleanup | `workspace_id`, `cleaned` (number of expired jobs reclaimed by the periodic sweep) |
 
 ### 3.4. UI (TypeScript/Vue) — Output Channels
 

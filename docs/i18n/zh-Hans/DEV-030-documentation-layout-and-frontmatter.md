@@ -207,6 +207,6 @@ INDEX.md 等纯导航文件不需要特殊设置——LYJ 端自动排除。
 | 服务标识 | serverId | 路由键：STDIO 取用户配置顶层 key，remote 取 `mcp_servers` 表行 |
 | 工具代数 | tool generation | 每次 `tools/list` 合并递增，随审计四元组记录，用于历史回放 |
 | 免鉴权远端 | no-auth remote | `authMode=no-auth` 的公开 remote server，跳过 CP token broker |
-| 沙盒 | Sandbox | per-workspace Docker 容器执行面 |
-| 桥 | bridge（xihe-mcp-bridge） | 容器内 STDIO MCP server ↔ HTTP 的桥接进程 |
-| 画像 | profile（Strict/Coding/Isolated） | Workspace 隔离等级，PLAN-235 后全部进 Sandbox 执行 |
+| 沙盒 | Sandbox | Agent 操作的执行实体抽象（`SandboxBackend` 接缝）：docker 后端即 per-workspace 容器，`windows-mxc` / `windows-host` 后端为宿主侧执行面 |
+| 桥 | bridge（已退役） | 原容器内 STDIO MCP server ↔ HTTP 的桥接进程，随 PLAN-0347 删除；现为宿主 `exec attach` 长驻会话（见 DEV-016 §5） |
+| 画像 | profile（Strict/Coding/Isolated） | docker 后端的容器隔离等级；MXC/host 后端无此维度（MXC 走 policy 路径白名单，host 无进程级隔离） |

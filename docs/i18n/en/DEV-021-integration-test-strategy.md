@@ -58,7 +58,7 @@ Integration tests are split into three layers, consistent with E2E's mock/real s
 |--------|-------|-----------|--------------|
 | CP (Java) | AuthIntegrationTest, SessionIntegrationTest, ChatIntegrationTest, WorkspaceIsolationTest, ConfigControllerTest, ChatControllerNpeTest | Spring MockMvc + H2 or Testcontainers PG | H2: ❌ / PG: ✅ |
 | Agent (Python) | test_vector_store.py, test_registry_integration.py | pytest + real PG | ✅ |
-| Runtime (Rust) | sandbox_test.rs, bridge_integration_test.rs | cargo test + Docker | ✅ |
+| Runtime (Rust) | sandbox_test.rs, mcp_session_test.rs | cargo test + Docker | ✅ |
 
 ### 2.2 T2: Cross-module Stub Integration
 
@@ -317,12 +317,12 @@ tests/
 ├── mcp_tools_test.rs                     ← unit
 ├── unit_tools_test.rs                    ← unit
 ├── sandbox_test.rs                       ← T1 (Docker)
-├── bridge_integration_test.rs            ← T1 (Docker)
-├── mcp_multi_workspace_test.rs           ← T1 (Docker)
-└── crossmodule/                     ← T2 + T3 new additions
-    ├── cp_stub_integration_test.rs       ← T2 (mockito/wiremock)
-    └── cp_real_integration_test.rs       ← T3 (real CP Docker)
-```
+├── mcp_session_test.rs                   ← T1 (Docker, exec attach sessions since PLAN-0347)
+├── job_engine_process_test.rs            ← T1 (host job engine, no Docker)
+├── file_worker_mxc.rs / m1c_strict_test.rs  ← T1 (MXC / Strict backend capability)
+├── checkpoint_*_test.rs                  ← T1 (host-side shadow git)
+├── cp_stub_integration_test.rs            ← T2 (stubbed CP, no Docker)
+└── cp_real_integration_test.rs            ← T3 (real CP)
 
 ### 3.4 Directory Location Design Decision
 
