@@ -63,6 +63,14 @@ public class HardGuard {
             "watch_directory", "extract_pdf_text", "write_file", "edit_file", "delete_file",
             "delete_directory", "move_file", "copy_file", "mkdir", "apply_patch");
 
+    /**
+     * task-81/G-2: the same workspace-file-tool list, so the request-side declaration-key conversion
+     * cannot drift from the guard that enforces relative resources.
+     */
+    static Set<String> workspaceFileTools() {
+        return WORKSPACE_FILE_TOOLS;
+    }
+
     /** Rejects explicit file resources that are not relative to the selected workspace root. */
     public Optional<HardDeny> checkWorkspaceResources(String toolName, List<String> resources) {
         if (PolicyResourceExtractor.hasInvalidResource(resources)) {

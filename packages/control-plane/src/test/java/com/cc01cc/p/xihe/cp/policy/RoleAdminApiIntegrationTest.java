@@ -643,6 +643,195 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
                 capabilityEscalation.getBody());
     }
 
+    // ── task-81 / DSD-1485: per-atom resource patterns (the role write face) ──
+
+    /**
+     * 正 1 的写面半：对象形态的原子必须原样落库、原样回读（响应、库面、GET 列表三处同一串），
+     * PATCH 也接受对象形态并把 pattern 换掉。资源串本身的可达性由求交测试覆盖（S2/S4），
+     * 这里只钉「写面不吞、不归一掉用户给的路径」。
+     */
+    @Test
+    void roleAtomsCarryTheirResourcePatternThroughCreateReadAndPatch() throws Exception {
+        String superToken = superAdmin("res-create@test.com");
+        String workspaceId = createWorkspace(superToken);
+        String pattern = "fs:" + workspaceId + "/src";
+
+        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "PATH_READER", "displayName", "Path reader",
+                        "atoms", List.of(Map.of("actionClass", "read", "resource", pattern))),
+                superToken);
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
+        JsonNode role = objectMapper.readTree(created.getBody());
+        String roleId = role.path("id").asText();
+        assertEquals(List.of("read"), texts(role.path("atoms")));
+        assertEquals(pattern, role.path("atoms").get(0).path("resource").asText(),
+                "the response must show the stored pattern, not the catalog's canonical one");
+        assertEquals(pattern, jdbc.queryForObject(
+                "SELECT resource_pattern FROM role_permissions WHERE role_id = CAST(? AS UUID)",
+                String.class, roleId), "the pattern is a persisted row, not a view-only field");
+
+        ResponseEntity<String> listed = call(HttpMethod.GET, "/api/v1/roles", null, superToken);
+        assertEquals(HttpStatus.OK, listed.getStatusCode(), listed.getBody());
+        JsonNode listedRole = null;
+        for (JsonNode candidate : objectMapper.readTree(listed.getBody())) {
+            if (roleId.equals(candidate.path("id").asText())) {
+                listedRole = candidate;
+            }
+        }
+        assertNotNull(listedRole, "the created role is part of the admin list");
+        assertEquals(pattern, listedRole.path("atoms").get(0).path("resource").asText(),
+                "the list view reports the same stored pattern");
+
+        String narrowed = "fs:" + workspaceId + "/src/api";
+        ResponseEntity<String> patched = call(HttpMethod.PATCH, "/api/v1/roles/" + roleId,
+                Map.of("atoms", List.of(Map.of("actionClass", "read", "resource", narrowed))),
+                superToken);
+        assertEquals(HttpStatus.OK, patched.getStatusCode(), patched.getBody());
+        assertEquals(narrowed, objectMapper.readTree(patched.getBody())
+                .path("atoms").get(0).path("resource").asText());
+        assertEquals(narrowed, jdbc.queryForObject(
+                "SELECT resource_pattern FROM role_permissions WHERE role_id = CAST(? AS UUID)",
+                String.class, roleId), "the PATCH row replacement keeps the new pattern");
+    }
+
+    /**
+     * 不变量 A（旧契约零变化）：字符串形态的原子仍按 canonical 资源落库 ——
+     * 现存客户端送 {@code ["read"]}，它必须还是原来那一行，绝不因新形态出现而变成空或非法串。
+     */
+    @Test
+    void atomsWithoutAResourceKeepTheirCanonicalPattern() throws Exception {
+        String superToken = superAdmin("res-default@test.com");
+
+        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "PLAIN_READER", "atoms", List.of("read", "exec")), superToken);
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
+        JsonNode role = objectMapper.readTree(created.getBody());
+        for (JsonNode atom : role.path("atoms")) {
+            String canonical = PermissionAtomCatalog.atom(atom.path("name").asText())
+                    .canonicalResource();
+            assertEquals(canonical, atom.path("resource").asText(),
+                    "an omitted resource must resolve to the atom's canonical pattern: "
+                            + atom.path("name").asText());
+        }
+        String roleId = role.path("id").asText();
+        assertEquals(0, countRows("SELECT COUNT(*) FROM role_permissions WHERE role_id ="
+                        + " CAST(? AS UUID) AND resource_pattern <> ?", roleId,
+                        PermissionAtomCatalog.WILDCARD),
+                "every old-form atom row is still the bare wildcard");
+    }
+
+    /**
+     * 反 3 的矩阵：非法 {@code fs:} 值在写面就被拒（400 INVALID_GRANT_RESOURCE），
+     * 且拒绝发生在写之前 —— 数据库里不留半成品角色。未知工作区是 404（形状合法、资源不存在）。
+     */
+    @Test
+    void illegalResourcePatternsAreRefusedAtTheWriteFace() throws Exception {
+        String superToken = superAdmin("res-invalid@test.com");
+        String workspaceId = createWorkspace(superToken);
+        String unknownWorkspace = UUID.randomUUID().toString();
+
+        Map<String, String> invalid = new LinkedHashMap<>();
+        invalid.put("a bare relative path", "src/app.ts");
+        invalid.put("a root that is not a uuid", "fs:not-a-uuid/src");
+        invalid.put("a dot segment", "fs:" + workspaceId + "/../secret");
+        invalid.put("a wildcard", "fs:" + workspaceId + "/*");
+        invalid.put("an empty segment", "fs:" + workspaceId + "/src//app");
+        invalid.put("a colon segment", "fs:" + workspaceId + "/src/app:1");
+        invalid.put("a backslash", "fs:" + workspaceId + "\\src");
+        invalid.put("a drive letter inside the path", "fs:" + workspaceId + "/C:/Windows");
+
+        int seq = 0;
+        for (Map.Entry<String, String> entry : invalid.entrySet()) {
+            String name = "BAD_RES_" + seq++;
+            ResponseEntity<String> refused = call(HttpMethod.POST, "/api/v1/roles",
+                    Map.of("name", name, "atoms",
+                            List.of(Map.of("actionClass", "read", "resource", entry.getValue()))),
+                    superToken);
+            assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(),
+                    entry.getKey() + " must be a 400: " + refused.getBody());
+            assertTrue(refused.getBody().contains("INVALID_GRANT_RESOURCE"),
+                    entry.getKey() + ": " + refused.getBody());
+        }
+
+        ResponseEntity<String> unknown = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "BAD_RES_UNKNOWN", "atoms", List.of(
+                        Map.of("actionClass", "read",
+                                "resource", "fs:" + unknownWorkspace + "/src"))), superToken);
+        assertEquals(HttpStatus.NOT_FOUND, unknown.getStatusCode(), unknown.getBody());
+        assertTrue(unknown.getBody().contains("WORKSPACE_NOT_FOUND"), unknown.getBody());
+
+        assertEquals(0, countRows("SELECT COUNT(*) FROM roles WHERE name LIKE 'BAD_RES%'"),
+                "a refused pattern must not leave a role behind");
+    }
+
+    /** 反 3 的跨工作区半：有 MANAGE_ROLES 但该工作区没有绑定权限 ⇒ 403，不是 400、不是 201。 */
+    @Test
+    void resourcePatternsForAForeignWorkspaceNeedBindingAuthority() throws Exception {
+        String superToken = superAdmin("res-cross@test.com");
+        // The victim workspace is owned by the super admin: the manager below is not a member.
+        String foreignWorkspace = createWorkspace(superToken);
+
+        String managerToken = register("res-cross-manager@test.com");
+        String managerId = userIdOf(managerToken);
+        createRole(superToken, "RES_MANAGER", List.of("MANAGE_ROLES", "read"));
+        grantInstanceRole(managerId, "RES_MANAGER");
+
+        // Control first: the same caller can write a role, so the 403 below is about the path.
+        ResponseEntity<String> control = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "RES_MANAGER_OWN", "atoms", List.of("read")), managerToken);
+        assertEquals(HttpStatus.CREATED, control.getStatusCode(), control.getBody());
+
+        ResponseEntity<String> attempt = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "RES_MANAGER_FOREIGN", "atoms", List.of(Map.of("actionClass", "read",
+                        "resource", "fs:" + foreignWorkspace + "/src"))), managerToken);
+        assertEquals(HttpStatus.FORBIDDEN, attempt.getStatusCode(), attempt.getBody());
+        assertTrue(attempt.getBody().contains("FORBIDDEN"), attempt.getBody());
+        assertEquals(0, countRows("SELECT COUNT(*) FROM roles WHERE name = 'RES_MANAGER_FOREIGN'"));
+    }
+
+    /** 原子自己的规则仍然压在 resource 之前：instance-only、capability、同原子双 pattern、未知字段。 */
+    @Test
+    void atomKindRulesStillGovernTheResourceField() throws Exception {
+        String superToken = superAdmin("res-kind@test.com");
+        String workspaceId = createWorkspace(superToken);
+        String pattern = "fs:" + workspaceId + "/src";
+
+        // instance-only 原子：路径收窄不了实例级权威。
+        assertTrue(PermissionAtomCatalog.instanceOnlyAtoms().contains("MANAGE_ROLES"),
+                "MANAGE_ROLES is the instance-only atom this case pins");
+        ResponseEntity<String> instanceOnly = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "BAD_SCOPE", "atoms", List.of(Map.of("actionClass", "MANAGE_ROLES",
+                        "resource", pattern))), superToken);
+        assertEquals(HttpStatus.BAD_REQUEST, instanceOnly.getStatusCode(), instanceOnly.getBody());
+        assertTrue(instanceOnly.getBody().contains("INVALID_GRANT_RESOURCE"),
+                instanceOnly.getBody());
+
+        // capability 原子：能力不是资源，带路径一律拒。
+        ResponseEntity<String> capability = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "BAD_CAP", "atoms", List.of(Map.of("actionClass", "instance:admin",
+                        "resource", pattern))), superToken);
+        assertEquals(HttpStatus.BAD_REQUEST, capability.getStatusCode(), capability.getBody());
+        assertTrue(capability.getBody().contains("INVALID_GRANT_RESOURCE"), capability.getBody());
+
+        // 一个角色对同一原子只有一个 pattern。
+        ResponseEntity<String> duplicate = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "BAD_DUP", "atoms", List.of(
+                        Map.of("actionClass", "read", "resource", pattern),
+                        Map.of("actionClass", "read",
+                                "resource", "fs:" + workspaceId + "/docs"))), superToken);
+        assertEquals(HttpStatus.BAD_REQUEST, duplicate.getStatusCode(), duplicate.getBody());
+        assertTrue(duplicate.getBody().contains("INVALID_GRANT_RESOURCE"), duplicate.getBody());
+        assertTrue(duplicate.getBody().contains("appears twice"), duplicate.getBody());
+
+        // 对象形态里的拼写错误不能被静默忽略（否则 typo 会退化成 canonical 全授予）。
+        String typoBody = "{\"name\":\"BAD_TYPO\",\"atoms\":[{\"actionClass\":\"read\","
+                + "\"action_class\":\"read\"}]}";
+        ResponseEntity<String> typo = call(HttpMethod.POST, "/api/v1/roles", typoBody, superToken);
+        assertEquals(HttpStatus.BAD_REQUEST, typo.getStatusCode(), typo.getBody());
+        assertEquals(0, countRows("SELECT COUNT(*) FROM roles WHERE name = 'BAD_TYPO'"),
+                "the typo must not create a role with a silently defaulted pattern");
+    }
+
     // ── fixtures / helpers ──────────────────────────────────────────────────
 
     private String superAdmin(String email) throws Exception {

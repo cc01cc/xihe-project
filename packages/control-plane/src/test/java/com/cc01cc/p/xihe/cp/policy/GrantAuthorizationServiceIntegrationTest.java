@@ -112,6 +112,8 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
     private JdbcTemplate jdbcTemplate;
 
     private String userId;
+    /** task-81 / G-2：共用前置里的读会话 id（{@link #seedPrefixFixture()} 填）。 */
+    private String prefixSessionId;
     private UUID workspaceId;
     private UUID unjoinedWorkspaceId;
     private UUID principalId;
@@ -689,6 +691,70 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
     }
 
     /**
+     * task-81 / G-2；请求侧的相对工具路径现在换算成与授予行<b>同一个</b> {@code fs:<wsId>/<rel>}
+     * 声明键 ⇒ 「授予某个路径前缀」真正按路径生效（正 1/正 2），换不出的形态保持原串、由求交与
+     * 硬门双拒（反 1）。
+     */
+    @Test
+    void grantedPathPrefixesGovernRelativeToolPaths() {
+        seedPrefixFixture();
+        String sessionId = prefixSessionId;
+        setBindingCap(workspaceId, atomWithResource(ToolFaceRegistry.ACTION_READ,
+                "fs:" + workspaceId + "/src"));
+
+        assertTrue(readFileAllowed("src/app.ts", sessionId),
+                "正 1：授予 fs:<ws>/src 覆盖 src 下的相对路径");
+        assertFalse(readFileAllowed("docs/b.md", sessionId),
+                "正 2：同一授予不覆盖其它前缀 —— 声明键是路径前缀，不是通配");
+        assertFalse(readFileAllowed("src/../secret/x", sessionId),
+                "反 1：点段换算不出声明键 ⇒ 求交 fail-closed");
+        assertFalse(readFileAllowed("../outside.ts", sessionId),
+                "反 1：越界点段同样不换算");
+        assertFalse(readFileAllowed("C:\\outside\\secret", sessionId),
+                "绝对宿主路径不参与相对换算，也不被相对前缀覆盖");
+    }
+
+    /**
+     * task-81 / G-2 反 2：授予侧停在老形态（相对模式串）时请求侧已是声明键 ⇒ 不可比 ⇒ <b>拒绝</b>。
+     * 这是本次收紧的一处语义（相对模式串不再覆盖文件工具路径），因此配一条通配对照证明拒绝来自
+     * 授予形态而不是「读工具被整体拒」。
+     */
+    @Test
+    void relativeGrantPatternsNoLongerMatchDeclarationKeyRequests() {
+        seedPrefixFixture();
+        String sessionId = prefixSessionId;
+        setBindingCap(workspaceId, atomWithResource(ToolFaceRegistry.ACTION_READ, "src/*"));
+        assertFalse(readFileAllowed("src/app.ts", sessionId),
+                "反 2：相对模式串授予不覆盖声明键请求（fail-closed）");
+
+        setBindingCap(workspaceId, atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
+        assertTrue(readFileAllowed("src/app.ts", sessionId),
+                "对照：通配 cap 仍走原匹配器 —— 上面那条拒绝来自授予形态");
+    }
+
+    /**
+     * task-81 / G-2 边界：声明键换算<b>只</b>对 workspace 文件工具做。{@code execute_command} 的
+     * {@code command} 是解释器输入，不是路径，把它拼进 {@code fs:} 命名空间会放宽授权 ⇒ 不换算，
+     * 于是声明键授予覆盖不到它（fail-closed），通配授予照旧放行。
+     */
+    @Test
+    void nonFileToolsAreNeverRewrittenIntoTheFileNamespace() {
+        seedPrefixFixture();
+        String sessionId = prefixSessionId;
+        setBindingCap(workspaceId, atomWithResource(ToolFaceRegistry.ACTION_EXEC,
+                "fs:" + workspaceId + "/src"));
+        String commandBody = "{\"params\":{\"arguments\":{\"command\":\"src/run.sh\"}}}";
+        assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "execute_command", commandBody,
+                        sessionId, userId, workspaceId.toString(), false),
+                "解释器输入不做声明键换算 ⇒ 路径前缀授予覆盖不到命令");
+
+        setBindingCap(workspaceId, atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
+        assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "execute_command", commandBody,
+                        sessionId, userId, workspaceId.toString(), false),
+                "对照：通配执行原子照旧放行同一请求");
+    }
+
+    /**
      * PLAN-0610 W4a (round-3 P1-4): the instance template layer is gated by the
      * {@code cap:instance:admin} capability, which comes from a role binding — the retired
      * {@code users.role} column no longer authorizes anything.
@@ -831,6 +897,42 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
             throw new IllegalStateException(
                     "Seeded agent-templates document is not a JSON array: id=" + seeded.getId(), cause);
         }
+    }
+
+    /**
+     * task-81 / G-2：三个声明键用例的公共前置。OWNER 用户 + 直连工作区 + 稳定 Agent principal
+     * （其 Workspace binding cap 就是本组用例收窄的那一层，见 {@code setBindingCap}）。
+     *
+     * <p>三层参与方路径都是通配：用户侧 OWNER 角色 + 显式 grant、会话 cap、binding cap；因此下面
+     * 每条用例只把 <b>binding cap</b> 换成 {@code fs:} 声明键 —— 求交后路径前缀才真正生效，
+     * 与 {@code stablePrincipalCapsAndWorkspaceBindingControlAgentActions} 收窄 {@code src/*} 的
+     * 做法同源。</p>
+     */
+    private void seedPrefixFixture() {
+        User user = userRepository.save(new User("grant-prefix-" + UUID.randomUUID() + "@test.com",
+                "hash", "Grant prefix test"));
+        userId = user.getId().toString();
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Grant prefix test", userId);
+        workspaceId = workspace.getId();
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
+        principal.setName("Grant prefix agent");
+        principal.setCreatedByUserId(userId);
+        principal.setTemplateSnapshot(objectMapper.createObjectNode());
+        principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
+        bindPrincipal(workspaceId, atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
+                atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
+        prefixSessionId = saveAgentSession(workspaceId, userId, "Prefix agent",
+                atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC)).getId().toString();
+    }
+
+    /** 读工具请求（相对路径形态），走 Agent 路径（三层求交，含 binding cap 层）。 */
+    private boolean readFileAllowed(String path, String sessionId) {
+        String body = "{\"params\":{\"arguments\":{\"path\":\"" + path.replace("\\", "\\\\")
+                + "\"}}}";
+        return policyEngine.allowsByGrant(PolicyContext.EMPTY, "read_file", body, sessionId, userId,
+                workspaceId.toString(), false);
     }
 
     private UUID addGrant(String subjectType, UUID subjectId, String source,

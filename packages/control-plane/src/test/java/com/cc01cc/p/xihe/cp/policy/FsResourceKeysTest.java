@@ -74,4 +74,60 @@ class FsResourceKeysTest {
         assertTrue(grantResource.endsWith("/SRC"), "授予行保持未归一形态");
         assertTrue(requestResource.endsWith("/src/app.ts"), "生产者输出已词法归一");
     }
+
+    /** task-81 / G-2：工具收到的相对路径必须落进<b>同一个</b> {@code fs:<wsId>} 命名空间。 */
+    @Test
+    void relativePathsBecomeDeclarationKeysInTheSameNamespace() {
+        String workspaceId = "3f2a1b4c-0000-4000-8000-000000000001";
+        assertEquals("fs:" + workspaceId + "/src/app.ts",
+                FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "src/app.ts"));
+        assertEquals("fs:" + workspaceId + "/src/app.ts",
+                FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "  src\\app.ts  "),
+                "反斜杠与首尾空白按词法归一");
+        assertEquals("fs:" + workspaceId + "/src",
+                FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "src/"),
+                "尾斜杠剥除后不留空段");
+        assertEquals("src/app", FsResourceKeys.plainRelative(" src/app/ "), "首尾空白与尾斜杠归一");
+    }
+
+    /**
+     * 反形态一律 {@code null}（fail-closed）：调用方保留原串，求交对非声明键请求返回拒绝，
+     * {@code HardGuard} 仍能看到原始点段硬拒。
+     */
+    @Test
+    void relativeShapesThatCouldWidenOrEscapeAreRefused() {
+        String workspaceId = "3f2a1b4c-0000-4000-8000-000000000001";
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", null));
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "   "), "空相对路径");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "/abs/path"),
+                "绝对路径不是相对形态");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "C:/Windows"),
+                "盘符形态");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws",
+                "fs:" + workspaceId + "/src"), "已是声明键，不许二次包装");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws",
+                "https://example.com/a"), "URL 不是路径");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "src/*"),
+                "通配符不可换算成前缀语义");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "src/../secret/x"),
+                "点段 fail-closed");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "./src/a.ts"),
+                "点段 fail-closed（就地）");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "src//a.ts"),
+                "空段 fail-closed");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws",
+                "\\\\server\\share\\a.ts"), "UNC fail-closed");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, "H:/ws", "a".repeat(1025)),
+                "超过长度上限");
+        assertNull(FsResourceKeys.declarationKeyFromRelative(workspaceId, null, "src/a.ts"),
+                "缺根");
+    }
+
+    /** 实例方法只接受 UUID 命名空间（非 UUID 在查库之前就 fail-closed，不猜根）。 */
+    @Test
+    void relativeKeyLookupRefusesANonUuidNamespace() {
+        FsResourceKeys keys = new FsResourceKeys(null, null);
+        assertNull(keys.declarationKeyForRelative("not-a-uuid", "src/a.ts"));
+        assertNull(keys.declarationKeyForRelative(null, "src/a.ts"));
+    }
 }

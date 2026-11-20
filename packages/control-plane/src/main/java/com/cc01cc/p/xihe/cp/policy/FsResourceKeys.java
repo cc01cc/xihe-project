@@ -51,6 +51,76 @@ public class FsResourceKeys {
         return relative.isEmpty() ? key : key + "/" + relative;
     }
 
+    /** task-81/G-2：相对路径形态的长度上限（提取器本身限 2048，这里更紧）。 */
+    private static final int MAX_RELATIVE_LENGTH = 1024;
+
+    /**
+     * 纯函数（task-81 / G-2）：把<b>工作区相对路径</b>换算成声明键。
+     *
+     * <p>{@link #declarationKey} 要求候选人已是宿主绝对路径且落在根内，但工具实际收到的是相对路径
+     * （{@code read_file {"path":"src/a.ts"}}）。这里只做保守形状校验（{@link #plainRelative}），
+     * 合法即拼进同一个 {@code fs:<workspaceId>} 命名空间：相对路径按定义就在根内，不必再走一次
+     * {@code withinLexical}。形状不合法 ⇒ {@code null}，调用方保留原串 —— 求交侧对非声明键返回
+     * 拒绝（fail-closed），{@code HardGuard} 也仍能看到原始 {@code ..} 并硬拒。</p>
+     */
+    public static String declarationKeyFromRelative(String workspaceId, String rootHostPath,
+                                                    String relativePath) {
+        if (workspaceId == null || workspaceId.isBlank() || PathKey.lexical(rootHostPath) == null) {
+            return null;
+        }
+        String relative = plainRelative(relativePath);
+        if (relative == null) {
+            return null;
+        }
+        // plainRelative 已保证非空 ⇒ 相对形态永远带段，不存在裸 fs:<wsId> 的分支。
+        return ResourceIdentity.DECLARATION_PREFIX + workspaceId.trim() + "/" + relative;
+    }
+
+    /**
+     * 保守的相对路径形状：归一化分隔符后不得有盘符/协议冒号、通配符、UNC、点段或空段。
+     *
+     * @return 归一化后的相对路径；不合法为 {@code null}（fail-closed）
+     */
+    static String plainRelative(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim().replace('\\', '/');
+        if (value.isEmpty() || value.length() > MAX_RELATIVE_LENGTH || value.startsWith("/")) {
+            return null;
+        }
+        if (value.indexOf(':') >= 0 || value.indexOf('*') >= 0 || value.indexOf('?') >= 0) {
+            return null;
+        }
+        if (PathKey.isUncOrExtended(value) || PathKey.hasDotSegments(value)) {
+            return null;
+        }
+        while (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        if (value.isEmpty()) {
+            return null;
+        }
+        for (String segment : value.split("/", -1)) {
+            if (segment.isEmpty()) {
+                return null;
+            }
+        }
+        return value;
+    }
+
+    /** 用工作区已存的主根换算相对路径形态；工作区不存在 ⇒ null。 */
+    public String declarationKeyForRelative(String workspaceId, String relativePath) {
+        UUID id = parseWorkspaceId(workspaceId);
+        if (id == null) {
+            return null;
+        }
+        return workspaces.findById(id)
+                .map(workspace -> declarationKeyFromRelative(id.toString(), workspace.getHostPath(),
+                        relativePath))
+                .orElse(null);
+    }
+
     /** 用工作区已存的主根换算；主根之外（含二级根）返回 null。 */
     public String declarationKeyFor(String workspaceId, String candidatePath) {
         UUID id = parseWorkspaceId(workspaceId);

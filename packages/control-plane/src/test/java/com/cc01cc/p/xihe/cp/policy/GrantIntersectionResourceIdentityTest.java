@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
@@ -8,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -117,5 +120,21 @@ class GrantIntersectionResourceIdentityTest {
         assertEquals(Boolean.FALSE, ResourceIdentity.matchesDeclaration("fs:ws-1/a", "credential:abc", id -> null));
         assertNull(ResourceIdentity.matchesDeclaration("a/b", "c/d", id -> null));
         assertNull(ResourceIdentity.matchesDeclaration("*", "fs:ws-1/a", id -> null));
+    }
+    /**
+     * 不变量 B（task-81 / DSD-1485）：{@code PermissionAtom} 的 JSON 形态只认 {@code actionClass} 与
+     * {@code resource}，第三个字段必须继续抛。写面新增的 {@code {actionClass, resource}} 形态不得顺带
+     * 把「未知字段」放宽成忽略 —— 否则 {@code action_class} 这类拼写错误会静默退化成 canonical
+     * {@code *}，一条本该收窄到某个路径的授予就变成全量授予。
+     */
+    @Test
+    void permissionAtomParsingStillRejectsAnUnknownField() throws Exception {
+        GrantIntersectionEvaluator evaluator = new GrantIntersectionEvaluator();
+        JsonNode permissions = new ObjectMapper().readTree(
+                "[{\"actionClass\":\"read\",\"resource\":\"*\",\"action_class\":\"read\"}]");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> evaluator.parse(permissions));
+        assertEquals("Unknown permission atom field: action_class", error.getMessage());
     }
 }

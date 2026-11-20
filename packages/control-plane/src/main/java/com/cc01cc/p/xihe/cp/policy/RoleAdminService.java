@@ -79,6 +79,7 @@ public class RoleAdminService {
     private final GrantabilityGuard grantability;
     private final AgentBindingAtomPolicy agentAtomPolicy;
     private final AgentPrincipalRepository principals;
+    private final GrantResourcePattern grantResources;
 
     public RoleAdminService(AccessRoleRepository roles,
                             AccessRolePermissionRepository permissions,
@@ -89,7 +90,8 @@ public class RoleAdminService {
                             DbLockTimeout dbLockTimeout,
                             GrantabilityGuard grantability,
                             AgentBindingAtomPolicy agentAtomPolicy,
-                            AgentPrincipalRepository principals) {
+                            AgentPrincipalRepository principals,
+                            GrantResourcePattern grantResources) {
         this.roles = roles;
         this.permissions = permissions;
         this.bindings = bindings;
@@ -100,6 +102,7 @@ public class RoleAdminService {
         this.grantability = grantability;
         this.agentAtomPolicy = agentAtomPolicy;
         this.principals = principals;
+        this.grantResources = grantResources;
     }
 
     /** Default-locale overload (callers that do not carry a request locale). */
@@ -135,7 +138,7 @@ public class RoleAdminService {
     /** {@code GET /api/v1/roles}: every definition, system roles first, then by name. */
     @Transactional(readOnly = true)
     public List<RoleAdminViews.RoleView> list() {
-        Map<UUID, List<String>> atomsByRole = atomsByRole();
+        Map<UUID, List<AccessRolePermission>> permissionsByRole = permissionsByRole();
         List<AccessRole> all = roles.findAll();
         Map<UUID, Long> bindingCounts = new LinkedHashMap<>();
         for (AccessRole role : all) {
@@ -144,7 +147,8 @@ public class RoleAdminService {
         return all.stream()
                 .sorted(Comparator.comparing(AccessRole::isSystem).reversed()
                         .thenComparing(AccessRole::getName))
-                .map(role -> toView(role, atomsByRole.getOrDefault(role.getId(), List.of()),
+                .map(role -> toView(role,
+                        specsOf(permissionsByRole.getOrDefault(role.getId(), List.of())),
                         bindingCounts.getOrDefault(role.getId(), 0L)))
                 .toList();
     }
@@ -162,18 +166,19 @@ public class RoleAdminService {
      */
     @Transactional(readOnly = true)
     public List<RoleAdminViews.RoleView> listAgentBindable() {
-        Map<UUID, List<String>> atomsByRole = atomsByRole();
+        Map<UUID, List<AccessRolePermission>> permissionsByRole = permissionsByRole();
         List<AccessRole> all = roles.findAll();
         Map<UUID, Long> bindingCounts = new LinkedHashMap<>();
         for (AccessRole role : all) {
             bindingCounts.put(role.getId(), bindings.countByRoleId(role.getId()));
         }
         return all.stream()
-                .filter(role -> PermissionAtomCatalog.canBindToAgentPrincipal(
-                        atomsByRole.getOrDefault(role.getId(), List.of())))
+                .filter(role -> PermissionAtomCatalog.canBindToAgentPrincipal(actionClasses(
+                        specsOf(permissionsByRole.getOrDefault(role.getId(), List.of())))))
                 .sorted(Comparator.comparing(AccessRole::isSystem).reversed()
                         .thenComparing(AccessRole::getName))
-                .map(role -> toView(role, atomsByRole.getOrDefault(role.getId(), List.of()),
+                .map(role -> toView(role,
+                        specsOf(permissionsByRole.getOrDefault(role.getId(), List.of())),
                         bindingCounts.getOrDefault(role.getId(), 0L)))
                 .toList();
     }
@@ -188,25 +193,24 @@ public class RoleAdminService {
             throw new CpApiException(HttpStatus.CONFLICT, "ROLE_NAME_EXISTS",
                     "A role with this name already exists");
         }
-        List<String> atomNames = requireAtoms(request.atoms());
+        List<AtomSpec> atoms = requireAtoms(request.atoms());
         // PLAN-0673 M1 T1.2 (闸门②): a role definition may only contain atoms the caller holds in
         // ANY scope (binding re-checks at the concrete target scope). 403 PRIVILEGE_ESCALATION names
         // the offending atoms; the cap gate (BL-287) stays a separate 409.
-        grantability.assertGrantable(new LinkedHashSet<>(atomNames), null);
+        grantability.assertGrantable(new LinkedHashSet<>(actionClasses(atoms)), null);
         String displayName = requireDisplayName(request.displayName(), name);
         AccessRole role = new AccessRole(UUID.randomUUID(), name, displayName,
                 trimToNull(request.description()), false);
         AccessRole saved = roles.save(role);
-        for (String atom : atomNames) {
-            PermissionAtomCatalog.Atom atomRef = PermissionAtomCatalog.atom(atom);
-            permissions.save(new AccessRolePermission(saved.getId(), atomRef.name(),
-                    atomRef.canonicalResource()));
+        for (AtomSpec atom : atoms) {
+            permissions.save(new AccessRolePermission(saved.getId(), atom.actionClass(),
+                    atom.resourcePattern()));
         }
         audit.recordDurableChange(actorId(), null, "access_role_created", RESOURCE_TYPE,
-                saved.getId().toString(), "name=" + name + " atoms=" + String.join(",", atomNames));
+                saved.getId().toString(), "name=" + name + " atoms=" + describe(atoms));
         logger.info("[POLICY] event=access_role_created role={} name={} atoms={}", saved.getId(), name,
-                atomNames.size());
-        return toView(saved, atomNames, 0L);
+                atoms.size());
+        return toView(saved, atoms, 0L);
     }
 
     /**
@@ -225,10 +229,7 @@ public class RoleAdminService {
         AccessRole role = roles.findByIdForUpdate(roleId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND",
                         "Role not found"));
-        List<String> currentAtoms = permissions.findByIdRoleId(role.getId()).stream()
-                .map(AccessRolePermission::actionClass)
-                .sorted()
-                .toList();
+        List<AtomSpec> currentAtoms = specsOf(permissions.findByIdRoleId(role.getId()));
         boolean atomsRequested = request.atoms() != null;
         boolean nameRequested = request.name() != null;
         boolean descriptionRequested = request.description() != null;
@@ -259,11 +260,16 @@ public class RoleAdminService {
         if (descriptionRequested) {
             role.setDescription(trimToNull(request.description()));
         }
-        List<String> effectiveAtoms = currentAtoms;
+        List<AtomSpec> effectiveAtoms = currentAtoms;
         if (atomsRequested) {
             effectiveAtoms = requireAtoms(request.atoms());
-            Set<String> added = new LinkedHashSet<>(effectiveAtoms);
-            added.removeAll(currentAtoms);
+            Set<String> added = new LinkedHashSet<>();
+            for (AtomSpec atom : effectiveAtoms) {
+                added.add(atom.key());
+            }
+            for (AtomSpec atom : currentAtoms) {
+                added.remove(atom.key());
+            }
             List<AccessRoleBinding> roleBindings = bindings.findByRoleId(roleId);
             // PLAN-0673 M1: the subset gate runs over EVERY binding scope of the role, not only
             // agent bindings — materializeRole() re-materialises every holder (users included), so
@@ -274,12 +280,13 @@ public class RoleAdminService {
                     .map(binding -> AccessScope.WORKSPACE.equals(binding.getScopeType())
                             ? AccessScope.workspace(binding.getScopeId()) : AccessScope.instance())
                     .distinct().toList();
-            List<AccessRolePermission> prospective = effectiveAtoms.stream().map(atom -> {
-                PermissionAtomCatalog.Atom ref = PermissionAtomCatalog.atom(atom);
-                return new AccessRolePermission(roleId, ref.name(), ref.canonicalResource());
-            }).toList();
+            List<AccessRolePermission> prospective = effectiveAtoms.stream()
+                    .map(atom -> new AccessRolePermission(roleId, atom.actionClass(),
+                            atom.resourcePattern()))
+                    .toList();
             List<AccessRolePermission> addedRows = prospective.stream()
-                    .filter(row -> added.contains(row.actionClass())).toList();
+                    .filter(row -> added.contains(row.actionClass() + "@" + row.resourcePattern()))
+                    .toList();
             if (!addedRows.isEmpty()) {
                 agentAtomPolicy.assertAddedRowsGrantableInEveryBindingScope(addedRows, targetScopes);
             }
@@ -309,7 +316,7 @@ public class RoleAdminService {
         int materialized = materializer.materializeRole(saved.getId(), actorUuid(), null);
         audit.recordDurableChange(actorId(), null, "access_role_updated", RESOURCE_TYPE,
                 saved.getId().toString(), "name=" + saved.getName() + " atoms="
-                        + String.join(",", effectiveAtoms) + " holders=" + materialized);
+                        + describe(effectiveAtoms) + " holders=" + materialized);
         logger.info("[POLICY] event=access_role_updated role={} atoms={} holders={}", saved.getId(),
                 effectiveAtoms.size(), materialized);
         return toView(saved, effectiveAtoms, bindings.countByRoleId(saved.getId()));
@@ -341,34 +348,64 @@ public class RoleAdminService {
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private Map<UUID, List<String>> atomsByRole() {
-        Map<UUID, List<String>> atomsByRole = new LinkedHashMap<>();
+    private Map<UUID, List<AccessRolePermission>> permissionsByRole() {
+        Map<UUID, List<AccessRolePermission>> byRole = new LinkedHashMap<>();
         for (AccessRolePermission permission : permissions.findAll()) {
-            atomsByRole.computeIfAbsent(permission.roleId(), ignored -> new ArrayList<>())
-                    .add(permission.actionClass());
+            byRole.computeIfAbsent(permission.roleId(), ignored -> new ArrayList<>())
+                    .add(permission);
         }
-        atomsByRole.values().forEach(atoms -> atoms.sort(Comparator.naturalOrder()));
-        return atomsByRole;
+        return byRole;
     }
 
-    private void replaceAtoms(UUID roleId, List<String> atomNames) {
+    /**
+     * One atom of a role, with the resource pattern it is stored under.
+     *
+     * <p>task-81: the pair has to travel together from the request to {@code role_permissions}. A
+     * name-only carrier would silently write the canonical {@code *} and turn every narrowed atom
+     * back into a wildcard — the exact state the C1 card exists to end.</p>
+     */
+    private record AtomSpec(String actionClass, String resourcePattern) {
+
+        String key() {
+            return actionClass + "@" + resourcePattern;
+        }
+    }
+
+    private static List<AtomSpec> specsOf(List<AccessRolePermission> rows) {
+        return rows.stream()
+                .map(row -> new AtomSpec(row.actionClass(), row.resourcePattern()))
+                .sorted(Comparator.comparing(AtomSpec::actionClass)
+                        .thenComparing(AtomSpec::resourcePattern))
+                .toList();
+    }
+
+    private static List<String> actionClasses(List<AtomSpec> atoms) {
+        return atoms.stream().map(AtomSpec::actionClass).toList();
+    }
+
+    private static String describe(List<AtomSpec> atoms) {
+        return String.join(",", atoms.stream().map(AtomSpec::key).toList());
+    }
+
+    private void replaceAtoms(UUID roleId, List<AtomSpec> atoms) {
         permissions.deleteByIdRoleId(roleId);
-        for (String atom : atomNames) {
-            PermissionAtomCatalog.Atom atomRef = PermissionAtomCatalog.atom(atom);
-            permissions.save(new AccessRolePermission(roleId, atomRef.name(),
-                    atomRef.canonicalResource()));
+        for (AtomSpec atom : atoms) {
+            permissions.save(new AccessRolePermission(roleId, atom.actionClass(),
+                    atom.resourcePattern()));
         }
     }
 
-    private RoleAdminViews.RoleView toView(AccessRole role, List<String> atomNames, long bindingCount) {
+    private RoleAdminViews.RoleView toView(AccessRole role, List<AtomSpec> atoms,
+                                           long bindingCount) {
         // Stable order regardless of how the atoms were supplied: the UI diffs this list.
-        List<RoleAdminViews.AtomView> atoms = atomNames.stream()
-                .sorted(java.util.Comparator.naturalOrder())
-                .map(name -> RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name),
-                        PermissionAtomLabels.DEFAULT_LOCALE))
+        List<RoleAdminViews.AtomView> views = atoms.stream()
+                .sorted(Comparator.comparing(AtomSpec::actionClass)
+                        .thenComparing(AtomSpec::resourcePattern))
+                .map(atom -> RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(atom.actionClass()),
+                        atom.resourcePattern(), PermissionAtomLabels.DEFAULT_LOCALE))
                 .toList();
         return new RoleAdminViews.RoleView(role.getId(), role.getName(), role.getDisplayName(),
-                role.getDescription(), role.isSystem(), atoms, bindingCount);
+                role.getDescription(), role.isSystem(), views, bindingCount);
     }
 
     /**
@@ -405,17 +442,40 @@ public class RoleAdminService {
         return displayName;
     }
 
-    /** Validates existence and deduplicates; an empty set is rejected (a role with no atoms is not). */
-    private static List<String> requireAtoms(List<String> raw) {
+    /**
+     * Validates existence, resolves each atom's resource pattern and deduplicates; an empty set is
+     * rejected (a role with no atoms is not a role).
+     *
+     * <p>task-81 (DSD-1485): an atom without a resource keeps the canonical pattern, so the old
+     * {@code atoms:["read"]} contract is byte-identical; an atom <b>with</b> a resource is resolved by
+     * {@link GrantResourcePattern} (400 {@code INVALID_GRANT_RESOURCE} on any unsupported form, 403
+     * when the caller may not administer the target workspace's bindings). One role holds one pattern
+     * per atom — {@code role_permissions}' primary key allows several rows, but two patterns for one
+     * atom would make the editor's "what does this atom cover" answer ambiguous.</p>
+     */
+    private List<AtomSpec> requireAtoms(List<RoleAdminViews.AtomInput> raw) {
         if (raw == null || raw.isEmpty()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_ATOMS",
                     "at least one permission atom is required");
         }
-        LinkedHashSet<String> atoms = new LinkedHashSet<>();
-        for (String atom : raw) {
-            atoms.add(PermissionAtomCatalog.atom(atom == null ? null : atom.trim()).name());
+        LinkedHashMap<String, AtomSpec> atoms = new LinkedHashMap<>();
+        for (RoleAdminViews.AtomInput input : raw) {
+            if (input == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_ATOMS",
+                        "atom entries must not be null");
+            }
+            PermissionAtomCatalog.Atom atom = PermissionAtomCatalog.atom(
+                    input.actionClass() == null ? null : input.actionClass().trim());
+            String pattern = grantResources.resolve(atom, input.resource());
+            AtomSpec previous = atoms.putIfAbsent(atom.name(), new AtomSpec(atom.name(), pattern));
+            if (previous != null && !previous.resourcePattern().equals(pattern)) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, GrantResourcePattern.CODE_INVALID,
+                        "atom " + atom.name() + " appears twice with different resource patterns ("
+                                + previous.resourcePattern() + " vs " + pattern
+                                + "); one role holds one resource pattern per atom");
+            }
         }
-        return List.copyOf(atoms);
+        return List.copyOf(atoms.values());
     }
 
     private static String trimToNull(String raw) {

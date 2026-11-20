@@ -53,22 +53,33 @@ public class PolicyEngine {
     }
 
     /**
-     * Q-d 第 2 步（task-533）：把看起来是路径的请求资源换成 {@code fs:} 声明键。
+     * Q-d 第 2 步（task-533；请求侧补完见 task-81 / G-2）：把请求资源换成 {@code fs:} 声明键。
      *
-     * <p>今天 {@code PolicyResourceExtractor} 只产 {@code credential:}/{@code skill:} ⇒ 恒返回原值。
-     * 这是<b>唯一可能的正确结果</b>（两侧都没有路径资源），不是「接线没生效」；等提取器真的产出
-     * 路径，求交才会走到 {@code phys} 键上。</p>
+     * <p>两种形态都收：①宿主绝对路径走 {@link FsResourceKeys#declarationKeyFor}；②<b>工作区相对
+     * 路径</b>（工具实际收到的形态）走 {@link FsResourceKeys#declarationKeyForRelative}。相对形态
+     * 只对 {@link HardGuard#workspaceFileTools()} 里的工具做：其它工具提取到的 {@code command}/
+     * {@code url} 不是路径，硬转成 {@code fs:} 键会在「授予覆盖某前缀」时把拒绝变成允许。</p>
+     *
+     * <p>两种形态都换不出时原样保留 ⇒ 求交侧对非声明键返回拒绝（fail-closed），且
+     * {@code HardGuard} 仍能看到原始 {@code ..} 并硬拒。</p>
      */
-    private List<String> declarationResources(String workspaceId, List<String> resources) {
+    private List<String> declarationResources(String toolName, String workspaceId,
+                                              List<String> resources) {
         if (fsResourceKeys == null || resources == null || resources.isEmpty()) {
             return resources;
         }
+        boolean relativeAllowed = HardGuard.workspaceFileTools().contains(toolName);
         return resources.stream()
-                .map(resource -> {
-                    String declaration = fsResourceKeys.declarationKeyFor(workspaceId, resource);
-                    return declaration == null ? resource : declaration;
-                })
+                .map(resource -> declarationResource(workspaceId, resource, relativeAllowed))
                 .toList();
+    }
+
+    private String declarationResource(String workspaceId, String resource, boolean relativeAllowed) {
+        String declaration = fsResourceKeys.declarationKeyFor(workspaceId, resource);
+        if (declaration == null && relativeAllowed) {
+            declaration = fsResourceKeys.declarationKeyForRelative(workspaceId, resource);
+        }
+        return declaration == null ? resource : declaration;
     }
 
     /** Checks hard guard and current grants before the approval resolver is allowed to run. */
@@ -82,7 +93,7 @@ public class PolicyEngine {
                 : new ToolFaceRegistry(context.extraFaces());
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
-                declarationResources(workspaceId, PolicyResourceExtractor.extract(body)),
+                declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
                 face.shape(), userId, workspaceId, sessionId);
         var hardDeny = hardGuard.checkWorkspaceResources(toolName, request.resources())
                 .or(() -> hardGuard.check(request));
@@ -251,7 +262,7 @@ public class PolicyEngine {
 
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
-                declarationResources(workspaceId, PolicyResourceExtractor.extract(body)),
+                declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
                 face.shape(), userId, workspaceId, sessionId);
 
         var hardDeny = hardGuard.check(request);

@@ -186,7 +186,10 @@ class RoleUpdateScopeEscalationTest extends AbstractReusableIntegrationTest {
 
         actAs(author);
         roleAdmin.update(role.getId(),
-                new RoleAdminViews.RoleUpdate(null, "Renamed", null, null));
+                new RoleAdminViews.RoleUpdate(null, "Renamed", null,
+                        // task-81: the 4th argument is the atom-input list; spell the type out so the
+                        // text-only convenience constructor cannot make a bare null ambiguous.
+                        (List<RoleAdminViews.AtomInput>) null));
 
         assertEquals("Renamed", accessRoleRepository.findById(role.getId()).orElseThrow().getDisplayName());
         assertEquals(List.of(ToolFaceRegistry.ACTION_READ), atomsOf(role.getId()),
