@@ -41,7 +41,7 @@ e2e/
 │   ├── tab-navigation.spec.ts
 │   ├── theme.spec.ts
 │   └── toast.spec.ts
-├── real/                     # Real mode: requires Docker Compose full stack
+├── real/                     # Real mode: runs under the compose/host profile
 │   ├── auth-login.spec.ts
 │   ├── chat.spec.ts
 │   ├── cross-module-auth-guard.spec.ts
@@ -59,10 +59,13 @@ e2e/
     └── sample.pdf            # PDF viewer test fixture
 ```
 
+> 🧊 **Lane frozen (2026-10-07 user ruling; 2026-10-09 mise task commented out)**: the `real/compose` lane and its `mise run test:e2e:compose` / `test:e2e` were discontinued together with the Docker service-containerization freeze (only PostgreSQL stays containerized; CP/Agent/Runtime/UI all run as host processes). The compose row below is kept as **historical reference**; actual acceptance runs on the `real/host` lane (`mise run test:e2e:host`).
+
 | Layer | External Dependencies | Startup Method | Test Count |
 |-------|----------------------|----------------|------------|
-| mock | None | `webServer` auto-starts Vite dev | 66 |
-| real | Docker Compose (CP/Agent/Runtime/PG) | Requires `docker compose up -d` first | 37 |
+| mock | None | `webServer` auto-starts Vite dev | Varies as specs grow |
+| real / compose | Docker Compose CP/Agent/Runtime/PG + host UI | `mise run test:e2e:compose` manages Compose automatically **[frozen 2026-10-07]** | Excludes `@host` specs by default |
+| real / host | Windows-native CP/Agent/Runtime/UI + per-round isolated PostgreSQL/host root/Sandbox | The host E2E runner arranges an isolated environment per round from `e2eRunId` | Runs the `@host` specs; never connects to the long-lived dev DB |
 
 How the three lanes relate (inline SVG, see DEV-030 §6.1): the `real / compose` lane was frozen on 2026-10-07, so acceptance runs on the `real / host` lane (`mise run test:e2e:host`).
 
