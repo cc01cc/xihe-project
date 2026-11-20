@@ -97,6 +97,7 @@
 - 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/`）；PLAN 工作包统一放在 workspace 根 `plans/`，本仓不另设；XH Spec Impact 与 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
 - **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为唯一 SSOT：池槽判定与槽表均以 `.agents/skills/worktree-lifecycle` 为准；**本仓当前未维护本地池表**，需要时按该 skill 建立并登记）：一个 lane 领一个**已存在**的槽位，开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序**以该 skill 为准，本行不复述**。**禁止 `git worktree add` 新建**（仅池内全忙 + 用户明确授权时可建，且**必须同批登记池表**；本机实测 470 s 与空残留事故见 `DEV-002` §8.2）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
+- **在 DSH 上跑 Lead 工作流**（三角色 / 派工四步 / 卡面模板 / chief-1 提交 / 巡检与假绿形态）见 [`DEV-036`](docs/i18n/zh-Hans/DEV-036-lead-workflow-on-dsh.md)；本文只给指针，判据正文在该篇。
 - **开发期数据无迁移包袱（D-215）**：XH 尚未上线，本地/隔离栈的开发数据属可丢弃物 ⇒ schema 变更可**直接清库重建**，**不写回填脚本、不做双读/双写/灰度开关、不保留「新旧快照并存」兼容分支**，也不把「存量行数对照」当验收判据；三条边界与清库前声明要求见 `DEV-002` §8.3。
 
 ## Skills
