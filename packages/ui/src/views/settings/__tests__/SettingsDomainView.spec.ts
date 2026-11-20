@@ -355,7 +355,8 @@ describe("SettingsDomainView", () => {
         expect(button.classes()).toContain("text-muted-foreground");
         expect(button.classes()).toContain("hover:underline");
         // task-10 / batch-3（触控）：`size="xs"` + `h-auto` 只有 text-xs 行盒（≈18.6px），
-        // 低于 SC 2.5.8 的 24×24 ⇒ 补 `min-h-7`（3.5px × 7 = 24.5）。档位仍是 xs，视觉重量不动。
+        // 低于 SC 2.5.8 的 24×24 ⇒ 补 `min-h-7`（4px × 7 = 28px；3.5px 栅格时代是 24.5px）。
+        // 档位仍是 xs，视觉重量不动。
         expect(button.classes()).toContain("min-h-7");
         // 点下去仍是「说明为什么不能切」，不是导航
         await button.trigger("click");
@@ -382,7 +383,7 @@ describe("SettingsDomainView", () => {
         const dismiss = notice.get('[data-testid="settings-layer-block-dismiss"]');
         expect(dismiss.attributes("data-slot")).toBe("button");
         expect(dismiss.attributes("data-variant")).toBe("ghost");
-        // 同上：提示条里的关闭键也是 xs 档，命中盒靠 min-h-7 顶到 24.5px 才达标。
+        // 同上：提示条里的关闭键也是 xs 档，命中盒靠 min-h-7 顶到 28px（4px × 7）才达标。
         expect(dismiss.classes()).toContain("min-h-7");
         await dismiss.trigger("click");
         expect(wrapper.find('[data-testid="settings-layer-block-notice"]').exists()).toBe(false);

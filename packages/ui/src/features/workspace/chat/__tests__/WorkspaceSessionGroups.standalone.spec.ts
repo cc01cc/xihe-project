@@ -221,10 +221,11 @@ describe("WorkspaceSessionGroups standalone group (task-373)", () => {
         wrapper.unmount();
     });
 
-    it("group-new 触控盒 ≥24（task-57：p-1+size-3.5 只有 19.25px）", async () => {
+    it("group-new 触控盒 ≥24（task-57：原 p-1+size-3.5 只有 19.25px，4px 栅格是 22px 仍欠）", async () => {
         const wrapper = await mountGroups();
-        // `p-1`(7) + `size-3.5`(12.25) = 19.25px（ui-2 batch-4 实测 19.3）⇒ 顶到
-        // `min-h-7 min-w-7` = 24.5px；图标仍 size-3.5 不变。jsdom 不求值 Tailwind ⇒ 钉类名。
+        // 读数钉在 3.5px 栅格：`p-1`(3.5) + `size-3.5`(12.25) = 19.25px（ui-2 batch-4 实测 19.3）
+        // ⇒ 顶到 `min-h-7 min-w-7`（当时 24.5px；4px 栅格同一组类是 4 + 14 + 4 = 22px，仍 <24，
+        // 所以这个修复照样必要 ⇒ 现值 28px）；图标仍 size-3.5 不变。jsdom 不求值 Tailwind ⇒ 钉类名。
         const newBtn = wrapper.get('[data-testid="sidebar-standalone-group-new"]');
         expect(newBtn.classes()).toEqual(
             expect.arrayContaining(["min-h-7", "min-w-7", "items-center", "justify-center"]),

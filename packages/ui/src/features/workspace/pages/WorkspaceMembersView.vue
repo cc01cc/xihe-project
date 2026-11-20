@@ -83,11 +83,13 @@ onMounted(() => {
                     无 role 的 label 仍是无意义属性 ⇒ 只保留 tablist 这一处。
                 -->
                 <!--
-                    task-10 / batch-2 ④（触控）：SC 2.5.8 要 24×24 CSS px。实测（ui-2 batch-3 rect 表）
-                    这两个触发器是 40.5 × **21.8** —— 高度只有文本行盒（text-sm 行高 1.55 × 14 = 21.7），
-                    因为 vendor `TabsTrigger` 的 `h-8` 挂在 `group-data-horizontal/tabs` 上，
-                    `variant="line"` 下没落到这层 ⇒ 盒高由内容撑。加 `min-h-7`：本仓 `--spacing` = 3.5px
-                    （main.css:339）⇒ **7 步 = 24.5px**（`min-h-6` 只有 21px，是「改了还违例」）。
+                    task-10 / batch-2 ④（触控）：SC 2.5.8 要 24×24 CSS px。实测（ui-2 batch-3 rect 表，
+                    钉在 3.5px 栅格时代）这两个触发器是 40.5 × **21.8** —— 高度只有文本行盒（当时
+                    text-sm 行高 1.55 × 14 = 21.7），因为 vendor `TabsTrigger` 的 `h-8` 挂在
+                    `group-data-horizontal/tabs` 上，`variant="line"` 下没落到这层 ⇒ 盒高由内容撑。
+                    加 `min-h-7`：本仓 `--spacing` = 4px（`styles/main.css:290` 的 `@theme` 默认，
+                    D-1842 删掉了此前的 3.5px 覆盖）⇒ **7 步 = 28px**（`h-6`/`min-h-6` 今天是 24px，
+                    恰好压在下限上、零余量，仍不当 24 档用）。
                     `inline-flex items-center` 自带，所以撑高后文案仍居中。
                 -->
                 <TabsList variant="line" :aria-label="t('workspace.membersTabLabel')">

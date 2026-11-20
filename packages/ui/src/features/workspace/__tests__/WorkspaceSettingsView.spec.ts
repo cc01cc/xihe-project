@@ -193,7 +193,8 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
 
     it("task-60：移动页签与 go-environment 命中盒 ≥24（min-h-7 锁定）", async () => {
         // ui-2 batch-4 开抽屉复测：页签 20.8 高（×4）、go-environment 48×19.2 ⇒ 均 <24 违例。
-        // `min-h-7` = 3.5px × 7 = 24.5；jsdom 不求值 Tailwind ⇒ 钉类名，真 rect 归复测。
+        // `min-h-7` = 4px × 7 = 28px（3.5px 栅格时代是 24.5px）；jsdom 不求值 Tailwind ⇒ 钉类名，
+        // 真 rect 归复测。
         // go-environment 在 `v-if=auth.canManageWorkspace` 块内 ⇒ 必须给 workspace:admin 能力位
         // （同 OWNER describe 的 mountOwner 夹具；默认登录态无此能力，元素不渲染）。
         localStorage.setItem(

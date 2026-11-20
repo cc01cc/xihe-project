@@ -141,7 +141,8 @@ describe("SettingsLayout 移动抽屉必须是真 Sheet（task-510）", () => {
  * H-05（task-227 ⑨ 类）：移动端抽屉开关原先是手搓 `<button class="inline-flex min-h-[36px] …">`
  * —— 圆角/边框/hover 各写一遍，且没有 vendor 的焦点环。换 `Button` 后有两件事必须同时成立：
  * ① 它真的是 vendor 件（`data-slot="button"`）；② **触控热区没缩水** —— vendor `sm` 是 h-7
- * （24.5 px），而这里原本刻意留了 36 px（`min-h-[36px]`）。少了那条覆盖类，热区会默默缩掉 11.5 px。
+ * （28 px，4px 栅格；3.5px 栅格时代是 24.5 px），而这里原本刻意留了 36 px（`min-h-[36px]`）。
+ * 少了那条覆盖类，热区会默默缩掉 8 px。
  */
 describe("SettingsLayout 移动抽屉开关是 vendor Button（H-05）", () => {
     it("data-slot=button + outline，且触控热区仍是 36px", () => {

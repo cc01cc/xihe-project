@@ -117,11 +117,14 @@ function toggle(): void {
                 :data-actor-kind="actor.kind"
             >
                 <!--
-                    task-292 / D-1142 ③：直径 size-3.5（3.5 × 3.5 = **12.25px**）装不下 1 个
-                    汉字。实测（Range API，见 task-292 证据）：contentBox 12.25 减左右边框
-                    各 0.67 ⇒ 可用 10.92px，而「架」字 12px、「H」9.02px ⇒ **CJK 必裁**；
-                    size-4（4 × 3.5 = 14px，可用 12.67px）才装得下 12px 的 CJK 首字。
-                    注意 3.5 与 4 都不是 px：本仓 --spacing = 3.5px，所以 3.5 ⇒ 12.25、4 ⇒ 14。
+                    task-292 / D-1142 ③：下列读数钉在 **3.5px 栅格时代**（当时 --spacing = 3.5px）：
+                    直径 size-3.5 = 3.5 × 3.5 = **12.25px** 装不下 1 个汉字。实测（Range API，见
+                    task-292 证据）：contentBox 12.25 减左右边框各 0.67 ⇒ 可用 10.92px，而「架」字
+                    12px、「H」9.02px ⇒ **CJK 必裁**；size-4（4 × 3.5 = 14px，可用 12.67px）才装得下
+                    12px 的 CJK 首字。注意 3.5 与 4 都不是 px 而是 --spacing 的单位数。
+                    D-1842 后 --spacing = 4px ⇒ 同一对类今天是 **14px / 16px**（3.5 ⇒ 14、4 ⇒ 16），
+                    上面 12.25 / 10.92 / 14 都是历史读数、**不是现值**。现值下 14px 与当年选中的
+                    size-4 同值 ⇒ 这个修复在 4px 栅格上可能已可回退（属行为变更，未在本卡处理）。
                 -->
                 <span
                     class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-xs leading-none font-medium text-foreground"

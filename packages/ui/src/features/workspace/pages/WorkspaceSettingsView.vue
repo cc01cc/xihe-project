@@ -468,7 +468,7 @@ onMounted(async () => {
                             <!--
                                 task-60（SC 2.5.8 24×24 AA，D-1751）：移动端实测页签只有 **20.8 高**
                                 （ui-2 batch-4 开抽屉复测，桌面档 26.2 也不富余）⇒ 补 `min-h-7`
-                                （3.5px × 7 = 24.5）顶命中盒，字号/档位不动。
+                                （4px × 7 = 28px；3.5px 栅格时代是 24.5px）顶命中盒，字号/档位不动。
                                 jsdom 不求值 Tailwind ⇒ 类名锁在 WorkspaceSettingsView.spec。
                             -->
                             <TabsTrigger
@@ -595,7 +595,7 @@ onMounted(async () => {
                                             task-60（SC 2.5.8 24×24 AA）：实测 48×**19.2** ——
                                             `text-xs` 行盒（12 × 1.6）。`<a>` 是 inline ⇒ min-height
                                             对它不生效，必须 `inline-flex items-center` 才顶得起盒；
-                                            补 `min-h-7`（24.5）只动命中盒，字号/下划线不动。
+                                            补 `min-h-7`（4px × 7 = 28px）只动命中盒，字号/下划线不动。
                                         -->
                                         <RouterLink
                                             class="inline-flex min-h-7 items-center text-xs text-primary underline"

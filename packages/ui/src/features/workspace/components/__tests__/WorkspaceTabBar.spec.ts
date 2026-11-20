@@ -131,9 +131,11 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
 
     /**
      * task-89（WCAG 2.2 SC 2.5.8 ≥24×24）：顶栏页签关闭键改前 `p-0.5` + `size-3` ⇒
-     * **14×14**，与同 chip 的 `workspace-tab-` 本体矩形距 **7** ⇒ 真缺陷（24 圆心圆与
-     * 本体矩形相交，Spacing 例外不成立）。`min-h-7 min-w-7` = 7 × **3.5px** = **24.5px**；
-     * `X` 仍 `size-3` 不放大 ⇒ 视觉档位不动。jsdom 不求值 Tailwind ⇒ 钉类名。
+     * **14×14**（3.5px 栅格：1.75×2 + 10.5；4px 栅格同一组类是 2×2 + 12 = 16，两值都 <24），
+     * 与同 chip 的 `workspace-tab-` 本体矩形距 **7**（4px 栅格是 8）⇒ 真缺陷（24 圆心圆与
+     * 本体矩形相交，Spacing 例外不成立）。`min-h-7 min-w-7` = 7 × **4px** = **28px**
+     * （3.5px 时代是 24.5px）；`X` 仍 `size-3`（今天 12px）不放大 ⇒ 视觉档位不动。
+     * jsdom 不求值 Tailwind ⇒ 钉类名。
      */
     it("task-89：关闭键命中盒 ≥24×24（min-h-7 min-w-7），图标尺寸不变", async () => {
         gotoSession("session-2");

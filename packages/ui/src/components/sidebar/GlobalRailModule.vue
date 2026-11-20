@@ -152,13 +152,15 @@ function isItemActive(path: string) {
  * `static`，而这里必须是 `absolute`（`top-1/2 right-1`）—— 否则焦点一出现就参与流式布局、
  * 把整行顶歪。所以只撤销「视觉隐藏」相关的属性，位置语义保持不变。
  *
- * 数值：本仓 `--spacing` = 3.5px（`styles/main.css`）⇒ 24 档 = 7 步 = **24.5px**；
- * `h-6`/`size-6` 只有 21px，不是 24 档（这才是「改了还违例」的那条坑）。
+ * 数值：本仓 `--spacing` = 4px（`styles/main.css` 的 `@theme` 默认，D-1842 起）⇒ 带余量的
+ * 24 档 = 7 步 = **28px**；`h-6`/`size-6` 今天是 24px，恰好压在下限上（零余量），
+ * 不是「富余的 24 档」（这才是「改了还违例」的那条坑）。3.5px 栅格时代 7 步是 24.5px。
  */
 [data-collapsible="icon"] .rail-module-menu:focus-visible {
     position: absolute;
-    width: 24.5px;
-    height: 24.5px;
+    /* 7 步 × --spacing(4px) = 28px（D-1842 前 3.5px 栅格是 24.5px） */
+    width: 28px;
+    height: 28px;
     margin: 0;
     padding: 0;
     overflow: visible;

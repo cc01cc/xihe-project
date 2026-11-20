@@ -501,8 +501,9 @@ describe("ConfigDomainPanel", () => {
         expect(save.attributes("data-slot")).toBe("button");
         // 尺寸档取 xs 是为了贴住原形状（h-6），不许被"顺手改成 default"
         expect(save.attributes("data-size")).toBe("xs");
-        // 但 xs = h-6 = 21px < SC 2.5.8 的 24×24（ui-2 rect 表实测 `config-save-context-policy` 47×21）
-        // ⇒ 命中盒靠 `min-h-7` 顶到 24.5px；档位不动，所以形状只长高 3.5px。
+        // 但 xs = h-6 在 3.5px 栅格时代是 21px < SC 2.5.8 的 24×24（ui-2 rect 表当时实测
+        // `config-save-context-policy` 47×21）；4px 栅格现值 h-6 = 24px，压在下限上零余量。
+        // ⇒ 命中盒靠 `min-h-7` 顶到 28px；档位不动，所以形状只长高 4px（28 − 24）。
         expect(save.classes()).toContain("min-h-7");
         expect(save.text()).toBe("Save");
 

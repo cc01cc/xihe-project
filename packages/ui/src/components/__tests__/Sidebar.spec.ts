@@ -172,7 +172,8 @@ describe("Sidebar", () => {
         expect(btn.text()).toBe("");
         expect(btn.attributes("aria-label")).toBe("新建会话");
         expect(btn.attributes("title")).toBe("新建会话");
-        // token 读数：size-7 = 7 × --spacing(3.5px) = 24.5px；填充色从 bg-primary 变透明。
+        // token 读数：size-7 = 7 × --spacing(4px) = 28px（3.5px 栅格时代是 24.5px）；
+        // 填充色从 bg-primary 变透明。
         expect(btn.classes()).toContain("size-7");
         expect(btn.classes()).not.toContain("bg-primary");
         expect(btn.classes()).not.toContain("w-full");
@@ -516,7 +517,8 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         const wrapper = await mountSidebar();
         const trigger = wrapper.get('[data-testid="sidebar-new-workspace"]');
         expect(trigger.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
-        // task-57（SC 2.5.8 24×24 AA）判据未放宽：命中区从 24.5 涨到 32（h-8 w-8 = 32px）。
+        // task-57（SC 2.5.8 24×24 AA）判据未放宽：命中区从当时的 24.5 涨到 32（h-8 w-8 = 32px，
+        // 4px 栅格同值）。
         expect(trigger.classes()).toContain("h-8");
         expect(trigger.classes()).toContain("w-8");
 

@@ -68,8 +68,10 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
 
     /**
      * task-89（WCAG 2.2 SC 2.5.8 ≥24×24）：容器页签的关闭键改前 `p-0.5` + `size-3` ⇒
-     * **14×14**，与左邻 `workspace-container-tab-` 本体矩形距 **7** ⇒ 真缺陷。
-     * `min-h-7 min-w-7` = 7 × 3.5px = **24.5px**（本仓 `--spacing` = 3.5）；`X` 仍 size-3。
+     * **14×14**（3.5px 栅格：1.75×2 + 10.5；4px 栅格同一组类是 2×2 + 12 = 16，两值都 <24），
+     * 与左邻 `workspace-container-tab-` 本体矩形距 **7**（4px 栅格是 8）⇒ 真缺陷。
+     * `min-h-7 min-w-7` = 7 × 4px = **28px**（本仓 `--spacing` = 4；3.5px 时代是 24.5px）；
+     * `X` 仍 size-3（今天 12px）。
      * jsdom 不求值 Tailwind ⇒ 钉类名，真 rect 归 Playwright。
      */
     it("task-89：关闭键命中盒 ≥24×24（min-h-7 min-w-7），图标尺寸不变", () => {

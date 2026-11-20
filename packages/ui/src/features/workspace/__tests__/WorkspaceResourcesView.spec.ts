@@ -328,8 +328,9 @@ describe("工作区资源页（M4-2 / task-210）", () => {
 });
 
 describe("资源页触控目标（task-10 / batch-2 ④）", () => {
-    it("说明折叠按钮不再用 h-6 覆盖（h-6 = 21px < SC 2.5.8 的 24）", async () => {
-        // vendor `size="sm"` 已是 h-7 = 24.5px；覆盖成 h-6 是 21px。
+    it("说明折叠按钮不再用 h-6 覆盖（h-6 恰在下限 24px 上、无余量）", async () => {
+        // vendor `size="sm"` 已是 h-7 = 28px（4px 栅格；3.5px 时代 24.5px）；覆盖成 h-6 今天是
+        // 24px（3.5px 时代 21px）—— 两值都不给余量，故仍不许覆盖。
         // jsdom 不求值 Tailwind ⇒ 钉类名；真实 rect 见 task-51 的浏览器 rect 导出。
         const wrapper = await mountPage();
         const toggle = wrapper.get('[data-testid="ws-resources-hints-toggle"]');

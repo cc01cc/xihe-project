@@ -377,7 +377,7 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
             expect(toggle.classes()).toEqual(expect.arrayContaining(["min-h-7", "min-w-7"]));
             expect(toggle.classes()).not.toContain("h-6");
         }
-        // 叶子行没有 chevron，但仍占同宽（否则父子行文字起点差 10.5px）。
+        // 叶子行没有 chevron，但仍占同宽（否则父子行文字起点差 12px：w-7 = 28 与 size-4 = 16 的差）。
         expect(wrapper.get('[data-testid="org-tree-node-d-root"]').html()).toContain("min-w-7");
         wrapper.unmount();
     });

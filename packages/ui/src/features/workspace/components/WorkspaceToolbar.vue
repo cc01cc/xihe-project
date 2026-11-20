@@ -102,9 +102,10 @@ function overflowNav(navigate: () => void) {
         class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-card md:hidden"
     >
         <!--
-            task-57（SC 2.5.8 24×24 AA）：原手搓 `<button class="p-1.5">` + `size-3.5` 图标 =
-            5.25×2 + 12.25 = **22.75px**（ui-2 batch-4 实测 22.8）⇒ 换 vendor Button
-            `variant="ghost" size="icon-sm"` = 24.5px（AGENTS：控件优先栈内 UI 库）。
+            task-57（SC 2.5.8 24×24 AA）：原手搓 `<button class="p-1.5">` + `size-3.5` 图标，
+            在 3.5px 栅格下是 5.25×2 + 12.25 = **22.75px**（ui-2 batch-4 实测 22.8）⇒ 换 vendor Button
+            `variant="ghost" size="icon-sm"`（4px 栅格 = 7 步 = 28px；3.5px 时代量到 24.5px）
+            （AGENTS：控件优先栈内 UI 库）。
             显式保留：`text-muted-foreground` / `hover:bg-accent`（盖过 ghost 默认的 muted 底与
             hover:text-foreground）、`md:hidden`（仅移动态）；图标仍 `size-3.5` —— vendor 的
             svg 尺寸规则 `[&_svg:not([class*=size-])]` 对**带 size 类**的图标不生效。
@@ -123,7 +124,8 @@ function overflowNav(navigate: () => void) {
         >
             <PanelLeft class="size-3.5" />
         </Button>
-        <!-- 同上（task-57）：命中盒 22.75 → 24.5px，vendor 换装；注释见 files 按钮上方。 -->
+        <!-- 同上（task-57）：命中盒 22.75（3.5px 栅格读数）→ 28px（4px 栅格 7 步），vendor 换装；
+             注释见 files 按钮上方。 -->
         <Button
             type="button"
             variant="ghost"
@@ -137,7 +139,7 @@ function overflowNav(navigate: () => void) {
             <Plus class="size-3.5" />
         </Button>
         <div class="relative md:hidden">
-            <!-- 同上（task-57）：命中盒 22.75 → 24.5px，vendor 换装。
+            <!-- 同上（task-57）：命中盒 22.75（3.5px 栅格读数）→ 28px（4px 栅格 7 步），vendor 换装。
                  `aria-expanded` 走 fallthrough attrs 落到原生 button 上，不变。 -->
             <Button
                 type="button"
@@ -160,14 +162,15 @@ function overflowNav(navigate: () => void) {
             -->
             <!--
                 task-57（SC 2.5.8 24×24 AA）：菜单 7 项**统一命中盒** `min-h-12`（D-206 裁定）。
-                本仓 `--spacing` = 3.5px ⇒ 12 步 = **42px**（token，不是任意值；24 档是 7 步）。
+                本仓 `--spacing` = 4px ⇒ 12 步 = **48px**（token，不是任意值；24 档是 6 步）。
                 改前是两档：monitor/members 带 `max-md:min-h-[44px]`（任意值），另 5 项只有
-                `py-1.5` ⇒ 内容高 10.5 + 21.7 = 32.2px。**两档都 ≥24 ⇒ 都不违例**，
+                `py-1.5` ⇒ 内容高 32.2px（3.5px 栅格读数）。**两档都 ≥24 ⇒ 都不违例**，
                 要修的是「同族两档 + 任意值」这件事本身。
-                D-206（Lead 2026-11-16 自裁，可逆）：统一到 **42px** 而非 24.5，四条理由 ——
-                ①避免 44 → 32.2 的手感回归；②`min-h-12` 是 token；③7×42 = 294px 在 844 视口内；
-                ④WCAG 24 是下限不是目标，iOS HIG 44 是推荐 ⇒ 取 42 兼顾两者。
-                用户若要 44 档，改一个 token（`min-h-[12.5]` → 12.5 步 ≈ 43.75，或等 spacing 允许）。
+                D-206（Lead 2026-11-16 自裁，可逆）：统一到 **42px**（当时 3.5px 栅格的 12 步）而非
+                24.5，四条理由 —— ①避免 44 → 32.2 的手感回归；②`min-h-12` 是 token；
+                ③7×42 = 294px 在 844 视口内；④WCAG 24 是下限不是目标，iOS HIG 44 是推荐 ⇒ 取 42 兼顾两者。
+                **D-1842 后同一 token 现值 48px**（4px 栅格，7×48 = 336px 仍在 844 视口内），四条理由不变；
+                若用户要 44 档，4px 栅格下就是 `min-h-11`（11 步 = 44px），不必再用任意值。
             -->
             <div
                 v-if="overflowOpen"

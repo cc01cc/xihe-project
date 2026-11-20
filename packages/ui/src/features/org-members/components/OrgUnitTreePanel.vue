@@ -233,11 +233,15 @@ function retryChildren(item: OrgTreeItem) {
                         <template v-else>
                             <!--
                                 task-10 / batch-2 ④（触控）：WCAG 2.2 SC 2.5.8 要求 24×24 CSS px。
-                                原先 `p-0.5` + `size-4` 图标 ⇒ 1.75×2 + 14 = **17.5px**，低于门槛。
-                                改为 `min-h-7 min-w-7`：**本仓 `--spacing` = 3.5px**（main.css:339）
-                                ⇒ 7 步 = **24.5px** 才是 24 档；`h-6`/`size-6` 只有 21px，别当 24 用。
+                                原先 `p-0.5` + `size-4` 图标，3.5px 栅格下是 1.75×2 + 14 = **17.5px**，
+                                低于门槛（4px 栅格同一组类是 2×2 + 16 = **20px**，同样低于 24）。
+                                改为 `min-h-7 min-w-7`：**本仓 `--spacing` = 4px**（`styles/main.css:290`
+                                的 `@theme` 默认；D-1842 删掉了此前的 3.5px 覆盖）⇒ 7 步 = **28px**
+                                才是带余量的 24 档；`h-6`/`size-6` 今天是 24px，恰好压在下限上
+                                （零余量），别当富余档用。
                                 图标不上放大（仍 size-4），只把命中区顶到门槛以上；叶子行占位同步宽到 w-7，
-                                否则父行与叶子行的 label 会错开 10.5px。
+                                否则父行与叶子行的 label 会错开（定格宽差：3.5px 栅格 24.5 − 14 = 10.5px；
+                                4px 栅格 28 − 16 = 12px）。
                             -->
                             <button
                                 v-if="fi.hasChildren"

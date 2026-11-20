@@ -7,14 +7,17 @@ import WorkspaceToolbar from "../WorkspaceToolbar.vue";
 /**
  * task-57（WCAG 2.2 SC 2.5.8 = 24×24 AA）× **D-206**（Lead 裁定）：
  *
- * 1) 溢出菜单 7 个入口统一 `min-h-12` = 12 × 3.5px = **42px**（D-206 可逆自裁，四条理由：
- *    避免 44→32.2 手感回归 / token 非任意值 / 7×42=294px 在 844 视口内 / 24 是下限不是目标）。
+ * 1) 溢出菜单 7 个入口统一 `min-h-12` = 12 × 4px = **48px**（D-206 可逆自裁；当时 3.5px 栅格
+ *    同一 token 是 42px，四条理由：避免 44→32.2 手感回归 / token 非任意值 /
+ *    7×42=294px 在 844 视口内 / 24 是下限不是目标；现值 7×48 = 336px 仍在视口内）。
  *    改前是两档：`more-monitor`/`more-members` 带 `max-md:min-h-[44px]`（任意值），另 5 项
- *    只有 `py-1.5` ⇒ 内容高 32.2px。两档都 ≥24 ⇒ 都不违例，要修的是「同族两档 + 任意值」。
+ *    只有 `py-1.5` ⇒ 内容高 32.2px（3.5px 栅格读数）。两档都 ≥24 ⇒ 都不违例，要修的是
+ *    「同族两档 + 任意值」。
  *
  * 2) 工具条三枚移动按钮（files / new-chat / more）**换 vendor Button**（Lead go）：
- *    原手搓 `<button class="p-1.5">` + `size-3.5` = 22.75px（ui-2 batch-4 实测 22.8）⇒
- *    `variant="ghost" size="icon-sm"` = 24.5px。显式保留 text-muted-foreground / hover:bg-accent /
+ *    原手搓 `<button class="p-1.5">` + `size-3.5` = 22.75px（3.5px 栅格读数，ui-2 batch-4
+ *    实测 22.8）⇒ `variant="ghost" size="icon-sm"` = 28px（4px 栅格 7 步；当时 24.5px）。
+ *    显式保留 text-muted-foreground / hover:bg-accent /
  *    md:hidden；图标仍 size-3.5。断言 `data-variant="ghost"` + `data-size="icon-sm"`
  *    且类名里**不得再出现 `p-1.5`**（防回潮到手搓贴类）。
  *
@@ -54,7 +57,7 @@ async function mountToolbar() {
 }
 
 describe("WorkspaceToolbar 触控（task-57 / D-206）", () => {
-    it("菜单 7 项都带 min-h-12（42px，D-206 口径）", async () => {
+    it("菜单 7 项都带 min-h-12（4px 栅格 = 48px，D-206 口径的同一 token）", async () => {
         const wrapper = await mountToolbar();
         await wrapper.get('[data-testid="workspace-toolbar-more-mobile"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-toolbar-more-menu"]').exists()).toBe(true);

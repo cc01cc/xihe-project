@@ -965,10 +965,12 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                 <!-- H-05：手搓 primary 按钮（自带 disabled:opacity-50 与 hover:opacity-90）换 vendor `Button`；
                      尺寸取 `xs` 是为了贴住原形状（h-6 px-2 + text-xs），不改变这一行的视觉重量。 -->
                 <!--
-                    task-10 / batch-3（触控）：`size="xs"` = h-6 = **21px**（`--spacing` 3.5px × 6 步），
-                    低于 WCAG 2.2 SC 2.5.8 的 24×24（ui-2 rect 表实测 `config-save-context-policy` = 47×21）。
-                    只顶命中盒、**不动 `size` 档位**（改档位会连带一串按钮的形状）；
-                    24 档在 3.5px 步进下 = 7 步 ⇒ `min-h-7` = 24.5px（`min-h-6` 仍只有 21，不算数）。
+                    task-10 / batch-3（触控）：`size="xs"` = h-6，3.5px 栅格时代是 **21px**
+                    （`--spacing` 3.5px × 6 步），低于 WCAG 2.2 SC 2.5.8 的 24×24（ui-2 rect 表当时
+                    实测 `config-save-context-policy` = 47×21）。4px 栅格现值 h-6 = **24px**，
+                    恰好压在下限上（零余量）。只顶命中盒、**不动 `size` 档位**（改档位会连带一串
+                    按钮的形状）；带余量的 24 档在 4px 步进下 = 7 步 ⇒ `min-h-7` = **28px**
+                    （`min-h-6` 只有 24，不算富余档）。
                 -->
                 <Button
                     size="xs"

@@ -241,9 +241,9 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
         -->
         <!--
             task-80：说明条同样收进内容列 —— 外层留分隔线（满宽），内层居中到 1152。
-            取 `px-2`（7px）而不是 `px-6`（21px）：条内已有的 `px-4`（14px）仍在 ⇒ 7 + 14 = 21，
-            与 h1 / 页签 / 面板的左缘严丝合缝。直接把 `px-4` 改成 `px-6` 也能对齐，但会把
-            「条的内边距」与「列的边距」揉成一个数，下次调列宽就会连带把条内距改掉。
+            取 `px-2`（4px 栅格 = 8px）而不是 `px-6`（24px）：条内已有的 `px-4`（16px）仍在
+            ⇒ 8 + 16 = 24，与 h1 / 页签 / 面板的左缘严丝合缝。直接把 `px-4` 改成 `px-6` 也能对齐，
+            但会把「条的内边距」与「列的边距」揉成一个数，下次调列宽就会连带把条内距改掉。
         -->
         <div
             v-if="MOVED_RESOURCE_IDS.length > 0 || referenceLayers.length > 0"
@@ -261,10 +261,11 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
                     }}</span>
                     <CollapsibleTrigger as-child>
                         <!--
-                        task-10 / batch-2 ④（触控）：原写 `h-6` = 21px（--spacing 3.5px × 6 步），
+                        task-10 / batch-2 ④（触控）：最初写 `h-6`，3.5px 栅格时代 6 步 = 21px，
                         低于 WCAG 2.2 SC 2.5.8 的 24×24。删掉这个高度覆盖即回落到 vendor
-                        `size="sm"` 的 `h-7` = 24.5px —— 视觉几乎不变，命中区达标。
-                        注意别用 `h-6`/`size-6` 当 24 档：本仓 6 步是 21px。
+                        `size="sm"` 的 `h-7` = 28px（4px 栅格；3.5px 时代是 24.5px）——
+                        视觉几乎不变，命中区达标。注意别用 `h-6`/`size-6` 当「富余的 24 档」：
+                        4px 栅格今天是 24px，恰好压在下限上（零余量）。
                     -->
                         <Button
                             variant="ghost"

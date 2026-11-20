@@ -388,7 +388,7 @@ test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
             return { width: box.width, height: box.height };
         });
         log("judgeC2", { multi });
-        // WCAG 2.2 SC 2.5.8 的 24px 是仓内既有命中盒口径（close 按钮 24.5px）。
+        // WCAG 2.2 SC 2.5.8 的 24px 是仓内既有命中盒口径（close 按钮 min-h-7 = 28px，4px 栅格）。
         expect(multi.width, "多页签下 + 命中盒 ≥24px（不被挤压）").toBeGreaterThanOrEqual(24);
         await expect(plus(page, "main"), "多页签下 + 仍可见").toBeVisible();
     });

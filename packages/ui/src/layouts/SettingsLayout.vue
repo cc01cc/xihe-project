@@ -180,7 +180,8 @@ watch(
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
             <div class="flex items-center gap-2 px-4 pt-3 lg:hidden">
                 <!-- H-05：移动端抽屉开关换 vendor `Button`。`min-h-[36px]` 保留 —— 那是触控热区
-                     的既有取值（vendor `sm` 是 h-7 = 24.5px），换成它会让热区缩水 11.5px。 -->
+                     的既有取值（vendor `sm` 是 h-7 = 28px；3.5px 栅格时代是 24.5px），
+                     换成它会让热区缩水 8px（36 − 28）。 -->
                 <Button
                     variant="outline"
                     size="sm"
