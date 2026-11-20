@@ -6,10 +6,14 @@ sidebar_group: "Developer Guide"
 sidebar_order: 2
 status: active
 created: 2026-05-28
-updated: 2026-10-25
+updated: 2026-11-20
 ---
 
 # Developer Guide — xihe Agent Platform
+
+Related documents:
+- [DEV-001 System Architecture](DEV-001-system-architecture.md)
+- [USER-001 User Guide](USER-001-user-guide.md)
 
 ## 1. Project Structure
 
@@ -76,9 +80,54 @@ xihe/
     └── images/workspace/             # xihe/workspace container image
 ```
 
+**Architecture design — protocol notes (SSOT: `DEV-001` §1.5, `DEV-016`, `DEV-004` §6.3)**
+
+**Communication protocol**
+
+- UI ↔ CP: HTTP + SSE, for chat message streaming
+- Agent ↔ CP: HTTP + SSE, for Agent streaming responses
+- CP ↔ Runtime: a per-request Runtime executor boundary for tool invocation; the tracked executor owns process readiness and health probing. The boundary is backend-agnostic — the same HTTP call dispatches to `docker` / `windows-mxc` / `windows-host` inside Runtime by `ExecutionSpec.executionMode` (see DEV-001 §1.3).
+
+**MCP reverse proxy**
+
+CP acts as an HTTP reverse proxy without depending on any MCP SDK:
+
+```text
+Agent → POST /mcp → CP (JSON parsing + permission check + request rewriting) → Runtime
+```
+
+See `internal/SPRINTS/SPRINT-001-cs-agent-mvp/DESIGN-007-mcp-gateway-reverse-proxy.md`
+
+**Tool name namespace**
+
+CP adds prefix during tools/list and removes prefix during tools/call:
+
+- Runtime returns: `read_file`
+- CP returns to Agent: `runtime__read_file`
+- Agent calls: `runtime__read_file`
+- CP removes prefix and forwards: `read_file` → Runtime
+
+See `internal/SPRINTS/SPRINT-001-cs-agent-mvp/DESIGN-009-tool-namespace.md`
+
+**SSE event protocol**
+
+UI ↔ CP communicates through SSE with 7 event types:
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `token` | CP→UI | LLM output token |
+| `tool_call` | CP→UI | Tool execution started |
+| `tool_result` | CP→UI | Tool execution result |
+| `approval_request` | CP→UI | Request user confirmation |
+| `status` | CP→UI | Agent status change |
+| `error` | CP→UI | Error message |
+| `done` | CP→UI | Completion (with token statistics) |
+
+LangChain events are automatically mapped through the SSE adapter layer (`packages/agent/src/xihe_agent/adapters/sse_adapter.py`).
+
 ## 2. Development Environment
 
-### 2.1. Prerequisites
+**Prerequisites**
 
 Using `mise` in the root directory is recommended for toolchain management and cross-module commands:
 
@@ -107,7 +156,7 @@ rustc --version  # 1.97.1+
 cargo --version  # 1.97.1+
 ```
 
-### 2.2. Install Dependencies
+**Install dependencies**
 
 Running directly from the root directory is recommended:
 
@@ -144,7 +193,7 @@ cd packages/control-plane && mvn dependency:resolve
 cd packages/runtime && cargo fetch
 ```
 
-### 2.3. Root Directory Tasks
+**Root directory tasks**
 
 > Dev hot-loop policy (dev channel "edit → see effect ≤30 s", verification channel keeps per-sha build roots, two prohibitions) lives in the ONE workspace: `internal/A03-xihe/docs/dev-hot-loop.md` — a cross-repo path, not part of this repo's body.
 
@@ -223,210 +272,13 @@ If you prefer not to use root tasks, you can enter the module directory and exec
 
 The root directory no longer uses pnpm workspace. `packages/ui/` is itself the pnpm root: it owns `pnpm-workspace.yaml`, the pnpm security policies (cooldown, build-script whitelist, overrides, patches) and the single lock file. Because it is a workspace root, pnpm commands run under `packages/ui/` must NOT pass `--ignore-workspace` — that flag is install-only and does not apply to `run`, and it would skip the package's own workspace policy. You can also use the root `mise run *` tasks, which are already wired to the UI root.
 
-### 2.4. Runtime Modes
+### First-boot account: where `admin@xihe.local` comes from (task-172 / `D-1532 ④`)
 
-CP (Control Plane) supports two runtime modes:
+CP defaults to `cp.bootstrap.seed-admin=${XIHE_SEED_ADMIN:false}`, so a fresh install has an empty `users` table, `GET /api/v1/auth/bootstrap-status` returns `{"initialized": false}`, and the UI sends the first user to `/onboarding` where the first registered account carries the admin duty (user ruling `39D-2`: keep first-run account creation). To get a ready-made `admin@xihe.local` for dev/test/demo, export `XIHE_SEED_ADMIN=true` plus `XIHE_DEV_ADMIN_PASSWORD` **before starting the stack**; seed insert is idempotent (`findByEmail` reuses an existing row and never overwrites the password), so a restart never creates a second account. Supersede (task-42 / D-1753 ②, 2026-11-17): the generated-password branch no longer prints the value (logs are a permanent-retention surface) — it only points at `mise run reset-admin`, and `DataSeeder` writes no persistent file, so "an account exists but nobody knows the password" **does happen** and the remedy is `mise run reset-admin` (an accepted cost, not a malfunction). `mise run reset-admin` is **not** a substitute for the switch: it only UPDATEs and exits 3 when the row is missing. Full Chinese-side section: `docs/i18n/zh-Hans/DEV-002-developer-guide.md` section 2 (the packaged launcher below opts in for you).
 
-#### Mode A: Docker Compose Full Stack (one-shot baseline — frozen since 2026-10-07; NOT the daily path)
+### Configuration management (PLAN-042)
 
-```bash
-# [frozen 2026-10-07 — do not run; daily work uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
-docker compose up -d --build
-```
-
-Starts all 4 services: `postgres` + `control-plane` + `agent` + `runtime`.
-
-> **Topology limit (read first)**: Compose already mounts Runtime's Docker Engine socket and aligns `XIHE_AGENT_API_TOKEN`/`XIHE_CP_API_TOKEN` (fixed in PLAN-0401), but the container-side WorkspaceStorage mapping is still missing (runtime mounts `./logs/runtime:/logs` and `/var/run/docker.sock`, with no host workspace directory mapping). Compose mode therefore **still cannot replace the `dev:host` main line**: workspace / MCP / screenshot verification must run in host mode, and a Compose failure must never be attributed to host v1. Separately, Agent single-workspace MCP binding conflicting with "one workspace per E2E case" is an architecture-level known boundary (see the project AGENTS Known Issues).
-
-CP connects to `postgres:5432` via Docker internal network `xihe-net`. PostgreSQL username/password is defined by `POSTGRES_USER` / `POSTGRES_PASSWORD` in `docker-compose.yml`.
-
-The development-stack PostgreSQL is **passwordless** (`POSTGRES_HOST_AUTH_METHOD: trust` plus an empty `POSTGRES_PASSWORD`, kept deliberately per DSD-1491) and its published port is **loopback-only**: `docker-compose.yml` maps `127.0.0.1:${XIHE_PG_PORT:-12634}:5432`, so `localhost:12634` still works on this machine while hosts on the same subnet cannot connect (task-97, 2026-11-20).
-
-Verification:
-
-```bash
-curl -s http://localhost:12631/actuator/health    # Expected: {"status":"UP"} (inside Docker: :8080)
-curl -s http://localhost:12633/health              # Expected: OK (inside Docker: :8001)
-```
-
-#### Mode B: Host Development (CP runs on host, for unit tests)
-
-```powershell
-# Option B1: H2 in-memory database (no external DB required; PowerShell example)
-$env:XIHE_CP_DATASOURCE_URL = 'jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1'
-$env:XIHE_CP_DATASOURCE_DRIVER = 'org.h2.Driver'
-$env:XIHE_CP_DATASOURCE_USERNAME = 'sa'
-$env:XIHE_CP_DATASOURCE_PASSWORD = ''
-$env:XIHE_CP_JPA_DIALECT = 'org.hibernate.dialect.H2Dialect'
-$env:SPRING_FLYWAY_ENABLED = 'false'
-$env:SPRING_JPA_HIBERNATE_DDL_AUTO = 'create-drop'
-
-mvn -f packages/control-plane/pom.xml spring-boot:run
-
-# Option B2: PostgreSQL container (requires Docker running first)
-docker compose up -d postgres
-mvn spring-boot:run -f packages/control-plane/pom.xml
-```
-
-**Note**: Under WSL2 mirror network mode, host connections to Docker PostgreSQL may fail password authentication. This is because the `bridge` network's port mapping causes NAT translation of the connection source address, and the `127.0.0.1/32 trust` rule in `pg_hba.conf` doesn't match. If you encounter this issue, use **Option B1 (H2)** or reach PostgreSQL on the host directly (`mise run dev:host` keeps only PostgreSQL in a container, so the host-side port is the one that matters). **Mode A (Full Docker Compose) is frozen since 2026-10-07** and stays historical reference only.
-
-`.env.dev` file records two database configurations (PostgreSQL is default, H2 is commented out). Uncomment to switch.
-
-**Startup order (PLAN-0632 T4.4)**: in `dev:host`, cp/runtime/ui still start in parallel, but the **Agent waits for CP readiness first** — `dev:host:wait-for-cp` polls `/actuator/health` until 200 (**budget is path-layered**: reuse-of-built-classes **60 s**; rebuild path (stale/missing/dirty ⇒ this start runs `clean compile` first) defaults to **240 s**; override both paths with `XIHE_WAIT_FOR_CP_TIMEOUT`, the rebuild path only with `XIHE_WAIT_FOR_CP_REBUILD_TIMEOUT`); on timeout it **fails loudly and prints the CP log path** instead of starting the Agent into `degraded` (the old behaviour burned ~2.8 s of startup config sync for nothing). Starting the Agent on its own still works via `mise run dev:host:start:agent` (it carries the wait).
-
-**Stack build freshness (PLAN-0662)** — a long-running stack does **not** follow `develop` by itself, and `health UP` does not mean "this is the current code" (that is how BL-240 was misjudged). Build output carries `classes/META-INF/build-info.properties` (`commit`/`builtAt`/`dirty`) and the startup log has a `cp.build commit=… built=… dirty=…` line. Operationally **read the verdict before restarting**: `mise run dev:host:status` (add `-- --json` for fixed fields, which lane scripts assert on); `verdict=fresh` alone means these classes came from the current HEAD; `verdict=dirty` (BL-325) is the right commit built from a dirty tree and **counts as non-fresh** (not stale — stale only means a different commit).
-- `stale`/`missing` **rebuild by default**: `mise run dev:host:start:cp`, `dev:host` and `dev:stack` all compare build-info against `git rev-parse HEAD` before `mvn` and run `clean compile` first when they disagree (single implementation: `scripts/stack-run.mjs`). To bring a stack up on old classes anyway, pass `--no-rebuild`: the log keeps a `WARNING` plus the old commit so it stays traceable.
-- When an E2E run reuses an external stack (`XIHE_E2E_EXTERNAL_SERVER=1`), the runner asserts CP build commit == `XIHE_E2E_EXPECT_CP_COMMIT` (defaulting to the HEAD of this checkout) before starting, and fails fast on a mismatch **or an unreadable build-info**, pointing at "rebuild/restart CP first" — so an old build is never reported as a product defect (BL-240).
-- **Build directories are isolated per stack and per commit (BL-253 L3)**: each stack compiles into its own `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]` (root overridable via `XIHE_CP_BUILD_ROOT`); a sibling `<stackId>/.current` records the directory **that stack last actually started from**, and status/E2E assertions read it, so `cpBuild.targetDirSource` tells you `pointer` (the record owned by that stack, most trustworthy) / `newest` (newest build slot on disk) / `env` (explicit `XIHE_CP_TARGET_DIR`) / `derived` (not built yet, derived from HEAD). **Read both verdict and source before restarting**: only `pointer+fresh` means "this stack is running the current code".
-- Retention happens **only through explicit cleanup**: `mise run dev:host:cp-build:clean` is a **dry run** by default, printing `keep N / prune M` per stack; add `-- --apply` to delete. Every stack keeps its newest 3 slots plus whatever `.current` points at, and only `cp/<stack-N>/<sha12>` is scanned — legacy directories (`dev-host`/`bl240-cp`/`e2e`/rust target) never match. The **rollback channel** stays the explicit `XIHE_CP_TARGET_DIR` (highest precedence, passed through as-is). Note that after switching to the isolated layout **the next restart of a stack** compiles into its own `<sha12>` for the first time (~60 s, during which that stack is unavailable): whoever restarts it owns checking the four ports and `verdict=fresh` — never restart a stack owned by somebody else just to "refresh".
-
-#### Parallel host stacks (PLAN-0533)
-
-`XIHE_STACK_ID` (`stack-1`..`stack-8`, default `stack-1`) selects a stack. The launcher derives ports, compose project, PG database, sandbox container prefix and the log/host-root/state dirs; modules only read the derived `XIHE_*_PORT` env. **Every 1263X port elsewhere in this guide is the stack-1 default.**
-
-```bash
-mise run dev:stack -- --stack 2                    # or: XIHE_STACK_ID=stack-2 mise run dev:host
-node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived values without starting
-```
-
-| Stack | UI | CP | Agent | Runtime | PG | compose project |
-|---|---|---|---|---|---|---|
-| stack-1 (default) | 12630 | 12631 | 12632 | 12633 | 12634 | `a03-xihe` |
-| stack-2 | 12640 | 12641 | 12642 | 12643 | 12644 | `xihe-stack-2` |
-| stack-3 / 4 | 12650 / 12660 blocks | … | … | … | … | `xihe-stack-3/4` |
-| stack-5..8 | 12700 / 12710 / 12730 / 12740 blocks | … | … | … | … | `xihe-stack-5..8` |
-
-- stack-1 keeps the legacy paths (`.xihe-workspaces`, `logs`, `.xihe-state`); stack≥2 uses `.xihe-stacks/<n>/{workspaces,logs,state}` (gitignored).
-- **On-demand stacks (D-808① reversed the PLAN-0656 "routine dual-stack")**: the `stack-1..8` slots remain the port/isolation infrastructure, so stacks are started on demand — **do not keep two resident stacks**; parallel development runs through the **four resident module branches** (`m/ui` / `m/cp` / `m/agent` / `m/runtime`, D-810). `node scripts/dev-stack.mjs status --all` gives a read-only overview of **every running stack's** ports/health/DB/compose/build target (a stack that is not running is not a fault). Three build-surface rules: **per-stack cargo target** — non-default stacks get `CARGO_TARGET_DIR=<root>/<stackId>` automatically (`<root>` = `XH_CARGO_TARGET_ROOT`, falling back to `<workspace>/.tmp/cargo-target` when unset) (stack-1 keeps the shared `main` warm cache from `.cargo/config.toml`; an explicitly set `CARGO_TARGET_DIR` is never overridden), so two stacks can no longer fight over one exe (BL-221); **orphan sweep** — `dev-stack stop` and every `stack-run <service>` launch sweep leftover processes by "this stack's port + service identity profile" with per-action logs (foreign occupants are warned, never killed); **E2E build isolation** — `test:e2e:host` uses its own `cargo-target/e2e` and `C:/xihe-build/e2e` and no longer requires stopping the dev stacks (see §5 Test entry points). Every directory under `cargo-target` (`main` / `stack-N` / `e2e` / worktree names) is a rebuildable cache (pair-delete per the workspace `worktree-lifecycle` discipline); the `check:runtime-target` water level intentionally measures only the resolved single target, never a cross-stack sum (so one stack's cache cannot gate another stack's start).
-- **Configurable build-output root (task-80, 2026-11-08)**: `XH_CARGO_TARGET_ROOT` decides where the whole target family lives (the machine value lives in the gitignored `mise.local.toml`, while `mise.toml` carries only the contract and never a machine path), layout `<root>/{main,stack-N,e2e}`; a linked worktree adds its own level `<root>/<worktree-dir>/` so two lanes on the same stack id never overwrite each other's exe. Precedence: `CARGO_TARGET_DIR` > `XH_CARGO_TARGET_ROOT` > the old derivation `<one>/.tmp/cargo-target`; **with the variable unset the behavior is byte-for-byte unchanged**. See §6 "Rust build cache strategy" for fail-fast semantics, the wrapper scope, and the bare-`cargo`/IDE residue.
-- Unregistered ids (`stack-9`, `foo`) fail fast instead of falling back to stack-1.
-- `dev:host:stop` / `dev:reset` only touch the current stack (label `xihe.stack-id`; a missing label means stack-1).
-- Two concurrent stacks at most are recommended.
-- **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (per stack × per port, derived fields, and `.env.dev` self-consistency). That gate is **fail-closed** (task-61 P1-3): it runs with `--require-mirror`, so a missing ONE workspace exits 2 — a skip no longer reads as a pass. A standalone clone that only needs the in-repo self-check runs the bare script `node scripts/check-ports-parity.mjs` (prints `SKIP`, json `skipped:true`, exit 0); do not treat the gate as passable there.
-- **Single-clone self-check**: `mise run check:standalone` exports a parent-less copy and verifies startup/self-check do not depend on the one root.
-- **OpenAPI contract gate (BL-162)**: `mise run check:openapi` validates `docs/api/openapi.yaml` (3.1 header, unique paths, path-parameter declarations, Problem Details, plus the frozen checkpoint-revert and session-read contract slices). It is a **dependency of `test:cp`**, so running the CP test suite checks the contract; PLAN closeout / wave acceptance must run it explicitly. A failure prints the parsed path count, the first failure and a fix hint (`docs/api/openapi.yaml` stays the single source of truth). It deliberately does **not** diff Spring routes against the contract — "route implemented but undocumented" is a known blind spot tracked as a separate BL.
-- **API docs freshness gate (PLAN-0763 M4)**: `mise run check:api-docs` asserts `docs/api/inventory.generated.md` is **byte-identical** to what `docs/api/openapi.yaml` generates (`--check`: stale ⇒ exit 1 with the first differing lines plus `fix: mise run gen:api-docs`; missing PyYAML interpreter ⇒ exit 2, never a silent pass); regenerate with `mise run gen:api-docs`. Parsing is delegated to the PyYAML that ships in `packages/agent/.venv` (**no new dependency**, and the script never hand-writes a YAML parser); grouping is two levels via `x-tagGroups` then `operation.tags[0]`, degrading to one section per path prefix (with a TODO marker) while the contract carries no tags. The hand-written `docs/api/inventory.md` is **kept and not replaced** — route-migration mappings, callers and error contracts cannot be expressed by the contract. The gate sits in the `validate` dependency chain next to `check:openapi` (not chained under it: that would force the Maven-only `test:cp` lane to depend on python).
-- **Migration-number gate (task-164 judgement / task-168 wiring)**: `mise run check:migrations` compares the Flyway numbers under `packages/control-plane/src/main/resources/db/migration` with the workspace registry `one/internal/A03-xihe/docs/migration-numbers.md` (duplicate numbers / registry behind / unregistered new number). **Three exit states 0/1/2: 1 = findings (each prints its code + file); 2 = cannot answer (migration dir or registry unreadable, or the registry headline values do not parse) — exit 2 is NOT green.** The registry is a workspace file and lives outside this repository, so it is located in this order: `mise run check:migrations -- --registry <path>` > sibling `../internal/…` > **the main checkout** (worktree/lane case, prints `NOTE cross-repo registry`); if none resolves the gate exits 2 and prints both fixes. Self-test: `node scripts/check-migration-numbers.mjs --selftest` (5 judgement fixtures + 4 resolution fixtures). **Not wired into `validate`** — prove it fires before hanging it on the pipeline.
-- **Migration test coverage gate (task-181 delivered / task-192 wired)**: `mise run test:cp:migration` runs `scripts/run-migration-tests.mjs`, which asks `scripts/check-migration-test-coverage.mjs --test-filter` for the class list and then runs `mvn -o test -Dtest=<list>` under `packages/control-plane`, i.e. only the CP tests that cover registered Flyway migrations; **why not inline the mvn call in `mise.toml`**: mise executes run strings through `cmd.exe` on this host and `$(...)` is not expanded (measured 2026-11-13: mvn reported `No tests matching pattern "$(node … --test-filter)"`) — the executable form and the criterion stay separate, and the criterion still lives only in that script; when the migration→test mapping has a gap the script exits non-zero first and names the file. **One-sentence criterion**: the task exists ⇒ "did anyone miss one" is answered by the script; it does not exist ⇒ it is answered by someone's memory. **Deliberately not part of `test:cp`** (wiring it there would swallow the maven output).
-- **Commit-message gate (2026-11-06)**: `mise run check:commit-msg` **now blocks** and is a dependency of `mise run validate` (D-216 measured at the flip, 2026-11-06 02:02: 32 commits since `a632de77`, 0 violations). Rules: first line `<type>(<scope>): <summary>`; **summary display width ≤72 columns (CJK counts as 2, ≈36 Han chars), merge ≤100**; non-merge commits must reference `PLAN-####`/`BL-###`/`D-###`. Shell script `scripts/check-commit-msg.mjs` (`--file` for hooks, `--range` for review, `--stats` for the window, `--report-only` for the old never-fails audit; blocking is the default) — the `mise` task runs `--enforce` and gates `validate`; enable a local hook with `git config core.hooksPath scripts/hooks`. The flip to blocking is decided by **commit count** (D-213: **≥30 commits** since `a632de77`, 12 h cap, whichever first; violation rate ≤10% with zero over-wide merges). Two different numbers by nature: 30 is the criterion threshold, 32 is the sample measured at the flip.
-
-#### Detached full-stack supervisor (PLAN-0603)
-
-`mise run dev:host` is a **foreground** mise task: when the terminal / agent turn exits, its child tree is reaped. For "survives the turn + four services ready", use the repo supervisor (commands/cwd/stack env are reused from `scripts/stack-run.mjs`, with no parent-directory lookup):
-
-```bash
-# Run from the A03 checkout root; works in the main checkout and in .worktrees/<name>
-node scripts/dev-stack.mjs start --stack 4 --with-pg
-mise run dev:stack -- --stack 4 --with-pg        # equivalent entry (forwards args)
-node scripts/dev-stack.mjs status --stack 4
-node scripts/dev-stack.mjs stop --stack 4                 # keeps PostgreSQL by default
-node scripts/dev-stack.mjs stop --stack 4 --with-pg       # explicitly stop the PG container (volume kept)
-```
-
-- Services: CP / Agent / Runtime / UI; `start` waits for HTTP readiness (default 300s, `--timeout`) and exits 2 on timeout, pointing at `.xihe-stacks/<n>/logs/*.err.log`.
-- Logs/PIDs: `.xihe-stacks/<n>/logs/<svc>.{out,err}.log` and `dev-stack-pids.json`; `--json` for machine-readable output.
-- `mise run dev:stack -- --stack N` forwards to this supervisor; **`--next` is not supported for xihe** (use `--stack`).
-- **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`. Inside the ONE workspace the external-cache convention for `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT` is documented on the ONE side; a standalone clone just uses the default cache.
-- `stop` only kills process trees recorded in the PID file whose command line matches `stack-run.mjs`; it never kills by port blindly.
-- **Dev admin password auto-injection (D-766)**: `start` resolves, persists and injects the dev admin password itself, then upserts it into the database once the four services are ready; source precedence, skip conditions and the log contract are in §4.11 "Dev admin password auto-injection".
-
-#### Packaged product (PLAN-0632, `pkg:launcher` / `pkg:installer`)
-
-The distribution shape ("double-click the installer → services start → browser opens localhost"), not the daily dev path (that stays Mode A).
-
-```bash
-mise run pkg:launcher -- start --install <install-dir>  # order: PG(TCP) -> CP(/actuator/health 200) -> Agent -> Runtime -> UI(same-origin /)
-mise run pkg:launcher -- status --stack 1 --json        # read-only state (health/ports/PIDs)
-mise run pkg:launcher -- stop                           # reverse-order tree kill + residual port check
-mise run pkg:installer                                  # NSIS build from the four existing service artifacts (-- --stage-only skips makensis)
-```
-
-- **The order is the contract**: PG must accept TCP (the CP runs Flyway on boot), then CP `/actuator/health` 200, then Agent (its startup config sync is fail-closed on `llm-provider`), then Runtime, then UI (D32-06 same-origin serving). Every step is a readiness probe with an explicit timeout — **no fixed sleeps** (implementation: `scripts/lib/service-supervisor.mjs`).
-- Extra arguments go after `--` (`--install`, `--stack`, `--exe <service>=<path>`, `--skip <service>`), the same convention as `dev:stack` and `dev:host:provider-init`.
-- **Two launchers, two jobs (do not mix them)**: `mise run pkg:launcher` (Node, `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor** — it starts the five stages from an install-relative manifest and **does no first-run work** (an uninitialized data directory fails with `PostgreSQL data directory is not initialized`); the **product first run** (extract PG, `initdb`, secrets, data root, JDBC bootstrap, open the browser) belongs to the **bundled Java launcher** (`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`, compiled into the installer by `build-installer.mjs`).
-- **Artifacts only land in `.tmp/pkg/` (gitignored) and are never committed.**
-- On a dev machine `pkg:launcher status` reports the `dev:host` listeners as `foreignListeners` and returns `ok:false` (exit 1): that is the correct answer to "this is not a packaged install", not a failure.
-- Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/archive/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
-
-##### Empirical landing path (task-187, 2026-11-18) [measured]
-
-> This section records the **product deployment** path proven by the task-187 empirical run (not the daily dev path — that stays Mode A).
-> **Do not mix the two launchers**: the product first run / start / stop uses the **bundled Java launcher** (`app/xihe-launcher.jar` — it does secrets / initdb / pgvector / data root / JDBC bootstrap); `mise run pkg:launcher` (Node `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor and does no first-run work** (an uninitialized data directory fails outright). Every command below targets the Java launcher.
-
-**Build the stage (assemble only; no makensis)**
-
-```bash
-# cwd = A03-xihe/; artifacts land only under .tmp/pkg/ (gitignored)
-node scripts/pkg/build-installer.mjs --stage-only \
-  --empirical-pgvector "<pgvector dist dir>" \
-  --runtime-exe "<xihe-runtime.exe>"
-# or via mise: mise run pkg:installer -- --stage-only --empirical-pgvector <dir> --runtime-exe <exe>
-```
-
-- `--empirical-pgvector <dir>`: the **D-1817 parameterized bypass**, **off by default**. When given, it uses a locally rebuilt pgvector artifact but **the shipped sha gate is untouched**, prints full provenance plus an `EMPIRICAL — NOT FOR SHIPPING` marker, and appends an audit line to `.tmp/pkg/empirical-audit.log`. Use it only when the genuine pgvector inputs are unavailable for empirical work; **a release must not pass this flag**.
-- **PG share-trim keep-set v2 (fixed by task-187)**: CP Flyway V163 needs `ltree` (`V163__plan0773_org_units.sql:43`); a keep-set with only plpgsql leaves the CP unable to boot (`extension "ltree" is not available`). The set now keeps all of plpgsql plus all of ltree (control + the 1.1 base script + the 1.1→1.2→1.3 upgrade chain). `PG_SHARE_TRIM_VERSION` is now v2 — changing the keep-set **requires a version bump**, otherwise the unchanged stamp reuses the stale cache.
-
-**Single-instance first-run start/stop (product Java launcher)**
-
-```bash
-S=<stage dir>; LA=<data root, e.g. /d/tmp/xh/la-1>
-export LOCALAPPDATA="$LA"        # data root = <LOCALAPPDATA>/Xihe (PG cluster / secrets / workspaces / attachments)
-"$S/payload/jre/bin/java.exe" -jar "$S/app/xihe-launcher.jar" start \
-  --install "$S" --no-browser --cleanup-on-failure
-```
-
-- **`start` blocks** through the pg→cp→agent→runtime→ui gates, then exits 0 leaving detached children (no Job Object). First-run chain: secrets (7 keys, owner-only ACL) → security env=prod 5/5 → pgvector install → initdb → db-bootstrap (role xihe / db xihe_1 / extension vector / SELECT 1) → CP (Flyway incl. V163) → agent → runtime → ui.
-- **First-run account creation (task-172 / D-1532 ④)**: CP defaults to `cp.bootstrap.seed-admin=${XIHE_SEED_ADMIN:false}`, so a fresh install has an empty `users` table, `GET /api/v1/auth/bootstrap-status` returns `{"initialized": false}`, and the UI sends the first user to `/onboarding` where the first registered account carries the admin duty (user ruling `39D-2`: keep first-run account creation). To get a ready-made `admin@xihe.local` for dev/test/demo, export `XIHE_SEED_ADMIN=true` plus `XIHE_DEV_ADMIN_PASSWORD` **before starting the stack**; seed insert is idempotent (`findByEmail` reuses an existing row and never overwrites the password), so a restart never creates a second account. Supersede (task-42 / D-1753 ②, 2026-11-17): the generated-password branch no longer prints the value (logs are a permanent-retention surface) — it only points at `mise run reset-admin`, and `DataSeeder` writes no persistent file, so "an account exists but nobody knows the password" **does happen** and the remedy is `mise run reset-admin` (an accepted cost, not a malfunction). `mise run reset-admin` is **not** a substitute for the switch: it only UPDATEs and exits 3 when the row is missing. Full Chinese-side section: `docs/i18n/zh-Hans/DEV-002-developer-guide.md` section 2 (the packaged launcher below opts in for you).
-- **A fresh instance boots with a seeded admin** (task-205/D-1818): the launcher injects `XIHE_SEED_ADMIN=true`, so CP DataSeeder creates **admin@xihe.local** (instance owner, SUPER_ADMIN) with the launcher-generated password disclosed only in **FIRST-RUN.txt (0600)**; the first user logs in with instance:admin — no self-service claim needed.
-- **webui = CP same-origin** (D32-06): `GET http://127.0.0.1:<cpPort>/` = 200; `/actuator/health` = 200.
-- **status**: `... status --install "$S"` prints each service's alive/ready plus "stack is up". **Note the status process exits 1 even when "stack is up" — judge liveness by the text, not the exit code.**
-- **stop**: `... stop --install "$S"` kills the tree in reverse order and rechecks residual ports; success prints `residual=[]` and removes the pid file.
-- **Execution discipline (or it hangs)**: launcher children detach but **inherit the stdout pipe** ⇒ **never pipe `start` into `tee`** (tee waits forever on the children); redirect to a file instead. Under a DSH/agent tool call **run it in the background + collect with job_output** (a foreground ops_bash waits on the detached children's handles and hangs); keep start→verify→stop inside one job so the job ending does not take the services down with it.
-
-**Dual instance (port / DB / data-root isolation)**
-
-```bash
-# instance A: stack-1 ports 12631-34, data root la-1 (stage's default app/ports.json)
-# instance B: own data root la-2 + own ports.json (a clean custom range, e.g. 12730-34)
-node scripts/pkg/ports-json.mjs --stack stack-2 --out <stage2>/app/ports.json   # or hand-write a clean range
-# the payload may be junction-shared (read-only): <stage2>/payload -> <stage1>/payload
-```
-
-- **Three isolation levers**: ① the five ports in `app/ports.json`; ② the `LOCALAPPDATA` data root (each instance gets its own PG cluster / secrets / workspaces); ③ a separate install directory (logs / pid file). The payload may be junction-shared to save disk.
-- **Both webui reachable at the same moment**: A `GET :1263x/`=200 + B `GET :1273x/`=200 (different ports, same moment).
-- **Data-isolation check**: register a user in A → logging in with the same credentials against B must return 401; create a workspace in A → B's list must not contain it and B directly requesting that workspaceId must return 404 `WORKSPACE_NOT_FOUND`.
-- **Windows TIME_WAIT trap**: Windows postgres **has no SO_REUSEADDR** ⇒ if a pg port accumulated TIME_WAIT from repeated probes, bind fails outright (`could not bind ... Only one usage`, even with no LISTEN). **Give the second instance a clean range never probed before** (e.g. 12730-34); do not reuse a range that just failed.
-- **Start/verify/stop in one job, run in the background** (same reason as above).
-
-**Known limitations (recorded as-is; unverified items)**
-
-- **NSIS Setup.exe unverified**: `makensis` is not installed and a host install needs user approval ⇒ the installer shell was not run; this path uses **stage + Java launcher** (functionally equivalent, not the double-click installer shape). Verifying NSIS needs user approval for a host install plus makensis.
-- **launcher hardcodes stack-1 / xihe_1** (`Launcher.java` @1048/1050/1074): both instances name the DB `xihe_1` and the stack `stack-1`, but the **clusters are separate** (different data roots) ⇒ isolation holds; the DB name is cosmetic. Proper multi-stack needs the launcher to read the stackId from ports.json (a code change; this card only documents).
-- **status exit=1**: judge liveness by the text (see above).
-- **Artifacts / evidence**: the skeleton stage lands under `.tmp/pkg/`; full evidence is `internal/A03-xihe/evidence/2026-11-18-exe-dual-instance-infra/`.
-
-#### Rust build cache and worktree isolation (PLAN-0596)
-
-- **Configurable build-output root (task-80, 2026-11-08; supersedes "Rust build output must stay on H:")**: Rust build output no longer has to live on the H: volume. `XH_CARGO_TARGET_ROOT` (the machine value lives in the gitignored `mise.local.toml` — on one dev box that reads e.g. `G:\zeolib\cargo-target`; no machine path is committed) relocates the whole cargo target family; the primary checkout gets `<root>/{main,stack-N,e2e}`, a linked worktree gets `<root>/<worktree-dir>/…` (so two lanes running the same stack id do not each overwrite the other's exe — the BL-221 failure mode). Precedence: `CARGO_TARGET_DIR` (`worktree-env.ps1` / manual) > `XH_CARGO_TARGET_ROOT` > old derivation `<one>/.tmp/cargo-target`; **unset ⇒ byte-for-byte the pre-080 behavior** (regression asserted in `scripts/lib/stack-cargo-target.test.mjs`). A relative or non-existent root makes the scripts **fail fast** instead of silently building on the old volume. To change the drive use `mise.local.toml` (gitignored, outranks `mise.toml`; exporting the variable in a shell does **not** win under `mise run` — measured 2026-11-08, mise `[env]` overrides the parent environment). **Scope:** mise cargo tasks that run through `scripts/cargo-run.mjs` land on `<root>`; **bare `cargo` that bypasses the wrapper, plus the IDE/rust-analyzer, still write the H: volume per `.cargo/config.toml`** (`target-dir = "../.tmp/cargo-target/main"` is deliberately kept; see below). **Net effect: the dev stacks, E2E, and wrapper-backed mise tasks no longer add H: usage; bare `cargo` and the IDE still do.**
->
-> **Wrapper (task-80 batch 2, 2026-11-08):** every `mise.toml` task that called cargo directly (`build:runtime` / `test:runtime` / `test:runtime:lib` / `test:runtime:lib:gate` / `test:runtime:lib:ignored:isolated|functional` / `lint:runtime` / `clean:runtime-sweep`) now calls `node scripts/cargo-run.mjs <cargo args…>`. Three hard rules keep it transparent: ① `spawnSync('cargo', args, { stdio: 'inherit' })` — cargo's stdout/stderr is never captured or rewritten; ② the exit code is passed through verbatim (`process.exit(status)`, signal-kill → 1); ③ it injects `<root>/[<worktree-dir>/]main` only when `XH_CARGO_TARGET_ROOT` is set and `CARGO_TARGET_DIR` is not, and the key comes from `scripts/lib/stack-cargo-target.mjs` (no second derivation) — with the variable unset the behavior is byte-identical to bare cargo. `cargo fetch` stays bare (writes `CARGO_HOME`, not the target dir). **Evidence:** `mise run test:runtime:lib` cold-built in 65.4 s into `<root>/plan-0631-t32/main` (3364 files / 1.33 GB; measured against the then-current machine root) while `.worktrees\.tmp\cargo-target` kept its old mtime; with `XH_CARGO_TARGET_ROOT=''` the same task's `cargo metadata` still reports the old H: path (nothing injected).
-- **Default: one `CARGO_TARGET_DIR` per worktree.** Inside the ONE workspace, the ONE-side worktree convention externalizes it under `one/.tmp/cargo-target/<name>` (and `UV_PROJECT_ENVIRONMENT` under `one/.tmp/venvs/<name>`); a standalone clone keeps the in-tree default. Do not point several worktrees at the same target: concurrent builds serialize on the target lock, and on Windows a running service holds the exe, so the other worktree's build fails.
-- **Measured (2026-10-31 scratch):** two checkouts with identical source/profile shared one target: second cold build 48.9s → **0.3s**, disk 2×2.606GB → **2.606GB**. The benefit only applies when source/toolchain/profile match; real parallel branches differ, so the default stays isolated (user acceptance would be required to change it).
-- **Sweep scope:** `mise run clean:runtime-sweep` only touches the single target resolved by the current `cargo metadata` (under `mise run` = the wrapper-injected `<root>/[<worktree-dir>/]main`; in a plain shell = in-tree or the external dir from the ONE-side convention); it never scans other projects under `.local/cargo-target`. `--maxsize 12GB` is interpreted as MiB (≈11.18 GiB).
-- **Permanent delete:** `mise run clean` runs `rm -rf logs packages/*/target packages/*/dist packages/*/coverage` with **no recycle bin and no prompt**; stop builds/services and confirm those are rebuildable artifacts first. Treat caches as "delete and rebuild", not cross-drive backup.
-
-### dev:host vs dev:stack — leases and the two meanings of `--stack` (measured 2026-11-12)
-
-- **`dev:host`** runs the four services (CP/Agent/Runtime/UI) **in the current terminal** and **writes no `lease` / `pidFile`**; bookkeeping under `.xihe-stacks/<n>/` is written only by the detached supervisor.
-- **`dev:stack`** (= `node scripts/dev-stack.mjs start`) starts **detached**, **writes the lease**, and outlives the terminal.
-- **Consequence**: after a `dev:host` session, `dev-stack status` first reports **`orphan` + `lease-pid-dead`** (4/4 services listening, lease pointing at a dead pid). That is **not a fault** — run `node scripts/dev-stack.mjs acquire --stack 1` to reclaim it and get back to `healthy`.
-- **One flag, two meanings (`--stack`)**:
-  - `scripts/dev-stack.mjs --stack 1` ⇒ **stack number**, lease under `.xihe-stacks/1/`;
-  - `scripts/cp-build-clean.mjs --stack stack-1` ⇒ **directory name**; passing `--stack 1` **silently no-ops with exit 0** and prints `nothing to prune` (`planForStack:72`, `join(root, stackId)`) — no error, no hint.
-
-### 2.5. Configuration Management (PLAN-042)
-
-#### Architecture Overview
+**Architecture overview**
 
 CP ConfigService is the unified configuration management entry point, using a two-layer model:
 
@@ -442,7 +294,7 @@ CP ConfigService is the unified configuration management entry point, using a tw
 - All application-layer configuration (LLM provider, API key, model, log level, embedding, etc.) managed through CP ConfigService
 - Only bootstrap variables retained for infrastructure startup (`XIHE_CP_URL`, `XIHE_CP_API_TOKEN`, `XIHE_RUNTIME_HOST/PORT`, `XIHE_DATASOURCE_*`, etc.)
 
-#### Configuration Methods
+**Configuration methods**
 
 **Method A: CP API** (runtime modification, takes effect immediately)
 
@@ -474,7 +326,7 @@ curl -X POST http://localhost:12631/api/v1/config/import \
 
 JSONC supports comments and trailing commas; you can directly copy MCP configuration snippets from Claude Desktop / Cursor.
 
-#### Development Workflow
+**Development workflow**
 
 1. **`cp config.import.example.jsonc config.import.local.jsonc`** — Fill in non-secret settings only (PowerShell: `Copy-Item`); API keys belong in Provider Connections, not JSONC.
 2. **`mise run dev:host`** — Start the daily host stack; config import remains separate.
@@ -497,7 +349,7 @@ The CLI is an operator entry point. It calls CP's authenticated HTTP API for Pro
 
 6. **Runtime debugging** — `PUT /api/v1/config/admin/{domain}` or UI settings page modification, takes effect immediately
 
-#### Configuration Clients
+**Configuration clients**
 
 Each module accesses CP ConfigService through local clients:
 
@@ -507,75 +359,426 @@ Each module accesses CP ConfigService through local clients:
 | **Agent** | `xihe_agent/config_client.py` | Fetches admin+system cache at startup, provides `get(key, default)` interface |
 | **Runtime** | `src/config_client.rs` | Fetches and periodically refreshes at startup, provides `get(key)` interface |
 
-### 2.6. Integration Tests
+## 3. Runtime Modes
 
-Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require a running CP. Read its port from `XIHE_CP_PORT` (stack-1 default `12631`; the `8080` in "Service ports" under §5.1 is the container-internal port, not the host port).
+CP (Control Plane) supports two runtime modes:
+
+### Mode A: `dev:host` daily development (recommended)
+
+```powershell
+# Option B1: H2 in-memory database (no external DB required; PowerShell example)
+$env:XIHE_CP_DATASOURCE_URL = 'jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1'
+$env:XIHE_CP_DATASOURCE_DRIVER = 'org.h2.Driver'
+$env:XIHE_CP_DATASOURCE_USERNAME = 'sa'
+$env:XIHE_CP_DATASOURCE_PASSWORD = ''
+$env:XIHE_CP_JPA_DIALECT = 'org.hibernate.dialect.H2Dialect'
+$env:SPRING_FLYWAY_ENABLED = 'false'
+$env:SPRING_JPA_HIBERNATE_DDL_AUTO = 'create-drop'
+
+mvn -f packages/control-plane/pom.xml spring-boot:run
+
+# Option B2: PostgreSQL container (requires Docker running first)
+docker compose up -d postgres
+mvn spring-boot:run -f packages/control-plane/pom.xml
+```
+
+**Note**: Under WSL2 mirror network mode, host connections to Docker PostgreSQL may fail password authentication. This is because the `bridge` network's port mapping causes NAT translation of the connection source address, and the `127.0.0.1/32 trust` rule in `pg_hba.conf` doesn't match. If you encounter this issue, use **Option B1 (H2)** or reach PostgreSQL on the host directly (`mise run dev:host` keeps only PostgreSQL in a container, so the host-side port is the one that matters). **Mode A (Full Docker Compose) is frozen since 2026-10-07** and stays historical reference only.
+
+`.env.dev` file records two database configurations (PostgreSQL is default, H2 is commented out). Uncomment to switch.
+
+**Startup order (PLAN-0632 T4.4)**: in `dev:host`, cp/runtime/ui still start in parallel, but the **Agent waits for CP readiness first** — `dev:host:wait-for-cp` polls `/actuator/health` until 200 (**budget is path-layered**: reuse-of-built-classes **60 s**; rebuild path (stale/missing/dirty ⇒ this start runs `clean compile` first) defaults to **240 s**; override both paths with `XIHE_WAIT_FOR_CP_TIMEOUT`, the rebuild path only with `XIHE_WAIT_FOR_CP_REBUILD_TIMEOUT`); on timeout it **fails loudly and prints the CP log path** instead of starting the Agent into `degraded` (the old behaviour burned ~2.8 s of startup config sync for nothing). Starting the Agent on its own still works via `mise run dev:host:start:agent` (it carries the wait).
+
+**Stack build freshness (PLAN-0662)** — a long-running stack does **not** follow `develop` by itself, and `health UP` does not mean "this is the current code" (that is how BL-240 was misjudged). Build output carries `classes/META-INF/build-info.properties` (`commit`/`builtAt`/`dirty`) and the startup log has a `cp.build commit=… built=… dirty=…` line. Operationally **read the verdict before restarting**: `mise run dev:host:status` (add `-- --json` for fixed fields, which lane scripts assert on); `verdict=fresh` alone means these classes came from the current HEAD; `verdict=dirty` (BL-325) is the right commit built from a dirty tree and **counts as non-fresh** (not stale — stale only means a different commit).
+- `stale`/`missing` **rebuild by default**: `mise run dev:host:start:cp`, `dev:host` and `dev:stack` all compare build-info against `git rev-parse HEAD` before `mvn` and run `clean compile` first when they disagree (single implementation: `scripts/stack-run.mjs`). To bring a stack up on old classes anyway, pass `--no-rebuild`: the log keeps a `WARNING` plus the old commit so it stays traceable.
+- When an E2E run reuses an external stack (`XIHE_E2E_EXTERNAL_SERVER=1`), the runner asserts CP build commit == `XIHE_E2E_EXPECT_CP_COMMIT` (defaulting to the HEAD of this checkout) before starting, and fails fast on a mismatch **or an unreadable build-info**, pointing at "rebuild/restart CP first" — so an old build is never reported as a product defect (BL-240).
+- **Build directories are isolated per stack and per commit (BL-253 L3)**: each stack compiles into its own `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]` (root overridable via `XIHE_CP_BUILD_ROOT`); a sibling `<stackId>/.current` records the directory **that stack last actually started from**, and status/E2E assertions read it, so `cpBuild.targetDirSource` tells you `pointer` (the record owned by that stack, most trustworthy) / `newest` (newest build slot on disk) / `env` (explicit `XIHE_CP_TARGET_DIR`) / `derived` (not built yet, derived from HEAD). **Read both verdict and source before restarting**: only `pointer+fresh` means "this stack is running the current code".
+- Retention happens **only through explicit cleanup**: `mise run dev:host:cp-build:clean` is a **dry run** by default, printing `keep N / prune M` per stack; add `-- --apply` to delete. Every stack keeps its newest 3 slots plus whatever `.current` points at, and only `cp/<stack-N>/<sha12>` is scanned — legacy directories (`dev-host`/`bl240-cp`/`e2e`/rust target) never match. The **rollback channel** stays the explicit `XIHE_CP_TARGET_DIR` (highest precedence, passed through as-is). Note that after switching to the isolated layout **the next restart of a stack** compiles into its own `<sha12>` for the first time (~60 s, during which that stack is unavailable): whoever restarts it owns checking the four ports and `verdict=fresh` — never restart a stack owned by somebody else just to "refresh".
+
+### Operator CLI surface (PLAN-0574)
 
 ```bash
-# Method 1: Docker Compose (historical — compose lane frozen since 2026-10-07; not for acceptance)
-docker compose up -d --build   # [frozen — historical reference only, do not run]
-cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
-
-# Method 2: Host stack
-# Use the tracked orchestrator; it owns the process lifecycle and readiness checks.
-mise run dev:host
-
-# In a separate terminal, probe CP before running Agent tests. The bounded health
-# probe is a prerequisite and reports failure instead of silently skipping tests.
-curl --fail-with-body --silent --show-error --max-time 5 http://localhost:12631/actuator/health
-cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
+mise run xihe -- status                                              # /status + /health + /version aggregate
+mise run xihe -- workspace list
+mise run xihe -- workspace get <wsId>                                # includes environment
+mise run xihe -- job list <wsId>
+mise run xihe -- job output <wsId> <jobId> [--stream stdout|stderr] [--offset N] [--limit N]
+mise run xihe -- job cancel <wsId> <jobId>                           # idempotent `changed:false` passthrough
+mise run xihe -- checkpoint list <wsId>                              # includes retention (failures reported explicitly)
+mise run xihe -- checkpoint preview-revert <wsId> <sliceRef>         # preview only, never reverts
+mise run xihe -- scheduled-task list <wsId> [--page N] [--size N]
+mise run xihe -- audit list [--type T] [--page N] [--size N]
+mise run xihe -- config export [--include-secrets] [--out <file>] [--force]   # secrets off by default
+mise run xihe -- provider delete <id> [--yes]                        # shows delete-impact first
+mise run xihe -- version [--check]
 ```
 
-Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an unreachable CP is otherwise an explicit test/setup failure. Do not use fixed sleeps, bare background shell operators, or untracked processes; use the tracked process/readiness/health probe with a bounded timeout.
+- Every command supports `--json` (a single stdout object `{ok:true,data}` or `{ok:false,error:{code,message}}`); human output is a one-line/table summary. See `mise run xihe -- --help`.
+- Stack port overrides (bootstrap allowlist): `node scripts/stack-run.mjs <cp|agent|runtime> --set XIHE_CP_PORT|XIHE_AGENT_PORT|XIHE_RUNTIME_PORT=<1..65535>` — the three allowlisted keys only, injected into the target that actually consumes the key; duplicates, unknown keys, secrets and invalid values are refused before any process starts, without echoing the input. When `XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` is set explicitly, the port only changes the listening side and the launcher warns about a possible broken link. Mechanism details: DEV-003 §2 and `spec/configuration/env-effective.md`.
 
-## 3. Architecture Design
+### Credential CLI (PLAN-0575)
 
-### 3.1. Communication Protocol
-
-- UI ↔ CP: HTTP + SSE, for chat message streaming
-- Agent ↔ CP: HTTP + SSE, for Agent streaming responses
-- CP ↔ Runtime: a per-request Runtime executor boundary for tool invocation; the tracked executor owns process readiness and health probing. The boundary is backend-agnostic — the same HTTP call dispatches to `docker` / `windows-mxc` / `windows-host` inside Runtime by `ExecutionSpec.executionMode` (see DEV-001 §1.3).
-
-### 3.2. MCP Reverse Proxy
-
-CP acts as an HTTP reverse proxy without depending on any MCP SDK:
-
-```text
-Agent → POST /mcp → CP (JSON parsing + permission check + request rewriting) → Runtime
+```bash
+mise run xihe -- credential list [--owner-type USER|WORKSPACE --owner-id <id>]
+mise run xihe -- credential references <id> --workspace <wsId>
+mise run xihe -- credential events <id> --workspace <wsId>
+mise run xihe -- credential precheck --permissions <atom[,atom...]>
+mise run xihe -- credential create --kind token --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> [--delivery-tier lease|reveal] --secret-env <NAME>
+mise run xihe -- credential create --kind key_pair --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> --access-key-env <NAME> --secret-key-env <NAME>
+mise run xihe -- credential replace <id> --kind token|key_pair --workspace <wsId> (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)
+mise run xihe -- credential delete <id> --workspace <wsId> [--yes]   # references preview, then confirmed delete
+mise run xihe -- credential bind <id> --workspace <wsId> --agent <principalId[,principalId...]>
+mise run xihe -- credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>
+mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]
 ```
 
-See `internal/SPRINTS/SPRINT-001-cs-agent-mvp/DESIGN-007-mcp-gateway-reverse-proxy.md`
+- **Secret channels**: `create`/`replace` read the token or key pair only from `--*-env <NAME>` environment variable names or a no-echo TTY prompt. Values are never accepted as arguments, read from JSONC or taken from input files; errors and logs only name the variable.
+- **Explicit workspace**: every credential command except `list` and `create --owner-type USER` requires `--workspace`, and `X-Workspace-Id` matches it. `create --owner-type WORKSPACE` requires `--owner-id` to equal `--workspace`; the CLI never falls back to the token claim or first membership.
+- **reveal**: on an explicit request it performs an independent step-up with the login password (`--password-env` or TTY) and prints to stdout or an `--out` regular file (existing files need confirmation or `--force`; symlinks/directories are refused). Terminal/file output is the only plaintext path; errors, progress and logs never carry the password or value. CP audit: `credential_revealed` on success, only `credential_reveal_failed` on a wrong password; other refusal branches write no event/audit.
+- **delete gate**: fetch `…/references` and show it before `--yes`/interactive confirmation; `409 CREDENTIAL_IN_USE` is passed through with a re-query hint, never described as a complete report.
+- CP error codes are preserved (`CREDENTIAL_NOT_FOUND`/`CREDENTIAL_IN_USE`/`CREDENTIAL_TIER_MISMATCH`/`CREDENTIAL_REVEAL_STEP_UP_FAILED`/`CREDENTIAL_REVEAL_RATE_LIMITED`, ...). Write 5xx/timeouts report an unknown outcome and are **never replayed**. All commands support `--json` (I8 shape).
 
-### 3.3. Tool Name Namespace
+### Mode A2: detached full stack (PLAN-0603)
 
-CP adds prefix during tools/list and removes prefix during tools/call:
+`mise run dev:host` is a **foreground** mise task: when the terminal / agent turn exits, its child tree is reaped. For "survives the turn + four services ready", use the repo supervisor (commands/cwd/stack env are reused from `scripts/stack-run.mjs`, with no parent-directory lookup):
 
-- Runtime returns: `read_file`
-- CP returns to Agent: `runtime__read_file`
-- Agent calls: `runtime__read_file`
-- CP removes prefix and forwards: `read_file` → Runtime
+```bash
+# Run from the A03 checkout root; works in the main checkout and in .worktrees/<name>
+node scripts/dev-stack.mjs start --stack 4 --with-pg
+mise run dev:stack -- --stack 4 --with-pg        # equivalent entry (forwards args)
+node scripts/dev-stack.mjs status --stack 4
+node scripts/dev-stack.mjs stop --stack 4                 # keeps PostgreSQL by default
+node scripts/dev-stack.mjs stop --stack 4 --with-pg       # explicitly stop the PG container (volume kept)
+```
 
-See `internal/SPRINTS/SPRINT-001-cs-agent-mvp/DESIGN-009-tool-namespace.md`
+- Services: CP / Agent / Runtime / UI; `start` waits for HTTP readiness (default 300s, `--timeout`) and exits 2 on timeout, pointing at `.xihe-stacks/<n>/logs/*.err.log`.
+- Logs/PIDs: `.xihe-stacks/<n>/logs/<svc>.{out,err}.log` and `dev-stack-pids.json`; `--json` for machine-readable output.
+- `mise run dev:stack -- --stack N` forwards to this supervisor; **`--next` is not supported for xihe** (use `--stack`).
+- **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`. Inside the ONE workspace the external-cache convention for `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT` is documented on the ONE side; a standalone clone just uses the default cache.
+- `stop` only kills process trees recorded in the PID file whose command line matches `stack-run.mjs`; it never kills by port blindly.
+- **Dev admin password auto-injection (D-766)**: `start` resolves, persists and injects the dev admin password itself, then upserts it into the database once the four services are ready; source precedence, skip conditions and the log contract are in §4 "Dev admin password auto-injection".
 
-### 3.4. SSE Event Protocol
+### Mode B: Docker Compose full stack (one-shot baseline, frozen since 2026-10-07)
 
-UI ↔ CP communicates through SSE with 7 event types:
+```bash
+# [frozen 2026-10-07 — do not run; daily work uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
+docker compose up -d --build
+```
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `token` | CP→UI | LLM output token |
-| `tool_call` | CP→UI | Tool execution started |
-| `tool_result` | CP→UI | Tool execution result |
-| `approval_request` | CP→UI | Request user confirmation |
-| `status` | CP→UI | Agent status change |
-| `error` | CP→UI | Error message |
-| `done` | CP→UI | Completion (with token statistics) |
+Starts all 4 services: `postgres` + `control-plane` + `agent` + `runtime`.
 
-LangChain events are automatically mapped through the SSE adapter layer (`packages/agent/src/xihe_agent/adapters/sse_adapter.py`).
+> **Topology limit (read first)**: Compose already mounts Runtime's Docker Engine socket and aligns `XIHE_AGENT_API_TOKEN`/`XIHE_CP_API_TOKEN` (fixed in PLAN-0401), but the container-side WorkspaceStorage mapping is still missing (runtime mounts `./logs/runtime:/logs` and `/var/run/docker.sock`, with no host workspace directory mapping). Compose mode therefore **still cannot replace the `dev:host` main line**: workspace / MCP / screenshot verification must run in host mode, and a Compose failure must never be attributed to host v1. Separately, Agent single-workspace MCP binding conflicting with "one workspace per E2E case" is an architecture-level known boundary (see the project AGENTS Known Issues).
 
-## 4. Testing
+CP connects to `postgres:5432` via Docker internal network `xihe-net`. PostgreSQL username/password is defined by `POSTGRES_USER` / `POSTGRES_PASSWORD` in `docker-compose.yml`.
 
-### 4.1. Test Landscape
+The development-stack PostgreSQL is **passwordless** (`POSTGRES_HOST_AUTH_METHOD: trust` plus an empty `POSTGRES_PASSWORD`, kept deliberately per DSD-1491) and its published port is **loopback-only**: `docker-compose.yml` maps `127.0.0.1:${XIHE_PG_PORT:-12634}:5432`, so `localhost:12634` still works on this machine while hosts on the same subnet cannot connect (task-97, 2026-11-20).
+
+Verification:
+
+```bash
+curl -s http://localhost:12631/actuator/health    # Expected: {"status":"UP"} (inside Docker: :8080)
+curl -s http://localhost:12633/health              # Expected: OK (inside Docker: :8001)
+```
+
+**Compose lane reference (frozen 2026-10-07 — historical only)**
+
+```bash
+# [frozen 2026-10-07 — do not run; daily start uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
+# Scope details: see the two banners in `docs/i18n/zh-Hans/DEV-002-developer-guide.md` "Mode B (Docker Compose)"
+# — workspace Docker backend freeze (PLAN-0618) / Compose topology limits.
+# Build and start all 4 services
+docker compose up -d --build
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f control-plane
+```
+
+Service ports (Docker internal / host mapping, stack-1; see "Mode D: parallel stacks" for stack-2..8):
+- CP: 8080 → 12631
+- Agent: 8000 → 12632
+- Runtime: 8001 → 12633
+- PostgreSQL: 5432 → 12634
+
+### Mode C: single-module host testing
+
+The CP can boot on its own against in-memory H2 — no PostgreSQL, no Docker (the datasource URL/driver/dialect must all be overridden and Flyway disabled; PowerShell example):
+
+```powershell
+$env:XIHE_CP_DATASOURCE_URL = 'jdbc:h2:mem:xihe;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1'
+$env:XIHE_CP_DATASOURCE_DRIVER = 'org.h2.Driver'
+$env:XIHE_CP_DATASOURCE_USERNAME = 'sa'
+$env:XIHE_CP_DATASOURCE_PASSWORD = ''
+$env:XIHE_CP_JPA_DIALECT = 'org.hibernate.dialect.H2Dialect'
+$env:SPRING_FLYWAY_ENABLED = 'false'
+$env:SPRING_JPA_HIBERNATE_DDL_AUTO = 'create-drop'
+
+mvn -f packages/control-plane/pom.xml spring-boot:run
+```
+
+Per-file commands live in `A03-xihe/AGENTS.md` (UI lint/typecheck/test:unit, single-file Agent pytest, single-class CP `mvn`, Runtime `cargo test --lib`).
+
+### Mode D: parallel stacks (PLAN-0533)
+
+`XIHE_STACK_ID` (`stack-1`..`stack-8`, default `stack-1`) selects a stack. The launcher derives ports, compose project, PG database, sandbox container prefix and the log/host-root/state dirs; modules only read the derived `XIHE_*_PORT` env. **Every 1263X port elsewhere in this guide is the stack-1 default.**
+
+```bash
+mise run dev:stack -- --stack 2                    # or: XIHE_STACK_ID=stack-2 mise run dev:host
+node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived values without starting
+```
+
+| Stack | UI | CP | Agent | Runtime | PG | compose project |
+|---|---|---|---|---|---|---|
+| stack-1 (default) | 12630 | 12631 | 12632 | 12633 | 12634 | `a03-xihe` |
+| stack-2 | 12640 | 12641 | 12642 | 12643 | 12644 | `xihe-stack-2` |
+| stack-3 / 4 | 12650 / 12660 blocks | … | … | … | … | `xihe-stack-3/4` |
+| stack-5..8 | 12700 / 12710 / 12730 / 12740 blocks | … | … | … | … | `xihe-stack-5..8` |
+
+- stack-1 keeps the legacy paths (`.xihe-workspaces`, `logs`, `.xihe-state`); stack≥2 uses `.xihe-stacks/<n>/{workspaces,logs,state}` (gitignored).
+- **On-demand stacks (D-808① reversed the PLAN-0656 "routine dual-stack")**: the `stack-1..8` slots remain the port/isolation infrastructure, so stacks are started on demand — **do not keep two resident stacks**; parallel development runs through the **four resident module branches** (`m/ui` / `m/cp` / `m/agent` / `m/runtime`, D-810). `node scripts/dev-stack.mjs status --all` gives a read-only overview of **every running stack's** ports/health/DB/compose/build target (a stack that is not running is not a fault). Three build-surface rules: **per-stack cargo target** — non-default stacks get `CARGO_TARGET_DIR=<root>/<stackId>` automatically (`<root>` = `XH_CARGO_TARGET_ROOT`, falling back to `<workspace>/.tmp/cargo-target` when unset) (stack-1 keeps the shared `main` warm cache from `.cargo/config.toml`; an explicitly set `CARGO_TARGET_DIR` is never overridden), so two stacks can no longer fight over one exe (BL-221); **orphan sweep** — `dev-stack stop` and every `stack-run <service>` launch sweep leftover processes by "this stack's port + service identity profile" with per-action logs (foreign occupants are warned, never killed); **E2E build isolation** — `test:e2e:host` uses its own `cargo-target/e2e` and `C:/xihe-build/e2e` and no longer requires stopping the dev stacks (see §5 Test entry points). Every directory under `cargo-target` (`main` / `stack-N` / `e2e` / worktree names) is a rebuildable cache (pair-delete per the workspace `worktree-lifecycle` discipline); the `check:runtime-target` water level intentionally measures only the resolved single target, never a cross-stack sum (so one stack's cache cannot gate another stack's start).
+- **Configurable build-output root (task-80, 2026-11-08)**: `XH_CARGO_TARGET_ROOT` decides where the whole target family lives (the machine value lives in the gitignored `mise.local.toml`, while `mise.toml` carries only the contract and never a machine path), layout `<root>/{main,stack-N,e2e}`; a linked worktree adds its own level `<root>/<worktree-dir>/` so two lanes on the same stack id never overwrite each other's exe. Precedence: `CARGO_TARGET_DIR` > `XH_CARGO_TARGET_ROOT` > the old derivation `<one>/.tmp/cargo-target`; **with the variable unset the behavior is byte-for-byte unchanged**. See §6 "Rust build cache strategy" for fail-fast semantics, the wrapper scope, and the bare-`cargo`/IDE residue.
+- Unregistered ids (`stack-9`, `foo`) fail fast instead of falling back to stack-1.
+- `dev:host:stop` / `dev:reset` only touch the current stack (label `xihe.stack-id`; a missing label means stack-1).
+- Two concurrent stacks at most are recommended.
+- **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (per stack × per port, derived fields, and `.env.dev` self-consistency). That gate is **fail-closed** (task-61 P1-3): it runs with `--require-mirror`, so a missing ONE workspace exits 2 — a skip no longer reads as a pass. A standalone clone that only needs the in-repo self-check runs the bare script `node scripts/check-ports-parity.mjs` (prints `SKIP`, json `skipped:true`, exit 0); do not treat the gate as passable there.
+- **Single-clone self-check**: `mise run check:standalone` exports a parent-less copy and verifies startup/self-check do not depend on the one root.
+- **OpenAPI contract gate (BL-162)**: `mise run check:openapi` validates `docs/api/openapi.yaml` (3.1 header, unique paths, path-parameter declarations, Problem Details, plus the frozen checkpoint-revert and session-read contract slices). It is a **dependency of `test:cp`**, so running the CP test suite checks the contract; PLAN closeout / wave acceptance must run it explicitly. A failure prints the parsed path count, the first failure and a fix hint (`docs/api/openapi.yaml` stays the single source of truth). It deliberately does **not** diff Spring routes against the contract — "route implemented but undocumented" is a known blind spot tracked as a separate BL.
+- **API docs freshness gate (PLAN-0763 M4)**: `mise run check:api-docs` asserts `docs/api/inventory.generated.md` is **byte-identical** to what `docs/api/openapi.yaml` generates (`--check`: stale ⇒ exit 1 with the first differing lines plus `fix: mise run gen:api-docs`; missing PyYAML interpreter ⇒ exit 2, never a silent pass); regenerate with `mise run gen:api-docs`. Parsing is delegated to the PyYAML that ships in `packages/agent/.venv` (**no new dependency**, and the script never hand-writes a YAML parser); grouping is two levels via `x-tagGroups` then `operation.tags[0]`, degrading to one section per path prefix (with a TODO marker) while the contract carries no tags. The hand-written `docs/api/inventory.md` is **kept and not replaced** — route-migration mappings, callers and error contracts cannot be expressed by the contract. The gate sits in the `validate` dependency chain next to `check:openapi` (not chained under it: that would force the Maven-only `test:cp` lane to depend on python).
+- **Migration-number gate (task-164 judgement / task-168 wiring)**: `mise run check:migrations` compares the Flyway numbers under `packages/control-plane/src/main/resources/db/migration` with the workspace registry `one/internal/A03-xihe/docs/migration-numbers.md` (duplicate numbers / registry behind / unregistered new number). **Three exit states 0/1/2: 1 = findings (each prints its code + file); 2 = cannot answer (migration dir or registry unreadable, or the registry headline values do not parse) — exit 2 is NOT green.** The registry is a workspace file and lives outside this repository, so it is located in this order: `mise run check:migrations -- --registry <path>` > sibling `../internal/…` > **the main checkout** (worktree/lane case, prints `NOTE cross-repo registry`); if none resolves the gate exits 2 and prints both fixes. Self-test: `node scripts/check-migration-numbers.mjs --selftest` (5 judgement fixtures + 4 resolution fixtures). **Not wired into `validate`** — prove it fires before hanging it on the pipeline.
+- **Migration test coverage gate (task-181 delivered / task-192 wired)**: `mise run test:cp:migration` runs `scripts/run-migration-tests.mjs`, which asks `scripts/check-migration-test-coverage.mjs --test-filter` for the class list and then runs `mvn -o test -Dtest=<list>` under `packages/control-plane`, i.e. only the CP tests that cover registered Flyway migrations; **why not inline the mvn call in `mise.toml`**: mise executes run strings through `cmd.exe` on this host and `$(...)` is not expanded (measured 2026-11-13: mvn reported `No tests matching pattern "$(node … --test-filter)"`) — the executable form and the criterion stay separate, and the criterion still lives only in that script; when the migration→test mapping has a gap the script exits non-zero first and names the file. **One-sentence criterion**: the task exists ⇒ "did anyone miss one" is answered by the script; it does not exist ⇒ it is answered by someone's memory. **Deliberately not part of `test:cp`** (wiring it there would swallow the maven output).
+- **Commit-message gate (2026-11-06)**: `mise run check:commit-msg` **now blocks** and is a dependency of `mise run validate` (D-216 measured at the flip, 2026-11-06 02:02: 32 commits since `a632de77`, 0 violations). Rules: first line `<type>(<scope>): <summary>`; **summary display width ≤72 columns (CJK counts as 2, ≈36 Han chars), merge ≤100**; non-merge commits must reference `PLAN-####`/`BL-###`/`D-###`. Shell script `scripts/check-commit-msg.mjs` (`--file` for hooks, `--range` for review, `--stats` for the window, `--report-only` for the old never-fails audit; blocking is the default) — the `mise` task runs `--enforce` and gates `validate`; enable a local hook with `git config core.hooksPath scripts/hooks`. The flip to blocking is decided by **commit count** (D-213: **≥30 commits** since `a632de77`, 12 h cap, whichever first; violation rate ≤10% with zero over-wide merges). Two different numbers by nature: 30 is the criterion threshold, 32 is the sample measured at the flip.
+
+### Mode E: packaged product (PLAN-0632, `pkg:launcher` / `pkg:installer`)
+
+The distribution shape ("double-click the installer → services start → browser opens localhost"), not the daily dev path (that stays Mode A).
+
+```bash
+mise run pkg:launcher -- start --install <install-dir>  # order: PG(TCP) -> CP(/actuator/health 200) -> Agent -> Runtime -> UI(same-origin /)
+mise run pkg:launcher -- status --stack 1 --json        # read-only state (health/ports/PIDs)
+mise run pkg:launcher -- stop                           # reverse-order tree kill + residual port check
+mise run pkg:installer                                  # NSIS build from the four existing service artifacts (-- --stage-only skips makensis)
+```
+
+- **The order is the contract**: PG must accept TCP (the CP runs Flyway on boot), then CP `/actuator/health` 200, then Agent (its startup config sync is fail-closed on `llm-provider`), then Runtime, then UI (D32-06 same-origin serving). Every step is a readiness probe with an explicit timeout — **no fixed sleeps** (implementation: `scripts/lib/service-supervisor.mjs`).
+- Extra arguments go after `--` (`--install`, `--stack`, `--exe <service>=<path>`, `--skip <service>`), the same convention as `dev:stack` and `dev:host:provider-init`.
+- **Two launchers, two jobs (do not mix them)**: `mise run pkg:launcher` (Node, `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor** — it starts the five stages from an install-relative manifest and **does no first-run work** (an uninitialized data directory fails with `PostgreSQL data directory is not initialized`); the **product first run** (extract PG, `initdb`, secrets, data root, JDBC bootstrap, open the browser) belongs to the **bundled Java launcher** (`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`, compiled into the installer by `build-installer.mjs`).
+- **Artifacts only land in `.tmp/pkg/` (gitignored) and are never committed.**
+- On a dev machine `pkg:launcher status` reports the `dev:host` listeners as `foreignListeners` and returns `ok:false` (exit 1): that is the correct answer to "this is not a packaged install", not a failure.
+- Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/archive/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
+
+#### E.1 Empirical landing path (task-187, 2026-11-18) [measured]
+
+> This section records the **product deployment** path proven by the task-187 empirical run (not the daily dev path — that stays Mode A).
+> **Do not mix the two launchers**: the product first run / start / stop uses the **bundled Java launcher** (`app/xihe-launcher.jar` — it does secrets / initdb / pgvector / data root / JDBC bootstrap); `mise run pkg:launcher` (Node `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor and does no first-run work** (an uninitialized data directory fails outright). Every command below targets the Java launcher.
+
+**Build the stage (assemble only; no makensis)**
+
+```bash
+# cwd = A03-xihe/; artifacts land only under .tmp/pkg/ (gitignored)
+node scripts/pkg/build-installer.mjs --stage-only \
+  --empirical-pgvector "<pgvector dist dir>" \
+  --runtime-exe "<xihe-runtime.exe>"
+# or via mise: mise run pkg:installer -- --stage-only --empirical-pgvector <dir> --runtime-exe <exe>
+```
+
+- `--empirical-pgvector <dir>`: the **D-1817 parameterized bypass**, **off by default**. When given, it uses a locally rebuilt pgvector artifact but **the shipped sha gate is untouched**, prints full provenance plus an `EMPIRICAL — NOT FOR SHIPPING` marker, and appends an audit line to `.tmp/pkg/empirical-audit.log`. Use it only when the genuine pgvector inputs are unavailable for empirical work; **a release must not pass this flag**.
+- **PG share-trim keep-set v2 (fixed by task-187)**: CP Flyway V163 needs `ltree` (`V163__plan0773_org_units.sql:43`); a keep-set with only plpgsql leaves the CP unable to boot (`extension "ltree" is not available`). The set now keeps all of plpgsql plus all of ltree (control + the 1.1 base script + the 1.1→1.2→1.3 upgrade chain). `PG_SHARE_TRIM_VERSION` is now v2 — changing the keep-set **requires a version bump**, otherwise the unchanged stamp reuses the stale cache.
+
+**Single-instance first-run start/stop (product Java launcher)**
+
+```bash
+S=<stage dir>; LA=<data root, e.g. /d/tmp/xh/la-1>
+export LOCALAPPDATA="$LA"        # data root = <LOCALAPPDATA>/Xihe (PG cluster / secrets / workspaces / attachments)
+"$S/payload/jre/bin/java.exe" -jar "$S/app/xihe-launcher.jar" start \
+  --install "$S" --no-browser --cleanup-on-failure
+```
+
+- **`start` blocks** through the pg→cp→agent→runtime→ui gates, then exits 0 leaving detached children (no Job Object). First-run chain: secrets (7 keys, owner-only ACL) → security env=prod 5/5 → pgvector install → initdb → db-bootstrap (role xihe / db xihe_1 / extension vector / SELECT 1) → CP (Flyway incl. V163) → agent → runtime → ui.
+- **A fresh instance boots with a seeded admin** (task-205/D-1818): the launcher injects `XIHE_SEED_ADMIN=true`, so CP DataSeeder creates **admin@xihe.local** (instance owner, SUPER_ADMIN) with the launcher-generated password disclosed only in **FIRST-RUN.txt (0600)**; the first user logs in with instance:admin — no self-service claim needed.
+- **webui = CP same-origin** (D32-06): `GET http://127.0.0.1:<cpPort>/` = 200; `/actuator/health` = 200.
+- **status**: `... status --install "$S"` prints each service's alive/ready plus "stack is up". **Note the status process exits 1 even when "stack is up" — judge liveness by the text, not the exit code.**
+- **stop**: `... stop --install "$S"` kills the tree in reverse order and rechecks residual ports; success prints `residual=[]` and removes the pid file.
+- **Execution discipline (or it hangs)**: launcher children detach but **inherit the stdout pipe** ⇒ **never pipe `start` into `tee`** (tee waits forever on the children); redirect to a file instead. Under a DSH/agent tool call **run it in the background + collect with job_output** (a foreground ops_bash waits on the detached children's handles and hangs); keep start→verify→stop inside one job so the job ending does not take the services down with it.
+
+**Dual instance (port / DB / data-root isolation)**
+
+```bash
+# instance A: stack-1 ports 12631-34, data root la-1 (stage's default app/ports.json)
+# instance B: own data root la-2 + own ports.json (a clean custom range, e.g. 12730-34)
+node scripts/pkg/ports-json.mjs --stack stack-2 --out <stage2>/app/ports.json   # or hand-write a clean range
+# the payload may be junction-shared (read-only): <stage2>/payload -> <stage1>/payload
+```
+
+- **Three isolation levers**: ① the five ports in `app/ports.json`; ② the `LOCALAPPDATA` data root (each instance gets its own PG cluster / secrets / workspaces); ③ a separate install directory (logs / pid file). The payload may be junction-shared to save disk.
+- **Both webui reachable at the same moment**: A `GET :1263x/`=200 + B `GET :1273x/`=200 (different ports, same moment).
+- **Data-isolation check**: register a user in A → logging in with the same credentials against B must return 401; create a workspace in A → B's list must not contain it and B directly requesting that workspaceId must return 404 `WORKSPACE_NOT_FOUND`.
+- **Windows TIME_WAIT trap**: Windows postgres **has no SO_REUSEADDR** ⇒ if a pg port accumulated TIME_WAIT from repeated probes, bind fails outright (`could not bind ... Only one usage`, even with no LISTEN). **Give the second instance a clean range never probed before** (e.g. 12730-34); do not reuse a range that just failed.
+- **Start/verify/stop in one job, run in the background** (same reason as above).
+
+**Known limitations (recorded as-is; unverified items)**
+
+- **NSIS Setup.exe unverified**: `makensis` is not installed and a host install needs user approval ⇒ the installer shell was not run; this path uses **stage + Java launcher** (functionally equivalent, not the double-click installer shape). Verifying NSIS needs user approval for a host install plus makensis.
+- **launcher hardcodes stack-1 / xihe_1** (`Launcher.java` @1048/1050/1074): both instances name the DB `xihe_1` and the stack `stack-1`, but the **clusters are separate** (different data roots) ⇒ isolation holds; the DB name is cosmetic. Proper multi-stack needs the launcher to read the stackId from ports.json (a code change; this card only documents).
+- **status exit=1**: judge liveness by the text (see above).
+- **Artifacts / evidence**: the skeleton stage lands under `.tmp/pkg/`; full evidence is `internal/A03-xihe/evidence/2026-11-18-exe-dual-instance-infra/`.
+
+## 4. Full-stack debugging (merged from DEV-005-fullstack)
+
+**CP logs**
+
+By default, each `mise run dev:*` task in the root directory writes process logs to `logs/<module>.log`. The four default file names are:
+
+- `logs/ui.log`
+- `logs/agent.log`
+- `logs/cp.log`
+- `logs/runtime.log`
+
+Log levels are also recommended to be configured from the root `.env`:
+
+- `XIHE_LOG_LEVEL`: Default level shared by all four modules
+- `XIHE_LOG_LEVEL_UI`
+- `XIHE_LOG_LEVEL_AGENT`
+- `XIHE_LOG_LEVEL_CP`
+- `XIHE_LOG_LEVEL_RUNTIME`
+
+Priority from highest to lowest:
+
+1. `XIHE_RUNTIME_LOG_FILTER`
+2. Module-specific variable: `XIHE_LOG_LEVEL_UI`, `XIHE_LOG_LEVEL_AGENT`, `XIHE_LOG_LEVEL_CP`, `XIHE_LOG_LEVEL_RUNTIME`
+3. Global variable: `XIHE_LOG_LEVEL`
+
+Note: Vite dev server only supports `info | warn | error | silent`; if you configure `debug` or `trace` for UI, it will automatically fall back to `info`.
+
+Project-level environment variables use the `XIHE_` prefix, e.g.: `XIHE_CP_PORT`, `XIHE_AGENT_PORT`, `XIHE_RUNTIME_PORT`, `XIHE_UI_PORT`, `XIHE_LLM_PROVIDER`, `XIHE_DEEPSEEK_API_KEY`.
+
+To change the directory, set `XIHE_LOG_DIR` in root `.env`; file logging is only disabled when you explicitly set `XIHE_LOG_TO_FILE=0`.
+
+To clear file logs:
+
+```bash
+mise run clean
+```
+
+The following commands are mainly for increasing single-module log verbosity, not for enabling file logging itself.
+
+```bash
+# Enable debug logging
+cd packages/control-plane && XIHE_LOG_LEVEL_CP=DEBUG mvn spring-boot:run
+```
+
+**Runtime logs**
+
+```bash
+XIHE_RUNTIME_LOG_FILTER=xihe_runtime=debug,rmcp=info cargo run
+```
+
+**Agent logs**
+
+Agent uses `langchain-litellm` (`ChatLiteLLM(BaseChatModel)`) as the unified LLM backend, with `litellm` automatically routing to 100+ Providers at the bottom layer. Provider switching only requires specifying in the UI settings page or environment variables:
+
+```bash
+XIHE_LLM_PROVIDER=deepseek \
+XIHE_DEEPSEEK_API_KEY=your-deepseek-api-key-here \
+uv run python -m xihe_agent.main
+# When started directly, logs output to terminal; when started via root task, also writes to logs/agent.log by default
+```
+
+Or add Providers through the settings page: OpenAI, DeepSeek, Xiaomi MiMo, Anthropic presets + custom.
+
+### One-shot stack verification (`mise run xihe -- verify`, PLAN-0574)
+
+The manual v1 chain (login → session + root branch → SSE → model list → chat) also runs as one CLI command (implementation: `scripts/xihe-cli/verify.mjs`):
+
+```bash
+XIHE_VERIFY_PASSWORD=<admin password> mise run xihe -- verify \
+  --stack 2 --email admin@xihe.local --workspace <wsId> --yes
+```
+
+- **Explicit target**: `--stack`, `--email` and `--workspace` are all required and missing values fail (exit 2). The CLI never falls back to the workspace from the login response (since 0614 login only returns the account's **first active** workspace, which may be null for a new account); `--yes` only confirms the execution prompt and never replaces a target flag. Without `--yes` a TTY confirmation is required.
+- **Credentials**: the password comes from `XIHE_VERIFY_PASSWORD`, falling back to `XIHE_DEV_ADMIN_PASSWORD` (OS env > `.env` chain); a TTY prompt is used without echo. No password exits 2 and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target stack as `-StackId` > `XIHE_STACK_ID` and the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used. For a stack started by `dev-stack`, the password is also persisted at `.local/dev/admin-password` (D-766, see §4 "Dev admin password auto-injection"), so no reset is required first.
+- **Stack derivation**: ports come from `node scripts/stack-run.mjs env-json --stack <id>`; an unknown stack exits 2.
+- **Side effects**: creates an agent principal (when the workspace has none bound), a session and a chat run, and really calls the model provider, which may incur cost. Use an isolated stack and a test workspace, and confirm the prompt first.
+- **Verdict and exit codes**: tier A (CP health / login / workspace access / principal / session + branch / messages / SSE / model list / agent health) must pass; tier B keeps the original `POST /api/v1/chat` acceptance semantics (200/202 with a `runId`). `0` = A/B passed and the run reached the `succeeded` terminal state, `4` = tier A passed but tier B precondition missing, `1` = failure (including a failed run terminal), `2` = missing target/credentials or stack derivation failure, `5` = run wait timeout (`--wait-seconds`, default 120; on timeout the CLI first calls `POST /api/v1/chat/runs/{runId}/cancel` and then deletes the session it created).
+- **Cleanup and residue**: on completion or failure the CLI closes SSE first and then `DELETE /api/v1/sessions/{sessionId}` for the session it created. A principal created by this run has no confirmed delete API and is retained and reported (`cleanup.principal`); pre-existing principals are never modified or deleted. Audit and provider-side records may persist.
+- **Agent principal**: creating a session requires `agentPrincipalId`. The CLI resolves it as explicit `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → first principal already bound to the workspace → newly created one. It only calls `PUT …/agents/{id}` right after creating a principal — that call **narrows** the workspace cap of an existing principal. Diagnostics only print whitelisted status fields, never raw agent logs.
+- **Template and connection binding (PLAN-0601)**: tier B requires the session to bind an explicitly published api-request-template triple plus a chat provider connection. The CLI resolves both automatically (`GET /api/v1/config/api-request-templates?layer=user|workspace|instance` for a published template matching the connection API type; `GET /api/v1/provider-connections` for a `status=READY` `operation=chat` connection) and sends `providerConnectionId` / `modelProvider` / `modelName` / `contextTemplateLayer|Id|Version` when creating the session. A missing template reports `VERIFY_TEMPLATE_MISSING`, a missing connection reports `VERIFY_CONNECTION_MISSING` (both exit 2 with actionable guidance) instead of failing with a bare `409 API_TYPE_REBIND_REQUIRED`. Publishing a template is an ADMIN instance-layer action (Settings → Configuration → API request templates → publish).
+
+### `dev:host` vs `dev:stack` — leases and the two meanings of `--stack` (measured 2026-11-12)
+
+- **`dev:host`** runs the four services (CP/Agent/Runtime/UI) **in the current terminal** and **writes no `lease` / `pidFile`**; bookkeeping under `.xihe-stacks/<n>/` is written only by the detached supervisor.
+- **`dev:stack`** (= `node scripts/dev-stack.mjs start`) starts **detached**, **writes the lease**, and outlives the terminal.
+- **Consequence**: after a `dev:host` session, `dev-stack status` first reports **`orphan` + `lease-pid-dead`** (4/4 services listening, lease pointing at a dead pid). That is **not a fault** — run `node scripts/dev-stack.mjs acquire --stack 1` to reclaim it and get back to `healthy`.
+- **One flag, two meanings (`--stack`)**:
+  - `scripts/dev-stack.mjs --stack 1` ⇒ **stack number**, lease under `.xihe-stacks/1/`;
+  - `scripts/cp-build-clean.mjs --stack stack-1` ⇒ **directory name**; passing `--stack 1` **silently no-ops with exit 0** and prints `nothing to prune` (`planForStack:72`, `join(root, stackId)`) — no error, no hint.
+
+### `dev-stack` status and lease contract (PLAN-0694)
+
+Since PLAN-0694 `node scripts/dev-stack.mjs` (verbs are documented in §3 "Mode A2: detached full stack") records **who started a stack** in a lease, and `status` cross-checks **every** lease field against a fact that is independent of the lease itself. The direction of trust is one-way: **facts beat intent** — what the lease claims does not matter until pids, ports and the heartbeat verify it ("a field nobody checks is a comment").
+
+- **Lease location and shape**: `.xihe-stacks/<n>/lease.json` (atomic write: tmp + rename; `version: 2`). Fields = `instanceId`/`projectRoot`/`stackId`/`ports`/`pids{svc:{launcher,listener}}`/`cpVersion`/`startedAt`/`heartbeatAt`, plus `releaseFailed{at,services,reason}` when a stop was partial. Since task-75 the shape also carries an **optional** `phase` (`starting`|…). **Version policy**: `isShapedLease` compares `version` **strictly**, so a future bump to 3 makes every existing v2 lease `corrupt`, `status --all` reports all `ghost` and exits 1 — a loud rejection that is the intended behaviour; introducing v3 must relax the read side to a set membership and migrate in the same batch (which is why task-75 added `phase` **without** bumping the version). `ports` covers **only the four supervised services** (CP/Agent/Runtime/UI).
+- **Exit codes**: `0` = healthy / a verification window may open (`status` passed every check; `status --all` found no non-healthy stack; `gc` found no candidates); `1` = hard problem (some stack is non-healthy, `gc` has candidates, or `stop` left residual ports/pid records); `2` = argument or environment error (unknown verb, **unknown option also exits 2**, invalid/unregistered `--stack`, derivation failure). Always parse stdout of `status --json` first and read the exit code second — `1` does not mean the tool is broken.
+- **`ok = factsOk && checks.allOk`**: `factsOk` = the pid records' processes are alive + all four service ports listen + PG listens; `checks` cross-checks each field — pid incarnation (launcher liveness + listener liveness + whether the port is still held by the recorded pid — **merged into one** `lease-incarnation-stale` with old→new pids in `expected`/`actual`, `task-586`), port actually listening (`port-not-listening`), heartbeat freshness (`lease-cold`, **informational**), `instanceId` match (`instance-mismatch`), `cpVersion` match (`cp-version-mismatch`, **informational** per D-1410: CP changes its build stamp on every rebuild, so this equality is always false during active development and would be ignored anyway — the `cpBuild` section (`runningCommit`/`behind`/`verdict`) covers what it was meant to catch), declared port match (`port-declared-mismatch`) and more. Mismatches land in `mismatch[]`; a field that **is declared but cannot be verified right now** lands in `unverifiable` (also blocks `healthy`); only an **undeclared** field is `skipped` (non-blocking). No field ever passes just because the lease says so.
+- **`heartbeatAt` = the time of the most recent successful verification**: `status` refreshes it when every check is green (`--json` reports `leaseRenewed` so the refresh is observable); it is **not** a self-reported uptime. `gc` is strictly read-only and never refreshes the heartbeat. An expired heartbeat is reported as `lease.state=cold` plus a P3 hint; it never changes `verdict` and never promotes a stack to `ghost`. Renewal admission is **facts verified** (four service ports listening + HTTP ready + PG), **not** fields match (`task-586`): requiring an empty `mismatch[]` meant any legitimate single-service restart froze the heartbeat forever, so `cold` became permanent and every `status` exited 1 — the other half of the self-lock described in the Chinese source. `status` re-reads the lease after a successful renewal so one screen never shows both "renewed" and a stale heartbeat.
+- **PG is not in the lease `ports`**: PG is a compose resident service that the supervisor does not own the lifecycle of, so declaring it would create a field that can never verify. PG facts stay in `status.pg` (`{port, listening}`).
+- **Migrating pre-upgrade stacks (not a fault)**: stacks started before this change have no lease ⇒ the first `status` / `status --all` reports `verdict: ghost` (reasons include `lease-missing`) and exits `1`. Fix it by either `node scripts/dev-stack.mjs acquire --stack <n>` (adopts the stack and writes the lease from current facts — it does **not create** pid records, it only reuses existing ones, so `ok` can stay `false` even when `verdict` is `healthy` because pid records are the factual substantiation layer) or restarting that stack once.
+- **Cross-checkout ghosts**: the port space is global while the lease space is per checkout ⇒ **a live stack started by another checkout also looks like a ghost here**. `gc --dry-run` candidates therefore carry `serving` (does the service still answer on that port) and `ownTrace` (does this checkout have a lease/pid trace) to disambiguate, and you must **not** `stop` based on them alone: confirm ownership first (run `stop` in the checkout that owns it, or `acquire` it here). `gc` never kills anything and offers no `--apply` (`--dry-run` is accepted and behaviour is always dry-run).
+
+### Dev admin password auto-injection (D-766, `dev-stack` starts)
+
+Since D-766, `node scripts/dev-stack.mjs start` (runtime mode "Mode A2: detached full stack" in §3, or `mise run dev:stack`) **decides** the dev admin password itself and injects it into the child environment, so a manual `mise run reset-admin` is no longer a prerequisite (implementation: `scripts/lib/dev-admin-password.mjs`; **zero product-surface change** — CP still only reads `XIHE_DEV_ADMIN_PASSWORD`, PLAN-0547).
+
+- **Source precedence** (high → low — the **B′ four-layer order**, user ruling 2026-11-11; isomorphic to Spring Boot / AWS CLI / Ansible / Docker Compose: explicit override > persisted file (truth) > packaged default): ① an explicit OS env `XIHE_DEV_ADMIN_PASSWORD` (caller/CI; **never persisted**); ② the value already persisted in `.local/dev/admin-password` (directory `0700` / file `0600`; `.local/` is gitignored) — **the persisted single source of truth**; ③ the machine's `.env` chain (`.env` → `.env.$XIHE_ENV` → `.env.local`, same semantics as CP's `DotenvLoader`, fill-gaps only) — **seed only for the first time**, not consulted when ② exists; ④ when none of the above applies, generate 24 bytes of base64url (32 chars) and persist it to ②'s path, reused stably across restarts. Blank/whitespace-only values always count as unconfigured (the empty placeholder in `.env.example` is not an empty password).
+- **Injection point**: `start` writes the value into the supervisor's child env (`childEnv.XIHE_DEV_ADMIN_PASSWORD`) *before* spawning anything ⇒ CP's `DataSeeder` seeds `admin@xihe.local` with exactly that password on an **empty** database.
+- **Upsert timing**: after all four services pass `waitReady` and the lease flips to `started`, it reuses the existing `scripts/reset-admin.ps1` (internally `ResetAdmin.java`) for an **UPDATE only** — `DataSeeder` **creates but never updates**, so an **existing** database only picks up the same password through this step. No new SQL. **Since BL-523 that entry point no longer self-creates the account**: when the `admin@xihe.local` row is missing it fails explicitly (exit 3) and points at `mise run dev:reset` or a stack restart so `DataSeeder` creates it (the old INSERT branch wrote `users.role`, which V89 dropped, so it always raised a SQL error; a self-created row would also lack the instance owner / SUPER_ADMIN binding).
+- **Skip conditions** (each prints the reason): non-Windows (`reset-admin.ps1` is Windows-only; the hint is to run `mise run reset-admin` manually); stack not ready.
+- **Failures never block the start**: a failed upsert is a WARN plus a repair command (`mise run reset-admin`, or just re-run `start`); a failed **password resolve/persist** degrades the same way — WARN plus skipped injection (neither `XIHE_DEV_ADMIN_PASSWORD` nor the upsert) — and `start` keeps going. Its exit code still depends only on the four ports becoming ready, never on a pre-spawn password read/write failure.
+- **Logs never contain the value**: only `source`/`file`/`persisted` (with `value=not-logged`; since PLAN-0770 **not even `length`** — length is a derived quantity); the password reaches the entry point through the child env, **not the command line**. The reset-admin leg uses **`XIHE_RESET_ADMIN_PASSWORD`** (BL-523: inside the entry point the precedence is `stdin > env > --password`, the last one kept but deprecated with a WARN; use `--password-stdin` when you need deterministic piped input); the wrapper's `-Password` entry point has been removed entirely (D-1753 ③: passing it is rejected by parameter binding with a non-zero exit), so **no plaintext ever appears in argv**. The full conclusion and options are logged in the internal note `internal/A03-xihe/docs/BL-523-reset-admin-insert-broken.md` (cross-repo path).- **The first upsert may occupy one build slot**: if `packages/control-plane/target/reset-admin-classpath.txt` is missing or older than `pom.xml`, that upsert first runs `mvn dependency:build-classpath` — **not a compile**, but it does enter Maven, so **do not misreport it as build contention**; the cache is generated once and reused afterwards.
+- **Relationship to older statements**: runtime mode A (`mise run dev:host`) does **not** take this path, so for it the "random password is not printed ⇒ scripts cannot log in" conclusion still holds (see the supersede note in the Chinese-side Mode B section); the English section carries no such claim to supersede.
+- **How to check which layer a given stack is actually using (PLAN-0770 INV-3)**: `node scripts/dev-stack.mjs status --stack <n>` now prints one extra non-secret line —
+  ```
+  dev-admin user=admin@xihe.local source=file stack=stack-2 db=xihe_2 hasFile=true persisted=.local/dev/admin-password upsert=ok
+  ```
+  `--json` carries the same fields in a `devAdmin` block (`{user, source, envFile, stack, database, persistedPath, hasFile, wouldGenerate, upsert, upsertAt, upsertReason, bootSource, bootAt}`), and `node scripts/stack-run.mjs env-json --stack <n>` exposes an identical `devAdmin` block for PowerShell consumers. `source` has five values: `env` (OS env, explicit override) / `file` (`.local/dev/admin-password`, the truth) / `env-file` (the `.env` chain; the `via` suffix names the file; only when no file exists) / `generated` (generated and persisted this run — appears in `start` logs only) / `missing` (none of the three; the live view in `status`, and the **next start will generate and persist one**). `upsert`/`bootSource` report the **previous `start`'s** result (`ok`/`failed`/`skipped`/`not-run`, plus a reason; `bootSource` = the layer that start actually used), while `source` is the **live view** (which layer a new start would use now) — two different time bases, so the line appends `bootSource=…(上次起栈 <time>)` when they disagree. `status` itself never upserts (a read command must not have side effects). **None of these readings carry the value, its length, or a hash.**
+- **The `.env` chain is seed-only (B′)**: once a checkout has a persisted file, **editing `.env.local` no longer takes effect** — check `source` in `status` (`file` = the file is live; `env-file` = no file yet, running off the seed). That is how "one checkout, one persisted source" is enforced; to change the password use `mise run reset-admin`, not `.env.local`. **Repair/rotation**: a successful `mise run reset-admin` (it passes `-WriteBack`) writes the **same** value back to `.local/dev/admin-password` (printing `written=<relative path>`, never the value), so the database and the file stop drifting. **Calling `scripts/reset-admin.ps1` directly does not write back by default** — `start`'s boot upsert also goes through that wrapper, so a default-on write-back would rewrite the persisted file on every boot, which is a different semantic and stays off.
+- **Irreversible cleanup and reset boundaries**: `mise run dev:reset` is a dry-run by default (confirm backups and data scope before a real reset, and state the target stack and database identity before dropping a database); **`mise run clean` deletes permanently and does not go to the recycle bin** — confirm no build or service still uses the artifacts first; the `reset-admin` temporary password **must not** be written into scripts, source, or logs, and its persistent location is the gitignored `.local/dev/admin-password` (once a persisted file exists, editing `.env.local` no longer takes effect).
+
+### First login: where the password comes from (bare CP boots, D-1753 ②)
+
+The account `admin@xihe.local` exists but you do not know its password? Pick the branch that matches how the stack was started:
+
+- **Stacks started via `dev:stack` / `dev-stack.mjs start`**: the single-source chain (B′) decides the password and upserts it into the database (§4 "Dev admin password auto-injection"). Read the gitignored `.local/dev/admin-password` (0600); to see which layer is live, check the `dev-admin … source=…` line in `status` (`file` = the persisted file is in effect; `env`/`env-file` = the value from that channel).
+- **A bare CP boot** (`mvn spring-boot:run` / `dev:host`, with `XIHE_SEED_ADMIN=true` but no `XIHE_DEV_ADMIN_PASSWORD`): `DataSeeder` takes the random-generation branch, and **since D-1753 ② (task-62) no channel discloses that value** — the WARN in `cp.out.log` only points at the remedy, never prints the value, and this class writes no persistent file. **You must run `mise run reset-admin` to set a known password before you can log in** (it resolves the single-source chain and writes the same value back to `.local/dev/admin-password`). This is the accepted cost of "logs are a permanent-retention surface, so no value ever lands there" — **not a malfunction**. (The Chinese-side §2 carries a superseded "printed once at creation" quote; the English side never made that claim.)
+- **The account row does not exist** (`reset-admin` exits 3): create it first — restart CP once with `XIHE_SEED_ADMIN=true` plus `XIHE_DEV_ADMIN_PASSWORD` (the Chinese-side §2 "first-run account creation" section owns that path) — then return to the two branches above. `reset-admin` only UPDATEs; it never self-creates the account (BL-523).
+
+Channel discipline is unchanged: the value travels only through env (`XIHE_RESET_ADMIN_PASSWORD`) or stdin; the `-Password` argv entry point has been removed (D-1753 ③ — passing it is rejected by parameter binding), and no log or script may ever contain the value itself.
+
+### springdoc debug surfaces (`/v3/api-docs`, `swagger-ui/**`) — OFF by default (task-244 / PLAN-0763 D-800)
+
+`docs/api/openapi.yaml` is the single SSOT for the API wire contract; the CP's `/v3/api-docs` and Swagger UI are **debug/reconciliation artifacts** only. They are therefore **off by default** (`application.properties`: `springdoc.api-docs.enabled` / `springdoc.swagger-ui.enabled` = `${XIHE_SPRINGDOC_ENABLED:false}`), so packaged and production-facing deployments no longer expose the full route index anonymously.
+
+- **Enabling locally (one line)**:
+  - PowerShell: `$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`
+  - POSIX shell: `XIHE_SPRINGDOC_ENABLED=true mise run dev:host`
+- **Profiles that enable it automatically**: `dev` / `e2e` / `test` (`application-{dev,e2e}.properties`, `src/test/resources/application-test.properties`). `dev:host` runs the **default profile**, so it needs the env var above or an explicit `--spring.profiles.active=dev`.
+- **Why it can never substitute for the contract (architecture reason)**: springdoc is generated by runtime reflection — it reads the code, it is not an input to the contract. Measured: it **under-reports 15 routes** versus the live `RequestMappingHandlerMapping` and **does not include `/internal/**` at all** (64 of the 84 yaml-only paths are `/internal/`). "The endpoint is / is not in springdoc" therefore must never be used to judge contract completeness; parity is owned by `RouteContractParityTest`. **Where the architecture rationale lives**: in the Chinese original [`DEV-014`](../zh-Hans/DEV-014-control-plane-architecture.md) (springdoc section), which this page links to **by policy** — architecture guides are maintained as Chinese originals and English pages link to them (`en/INDEX.md`).
+- **What "off" looks like**: `GET /v3/api-docs` and `/swagger-ui.html` return **404** (no handler). The three `permitAll` entries in `SecurityConfig` only matter when the surface is explicitly enabled — they are **not** a standing anonymous hole.
+- **Both states measured (task-194, 2026-11-11; both columns measured, not inferred)**: a standalone CP on the default profile (`XIHE_CP_PORT=18081`, throwaway database, `stack-1` untouched), same jar, only one env differs:
+  | Path | OFF (default profile) | `XIHE_SPRINGDOC_ENABLED=true` |
+  | --- | --- | --- |
+  | `/v3/api-docs` | **404** (RFC 9457 `not_found` body) | **200** (`{"openapi":"3.1.0"…}`) |
+  | `/v3/api-docs.yaml` | **404** | **200** (YAML) |
+  | `/swagger-ui/index.html` | **404** | **200** (Swagger UI) |
+  | `/swagger-ui.html` | **404** | **302** → `/swagger-ui/index.html` |
+  | `/actuator/health` | **200** `UP` | **200** `UP` |
+  The OFF-state 404 is a **real 404 (no handler)**, not a 500 or an empty JSON body — that is the line between "the surface is absent" and "it exists but errors".
+  `[source]` One correction made along the way: `/v3/api-docs.yaml` used to answer 401 in both states because `SecurityConfig`'s `permitAll("/v3/api-docs/**")` does not cover the `.yaml` suffix (`/**` needs a following segment); task-194 adds `/v3/api-docs.yaml` explicitly to permitAll and to `UiStaticServingFilter`'s bypass list.
+- **Never use it as the contract or as a denominator**: it **under-reports** routes compared with the live `RequestMappingHandlerMapping` and does not include `/internal/**`; reconciliation always goes through `RouteContractParityTest` (live mapping).
+
+## 5. Test entry points
+
+**Test landscape**
 
 | Module | Framework | Test Count | Run Command |
 |--------|-----------|------------|-------------|
@@ -616,7 +819,7 @@ LangChain events are automatically mapped through the SSE adapter layer (`packag
 
 - **DEV-only preview page**: with the UI dev server running, open `/preview.html` (Vite multi-entry; not a product route or build entry). Its **Modal + Popover** block is the manual regression surface for overlay stacking — BaseModal backdrop vs Popover/Select z-index (PLAN-0714 / BL-518). The page calls no `/api/v1/**`; everything is mock data.
 
-### 4.2. Test Directory Naming Convention
+**Test directory naming convention**
 
 Test directories are named by **test pattern**, not by functional module:
 
@@ -636,7 +839,7 @@ Rules:
 
 **Total: 756+ tests**
 
-### 4.3. Running Tests
+**Running tests**
 
 ```bash
 # All quality gates via keep-going aggregator (task-176): gate cluster parallel (every gate always runs and reports its exit) then test serial tail; any red => non-zero but never 5s abort. Gates: check:mise-env + check:openapi(:lint) + check:api-docs + check:plan-anchors + check:runtime:ignored + check:commit-msg + lint + typecheck + build + e2e fixtures + lint:links, then test; no Docker step
@@ -688,14 +891,14 @@ The UI `pnpm run lint` gate runs `oxfmt --check .` followed by `oxlint .`. Oxlin
 
 **DEV zh/en drift check (task-316)**: `mise run check:dev-i18n-drift` (= `node scripts/check-dev-i18n-drift.mjs`) has exactly two reliable criteria: (1) the per-document id-set **symmetric difference** for `PLAN-` / `D-` / `task-` between zh-Hans and en, and (2) **registration lookup** for those ids (`PLAN-` in `plans/`, **including `archive/`, counting both files and directories**; `D-` in the decision ledger plus its archive volumes, matched by occurrence rather than by `###` heading — many ledger rulings are list items). **The script prints its own blind spots** (negative statements / runtime task cards / relative child routes / component names and testids are not covered); **report-only, never wired into `validate`** (a red gate that gets bypassed is no gate at all, D-1046). Self-test: `-- --selftest` (9 cases).
 
-### 4.4. CP Integration Test Modes
+**CP integration test modes**
 
 CP integration tests support two modes:
 
 - **Local Development** (default): `AbstractH2Test` + H2 in-memory database, zero configuration, no Docker needed
 - **Docker Environment**: `AbstractIntegrationTest` + Testcontainers + PostgreSQL 17
 
-### 4.5. Cross-module E2E Tests
+**Cross-module E2E tests**
 
 ```bash
 # Prereq: host stack up in another terminal — `mise run dev:host`
@@ -711,137 +914,32 @@ uv run --with httpx pytest tests/ -v -m integration
 # - test_full_chat_flow.py: Register → login → chat → SSE (6 tests)
 ```
 
-### 4.6. MSW Mock Tests (UI)
+**MSW mock tests (UI)**
 
 UI API integration tests use MSW (Mock Service Worker) to intercept HTTP requests. Handlers are defined in `packages/ui/src/mocks/handlers.ts`, covering auth/session/health check scenarios. MSW does not intercept EventSource (SSE); SSE tests are verified through fetch-based approach.
 
-### 4.7. One-shot stack verification (`mise run xihe -- verify`, PLAN-0574)
+**Agent integration tests**
 
-The manual v1 chain (login → session + root branch → SSE → model list → chat) also runs as one CLI command (implementation: `scripts/xihe-cli/verify.mjs`):
-
-```bash
-XIHE_VERIFY_PASSWORD=<admin password> mise run xihe -- verify \
-  --stack 2 --email admin@xihe.local --workspace <wsId> --yes
-```
-
-- **Explicit target**: `--stack`, `--email` and `--workspace` are all required and missing values fail (exit 2). The CLI never falls back to the workspace from the login response (since 0614 login only returns the account's **first active** workspace, which may be null for a new account); `--yes` only confirms the execution prompt and never replaces a target flag. Without `--yes` a TTY confirmation is required.
-- **Credentials**: the password comes from `XIHE_VERIFY_PASSWORD`, falling back to `XIHE_DEV_ADMIN_PASSWORD` (OS env > `.env` chain); a TTY prompt is used without echo. No password exits 2 and the token is never echoed. Generate a password with `mise run reset-admin`; it resolves the target stack as `-StackId` > `XIHE_STACK_ID` and the target database as `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB` (default `12634/xihe_1`, matching the post-0533 `xihe_<n>` naming) and prints the target it used. For a stack started by `dev-stack`, the password is also persisted at `.local/dev/admin-password` (D-766, see §4.11), so no reset is required first.
-- **Stack derivation**: ports come from `node scripts/stack-run.mjs env-json --stack <id>`; an unknown stack exits 2.
-- **Side effects**: creates an agent principal (when the workspace has none bound), a session and a chat run, and really calls the model provider, which may incur cost. Use an isolated stack and a test workspace, and confirm the prompt first.
-- **Verdict and exit codes**: tier A (CP health / login / workspace access / principal / session + branch / messages / SSE / model list / agent health) must pass; tier B keeps the original `POST /api/v1/chat` acceptance semantics (200/202 with a `runId`). `0` = A/B passed and the run reached the `succeeded` terminal state, `4` = tier A passed but tier B precondition missing, `1` = failure (including a failed run terminal), `2` = missing target/credentials or stack derivation failure, `5` = run wait timeout (`--wait-seconds`, default 120; on timeout the CLI first calls `POST /api/v1/chat/runs/{runId}/cancel` and then deletes the session it created).
-- **Cleanup and residue**: on completion or failure the CLI closes SSE first and then `DELETE /api/v1/sessions/{sessionId}` for the session it created. A principal created by this run has no confirmed delete API and is retained and reported (`cleanup.principal`); pre-existing principals are never modified or deleted. Audit and provider-side records may persist.
-- **Agent principal**: creating a session requires `agentPrincipalId`. The CLI resolves it as explicit `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → first principal already bound to the workspace → newly created one. It only calls `PUT …/agents/{id}` right after creating a principal — that call **narrows** the workspace cap of an existing principal. Diagnostics only print whitelisted status fields, never raw agent logs.
-- **Template and connection binding (PLAN-0601)**: tier B requires the session to bind an explicitly published api-request-template triple plus a chat provider connection. The CLI resolves both automatically (`GET /api/v1/config/api-request-templates?layer=user|workspace|instance` for a published template matching the connection API type; `GET /api/v1/provider-connections` for a `status=READY` `operation=chat` connection) and sends `providerConnectionId` / `modelProvider` / `modelName` / `contextTemplateLayer|Id|Version` when creating the session. A missing template reports `VERIFY_TEMPLATE_MISSING`, a missing connection reports `VERIFY_CONNECTION_MISSING` (both exit 2 with actionable guidance) instead of failing with a bare `409 API_TYPE_REBIND_REQUIRED`. Publishing a template is an ADMIN instance-layer action (Settings → Configuration → API request templates → publish).
-
-### 4.8. Operator CLI surface (PLAN-0574)
+Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require a running CP. Read its port from `XIHE_CP_PORT` (stack-1 default `12631`; the `8080` in "Service ports" under §3 "Compose lane reference" is the container-internal port, not the host port).
 
 ```bash
-mise run xihe -- status                                              # /status + /health + /version aggregate
-mise run xihe -- workspace list
-mise run xihe -- workspace get <wsId>                                # includes environment
-mise run xihe -- job list <wsId>
-mise run xihe -- job output <wsId> <jobId> [--stream stdout|stderr] [--offset N] [--limit N]
-mise run xihe -- job cancel <wsId> <jobId>                           # idempotent `changed:false` passthrough
-mise run xihe -- checkpoint list <wsId>                              # includes retention (failures reported explicitly)
-mise run xihe -- checkpoint preview-revert <wsId> <sliceRef>         # preview only, never reverts
-mise run xihe -- scheduled-task list <wsId> [--page N] [--size N]
-mise run xihe -- audit list [--type T] [--page N] [--size N]
-mise run xihe -- config export [--include-secrets] [--out <file>] [--force]   # secrets off by default
-mise run xihe -- provider delete <id> [--yes]                        # shows delete-impact first
-mise run xihe -- version [--check]
+# Method 1: Docker Compose (historical — compose lane frozen since 2026-10-07; not for acceptance)
+docker compose up -d --build   # [frozen — historical reference only, do not run]
+cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
+
+# Method 2: Host stack
+# Use the tracked orchestrator; it owns the process lifecycle and readiness checks.
+mise run dev:host
+
+# In a separate terminal, probe CP before running Agent tests. The bounded health
+# probe is a prerequisite and reports failure instead of silently skipping tests.
+curl --fail-with-body --silent --show-error --max-time 5 http://localhost:12631/actuator/health
+cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 ```
 
-- Every command supports `--json` (a single stdout object `{ok:true,data}` or `{ok:false,error:{code,message}}`); human output is a one-line/table summary. See `mise run xihe -- --help`.
-- Stack port overrides (bootstrap allowlist): `node scripts/stack-run.mjs <cp|agent|runtime> --set XIHE_CP_PORT|XIHE_AGENT_PORT|XIHE_RUNTIME_PORT=<1..65535>` — the three allowlisted keys only, injected into the target that actually consumes the key; duplicates, unknown keys, secrets and invalid values are refused before any process starts, without echoing the input. When `XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` is set explicitly, the port only changes the listening side and the launcher warns about a possible broken link. Mechanism details: DEV-003 §2 and `spec/configuration/env-effective.md`.
+Test files may use `@pytest.mark.skipif` only for explicitly optional tests; an unreachable CP is otherwise an explicit test/setup failure. Do not use fixed sleeps, bare background shell operators, or untracked processes; use the tracked process/readiness/health probe with a bounded timeout.
 
-### 4.9. Credential CLI (PLAN-0575)
-
-```bash
-mise run xihe -- credential list [--owner-type USER|WORKSPACE --owner-id <id>]
-mise run xihe -- credential references <id> --workspace <wsId>
-mise run xihe -- credential events <id> --workspace <wsId>
-mise run xihe -- credential precheck --permissions <atom[,atom...]>
-mise run xihe -- credential create --kind token --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> [--delivery-tier lease|reveal] --secret-env <NAME>
-mise run xihe -- credential create --kind key_pair --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> --access-key-env <NAME> --secret-key-env <NAME>
-mise run xihe -- credential replace <id> --kind token|key_pair --workspace <wsId> (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)
-mise run xihe -- credential delete <id> --workspace <wsId> [--yes]   # references preview, then confirmed delete
-mise run xihe -- credential bind <id> --workspace <wsId> --agent <principalId[,principalId...]>
-mise run xihe -- credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>
-mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]
-```
-
-- **Secret channels**: `create`/`replace` read the token or key pair only from `--*-env <NAME>` environment variable names or a no-echo TTY prompt. Values are never accepted as arguments, read from JSONC or taken from input files; errors and logs only name the variable.
-- **Explicit workspace**: every credential command except `list` and `create --owner-type USER` requires `--workspace`, and `X-Workspace-Id` matches it. `create --owner-type WORKSPACE` requires `--owner-id` to equal `--workspace`; the CLI never falls back to the token claim or first membership.
-- **reveal**: on an explicit request it performs an independent step-up with the login password (`--password-env` or TTY) and prints to stdout or an `--out` regular file (existing files need confirmation or `--force`; symlinks/directories are refused). Terminal/file output is the only plaintext path; errors, progress and logs never carry the password or value. CP audit: `credential_revealed` on success, only `credential_reveal_failed` on a wrong password; other refusal branches write no event/audit.
-- **delete gate**: fetch `…/references` and show it before `--yes`/interactive confirmation; `409 CREDENTIAL_IN_USE` is passed through with a re-query hint, never described as a complete report.
-- CP error codes are preserved (`CREDENTIAL_NOT_FOUND`/`CREDENTIAL_IN_USE`/`CREDENTIAL_TIER_MISMATCH`/`CREDENTIAL_REVEAL_STEP_UP_FAILED`/`CREDENTIAL_REVEAL_RATE_LIMITED`, ...). Write 5xx/timeouts report an unknown outcome and are **never replayed**. All commands support `--json` (I8 shape).
-
-### 4.10. `dev-stack` status and lease contract (PLAN-0694)
-
-Since PLAN-0694 `node scripts/dev-stack.mjs` (verbs are documented in §2.4 "Detached full-stack supervisor") records **who started a stack** in a lease, and `status` cross-checks **every** lease field against a fact that is independent of the lease itself. The direction of trust is one-way: **facts beat intent** — what the lease claims does not matter until pids, ports and the heartbeat verify it ("a field nobody checks is a comment").
-
-- **Lease location and shape**: `.xihe-stacks/<n>/lease.json` (atomic write: tmp + rename; `version: 2`). Fields = `instanceId`/`projectRoot`/`stackId`/`ports`/`pids{svc:{launcher,listener}}`/`cpVersion`/`startedAt`/`heartbeatAt`, plus `releaseFailed{at,services,reason}` when a stop was partial. Since task-75 the shape also carries an **optional** `phase` (`starting`|…). **Version policy**: `isShapedLease` compares `version` **strictly**, so a future bump to 3 makes every existing v2 lease `corrupt`, `status --all` reports all `ghost` and exits 1 — a loud rejection that is the intended behaviour; introducing v3 must relax the read side to a set membership and migrate in the same batch (which is why task-75 added `phase` **without** bumping the version). `ports` covers **only the four supervised services** (CP/Agent/Runtime/UI).
-- **Exit codes**: `0` = healthy / a verification window may open (`status` passed every check; `status --all` found no non-healthy stack; `gc` found no candidates); `1` = hard problem (some stack is non-healthy, `gc` has candidates, or `stop` left residual ports/pid records); `2` = argument or environment error (unknown verb, **unknown option also exits 2**, invalid/unregistered `--stack`, derivation failure). Always parse stdout of `status --json` first and read the exit code second — `1` does not mean the tool is broken.
-- **`ok = factsOk && checks.allOk`**: `factsOk` = the pid records' processes are alive + all four service ports listen + PG listens; `checks` cross-checks each field — pid incarnation (launcher liveness + listener liveness + whether the port is still held by the recorded pid — **merged into one** `lease-incarnation-stale` with old→new pids in `expected`/`actual`, `task-586`), port actually listening (`port-not-listening`), heartbeat freshness (`lease-cold`, **informational**), `instanceId` match (`instance-mismatch`), `cpVersion` match (`cp-version-mismatch`, **informational** per D-1410: CP changes its build stamp on every rebuild, so this equality is always false during active development and would be ignored anyway — the `cpBuild` section (`runningCommit`/`behind`/`verdict`) covers what it was meant to catch), declared port match (`port-declared-mismatch`) and more. Mismatches land in `mismatch[]`; a field that **is declared but cannot be verified right now** lands in `unverifiable` (also blocks `healthy`); only an **undeclared** field is `skipped` (non-blocking). No field ever passes just because the lease says so.
-- **`heartbeatAt` = the time of the most recent successful verification**: `status` refreshes it when every check is green (`--json` reports `leaseRenewed` so the refresh is observable); it is **not** a self-reported uptime. `gc` is strictly read-only and never refreshes the heartbeat. An expired heartbeat is reported as `lease.state=cold` plus a P3 hint; it never changes `verdict` and never promotes a stack to `ghost`. Renewal admission is **facts verified** (four service ports listening + HTTP ready + PG), **not** fields match (`task-586`): requiring an empty `mismatch[]` meant any legitimate single-service restart froze the heartbeat forever, so `cold` became permanent and every `status` exited 1 — the other half of the self-lock described in the Chinese source. `status` re-reads the lease after a successful renewal so one screen never shows both "renewed" and a stale heartbeat.
-- **PG is not in the lease `ports`**: PG is a compose resident service that the supervisor does not own the lifecycle of, so declaring it would create a field that can never verify. PG facts stay in `status.pg` (`{port, listening}`).
-- **Migrating pre-upgrade stacks (not a fault)**: stacks started before this change have no lease ⇒ the first `status` / `status --all` reports `verdict: ghost` (reasons include `lease-missing`) and exits `1`. Fix it by either `node scripts/dev-stack.mjs acquire --stack <n>` (adopts the stack and writes the lease from current facts — it does **not create** pid records, it only reuses existing ones, so `ok` can stay `false` even when `verdict` is `healthy` because pid records are the factual substantiation layer) or restarting that stack once.
-- **Cross-checkout ghosts**: the port space is global while the lease space is per checkout ⇒ **a live stack started by another checkout also looks like a ghost here**. `gc --dry-run` candidates therefore carry `serving` (does the service still answer on that port) and `ownTrace` (does this checkout have a lease/pid trace) to disambiguate, and you must **not** `stop` based on them alone: confirm ownership first (run `stop` in the checkout that owns it, or `acquire` it here). `gc` never kills anything and offers no `--apply` (`--dry-run` is accepted and behaviour is always dry-run).
-
-### 4.11. Dev admin password auto-injection (D-766, `dev-stack` starts)
-
-Since D-766, `node scripts/dev-stack.mjs start` (runtime mode "Detached full-stack supervisor" in §2.4, or `mise run dev:stack`) **decides** the dev admin password itself and injects it into the child environment, so a manual `mise run reset-admin` is no longer a prerequisite (implementation: `scripts/lib/dev-admin-password.mjs`; **zero product-surface change** — CP still only reads `XIHE_DEV_ADMIN_PASSWORD`, PLAN-0547).
-
-- **Source precedence** (high → low — the **B′ four-layer order**, user ruling 2026-11-11; isomorphic to Spring Boot / AWS CLI / Ansible / Docker Compose: explicit override > persisted file (truth) > packaged default): ① an explicit OS env `XIHE_DEV_ADMIN_PASSWORD` (caller/CI; **never persisted**); ② the value already persisted in `.local/dev/admin-password` (directory `0700` / file `0600`; `.local/` is gitignored) — **the persisted single source of truth**; ③ the machine's `.env` chain (`.env` → `.env.$XIHE_ENV` → `.env.local`, same semantics as CP's `DotenvLoader`, fill-gaps only) — **seed only for the first time**, not consulted when ② exists; ④ when none of the above applies, generate 24 bytes of base64url (32 chars) and persist it to ②'s path, reused stably across restarts. Blank/whitespace-only values always count as unconfigured (the empty placeholder in `.env.example` is not an empty password).
-- **Injection point**: `start` writes the value into the supervisor's child env (`childEnv.XIHE_DEV_ADMIN_PASSWORD`) *before* spawning anything ⇒ CP's `DataSeeder` seeds `admin@xihe.local` with exactly that password on an **empty** database.
-- **Upsert timing**: after all four services pass `waitReady` and the lease flips to `started`, it reuses the existing `scripts/reset-admin.ps1` (internally `ResetAdmin.java`) for an **UPDATE only** — `DataSeeder` **creates but never updates**, so an **existing** database only picks up the same password through this step. No new SQL. **Since BL-523 that entry point no longer self-creates the account**: when the `admin@xihe.local` row is missing it fails explicitly (exit 3) and points at `mise run dev:reset` or a stack restart so `DataSeeder` creates it (the old INSERT branch wrote `users.role`, which V89 dropped, so it always raised a SQL error; a self-created row would also lack the instance owner / SUPER_ADMIN binding).
-- **Skip conditions** (each prints the reason): non-Windows (`reset-admin.ps1` is Windows-only; the hint is to run `mise run reset-admin` manually); stack not ready.
-- **Failures never block the start**: a failed upsert is a WARN plus a repair command (`mise run reset-admin`, or just re-run `start`); a failed **password resolve/persist** degrades the same way — WARN plus skipped injection (neither `XIHE_DEV_ADMIN_PASSWORD` nor the upsert) — and `start` keeps going. Its exit code still depends only on the four ports becoming ready, never on a pre-spawn password read/write failure.
-- **Logs never contain the value**: only `source`/`file`/`persisted` (with `value=not-logged`; since PLAN-0770 **not even `length`** — length is a derived quantity); the password reaches the entry point through the child env, **not the command line**. The reset-admin leg uses **`XIHE_RESET_ADMIN_PASSWORD`** (BL-523: inside the entry point the precedence is `stdin > env > --password`, the last one kept but deprecated with a WARN; use `--password-stdin` when you need deterministic piped input); the wrapper's `-Password` entry point has been removed entirely (D-1753 ③: passing it is rejected by parameter binding with a non-zero exit), so **no plaintext ever appears in argv**. The full conclusion and options are logged in the internal note `internal/A03-xihe/docs/BL-523-reset-admin-insert-broken.md` (cross-repo path).- **The first upsert may occupy one build slot**: if `packages/control-plane/target/reset-admin-classpath.txt` is missing or older than `pom.xml`, that upsert first runs `mvn dependency:build-classpath` — **not a compile**, but it does enter Maven, so **do not misreport it as build contention**; the cache is generated once and reused afterwards.
-- **Relationship to older statements**: runtime mode A (`mise run dev:host`) does **not** take this path, so for it the "random password is not printed ⇒ scripts cannot log in" conclusion still holds (see the supersede note in the Chinese-side Mode B section); the English section carries no such claim to supersede.
-- **How to check which layer a given stack is actually using (PLAN-0770 INV-3)**: `node scripts/dev-stack.mjs status --stack <n>` now prints one extra non-secret line —
-  ```
-  dev-admin user=admin@xihe.local source=file stack=stack-2 db=xihe_2 hasFile=true persisted=.local/dev/admin-password upsert=ok
-  ```
-  `--json` carries the same fields in a `devAdmin` block (`{user, source, envFile, stack, database, persistedPath, hasFile, wouldGenerate, upsert, upsertAt, upsertReason, bootSource, bootAt}`), and `node scripts/stack-run.mjs env-json --stack <n>` exposes an identical `devAdmin` block for PowerShell consumers. `source` has five values: `env` (OS env, explicit override) / `file` (`.local/dev/admin-password`, the truth) / `env-file` (the `.env` chain; the `via` suffix names the file; only when no file exists) / `generated` (generated and persisted this run — appears in `start` logs only) / `missing` (none of the three; the live view in `status`, and the **next start will generate and persist one**). `upsert`/`bootSource` report the **previous `start`'s** result (`ok`/`failed`/`skipped`/`not-run`, plus a reason; `bootSource` = the layer that start actually used), while `source` is the **live view** (which layer a new start would use now) — two different time bases, so the line appends `bootSource=…(上次起栈 <time>)` when they disagree. `status` itself never upserts (a read command must not have side effects). **None of these readings carry the value, its length, or a hash.**
-- **The `.env` chain is seed-only (B′)**: once a checkout has a persisted file, **editing `.env.local` no longer takes effect** — check `source` in `status` (`file` = the file is live; `env-file` = no file yet, running off the seed). That is how "one checkout, one persisted source" is enforced; to change the password use `mise run reset-admin`, not `.env.local`. **Repair/rotation**: a successful `mise run reset-admin` (it passes `-WriteBack`) writes the **same** value back to `.local/dev/admin-password` (printing `written=<relative path>`, never the value), so the database and the file stop drifting. **Calling `scripts/reset-admin.ps1` directly does not write back by default** — `start`'s boot upsert also goes through that wrapper, so a default-on write-back would rewrite the persisted file on every boot, which is a different semantic and stays off.
-- **Irreversible cleanup and reset boundaries**: `mise run dev:reset` is a dry-run by default (confirm backups and data scope before a real reset, and state the target stack and database identity before dropping a database); **`mise run clean` deletes permanently and does not go to the recycle bin** — confirm no build or service still uses the artifacts first; the `reset-admin` temporary password **must not** be written into scripts, source, or logs, and its persistent location is the gitignored `.local/dev/admin-password` (once a persisted file exists, editing `.env.local` no longer takes effect).
-
-### 4.12. First login: where the password comes from (bare CP boots, D-1753 ②)
-
-The account `admin@xihe.local` exists but you do not know its password? Pick the branch that matches how the stack was started:
-
-- **Stacks started via `dev:stack` / `dev-stack.mjs start`**: the single-source chain (B′) decides the password and upserts it into the database (§4.11). Read the gitignored `.local/dev/admin-password` (0600); to see which layer is live, check the `dev-admin … source=…` line in `status` (`file` = the persisted file is in effect; `env`/`env-file` = the value from that channel).
-- **A bare CP boot** (`mvn spring-boot:run` / `dev:host`, with `XIHE_SEED_ADMIN=true` but no `XIHE_DEV_ADMIN_PASSWORD`): `DataSeeder` takes the random-generation branch, and **since D-1753 ② (task-62) no channel discloses that value** — the WARN in `cp.out.log` only points at the remedy, never prints the value, and this class writes no persistent file. **You must run `mise run reset-admin` to set a known password before you can log in** (it resolves the single-source chain and writes the same value back to `.local/dev/admin-password`). This is the accepted cost of "logs are a permanent-retention surface, so no value ever lands there" — **not a malfunction**. (The Chinese-side §2 carries a superseded "printed once at creation" quote; the English side never made that claim.)
-- **The account row does not exist** (`reset-admin` exits 3): create it first — restart CP once with `XIHE_SEED_ADMIN=true` plus `XIHE_DEV_ADMIN_PASSWORD` (the Chinese-side §2 "first-run account creation" section owns that path) — then return to the two branches above. `reset-admin` only UPDATEs; it never self-creates the account (BL-523).
-
-Channel discipline is unchanged: the value travels only through env (`XIHE_RESET_ADMIN_PASSWORD`) or stdin; the `-Password` argv entry point has been removed (D-1753 ③ — passing it is rejected by parameter binding), and no log or script may ever contain the value itself.
-
-## 5. Deployment
-
-### 5.1. Docker Compose (frozen 2026-10-07 — one-shot baseline, historical reference only)
-
-```bash
-# [frozen 2026-10-07 — do not run; daily start uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
-# Scope details: see the two banners in `docs/i18n/zh-Hans/DEV-002-developer-guide.md` "Mode B (Docker Compose)"
-# — workspace Docker backend freeze (PLAN-0618) / Compose topology limits.
-# Build and start all 4 services
-docker compose up -d --build
-
-# Check status
-docker compose ps
-
-# View logs
-docker compose logs -f control-plane
-```
-
-Service ports (Docker internal / host mapping, stack-1; see "Parallel host stacks" for stack-2..8):
-- CP: 8080 → 12631
-- Agent: 8000 → 12632
-- Runtime: 8001 → 12633
-- PostgreSQL: 5432 → 12634
-
-### 5.2. GraalVM Native Image (CP, experimental)
+### CP GraalVM Native Image (experimental, Windows x64)
 
 The current compatibility effort targets Windows x64 only and uses GraalVM Community Edition 25.4.4.1.1 (JDK 25.0.4.1.1). Linux/macOS are unverified. This is not a supported release artifact; the ordinary `dev:cp` and `mvn spring-boot:run` commands remain JVM-based.
 
@@ -889,92 +987,17 @@ Native metadata maintenance: the record hints in `NativeAotRuntimeHints` come fr
 
 Native probe semantics for operators: the native CP exposes `/actuator/health` anonymously, but **`/ready` requires authentication** (an anonymous request returns 401) — do not read an anonymous `/ready` 401 as a readiness failure; send the run-scoped token when probing readiness.
 
-## 6. Debugging
+## 6. Rust build cache strategy
 
-### 6.1. CP Logs
+- **Configurable build-output root (task-80, 2026-11-08; supersedes "Rust build output must stay on H:")**: Rust build output no longer has to live on the H: volume. `XH_CARGO_TARGET_ROOT` (the machine value lives in the gitignored `mise.local.toml` — on one dev box that reads e.g. `G:\zeolib\cargo-target`; no machine path is committed) relocates the whole cargo target family; the primary checkout gets `<root>/{main,stack-N,e2e}`, a linked worktree gets `<root>/<worktree-dir>/…` (so two lanes running the same stack id do not each overwrite the other's exe — the BL-221 failure mode). Precedence: `CARGO_TARGET_DIR` (`worktree-env.ps1` / manual) > `XH_CARGO_TARGET_ROOT` > old derivation `<one>/.tmp/cargo-target`; **unset ⇒ byte-for-byte the pre-080 behavior** (regression asserted in `scripts/lib/stack-cargo-target.test.mjs`). A relative or non-existent root makes the scripts **fail fast** instead of silently building on the old volume. To change the drive use `mise.local.toml` (gitignored, outranks `mise.toml`; exporting the variable in a shell does **not** win under `mise run` — measured 2026-11-08, mise `[env]` overrides the parent environment). **Scope:** mise cargo tasks that run through `scripts/cargo-run.mjs` land on `<root>`; **bare `cargo` that bypasses the wrapper, plus the IDE/rust-analyzer, still write the H: volume per `.cargo/config.toml`** (`target-dir = "../.tmp/cargo-target/main"` is deliberately kept; see below). **Net effect: the dev stacks, E2E, and wrapper-backed mise tasks no longer add H: usage; bare `cargo` and the IDE still do.**
+>
+> **Wrapper (task-80 batch 2, 2026-11-08):** every `mise.toml` task that called cargo directly (`build:runtime` / `test:runtime` / `test:runtime:lib` / `test:runtime:lib:gate` / `test:runtime:lib:ignored:isolated|functional` / `lint:runtime` / `clean:runtime-sweep`) now calls `node scripts/cargo-run.mjs <cargo args…>`. Three hard rules keep it transparent: ① `spawnSync('cargo', args, { stdio: 'inherit' })` — cargo's stdout/stderr is never captured or rewritten; ② the exit code is passed through verbatim (`process.exit(status)`, signal-kill → 1); ③ it injects `<root>/[<worktree-dir>/]main` only when `XH_CARGO_TARGET_ROOT` is set and `CARGO_TARGET_DIR` is not, and the key comes from `scripts/lib/stack-cargo-target.mjs` (no second derivation) — with the variable unset the behavior is byte-identical to bare cargo. `cargo fetch` stays bare (writes `CARGO_HOME`, not the target dir). **Evidence:** `mise run test:runtime:lib` cold-built in 65.4 s into `<root>/plan-0631-t32/main` (3364 files / 1.33 GB; measured against the then-current machine root) while `.worktrees\.tmp\cargo-target` kept its old mtime; with `XH_CARGO_TARGET_ROOT=''` the same task's `cargo metadata` still reports the old H: path (nothing injected).
+- **Default: one `CARGO_TARGET_DIR` per worktree (PLAN-0596).** Inside the ONE workspace, the ONE-side worktree convention externalizes it under `one/.tmp/cargo-target/<name>` (and `UV_PROJECT_ENVIRONMENT` under `one/.tmp/venvs/<name>`); a standalone clone keeps the in-tree default. Do not point several worktrees at the same target: concurrent builds serialize on the target lock, and on Windows a running service holds the exe, so the other worktree's build fails.
+- **Measured (2026-10-31 scratch):** two checkouts with identical source/profile shared one target: second cold build 48.9s → **0.3s**, disk 2×2.606GB → **2.606GB**. The benefit only applies when source/toolchain/profile match; real parallel branches differ, so the default stays isolated (user acceptance would be required to change it).
+- **Sweep scope:** `mise run clean:runtime-sweep` only touches the single target resolved by the current `cargo metadata` (under `mise run` = the wrapper-injected `<root>/[<worktree-dir>/]main`; in a plain shell = in-tree or the external dir from the ONE-side convention); it never scans other projects under `.local/cargo-target`. `--maxsize 12GB` is interpreted as MiB (≈11.18 GiB).
+- **Permanent delete:** `mise run clean` runs `rm -rf logs packages/*/target packages/*/dist packages/*/coverage` with **no recycle bin and no prompt**; stop builds/services and confirm those are rebuildable artifacts first. Treat caches as "delete and rebuild", not cross-drive backup.
 
-By default, each `mise run dev:*` task in the root directory writes process logs to `logs/<module>.log`. The four default file names are:
-
-- `logs/ui.log`
-- `logs/agent.log`
-- `logs/cp.log`
-- `logs/runtime.log`
-
-Log levels are also recommended to be configured from the root `.env`:
-
-- `XIHE_LOG_LEVEL`: Default level shared by all four modules
-- `XIHE_LOG_LEVEL_UI`
-- `XIHE_LOG_LEVEL_AGENT`
-- `XIHE_LOG_LEVEL_CP`
-- `XIHE_LOG_LEVEL_RUNTIME`
-
-Priority from highest to lowest:
-
-1. `XIHE_RUNTIME_LOG_FILTER`
-2. Module-specific variable: `XIHE_LOG_LEVEL_UI`, `XIHE_LOG_LEVEL_AGENT`, `XIHE_LOG_LEVEL_CP`, `XIHE_LOG_LEVEL_RUNTIME`
-3. Global variable: `XIHE_LOG_LEVEL`
-
-Note: Vite dev server only supports `info | warn | error | silent`; if you configure `debug` or `trace` for UI, it will automatically fall back to `info`.
-
-Project-level environment variables use the `XIHE_` prefix, e.g.: `XIHE_CP_PORT`, `XIHE_AGENT_PORT`, `XIHE_RUNTIME_PORT`, `XIHE_UI_PORT`, `XIHE_LLM_PROVIDER`, `XIHE_DEEPSEEK_API_KEY`.
-
-To change the directory, set `XIHE_LOG_DIR` in root `.env`; file logging is only disabled when you explicitly set `XIHE_LOG_TO_FILE=0`.
-
-To clear file logs:
-
-```bash
-mise run clean
-```
-
-The following commands are mainly for increasing single-module log verbosity, not for enabling file logging itself.
-
-```bash
-# Enable debug logging
-cd packages/control-plane && XIHE_LOG_LEVEL_CP=DEBUG mvn spring-boot:run
-```
-
-### 6.2. Runtime Logs
-
-```bash
-XIHE_RUNTIME_LOG_FILTER=xihe_runtime=debug,rmcp=info cargo run
-```
-
-### 6.3. Agent Logs
-
-Agent uses `langchain-litellm` (`ChatLiteLLM(BaseChatModel)`) as the unified LLM backend, with `litellm` automatically routing to 100+ Providers at the bottom layer. Provider switching only requires specifying in the UI settings page or environment variables:
-
-```bash
-XIHE_LLM_PROVIDER=deepseek \
-XIHE_DEEPSEEK_API_KEY=your-deepseek-api-key-here \
-uv run python -m xihe_agent.main
-# When started directly, logs output to terminal; when started via root task, also writes to logs/agent.log by default
-```
-
-Or add Providers through the settings page: OpenAI, DeepSeek, Xiaomi MiMo, Anthropic presets + custom.
-
-### 6.4 springdoc debug surfaces (`/v3/api-docs`, `/swagger-ui/**`) — OFF by default (task-244 / PLAN-0763 D-800)
-
-`docs/api/openapi.yaml` is the single SSOT for the API wire contract; the CP's `/v3/api-docs` and Swagger UI are **debug/reconciliation artifacts** only. They are therefore **off by default** (`application.properties`: `springdoc.api-docs.enabled` / `springdoc.swagger-ui.enabled` = `${XIHE_SPRINGDOC_ENABLED:false}`), so packaged and production-facing deployments no longer expose the full route index anonymously.
-
-- **Enabling locally (one line)**:
-  - PowerShell: `$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`
-  - POSIX shell: `XIHE_SPRINGDOC_ENABLED=true mise run dev:host`
-- **Profiles that enable it automatically**: `dev` / `e2e` / `test` (`application-{dev,e2e}.properties`, `src/test/resources/application-test.properties`). `dev:host` runs the **default profile**, so it needs the env var above or an explicit `--spring.profiles.active=dev`.
-- **Why it can never substitute for the contract (architecture reason)**: springdoc is generated by runtime reflection — it reads the code, it is not an input to the contract. Measured: it **under-reports 15 routes** versus the live `RequestMappingHandlerMapping` and **does not include `/internal/**` at all** (64 of the 84 yaml-only paths are `/internal/`). "The endpoint is / is not in springdoc" therefore must never be used to judge contract completeness; parity is owned by `RouteContractParityTest`. **Where the architecture rationale lives**: in the Chinese original [`DEV-014`](../zh-Hans/DEV-014-control-plane-architecture.md) (springdoc section), which this page links to **by policy** — architecture guides are maintained as Chinese originals and English pages link to them (`en/INDEX.md`).
-- **What "off" looks like**: `GET /v3/api-docs` and `/swagger-ui.html` return **404** (no handler). The three `permitAll` entries in `SecurityConfig` only matter when the surface is explicitly enabled — they are **not** a standing anonymous hole.
-- **Both states measured (task-194, 2026-11-11; both columns measured, not inferred)**: a standalone CP on the default profile (`XIHE_CP_PORT=18081`, throwaway database, `stack-1` untouched), same jar, only one env differs:
-  | Path | OFF (default profile) | `XIHE_SPRINGDOC_ENABLED=true` |
-  | --- | --- | --- |
-  | `/v3/api-docs` | **404** (RFC 9457 `not_found` body) | **200** (`{"openapi":"3.1.0"…}`) |
-  | `/v3/api-docs.yaml` | **404** | **200** (YAML) |
-  | `/swagger-ui/index.html` | **404** | **200** (Swagger UI) |
-  | `/swagger-ui.html` | **404** | **302** → `/swagger-ui/index.html` |
-  | `/actuator/health` | **200** `UP` | **200** `UP` |
-  The OFF-state 404 is a **real 404 (no handler)**, not a 500 or an empty JSON body — that is the line between "the surface is absent" and "it exists but errors".
-  `[source]` One correction made along the way: `/v3/api-docs.yaml` used to answer 401 in both states because `SecurityConfig`'s `permitAll("/v3/api-docs/**")` does not cover the `.yaml` suffix (`/**` needs a following segment); task-194 adds `/v3/api-docs.yaml` explicitly to permitAll and to `UiStaticServingFilter`'s bypass list.
-- **Never use it as the contract or as a denominator**: it **under-reports** routes compared with the live `RequestMappingHandlerMapping` and does not include `/internal/**`; reconciliation always goes through `RouteContractParityTest` (live mapping).
-
-## 7. Module Version Bump (PLAN-0534)
+## 7. Module version bump (PLAN-0534)
 
 The four modules version **independently**. Each manifest is the only authority;
 business code must not contain a version literal.
@@ -1012,29 +1035,25 @@ business code must not contain a version literal.
 - When CP runs directly in an IDE that does not delegate resource filtering to Maven, `pom.properties` may still contain the raw `@project.version@` placeholder. `BuildVersion` rejects it and returns `null` with a WARN, so `cp.version` is `null`. Use `mvn spring-boot:run` or a Maven build for a real version.
 - Commits are never fabricated; without build/deploy injection the UI shows “not injected”.
 
-## 8. Related Documents
-
-- [DEV-001 System Architecture](DEV-001-system-architecture.md)
-- [USER-001 User Guide](USER-001-user-guide.md)
-
-## 9. Commit Messages, the Worktree Pool, and Development Data (moved down from AGENTS.md, task-93)
+## 8. Commit messages, the worktree pool, and development data (task-93)
 
 Policy criteria stay in `AGENTS.md`; this section keeps the measurable readings and the boundaries for when detail is needed.
 
-### 9.1 Commit-message gate
+### 8.1 Commit-message gate
 
 - The gate rules and the flip measurement live in §3 "Mode D" (last bullet) and `scripts/check-commit-msg.mjs`; this section adds the **first-line bans**: no emoji, no trailing period, and do not start with "update/modify/adjust/optimize/handle/improve/tidy" — say what changed. Put the body after a blank line.
 - Suggested body sections `Why:` / `What:` / `Verify:` / `Risk:`; describe why and how it was verified, do not repeat the diff.
 - **Validate the branch itself before merging**: `node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`. The gate only reads history on develop, so over-wide or unreferenced commits inside a branch surface after the merge (this happened once in 2026-11-06 and was explicitly exempted through `scripts/commit-msg-allowlist.json`). The allowlist only accepts committed facts already on develop that cannot be rewritten; every entry needs a reason and bulk back-filling is forbidden.
 - Historical commits are exempt by default via `--since 1dd57056`.
 
-### 9.2 Worktree pool: local measurement and incident
+### 8.2 Worktree pool: local measurement and incident
 
 - **Measured on this machine (2026-11-05)**: `git worktree add` on the H: volume takes **470 seconds** and can leave **0 MB half-finished directories** when the checkout never completes; **34** worktrees were created that day and **14** of them were empty leftovers.
 - ⇒ Isolated PLAN execution in A03 always reuses an existing pool slot (the order between "resident module-branch slot" and "task slot" is owned by the `worktree-lifecycle` skill); a new worktree is allowed **only when the whole pool is busy and the user explicitly authorises it**, and it **must be registered in the pool table** (`.local/xh-d28/worktree-pool.md`) in the same batch.
 - **Do not** substitute the Kilo / Agent Manager worktree mode (a different mechanism; corrected again by the user on 2026-10-14).
 
-### 9.3 Development-data policy (D-215)
+### 8.3 Development-data policy (D-215)
 
 - **Criterion**: XH is not released, so development data in local/isolated stacks is disposable ⇒ a schema change may **drop and rebuild the database** (`mise run dev:reset` or delete the DB and re-run Flyway) with **no backfill script, no dual read/write, no grey-release switch, and no "old and new snapshots side by side" compatibility branch**, and "row-count comparison" is not an acceptance criterion.
 - **Three boundaries**: ① development data only (lane / isolated stack / dev stack); ② user-visible release artifacts, backups, `.local/evidence/` evidence, and repository history are excluded; ③ before dropping a database you must state the **target stack and database identity** (so another lane is never wiped by mistake), and an irreversible action must be preceded by a line saying which databases will be dropped.
+

@@ -119,7 +119,7 @@ mise run dev:host
 
 > 首次接触 XH（空白实例 → 首条回复）请直接看 [DEV-033](DEV-033-first-run-gold-path.md)：本文只讲环境与运行模式，DEV-033 讲本地模式三条件、onboarding 步骤与「看到什么算成功」的逐条判据。
 >
-> **启动顺序（PLAN-0632 T4.4）**：`dev:host` 里 cp/runtime/ui 仍并行，但 **Agent 会先等 CP readiness** —— `dev:host:wait-for-cp` 轮询 CP `/actuator/health` 到 200（**预算按起栈路径分层**：复用已构建 **60 s**，重建路径（stale/missing/dirty ⇒ 本次会先 `clean compile`）默认 **240 s；`XIHE_WAIT_FOR_CP_TIMEOUT` 覆盖两路径，`XIHE_WAIT_FOR_CP_REBUILD_TIMEOUT` 仅重建路径），等不到就**显式失败并打印 CP 日志路径**，**不会**在 CP 缺席时把 Agent 起成 degraded（旧行为会白跑约 2.8 s 启动 config sync）。单独起 Agent 仍用 `mise run dev:host:start:agent`（它已自动带这个等待）。
+> **启动顺序（PLAN-0632 T4.4）**：`dev:host` 里 cp/runtime/ui 仍并行，但 **Agent 会先等 CP readiness** —— `dev:host:wait-for-cp` 轮询 CP `/actuator/health` 到 200（**预算按起栈路径分层**：复用已构建 **60 s**，重建路径（stale/missing/dirty ⇒ 本次会先 `clean compile`）默认 **240 s**；`XIHE_WAIT_FOR_CP_TIMEOUT` 覆盖两路径，`XIHE_WAIT_FOR_CP_REBUILD_TIMEOUT` 仅重建路径），等不到就**显式失败并打印 CP 日志路径**，**不会**在 CP 缺席时把 Agent 起成 degraded（旧行为会白跑约 2.8 s 启动 config sync）。单独起 Agent 仍用 `mise run dev:host:start:agent`（它已自动带这个等待）。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -266,7 +266,7 @@ node scripts/dev-stack.mjs stop --stack 4 --with-pg       # 显式停 PG 容器�
 - `stop` 只终止 pid 文件记录且命令行匹配 `stack-run.mjs` 的 wrapper 进程树，不按端口盲杀。
 - **dev 管理员密码自动注入（D-766）**：`start` 自己解析/持久/注入 dev 管理员密码，并在四服务 ready 后把它 upsert 进库；来源优先级、跳过条件与日志口径见 §4「dev 管理员密码自动注入」。
 
-### 模式 B：Docker Compose 全栈（一次性基线）
+### 模式 B：Docker Compose 全栈（一次性基线，2026-10-07 冻结）
 
 > 🧊 **已冻结（2026-10-07 用户裁定；2026-10-09 mise 已注释）**：XH 服务容器化与 docker 构建全部暂缓——只有 PostgreSQL 保留容器，其余全 host。本模式命令与 `mise run dev:full` / `dev:backend` 均停用，仅作历史参考；日常启动用 `dev:host`，隔离 E2E 用 `test:e2e:host`。解冻须用户明确裁定并同步 AGENTS/DEV-002/DEV-020。
 
