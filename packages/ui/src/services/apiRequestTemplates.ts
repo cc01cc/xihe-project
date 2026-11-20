@@ -45,6 +45,20 @@ export function parseTemplates(raw?: string): ApiRequestTemplate[] {
 export function templateKey(ref: { layer: string; templateId: string; version: number }): string {
     return `${ref.layer}:${ref.templateId}:${ref.version}`;
 }
+/**
+ * DSD-1508 ③：模板选项标签 = 「name + v{version}」。模板名本身常自带版本后缀
+ * （真栈实例 `openai-chat-completions default v2` 再拼 v2 ⇒「… default v2 v2」），
+ * 所以末尾已是 `vN` 时按 version 对齐：相等原样返回，不等把旧后缀换成当前版本，
+ * 任何情况下都不会出现两个版本号。名称里的其它数字（如 `gpt-4`）不受影响。
+ */
+const VERSION_SUFFIX = /(?:^|[\s_\-/])v(\d+)$/i;
+export function templateLabel(name: string, version: number): string {
+    const base = name.trim();
+    const matched = VERSION_SUFFIX.exec(base);
+    if (!matched) return `${base} v${version}`;
+    if (Number(matched[1]) === version) return base;
+    return `${base.slice(0, matched.index).trimEnd()} v${version}`;
+}
 export function validateTemplate(template: ApiRequestTemplate) {
     return request<{ valid: boolean; diagnostics: TemplateDiagnostic[] }>(
         `/api-input-types/${encodeURIComponent(template.apiTypeId)}/versions/${template.apiTypeVersion}/validate`,
