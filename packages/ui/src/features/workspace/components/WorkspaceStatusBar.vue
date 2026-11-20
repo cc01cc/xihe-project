@@ -34,6 +34,7 @@
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { ShieldAlert } from "@lucide/vue";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -43,13 +44,34 @@ import {
     BreadcrumbSeparator,
 } from "../../../components/ui/breadcrumb";
 import { useAgentStore } from "../../../stores/agent";
+import { useAuthStore } from "../../../stores/auth";
 import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection";
 import { useWorkspaceEventStatus } from "../composables/useWorkspaceEventStatus";
 import { useWorkspaceNav } from "../composables/useWorkspaceNav";
 
 const { t } = useI18n();
 const agentStore = useAgentStore();
+const auth = useAuthStore();
 const connection = useWorkspaceConnectionStore();
+
+/**
+ * 沙箱执行面读数（task-134 / DSD-1507 ②）—— 从会话头搬下来的**唯一**一项状态。
+ *
+ * <p><b>判据</b>：只有 `windows-host`（direct_attach，无文件系统授权限制、只限启动目录）
+ * 需要常显警示 —— 换句话说是「你以为有沙箱限制，其实没有」这件事只在这一个后端成立。
+ * `windows-mxc` / `docker` 的隔离是常态，占位反而是噪音，故整节点不渲染（DOM 里不存在，
+ * 判据可断言 count 为 0）。</p>
+ *
+ * <p><b>为什么条件只看 executionMode，没有第二个「FS 限制」标志</b>：wire 面
+ * （`ApiWorkspace` / `WORKSPACE_WIRE_FIELDS`，`composables/api.ts:153`）**没有**任何
+ * 文件系统限制字段，14 个键里能表达这件事的只有 `executionMode`；`windows-host` 就是
+ * 「不限读写范围」的那个后端。若将来 CP 加了限制位，条件应改成
+ * `executionMode === "windows-host" && !workspace.fsRestricted`（届时同步改本注释与 spec）。</p>
+ *
+ * <p><b>文案沿用既有 key</b>：`workspace.sandboxEnforcement`（全文）/ `...Short`（行内），
+ * 与搬走前的会话头徽标同一句，不新造措辞。</p>
+ */
+const showSandboxReading = computed(() => auth.workspace?.executionMode === "windows-host");
 /**
  * 面包屑（task-160 从 `WorkspaceSecondaryNav` **整段搬来**，不是重写）：
  * 三段 `工作区（可点）→ 工作区名（不可点）→ 当前页（aria-current="page"）`。
@@ -175,6 +197,23 @@ const showUsage = computed(() => typeof connection.usageInput === "number");
                 aria-hidden="true"
             />
             <span>{{ connectionLabel }}</span>
+        </span>
+
+        <!--
+            ①b 沙箱执行面（task-134：从会话头搬来）：只有 windows-host 无 FS 限制时占位，
+            其它后端整节点不渲染（理由与条件见 script 里 showSandboxReading 的注释）。
+        -->
+        <span
+            v-if="showSandboxReading"
+            data-testid="workspace-status-sandbox"
+            :data-sandbox-enforcement="'unrestricted-fs'"
+            role="note"
+            class="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300"
+            :title="t('workspace.sandboxEnforcement')"
+            :aria-label="t('workspace.sandboxEnforcement')"
+        >
+            <ShieldAlert class="size-3 shrink-0" aria-hidden="true" />
+            <span>{{ t("workspace.sandboxEnforcementShort") }}</span>
         </span>
 
         <!-- ② 待审批总数：0 时不渲染（0 条待审批是常态，占位等于噪音）。 -->

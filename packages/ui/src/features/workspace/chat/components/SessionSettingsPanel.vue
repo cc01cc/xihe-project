@@ -62,10 +62,12 @@ const templateSummary = ref<TemplateSummary>({ label: null, loading: true, faile
 const panelId = computed(() => `session-settings-panel-${props.sessionId}`);
 const policyState = computed(() => policyStore.getState(props.sessionId)),
     mode = computed<SessionPolicyMode | null>(() => policyState.value?.mode ?? null);
-const modeLabel = computed(() => {
-    if (!mode.value) return t("chat.approvalModeUnavailable");
-    return mode.value === "manual" ? t("chat.approvalModeManual") : t("chat.approvalModeAuto");
-});
+/**
+ * task-134（DSD-1507 ③）：摘要行不再渲染「审批模式 …」文案 —— 档位徽标（SessionTierBadge）
+ * 是摘要行上唯一的状态读数，模式退化为档位的派生值（D-1908 二）。因此这里不再需要把 mode
+ * 翻成文案；`mode` 本身仍驱动下面的「自动放行」安全横幅（autoApproval），该横幅是安全状态，
+ * 不随摘要行文案移除而消失。
+ */
 const autoApproval = computed(() => mode.value === "auto");
 
 const session = computed(
@@ -114,9 +116,13 @@ const branchDetached = computed(
         props.selectedBranchId !== props.mainBranchId,
 );
 
+/**
+ * 折叠态（移动端 sheet）的 title 读数：与摘要行可见内容同口径（模板 + 分支）。
+ * task-134（DSD-1507 ③）：审批模式已从摘要行移除，title 不再拼它 —— 否则「看不见的文案」
+ * 与「悬停才看的文案」会各说一套。
+ */
 const summaryText = computed(() =>
     [
-        `${t("chat.approvalModeLabel")} ${modeLabel.value}`,
         `${t("chat.contextTemplateLabel")} ${templateDisplay.value}`,
         `${t("chat.branchSelectorLabel")} ${branchLabel.value}`,
     ].join(" · "),
@@ -216,15 +222,11 @@ async function closeAutoApproval() {
                     : t("sessionSettings.openInPanel")
             }}</span>
             <span class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap">
-                <span class="shrink-0" data-testid="session-settings-summary-approval">
-                    {{ t("chat.approvalModeLabel") }}
-                    <span class="font-medium text-foreground">{{ modeLabel }}</span>
-                </span>
-                <span class="shrink-0 text-muted-foreground" aria-hidden="true">·</span>
                 <!--
                     D-1908 一：档位 + 继承来源在摘要行上必须是**一个**读数（三态 + 降级子态）。
-                    上面的审批段是过渡期并存项（3 个 e2e 与本次 spec 之外的既有断言仍依赖它），
-                    彻底移除要走单独一张卡 —— 这里只做 additive，不动 policyStore 的加载链。
+                    task-134（DSD-1507 ③）：过渡期的「审批模式 …」段已删（D-1908 注释原文
+                    「彻底移除要走单独一张卡」，本卡即那张卡）；本行现在恒为 档位徽标 + 请求模板 + 分支。
+                    mode 仍驱动「自动放行」安全横幅，但不再在摘要行上重复渲染成文案。
                 -->
                 <SessionTierBadge :session-id="sessionId" />
                 <span class="shrink-0 text-muted-foreground" aria-hidden="true">·</span>

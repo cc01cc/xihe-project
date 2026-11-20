@@ -114,7 +114,8 @@ function sessionSettingsTestIds(root: Element | null): string[] {
  * task-52 / DSD-1463（`DSD-1450` + `D-1907` rev10）· 唯一入口判据。
  *
  * 裁定原文：会话设置唯一入口 = 摘要行（`session-settings-summary`），**不新增行内入口**。
- * 摘要行下的 `session-settings-summary-approval` / `-branch` / `session-settings-risk-*` 是它的
+ * 摘要行下的 `session-tier-badge`（档位徽标，task-134 / DSD-1507 ③ 取代了原审批模式段）/
+ * `session-context-template-current` / `-branch` / `session-settings-risk-*` 是它的
  * 读数子节点（`<span>`），不是入口；所以这里按**激活面**口径筛：`<button>` / `<a>` /
  * `role=button|link|tab|menuitem` / 带 `aria-expanded` 的家族节点。产品若被改成「两个入口」，
  * 第二个可激活节点一出现就被抓到 —— 判据是计数，不是注释。

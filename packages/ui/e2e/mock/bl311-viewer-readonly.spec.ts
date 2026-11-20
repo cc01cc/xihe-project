@@ -206,9 +206,19 @@ test.describe("BL-311 VIEWER 只读：会话权限档位写入口点击前不可
         await expect(page.getByTestId("session-tier-readonly")).toBeVisible();
         await expect(page.getByTestId("session-tier-readonly")).toContainText(READ_ONLY_COPY);
 
-        // 聊天列 summary 行仍显示审批模式（只读≠看不到状态）。
-        await expect(page.getByTestId("session-settings-summary-approval")).toContainText(
-            AUTO_MODE_COPY,
+        // 聊天列 summary 行仍可读（只读≠看不到状态，BL-311 规则不变）。
+        // task-134（DSD-1507 ③）：审批模式文案已随摘要行瘦身撤走（模式降级为档位的派生值，
+        // D-1908 二），摘要行上的状态读数改为档位徽标 —— 因此这里断言它的**内容**：
+        // 可见文本必须带只读原因（tierNoPermission + tierReasonViewer 拼出「无权限修改：工作区只读」），
+        // title 必须是具体档位名；「只是可见」不算通过。
+        const summaryBadge = page.getByTestId("session-tier-badge");
+        await expect(summaryBadge, "summary row keeps a readable state readout").toBeVisible();
+        await expect(summaryBadge, "readonly reason stays visible without hover").toContainText(
+            READ_ONLY_COPY,
+        );
+        await expect(summaryBadge, "the badge still names the concrete tier").toHaveAttribute(
+            "title",
+            TIER_COPY.view,
         );
     });
 

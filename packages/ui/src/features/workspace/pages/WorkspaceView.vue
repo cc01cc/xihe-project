@@ -8,12 +8,11 @@ import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection
 import { useAuthStore } from "../../../stores/auth";
 import { useChatStore } from "../chat/stores/chat";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../../composables/api";
-import { useWorkspaceEventStatus } from "../composables/useWorkspaceEventStatus";
 import { useWorkspaceSSE } from "../composables/useWorkspaceSSE";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
-import { FolderTree, ShieldAlert } from "@lucide/vue";
+import { FolderTree } from "@lucide/vue";
 import { useMediaQuery } from "@vueuse/core";
 import WorkspaceWorkbench from "../components/WorkspaceWorkbench.vue";
 import WorkspaceCreateDialog from "../components/WorkspaceCreateDialog.vue";
@@ -253,16 +252,6 @@ const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspa
 const workspaceEvents = useWorkspaceSSE(workspaceId, {
     onEvent: (event) => ws.applyWorkspaceEvent(event),
 });
-
-/**
- * 文件事件连接态**与底部状态栏同一实现**（task-10 item 3 / batch-2 #3）。
- *
- * <p>原先这里是二态（isConnected ? 已连接 : 重连中），状态栏是四态 ⇒ 未订阅页同一屏出现
- * 「文件事件重连中」与「本页未订阅文件事件」两句互相矛盾的话：同一个 connected=false，
- * 页面徽标判成「断了」，状态栏判成「没订阅」。现在派生链只有一条
- * （composables/useWorkspaceEventStatus），两处只差视觉。</p>
- */
-const { state: eventState, label: eventLabel } = useWorkspaceEventStatus();
 
 /**
  * PLAN-0676 T2：`limit` 态由壳级横幅（`AppLayout` 里的 `<SseSubscriberLimitNotice />`，读模块级
@@ -574,10 +563,13 @@ watch(isMobileViewport, (mobile) => {
                         :on-retry="workspaceEvents.retry"
                     />
                     <!--
-                        task-60 F-1（D-1907 rev10 达标路径）：这条只读提示原来独占一条 28px 带（line-clamp-2），
-                        现在并入下面 h-8 会话头行做行内徽标 —— 常显短标签 + 全文 title/aria-label。
-                        task-550 的裁定是「常显、不藏 hover」，故不改纯 tooltip；窄档（<1536px）只留图标，
-                        aria-label 仍带全文。testid 沿用 session-sandbox-enforcement（既有探针/追溯门引用）。
+                        会话头 = 页面身份行（task-134 / DSD-1507 ①）。**状态不在这里**：
+                        原 task-60 F-1 的「文件事件已连接」徽标（workspace-event-status）与
+                        「只限启动目录」提示（session-sandbox-enforcement）都搬到下面底部状态栏
+                        （WorkspaceStatusBar：连接态沿用同一条派生链 useWorkspaceEventStatus，
+                        沙箱读数只在 windows-host 无 FS 限制时占位）。用户原话（2026-11-20）：
+                        「毫无意义、状态应在底部」。**不要把它们加回本行** —— 会话头子节点上限 3
+                        （标题 / 只读徽标 / 用量），加回即超额。
                     -->
                     <div
                         class="h-8 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
@@ -600,39 +592,6 @@ watch(isMobileViewport, (mobile) => {
                             class="rounded border border-amber-500/40 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-300"
                         >
                             {{ t("workspace.viewerReadOnly") }}
-                        </span>
-                        <span
-                            data-testid="workspace-event-status"
-                            class="text-xs"
-                            :class="[
-                                // task-89：emerald-600 对浅底实测 3.62:1（<4.5）⇒ 降一档到 700（深色主题仍用 400）。
-                                eventState === 'connected'
-                                    ? 'text-emerald-700 dark:text-emerald-400'
-                                    : '',
-                                // 连接中占「进行中」色（与状态栏圆点同语义）；未订阅/未连接保持中性 ——
-                                // 未订阅不是故障，不该占用警示色（task-81 裁定，见 useWorkspaceEventStatus）。
-                                eventState === 'connecting'
-                                    ? 'text-amber-700 dark:text-amber-300'
-                                    : '',
-                                eventState === 'unsubscribed' || eventState === 'disconnected'
-                                    ? 'text-muted-foreground'
-                                    : '',
-                            ]"
-                            :data-event-state="eventState"
-                        >
-                            {{ eventLabel }}
-                        </span>
-                        <span
-                            data-testid="session-sandbox-enforcement"
-                            role="note"
-                            class="flex shrink-0 items-center gap-1"
-                            :title="t('workspace.sandboxEnforcement')"
-                            :aria-label="t('workspace.sandboxEnforcement')"
-                        >
-                            <ShieldAlert class="size-3.5" aria-hidden="true" />
-                            <span class="hidden 2xl:inline">{{
-                                t("workspace.sandboxEnforcementShort")
-                            }}</span>
                         </span>
                         <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
                         <div

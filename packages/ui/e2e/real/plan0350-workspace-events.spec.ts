@@ -225,7 +225,16 @@ test.describe("@host PLAN-0350 workspace file events", () => {
     }) => {
         seedPage(page);
         await page.goto(`/workspace/${wsId}`, { waitUntil: "load" });
-        await expect(page.locator('[data-testid="workspace-event-status"]')).toBeVisible({
+        // task-134（DSD-1507 ①）：同一个读数换了节点 —— 会话头不再渲染 workspace-event-status
+        // （页面身份行只留标题/查看者/风险），文件事件连接态现在由底部状态栏承载
+        // （WorkspaceStatusBar.vue 的 workspace-status-connection，data-connection-state 派生自
+        // 同一个 useWorkspaceConnectionStore，publish 方仍是 WorkspaceView 的 useWorkspaceSSE）。
+        // 判据没放宽：仍然「等到 SSE 报告已连接」才继续，区别只是落点从头部移到状态栏。
+        await expect(
+            page.locator(
+                '[data-testid="workspace-status-connection"][data-connection-state="connected"]',
+            ),
+        ).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByText("seed.md", { exact: true }).first()).toBeVisible({

@@ -19,6 +19,9 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             ...actual.api,
             getPolicyMode: vi.fn<typeof apiModule.api.getPolicyMode>(),
             setPolicyMode: vi.fn<typeof apiModule.api.setPolicyMode>(),
+            // task-134（DSD-1507 ③）：摘要行的状态读数换成档位徽标后，徽标要读档位投影；
+            // 不桩这里就是真 fetch（jsdom 下必然失败），徽标不渲染，断言会退化成「什么都没测」。
+            getSessionTier: vi.fn<typeof apiModule.api.getSessionTier>(),
         },
     };
 });
@@ -118,13 +121,23 @@ beforeEach(() => {
         mode: "manual",
         scope: "session",
     });
+    vi.mocked(api.getSessionTier).mockResolvedValue({
+        tier: "workspace",
+        source: "workspace",
+        workspaceTier: "workspace",
+        canConfigure: true,
+        denyReason: null,
+        available: ["view", "workspace", "full"],
+    });
     templateSummary.value = { label: null, loading: false, failed: false };
     setPolicyMode("manual");
     setSessionBinding({ id: "user-template", version: 2 });
 });
 
 describe("SessionSettingsPanel collapsed summary", () => {
-    it("renders one read-only summary line with the current approval / template / branch values", async () => {
+    // task-134（DSD-1507 ③）：摘要行的状态读数从「审批模式文案」换成「会话权限档位徽标」，
+    // 用例名同步 —— 旧名会让后来的人以为摘要行还在渲染模式（判据跟着改名，断言跟着改名）。
+    it("renders one read-only summary line with the current tier / template / branch values", async () => {
         const wrapper = mountPanel();
         await flushPromises();
 
@@ -134,8 +147,18 @@ describe("SessionSettingsPanel collapsed summary", () => {
         expect(summary.attributes("aria-expanded")).toBeUndefined();
         // D-1907 rev10：摘要条是「会话配置」的快捷开关，文案不再指向侧栏/会话设置面板。
         expect(summary.attributes("aria-label")).toBe("打开会话配置");
-        expect(summary.get('[data-testid="session-settings-summary-approval"]').text()).toContain(
-            "手动审批",
+        // task-134（DSD-1507 ③）：摘要行不再渲染「审批模式 …」段 —— 状态读数只剩档位徽标
+        // （D-1908 一）。断言钉**内容**而不是「徽标在」：可见文本 = 继承态 + 具体档位名，
+        // title = 具体档位名；同时反向钉住审批段真的没了。
+        const tierBadge = summary.get('[data-testid="session-tier-badge"]');
+        expect(tierBadge.text()).toBe(
+            i18n.global.t("sessionSettings.tierInherited", {
+                tier: i18n.global.t("sessionSettings.tierWorkspace"),
+            }),
+        );
+        expect(tierBadge.attributes("title")).toBe(i18n.global.t("sessionSettings.tierWorkspace"));
+        expect(summary.find('[data-testid="session-settings-summary-approval"]').exists()).toBe(
+            false,
         );
         expect(summary.get('[data-testid="session-context-template-current"]').text()).toContain(
             "user-template v2",

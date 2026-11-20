@@ -7,7 +7,7 @@ import { workspaceWire } from "./helpers/workspace-fixture";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
-import { selectByLocator } from "../helpers/select";
+import { copyForKey, selectByLocator } from "../helpers/select";
 
 // BL-328 家族：`expired decision` 用例**故意**让 decision 端点回 410（验"过期后卡片不关闭 + 可见错误"），
 // 逐条放行该端点与它的 logger 输出；其余通道不放行。
@@ -110,6 +110,31 @@ async function installPolicyModeRoute(page: Page) {
             ),
         });
     });
+}
+
+/**
+ * 语言包文案（task-134 / DSD-1507 ③）：摘要行改钉档位徽标后，断言文案一律从 i18n 取**当前语言副本**
+ * （copyForKey），不再抄中文常量 —— 语言包改词时这里跟着变；副本缺失直接抛，不退化成空串匹配。
+ */
+function copyOf(key: string): string {
+    const text = copyForKey(key);
+    if (!text) {
+        throw new Error("语言包缺键 " + key + "（e2e/helpers/select.ts copyForKey 返回 null）");
+    }
+    return text;
+}
+
+/**
+ * 审批模式的 **API 读回**（task-134）：摘要行不再渲染「审批模式 …」（DSD-1507 ③），
+ * 模式改由「横幅 + API 真值」钉住。直接问页面自己的 mock 路由，断言具体值而不是「非空」。
+ */
+async function readModeFromApi(page: Page): Promise<string> {
+    return page.evaluate(async (sessionId: string) => {
+        const url = "/api/v1/policy/mode?sessionId=" + encodeURIComponent(sessionId);
+        const response = await fetch(url);
+        const body = (await response.json()) as { mode?: string };
+        return body.mode ?? "";
+    }, SESSION_ID);
 }
 
 async function openApprovalChat(page: Page) {
@@ -497,15 +522,29 @@ test.describe("Chat approval flow", () => {
         });
         await openApprovalChat(page);
 
-        // PLAN-0582 S4: the collapsed summary shows the current mode; the auto
-        // warning + its remediation stay visible without opening the panel.
+        // PLAN-0582 S4 的原始判据是「摘要行显示当前模式」；task-134（DSD-1507 ③）把审批模式
+        // 文案撤出摘要行（模式降级为档位的派生值，D-1908 二）⇒ 替代判据三件，缺一不可：
+        //  1) 摘要行**不再**出现审批模式标签（反向钉住删除生效）；
+        //  2) 摘要行的状态读数（档位徽标）按**内容**钉：title 是具体档位名；
+        //  3) 模式本身走 API 读回具体值（不是「非空」）。
         const settingsSummary = page.getByTestId("session-settings-summary");
-        await expect(settingsSummary).toContainText("自动放行");
+        await expect(settingsSummary).not.toContainText(copyOf("chat.approvalModeLabel"));
+        const summaryBadge = page.getByTestId("session-tier-badge");
+        await expect(summaryBadge).toBeVisible();
+        await expect(summaryBadge).toHaveAttribute(
+            "title",
+            copyOf("sessionSettings.tierWorkspace"),
+        );
+        expect(await readModeFromApi(page), "mode read back from the API must be auto").toBe(
+            "auto",
+        );
         const autoBanner = page.locator('[data-testid="session-policy-auto-banner"]');
         await expect(autoBanner).toBeVisible();
         await autoBanner.locator('[data-testid="session-policy-auto-close"]').click();
         await expect(autoBanner).toBeHidden();
-        await expect(settingsSummary).toContainText("手动审批");
+        expect(await readModeFromApi(page), "closing the banner flips the mode to manual").toBe(
+            "manual",
+        );
         // PLAN-0626 M2: the summary row is only the entry, so open the panel
         // explicitly (the helper asserts visibility — no waitForTimeout after the click).
         await openContextPanel(page);
@@ -515,7 +554,14 @@ test.describe("Chat approval flow", () => {
         // 模式写入口」，而不是去读一个不存在的 trigger。
         await expect(page.getByTestId("session-policy-mode")).toHaveCount(0);
         await expect(page.getByTestId("session-policy-mode-readonly")).toHaveCount(0);
-        await expect(settingsSummary).toContainText("手动审批");
+        // 面板打开后摘要行的读数不变（档位徽标仍是具体档位名），模式 API 真值仍是 manual。
+        await expect(summaryBadge).toHaveAttribute(
+            "title",
+            copyOf("sessionSettings.tierWorkspace"),
+        );
+        expect(await readModeFromApi(page), "mode stays manual after opening the panel").toBe(
+            "manual",
+        );
         expect(postResponse).toEqual({ sessionId: SESSION_ID, mode: "manual", scope: "session" });
     });
 

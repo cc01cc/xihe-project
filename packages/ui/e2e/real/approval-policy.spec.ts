@@ -87,6 +87,23 @@ async function readSessionMode(
     return body.mode ?? "";
 }
 
+/**
+ * 会话权限档位的 **API 读回**（task-134 / DSD-1507 ③）：摘要行的状态读数换成档位徽标后，
+ * 徽标 title 的"正确值"只能来自 CP —— 断言「徽标文字 == API 档位」，而不是「徽标可见」。
+ */
+async function readSessionTier(
+    request: APIRequestContext,
+    auth: Auth,
+    sessionId: string,
+): Promise<string> {
+    const response = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/tier`, {
+        headers: authHeaders(auth),
+    });
+    expect(response.ok(), await response.text()).toBe(true);
+    const body = (await response.json()) as { tier?: string };
+    return body.tier ?? "";
+}
+
 async function resolvedApprovalMode(request: APIRequestContext, auth: Auth): Promise<string> {
     const response = await request.get(
         `${CP_URL}/api/v1/config/approval-policy?workspaceId=${encodeURIComponent(auth.workspaceId)}`,
@@ -118,6 +135,24 @@ const TIER_COPY_KEYS = [
     "sessionSettings.tierWorkspace",
     "sessionSettings.tierFull",
 ] as const;
+
+/** 档位名 → 档位名文案键（同一组键，摘要行档位徽标的 title 就是它）。 */
+const TIER_LABEL_KEYS: Record<string, string> = {
+    view: "sessionSettings.tierView",
+    workspace: "sessionSettings.tierWorkspace",
+    full: "sessionSettings.tierFull",
+};
+
+/** 把 API 读回的档位名翻成文案键；未知档位直接抛（CP 只允许三档，读到别的一律算异常）。 */
+function tierLabelKeyFor(tier: string): string {
+    const key = TIER_LABEL_KEYS[tier];
+    if (!key) {
+        throw new Error(
+            "未知档位读数 " + JSON.stringify(tier) + "（CP 只允许 view/workspace/full）",
+        );
+    }
+    return key;
+}
 
 test.describe.configure({ retries: 0 });
 
@@ -222,14 +257,17 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
     // PLAN-0626 M2：模式选择器迁进右侧 dock 的 `context` 标签，聊天列摘要行只是入口；
     // 帮助器返回时面板已可见，不再需要点完再等。
     await openContextPanel(page);
-    // task-24（D-1908 二）跟改：面板里的独立审批模式下拉 `session-policy-mode` 已退役 ——
-    // 唯一持有者 SessionPolicyControls.vue 无任何 import（死组件），模式降级为**档位的派生值**，
-    // 页面上的读数落在 32px 摘要行 `session-settings-summary-approval`
-    // （SessionSettingsPanel.vue:219 渲染 chat.approvalModeLabel + modeLabel，:66-67 由 mode 派生）。
-    // 断言没有放宽：文案仍是「当前模式副本」（copyOf 从语言包取，键不存在直接抛），只是从已经不渲染的
-    // trigger 换到真正承载该值的节点；同时反向钉住「面板不再承载模式写入口」。
-    const modeReading = page.getByTestId("session-settings-summary-approval");
-    await expect(modeReading).toContainText(copyOf("chat.approvalModeAuto"), {
+    // task-134（DSD-1507 ③）跟改：摘要行连审批模式段也已撤走（D-1908 二：模式是档位的派生值），
+    // 32px 摘要行上的状态读数只剩档位徽标 `session-tier-badge`。替换判据**按内容钉**：
+    //  1) 徽标 title 必须等于「CP 读回的那个档位」的文案（档位名来自 API，不是写死常量）；
+    //  2) 摘要行不再出现审批模式标签（反向钉住删除真的生效）；
+    //  3) 模式自身在 UI 上的体现由本用例原有的「自动放行横幅可见 / 手动时 0 命中」+ DB 读回钉住。
+    const summaryBadge = page.getByTestId("session-tier-badge");
+    const tierLabelKey = tierLabelKeyFor(await readSessionTier(request, auth, sessionId));
+    await expect(page.getByTestId("session-settings-summary")).not.toContainText(
+        copyOf("chat.approvalModeLabel"),
+    );
+    await expect(summaryBadge).toHaveAttribute("title", copyOf(tierLabelKey), {
         timeout: EXPECT_TIMEOUT_MS,
     });
     // ② 面板内活的写入口 = 三档选择器 `session-tier-select`（D-1908 二：模式下拉退役后它接手写面；
@@ -263,9 +301,11 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
         timeout: LONG_TIMEOUT_MS,
     });
     await openContextPanel(page);
-    // 同上（task-24）：reload 后从 DB 读回的 manual 必须体现在摘要行读数上；
-    // 活写入口（三档选择器）仍在位，两个退役 testid 仍须 0 命中。
-    await expect(modeReading).toContainText(copyOf("chat.approvalModeManual"), {
+    // 同上（task-134 / DSD-1507 ③）：reload 后摘要行的状态读数仍是档位徽标，且**名字必须等于
+    // API 读回的档位**（tier 来自 CP，不是写死常量）；模式（manual）由横幅 0 命中 + 下面的 DB
+    // 读回钉住 —— 它已经不在摘要行文案上，所以不再拿摘要行文案当模式判据。
+    const reloadedTierLabelKey = tierLabelKeyFor(await readSessionTier(request, auth, sessionId));
+    await expect(summaryBadge).toHaveAttribute("title", copyOf(reloadedTierLabelKey), {
         timeout: EXPECT_TIMEOUT_MS,
     });
     await expect(tierSelect).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

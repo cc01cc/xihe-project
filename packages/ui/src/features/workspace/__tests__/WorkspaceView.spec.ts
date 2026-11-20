@@ -922,3 +922,56 @@ it("falls back to the agent picker only when the default agent is rejected with 
     await flushPromises();
     expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true);
 });
+
+/**
+ * 会话头 = 页面身份行（task-134 / DSD-1507 ①）。
+ *
+ * <p><b>判什么</b>：①「文件事件已连接」与「只限启动目录」这两个状态节点**不在会话头**——
+ * 它们搬到壳层底部状态栏（`WorkspaceStatusBar`：连接态 `workspace-status-connection`、
+ * 沙箱 `workspace-status-sandbox`）；②头部子节点 ≤ 3（标题 / 只读徽标 / 用量），
+ * 再加就回到用户抱怨的「一行毫无意义的状态」。</p>
+ *
+ * <p>为什么不在这里断言底部有那两个节点：`WorkspaceStatusBar` 由 `WorkspaceShell` 挂载，
+ * 本文件里根本不存在它的实例（判断放 `components/__tests__/WorkspaceStatusBar.spec.ts`）。</p>
+ */
+describe("会话头身份行（task-134 / DSD-1507 ①）", () => {
+    async function mountWithSession(): Promise<VueWrapper> {
+        mockedApi.getSessions.mockResolvedValue({
+            sessions: [workspaceSession(SESSION_A, "agent-default")],
+        } as never);
+        mockedApi.getWorkspaceAgents.mockResolvedValue([boundAgent("agent-default", true)]);
+        useSessionStore().currentSessionId = SESSION_A;
+        useChatStore().setSessionLastUsage(SESSION_A, {
+            inputTokens: 12,
+            outputTokens: 3,
+            source: "real",
+            cost: 0.01,
+            costSource: "price_table",
+            costNote: null,
+        });
+        const wrapper = mountView();
+        await settle();
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("不再渲染连接态与沙箱提示（两者搬到底部状态栏）", async () => {
+        const wrapper = await mountWithSession();
+        expect(wrapper.find('[data-testid="workspace-session-title"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-event-status"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="session-sandbox-enforcement"]').exists()).toBe(false);
+    });
+
+    it("头部子节点 ≤3（标题 / 只读徽标 / 用量）", async () => {
+        const wrapper = await mountWithSession();
+        const header = wrapper.get('[data-testid="workspace-session-title"]').element.parentElement;
+        expect(header).not.toBeNull();
+        const children = Array.from((header as HTMLElement).children).filter(
+            (node) => node.nodeType === 1,
+        );
+        // 夹具里 canWriteWorkspace 为真 ⇒ 只读徽标不渲染，正常态就是 2（标题 + 用量）。
+        expect(children.length).toBeLessThanOrEqual(3);
+        // 用量读数仍在头部（e2e/mock/chat.spec.ts 的 workspace-usage-source 依赖它在同一行）。
+        expect(wrapper.find('[data-testid="workspace-usage-cost"]').exists()).toBe(true);
+    });
+});

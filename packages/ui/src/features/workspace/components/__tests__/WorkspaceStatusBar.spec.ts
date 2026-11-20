@@ -257,3 +257,61 @@ describe("WorkspaceStatusBar 读数的显示条件", () => {
         wrapper.unmount();
     });
 });
+
+/**
+ * 沙箱执行面读数（task-134 / DSD-1507 ②）：从会话头搬到底部状态栏。
+ *
+ * <p><b>判据</b>：只有 `windows-host`（direct_attach，无文件系统授权限制）常显警示读数；
+ * `windows-mxc` / `docker` 的隔离是常态 ⇒ 节点**不渲染**（DOM 里不存在，可断言 count 0）。
+ * 反例锚点：把条件写成「有 workspace 就渲染」或「任何执行面都渲染」，第二条用例立刻红。</p>
+ */
+describe("WorkspaceStatusBar 沙箱执行面（task-134 / DSD-1507 ②）", () => {
+    async function setExecutionMode(mode: string | undefined) {
+        const { useAuthStore } = await import("../../../../stores/auth");
+        const auth = useAuthStore();
+        auth.workspace = {
+            id: WORKSPACE_ID,
+            name: WORKSPACE_NAME,
+            ...(mode ? { executionMode: mode } : {}),
+        } as never;
+    }
+
+    it("windows-host ⇒ 常显警示读数（文案沿用 workspace.sandboxEnforcementShort）", async () => {
+        await setExecutionMode("windows-host");
+        const wrapper = await mountBar();
+
+        const node = wrapper.find('[data-testid="workspace-status-sandbox"]');
+        expect(node.exists()).toBe(true);
+        expect(node.text()).toBe(i18n.global.t("workspace.sandboxEnforcementShort"));
+        // 警示色是「你以为有沙箱、其实没有」的唯一视觉线索。
+        expect(node.classes().join(" ")).toContain("text-amber-700");
+        // 全文进 title/aria：行内只放短标签，不丢信息。
+        expect(node.attributes("title")).toBe(i18n.global.t("workspace.sandboxEnforcement"));
+        expect(node.attributes("aria-label")).toBe(i18n.global.t("workspace.sandboxEnforcement"));
+        wrapper.unmount();
+    });
+
+    it("windows-mxc / docker / 未加载 ⇒ 不渲染（隔离是常态，占位是噪音）", async () => {
+        for (const mode of ["windows-mxc", "docker", undefined]) {
+            await setExecutionMode(mode);
+            const wrapper = await mountBar();
+            expect(
+                wrapper.find('[data-testid="workspace-status-sandbox"]').exists(),
+                `executionMode=${String(mode)} 不该渲染沙箱读数`,
+            ).toBe(false);
+            wrapper.unmount();
+        }
+    });
+
+    it("连接态与沙箱读数同屏并存（一条派生链，不是两条来源）", async () => {
+        await setExecutionMode("windows-host");
+        const store = await connectionStore();
+        const wrapper = await mountBar();
+        store.publishConnection({ connected: true, connecting: false, error: null });
+        await flushPromises();
+
+        expect(stateOf(wrapper)).toBe("connected");
+        expect(wrapper.find('[data-testid="workspace-status-sandbox"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+});
