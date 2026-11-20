@@ -60,7 +60,9 @@ const CHROME_MAX_BANDS = 3;
 /** 行高基数：xs 行 32px；内容区起点允许 3 行 + 8px 边框内距 */
 const CHROME_ROW_HEIGHT_PX = 32;
 const CHROME_MAX_CONTENT_TOP = CHROME_MAX_BANDS * CHROME_ROW_HEIGHT_PX + 8; // 104
-/** ② composer 块高 / 视口高（现状 16.1%@1920、22.7%@1366、12.1%@2560） */
+/** ② composer 块高 / 视口高。task-9（D-1465）收敛后现状 = **12.33%@1920×1080 / 14.80%@1440×900**（composer 133.2px；
+ *  改前 206.4px = 19.11%@1080 / 22.93%@900，读数见 internal/A03-xihe/evidence/2026-11-20-composer-height/README.md）。
+ *  900 档是本门的绑定档：0.15 × 900 = 135px。 */
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.15;
 /**
  * ③ composer 居中容差（**task-67 r5 口径**，Lead 2026-11-20 00:46 裁定；取代 rev0 的
@@ -106,6 +108,25 @@ const HIT_MIN_PX = 28;
 /** ① 顶带扫描里要排除的带：settings-summary 属 chat 列内行（Lead 复核口径），
  *  SSE limit 横幅是运行态提示而非常驻 chrome。两者都照原样记进 bands 供诊断，但不算顶带层数/高度。 */
 const CHROME_EXCLUDED_KEYS = ["session-settings-summary", "sse-subscriber-limit-notice"];
+/**
+ * ⑤F5'（task-9）：桌面六颗面板图标的 testid —— D-1907 图标簇收敛后**已全仓退役**（src 内 0 命中）。
+ * 判据只数这六个精确 id：前缀 workspace-toolbar-* 不能当口径 —— 它同时命中 3 个移动态控件
+ * （WorkspaceToolbar.vue:121 files-mobile / :132 new-chat-mobile / :147 more-mobile，父容器 :100-103 带 md:hidden）
+ * 与 FileTreePanel.vue:367 面板内折叠钮（workspace-toolbar-toggle-tree），DOM 恒 ≥4 个 ⇒ 前缀计数门恒红，
+ * 红的是选择器口径而不是产品；:visible 过滤同样会红（file-tree 面板展开时折叠钮本来就可见，FileTreePanel.vue:365-375）。
+ */
+const RETIRED_PANEL_ICON_IDS = [
+    "workspace-toolbar-files",
+    "workspace-toolbar-code",
+    "workspace-toolbar-changes",
+    "workspace-toolbar-monitor",
+    "workspace-toolbar-members",
+    "workspace-toolbar-delegation",
+];
+/** 六 id 的 locator 选择器（⑤F5' 判据用；与 evaluate 里的 rect 读数同源，避免两处清单漂移）。 */
+const RETIRED_PANEL_ICON_SELECTOR = RETIRED_PANEL_ICON_IDS.map(
+    (id) => `[data-testid="${id}"]`,
+).join(",");
 
 const VIEWPORTS = [
     { name: "1920x1080", width: 1920, height: 1080 },
@@ -689,7 +710,8 @@ async function readLayout(page: Page): Promise<LayoutReading> {
             ).length,
             // 右栏展开态的第二个判据：D-1907 rev3 要求开合由「唯一 aria-pressed 图标」表达（现状是六面板图标）
             ariaPressedTrue: document.querySelectorAll('[aria-pressed="true"]').length,
-            // 顶部六面板图标（WorkspacePanelActions.vue:49-116 的 files/code/changes/monitor/members/delegation）
+            // 顶部六面板图标（files/code/changes/monitor/members/delegation；D-1907 后 src 内已退役，
+            // 这里保留字面量清单给 rect 可见读数用，判据清单见 RETIRED_PANEL_ICON_IDS）
             visiblePanelIcons: [
                 "workspace-toolbar-files",
                 "workspace-toolbar-code",
@@ -934,7 +956,7 @@ async function runMatrix(
             )
             .toBeLessThanOrEqual(0.5);
 
-        // ② composer 块高 / 视口高（A3；现状 16.1%@1920、22.7%@1366）
+        // ② composer 块高 / 视口高（A3；task-9 后现状 12.33%@1920×1080 / 14.80%@1440×900，绑定档是 900）
         const composerRatio = layout.composer ? layout.composer.h / layout.viewport.h : Number.NaN;
         expect
             .soft(
@@ -944,7 +966,8 @@ async function runMatrix(
             .toBeLessThanOrEqual(COMPOSER_MAX_VIEWPORT_RATIO);
 
         // ②C3（doc:44）：composer 容器背景必须不透明 —— 计算值 alpha = 1。
-        //    现状 InputArea.vue:1883 用 bg-muted/30（半透明）⇒ 改前必红。测试位置就在本 spec。
+        //    现状 InputArea.vue:1985 用 bg-muted/30（半透明）⇒ 改前必红。测试位置就在本 spec。
+        //    行号历史：:1883 → :1970 → :1985；定位不稳时按类名 bg-muted/30 grep。
         const composerBg = await page
             .evaluate(() => {
                 let el: Element | null = document.querySelector('[data-testid="chat-input"]');
@@ -1221,14 +1244,16 @@ async function runMatrix(
                 railCount,
             };
         } else {
-            // F5'/F-7：展开态顶部不得再有六面板图标 —— 用计数判据（旧版按 rect 判可见会漏）
-            const panelIconCount = await page
+            // F5'/F-7（task-9 改判据）：展开态顶部不得再有六颗桌面面板图标 —— 数六个**精确 id**（D-1907 后全仓退役 ⇒ 期望 0），
+            // 不再用前缀 workspace-toolbar-*：该前缀恒命中移动态控件与文件面板折叠钮（口径见 RETIRED_PANEL_ICON_IDS 注释）。
+            const panelIconCount = await page.locator(RETIRED_PANEL_ICON_SELECTOR).count();
+            const toolbarPrefixDomCount = await page
                 .locator('[data-testid^="workspace-toolbar-"]')
                 .count();
             expect
                 .soft(
                     panelIconCount,
-                    `${tag} ⑤F5' 展开态顶部仍有 ${panelIconCount} 个 workspace-toolbar-* 图标（实测 ${panelIconCount}，阈值 0；rect 可见读数 ${layout.visiblePanelIcons.join(",") || "无"} 归属卡 task-102 F5'）`,
+                    `${tag} ⑤F5' 展开态顶部仍有 ${panelIconCount} 个已退役面板图标（阈值 0；前缀 workspace-toolbar-* 的 DOM 共 ${toolbarPrefixDomCount} 个 = 移动态控件 + 文件面板折叠钮，不计入判据；rect 可见读数 ${layout.visiblePanelIcons.join(",") || "无"} 归属卡 task-102 F5'）`,
                 )
                 .toBe(0);
             // D4：点已激活的 right 页签不得关整列
@@ -1424,7 +1449,8 @@ async function runMatrix(
                     .toBeGreaterThanOrEqual(MENU_ROW_MIN_WIDTH_PX);
             }
 
-            // E2'：新建会话必须在首个会话行之上（Sidebar.vue:279-337 现状仍在搜索行 ⇒ 改前必红）
+            // E2'：新建会话必须在首个会话行之上（Sidebar.vue:373-413 现状仍在搜索行 ⇒ 改前必红）
+            //      task-9 注释漂移修正：旧注 :279-337 已是失效行号。
             // task-120 F-8：同上，0 条会话时 first().boundingBox() 会无限等待 ⇒ 先 count。
             const sessionRows = page.locator('[data-testid="session-item"]');
             const firstSessionRow =

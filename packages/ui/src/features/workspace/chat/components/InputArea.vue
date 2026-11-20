@@ -1553,13 +1553,15 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
     <div
         ref="composerRoot"
-        class="min-w-0 border-t bg-background pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
+        class="min-w-0 border-t bg-background pt-1.5 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.375rem)]"
         data-testid="chat-composer"
     >
         <!-- task-130：列宽 token 挂在**带内边距的这一层**上（px-4 从 root 移到这里）。
              这样它的 offsetWidth 与消息列 / 面板同为 min(父宽, --chat-column-max)，
-             四处差 ≤1px；内容净宽仍是列宽减 32。 -->
-        <div class="mx-auto w-full max-w-(--chat-column-max) space-y-1.5 px-4">
+             四处差 ≤1px；内容净宽仍是列宽减 32。
+            task-9：行间距 6 → 2（space-y-1.5 → space-y-0.5）+ 根上下内距 8 → 6：composer 是
+            常驻占位块，每 1px 都直接从消息视口里扣，而列间距只承担「两栏不要粘成一块」这一件事。 -->
+        <div class="mx-auto w-full max-w-(--chat-column-max) space-y-0.5 px-4">
             <!--
                 task-55（D-1882③）：这里原本渲染「代发身份」RecipientField（testid="speak-as" /
                 data-testid="speak-as-bar"；PLAN-0623 D23-27 → PLAN-0630 M5b D30-14 → 2026-11-04 改为
@@ -1594,19 +1596,111 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 「代发」栏分开，因为一个消息只能有一个发言身份，但可以有多个响应者。真人目标只收
                 「重要通知」、不作答。默认空集 = 旧单响应者路径。
             -->
-            <RecipientField
-                v-if="showToTargets"
-                :label="t('chat.input.toTargetsLabel')"
-                :model-value="toTargetIds"
-                :candidates="toTargetCandidates"
-                :multiple="true"
-                :placeholder="t('chat.input.recipientPlaceholder')"
-                testid="to-targets"
-                data-testid="to-targets-bar"
-                :hint="t('chat.input.toHint')"
-                hint-testid="composer-send-hint"
-                @update:model-value="onToTargetsFieldChange"
-            />
+            <!--
+                task-9（D1458 实施 / D-1904 F-2）：收件人（发送）栏与抄送栏**合并为同一行**。
+                原来两栏各占一行：实测 30.19（to-targets-bar）+ 6（列间距）+ 23.19（抄送行）+ 6
+                ⇒ 合并后行高只取较高的那一栏，直接省 29.2px；功能一个不丢 —— TO 多选 chips 在左
+                （flex-1 吃掉剩余宽度），抄送入口 / 展开态在右。允许合并的理由：两者都是「本条消息的
+                投递对象」，同一语义族、同一视线高度；分两行的唯一后果是 composer 多啃一截消息视口，
+                而 D-1458 的门量的就是这个（composer 块高 ≤15% 视口高）。
+            -->
+            <div class="flex min-w-0 items-center gap-2" data-testid="composer-recipient-row">
+                <RecipientField
+                    v-if="showToTargets"
+                    class="min-w-0 flex-1"
+                    :label="t('chat.input.toTargetsLabel')"
+                    :model-value="toTargetIds"
+                    :candidates="toTargetCandidates"
+                    :multiple="true"
+                    :placeholder="t('chat.input.recipientPlaceholder')"
+                    testid="to-targets"
+                    data-testid="to-targets-bar"
+                    :hint="t('chat.input.toHint')"
+                    hint-testid="composer-send-hint"
+                    @update:model-value="onToTargetsFieldChange"
+                />
+                <!--
+                    PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。被 @ 的参与者会自动
+                    出现在这里；点 × 移除（同一个 @ 不再自动加回，直到它从文本里消失）；+ 下拉手动添加。
+                -->
+                <!--
+                    2026-11-04 用户裁定（composer 打磨）：抄送栏默认收起为「抄送 +」小按钮，
+                    自动展开仅两种 —— 已有 chips（含 @ 点名自动加入）、用户手动点开；
+                    chips 清空后可手动收起，手动选择按会话记忆（不落 localStorage）。
+                -->
+                <!--
+                    task-38 C3（用户直接问「为什么没有抄送」）：抄送入口原本在候选为空时**静默消失** ——
+                    ccCandidates 会剔掉代发身份自己与已进 TO 的主体，独立会话里只剩调用者本人，于是
+                    门恒为假、用户永远找不到抄送。实测（1920×1080，stack-2）：只有 agent + 本人时
+                    `cc-expand` 矩形为 null；把另一个主体加为 MEMBER 后立刻出现 ⇒ 门本身没坏，坏在空态无入口。
+                    现在空态给**可发现的禁用态入口**：aria-disabled 保持可聚焦（与 SettingsResourceNav.vue:132
+                    同一模式，opacity 顶回 100% 以满足 DEV-011:165 的 ≥3:1），一句说明走同一个 tooltip 原语。
+                -->
+                <div v-if="!showCcSection" class="flex shrink-0 items-center gap-1">
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger as-child>
+                                <button
+                                    type="button"
+                                    data-testid="cc-expand-empty"
+                                    aria-disabled="true"
+                                    class="inline-flex shrink-0 cursor-not-allowed items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground opacity-100 shadow-xs"
+                                >
+                                    <Plus class="size-3" aria-hidden="true" />
+                                    {{ t("chat.input.ccLabel") }}
+                                    <span class="sr-only" data-testid="cc-empty-hint">
+                                        {{ t("chat.input.ccEmptyHint") }}
+                                    </span>
+                                </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">{{
+                                t("chat.input.ccEmptyHint")
+                            }}</TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+                </div>
+                <div v-else class="flex min-w-0 shrink-0 items-center gap-1">
+                    <button
+                        v-if="!ccBarVisible"
+                        type="button"
+                        data-testid="cc-expand"
+                        class="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground"
+                        @click="expandCc"
+                    >
+                        <Plus class="size-3" />
+                        {{ t("chat.input.ccLabel") }}
+                    </button>
+                    <template v-else>
+                        <!--
+                            task-9：展开态与 TO 同处一行 ⇒ 不再 flex-1（抢宽度会让 TO 的 chips 折行、
+                            把手势行高撑回去），固定一档可用宽度 + chips 自己折行。
+                        -->
+                        <RecipientField
+                            class="w-56 min-w-0 shrink-0"
+                            :label="t('chat.input.ccLabel')"
+                            :model-value="ccIds"
+                            :candidates="ccCandidates"
+                            :multiple="true"
+                            :placeholder="t('chat.input.recipientPlaceholder')"
+                            testid="cc"
+                            data-testid="cc-bar"
+                            :hint="t('chat.input.ccHint')"
+                            hint-testid="composer-cc-hint"
+                            @update:model-value="onCcFieldChange"
+                        />
+                        <button
+                            v-if="ccIds.length === 0"
+                            type="button"
+                            data-testid="cc-collapse"
+                            :aria-label="t('chat.input.ccCollapse')"
+                            class="shrink-0 rounded-sm px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                            @click="collapseCc"
+                        >
+                            ×
+                        </button>
+                    </template>
+                </div>
+            </div>
             <!--
                 task-50（用户裁定 P-6）：「发送」= @ 重要通知，「抄送」= 普通通知。
                 说明文案必须**贴着各自的栏**，不然用户只看到两个词、不知道差别在哪。
@@ -1677,83 +1771,6 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 >
                     {{ t("chat.input.toEmptyHintDismiss") }}
                 </button>
-            </div>
-            <!--
-                PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。被 @ 的参与者会自动
-                出现在这里；点 × 移除（同一个 @ 不再自动加回，直到它从文本里消失）；+ 下拉手动添加。
-            -->
-            <!--
-                2026-11-04 用户裁定（composer 打磨）：抄送栏默认收起为「抄送 +」小按钮，
-                自动展开仅两种 —— 已有 chips（含 @ 点名自动加入）、用户手动点开；
-                chips 清空后可手动收起，手动选择按会话记忆（不落 localStorage）。
-            -->
-            <!--
-                task-38 C3（用户直接问「为什么没有抄送」）：抄送入口原本在候选为空时**静默消失** ——
-                ccCandidates 会剔掉代发身份自己与已进 TO 的主体，独立会话里只剩调用者本人，于是
-                门恒为假、用户永远找不到抄送。实测（1920×1080，stack-2）：只有 agent + 本人时
-                `cc-expand` 矩形为 null；把另一个主体加为 MEMBER 后立刻出现 ⇒ 门本身没坏，坏在空态无入口。
-                现在空态给**可发现的禁用态入口**：aria-disabled 保持可聚焦（与 SettingsResourceNav.vue:132
-                同一模式，opacity 顶回 100% 以满足 DEV-011:165 的 ≥3:1），一句说明走同一个 tooltip 原语。
-            -->
-            <div v-if="!showCcSection" class="flex items-center gap-1">
-                <TooltipProvider>
-                    <Tooltip>
-                        <TooltipTrigger as-child>
-                            <button
-                                type="button"
-                                data-testid="cc-expand-empty"
-                                aria-disabled="true"
-                                class="inline-flex shrink-0 cursor-not-allowed items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground opacity-100 shadow-xs"
-                            >
-                                <Plus class="size-3" aria-hidden="true" />
-                                {{ t("chat.input.ccLabel") }}
-                                <span class="sr-only" data-testid="cc-empty-hint">
-                                    {{ t("chat.input.ccEmptyHint") }}
-                                </span>
-                            </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">{{
-                            t("chat.input.ccEmptyHint")
-                        }}</TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-            </div>
-            <div v-else class="flex items-center gap-1">
-                <button
-                    v-if="!ccBarVisible"
-                    type="button"
-                    data-testid="cc-expand"
-                    class="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground"
-                    @click="expandCc"
-                >
-                    <Plus class="size-3" />
-                    {{ t("chat.input.ccLabel") }}
-                </button>
-                <template v-else>
-                    <RecipientField
-                        class="min-w-0 flex-1"
-                        :label="t('chat.input.ccLabel')"
-                        :model-value="ccIds"
-                        :candidates="ccCandidates"
-                        :multiple="true"
-                        :placeholder="t('chat.input.recipientPlaceholder')"
-                        testid="cc"
-                        data-testid="cc-bar"
-                        :hint="t('chat.input.ccHint')"
-                        hint-testid="composer-cc-hint"
-                        @update:model-value="onCcFieldChange"
-                    />
-                    <button
-                        v-if="ccIds.length === 0"
-                        type="button"
-                        data-testid="cc-collapse"
-                        :aria-label="t('chat.input.ccCollapse')"
-                        class="shrink-0 rounded-sm px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                        @click="collapseCc"
-                    >
-                        ×
-                    </button>
-                </template>
             </div>
             <!-- task-38 C2（DEV-011 §13.4）：抄送说明同样收进 cc 栏标签后的 tooltip。 -->
             <p
@@ -1967,13 +1984,13 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                 （`e2e/real/ui-baseline.spec.ts` ④ 的 ringer.borderWidthPx）。
             -->
             <div
-                class="rounded-xl border-0 bg-muted/30 px-3 py-2 ring-1 ring-border transition-[box-shadow,border-color] has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
+                class="rounded-xl border-0 bg-muted/30 px-3 py-1.5 ring-1 ring-border transition-[box-shadow,border-color] has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/50"
             >
                 <textarea
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[40px] max-h-[240px] rounded-none bg-transparent px-1 py-0.5 text-sm leading-relaxed field-sizing-content resize-none placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:outline-none"
+                    class="block w-full min-h-[40px] max-h-[240px] rounded-none bg-transparent px-1 py-0.5 text-sm leading-relaxed field-sizing-content resize-none placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:outline-none"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"
@@ -2017,37 +2034,40 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                                 : t("chat.followUpEnqueue")
                         }}</span>
                     </button>
+                    <!--
+                        task-135 第 3 层（task-9 挪位）：元信息行（轮·步·tok/s ｜ token 用量 ｜ 缓存命中）。
+                        原来它独占一行（20 + 6 列间距 = 26px）；task-9 收进工具条这一行**右端** ——
+                        工具条只放按钮，右端本来就空着，元信息与按钮同处一水平线不额外抢注意力。
+                        数据来源只有 token 用量（chat store 的 sessionLastUsage）；轮/步/tok/s 与缓存命中
+                        UI 侧没有数据源 ⇒ 恒 "—"（见脚本里 composerModelChip 上方注释）。
+                        抗抖动：min-h-4 + leading-4 + tabular-nums —— 数字变化只改字形不改行高，
+                        判据是「连续三次 token 变化 composer 高度差 0」。注意 ComposerMeta.spec.ts:120-128
+                        钉着 min-h-4 / flex / flex-wrap / leading-4 / tabular-nums 五条 class，别顺手删。
+                    -->
+                    <div
+                        class="ml-auto flex min-h-4 min-w-0 flex-wrap items-center justify-end gap-x-3 px-1 text-[11px] leading-4 tabular-nums text-muted-foreground/80"
+                        data-testid="composer-meta"
+                    >
+                        <span data-testid="composer-meta-run">
+                            {{ t("chat.composerMeta.rounds", { value: META_PLACEHOLDER }) }}
+                            ·
+                            {{ t("chat.composerMeta.steps", { value: META_PLACEHOLDER }) }}
+                            ·
+                            {{ t("chat.composerMeta.speed", { value: META_PLACEHOLDER }) }}
+                        </span>
+                        <span data-testid="composer-meta-tokens">
+                            {{
+                                t("chat.composerMeta.tokens", {
+                                    used: composerTokensUsedLabel,
+                                    limit: composerContextWindowLabel,
+                                })
+                            }}
+                        </span>
+                        <span data-testid="composer-meta-cache">
+                            {{ t("chat.composerMeta.cacheHit", { percent: META_PLACEHOLDER }) }}
+                        </span>
+                    </div>
                 </div>
-            </div>
-            <!--
-                task-135 第 3 层：元信息行（轮·步·tok/s ｜ token 用量 ｜ 缓存命中）。
-                数据来源只有 token 用量（chat store 的 sessionLastUsage）；轮/步/tok/s 与缓存命中
-                UI 侧没有数据源 ⇒ 恒 "—"（见脚本里 composerModelChip 上方注释）。
-                抗抖动：min-h-4 + leading-4 + tabular-nums —— 数字变化只改字形不改行高，
-                判据是「连续三次 token 变化 composer 高度差 0」。
-            -->
-            <div
-                class="flex min-h-4 flex-wrap items-center gap-x-3 px-1 pt-1 text-[11px] leading-4 tabular-nums text-muted-foreground/80"
-                data-testid="composer-meta"
-            >
-                <span data-testid="composer-meta-run">
-                    {{ t("chat.composerMeta.rounds", { value: META_PLACEHOLDER }) }}
-                    ·
-                    {{ t("chat.composerMeta.steps", { value: META_PLACEHOLDER }) }}
-                    ·
-                    {{ t("chat.composerMeta.speed", { value: META_PLACEHOLDER }) }}
-                </span>
-                <span data-testid="composer-meta-tokens">
-                    {{
-                        t("chat.composerMeta.tokens", {
-                            used: composerTokensUsedLabel,
-                            limit: composerContextWindowLabel,
-                        })
-                    }}
-                </span>
-                <span data-testid="composer-meta-cache">
-                    {{ t("chat.composerMeta.cacheHit", { percent: META_PLACEHOLDER }) }}
-                </span>
             </div>
         </div>
     </div>
