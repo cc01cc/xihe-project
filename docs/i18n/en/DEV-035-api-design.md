@@ -98,7 +98,7 @@ tags:
 ## Appendix A · New-endpoint checklist (draft; takes effect at landing)
 
 1. Path segments kebab-case, mounted under the correct tag; 2. openapi.yaml written first (SSOT first); 3. redocly lint + validate green;
-4. Error responses reference the schema; 5. Registered in inventory.md; 6. DEV number (both languages) in the same batch; 7. UI four layers in the same wave (packages/ui/AGENTS.md:52); 8. e2e that needs in-page fetch gets an annotation.
+4. Error responses reference the schema; 5. Registered in inventory.md; 6. DEV number (both languages) in the same batch; 7. UI four layers in the same wave (packages/ui/AGENTS.md:116); 8. e2e that needs in-page fetch gets an annotation.
 
 ## Appendix B · Evidence index
 

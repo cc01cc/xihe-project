@@ -97,7 +97,7 @@ Agent → CP /mcp (tool_name, args)
 
 `git_status`/`git_diff`/`git_log` are **CP-owned tools**: they are not forwarded through the Runtime `/mcp` system catalog; the CP dispatches them locally after authorization and returns a normal MCP tool-result.
 
-- **Registration and dispatch**: tool-name constants `McpProxyController.java:94-96`; the `tools/list` catalog injection and `inputSchema` live in `populateSystemTools`; `tools/call` goes through `dispatchCpOwnedGit` (`:1536-1590`).
+- **Registration and dispatch**: tool-name constants `McpProxyController.java:96-98`; the `tools/list` catalog injection and `inputSchema` live in `populateSystemTools`; `tools/call` goes through `dispatchCpOwnedGit` (`:1536-1590`).
 - **Face and authorization**: all three are in `ToolFaceRegistry.READ_TOOLS` (`:91-104`) ⇒ `read` atom + `STRUCTURED`; no new action atom, no `extraFaces` ([`spec/protocol/mcp.md`](../../../spec/protocol/mcp.md) §3.1). The gate is the §3.2 chain (`loadContext → allowsByGrant → faceOf`); an unauthorized caller gets a `TOOL_GRANT_DENIED` tool-result plus an audit record, never a bare 403.
 - **Data source**: `git_status` **reuses** the public read face's one path `RuntimeCheckpointClient.workspaceGitStatus` → `/internal/v1/runtime/workspaces/{workspaceId}/git-status` (the CP keeps no second git implementation); `git_diff`/`git_log` call the Runtime read-only endpoints `git-diff`/`git-log` (wire contract in [`docs/api/inventory.md`](../../api/inventory.md)).
 - **Read-only constraints (Runtime side)**: the user repository is used as `GIT_DIR`/`GIT_WORK_TREE`, `GIT_INDEX_FILE` is **never** set, `GIT_DIR` never points at the shadow repository, `GIT_OPTIONAL_LOCKS=0`, and diff runs with `--no-ext-diff --no-textconv`; `ShadowGit` is not called and index/refs are not written, so these reads can run lock-free alongside checkpoint capture/restore.
@@ -279,7 +279,7 @@ The tool catalog is a **runtime property**, not a static contract: it is decided
 | CP logical entry, user/agent token | Agent, user-facing MCP clients | **23** | plus workspace-configured STDIO/remote tools (none on a fresh workspace) |
 | CP logical entry, internal service token | CP-internal faces (sub-agent / credential / skill / git) | **29** | 23 + **6 CP-owned tools** |
 
-The CP-owned tools (`spawn_agent`, `acquire_credential`, `skill_read`, `git_status`, `git_diff`, `git_log`) are injected by `populateSystemTools` only when `access.internalService()` is true (`McpProxyController.java:605-622`) — **a user/agent face never sees them** (which is also why the three git tools in §3.2.1 are service-face capabilities, not model-face ones).
+The CP-owned tools (`spawn_agent`, `acquire_credential`, `skill_read`, `git_status`, `git_diff`, `git_log`) are injected by `populateSystemTools` only when `access.internalService()` is true (`McpProxyController.java:634-651`) — **a user/agent face never sees them** (which is also why the three git tools in §3.2.1 are service-face capabilities, not model-face ones).
 
 **Re-verification (run both, then align line by line)**:
 

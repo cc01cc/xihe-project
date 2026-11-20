@@ -23,7 +23,7 @@ updated: 2026-11-10
 | Docker | **PostgreSQL only**. Service containerisation and the `xihe/workspace` image build are frozen — do not `docker compose up` the whole stack | `mise.toml` header (freeze note) |
 | Directory | **Any directory** works (single clone); no longer "must live inside the `one/` workspace" | `mise run check:standalone` verifies "no dependency on the one root" |
 | Ports | stack-1: UI 12630 / CP 12631 / Agent 12632 / Runtime 12633 / PG 12634 | `scripts/lib/stack-ports.mjs:20` (port source of truth) |
-| Workspace | **A fresh instance has no workspace at all**: neither register nor login creates one; the first step is the user creating one (§3 step 2 / §4 step 1) | `AuthController.withFirstWorkspace` (`AuthController.java:137,165,196-201`) |
+| Workspace | **A fresh instance has no workspace at all**: neither register nor login creates one; the first step is the user creating one (§3 step 2 / §4 step 1) | `AuthController.withFirstWorkspace` (`AuthController.java:102,165,196-201`) |
 
 Two operating modes, pick by purpose:
 
@@ -60,7 +60,7 @@ Steps:
 
 1. Open `http://localhost:12630/login` and sign in as `admin@xihe.local` with the password from above (`POST /api/v1/auth/login` 200).
 2. You land on `/workspace` in its **empty state**: a "create your first workspace" button, zero workspace entries, `GET /api/v1/workspaces` returns an **empty array**, `AuthResponse.workspaceId` is **`null`** (`AuthController.withFirstWorkspace`, the same path register and login use).
-3. That account is instance owner + `SUPER_ADMIN` (`InstanceOwnershipService.ensureAssigned` / `GrantDefaultService.ensureInstanceSuperAdmin`, seeded at `DataSeeder.java:86-89`), so **no self-grant step** is needed to manage Agents or settings.
+3. That account is instance owner + `SUPER_ADMIN` (`InstanceOwnershipService.ensureAssigned` / `GrantDefaultService.ensureInstanceSuperAdmin`, seeded at `DataSeeder.java:153-156`), so **no self-grant step** is needed to manage Agents or settings.
 
 > **Registration is no longer the first-run path**: `/onboarding` still works outside local mode (the form carries a **password**; omitting it returns **400 `INVALID_REQUEST`**, `AuthController.java:113-119`), but **registration grants neither instance owner nor `SUPER_ADMIN`** — both seeds run only on `DataSeeder`'s empty-database path (PLAN-0758 removed the register-time seeding). To make a registered account an instance admin, use the grant surface.
 
@@ -126,7 +126,7 @@ Also covered, outside C1–C8: C9 a connection verifies `READY` and the fake mod
 
 ### 5.3 Known boundaries (read this before calling anything a regression)
 
-1. **The two G4 cases are `test.fixme`, and the host lane does not even collect them**: `G4-a` (:1069-1082, BL-152 readable failure copy) and `G4-b` (:1085-1092, F-09 connection → Agent ready) live in the `@gap` describe (:1068), while the host Playwright config is `grep: /@host/` (`packages/ui/e2e/playwright.config.ts:42`) ⇒ they are **neither passing nor skipped — they never enter the run list**; `--grep "@gap"` is overridden by the config grep. Running them needs a config change or a separate lane (not in this batch).
+1. **The two G4 cases are `test.fixme`, and the host lane does not even collect them**: `G4-a` (:1069-1082, BL-152 readable failure copy) and `G4-b` (:1085-1092, F-09 connection → Agent ready) live in the `@gap` describe (:1068), while the host Playwright config is `grep: /@host/` (`packages/ui/e2e/playwright.config.ts:134`) ⇒ they are **neither passing nor skipped — they never enter the run list**; `--grep "@gap"` is overridden by the config grep. Running them needs a config change or a separate lane (not in this batch).
 2. **Registration policy (post-PLAN-0758)**: `AuthController.register` calls `registrationPolicy.requireOpen()` unconditionally, so `closed` returns **403 `REGISTRATION_CLOSED`**; the old local-mode exemption is gone withing 201** (:754) — **not** "second registration 403". Rationale in §3; proving the strict 403 needs a **non-local-mode** stack (not done in this batch). (Added 2026-11-10: that exemption goes away with local mode and is only observable on the E2E lane.)
 3. **BL-169 I6 exception removed with PLAN-0758**: with the passwordless branch gone there is no I6 exception (the `packages/ui/AGENTS.md` entry is marked removed), so login-response consumers never backfill the tab workspace context.LocalModeLanding`), so C5 may land on a **workspace view** instead of the picker; the case therefore accepts any of the three states. The exception is documented in `packages/ui/AGENTS.md` (I6 exception, `ef73ae12`). (Added 2026-11-10: with local mode abandoned the exception loses its justification; it is recorded as a residual risk in `localmode-enablement.md` §3.6.)
 4. **BL-170 (fixed, shipped with 0614 M2)**: the guard-written session used to skip Pinia ⇒ right after passwordless entry the first paint lacked the admin entry and config/session preload was skipped. Fixed by `stores/auth.ts#adoptGuardSession` (`:146`), the guard adopting that session, and `App.vue` awaiting `router.isReady()` (`39e6f093`). C6 depends on this fix.

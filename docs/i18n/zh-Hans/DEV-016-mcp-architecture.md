@@ -107,7 +107,7 @@ sequenceDiagram
 
 `git_status`/`git_diff`/`git_log` 是 **CP 自有（CP-owned）工具**：不经 Runtime `/mcp` 系统目录转发，由 CP 在授权后本地派发，再以 MCP tool-result 返回。
 
-- **注册与派发**：工具名常量 `McpProxyController.java:94-96`；`tools/list` 目录注入与 `inputSchema` 在 `populateSystemTools`；`tools/call` 走 `dispatchCpOwnedGit`（`:1536-1590`）。
+- **注册与派发**：工具名常量 `McpProxyController.java:96-98`；`tools/list` 目录注入与 `inputSchema` 在 `populateSystemTools`；`tools/call` 走 `dispatchCpOwnedGit`（`:1536-1590`）。
 - **面与授权**：三者进 `ToolFaceRegistry.READ_TOOLS`（`:91-104`）⇒ `read` 原子 + `STRUCTURED`；不新增 action atom、不走 `extraFaces`（[`spec/protocol/mcp.md`](../../../spec/protocol/mcp.md) §3.1）。门禁仍是本章 §3.2 的 `loadContext → allowsByGrant → faceOf`；未授权返回 `TOOL_GRANT_DENIED` tool-result 并留审计，不返回裸 403。
 - **数据来源**：`git_status` **复用**公开读面同一条 `RuntimeCheckpointClient.workspaceGitStatus` → `/internal/v1/runtime/workspaces/{workspaceId}/git-status`（CP 不做第二份 git 逻辑）；`git_diff`/`git_log` 调 Runtime 只读端点 `git-diff`/`git-log`（wire 见 [`docs/api/inventory.md`](../../api/inventory.md)）。
 - **只读约束（Runtime 侧）**：以用户仓库为 `GIT_DIR`/`GIT_WORK_TREE`、**不设** `GIT_INDEX_FILE`、不把 `GIT_DIR` 指向 shadow 仓库，`GIT_OPTIONAL_LOCKS=0`，diff 带 `--no-ext-diff --no-textconv`；不调用 `ShadowGit`、不改 index/refs，故与 checkpoint capture/restore 可无锁并发。
@@ -296,7 +296,7 @@ Tool 清单是**运行时属性**，不是静态契约：它由 `packages/runtim
 | CP 逻辑入口（用户/Agent token） | Agent、用户面 MCP 客户端 | **23** | 另加工作区配置的 STDIO/remote 工具（新工作区为空） |
 | CP 逻辑入口（内部服务 token） | CP 内部面（子 Agent / 凭据 / skill / git） | **29** | 23 + **6 个 CP 自有工具** |
 
-CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_status`、`git_diff`、`git_log`）由 `populateSystemTools` 在 `access.internalService()` 为真时注入（`McpProxyController.java:605-622`）——**用户/Agent 面的 `tools/list` 永远看不到它们**（§3.2.1 的三条 git 工具由此解释：它们是 service 面能力，不是模型面能力）。
+CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_status`、`git_diff`、`git_log`）由 `populateSystemTools` 在 `access.internalService()` 为真时注入（`McpProxyController.java:634-651`）——**用户/Agent 面的 `tools/list` 永远看不到它们**（§3.2.1 的三条 git 工具由此解释：它们是 service 面能力，不是模型面能力）。
 
 **复核（两条都要跑，逐条对齐）**：
 

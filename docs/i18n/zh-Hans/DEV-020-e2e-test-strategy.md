@@ -350,11 +350,11 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 
 ### 3.6 E2E 构建根与并行运行（PLAN-0656 R2）
 
-E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`，默认值在 `:62`；显式设 `XIHE_CP_TARGET_DIR` 时以环境值为准）。它省掉每个 run 2–3 min 的冷编，代价是**同一构建根同一时刻只服务一个 run**（并发 repackage 的后果见窗口协议 §5，本文不重复）。
+E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:99-103`，默认值在 `:62`；显式设 `XIHE_CP_TARGET_DIR` 时以环境值为准）。它省掉每个 run 2–3 min 的冷编，代价是**同一构建根同一时刻只服务一个 run**（并发 repackage 的后果见窗口协议 §5，本文不重复）。
 
-- **要并行就给第二个 run 换根**：`XIHE_CP_TARGET_DIR=C:/xihe-build/e2e-runs/<runId>` —— runner 直接把这个值传给 mvn（`scripts/e2e-host.mjs:59-63`），**不需要改代码**；代价是该 run 独立冷编（~2–3 min + 磁盘）。
+- **要并行就给第二个 run 换根**：`XIHE_CP_TARGET_DIR=C:/xihe-build/e2e-runs/<runId>` —— runner 直接把这个值传给 mvn（`scripts/e2e-host.mjs:99-103`），**不需要改代码**；代价是该 run 独立冷编（~2–3 min + 磁盘）。
 - **共用根是 E2E 的默认值，不是架构限制**：dev 栈侧的 CP 构建目录早已按 `<root>/<stackId>/<sha12>[-dirty]` 分目录（`scripts/lib/cp-build-dir.mjs:11`，默认根 `:29`，dirty 后缀 `:36`），E2E 只是没走那套派生逻辑。
-- **并行只在三条同时成立时允许**：① 两个 run 构建根不同；② 都不是测量类 spec；③ 钉住同一个 SHA（跨 commit 的数字不可比）。开窗前另跑 `node scripts/e2e-preflight.mjs`（只读）：任何 `FAIL` 即阻塞，只有 exit 0（无 blocking finding，`scripts/e2e-preflight.mjs:26`）才开窗。
+- **并行只在三条同时成立时允许**：① 两个 run 构建根不同；② 都不是测量类 spec；③ 钉住同一个 SHA（跨 commit 的数字不可比）。开窗前另跑 `node scripts/e2e-preflight.mjs`（只读）：任何 `FAIL` 即阻塞，只有 exit 0（无 blocking finding，`scripts/e2e-preflight.mjs:39`）才开窗。
 - **测量类恒独占**：会话规模/内存采样这类 spec 并发跑时，旁边多一个 spec 就改写 GC 压力与内存水位 —— 量出来不是它要的量。
 - **窗口本身不在这里**：开窗/冻结/钉靶 SHA 的规则见 SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md`（ONE 私有层，不在本仓）§3–§5。
 - **同一个 `packages/ui/test-results/` 不能并行**（task-224，2026-11-15 实测）：两个 Playwright 进程共用该目录时，后启动的那个开跑即清空目录 ⇒ 先启动的进程在 `browserContext.close` 写 trace 时拿到 `ENOENT … playwright-artifacts-N\traces\…`；**该条失败的 error 里没有任何断言失败**，于是它伪装成「测试失败」。

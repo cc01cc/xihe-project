@@ -37,9 +37,9 @@ tags:
 
 | 反例 | 事实 | 锚点 |
 |---|---|---|
-| 改角色不改授权面 | 角色只把原子物化进 `access_role_permissions`；求值输入是 `PermissionAtom(actionClass, resource)` 两字段，`parse` 遇到第三个键直接抛 `Unknown permission atom field` | `policy/RoleGrantMaterializer.java:376-393`；`policy/GrantIntersectionEvaluator.java:18-34`、`:46-50` |
+| 改角色不改授权面 | 角色只把原子物化进 `access_role_permissions`；求值输入是 `PermissionAtom(actionClass, resource)` 两字段，`parse` 遇到第三个键直接抛 `Unknown permission atom field` | `policy/RoleGrantMaterializer.java:376-393`；`policy/GrantIntersectionEvaluator.java:36-52`、`:46-50` |
 | 能力原子根本不进 grants | 平台/实例级能力原子不是可授予动作，物化时返回 null 被跳过 | `policy/RoleGrantMaterializer.java:381-383`；`policy/PermissionAtomCatalog.java:414`、`:419` |
-| 组合语义不是「多角色并集放大」 | 同主体多条 grants 确实并集（`union`，来源标签不产生优先级），但并集之后还要过资源前缀覆盖与**写入期**上限：绑定 cap 不得超出主体与操作者各自已持原子的集合，否则 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:62-75`；`service/AgentPrincipalService.java:539-563` |
+| 组合语义不是「多角色并集放大」 | 同主体多条 grants 确实并集（`union`，来源标签不产生优先级），但并集之后还要过资源前缀覆盖与**写入期**上限：绑定 cap 不得超出主体与操作者各自已持原子的集合，否则 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:152-165`；`service/AgentPrincipalService.java:539-563` |
 
 **禁用词**（写作与评审一律不用）：`RBAC`、`基于角色的权限系统`、`作用域交集`（「作用域」在本仓专指 `scope_type` 的 instance / workspace 两档，与「资源前缀」不是一回事）。这个词只允许出现在「与成熟模型对比」表与来源链接里（对比语境），不得用来描述本模型。
 
@@ -48,7 +48,7 @@ tags:
 | 输入 | 取值来源 | 不许做的事 | 锚点 |
 |---|---|---|---|
 | **principal** | 会话叶子的参与者 + agent 绑定；`resolveAgent` 返回叶子自身主体与整条会话链 | 不信任请求里自带的主体；链上任何一环 tenant 不符、缺 principal、成环都 fail-closed | `policy/GrantPrincipalPathResolver.java:78-106` |
-| **actionClass** | 工具到动作类的映射表（内置工具 + 第三方 MCP 工具的 extraFaces） | 不由调用方声明动作类；未分类工具落 `UNCLASSIFIED_ACTION` | `policy/ToolFaceRegistry.java:249-271`；`policy/PolicyRequest.java:24-27` |
+| **actionClass** | 工具到动作类的映射表（内置工具 + 第三方 MCP 工具的 extraFaces） | 不由调用方声明动作类；未分类工具落 `UNCLASSIFIED_ACTION` | `policy/ToolFaceRegistry.java:277-299`；`policy/PolicyRequest.java:24-27` |
 | **resource** | 工具参数解析出的目标串（`fs:` 声明键、`phys:` 物理键、`credential:<uuid>` 等） | 凭据类请求必须带具体 `credential:<uuid>`；`credential:*` 与裸 `*` 直接抛错（fail-closed） | `policy/PolicyRequest.java:28-37` |
 | **scope** | 由 `workspaceId` / `sessionId` 派生，**不是请求参数** | 请求体不得携带决定授权的 scope；跨工作区读写由 repository 的 scoped 查询裁决 | `spec/security/authorization.md` §2 第 2 步；`service/AgentPrincipalService.java:536-540` |
 
@@ -76,24 +76,24 @@ tags:
 | # | 步骤 | 谁判 | 锚点 | 判错会怎样 |
 |---|---|---|---|---|
 | 1 | 认证 + access-token epoch | 认证过滤链（token 的 `tv` 与 `users.token_version` 不一致即 401） | `auth/AuthService.java:196-200`；`spec/security/authorization.md` §6 | 旧 token 继续可用，撤销失效 |
-| 2 | scope 派生（租户一致性） | CP 派生，非请求参数 | `policy/GrantAuthorizationService.java:79-98` | 跨租户读写 |
+| 2 | scope 派生（租户一致性） | CP 派生，非请求参数 | `policy/GrantAuthorizationService.java:83-102` | 跨租户读写 |
 | 3 | 能力原子闸 | 能力缓存 `AuthzContext`（`cp.capability-cache-ttl-ms` 默认 30000 ms） | `policy/AuthzContext.java:106` | 越权进管理面 |
-| 4 | 工具面到动作类 | `ToolFaceRegistry` 构造器 | `policy/ToolFaceRegistry.java:249-271` | 工具错分类，判据套错轴 |
-| 5 | L0 硬门 | `HardGuard`（builtin 层，先于一切 grant） | `policy/HardGuard.java:48`、`:98-112`；`policy/PolicyEngine.java:98-99` | 对关键路径的不可逆删除被放行 |
-| 6 | 原子与资源（主体派生链候选） | `GrantAuthorizationService.allows` 取源与快照 → `GrantIntersectionEvaluator.allows` 判定 | `policy/GrantAuthorizationService.java:79-115`；`policy/GrantIntersectionEvaluator.java:98-121` | 越权执行 |
-| 7 | 审批门（要不要 ASK） | `PolicyEngine.approvalVerdict`，按 ask 动作类列表 | `policy/PolicyEngine.java:185-200` | 该问的没问，或全问成打扰 |
+| 4 | 工具面到动作类 | `ToolFaceRegistry` 构造器 | `policy/ToolFaceRegistry.java:277-299` | 工具错分类，判据套错轴 |
+| 5 | L0 硬门 | `HardGuard`（builtin 层，先于一切 grant） | `policy/HardGuard.java:59`、`:98-112`；`policy/PolicyEngine.java:111-112` | 对关键路径的不可逆删除被放行 |
+| 6 | 原子与资源（主体派生链候选） | `GrantAuthorizationService.allows` 取源与快照 → `GrantIntersectionEvaluator.allows` 判定 | `policy/GrantAuthorizationService.java:83-123`；`policy/GrantIntersectionEvaluator.java:211-240` | 越权执行 |
+| 7 | 审批门（要不要 ASK） | `PolicyEngine.approvalVerdict`，按 ask 动作类列表 | `policy/PolicyEngine.java:198-213` | 该问的没问，或全问成打扰 |
 | 8 | 执行 | Runtime（`job_host_adapter.rs` 明确不做 sandbox、不做 policy） | `packages/runtime/src/job_host_adapter.rs:1-5` | 以为 Runtime 兜底，实际无兜底 |
-| 9 | 审计 | 审批链写 `audit_logs`；授权求值自身只打 WARN | `policy/GrantAuthorizationService.java:111-113` | 拒了说不出理由 |
+| 9 | 审计 | 审批链写 `audit_logs`；授权求值自身只打 WARN | `policy/GrantAuthorizationService.java:119-121` | 拒了说不出理由 |
 
 ## 4. 判据本体（源码锚点）
 
 | 判据 | 内容 | 锚点 |
 |---|---|---|
-| 原子两字段 | `PermissionAtom(actionClass, resource)`；未知字段即抛错，不允许夹带第三维 | `policy/GrantIntersectionEvaluator.java:18-34`、`:46-50` |
-| 缺省拒 | 主体链为空、动作类为空、资源空白、动作类不在闭集内，一律 false | `policy/GrantIntersectionEvaluator.java:98-107` |
-| 两轴同时命中 | 逐个 (actionClass × resource) 组合判定，任一组合无命中即 false | `policy/GrantIntersectionEvaluator.java:108-118` |
-| 资源匹配 | 两侧都是 `fs:` 声明键时归一成 `phys:` 比物理身份（永不比字符串），其余交分层匹配器 | `policy/ResourceIdentity.java:104-130`；`policy/GrantIntersectionEvaluator.java:89-95` |
-| 来源闭集 | 参与判定的 grant 来源是闭集 `EVALUATION_SOURCES`（6 个来源），来源标签不产生优先级 | `policy/GrantSources.java:50-54`；`policy/GrantIntersectionEvaluator.java:62-75` |
+| 原子两字段 | `PermissionAtom(actionClass, resource)`；未知字段即抛错，不允许夹带第三维 | `policy/GrantIntersectionEvaluator.java:36-52`、`:46-50` |
+| 缺省拒 | 主体链为空、动作类为空、资源空白、动作类不在闭集内，一律 false | `policy/GrantIntersectionEvaluator.java:265-309` |
+| 两轴同时命中 | 逐个 (actionClass × resource) 组合判定，任一组合无命中即 false | `policy/GrantIntersectionEvaluator.java:326-362` |
+| 资源匹配 | 两侧都是 `fs:` 声明键时归一成 `phys:` 比物理身份（永不比字符串），其余交分层匹配器 | `policy/ResourceIdentity.java:104-130`；`policy/GrantIntersectionEvaluator.java:202-208` |
+| 来源闭集 | 参与判定的 grant 来源是闭集 `EVALUATION_SOURCES`（6 个来源），来源标签不产生优先级 | `policy/GrantSources.java:59-63`；`policy/GrantIntersectionEvaluator.java:152-165` |
 | 写入期上限 | 绑定 cap 必须 ⊆ 主体已持原子且 ⊆ 操作者已持原子，否则 403 并点名越界原子 | `service/AgentPrincipalService.java:539-563` |
 
 **一条必须说清的实现细节**：`GrantIntersectionEvaluator.allows` 的 javadoc（`:97`「Every requested atom must be granted by every principal in the operation path.」）与实现一致——`principalPath` 里**每一级**快照都必须持有该 `(actionClass × resource)` 原子，任一级 `noneMatch` 即整体 `return false`（`:103-120`），所以「逐级求交」在**求值期**就成立，不是只在写入期成立。评审读法：`path` 由 `policy/GrantPrincipalPathResolver` 按主体派生链解出（`:78-106` 对 agent 链逐级校验），链上任一环缺原子整条调用即拒，放宽单独一级不生效。写入期另有**前置上限**（cap ⊆ 主体已持原子且 ⊆ 操作者已持原子，`service/AgentPrincipalService.java:539-563`，越界 403 `AGENT_PERMISSION_SCOPE_EXCEEDED`）：它是落库前的边界校验，不能替代读期判定。
@@ -101,7 +101,7 @@ tags:
 ## 5. 资源与原子目录
 
 - 原子目录：**42 个动作原子 + 3 个能力原子**（`policy/PermissionAtomCatalog.java`；[实测] 枚举计数见 `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`）。
-- 有工具面入口的动作类 **7 个**：`read`、`write`、`exec`、`network`、`credential_use`、`spawn_agent`、`team_task_manage`（`policy/ToolFaceRegistry.java:253-269`）。`delete` 动作类存在，但当前没有任何工具映射到它，`WRITE_TOOLS` 也不含删除工具（`policy/ToolFaceRegistry.java:192-194`、`:254`）——即该原子在工具链上不可达。
+- 有工具面入口的动作类 **7 个**：`read`、`write`、`exec`、`network`、`credential_use`、`spawn_agent`、`team_task_manage`（`policy/ToolFaceRegistry.java:280-296`）。`delete` 动作类存在，但当前没有任何工具映射到它，`WRITE_TOOLS` 也不含删除工具（`policy/ToolFaceRegistry.java:193-195`、`:254`）——即该原子在工具链上不可达。
 
 8 个内置角色的默认动作原子数（[实测]，同一份证据）：
 
@@ -113,8 +113,8 @@ tags:
 | WS_OWNER | 17 | 工作区 | 同上 |
 | WS_EDITOR | 12 | 工作区 | 同上 |
 | WS_VIEWER | 2 | 工作区 | 同上 |
-| AGENT_DELEGATOR | 1 | 代理 | `policy/SystemAccessRoleCatalog.java:321` |
-| AGENT_USER | 7 | 代理 | `policy/SystemAccessRoleCatalog.java:330` |
+| AGENT_DELEGATOR | 1 | 代理 | `policy/SystemAccessRoleCatalog.java:374` |
+| AGENT_USER | 7 | 代理 | `policy/SystemAccessRoleCatalog.java:385` |
 
 PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Windows host 通道既无 sandbox 也无 policy 门（`packages/runtime/src/job_host_adapter.rs:1-5`）。覆盖清单与缺口见 `internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`。
 
@@ -195,7 +195,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 |---|---|---|
 | 1 判据在求值器、不在角色 | 审查者若以为「改角色定义 = 改授权面」，会漏掉真正决定放行的两样东西：`grants` 里 `source='role'` 的物化行，与主体派生链每一级的快照；绕过 `RoleGrantMaterializer` 手改 `grants`，或只改角色而快照未追平，都会出现「改了角色不动授权面」 | 设计如此：改角色/绑定走 `/api/v1/roles`、`/bindings` 与物化器；快照追平见坑 4 |
 | 2 无显式 Deny | 写不出「永远不许」的绝对禁令；目前只有 HardGuard 的硬编码规则兜住关键路径 | 设计如此 |
-| 3 拒了说不出理由 | 判定失败只有 WARN 日志（`policy/GrantAuthorizationService.java:111-113`），没有「哪一级缺哪个原子」的决策链 | explain 设计在办（task-110） |
+| 3 拒了说不出理由 | 判定失败只有 WARN 日志（`policy/GrantAuthorizationService.java:119-121`），没有「哪一级缺哪个原子」的决策链 | explain 设计在办（task-110） |
 | 4 三源快照不同步 | grants 行、binding 的 `permissionsSnapshot`、session 的 `agentPermissionsSnapshot` 三处副本；改了 grant 不追平快照，就会出现「改了没生效」或「撤了还在」 | 未动 |
 | 5 撤销有延迟 | 能力原子走 `cp.capability-cache-ttl-ms`（默认 30000 ms）短 TTL 缓存，撤权最坏晚 30 s 生效 | 设计如此（可配） |
 | 6 PEP 覆盖不全 | 42 个原子只有 7 个有工具面入口；`delete` 原子在工具链上不可达；Windows host 通道无 sandbox 也无 policy 门 | 已留证据（`internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`），修法未裁 |

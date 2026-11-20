@@ -98,7 +98,7 @@ tags:
 ## 附录 A · 新端点 checklist（草案，随落盘生效）
 
 1. 路径段 kebab-case，挂正确 tag；2. openapi.yaml 先写（SSOT 先行）；3. redocly lint + validate 绿；
-4. 错误响应挂 schema 引用；5. inventory.md 登记；6. DEV 编号（中英双侧）同批；7. UI 四层同波次（packages/ui/AGENTS.md:52）；8. 需要页内 fetch 的 e2e 加标注。
+4. 错误响应挂 schema 引用；5. inventory.md 登记；6. DEV 编号（中英双侧）同批；7. UI 四层同波次（packages/ui/AGENTS.md:116）；8. 需要页内 fetch 的 e2e 加标注。
 
 ## 附录 B · 证据索引
 

@@ -23,7 +23,7 @@ updated: 2026-11-10
 | Docker | **仅 PostgreSQL** 用容器；服务容器化与 `xihe/workspace` 镜像构建已冻结，不要试图 `docker compose up` 全栈 | `mise.toml` 文件头（冻结说明） |
 | 目录 | **任意目录**即可（单 clone）；不再是"必须在 `one/` 工作区内" | `mise run check:standalone`自检「不依赖 one 根」 |
 | 端口 | stack-1：UI 12630 / CP 12631 / Agent 12632 / Runtime 12633 / PG 12634 | `scripts/lib/stack-ports.mjs:20`（端口事实源） |
-| 工作区 | **首启没有任何工作区**：注册/登录都不再自动创建，第一步是用户自己建（§3 第 2 步 / §4 第 1 步） | `AuthController.withFirstWorkspace`（`AuthController.java:137,165,196-201`） |
+| 工作区 | **首启没有任何工作区**：注册/登录都不再自动创建，第一步是用户自己建（§3 第 2 步 / §4 第 1 步） | `AuthController.withFirstWorkspace`（`AuthController.java:102,165,196-201`） |
 
 两种运行前提，按用途选：
 
@@ -60,7 +60,7 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 
 1. 打开 `http://localhost:12630/login`，用 `admin@xihe.local` + 上一步的密码登录（`POST /api/v1/auth/login` 200）。
 2. 登录后落在 `/workspace` 的**空态**：显示「创建你的第一个工作区」，工作区条目 0，`GET /api/v1/workspaces` 返回**空数组**，`AuthResponse.workspaceId` 为 **`null`**（`AuthController.withFirstWorkspace`，注册与登录同一条路径）。
-3. 该账号是 instance owner + `SUPER_ADMIN`（`InstanceOwnershipService.ensureAssigned` / `GrantDefaultService.ensureInstanceSuperAdmin`，seed 点在 `DataSeeder.java:86-89`），**无需自授权**即可管理 Agent 与设置。
+3. 该账号是 instance owner + `SUPER_ADMIN`（`InstanceOwnershipService.ensureAssigned` / `GrantDefaultService.ensureInstanceSuperAdmin`，seed 点在 `DataSeeder.java:153-156`），**无需自授权**即可管理 Agent 与设置。
 
 > **注册路径不是首跑主路径**：`/onboarding` 可用（表单含**密码**；缺密码返回 **400 `INVALID_REQUEST`**），但**注册不授予 instance owner / `SUPER_ADMIN`** —— 那两步 seed 只在 `DataSeeder` 的空库路径里执行（PLAN-0758 后 `AuthController.register` 不再种入）。想让某个注册账号成为实例管理员，走授权面。
 
@@ -126,7 +126,7 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 
 ### 5.3 已知边界（必读，避免把"没绿"误读成回归）
 
-1. **G4 两条是 `test.fixme`，且在 host 车道不被收集**：`G4-a`（:1069-1082，BL-152 错误文案可读性）与 `G4-b`（:1085-1092，F-09 连接→Agent 就绪）位于 `@gap` describe（:1068），而 host 车道的 Playwright 配置是 `grep: /@host/`（`packages/ui/e2e/playwright.config.ts:42`）⇒ 这两条**既不通过也不 skip，而是不进入 run 列表**；`--grep "@gap"` 也会被 config 的 grep 覆盖。要看它们需改配置或另开车道（本波不做）。
+1. **G4 两条是 `test.fixme`，且在 host 车道不被收集**：`G4-a`（:1069-1082，BL-152 错误文案可读性）与 `G4-b`（:1085-1092，F-09 连接→Agent 就绪）位于 `@gap` describe（:1068），而 host 车道的 Playwright 配置是 `grep: /@host/`（`packages/ui/e2e/playwright.config.ts:134`）⇒ 这两条**既不通过也不 skip，而是不进入 run 列表**；`--grep "@gap"` 也会被 config 的 grep 覆盖。要看它们需改配置或另开车道（本波不做）。
 2. **注册策略（PLAN-0758 后口径）**：`AuthController.register` 无条件执行 `registrationPolicy.requireOpen()`，`closed` 时公开注册 **403 `REGISTRATION_CLOSED`**；旧「本地模式豁免」口径已随 PLAN-0758 移除。
 3. **BL-169 I6 例外已随 PLAN-0758 移除**：本地模式免密分支删除后 I6 无例外（`packages/ui/AGENTS.md` 的例外条目已标注移除），登录响应消费方一律不得回填 tab 上下文。
 4. **BL-170（已修复，随 0614 M2 合入）**：守卫写入的会话原先不进 Pinia ⇒ 免密进入后首屏看不到管理入口、config/session 预载被跳过。修复：`stores/auth.ts#adoptGuardSession`（`:146`）、守卫采用该会话、`App.vue` 等 `router.isReady()`（`39e6f093`）。C6 依赖此修复。

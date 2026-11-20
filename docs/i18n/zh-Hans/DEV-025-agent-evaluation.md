@@ -41,7 +41,7 @@ uv run python -m xihe_agent.evaluation gate --report invariant.json --report beh
 
 凭据与原始数据：token 只从参数/env 读入内存，不写入报告与日志；`--output-dir` 的 raw 响应落 `.local`（gitignored），报告只保留 content-free facts；真实 lane 的 provider key 只从 env 读取，禁止写入报告、日志或 argv。
 
-**确定性 lane 的假 LLM 不需要真实凭据，但 connection 必须持有一条非密假凭据**：PLAN-0553 起 `provider_connections` 只存 `credential_id`（`V78__provider_connection_credential_ref.sql:1-6` 硬切，无 ciphertext/双读回退），运行期租约必须从 `credentials` 域解密一条凭据，缺行即 `ProviderCredentialAccess.java:140` 抛 `CredentialNotFoundException` → run 终态 `CHAT_EXECUTION_FAILED`（`chat_run_transport_attempts` 0 行、假 LLM 收不到请求，即还没走到 Agent/传输）。假 key 取 `XIHE_EVAL_LLM_API_KEY`，默认 `eval-fake-llm-not-a-secret`（`lane-setup.mjs:79`），fixture server 忽略 `Authorization`；它仍按「不进 argv / 不进报告 / 不进日志」处理——理由是**不给后人留下「报告里可以出现凭据字段」的先例**。
+**确定性 lane 的假 LLM 不需要真实凭据，但 connection 必须持有一条非密假凭据**：PLAN-0553 起 `provider_connections` 只存 `credential_id`（`V78__provider_connection_credential_ref.sql:1-6` 硬切，无 ciphertext/双读回退），运行期租约必须从 `credentials` 域解密一条凭据，缺行即 `ProviderCredentialAccess.java:149` 抛 `CredentialNotFoundException` → run 终态 `CHAT_EXECUTION_FAILED`（`chat_run_transport_attempts` 0 行、假 LLM 收不到请求，即还没走到 Agent/传输）。假 key 取 `XIHE_EVAL_LLM_API_KEY`，默认 `eval-fake-llm-not-a-secret`（`lane-setup.mjs:79`），fixture server 忽略 `Authorization`；它仍按「不进 argv / 不进报告 / 不进日志」处理——理由是**不给后人留下「报告里可以出现凭据字段」的先例**。
 
 ## 3. 契约一：dataset
 
@@ -245,14 +245,14 @@ gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`d
 | 前置 | 说明 |
 |---|---|
 | 活栈 | CP / Agent / Runtime / PG 已启动 |
-| 首个 workspace | **目标库必须已有至少一个 workspace**：PLAN-0614 空白起步后认证路径不再建 workspace（`AuthController.java:261`），空库登录返回 `workspaceId=null`，fixture 直接报 `login workspace is not a UUID: null` |
+| 首个 workspace | **目标库必须已有至少一个 workspace**：PLAN-0614 空白起步后认证路径不再建 workspace（`AuthController.java:197`），空库登录返回 `workspaceId=null`，fixture 直接报 `login workspace is not a UUID: null` |
 | MCP fixture | 暴露 `always_failing`，`tool_faces` 分类为 `read` |
 | 假 LLM | OpenAI 兼容 SSE，脚本「调 `always_failing` → isError → 再调」 |
 | Provider Connection | WORKSPACE scope、`openai` / `openai-chat-completions` v1、verify READY。**不能用 `custom-openai-compatible`**：该 provider 的 `openai-chat-completions` v1 是 `capability.tools=false`（`provider-catalog/providers.json:328`），工具类任务在传输前即 `LLM_TOOL_ROUTE_UNSUPPORTED` |
 | instance profile | `llm-provider` 指向该 connection（`eval-fake-llm` / `eval-fake-model`；否则 Agent `llmReady=missing_credentials`） |
 | workspace 预算 | `agent-runtime.runMaxTurns=2`（否则 180s 内跑不出刹车码） |
 | workspace 上下文 | WORKSPACE-scope 写（建 agent principal、写 workspace 层配置）**必须显式带 `X-Workspace-Id`**，否则 `409 WORKSPACE_CONTEXT_REQUIRED`（PLAN-0622）：写路径不猜 workspace，CP 的「首个活跃成员」回退只用于读（`AgentPrincipalService.java:196-211`） |
-| 授权来源 | `grants.source='direct'` 已被 V88 / PLAN-0610 T1.6 退役——`ck_grants_source` 现值 `('role','spawn','template','credential_binding','agent_default')`，直接种 direct grant 会被约束拒绝，且 `direct` 不在 `GrantSources.EVALUATION_SOURCES`（`GrantSources.java:41-42`）⇒ 即使插入也不参与授权判定。授权应靠角色物化 `source='role'` + workspace agent cap |
+| 授权来源 | `grants.source='direct'` 已被 V88 / PLAN-0610 T1.6 退役——`ck_grants_source` 现值 `('role','spawn','template','credential_binding','agent_default')`，直接种 direct grant 会被约束拒绝，且 `direct` 不在 `GrantSources.EVALUATION_SOURCES`（`GrantSources.java:59-60`）⇒ 即使插入也不参与授权判定。授权应靠角色物化 `source='role'` + workspace agent cap |
 | token | `--token` 或 `XIHE_EVAL_TOKEN` |
 
 真实 lane 的前置（0540 实测）：
@@ -272,7 +272,7 @@ gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`d
 
 1. `setup`：创建/复用 eval workspace 与 principal，起假 LLM（`XIHE_EVAL_LLM_PORT`，默认 12762，避开 stack 段位 12630–12634/12640–12644）与 MCP fixture（默认 12761），创建假 Provider Connection 并 verify，把 instance `llm-provider` 切到假 provider，校验 workspace `runMaxTurns=2`，输出 session 绑定所需 id。
 2. `behavior-setup`：复用上述 workspace/principal，若不存在同 `connectionKey` 的真实 connection 则用 `XIHE_XIAOMI_API_KEY` 新建并 verify，然后把 profile 切到真实 provider；记录该 connection 是否由本次 setup 创建。
-3. `run`：按 `--lane` 跑指定轮次（`--rounds`）与尝试数（`--attempts`）；behavior lane 需显式传 `--provider xiaomi --model mimo-v2.6-flash`。`--tool-surface` 的默认值语义是**按 lane 猜**：不给 flag 时只在 `lane === "invariant"` 打开（`lane-setup.mjs:1401`），behavior lane 一律关闭。要不要开**由 required 任务决定**，不由 lane 决定——`gate-v2.json:13` 的 required behavior 任务就是工具调用率（`failure_budget.attempt_rate.v2` 的 B1 断言「至少一次工具调用」），所以默认跑法下这条 gate 永远只能 `NOT_EVALUATED(2)`，且 `not_evaluated` 数超过 baseline 还会触发 `coverage_shrunk`。需要评估工具面的 lane 必须显式传 `--tool-surface`（反向用 `--no-tool-surface` 显式关闭）。
+3. `run`：按 `--lane` 跑指定轮次（`--rounds`）与尝试数（`--attempts`）；behavior lane 需显式传 `--provider xiaomi --model mimo-v2.6-flash`。`--tool-surface` 的默认值语义是**按 lane 猜**：不给 flag 时只在 `lane === "invariant"` 打开（`lane-setup.mjs:1402`），behavior lane 一律关闭。要不要开**由 required 任务决定**，不由 lane 决定——`gate-v2.json:13` 的 required behavior 任务就是工具调用率（`failure_budget.attempt_rate.v2` 的 B1 断言「至少一次工具调用」），所以默认跑法下这条 gate 永远只能 `NOT_EVALUATED(2)`，且 `not_evaluated` 数超过 baseline 还会触发 `coverage_shrunk`。需要评估工具面的 lane 必须显式传 `--tool-surface`（反向用 `--no-tool-surface` 显式关闭）。
 4. `status`：打印 lane 状态与 id（含 `realConnectionId`、`profileIsReal`）。
 5. `teardown`：删除本 lane 创建的 eval session/run 与 connection（含真实 connection，若为 setup 创建）、清空 profile、恢复 `runMaxTurns` 原值、停 fixtures。
 

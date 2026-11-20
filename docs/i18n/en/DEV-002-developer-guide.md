@@ -802,7 +802,7 @@ Channel discipline is unchanged: the value travels only through env (`XIHE_RESET
 >   from one full `mvn test`, i.e. the tail line `Tests run: 3701, Failures: 1, Errors: 0, Skipped: 2`
 >   (merge tree `918e175a`, 2026-11-07, ~14 min). Count is *cases executed*, not "green cases": the single
 >   failure is `MessagePaginationContractTest`, a **test-side flakiness** — the entity's `@PrePersist`
->   (`Message.java:98-100`) unconditionally overwrites the fixture `createdAt` set at `saveMessage:309`, so
+>   (`Message.java:107-109`) unconditionally overwrites the fixture `createdAt` set at `saveMessage:309`, so
 >   ordering falls back to wall-clock microseconds and the string comparison in `assertAscending:355-364`
 >   inverts (`.319Z` vs `.319999Z`); 7 of 8 repeat runs are green, so it is not a regression — tracked as
 >   `BL-475`. The two previously registered baseline entries

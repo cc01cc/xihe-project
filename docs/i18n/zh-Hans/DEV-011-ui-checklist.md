@@ -102,8 +102,8 @@ status: active
 
 ### 6.1 rail（`GlobalRail`，双态：折叠 56px 纯图标 ↔ 展开图标 + 文字）
 
-- [ ] **双态**（`GlobalRail.vue:77`：`--sidebar-width-icon: 3.5rem` = 折叠 56px、`--sidebar-width: 12rem` = 展开，`collapsible="icon"`）：折叠态纯图标无文字标签、展开态图标 + 文字；每个图标有 `aria-label` 且 hover 有 tooltip
-- [ ] 收起/展开入口**不只在导航面板头、也不只靠快捷键**：全局导航自带 `SidebarRail` hover 切换（`GlobalRail.vue:190`）+ `⌘/Ctrl+B`（`SidebarProvider`）；导航面板折叠态另渲染一条 56px 折叠条（`Sidebar.vue:154-157`，`sidebar-collapsed-strip`，只含展开控件）；`<1024` 时全局导航整条隐藏（`App.vue:29-36`）
+- [ ] **双态**（`GlobalRail.vue:187`：`--sidebar-width-icon: 3.5rem` = 折叠 56px、`--sidebar-width: 12rem` = 展开，`collapsible="icon"`）：折叠态纯图标无文字标签、展开态图标 + 文字；每个图标有 `aria-label` 且 hover 有 tooltip
+- [ ] 收起/展开入口**不只在导航面板头、也不只靠快捷键**：全局导航自带 `SidebarRail` hover 切换（`GlobalRail.vue:190`）+ `⌘/Ctrl+B`（`SidebarProvider`）；导航面板折叠态另渲染一条 56px 折叠条（`Sidebar.vue:284-288`，`sidebar-collapsed-strip`，只含展开控件）；`<1024` 时全局导航整条隐藏（`App.vue:29-36`）
 
 ### 6.2 三处栏宽与夹取（PLAN-0582）
 
@@ -519,7 +519,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 | 已有实现 | 覆盖范围 |
 | --- | --- |
-| `styles/main.css:241` | `*, *::before, *::after` 的 `animation-duration` / `transition-duration` 压到 `0.01ms !important`（覆盖全量） |
+| `styles/main.css:253` | `*, *::before, *::after` 的 `animation-duration` / `transition-duration` 压到 `0.01ms !important`（覆盖全量） |
 | `styles/shadcn-vue-tailwind.css:569` | `.shimmer` 显式 `animation: none` + `-webkit-text-fill-color: currentColor`（文字渐变回退实色） |
 
 **新增动效 PR 必查**：
@@ -607,7 +607,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 ### 13.3 焦点指示只许一套
 
-**构成边界**：「焦点指示」= **键盘 Tab 落到元素、settle 之后的**可见环，来源只有两种 —— `@layer base` 的全局 `*:focus-visible { outline }`（`main.css:235`）与组件自带的 `focus-visible:ring-*`（含 `shadow-*` 工具类铺出来的环层）。**不属于**焦点指示：hover 态、`shadow-sm` 这类投影层、alpha 为 0 的透明占位层、鼠标点击后的 `:focus`（`matches(":focus-visible")` 为 false，读到的不是键盘态）。「一套」= 有效环层 + 有效 `outline` 层**合计 ≤ 1**；内外层按**盒子归属**判：外层是包住可聚焦子元素的那个框，指示由它画，内层不得自绘。
+**构成边界**：「焦点指示」= **键盘 Tab 落到元素、settle 之后的**可见环，来源只有两种 —— `@layer base` 的全局 `*:focus-visible { outline }`（`main.css:247`）与组件自带的 `focus-visible:ring-*`（含 `shadow-*` 工具类铺出来的环层）。**不属于**焦点指示：hover 态、`shadow-sm` 这类投影层、alpha 为 0 的透明占位层、鼠标点击后的 `:focus`（`matches(":focus-visible")` 为 false，读到的不是键盘态）。「一套」= 有效环层 + 有效 `outline` 层**合计 ≤ 1**；内外层按**盒子归属**判：外层是包住可聚焦子元素的那个框，指示由它画，内层不得自绘。
 
 **判据**：任一可聚焦元素在同一时刻**只许有一套**焦点视觉。嵌套形态（外层容器 + 内层 `input`/`textarea`/contenteditable）里，焦点指示**由外层画**；内层**不得**自绘 `box-shadow` 环，也**不得**保留 UA / 全局 `outline`。
 
@@ -633,7 +633,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 > ⇒ **判据**：读数必须写明「量的是哪一层元素的盒子」（含 `padding` 与定位上下文），且**同一量要给出至少两层的对照**
 > （自己这层 + 父/子一层），否则无法区分「修好了」与「被级联补位了」。
 >
-> **绘制层必须先定，两个属性都读（`task-75` 实测踩坑）**：焦点环可能由 `@layer base` 的全局 `*:focus-visible { outline }`（`main.css:235`）画，也可能由组件自带的 `focus-visible:ring-*` utility 画。读数必须**同时**给出 `outline` / `outlineStyle` 与 `boxShadow` / `--tw-ring-shadow`，并写明该面的环由哪条规则画。
+> **绘制层必须先定，两个属性都读（`task-75` 实测踩坑）**：焦点环可能由 `@layer base` 的全局 `*:focus-visible { outline }`（`main.css:247`）画，也可能由组件自带的 `focus-visible:ring-*` utility 画。读数必须**同时**给出 `outline` / `outlineStyle` 与 `boxShadow` / `--tw-ring-shadow`，并写明该面的环由哪条规则画。
 > 实测反例：折叠区「技术详情」触发器**没有** ring utility ⇒ `boxShadow` 恒 `none`、`--tw-ring-shadow` 恒 `0 0 #0000`，而环真实存在（`outline: 2px solid`）。**只读 `box-shadow` 会把「有环」判成「无环」** —— 已经发生过一次：两张交付图配着一行 `boxShadow=none` 的读数。
 > **真不可见的样本是双 `none`**：`styles/dockview-theme.css:32` 记录 dockview 区域内 `outline-style:none` **且** `box-shadow:none`，那才叫焦点不可见。
 
@@ -643,7 +643,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
     字面式 `boxShadow != "none"` **不可当判据**（2026-11-19 独立复跑实测：**假阳 2 / 假阴 4**）—— 它把 `dock-tab-files`（5 层全透明，实际只有一套 outline）与 `message-search-toggle`（`shadow-sm` 投影，焦点语言与它无关）记成缺陷，同时漏掉 4 个真双指示的 rail 按钮。
     **用修正式重扫的存量**：4 处 `global-rail-menu-*`（workbench / org-members / resources / settings —— `outline 2px solid` + `ring 2px` 实色环）与页签 `outline-1` + `ring-3` 并存（vendor `components/ui/tabs/TabsTrigger.vue:20`）。两处已同批修掉：rail 补 `focus-visible:outline-none`，vendor 删 `focus-visible:outline-1 focus-visible:outline-ring`（保留 `border-ring + ring-3` = 本仓通用焦点语言），改后复跑为 0。
 
-**反例锚点（判据必须能红，否则是装饰）**：把内层 textarea 自绘的 `box-shadow … 0 0 0 3px` 环放回去（回到 2026-11-19 修前）⇒ 外层 `1px` 淡边框 + 内层 `3px` 环 = 双指示，第 1 条「内层 `boxShadow == "none"`」**必须判红**。已有真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-4 —— 同屏 **4 套焦点语言 + 4 处双指示**（`chat-input` inner 环 3px `oklab(0.205 0 0 / 0.5)`；`InputArea.vue:1900` 的 `focus-visible:ring-3`、`RecipientField.vue:225` 的 `focus-visible:ring-1`，rails 与页签另两套）。第二条反例是**判据本身写错**：用字面式 `boxShadow != "none"` 判会得到假阳 2 / 假阴 4（见本节上条实测）⇒ 红了也不能证明修好。
+**反例锚点（判据必须能红，否则是装饰）**：把内层 textarea 自绘的 `box-shadow … 0 0 0 3px` 环放回去（回到 2026-11-19 修前）⇒ 外层 `1px` 淡边框 + 内层 `3px` 环 = 双指示，第 1 条「内层 `boxShadow == "none"`」**必须判红**。已有真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-4 —— 同屏 **4 套焦点语言 + 4 处双指示**（`chat-input` inner 环 3px `oklab(0.205 0 0 / 0.5)`；`InputArea.vue:2176` 的 `focus-visible:ring-3`、`RecipientField.vue:225` 的 `focus-visible:ring-1`，rails 与页签另两套）。第二条反例是**判据本身写错**：用字面式 `boxShadow != "none"` 判会得到假阳 2 / 假阴 4（见本节上条实测）⇒ 红了也不能证明修好。
 
 ### 13.4 提示语不得整幅占行
 
@@ -766,7 +766,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 | 坑 | 实测症状 | 可操作判据 |
 | --- | --- | --- |
 | 缺 `x-workspace-id` 请求头 | CP 一律 **404，不是 403** —— 既不报「没权限」也不报「缺头」 | 任何以「取不到」为根据的结论，**先证明请求与同页面真实请求逐头逐参一致**：抓 UI 自己发的那条请求照抄 headers + query 再复现。**对照组**：同参数打一个已知存在的资源，它命中才说明寻址可用 |
-| `branchId` 是必填 query | 漏它 ⇒ **404**（不是全量列表） | 写探针前先查 `docs/api/openapi.yaml` 该操作的 `required`（本例在 `openapi.yaml:3827`）。**404 的第一候选解释是「我的寻址不完整」，不是「资源不存在」** |
+| `branchId` 是必填 query | 漏它 ⇒ **404**（不是全量列表） | 写探针前先查 `docs/api/openapi.yaml` 该操作的 `required`（本例在 `openapi.yaml:4109`）。**404 的第一候选解释是「我的寻址不完整」，不是「资源不存在」** |
 
 **一般形态**：404 / 空结果 **不构成**「产品面不存在」的证据。要写「没有」，必须给出**寻址完整**的证据 —— 同头同参 + 一个已知存在的对照组命中。
 `task-59` 的 P-9 就是这么纠正的：最初按 404 读成「没有知识库面」，补上头与 `branchId` 后面全在，真实现象是**检索这一轮根本没发生**（`tools=0`）。两个结论给出的文案完全不同，错的那个还会把用户支去一个不存在的入口。
@@ -789,9 +789,9 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 ### 15.3 `<main` 可以单独成行
 
-- **构成边界**：标记允许写成 `<main` 一行、属性跟在下面几行 —— `src/layouts/AppLayout.vue:460` 就是这个形态。
+- **构成边界**：标记允许写成 `<main` 一行、属性跟在下面几行 —— `src/layouts/AppLayout.vue:468` 就是这个形态。
 - **度量方式**：匹配式的后随字符集必须包含**行尾**（空白、`>`、`/` **或换行**四者都算）；写完造一条「`<main` 单独成行」的正例自测，别只测单行闭合的写法。
-- **反例锚点**：逐行匹配要求 `<main` 后必须跟空白 / `>` / `/` ⇒ 把 `AppLayout.vue:460` 这个**真有 main 的全站 layout** 判成「真缺」（**假红**）。两个方向代价不同：假绿让人不去补，假红让人去补已经存在的东西。
+- **反例锚点**：逐行匹配要求 `<main` 后必须跟空白 / `>` / `/` ⇒ 把 `AppLayout.vue:468` 这个**真有 main 的全站 layout** 判成「真缺」（**假红**）。两个方向代价不同：假绿让人不去补，假红让人去补已经存在的东西。
 
 ### 15.4 禁止「一把套」：在公共容器统一套 main 会造出两层 main
 
@@ -867,7 +867,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 **判据**
 
 - 每个可编辑控件都有可见标签，且用 `<Label :for>` 绑到控件 id；标签文案不得与 placeholder 逐字相同。
-- 必填字段显式标注；可选字段写「可选」（i18n 已有 `optional` 键，见 `i18n/index.ts:2816`）。
+- 必填字段显式标注；可选字段写「可选」（i18n 已有 `optional` 键，见 `i18n/index.ts:2828`）。
 - placeholder 只作示例，不承载唯一说明；说明走 hint 文本或 `aria-describedby`。
 
 **现状反例**

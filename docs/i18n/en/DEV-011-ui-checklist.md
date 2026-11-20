@@ -98,8 +98,8 @@ status: active
 
 ### 6.1 rail (`GlobalRail`, dual state: 56px icon-only collapsed ↔ icon + label expanded)
 
-- [ ] **Dual state** (`GlobalRail.vue:77`: `--sidebar-width-icon: 3.5rem` = 56px collapsed, `--sidebar-width: 12rem` = expanded, `collapsible="icon"`): icon-only with no text labels when collapsed, icon + label when expanded; every icon has an `aria-label` and a hover tooltip
-- [ ] Collapse/expand affordances live **neither only in the navigation panel header nor behind a shortcut**: the global rail ships its own `SidebarRail` hover toggle (`GlobalRail.vue:190`) plus `⌘/Ctrl+B` (`SidebarProvider`); the navigation panel additionally renders a 56px collapsed strip (`Sidebar.vue:154-157`, `sidebar-collapsed-strip`, expand control only); below `1024` the whole global rail is hidden (`App.vue:29-36`)
+- [ ] **Dual state** (`GlobalRail.vue:187`: `--sidebar-width-icon: 3.5rem` = 56px collapsed, `--sidebar-width: 12rem` = expanded, `collapsible="icon"`): icon-only with no text labels when collapsed, icon + label when expanded; every icon has an `aria-label` and a hover tooltip
+- [ ] Collapse/expand affordances live **neither only in the navigation panel header nor behind a shortcut**: the global rail ships its own `SidebarRail` hover toggle (`GlobalRail.vue:398`) plus `⌘/Ctrl+B` (`SidebarProvider`); the navigation panel additionally renders a 56px collapsed strip (`Sidebar.vue:284-288`, `sidebar-collapsed-strip`, expand control only); below `1024` the whole global rail is hidden (`App.vue:29-36`)
 
 ### 6.2 Three column widths and viewport clamping (PLAN-0582)
 
@@ -525,7 +525,7 @@ Likewise **`opacity` breathing may only target non-text, non-icon surfaces** (`b
 
 | Existing implementation | Coverage |
 | --- | --- |
-| `styles/main.css:241` | `*, *::before, *::after` `animation-duration` / `transition-duration` forced to `0.01ms !important` (covers everything) |
+| `styles/main.css:253` | `*, *::before, *::after` `animation-duration` / `transition-duration` forced to `0.01ms !important` (covers everything) |
 | `styles/shadcn-vue-tailwind.css:569` | `.shimmer` explicitly `animation: none` + `-webkit-text-fill-color: currentColor` (text gradient falls back to solid) |
 
 **Required checks on any motion PR**:
@@ -631,7 +631,7 @@ chip `borderTopWidth == 0` and `boxShadow != "none"`.
 
 ### 13.3 Exactly one focus indicator
 
-**Constituting boundary**: a focus indicator is **the visible ring after a keyboard Tab settles** on the element, and it has exactly two possible sources — the global `*:focus-visible { outline }` in `@layer base` (`main.css:235`) and the component own `focus-visible:ring-*` (including ring layers laid down by `shadow-*` utilities). **Not a focus indicator**: hover state, projection layers such as `shadow-sm`, fully transparent placeholder layers (alpha 0), and mouse `:focus` (`matches(":focus-visible")` is false, so that is not the keyboard state). "One set" means valid ring layers plus valid `outline` layers sum to **≤ 1**; inner vs outer is decided by **box ownership**: the outer element is the box that wraps the focusable child and draws the indicator, and the inner element must not draw its own.
+**Constituting boundary**: a focus indicator is **the visible ring after a keyboard Tab settles** on the element, and it has exactly two possible sources — the global `*:focus-visible { outline }` in `@layer base` (`main.css:247`) and the component own `focus-visible:ring-*` (including ring layers laid down by `shadow-*` utilities). **Not a focus indicator**: hover state, projection layers such as `shadow-sm`, fully transparent placeholder layers (alpha 0), and mouse `:focus` (`matches(":focus-visible")` is false, so that is not the keyboard state). "One set" means valid ring layers plus valid `outline` layers sum to **≤ 1**; inner vs outer is decided by **box ownership**: the outer element is the box that wraps the focusable child and draws the indicator, and the inner element must not draw its own.
 
 **Criterion**: any focusable element may show **one** focus visual at a time. In nested forms (outer container +
 inner `input`/`textarea`/contenteditable) the indicator is drawn **by the outer element**; the inner element must not
@@ -670,7 +670,7 @@ the target, **settle before reading**, then read `getComputedStyle`:
 > and one quantity must come with **at least a two-layer comparison** (own layer plus parent or child), otherwise
 > "fixed" cannot be told apart from "the cascade filled it back in".
 >
-> **Decide the drawing layer first and read both properties (`task-75`, measured pitfall)**: a focus ring may be drawn by the global `@layer base` rule `*:focus-visible { outline }` (`main.css:235`) or by the component's own `focus-visible:ring-*` utility. A reading must give `outline` / `outlineStyle` **and** `boxShadow` / `--tw-ring-shadow` together, and state which rule draws it on that surface.
+> **Decide the drawing layer first and read both properties (`task-75`, measured pitfall)**: a focus ring may be drawn by the global `@layer base` rule `*:focus-visible { outline }` (`main.css:247`) or by the component's own `focus-visible:ring-*` utility. A reading must give `outline` / `outlineStyle` **and** `boxShadow` / `--tw-ring-shadow` together, and state which rule draws it on that surface.
 > Measured counter-example: the collapsed-region "technical details" trigger has **no** ring utility ⇒ `boxShadow` is always `none` and `--tw-ring-shadow` always `0 0 #0000`, while the ring really exists (`outline: 2px solid`). **Reading only `box-shadow` turns "ring present" into "ring absent"** — it already happened once: two delivered frames shipped with a `boxShadow=none` reading line.
 > **The genuinely invisible sample is the double `none`**: `styles/dockview-theme.css:32` records `outline-style:none` **and** `box-shadow:none` inside dockview regions — that is what an invisible focus indicator looks like.
 
@@ -690,7 +690,7 @@ the target, **settle before reading**, then read `getComputedStyle`:
    the vendor trigger drops `focus-visible:outline-1 focus-visible:outline-ring` (keeping `border-ring + ring-3`,
    this repo's common focus language); the re-run after the fix measures 0.
 
-**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: put back the inner textarea self-drawn `box-shadow … 0 0 0 3px` ring (the pre-fix 2026-11-19 state) ⇒ a `1px` outer rule plus a `3px` inner ring = a double indicator, so item 1 (inner `boxShadow == "none"`) **must go red**. Real readings already exist: §F-4 of `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — **4 focus languages and 4 double indicators on one screen** (`chat-input` inner ring 3px `oklab(0.205 0 0 / 0.5)`; `InputArea.vue:1900` uses `focus-visible:ring-3`, `RecipientField.vue:225` uses `focus-visible:ring-1`, plus two more on the rails and tabs). A second counter-example is **the criterion written wrong**: judging with the literal `boxShadow != "none"` yields 2 false positives and 4 false negatives (measured under the item above) ⇒ red does not prove a fix either.
+**Counter-example anchor (the criterion must be able to go red, otherwise it is decoration)**: put back the inner textarea self-drawn `box-shadow … 0 0 0 3px` ring (the pre-fix 2026-11-19 state) ⇒ a `1px` outer rule plus a `3px` inner ring = a double indicator, so item 1 (inner `boxShadow == "none"`) **must go red**. Real readings already exist: §F-4 of `internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` — **4 focus languages and 4 double indicators on one screen** (`chat-input` inner ring 3px `oklab(0.205 0 0 / 0.5)`; `InputArea.vue:2176` uses `focus-visible:ring-3`, `RecipientField.vue:225` uses `focus-visible:ring-1`, plus two more on the rails and tabs). A second counter-example is **the criterion written wrong**: judging with the literal `boxShadow != "none"` yields 2 false positives and 4 false negatives (measured under the item above) ⇒ red does not prove a fix either.
 
 ### 13.4 Hint copy must not occupy a whole row
 
@@ -818,7 +818,7 @@ Both bit during the same night, with the same symptom: the instrument reports em
 | Trap | Measured symptom | Operable criterion |
 | --- | --- | --- |
 | Missing `x-workspace-id` header | The CP answers **404, never 403** — it reports neither "no permission" nor "missing header" | Any conclusion built on "could not fetch" must **first prove the request matches the page's real request, header-for-header and parameter-for-parameter**: capture the request the UI itself sends and replay it with the same headers and query. **Control group**: hit a resource known to exist with those same parameters; only when that hits is the addressing usable |
-| `branchId` is a required query parameter | Omitting it ⇒ **404** (not a full list) | Before writing a probe, check the operation's `required` in `docs/api/openapi.yaml` (here: `openapi.yaml:3827`). **The first candidate explanation for a 404 is "my addressing is incomplete", not "the resource does not exist"** |
+| `branchId` is a required query parameter | Omitting it ⇒ **404** (not a full list) | Before writing a probe, check the operation's `required` in `docs/api/openapi.yaml` (here: `openapi.yaml:4109`). **The first candidate explanation for a 404 is "my addressing is incomplete", not "the resource does not exist"** |
 
 **General shape**: a 404 or an empty result is **not** evidence that a product surface is missing. To write "there is none", you must show **complete addressing** — same headers and parameters, plus a known-existing control that hits.
 
@@ -842,9 +842,9 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 
 ### 15.3 The token `<main` may sit alone on its own line
 
-- **Boundary**: markup may open `<main` on one line and put the attributes on the lines below — `src/layouts/AppLayout.vue:460` is written that way.
+- **Boundary**: markup may open `<main` on one line and put the attributes on the lines below — `src/layouts/AppLayout.vue:468` is written that way.
 - **Measurement**: the set of characters allowed right after `<main` must include **end of line** (whitespace, `>`, `/` **or newline** — all four count); write one positive test using a bare `<main` line instead of testing only single-line tags.
-- **Counter-example anchor**: a per-line matcher that required `<main` to be followed by whitespace / `>` / `/` read `AppLayout.vue:460` — **the site-wide layout that really does have a main** — as genuinely missing (**false red**). The two directions cost differently: a false green stops people from fixing, a false red sends them to fix something that already exists.
+- **Counter-example anchor**: a per-line matcher that required `<main` to be followed by whitespace / `>` / `/` read `AppLayout.vue:468` — **the site-wide layout that really does have a main** — as genuinely missing (**false red**). The two directions cost differently: a false green stops people from fixing, a false red sends them to fix something that already exists.
 
 ### 15.4 No blanket wrapper: putting main in the shared shell creates two nested mains
 
@@ -920,7 +920,7 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 **Criteria**
 
 - Every editable control has a visible label bound with `<Label :for>`; the label text must not be byte-identical to the placeholder.
-- Required fields are marked explicitly; optional fields say "optional" (the i18n key `optional` exists at `i18n/index.ts:2816`).
+- Required fields are marked explicitly; optional fields say "optional" (the i18n key `optional` exists at `i18n/index.ts:2828`).
 - A placeholder is an example only and never the sole explanation; explanations live in hint text or `aria-describedby`.
 
 **Counterexamples**

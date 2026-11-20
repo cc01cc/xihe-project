@@ -46,8 +46,8 @@ tags:
 | Surface | Coordinate | What it covers |
 |---|---|---|
 | Lifecycle and ownership | `spec/protocol/event-stream.md` (`proposed`·`partial`; `:8`, `:45`) | One emitter per session, generation increments, `done` ends a run only, `heartbeat` never enters UI, the event ownership table, the closed user-channel event set |
-| Envelope-level prose | OpenAPI `GET /api/v1/events` → `chatEvents` `description` (`openapi.yaml:2315-2330`) | Event **ordering** and the field strings of **some** events: `derived_state_changed`, `run_checkpoint`, `transport_progress`, `participantId`, `runId` |
-| User channel example | OpenAPI `/api/v1/user-events` (`openapi.yaml:2286`, example at `:2303`) | `text/event-stream` + `schema: {type: string}` + an `event:/data:` sample (a **sample**, not a schema) |
+| Envelope-level prose | OpenAPI `GET /api/v1/events` → `chatEvents` `description` (`openapi.yaml:3064-3079`) | Event **ordering** and the field strings of **some** events: `derived_state_changed`, `run_checkpoint`, `transport_progress`, `participantId`, `runId` |
+| User channel example | OpenAPI `/api/v1/user-events` (`openapi.yaml:3034`, example at `:2303`) | `text/event-stream` + `schema: {type: string}` + an `event:/data:` sample (a **sample**, not a schema) |
 | Workspace channel | OpenAPI `/api/v1/workspaces/{workspaceId}/events` (`:2399`) | Same — sample level |
 
 `spec/protocol/event-stream.md:8` states: "full event payload follows OpenAPI/code types; this document freezes lifecycle and ownership"; `:45`: "the event wire schema is not copied in this document." ⇒ **It is not the payload body; citing it for field assertions is a misreading.**

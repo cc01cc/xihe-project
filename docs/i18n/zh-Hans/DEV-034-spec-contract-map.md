@@ -46,8 +46,8 @@ tags:
 | 面 | 坐标 | 覆盖什么 |
 |---|---|---|
 | 生命周期与 ownership | `spec/protocol/event-stream.md`（`proposed`·`partial`；`:8`、`:45`） | 一 session 一 emitter、generation 递增、`done` 只结束 run、`heartbeat` 不进 UI、事件 ownership 表、用户通道封闭事件集 |
-| 信封级散文描述 | OpenAPI `GET /api/v1/events` 的 `chatEvents` `description`（`openapi.yaml:2315-2330`） | 事件**顺序**与**部分**事件的字段串：`derived_state_changed`、`run_checkpoint`、`transport_progress`、`participantId`、`runId` |
-| 用户通道示例 | OpenAPI `/api/v1/user-events`（`openapi.yaml:2286`，示例 `:2303`） | `text/event-stream` + `schema: {type: string}` + 一段 `event:/data:` 示例（是**示例**，不是 schema） |
+| 信封级散文描述 | OpenAPI `GET /api/v1/events` 的 `chatEvents` `description`（`openapi.yaml:3064-3079`） | 事件**顺序**与**部分**事件的字段串：`derived_state_changed`、`run_checkpoint`、`transport_progress`、`participantId`、`runId` |
+| 用户通道示例 | OpenAPI `/api/v1/user-events`（`openapi.yaml:3034`，示例 `:2303`） | `text/event-stream` + `schema: {type: string}` + 一段 `event:/data:` 示例（是**示例**，不是 schema） |
 | 工作区通道 | OpenAPI `/api/v1/workspaces/{workspaceId}/events`（`:2399`） | 同上，示例级 |
 
 `spec/protocol/event-stream.md:8` 原文：「完整 event payload 以 OpenAPI/代码类型为准，本文冻结生命周期和 ownership」；`:45`：「事件 wire schema 不在本文复制」。⇒ **该文不是 payload 正文，引用它来断言字段是误读。**
