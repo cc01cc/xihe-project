@@ -1141,6 +1141,10 @@ description = "Fixture shape ⊇ contract required (task-166/172): YAML via back
 run = "node scripts/check-versions.mjs"
 description = "PLAN-0534 version consistency: the four manifests are the only authority, production source carries no version literal, derivation anchors exist, CHANGELOG structure intact. Also exported as checkVersions(root) for `xihe version --check` (PLAN-0574 T1.4, no duplicated logic). Current reading: PASS: 4 manifests, 19 checks ⇒ exit 0."
 
+[tasks."check:readme-symlinks"]
+run = "node ../internal/A03-xihe/scripts/check-readme-symlinks.mjs"
+description = "Package-root README symlinks (task-99, from task-89 candidate A): A) index mode 120000 set is exactly packages/{agent,control-plane,runtime,ui}/README.md; B) each link is a real symlink on disk, index blob target == readlink target, target resolves to a non-empty file (reading only file content is a false green: with core.symlinks=false the file degrades to plain text while git status stays clean); C) the /en/ counterpart of each zh-Hans target exists and is non-empty. --selftest runs 3 fixtures in throwaway git repos (1 positive, 2 negative). Report-only, not part of validate. Current reading: 120000 4 / expected 4, 4 links PASS, selftest OK 3/3 ⇒ exit 0."
+
 [tasks."gate-parity"]
 run = "node scripts/gate-parity.mjs"
 description = "Gate-set parity (task-105 / D-853): ① window ladder (scripts/gate-ladder.json) ② SSOT registry (xh-verify-gates.mjs DEFAULT_GATES) ③ mise.toml task exists; named exemptions instead of silent gaps. Current reading: ladder 24 / SSOT 27 / mise 102 ⇒ PASS (exit 0)."
