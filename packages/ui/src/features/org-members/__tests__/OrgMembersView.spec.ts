@@ -43,13 +43,17 @@ const MEMBERS = [
 
 type FetchHandler = (url: URL) => { status: number; body: unknown };
 let calls: string[] = [];
+/** 与 calls 并行：task-136 起「开窗口」与「提交」要分开断言，光看路径分不出读/写。 */
+let methods: string[] = [];
 
 function mockFetch(handler: FetchHandler) {
     calls = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    methods = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
         const raw = typeof input === "string" ? input : input.url;
         const url = new URL(raw, "http://localhost");
         calls.push(url.pathname + url.search);
+        methods.push((init?.method ?? "GET").toUpperCase());
         const { status, body } = handler(url);
         return Promise.resolve(
             new Response(JSON.stringify(body), {
@@ -230,7 +234,11 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
         wrapper.unmount();
     });
 
-    it("写面按钮全部 disabled，点击不发出任何请求（卡面 ③：不造可点入口）", async () => {
+    /**
+     * task-136 取代 task-240 的 ③「写面一律禁用」：契约已接（api.ts 六写函数），
+     * 判据反过来 —— 六个入口**都可点**、点开只是本地窗口（零请求）、提交才发写请求。
+     */
+    it("写面六个入口都可点，且打开窗口不发任何请求（task-136 J1，取代旧「一律禁用」）", async () => {
         mockFetch(happyHandler);
         const wrapper = await mountView();
         await selectRoot(wrapper);
@@ -246,12 +254,52 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
         ];
         for (const id of ids) {
             const button = wrapper.get(`[data-testid="${id}"]`);
-            expect(button.attributes("disabled")).toBeDefined();
-            await button.trigger("click");
+            expect(button.attributes("disabled"), `${id} 仍是 disabled`).toBeUndefined();
         }
-        // 禁用说明在页面上（不是只有 title 悬浮）。
-        expect(wrapper.get('[data-testid="org-write-actions"]').text()).toContain("只读预览");
+        // 「只读预览」现在是假话，必须消失（写接口已接真实契约）。
+        expect(wrapper.get('[data-testid="org-write-actions"]').text()).not.toContain("只读预览");
+
+        await wrapper.get('[data-testid="org-write-new-unit"]').trigger("click");
+        await flushPromises();
+        // 打开窗口只是本地状态：一个请求都不发（写请求只在提交时发）。
         expect(calls.length).toBe(requestsAfterLoad);
+        await vi.waitFor(() => {
+            expect(document.body.querySelector('[data-testid="org-write-dialog"]')).toBeTruthy();
+        });
+        expect(document.body.querySelector('[data-testid="org-write-name"]')).toBeTruthy();
+        wrapper.unmount();
+    });
+
+    /** J5：写成功后**不本地插节点**，只 bump 刷新令牌让树重新取数。 */
+    it("新建子单元：提交打 POST /org-units，成功后重取读面而不是本地插节点", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        await selectRoot(wrapper);
+        const before = methods.length;
+        await wrapper.get('[data-testid="org-write-new-unit"]').trigger("click");
+        await flushPromises();
+
+        const input = document.body.querySelector(
+            '[data-testid="org-write-name"]',
+        ) as HTMLInputElement;
+        input.value = "数据平台";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushPromises();
+
+        const submit = document.body.querySelector(
+            '[data-testid="org-write-submit"]',
+        ) as HTMLButtonElement;
+        submit.click();
+        await vi.waitFor(() => {
+            expect(methods.slice(before)).toContain("POST");
+        });
+        // 树重新 loadRoots（写后重取），而不是把新单元塞进本地 map。
+        await vi.waitFor(() => {
+            const reloads = calls.filter(
+                (call) => call.startsWith("/api/v1/org-units") && !call.includes("parentId="),
+            ).length;
+            expect(reloads).toBeGreaterThan(1);
+        });
         wrapper.unmount();
     });
 });

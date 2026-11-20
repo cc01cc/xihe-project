@@ -287,13 +287,27 @@ describe("task-43 身份 / 所属单元 / 动作（三成员对照）", () => {
         expect(q("org-member-detail-unit-cost")?.textContent).toContain("逐级查询");
     });
 
-    it("动作全禁用，且两条原因都可见（不是灰按钮无解释）", async () => {
-        mountSheet(BOB);
+    /**
+     * task-136 取代 task-43 的「动作全禁用」：写面已接真实契约，抽屉**只转发意图**
+     * （不自己发请求）—— 页面的写窗口是唯一实现，否则同一操作会有两套错误处理。
+     */
+    it("动作入口可点且只 emit 意图（抽屉不发请求）；管理员能力位那条原因仍写清", async () => {
+        const wrapper = mountSheet(BOB);
         await flushPromises();
 
-        expect((q("org-member-detail-change-role") as HTMLButtonElement).disabled).toBe(true);
-        expect((q("org-member-detail-remove") as HTMLButtonElement).disabled).toBe(true);
-        expect(q("org-member-detail-action-reason-batch")?.textContent).toContain("尚未开放");
+        const changeRole = q("org-member-detail-change-role") as HTMLButtonElement;
+        const remove = q("org-member-detail-remove") as HTMLButtonElement;
+        expect(changeRole.disabled).toBe(false);
+        expect(remove.disabled).toBe(false);
+
+        changeRole.click();
+        remove.click();
+        await flushPromises();
+        expect(wrapper.emitted("change-role")?.[0]?.[0]).toMatchObject({ memberId: "m-bob" });
+        expect(wrapper.emitted("remove")?.[0]?.[0]).toMatchObject({ memberId: "m-bob" });
+
+        // 「入口在页面工具条与成员行内」是现在的实情；能力位限制与写面开放无关，仍然成立。
+        expect(q("org-member-detail-action-reason-batch")?.textContent).toContain("页面顶部工具条");
         expect(q("org-member-detail-action-reason-admin")?.textContent).toContain("管理员能力位");
     });
 });

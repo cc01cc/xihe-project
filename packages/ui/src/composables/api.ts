@@ -277,6 +277,47 @@ export interface ApiOrgUnitMember {
 }
 
 /**
+ * task-136 J1：`POST /org-units` 的 201 体（openapi `OrgUnitCreatedResponse`）。
+ * `path` 是服务端算的点分 id 链 —— UI 不自己拼（拼了就是一份会过期的副本）。
+ */
+export interface ApiOrgUnitCreated {
+    id: string;
+    path: string;
+}
+
+/**
+ * task-136 J3：`PUT /org-units/{unitId}/members/{memberId}` 的 200 体
+ * （openapi `OrgUnitMemberMoveResponse`）。
+ *
+ * <p>两条实测口径（G1 真栈读数，`internal/A03-xihe/evidence/2026-11-20-org-members-write/`）：</p>
+ * <ul>
+ *   <li>`affectedWorkspaceIds` 是**服务端全集**（实测 11 条，含 UI 不可见的工作区）；
+ *       UI 本地只能派生出可见的子集 ⇒ 展示必须标注「可能不全」（Lead 2026-11-21 裁 C 方案）。</li>
+ *   <li>确认门 `409 ORG_UNIT_MOVE_CONFIRMATION_REQUIRED` 的响应体**没有**这个字段，
+ *       人数只在 `detail` 原文里 —— 所以确认流是「先发不带 confirm 的请求，拿 409 再确认」，
+ *       不是「先查再发」。</li>
+ * </ul>
+ */
+export interface ApiOrgUnitMemberMoveResult {
+    memberId: string;
+    fromOrgUnitId: string | null;
+    toOrgUnitId: string;
+    affectedWorkspaceIds: string[];
+    auditEvent: string;
+}
+
+/**
+ * task-136 J4：`PUT /org-units/{unitId}/role-bindings` 的 200 体（整集写完后的最终集合）。
+ *
+ * <p>CP **没有**该域的 GET 读面（`OrgUnitController` 只有 PUT），所以这个响应体是本会话唯一
+ * 可信的基线：打开面板时集合未知，任何「新增/解绑」都必须先落一次基线才能做差集。
+ * 补 GET 已另立需求（见证据 README 的契约盲区），UI 不许假装读得到。</p>
+ */
+export interface ApiOrgUnitRoleBindingList {
+    roleIds: string[];
+}
+
+/**
  * PLAN-0610 W3-2a: the role/binding administration surface (`/api/v1/roles`, `/api/v1/bindings`).
  *
  * <p>`scopeClass` is the atom's SSOT classification: `instance` atoms are only meaningful on an
@@ -5443,6 +5484,106 @@ export const api = {
             `/org-units/${encodeURIComponent(unitId)}/members${suffix}`,
         );
         return data.members;
+    },
+
+    /**
+     * task-136 J1（`POST /org-units`，openapi :6882）：新建子单元；`parentId: null` = 建根单元。
+     *
+     * <p>失败**原样抛 `ApiError`**（J2 判据要的是服务端原文，不是 UI 改写后的说法）：
+     * `409 ORG_UNIT_NAME_CONFLICT` = 同层同名（`detail` 原文 "a sibling unit already uses this
+     * name"，G1 实测）。名称 1..120 由服务端校验，UI 不做第二套规则。</p>
+     */
+    createOrgUnit(input: { name: string; parentId: string | null }): Promise<ApiOrgUnitCreated> {
+        return request<ApiOrgUnitCreated>("/org-units", {
+            method: "POST",
+            body: JSON.stringify(input),
+        });
+    },
+
+    /** task-136 J1（`PATCH /org-units/{unitId}`，openapi :6936）：改名。同层同名同样 409。 */
+    renameOrgUnit(unitId: string, name: string): Promise<ApiOrgUnitNode> {
+        return request<ApiOrgUnitNode>(`/org-units/${encodeURIComponent(unitId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ name }),
+        });
+    },
+
+    /**
+     * task-136 J1（`PUT /org-units/{unitId}/parent`，openapi :6956）：把单元搬到新父（`null` = 升为根）。
+     *
+     * <p>`422 ORG_UNIT_CYCLE`（G1 实测原文 "an org unit cannot become a child of itself or of its
+     * own descendant"）。父选择器**不做本地环预检**：本地树是可见子集，预检等于替 CP 判定哪些父
+     * 合法，而且会把这条 422 变成永远走不到的死分支。</p>
+     */
+    moveOrgUnit(unitId: string, parentId: string | null): Promise<ApiOrgUnitNode> {
+        return request<ApiOrgUnitNode>(`/org-units/${encodeURIComponent(unitId)}/parent`, {
+            method: "PUT",
+            body: JSON.stringify({ parentId }),
+        });
+    },
+
+    /**
+     * task-136 J1/J3（`PUT /org-units/{unitId}/members/{memberId}?memberKind=`，openapi :6984）：
+     * 把成员放到目标单元（首次放置与跨单元移动同一个端点 —— 成员行按 (kind,id) 唯一）。
+     *
+     * <p>`confirmAffected` 缺省 false。为 false 且这次移动会影响该主体 OWNED 的工作区时，
+     * 服务端 **409 `ORG_UNIT_MOVE_CONFIRMATION_REQUIRED`** 而不是静默改归属（G1 实测）；调用方
+     * 必须把 409 的 `detail` 原文摆到用户面前、取得确认后再带 `true` 重发一次。</p>
+     */
+    placeOrgUnitMember(
+        unitId: string,
+        memberId: string,
+        memberKind: ApiOrgUnitMember["memberKind"],
+        opts: { confirmAffected?: boolean } = {},
+    ): Promise<ApiOrgUnitMemberMoveResult> {
+        return request<ApiOrgUnitMemberMoveResult>(
+            `/org-units/${encodeURIComponent(unitId)}/members/${encodeURIComponent(memberId)}?memberKind=${encodeURIComponent(memberKind)}`,
+            {
+                method: "PUT",
+                body: JSON.stringify({ confirmAffected: opts.confirmAffected === true }),
+            },
+        );
+    },
+
+    /**
+     * task-136 J1（`DELETE /org-units/{unitId}/members/{memberId}?memberKind=`，openapi :7021）：
+     * 把成员从单元上摘掉（204 无体）。
+     *
+     * <p>后果必须说清（G1 实测）：主体失去成员归属后，读面作用域立刻变化（`OrgUnitAccess.java:60-70`
+     * —— 无成员归属且持原子 = 整棵树；被移出子树则看不见该子树），把自己移出去之后再 PUT 回原单元
+     * 会 403 "org unit is outside the caller's governance scope"。</p>
+     */
+    removeOrgUnitMember(
+        unitId: string,
+        memberId: string,
+        memberKind: ApiOrgUnitMember["memberKind"],
+    ): Promise<void> {
+        return request<void>(
+            `/org-units/${encodeURIComponent(unitId)}/members/${encodeURIComponent(memberId)}?memberKind=${encodeURIComponent(memberKind)}`,
+            { method: "DELETE" },
+        );
+    },
+
+    /**
+     * task-136 J4（`PUT /org-units/{unitId}/role-bindings`，openapi :7039）：整集替换单元的治理角色绑定。
+     *
+     * <p>三条实测口径，直接决定 UI 形态：</p>
+     * <ul>
+     *   <li>**只有 PUT，没有 GET**（`OrgUnitController`）⇒ 面板打开时既有集合不可知，这个响应体是
+     *       唯一基线；调用方必须把「基线未知」如实显示，不许做勾完整集再保存的形态（Lead 2026-11-21 裁）。</li>
+     *   <li>`409 ORG_SCOPE_ROLE_FORBIDDEN`：角色原子越出治理白名单
+     *       （`OrgUnitGovernancePolicy.java:71-72`）——G1 实测 dev 目录 11 个角色 0 个命中。</li>
+     *   <li>`roleIds: []` 合法（G1 实测 200），且空集在 CP 侧算治理角色（`isGovernanceRole` empty⇒true）。</li>
+     * </ul>
+     */
+    replaceOrgUnitRoleBindings(
+        unitId: string,
+        roleIds: string[],
+    ): Promise<ApiOrgUnitRoleBindingList> {
+        return request<ApiOrgUnitRoleBindingList>(
+            `/org-units/${encodeURIComponent(unitId)}/role-bindings`,
+            { method: "PUT", body: JSON.stringify({ roleIds }) },
+        );
     },
 
     async listWorkspaceMembers(wsId: string): Promise<ApiWorkspaceMember[]> {

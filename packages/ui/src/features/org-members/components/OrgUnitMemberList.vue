@@ -16,7 +16,18 @@ import {
 } from "../composables/useOrgUnitTree";
 import OrgMemberDetailSheet from "./OrgMemberDetailSheet.vue";
 
-const props = defineProps<{ unit: ApiOrgUnitNode | null }>();
+const props = defineProps<{
+    unit: ApiOrgUnitNode | null;
+    /** 写操作成功后的重取令牌（J5）。 */
+    refreshToken?: number;
+}>();
+/**
+ * 详情面板的两个写入口落到页面的写窗口上（一个操作只有一处实现）⇒ 这里只转发意图，
+ * 不自己发请求。
+ */
+const emit = defineEmits<{
+    "request-write": [mode: "remove-member" | "roles", member: ApiOrgUnitMember];
+}>();
 const { t } = useI18n();
 
 const members = ref<ApiOrgUnitMember[]>([]),
@@ -57,6 +68,12 @@ watch(
     { immediate: true },
 );
 
+/** 写后重取（J5）：只换令牌不换 unit ⇒ 上面的 watch 不会触发，需要单独一条。 */
+watch(
+    () => props.refreshToken,
+    () => void load(),
+);
+
 /**
  * 成员行的「所在单元」解析：树节点注册表（加载过的单元都有名字）。
  * 没加载过的单元（读面子集）没有名字可解析 —— 诚实显示 id 本身，**不编造名字**。
@@ -72,6 +89,16 @@ function unitDisplayName(id: string): string {
 const detailMember = ref<ApiOrgUnitMember | null>(null);
 const detailUnitName = ref("");
 const detailOpen = ref(false);
+
+function onDetailChangeRole(member: ApiOrgUnitMember): void {
+    detailOpen.value = false;
+    emit("request-write", "roles", member);
+}
+
+function onDetailRemove(member: ApiOrgUnitMember): void {
+    detailOpen.value = false;
+    emit("request-write", "remove-member", member);
+}
 
 function openDetail(member: ApiOrgUnitMember) {
     detailMember.value = member;
@@ -195,6 +222,8 @@ const errorDesc = computed(() =>
             :open="detailOpen"
             :unit-name="detailUnitName"
             @update:open="detailOpen = $event"
+            @change-role="onDetailChangeRole"
+            @remove="onDetailRemove"
         />
     </div>
 </template>

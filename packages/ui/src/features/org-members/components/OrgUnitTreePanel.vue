@@ -6,6 +6,10 @@ import { Tree, TreeItem } from "../../../components/ui/tree";
 import { useOrgUnitTree, type OrgTreeItem } from "../composables/useOrgUnitTree";
 import type { ApiOrgUnitNode } from "../../../composables/api";
 
+const props = defineProps<{
+    /** 写操作成功后的重取令牌：父页 bump 时作废子层并重拉（J5，禁乐观更新）。 */
+    refreshToken?: number;
+}>();
 const emit = defineEmits<{ select: [unit: ApiOrgUnitNode] }>();
 const { t } = useI18n();
 
@@ -134,6 +138,20 @@ watch(query, (q) => {
 });
 
 onMounted(() => void tree.loadRoots());
+
+/**
+ * 写后重取：顶层重拉 + 已展开的节点按原展开态重拉。
+ * 顺序不能换 —— 先 invalidate 再 loadRoots，否则 loadRoots 刚建的树会被 ensureChildren 的
+ * `childrenLoaded` 短路（写操作改的 name/depth/hasChildren 都在子层）。
+ */
+watch(
+    () => props.refreshToken,
+    async () => {
+        tree.invalidateChildren();
+        await tree.loadRoots();
+        for (const id of Array.from(tree.expandedIds.value)) await tree.ensureChildren(id);
+    },
+);
 
 /**
  * 树级错误文案（卡面 ② 在列表侧还有一份同款判据）：404 与 403 不许混 ——

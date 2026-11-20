@@ -148,7 +148,6 @@ const messages = {
             membersEmpty: "该单元没有成员。",
             membersLoading: "正在加载成员…",
             membersError: "成员列表加载失败",
-            writeHint: "写操作（新建/改名/移动单元、增删成员、改角色）尚未开放，当前为只读预览。",
             writeNewUnit: "新建子单元",
             writeRename: "改名",
             writeMove: "搬移",
@@ -205,9 +204,76 @@ const messages = {
             detailActionsTitle: "可执行动作",
             detailActionChangeRole: "改角色",
             detailActionRemove: "移除成员",
-            detailActionsBatchReason: "写操作尚未开放，当前为只读预览。",
+            detailActionsBatchReason:
+                "改角色与移除成员的入口在页面顶部工具条与成员行内；这里不再重复放按钮。",
             detailActionsAdminReason:
                 "即使写面开放，也需在目标工作区具备管理员能力位；实例管理员覆盖全部工作区。",
+            // task-136（J1/J2/J3）：写面接真实契约后的文案。服务端原文刻意不改写 ——
+            // code/detail/requestId 由组件原样渲染，这里只提供标签。键名不出现在模板注释里（test-utils 裸键护栏）。
+            writeHint:
+                "写操作已接真实契约：新建/改名/搬移单元、加成员/移成员/改角色。每次写入成功后都会重新读取读面。",
+            writeNeedsSelection: "先在左栏选择一个组织单元。",
+            writeCancel: "取消",
+            writeSubmit: "提交",
+            writeBusy: "提交中…",
+            writeOk: "已提交，读面已重新读取。",
+            writeNameLabel: "名称",
+            writeParentLabel: "父单元",
+            writeParentTop: "（顶层单元，没有父单元）",
+            writeParentScan:
+                "父单元候选只包含左栏树里已经加载过的单元；要找的单元不在列表里，先展开它的上级。",
+            writeNewUnitDesc:
+                "新单元挂在当前选中的单元下面。同一父单元下不能重名 —— 重名由服务端拒绝，界面不预判。",
+            writeRenameDesc: "只改名称，不动成员与下级单元。",
+            writeMoveDesc: "搬移会改整个子树的归属。环与越权都交给服务端判定，界面不做本地预检。",
+            writeMemberKindLabel: "成员类型",
+            writeSubjectLabel: "成员",
+            writeSubjectSearch: "按用户名或邮箱搜索",
+            writeSubjectSearching: "正在搜索…",
+            writeSubjectEmpty: "没有匹配的成员。",
+            writeSubjectAgents: "智能体主体列表来自当前可见的主体；看不到的主体不在这里。",
+            writeSubjectPick: "请选择一个成员。",
+            writeAddMemberDesc:
+                "成员会被放到当前选中的单元。服务端算出受影响的工作区后，需要你确认才会真正写入。",
+            writeRemoveDesc:
+                "把成员从这个单元移出（成员本身不会被删除）。这一步没有反向接口，不可撤销。",
+            writeConfirmMoveTitle: "这次移动会影响该成员名下的工作区",
+            writeConfirmCount: "服务端原文里的数量：{count} 个工作区",
+            writeConfirmCountUnknown: "服务端没有在原文里给出数量。",
+            writeConfirmDetailLabel: "服务端原文",
+            writeConfirmDerivedTitle: "本地能看到的 OWNER 工作区",
+            writeConfirmDerivedPartial:
+                "可能不全：服务端把你看不见的工作区也算进去了，这里只列出当前账号可见的那部分。",
+            writeConfirmDerivedNone:
+                "本地列不出清单：被移动的不是你本人，契约没有「按主体反查工作区」的端点。",
+            writeConfirmDerivedEmpty: "在你可见的工作区里，该成员没有任何 OWNER 工作区。",
+            writeConfirmSelf:
+                "被移动的就是你自己：移出后你会立刻失去这棵子树的读面，再想搬回原单元会得到 403「org unit is outside the caller's governance scope」。",
+            writeConfirmMove: "确认移动",
+            writeConfirmRemoveTitle: "确认把该成员移出这个单元？",
+            writeConfirmRemoveSelf:
+                "被移除的是你自己：移除后你会立刻失去这棵子树的读面，且当前没有接口能把你放回去。",
+            writeConfirmRemove: "确认移出",
+            writeConfirmRemoveOther: "移出只影响这个单元的成员列表，不动成员本身的账号或角色绑定。",
+            writeProblemTitle: "服务端拒绝了这次写入（原文）",
+            writeProblemStatus: "HTTP",
+            writeProblemCode: "code",
+            writeProblemDetail: "detail",
+            writeProblemRequest: "requestId",
+            writeProblemNoCode: "响应里没有 code（网络错误或非契约错误）。",
+            writeRolesBaselineUnknown:
+                "契约没有「读取角色绑定」的端点，所以这个单元当前到底绑了哪些角色，界面无从得知。",
+            writeRolesBaselineHint:
+                "角色写入是整集覆盖：先以空集建立基线，再逐条加上；直接提交会静默清掉既有绑定。",
+            writeRolesEstablish: "以空集建立基线",
+            writeRolesBaseline: "本地基线：{count} 个角色",
+            writeRolesEmpty:
+                "角色目录里没有命中治理白名单的角色（服务端只接受 MANAGE_ORG_UNITS / MANAGE_ORG_UNIT_MEMBERS / READ_ORG_UNIT_MEMBERS 三个原子）。这是环境限制，不等于没有权限。",
+            writeRolesAdd: "加上",
+            writeRolesUnbind: "解绑",
+            writeRolesNoCandidates: "没有可加的角色。",
+            writeRolesMirror: "白名单是服务端规则的映射副本，判定仍在服务端；越界会原样返回 409。",
+            writeRolesNotConfirmed: "基线未知：先按上面说的建立基线，再改角色。",
         },
         workspaceNav: {
             // PLAN-0773 M4-4（task-190）：工作区内部二级导航与面包屑的文案。
@@ -253,7 +319,6 @@ const messages = {
             search: "搜索会话...",
             // task-89：区头三个常驻动作 + 行内 ⋯ 的可访问名（英文侧同键同批）。
             searchSessions: "搜索会话",
-            configureWorkspace: "配置工作区",
             workspaceSettings: "工作区设置",
             moreActions: "更多操作",
             // task-152（`D-1221` ④）：拖拽/键盘移动后的 a11y 播报（`aria-live`）。
@@ -1310,10 +1375,6 @@ const messages = {
             // PLAN-0773 M4-2（task-210）：工作区资源页里「平台 / 用户层只读引用」那一行的引导语。
             // task-26（批 1）：层名 SSOT = 「个人层」（task-251 / D-1043）。
             resourcesRefHint: "平台 / 个人层的同类资源在这里只读引用：",
-            settingsResourceMovedTitle: "这项设置已迁到资源区",
-            settingsResourceMovedBody:
-                "「{name}」现在按层在资源区里管理，本页只保留「常规」与「成员」。",
-            settingsResourceMovedAction: "去资源区",
             settingsGeneralTitle: "基本信息",
             settingsName: "名称",
             settingsDescription: "描述",
@@ -2129,14 +2190,8 @@ const messages = {
             // task-96：`nameAgents`（「智能体」）已删 —— 资源区不再有智能体页（用户裁定
             // 「智能体是组织成员，不是资源」）。层内名仍在 `settings.ia.resourceAgents`（平台智能体）
             // 与 `settings.ia.resourceAgentPrincipals`（智能体主体）里，分别被两个新落点复用。
-            // D-1432 / task-41：MCP 与技能的「本工作区」层搬回工作区设置后，资源区的指路文案。
-            // 语义与 D-1023 的反向一致：不 404、不静默跳走 —— 说明搬到哪了 + 一条直链。
-            workspaceLayerMovedTitle: "这项资源的「本工作区」层已迁到工作区设置",
-            workspaceLayerMovedBody:
-                "「{name}」的本工作区层现在在工作区设置里管理；资源区只保留平台与个人层。",
-            workspaceLayerMovedAction: "打开工作区设置",
-            workspaceLayerMovedNoWorkspace: "先在左侧选择一个工作区，再从该工作区的设置页进入。",
-            workspaceLayerMovedInlineHint: "以下资源的「本工作区」层已迁到工作区设置：",
+            // task-145 / DSD-1511：D-1432 / task-41 的「已迁到工作区设置」指路文案（5 条）连同
+            // 指路卡一起删除 —— 已迁层不再出现在页签与说明条，深链静默回落 INSTANCE / USER。
             // task-52 / batch-02 ③：把两条说明压成一条**可折叠摘要**（默认收起）。
             // 摘要行说明「这里有说明」，展开才给明细与直链 —— 导航说明不该压过功能主体。
             resourcesHintSummary: "关于本页资源的层级与去处",
@@ -2654,6 +2709,24 @@ const messages = {
                 operationChat: "对话",
                 operationEmbedding: "向量",
                 credentialMissing: "未配置",
+                // task-146（DSD-1512）：连接的密钥来源三态（保留绑定 / 绑定已有凭据 / 内联新建）。
+                fieldCredentialSource: "密钥来源",
+                credentialCurrent: "当前绑定的凭据",
+                credentialUnresolved:
+                    "读不到这条凭据的详情（可能已删除，或不在当前作用域的可读范围内）",
+                credentialReplace: "替换凭据",
+                credentialSelectPlaceholder: "选择一条已有凭据",
+                credentialEmpty: "当前作用域还没有可用凭据，先在下面新建一条",
+                credentialLoading: "正在加载凭据…",
+                credentialLoadFailed: "凭据列表加载失败",
+                credentialWorkspaceMissing: "缺少工作区上下文，无法列出工作区凭据",
+                credentialDisabledWarning: "这条凭据已停用；绑定后连接校验会失败",
+                credentialCreate: "新建一条凭据",
+                credentialInlineHint:
+                    "保存时会新建一条凭据并绑定到这条连接（密钥只提交一次，不回显）",
+                credentialBindMode: "绑定已有凭据",
+                credentialInlineMode: "内联新建密钥",
+                credentialReferences: "查看引用它的地方",
                 replaceKey: "替换 API key",
                 addKey: "添加 API key",
                 statusLabel: "连接状态",
@@ -2740,10 +2813,7 @@ const messages = {
                 toastLabelInvalid: "连接名称不合法：请填写 1-40 个字符且不含控制字符",
                 fieldKey: "连接标识",
                 keyHint: "小写字母、数字和连字符；同一 Provider/作用域内不可重复。保存后不可修改。",
-                fieldApiKey: "API key",
-                keyPlaceholderKeep: "留空表示不替换",
                 optional: "可选",
-                keySaveHint: "密钥只提交一次，保存后不会回显。",
                 fieldBaseUrl: "Base URL",
                 fieldDiscovery: "模型发现",
                 discoveryRemote: "从 Provider 拉取模型列表",
@@ -3073,6 +3143,8 @@ const messages = {
             configSourceInheritedAbove: "继承自上层",
             configSourceNone: "未设置",
             configSourceInherited: "继承自 {source}",
+            configSelectInherited: "{value}（{source}）",
+            configSelectUnsetInherited: "未设置（继承：{value}）",
             configSourceReadonly: "只读",
             configSourceOverridable: "可被覆盖",
             configSourceInstanceOnly: "仅实例层",
@@ -3948,6 +4020,7 @@ const messages = {
             owner: "归属",
             ownerUser: "我的凭据",
             ownerWorkspace: "工作区凭据",
+            ownerInstance: "实例凭据",
             // task-509 补提交（Lead 2026-11-14 裁 ①）：列名不上界面。这句在凭据页可见，
             // 用户要知道的是「这一屏管哪个工作区」，不是数据库里的归属列叫什么。
             scopeWorkspaceNote: "这里只列属于当前工作区的凭据。",
@@ -4227,8 +4300,6 @@ const messages = {
             membersEmpty: "No members in this unit.",
             membersLoading: "Loading members…",
             membersError: "Failed to load members",
-            writeHint:
-                "Write actions (create/rename/move units, add/remove members, change roles) are not available yet — read-only preview.",
             writeNewUnit: "New sub-unit",
             writeRename: "Rename",
             writeMove: "Move",
@@ -4298,9 +4369,81 @@ const messages = {
             detailActionChangeRole: "Change role",
             detailActionRemove: "Remove member",
             detailActionsBatchReason:
-                "Write actions are not open yet; this is a read-only preview.",
+                "Role changes and removal live in the page toolbar and on each member row; this sheet does not duplicate them.",
             detailActionsAdminReason:
                 "Even once writes open, this needs an administrator capability on the target workspace; an instance administrator covers every workspace.",
+            // task-136 (J1/J2/J3): copy for the write surface. The server raw text is never rewritten —
+            // code/detail/requestId are rendered verbatim by the component; these are labels only.
+            writeHint:
+                "Write actions are wired to the real contract: create/rename/move units, add member, remove member, change role. Every successful write re-reads the surface.",
+            writeNeedsSelection: "Select an org unit in the left column first.",
+            writeCancel: "Cancel",
+            writeSubmit: "Submit",
+            writeBusy: "Submitting…",
+            writeOk: "Submitted; the read surface was reloaded.",
+            writeNameLabel: "Name",
+            writeParentLabel: "Parent unit",
+            writeParentTop: "(top level, no parent)",
+            writeParentScan:
+                "Parent candidates are limited to units already loaded in the left tree; expand a unit to make its children available.",
+            writeNewUnitDesc:
+                "The new unit goes under the selected unit. Sibling names must be unique — the server rejects duplicates, the UI does not pre-judge.",
+            writeRenameDesc: "Renames only; members and sub-units are untouched.",
+            writeMoveDesc:
+                "A move rewrites the ownership of the whole subtree. Cycles and scope violations are decided by the server, not pre-checked here.",
+            writeMemberKindLabel: "Member kind",
+            writeSubjectLabel: "Member",
+            writeSubjectSearch: "Search by username or email",
+            writeSubjectSearching: "Searching…",
+            writeSubjectEmpty: "No matching member.",
+            writeSubjectAgents:
+                "Agent principals come from the list you can currently see; invisible ones are not here.",
+            writeSubjectPick: "Pick a member.",
+            writeAddMemberDesc:
+                "The member is placed into the selected unit. Nothing is written until you confirm the affected workspaces the server reports.",
+            writeRemoveDesc:
+                "Removes the member from this unit (the member itself is not deleted). There is no inverse endpoint, so this cannot be undone.",
+            writeConfirmMoveTitle: "This move affects workspaces owned by the member",
+            writeConfirmCount: "Count from the server raw text: {count} workspace(s)",
+            writeConfirmCountUnknown: "The server did not state a count.",
+            writeConfirmDetailLabel: "Server raw text",
+            writeConfirmDerivedTitle: "OWNER workspaces visible locally",
+            writeConfirmDerivedPartial:
+                "May be incomplete: the server also counts workspaces you cannot see; only the part visible to this account is listed.",
+            writeConfirmDerivedNone:
+                "No local list: the subject is not you, and the contract has no endpoint to look up workspaces by subject.",
+            writeConfirmDerivedEmpty: "Among the workspaces you can see, this member owns none.",
+            writeConfirmSelf:
+                'The subject is you: after the move you immediately lose read access to this subtree, and moving yourself back returns 403 "org unit is outside the caller\'s governance scope".',
+            writeConfirmMove: "Confirm move",
+            writeConfirmRemoveTitle: "Remove this member from the unit?",
+            writeConfirmRemoveSelf:
+                "The subject is you: after removal you immediately lose read access to this subtree, and no endpoint can put you back.",
+            writeConfirmRemove: "Confirm removal",
+            writeConfirmRemoveOther:
+                "Removal only changes this unit's member list; the member's account and role bindings are untouched.",
+            writeProblemTitle: "The server rejected this write (raw text)",
+            writeProblemStatus: "HTTP",
+            writeProblemCode: "code",
+            writeProblemDetail: "detail",
+            writeProblemRequest: "requestId",
+            writeProblemNoCode:
+                "No code in the response (network failure or a non-contract error).",
+            writeRolesBaselineUnknown:
+                "The contract has no endpoint to read role bindings, so the UI cannot know which roles this unit currently holds.",
+            writeRolesBaselineHint:
+                "Role writes replace the whole set: establish an empty baseline first, then add one by one; submitting directly silently clears existing bindings.",
+            writeRolesEstablish: "Establish empty baseline",
+            writeRolesBaseline: "Local baseline: {count} role(s)",
+            writeRolesEmpty:
+                "No role in the catalog hits the governance whitelist (the server only accepts MANAGE_ORG_UNITS / MANAGE_ORG_UNIT_MEMBERS / READ_ORG_UNIT_MEMBERS). That is an environment limit, not a permission denial.",
+            writeRolesAdd: "Add",
+            writeRolesUnbind: "Unbind",
+            writeRolesNoCandidates: "No role left to add.",
+            writeRolesMirror:
+                "The whitelist mirrors the server rule; the decision stays server-side and out-of-scope roles still return 409.",
+            writeRolesNotConfirmed:
+                "Baseline unknown: establish the baseline above before changing roles.",
         },
         workspaceNav: {
             ariaLabel: "Workspace navigation",
@@ -4340,7 +4483,6 @@ const messages = {
             search: "Search sessions...",
             // task-89: the three always-visible header actions + the row "more" control name.
             searchSessions: "Search sessions",
-            configureWorkspace: "Configure workspace",
             workspaceSettings: "Workspace settings",
             moreActions: "More actions",
             // task-152 (`D-1221` ④): screen-reader announcement after a drag/keyboard move.
@@ -5401,10 +5543,6 @@ const messages = {
                 "You can retry later; the failure is surfaced explicitly, not swallowed.",
             // task-26 (batch 1): layer-name SSOT is "personal layer" (task-251 / D-1043).
             resourcesRefHint: "Platform / personal layers are referenced read-only:",
-            settingsResourceMovedTitle: "This setting moved to the resources module",
-            settingsResourceMovedBody:
-                '"{name}" is now managed per layer in the resources module; this page keeps only General and Members.',
-            settingsResourceMovedAction: "Open resources",
             settingsGeneralTitle: "General",
             settingsName: "Name",
             settingsDescription: "Description",
@@ -6235,15 +6373,8 @@ const messages = {
             // task-89: name the two unnamed landmarks in the resources area (sidebar complementary, header banner).
             navScopeLabel: "Resources navigation panel",
             headerLabel: "Resources header",
-            workspaceLayerMovedTitle:
-                "The workspace layer of this resource moved to workspace settings",
-            workspaceLayerMovedBody:
-                "The workspace layer of {name} is now managed in workspace settings; the resources module keeps only the platform and personal layers.",
-            workspaceLayerMovedAction: "Open workspace settings",
-            workspaceLayerMovedNoWorkspace:
-                "Pick a workspace on the left, then open that workspace's settings.",
-            workspaceLayerMovedInlineHint:
-                "The workspace layer of these resources moved to workspace settings:",
+            // task-145 / DSD-1511: the five "moved to workspace settings" notice strings were
+            // deleted together with the notice card; the retired layer is no longer a tab here.
             resourcesHintSummary: "Where this page's resources live",
             resourcesHintShow: "Show details",
             resourcesHintHide: "Hide details",
@@ -6754,6 +6885,26 @@ const messages = {
                 operationChat: "Chat",
                 operationEmbedding: "Embedding",
                 credentialMissing: "Not configured",
+                // task-146 (DSD-1512): where the connection key comes from — keep / bind / inline.
+                fieldCredentialSource: "Key source",
+                credentialCurrent: "Currently bound credential",
+                credentialUnresolved:
+                    "This credential cannot be read (it may be deleted, or outside the readable scope)",
+                credentialReplace: "Replace credential",
+                credentialSelectPlaceholder: "Select an existing credential",
+                credentialEmpty: "No credential in this scope yet — create one below",
+                credentialLoading: "Loading credentials…",
+                credentialLoadFailed: "Failed to load credentials",
+                credentialWorkspaceMissing:
+                    "Workspace context is missing, so workspace credentials cannot be listed",
+                credentialDisabledWarning:
+                    "This credential is disabled; binding it makes the connection verification fail",
+                credentialCreate: "Create a credential",
+                credentialInlineHint:
+                    "Saving creates a new credential and binds it to this connection (the key is submitted once and never displayed)",
+                credentialBindMode: "Bind an existing credential",
+                credentialInlineMode: "Create a key inline",
+                credentialReferences: "Where this credential is referenced",
                 replaceKey: "Replace API key",
                 addKey: "Add API key",
                 statusLabel: "Connection status",
@@ -6849,10 +7000,7 @@ const messages = {
                 fieldKey: "Connection key",
                 keyHint:
                     "Lowercase letters, digits, and hyphens; unique per Provider/scope. Cannot be changed after saving.",
-                fieldApiKey: "API key",
-                keyPlaceholderKeep: "Leave empty to keep unchanged",
                 optional: "Optional",
-                keySaveHint: "The key is submitted only once and never displayed after saving.",
                 fieldBaseUrl: "Base URL",
                 fieldDiscovery: "Model discovery",
                 discoveryRemote: "Provider /models",
@@ -7186,6 +7334,8 @@ const messages = {
             configSourceInheritedAbove: "Inherited from the layer above",
             configSourceNone: "Not set",
             configSourceInherited: "Inherited from {source}",
+            configSelectInherited: "{value} ({source})",
+            configSelectUnsetInherited: "Not set (inherits: {value})",
             configSourceReadonly: "Read-only",
             configSourceOverridable: "Overridable",
             configSourceInstanceOnly: "Instance layer only",
@@ -8114,6 +8264,7 @@ const messages = {
             owner: "Owner",
             ownerUser: "My credentials",
             ownerWorkspace: "Workspace credentials",
+            ownerInstance: "Instance credentials",
             scopeWorkspaceNote: "This list only shows credentials that belong to this workspace.",
             ownerWorkspaceSelect: "Select workspace",
             token: "Token",

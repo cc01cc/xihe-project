@@ -50,7 +50,12 @@ const props = defineProps<{
     /** 成员直接挂载单元的名字：调用方从树节点注册表解析；解析不到由调用方回退传 id。 */
     unitName: string;
 }>();
-const emit = defineEmits<{ "update:open": [boolean] }>();
+const emit = defineEmits<{
+    "update:open": [boolean];
+    /** task-136：写面已接真实契约 ⇒ 两个动作交给页面的写窗口（本抽屉不自己发请求）。 */
+    "change-role": [member: ApiOrgUnitMember];
+    remove: [member: ApiOrgUnitMember];
+}>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -539,26 +544,30 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
                     </a>
                 </section>
 
-                <!-- 动作：本批写面未开放 ⇒ 一律禁用 + 两条原因都写出来 -->
+                <!-- 动作：task-136 起两个入口都接真实契约 —— 点击后关抽屉，由页面写窗口执行 -->
                 <section class="border-t pt-4" data-testid="org-member-detail-actions">
                     <h3 class="text-sm font-semibold">{{ t("orgMembers.detailActionsTitle") }}</h3>
                     <div class="mt-2 flex flex-wrap items-center gap-2">
-                        <button
+                        <Button
                             type="button"
-                            disabled
+                            variant="outline"
+                            size="sm"
                             data-testid="org-member-detail-change-role"
-                            class="rounded-md border bg-muted/30 px-2 py-1 text-sm text-muted-foreground cursor-not-allowed"
+                            :disabled="!member"
+                            @click="member && emit('change-role', member)"
                         >
                             {{ t("orgMembers.detailActionChangeRole") }}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                             type="button"
-                            disabled
+                            variant="outline"
+                            size="sm"
                             data-testid="org-member-detail-remove"
-                            class="rounded-md border bg-muted/30 px-2 py-1 text-sm text-muted-foreground cursor-not-allowed"
+                            :disabled="!member"
+                            @click="member && emit('remove', member)"
                         >
                             {{ t("orgMembers.detailActionRemove") }}
-                        </button>
+                        </Button>
                     </div>
                     <p
                         class="mt-2 text-xs text-muted-foreground"

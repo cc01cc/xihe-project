@@ -3,8 +3,10 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import OrgUnitTreePanel from "../components/OrgUnitTreePanel.vue";
 import OrgUnitMemberList from "../components/OrgUnitMemberList.vue";
+import OrgUnitWritePanel from "../components/OrgUnitWritePanel.vue";
 import AgentPrincipalsPanel from "../../../components/settings/AgentPrincipalsPanel.vue";
-import type { ApiOrgUnitNode } from "../../../composables/api";
+import type { ApiOrgUnitMember, ApiOrgUnitNode } from "../../../composables/api";
+import type { OrgWriteKind } from "../composables/useOrgUnitWrites";
 
 const { t } = useI18n();
 
@@ -21,19 +23,25 @@ function onSelect(unit: ApiOrgUnitNode) {
 }
 
 /**
- * 写面（M3-3）一律禁用 + 解释，不造可点入口（卡面 ④，SettingsResourceNav 同规矩）。
- * 说明文本按现状写：写端点已登记契约（D-1115，cp-1 已实现），**UI 写面随 M3-3 批次开放**
- * —— 不是「后端缺口」，禁用理由是「本批未落地」，不假装、也不谎称缺口。
+ * 写面（task-136）：六个操作接真实契约，入口在 `OrgUnitWritePanel`。
+ *
+ * <p>**写成功后不在这里改任何本地副本**（J5 / task-43 裁定）：只 bump 两个刷新令牌，
+ * 让树与成员列表各自重取 —— `name/depth/hasChildren/orgUnitId` 都是服务端算的，
+ * 本地拼一份等于制造第二套真相。</p>
  */
-/** 写面六项：testid 与 i18n 键**全量显式**列出（lint:i18n 会扫源码里的键字面量，不许字符串拼接造键）。 */
-const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
-    { testid: "org-write-new-unit", labelKey: "orgMembers.writeNewUnit" },
-    { testid: "org-write-rename", labelKey: "orgMembers.writeRename" },
-    { testid: "org-write-move", labelKey: "orgMembers.writeMove" },
-    { testid: "org-write-add-member", labelKey: "orgMembers.writeAddMember" },
-    { testid: "org-write-remove-member", labelKey: "orgMembers.writeRemoveMember" },
-    { testid: "org-write-change-role", labelKey: "orgMembers.writeChangeRole" },
-];
+const treeRefresh = ref(0),
+    memberRefresh = ref(0),
+    writePanel = ref<InstanceType<typeof OrgUnitWritePanel> | null>(null);
+
+function onWritten(_kind: OrgWriteKind): void {
+    treeRefresh.value += 1;
+    memberRefresh.value += 1;
+}
+
+/** 详情抽屉的写入口 → 页面写窗口（预选该成员）。 */
+function onMemberWrite(mode: "remove-member" | "roles", member: ApiOrgUnitMember): void {
+    void writePanel.value?.openForMember(mode, member);
+}
 </script>
 
 <template>
@@ -69,20 +77,7 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
             </div>
         </header>
         <div class="mx-auto w-full max-w-6xl px-6 py-4">
-            <div class="flex flex-wrap items-center gap-2" data-testid="org-write-actions">
-                <button
-                    v-for="action in WRITE_ACTIONS"
-                    :key="action.testid"
-                    type="button"
-                    disabled
-                    :data-testid="action.testid"
-                    :title="t('orgMembers.writeHint')"
-                    class="rounded-md border bg-muted/30 px-2 py-1 text-sm text-muted-foreground cursor-not-allowed"
-                >
-                    {{ t(action.labelKey) }}
-                </button>
-                <p class="w-full text-xs text-muted-foreground">{{ t("orgMembers.writeHint") }}</p>
-            </div>
+            <OrgUnitWritePanel ref="writePanel" :unit="selectedUnit" @written="onWritten" />
         </div>
         <!--
             task-135 J4：lg 下两栏同高、各自内部滚动。
@@ -100,10 +95,14 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
             class="mx-auto grid w-full max-w-6xl grid-cols-1 gap-0 px-6 pb-6 lg:h-[420px] lg:shrink-0 lg:grid-cols-[320px_1fr]"
         >
             <div class="min-h-0 rounded-md border lg:me-4" data-testid="org-tree-scope">
-                <OrgUnitTreePanel @select="onSelect" />
+                <OrgUnitTreePanel :refresh-token="treeRefresh" @select="onSelect" />
             </div>
             <div class="min-h-0 rounded-md border max-lg:mt-4">
-                <OrgUnitMemberList :unit="selectedUnit" />
+                <OrgUnitMemberList
+                    :unit="selectedUnit"
+                    :refresh-token="memberRefresh"
+                    @request-write="onMemberWrite"
+                />
             </div>
         </div>
         <!--

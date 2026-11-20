@@ -139,6 +139,26 @@ export function useOrgUnitTree() {
         }
     }
 
+    /**
+     * 写后重取：把**已加载的子层全部作废**。
+     *
+     * <p>只调 `loadRoots()` 刷新不到子层 —— `ensureChildren` 对 `childrenLoaded` 的节点
+     * 直接 return（懒加载的本意）。而写操作会改 `name` / `depth` / `hasChildren` / 成员归属，
+     * 这些都在子层里 ⇒ 必须先作废再按展开态重拉（task-136 J5，禁乐观更新）。</p>
+     */
+    function invalidateChildren(): void {
+        const walk = (items: OrgTreeItem[]): void => {
+            for (const item of items) {
+                item.childrenLoaded = false;
+                item.childrenError = "";
+                item.children = [];
+                walk(item.children);
+            }
+        };
+        walk(roots.value);
+        if (searchResults.value) walk(searchResults.value);
+    }
+
     function rememberExpanded(ids: string[]): void {
         expandedIds.value = ids;
         writeExpandedIds(ids);
@@ -175,6 +195,7 @@ export function useOrgUnitTree() {
         expandedIds,
         loadRoots,
         ensureChildren,
+        invalidateChildren,
         rememberExpanded,
         search,
     };
