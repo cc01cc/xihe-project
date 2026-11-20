@@ -12,7 +12,6 @@ import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
-import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,8 +33,10 @@ import java.util.UUID;
  * list/replace/delete/references/precheck over the credential domain plus the
  * credential_manage authorization gates. Registering a new credential requires the
  * wide {@code credential_manage@credential:*} ceiling; replacing/deleting a concrete
- * credential requires {@code credential_manage@credential:<id>}; reads (list,
- * references, precheck) only require the caller's ownership/membership visibility.
+ * credential requires {@code credential_manage@credential:<id>}. Reads are not uniform and
+ * must not be made uniform by accident: the list face answers ownership visibility only, while
+ * the two per-credential read faces (references, events) require the atom gate <b>and</b> the
+ * ownership gate (DSD-1519 ①, task-142) — see {@link CredentialOwnerGate}.
  * Responses never carry ciphertext or suffixes.
  */
 @Service
@@ -50,35 +51,32 @@ public class CredentialAdminService {
     private final GrantIntersectionEvaluator evaluator;
     private final AuthorizationGrantRepository grantRepository;
     private final WorkspaceAgentRepository workspaceAgentRepository;
-    private final WorkspaceService workspaceService;
     private final AuthService authService;
     private final CredentialRepository credentialRepository;
     private final CredentialEventRepository credentialEventRepository;
     private final ProviderConnectionRepository providerConnectionRepository;
 
-    /** D-1007 task-166: the INSTANCE owner type is gated by the capability atom, not by a role name. */
-    private final AuthzContext authzContext;
+    /** DSD-1519 ① (task-142): owner visibility shared by every credential read face. */
+    private final CredentialOwnerGate ownerGate;
 
     public CredentialAdminService(CredentialService credentialService,
             GrantIntersectionEvaluator evaluator,
             AuthorizationGrantRepository grantRepository,
             WorkspaceAgentRepository workspaceAgentRepository,
-            WorkspaceService workspaceService,
             AuthService authService,
             CredentialRepository credentialRepository,
             CredentialEventRepository credentialEventRepository,
             ProviderConnectionRepository providerConnectionRepository,
-            AuthzContext authzContext) {
+            CredentialOwnerGate ownerGate) {
         this.credentialService = credentialService;
         this.evaluator = evaluator;
         this.grantRepository = grantRepository;
         this.workspaceAgentRepository = workspaceAgentRepository;
-        this.workspaceService = workspaceService;
         this.authService = authService;
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
         this.providerConnectionRepository = providerConnectionRepository;
-        this.authzContext = authzContext;
+        this.ownerGate = ownerGate;
     }
 
     public record CredentialSummary(String id, String label, String kind, String deliveryTier,
@@ -130,6 +128,7 @@ public class CredentialAdminService {
     public Credential replace(String actorUserId, UUID credentialId, CredentialService.SecretPayload secret) {
         UUID actorId = requireUser(actorUserId);
         requireManageConcrete(actorId, credentialId);
+        ownerGate.requireVisible(actorId, requireCredentialRow(credentialId));
         return credentialService.replaceSecret(credentialId, secret, actorId.toString());
     }
 
@@ -137,6 +136,7 @@ public class CredentialAdminService {
     public DeleteReport delete(String actorUserId, UUID credentialId) {
         UUID actorId = requireUser(actorUserId);
         requireManageConcrete(actorId, credentialId);
+        ownerGate.requireVisible(actorId, requireCredentialRow(credentialId));
         List<ReferenceEntry> references = references(credentialId);
         if (references.stream().anyMatch(reference ->
                 "provider_connection".equals(reference.source()))) {
@@ -147,11 +147,15 @@ public class CredentialAdminService {
         return new DeleteReport(deleted.getId().toString(), references);
     }
 
-    /** Management-API references view: gated by credential_manage@credential:&lt;id&gt;. */
+    /**
+     * Management-API references view (DSD-1519 ①, task-142): both gates. The ownership gate answers
+     * first, so a caller that may not even see the row learns nothing about who holds atoms on it;
+     * the management atom is then required on top.
+     */
     @Transactional(readOnly = true)
     public List<ReferenceEntry> referencesForActor(String actorUserId, UUID credentialId) {
         UUID actorId = requireUser(actorUserId);
-        requireManageConcrete(actorId, credentialId);
+        requireManageAndOwnerVisible(actorId, requireCredentialRow(credentialId));
         return references(credentialId);
     }
 
@@ -163,10 +167,8 @@ public class CredentialAdminService {
     @Transactional(readOnly = true)
     public List<CredentialEventView> eventsForActor(String actorUserId, UUID credentialId, int limit) {
         UUID actorId = requireUser(actorUserId);
-        Credential credential = credentialRepository.findByIdAndDeletedAtIsNull(credentialId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "CREDENTIAL_NOT_FOUND",
-                        "Credential not found"));
-        requireOwnerVisible(actorId, credential.getOwnerType(), credential.getOwnerId());
+        Credential credential = requireCredentialRow(credentialId);
+        requireManageAndOwnerVisible(actorId, credential);
         // Wave review: bound the read face 0498 consumes — newest events, 1..MAX_EVENT_LIMIT.
         int bounded = Math.max(1, Math.min(limit, MAX_EVENT_LIMIT));
         return credentialEventRepository
@@ -290,28 +292,21 @@ public class CredentialAdminService {
         }
     }
 
+    /** DSD-1519 ①: the ownership gate lives in one place, {@link CredentialOwnerGate}. */
     private void requireOwnerVisible(UUID actorId, String ownerType, String ownerId) {
-        if ("USER".equals(ownerType)) {
-            if (!ownerId.equalsIgnoreCase(actorId.toString())) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Only the caller's own USER credentials are visible here");
-            }
-            return;
-        }
-        if (Credential.OWNER_INSTANCE.equals(ownerType)) {
-            // D-1009: instance credentials are instance-level infrastructure; only a holder of the
-            // instance:admin capability may see or create them. Evaluated at the atom layer so a
-            // custom role carrying the atom works and a role *named* admin does not.
-            if (!authzContext.capabilitiesFor(actorId)
-                    .holdsCapability(PermissionAtomCatalog.CAP_INSTANCE_ADMIN, null)) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Instance administration is required for INSTANCE-owned credentials");
-            }
-            return;
-        }
-        if (!workspaceService.isWorkspaceMember(ownerId, actorId.toString())) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace membership is required");
-        }
+        ownerGate.requireVisible(actorId, ownerType, ownerId);
+    }
+
+    /** DSD-1519 ①: both gates, ownership first — shared by the two per-credential read faces. */
+    private void requireManageAndOwnerVisible(UUID actorId, Credential credential) {
+        ownerGate.requireVisible(actorId, credential);
+        requireManageConcrete(actorId, credential.getId());
+    }
+
+    private Credential requireCredentialRow(UUID credentialId) {
+        return credentialRepository.findByIdAndDeletedAtIsNull(credentialId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "CREDENTIAL_NOT_FOUND",
+                        "Credential not found"));
     }
 
     private static boolean coveredBy(GrantIntersectionEvaluator.PermissionAtom candidate,

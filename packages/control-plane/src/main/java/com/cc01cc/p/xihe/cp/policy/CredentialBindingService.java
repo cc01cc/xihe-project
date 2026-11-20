@@ -5,9 +5,11 @@ import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialService;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -55,6 +57,9 @@ public class CredentialBindingService {
     private final CredentialService credentialService;
     private final AuthService authService;
     private final WorkspaceService workspaceService;
+    private final CredentialRepository credentialRepository;
+    /** DSD-1519 ① (task-142): the ownership gate every credential face now shares. */
+    private final CredentialOwnerGate ownerGate;
 
     public CredentialBindingService(AuthorizationGrantRepository grantRepository,
             WorkspaceAgentRepository workspaceAgentRepository,
@@ -63,7 +68,9 @@ public class CredentialBindingService {
             ObjectMapper objectMapper,
             CredentialService credentialService,
             AuthService authService,
-            WorkspaceService workspaceService) {
+            WorkspaceService workspaceService,
+            CredentialRepository credentialRepository,
+            CredentialOwnerGate ownerGate) {
         this.grantRepository = grantRepository;
         this.workspaceAgentRepository = workspaceAgentRepository;
         this.evaluator = evaluator;
@@ -72,6 +79,8 @@ public class CredentialBindingService {
         this.credentialService = credentialService;
         this.authService = authService;
         this.workspaceService = workspaceService;
+        this.credentialRepository = credentialRepository;
+        this.ownerGate = ownerGate;
     }
 
     /** Adds credential_use atoms for the given credentials to the principal grant and the cap. */
@@ -165,7 +174,13 @@ public class CredentialBindingService {
         for (String resource : resources) {
             requireCredentialManage(actorId, resource);
             if (requireCredentialExists) {
-                requireCredentialExists(actorId, workspaceId, resource);
+                Credential credential = requireCredentialRow(resource);
+                // DSD-1519 ①: the atom above says "may I manage this class of row"; the ownership
+                // gate says "does this row belong to you". Both must pass, and the gate keeps no
+                // admin bypass, so holding credential_manage@credential:<id> never reveals whose
+                // row it is through a different refusal reason.
+                ownerGate.requireVisible(actorId, credential);
+                requireCredentialExists(actorId, workspaceId, credential);
             }
         }
         WorkspaceAgent binding = workspaceAgentRepository
@@ -210,15 +225,37 @@ public class CredentialBindingService {
         }
     }
 
-    /** PLAN-0496 I4: the referenced credential must exist for the operator or the workspace. */
-    private void requireCredentialExists(UUID actorId, UUID workspaceId, String resource) {
-        String credentialId = resource.substring(ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX.length());
+    /**
+     * PLAN-0496 I4, now fed by the loaded row (task-142): the referenced credential must still exist
+     * for the operator or for the workspace the binding lives in.
+     */
+    private void requireCredentialExists(UUID actorId, UUID workspaceId, Credential credential) {
+        String credentialId = credential.getId().toString();
         boolean exists = credentialService.existsForOwner("USER", actorId.toString(), credentialId)
                 || credentialService.existsForOwner("WORKSPACE", workspaceId.toString(), credentialId);
         if (!exists) {
             throw new CpApiException(HttpStatus.UNPROCESSABLE_ENTITY, "CREDENTIAL_NOT_FOUND",
-                    "Credential does not exist for the operator or workspace: " + resource);
+                    "Credential does not exist for the operator or workspace: credential:" + credentialId);
         }
+    }
+
+    /**
+     * Loads the row named by {@code credential:<uuid>}. A row that is gone keeps the face answer it
+     * always had on the bind path (422 CREDENTIAL_NOT_FOUND, PLAN-0496 I4); only a row that exists and
+     * belongs to somebody else is answered by the ownership gate with 403 (DSD-1519 ①).
+     */
+    private Credential requireCredentialRow(String resource) {
+        String credentialId = resource.substring(ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX.length());
+        UUID id;
+        try {
+            id = UUID.fromString(credentialId);
+        } catch (IllegalArgumentException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CREDENTIAL_RESOURCE",
+                    "credential resource must be credential:<uuid>: " + resource);
+        }
+        return credentialRepository.findByIdAndDeletedAtIsNull(id)
+                .orElseThrow(() -> new CpApiException(HttpStatus.UNPROCESSABLE_ENTITY, "CREDENTIAL_NOT_FOUND",
+                        "Credential does not exist for the operator or workspace: credential:" + credentialId));
     }
 
     /** 0494 #12: only the newly added atoms must be covered by the operator. */

@@ -43,6 +43,8 @@ public class CredentialRevealService {
     private final GrantAuthorizationService grantAuthorizationService;
     private final AuthService authService;
     private final AuditLogger auditLogger;
+    /** DSD-1519 ① (task-142): both gates on every credential face — reveal included. */
+    private final CredentialOwnerGate ownerGate;
     private final Map<UUID, Deque<Instant>> stepUpFailures = new ConcurrentHashMap<>();
 
     public CredentialRevealService(CredentialRepository credentialRepository,
@@ -50,13 +52,15 @@ public class CredentialRevealService {
             CredentialEnvelope credentialEnvelope,
             GrantAuthorizationService grantAuthorizationService,
             AuthService authService,
-            AuditLogger auditLogger) {
+            AuditLogger auditLogger,
+            CredentialOwnerGate ownerGate) {
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
         this.credentialEnvelope = credentialEnvelope;
         this.grantAuthorizationService = grantAuthorizationService;
         this.authService = authService;
         this.auditLogger = auditLogger;
+        this.ownerGate = ownerGate;
     }
 
     public record RevealedCredential(String credentialId, int revision, String plaintext) {}
@@ -72,7 +76,12 @@ public class CredentialRevealService {
             String password) {
         UUID actorId = requireActor(actorUserId);
         requireRevealGrant(actorId, credentialId, workspaceId);
-        return revealAfterAuthorization(requireCredential(credentialId), actorId, password);
+        Credential credential = requireCredential(credentialId);
+        // DSD-1519 ①: the atom gate above is the caller's answer to "may I reveal at all"; the
+        // ownership gate below is the row's answer to "does this row belong to you". Both must
+        // pass, and the ownership gate keeps no admin bypass.
+        ownerGate.requireVisible(actorId, credential);
+        return revealAfterAuthorization(credential, actorId, password);
     }
 
     /**
@@ -97,6 +106,9 @@ public class CredentialRevealService {
             throw new CpApiException(HttpStatus.NOT_FOUND, "CREDENTIAL_NOT_FOUND", "Credential not found");
         }
         requireInstanceRevealGrant(actorId, credentialId);
+        // DSD-1519 ①: the INSTANCE branch of the ownership gate re-checks cap:instance:admin at
+        // the capability atom layer, so a role named admin without the atom still cannot reveal.
+        ownerGate.requireVisible(actorId, credential);
         return revealAfterAuthorization(credential, actorId, password);
     }
 
