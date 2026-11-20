@@ -200,9 +200,9 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 | Page class | How many | Component chain | Containers | Secondary nav strip |
 | --- | --- | --- | --- | --- |
 | 工作区内容页 Workspace content page | 5 (environment / scheduled tasks / resources / members / settings) | `pages/WorkspaceShell.vue` = `WorkspaceSecondaryNav` (judged by `route.meta?.workspaceSecondaryNav !== false`) + a scroll container holding `RouterView` + the workspace status bar (shared by all six pages, `D-1527`) | **none** — no right row either: none of the five imports a container or `WorkspaceWorkbench` | yes |
-| 工作台承载页 Workbench-hosted page (2 routes, one component) | 2: `/workspace/:id` (name `workspace`, the "sessions" entry in the nav) and `/workspace/:id/chat/:sessionId` (name `workspace-chat`, `meta.workspaceSecondaryNav = false`) | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **two**: `CONTAINER_IDS = ["main","right"]` (`features/workspace/lib/containers.ts:32-33`); the right row renders only when `dockOpen = !layout.dockCollapsed` (`WorkspaceWorkbench.vue:239`, `:499`) | no (`D-1907` rev7 / `task-118`) |
+| 会话页面 Session page (2 routes, one component, one page class) | 2: `/workspace/:id` (name `workspace`, the "sessions" entry in the nav; without `:sessionId` the id falls back to `sessionStore.currentSession`, see `pages/WorkspaceView.vue:234-243`) and `/workspace/:id/chat/:sessionId` (name `workspace-chat`, `meta.workspaceSecondaryNav = false`) | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **two**: `CONTAINER_IDS = ["main","right"]` (`features/workspace/lib/containers.ts:32-33`); the right row renders only when `dockOpen = !layout.dockCollapsed` (`WorkspaceWorkbench.vue:239`, `:499`) | no (`D-1907` rev7 / `task-118`) |
 
-Therefore "the workspace page also has the two containers" is **wrong**: the two containers belong to the **Workbench component** and appear only on the two routes it hosts.
+So two separate statements must be kept apart: (a) "the workspace page also carries the two containers" is **wrong** — containers belong to the **Workbench component**, not to workspace pages; (b) the other class is **not** some new "hosted page" — it was always the **session page**, and those 2 routes are merely its two entries (with and without `:sessionId`). There is **no page class called "workbench-hosted page" / "carrier page"** (user correction 2026-11-20, `D1469`).
 
 **Name table** (sanctioned name / English / code anchor / what never to say, and why):
 
@@ -211,7 +211,7 @@ Therefore "the workspace page also has the two containers" is **wrong**: the two
 | 1 | 工作台 | `Workbench` | `sidebar.workbench`, `D-924` | "工作区" for the module: module name vs object name (`D-924` fixed exactly this) |
 | 2 | 工作区 | `Workspace` | `/workspace/:workspaceId` | "project" / "space": not our vocabulary |
 | 3 | 工作区页面 | `Workspace Page` | `WorkspaceShell.vue` + `meta.workspacePage` | "workbench home" / "workspace detail page": sounds like a different page |
-| 4 | 会话页面 (会话页) | `Session Page` | router name `workspace-chat`, `chat/:sessionId` | "chat page" / "conversation page": three names for one thing; "对话" is already a tab label |
+| 4 | 会话页面 (会话页) | `Session Page` | router names `workspace` (`/workspace/:id`) and `workspace-chat` (`chat/:sessionId`), same component `WorkspaceView.vue` | "chat page" / "conversation page": three names for one thing; "对话" is already a tab label; "workbench-hosted page" / "carrier page": no such page class exists (`D1469`) |
 | 5 | 主栏容器 | `Main Container` | `CONTAINER_IDS[0] = "main"` | "中栏容器" (there are two columns, so "middle" is meaningless), "主区" / "内容区" (collides with the outer main area) |
 | 6 | 右栏容器 | `Right Container` | `CONTAINER_IDS[1] = "right"` | bare "右栏" / "侧栏" (§10.1 discipline 1), "dock" (an implementation name, not a UI name) |
 | 7 | 面板 | `Panel` | `DOCK_TAB_IDS`, `pane:<container>:<view>` | calling a panel a container: per `D-1777` the two columns are containers, a panel is the content of a tab inside one |
@@ -230,6 +230,7 @@ Therefore "the workspace page also has the two containers" is **wrong**: the two
 - Never say "中栏 / middle column": desktop has exactly `main` and `right`; on narrow screens `activeColumn` only switches which row is visible (`containers.ts:41`) and does not create a third column.
 - Never write a bare "right bar" / "side bar": either "right container" or "right session-config panel" (panel level).
 - "主栏" is the short UI label (used as the tab-row label); **in documentation the sanctioned name is always 主栏容器**.
+- **Never say "workbench-hosted page" / "carrier page" / "hosted page"**: there is no such page class. There are exactly two — 工作区页面 (5 content pages, no containers) and 会话页面 (2 routes, with containers). Naming the latter a "hosted page" blurs the conclusion that containers live only on the session page (user correction 2026-11-20 ⇒ `D1469`).
 
 **Relationship to the four-row table in §10.1**: it is extended, never deleted; the "content column" current state (nav panel / file tree / main area / dock) is the **not implemented** `ListPane`-to-`ContextPane` plan, while the two containers here are the **landed** `main` / `right` — different layers, never substitute one for the other.
 

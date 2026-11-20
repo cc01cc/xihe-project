@@ -208,9 +208,9 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 | 页面类别 | 几条 | 组件链 | 有容器吗 | 有二级导航带 |
 | --- | --- | --- | --- | --- |
 | 工作区内容页 | 5 个（环境 / 定时任务 / 资源 / 成员 / 设置） | `pages/WorkspaceShell.vue` = 二级导航带 `WorkspaceSecondaryNav`（判据 `route.meta?.workspaceSecondaryNav !== false`）+ `<div class="min-h-0 flex-1 overflow-y-auto"><RouterView /></div>` + 工作区状态栏（六页共有，`D-1527`） | **没有容器、没有右栏**：这 5 页不 import 任何容器或 `WorkspaceWorkbench` ⇒ 没有容器行 | 有 |
-| 工作台承载页（2 条路由，同一个组件） | 2 条：`/workspace/:id`（`name` `workspace`，即导航里的「会话」页，带 `meta.workspacePage`）与 `/workspace/:id/chat/:sessionId`（`name` `workspace-chat`，`meta.workspaceSecondaryNav = false`） | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **有**，两栏：`CONTAINER_IDS = ["main","right"]`（`features/workspace/lib/containers.ts:32-33`）；右栏行仅在 `dockOpen = !layout.dockCollapsed` 时渲染（`WorkspaceWorkbench.vue:239`、`:499`） | 无（会话页面连壳层那一条也不画，`D-1907` rev7 / `task-118`） |
+| 会话页面（2 条路由，同一个组件、同一个页面类别） | 2 条：`/workspace/:id`（`name` `workspace`，即导航里的「会话」入口，带 `meta.workspacePage`；无 `:sessionId` 时 `sessionId` 回退到 `sessionStore.currentSession`，见 `pages/WorkspaceView.vue:234-243`）与 `/workspace/:id/chat/:sessionId`（`name` `workspace-chat`，`meta.workspaceSecondaryNav = false`） | `pages/WorkspaceView.vue` → `features/workspace/components/WorkspaceWorkbench.vue` | **有**，两栏：`CONTAINER_IDS = ["main","right"]`（`features/workspace/lib/containers.ts:32-33`）；右栏行仅在 `dockOpen = !layout.dockCollapsed` 时渲染（`WorkspaceWorkbench.vue:239`、`:499`） | 无（会话页面连壳层那一条也不画，`D-1907` rev7 / `task-118`） |
 
-⇒ 因此「工作区页面也设两栏容器」是**错的说法**：两栏容器属于**工作台组件**，只出现在它承载的会话导航页与会话页面这两条路由上。
+⇒ 因此两件事必须分开说：①「工作区页面也设两栏容器」是**错的说法** —— 容器属于**工作台组件**，不在工作区页面里；②「会话页面」也不是第二类「承载页」 —— 上面那片页面类别本来就叫**会话页面**，那 2 条路由只是它的两个入口（带 `:sessionId` 与不带），**不存在「工作台承载页 / 承载页 / 承接页」这个类别**（2026-11-20 用户纠正，见 `D1469`）。
 
 **称呼表**（正名 / 英文 / 代码锚点 / 禁用说法及原因）：
 
@@ -219,7 +219,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 | 1 | 工作台 | `Workbench` | `sidebar.workbench`、`D-924` | 禁用「工作区」：模块名与对象名混用（`D-924` 改的正是这一处） |
 | 2 | 工作区 | `Workspace` | `/workspace/:workspaceId` | 禁用「项目」「空间」：非本系统术语 |
 | 3 | 工作区页面 | `Workspace Page` | `WorkspaceShell.vue` + `meta.workspacePage` | 禁用「工作台首页」「工作区详情页」：听起来像另一个页面 |
-| 4 | 会话页面（会话页） | `Session Page` | router: `workspace-chat`，`chat/:sessionId` | 禁用「聊天页」「chat 页」「对话页」：三说法混用，「对话」已是页签名 |
+| 4 | 会话页面（会话页） | `Session Page` | router: `workspace`（`/workspace/:id`）与 `workspace-chat`（`chat/:sessionId`），同一组件 `WorkspaceView.vue` | 禁用「聊天页」「chat 页」「对话页」：三说法混用，「对话」已是页签名；禁用「工作台承载页 / 承载页 / 承接页」：不存在这个页面类别（`D1469`） |
 | 5 | 主栏容器 | `Main Container` | `CONTAINER_IDS[0] = "main"` | 禁用「中栏容器」（只有两栏，「中」无意义）、「主区」「内容区」（与上层主区撞名） |
 | 6 | 右栏容器 | `Right Container` | `CONTAINER_IDS[1] = "right"` | 禁用「右栏」「侧栏」「dock」：§10.1 纪律 1 禁无定语栏名；dock 是实现名不是界面名 |
 | 7 | 面板 | `Panel` | `DOCK_TAB_IDS`、`pane:<container>:<view>` | 禁用把面板叫容器：`D-1777` 两栏是容器，面板是容器内页签内容 |
@@ -238,6 +238,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 - 禁「中栏 / 中栏容器」：桌面只有 main / right 两栏，窄屏 `activeColumn` 只是可见性切换（`containers.ts:41`），不产生第三栏。
 - 禁无定语的「右栏 / 侧栏」：要么「右栏容器」，要么「右栏会话配置面板」（面板级）。
 - 「主栏」是界面短称（页签行标签用），**文档正名一律「主栏容器」**。
+- **禁「工作台承载页 / 承载页 / 承接页 / 托管页」**：这不是新的页面类别。两类页面只有「工作区页面（5 个内容页，无容器）」与「会话页面（2 条路由，有容器）」；把后者叫「承载页」会让「容器只在会话页面」这条结论重新变模糊（2026-11-20 用户纠正 ⇒ `D1469`）。
 
 **与 §10.1 既有四行表的关系**：新增补充、不删旧行；「内容列」四段现状（导航面板 / 文件树 / 主区 / dock）是**未落地**的 `ListPane`-`MainPane`-`ContextPane` 设想，本节的两栏容器是**已落地**的 `main` / `right`，两者不是同一层东西，不得互相替换引用。
 
