@@ -10,6 +10,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import {
     AlertDialog,
     AlertDialogCancel,
@@ -167,7 +168,17 @@ const memoryEnabled = ref(false);
 const memoryBaseline = ref(false);
 const advisors = ref<HookAdvisorDraft[]>([]);
 const advisorsBaseline = ref("");
-const newAdvisorKind = ref("");
+// 枚举族字段（§17.5）的取值一律来自 CP 契约，不自造下拉项：
+// kind 今天只有 GuardHookAdvisor.KIND（唯一注册的 advisor），on 白名单只有
+// HookAdvisorRegistry.ALLOWED_ACTION_CLASSES 里的 approval.ask。未登记的 kind 走显式「自定义」分支。
+const ADVISOR_KINDS = ["guard"] as const;
+const ADVISOR_EVENTS = ["approval.ask"] as const;
+const CUSTOM_ADVISOR_KIND = "__custom__";
+const newAdvisorKind = ref<string>(ADVISOR_KINDS[0]);
+const newAdvisorCustomTag = ref("");
+const newAdvisorEvent = ref<string>(ADVISOR_EVENTS[0]);
+const newAdvisorKindIsCustom = computed(() => newAdvisorKind.value === CUSTOM_ADVISOR_KIND);
+const memoryRetryTarget = ref<boolean | null>(null);
 
 const roles = ref<AgentRoleBinding[] | null>(null);
 const rolesError = ref<ErrorPresentation | null>(null);
@@ -236,7 +247,10 @@ function resetDrafts() {
     memoryBaseline.value = memoryEnabled.value;
     advisors.value = parseAdvisors(principal.hooks);
     advisorsBaseline.value = JSON.stringify(advisors.value);
-    newAdvisorKind.value = "";
+    newAdvisorKind.value = ADVISOR_KINDS[0];
+    newAdvisorCustomTag.value = "";
+    newAdvisorEvent.value = ADVISOR_EVENTS[0];
+    memoryRetryTarget.value = null;
     sectionErrors.model = null;
     sectionErrors.delegation = null;
     sectionErrors.memory = null;
@@ -255,6 +269,17 @@ watch(
     },
     { immediate: true },
 );
+
+// 主体还没绑定工作区 = 空态，不是错误（task-151 ④）；去绑定的入口在设置 › 角色
+// （src/router/index.ts:417-419 settings 子路由）。
+const ROLES_BIND_HREF = "/settings/roles";
+const rolesPrincipalMissing = computed(
+    () => (rolesError.value?.code ?? "") === "AGENT_PRINCIPAL_NOT_FOUND",
+);
+
+function retryRoles() {
+    void loadRoles();
+}
 
 async function loadRoles() {
     const principalId = props.principal?.principalId;
@@ -410,12 +435,13 @@ const delegationSaveBlocked = computed(
 );
 
 const memoryDirty = computed(() => memoryEnabled.value !== memoryBaseline.value);
-const memorySaveBlocked = computed(
-    () => props.readonly || !memoryDirty.value || memorySaving.value,
-);
 
 const hooksDirty = computed(() => JSON.stringify(advisors.value) !== advisorsBaseline.value);
 const hooksSaveBlocked = computed(() => props.readonly || !hooksDirty.value || hooksSaving.value);
+
+// task-151 / task-172 §17.4：开关类即时写不算 dirty；表单类（模型 / 委派 / 钩子）有草稿才算。
+const unsavedDraft = computed(() => modelDirty.value || delegationDirty.value || hooksDirty.value);
+const unsavedConfirmOpen = ref(false);
 
 const memoryTypesMissing = computed(() => {
     if (!props.principal) return false;
@@ -539,24 +565,29 @@ async function saveDelegation() {
     }
 }
 
-async function saveMemory() {
+/**
+ * task-151 ①：记忆是**纯布尔**开关，翻转即写，没有保存按钮（§17.2 布尔控件的提交点就是它自己）。
+ * 失败必须回滚开关并留下重试入口 —— 否则界面显示的值和库里的值会分叉。
+ */
+async function commitMemory() {
     const principalId = props.principal?.principalId;
-    if (!principalId || memorySaveBlocked.value) return;
+    if (!principalId || props.readonly || memorySaving.value || !memoryDirty.value) return;
+    const attempted = memoryEnabled.value;
     memorySaving.value = true;
     sectionErrors.memory = null;
     try {
         // PATCH 是整对象替换 ⇒ 必须与现值合并后发送（memoryPolicy.mergeMemoryEnabled 是唯一口径）。
-        const merged = mergeMemoryEnabled(
-            props.principal?.contextPolicy ?? null,
-            memoryEnabled.value,
-        );
+        const merged = mergeMemoryEnabled(props.principal?.contextPolicy ?? null, attempted);
         const view = await api.updateAgentPrincipal(principalId, { contextPolicy: merged });
         if (!principalGuard(principalId)) return;
-        memoryBaseline.value = memoryEnabled.value;
+        memoryBaseline.value = attempted;
+        memoryRetryTarget.value = null;
         emit("changed", { principalId, contextPolicy: view.contextPolicy });
         toast.success(t(K + "memorySaved"));
     } catch (cause) {
         if (principalGuard(principalId)) {
+            memoryEnabled.value = memoryBaseline.value;
+            memoryRetryTarget.value = attempted;
             sectionErrors.memory = sectionError(cause, t(K + "saveFailed"));
         }
     } finally {
@@ -564,11 +595,34 @@ async function saveMemory() {
     }
 }
 
+function retryMemory() {
+    const target = memoryRetryTarget.value;
+    memoryRetryTarget.value = null;
+    if (target === null) return;
+    memoryEnabled.value = target;
+}
+
+// 基线回填与开关写入同 tick ⇒ dirty 立刻归零，watch 不会自激成死循环。
+watch(memoryEnabled, () => {
+    void commitMemory();
+});
+
 function addAdvisor() {
-    const kind = newAdvisorKind.value.trim();
+    const kind = newAdvisorKindIsCustom.value
+        ? newAdvisorCustomTag.value.trim()
+        : newAdvisorKind.value.trim();
     if (!kind) return;
-    advisors.value = [...advisors.value, { kind, on: ["approval.ask"] }];
-    newAdvisorKind.value = "";
+    advisors.value = [...advisors.value, { kind, on: [newAdvisorEvent.value] }];
+    newAdvisorKind.value = ADVISOR_KINDS[0];
+    newAdvisorCustomTag.value = "";
+    newAdvisorEvent.value = ADVISOR_EVENTS[0];
+}
+
+/** 白名单今天只有一个 action，单值选择器与契约（on 是数组）等价 —— 落 wire 仍是数组。 */
+function setAdvisorEvent(index: number, action: string) {
+    advisors.value = advisors.value.map((advisor, current) =>
+        current === index ? { ...advisor, on: [action] } : advisor,
+    );
 }
 
 function removeAdvisor(index: number) {
@@ -619,6 +673,16 @@ async function confirmDisable() {
 }
 
 function closeDrawer() {
+    // §17.4 离开策略：表单类草稿未提交时不静默丢弃（开关类即时写，不进 unsavedDraft）。
+    if (unsavedDraft.value) {
+        unsavedConfirmOpen.value = true;
+        return;
+    }
+    emit("update:open", false);
+}
+
+function discardAndClose() {
+    unsavedConfirmOpen.value = false;
     emit("update:open", false);
 }
 </script>
@@ -679,27 +743,28 @@ function closeDrawer() {
                             <dd>{{ formatDate(principal.createdAt) }}</dd>
                         </div>
                     </dl>
-                </section>
 
-                <!-- 人设（Q1：创建时钉住，只读） -->
-                <section data-testid="apd-persona" class="apd-two-col">
-                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
-                        {{ t(K + "sectionPersona") }}
-                    </h3>
-                    <p class="text-sm">
-                        {{
-                            principal.templateName
-                                ? principal.templateName
-                                : t(K + "personaFallback")
-                        }}
-                    </p>
-                    <p class="text-xs leading-5 text-muted-foreground">
-                        {{ t(K + "personaFrozenNote") }}
-                    </p>
+                    <!-- task-151 ④：人设并入身份组（form-contract F4 只允许 6 个顶级语义组），
+                         仍是只读（Q1：templateId 创建时钉住）。 -->
+                    <div class="space-y-1" data-testid="apd-persona">
+                        <p class="text-sm font-medium text-muted-foreground">
+                            {{ t(K + "sectionPersona") }}
+                        </p>
+                        <p class="text-sm">
+                            {{
+                                principal.templateName
+                                    ? principal.templateName
+                                    : t(K + "personaFallback")
+                            }}
+                        </p>
+                        <p class="text-xs leading-5 text-muted-foreground">
+                            {{ t(K + "personaFrozenNote") }}
+                        </p>
+                    </div>
                 </section>
 
                 <!-- 模型意图（可写；instance 层只读） -->
-                <section data-testid="apd-model" class="apd-two-col">
+                <section data-testid="apd-model" class="space-y-2" :data-dirty="modelDirty">
                     <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
                         {{ t(K + "sectionModel") }}
                     </h3>
@@ -805,8 +870,9 @@ function closeDrawer() {
                     >
                         {{ t(K + "unknownSectionHint") }}
                     </p>
-                    <div v-if="canEdit('model')" class="flex items-center gap-2">
+                    <div class="flex items-center gap-2">
                         <Button
+                            v-if="canEdit('model')"
                             type="button"
                             size="sm"
                             data-testid="apd-model-save"
@@ -815,16 +881,36 @@ function closeDrawer() {
                         >
                             {{ modelSaving ? t(K + "saving") : t(K + "modelSave") }}
                         </Button>
+                        <span
+                            v-if="canEdit('model') && modelDirty"
+                            class="text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="apd-model-unsaved"
+                        >
+                            {{ t(K + "unsaved") }}
+                        </span>
                     </div>
-                    <ErrorBlock
-                        v-if="sectionErrors.model"
-                        :presentation="sectionErrors.model"
-                        testid="apd-model-error"
-                    />
+                    <div v-if="sectionErrors.model" class="space-y-2">
+                        <ErrorBlock :presentation="sectionErrors.model" testid="apd-model-error" />
+                        <Button
+                            v-if="canEdit('model')"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            data-testid="apd-model-retry"
+                            :disabled="modelSaving"
+                            @click="saveModel"
+                        >
+                            {{ t(K + "retry") }}
+                        </Button>
+                    </div>
                 </section>
 
                 <!-- 委派预算（可写；instance 层只读） -->
-                <section data-testid="apd-delegation" class="apd-two-col">
+                <section
+                    data-testid="apd-delegation"
+                    class="space-y-2"
+                    :data-dirty="delegationDirty"
+                >
                     <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
                         {{ t(K + "sectionDelegation") }}
                     </h3>
@@ -840,8 +926,9 @@ function closeDrawer() {
                         v-model="delegationDraft"
                         :disabled="!canEdit('delegation')"
                     />
-                    <div v-if="canEdit('delegation')" class="flex items-center gap-2">
+                    <div class="flex items-center gap-2">
                         <Button
+                            v-if="canEdit('delegation')"
                             type="button"
                             size="sm"
                             data-testid="apd-delegation-save"
@@ -850,50 +937,78 @@ function closeDrawer() {
                         >
                             {{ delegationSaving ? t(K + "saving") : t(K + "delegationSave") }}
                         </Button>
+                        <span
+                            v-if="canEdit('delegation') && delegationDirty"
+                            class="text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="apd-delegation-unsaved"
+                        >
+                            {{ t(K + "unsaved") }}
+                        </span>
                     </div>
-                    <ErrorBlock
-                        v-if="sectionErrors.delegation"
-                        :presentation="sectionErrors.delegation"
-                        testid="apd-delegation-error"
-                    />
+                    <div v-if="sectionErrors.delegation" class="space-y-2">
+                        <ErrorBlock
+                            :presentation="sectionErrors.delegation"
+                            testid="apd-delegation-error"
+                        />
+                        <Button
+                            v-if="canEdit('delegation')"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            data-testid="apd-delegation-retry"
+                            :disabled="delegationSaving"
+                            @click="saveDelegation"
+                        >
+                            {{ t(K + "retry") }}
+                        </Button>
+                    </div>
                 </section>
 
-                <!-- 记忆（可写；instance 层只读） -->
-                <section data-testid="apd-memory" class="apd-two-col">
-                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                <!-- 记忆（可写；instance 层只读）。task-151 ①：纯布尔 ⇒ 翻转即写，没有保存按钮。 -->
+                <section data-testid="apd-memory" class="space-y-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">
                         {{ t(K + "sectionMemory") }}
                     </h3>
-                    <div class="flex justify-end">
+                    <div class="flex items-center gap-2">
                         <Switch
                             v-model="memoryEnabled"
                             :disabled="!canEdit('memory') || memorySaving"
                             data-testid="apd-memory-switch"
                         />
+                        <span
+                            class="text-xs text-muted-foreground"
+                            data-testid="apd-memory-instant-hint"
+                        >
+                            {{ memorySaving ? t(K + "saving") : t(K + "memoryInstantHint") }}
+                        </span>
                     </div>
                     <p v-if="memoryTypesMissing" class="text-xs text-muted-foreground">
                         {{ t(K + "memoryTypesMissing") }}
                     </p>
-                    <div v-if="canEdit('memory')" class="flex items-center gap-2">
+                    <div v-if="sectionErrors.memory" class="space-y-2">
+                        <ErrorBlock
+                            :presentation="sectionErrors.memory"
+                            testid="apd-memory-error"
+                        />
                         <Button
+                            v-if="canEdit('memory') && memoryRetryTarget !== null"
                             type="button"
+                            variant="outline"
                             size="sm"
-                            data-testid="apd-memory-save"
-                            :disabled="memorySaveBlocked"
-                            @click="saveMemory"
+                            data-testid="apd-memory-retry"
+                            :disabled="memorySaving"
+                            @click="retryMemory"
                         >
-                            {{ memorySaving ? t(K + "saving") : t(K + "memorySave") }}
+                            {{ t(K + "retry") }}
                         </Button>
                     </div>
-                    <ErrorBlock
-                        v-if="sectionErrors.memory"
-                        :presentation="sectionErrors.memory"
-                        testid="apd-memory-error"
-                    />
                 </section>
 
-                <!-- 钩子订阅（可写；on 白名单今天只有 approval.ask，UI 固定之） -->
-                <section data-testid="apd-hooks" class="apd-two-col">
-                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                <!-- 钩子订阅（可写）。kind 与 on 都是**枚举族字段**（§17.5）——取值来自 CP 契约
+                     HookAdvisorRegistry：kind 今天只有 guard，on 白名单只有 approval.ask；
+                     未登记的 kind 走显式「自定义」分支，不自造下拉项。 -->
+                <section data-testid="apd-hooks" class="space-y-2" :data-dirty="hooksDirty">
+                    <h3 class="text-sm font-medium text-muted-foreground">
                         {{ t(K + "sectionHooks") }}
                     </h3>
                     <p v-if="advisors.length === 0" class="text-sm text-muted-foreground">
@@ -903,10 +1018,35 @@ function closeDrawer() {
                         <li
                             v-for="(advisor, index) in advisors"
                             :key="index"
-                            class="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                            class="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
                         >
                             <span class="font-medium">{{ advisor.kind }}</span>
-                            <Badge variant="outline">approval.ask</Badge>
+                            <Select
+                                v-if="canEdit('hooks')"
+                                :model-value="advisor.on[0] ?? ADVISOR_EVENTS[0]"
+                                :disabled="hooksSaving"
+                                @update:model-value="
+                                    (value: unknown) => setAdvisorEvent(index, String(value))
+                                "
+                            >
+                                <SelectTrigger
+                                    class="h-8 w-40"
+                                    :data-testid="'apd-hooks-event-' + index"
+                                    :aria-label="t(K + 'hooksEventLabel')"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem
+                                        v-for="action in ADVISOR_EVENTS"
+                                        :key="action"
+                                        :value="action"
+                                    >
+                                        {{ action }}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Badge v-else variant="outline">{{ advisor.on.join(" · ") }}</Badge>
                             <Button
                                 v-if="canEdit('hooks')"
                                 type="button"
@@ -921,46 +1061,109 @@ function closeDrawer() {
                             </Button>
                         </li>
                     </ul>
-                    <div v-if="canEdit('hooks')" class="flex items-center gap-2">
-                        <Input
-                            v-model="newAdvisorKind"
-                            data-testid="apd-hooks-kind"
-                            :placeholder="t(K + 'hooksKindPlaceholder')"
-                            :disabled="hooksSaving"
-                            autocomplete="off"
-                            @keyup.enter="addAdvisor"
-                        />
+                    <div v-if="canEdit('hooks')" class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <Select v-model="newAdvisorKind" :disabled="hooksSaving">
+                                <SelectTrigger
+                                    class="h-8 w-40"
+                                    data-testid="apd-hooks-kind"
+                                    :aria-label="t(K + 'hooksKindLabel')"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem
+                                        v-for="kind in ADVISOR_KINDS"
+                                        :key="kind"
+                                        :value="kind"
+                                    >
+                                        {{ kind }}
+                                    </SelectItem>
+                                    <SelectItem :value="CUSTOM_ADVISOR_KIND">
+                                        {{ t(K + "hooksKindCustom") }}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Input
+                                v-if="newAdvisorKindIsCustom"
+                                v-model="newAdvisorCustomTag"
+                                class="h-8 w-48"
+                                data-testid="apd-hooks-custom-tag"
+                                :placeholder="t(K + 'hooksCustomPlaceholder')"
+                                :disabled="hooksSaving"
+                                autocomplete="off"
+                                @keyup.enter="addAdvisor"
+                            />
+                            <Select v-model="newAdvisorEvent" :disabled="hooksSaving">
+                                <SelectTrigger
+                                    class="h-8 w-40"
+                                    data-testid="apd-hooks-new-event"
+                                    :aria-label="t(K + 'hooksEventLabel')"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem
+                                        v-for="action in ADVISOR_EVENTS"
+                                        :key="action"
+                                        :value="action"
+                                    >
+                                        {{ action }}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                data-testid="apd-hooks-add"
+                                :disabled="newAdvisorKind.trim() === ''"
+                                @click="addAdvisor"
+                            >
+                                <Plus class="size-3.5" aria-hidden="true" />
+                                {{ t(K + "hooksAdd") }}
+                            </Button>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <Button
+                                type="button"
+                                size="sm"
+                                data-testid="apd-hooks-save"
+                                :disabled="hooksSaveBlocked"
+                                @click="saveHooks"
+                            >
+                                {{ hooksSaving ? t(K + "saving") : t(K + "hooksSave") }}
+                            </Button>
+                            <span
+                                v-if="hooksDirty"
+                                class="text-xs text-amber-600 dark:text-amber-400"
+                                data-testid="apd-hooks-unsaved"
+                            >
+                                {{ t(K + "unsaved") }}
+                            </span>
+                        </div>
+                    </div>
+                    <div v-if="sectionErrors.hooks" class="space-y-2">
+                        <ErrorBlock :presentation="sectionErrors.hooks" testid="apd-hooks-error" />
                         <Button
+                            v-if="canEdit('hooks')"
                             type="button"
                             variant="outline"
                             size="sm"
-                            data-testid="apd-hooks-add"
-                            :disabled="newAdvisorKind.trim() === ''"
-                            @click="addAdvisor"
-                        >
-                            <Plus class="size-3.5" aria-hidden="true" />
-                            {{ t(K + "hooksAdd") }}
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            data-testid="apd-hooks-save"
-                            :disabled="hooksSaveBlocked"
+                            data-testid="apd-hooks-retry"
+                            :disabled="hooksSaving"
                             @click="saveHooks"
                         >
-                            {{ hooksSaving ? t(K + "saving") : t(K + "hooksSave") }}
+                            {{ t(K + "retry") }}
                         </Button>
                     </div>
-                    <ErrorBlock
-                        v-if="sectionErrors.hooks"
-                        :presentation="sectionErrors.hooks"
-                        testid="apd-hooks-error"
-                    />
                 </section>
 
-                <!-- 能力（只读；授权在 CP，UI 不复制判定） -->
-                <section data-testid="apd-capabilities" class="apd-two-col">
-                    <h3 class="text-sm font-medium text-muted-foreground sm:pt-0.5">
+                <!-- 工作区角色（只读；授权在 CP，UI 不复制判定）。task-151 ③：名字从「能力」
+                     改为「工作区角色」——它读的是主体绑定的工作区角色（api.getAgentRoles），
+                     不是平台能力原子表（DSD-1499）。 -->
+                <section data-testid="apd-capabilities" class="space-y-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">
                         {{ t(K + "sectionCapabilities") }}
                     </h3>
                     <p
@@ -970,11 +1173,38 @@ function closeDrawer() {
                         <LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />
                         {{ t(K + "rolesLoading") }}
                     </p>
-                    <ErrorBlock
-                        v-else-if="rolesError"
-                        :presentation="rolesError"
-                        testid="apd-roles-error"
-                    />
+                    <template v-else-if="rolesError">
+                        <!-- task-151 ④：404 AGENT_PRINCIPAL_NOT_FOUND 是「还没绑角色」的空态，
+                             不是错误 —— 红卡会占掉功能位，这里只留一句说明 + 去绑定入口。 -->
+                        <p
+                            v-if="rolesPrincipalMissing"
+                            class="text-sm text-muted-foreground"
+                            data-testid="apd-roles-empty"
+                        >
+                            {{ t(K + "rolesNotBound") }}
+                        </p>
+                        <ErrorBlock v-else :presentation="rolesError" testid="apd-roles-error" />
+                        <div class="flex items-center gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                data-testid="apd-roles-retry"
+                                :disabled="rolesLoading"
+                                @click="retryRoles"
+                            >
+                                {{ t(K + "retry") }}
+                            </Button>
+                            <a
+                                v-if="rolesPrincipalMissing"
+                                :href="ROLES_BIND_HREF"
+                                class="text-xs text-primary underline underline-offset-2"
+                                data-testid="apd-roles-bind"
+                            >
+                                {{ t(K + "rolesBindCta") }}
+                            </a>
+                        </div>
+                    </template>
                     <p
                         v-else-if="!roles || roles.length === 0"
                         class="text-sm text-muted-foreground"
@@ -1005,8 +1235,10 @@ function closeDrawer() {
                         </li>
                     </ul>
                 </section>
-                <!-- 危险区：只有宿主没有自己 disable 入口时才渲染（user 层）。 -->
-                <section
+                <!-- 危险区：只有宿主没有自己 disable 入口时才渲染（user 层）。
+                     task-151 ④：这一块不是语义分区，是页脚动作区 —— 用 div 承接，
+                     顶级 <section> 因此只剩 6 组（form-contract F4）。 -->
+                <div
                     v-if="showDanger && !readonly && !principal.disabled"
                     data-testid="apd-danger"
                     class="space-y-2 rounded-md border border-destructive/30 p-3"
@@ -1031,7 +1263,7 @@ function closeDrawer() {
                         :presentation="disableError"
                         testid="apd-disable-error"
                     />
-                </section>
+                </div>
             </div>
 
             <AlertDialog
@@ -1063,6 +1295,34 @@ function closeDrawer() {
                             @click="confirmDisable"
                         >
                             {{ disabling ? t(K + "disabling") : t(K + "disable") }}
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <!-- task-151 / task-172 §17.4：离开策略 —— 有未保存草稿时关抽屉要先确认。 -->
+            <AlertDialog
+                :open="unsavedConfirmOpen"
+                @update:open="(value: boolean) => !value && (unsavedConfirmOpen = false)"
+            >
+                <AlertDialogContent data-testid="apd-unsaved-confirm">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{{ t(K + "unsavedConfirmTitle") }}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {{ t(K + "unsavedConfirmDesc") }}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel data-testid="apd-unsaved-keep">
+                            {{ t(K + "unsavedKeep") }}
+                        </AlertDialogCancel>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            data-testid="apd-unsaved-discard"
+                            @click="discardAndClose"
+                        >
+                            {{ t(K + "unsavedDiscard") }}
                         </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>

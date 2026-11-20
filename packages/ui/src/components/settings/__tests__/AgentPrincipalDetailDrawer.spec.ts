@@ -259,7 +259,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         expect(body.delegationPolicy).toBeNull();
     });
 
-    it("记忆：只翻 enabled，writeMode/types 原样带回去（整对象替换契约）", async () => {
+    it("记忆：纯布尔翻转即 PATCH（没有保存按钮），writeMode/types 原样带回去", async () => {
         const update = vi.spyOn(api, "updateAgentPrincipal").mockResolvedValue({
             principalId: "p-1",
             defaultModelProvider: null,
@@ -272,17 +272,59 @@ describe("AgentPrincipalDetailDrawer", () => {
         mountDrawer();
         await flushPromises();
 
+        // task-151 ①：布尔控件的提交点就是它自己 —— 保存按钮必须不存在。
+        expect(maybe('[data-testid="apd-memory-save"]')).toBeNull();
         q('[data-testid="apd-memory-switch"]').click();
-        // reka-ui Switch 的 modelValue 更新在微任务里落地 —— 不 flush 就点保存会点到 disabled 上。
         await flushPromises();
         await nextTick();
-        await click("apd-memory-save");
 
+        expect(update).toHaveBeenCalledTimes(1);
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
         expect(Object.keys(body)).toEqual(["contextPolicy"]);
         expect(body.contextPolicy).toEqual({
             memory: { enabled: true, writeMode: "append", types: ["fact"] },
         });
+    });
+
+    it("记忆写失败：开关回滚到库里仍生效的值，并留下重试入口（不静默分叉）", async () => {
+        const update = vi
+            .spyOn(api, "updateAgentPrincipal")
+            .mockRejectedValueOnce(forbidden("GUARD_CONTEXT_POLICY_IMMUTABLE"))
+            .mockResolvedValueOnce({
+                principalId: "p-1",
+                defaultModelProvider: null,
+                defaultModelName: null,
+                allowedModels: null,
+                hooks: null,
+                contextPolicy: { memory: { enabled: true, writeMode: "append", types: ["fact"] } },
+                delegationPolicy: null,
+            });
+        mountDrawer();
+        await flushPromises();
+
+        q('[data-testid="apd-memory-switch"]').click();
+        await flushPromises();
+        await nextTick();
+
+        expect(maybe('[data-testid="apd-memory-error"]')).not.toBeNull();
+        // 回滚：界面显示的值必须等于库里仍生效的值（否则用户以为已经打开）。
+        expect(q('[data-testid="apd-memory-switch"]').getAttribute("aria-checked")).toBe("false");
+        await click("apd-memory-retry");
+        expect(update).toHaveBeenCalledTimes(2);
+        expect(Object.keys(update.mock.calls[1]![1] as Record<string, unknown>)).toEqual([
+            "contextPolicy",
+        ]);
+    });
+
+    it("保存点收敛：表单组各一个提交点，记忆组只有开关（task-151 ①）", async () => {
+        mountDrawer({ editableSections: ["model", "delegation", "memory", "hooks"] });
+        await flushPromises();
+
+        for (const testid of ["apd-model-save", "apd-delegation-save", "apd-hooks-save"]) {
+            expect(document.body.querySelectorAll('[data-testid="' + testid + '"]').length).toBe(1);
+        }
+        expect(maybe('[data-testid="apd-memory-save"]')).toBeNull();
+        expect(document.body.querySelectorAll('[data-testid="apd-memory-switch"]').length).toBe(1);
     });
 
     it("钩子：移除后保存；清空全部 ⇒ hooks 显式 null", async () => {
@@ -304,6 +346,62 @@ describe("AgentPrincipalDetailDrawer", () => {
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
         expect(Object.keys(body)).toEqual(["hooks"]);
         expect(body.hooks).toBeNull();
+    });
+
+    it("钩子类型：枚举选择器（不裸文本），自定义分支才出现输入框（task-151 ②）", async () => {
+        const wrapper = mountDrawer();
+        await flushPromises();
+
+        // CP 今天只注册了 guard（GuardHookAdvisor.KIND），事件白名单只有 approval.ask。
+        expect(selectModelValue(wrapper as never, '[data-testid="apd-hooks-kind"]')).toBe("guard");
+        expect(selectModelValue(wrapper as never, '[data-testid="apd-hooks-new-event"]')).toBe(
+            "approval.ask",
+        );
+        expect(maybe('[data-testid="apd-hooks-custom-tag"]')).toBeNull();
+
+        await pick(wrapper, "apd-hooks-kind", "__custom__");
+        expect(maybe('[data-testid="apd-hooks-custom-tag"]')).not.toBeNull();
+        await setName("apd-hooks-custom-tag", "my-guard");
+        await click("apd-hooks-add");
+
+        expect(q('[data-testid="apd-hooks"]').textContent).toContain("my-guard");
+        // 新增行也带事件选择器（数组 on 的单值形态），落 wire 仍是 {kind, on:[…]}。
+        expect(maybe('[data-testid="apd-hooks-event-1"]')).not.toBeNull();
+    });
+
+    it("工作区角色 404：走区块空态 + 去绑定入口 + 可重试，不占错误卡位（task-151 ④）", async () => {
+        const roles = vi
+            .spyOn(api, "getAgentRoles")
+            .mockRejectedValueOnce(forbidden("AGENT_PRINCIPAL_NOT_FOUND"))
+            .mockResolvedValueOnce([]);
+        mountDrawer({ workspaceId: "ws-1" });
+        await flushPromises();
+
+        expect(q('[data-testid="apd-roles-empty"]').textContent).toContain("角色");
+        expect(maybe('[data-testid="apd-roles-error"]')).toBeNull();
+        expect(q('[data-testid="apd-roles-bind"]').getAttribute("href")).toBe("/settings/roles");
+        await click("apd-roles-retry");
+        expect(roles).toHaveBeenCalledTimes(2);
+    });
+
+    it("未保存草稿：关抽屉先确认（保留不关 / 丢弃才 emit）（task-151 / §17.4）", async () => {
+        const wrapper = mountDrawer();
+        await flushPromises();
+        await pickAnthropic(wrapper);
+
+        q('[data-slot="dialog-close"]').click();
+        await flushPromises();
+        expect(maybe('[data-testid="apd-unsaved-confirm"]')).not.toBeNull();
+        expect(wrapper.emitted("update:open")).toBeUndefined();
+
+        await click("apd-unsaved-keep");
+        expect(maybe('[data-testid="apd-unsaved-confirm"]')).toBeNull();
+        expect(wrapper.emitted("update:open")).toBeUndefined();
+
+        q('[data-slot="dialog-close"]').click();
+        await flushPromises();
+        await click("apd-unsaved-discard");
+        expect(wrapper.emitted("update:open")?.at(-1)?.[0]).toBe(false);
     });
 
     it.each([
@@ -334,6 +432,8 @@ describe("AgentPrincipalDetailDrawer", () => {
         expect(maybe('[data-testid="apd-model-save"]')).toBeNull();
         expect(maybe('[data-testid="apd-delegation-save"]')).toBeNull();
         expect(maybe('[data-testid="apd-memory-save"]')).toBeNull();
+        // 记忆组没有保存键，只读必须靠在控件自身 disabled 上（不是靠隐藏假装只读）。
+        expect(q<HTMLButtonElement>('[data-testid="apd-memory-switch"]').disabled).toBe(true);
         expect(maybe('[data-testid="apd-hooks-save"]')).toBeNull();
         // 三段选择器全部 disabled（不是靠隐藏假装只读）。
         expect(wrapper.findAllComponents(Select)[0]!.props("disabled")).toBe(true);
