@@ -172,9 +172,42 @@ export default defineConfig(({ mode }) => {
                 "@": path.resolve(__dirname, "src"),
             },
         },
+        // task-159 O3 —— 卡面写「收窄 include」，实测证伪：本文件此前**没有 optimizeDeps 段**，
+        // 依赖全靠 Vite 启动扫描自动发现，没有可收窄的清单。真正可量的缺陷是 katex 走**裸文件**：
+        // `src/main.ts:42-53` 用 `import("markstream-vue/workers/katexRenderer.worker?worker")` 起
+        // KaTeX worker，该 worker 内部 `import e from "katex"` + `import "katex/dist/contrib/mhchem"`；
+        // 扫描器不进 worker 入口，于是这两个裸依赖没被预构建，浏览器每次首屏直取
+        // `/node_modules/.pnpm/katex@0.18.10/.../katex.mjs`（实测 3,531,091B）与
+        // `mhchem.mjs`（516,542B）= 4.05MB 未打包、未缓存复用。这里**加**两条 include，
+        // 让它们进 `.vite/deps`（单文件、immutable 缓存）。被否决候选：`optimizeDeps.entries`
+        // 把 worker 文件加进扫描面 —— 多一个入口去扫 worker 的整个依赖图，代价高于点名两个依赖。
+        optimizeDeps: {
+            include: ["katex", "katex/dist/contrib/mhchem"],
+        },
+        // task-159 O2 —— dev 首屏预变换。Vite 8 的 `server.warmup.clientFiles` 在
+        // `dist/node/chunks/node.js:37725` 被搬进 `environments.client.dev.warmup`，服务器启动时由
+        // `warmupFiles`（同文件 :36989）逐条 `warmupRequest`；而 `transformRequest`（:20231）会对
+        // **每个静态 import** 递归预变换（`imp.d === -1 && dev.preTransformRequests`），动态 import 不爬。
+        // 所以这里只列六条主路由的**入口模块**（`src/router/index.ts` 里那些 `() => import(...)` 的目标），
+        // 让浏览器首次请求某路由时命中已变换缓存，而不是把 483 个 /src 模块全列一遍。
+        // 判据：只影响 dev server，不改 `build` 语义（生产产物字节完全不变）。
         server: {
             port: uiPort,
             strictPort: false,
+            warmup: {
+                clientFiles: [
+                    "./src/main.ts",
+                    "./src/App.vue",
+                    "./src/layouts/AppLayout.vue",
+                    "./src/components/WorkspacePicker.vue",
+                    "./src/features/workspace/pages/WorkspaceShell.vue",
+                    "./src/features/workspace/pages/WorkspaceView.vue",
+                    "./src/views/chat/StandaloneChatView.vue",
+                    "./src/features/org-members/pages/OrgMembersView.vue",
+                    "./src/layouts/SettingsLayout.vue",
+                    "./src/views/settings/RolesView.vue",
+                ],
+            },
             fs: {
                 // pdfjs-dist is hoisted to the workspace root by pnpm.
                 allow: [path.resolve(__dirname, "../.."), path.resolve(__dirname, "../../..")],

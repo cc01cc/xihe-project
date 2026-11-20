@@ -419,6 +419,39 @@ describe("AppLayout pending approval indicators", () => {
         wrapper.unmount();
     });
 
+    /**
+     * task-159（G2 残余，DSD-1516）：真栈 dev 首屏实测 `GET /approvals/pending` 出现两条
+     * （t=251 与 t=255，间隔 4ms）—— 第一条来自 `onMounted` 的无条件 `startPendingPolling()`，
+     * 那时 token 已在（`isAuthenticated` 只看 token，`stores/auth.ts:61`）、tab 工作区上下文也已从
+     * localStorage 恢复，但 `/auth/me` 还没回 ⇒ `auth.user` 仍是 null。等 `/auth/me` 落地，
+     * `watch(() => [auth.user?.id, auth.currentWorkspaceId])` 因 userId 变化再走一次
+     * `agentStore.reset()` + 重发，第一条因此被 abort。本用例钉住「身份未解析时挂载不发首拉，
+     * 由 watcher 补一次且不被 abort」。把 `AppLayout.vue` 的那行守卫改回无条件调用，本用例即红
+     * （实测读数见证据 README「会咬住」一节）。
+     */
+    it("waits for the resolved identity before the first pending-approval fetch on mount", async () => {
+        const auth = useAuthStore();
+        const signals: AbortSignal[] = [];
+        let release: (value: never[]) => void = () => undefined;
+        vi.mocked(api.getPendingApprovals).mockImplementation((signal?: AbortSignal) => {
+            if (signal) signals.push(signal);
+            return new Promise((resolve) => (release = resolve));
+        });
+        // 挂载形态：token 与工作区上下文都在，只有 user 还没回（`/auth/me` 在途）。
+        auth.$patch({ user: null });
+        const wrapper = await mountLayout(createTestRouter());
+        expect(api.getPendingApprovals).not.toHaveBeenCalled();
+
+        auth.$patch({ user: { id: "user-1", email: "test@xihe.local" } });
+        await flushPromises();
+
+        expect(api.getPendingApprovals).toHaveBeenCalledTimes(1);
+        expect(signals.map((signal) => signal.aborted)).toEqual([false]);
+        release([]);
+        await flushPromises();
+        wrapper.unmount();
+    });
+
     it("refreshes once on mount and once per conservative poll interval", async () => {
         vi.useFakeTimers();
         try {

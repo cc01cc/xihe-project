@@ -366,7 +366,12 @@ onMounted(() => {
     void auth.hydrateWorkspace();
     // PLAN-0660 T5.6：已登录才开流（未登录的壳不该对着空 token 起一轮退避重连）。
     if (auth.isAuthenticated) userChannel.start();
-    startPendingPolling();
+    // task-159（G2 残余，DSD-1516）：`isAuthenticated` 只看 token（`stores/auth.ts:61`），所以
+    // 「token 已在、`/auth/me` 未回、user 还是 null」这一拍里，无条件首拉发出的那条
+    // `GET /approvals/pending` 必然在 user 到位那一拍被上面合并 watcher 的 `agentStore.reset()`
+    // abort 掉再重发（真栈实测 t=251 / t=255 两条，间隔 4ms）。身份未知时**只等不拉**：
+    // watcher 会在 `/auth/me` 落地那一补上首拉与定时器，语义（表生命周期跟工作区上下文）不变。
+    if (auth.user?.id) startPendingPolling();
 });
 
 onUnmounted(() => {
