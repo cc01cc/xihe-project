@@ -23,6 +23,51 @@ updated: 2026-11-06
 4. **中英成对**：中文行话与英文正名成对出现一次（见 §2），避免只写「收口」不说明 seam。
 5. 新 PLAN README 建议加一行：`> 术语按 DEV-032。`
 
+## 0.1 两条相反路径（分义 / 归一）
+
+本册要解决的是两类相反问题：**一词多义**要把一个裸词拆成多个正名（§1），**多词一义**要把多个别名收敛到一个正名（§2）。两条路径的箭头方向正好相反，混用就会把「拆」写成「并」。
+
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>DEV-032：一词多义分义 / 多词一义归一</title>
+  <defs><marker id="ar" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#4f46e5"/></marker></defs>
+  <rect x="16" y="36" width="310" height="248" rx="6" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="32" y="58" font-size="12" fill="#374151">§1 分义正名</text>
+  <rect x="121" y="72" width="100" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="171" y="88" font-size="11" fill="#374151" text-anchor="middle">resume</text>
+  <path d="M171,96 L108,116" stroke="#4f46e5" marker-end="url(#ar)"/><path d="M171,96 L234,116" stroke="#4f46e5" marker-end="url(#ar)"/>
+  <rect x="48" y="116" width="120" height="24" rx="4" fill="#ffffff" stroke="#4f46e5"/>
+  <text x="108" y="132" font-size="11" fill="#312e81" text-anchor="middle">run resume</text>
+  <rect x="174" y="116" width="120" height="24" rx="4" fill="#ffffff" stroke="#4f46e5"/>
+  <text x="234" y="132" font-size="11" fill="#312e81" text-anchor="middle">unpause</text>
+  <rect x="121" y="164" width="100" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="171" y="180" font-size="11" fill="#374151" text-anchor="middle">scope</text>
+  <path d="M171,188 L108,208" stroke="#4f46e5" marker-end="url(#ar)"/><path d="M171,188 L234,208" stroke="#4f46e5" marker-end="url(#ar)"/>
+  <rect x="48" y="208" width="120" height="24" rx="4" fill="#ffffff" stroke="#4f46e5"/>
+  <text x="108" y="224" font-size="11" fill="#312e81" text-anchor="middle">job scope</text>
+  <rect x="174" y="208" width="120" height="24" rx="4" fill="#ffffff" stroke="#4f46e5"/>
+  <text x="234" y="224" font-size="11" fill="#312e81" text-anchor="middle">policy scope</text>
+  <text x="32" y="266" font-size="10" fill="#9ca3af">裸词不得单用</text>
+  <rect x="334" y="36" width="310" height="248" rx="6" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="350" y="58" font-size="12" fill="#374151">§2 正名与别名</text>
+  <rect x="342" y="72" width="110" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="397" y="88" font-size="11" fill="#374151" text-anchor="middle">物化</text>
+  <rect x="464" y="72" width="110" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="519" y="88" font-size="11" fill="#374151" text-anchor="middle">provision</text>
+  <path d="M397,96 L452,116" stroke="#4f46e5" marker-end="url(#ar)"/><path d="M519,96 L452,116" stroke="#4f46e5" marker-end="url(#ar)"/>
+  <rect x="392" y="116" width="120" height="24" rx="4" fill="#ffffff" stroke="#4f46e5"/>
+  <text x="452" y="132" font-size="11" fill="#312e81" text-anchor="middle">ensure</text>
+  <rect x="342" y="164" width="110" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="397" y="180" font-size="11" fill="#374151" text-anchor="middle">遮蔽</text>
+  <rect x="464" y="164" width="110" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="519" y="180" font-size="11" fill="#374151" text-anchor="middle">工具结果截断</text>
+  <path d="M397,188 L452,208" stroke="#4f46e5" marker-end="url(#ar)"/><path d="M519,188 L452,208" stroke="#4f46e5" marker-end="url(#ar)"/>
+  <rect x="392" y="208" width="120" height="24" rx="4" fill="#ffffff" stroke="#4f46e5"/>
+  <text x="452" y="224" font-size="11" fill="#312e81" text-anchor="middle">prune</text>
+  <text x="350" y="266" font-size="10" fill="#9ca3af">别名只括注一次</text>
+</svg>
+
+读法：左栏裸词在下游拆成两个正名（§1 的「冲突裸词 → 正名」）；右栏多个别名在上游并到一个正名（§2 的「别名 → 正名」）。强调色只画箭头，方框一律中性灰。
+
 ## 1. 一词多义 → 分义正名
 
 | 冲突裸词 | 义项 | **正名（必须用这个）** | 禁止写法 | 备注 |

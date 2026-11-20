@@ -15,6 +15,42 @@ updated: 2026-10-25
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
+## 已知问题状态总览（2026-11-20）
+
+本节把本册 31 个小节按**册内自有状态词**归入四档，用于快速判断「哪些还没处置」。判据：标题与正文同权，取该节范围内状态词**首次出现位置最早**的一档（由此每个小节只落一档，不再出现「同时属两档」的歧义）。「环境 / Docker」与「Code」两个分组节各含多条独立条目，PLAN-0345 与 PLAN-0342 两节正文只述行为变化与已修项、无档位词 —— 这 4 节**不计入四档**。**不引入 P0–P3 之类外部等级**：本册从未把 P0–P3 用作**严重度**分级（`:54` / `:229` 的 P2/P3 是 PLAN 阶段名，`:318` 的 P1-10 是历史债务号，均非严重度），硬套即造词。
+
+<svg viewBox="0 0 660 300" width="100%" role="img">
+  <title>DEV-018 已知问题：四级状态档位与处置路径</title>
+  <text x="48" y="30" font-size="10" fill="#9ca3af">状态档位</text>
+  <text x="612" y="30" font-size="10" fill="#9ca3af" text-anchor="end">节数</text>
+  <rect x="32" y="40" width="596" height="40" rx="5" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="48" y="66" font-size="13" fill="#374151">未修复</text>
+  <text x="140" y="66" font-size="10" fill="#6b7280">未立项 · 残项</text>
+  <text x="612" y="66" font-size="13" fill="#374151" text-anchor="end">8 节</text>
+  <polygon points="318,84 324,84 324,92 328,92 321,98 314,92 318,92" fill="#4f46e5"/>
+  <text x="340" y="94" font-size="10" fill="#4f46e5">开始处置</text>
+  <rect x="32" y="100" width="596" height="40" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="48" y="126" font-size="13" fill="#374151">部分收口</text>
+  <text x="140" y="126" font-size="10" fill="#6b7280">余项待裁</text>
+  <text x="612" y="126" font-size="13" fill="#374151" text-anchor="end">1 节</text>
+  <polygon points="318,144 324,144 324,152 328,152 321,158 314,152 318,152" fill="#4f46e5"/>
+  <text x="340" y="154" font-size="10" fill="#4f46e5">余项收口</text>
+  <rect x="32" y="160" width="596" height="40" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
+  <text x="48" y="186" font-size="13" fill="#374151">已修复</text>
+  <text x="140" y="186" font-size="10" fill="#6b7280">已兜底 · 收敛</text>
+  <text x="612" y="186" font-size="13" fill="#374151" text-anchor="end">17 节</text>
+  <polygon points="318,204 324,204 324,212 328,212 321,218 314,212 318,212" fill="#4f46e5"/>
+  <text x="340" y="214" font-size="10" fill="#4f46e5">结论归档</text>
+  <rect x="32" y="220" width="596" height="40" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="48" y="246" font-size="13" fill="#374151">供回溯</text>
+  <text x="140" y="246" font-size="10" fill="#6b7280">已修复 · 已证伪</text>
+  <text x="612" y="246" font-size="13" fill="#374151" text-anchor="end">1 节</text>
+  <text x="48" y="278" font-size="10" fill="#9ca3af">余 4 节不归档</text>
+  <text x="48" y="294" font-size="10" fill="#9ca3af">2 分组 + 2 无档位</text>
+</svg>
+
+复算方式：按上述判据逐节扫标题与正文的状态词并取最早一档（四档 8 + 1 + 17 + 1 = 27 节，加不归档的 2 分组节与 2 无状态词节，合计 31 节）。
+
 ## PLAN-0653 XH checkpoint 自研存储（BL-207）— P3 后状态与已知限制（2026-11-04）
 
 - **现状**：P2 已合入（store v1 + 双写 + self 读路径 + GC 分层锁 + 回切演练）；P3 起 **self 模式 store 为读写主路径**，git shadow 降级为 best-effort 备份（D53-37）；安装版默认仍 `git`。capture 性能取舍已裁定（D53-36 案 A：10k 档 capture 慢于 git 接受，不优化）。
