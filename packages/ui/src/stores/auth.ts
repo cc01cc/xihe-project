@@ -537,7 +537,7 @@ export const useAuthStore = defineStore("auth", () => {
                 workspace.value = null;
                 return;
             }
-            const current = await api.getWorkspace(tabWorkspaceId);
+            const current = await loadWorkspaceOnce(tabWorkspaceId);
             // task-601：**await 之后要复核 tab 上下文**。进入 ws-less（独立会话）时
             // `enterWorkspaceless()` 会把 ref 与 sessionStorage 两份一起清，但本函数在 await 前
             // 就捕获了 `tabWorkspaceId`；旧写法直接把结果写回去 ⇒ 已清空的上下文被「复活」，
@@ -557,6 +557,28 @@ export const useAuthStore = defineStore("auth", () => {
     }
 
     /**
+     * task-158：首屏同一个工作区的 `GET /workspaces/:id` 会在同一拍里发两次 ——
+     * `AppLayout.onMounted` 的 `hydrateWorkspace()` 与 `WorkspaceView.selectSessionForWorkspace`
+     * 的 `selectWorkspace()`（实测 t=1170 / t=1171，两份 463 字节同载荷）。这里只做**在途合并**、
+     * 不做结果缓存：同 id 的并发调用共享同一个 Promise，settled 即删除。因此
+     * `refreshWorkspace()` 的「强制重读」语义不变（重读时没有同 id 在途 ⇒ 真发一次），
+     * task-601 的「await 之后复核发起者」与 `selectSequence` 取号也由各调用方原样保留。
+     */
+    const workspaceLoads = new Map<string, Promise<ApiWorkspace>>();
+
+    function loadWorkspaceOnce(workspaceId: string): Promise<ApiWorkspace> {
+        const inFlight = workspaceLoads.get(workspaceId);
+        if (inFlight) return inFlight;
+        const request = api.getWorkspace(workspaceId);
+        workspaceLoads.set(workspaceId, request);
+        const forget = () => {
+            if (workspaceLoads.get(workspaceId) === request) workspaceLoads.delete(workspaceId);
+        };
+        request.then(forget, forget);
+        return request;
+    }
+
+    /**
      * PLAN-0641 M2 T3.1: force a workspace re-read after a mutation that changes
      * the root projection (declare/undeclare). `hydrateWorkspace` deliberately
      * short-circuits on a loaded workspace, so the refresh needs its own entry.
@@ -565,7 +587,7 @@ export const useAuthStore = defineStore("auth", () => {
         const tabWorkspaceId = readTabWorkspaceId() ?? workspace.value?.id ?? null;
         if (!token.value || !tabWorkspaceId) return;
         try {
-            const current = await api.getWorkspace(tabWorkspaceId);
+            const current = await loadWorkspaceOnce(tabWorkspaceId);
             // task-601：同 hydrateWorkspace —— await 期间上下文可能已被清空（进入 ws-less），
             // 写回会把旧身份复活，因此只有仍是发起者时才落地。
             if (readTabWorkspaceId() !== tabWorkspaceId) return;
@@ -588,7 +610,7 @@ export const useAuthStore = defineStore("auth", () => {
         }
         const previousId = workspace.value?.id;
         try {
-            const selected = await api.getWorkspace(workspaceId);
+            const selected = await loadWorkspaceOnce(workspaceId);
             if (sequence !== selectSequence) {
                 // A newer switch won; never let a late response overwrite it.
                 return selected;

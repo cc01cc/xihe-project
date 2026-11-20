@@ -1345,6 +1345,38 @@ describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => 
         }
     });
 });
+
+/**
+ * task-158：真栈首屏实测 `GET /api/v1/sessions/:id/messages?branchId=…&limit=50` 连发两条
+ * （t=1453 / t=1455，同参数）。第一条来自 `watch(selectedBranchId)`（分支解析写回后触发），
+ * 第二条来自 `watch(() => props.sessionId, …, { immediate: true })` 的 await 续体。
+ * 修法是在「本会话正在解析分支」的窗口内让分支 watcher 让路，由首屏那一次自己发请求。
+ * 该窗口判据（`branchesResolvingForSession`）删掉后本用例即红 —— 见证据 README §回归断言。
+ */
+describe("ChatPanel first-screen message history (task-158)", () => {
+    it("requests the first message page once while branches resolve", async () => {
+        // 首屏请求故意挂在途：重复请求的真实形态是「两条同时在飞」，
+        // 若让第一条先落地再断言，Vue 的 watcher 冲刷时机差异会掩盖问题。
+        let releaseFirstPage: (messages: never[]) => void = () => undefined;
+        vi.mocked(api.getMessages).mockImplementation(
+            () => new Promise((resolve) => (releaseFirstPage = resolve)),
+        );
+
+        const wrapper = mountPanel();
+        await nextTick();
+        await flushPromises();
+
+        expect(vi.mocked(api.getSessionBranches)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(api.getMessages)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(api.getMessages).mock.calls[0]?.[1]).toBe(ROOT_BRANCH_ID);
+
+        releaseFirstPage([]);
+        await flushPromises();
+        expect(vi.mocked(api.getMessages)).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+});
+
 describe("Problem detail surfacing (BL-288)", () => {
     it("shows the 413 PAGINATION_REQUIRED detail instead of the generic load copy", async () => {
         vi.mocked(toast.error).mockClear();

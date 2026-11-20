@@ -212,6 +212,31 @@ describe("useAuthStore", () => {
         expect(localStorage.getItem("xihe-workspace")).toBeNull();
     });
 
+    /**
+     * task-158：真栈首屏实测 `GET /api/v1/workspaces/:id` 在同一毫秒发两次 ——
+     * `AppLayout.onMounted` 的 `hydrateWorkspace()`（t=1170）与 `WorkspaceView` 里
+     * `selectSessionForWorkspace` 的 `selectWorkspace()`（t=1171），两份 463 字节同载荷。
+     * 这里钉住「同 id 并发只发一次」：把 `stores/auth.ts` 的 `loadWorkspaceOnce` 换回直连
+     * `api.getWorkspace` 本用例即红（实测见证据 README §回归断言）。
+     */
+    it("merges concurrent reads of the same tab workspace into one request", async () => {
+        const { api } = await import("../../composables/api");
+        const { writeTabWorkspaceId } = await import("../../lib/workspaceContext");
+        const store = useAuthStore();
+        store.$patch({ token: "token", user: mockUser });
+        // tab 上下文必须在 store 建立之后写：store 初始化时会读一次 tab，命中就短路不发请求。
+        writeTabWorkspaceId(WORKSPACE_ID);
+        // 本文件的 beforeEach 不重置 api mock，计数必须自己清一次再断言。
+        vi.mocked(api.getWorkspace).mockClear().mockResolvedValue({ id: WORKSPACE_ID, name: "A" });
+        const before = vi.mocked(api.getWorkspace).mock.calls.length;
+
+        await Promise.all([store.hydrateWorkspace(), store.selectWorkspace(WORKSPACE_ID)]);
+
+        expect(vi.mocked(api.getWorkspace).mock.calls.length).toBe(before + 1);
+        expect(api.getWorkspace).toHaveBeenCalledWith(WORKSPACE_ID);
+        expect(store.workspace?.id).toBe(WORKSPACE_ID);
+    });
+
     it("selectWorkspace writes the tab key and ignores a stale response", async () => {
         const { api } = await import("../../composables/api");
         const wsA = { id: WORKSPACE_ID, name: "A" };

@@ -291,25 +291,28 @@ watch(
     },
 );
 
-// task-601：工作区上下文一变为空（进入 ws-less / 登出）就停表 + 取消在途；再拿到上下文时重起。
+/**
+ * task-601：工作区上下文一变为空（进入 ws-less / 登出）就停表 + 取消在途；再拿到上下文时重起。
+ *
+ * <p>task-158：这里原本是**两个** watcher —— 一个只跟 `currentWorkspaceId` 管轮询表（内部
+ * `startPendingPolling()` 会立刻首拉），另一个跟 `[user.id, currentWorkspaceId]` 做
+ * `reset()` + 首拉。登录/hydration 那一拍两个依赖同时变化 ⇒ 两边都动作：前者先发出
+ * `GET /approvals/pending`，后者立刻 `agentStore.reset()` 把它 abort 掉再发一条（真栈实测
+ * t=1269 aborted、t=1274 200）。合并成单 watcher 后一次上下文变化只走一条路径：`reset()`
+ * 仍在首拉之前 ⇒ 取消在途与「换身份不复用旧投影」两条语义不变；ws-less/登出分支同样照旧
+ * 停表 + 清投影。</p>
+ */
 watch(
-    () => auth.currentWorkspaceId,
-    (workspaceId) => {
+    () => [auth.user?.id, auth.currentWorkspaceId] as const,
+    ([userId, workspaceId], previous) => {
+        if (userId === previous?.[0] && workspaceId === previous?.[1]) return;
+        agentStore.reset();
         if (!workspaceId) {
             stopPendingPolling();
             agentStore.clearPendingApprovals();
             return;
         }
         startPendingPolling();
-    },
-);
-
-watch(
-    () => [auth.user?.id, auth.currentWorkspaceId] as const,
-    ([userId, workspaceId], previous) => {
-        if (userId === previous?.[0] && workspaceId === previous?.[1]) return;
-        agentStore.reset();
-        if (userId && workspaceId) refreshPendingApprovals();
     },
 );
 

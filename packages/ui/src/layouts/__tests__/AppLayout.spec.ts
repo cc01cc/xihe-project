@@ -380,6 +380,45 @@ describe("AppLayout pending approval indicators", () => {
         expect(wrapper.find('[data-testid="global-pending-approval-banner"]').exists()).toBe(false);
     });
 
+    /**
+     * task-158：真栈实测首屏 `GET /api/v1/approvals/pending` 两条 —— 第一条在 4 ms 后被 abort、
+     * 第二条 1 453 ms 才回。发起方是 `AppLayout.vue` 里同拍互触发两个 watcher：
+     * `watch(() => auth.currentWorkspaceId)` 先 `startPendingPolling()` 发第一条，
+     * 紧接 `watch(() => [auth.user?.id, auth.currentWorkspaceId])` 的 `agentStore.reset()`
+     * 把它 abort 掉再发第二条（abort 栈 `agent.ts:331` ← `AppLayout.vue:238`，实测 t=1269/1274）。
+     * 两个 watcher 合并成一个之后，本用例钉住「同拍只发一次、且没有请求被半路 abort」。
+     * 把两个 watcher 拆回旧写法本用例即红（实测见证据 README §回归断言）。
+     */
+    it("requests pending approvals once and never aborts it when the context arrives after mount", async () => {
+        const auth = useAuthStore();
+        // 真栈形态：AppLayout 先挂上，user 与 workspace 在同一拍里才到位（t=1269 的那条
+        // `GET /approvals/pending` 就是这一拍发出的）。请求故意挂在途 —— 重复请求的真实形态是
+        // 「第一条被 abort、第二条重发」，请求若先落地就看不到 abort。
+        const signals: AbortSignal[] = [];
+        let release: (value: never[]) => void = () => undefined;
+        vi.mocked(api.getPendingApprovals).mockImplementation((signal?: AbortSignal) => {
+            if (signal) signals.push(signal);
+            return new Promise((resolve) => (release = resolve));
+        });
+        auth.$patch({ token: null, user: null, workspace: null });
+        const wrapper = await mountLayout(createTestRouter());
+        expect(api.getPendingApprovals).not.toHaveBeenCalled();
+
+        auth.$patch({
+            token: "token",
+            user: { id: "user-1", email: "test@xihe.local" },
+            workspace: { id: "workspace-1", name: "Workspace" },
+        });
+        await flushPromises();
+
+        // 旧写法（两个 watcher 同拍各动作一次）：先发一条、再 `agentStore.reset()` 把它 abort 掉。
+        expect(api.getPendingApprovals).toHaveBeenCalledTimes(1);
+        expect(signals.map((signal) => signal.aborted)).toEqual([false]);
+        release([]);
+        await flushPromises();
+        wrapper.unmount();
+    });
+
     it("refreshes once on mount and once per conservative poll interval", async () => {
         vi.useFakeTimers();
         try {
