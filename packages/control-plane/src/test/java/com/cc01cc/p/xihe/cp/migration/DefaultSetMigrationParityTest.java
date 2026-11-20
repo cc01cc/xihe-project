@@ -93,8 +93,17 @@ class DefaultSetMigrationParityTest {
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         table.put(SystemAccessRoleCatalog.AGENT_DELEGATOR, Set.of());
         // V127 / D-174: the agent default INSTANCE role (read/write/delete/exec/network, all `*`) —
-        // none of the governed atoms, so every governance cell is false.
+        // none of the governed atoms, so every governance cell is false. (DSD-1500/V179 dropped exec
+        // from its atoms; the governance cells were and stay false.)
         table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
+        // DSD-1500 (Q-93) R3 / V179: AGENT_READER mirrors WS_VIEWER (N7 only), AGENT_WORKER is
+        // read/write/delete only, WS_RUNNER is exec + N7. Reviewed here because the parity test's
+        // EXPECTED table is the hand-checked side that a new migration must match by name.
+        table.put(SystemAccessRoleCatalog.AGENT_READER, Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+        table.put(SystemAccessRoleCatalog.AGENT_WORKER, Set.of());
+        table.put(SystemAccessRoleCatalog.WS_RUNNER, Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         return table;
     }
 

@@ -46,6 +46,17 @@ public class SystemAccessRoleCatalog {
      */
     public static final UUID AGENT_USER_ID = UUID.fromString("00000000-0000-4000-8000-000000000008");
 
+    /**
+     * DSD-1500 (Q-93) R3 "A": three preset roles so an agent can work without executing. They are
+     * ordinary built-in roles with fixed ids (same id space as V87/V127), NOT a new binding tier:
+     * the scope of a role lives on the binding (see {@code AccessRole}), so the same role may be
+     * bound at instance scope (reach) and at workspace scope (cap reach) — exec needs both, because
+     * {@code GrantIntersectionEvaluator.allows} intersects every level of the principal path.
+     */
+    public static final UUID AGENT_READER_ID = UUID.fromString("00000000-0000-4000-8000-000000000009");
+    public static final UUID AGENT_WORKER_ID = UUID.fromString("00000000-0000-4000-8000-000000000010");
+    public static final UUID WS_RUNNER_ID = UUID.fromString("00000000-0000-4000-8000-000000000011");
+
     public static final String SUPER_ADMIN = "SUPER_ADMIN";
     public static final String ADMIN = "ADMIN";
     public static final String USER = "USER";
@@ -55,6 +66,23 @@ public class SystemAccessRoleCatalog {
     public static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
     /** D-174: agent default instance role (the base set; BL-312 removed CREATE_OWN_AGENT). */
     public static final String AGENT_USER = "AGENT_USER";
+
+    /**
+     * DSD-1500 (Q-93) R3: read-only agent preset — the agent counterpart of WS_VIEWER. Read plus the
+     * workspace runtime channel, nothing that writes.
+     */
+    public static final String AGENT_READER = "AGENT_READER";
+    /**
+     * DSD-1500 (Q-93) R3: read/write agent preset without exec — the "works without executing"
+     * middle ground the session-permission ladder needs (read-only and full are not enough).
+     */
+    public static final String AGENT_WORKER = "AGENT_WORKER";
+    /**
+     * DSD-1500 (Q-93) R2/R3: the workload preset that carries exec. After R2 exec left the agent
+     * defaults, so execution is now an explicit, per-principal act: bind WS_RUNNER at instance scope
+     * (reach) and let the workspace side grant exec as well (cap or workspace-scope binding).
+     */
+    public static final String WS_RUNNER = "WS_RUNNER";
 
     /** The three instance-level system roles, used to keep one tier binding per user. */
     public static final List<String> INSTANCE_TIER_ROLES = List.of(SUPER_ADMIN, ADMIN, USER);
@@ -100,6 +128,29 @@ public class SystemAccessRoleCatalog {
             // the established inheritance, see the USER_DEFAULT_ATOMS doc). WS_OWNER/WS_EDITOR
             // carry it in their own seeds below; WS_VIEWER stays out (read-only role, no board
             // writes). Never agent-forbidden: the board is a workspace-domain action.
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE));
+
+    /**
+     * DSD-1500 (Q-93) R2 "A": the agent default set is {@link #BASE_ATOMS} <b>minus exec</b>.
+     *
+     * <p>Why a separate list instead of deleting EXEC from {@code BASE_ATOMS}: BASE_ATOMS is the
+     * human registration base — {@link #USER} inherits it verbatim (and ADMIN/SUPER_ADMIN through
+     * USER). Human users keep exec; only the <i>agent</i> default loses it. Removing it from
+     * BASE_ATOMS would strip exec from every human account, which is a different (bigger) ruling
+     * nobody made.</p>
+     *
+     * <p>Why exec leaves the agent default at all: a fresh agent principal is bound to AGENT_USER
+     * (instance) + WS_EDITOR (workspace), and the runtime's default backend is the Windows host with
+     * "no sandbox, no policy" (packages/runtime/src/job_host_adapter.rs:1-5) — so "exec in the
+     * default set" equals "unbounded command execution on the host, by default". Execution is now
+     * an explicit act: bind {@link #WS_RUNNER} (per-principal, both levels — see the role seed).</p>
+     */
+    private static final List<AtomRef> AGENT_BASE_ATOMS = List.of(
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_WRITE),
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_NETWORK),
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE));
 
     /**
@@ -269,12 +320,14 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
                 new RoleSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
-                        "Workspace scope: read/write/delete/exec.",
+                        // DSD-1500 (Q-93) R2: exec left the editor default as well — the intersection
+                        // requires every level to hold an atom, so leaving exec here would keep the
+                        // whole default stack executable (see AGENT_BASE_ATOMS).
+                        "Workspace scope: read/write/delete.",
                         List.of(
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_WRITE),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
                                 // PLAN-0651 M2 T2.1: editors manage providers, runtime use and
                                 // workspace policy; skills stay owner-level and N10 stays unassigned.
                                 AtomRef.wildcard(
@@ -327,10 +380,36 @@ public class SystemAccessRoleCatalog {
                 // BL-312 (2026-11-09) removed that atom from the vocabulary entirely, so the two
                 // roles now differ only by the human MEMORY_WRITE_SELF atom.
                 // Migration V127 rebinds legacy agent seed bindings (stack-1 measured 40) to it.
+                // DSD-1500 (Q-93) R2: the agent default is now BASE_ATOMS minus exec. The seed keeps
+                // the historical name/id (V127 rebinding stays valid) — only its atom set narrows.
                 new RoleSeed(AGENT_USER_ID, AGENT_USER, "Agent User (default)",
-                        "Instance scope: read/write/delete/exec/network + PLUGIN_INVOKE — the "
-                                + "agent default base set (BL-312 removed CREATE_OWN_AGENT).",
-                        BASE_ATOMS));
+                        "Instance scope: read/write/delete/network + PLUGIN_INVOKE — the agent "
+                                + "default base set (BL-312 removed CREATE_OWN_AGENT; DSD-1500 removed "
+                                + "exec).",
+                        AGENT_BASE_ATOMS),
+                // DSD-1500 (Q-93) R3: three presets that make "work without executing" expressible
+                // without hand-assembling temp grants. All three are ordinary built-in roles: their
+                // atoms are workspace-domain (no instance capability), so binding decides reach.
+                new RoleSeed(AGENT_READER_ID, AGENT_READER, "Agent Reader",
+                        "Instance/workspace scope: read + workspace runtime — the read-only agent "
+                                + "preset (WS_VIEWER's counterpart for agent principals).",
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))),
+                new RoleSeed(AGENT_WORKER_ID, AGENT_WORKER, "Agent Worker",
+                        "Instance/workspace scope: read/write/delete — the read+write agent preset "
+                                + "with no exec (DSD-1500 R3).",
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_WRITE),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE))),
+                // Exec carrier: deliberately JUST exec + the runtime channel, so granting execution
+                // never silently brings workspace administration along. Bind it at instance scope for
+                // reach AND let the workspace side hold exec (cap snapshot or the same role at
+                // workspace scope) — GrantIntersectionEvaluator requires every level to match.
+                new RoleSeed(WS_RUNNER_ID, WS_RUNNER, "Workspace Runner",
+                        "Instance/workspace scope: exec + workspace runtime — the explicit execution "
+                                + "preset (DSD-1500 R2/R3). Never granted by default.",
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))));
     }
 
     private static List<AtomRef> superAdminAtoms() {

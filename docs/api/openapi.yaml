@@ -989,9 +989,12 @@ paths:
         is created** — reach is granted later through the existing bind surface. The durable audit
         records the atom that actually authorized the create (`detail.authorizationAction`).
 
-        `roleIds` defaults to the instance seed role `AGENT_USER` (the human USER registration
-        base set; the user-level creation atom `CREATE_OWN_AGENT` is part of that base set again
-        since PLAN-0750 M1 restored it with these semantics); every id is validated once before the
+        `roleIds` defaults to the instance seed role `AGENT_USER` (the agent registration base set:
+        read/write/delete/network/plugin_invoke/team_task_manage; the user-level creation atom
+        `CREATE_OWN_AGENT` is part of that base set again since PLAN-0750 M1 restored it with these
+        semantics; DSD-1500 R2 removed `exec` from it **and** from the default Workspace role
+        `WS_EDITOR`, so execution is only reachable by granting `WS_RUNNER` explicitly on both
+        scopes); every id is validated once before the
         row is written (unknown / agent-principal-forbidden / wider than the caller holds ⇒ 403
         `ROLE_NOT_GRANTABLE`; the grant-side subset guard answers 403 `PRIVILEGE_ESCALATION` and
         names the atoms). Resolves an optional template only from caller-readable config layers and

@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
@@ -86,10 +87,18 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // moves with the single source; the atom is seed data, not a role special case.
         // task-188 MVP⑤ (V172, 2026-11-18) added TEAM_TASK_MANAGE to BASE_ATOMS (design §3:
         // a teammate is an agent principal, so claiming/completing board tasks is its base
-        // capability), so AGENT_USER — whose seed IS BASE_ATOMS — went 6 -> 7.
-        assertEquals(7, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
-                "AGENT_USER seeds exactly the seven base atoms (V172 added TEAM_TASK_MANAGE:"
-                        + " 6 -> 7)");
+        // capability), so AGENT_USER went 6 -> 7.
+        // DSD-1500 (Q-93) R2 / V179 (2026-11-20) removed exec from the AGENT default stack: the
+        // agent seed is now BASE_ATOMS minus exec (SystemAccessRoleCatalog.AGENT_BASE_ATOMS), so
+        // AGENT_USER went 7 -> 6 while the human USER default is untouched. This is the assertion
+        // that makes "exec is back in the agent default" fail loudly instead of silently.
+        assertEquals(6, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
+                "AGENT_USER seeds exactly the six base atoms (V172 added TEAM_TASK_MANAGE: 6 -> 7;"
+                        + " DSD-1500/V179 removed exec: 7 -> 6)");
+        assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
+                        .filter(row -> ToolFaceRegistry.ACTION_EXEC.equals(row.getId().getActionClass()))
+                        .count(),
+                "DSD-1500 R2: the agent default INSTANCE role must not carry exec");
         assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
                         .filter(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())).count(),
                 "the agent-forbidden atom is never part of AGENT_USER");
@@ -168,6 +177,16 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // forward strip for exactly that atom — one atom per migration, the same shape as V131
         // (V156 is already applied elsewhere, so it is not edited).
         runMigration("V159__agent_principals_drop_personal_skills_atom.sql");
+        // The upgrade path continues past V159: DSD-1500 (Q-93) R2 / V179 strips exec from the
+        // agent default stack. V127's own seed row still carries exec (it *created* the AGENT_USER
+        // seed in 2026-11), so replaying V179 here is what a real legacy database goes through on
+        // its way to HEAD — without it this fixture would assert an atom set HEAD no longer seeds.
+        runMigration("V179__dsd1500_agent_exec_retirement_and_presets.sql");
+        assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
+                        .filter(row -> ToolFaceRegistry.ACTION_EXEC.equals(row.getId().getActionClass()))
+                        .count(),
+                "the replay of V179 leaves AGENT_USER without exec");
+
 
         assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemAccessRoleCatalog.AGENT_USER_ID),
                 "40 → 40: every legacy seed is rebound to AGENT_USER");
@@ -176,11 +195,11 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         assertEquals(0, forbiddenGrantCount(agentIds),
                 "the agent-forbidden grant is stripped");
         for (UUID agentId : agentIds) {
-            assertEquals(7, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
+            assertEquals(6, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                             + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                             + " AND source='role' AND scope_type='instance'", Integer.class,
-                    agentId.toString()), "each agent materializes exactly AGENT_USER's seven atoms"
-                    + " (V172 added TEAM_TASK_MANAGE to the base set: 6 -> 7)");
+                    agentId.toString()), "each agent materializes exactly AGENT_USER's six atoms"
+                    + " (V172 added TEAM_TASK_MANAGE: 6 -> 7; DSD-1500 R2/V179 removed exec: 7 -> 6)");
         }
         // BL-367 处置③: no upgraded agent may hold any AGENT_FORBIDDEN_ATOMS atom. This is the
         // structural guard against a future migration re-materializing SELF (or another forbidden atom).

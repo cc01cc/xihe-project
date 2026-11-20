@@ -74,6 +74,15 @@ class DefaultSetAtomMatrixTest {
         // V127 / D-174: the agent default INSTANCE role — the base set (BL-312 removed the former
         // CREATE_OWN_AGENT differentiator), so none of N1–N10 (all cells false).
         table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
+        // DSD-1500 (Q-93) R3: the three presets. AGENT_WORKER is read/write/delete only, so it holds
+        // none of N1–N10; AGENT_READER mirrors WS_VIEWER and WS_RUNNER is exec + the runtime channel,
+        // so both hold N7 (USE_WORKSPACE_RUNTIME) and nothing else. A cell flipping here means a preset
+        // silently gained a governance atom.
+        table.put(SystemAccessRoleCatalog.AGENT_READER, Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+        table.put(SystemAccessRoleCatalog.AGENT_WORKER, Set.of());
+        table.put(SystemAccessRoleCatalog.WS_RUNNER, Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         return table;
     }
 
