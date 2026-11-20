@@ -158,6 +158,40 @@ class TeamTaskServiceTest {
                 eq("team_task"), anyString(), anyString());
     }
 
+    // task-188 J1: the projection is built from the row the service just saved — no flush, no
+    // re-read — so the stamps must already be there when toWire() serializes them.
+    @Test
+    void createStampsBothTimestampsWithoutWaitingForAFlush() {
+        when(teamTasks.countByTeamRootSessionId(ROOT)).thenReturn(0L);
+
+        TeamTaskService.TeamTaskView view = service.create(TOOL, USER, WS, CHILD,
+                "stamp the create", null, null, null);
+
+        assertNotNull(view.createdAt(), "createdAt must be readable before any @PrePersist runs");
+        assertNotNull(view.updatedAt(), "updatedAt must be readable before any @PrePersist runs");
+        assertEquals(view.createdAt(), view.updatedAt(),
+                "a just-created row carries one instant on both stamps");
+    }
+
+    // task-188 J7: real service + real entity + real toWire — the wire row must keep the 15-key
+    // ui-1 ApiTeamTask contract and hand out RFC-3339 instants a client can parse.
+    @Test
+    void createWireRowKeepsTheFifteenFieldContractWithParsableTimestamps() {
+        when(teamTasks.countByTeamRootSessionId(ROOT)).thenReturn(0L);
+
+        TeamTaskService.TeamTaskView view = service.create(TOOL, USER, WS, CHILD,
+                "wire shape", "details", List.of(), List.of("src/x"));
+        java.util.Map<String, Object> wire = view.toWire();
+
+        assertEquals(java.util.Set.of("taskId", "teamRootSessionId", "taskNo", "revision",
+                "subject", "description", "status", "ready", "ownerSessionId", "ownerName",
+                "blockedBy", "writeScopeWarnings", "createdBySessionId", "createdAt", "updatedAt"),
+                wire.keySet(), "the ui-1 ApiTeamTask contract is 15 keys, no more and no less");
+        java.time.Instant createdAt = java.time.Instant.parse((String) wire.get("createdAt"));
+        java.time.Instant updatedAt = java.time.Instant.parse((String) wire.get("updatedAt"));
+        assertEquals(createdAt, updatedAt, "both stamps serialized from the same eager instant");
+    }
+
     @Test
     void createWithoutTheAtomIsDeniedAndAudited() {
         when(policy.allowsByGrant(any(), anyString(), isNull(), anyString(), anyString(),

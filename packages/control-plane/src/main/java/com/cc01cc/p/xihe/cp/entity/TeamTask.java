@@ -107,6 +107,14 @@ public class TeamTask {
         // Assigned eagerly (not only in @PrePersist) so callers outside a JPA persistence context —
         // unit tests, the service's audit line — see the real id immediately.
         row.id = UUID.randomUUID();
+        // task-188: the same reasoning covers the two stamps. TeamTaskService.create() projects its
+        // TeamTaskView from the row it just handed to save(), before any flush, so a @PrePersist-only
+        // stamp left createdAt/updatedAt null there and toWire() threw on the very create that made
+        // the row. Stamp eagerly; onCreate() keeps its null-tolerant fallback for rows built through
+        // other seams (and still refreshes updatedAt on insert).
+        Instant now = Instant.now();
+        row.createdAt = now;
+        row.updatedAt = now;
         return row;
     }
 
