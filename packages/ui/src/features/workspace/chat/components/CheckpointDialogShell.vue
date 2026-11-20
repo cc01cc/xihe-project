@@ -44,10 +44,10 @@ function handleOpenAutoFocus(event: Event) {
 <template>
     <Dialog :open="open" @update:open="open = $event">
         <DialogContent
+            width="form"
             aria-modal="true"
             v-if="!isMobileViewport"
             data-testid="checkpoint-dialog"
-            class="max-w-lg sm:max-w-lg"
             @open-auto-focus="handleOpenAutoFocus"
         >
             <DialogHeader>

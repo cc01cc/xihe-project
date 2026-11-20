@@ -344,11 +344,7 @@ onBeforeUnmount(reset);
 
 <template>
     <Dialog :open="props.open" @update:open="emit('update:open', $event)">
-        <DialogContent
-            class="sm:max-w-2xl"
-            data-testid="attachment-preview-dialog"
-            aria-modal="true"
-        >
+        <DialogContent width="workbench" data-testid="attachment-preview-dialog" aria-modal="true">
             <DialogHeader>
                 <DialogTitle class="truncate pr-6" :title="props.attachment.name">
                     {{ props.attachment.name }}

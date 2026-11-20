@@ -184,8 +184,9 @@ const rejectedRows = computed(() =>
         <!-- task-190：JSON 批面板实测 736px 超出 1280×720 视口 16px（臂 A 形态）。补 BaseModal 同款形态约束：
              max-h-[85vh] + overflow-y-auto（超长批可滚）。形态约束不等于可达性证明（task-173 裁定）。 -->
         <DialogContent
+            width="workbench"
             data-testid="skills-import-dialog"
-            class="max-h-[85vh] overflow-y-auto max-w-4xl sm:max-w-4xl"
+            class="max-h-[85vh] overflow-y-auto"
         >
             <DialogHeader>
                 <DialogTitle data-testid="skills-import-title">

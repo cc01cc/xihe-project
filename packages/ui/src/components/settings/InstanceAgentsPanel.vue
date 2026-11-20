@@ -625,7 +625,7 @@ async function confirmDelete(): Promise<void> {
             </Card>
 
             <Dialog :open="createOpen" @update:open="(open: boolean) => (createOpen = open)">
-                <DialogContent data-testid="instance-agents-create-dialog">
+                <DialogContent width="form" data-testid="instance-agents-create-dialog">
                     <DialogHeader>
                         <DialogTitle>{{
                             t("settings.instanceResources.agents.createTitle")
@@ -689,7 +689,7 @@ async function confirmDelete(): Promise<void> {
                 :open="editTarget !== null"
                 @update:open="(open: boolean) => !open && (editTarget = null)"
             >
-                <DialogContent data-testid="instance-agents-edit-dialog">
+                <DialogContent width="form" data-testid="instance-agents-edit-dialog">
                     <DialogHeader>
                         <DialogTitle>{{
                             t("settings.instanceResources.agents.editTitle")

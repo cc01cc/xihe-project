@@ -467,7 +467,7 @@ async function submitReveal(): Promise<void> {
             </Card>
 
             <Dialog :open="createOpen" @update:open="(open: boolean) => (createOpen = open)">
-                <DialogContent data-testid="instance-credentials-create-dialog">
+                <DialogContent width="form" data-testid="instance-credentials-create-dialog">
                     <DialogHeader>
                         <DialogTitle>
                             {{ t("settings.instanceResources.credentials.createTitle") }}
@@ -586,7 +586,7 @@ async function submitReveal(): Promise<void> {
                 :open="revealTarget !== null"
                 @update:open="(open: boolean) => !open && (revealTarget = null)"
             >
-                <DialogContent data-testid="instance-credential-reveal-dialog">
+                <DialogContent width="form" data-testid="instance-credential-reveal-dialog">
                     <DialogHeader>
                         <DialogTitle>
                             {{ t("settings.instanceResources.credentials.revealTitle") }}

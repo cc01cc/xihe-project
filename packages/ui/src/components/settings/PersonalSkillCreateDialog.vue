@@ -210,7 +210,7 @@ const draftErrorReason = computed(() =>
 
 <template>
     <Dialog :open="open" @update:open="(next: boolean) => emit('update:open', next)">
-        <DialogContent data-testid="personal-skill-create-dialog" class="max-w-2xl sm:max-w-2xl">
+        <DialogContent width="config" data-testid="personal-skill-create-dialog">
             <DialogHeader>
                 <DialogTitle data-testid="personal-skill-create-title">
                     {{ t("resources.skills.create.title") }}

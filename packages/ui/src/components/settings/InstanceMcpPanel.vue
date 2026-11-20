@@ -367,7 +367,7 @@ async function confirmDelete(): Promise<void> {
             </Card>
 
             <Dialog :open="createOpen" @update:open="(open: boolean) => (createOpen = open)">
-                <DialogContent data-testid="instance-mcp-create-dialog">
+                <DialogContent width="form" data-testid="instance-mcp-create-dialog">
                     <DialogHeader>
                         <DialogTitle>{{
                             t("settings.instanceResources.mcp.createTitle")

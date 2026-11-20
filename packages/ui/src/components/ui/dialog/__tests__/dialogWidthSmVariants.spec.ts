@@ -1,60 +1,56 @@
 /**
- * 机器判据：对话框宽度业务值必须能覆盖 vendor 默认值（`task-98`）。
+ * 机器判据：对话框宽度**只能来自档位表**（task-137；机制成因见 task-98 的注释与 evidence）。
  *
- * <p><b>机制（不是风格偏好）</b>：vendor `src/components/ui/dialog/DialogContent.vue` 的默认 class 里
- * 宽度是**带响应式变体**的 `sm:max-w-sm`（384px）；`src/components/ui/alert-dialog/AlertDialogContent.vue`
- * 同形（`data-[size=default]:sm:max-w-sm`）。宽度合并走 `src/lib/utils.ts` 的 `cn` = `twMerge(clsx(...))`，
- * 而 **twMerge 只在同一条变体通道里互相覆盖** —— 业务裸写 `max-w-2xl` 时两条不算冲突、都留在 class 上，
- * ≥640px 时 `sm:max-w-sm` 胜出 ⇒ 业务意图被静默压成 384px：内容按窄宽度 reflex 折行、高度翻倍、
- * 底部按钮掉出视口（`task-98` 的改前/改后读数在回执里，本注释不复制会随滚动容器变动的数值 —— D-1767）。
- * 只有同通道的 `sm:max-w-*` 才会把 `sm:max-w-sm` 换掉。</p>
+ * <p><b>为什么是「只能来自档位表」而不是「必须带 sm: 对家」</b>：task-98 只拦住了「裸 `max-w-*` 缺
+ * `sm:` 对家」这个形态，结果是 20 个调用点各自拼 `max-w-md sm:max-w-md` / `max-w-4xl sm:max-w-4xl`
+ * 四套刻度，宽度照样被 vendor 默认值（`sm:max-w-sm`=384px）语言化地压回窄档 —— 用户看到的就是
+ * 「弹窗都非常窄」（task-137 的全量盘点在 `internal/A03-xihe/evidence/2026-11-20-dialog-width-scale`）。
+ * 换成档位后，调用点只说**语义**：`<DialogContent width="config">`，class 里不再出现任何宽度 token；
+ * 宽度只有一处可改（`dialogWidths.ts`）。</p>
  *
- * <p><b>判据</b>：`<DialogContent>` / `<AlertDialogContent>` 的**静态** class 里出现裸 `max-w-*` 时，
- * 同一标签上必须同时有**至少一个** `sm:max-w-*`。</p>
- *
- * <p><b>为什么是「至少一个同通道」而不是「同值」</b>：`max-w-lg sm:max-w-2xl` 是合法的响应式意图
- * （窄屏 512 / ≥640 宽 672），twMerge 实测两条都保留。真正要防的是**完全没有 sm: 对家**这个状态，
- * 那才是 vendor 默认值取胜的唯一条件。同值写法（`max-w-2xl sm:max-w-2xl`）是当前主流形，不是判据要求。</p>
- *
- * <p><b>为什么要连「有 sm: 但对家更窄」一起判</b>：只判「没有 sm: 对家」时，写 `max-w-2xl sm:max-w-sm`
- * 就能让判据变绿而缺陷原样保留（`sm:max-w-sm` 正是 vendor 那个值）—— 那是「改断言让它绿」的同一个形态，
- * 不是修好。故：裸值 ≥384px 且同通道对家更窄 ⇒ 也红（裸值在 ≥640px 永远不生效 = 死值）。反向形态
- * （`max-w-xs sm:max-w-2xl`，窄屏小、宽屏大）不受影响；任意值 `max-w-[…]` 静态比不了，不判。</p>
- *
- * <p><b>没有豁免表</b>：`src/**` 全部 `.vue` 逐文件扫。唯一不进判定的路径是两个 vendor 原语目录
- * （`components/ui/dialog`、`components/ui/alert-dialog`）—— 那里是**判据的成因本身**（默认值就写在那儿），
- * 不是被判的调用方。除此之外不因「这个文件是别人的」「它历史上就写对了」而放行。</p>
- *
- * <p><b>判据不覆盖什么（写清而不是装作覆盖了）</b>：</p>
+ * <p><b>三条规则</b>：</p>
  * <ol>
- *   <li><b>动态 class</b>：`:class="cn(...)"` 里的宽度静态不可判 ⇒ 只计数、不判定。静态字符串形态
- *       （`class="…"`、`:class="'…'"`、无插值模板字面量）照判，堵掉「换个写法就绕过」。</li>
- *   <li><b>高度与可达性</b>：宽度对了不等于装得进视口 —— `RoleEditorDialog` 宽度修好后内容总量仍远超
- *       单屏（原子清单很长），所以它另加了 `max-h-[85vh] overflow-y-auto`（与 `WorkspaceCreateDialog`、
- *       `ScheduledTaskCreateDialog` 同形）。这一半只能靠浏览器读数验，静态扫描证明不了，本文件不假装能证。</li>
+ *   <li><b>硬判（红）</b>：宽度类元素（`<DialogContent>` / `<AlertDialogContent>` /
+ *       `<DialogScrollContent>`，含 kebab 拼法）的静态 class 里不得出现 `max-w-*` / `sm:max-w-*`
+ *       宽度 token（白名单只留真正的布局值：`max-w-full` / `max-w-none` / `max-w-[calc(100%-2rem)]`）。</li>
+ *   <li><b>硬判（红）</b>：`width` 属性若写成静态字符串，必须是档位表里的值（`confirm`/`form`/`config`/`workbench`）。</li>
+ *   <li><b>report-only（永不红）</b>：静态判不了的调用点（`:class` 动态拼宽度、`width` 是表达式）记为
+ *       「未归档」，只在测试输出里报警 —— 让新调用点漏登记时**看得见**，但不拿静态不可判当缺陷。
+ *       真正拦回归的是规则 1（宽度 token 一律不许出现），它可静态判、无豁免表。</li>
  * </ol>
+ *
+ * <p><b>没有豁免表</b>：`src/**` 全部 `.vue` 逐文件扫，唯一不进判定的路径是两个 vendor 原语目录
+ * （`components/ui/dialog`、`components/ui/alert-dialog`）—— 那里是档位表的落地实现，不是被判的调用方。
+ * Sheet 抽屉不在本判据范围（侧向语义归 task-135 域，本卡不动）。</p>
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+    DIALOG_WIDTH_TIERS,
+    DIALOG_WIDTH_TIER_PX,
+    isDialogWidthTier,
+    type DialogWidthTier,
+} from "../dialogWidths";
+
 const SRC = resolve(process.cwd(), "src");
 
-/**
- * 宽度默认值带响应式变体的两个 vendor 元素（机制入口）。
- * 同时登记 kebab-case 拼法：Vue 里 `<dialog-content>` 也能挂同一个组件，只认 PascalCase 会留一个
- * 「换个写法就绕过」的缺口。
- */
+/** 宽度类元素（含 kebab 拼法：Vue 里 `<dialog-content>` 挂的是同一个组件，只认 PascalCase 会留缺口）。 */
 const WIDTH_BEARING_ELEMENTS = [
     "DialogContent",
     "AlertDialogContent",
+    "DialogScrollContent",
     "dialog-content",
     "alert-dialog-content",
+    "dialog-scroll-content",
 ] as const;
 
-/** vendor 原语本体（判据的成因，不是判据对象）—— 除这两个目录外没有放行。 */
+/** vendor 原语本体（档位表的实现处，不是判据对象）。 */
 const PRIMITIVE_DIRS = ["components/ui/dialog", "components/ui/alert-dialog"] as const;
+
+/** 布局用的 max-w（不是"宽度档位"，不参与判定）。 */
+const ALLOWED_MAX_W = new Set(["max-w-full", "max-w-none", "max-w-[calc(100%-2rem)]"]);
 
 export interface Finding {
     file: string;
@@ -63,11 +59,21 @@ export interface Finding {
     detail: string;
 }
 
+/** 静态判不了的调用点：只报警，不判红。 */
+export interface Unarchived {
+    file: string;
+    line: number;
+    element: string;
+    reason: string;
+}
+
 export interface ScanReport {
     files: number;
     elements: number;
     dynamicElements: number;
+    explicitTiers: number;
     findings: Finding[];
+    unarchived: Unarchived[];
 }
 
 interface OpeningTag {
@@ -83,10 +89,7 @@ function vueFiles(dir: string): string[] {
     });
 }
 
-/**
- * 取开标签原文：从 `<Name` 起**按引号状态**扫到第一个不在引号内的 `>`。
- * 属性跨行（`class` 单独占一行）与属性值里含 `>` 都成立。
- */
+/** 取开标签原文：从 `<Name` 起按引号状态扫到第一个不在引号内的 `>`（属性跨行、值里含 `>` 都成立）。 */
 function openingTags(text: string, name: string): OpeningTag[] {
     const tags: OpeningTag[] = [];
     const needle = "<" + name;
@@ -99,8 +102,8 @@ function openingTags(text: string, name: string): OpeningTag[] {
             from = start + needle.length;
             continue;
         }
-        let quote: string | null = null,
-            end = -1;
+        let quote: string | null = null;
+        let end = -1;
         for (let i = start; i < text.length; i += 1) {
             const ch = text[i];
             if (quote) {
@@ -126,27 +129,24 @@ function openingTags(text: string, name: string): OpeningTag[] {
     return tags;
 }
 
-/**
- * 取标签上的**静态** class 值：`class="…"`，以及 `:class="'…'"` / `:class="`…`"`（无插值）。
- * 动态表达式（`cn(...)`、含插值的模板字面量）记为 `dynamic: true` ⇒ 由调用方只计数、不判定。
- */
-function staticClassValues(tag: string): { values: string[]; dynamic: boolean } {
+/** 标签上的静态 class 值（`class="…"`、`:class="'…'"`）；动态表达式只记 `dynamic`。 */
+function classValues(tag: string): { values: string[]; dynamic: boolean } {
     const values: string[] = [];
     let dynamic = false;
-    // 两种引号都认：oxfmt 不重写模板里的属性引号，只认双引号会留一个可绕过的缺口。
     for (const match of tag.matchAll(/(?<![:@\w-])class=(?:"([^"]*)"|'([^']*)')/g)) {
         values.push(match[1] ?? match[2] ?? "");
     }
     for (const match of tag.matchAll(/(?<![:@\w-]):class=(?:"([^"]*)"|'([^']*)')/g)) {
-        const raw = (match[1] ?? match[2] ?? "").trim();
-        const literal = stringLiteral(raw);
-        if (literal === null) dynamic = true;
-        else values.push(literal);
+        const literal = stringLiteral((match[1] ?? match[2] ?? "").trim());
+        if (literal === null) {
+            if (/max-w-/.test(match[1] ?? match[2] ?? "")) dynamic = true;
+            continue;
+        }
+        values.push(literal);
     }
     return { values, dynamic };
 }
 
-/** 只认无插值的静态字符串字面量（单引号 / 双引号换皮 / 反引号）；其余返回 null。 */
 function stringLiteral(raw: string): string | null {
     for (const quote of ["'", '"', "`"]) {
         if (raw.length < 2 || raw[0] !== quote || raw[raw.length - 1] !== quote) continue;
@@ -157,78 +157,73 @@ function stringLiteral(raw: string): string | null {
     return null;
 }
 
-/**
- * 容器刻度**从装好的 tailwindcss 的 `theme.css` 读**，不在本文件抄一张 px 表 —— 抄表会随升级静默过期
- * （D-1767）。这里只比较 **rem 数值**（同一条轴，root 字号影响被约掉），所以永远不需要 `16px` 这个常数。
- * 读不到 theme.css ⇒ 判据没有事实源，**直接抛**（不静默降级成「一律放行」）。
- */
-const CONTAINER_REM: Record<string, number> = (() => {
-    const themeCss = createRequire(import.meta.url).resolve("tailwindcss/theme.css");
-    const rem: Record<string, number> = {};
-    for (const match of readFileSync(themeCss, "utf8").matchAll(
-        /--container-([a-z0-9]+):\s*(\d+(?:\.\d+)?)rem;/g,
-    )) {
-        rem[match[1]] = Number(match[2]);
+/** `width` 属性的静态值；动态表达式返回 `{ dynamic: true }`。 */
+function widthAttr(tag: string): { value?: string; dynamic: boolean } {
+    const staticMatch = tag.match(/(?<![:@\w-])width=(?:"([^"]*)"|'([^']*)')/);
+    if (staticMatch)
+        return { value: (staticMatch[1] ?? staticMatch[2] ?? "").trim(), dynamic: false };
+    const boundMatch = tag.match(/(?<![:@\w-]):width=(?:"([^"]*)"|'([^']*)')/);
+    if (boundMatch) {
+        const literal = stringLiteral((boundMatch[1] ?? boundMatch[2] ?? "").trim());
+        return literal === null ? { dynamic: true } : { value: literal.trim(), dynamic: false };
     }
-    if (Object.keys(rem).length === 0)
-        throw new Error("tailwindcss/theme.css 里没读到 --container-* 刻度");
-    return rem;
-})();
-
-/** 命名刻度 token ⇒ rem；任意值（`max-w-[…]`）与 `full`/`none` 等未登记值返回 null（不判）。 */
-function tokenRem(token: string, prefix: string): number | null {
-    return CONTAINER_REM[token.slice(prefix.length)] ?? null;
+    return { dynamic: false };
 }
 
-export function widthFindingsForElement(
+export function checkElement(
     element: string,
-    classValues: string[],
+    tag: string,
     file: string,
     line: number,
-): Finding[] {
-    const tokens = classValues.flatMap((value) => value.split(/\s+/).filter(Boolean));
-    const bare = tokens.filter((token) => token.startsWith("max-w-"));
-    if (bare.length === 0) return [];
-    const smTokens = tokens.filter((token) => token.startsWith("sm:max-w-"));
-    if (smTokens.length === 0) {
-        return bare.map((token) => ({
+): { findings: Finding[]; unarchived: Unarchived[]; explicitTier: boolean } {
+    const findings: Finding[] = [];
+    const unarchived: Unarchived[] = [];
+    const { values, dynamic } = classValues(tag);
+    const tokens = values.flatMap((value) => value.split(/\s+/).filter(Boolean));
+    for (const token of tokens) {
+        if (ALLOWED_MAX_W.has(token)) continue;
+        if (!/^(?:sm:)?max-w-/.test(token)) continue;
+        findings.push({
             file,
             line,
             element,
             detail:
-                "裸 " +
                 token +
-                " 没有 sm: 对家 ⇒ vendor 的 sm:max-w-sm 在 ≥640px 胜出（宽度被压成 384px）",
-        }));
+                ' ⇒ 宽度不得来自调用点 class；改用档位 width="confirm|form|config|workbench"（dialogWidths.ts）',
+        });
     }
-    /**
-     * 有对家也不行的情况：对家比业务裸值**更窄** ⇒ 业务值在 ≥640px 被压成对家的宽度。
-     * 这只咬「业务想要更宽、却在 sm: 通道收窄」这一个形态（与上面那条同一后果），
-     * 不复述「同值/更宽」的合法响应式写法。任意值（`max-w-[…]`）不判 —— 静态比不了。
-     */
-    const narrowed: Finding[] = [];
-    for (const bareToken of bare) {
-        const bareRem = tokenRem(bareToken, "max-w-");
-        if (bareRem === null || bareRem <= CONTAINER_REM.sm) continue;
-        for (const smToken of smTokens) {
-            const smRem = tokenRem(smToken, "sm:max-w-");
-            if (smRem === null || smRem >= bareRem) continue;
-            narrowed.push({
-                file,
-                line,
-                element,
-                detail:
-                    "裸 " +
-                    bareToken +
-                    " 的 sm: 对家 " +
-                    smToken +
-                    " 更窄 ⇒ ≥640px 时业务值被压成 " +
-                    smRem +
-                    "rem（想「≥640 收窄」请写任意值或显式注明意图）",
-            });
+    const width = widthAttr(tag);
+    if (width.dynamic) {
+        unarchived.push({ file, line, element, reason: ":width 是表达式，静态不可判档位" });
+    } else if (width.value !== undefined) {
+        if (isDialogWidthTier(width.value)) {
+            return { findings, unarchived, explicitTier: true };
         }
+        // 静态写了非档位值：这属于"既非默认档又非档位表"⇒ report-only 报警（历史遗留不被本卡拦死）。
+        unarchived.push({
+            file,
+            line,
+            element,
+            reason:
+                'width="' +
+                width.value +
+                '" 不在档位表（' +
+                Object.keys(DIALOG_WIDTH_TIERS).join("/") +
+                "）",
+        });
+    } else if (dynamic) {
+        unarchived.push({
+            file,
+            line,
+            element,
+            reason: ":class 表达式里出现 max-w-*，静态不可判档位",
+        });
     }
-    return narrowed;
+    return {
+        findings,
+        unarchived,
+        explicitTier: width.value !== undefined && isDialogWidthTier(width.value),
+    };
 }
 
 export function scanSource(
@@ -237,28 +232,35 @@ export function scanSource(
 ): {
     elements: number;
     dynamicElements: number;
+    explicitTiers: number;
     findings: Finding[];
+    unarchived: Unarchived[];
 } {
     const findings: Finding[] = [];
-    let elements = 0,
-        dynamicElements = 0;
+    const unarchived: Unarchived[] = [];
+    let elements = 0;
+    let dynamicElements = 0;
+    let explicitTiers = 0;
     for (const element of WIDTH_BEARING_ELEMENTS) {
         for (const { tag, line } of openingTags(text, element)) {
             elements += 1;
-            const { values, dynamic } = staticClassValues(tag);
-            if (dynamic) dynamicElements += 1;
-            if (values.length === 0) continue;
-            findings.push(...widthFindingsForElement(element, values, file, line));
+            const result = checkElement(element, tag, file, line);
+            if (result.explicitTier) explicitTiers += 1;
+            if (classValues(tag).dynamic) dynamicElements += 1;
+            findings.push(...result.findings);
+            unarchived.push(...result.unarchived);
         }
     }
-    return { elements, dynamicElements, findings };
+    return { elements, dynamicElements, explicitTiers, findings, unarchived };
 }
 
 export function scanRepo(root = SRC): ScanReport {
     const findings: Finding[] = [];
-    let files = 0,
-        elements = 0,
-        dynamicElements = 0;
+    const unarchived: Unarchived[] = [];
+    let files = 0;
+    let elements = 0;
+    let dynamicElements = 0;
+    let explicitTiers = 0;
     for (const full of vueFiles(root)) {
         const rel = relative(root, full).replace(/\\/g, "/");
         if (PRIMITIVE_DIRS.some((dir) => rel === dir || rel.startsWith(dir + "/"))) continue;
@@ -266,96 +268,90 @@ export function scanRepo(root = SRC): ScanReport {
         const scanned = scanSource(readFileSync(full, "utf8"), "src/" + rel);
         elements += scanned.elements;
         dynamicElements += scanned.dynamicElements;
+        explicitTiers += scanned.explicitTiers;
         findings.push(...scanned.findings);
+        unarchived.push(...scanned.unarchived);
     }
-    return { files, elements, dynamicElements, findings };
+    return { files, elements, dynamicElements, explicitTiers, findings, unarchived };
 }
 
-describe("对话框宽度：业务 max-w-* 必须能在 sm: 通道覆盖 vendor 默认值（task-98）", () => {
-    it("判据本体：裸 max-w 缺对家或对家更窄 ⇒ red；成对 / 仅 sm: / 窄屏小宽屏大 ⇒ green", () => {
-        const bare = widthFindingsForElement("DialogContent", ["max-w-2xl"], "synthetic.vue", 10);
-        expect(bare).toHaveLength(1);
-        expect(bare[0].detail).toContain("max-w-2xl");
+function describeFinding(finding: Finding): string {
+    return finding.file + ":" + finding.line + " <" + finding.element + "> " + finding.detail;
+}
+
+describe("对话框宽度只能来自档位表（task-137，承接 task-98）", () => {
+    it("判据本体：class 里出现宽度 token ⇒ 红；width 档位 ⇒ 绿；非档位值 ⇒ report-only", () => {
+        const bare = checkElement(
+            "DialogContent",
+            '<DialogContent class="max-w-2xl sm:max-w-2xl">',
+            "synthetic.vue",
+            10,
+        );
+        expect(bare.findings).toHaveLength(2);
+        expect(bare.findings[0].detail).toContain("max-w-2xl");
+        expect(bare.findings[1].detail).toContain("sm:max-w-2xl");
+
+        const tier = checkElement(
+            "DialogContent",
+            '<DialogContent width="config">',
+            "synthetic.vue",
+            10,
+        );
+        expect(tier.findings).toEqual([]);
+        expect(tier.unarchived).toEqual([]);
+        expect(tier.explicitTier).toBe(true);
+
+        const unknownTier = checkElement(
+            "DialogContent",
+            '<DialogContent width="huge">',
+            "synthetic.vue",
+            10,
+        );
+        expect(unknownTier.findings).toEqual([]);
+        expect(unknownTier.explicitTier).toBe(false);
+        expect(unknownTier.unarchived[0].reason).toContain("不在档位表");
+
+        const dynamicWidth = checkElement(
+            "DialogContent",
+            '<DialogContent :width="props.width">',
+            "synthetic.vue",
+            10,
+        );
+        expect(dynamicWidth.findings).toEqual([]);
+        expect(dynamicWidth.unarchived[0].reason).toContain("表达式");
+
+        const dynamicClass = checkElement(
+            "DialogContent",
+            "<DialogContent :class=\"cn('max-w-2xl', props.class)\">",
+            "synthetic.vue",
+            10,
+        );
+        expect(dynamicClass.findings).toEqual([]);
+        expect(dynamicClass.unarchived[0].reason).toContain(":class 表达式");
+
+        // 布局用的 max-w 不参与判定（白名单）。
         expect(
-            widthFindingsForElement(
+            checkElement(
                 "DialogContent",
-                ["max-h-[85vh] overflow-y-auto max-w-2xl sm:max-w-2xl"],
+                '<DialogContent class="max-w-[calc(100%-2rem)] max-w-full">',
                 "synthetic.vue",
                 10,
-            ),
-        ).toEqual([]);
-        expect(
-            widthFindingsForElement("DialogContent", ["sm:max-w-md"], "synthetic.vue", 10),
-        ).toEqual([]);
-        expect(
-            widthFindingsForElement(
-                "DialogContent",
-                ["max-w-lg sm:max-w-2xl"],
-                "synthetic.vue",
-                10,
-            ),
-        ).toEqual([]);
-        expect(
-            widthFindingsForElement("AlertDialogContent", ["max-w-2xl"], "synthetic.vue", 10),
-        ).toHaveLength(1);
-        // 「只判没有对家」会被 `max-w-2xl sm:max-w-sm` 绕过（对家就是 vendor 值本身）⇒ 也必须红。
-        expect(
-            widthFindingsForElement(
-                "DialogContent",
-                ["max-w-2xl sm:max-w-sm"],
-                "synthetic.vue",
-                10,
-            ),
-        ).toHaveLength(1);
-        // 反向形态（窄屏小、宽屏大）是合法响应式意图，不得误伤。
-        expect(
-            widthFindingsForElement(
-                "DialogContent",
-                ["max-w-xs sm:max-w-2xl"],
-                "synthetic.vue",
-                10,
-            ),
-        ).toEqual([]);
-        // 任意值不判（静态比不了 px）。
-        expect(
-            widthFindingsForElement(
-                "DialogContent",
-                ["max-w-[42rem] sm:max-w-md"],
-                "synthetic.vue",
-                10,
-            ),
+            ).findings,
         ).toEqual([]);
     });
 
-    it("解析面：跨行标签与静态 :class 照判；动态 :class 只计数不判定；相似元素名不误命中", () => {
+    it("解析面：跨行标签、单引号、kebab 元素名照判；相似元素名不误命中", () => {
         const multiLine = [
             "<DialogContent",
-            '    class="max-w-lg"',
-            '    data-testid="synthetic-dialog"',
+            '    width="config"',
+            '    class="max-h-[85vh] overflow-y-auto"',
             ">",
         ].join("\n");
-        const multi = scanSource(multiLine, "synthetic.vue");
-        expect(multi.elements).toBe(1);
-        expect(multi.findings).toHaveLength(1);
-        expect(
-            scanSource(`<DialogContent :class="'max-w-xl'" />`, "synthetic.vue").findings,
-        ).toHaveLength(1);
-        const dynamic = scanSource(
-            `<DialogContent :class="cn('rounded-xl! top-1/3', props.class)" />`,
-            "synthetic.vue",
-        );
-        expect(dynamic.elements).toBe(1);
-        expect(dynamic.dynamicElements).toBe(1);
-        expect(dynamic.findings).toEqual([]);
-        const nested = scanSource(
-            "<DialogTrigger><DialogContent /></DialogTrigger>",
-            "synthetic.vue",
-        );
-        expect(nested.elements).toBe(1);
-        expect(nested.findings).toEqual([]);
-        const lookalike = scanSource('<DialogContentShell class="max-w-xl" />', "synthetic.vue");
-        expect(lookalike.elements).toBe(0);
-        // 「换个写法」不得绕过：kebab 元素名、单引号属性值都照判。
+        const parsed = scanSource(multiLine, "synthetic.vue");
+        expect(parsed.elements).toBe(1);
+        expect(parsed.explicitTiers).toBe(1);
+        expect(parsed.findings).toEqual([]);
+
         expect(
             scanSource("<dialog-content class='max-w-xl' />", "synthetic.vue").findings,
         ).toHaveLength(1);
@@ -363,30 +359,70 @@ describe("对话框宽度：业务 max-w-* 必须能在 sm: 通道覆盖 vendor 
             scanSource('<alert-dialog-content class="max-w-xl" />', "synthetic.vue").findings,
         ).toHaveLength(1);
         expect(
+            scanSource('<DialogScrollContent class="max-w-xl" />', "synthetic.vue").findings,
+        ).toHaveLength(1);
+        expect(
+            scanSource('<DialogContentShell class="max-w-xl" />', "synthetic.vue").elements,
+        ).toBe(0);
+        expect(
             scanSource("<DialogContent :class=\"'max-w-xl'\" />", "synthetic.vue").findings,
         ).toHaveLength(1);
     });
 
-    it("三处既有正确写法必须仍然绿（判据不误伤「本来就对」的）", () => {
-        // 这三处是本卡的对照组：写法本来就带 sm: 通道，宽度一直生效。
-        // 断言它们零命中，证明判据只咬「缺 sm: 对家」这个状态，而不是见 max-w-* 就红。
-        const scanOf = (file: string) =>
-            scanSource(readFileSync(join(SRC, file), "utf8"), "src/" + file);
-        for (const file of [
-            "features/workspace/components/ScheduledTaskCreateDialog.vue",
-            "features/workspace/components/WorkspaceCreateDialog.vue",
-            "features/workspace/chat/components/AttachmentPreviewDialog.vue",
-        ]) {
-            const scanned = scanOf(file);
-            expect(scanned.elements, file).toBe(1);
-            expect(scanned.findings, file).toEqual([]);
+    it("档位表本体：四档 + px 刻度与 Lead 裁定一致（task-137）", () => {
+        expect(Object.keys(DIALOG_WIDTH_TIERS)).toEqual(["confirm", "form", "config", "workbench"]);
+        expect(DIALOG_WIDTH_TIER_PX).toEqual({
+            confirm: 384,
+            form: 512,
+            config: 768,
+            workbench: 1024,
+        });
+        for (const [tier, cls] of Object.entries(DIALOG_WIDTH_TIERS)) {
+            expect(cls, tier).toMatch(/^sm:max-w-(sm|lg|3xl|5xl)$/);
         }
+        expect(isDialogWidthTier("config")).toBe(true);
+        expect(isDialogWidthTier("huge")).toBe(false);
+        // agent 配置弹窗 ≥768px（J3）：config 档即 768，不许降档。
+        expect(DIALOG_WIDTH_TIER_PX.config).toBeGreaterThanOrEqual(768);
     });
 
-    it("仓库实况：src/** 没有一处「裸 max-w-* 缺 sm: 对家或对家更窄」", () => {
+    it("agent 配置弹窗（AgentPrincipalDetailDrawer）用 config 档 + 两列布局（J3）", () => {
+        const source = readFileSync(
+            join(SRC, "components/settings/AgentPrincipalDetailDrawer.vue"),
+            "utf8",
+        );
+        const drawer = /<DialogContent[\s\S]*?width="config"[\s\S]*?>/.exec(source);
+        expect(drawer, '抽屉必须显式 width="config"').not.toBeNull();
+        // 两列：标签列 7.5rem + 内容列，≥640px 生效（<style> 块里的 .apd-two-col）
+        expect(source).toContain(".apd-two-col");
+        expect(source).toContain("grid-template-columns: 7.5rem minmax(0, 1fr)");
+        expect(source).toContain(".apd-two-col > :not(h3)");
+    });
+
+    it("仓库实况：src/** 没有一处调用点自带宽度 token；未归档调用点只报警", () => {
         const report = scanRepo();
         expect(report.files).toBeGreaterThan(0);
         expect(report.elements).toBeGreaterThan(0);
-        expect(report.findings.map((f) => f.file + ":" + f.line + " " + f.detail)).toEqual([]);
+        expect(report.findings.map(describeFinding)).toEqual([]);
+        // 阶段目标（task-137 全量盘点）：显式档位覆盖 ≥20 个调用点；其余走默认档 confirm。
+        expect(report.explicitTiers).toBeGreaterThanOrEqual(20);
+        if (report.unarchived.length > 0) {
+            // report-only：漏登记要看得见，但不判红（静态不可判 ≠ 缺陷）。
+            for (const item of report.unarchived) {
+                console.warn(
+                    "[dialog-width] 未归档调用点 " +
+                        item.file +
+                        ":" +
+                        item.line +
+                        " <" +
+                        item.element +
+                        "> " +
+                        item.reason,
+                );
+            }
+        }
+        expect(Array.isArray(report.unarchived)).toBe(true);
     });
 });
+
+export type { DialogWidthTier };

@@ -15,15 +15,27 @@ import { useI18n } from "vue-i18n";
 import { reactiveOmit } from "@vueuse/core";
 import { cn } from "@/lib/utils";
 import { useAriaModal } from "./useAriaModal";
+import { dialogWidthClass, type DialogWidthTier } from "./dialogWidths";
 
 defineOptions({
     inheritAttrs: false,
 });
 
-const props = defineProps<DialogContentProps & { class?: HTMLAttributes["class"] }>();
+const props = withDefaults(
+    defineProps<
+        DialogContentProps & {
+            class?: HTMLAttributes["class"];
+            /** 宽度档位（task-137）：与 DialogContent 同一张表，默认 form（= 旧 max-w-lg）。 */
+            width?: DialogWidthTier;
+        }
+    >(),
+    {
+        width: "form",
+    },
+);
 const emits = defineEmits<DialogContentEmits>();
 
-const delegatedProps = reactiveOmit(props, "class");
+const delegatedProps = reactiveOmit(props, "class", "width");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 const { t } = useI18n();
@@ -39,11 +51,13 @@ const ariaModal = useAriaModal();
             <DialogContent
                 :class="
                     cn(
-                        'relative z-50 grid w-full max-w-lg my-8 gap-4 border border-border bg-background p-6 shadow-lg duration-200 sm:rounded-lg md:w-full',
+                        'relative z-50 grid w-full my-8 gap-4 border border-border bg-background p-6 shadow-lg duration-200 sm:rounded-lg md:w-full',
+                        dialogWidthClass(props.width),
                         props.class,
                     )
                 "
                 v-bind="{ ...$attrs, ...forwarded }"
+                :data-dialog-width="props.width"
                 :aria-modal="ariaModal"
                 @pointer-down-outside="
                     (event) => {

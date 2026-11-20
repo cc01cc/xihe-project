@@ -386,9 +386,10 @@ watch(
 <template>
     <Dialog :open="open" @update:open="handleOpenChange">
         <DialogContent
+            width="form"
             aria-modal="true"
             data-testid="workspace-create-dialog"
-            class="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+            class="max-h-[85vh] overflow-y-auto"
         >
             <DialogHeader>
                 <DialogTitle>{{ t("workspace.addWorkspaceTitle") }}</DialogTitle>
