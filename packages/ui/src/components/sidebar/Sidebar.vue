@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
@@ -8,6 +8,7 @@ import {
     FolderTree,
     LogOut,
     MessageSquare,
+    MessagesSquare,
     PanelLeftClose,
     PanelLeftOpen,
     Plus,
@@ -23,6 +24,7 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import StandaloneSessionDialog from "./StandaloneSessionDialog.vue";
 import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
@@ -77,6 +79,19 @@ const showCollapsedStrip = computed(
 function expandSidebar() {
     emit("update:open", true);
 }
+
+/**
+ * task-172 / `D-1464`：会话区头的计数 = 左栏列表**当前渲染**的会话总数。
+ *
+ * <p>数据源只有**一处**：`WorkspaceSessionGroups.vue` 的 `renderedSessionCount` —— 它镜像
+ * 自己的模板分支（独立会话区 + 各**已展开且已加载**的工作区分组之和；折叠组、loading、error、
+ * 两种空态一律 0）。这里**不**自算第二份：两处各算一份必然漂移（典型分歧是「折叠但仍缓存」的
+ * 分组：store 里有行、列表里没有行），而区头数字存在的意义就是可核。</p>
+ *
+ * <p>模板 ref 在首次渲染前是 `null` ⇒ 回落 0，不让区头出现 `undefined`。</p>
+ */
+const sessionGroupsRef = ref<{ renderedSessionCount: number } | null>(null);
+const sessionCount = computed(() => sessionGroupsRef.value?.renderedSessionCount ?? 0);
 
 const panelStyle = computed(() => (props.isMobile ? { width: "100%" } : undefined));
 
@@ -172,6 +187,37 @@ function focusSearch() {
 }
 
 /**
+ * task-173 / `D-1464`：rail 态（56px 折叠条）此前**没有任何检索入口** —— 三条 UI 缺口里
+ * 唯一「真丢功能」的那条。形态 **A**：折叠条内检索图标按钮 + 栈内 reka-ui Popover 弹出检索框；
+ * 否决「点一下就把左栏展开再聚焦」—— 点击语义歧义（究竟是想检索还是想展开），且等于把
+ * 「检索」偷偷换成「展开」。
+ *
+ * <p>数据面**复用** `sessionStore.searchQuery`（与展开态那一行 input 同一个 v-model）：
+ * rail 里输入的过滤词展开后仍然生效，不需要第二套状态，也不会出现「两个搜索框各记一半」。
+ * testid 也复用 `sidebar-session-search`（同一个「会话检索入口」，两态各渲染其一；折叠态下
+ * #sidebar-panel 整套不挂载 ⇒ 任何一态都只有一处），Popover 里的输入框另给
+ * `sidebar-session-search-input`。</p>
+ */
+const railSearchOpen = ref(false);
+const railSearchTriggerRef = ref<HTMLButtonElement | null>(null);
+const railSearchInputRef = ref<HTMLInputElement | null>(null);
+
+/** 打开后把焦点送进输入框（PopoverContent 的默认自动聚焦停在容器上，用户还得再按一次 Tab）。 */
+async function onRailSearchOpenChange(open: boolean) {
+    railSearchOpen.value = open;
+    if (open) {
+        await nextTick();
+        railSearchInputRef.value?.focus();
+    }
+}
+
+/** Esc 关闭并把焦点还给触发器 —— 否则焦点掉进 body，键盘用户得重新 Tab 一整圈。 */
+function closeRailSearch() {
+    railSearchOpen.value = false;
+    railSearchTriggerRef.value?.focus();
+}
+
+/**
  * task-89 ②：区头的「配置工作区」常驻入口 —— 指向**当前工作区自己的**设置页与成员页
  * （四 tab 由工作区自身导航承载；不复制到会话页、不进容器页签）。
  * 没有活动工作区时触发器 disabled 并给出原因（sidebar.noWorkspace）。
@@ -217,11 +263,15 @@ function handleLogout() {
                   : 'transition-[flex-grow] duration-300',
         ]"
     >
-        <!-- 桌面折叠态：56px 折叠条（只含展开控件）。全局条在 App.vue，不在这里。 -->
+        <!--
+            桌面折叠态：56px 折叠条（展开控件 + 检索入口）。全局条在 App.vue，不在这里。
+            task-173 / `D-1464`：折叠后原先只剩展开按钮 ⇒ 检索功能**真丢**（其余两条缺口只是位置不对）。
+            现在补检索图标按钮 + reka-ui Popover 检索框（形态 A）；展开按钮原样保留（e2e ⑥E2 断言它可见）。
+        -->
         <div
             v-if="showCollapsedStrip"
             data-testid="sidebar-collapsed-strip"
-            class="flex h-full w-full flex-col items-center justify-start py-3"
+            class="flex h-full w-full flex-col items-center justify-start gap-2 py-3"
         >
             <button
                 type="button"
@@ -233,6 +283,39 @@ function handleLogout() {
             >
                 <PanelLeftOpen class="size-4" aria-hidden="true" />
             </button>
+            <Popover :open="railSearchOpen" @update:open="onRailSearchOpenChange">
+                <PopoverTrigger as-child>
+                    <button
+                        ref="railSearchTriggerRef"
+                        type="button"
+                        data-testid="sidebar-session-search"
+                        :aria-label="t('sidebar.search')"
+                        :title="t('sidebar.search')"
+                        class="rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        <Search class="size-4" aria-hidden="true" />
+                    </button>
+                </PopoverTrigger>
+                <PopoverContent side="right" align="start" :side-offset="8" class="w-64">
+                    <div class="relative min-w-0">
+                        <Search
+                            class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                            aria-hidden="true"
+                        />
+                        <input
+                            ref="railSearchInputRef"
+                            v-model="sessionStore.searchQuery"
+                            data-testid="sidebar-session-search-input"
+                            type="text"
+                            autocomplete="off"
+                            class="w-full rounded-md border border-sidebar-border bg-background py-1.5 pl-7 pr-2 text-sm text-sidebar-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                            :placeholder="t('sidebar.search')"
+                            :aria-label="t('sidebar.search')"
+                            @keydown.esc.prevent.stop="closeRailSearch"
+                        />
+                    </div>
+                </PopoverContent>
+            </Popover>
         </div>
         <!-- 桌面：panel #1 的剩余宽度全部归导航面板（全局条不在其中）。折叠态改渲染上面的折叠条。 -->
         <div
@@ -431,7 +514,30 @@ function handleLogout() {
                 </div>
             </div>
 
+            <!--
+                task-172 / `D-1464`：会话区头（含计数）。左栏此前只有「工作区」一个区头，会话行是裸的
+                （直接 今天/昨天/更早 桶）—— 一级列表有区头、二级列表没有，且会话总数无处可读。
+                排版复用工作区区头的语言（text-xs font-medium tracking-wider + muted-foreground +
+                size-4 图标），高度取 h-9 < 工作区区头的 h-14：它管的是区头**之下**那层列表，不与之同高。
+                计数是**独立节点**、不拼进 t() —— 译文不持有数字（数字随数据变，占位会漂移，DEV-011）。
+            -->
+            <div data-testid="sidebar-sessions-header" class="flex h-9 shrink-0 items-center px-2">
+                <span
+                    class="flex min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium tracking-wider text-muted-foreground"
+                >
+                    <MessagesSquare class="size-4 shrink-0" aria-hidden="true" />
+                    <span class="truncate">{{ t("sidebar.sessionsSection") }}</span>
+                </span>
+                <span
+                    data-testid="sidebar-sessions-count"
+                    class="shrink-0 px-2 text-xs tabular-nums text-muted-foreground"
+                >
+                    {{ sessionCount }}
+                </span>
+            </div>
+
             <WorkspaceSessionGroups
+                ref="sessionGroupsRef"
                 @new-session="startNewChatInWorkspace"
                 @new-standalone-session="openStandaloneDialog"
             />

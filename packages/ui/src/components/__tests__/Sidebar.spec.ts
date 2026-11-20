@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
@@ -119,6 +119,20 @@ const i18n = createI18n({
     messages,
 });
 
+/**
+ * task-173：Popover 的焦点行为（打开后输入框获焦 / Esc 后焦点回触发器）只能用
+ * `document.activeElement` 断言，而 VTU 默认把组件挂到**游离**容器上 —— 游离元素
+ * `focus()` 之后 `document.activeElement` 仍是 `<body>`（jsdom 只认文档内节点），
+ * 那样的断言测的是挂载位置而不是行为。需要焦点的用例显式 attachTo body，并在 afterEach 卸干净。
+ */
+const attachedWrappers: { unmount: () => void }[] = [];
+
+afterEach(() => {
+    for (const wrapper of attachedWrappers.splice(0)) {
+        wrapper.unmount();
+    }
+});
+
 async function mountSidebar(
     props: Partial<{
         open: boolean;
@@ -127,6 +141,7 @@ async function mountSidebar(
         forceCollapsed: boolean;
         resizing: boolean;
     }> = {},
+    options: { attach?: boolean } = {},
 ) {
     const wrapper = mount(Sidebar, {
         props: {
@@ -135,12 +150,16 @@ async function mountSidebar(
             isMobile: false,
             ...props,
         },
+        attachTo: options.attach ? document.body : undefined,
         global: {
             plugins: [i18n],
             stubs: { Teleport: { template: "<div><slot /></div>" } },
         },
     });
     await flushPromises();
+    if (options.attach) {
+        attachedWrappers.push(wrapper);
+    }
     return wrapper;
 }
 
@@ -550,5 +569,142 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
             expect(btn.attributes("data-testid")).not.toBe("sidebar-new-workspace");
             expect(btn.attributes("data-testid")).not.toBe("sidebar-workspace-config");
         }
+    });
+});
+
+/**
+ * task-172 / `D-1464`：会话区头 + 会话计数。
+ *
+ * 判据与 e2e ⑥E4① 同源（`ui-baseline.spec.ts:1465-1473` 断言 `sidebar-sessions-header`
+ * count === 1），这里再加三条产品口径：① 计数是**独立节点**（数字不拼进 `t()` 译文）；
+ * ② 计数 = 左栏**当前渲染**的会话行数（独立会话区 + 已展开的工作区分组）；
+ * ③ 随搜索与折叠同步 —— 折叠组与过滤掉的行**不计入**（不是「store 里存了多少条」）。
+ */
+describe("Sidebar sessions section header (task-172 / D-1464)", () => {
+    function seedRow(id: string, title: string) {
+        return {
+            id,
+            title,
+            workspaceId: "ws-test",
+            archived: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+    }
+
+    beforeEach(() => {
+        vi.spyOn(api, "getSessions").mockResolvedValue({
+            sessions: [seedRow("s-1", "Alpha planning"), seedRow("s-2", "Beta review")],
+            workspace: null,
+        } as unknown as Awaited<ReturnType<typeof api.getSessions>>);
+        vi.spyOn(api, "getWorkspacelessSessions").mockResolvedValue({
+            sessions: [seedRow("w-1", "Standalone alpha")],
+            workspace: null,
+        } as unknown as Awaited<ReturnType<typeof api.getWorkspacelessSessions>>);
+    });
+
+    it("renders exactly one header and puts the count in its own node", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        const headers = wrapper.findAll('[data-testid="sidebar-sessions-header"]');
+        expect(headers).toHaveLength(1);
+        expect(headers[0].text()).toContain(zhSource.sidebar.sessionsSection);
+        // 计数单独渲染（数字不进译文）：区头文本 = 区名 + 数字两块。
+        expect(wrapper.get('[data-testid="sidebar-sessions-count"]').text()).toBe("3");
+    });
+
+    it("counts standalone + expanded workspace rows, following search and collapse", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        const count = () => wrapper.get('[data-testid="sidebar-sessions-count"]').text();
+        // 1 条独立会话 + 当前工作区分组已展开的 2 条。
+        expect(count()).toBe("3");
+
+        // ② 搜索：只数过滤后仍然渲染的行（"alpha" 命中工作区 1 行 + 独立会话 1 行）。
+        useSessionStore().searchQuery = "alpha";
+        await flushPromises();
+        expect(count()).toBe("2");
+
+        useSessionStore().searchQuery = "";
+        await flushPromises();
+        expect(count()).toBe("3");
+
+        // ③ 折叠当前工作区分组：行不再渲染 ⇒ 计数跟着掉（不是「store 里有多少」）。
+        await wrapper
+            .get('[data-testid="sidebar-workspace-group-toggle-ws-test"]')
+            .trigger("click");
+        await flushPromises();
+        expect(count()).toBe("1");
+    });
+    it("rail（折叠）态不挂载会话区头，展开后恰好一个", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ open: false });
+        // rail 只渲染 56px 折叠条（panel 是 v-else）⇒ 区头根本不挂载：⑥E4① 在折叠态读 0 是**预期**，
+        // 不是缺陷 —— e2e 的 count===1 只在展开态断言，折叠步骤（⑥E2）之后才发生。
+        expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="sidebar-sessions-header"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="sidebar-sessions-count"]').exists()).toBe(false);
+
+        await wrapper.setProps({ open: true });
+        await flushPromises();
+        expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="sidebar-sessions-header"]')).toHaveLength(1);
+    });
+});
+
+/**
+ * task-173 / `D-1464`：rail（折叠）态检索入口，形态 A（图标按钮 + reka-ui Popover）。
+ *
+ * <p>这里守的是三条用户可见行为：①折叠态确有检索入口且展开控件没被顶掉（e2e ⑥E2 同时断言两者）；
+ * ②打开后焦点**直接**落在输入框（不是容器上再让用户 Tab）；③Esc 关闭后焦点回到触发器。
+ * testid 复用 `sidebar-session-search` 是本卡口径，所以每条都顺手断言「同态只有一个」——
+ * 复用 id 最怕的就是两态同时挂载出两个同名节点，让 `.get()` 与 e2e 的 count 变成掷骰子。</p>
+ */
+describe("Sidebar · rail 检索入口（task-173 / D-1464）", () => {
+    it("折叠态渲染恰好一个检索入口，展开控件仍在，输入框未打开时不挂载", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ open: false });
+
+        expect(wrapper.find('[data-testid="sidebar-expand"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid="sidebar-session-search"]')).toHaveLength(1);
+        expect(wrapper.find('[data-testid="sidebar-session-search-input"]').exists()).toBe(false);
+    });
+
+    it("点检索按钮弹出 Popover：输入框获焦，且写的就是展开态那一个 searchQuery", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ open: false }, { attach: true });
+
+        await wrapper.get('[data-testid="sidebar-session-search"]').trigger("click");
+        await flushPromises();
+
+        const input = wrapper.get('[data-testid="sidebar-session-search-input"]');
+        expect(document.activeElement).toBe(input.element);
+        await input.setValue("alpha");
+        expect(useSessionStore().searchQuery).toBe("alpha");
+    });
+
+    it("Esc 关闭 Popover 并把焦点还给触发器", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar({ open: false }, { attach: true });
+
+        const trigger = wrapper.get('[data-testid="sidebar-session-search"]');
+        await trigger.trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="sidebar-session-search-input"]').trigger("keydown", {
+            key: "Escape",
+        });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="sidebar-session-search-input"]').exists()).toBe(false);
+        expect(document.activeElement).toBe(trigger.element);
+    });
+
+    it("展开态仍然只有那一个 sidebar-session-search（复用 id 不产生同态双节点）", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+
+        expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="sidebar-session-search"]')).toHaveLength(1);
+        expect(wrapper.find('[data-testid="sidebar-session-search-input"]').exists()).toBe(false);
     });
 });

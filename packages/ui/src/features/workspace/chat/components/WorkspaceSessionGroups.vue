@@ -186,6 +186,36 @@ const hasAnyVisibleSession = computed(
         visibleStandalone.value.length > 0,
 );
 
+/**
+ * task-172 / `D-1464`：左栏**当前渲染**的会话行总数（Sidebar 的会话区头计数只读这一个值）。
+ *
+ * <p>纯派生：不取数、不改状态，逐条镜像本模板的分支条件 —— 只有「真的渲染出 `SessionList`
+ * 的那几支」才计行，所以：① 顶层四块（loading / error / 无工作区且无独立会话 / 搜索零命中）
+ * 一行都不渲染 ⇒ 0；② 独立会话区仅在 `standaloneExpanded` 且非 loading/error 时计
+ * `visibleStandalone`；③ 每个工作区分组仅在**已展开**且非 loading/error 时计
+ * `visibleSessions(ws)` —— 折叠（包括「展开过、现在折叠」）的行**不算**，否则区头数字
+ * 与列表里看得见的行对不上，而这个数字存在的意义就是「可核」。</p>
+ */
+const renderedSessionCount = computed(() => {
+    if (listLoading.value || listError.value) return 0;
+    if (!hasWorkspace.value && !showStandalone.value) return 0;
+    if (isSearching.value && !hasAnyVisibleSession.value) return 0;
+    let total = 0;
+    if (
+        showStandalone.value &&
+        standaloneExpanded.value &&
+        !standaloneLoading.value &&
+        !standaloneError.value
+    )
+        total += visibleStandalone.value.length;
+    for (const workspace of orderedWorkspaces.value) {
+        if (!isExpanded(workspace.id)) continue;
+        if (loadingGroups.value[workspace.id] || failedGroups.value[workspace.id]) continue;
+        total += visibleSessions(workspace.id).length;
+    }
+    return total;
+});
+
 async function loadWorkspaces(): Promise<void> {
     listLoading.value = true;
     listError.value = null;
@@ -313,6 +343,8 @@ defineExpose({
     isExpanded,
     standaloneExpanded,
     loadStandalone,
+    // task-172 / `D-1464`：左栏会话区头的计数源（纯派生读数，见上面的注释）。
+    renderedSessionCount,
 });
 </script>
 
