@@ -1,0 +1,320 @@
+{
+ "version": 1,
+ "generator": "A03-xihe/scripts/check-gate-registry.mjs（task-104）",
+ "generatedAt": "2026-11-20",
+ "semantics": {
+  "docRoots": "应受文档门约束的目录；gates 为覆盖它的门脚本（相对 workspace 根）。无门时必须给 gap（记账）或 exempt（判定不需门），否则 W_UNCOVERED_ROOT（硬 W）",
+  "gateScriptDirs": "门型脚本目录；发现新目录未登记 ⇒ W_UNREGISTERED_ROOT，登记了但不存在 ⇒ W_STALE_ROOT",
+  "miseTasks": "跨仓同名 mise 任务；allow = 已确认的祖先链遮蔽（降为 ACK）"
+ },
+ "docRoots": [
+  {
+   "root": "docs",
+   "kind": "workspace-dir",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs",
+    "scripts/check-md-emphasis.mjs",
+    "scripts/check-md-tables.mjs"
+   ],
+   "owner": "one",
+   "note": "workspace 文档根：md-tables 默认根 + emphasis 默认 scope + control-bytes 根"
+  },
+  {
+   "root": "internal",
+   "kind": "workspace-dir",
+   "gates": [
+    "internal/A03-xihe/scripts/bl-count.mjs",
+    "internal/A03-xihe/scripts/check-backlog-decision-ref.mjs",
+    "scripts/check-docs-index.mjs",
+    "scripts/check-evidence-readme.mjs",
+    "scripts/check-markdown-control-bytes.mjs",
+    "scripts/check-md-emphasis.mjs",
+    "scripts/check-md-tables.mjs"
+   ],
+   "owner": "one",
+   "note": "含 internal/A03-xihe/docs（docs-index 主面）与 internal/A03-xihe/evidence（evidence-readme）"
+  },
+  {
+   "root": "plans",
+   "kind": "workspace-dir",
+   "gates": [
+    "internal/A03-xihe/scripts/bl-count.mjs",
+    "scripts/check-markdown-control-bytes.mjs",
+    "scripts/check-md-emphasis.mjs",
+    "scripts/check-md-tables.mjs"
+   ],
+   "owner": "one",
+   "note": "plans/**/README.md 走 emphasis 默认 scope；plans/archive 由 md-tables EXCLUDE_SCOPES 记账（D-1074）"
+  },
+  {
+   "root": "tools",
+   "kind": "workspace-dir",
+   "gates": [
+    "scripts/check-md-tables.mjs"
+   ],
+   "owner": "one",
+   "note": "task-235 起纳入 md-tables 默认面"
+  },
+  {
+   "root": "config",
+   "kind": "workspace-dir",
+   "gates": [],
+   "owner": "one",
+   "exempt": "非文档语料：config/ 仅 1 个 tracked 文件，生成物漂移归 check:config-schema，不属于 md 语料",
+   "note": "非文档语料"
+  },
+  {
+   "root": "research",
+   "kind": "workspace-dir",
+   "gates": [],
+   "owner": "one",
+   "gap": "D-1843 / task-104：research/ 有 25 个 tracked .md，不在 md-tables 五根（AGENTS.md/internal/docs/tools/plans）内 ⇒ 现无任何结构门覆盖",
+   "note": "本门 2026-11-20 首次跑出的真实缺口（非假设）"
+  },
+  {
+   "root": "A01-cmtx/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A01-cmtx",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A02-shouzha/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A02-shouzha",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A03-xihe/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "A03-xihe/scripts/check-doc-links-entry.sh",
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A03-xihe",
+   "note": "structure 面：control-bytes 走 <repo>/docs 扫描 + 链接门（lint:links → validate）；md-tables/emphasis 不覆盖 A03 仓库内 docs"
+  },
+  {
+   "root": "A03-xihe/spec",
+   "kind": "spec-corpus",
+   "gates": [
+    "scripts/check-terminology-identifiers.mjs"
+   ],
+   "owner": "A03-xihe",
+   "note": "仅标识符轴（check-terminology-identifiers 的 CORPORA spec 行）；结构类 md 门 0 覆盖 ⇒ 卡面背景论点"
+  },
+  {
+   "root": "A04-agent-exo/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A04-agent-exo",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A05-LingYiJu/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A05-LingYiJu",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A06-OneArchive/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A06-OneArchive",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A07-yizhan/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A07-yizhan",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A08-xingshu/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A08-xingshu",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A08-xingshu/spec",
+   "kind": "spec-corpus",
+   "gates": [],
+   "owner": "A08-xingshu",
+   "gap": "D-1843 / task-104：spec 面无结构类 Markdown 门（md-tables 五根不含、md-emphasis SCOPES 无 spec）",
+   "note": "spec 面结构门 0 覆盖"
+  },
+  {
+   "root": "A09-ledger-loom/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A09-ledger-loom",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A11-telemetry/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A11-telemetry",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "A11-telemetry/spec",
+   "kind": "spec-corpus",
+   "gates": [],
+   "owner": "A11-telemetry",
+   "gap": "D-1843 / task-104：spec 面无结构类 Markdown 门（md-tables 五根不含、md-emphasis SCOPES 无 spec）",
+   "note": "spec 面结构门 0 覆盖"
+  },
+  {
+   "root": "A12-DSH-decision/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "A12-DSH-decision",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "FB02-ember-works/docs",
+   "kind": "doc-corpus",
+   "gates": [
+    "scripts/check-markdown-control-bytes.mjs"
+   ],
+   "owner": "FB02-ember-works",
+   "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
+  },
+  {
+   "root": "FB02-ember-works/spec",
+   "kind": "spec-corpus",
+   "gates": [],
+   "owner": "FB02-ember-works",
+   "gap": "D-1843 / task-104：spec 面无结构类 Markdown 门（md-tables 五根不含、md-emphasis SCOPES 无 spec）",
+   "note": "spec 面结构门 0 覆盖"
+  }
+ ],
+ "gateScriptDirs": [
+  {
+   "root": "A01-cmtx/packages/vscode-extension/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A01-cmtx",
+   "discoveredCount": 1,
+   "note": "1 个门型脚本"
+  },
+  {
+   "root": "A01-cmtx/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A01-cmtx",
+   "discoveredCount": 3,
+   "note": "3 个门型脚本"
+  },
+  {
+   "root": "A03-xihe/packages/ui/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A03-xihe",
+   "discoveredCount": 10,
+   "note": "UI 包门（10）；真执行者多为 packages/ui/package.json 的 lint → lint-gates.mjs --gate"
+  },
+  {
+   "root": "A03-xihe/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A03-xihe",
+   "discoveredCount": 45,
+   "note": "A03 主门集合（45 个门型脚本，含聚合器 lint-run/validate-run）"
+  },
+  {
+   "root": "A05-LingYiJu/packages/blog/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A05-LingYiJu",
+   "discoveredCount": 1,
+   "note": "1 个门型脚本"
+  },
+  {
+   "root": "A05-LingYiJu/packages/project/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A05-LingYiJu",
+   "discoveredCount": 2,
+   "note": "2 个门型脚本"
+  },
+  {
+   "root": "A12-DSH-decision/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A12-DSH-decision",
+   "discoveredCount": 3,
+   "note": "3 个门型脚本"
+  },
+  {
+   "root": "FB01-fire-bird/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "FB01-fire-bird",
+   "discoveredCount": 1,
+   "note": "1 个门型脚本"
+  },
+  {
+   "root": "FB02-ember-works/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "FB02-ember-works",
+   "discoveredCount": 9,
+   "note": "9 个门型脚本"
+  },
+  {
+   "root": "internal/A03-xihe/scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "A03-xihe",
+   "discoveredCount": 21,
+   "note": "审计器扫不到的一层（21 个门型脚本，task-103 发现）"
+  },
+  {
+   "root": "scripts",
+   "kind": "gate-scripts",
+   "gates": [],
+   "owner": "scripts",
+   "discoveredCount": 22,
+   "note": "workspace 根：审计器/文档门/背包门（22 个门型脚本）"
+  }
+ ],
+ "miseTasks": {
+  "allow": [
+   {
+    "task": "lint:scripts",
+    "files": [
+     "mise.toml",
+     "A03-xihe/mise.toml",
+     "A12-DSH-decision/mise.toml"
+    ],
+    "reason": "祖先链同名：mise 任务名唯一、后加载者胜（task-103 §6.3 实测：A03 cwd 下 A03 定义胜，one 根定义永不随 A03 的 lint 跑）"
+   }
+  ]
+ }
+}
