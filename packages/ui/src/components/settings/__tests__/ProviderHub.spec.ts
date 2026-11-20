@@ -1,8 +1,15 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { config, flushPromises, mount } from "@vue/test-utils";
 import ProviderHub from "../ProviderHub.vue";
-import { setSelectValue, setSelectWithin } from "../../../test-utils/select";
+import {
+    openSelect,
+    selectItemTextsFor,
+    setSelectValue,
+    setSelectWithin,
+} from "../../../test-utils/select";
 import type {
     ApiTypePair,
     ProviderConnection,
@@ -1266,5 +1273,69 @@ describe("ProviderHub credential binding (task-146)", () => {
         // 没有工作区就根本不发请求（而不是发一个 ownerType=WORKSPACE 的空查询）。
         expect(api.listCredentials).not.toHaveBeenCalled();
         wrapper.unmount();
+    });
+});
+
+/**
+ * task-170（R7）：请求模板标签收敛到唯一拼接点 templateOptionLabel。
+ *
+ * 原来四处 SelectItem 各自在模板里写「名称 + 空格 + v + 版本号」，两个后果：
+ * 1) 同一段格式散在四处，改一处漏三处；
+ * 2) 模板名自带版本后缀（如「OpenAI 对话补全 v2」）时再拼一次就成了「… v2 v2」。
+ */
+function mountHubWithTemplates(
+    templates: { name: string; version: number; templateId?: string }[],
+) {
+    vi.mocked(listVisibleTemplates).mockResolvedValue(
+        templates.map((item) => ({
+            layer: "instance",
+            templateId: item.templateId ?? "tpl-" + item.name,
+            version: item.version,
+            name: item.name,
+            apiTypeId: user.apiTypeId,
+            apiTypeVersion: 1,
+        })),
+    );
+    return mountHub();
+}
+
+function defaultTemplateTriggerSelector() {
+    return (
+        '[data-slot="select-trigger"][aria-label="' +
+        i18n.global.t("settings.providerHub.connDefaultTemplate") +
+        '"]'
+    );
+}
+
+describe("ProviderHub request-template labels (task-170 R7)", () => {
+    it("appends the version exactly once when the template name has no version suffix", async () => {
+        const wrapper = await mountHubWithTemplates([{ name: "OpenAI 对话补全", version: 2 }]);
+        await openSelect(wrapper, defaultTemplateTriggerSelector());
+        const labels = selectItemTextsFor(wrapper, defaultTemplateTriggerSelector());
+        const label = labels.find((text) => text.includes("OpenAI 对话补全"));
+        expect(label).toBe("OpenAI 对话补全 v2");
+        wrapper.unmount();
+    });
+
+    it("does not repeat a version the template name already carries", async () => {
+        const wrapper = await mountHubWithTemplates([{ name: "OpenAI 对话补全 v2", version: 2 }]);
+        await openSelect(wrapper, defaultTemplateTriggerSelector());
+        const labels = selectItemTextsFor(wrapper, defaultTemplateTriggerSelector());
+        const label = labels.find((text) => text.includes("OpenAI 对话补全"));
+        expect(label).toBe("OpenAI 对话补全 v2");
+        expect(label?.match(/v2/g)?.length).toBe(1);
+        wrapper.unmount();
+    });
+
+    it("renders every template dropdown through the single label assembly point", () => {
+        // 四处模板站点是同一段插值；用源码守卫把「四处都走 templateOptionLabel」钉住，
+        // 避免新增下拉时又手写一份「name + v + version」。
+        const source = readFileSync(
+            resolve(process.cwd(), "src/components/settings/ProviderHub.vue"),
+            "utf8",
+        );
+        const throughHelper = source.match(/\{\{ templateOptionLabel\(item\) \}\}/g) ?? [];
+        expect(throughHelper.length).toBe(4);
+        expect(source).not.toContain("{{ item.name }} v{{ item.version }}");
     });
 });

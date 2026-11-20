@@ -235,10 +235,24 @@ function currentModelKey(model: string) {
     const ref = activeConnection.value && modelBindings.value[activeConnection.value.id]?.[model];
     return ref ? templateKey(ref) : "";
 }
+/**
+ * task-170（R7）：请求模板标签的唯一拼接点。
+ *
+ * 为什么要有它：四处 SelectItem 原来各自在模板里写「名称 + 空格 + v + 版本号」，同一段格式散在四处；
+ * 而且模板名本身常自带版本后缀（如「OpenAI 对话补全 v2」），再拼一次就成了「… v2 v2」。
+ * 所以：名称已带同版本后缀时原样返回，否则补一次。
+ */
+function templateOptionLabel(item: TemplateOption): string {
+    const name = item.name.trim();
+    const version = String(item.version);
+    const existing = /(?:^|[\s·])v([\w.]+)$/.exec(name);
+    if (existing && existing[1] === version) return name;
+    return name + " v" + version;
+}
 function templateLabelFor(key: string, fallback: string) {
     if (!key) return fallback;
     const item = activeTemplates.value.find((candidate) => templateKey(candidate) === key);
-    return item ? `${item.name} v${item.version}` : key;
+    return item ? templateOptionLabel(item) : key;
 }
 const defaultTemplateLabel = computed(() =>
     templateLabelFor(currentDefaultKey(), t("settings.providerHub.builtinTemplate")),
@@ -1660,7 +1674,7 @@ onMounted(() => {
                                         :key="templateKey(item)"
                                         :value="templateKey(item)"
                                     >
-                                        {{ item.name }} v{{ item.version }}
+                                        {{ templateOptionLabel(item) }}
                                     </SelectItem>
                                 </SelectContent>
                             </Select>
@@ -1836,7 +1850,7 @@ onMounted(() => {
                                                     :key="templateKey(item)"
                                                     :value="templateKey(item)"
                                                 >
-                                                    {{ item.name }} v{{ item.version }}
+                                                    {{ templateOptionLabel(item) }}
                                                 </SelectItem>
                                             </SelectContent>
                                         </Select>
@@ -1982,7 +1996,7 @@ onMounted(() => {
                                                 :key="templateKey(item)"
                                                 :value="templateKey(item)"
                                             >
-                                                {{ item.name }} v{{ item.version }}
+                                                {{ templateOptionLabel(item) }}
                                             </SelectItem>
                                         </SelectContent>
                                     </Select>
@@ -2357,7 +2371,7 @@ onMounted(() => {
                                             :key="templateKey(item)"
                                             :value="templateKey(item)"
                                         >
-                                            {{ item.name }} v{{ item.version }}
+                                            {{ templateOptionLabel(item) }}
                                         </SelectItem>
                                     </SelectContent>
                                 </Select>
