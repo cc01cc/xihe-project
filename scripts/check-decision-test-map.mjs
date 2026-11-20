@@ -12,15 +12,21 @@
  *      ⇒ 测试被改名/删除/断言搬走时本门立刻红，而不是「文档里说测了」
  *   3) pending ⇒ 必须有 card（承接卡号）；给了 file 就必须给 title
  *   4) not-testable ⇒ 必须有 reason（≥10 字），且占比 ≤ 20%
- *   5) file 白名单（四类前缀，task-53 放宽；越界仍报 E_PATH_OUTSIDE）：
+ *   5) file 白名单（五类前缀，task-53 放宽 + task-173 加 CP；越界仍报 E_PATH_OUTSIDE）：
  *        A03-xihe/packages/ui/** · A12-DSH-decision/packages/dsh-decision/tests/** ·
- *        internal/A03-xihe/scripts/** · scripts/**（one 仓仓库级门禁脚本的自测）
- *      且必须是测试文件（禁止 .tmp/.local/node_modules 副本误绿）。
+ *        internal/A03-xihe/scripts/** · scripts/**（one 仓仓库级门禁脚本的自测）·
+ *        A03-xihe/packages/control-plane/src/test/**（CP 的 JUnit 判据）
+ *      且必须是测试文件（禁止 .tmp/.local/node_modules 副本误绿）。测试文件两族口径见 TEST_FILE_RE /
+ *      JAVA_TEST_FILE_RE：JS/TS 认 *.{spec,test}.[cm]?[jt]sx?，Java 只认 *Test.java 且文件内必须有 @Test
+ *      （AbstractIntegrationTest.java / *Fixture.java 这类基类夹具叫得像测试，但不是判据 ⇒ 仍然拒）。
  *      为什么放开这四类：门**本身**的判据只能挂在自己的测试上 —— DSD-1474（D 号/DSD 前缀解析）与
  *      DSD-1475（投影缺失自愈）的判据分别落在 one 根 scripts/ 与 internal/A03-xihe/scripts/ 的 .test.mjs，
  *      只允许 ui/ 时这两类条款根本登记不进来（只能人工读文本，等于「决策只停在文本」）。
  *      为什么**不**放开 A03-xihe/scripts/**：当前没有任何登记需要它；每多一个前缀就多一片「测试可被算作判据」的面，
  *      等真有卡需要再加，加的时候同批补越界反例（自检里已有一条断言它仍然越界）。
+ *      为什么加 CP（task-173）：DSD-1513 ①②（空库种子三组 / 超管口令一次性披露）的判据全部是 CP 的
+ *      Spring 集成测试，只允许 ui/ 时它们一律 E_PATH_OUTSIDE ⇒ 「裁定固化成测试」（DSD-1476）在 Java 面失效。
+ *      前缀只到 src/test/：src/main/ 下的同名文件不是判据；Java 侧再叠 @Test 注解判据，防止把夹具当判据。
  *   6) 决策号两条登记处（task-59）：DSD-1474 起新裁定一律写 `DSD-NNNN`，历史台账号保持 `D-####`。
  *      · `D-####`：台账未冻结 ⇒ 须在 lead-decisions-ledger.md 命中；台账已冻结（D-1903 起登记处迁 DSD）
  *        ⇒ 须给 decisions[].dsd（DSD decisions.id），并尽力核对 revision（库不可读则 SKIP 不判红）
@@ -37,7 +43,9 @@
  *   --enforce  追加「pending > 0 即红」（条款全部落地后的严格档）
  *   --selftest 内存内自检（基线绿 / title 错 / assert 错 / pending 缺 card / not-testable 缺 reason /
  *              clause id 重复 / 路径越界 / 比例超限 + file 白名单四类正向 + 缺文件 / 非测试文件 / DSD 号不存在反例
- *              + DSD- 号正向（dsd 省略可推导）、DSD 与 dsd 不一致、DSD- 号不被台账判红、clause id 前缀不符）
+ *              + DSD- 号正向（dsd 省略可推导）、DSD 与 dsd 不一致、DSD- 号不被台账判红、clause id 前缀不符
+ *              + task-173 CP 面：*Test.java 可登记 / *Fixture.java 仍拒 / 抽象基类（无 @Test）仍拒 / src/main 越界仍拒
+ *                / JS/TS 老路径回归；正向类用例按「清单结构」判，不因并行在飞卡改产品 spec 而染色）
  *
  * 退出码：0 无硬违规；1 有硬违规（或 --enforce 下 pending > 0、--selftest 失败）；2 用法或 IO 错。
  */
@@ -55,15 +63,26 @@ const A03_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const ONE_ROOT = path.resolve(A03_ROOT, '..')
 const DEFAULT_MAP = path.join(A03_ROOT, 'config', 'decision-test-map.json')
 const LEDGER = path.join('internal', 'A03-xihe', 'docs', 'lead-decisions-ledger.md')
-// file 白名单（task-53）：四类前缀。放宽的判据不是「路径更像测试就能算判据」，而是「这条判据的测试就在它该在的地方」。
+// file 白名单（task-53 四类 + task-173 加 CP）：放宽的判据不是「路径更像测试就能算判据」，
+// 而是「这条判据的测试就在它该在的地方」。
 const TEST_PREFIXES = [
     'A03-xihe/packages/ui/',
     'A12-DSH-decision/packages/dsh-decision/tests/',
     'internal/A03-xihe/scripts/',
-    'scripts/'
+    'scripts/',
+    // task-173：DSD-1513 ①② 的判据是 CP 的 Spring 集成测试。前缀止于 src/test/ ——
+    // src/main/ 下的同名文件不是判据，必须仍然越界（自检里有一条钉住它）。
+    'A03-xihe/packages/control-plane/src/test/'
 ]
 const isAllowedPath = (rel) => TEST_PREFIXES.some((p) => rel.startsWith(p))
+// 测试文件两族，显式清单，不用一个宽正则把夹具一起吞掉：
+//   ① JS/TS：*.{spec,test}.[cm]?[jt]sx?（原口径，一个字都没动）
+//   ② Java：只认 Maven surefire 的默认命名 *Test.java，且文件内必须有 @Test 注解 ——
+//      AbstractIntegrationTest.java（抽象基类）与 *Fixture.java 都叫得像测试，但都不是判据。
 const TEST_FILE_RE = /\.(spec|test)\.[cm]?[jt]sx?$/
+const JAVA_TEST_FILE_RE = /Test\.java$/
+const JAVA_ANNOTATION_RE = /@Test\b/
+const isTestFilePath = (rel) => TEST_FILE_RE.test(rel) || JAVA_TEST_FILE_RE.test(rel)
 const NT_RATIO_MAX = 0.2
 const NT_REASON_MIN = 10
 const STATUSES = ['covered', 'pending', 'not-testable']
@@ -225,7 +244,7 @@ export function validate(map, opts = {}) {
                 if (!norm(c?.assert)) add('E_COVERED_NO_ASSERT', where, 'covered 必须给 assert（断言锚点子串）')
                 if (file && !isAllowedPath(file)) add('E_PATH_OUTSIDE', where, 'file 必须落在 ' + TEST_PREFIXES.join(' | ') + ' 内，实为 ' + file)
                 if (file && /(^|\/)(\.tmp|\.local|node_modules)\//.test(file)) add('E_PATH_OUTSIDE', where, '禁止指向临时/副本目录（会误绿）：' + file)
-                if (file && !TEST_FILE_RE.test(file)) add('E_NOT_TEST_FILE', where, 'file 必须是 *.{spec,test}.[cm]?[jt]sx?：' + file)
+                if (file && !isTestFilePath(file)) add('E_NOT_TEST_FILE', where, 'file 必须是 *.{spec,test}.[cm]?[jt]sx? 或 *Test.java：' + file)
                 if (file && title) {
                     const body = readTest(file)
                     if (body === null) add('E_FILE_MISSING', where, '测试文件不存在：' + file)
@@ -234,6 +253,11 @@ export function validate(map, opts = {}) {
                         if (!nb.includes(title)) add('E_TITLE_MISSING', where, '在 ' + file + ' 里找不到用例标题：' + title)
                         const assert = norm(c?.assert)
                         if (assert && !nb.includes(assert)) add('E_ASSERT_MISSING', where, '在 ' + file + ' 里找不到断言锚点：' + assert)
+                        // task-173：*Test.java 的命名不足以说明它是判据 —— 抽象基类（AbstractIntegrationTest）
+                        // 也叫这个名字。要求真有一条 @Test，否则按「非测试文件」报。
+                        if (JAVA_TEST_FILE_RE.test(file) && !JAVA_ANNOTATION_RE.test(body)) {
+                            add('E_NOT_TEST_FILE', where, 'file 以 Test.java 结尾但没有任何 @Test 注解（抽象基类/夹具不是判据）：' + file)
+                        }
                     }
                 }
             } else if (status === 'pending') {
@@ -300,6 +324,11 @@ function selftest() {
         return null
     }
     const has = (res, code) => res.violations.some((v) => v.code === code)
+    // 产品树内容漂移（并行在飞卡正在改 ui-baseline.spec.ts 一类的 spec）不该让「这条路径/这个形态能不能登记」
+    // 的逻辑判定染红：内容类违规由门自身 exit 1 逐条承担，selftest 只判清单结构与登记判据。
+    // 三类「测试文件里的子串对不上」= 内容漂移；其余（结构/登记/越界/比例）= 逻辑，一律判红。
+    const DRIFT_CODES = new Set(['E_TITLE_MISSING', 'E_ASSERT_MISSING', 'E_FILE_MISSING'])
+    const onlyDrift = (r) => r.violations.every((v) => DRIFT_CODES.has(v.code))
     const cases = []
     const run = (name, mutate, expect) => {
         const m = clone()
@@ -308,7 +337,10 @@ function selftest() {
         const ok = expect(res)
         cases.push({ name, ok, violations: res.violations.map((v) => v.code + ':' + v.where) })
     }
-    run('基线绿', null, (r) => r.violations.length === 0)
+    // 正向类用例用 onlyDrift 而不是「0 违规」：留痕（末尾打印漂移条数）但不让并行卡染色判定。
+    // 漂移读数取**未变异**的基线清单，不掺本自检自己制造的 title/assert 错。
+    const baseDrift = validate(clone(), { root: ONE_ROOT }).violations.filter((v) => DRIFT_CODES.has(v.code)).length
+    run('基线绿（清单结构；产品树内容漂移不影响本判定）', null, (r) => onlyDrift(r))
     run('covered title 改错', (m) => { findCovered(m).title = '__不存在的用例标题__' }, (r) => has(r, 'E_TITLE_MISSING'))
     run('covered assert 改错', (m) => { findCovered(m).assert = '__不存在的断言锚点__' }, (r) => has(r, 'E_ASSERT_MISSING'))
     run('pending 缺 card', (m) => { delete findStatus(m, 'pending').card }, (r) => has(r, 'E_PENDING_NO_CARD'))
@@ -327,16 +359,38 @@ function selftest() {
     const pointTo = (m, file, title, assert) => { const c = findCovered(m); c.file = file; c.title = title; c.assert = assert }
     run('白名单：A12 tests/** 可登记', (m) => {
         pointTo(m, 'A12-DSH-decision/packages/dsh-decision/tests/host/tools.test.mjs', 'T2.1: the six tools register in contract order with distinct names', 'distinct names')
-    }, (r) => r.violations.length === 0)
+    }, (r) => onlyDrift(r))
     run('白名单：internal/A03-xihe/scripts/** 可登记', (m) => {
         pointTo(m, 'internal/A03-xihe/scripts/trace-check.test.mjs', 'task-44: missing projection + working exporter => auto-regenerate once, then exit clean', '投影缺失，已自动重生成')
-    }, (r) => r.violations.length === 0)
+    }, (r) => onlyDrift(r))
     run('白名单：scripts/** 可登记', (m) => {
         pointTo(m, 'scripts/check-commit-msg.test.mjs', '③-d 投影缺失（默认落点）+ 导出器可用 ⇒ 自动重生成一次、exit 0，且真的写出投影', '投影缺失，已自动重生成')
-    }, (r) => r.violations.length === 0)
+    }, (r) => onlyDrift(r))
     run('白名单外：A03-xihe/scripts/**（未开放）仍红', (m) => {
         pointTo(m, 'A03-xihe/scripts/check-decision-test-map.mjs', 'x', 'x')
     }, (r) => has(r, 'E_PATH_OUTSIDE'))
+    // —— task-173：CP（Java）面五例。放宽的是「CP 的判据能登记进来」，不是「凡 Java 都算判据」——
+    // 每个正向都配一条反例（夹具 / 抽象基类 / src/main），否则这次放宽就是把判据换成路径长相。
+    const CP = 'A03-xihe/packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp'
+    run('白名单：CP *Test.java 可登记（task-173）', (m) => {
+        pointTo(m, CP + '/config/OrgUnitRootSeedIntegrationTest.java',
+            'aBootedDatabaseHasTheRootUnitAndTheAdminIsPlacedInIt',
+            'V167 must have created the root unit')
+    }, (r) => onlyDrift(r) && !has(r, 'E_NOT_TEST_FILE'))
+    run('CP 夹具 *Fixture.java 仍拒（不因放宽前缀而变判据）', (m) => {
+        pointTo(m, CP + '/integration/WorkspaceFixture.java', 'x', 'x')
+    }, (r) => has(r, 'E_NOT_TEST_FILE'))
+    run('CP 抽象基类 *Test.java（无 @Test）仍拒', (m) => {
+        pointTo(m, CP + '/AbstractIntegrationTest.java', 'x', 'x')
+    }, (r) => has(r, 'E_NOT_TEST_FILE'))
+    run('CP src/main/** 仍越界（前缀止于 src/test/）', (m) => {
+        pointTo(m, 'A03-xihe/packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/DataSeeder.java', 'x', 'x')
+    }, (r) => has(r, 'E_PATH_OUTSIDE'))
+    run('JS/TS 老路径回归：ui spec 仍可登记（口径未动）', (m) => {
+        pointTo(m, 'A03-xihe/packages/ui/src/features/workspace/chat/__tests__/sessionSettingsExpandedUnique.spec.ts',
+            'desktop: the summary row is the only activate-able node in the family',
+            '会话设置入口应为 1 个且必须是 session-settings-summary')
+    }, (r) => onlyDrift(r) && !has(r, 'E_PATH_OUTSIDE') && !has(r, 'E_NOT_TEST_FILE'))
     run('covered 指向不存在的测试文件 ⇒ 红', (m) => {
         pointTo(m, 'scripts/__no-such-test__.test.mjs', 'x', 'x')
     }, (r) => has(r, 'E_FILE_MISSING'))
@@ -356,7 +410,7 @@ function selftest() {
                 assert: '会话设置入口应为 1 个且必须是 session-settings-summary'
             }]
         })
-    }, (r) => r.violations.length === 0)
+    }, (r) => onlyDrift(r))
     run('DSD-NNNN 与 dsd 字段不一致 ⇒ E_DSD_ID_MISMATCH', (m) => {
         m.decisions.push({ id: 'DSD-1470', rev: 1, dsd: 1463, clauses: [{ id: 'DSD-1470/1', text: '自检占位条款', status: 'pending', card: 'task-59' }] })
     }, (r) => has(r, 'E_DSD_ID_MISMATCH'))
@@ -369,6 +423,9 @@ function selftest() {
     run('clause id 不以决策 id 开头 ⇒ E_CLAUSE_ID_PREFIX', (m) => {
         findCovered(m).id = 'D-9999/1'
     }, (r) => has(r, 'E_CLAUSE_ID_PREFIX'))
+    if (baseDrift > 0) {
+        console.log('  NOTE  产品树内容漂移 ' + baseDrift + ' 条（基线清单上测试文件里的 title/assert 对不上；由门 exit 1 逐条报出，本自检不因此判红）')
+    }
     let failed = 0
     for (const c of cases) {
         if (!c.ok) failed++

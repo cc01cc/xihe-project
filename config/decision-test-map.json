@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated": "2026-11-20",
-  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在四类白名单内（A03-xihe/packages/ui/ · A12-DSH-decision/packages/dsh-decision/tests/ · internal/A03-xihe/scripts/ · scripts/；task-53 放宽）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。决策号两种形态（task-59）：\"DSD-NNNN\" = DSD-1474 起的新裁定（只解析 DSD 侧、不做台账查重，dsd 可省略由 id 推导、给了就必须同值），\"D-####\" = 历史台账号（台账自 D-1903 冻结后按 DSD 库核对）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
+  "updated": "2026-11-21",
+  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在五类白名单内（A03-xihe/packages/ui/ · A12-DSH-decision/packages/dsh-decision/tests/ · internal/A03-xihe/scripts/ · scripts/ · A03-xihe/packages/control-plane/src/test/；task-53 放宽、task-173 加 CP/Java），测试文件认 *.{spec,test}.[cm]?[jt]sx? 与 *Test.java（且须有 @Test 注解）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。决策号两种形态（task-59）：\"DSD-NNNN\" = DSD-1474 起的新裁定（只解析 DSD 侧、不做台账查重，dsd 可省略由 id 推导、给了就必须同值），\"D-####\" = 历史台账号（台账自 D-1903 冻结后按 DSD 库核对）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
   "decisions": [
     {
       "id": "D-1904",
@@ -425,6 +425,32 @@
           "title": "展开态仍然只有那一个 sidebar-session-search（复用 id 不产生同态双节点）",
           "assert": "expect(wrapper.findAll('[data-testid=\"sidebar-session-search\"]')).toHaveLength(1);",
           "note": "同族另有一例判折叠态（折叠态渲染恰好一个检索入口，展开控件仍在，输入框未打开时不挂载）。单列一条的理由：testid 复用是口径 A 的代价，计数器让「两态同时挂载」这种回归立刻红"
+        }
+      ]
+    },
+    {
+      "id": "DSD-1513",
+      "rev": 1,
+      "dsd": 1513,
+      "title": "开箱默认 = 空库种子三层（身份/组织/内容），超管口令只在生成时明文披露一次",
+      "clauses": [
+        {
+          "id": "DSD-1513/1",
+          "text": "空库首启必须把身份组种子落成可用的树：V167 建根组织（ROOT_ORG_UNIT_ID）、DataSeeder 把 admin@xihe.local 放进该根、再次启动不新增行；「成员页空白」不得再被当成前端缺陷去修",
+          "status": "covered",
+          "file": "A03-xihe/packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/config/OrgUnitRootSeedIntegrationTest.java",
+          "title": "aBootedDatabaseHasTheRootUnitAndTheAdminIsPlacedInIt",
+          "assert": "V167 must have created the root unit",
+          "note": "task-148 落地（CP 集成判据）。同一目录另有两条同族判据：theAdminSeesTheRootOverHttpInsteadOfAnEmptyTree（HTTP 面看到的是根而非空树）与 runningTheSeederAgainMovesNoRow（重启幂等）；迁移面在 cp/migration/OrgUnitRootSeedMigrationTest 与 AgentUserSeedMigrationUpgradeTest。task-173 之前这条登记不进来 —— file 白名单没有 CP 前缀"
+        },
+        {
+          "id": "DSD-1513/2",
+          "text": "超管首启口令的明文只在生成时披露一次：不得进日志（fresh / reused 两条分支都判），且披露方法体内不得引用口令常量",
+          "status": "covered",
+          "file": "A03-xihe/packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/config/DataSeederPasswordResolutionTest.java",
+          "title": "disclosureOnFreshRowNeverLogsThePasswordValue",
+          "assert": "doesNotContain(DataSeeder.seededAdminPassword())",
+          "note": "task-149 落地（CP 判据）。同族：disclosureOnReusedRowNeverLogsThePasswordValue（复用行同判）、disclosureMethodBodyNeverReferencesThePasswordConstant（源码级扫方法体，防另一条 env 分支被重加）、assertNoValueLogged:116（先断言 appender 非空，否则「不含」是空断言）；解析优先级 10 例（osEnvWinsOverPropertyAndRandom 等）。UI 面「披露面板只渲染一次 / 刷新后不再含明文」的断言仍缺（task-149 收尾），所以本条款只判 CP 侧"
         }
       ]
     }
