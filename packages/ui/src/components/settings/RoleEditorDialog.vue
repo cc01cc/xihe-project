@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
     type ApiRole,
     type ApiRoleAtom,
+    type ApiRoleAtomInput,
     type ApiRoleCatalog,
     type ApiRoleWrite,
 } from "../../composables/api";
@@ -39,6 +40,12 @@ const props = defineProps<{
     role: ApiRole | null;
     catalog: ApiRoleCatalog | null;
     saving: boolean;
+    /**
+     * task-126：「用当前工作区」按钮预填的 uuid（`auth.currentWorkspaceId`，取不到就不显示按钮）。
+     * 只做省粘贴，**不当校验**：输入框仍然接受任意文本，不存在的 uuid 要能一路走到 CP 拿到
+     * `404 WORKSPACE_NOT_FOUND` 原文 —— 在 UI 里先拦住就等于替 CP 改口径。
+     */
+    currentWorkspaceId?: string | null;
 }>();
 const emit = defineEmits<{
     close: [];
@@ -51,6 +58,11 @@ const name = ref(""),
     displayName = ref(""),
     description = ref(""),
     selectedAtoms = ref<string[]>([]),
+    /**
+     * task-126：每个原子「资源前缀」输入的原文（键 = 原子名，值 = 用户所见所输）。
+     * 空/缺键 ⇒ 该原子不收窄，提交裸串（CP 落 canonical `*`）。
+     */
+    atomResources = reactive<Record<string, string>>({}),
     error = ref("");
 
 const isSystem = computed(() => props.role?.system === true);
@@ -95,12 +107,28 @@ const noAtomMatches = computed(
         bothAtoms.value.length === 0,
 );
 
+/**
+ * 服务端对该角色**实际存的**资源前缀，只收窄过的（canonical `*` 不是收窄）。
+ * 用途有二：编辑时回填输入框；行内标一句「这是当前生效的前缀」，让用户在改之前看清基线。
+ */
+const storedResources = computed<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const atom of props.role?.atoms ?? []) {
+        if (atom.resource && atom.resource !== "*") map[atom.name] = atom.resource;
+    }
+    return map;
+});
+
 function reset() {
     const role = props.role;
     name.value = role?.name ?? "";
     displayName.value = role?.displayName ?? "";
     description.value = role?.description ?? "";
     selectedAtoms.value = role ? role.atoms.map((atom) => atom.name) : [];
+    for (const atomName of Object.keys(atomResources)) delete atomResources[atomName];
+    for (const [atomName, resource] of Object.entries(storedResources.value)) {
+        atomResources[atomName] = resource;
+    }
     atomQuery.value = "";
     error.value = "";
 }
@@ -118,6 +146,28 @@ function toggleAtom(atomName: string) {
     selectedAtoms.value = selectedAtoms.value.includes(atomName)
         ? selectedAtoms.value.filter((name_) => name_ !== atomName)
         : [...selectedAtoms.value, atomName];
+}
+
+/**
+ * task-126：一个原子最终的 wire 形态。**输入框留空 = 不收窄 ⇒ 仍送裸串**，与 task-126 之前的
+ * 请求字节完全一致（CP 的 `GrantResourcePattern.resolve` 对 null/blank 返回 canonical `*`），
+ * 所以老行为不受影响；只有用户真填了前缀才切成对象形态。
+ */
+function atomWire(atomName: string): string | ApiRoleAtomInput {
+    const resource = (atomResources[atomName] ?? "").trim();
+    return resource ? { actionClass: atomName, resource } : atomName;
+}
+
+/** 「用当前工作区」：只把 `fs:<uuid>` 填进去省粘贴（`fs:<uuid>` 本身合法 = 收窄到整个工作区）。 */
+function useCurrentWorkspace(atomName: string) {
+    const workspaceId = props.currentWorkspaceId;
+    if (!workspaceId) return;
+    atomResources[atomName] = `fs:${workspaceId}`;
+}
+
+/** 该行在服务端当前生效的前缀（没有则空串 = 整域）。 */
+function storedResource(atomName: string): string {
+    return storedResources.value[atomName] ?? "";
 }
 
 function submit() {
@@ -144,13 +194,13 @@ function submit() {
                   name: trimmedName,
                   displayName: displayName.value.trim(),
                   description: description.value.trim(),
-                  atoms: [...selectedAtoms.value],
+                  atoms: selectedAtoms.value.map(atomWire),
               }
         : {
               name: trimmedName,
               displayName: displayName.value.trim(),
               description: description.value.trim(),
-              atoms: [...selectedAtoms.value],
+              atoms: selectedAtoms.value.map(atomWire),
           };
     emit("submit", payload);
 }
@@ -240,26 +290,40 @@ defineExpose({ error });
                             {{ t("settings.rolesEditorGroupInstanceHint") }}
                         </p>
                         <div class="grid gap-1 sm:grid-cols-2">
-                            <label
-                                v-for="atom in instanceAtoms"
-                                :key="atom.name"
-                                class="flex items-center gap-2 text-sm"
-                                :data-testid="`role-editor-atom-${atom.name}`"
-                            >
-                                <Checkbox
-                                    :model-value="selectedAtoms.includes(atom.name)"
-                                    :disabled="isSystem"
-                                    @update:model-value="toggleAtom(atom.name)"
-                                />
-                                <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
-                                <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
-                                <span class="font-mono text-xs text-muted-foreground">
-                                    {{ atom.name }}
-                                </span>
-                                <span v-if="atom.capability" class="text-xs text-muted-foreground">
-                                    {{ t("settings.rolesEditorCapabilityBadge") }}
-                                </span>
-                            </label>
+                            <div v-for="atom in instanceAtoms" :key="atom.name" class="space-y-0.5">
+                                <label
+                                    class="flex items-center gap-2 text-sm"
+                                    :data-testid="`role-editor-atom-${atom.name}`"
+                                >
+                                    <Checkbox
+                                        :model-value="selectedAtoms.includes(atom.name)"
+                                        :disabled="isSystem"
+                                        @update:model-value="toggleAtom(atom.name)"
+                                    />
+                                    <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
+                                    <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
+                                    <span class="font-mono text-xs text-muted-foreground">
+                                        {{ atom.name }}
+                                    </span>
+                                    <span
+                                        v-if="atom.capability"
+                                        class="text-xs text-muted-foreground"
+                                    >
+                                        {{ t("settings.rolesEditorCapabilityBadge") }}
+                                    </span>
+                                </label>
+                                <!-- task-126: 只有 both 作用域的原子能收窄；这两组不显示输入框，但要说明理由，不做静默丢弃 -->
+                                <p
+                                    v-if="selectedAtoms.includes(atom.name)"
+                                    class="ml-6 text-xs text-muted-foreground"
+                                >
+                                    {{
+                                        atom.capability
+                                            ? t("settings.rolesEditorCapabilityNoResource")
+                                            : t("settings.rolesEditorInstanceNoResource")
+                                    }}
+                                </p>
+                            </div>
                         </div>
                     </div>
 
@@ -270,24 +334,66 @@ defineExpose({ error });
                         <p class="mb-2 text-xs text-muted-foreground">
                             {{ t("settings.rolesEditorGroupBothHint") }}
                         </p>
-                        <div class="grid gap-1 sm:grid-cols-2">
-                            <label
-                                v-for="atom in bothAtoms"
-                                :key="atom.name"
-                                class="flex items-center gap-2 text-sm"
-                                :data-testid="`role-editor-atom-${atom.name}`"
-                            >
-                                <Checkbox
-                                    :model-value="selectedAtoms.includes(atom.name)"
-                                    :disabled="isSystem"
-                                    @update:model-value="toggleAtom(atom.name)"
-                                />
-                                <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
-                                <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
-                                <span class="font-mono text-xs text-muted-foreground">
-                                    {{ atom.name }}
-                                </span>
-                            </label>
+                        <div class="grid gap-2 sm:grid-cols-2">
+                            <div v-for="atom in bothAtoms" :key="atom.name" class="space-y-1">
+                                <label
+                                    class="flex items-center gap-2 text-sm"
+                                    :data-testid="`role-editor-atom-${atom.name}`"
+                                >
+                                    <Checkbox
+                                        :model-value="selectedAtoms.includes(atom.name)"
+                                        :disabled="isSystem"
+                                        @update:model-value="toggleAtom(atom.name)"
+                                    />
+                                    <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
+                                    <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
+                                    <span class="font-mono text-xs text-muted-foreground">
+                                        {{ atom.name }}
+                                    </span>
+                                </label>
+                                <!-- task-126: 留空 = 整域（送裸串，与旧客户端同字节）；填了就原样送，UI 不做本地预校验，
+                                     否则 CP 的 400/404/403 原文到不了用户。 -->
+                                <div
+                                    v-if="selectedAtoms.includes(atom.name)"
+                                    class="ml-6 space-y-1"
+                                    :data-testid="`role-editor-atom-resource-block-${atom.name}`"
+                                >
+                                    <div class="flex items-center gap-2">
+                                        <Input
+                                            v-model="atomResources[atom.name]"
+                                            class="h-8 font-mono text-xs"
+                                            :data-testid="`role-editor-atom-resource-${atom.name}`"
+                                            :placeholder="
+                                                t('settings.rolesEditorResourcePlaceholder')
+                                            "
+                                            :aria-label="t('settings.rolesEditorResourceLabel')"
+                                        />
+                                        <Button
+                                            v-if="currentWorkspaceId"
+                                            type="button"
+                                            variant="ghost"
+                                            size="xs"
+                                            class="shrink-0"
+                                            :data-testid="`role-editor-atom-use-workspace-${atom.name}`"
+                                            @click.prevent="useCurrentWorkspace(atom.name)"
+                                        >
+                                            {{ t("settings.rolesEditorResourceUseWorkspace") }}
+                                        </Button>
+                                    </div>
+                                    <p class="text-xs text-muted-foreground">
+                                        {{ t("settings.rolesEditorResourceHint") }}
+                                    </p>
+                                    <p
+                                        v-if="storedResource(atom.name)"
+                                        class="text-xs text-muted-foreground"
+                                    >
+                                        {{ t("settings.rolesEditorResourceEffective") }}:
+                                        <span class="font-mono">{{
+                                            storedResource(atom.name)
+                                        }}</span>
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </fieldset>

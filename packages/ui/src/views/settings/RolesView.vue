@@ -442,6 +442,7 @@ watch(
                     :role="editorRole"
                     :catalog="catalog"
                     :saving="saving"
+                    :current-workspace-id="auth.currentWorkspaceId"
                     @close="editorOpen = false"
                     @submit="submitEditor"
                 />

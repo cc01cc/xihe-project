@@ -25,6 +25,11 @@ export type RoleErrorKey =
     | "roleNotFound"
     | "invalidRoleName"
     | "invalidRoleAtoms"
+    /**
+     * task-81 / task-126：`resource` 前缀不合法（400 INVALID_GRANT_RESOURCE）。CP 的 detail 会点名
+     * 具体原子与原因，按 BL-288 走 detail-first；这条只是 detail 缺失时的兜底。
+     */
+    | "invalidGrantResource"
     | "invalidScope"
     | "workspaceNotFound"
     | "invalidBinding"
@@ -46,6 +51,7 @@ const CODE_TO_KEY: Record<string, RoleErrorKey> = {
     ROLE_NOT_FOUND: "roleNotFound",
     INVALID_ROLE_NAME: "invalidRoleName",
     INVALID_ROLE_ATOMS: "invalidRoleAtoms",
+    INVALID_GRANT_RESOURCE: "invalidGrantResource",
     INVALID_SCOPE: "invalidScope",
     WORKSPACE_NOT_FOUND: "workspaceNotFound",
     INVALID_BINDING: "invalidBinding",

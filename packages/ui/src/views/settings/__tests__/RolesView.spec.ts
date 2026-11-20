@@ -39,7 +39,12 @@ vi.mock("../../../composables/api", async (importOriginal) => {
  * (`auth.canManageRoles`); the `isInstanceAdmin` capability flag (`auth.isAdmin`) is kept on the
  * mock so a case can prove it no longer opens the page on its own.
  */
-const authState = vi.hoisted(() => ({ isAdmin: true, canManageRoles: true }));
+const authState = vi.hoisted(() => ({
+    isAdmin: true,
+    canManageRoles: true,
+    /** task-126：「用当前工作区」按钮读它；null 时按钮不渲染。 */
+    currentWorkspaceId: null as string | null,
+}));
 const authEnsureSelfPermissions = vi.hoisted(() =>
     vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
 );
@@ -51,6 +56,9 @@ vi.mock("../../../stores/auth", () => ({
         },
         get canManageRoles() {
             return authState.canManageRoles;
+        },
+        get currentWorkspaceId() {
+            return authState.currentWorkspaceId;
         },
     }),
 }));
@@ -179,6 +187,7 @@ beforeEach(() => {
     localStorage.clear();
     authState.isAdmin = true;
     authState.canManageRoles = true;
+    authState.currentWorkspaceId = null;
     vi.clearAllMocks();
     authEnsureSelfPermissions.mockClear();
     mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
@@ -382,6 +391,239 @@ describe("RoleEditorDialog catalog wiring", () => {
         expect(payload).toEqual({ displayName: "Renamed super admin", description: "" });
         expect(payload).not.toHaveProperty("atoms");
         expect(payload).not.toHaveProperty("name");
+    });
+});
+
+/**
+ * task-126：角色编辑器改送 `{actionClass, resource}`（task-81 收窄写面）。
+ * 口径（Lead 2026-11-20 裁定 a：纯文本完整形态）：UI **不做本地预校验** —— 先在 UI 里拦就等于替 CP
+ * 改口径，用户永远看不到 400/404/403 原文。所以这里既钉「怎么送」，也钉「原文怎么显示」。
+ * 只有 both 作用域的行有输入框；capability 与 instance-only 行不给输入框，但必须给理由文案。
+ */
+describe("RoleEditorDialog · task-126 资源前缀", () => {
+    const WS = "e005df0b-5464-45a2-a2a1-122bd85a7ddc";
+
+    async function openCreate() {
+        await mountView();
+        await clickBody('[data-testid="roles-create"]');
+    }
+
+    async function fillText(selector: string, value: string) {
+        const el = (await bodyEl(selector)) as HTMLInputElement;
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushPromises();
+    }
+
+    async function fillRoleBasics() {
+        await fillText('[data-testid="role-editor-name"]', "SCOPED_READER");
+        await fillText('[data-testid="role-editor-display-name"]', "Scoped reader");
+    }
+
+    async function submitAndReadPayload() {
+        await clickBody('[data-testid="role-editor-submit"]');
+        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
+        return mockedApi.createRole.mock.calls[0]?.[0];
+    }
+
+    it("留空资源前缀仍送裸原子名（老客户端字节不变）", async () => {
+        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        await openCreate();
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+
+        const payload = await submitAndReadPayload();
+        expect(payload?.atoms).toEqual(["read"]);
+    });
+
+    it("填了前缀就改送 {actionClass, resource} 对象", async () => {
+        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        await openCreate();
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        await fillText('[data-testid="role-editor-atom-resource-read"]', "fs:" + WS + "/src");
+
+        const payload = await submitAndReadPayload();
+        expect(payload?.atoms).toEqual([{ actionClass: "read", resource: "fs:" + WS + "/src" }]);
+    });
+
+    it("混发：只有填了前缀的原子变对象，其余仍是裸串", async () => {
+        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        await openCreate();
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-FUTURE_ATOM_FROM_CATALOG"]');
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        await fillText('[data-testid="role-editor-atom-resource-read"]', "fs:" + WS + "/lib");
+
+        const payload = await submitAndReadPayload();
+        expect(payload?.atoms).toEqual([
+            "FUTURE_ATOM_FROM_CATALOG",
+            { actionClass: "read", resource: "fs:" + WS + "/lib" },
+        ]);
+    });
+
+    it("纯空白前缀按留空处理（trim 后为空 ⇒ 裸串）", async () => {
+        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        await openCreate();
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        await fillText('[data-testid="role-editor-atom-resource-read"]', "   ");
+
+        const payload = await submitAndReadPayload();
+        expect(payload?.atoms).toEqual(["read"]);
+    });
+
+    it("「用当前工作区」把 auth.currentWorkspaceId 填成 fs:<uuid>", async () => {
+        authState.currentWorkspaceId = WS;
+        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        await openCreate();
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+
+        const input = (await bodyEl(
+            '[data-testid="role-editor-atom-resource-read"]',
+        )) as HTMLInputElement;
+        expect(input.value).toBe("");
+        await clickBody('[data-testid="role-editor-atom-use-workspace-read"]');
+        expect(input.value).toBe("fs:" + WS);
+
+        const payload = await submitAndReadPayload();
+        expect(payload?.atoms).toEqual([{ actionClass: "read", resource: "fs:" + WS }]);
+    });
+
+    it("取不到工作区时按钮不渲染（只做省粘贴，不造假 uuid）", async () => {
+        await openCreate();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        expect(
+            document.body.querySelector('[data-testid="role-editor-atom-use-workspace-read"]'),
+        ).toBeNull();
+        // 输入框仍然在：手填完整形态依旧可用（不因取不到当前工作区而禁用收窄）。
+        expect(
+            document.body.querySelector('[data-testid="role-editor-atom-resource-read"]'),
+        ).toBeTruthy();
+    });
+
+    it("编辑既有角色时把已生效前缀回填，并标注这是当前生效值", async () => {
+        const stored = "fs:" + WS + "/src";
+        mockedApi.listRoles.mockResolvedValue([
+            SYSTEM_ROLE,
+            role({ atoms: [{ ...BOTH_ATOM, resource: stored }] }),
+        ]);
+        mockedApi.updateRole.mockResolvedValue(role({ id: "role-1" }));
+        await mountView();
+        await clickBody('[data-testid="role-edit-AUDITOR"]');
+
+        const input = (await bodyEl(
+            '[data-testid="role-editor-atom-resource-read"]',
+        )) as HTMLInputElement;
+        expect(input.value).toBe(stored);
+        const effective = Array.from(
+            document.body.querySelectorAll(
+                '[data-testid="role-editor-atom-resource-block-read"] p',
+            ),
+        ).map((node) => node.textContent ?? "");
+        expect(effective.join(" ")).toContain(stored);
+        expect(effective.join(" ")).toContain(
+            i18n.global.t("settings.rolesEditorResourceEffective"),
+        );
+
+        await clickBody('[data-testid="role-editor-submit"]');
+        await vi.waitFor(() => expect(mockedApi.updateRole).toHaveBeenCalled());
+        // 未改动时原样回送，不把既有收窄悄悄放宽成 *。
+        expect(mockedApi.updateRole.mock.calls[0]?.[1]).toEqual({
+            name: "AUDITOR",
+            displayName: "Auditor",
+            description: "",
+            atoms: [{ actionClass: "read", resource: stored }],
+        });
+    });
+
+    it("capability 与 instance-only 行不给输入框，并说明不可收窄的理由", async () => {
+        await openCreate();
+        await clickBody('[data-testid="role-editor-atom-MANAGE_ROLES"]');
+        await clickBody('[data-testid="role-editor-atom-instance:admin"]');
+
+        expect(
+            document.body.querySelector('[data-testid="role-editor-atom-resource-MANAGE_ROLES"]'),
+        ).toBeNull();
+        expect(
+            document.body.querySelector('[data-testid="role-editor-atom-resource-instance:admin"]'),
+        ).toBeNull();
+
+        const instanceGroup = (await bodyEl(
+            '[data-testid="role-editor-atoms-instance"]',
+        )) as HTMLElement;
+        expect(instanceGroup.textContent).toContain(
+            i18n.global.t("settings.rolesEditorInstanceNoResource"),
+        );
+        expect(instanceGroup.textContent).toContain(
+            i18n.global.t("settings.rolesEditorCapabilityNoResource"),
+        );
+    });
+
+    /**
+     * 三条错误都用真实报文（2026-11-20 对运行中 stack-2 / CP=12641 的实测 HTTP 响应正文），
+     * 断言「原样展示」而不是「被压成保存失败」——这正是裁定选纯文本形态的理由。
+     */
+    it("400 INVALID_GRANT_RESOURCE 原样显示 CP 报文", async () => {
+        const detail =
+            "resource pattern 'src' is not valid for atom read: path patterns must be " +
+            "fs:<workspaceId>[/<relative path>] without dot segments, wildcards, " +
+            "backslashes or a leading slash";
+        mockedApi.createRole.mockRejectedValue(
+            new ApiError({ status: 400, code: "INVALID_GRANT_RESOURCE", detail, requestId: "t" }),
+        );
+        const wrapper = await mountView();
+        await clickBody('[data-testid="roles-create"]');
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        await fillText('[data-testid="role-editor-atom-resource-read"]', "src");
+        await clickBody('[data-testid="role-editor-submit"]');
+
+        await vi.waitFor(() =>
+            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
+        );
+        expect(wrapper.get('[data-testid="roles-error"]').text()).not.toBe(
+            i18n.global.t("settings.rolesError.generic"),
+        );
+    });
+
+    it("403 FORBIDDEN 原样显示 CP 报文", async () => {
+        const detail =
+            "MANAGE_WORKSPACE_AGENTS is required to administer this workspace's bindings";
+        mockedApi.createRole.mockRejectedValue(
+            new ApiError({ status: 403, code: "FORBIDDEN", detail, requestId: "t" }),
+        );
+        const wrapper = await mountView();
+        await clickBody('[data-testid="roles-create"]');
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        await fillText('[data-testid="role-editor-atom-resource-read"]', "fs:" + WS + "/src");
+        await clickBody('[data-testid="role-editor-submit"]');
+
+        await vi.waitFor(() =>
+            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
+        );
+    });
+
+    it("404 WORKSPACE_NOT_FOUND 原样显示 CP 报文", async () => {
+        const detail = "Workspace not found: 00000000-0000-4000-8000-000000000000";
+        mockedApi.createRole.mockRejectedValue(
+            new ApiError({ status: 404, code: "WORKSPACE_NOT_FOUND", detail, requestId: "t" }),
+        );
+        const wrapper = await mountView();
+        await clickBody('[data-testid="roles-create"]');
+        await fillRoleBasics();
+        await clickBody('[data-testid="role-editor-atom-read"]');
+        await fillText(
+            '[data-testid="role-editor-atom-resource-read"]',
+            "fs:00000000-0000-4000-8000-000000000000/src",
+        );
+        await clickBody('[data-testid="role-editor-submit"]');
+
+        await vi.waitFor(() =>
+            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
+        );
     });
 });
 
@@ -634,6 +876,9 @@ describe("roleErrorMessages", () => {
         expect(roleErrorKey(problemError(409, "LAST_SUPER_ADMIN"))).toBe("lastSuperAdmin");
         expect(roleErrorKey(problemError(409, "CONCURRENT_MODIFICATION"))).toBe(
             "concurrentModification",
+        );
+        expect(roleErrorKey(problemError(400, "INVALID_GRANT_RESOURCE"))).toBe(
+            "invalidGrantResource",
         );
         expect(roleErrorKey(new Error("boom"))).toBe("generic");
 

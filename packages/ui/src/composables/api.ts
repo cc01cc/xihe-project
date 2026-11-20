@@ -326,12 +326,32 @@ export interface ApiRole {
     bindingCount: number;
 }
 
+/**
+ * task-126：角色写面的**元素**有两种形态，CP 两种都收（`RoleAdminViews.AtomInput.Deserializer`）。
+ *
+ * - 裸串 `"read"` ⇒ `resource = null`，CP 落该原子的 canonical 值（`*`，整域生效）；
+ * - 对象 `{ actionClass, resource }` ⇒ 资源前缀收窄。**合法形态只有
+ *   `fs:<workspace-uuid>[/<relative/path>]`**（task-81 `GrantResourcePattern` 的七道校验：
+ *   无 dot segment / 通配 / 反斜杠 / 前导斜杠、root 必须是 UUID、workspace 必须存在且调用方在该
+ *   工作区持 `MANAGE_WORKSPACE_AGENTS`、capability 与 instance-only 原子**永不接受**前缀）。
+ *   UI 不做本地预校验：本地猜一套规则就等于替 CP 改写口径，400/404/403 的原文就再也到不了用户。
+ */
+export interface ApiRoleAtomInput {
+    actionClass: string;
+    /** 留空/null 与不传等价 —— CP 按 canonical 落值。 */
+    resource?: string | null;
+}
+
 /** `POST /roles` and `PATCH /roles/{id}` body (PATCH: null = unchanged, system roles: display only). */
 export interface ApiRoleWrite {
     name?: string | null;
     displayName?: string | null;
     description?: string | null;
-    atoms?: string[] | null;
+    /**
+     * 混发合法：未收窄的原子仍送裸串（老客户端的字节不变），收窄的送对象。
+     * 同一原子出现两次且 pattern 不同，CP 会 400 `INVALID_GRANT_RESOURCE`。
+     */
+    atoms?: Array<string | ApiRoleAtomInput> | null;
 }
 
 export type ApiBindingScope = "instance" | "workspace";
