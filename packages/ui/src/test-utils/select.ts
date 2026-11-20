@@ -1,6 +1,7 @@
 import { nextTick } from "vue";
 import type { VueWrapper } from "@vue/test-utils";
 import { Select, SelectItem } from "@/components/ui/select";
+import { SearchableCombobox } from "@/components/ui/combobox";
 
 /**
  * PLAN-0698 helper: the migrated pages use the shadcn-vue/reka `Select` (a button
@@ -44,6 +45,23 @@ export function findSelectRoot(wrapper: Wrapper, selector?: string) {
 export async function setSelectValue(wrapper: Wrapper, selector: string, value: unknown) {
     const root = findSelectRoot(wrapper, selector);
     if (!root) throw new Error(`No <Select> matches ${selector}`);
+    root.vm.$emit("update:modelValue", value);
+    await nextTick();
+}
+
+/**
+ * task-152：>8 项站点已从 Select 换成可搜索的 `SearchableCombobox`（同一语义：
+ * 发 `update:modelValue`，值为选项的 wire 值）。真实点选/过滤路径由该组件自己的
+ * `__tests__/SearchableCombobox.spec.ts` 与真栈读数覆盖。
+ */
+export function searchableComboboxRoots(wrapper: Wrapper) {
+    return wrapper.findAllComponents(SearchableCombobox);
+}
+
+export async function setComboboxValue(wrapper: Wrapper, selector: string, value: unknown) {
+    const roots = searchableComboboxRoots(wrapper);
+    const root = roots.find((candidate) => candidate.find(selector).exists());
+    if (!root) throw new Error(`No <SearchableCombobox> matches ${selector}`);
     root.vm.$emit("update:modelValue", value);
     await nextTick();
 }

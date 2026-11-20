@@ -12,6 +12,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "../../components/ui/select";
+import { SearchableCombobox, type SearchableComboboxOption } from "../../components/ui/combobox";
 import { useAuditStore } from "../../stores/audit";
 import type {
     ApprovalPolicyEffect,
@@ -82,6 +83,15 @@ const allStatuses = computed(() => {
     }
     return values;
 });
+
+/**
+ * task-152：状态筛选项最多 24 个，Select 弹层再宽也读不完，改可搜索面板。
+ * `__all__` 哨兵留在视图层（SelectContent 时代就是它），SearchableCombobox 只当值就是值。
+ */
+const statusOptions = computed<SearchableComboboxOption[]>(() => [
+    { value: "__all__", label: t("settings.auditAllStatuses") },
+    ...allStatuses.value.map((status) => ({ value: status, label: statusLabel(status) })),
+]);
 
 const sourceLayerLabels: Record<ApprovalPolicySourceLayer, string> = {
     builtin: "chat.approvalLayerBuiltin",
@@ -329,29 +339,14 @@ onMounted(() => {
                 </label>
                 <label class="flex items-center gap-2">
                     <span class="text-muted-foreground">{{ t("settings.auditStatus") }}</span>
-                    <Select
+                    <SearchableCombobox
                         :model-value="statusFilter || '__all__'"
+                        :options="statusOptions"
+                        :placeholder="t('settings.auditAllStatuses')"
+                        testid="settings-audit-status"
+                        trigger-class="h-auto rounded-md border-border bg-background px-2 py-1.5"
                         @update:model-value="(value) => setStatusFilter(String(value ?? ''))"
-                    >
-                        <SelectTrigger
-                            data-testid="settings-audit-status"
-                            class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                        >
-                            <SelectValue>{{
-                                statusFilter
-                                    ? statusLabel(statusFilter)
-                                    : t("settings.auditAllStatuses")
-                            }}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="__all__">{{
-                                t("settings.auditAllStatuses")
-                            }}</SelectItem>
-                            <SelectItem v-for="status in allStatuses" :key="status" :value="status">
-                                {{ statusLabel(status) }}
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
+                    />
                 </label>
             </div>
         </header>

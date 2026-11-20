@@ -8,7 +8,12 @@ import type * as apiModule from "../../../composables/api";
 import RolesView from "../RolesView.vue";
 import { expectModalDialog } from "../../../test-utils/modalDialog";
 import { roleErrorKey, roleErrorMessage } from "../../../components/settings/roleErrorMessages";
-import { openSelect, selectItemComponents, setSelectValue } from "../../../test-utils/select";
+import {
+    openSelect,
+    selectItemComponents,
+    setComboboxValue,
+    setSelectValue,
+} from "../../../test-utils/select";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -772,7 +777,7 @@ describe("RoleBindingsPanel", () => {
                 document.body.querySelector('[data-testid="role-bindings-subject"]'),
             ).toBeTruthy(),
         );
-        await setSelectValue(wrapper, '[data-testid="role-bindings-subject"]', "user-2");
+        await setComboboxValue(wrapper, '[data-testid="role-bindings-subject"]', "user-2");
         await setSelectValue(wrapper, '[data-testid="role-bindings-role"]', "role-1");
         await clickBody('[data-testid="role-bindings-add"]');
 

@@ -5,13 +5,7 @@ import { request } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import { INSTANCE_DOMAINS, type ConfigDomain } from "../../stores/config";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
+import { SearchableCombobox, type SearchableComboboxOption } from "@/components/ui/combobox";
 
 /**
  * PLAN-0556: the admin-only lock page. Ordinary config pages only render the
@@ -41,6 +35,13 @@ const auth = useAuthStore();
 const isAdmin = computed(() => auth.isAdmin);
 
 const domains = INSTANCE_DOMAINS;
+/**
+ * task-152：12 个配置域塞进 62px 的 Select 触发器后，长域名（api-request-templates）
+ * 在弹层里被裁掉半个词，只能靠调用点 `min-w-*` 覆写救——改可搜索面板，宽度不再靠覆写。
+ */
+const domainOptions = computed<SearchableComboboxOption[]>(() =>
+    domains.map((item) => ({ value: item, label: item })),
+);
 const domain = ref<ConfigDomain>("rag");
 const catalog = ref<ConfigLockCatalog | null>(null);
 const values = ref<Record<string, string>>({});
@@ -195,20 +196,14 @@ watch(domain, () => {
                 <label class="text-xs text-muted-foreground" for="config-lock-domain">
                     {{ t("settings.configLockDomain") }}
                 </label>
-                <Select v-model="domain">
-                    <SelectTrigger
-                        id="config-lock-domain"
-                        data-testid="config-lock-domain"
-                        class="rounded border bg-background px-2 py-1 text-sm"
-                    >
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem v-for="item in domains" :key="item" :value="item">
-                            {{ item }}
-                        </SelectItem>
-                    </SelectContent>
-                </Select>
+                <SearchableCombobox
+                    id="config-lock-domain"
+                    :model-value="domain"
+                    :options="domainOptions"
+                    testid="config-lock-domain"
+                    trigger-class="h-auto w-auto rounded border bg-background px-2 py-1"
+                    @update:model-value="(value) => (domain = value as ConfigDomain)"
+                />
                 <span v-if="catalog" class="text-xs text-muted-foreground">
                     {{ t("settings.configLockCount", { count: lockedCount }) }}
                 </span>

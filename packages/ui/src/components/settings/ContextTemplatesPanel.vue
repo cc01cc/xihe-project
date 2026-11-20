@@ -288,7 +288,10 @@ async function save(publish: boolean) {
                 >
                     <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <!-- task-152: 选项名最长 191px（Anthropic Messages 协议@1），触发器 155px 装不下 4 个选项
+                     ⇒ 该处只有 4 项、不属 >8 项站点，保留 Select，仅给面板加下限 240px 让最长的那个完整显示
+                     （208px 实测文本区只有 162px，仍裁 2 项）。 -->
+                <SelectContent class="min-w-60">
                     <SelectItem v-for="type in types" :key="typeKey(type)" :value="typeKey(type)">
                         {{ formatApiType(type.apiTypeId, type.version, t) }}
                     </SelectItem>

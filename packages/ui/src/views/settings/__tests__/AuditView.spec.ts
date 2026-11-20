@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { api, ApiError } from "../../../composables/api";
-import { setSelectValue } from "../../../test-utils/select";
+import { setComboboxValue, setSelectValue } from "../../../test-utils/select";
 import type * as apiModule from "../../../composables/api";
 import type {
     AuditEntry,
@@ -371,7 +371,7 @@ describe("AuditView audit read surface (PLAN-0466)", () => {
     it("applies the status and type filters to the list request", async () => {
         const wrapper = await mountOnly();
 
-        await setSelectValue(wrapper, '[data-testid="settings-audit-status"]', "failed");
+        await setComboboxValue(wrapper, '[data-testid="settings-audit-status"]', "failed");
         await flushPromises();
         expect(api.listAuditEntries).toHaveBeenLastCalledWith({
             status: "failed",

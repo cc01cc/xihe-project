@@ -17,6 +17,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { SearchableCombobox, type SearchableComboboxOption } from "../ui/combobox";
 import { LoaderCircle, X } from "@lucide/vue";
 
 /**
@@ -56,6 +57,17 @@ const subjectQuery = ref(""),
     subjectSearching = ref(false);
 const selectedSubject = ref<ApiAdminUser | null>(null),
     selectedRoleId = ref("");
+
+/**
+ * task-152：搜索结果一次最多回 11 个账号，Select 弹层宽度跟着 `min-w-56` 的触发器走，
+ * 长邮箱在弹层里被裁；改可搜索面板后搜索框本身就是过滤面（服务端搜索仍是外层输入框）。
+ */
+const subjectOptions = computed<SearchableComboboxOption[]>(() =>
+    subjectResults.value.map((user) => ({
+        value: user.id,
+        label: user.username || user.email,
+    })),
+);
 
 const workspaceId = computed(() => (scope.value === "workspace" ? scopeId.value : ""));
 
@@ -398,30 +410,21 @@ defineExpose({ load });
             </Button>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsSubject") }}
-                <Select
+                <!-- task-152 已登记例外：面板宽度覆写。实测 50 个账号、最长文本 229px（approvalpolicyreal…），
+                     面板 224px 时裁 15 项 ⇒ 提到 320px 后裁 0。第三次出现同类覆写应停手报 lead，改为升成组件 tier prop。 -->
+                <SearchableCombobox
                     :model-value="selectedSubject?.id ?? ''"
+                    :options="subjectOptions"
+                    :placeholder="t('settings.rolesBindingsSubjectPick')"
+                    testid="role-bindings-subject"
+                    trigger-class="min-w-56 h-auto rounded border bg-background px-2 py-1 text-foreground"
+                    panel-class="min-w-[20rem]"
                     @update:model-value="
                         (value) =>
                             (selectedSubject =
                                 subjectResults.find((user) => user.id === String(value)) ?? null)
                     "
-                >
-                    <SelectTrigger
-                        data-testid="role-bindings-subject"
-                        class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
-                    >
-                        <SelectValue>{{
-                            selectedSubject
-                                ? selectedSubject.username || selectedSubject.email
-                                : t("settings.rolesBindingsSubjectPick")
-                        }}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem v-for="user in subjectResults" :key="user.id" :value="user.id">
-                            {{ user.username || user.email }}
-                        </SelectItem>
-                    </SelectContent>
-                </Select>
+                />
             </label>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsRole") }}
