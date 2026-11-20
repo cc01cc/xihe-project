@@ -43,6 +43,14 @@
  *   (b) 登记面三源（plans/ 目录、台账主册、归档卷）缺失时静默成空集 —— 主册缺失 ⇒ 全部 D 号报「未登记」（假红），
  *       ops 台账缺失 ⇒ 「疑似错册登记」提示永不出现（假绿，正是 task-62 矩阵 ④-1）；
  *   (c) 读取失败裸 throw ⇒ 整轮崩掉，已算出的 findings 全丢。
+ * task-85（2026-11-20）：单边篇改**声明豁免制**。task-73 把 12 条单边篇一律报 E，其中 10 条（en 缺的 DEV-003/012/013/014/015/018/019/023/025 与 README）
+ * 其实已被 `zh-Hans/INDEX.md:55` 与 `en/INDEX.md` 的 "Chinese-only guides" 段（:50-64）明文裁定过：「其余 10 篇…保留中文原册：英文页需要时链接到中文文件并标 (zh)，
+ * 不维护过期英文残稿」——把已生效的裁定当成缺口，等于门在跟 INDEX 打架。现口径：
+ *   (a) 单边篇先查 INDEX 声明面：**在册 ⇒ W 级并计数**（已裁定不译，不算缺口）；**不在册 ⇒ 保持 E**；
+ *   (b) 声明面**从 INDEX 解析**，不 hardcode 文件清单：en 侧解析 Chinese-only 段的 `../zh-Hans/<file>.md` 链接目标，
+ *       zh 侧解析「保留中文原册」句里点名的 `DEV-0NN` 与 `README`（编号按目录实际文件名解析，不拼字符串）；
+ *   (c) 声明面整份缺失/不可读 ⇒ **不降级**：全部按未声明处理、E 照旧，并打印一行 fail-closed 说明（缺声明不会放宽判据）。
+ * 真树读数（2026-11-20，本卡实测）：改前 E 12 条；改后 E 2 条（ADR-001 / RFC-001 是 en 独有历史档，INDEX 未声明 ⇒ 仍 E）+ W 10 条。
  * 现口径：单边篇**进登记面判据**（它们的编号照样要能落到 plans/台账）；三源缺失与读取失败都进 `errors`（E_INPUT_MISSING），
  * 且**抑制**由空登记面产生的 unregistered 假红；有 E 时 exit 2，绝不以「0 命中」收场。判据本体（对称差 / 标题对拍 / 登记面存在性）一字未放宽。
  */
@@ -73,7 +81,7 @@ const BLIND_SPOTS = [
     "  d. 不覆盖：组件名 / data-testid / CSS 类 / 参数值域 / 路由表（这些只能人读或另立专用门）。",
     "  e. 登记面取「出现过」而非「被定义为条目」：正文顺带提一句也算已登记 ⇒ 会漏掉「从未定义、只被引用」的号；",
     "  f. 小节标题对拍的残余盲区：无签名标题按「同层出现顺序」配对 ⇒ 两侧条数相同而内容互换（改名 + 换序）不报；章号在两册故意分叉（en DEV-011 第 10 节自己写着别按编号平移）⇒ H2 条数相同就不报。",
-    "  g. 单边篇（task-73 起）报 E 级并进「登记面存在性」，但不做中英对称差与标题对拍 —— 它们没有对侧，这两个判据在单边篇上本来就没有对象。真树上 en 缺篇 10 篇是真缺口（归 task-62 的 en 译稿面），ADR-001 / RFC-001 是 en 独有历史档（按设计不参与）。",
+    "  g. 单边篇（task-73 起）进「登记面存在性」，但不做中英对称差与标题对拍 —— 它们没有对侧，这两个判据在单边篇上本来就没有对象。task-85 起按 INDEX 声明面分档：已声明 10 篇（en 缺）报 W，未声明的 ADR-001 / RFC-001 仍报 E；声明面本身只认 INDEX 原文，INDEX 没说的一律按未声明算。",
 ];
 
 function readText(file) {
@@ -258,9 +266,69 @@ function compareHeadings(name, zhText, enText, findings) {
     return { zh: zhAll.length, en: enAll.length };
 }
 
+// task-85（2026-11-20）：单边篇改「声明豁免制」。
+// 依据：zh-Hans/INDEX.md:55 与 en/INDEX.md 的 "Chinese-only guides" 段（:50-64）都明文写着「其余 10 篇…**保留中文原册**：
+// 英文页需要时链接到中文文件并标 (zh)，不维护过期英文残稿」⇒ task-73 把 12 条单边篇一律报 E，其中 10 条正是这条已生效的裁定，
+// 把「已声明的不译」当成缺口。判据改成：单边篇先查 INDEX 声明面 —— 在册 ⇒ 降 W 级并计数；不在册 ⇒ 保持 E。
+// **不从代码里 hardcode 文件清单**：声明只能从 INDEX 解析（en 侧解析链接目标，zh 侧解析「保留中文原册」句里点名的编号，
+// 编号按目录实际文件名解析而不是拼字符串）。声明面不可读时**不降级**：全部按未声明处理，E 照旧（fail-closed）。
+function parseDeclaredUnpaired(zhDir, enDir, errors) {
+    const names = new Set();
+    const sources = [];
+    const enIndex = path.join(enDir, "INDEX.md");
+    const zhIndex = path.join(zhDir, "INDEX.md");
+    const resEn = readTextSafe(enIndex);
+    if (resEn.ok) {
+        let inSection = false;
+        let level = 0;
+        let listed = 0;
+        for (const line of resEn.text.split(/\r?\n/)) {
+            const h = line.match(/^(#{2,6})\s+(.*)$/);
+            if (h) {
+                if (/chinese-only/i.test(h[2])) {
+                    inSection = true;
+                    level = h[1].length;
+                    continue;
+                }
+                if (inSection && h[1].length <= level) inSection = false;
+            }
+            if (!inSection) continue;
+            for (const m of line.matchAll(/\]\(\s*\.\.\/zh-Hans\/([^)\s#]+\.md)\s*\)/g)) {
+                names.add(path.basename(m[1]));
+                listed += 1;
+            }
+        }
+        if (listed > 0) sources.push(`en/INDEX.md Chinese-only 段（${listed} 条链接）`);
+    } else if (fs.existsSync(enIndex)) {
+        errors.push({ code: "E_INPUT_MISSING", detail: `en/INDEX.md 读取失败（${resEn.error}）⇒ 声明面不完整，未声明判定按 fail-closed 处理`, path: enIndex, source: "declaration" });
+    }
+    const resZh = readTextSafe(zhIndex);
+    if (resZh.ok) {
+        const zhNames = fs.existsSync(zhDir) ? fs.readdirSync(zhDir).filter((n) => n.endsWith(".md")) : [];
+        let prose = 0;
+        for (const line of resZh.text.split(/\r?\n/)) {
+            if (!/保留中文原册/.test(line)) continue;
+            prose += 1;
+            for (const m of line.matchAll(/DEV-(\d{3})/gu)) {
+                const hit = zhNames.find((n) => n.startsWith(`DEV-${m[1]}-`));
+                if (hit) names.add(hit);
+            }
+            if (/\bREADME\b/.test(line) && zhNames.includes("README.md")) names.add("README.md");
+        }
+        if (prose > 0) sources.push(`zh-Hans/INDEX.md「保留中文原册」句（${prose} 行）`);
+    } else if (fs.existsSync(zhIndex)) {
+        errors.push({ code: "E_INPUT_MISSING", detail: `zh-Hans/INDEX.md 读取失败（${resZh.error}）⇒ 声明面不完整，未声明判定按 fail-closed 处理`, path: zhIndex, source: "declaration" });
+    }
+    const note = names.size
+        ? ""
+        : "INDEX 声明面不可读或未列任何单边篇 ⇒ 全部单边篇按「未声明」处理并保持 E（fail-closed：缺声明不会放宽判据）";
+    return { names, sources: [...new Set(sources)], note };
+}
 // task-73（a）：单边篇的说明文字。真树上 en 缺篇 10 篇 / zh 缺篇 2 篇（ADR-001 / RFC-001 是 en 独有历史档），
 // 前者是真缺口（归 task-62 的 en 译稿面），后者按设计不参与对称差。门只报「这一侧无对侧」，不替人判定归属。
 const UNPAIRED_NOTE = "该篇只有一侧可读 ⇒ 中英对称差与标题对拍在这一篇上没有对象（这本身就是 E 级覆盖缺口，不是 W 级措辞差异）";
+// task-85：已声明的不译不是缺口。原文见 zh-Hans/INDEX.md:55 与 en/INDEX.md Chinese-only 段。
+const DECLARED_NOTE = "该篇在 INDEX 的「保留中文原册」声明面内（英文页需要时链中文文件并标 (zh)，不维护过期英文残稿）⇒ 属已裁定不译，降 W 级计数，不报 E";
 function scan({ workspace, a03 }) {
     const i18nRoot = path.join(a03, "docs", "i18n");
     const zhDir = path.join(i18nRoot, "zh-Hans");
@@ -273,7 +341,7 @@ function scan({ workspace, a03 }) {
         const missing = [!fs.existsSync(zhDir) ? zhDir : null, !fs.existsSync(enDir) ? enDir : null].filter(Boolean);
         noteInput(`i18n 目录不可读（${missing.join(" / ")}）⇒ 该侧册未参与判据，本轮不得读成「0 命中」`, i18nRoot);
         return {
-            surface: { pairedFiles: 0, missingOnEn: 0, missingOnZh: 0, zhFiles: 0, enFiles: 0, zhSpans: 0, enSpans: 0, headingZh: 0, headingEn: 0, zhIds: {}, enIds: {} },
+            surface: { pairedFiles: 0, missingOnEn: 0, missingOnZh: 0, zhFiles: 0, enFiles: 0, zhSpans: 0, enSpans: 0, headingZh: 0, headingEn: 0, zhIds: {}, enIds: {}, declaredUnpaired: 0, undeclaredUnpaired: 0, declarationSources: [], declarationNote: "" },
             findings: [],
             errors,
             suppression: "",
@@ -292,7 +360,9 @@ function scan({ workspace, a03 }) {
     const missingOnZh = enList.filter((n) => !zhSet.has(n));
     const paired = zhFiles.filter((n) => enFiles.has(n));
 
-    const surface = { pairedFiles: paired.length, missingOnEn: missingOnEn.length, missingOnZh: missingOnZh.length, zhFiles: zhFiles.length, enFiles: enFiles.size, zhSpans: 0, enSpans: 0, headingZh: 0, headingEn: 0, zhIds: {}, enIds: {} };
+    // task-85：声明面先解析出来，单边篇按「在册 / 不在册」分 W 与 E。
+    const declared = parseDeclaredUnpaired(zhDir, enDir, errors);
+    const surface = { pairedFiles: paired.length, missingOnEn: missingOnEn.length, missingOnZh: missingOnZh.length, zhFiles: zhFiles.length, enFiles: enFiles.size, zhSpans: 0, enSpans: 0, headingZh: 0, headingEn: 0, zhIds: {}, enIds: {}, declaredUnpaired: 0, undeclaredUnpaired: 0, declarationSources: declared.sources, declarationNote: declared.note };
     for (const c of CLASSES) {
         surface.zhIds[c.key] = 0;
         surface.enIds[c.key] = 0;
@@ -342,7 +412,14 @@ function scan({ workspace, a03 }) {
         for (const c of CLASSES) for (const id of z[c.key]) seenZh[c.key].add(id);
         // task-73（a）：单边篇本身就是 E 级命中 —— 门自称覆盖全部册，实际只有这一侧可读，
         // 对侧的对称差与标题对拍**没有对象**。旧实现把它当成「不存在的篇」直接跳过 ⇒ 口径谎报。
-        findings.push({ kind: "unpaired", severity: "E", file: name, side: "zh", note: UNPAIRED_NOTE });
+        // task-85：在 INDEX 声明面里的单边篇降 W（已裁定不译）；不在册的仍然 E。
+        if (declared.names.has(name)) {
+            surface.declaredUnpaired += 1;
+            findings.push({ kind: "unpairedDeclared", severity: "W", file: name, side: "zh", note: DECLARED_NOTE });
+        } else {
+            surface.undeclaredUnpaired += 1;
+            findings.push({ kind: "unpaired", severity: "E", file: name, side: "zh", note: UNPAIRED_NOTE });
+        }
     }
     for (const name of missingOnZh) {
         const t = readOrNote(enDir, name, "en");
@@ -350,7 +427,14 @@ function scan({ workspace, a03 }) {
         surface.enSpans += countCodeSpans(t);
         const eIds = extractIds(t);
         for (const c of CLASSES) for (const id of eIds[c.key]) seenEn[c.key].add(id);
-        findings.push({ kind: "unpaired", severity: "E", file: name, side: "en", note: UNPAIRED_NOTE });
+        // task-85：同一条声明面也用于 en 独有篇（ADR-001 / RFC-001 是 en 独有历史档，INDEX 未声明 ⇒ 保持 E）。
+        if (declared.names.has(name)) {
+            surface.declaredUnpaired += 1;
+            findings.push({ kind: "unpairedDeclared", severity: "W", file: name, side: "en", note: DECLARED_NOTE });
+        } else {
+            surface.undeclaredUnpaired += 1;
+            findings.push({ kind: "unpaired", severity: "E", file: name, side: "en", note: UNPAIRED_NOTE });
+        }
     }
     for (const c of CLASSES) {
         surface.zhIds[c.key] = seenZh[c.key].size;
@@ -406,7 +490,7 @@ function render(result) {
     );
     lines.push(
         `[dev-i18n-drift] 扫描面：配对文档 ${result.surface.pairedFiles} 篇；en 缺篇 ${result.surface.missingOnEn} 篇 / zh 缺篇 ${result.surface.missingOnZh} 篇` +
-            `（单边篇报 E 并进登记面存在性；对称差与标题对拍在它们身上不适用）` +
+            `（单边篇进登记面存在性；对称差与标题对拍在它们身上不适用。已声明 ${result.surface.declaredUnpaired} 篇降 W / 未声明 ${result.surface.undeclaredUnpaired} 篇保持 E）` +
             `${result.surface.missingOnEn ? "｜ en 缺篇：" + result.missingOnEn.slice(0, 8).join(", ") + (result.surface.missingOnEn > 8 ? " …" : "") : ""}` +
             `${result.surface.missingOnZh ? "｜ zh 缺篇：" + result.missingOnZh.slice(0, 8).join(", ") + (result.surface.missingOnZh > 8 ? " …" : "") : ""}`,
     );
@@ -414,6 +498,10 @@ function render(result) {
         `[dev-i18n-drift] 代码跨度：zh ${result.surface.zhSpans} 个 / en ${result.surface.enSpans} 个；` +
             `编号抽取 zh PLAN ${result.surface.zhIds.PLAN} · D ${result.surface.zhIds.D} · task ${result.surface.zhIds.task} ｜ ` +
             `en PLAN ${result.surface.enIds.PLAN} · D ${result.surface.enIds.D} · task ${result.surface.enIds.task}`,
+    );
+    lines.push(
+        `[dev-i18n-drift] 单边篇声明面：${result.surface.declarationSources.length ? result.surface.declarationSources.join(" + ") : "（未解析到任何声明）"}` +
+            `${result.surface.declarationNote ? " ｜ " + result.surface.declarationNote : ""}`,
     );
     lines.push(
         `[dev-i18n-drift] 小节标题对拍：zh ${result.surface.headingZh} 条 / en ${result.surface.headingEn} 条（同层内签名相同即配对；两侧无签名按顺序互相抵消）`,
@@ -430,14 +518,16 @@ function render(result) {
     }
     if (result.suppression) lines.push(`[dev-i18n-drift] ${result.suppression}`);
     if (!result.findings.length) {
-        lines.push("[dev-i18n-drift] 命中 0 处（作用域根 " + result.dirs.workspace + "；判据：编号对称差 + 登记面存在性 + 小节标题对拍；盲区见下，0 处只在这条作用域内成立）");
+        lines.push("[dev-i18n-drift] 命中 0 处（作用域根 " + result.dirs.workspace + "；判据：编号对称差 + 登记面存在性 + 小节标题对拍 + 单边篇声明豁免；盲区见下，0 处只在这条作用域内成立）");
     } else {
-        lines.push(`[dev-i18n-drift] 命中 ${result.findings.length} 处（其中 E 级单边篇 ${result.findings.filter((f) => f.severity === "E").length} 处）：`);
+        lines.push(`[dev-i18n-drift] 命中 ${result.findings.length} 处（其中 E 级单边篇 ${result.findings.filter((f) => f.kind === "unpaired").length} 处 / W 级已声明单边篇 ${result.findings.filter((f) => f.kind === "unpairedDeclared").length} 处）：`);
         let n = 0;
         for (const f of result.findings) {
             n += 1;
-            if (f.kind === "unpaired") {
-                lines.push(`  ${n}. [E] 单边篇 · ${f.file} · 仅 ${f.side} 有 ⇒ 对称差与标题对拍在这一篇上无对象（E 级覆盖缺口，非 W 级措辞差异）`);
+            if (f.kind === "unpairedDeclared") {
+                lines.push(`  ${n}. [W] 单边篇（INDEX 已声明保留中文原册）· ${f.file} · 仅 ${f.side} 有 ⇒ 已裁定不译，属声明面内计数，不算缺口`);
+            } else if (f.kind === "unpaired") {
+                lines.push(`  ${n}. [E] 单边篇（**未**在 INDEX 声明面内）· ${f.file} · 仅 ${f.side} 有 ⇒ 对称差与标题对拍在这一篇上无对象（E 级覆盖缺口，非 W 级措辞差异）`);
             } else if (f.kind === "asymmetry") {
                 lines.push(`  ${n}. 中英不对称 · ${f.file} · ${f.class} · 仅 ${f.side} 有：${f.ids.join(", ")}`);
             } else if (f.kind === "headingAsymmetry") {
@@ -671,6 +761,79 @@ function runSelftest() {
             !cleanAll.errors.some((e) => e.code === "E_INPUT_MISSING") && readFailText.includes("E 级输入缺失") &&
                 cleanText.includes("zh 缺篇") && cleanText.includes("en 缺篇") && cleanText.includes("已退役、文件不存在"),
             cleanText.split(LF_CH).slice(1, 4).join(" | "),
+        );
+
+
+        // ── task-85：单边篇「声明豁免制」三条正反 + 一条声明面来源覆盖 ──
+        // 声明面必须从 INDEX 解析（en 侧解析 Chinese-only 段的链接目标，zh 侧解析「保留中文原册」句里点名的编号）。
+        // 夹具里 Z9.md 是「仅 zh 有」的篇：先给它写一份 INDEX 声明，它就该从 E 降 W。
+        const enIndexPath = path.join(fx.en, "INDEX.md");
+        const zhIndexPath = path.join(fx.zh, "INDEX.md");
+        const enIndexBody = [
+            "# Fixture index",
+            "",
+            "## Chinese-only guides (not translated yet)",
+            "",
+            "- [Z9: declared fixture](../zh-Hans/Z9.md)",
+            "",
+            "## Other",
+            "",
+            "- [not a declaration](../zh-Hans/T1.md)",
+            "",
+        ].join(LF_CH);
+        const zhIndexBody = [
+            "# 夹具索引",
+            "",
+            "其余 10 篇（DEV-077 与 README）**保留中文原册**：英文页需要时链接到中文文件并标 (zh)，不维护过期英文残稿。",
+            "",
+        ].join(LF_CH);
+        fs.writeFileSync(enIndexPath, enIndexBody, "utf8");
+        fs.writeFileSync(zhIndexPath, zhIndexBody, "utf8");
+        // 只在 zh 有的一篇，且被 zh 侧散文句点名（验第二条解析来源；编号按目录实际文件名解析而非拼字符串）
+        fs.writeFileSync(path.join(fx.zh, "DEV-077-fixture.md"), "仅 zh 有，且已被 INDEX 散文句点名。" + LF_CH, "utf8");
+        const decl = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "20 正：INDEX 声明过的单边篇（Z9 走 en 链接 / DEV-077 走 zh 散文）⇒ 降 W，不报 E",
+            decl.findings.some((f) => f.kind === "unpairedDeclared" && f.file === "Z9.md") &&
+                decl.findings.some((f) => f.kind === "unpairedDeclared" && f.file === "DEV-077-fixture.md") &&
+                !decl.findings.some((f) => f.kind === "unpaired" && (f.file === "Z9.md" || f.file === "DEV-077-fixture.md")) &&
+                decl.surface.declaredUnpaired >= 2 &&
+                decl.surface.declarationSources.length >= 2,
+            JSON.stringify(decl.findings.filter((f) => f.kind.startsWith("unpaired"))) + " / sources " + JSON.stringify(decl.surface.declarationSources),
+        );
+
+        // 反一：再造一个**未声明**的单边篇 ⇒ 仍必须报 E（证明不是整体放宽）
+        fs.writeFileSync(path.join(fx.zh, "T7.md"), "仅 zh 有且未被任何 INDEX 声明。" + LF_CH, "utf8");
+        const undeclared = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "21 反一：未声明的单边篇仍报 E（不整体放宽）",
+            undeclared.findings.some((f) => f.kind === "unpaired" && f.severity === "E" && f.file === "T7.md") &&
+                undeclared.findings.some((f) => f.kind === "unpairedDeclared" && f.file === "Z9.md") &&
+                undeclared.surface.undeclaredUnpaired >= 1,
+            JSON.stringify(undeclared.findings.filter((f) => f.kind.startsWith("unpaired"))) + " / undeclared " + undeclared.surface.undeclaredUnpaired,
+        );
+
+        // 反二：把 INDEX 里的声明行删掉 ⇒ 该篇立刻升回 E（证明判据不是空转）
+        fs.writeFileSync(enIndexPath, enIndexBody.split(LF_CH).filter((l) => !l.includes("Z9")).join(LF_CH), "utf8");
+        fs.writeFileSync(zhIndexPath, "# 夹具索引" + LF_CH, "utf8");
+        const revoked = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "22 反二：删掉 INDEX 声明 ⇒ Z9 / DEV-077 立刻升回 E",
+            revoked.findings.some((f) => f.kind === "unpaired" && f.severity === "E" && f.file === "Z9.md") &&
+                revoked.findings.some((f) => f.kind === "unpaired" && f.severity === "E" && f.file === "DEV-077-fixture.md"),
+            JSON.stringify(revoked.findings.filter((f) => f.kind.startsWith("unpaired"))),
+        );
+
+        // 声明面缺失时**不降级**：全部按未声明处理，且读数必须显式说明（fail-closed，不许静默放宽）
+        fs.rmSync(enIndexPath, { force: true });
+        fs.rmSync(zhIndexPath, { force: true });
+        const noDecl = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "23 声明面整份缺失 ⇒ 全部按未声明（E 照旧），并显式打印 fail-closed 说明",
+            noDecl.findings.some((f) => f.kind === "unpaired" && f.file === "Z9.md") &&
+                noDecl.surface.declarationNote.length > 0 &&
+                render(noDecl).includes("未解析到任何声明"),
+            noDecl.surface.declarationNote + " / " + JSON.stringify(noDecl.findings.filter((f) => f.kind.startsWith("unpaired"))),
         );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
