@@ -316,8 +316,31 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("ws-settings-tab-credentials")).toHaveCount(0);
         await expect(page.getByTestId("ws-settings-tab-knowledge")).toHaveCount(0);
 
-        // 生效 tab：tab 按钮没有 `aria-selected`，高亮实现是 `border-primary`（WorkspaceSettingsView.vue）。
-        await expect(page.getByTestId("ws-settings-tab-config")).toHaveClass(/border-primary/);
+        // 生效 tab 的现行判据 = reka 状态属性，不是 class。链条：vendor `ui/tabs/TabsTrigger.vue:20-23`
+        // 把激活态样式挂在 `data-active:` 变体上 ⇒ 该变体由 `src/styles/shadcn-vue-tailwind.css:72-76`
+        // 定义成 `:where([data-state="active"])` 或 `[data-active]` ⇒ 而 reka-ui 2.11.0
+        // `dist/Tabs/TabsTrigger.js:53` 只发 `data-state` / `aria-selected`，**从不发 `data-active`**。
+        // 原断言 `/border-primary/` 把「某一时期的实现细节」当契约：该 class 在
+        // `ffe0a362d`（2026-11-16 工作区设置页签无 nav/aria）里从视图侧移除后，这条自 11-16 起恒红
+        // （task-145 的 mock lane 唯一红点，git blame 断言侧 = `1dc6a0240` 2026-11-13）。
+        // 现在钉状态并反向钉一个非选中页签，避免「全部 tab 都 active」这种假绿。
+        await expect(page.getByTestId("ws-settings-tab-config")).toHaveAttribute(
+            "data-state",
+            "active",
+        );
+        await expect(page.getByTestId("ws-settings-tab-config")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
+        await expect(page.getByTestId("ws-settings-tab-general")).toHaveAttribute(
+            "data-state",
+            "inactive",
+        );
+        await expect(page.getByTestId("ws-settings-tab-general")).toHaveAttribute(
+            "aria-selected",
+            "false",
+        );
+
 
         // 域落点**从 DOM 取**、期望集合**从 SSOT 取**（`LAYER_DOMAINS.workspace`），再对撞：
         // spec 里不另抄一份域名清单（抄的那份一定会漂，且漂了没人知道）。
@@ -362,15 +385,14 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
         await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
 
-        // 反向：资源区那一层不再挂面板，而是「就地说明 + 直链」（不 404、不静默跳走）。
+        // 反向：资源区的这一层**既没有面板、也没有指路卡**（task-145 / DSD-1511：指路卡按
+        // 「MVP 前不留请到别处的空壳」删除）⇒ 已迁层深链静默回落到实例层，页面上反查 0 个退役节点。
         await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         await expect(page.getByTestId("resources-header")).toBeVisible();
+        await expect(page.getByTestId("instance-mcp-panel")).toBeVisible();
         await expect(page.getByTestId("mcp-config-textarea")).toHaveCount(0);
-        await expect(page.getByTestId("workspace-layer-moved")).toBeVisible();
-        await expect(page.getByTestId("workspace-layer-moved-action")).toHaveAttribute(
-            "href",
-            "/workspace/11111111-1111-4111-8111-111111111111/settings?tab=mcp",
-        );
+        await expect(page.getByTestId("workspace-layer-moved")).toHaveCount(0);
+        await expect(page.getByTestId("workspace-layer-moved-action")).toHaveCount(0);
     });
 
     // task-174：原用例是「断言…→截图→goto MCP→断言…→截图」，截图夹在中间 ⇒ 非 linux 的 skip
@@ -402,14 +424,12 @@ test.describe("Config Settings (three layers)", () => {
         // 它不是可提交物，「贴 git status 证明没动别的 snapshot」也就不成立。
         // 缺口的补法是 linux runner（D-1441 已登记），不是在 Windows 上凑一张图。
         //
-        // 断言内容 = D-1432 / task-41 的落点变化：MCP 的「本工作区」层从资源区**搬到**工作区设置
-        // `?tab=mcp`，资源区就地给指路卡（不 404、不静默跳走）。href 必须指向设置页；
-        // 若它指回资源区，说明搬家被回退了 ⇒ 本条必须红（变异读数见 task-56 交付）。
-        await expect(page.getByTestId("workspace-layer-moved")).toBeVisible();
-        await expect(page.getByTestId("workspace-layer-moved-action")).toHaveAttribute(
-            "href",
-            /^\/workspace\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/settings\?tab=mcp$/,
-        );
+        // 断言内容 = D-1432 / task-41 的落点变化 + task-145 / DSD-1511 的清理：MCP 的「本工作区」
+        // 层从资源区**搬到**工作区设置 `?tab=mcp`；资源区这边**既无面板也无指路卡**，深链回落到
+        // 实例层。变异：把指路卡加回来（或把 WORKSPACE 分支接回面板）⇒ 本条红。
+        await expect(page.getByTestId("instance-mcp-panel")).toBeVisible();
+        await expect(page.getByTestId("workspace-layer-moved")).toHaveCount(0);
+        await expect(page.getByTestId("mcp-config-textarea")).toHaveCount(0);
         await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
     });
 

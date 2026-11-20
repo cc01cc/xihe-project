@@ -487,6 +487,35 @@ export function layersForResource(id: ResourceId): readonly ResourceLayer[] {
     return resourceDef(id).layerRules.map((rule) => rule.layer);
 }
 
+/**
+ * 该资源**在资源区还能当页签用**的层 —— `layersForResource` 去掉已迁到工作区设置的 WORKSPACE 层
+ * （task-145 / DSD-1511：MVP 前不留「请到别处」空壳页签）。
+ *
+ * <p>为什么需要第二个函数而不是改 `layersForResource`：后者回答的是**后端有什么实体**
+ * （`owner_type` 三层都是真表、layerRules 是真话），用它当「有哪些页签」的来源就会把
+ * 已迁层继续渲染成一张指路卡。两个问题分开回答，页签来源才只能是 UI 事实。</p>
+ */
+export function visibleLayersForResource(id: ResourceId): readonly ResourceLayer[] {
+    return layersForResource(id).filter(
+        (layer) => !(layer === "WORKSPACE" && workspaceLayerMoved(id)),
+    );
+}
+
+/**
+ * 该资源在资源区的默认层：声明过的默认层仍然可见就用它，否则退到剩下层里的第一层。
+ *
+ * <p>为什么不是直接 `defaultLayer`：mcp 与 skills 的声明默认层都是 WORKSPACE（已迁），
+ * 继续落 WORKSPACE 会指向一个已经不存在的页签。mcp 的 layerRules 只有 WORKSPACE + INSTANCE
+ * ⇒ 退到 INSTANCE；skills 声明顺序是 USER → WORKSPACE → INSTANCE，filter 掉 WORKSPACE 后
+ * 首项是 USER ⇒ 退到 USER。</p>
+ */
+export function defaultLayerForResource(id: ResourceId): ResourceLayer {
+    const def = resourceDef(id);
+    const visible = visibleLayersForResource(id);
+    if (visible.length === 0) return def.defaultLayer;
+    return visible.includes(def.defaultLayer) ? def.defaultLayer : visible[0];
+}
+
 export function resourceLayerRule(
     id: ResourceId,
     layer: ResourceLayer,
@@ -499,14 +528,17 @@ export function resourceLayerRule(
  *
  * <p>为什么**不**在非法值上 404：层 tab 是本页的主要交互，手输 `?layer=user` 或复制到小写写法
  * 都该落在正确的层，而不是给一张 404。资源 id 非法才 404（路由段不匹配）。</p>
+ *
+ * <p>task-145 / DSD-1511：已迁层（WORKSPACE 且 `workspaceLayerMoved`）不再是合法值 ——
+ * 旧深链 `?layer=WORKSPACE` 与「该层不存在」同等对待，一律落 `defaultLayerForResource`，
+ * 也就是**静默回落**而不是指路卡（MVP 前不留「请到别处」空壳）。</p>
  */
 export function resolveResourceLayer(id: ResourceId, raw: unknown): ResourceLayer {
-    const def = resourceDef(id);
-    if (typeof raw !== "string") return def.defaultLayer;
+    const visible = visibleLayersForResource(id);
+    const fallback = defaultLayerForResource(id);
+    if (typeof raw !== "string") return fallback;
     const upper = raw.trim().toUpperCase();
-    return def.layerRules.some((rule) => rule.layer === upper)
-        ? (upper as ResourceLayer)
-        : def.defaultLayer;
+    return visible.some((layer) => layer === upper) ? (upper as ResourceLayer) : fallback;
 }
 
 /** 资源页路径（不带层）：`/resources/credentials`。层在 `?layer=`，不进路径段。 */
@@ -530,9 +562,14 @@ export function defaultResourcePath(): string {
  * <p>只搬 **WORKSPACE 这一层**：MCP 与技能的「本工作区」层改由
  * /workspace/:id/settings?tab=&lt;id&gt; 承载，其余层（实例 / 个人）仍在资源区。</p>
  *
- * <p>为什么是一个常量而不是散在组件里的判断：资源区指路页、工作区设置页签、工作区资源页
- * 三处对同一件事生效；写成三份判断就会像 task-209 那样「文案与权限各自漂移」。这份清单是
- * 唯一出处，三处都从这里派生。</p>
+ * <p>为什么是一个常量而不是散在组件里的判断：写成多份判断就会像 task-209 那样
+ * 「文案与权限各自漂移」。这份清单是唯一出处。</p>
+ *
+ * <p><b>task-145 / DSD-1511 之后只剩一个消费者</b>：`visibleLayersForResource`（页签来源）
+ * 与 `defaultLayerForResource`（默认层回落）。原先的指路页（`WorkspaceLayerMovedNotice`）、
+ * 工作区设置 `?tab=` 指路块、工作区资源页内联提示已全部删除。**清单本身不能删**：后端
+ * WORKSPACE 实体仍在、`layerRules` 是真话，删掉这个常量就没有任何地方记录「这一层已搬到哪里」，
+ * 将来再搬一层会重新长出散判断。</p>
  */
 export const WORKSPACE_SETTINGS_RESOURCE_IDS = ["mcp", "skills"] as const;
 export type WorkspaceSettingsResourceId = (typeof WORKSPACE_SETTINGS_RESOURCE_IDS)[number];
@@ -547,14 +584,6 @@ export function isWorkspaceSettingsResource(id: ResourceId): id is WorkspaceSett
  */
 export function workspaceLayerMoved(id: ResourceId): boolean {
     return isWorkspaceSettingsResource(id) && layersForResource(id).includes("WORKSPACE");
-}
-
-/** 工作区设置页 + 资源页签的深链：/workspace/:id/settings?tab=mcp。 */
-export function workspaceSettingsResourcePath(
-    workspaceId: string,
-    id: WorkspaceSettingsResourceId,
-): string {
-    return "/workspace/" + workspaceId + "/settings?tab=" + id;
 }
 
 export interface SettingsNavItem {

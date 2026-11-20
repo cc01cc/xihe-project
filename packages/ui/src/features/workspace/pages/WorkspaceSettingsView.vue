@@ -17,7 +17,6 @@ import {
 import WorkspaceConfigPanel from "../components/WorkspaceConfigPanel.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceSkillsPanel from "../../../components/resources/WorkspaceSkillsPanel.vue";
-import { resourcePath } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -52,24 +51,17 @@ import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 // 渲染的是**同一个组件**（`WorkspaceMcpPanel` / `CredentialsPanel ownerType=WORKSPACE`，
 // 见 PLAN-0772 M2 的资源区搬家）⇒ 留着就是两份入口，且文案与权限各自漂移。
 //
-// 旧 `?tab=` 的处置：**回落到「常规」并就地告知迁移地址**（不是 404）。理由：①与 task-253
+// task-145 / DSD-1511（2026-11-20 用户：MVP 前不留「请到别处」的空壳）：原 D-1019 的
+// 「回落到「常规」并就地告知迁移地址」提示条**已整块删除**，旧 ?tab= 现在静默回落「常规」
+// —— 迁移公告是临时产物，用户裁定不留。下面这条注释保留原委，说明为什么不再有提示条。
+//
+// 旧 `?tab=` 的处置（task-145 之前的口径，仅存档）：**回落到「常规」并就地告知迁移地址**（不是 404）。理由：①与 task-253
 // 的 `?tab=config` 同口径，那条回落行为已被 `e2e/mock/config-settings.spec.ts:194-195` 与
 // `e2e/real/approval-policy.spec.ts:128` 当作既有契约在用；②旧链接来自书签/文档/外部引用，
 // 回落到一个能解释「东西搬到哪了」的页面比 404 更有用（404 只能让人以为页面坏了）。
 // task-236（M4-3）：「成员」已提升为一级页 /workspace/:id/members —— 本页只剩
 // 配置 / 常规两个 tab；旧 ?tab=members 深链**重定向**到新页（见下方 watch），不回落不 404。
 type SettingsTab = "config" | "mcp" | "skills" | "general";
-
-/**
- * 仍留在资源区的两个旧 tab（D-1432 后 `mcp` 已搬回本页成为真页签，不再走"指路"这条）。
- * `knowledge` 在资源区是 **G3 缺口页**（CP 无库实体，见 `KnowledgeResourceView.vue` 的说明）
- * ⇒ 这里只负责"指路"，不承诺新页面有写面。
- */
-type LegacyResourceTab = "credentials" | "knowledge";
-
-function legacyResourceTab(q: unknown): LegacyResourceTab | null {
-    return q === "credentials" || q === "knowledge" ? q : null;
-}
 
 const route = useRoute(),
     router = useRouter(),
@@ -112,31 +104,6 @@ function tabFromQuery(q: unknown): SettingsTab {
 }
 const activeTab = ref<SettingsTab>(tabFromQuery(route.query.tab));
 
-/** 旧资源 tab（若有）：驱动「已迁到资源区」的提示条，并在切页签时自然离开 URL。 */
-const legacyTab = ref<LegacyResourceTab | null>(legacyResourceTab(route.query.tab));
-
-function legacyResourceName(tab: LegacyResourceTab | null): string {
-    switch (tab) {
-        case "credentials":
-            return t("settings.ia.resourceCredentials");
-        case "knowledge":
-            return t("settings.ia.resourceKnowledge");
-        default:
-            return "";
-    }
-}
-
-const legacyResourceLink = computed(() => {
-    switch (legacyTab.value) {
-        case "credentials":
-            return `${resourcePath("credentials")}?layer=WORKSPACE`;
-        case "knowledge":
-            return `${resourcePath("knowledge")}?layer=WORKSPACE`;
-        default:
-            return "";
-    }
-});
-
 // 外部 query 变化要能回到页面状态（深链、浏览器前进/后退、别人贴过来的链接）。
 watch(
     () => route.query.tab,
@@ -152,7 +119,8 @@ watch(
             }
             return;
         }
-        legacyTab.value = legacyResourceTab(q);
+        // task-145 / DSD-1511：旧的 ?tab=credentials|knowledge 不再有指路条，`tabFromQuery`
+        // 对它们返回 "general" ⇒ 静默回落，URL 保留原 query（不跳转、不报错）。
         const next = tabFromQuery(q);
         if (next !== activeTab.value) activeTab.value = next;
     },
@@ -484,34 +452,9 @@ onMounted(async () => {
                     </Tabs>
 
                     <!--
-                        D-1019 / task-209：旧 `?tab=mcp|credentials|knowledge` 的落点。
-                        不做 404、也不静默：回落到「常规」后就说明东西搬去哪了，并给一条能直接点过去
-                        的链接（`/resources/<id>?layer=WORKSPACE`）。提示条纯静态，不额外发请求。
+                        task-145 / DSD-1511：原 D-1019 的「已迁到资源区」指路条整块删除。
+                        旧 ?tab=credentials|knowledge 现在由 `tabFromQuery` 静默回落「常规」。
                     -->
-                    <div
-                        v-if="legacyTab"
-                        data-testid="ws-settings-resource-moved"
-                        class="mb-4 rounded-lg border bg-muted/40 px-4 py-3 text-sm"
-                    >
-                        <p class="font-medium">
-                            {{ t("workspace.settingsResourceMovedTitle") }}
-                        </p>
-                        <p class="mt-1 text-muted-foreground">
-                            {{
-                                t("workspace.settingsResourceMovedBody", {
-                                    name: legacyResourceName(legacyTab),
-                                })
-                            }}
-                        </p>
-                        <Button as-child variant="outline" size="sm" class="mt-2">
-                            <RouterLink
-                                :to="legacyResourceLink"
-                                data-testid="ws-settings-resource-moved-action"
-                            >
-                                {{ t("workspace.settingsResourceMovedAction") }}
-                            </RouterLink>
-                        </Button>
-                    </div>
 
                     <WorkspaceConfigPanel v-if="activeTab === 'config'" />
 

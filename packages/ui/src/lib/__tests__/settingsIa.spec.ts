@@ -256,17 +256,23 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
         expect(resolveResourceLayer("credentials", "INSTANCE")).toBe("INSTANCE");
         expect(resolveResourceLayer("credentials", undefined)).toBe("USER");
         expect(resolveResourceLayer("credentials", "nope")).toBe("USER");
-        // MCP 没有个人层 ⇒ `?layer=USER` 落回它的默认层（WORKSPACE），不是 404、不是空页。
-        expect(resolveResourceLayer("mcp", "USER")).toBe("WORKSPACE");
+        // task-145 / DSD-1511：mcp 的 WORKSPACE 层已迁出 ⇒ 可见层只剩 INSTANCE，
+        // 于是 `?layer=USER`（本来也没有个人层）落回 INSTANCE，不是 404、不是空页。
+        expect(resolveResourceLayer("mcp", "USER")).toBe("INSTANCE");
+        expect(resolveResourceLayer("mcp", "WORKSPACE")).toBe("INSTANCE");
+        expect(resolveResourceLayer("mcp", undefined)).toBe("INSTANCE");
         // 技能个人层「存在但后端未实现」⇒ 解析仍认它（tab 要能选中并解释为什么不能用）。
         expect(resolveResourceLayer("skills", "user")).toBe("USER");
+        // 技能的声明默认层是 WORKSPACE（已迁出）⇒ 缺省与已迁层都落可见层首项 USER。
+        expect(resolveResourceLayer("skills", "WORKSPACE")).toBe("USER");
+        expect(resolveResourceLayer("skills", undefined)).toBe("USER");
     });
 
     it("深链形态：`?layer=` 大写、层不进路径段", () => {
         expect(resourcePath("skills")).toBe("/resources/skills");
         expect(resourceLayerPath("skills", "WORKSPACE")).toBe("/resources/skills?layer=WORKSPACE");
-        // 大小写都收：换 skills（有 WORKSPACE 层）继续钉同一解析器。
-        expect(resolveResourceLayer("skills", "workspace")).toBe("WORKSPACE");
+        // 大小写都收：换 skills 继续钉同一解析器 —— 但 WORKSPACE 已迁出 ⇒ 落 USER。
+        expect(resolveResourceLayer("skills", "workspace")).toBe("USER");
         // 默认层**不因新增层而改变**（仍是个人主体）：工作区层只在显式 `?layer=` 时进入。
         expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
         expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");

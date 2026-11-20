@@ -91,8 +91,9 @@ const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 /**
  * PLAN-0560 M1：WorkspaceSettingsView 承载 workspace 层常规信息与成员。
  * task-209（D-1019）：`mcp` / `credentials` / `knowledge` 三个 tab 已撤到资源区
- * （`/resources/<id>?layer=WORKSPACE`），旧 `?tab=` 回落到「常规」并显示迁移提示条 ——
- * 本 spec 现在**同时**守住「tab 不再存在」与「旧链接有落点」两件事。
+ * （`/resources/<id>?layer=WORKSPACE`）。**task-145 / DSD-1511 起迁移提示条整块删除**（用户
+ * 「MVP 前不留请到别处的空壳」）⇒ 旧 `?tab=credentials|knowledge` 只是静默回落「常规」。
+ * 本 spec 现在守住「tab 不再存在」「旧链接不 404 也不给指路卡」「members 深链仍重定向」三件事。
  * fetch 对 config 域返回 layer envelope；工作区上下文由 selectWorkspace
  * 的缓存短路提供（fixture 带 name），不额外请求 /workspaces/{id}。
  */
@@ -251,29 +252,22 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         wrapper.unmount();
     });
 
-    it.each([
-        ["credentials", "credentials", "凭据"],
-        ["knowledge", "knowledge", "知识库"],
-    ])(
-        "旧 ?tab=%s 回落到「常规」并指路到 /resources/%s?layer=WORKSPACE",
-        async (legacyTab, resourceId, resourceName) => {
+    it.each([["credentials"], ["knowledge"]])(
+        "旧 ?tab=%s 静默回落「常规」：不 404、但也不再有迁移指路卡（task-145 / DSD-1511）",
+        async (legacyTab) => {
             routeState.query = { tab: legacyTab };
             const wrapper = await mountView();
 
-            // ① 回落：落点是「常规」，三个旧 tab 容器一个都不渲染（不是静默 404，也不是原页面）。
+            // ① 回落：落点是「常规」，旧 tab 容器一个都不渲染。
             expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
             expect(wrapper.find(`[data-testid="ws-settings-${legacyTab}"]`).exists()).toBe(false);
-
-            // ② 不静默：提示条点名是哪个资源搬走了，并给出可直接点过去的**目标地址**。
-            const notice = wrapper.find('[data-testid="ws-settings-resource-moved"]');
-            expect(notice.exists()).toBe(true);
-            expect(notice.text()).toContain("已迁到资源区");
-            expect(notice.text()).toContain(resourceName);
-            expect(
-                notice
-                    .find('[data-testid="ws-settings-resource-moved-action"]')
-                    .attributes("data-to"),
-            ).toBe(`/resources/${resourceId}?layer=WORKSPACE`);
+            // ② 退役节点反查为 0：提示条与它的按钮都已被删除（不是隐藏、不是条件不满足）。
+            expect(wrapper.find('[data-testid="ws-settings-resource-moved"]').exists()).toBe(false);
+            expect(wrapper.find('[data-testid="ws-settings-resource-moved-action"]').exists()).toBe(
+                false,
+            );
+            // ③ 页面里也不许出现「已迁到资源区」这类措辞（文案与节点一起删干净）。
+            expect(wrapper.text()).not.toContain("已迁");
             wrapper.unmount();
         },
     );

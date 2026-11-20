@@ -15,11 +15,9 @@ import {
     workspaceLayerMoved,
     type ResourceId,
     type ResourceLayer,
-    type WorkspaceSettingsResourceId,
 } from "../../../lib/settingsIa";
 import { RESOURCE_VIEWS } from "../../../lib/resourceViews";
 import ResourcePaneLoading from "../components/ResourcePaneLoading.vue";
-import WorkspaceLayerMovedNotice from "../../../components/settings/WorkspaceLayerMovedNotice.vue";
 
 /**
  * PLAN-0773 **M4-2**（task-210）：`/workspace/:id/resources` —— 本工作区的资源页。
@@ -36,11 +34,11 @@ import WorkspaceLayerMovedNotice from "../../../components/settings/WorkspaceLay
  *       与 design 的 `/workspace/:id/resources` 不符（M4-6 的旧链接 302 目标也指着后者）。</li>
  * </ul>
  *
- * <p><b>D-1432 / task-41（用户 2026-11-15 裁定）—— 本页的「已迁资源」处理：</b>
- * MCP 与技能的**本工作区层搬回工作区设置** ⇒ 这两个资源**不再出现在本页页签里**，页签上方给一行
- * 「已迁到工作区设置」的直链说明；深链 `?resource=mcp` **不静默回落到别的资源**，而是就地渲染同一张
- * 指路卡（`WorkspaceLayerMovedNotice`）。凭据 / 智能体（以及将来真正落在本层的资源）照旧渲染面板 ——
- * 「把整页清空」与「悄悄少两个页签」都不是本裁定要的结果。</p>
+ * <p><b>D-1432 / task-41 + task-145 / DSD-1511 —— 本页的「已迁资源」处理：</b>
+ * MCP 与技能的**本工作区层搬回工作区设置** ⇒ 这两个资源**不出现在本页页签里**。
+ * task-145 起本页**不再给任何指路提示**：迁移公告与指路卡（`ws-resources-moved-hint` /
+ * `WorkspaceLayerMovedNotice`）已一并删除，深链 `?resource=mcp` **静默回落**到首个可用资源
+ * （凭据）—— MVP 前不留「请到别处」的空壳面。凭据（以及将来真正落在本层的资源）照旧渲染面板。</p>
  *
  * <p><b>三个 SSOT 纪律（这页自己不持有一份清单）</b>：</p>
  * <ol>
@@ -64,11 +62,10 @@ const WORKSPACE_LAYER_RESOURCE_IDS: readonly ResourceId[] = RESOURCE_DEFS.filter
     def.layerRules.some((rule) => rule.layer === WORKSPACE_LAYER),
 ).map((def) => def.id);
 
-/** 派生口径 ②：已迁到工作区设置的那几个（本页要指路）；③ 页签 = ① 减 ②。 */
-const MOVED_RESOURCE_IDS: readonly WorkspaceSettingsResourceId[] =
-    WORKSPACE_LAYER_RESOURCE_IDS.filter((id): id is WorkspaceSettingsResourceId =>
-        workspaceLayerMoved(id),
-    );
+/**
+ * 派生口径 ②：页签 = ① 减去「已迁到工作区设置」的层（D-1432 / task-41 的搬迁，task-145 起
+ * 连指路卡都不再渲染 ⇒ 本页不需要单独持有「已迁清单」，只要过滤掉即可）。
+ */
 const TAB_RESOURCE_IDS: readonly ResourceId[] = WORKSPACE_LAYER_RESOURCE_IDS.filter(
     (id) => !workspaceLayerMoved(id),
 );
@@ -107,9 +104,14 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
  */
 const hintsOpen = ref(false);
 
-/** `?resource=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
+/**
+ * `?resource=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。
+ *
+ * <p>task-145：合法值 = **页签集合**（`TAB_RESOURCE_IDS`），不是「有 WORKSPACE 层的资源」——
+ * 否则 `?resource=mcp` 会解析出一个不存在的页签（已迁层不再渲染任何面板）。</p>
+ */
 function resourceFromQuery(q: unknown): ResourceId {
-    return typeof q === "string" && (WORKSPACE_LAYER_RESOURCE_IDS as readonly string[]).includes(q)
+    return typeof q === "string" && (TAB_RESOURCE_IDS as readonly string[]).includes(q)
         ? (q as ResourceId)
         : TAB_RESOURCE_IDS[0];
 }
@@ -135,16 +137,7 @@ function selectResource(id: ResourceId) {
     void router.replace({ query: { ...route.query, resource: id } });
 }
 
-/** 当前资源是否已迁走（深链 `?resource=mcp` 也要落在指路卡上，不静默换资源）。 */
-const activeMovedId = computed<WorkspaceSettingsResourceId | null>(() =>
-    workspaceLayerMoved(activeResource.value)
-        ? (activeResource.value as WorkspaceSettingsResourceId)
-        : null,
-);
-
-const activeView = computed(() =>
-    activeMovedId.value ? undefined : RESOURCE_VIEW_COMPONENTS.get(activeResource.value),
-);
+const activeView = computed(() => RESOURCE_VIEW_COMPONENTS.get(activeResource.value));
 
 /**
  * 其它层（平台 / 用户）—— **只作只读引用**。取自同一份 `layerRules`（顺序由 `RESOURCE_LAYERS`
@@ -162,11 +155,6 @@ function layerLabel(id: ResourceId, layer: ResourceLayer): string {
 
 function referenceHref(id: ResourceId, layer: ResourceLayer): string {
     return `${resourcePath(id)}?layer=${layer}`;
-}
-
-/** 已迁资源在工作区设置里的深链（页签 id 与资源 id 同名，见 WorkspaceSettingsView 的 tabs）。 */
-function movedHref(id: WorkspaceSettingsResourceId): string {
-    return `/workspace/${workspaceId.value}/settings?tab=${id}`;
 }
 </script>
 
@@ -225,19 +213,11 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
         </div>
 
         <!--
-            D-1432 / task-41：已迁到工作区设置的资源在这页**不再开页签**，
-            但仍要「就地说明 + 直链」—— 否则用户只看到页签少了两个，无处可问。
-
-            task-52 / batch-02 ③（P1，截图 `.tmp/xh/b02-tab-资源.png`）：上面那句说明与下面的
-            「平台 / 个人层只读引用」**各自占一整行**，两条内部说明条压在页头主位，而用户来这页
-            要做的事（凭据管理面板）被挤到下面且是空态 —— 信息层级倒置。
-
-            改法（选项之一，理由写在这里而不是卡面）：**并成一条可折叠摘要**，默认只留一行
-            低权重摘要 + 一个「?」触发器，展开才看到两份明细与直链。为什么不直接删掉：
-            直链是用户点回设置页的**唯一**入口（页签里已经没有 mcp/skills 了），删掉等于
-            把「搬去哪了」变成无处可问 —— 那正是 task-41 当初要解决的问题。为什么不并成
-            两行不可折叠的短句：两条说明的**类型不同**（一条是「搬走了」、一条是「只读」），
-            并成一行会让「只读」听起来也像「搬走了」。
+            task-145 / DSD-1511：**迁移公告整块删除**。D-1432 / task-41 / task-52 曾在这里给
+            「已迁到工作区设置」的直链说明（可折叠摘要），用户 2026-11-20 裁定 MVP 前不留任何
+            「请到别处」的空壳面 —— 已迁层不出现在页签、也不出现在说明条，深链静默回落。
+            保留下来的只有「平台 / 个人层只读引用」这一条：它不是迁移公告，而是本页唯一能
+            到达其它层的合法入口（本页钉死工作区层，其它层只可跳转不可编辑）。
         -->
         <!--
             task-80：说明条同样收进内容列 —— 外层留分隔线（满宽），内层居中到 1152。
@@ -245,10 +225,7 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
             ⇒ 8 + 16 = 24，与 h1 / 页签 / 面板的左缘严丝合缝。直接把 `px-4` 改成 `px-6` 也能对齐，
             但会把「条的内边距」与「列的边距」揉成一个数，下次调列宽就会连带把条内距改掉。
         -->
-        <div
-            v-if="MOVED_RESOURCE_IDS.length > 0 || referenceLayers.length > 0"
-            class="shrink-0 border-b border-border"
-        >
+        <div v-if="referenceLayers.length > 0" class="shrink-0 border-b border-border">
             <Collapsible
                 :open="hintsOpen"
                 class="mx-auto w-full max-w-6xl px-2"
@@ -284,22 +261,6 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
                     </CollapsibleTrigger>
                 </div>
                 <CollapsibleContent>
-                    <div
-                        v-if="MOVED_RESOURCE_IDS.length > 0"
-                        data-testid="ws-resources-moved-hint"
-                        class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs text-muted-foreground"
-                    >
-                        <span>{{ t("resources.workspaceLayerMovedInlineHint") }}</span>
-                        <RouterLink
-                            v-for="id in MOVED_RESOURCE_IDS"
-                            :key="id"
-                            :to="movedHref(id)"
-                            :data-testid="`ws-resources-moved-link-${id}`"
-                            class="text-foreground underline-offset-2 hover:underline"
-                        >
-                            {{ t(resourceDef(id).labelKey) }}
-                        </RouterLink>
-                    </div>
                     <!-- 平台 / 用户层：只读引用（不在这里编辑，也不给层切换入口）。 -->
                     <div
                         v-if="referenceLayers.length > 0"
@@ -336,12 +297,6 @@ function movedHref(id: WorkspaceSettingsResourceId): string {
                     :layer="WORKSPACE_LAYER"
                     :workspace-id="workspaceId"
                 />
-                <div v-else-if="activeMovedId" class="p-4">
-                    <WorkspaceLayerMovedNotice
-                        :resource="activeMovedId"
-                        :workspace-id="workspaceId"
-                    />
-                </div>
             </div>
         </div>
     </div>

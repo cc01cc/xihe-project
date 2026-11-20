@@ -19,11 +19,11 @@ import { useAuthStore } from "../stores/auth";
 import { readTabWorkspaceId } from "../lib/workspaceContext";
 import {
     isResourceId,
-    layersForResource,
     resolveResourceLayer,
     resourceDef,
     resourceGroups,
     resourcePath,
+    visibleLayersForResource,
     type ResourceId,
     type ResourceLayer,
 } from "../lib/settingsIa";
@@ -52,8 +52,12 @@ const resourceId = computed<ResourceId | null>(() => {
 });
 
 const def = computed(() => (resourceId.value ? resourceDef(resourceId.value) : null));
+/**
+ * 层页签来源 = **可见层**（task-145 / DSD-1511）：已迁到工作区设置的 WORKSPACE 层不再出现在
+ * 页签条上，继续用 `layersForResource`（后端实体口径）会把这一层渲染成一张「请到别处」的空壳。
+ */
 const layers = computed<readonly ResourceLayer[]>(() =>
-    resourceId.value ? layersForResource(resourceId.value) : [],
+    resourceId.value ? visibleLayersForResource(resourceId.value) : [],
 );
 const active = computed<ResourceLayer>(() =>
     resourceId.value ? resolveResourceLayer(resourceId.value, route.query.layer) : "USER",

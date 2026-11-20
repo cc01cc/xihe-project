@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { h, nextTick } from "vue";
 import { createI18n } from "vue-i18n";
-import { RESOURCE_DEFS } from "../../../lib/settingsIa";
+import { RESOURCE_DEFS, visibleLayersForResource } from "../../../lib/settingsIa";
 
 /**
  * PLAN-0773 **M4-2**（task-210）`/workspace/:id/resources` 的机器判据。
@@ -31,13 +31,10 @@ const messages = {
                 resourceSkills: "技能",
             },
         },
+        // task-145 / DSD-1511：原先这里有 5 条「已迁到工作区设置」指路文案的夹具 —— 指路卡
+        // 整块删除后夹具一并删除（留着夹具等于替已删除的文案背书）。
         resources: {
-            workspaceLayerMovedTitle: "这项资源的「本工作区」层已迁到工作区设置",
-            workspaceLayerMovedBody: "「{name}」的本工作区层现在在工作区设置里管理。",
-            workspaceLayerMovedAction: "打开工作区设置",
-            workspaceLayerMovedNoWorkspace: "先在左侧选择一个工作区。",
-            workspaceLayerMovedInlineHint: "以下资源的「本工作区」层已迁到工作区设置：",
-            // task-52 / batch-02 ③：两条说明合并成可折叠摘要（默认收起）。
+            // task-52 / batch-02 ③：说明合并成可折叠摘要（默认收起）。
             resourcesHintSummary: "关于本页资源的层级与去处",
             resourcesHintShow: "查看说明",
             resourcesHintHide: "收起说明",
@@ -196,15 +193,12 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         // task-96：智能体撤出资源面 ⇒ 派生集合里不再有它（工作区层入口在 dock tab 与管理弹窗，不在这页）。
         expect([...DERIVED_IDS]).toEqual(["credentials", "mcp", "skills"]);
         expect([...TAB_IDS]).toEqual(["credentials"]);
-        // 已迁走的两个不进页签，但在「已迁」提示行里**有名字有直链**（指路而不是消失）。
+        // 已迁走的两个既不进页签、也不再有任何指路节点（task-145 / DSD-1511）。
         expect(wrapper.find('[data-testid="ws-resources-tab-mcp"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-resources-tab-skills"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="ws-resources-moved-link-mcp"]').attributes("href")).toBe(
-            "/workspace/ws-1/settings?tab=mcp",
-        );
-        expect(
-            wrapper.find('[data-testid="ws-resources-moved-link-skills"]').attributes("href"),
-        ).toBe("/workspace/ws-1/settings?tab=skills");
+        expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-mcp"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-skills"]').exists()).toBe(false);
         // knowledge **自然不入选**：它的 layerRules 为空（G3 缺口），不是被白名单挡掉的。
         expect(
             RESOURCE_DEFS.find((def) => def.id === "knowledge")?.layerRules.some(
@@ -237,37 +231,30 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         expect(replaceSpy).not.toHaveBeenCalled();
     });
 
-    it("深链：?resource=mcp（已迁）⇒ 就地指路卡 + 深链，不静默换成别的资源", async () => {
+    it("深链：?resource=mcp（已迁）⇒ 静默回落首个可用资源，页面上没有任何指路节点", async () => {
         routeState.query = { resource: "mcp" };
-        let wrapper = await mountPage();
-        // 不静默：仍是「mcp 被选中」的状态，页面上是一张说明卡而不是别人的面板。
+        const wrapper = await mountPage();
+        // task-145 / DSD-1511：旧深链**静默回落**到首个未迁资源（credentials），
+        // 既不留指路卡（那是「请到别处」的空壳），也不留空白页。
         expect(wrapper.find('[data-testid="resource-view-mcp"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(false);
-        const notice = wrapper.get('[data-testid="workspace-layer-moved"]');
-        expect(notice.exists()).toBe(true);
-        expect(
-            wrapper.find('[data-testid="workspace-layer-moved-action"]').attributes("href"),
-        ).toBe("/workspace/ws-1/settings?tab=mcp");
-        wrapper.unmount();
-
-        // knowledge 不在派生集合里（G3 缺口）⇒ 回落首个**未迁**资源。
-        routeState.query = { resource: "knowledge" };
-        wrapper = await mountPage();
         expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="resource-view-knowledge"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-layer-moved"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(false);
     });
 
     it("非法/缺口资源回落：?resource=knowledge 落回首个未迁资源（面板照常渲染）", async () => {
         routeState.query = { resource: "knowledge" };
         const wrapper = await mountPage();
         expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(true);
+        // knowledge 的 layerRules 为空（G3 缺口），本页从不渲染它，也不为它造指路卡。
+        expect(wrapper.find('[data-testid="resource-view-knowledge"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="workspace-layer-moved"]').exists()).toBe(false);
     });
 
-    it("平台 / 个人层只作只读引用：链接按该资源的 layerRules 派生（mcp 无个人层）", async () => {
+    it("平台 / 个人层只作只读引用：链接按「选中资源 × 可见层」派生", async () => {
         // credentials 三层都真实存在 ⇒ 引用条 = 个人 + 平台（本工作区那层就是本页自己，不列）。
         routeState.query = { resource: "credentials" };
-        let wrapper = await mountPage();
+        const wrapper = await mountPage();
         const credentialRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
         expect(credentialRefs.map((node) => node.attributes("href"))).toEqual([
             "/resources/credentials?layer=USER",
@@ -275,13 +262,18 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         ]);
         wrapper.unmount();
 
-        // mcp 的 layerRules 只有 WORKSPACE/INSTANCE ⇒ 引用条只剩平台层：证明链接不是手写常量。
+        // mcp 已迁走 ⇒ 它的 query 静默回落 credentials，所以引用条仍是 credentials 的两条：
+        // 证明链接跟着**最终选中的资源**走，不是照着 URL 里的 resource 手写。
         routeState.query = { resource: "mcp" };
-        wrapper = await mountPage();
-        const mcpRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
-        expect(mcpRefs.map((node) => node.attributes("href"))).toEqual([
-            "/resources/mcp?layer=INSTANCE",
-        ]);
+        const fallback = await mountPage();
+        expect(
+            fallback
+                .findAll('[data-testid^="ws-resources-ref-layer-"]')
+                .map((node) => node.attributes("href")),
+        ).toEqual(["/resources/credentials?layer=USER", "/resources/credentials?layer=INSTANCE"]);
+        // 层事实本身在 settingsIa 里仍为真（mcp 有 WORKSPACE/INSTANCE），只是 WORKSPACE 不可见。
+        expect(visibleLayersForResource("mcp")).toEqual(["INSTANCE"]);
+        expect(visibleLayersForResource("credentials")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
     });
 
     /**
@@ -292,13 +284,16 @@ describe("工作区资源页（M4-2 / task-210）", () => {
      *
      * 判据分两半，合起来才是「折叠」的意思：
      * ① 默认态：摘要行在、明细不在（不是删掉）；
-     * ② 展开后：两段明细与全部直链一个不少（信息没丢，只是收起来）。
+     * ② 展开后：只读引用明细与链接一个不少（信息没丢，只是收起来）。
+     *
+     * task-145 / DSD-1511 之后本条只剩**一种**明细（平台 / 个人层只读引用）：「已迁到工作区设置」
+     * 那段连同指路卡整块删除，因此展开后必须**反查不到** moved 节点/直链。
      *
      * 承重点（变异）：把 hintsOpen 初值改 ref(true) ⇒ ① 红；把 CollapsibleContent 里的
-     * 直链删掉 ⇒ ② 红。**「默认收起」和「内容还在」必须同时成立** —— 只测前者会把「删掉说明」
+     * 引用链接删掉 ⇒ ② 红。**「默认收起」和「内容还在」必须同时成立** —— 只测前者会把「删掉说明」
      * 误判成修好了。
      */
-    it("顶部说明默认折叠：摘要行常驻、明细与直链收在展开里（内容不丢）", async () => {
+    it("顶部说明默认折叠：摘要行常驻、只读引用收在展开里；已迁指路节点反查为 0", async () => {
         routeState.query = { resource: "credentials" };
         const wrapper = await mountPage({ expandHints: false });
 
@@ -308,12 +303,12 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         // ② 明细不在默认态。
         expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid^="ws-resources-ref-layer-"]').exists()).toBe(false);
-        // ③ 展开后两段明细 + 全部直链都在。
+        // ③ 展开后只读引用明细 + 全部链接都在；已迁指路节点（task-145 删除）反查为 0。
         await wrapper.get('[data-testid="ws-resources-hints-toggle"]').trigger("click");
         await flushPromises();
-        expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-resources-moved-link-mcp"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-resources-moved-link-skills"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-resources-moved-hint"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-mcp"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-skills"]').exists()).toBe(false);
         expect(
             wrapper
                 .findAll('[data-testid^="ws-resources-ref-layer-"]')

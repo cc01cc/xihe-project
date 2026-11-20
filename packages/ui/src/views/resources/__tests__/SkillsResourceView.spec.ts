@@ -6,16 +6,16 @@ import { i18n } from "../../../i18n";
 /**
  * 技能资源页壳的单测。
  *
- * <p><b>D-1432 / task-41</b>：WORKSPACE 层不再渲染 `WorkspaceSkillsPanel`，改为指路卡；
- * INSTANCE（全平台）与 USER（个人）两层不变。WORKSPACE 断言因此从「面板 + workspaceId」
- * 变成「指路卡 + 深链 href = ?tab=skills」，并加负断言「面板不在」。</p>
+ * <p><b>D-1432 / task-41 + task-145 / DSD-1511</b>：WORKSPACE 层搬回工作区设置（D-1432），
+ * 其后指路卡（`WorkspaceLayerMovedNotice`）也按「MVP 前不留请到别处」整件删除（task-145）。
+ * 本页现在只剩 INSTANCE（全平台）与 USER（个人）两层；`?layer=WORKSPACE` 静默回落到
+ * 默认可见层 = USER。</p>
+ *
+ * <p>承重判据：① WORKSPACE 深链与缺省层都落 USER，且退役指路节点反查为 0；
+ * ② 小写 layer 仍认（解析器大小写不敏感）；③ prop 钉层盖过 query。</p>
  */
-const mocks = vi.hoisted(() => ({
-    query: {} as Record<string, unknown>,
-    tabWs: null as string | null,
-}));
+const mocks = vi.hoisted(() => ({ query: {} as Record<string, unknown> }));
 vi.mock("vue-router", () => ({ useRoute: () => ({ query: mocks.query }) }));
-vi.mock("../../../lib/workspaceContext", () => ({ readTabWorkspaceId: () => mocks.tabWs }));
 vi.mock("../../../components/settings/SkillsPanel.vue", () => ({
     default: { name: "SkillsPanel", template: "<div data-testid='stub-skills-instance' />" },
 }));
@@ -25,71 +25,49 @@ vi.mock("../../../components/resources/PersonalSkillsPanel.vue", () => ({
         template: "<div data-testid='stub-skills-personal' />",
     },
 }));
-vi.mock("../../../components/resources/WorkspaceSkillsPanel.vue", () => ({
-    default: {
-        name: "WorkspaceSkillsPanel",
-        props: ["workspaceId"],
-        template: "<div data-testid='stub-skills-workspace' />",
-    },
-}));
-
-const RouterLinkStub = {
-    props: ["to"],
-    template: '<a :href="String(to)"><slot /></a>',
-};
 
 function mountView(props: Record<string, unknown> = {}) {
-    return mount(SkillsResourceView, {
-        props,
-        global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
-    });
+    return mount(SkillsResourceView, { props, global: { plugins: [i18n] } });
 }
+
 beforeEach(() => {
     mocks.query = {};
-    mocks.tabWs = null;
 });
-describe("SkillsResourceView — 层→面板映射（D-1432 后：WORKSPACE = 指路）", () => {
+
+describe("SkillsResourceView — 层→面板映射（task-145 后：已迁层静默回落）", () => {
     it("INSTANCE → SkillsPanel（全平台）", () => {
         mocks.query = { layer: "INSTANCE" };
         const w = mountView();
         expect(w.find('[data-testid="stub-skills-instance"]').exists()).toBe(true);
         expect(w.find('[data-testid="stub-skills-personal"]').exists()).toBe(false);
     });
+
     it("USER → PersonalSkillsPanel（个人层不受搬迁影响）", () => {
         mocks.query = { layer: "USER" };
         expect(mountView().find('[data-testid="stub-skills-personal"]').exists()).toBe(true);
     });
+
     it("小写 ?layer=instance 也认（resolveResourceLayer 大小写不敏感）", () => {
         mocks.query = { layer: "instance" };
         expect(mountView().find('[data-testid="stub-skills-instance"]').exists()).toBe(true);
     });
-    it("WORKSPACE + 有上下文 → 指路卡 + ?tab=skills 深链，且**不**渲染面板", () => {
+
+    it("已迁层深链 ?layer=WORKSPACE ⇒ 静默回落 USER，退役指路节点反查为 0", () => {
         mocks.query = { layer: "WORKSPACE" };
-        mocks.tabWs = "ws-1";
         const w = mountView();
-        expect(w.find('[data-testid="workspace-layer-moved"]').exists()).toBe(true);
-        expect(w.find('[data-testid="workspace-layer-moved-action"]').attributes("href")).toBe(
-            "/workspace/ws-1/settings?tab=skills",
-        );
-        expect(w.find('[data-testid="stub-skills-workspace"]').exists()).toBe(false);
-    });
-    it("缺省层 ⇒ WORKSPACE（skills 默认 WORKSPACE）⇒ 有上下文时指路卡", () => {
-        mocks.tabWs = "ws-1";
-        expect(mountView().find('[data-testid="workspace-layer-moved"]').exists()).toBe(true);
-    });
-    it("WORKSPACE + 无上下文 → 指路卡只给提示，不给按钮", () => {
-        mocks.query = { layer: "WORKSPACE" };
-        mocks.tabWs = null;
-        const w = mountView();
-        expect(w.find('[data-testid="workspace-layer-moved"]').exists()).toBe(true);
+        expect(w.find('[data-testid="stub-skills-personal"]').exists()).toBe(true);
+        expect(w.find('[data-testid="workspace-layer-moved"]').exists()).toBe(false);
         expect(w.find('[data-testid="workspace-layer-moved-action"]').exists()).toBe(false);
     });
-    it("task-210：prop 钉层盖过 ?layer=（深链用 prop 的工作区）", () => {
+
+    it("缺省层 ⇒ 默认可见层 = USER（skills 的声明默认层 WORKSPACE 已迁出）", () => {
+        expect(mountView().find('[data-testid="stub-skills-personal"]').exists()).toBe(true);
+    });
+
+    it("task-210：prop 钉层盖过 ?layer=", () => {
         mocks.query = { layer: "USER" };
-        const w = mountView({ layer: "WORKSPACE", workspaceId: "ws-prop" });
+        const w = mountView({ layer: "INSTANCE" });
+        expect(w.find('[data-testid="stub-skills-instance"]').exists()).toBe(true);
         expect(w.find('[data-testid="stub-skills-personal"]').exists()).toBe(false);
-        expect(w.find('[data-testid="workspace-layer-moved-action"]').attributes("href")).toBe(
-            "/workspace/ws-prop/settings?tab=skills",
-        );
     });
 });

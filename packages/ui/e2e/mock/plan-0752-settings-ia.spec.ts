@@ -166,15 +166,15 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
     // (a) 删 —— 「域段不在矩阵内渲染 404 且零 /config/workspace 请求」：域 404 面已不存在，
     //     且工作区层 /config 请求整体消失，判据失去对象。
     // (a) 删 —— 「域页概览按钮回 ?tab=config」：概览按钮与域页同批删除。
-    test("legacy resource ?tab= falls back to general and points at the resources module (task-209)", async ({
+    test("legacy resource ?tab= falls back to general silently with no pointer card (task-209 / task-145)", async ({
         page,
     }) => {
         const configRequests: string[] = [];
         await mockSettingsAPIs(page, configRequests);
 
-        // D-1432 / task-41（用户 2026-11-15 裁定）：`mcp` 已**搬回**本页成为真页签 ⇒ 只剩
-        // `credentials` / `knowledge` 走「回落 + 指路」这条；对这两个的判据不变 ——
-        // 旧深链不做 404：回落「常规」+ 点名搬去哪 + 直链，容器与 tab 计数都为 0。
+        // D-1432 / task-41：`mcp` 已**搬回**本页成为真页签。task-145 / DSD-1511：指路卡整块
+        // 删除（MVP 前不留「请到别处」的空壳）⇒ 只剩 `credentials` / `knowledge` 的**静默回落**
+        // 判据 —— 旧深链不做 404、回落「常规」、容器与 tab 计数为 0、退役指路节点反查 0。
         for (const legacy of ["credentials", "knowledge"] as const) {
             await page.goto(
                 `/workspace/11111111-1111-4111-8111-111111111111/settings?tab=${legacy}`,
@@ -184,11 +184,9 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
             await expect(page.getByTestId("ws-settings-general")).toBeVisible();
             await expect(page.getByTestId(`ws-settings-${legacy}`)).toHaveCount(0);
             await expect(page.getByTestId(`ws-settings-tab-${legacy}`)).toHaveCount(0);
-            await expect(page.getByTestId("ws-settings-resource-moved")).toBeVisible();
-            await expect(page.getByTestId("ws-settings-resource-moved-action")).toHaveAttribute(
-                "href",
-                `/resources/${legacy}?layer=WORKSPACE`,
-            );
+            // 退役节点反查（task-145）：指路卡与它的直链都已删除；有人加回来 ⇒ 本条红。
+            await expect(page.getByTestId("ws-settings-resource-moved")).toHaveCount(0);
+            await expect(page.getByTestId("ws-settings-resource-moved-action")).toHaveCount(0);
         }
 
         // task-236（M4-3）：成员提升为一级页（/workspace/:id/members）——设置页成员 tab 已撤
