@@ -177,11 +177,20 @@ const activeTab = computed<string>({
             {{ containerLabel }}
         </span>
         <Tabs :id="domId" :model-value="activeTab" class="min-w-0 flex-1">
-            <TabsList variant="line" class="p-0">
+            <!--
+                task-26（可用性缺陷）：页签条必须是**真的可收缩区**，不得再让芯片画到行尾 actions（含「+」）上面。
+                改前 `TabsList` 是 `inline-flex w-fit`（components/ui/tabs/index.ts:12-24）且无裁剪：
+                右栏 3 芯片 + active 芯片的关闭键（+28px）时条带 intrinsic 宽 232px > 可用 200px，
+                芯片直接盖住 `+`（实测命中 `dock-tab-code`，鼠标点击撞 intercepts pointer events）。
+                这里三件事一起做：① `max-w-full` 把条带上限钉在 Tabs 盒宽；② 芯片可收缩（见下方
+                `min-w-0` + trigger `flex-1 min-w-0`）⇒ 正常态不再溢出；③ `overflow-x-clip` 作为兜底
+                （`clip` 不建滚动容器，且不裁纵轴 ⇒ active 下划线的 `after:bottom-[-5px]` 仍在）。
+            -->
+            <TabsList variant="line" class="max-w-full min-w-0 justify-start overflow-x-clip p-0">
                 <div
                     v-for="tab in visibleTabs"
                     :key="tab.id"
-                    class="group inline-flex shrink-0 items-center rounded-md"
+                    class="group inline-flex min-w-0 items-center rounded-md"
                     :class="
                         tab.id === activeId
                             ? 'bg-primary/10 text-primary'
@@ -194,7 +203,7 @@ const activeTab = computed<string>({
                         @auxclick="emit('tab-auxclick', tab.id, $event)"
                         :data-tab-id="tab.id"
                         :title="tab.label"
-                        class="h-auto max-w-52 flex-none rounded-md px-2 py-1 text-xs after:hidden data-active:bg-transparent data-active:text-inherit dark:data-active:border-transparent dark:data-active:bg-transparent"
+                        class="h-auto max-w-52 min-w-0 flex-1 rounded-md px-2 py-1 text-xs after:hidden data-active:bg-transparent data-active:text-inherit dark:data-active:border-transparent dark:data-active:bg-transparent"
                         :class="tab.id === activeId ? 'font-medium' : ''"
                         @click="emit('select', tab.id)"
                     >
@@ -211,7 +220,7 @@ const activeTab = computed<string>({
                             class="mr-1 size-3 shrink-0 opacity-60"
                             aria-hidden="true"
                         />
-                        <span class="truncate">{{ tab.label }}</span>
+                        <span class="min-w-0 truncate">{{ tab.label }}</span>
                     </TabsTrigger>
                     <!--
                         task-89（触控目标，WCAG 2.2 SC 2.5.8 ≥24×24）：`p-0.5` + `size-3`

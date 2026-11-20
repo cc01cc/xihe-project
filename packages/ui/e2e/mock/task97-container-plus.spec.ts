@@ -193,6 +193,69 @@ async function isHitByPlus(page: Page, container: "main" | "right"): Promise<boo
     });
 }
 
+/**
+ * task-26（2026-11-20）：`+` 的「可达」读数 —— 命中者 + `+` 与页签行的矩形。
+ *
+ * 为什么要矩形而不只命中：命中可能是「`+` 被挤到行外但行外没有别的元素」这种假通过；
+ * 判据要求 `+` **完整落在页签行可视区内**（Lead 2026-11-20 指定的守护口径）。
+ */
+interface PlusReach {
+    plusX: number;
+    plusRight: number;
+    plusWidth: number;
+    rowX: number;
+    rowRight: number;
+    rowY: number;
+    rowBottom: number;
+    hitIsPlus: boolean;
+    hitTestId: string | null;
+}
+
+async function measurePlusReach(page: Page, container: "main" | "right"): Promise<PlusReach> {
+    return plus(page, container).evaluate((el) => {
+        const nav = el.closest('[data-testid="workspace-container-tabs"]')!;
+        const p = el.getBoundingClientRect();
+        const r = nav.getBoundingClientRect();
+        const target = document.elementFromPoint(p.x + p.width / 2, p.y + p.height / 2);
+        return {
+            plusX: p.x,
+            plusRight: p.right,
+            plusWidth: p.width,
+            rowX: r.x,
+            rowRight: r.right,
+            rowY: r.y,
+            rowBottom: r.bottom,
+            hitIsPlus: !!target && (target === el || el.contains(target)),
+            hitTestId: target?.closest("[data-testid]")?.getAttribute("data-testid") ?? null,
+        };
+    });
+}
+
+/** 一次断言三件：命中 = 自身、rect 在行内、宽 ≥ 24（触控目标，同判据 c 口径）。 */
+async function expectPlusReachable(
+    page: Page,
+    container: "main" | "right",
+    state: string,
+): Promise<PlusReach> {
+    const reading = await measurePlusReach(page, container);
+    log("task26", { state, ...reading });
+    expect(
+        reading.hitIsPlus,
+        `${state}：「+」中心命中的必须是它自己（命中者 = ${reading.hitTestId}）`,
+    ).toBe(true);
+    expect(reading.plusWidth, `${state}：「+」宽 ≥ 24（不被挤压）`).toBeGreaterThanOrEqual(24);
+    expect(reading.plusX, `${state}：「+」不越出页签行左边界`).toBeGreaterThanOrEqual(
+        reading.rowX - 1,
+    );
+    expect(reading.plusRight, `${state}：「+」不越出页签行右边界`).toBeLessThanOrEqual(
+        reading.rowRight + 1,
+    );
+    expect(reading.plusRight - reading.plusX, `${state}：「+」rect 完整落在行内`).toBeGreaterThan(
+        0,
+    );
+    return reading;
+}
+
 test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
     test("判据 a：main 行 + 紧贴页签右侧；right 行 + 在 pin/focus/close 之前", async ({ page }) => {
         await boot(page);
@@ -409,5 +472,53 @@ test.describe("task-97 容器页签行「+」（D-1754 ②）", () => {
             page.getByTestId("dock-overflow-item-changes"),
             "溢出菜单里 changes 项可见",
         ).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    });
+
+    /**
+     * task-26（2026-11-20 可用性缺陷守护）：`+` 在任何「页签条被撑宽」的态下都必须可命中。
+     *
+     * 改前缺陷（本用例改前必然红）：右栏 3 芯片 + **active 芯片的关闭键**（dock 语义
+     * `close-active-only`，只有活页签渲染 `dock-tab-close-*`）⇒ 条带 intrinsic 宽 232px >
+     * 可用 200px，芯片画到 `+` 上面（实测 `+` 中心命中 `dock-tab-code`，鼠标点击撞
+     * `… intercepts pointer events` 重试到超时）。修法见 `WorkspaceContainerTabs.vue`
+     * TabsList 上方注释（条带可收缩 + `overflow-x-clip` 兜底）。
+     *
+     * 守护判据（Lead 2026-11-20 指定，**不得放宽**）：静止 + hover 任一芯片 + hover「+」+
+     * hover 行尾空白，四态下 `+` ① 中心命中 = 自身；② rect 完整落在页签行可视区内；③ 宽 ≥ 24。
+     */
+    test("判据 b 补充（task-26）：active 关闭键 + hover 态下「+」不被芯片覆盖、不越出页签行", async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 1920, height: 1080 });
+        await boot(page);
+        // 造态：3 芯片（= maxVisibleTabs 上限，右栏条带最挤的常态），再把中间芯片点成 active
+        // ⇒ 它长出 28px 关闭键，正是改前把「+」挤出去的机制（不是 hover，是 active 关闭键）。
+        await openDockPanels(page, ["code", "changes", "monitor"]);
+        const rowTabs = row(page, "right").locator('[role="tab"]');
+        await expect(rowTabs, "非空前提：右栏 3 个可见芯片").toHaveCount(3, {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await rowTabs.nth(1).click({ timeout: ACTION_TIMEOUT_MS });
+        await expect(
+            row(page, "right").locator('[data-testid^="dock-tab-close-"]').first(),
+            "非空前提：active 芯片真的渲染出关闭键（close-active-only 语义）",
+        ).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+
+        await page.mouse.move(5, 5);
+        await expectPlusReachable(page, "right", "静止（active 芯片带关闭键）");
+
+        for (const chipId of ["dock-tab-files", "dock-tab-monitor", "dock-tab-code"]) {
+            await page.getByTestId(chipId).hover({ timeout: ACTION_TIMEOUT_MS });
+            await expectPlusReachable(page, "right", "hover:" + chipId);
+        }
+        const plusBox = await measurePlusReach(page, "right");
+        await page.mouse.move(
+            plusBox.plusX + plusBox.plusWidth / 2,
+            (plusBox.rowY + plusBox.rowBottom) / 2,
+        );
+        await expectPlusReachable(page, "right", "hover:+");
+        // 行尾空白（窗口控件区之外的最右 4px）：鼠标停在行内但不压任何控件。
+        await page.mouse.move(plusBox.rowRight - 4, plusBox.rowY + 4);
+        await expectPlusReachable(page, "right", "hover:rowEnd");
     });
 });
