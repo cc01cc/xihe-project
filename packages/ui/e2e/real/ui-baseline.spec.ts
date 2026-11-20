@@ -850,6 +850,82 @@ async function readNewChatAnchor(page: Page): Promise<NewChatAnchorReading> {
     });
 }
 
+// ── ⑥E4① 会话区头计数取样（task-52 / DSD-1464）──────────────────────────────────
+// 判什么：`sidebar-sessions-count` 的**文本**必须等于列表里**实际渲染**的会话行数
+// （`[data-testid="sidebar-workspace-groups"]` 内 `[data-testid="session-item"]` 按节点数），
+// 空态必须读成 0。裁定原文（DSD-1464 口径①）：计数 = 左栏列表当前渲染的会话总数
+// （独立会话区 + 各工作区分组内会话合计，随搜索/过滤同步），单独渲染、不拼进 t() 文案。
+//
+// 为什么不能只 `count()` 了事：0 条会话时区头照样在（恒常），所以「区头命中 1」与「计数对」是
+// 两条不同判据 —— 前者是 task-73 E4① 的可见性，后者是 D-1464 的读数一致性。
+// 取样口径沿用 readNewChatAnchor（D1466/task-13）：先等组头就位 → 过帧门 → 列表 scrollTop 归零 →
+// **一次 evaluate（rAF 对齐、连续两帧一致）**同帧读数，避免「文本早帧 / 行数晚帧」的跨帧假红。
+// 行被滚出容器的情形不影响计数（按 DOM 节点数，不按 rect）。
+interface SessionsCountReading {
+    headerCount: number;
+    countText: string | null;
+    countParsed: number | null;
+    rows: number;
+    containerPresent: boolean;
+    scrollTop: number;
+    frames: number;
+    stable: boolean;
+}
+
+async function readSessionsCount(page: Page): Promise<SessionsCountReading> {
+    await page
+        .locator(
+            '[data-testid^="sidebar-workspace-group-toggle-"], [data-testid="sidebar-standalone-group-toggle"]',
+        )
+        .first()
+        .waitFor({ state: "visible", timeout: 5000 })
+        .catch(() => {
+            /* 0 组 / 0 会话：由下面的容器缺失分支暴露，不在这里抛 */
+        });
+    await settleLayoutFrames(page);
+    return page
+        .evaluate(async () => {
+            const container = document.querySelector<HTMLElement>(
+                '[data-testid="sidebar-workspace-groups"]',
+            );
+            const badge = document.querySelector<HTMLElement>(
+                '[data-testid="sidebar-sessions-count"]',
+            );
+            if (container && container.scrollTop !== 0) container.scrollTop = 0;
+            const nextFrame = () =>
+                new Promise<void>((resolve) => {
+                    requestAnimationFrame(() => resolve());
+                });
+            const snapshot = () => ({
+                countText: badge?.textContent?.trim() ?? null,
+                rows: container
+                    ? container.querySelectorAll('[data-testid="session-item"]').length
+                    : 0,
+                headerCount: document.querySelectorAll('[data-testid="sidebar-sessions-header"]')
+                    .length,
+                containerPresent: container !== null,
+                scrollTop: container?.scrollTop ?? 0,
+            });
+            await nextFrame();
+            let prev = snapshot();
+            let frames = 1;
+            for (let i = 0; i < 30; i += 1) {
+                await nextFrame();
+                frames += 1;
+                const next = snapshot();
+                if (JSON.stringify(next) === JSON.stringify(prev))
+                    return { ...next, frames, stable: true };
+                prev = next;
+            }
+            return { ...prev, frames, stable: false };
+        })
+        .then((reading) => {
+            const text = reading.countText;
+            const parsed = text !== null && /^-?\d+$/.test(text) ? Number.parseInt(text, 10) : null;
+            return { ...reading, countText: text, countParsed: parsed };
+        });
+}
+
 /** 只用键盘 Tab 站到 chat-input，避免脚本 focus() 造出产品里不存在的焦点态。 */
 async function tabToChatInput(page: Page, maxPresses = 400): Promise<number> {
     for (let i = 1; i <= maxPresses; i += 1) {
@@ -1703,6 +1779,45 @@ async function runMatrix(
                     `${tag} ⑥E4① 会话区头计数 ${sessionsHeaderCount}（实测 ${sessionsHeaderCount}，阈值 =1 归属卡 task-73 E4①）`,
                 )
                 .toBe(1);
+            // ⑥E4① 读数一致性（task-52 / DSD-1464 口径①）：区头计数 = 列表**实际渲染**的会话行数，
+            // 空态 0。上面那条只判「区头存在且唯一」，判不出「数字是不是真的」—— 数字写死 0 或
+            // 只数当前工作区都能过。取样口径同 readNewChatAnchor（同帧、scrollTop 归零）。
+            const counts = await readSessionsCount(page);
+            testInfo.annotations.push({
+                type: "sessions-count",
+                description: `${tag} ⑥E4① 区头文本 "${counts.countText ?? "n/a"}" 解析 ${counts.countParsed ?? "n/a"} / 渲染行 ${counts.rows} ｜ container=${counts.containerPresent} scrollTop=${fmt(counts.scrollTop)} frames=${counts.frames} stable=${counts.stable}`,
+            });
+            console.log(
+                `[task-52] ${tag} ⑥E4① 区头计数文本="${counts.countText ?? "n/a"}" 解析=${counts.countParsed ?? "n/a"} 渲染行=${counts.rows} container=${counts.containerPresent} scrollTop=${fmt(counts.scrollTop)} frames=${counts.frames} stable=${counts.stable}`,
+            );
+            expect
+                .soft(
+                    counts.countParsed,
+                    `${tag} ⑥E4① 区头计数不是可解析的整数（原始文本="${counts.countText ?? "n/a"}"；计数必须是独立渲染的数字节点 归属卡 task-52 / DSD-1464 口径①）`,
+                )
+                .not.toBeNull();
+            expect
+                .soft(
+                    counts.countParsed,
+                    `${tag} ⑥E4① 区头计数 ${counts.countParsed ?? "n/a"} ≠ 列表实际渲染的会话行数 ${counts.rows}（口径 = 独立会话区 + 各已展开工作区分组的可见会话合计，空态写 0；归属卡 task-52 / DSD-1464 口径①）`,
+                )
+                .toBe(counts.rows);
+            // 空态必须写 0（而不是留空 / 写「暂无」）：计数节点恒在，0 也得是数字。
+            if (counts.rows === 0) {
+                expect
+                    .soft(
+                        counts.countText,
+                        `${tag} ⑥E4① 空态计数文本应为 "0"（实测 "${counts.countText ?? "n/a"}"；归属卡 task-52 / DSD-1464 口径①）`,
+                    )
+                    .toBe("0");
+            }
+            // 取样可信度：区头与计数节点都必须真的在 DOM 里（容器缺失时 rows 恒 0，会假绿）。
+            expect
+                .soft(
+                    counts.containerPresent,
+                    `${tag} ⑥E4① 取不到 [data-testid="sidebar-workspace-groups"] 容器 ⇒ 行数读 0 不可信（归属卡 task-52 / DSD-1464 口径①）`,
+                )
+                .toBe(true);
             // task-158：同一处空覆盖 —— 会话行「⋯」的真键是 SessionItem.vue:174 `session-item-more`
             // （h-7 w-7，opacity-70 常驻，hover 才 100），`sidebar-session-more` 产品从未有过。
             const sessionMoreVisible = await page
