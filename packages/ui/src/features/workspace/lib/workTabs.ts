@@ -13,13 +13,7 @@ import { DOCK_MAX_TABS } from "../../../composables/useWorkspaceLayout";
 import type { ContainerId } from "./containers";
 
 /** 会话视图：必须绑定一个会话。`chat` 落 main，其余落 right。 */
-export const SESSION_VIEWS = [
-    "chat",
-    "monitor",
-    "members",
-    "changes",
-    "delegation",
-] as const;
+export const SESSION_VIEWS = ["chat", "monitor", "members", "changes", "delegation"] as const;
 export type SessionView = (typeof SESSION_VIEWS)[number];
 
 /**
