@@ -175,6 +175,21 @@ function runSelftest() {
     check(aggregateExit([1, 0]) === 1, "判定失败 ⇒ 1");
     check(aggregateExit([1, 2]) === 2, "环境/用法错误压过判定失败 ⇒ 2");
 
+    // ④b task-128：多门同时红 ⇒ 仍把全部门列出、聚合非 0（keep-going 的验收两条）
+    const twoRed = [
+        "[lint:ui] exited with status 1",
+        "[lint:agent] exited with status 1",
+        "[check:types] Finished in 1.0s",
+    ].join("\n");
+    const rowsTwoRed = parseTaskExits(twoRed, ["lint:ui", "lint:agent", "check:types"]);
+    check(rowsTwoRed.length === 3, "多门同时红：门清单里有几门就出几行（未被首红截断）", "rows=" + rowsTwoRed.length);
+    check(rowsTwoRed.filter((r) => r.exit !== 0).length === 2, "多门同时红：两门都记为 FAIL");
+    check(aggregateExit(rowsTwoRed.map((r) => r.exit)) === 1, "多门同时红：聚合仍是非 0 的 1（不是 0，也不是 2）");
+    const allGreen = ["[a] Finished in 1ms", "[b] Finished in 2ms", "[c] Finished in 3ms"].join("\n");
+    const rowsGreen = parseTaskExits(allGreen, ["a", "b", "c"]);
+    check(rowsGreen.every((r) => r.exit === 0), "全绿：逐门 exit 都是 0", "rows=" + rowsGreen.length);
+    check(aggregateExit(rowsGreen.map((r) => r.exit)) === 0, "全绿：聚合 exit 0");
+
     // ⑤ 耗时解析口径：缺失不等于 0
     const timings = parseTaskTimings(synth);
     check(timings["check:types"] === 2500, "Finished in 2.5s ⇒ 2500ms", String(timings["check:types"]));
