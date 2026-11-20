@@ -407,8 +407,22 @@ const STATUS_LABEL_KEY: Record<string, string> = {
     assigned: "workspace.environmentStatus.assigned",
     unassigned: "workspace.environmentStatus.unassigned",
 };
-function statusLabel(value: string): string {
-    const key = STATUS_LABEL_KEY[value.trim().toLowerCase()];
+/**
+ * task-57：**签名放宽到可空 + 单点兜底**。
+ *
+ * <p>三处调用（`statusLabel(environment.status)` / `statusLabel(executionSpecSnapshot.status ?? "")`
+ * / `statusLabel(environment.runtime.status)`，模板内 :715 / :928 / :1115）都在**渲染期**执行。类型上这三个字段必填
+ * （`src/types/index.ts` 的 `WorkspaceEnvironment`），但值来自服务端响应，CP 旧版本或
+ * 半初始化状态可能给 `null`/`undefined` ⇒ 原实现 `value.trim()` 直接抛 TypeError，
+ * 变成渲染期的 unhandled rejection（整块视图渲染中断，用户看到的是空白而不是「未知状态」）。</p>
+ *
+ * <p>兜底**只写在这里一处**，不在三个调用点各写一遍 `?? ""` —— 与本文件
+ * `executionSpecSnapshot` computed 的做法一致：把「未探测 / 未给值」收敛到单一判断点。
+ * 值不落词表（含空串）时返回 `environmentStatusUnknown`，与「值不认识」同一出口：
+ * 两者对用户是同一件事（这一格没有可读状态），区分放在 `data-value` 属性上。</p>
+ */
+function statusLabel(value: string | null | undefined): string {
+    const key = STATUS_LABEL_KEY[typeof value === "string" ? value.trim().toLowerCase() : ""];
     return key ? t(key) : t("workspace.environmentStatusUnknown");
 }
 
