@@ -40,11 +40,23 @@ const importWarnings = ref<string[]>([]);
  * <ul>
  *   <li><b>import</b> → `POST /api/v1/config/import`，CP 门 = 动作原子 `WRITE_INSTANCE_CONTENT`
  *       （`ConfigController.java:572`）；</li>
- *   <li><b>export</b>（两个按钮都打 `GET /api/v1/config/export`）→ CP 门 = **能力位**
+ *   <li><b>导出设置</b> → `GET /api/v1/config/export`，CP 门 = **能力位**
  *       `hasAuthority('cap:instance:admin')`（`ConfigController.java:607-610`，注释写明那是
  *       「读内容 ∧ 看密文」的复合门，没有单一动作原子可表达 ⇒ 不能改成原子）；</li>
  *   <li><b>保留期清理</b> → 工作区成员面（那半条判据归 `task-153`，本次不动）。</li>
  * </ul>
+ *
+ * **task-76（2026-11-20）：「导出会话」不再是导出动作。** 原实现两个按钮都打
+ * `GET /api/v1/config/export` ⇒ 点「导出会话」会**成功下载**一份配置 JSON，只是命名为
+ * `xihe-chats.json`：可点击、无报错、内容是错的（比 403 更难发现）。CP 侧已核：实例层配置
+ * 导出只有 `ConfigController.java:631`（`:637` 硬限 instance 层，产物 = config KV + provider
+ * 连接），会话导出只有**单会话 Markdown** `chat/SessionExportController.java:78`
+ * （`GET /api/v1/sessions/{sessionId}/export?branchId=`），**没有批量会话导出路由**；
+ * `service/ExportService.java` 的 `exportChats(userId)` 写完从未接线（孤儿能力）。
+ * 新造端点属契约面变更（须单开 DSD），因此这里把假按钮改成**停用 + 常显说明**：
+ * 静态 `disabled`（与能力位无关）＋ 就地指路会话内 `/export` 命令。
+ * 判据（`DataControlsView.spec.ts` / `e2e/mock/data-controls.spec.ts`）：点它**不产生**
+ * `/config/export` 请求、**不触发下载**；「导出设置」仍恰好一次且文件名不变。
  *
  * 密文可见性不是 UI 门：不持 `VIEW_SECRET_CONTENT` 时服务端**脱敏**而不是 403
  * （`ConfigController.java:93-99`）⇒ UI 不为它加第三个门。
@@ -152,19 +164,6 @@ async function exportSettings() {
     exporting.value = false;
 }
 
-async function exportChats() {
-    exporting.value = true;
-    try {
-        const res = await apiRaw("/config/export"),
-            blob = await res.blob();
-        downloadBlob(blob, "xihe-chats.json");
-    } catch (e) {
-        logger.error(`Chats export failed: ${e instanceof Error ? e.message : String(e)}`);
-        result.value = "Export failed";
-    }
-    exporting.value = false;
-}
-
 function handleFileSelected(e: Event) {
     const files = (e.target as HTMLInputElement).files;
     if (!files?.length) return;
@@ -242,14 +241,23 @@ function downloadBlob(blob: Blob, filename: string) {
                 >
                     {{ t("settings.exportSettings") }}
                 </button>
+                <!-- task-76：CP 无批量会话导出能力（单会话走 /export 命令）⇒ 停用并常显原因，
+                     详见本文件头部注释与证据档 2026-11-20-data-controls-export。 -->
                 <button
                     data-testid="settings-data-export-chats"
-                    class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
-                    :disabled="exporting || !canExport"
-                    @click="exportChats"
+                    class="w-full px-3 py-2 rounded text-xs border bg-background text-left opacity-60"
+                    disabled
+                    aria-describedby="settings-data-export-chats-unavailable"
                 >
                     {{ t("settings.exportChats") }}
                 </button>
+                <p
+                    id="settings-data-export-chats-unavailable"
+                    data-testid="settings-data-export-chats-unavailable"
+                    class="text-xs leading-relaxed text-muted-foreground"
+                >
+                    {{ t("settings.exportChatsUnavailable", { command: "/export" }) }}
+                </p>
                 <!-- #3=A：导出那一半的判据是能力位（CP 的复合门），缺它时禁用 + 就地说明。 -->
                 <p
                     v-if="!canExport"

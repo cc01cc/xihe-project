@@ -3554,6 +3554,10 @@ const messages = {
             import: "导入",
             exportSettings: "导出设置",
             exportChats: "导出会话",
+            // task-76：CP 无批量会话导出能力（只有单会话 Markdown 导出 + 孤儿 service），
+            // 故该按钮改为停用 + 常显此说明。措辞只说当前可做的动作，不写「即将支持」这类未来态。
+            exportChatsUnavailable:
+                "批量会话导出暂未实现；需要导出单个会话时，在会话输入框里发送 {command} 命令（下载 Markdown 文件）。",
             noDocuments: "暂无文档",
             importPreview: "导入预览",
             importFile: "文件",
@@ -7680,6 +7684,11 @@ const messages = {
             import: "Import",
             exportSettings: "Export Settings",
             exportChats: "Export Sessions",
+            // task-76: CP has no bulk session export (only per-session Markdown export + an
+            // unwired orphan service), so this button is disabled with this copy shown. The copy
+            // states what is possible today, never a "coming soon" future tense.
+            exportChatsUnavailable:
+                "Bulk session export is not implemented yet; to export a single session, send the {command} command in that session's composer (it downloads a Markdown file).",
             noDocuments: "No documents",
             importPreview: "Import Preview",
             importFile: "File",

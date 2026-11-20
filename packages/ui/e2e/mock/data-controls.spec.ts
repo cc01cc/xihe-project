@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 test.describe("Data Controls", () => {
     test.beforeEach(async ({ page }) => {
@@ -47,7 +48,11 @@ test.describe("Data Controls", () => {
         await page.goto("/settings/data", { waitUntil: "load" });
         await page.waitForTimeout(1000);
         await expect(page.locator('button:has-text("导出设置")')).toBeVisible();
-        await expect(page.locator('button:has-text("导出会话")')).toBeVisible();
+        // task-76：该按钮已**停用**（CP 无批量会话导出能力），文案与说明仍常显。
+        const chatsButton = page.getByTestId("settings-data-export-chats");
+        await expect(chatsButton).toBeVisible();
+        await expect(chatsButton).toBeDisabled();
+        await expect(page.getByTestId("settings-data-export-chats-unavailable")).toBeVisible();
         await expect(page.locator('button:has-text("导入")')).toBeVisible();
         await expectPlatformScreenshot(page, "data-controls-buttons.png");
     });
@@ -95,6 +100,9 @@ test.describe("Data Controls", () => {
         await page.goto("/settings/data", { waitUntil: "load" });
         await expect(page.getByTestId("settings-data-export-settings")).toBeVisible();
         await expect(page.getByTestId("settings-data-export-chats")).toBeVisible();
+        // task-76：挂载 ≠ 可用 —— 该按钮静态停用（与能力位无关，能力位缺时两个都停用）。
+        await expect(page.getByTestId("settings-data-export-chats")).toBeDisabled();
+        await expect(page.getByTestId("settings-data-export-chats-unavailable")).toBeVisible();
         await expect(page.getByTestId("settings-data-import")).toBeVisible();
         // 隐藏 file input 不占可见性，只断言挂载（count 1）。
         await expect(page.getByTestId("settings-data-import-file")).toHaveCount(1);
@@ -140,5 +148,60 @@ test.describe("Data Controls", () => {
         await expect(page.getByTestId("settings-data-import")).toHaveCount(0);
         await expect(page.getByTestId("settings-data-import-file")).toHaveCount(0);
         expect(retentionRequests).toBe(0);
+    });
+
+    // task-76（Lead 裁定 ②）：判据落在**行为**上 —— 点「导出会话」不发 `/config/export`、不产生
+    // 下载；点「导出设置」仍恰好一次并落盘 `xihe-settings.json`（别把唯一能用的那个一起弄坏）。
+    // 浏览器里 Playwright 的 `download` 事件是真实落盘的唯一证据（jsdom 完全观测不到）。
+    test("task-76: chats export is inert while settings export still downloads", async ({
+        page,
+    }) => {
+        const requests: string[] = [];
+        page.on("request", (request) => {
+            if (request.url().includes("/config/export")) requests.push(request.url());
+        });
+        const downloads: string[] = [];
+        page.on("download", (download) => downloads.push(download.suggestedFilename()));
+
+        await page.route("**/api/v1/**", (route) =>
+            route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+        );
+        await page.route("**/api/v1/config/export**", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                headers: { "content-disposition": 'attachment; filename="xihe-settings.json"' },
+                body: JSON.stringify({ version: 1, config: {} }),
+            }),
+        );
+        await page.route("**/api/v1/events**", (route) =>
+            route.fulfill({
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+                body: "retry: 5000" + "\n\n",
+            }),
+        );
+        await page.goto("/settings/data", { waitUntil: "load" });
+
+        // 等权限投影落定（三态防假 403）：按钮挂载即代表 permissionsChecked 已 true。
+        const chatsButton = page.getByTestId("settings-data-export-chats");
+        await expect(chatsButton).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(page.getByTestId("settings-data-export-settings")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+
+        // ① 停用按钮点下去什么都不发生：用 `force` 绕过 Playwright 的「disabled 不可点」保护，
+        //    确保真正证明的是**处理器链路断了**，而不是被框架挡在门外。
+        await chatsButton.click({ force: true });
+        await expect.poll(() => downloads.length, { timeout: ACTION_TIMEOUT_MS }).toBe(0);
+        expect(requests).toEqual([]);
+
+        // ② 「导出设置」照常：一次请求、一个下载、文件名不变。
+        await page.getByTestId("settings-data-export-settings").click();
+        await expect.poll(() => requests.length, { timeout: ACTION_TIMEOUT_MS }).toBe(1);
+        expect(requests[0]).toContain("/api/v1/config/export");
+        await expect
+            .poll(() => downloads, { timeout: ACTION_TIMEOUT_MS })
+            .toEqual(["xihe-settings.json"]);
     });
 });

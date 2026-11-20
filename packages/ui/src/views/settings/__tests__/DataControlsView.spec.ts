@@ -70,6 +70,9 @@ const mockedApi = vi.mocked(api, true),
                 dataControls: "数据控制",
                 exportSettings: "导出设置",
                 exportChats: "导出会话",
+                // task-76：该按钮已停用，说明文案常显（值随真源手工同步，等值性不由本文件保证）。
+                exportChatsUnavailable:
+                    "批量会话导出暂未实现；需要导出单个会话时，在会话输入框里发送 {command} 命令（下载 Markdown 文件）。",
                 import: "导入",
                 configTab: "配置管理",
                 knowledge: "知识库",
@@ -143,6 +146,23 @@ function seedCapability(isInstanceAdmin: boolean) {
     );
 }
 
+/**
+ * task-76：抓下载。`downloadBlob` 的可见效果是「造一个 `<a download=…>` 并点它」，所以判据落在
+ * **被创建的 anchor 的 download 属性**上（这比 spy 组件内部函数更贴近用户看到的结果：到底有没有
+ * 文件名落盘）。
+ *
+ * 注意：**在模块作用域一次性安装 spy**，不在每个用例里重装 —— 重装时 `document.createElement`
+ * 已经是上一次 spy 的代理，`bind` 到它会让代理递归调用自己（`RangeError: Maximum call stack size
+ * exceeded`，本文件实测过）。`downloadAnchors` 由用例自己清空。
+ */
+const downloadAnchors: HTMLAnchorElement[] = [];
+const realCreateElement = document.createElement.bind(document);
+vi.spyOn(document, "createElement").mockImplementation(((tag: string, options?: any) => {
+    const element = realCreateElement(tag, options);
+    if (tag === "a") downloadAnchors.push(element as HTMLAnchorElement);
+    return element;
+}) as typeof document.createElement);
+
 /** PLAN-0752 T4.4：数据面按实例原子门控；默认「已授予」，denied 用例显式收回。 */
 function selfPermissions(atoms: string[]) {
     return {
@@ -188,11 +208,68 @@ describe("DataControlsView", () => {
         expect(wrapper.text()).toContain("导出设置");
     });
 
-    it("renders export chats button", async () => {
+    /**
+     * task-76：**CP 没有批量会话导出能力**（实例层只有 `GET /api/v1/config/export`；会话只有单会话
+     * Markdown `GET /api/v1/sessions/{id}/export?branchId=`；`ExportService.exportChats` 是未接线孤儿）
+     * ⇒ 原按钮点下去会「成功下载」一份配置 JSON 并命名成 `xihe-chats.json`：可点、无报错、内容是错的。
+     * 这里锁住替代形态：按钮**停用**且**常显**当前可执行的指路（不写「即将支持」这类未来态）。
+     */
+    it("task-76: the chats export button is disabled and states what works today", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
         await flushPromises();
-        expect(wrapper.text()).toContain("导出会话");
+
+        const button = wrapper.get('[data-testid="settings-data-export-chats"]');
+        expect(button.text()).toContain("导出会话");
+        expect(button.attributes("disabled")).toBeDefined();
+        // 说明必须是**在屏**的段落（不是 title/tooltip：键盘与读屏都读不到后者），
+        // 且点名唯一可用的替代路径（会话内 `/export` 命令）。
+        const note = wrapper.get('[data-testid="settings-data-export-chats-unavailable"]');
+        expect(note.text()).toBe(
+            messages["zh-CN"].settings.exportChatsUnavailable.replace("{command}", "/export"),
+        );
+        // 与「缺能力位」说明是两回事：那条讲授权，这条讲能力缺口，不许合并成一条。
+        expect(note.text()).not.toContain("cap:instance:admin");
+    });
+
+    /**
+     * task-76 的行为判据（Lead 裁定 ②）：断言**请求与下载**，不是「按钮有 disabled 属性」。
+     * (a) 点「导出会话」⇒ 一个 `/config/export` 请求都不发、也不产生任何下载；
+     * (b) 点「导出设置」⇒ 恰好一次 `/config/export`，且落盘文件名仍是 `xihe-settings.json`
+     *     —— 别把唯一能用的那个一起弄坏。
+     */
+    it("task-76: clicking chats requests nothing and creates no download", async () => {
+        seedCapability(true);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+
+        downloadAnchors.length = 0;
+        vi.mocked(apiRaw).mockClear();
+        await wrapper.get('[data-testid="settings-data-export-chats"]').trigger("click");
+        await flushPromises();
+
+        expect(vi.mocked(apiRaw)).not.toHaveBeenCalled();
+        expect(downloadAnchors.map((anchor) => anchor.download)).toEqual([]);
+    });
+
+    it("task-76: export settings still requests /config/export once and keeps its filename", async () => {
+        seedCapability(true);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+
+        vi.mocked(apiRaw).mockResolvedValue({
+            blob: () => Promise.resolve(new Blob(["{}"], { type: "application/json" })),
+        } as unknown as Response);
+        downloadAnchors.length = 0;
+        vi.mocked(apiRaw).mockClear();
+        await wrapper.get('[data-testid="settings-data-export-settings"]').trigger("click");
+        await flushPromises();
+
+        expect(vi.mocked(apiRaw)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(apiRaw)).toHaveBeenCalledWith("/config/export");
+        expect(downloadAnchors.map((anchor) => anchor.download)).toEqual(["xihe-settings.json"]);
     });
 
     it("renders import button", async () => {
