@@ -9,6 +9,7 @@ import { useSessionStore } from "../../stores/session";
 import { useAuthStore } from "../../stores/auth";
 import { useAgentStore } from "../../stores/agent";
 import { api } from "../../composables/api";
+import WorkspaceSourceImportDialog from "../../features/workspace/components/WorkspaceSourceImportDialog.vue";
 
 /**
  * D-1162 ③：夹具**必须读真源**。
@@ -534,27 +535,78 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         expect(wrapper.text()).toContain(zhSource.sidebar.workspacesSection);
     });
 
-    it("add-workspace opens the picker create dialog through ?create=1", async () => {
+    /**
+     * task-147 / `DSD-1514`：「添加工作区」**不再**借 `?create=1` 把动作托付给路由落点。
+     *
+     * 旧实现 `router.push({path:'/workbench', query:{create:'1'}})` 的消费者只有选择面与工作区
+     * 会话页；守卫把 `workspace-home` 重定向回工作区后，落点若是环境/设置/成员等**二级页**，
+     * 那一跳没人消费 ⇒ 点上去就是「点了没反应」（真栈读数：
+     * internal/A03-xihe/evidence/2026-11-21-add-workspace-entry/README.md）。现在左栏自己挂
+     * 全局对话框 ⇒ **与路由无关**，且 URL 不动。
+     *
+     * 「如果我没做」这条会怎么红：改回 push ⇒ `pushSpy` 被调用；对话框没挂 ⇒ testid 找不到。
+     */
+    it("task-147: 有工作区上下文时，「添加工作区」就地开对话框、不动 URL", async () => {
         mockAuth();
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
         const wrapper = await mountSidebar();
+        expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(false);
+
         await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
         await flushPromises();
         await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
         await flushPromises();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/workbench", query: { create: "1" } });
+
+        expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(true);
+        expect(pushSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
     });
 
-    it("import-source opens the workspace dialog through ?importSource=1", async () => {
-        mockAuth();
+    it("task-147: 创建入口不依赖工作区上下文（无上下文时也能开对话框）", async () => {
+        mockAuth("");
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
         const wrapper = await mountSidebar();
+
+        await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-create-dialog"]').exists()).toBe(true);
+        fetchSpy.mockRestore();
+    });
+
+    it("task-147: 导入源入口同判据 —— 就地开对话框，目标 = 当前工作区", async () => {
+        mockAuth();
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        const wrapper = await mountSidebar();
+        expect(wrapper.find('[data-testid="workspace-import-dialog"]').exists()).toBe(false);
+
         await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
         await flushPromises();
         await wrapper.get('[data-testid="sidebar-import-source"]').trigger("click");
         await flushPromises();
-        expect(pushSpy).toHaveBeenCalledWith({
-            path: "/workspace/ws-test",
-            query: { importSource: "1" },
-        });
+
+        expect(wrapper.find('[data-testid="workspace-import-dialog"]').exists()).toBe(true);
+        // 目标工作区必须是**当前上下文**：选错工作区会把文件导到别处。
+        expect(wrapper.findComponent(WorkspaceSourceImportDialog).props("workspaceId")).toBe(
+            "ws-test",
+        );
+        expect(pushSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
+    });
+
+    it("task-147: 无工作区上下文时，导入源入口仍走「先选工作区」提示而不是开对话框", async () => {
+        mockAuth("");
+        const wrapper = await mountSidebar();
+
+        await wrapper.get('[data-testid="sidebar-new-workspace"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="sidebar-import-source"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="workspace-import-dialog"]').exists()).toBe(false);
+        expect(pushSpy).not.toHaveBeenCalled();
     });
 
     it("keeps the two plus buttons semantically distinct (header = workspace, row = session)", async () => {
@@ -569,8 +621,29 @@ describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
         expect(rowNew.length).toBeGreaterThan(0);
         for (const btn of rowNew) {
             expect(btn.attributes("data-testid")).not.toBe("sidebar-new-workspace");
-            expect(btn.attributes("data-testid")).not.toBe("sidebar-workspace-config");
         }
+    });
+
+    /**
+     * task-150 / `DSD-1515`：左栏「工作区设置 / 成员」第二入口已删除。
+     *
+     * 判据：区头只留「新建工作区菜单 + 检索 + 折叠」三件套；`sidebar-workspace-config`
+     * 与它的两个菜单项**一个都不能再渲染**（设置/成员只从工作区页导航进入，属页面导航职责）。
+     */
+    it("task-150: header no longer renders the workspace config entry", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        expect(wrapper.find('[data-testid="sidebar-workspace-config"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="sidebar-workspace-config-settings"]').exists()).toBe(
+            false,
+        );
+        expect(wrapper.find('[data-testid="sidebar-workspace-config-members"]').exists()).toBe(
+            false,
+        );
+        // 区头其余动作不受影响：新建工作区触发器 + 检索 + 折叠仍在。
+        expect(wrapper.find('[data-testid="sidebar-new-workspace"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="sidebar-search-action"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="sidebar-collapse"]').exists()).toBe(true);
     });
 });
 

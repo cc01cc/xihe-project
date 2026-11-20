@@ -14,8 +14,6 @@ import {
     Plus,
     Search,
     Settings,
-    Settings2,
-    Users,
     X,
 } from "@lucide/vue";
 import {
@@ -30,9 +28,12 @@ import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
 import WorkspaceSessionGroups from "../../features/workspace/chat/components/WorkspaceSessionGroups.vue";
 import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
+import WorkspaceCreateDialog from "../../features/workspace/components/WorkspaceCreateDialog.vue";
+import WorkspaceSourceImportDialog from "../../features/workspace/components/WorkspaceSourceImportDialog.vue";
+import { useWorkspaceStore } from "../../features/workspace/stores/workspace";
 // PLAN-0762 T2.1：NavRail 已提升为全局层（components/sidebar/GlobalRail.vue，App.vue 常驻），
 // 本组件不再自带 rail —— 它只负责工作区模块的导航面板。
-import { standaloneChatPath, workspacePath, workspaceSettingsPath } from "../../lib/routes";
+import { standaloneChatPath, workspacePath } from "../../lib/routes";
 import { useSessionStore } from "../../stores/session";
 import { defaultLayerPath } from "../../lib/settingsIa";
 
@@ -151,12 +152,28 @@ function clearSearch() {
  * D-1220 ②（task-365 B）：「新建工作区 / 导入源」从页内右上角搬进左栏「工作区」区头。
  * 两者都是**对一级列表做的事**（DSH 的 workspace.add 也在区头/菜单，不在工作区行上）；
  * 行上的 `+` 保持「在该工作区新建会话」语义，两者不可混用（D-1206）。
- * 走 query 而不是本地弹窗：左栏是全局 chrome，而创建/导入对话框分别住在
- * `WorkspacePicker`（无 tab 上下文时）与 `WorkspaceView`（有上下文时）——
- * query 让它们各自消费，顺带得到可分享深链。
+ *
+ * <p><b>task-147 / DSD-1514：动作不再走 query 深链。</b>旧实现 push
+ * `/workbench?create=1`，把「打开对话框」交给**落点页**消费，而落点页由守卫决定：本 tab
+ * 已有工作区上下文时守卫把 `workspace-home` 重定向回工作区落点并透传 query
+ * （`router/index.ts` 的 workspace-home 分支），落到会话页时 `WorkspaceView` 消费、
+ * 落到工作区二级页（environment / settings / members / resources / scheduled-tasks）时
+ * **无人消费** ⇒ 点了没反应。实测读数见
+ * `internal/A03-xihe/evidence/2026-11-21-add-workspace-entry/reading-before.json`
+ * （`create-on-environment` / `create-on-settings`：URL 停在 `?create=1`，对话框 count=0）。</p>
+ *
+ * <p>左栏是**全局 chrome**（AppLayout 恒在），所以对话框改由本组件常驻挂载 —— 与
+ * `StandaloneSessionDialog` 同一口径，与路由、与守卫落点无关。`?create=1` /
+ * `?importSource=1` 深链仍然可用（`WorkspacePicker` / `WorkspaceView` 各自保留消费者），
+ * 站内入口只是不再依赖它。</p>
  */
+const workspaceCreateOpen = ref(false);
+const sourceImportOpen = ref(false);
+/** 导入源对话框的目标工作区：打开时定格，避免中途切工作区后导入到别处。 */
+const sourceImportWorkspaceId = ref("");
+
 function openAddWorkspace() {
-    void router.push({ path: "/workbench", query: { create: "1" } });
+    workspaceCreateOpen.value = true;
 }
 
 async function openImportSource() {
@@ -168,7 +185,26 @@ async function openImportSource() {
         toast.error(t("sidebar.noWorkspace"));
         return;
     }
-    void router.push({ path: workspacePath(workspaceId), query: { importSource: "1" } });
+    sourceImportWorkspaceId.value = workspaceId;
+    sourceImportOpen.value = true;
+}
+
+/** 创建成功 → 直达新工作区（与 `WorkspaceView.handleWorkspaceCreated` 同形）。 */
+function onWorkspaceCreated(workspaceId: string) {
+    workspaceCreateOpen.value = false;
+    void router.push(workspacePath(workspaceId));
+}
+
+/**
+ * 导入完成：关对话框，并在**文件树确实已加载**时刷新它（与 `WorkspaceView` 里
+ * `@completed` 的 `ws.refreshTree()` 保平）。树从未加载过（例如用户停在二级页）
+ * 就不凭空拉一次 —— 那也是原来的行为。
+ */
+function onSourceImportCompleted() {
+    sourceImportOpen.value = false;
+    if (auth.currentWorkspaceId !== sourceImportWorkspaceId.value) return;
+    const ws = useWorkspaceStore();
+    if (ws.treeLoadedAt !== null) void ws.refreshTree();
 }
 
 /** task-113：指向最终地址（`lib/settingsIa` 的 SSOT），不再依赖 `/settings/config` 的 redirect。 */
@@ -215,29 +251,6 @@ async function onRailSearchOpenChange(open: boolean) {
 function closeRailSearch() {
     railSearchOpen.value = false;
     railSearchTriggerRef.value?.focus();
-}
-
-/**
- * task-89 ②：区头的「配置工作区」常驻入口 —— 指向**当前工作区自己的**设置页与成员页
- * （四 tab 由工作区自身导航承载；不复制到会话页、不进容器页签）。
- * 没有活动工作区时触发器 disabled 并给出原因（sidebar.noWorkspace）。
- */
-function openWorkspaceSettings() {
-    const workspaceId = auth.currentWorkspaceId;
-    if (!workspaceId) {
-        toast.error(t("sidebar.noWorkspace"));
-        return;
-    }
-    void router.push(workspaceSettingsPath(workspaceId));
-}
-
-function openWorkspaceMembers() {
-    const workspaceId = auth.currentWorkspaceId;
-    if (!workspaceId) {
-        toast.error(t("sidebar.noWorkspace"));
-        return;
-    }
-    void router.push(workspacePath(workspaceId) + "/members");
 }
 
 function handleLogout() {
@@ -391,40 +404,6 @@ function handleLogout() {
                 >
                     <Search class="size-4" aria-hidden="true" />
                 </button>
-                <DropdownMenu>
-                    <DropdownMenuTrigger as-child>
-                        <button
-                            type="button"
-                            data-testid="sidebar-workspace-config"
-                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            :disabled="!auth.currentWorkspaceId"
-                            :aria-label="t('sidebar.configureWorkspace')"
-                            :title="
-                                auth.currentWorkspaceId
-                                    ? t('sidebar.configureWorkspace')
-                                    : t('sidebar.noWorkspace')
-                            "
-                        >
-                            <Settings2 class="size-4" aria-hidden="true" />
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" class="w-56">
-                        <DropdownMenuItem
-                            data-testid="sidebar-workspace-config-settings"
-                            @select="openWorkspaceSettings"
-                        >
-                            <Settings2 class="size-4" aria-hidden="true" />
-                            {{ t("sidebar.workspaceSettings") }}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                            data-testid="sidebar-workspace-config-members"
-                            @select="openWorkspaceMembers"
-                        >
-                            <Users class="size-4" aria-hidden="true" />
-                            {{ t("workspace.membersTitle") }}
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
                 <button
                     type="button"
                     :data-testid="isMobile ? 'sidebar-close' : 'sidebar-collapse'"
@@ -548,6 +527,23 @@ function handleLogout() {
                 :show="standaloneDialogOpen"
                 @close="standaloneDialogOpen = false"
                 @created="onStandaloneCreated"
+            />
+
+            <!--
+                task-147 / DSD-1514：区头两个动作的**全局载体**。挂在左栏（AppLayout 恒在）
+                而不是挂到某个路由落点，所以「点了有没有反应」不再取决于守卫把 workspace-home
+                重定向到了哪一页（会话页 / 环境页 / 设置页 / 成员页 …）。
+            -->
+            <WorkspaceCreateDialog
+                :open="workspaceCreateOpen"
+                @close="workspaceCreateOpen = false"
+                @created="onWorkspaceCreated"
+            />
+            <WorkspaceSourceImportDialog
+                :open="sourceImportOpen"
+                :workspace-id="sourceImportWorkspaceId"
+                @close="sourceImportOpen = false"
+                @completed="onSourceImportCompleted"
             />
 
             <div

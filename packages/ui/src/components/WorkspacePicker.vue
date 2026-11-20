@@ -37,6 +37,16 @@ const router = useRouter();
 const route = useRoute();
 
 /**
+ * PLAN-0614 T2.1: 空态直接给"创建你的第一个工作区"入口（复用既有对话框，不新增页面/路由）。
+ *
+ * 声明位置压在下面的 `?create=1` watcher **之前**：那条 watcher 是 `immediate: true`，
+ * 回调在 setup 期间就跑，若 ref 还在后面声明就是 TDZ —— 带 `?create=1` 进来会
+ * `ReferenceError: Cannot access 'createOpen' before initialization`，选择面整体挂不起来。
+ * 这个顺序 bug 在拆左栏路由跳转时被子测抓出来（task-147），不是新引入的。
+ */
+const createOpen = ref(false);
+
+/**
  * D-1220 ②（task-365 B）：左栏「工作区」区头的 `+` 用 `?create=1` 唤起创建对话框 ——
  * 左栏是全局 chrome、不持有本页状态，query 是它和页之间唯一的耦合面，
  * 顺带让「新建工作区」变成可分享深链。消费后立刻抹掉参数（与 `?newChat=1` 同形）。
@@ -71,8 +81,6 @@ const workspaces = ref<ApiWorkspace[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const selecting = ref<string | null>(null);
-/** PLAN-0614 T2.1: 空态直接给"创建你的第一个工作区"入口（复用既有对话框，不新增页面/路由）。 */
-const createOpen = ref(false);
 /** task-169 / F-02：列表页三件套 —— 新建入口（header）+ 搜索过滤 + 空态出口。 */
 const query = ref("");
 const filteredWorkspaces = computed(() => {

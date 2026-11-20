@@ -1845,7 +1845,10 @@ async function runMatrix(
                 )
                 .toBe(true);
 
-            // E1'：三常驻动作（add-workspace / session-search / workspace-config）默认可见
+            // E1'：常驻动作（add-workspace / session-search）默认可见。
+            // task-150（`DSD-1515`）：左栏「工作区设置/成员」第二入口已删除（「不再渲染」由单测
+            // `Sidebar.spec.ts` 的负向用例守住，e2e 侧不留该入口的 testid 字面）⇒ 设置/成员改由
+            // 工作区页导航承载，可达性在同屏路由块里验（`workspace-nav-settings` / `-members`）。
             const sessionSearchVisible = await page
                 .locator('[data-testid="sidebar-session-search"]')
                 .first()
@@ -1855,16 +1858,6 @@ async function runMatrix(
                 .soft(
                     sessionSearchVisible,
                     `${tag} ⑥E1' 会话检索入口不常驻（实测 visible=${sessionSearchVisible}，阈值 true 归属卡 task-73 E1'）`,
-                )
-                .toBe(true);
-            const configEntry = page.locator('[data-testid="sidebar-workspace-config"]');
-            const configEntryCount = await configEntry.count();
-            const configEntryVisible =
-                configEntryCount > 0 ? await configEntry.first().isVisible() : false;
-            expect
-                .soft(
-                    configEntryVisible,
-                    `${tag} ⑥E1' 工作区配置入口不常驻（实测 count=${configEntryCount} visible=${configEntryVisible}，阈值 可见=true 归属卡 task-73 E1'）`,
                 )
                 .toBe(true);
         }
@@ -1935,6 +1928,21 @@ async function runMatrix(
                         `${tag} ⑥E1' 配置工作区页不可达（实测 ${page.url()}，期望含 ${settingsPath} 归属卡 task-73 E1'）`,
                     )
                     .toContain(`/workspace/${wsId}/settings`);
+                // task-150（`DSD-1515`）：设置/成员只从**工作区页导航**进入 ⇒ 导航项必须在场。
+                // 口径：整页 goto 后壳层要等工作区 hydrate 才挂导航，故用有界 waitFor（非即时 isVisible），
+                // 与文件内其它「短步探针」同型；超时仍按 false 记账，不改变失败语义。
+                const settingsNavVisible = await page
+                    .locator('[data-testid="workspace-nav-settings"]')
+                    .first()
+                    .waitFor({ state: "visible", timeout: 8000 })
+                    .then(() => true)
+                    .catch(() => false);
+                expect
+                    .soft(
+                        settingsNavVisible,
+                        `${tag} ⑥E1' 工作区页导航缺「设置」项（实测 visible=${settingsNavVisible}；task-150 起设置页只能从工作区页导航进入）`,
+                    )
+                    .toBe(true);
                 const membersPath = `/workspace/${wsId}/members`;
                 await page.goto(membersPath, { waitUntil: "load" });
                 expect
@@ -1943,6 +1951,18 @@ async function runMatrix(
                         `${tag} ⑥E1' 成员页不可达（实测 ${page.url()}，期望含 ${membersPath} 归属卡 task-73 E1'）`,
                     )
                     .toContain(`/workspace/${wsId}/members`);
+                const membersNavVisible = await page
+                    .locator('[data-testid="workspace-nav-members"]')
+                    .first()
+                    .waitFor({ state: "visible", timeout: 8000 })
+                    .then(() => true)
+                    .catch(() => false);
+                expect
+                    .soft(
+                        membersNavVisible,
+                        `${tag} ⑥E1' 工作区页导航缺「成员」项（实测 visible=${membersNavVisible}；task-150 起成员页只能从工作区页导航进入）`,
+                    )
+                    .toBe(true);
             }
         }
 

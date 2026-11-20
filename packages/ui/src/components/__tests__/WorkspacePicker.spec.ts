@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => ({
     writeTabWorkspace: vi.fn<(ws: unknown) => void>(),
     clearTabWorkspace: vi.fn<() => void>(),
     tabWorkspaceId: { value: null as string | null },
+    // task-147：`?create=1` 深链的读取点在本页，用例需要按场景换 query
+    // （固定成 `{}` 就只能测「没有深链」那一半）。
+    routeQuery: {} as Record<string, unknown>,
 }));
 
 vi.mock(
@@ -39,7 +42,7 @@ vi.mock(
             // 组件开始读 `useRoute()`，而本 mock 只给了 useRouter ⇒ 9 条用例在 setup 处就红
             // （No "useRoute" export is defined on the "vue-router" mock）。本文件的用例都由
             // **按钮**驱动创建对话框，不走 query 深链，所以空 query 是忠实的最小 stub。
-            useRoute: () => ({ query: {} }),
+            useRoute: () => ({ query: mocks.routeQuery }),
             // 选择面静态 import 了创建对话框 → 其依赖链会加载 `stores/auth` → `router/index.ts`，
             // 那里在模块求值时调用 `createRouter`/`createWebHistory`，所以 mock 必须提供最小实现。
             createRouter: () => ({
@@ -128,6 +131,7 @@ describe("WorkspacePicker", () => {
         mocks.writeTabWorkspace.mockReset();
         mocks.clearTabWorkspace.mockReset();
         mocks.tabWorkspaceId.value = null;
+        for (const key of Object.keys(mocks.routeQuery)) delete mocks.routeQuery[key];
     });
 
     it("BL-172: 清掉过期 tab 上下文后再重定向", async () => {
@@ -423,5 +427,27 @@ describe("WorkspacePicker", () => {
 
         await links.get('[data-testid="workspace-picker-link-settings"]').trigger("click");
         expect(mocks.push).toHaveBeenCalledWith("/settings");
+    });
+
+    /**
+     * task-147 / `DSD-1514`：左栏「添加工作区」改为就地开全局对话框后，`?create=1` **仍然是
+     * 可用深链** —— 它的落点场景是「没有工作区上下文、停在 /workbench 选择面」：守卫不重定向，
+     * 选择面就是那一跳的消费者。这条用例钉住「拆掉左栏那条路由跳转，不等于把深链一起废了」。
+     */
+    it("task-147: ?create=1 深链在选择面仍能打开创建对话框并抹掉参数", async () => {
+        mocks.listWorkspaces.mockResolvedValue([]);
+        mocks.routeQuery.create = "1";
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="create-dialog-stub"]').attributes("data-open")).toBe(
+            "true",
+        );
+        // 参数只消费一次：打开后立刻 replace 抹掉，避免刷新/回退再弹一次。
+        const lastCall = mocks.replace.mock.calls.at(-1)?.[0] as {
+            query: Record<string, unknown>;
+        };
+        expect(lastCall.query.create).toBeUndefined();
     });
 });
