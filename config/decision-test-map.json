@@ -336,7 +336,7 @@
           "text": "门脚本（check-decision-refs / validate-handoff / check-commit-msg）的 D 号解析同时接受 D-#### 与 DSD-NNNN；DSD- 前缀只解析 DSD 侧、D- 前缀按现行并集解析；撞号（DSD id 1461 vs 台账 D-1461）须报警而非静默合并",
           "status": "pending",
           "card": "task-49",
-          "note": "task-53 只想登记、不代写实现：当天实测 grep DSD 前缀解析实现 0 命中（check-decision-refs.mjs:76 仍是只认台账号的 D 加数字形态、check-commit-msg.mjs:375 同上、validate-handoff.mjs 的 D 号正则也仍只认台账号），前缀解析测试因此无处可挂 ⇒ 按 pending + 承接卡 task-49 登记；实现与测试落地后把本条款改 covered 并补 file/title/assert"
+          "note": "task-53 只想登记、不代写实现：当天实测 grep DSD 前缀解析实现 0 命中（check-decision-refs.mjs 的 D 号解析常量（BARE_REF）仍是只认台账号的 D 加数字形态、check-commit-msg.mjs:375 同上、validate-handoff.mjs 的 D 号正则也仍只认台账号），前缀解析测试因此无处可挂 ⇒ 按 pending + 承接卡 task-49 登记；实现与测试落地后把本条款改 covered 并补 file/title/assert"
         }
       ],
       "dsd": 1474
