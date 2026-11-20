@@ -187,7 +187,14 @@ function referenceHref(id: ResourceId, layer: ResourceLayer): string {
             </div>
         </header>
         <!-- 资源切换：本页**固定在本工作区层**，所以这里是「资源」而不是「层」的页签。 -->
-        <div class="shrink-0 border-b border-border">
+        <!--
+            task-162（与 `ResourceLayerTabs.vue` 同一条规则，各自唯一出处）：**只剩一个页签就不渲染页签条**。
+            task-145 迁走 mcp / skills 的工作区层之后，`TAB_RESOURCE_IDS` 只剩 credentials 一个，
+            这条带（真栈 1920×1080 实测 43px 高、满宽分隔线）此前仍会渲染出一个点不动的「凭据」。
+            本页没有层可切（钉死 WORKSPACE），少这一条带不损失任何可达性；资源名由 h1 + 面板自带标题表达。
+            判据留在这一处（模板层一个长度比较），页签集合将来长回 2 个即自动出现。
+        -->
+        <div v-if="tabs.length > 1" class="shrink-0 border-b border-border">
             <div
                 class="mx-auto flex w-full max-w-6xl items-center gap-1 px-2 pt-1"
                 role="tablist"

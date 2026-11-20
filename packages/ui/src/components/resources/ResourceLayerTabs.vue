@@ -63,7 +63,27 @@ function select(value: string | number | undefined) {
 </script>
 
 <template>
-    <div data-testid="resource-layer-tabs" class="flex flex-col gap-1.5">
+    <div
+        v-if="layers.length > 1"
+        data-testid="resource-layer-tabs"
+        class="mt-3 flex flex-col gap-1.5"
+    >
+        <!--
+            task-162（页签条退化收口）：**只剩一层就整块不渲染**。
+
+            <p>为什么判据必须落在本组件、而不是每个消费者自己写一遍：`/resources/mcp` 的可见层在
+            task-145（DSD-1511）之后只剩 INSTANCE 一层，当时布局那边只写了 `v-if="layers.length"`
+            —— 0 层不渲染、1 层照渲染，于是出现「只有一个页签却挂着一条页签栏」（真栈 1920×1080
+            实测：`resource-layer-tabs` 节点 1 个、`resource-layer-tab-*` 1 个、header 高 88.19px）。
+            规则收口在这里 ⇒ 以后任何资源退化成单层都自动不出现页签条，不需要第二处条件，
+            也不可能两处漂开。`mt-3` 一并搬进本 root（原先挂在布局那层 wrapper 上；根节点不渲染时
+            那层空 div 仍会留 12px 空白）。</p>
+
+            <p>为什么整块（含下方禁用理由列表）一起不渲染不丢信息：唯一的消费者 `ResourcesLayout`
+            的 `disabledReason` 显式跳过**当前层**（`ResourcesLayout.vue:103`），单层时当前层就是那一层
+            ⇒ 理由结构上恒空。将来若出现「单层却要给理由」的消费者，正确做法是把理由写进正文，
+            不是回滚这条收口。</p>
+        -->
         <Tabs :model-value="active" @update:model-value="select">
             <TabsList variant="line" :aria-label="t('resources.tabsLabel')">
                 <!--

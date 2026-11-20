@@ -280,15 +280,19 @@ watch(
                         读屏会把同一个名字念两遍，aria 结构也自相矛盾。面包屑保留（它不是标题，
                         承担的是"我在哪一层"的定位），页名由面包屑末级 + 面板标题共同表达。
                     -->
-                    <div v-if="layers.length" class="mt-3">
-                        <ResourceLayerTabs
-                            :resource-id="(resourceId ?? 'credentials') as ResourceId"
-                            :layers="layers"
-                            :active="active"
-                            :disabled-reason="disabledReason"
-                            @select="selectLayer"
-                        />
-                    </div>
+                    <!--
+                        task-162：这里此前是 `<div v-if="layers.length" class="mt-3">` 包住组件
+                        ——「0 层不渲染」是**条自己**的规则，写在包装层就成了第二处条件，
+                        且与组件里那条（`layers.length > 1`）口径不一致，才会让 mcp 的单层页签渲染出来。
+                        现在整条判据只在 `ResourceLayerTabs.vue` 一处；包装层删除，`mt-3` 移进组件根节点。
+                    -->
+                    <ResourceLayerTabs
+                        :resource-id="(resourceId ?? 'credentials') as ResourceId"
+                        :layers="layers"
+                        :active="active"
+                        :disabled-reason="disabledReason"
+                        @select="selectLayer"
+                    />
                 </div>
             </header>
 

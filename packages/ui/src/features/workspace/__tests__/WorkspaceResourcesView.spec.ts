@@ -169,7 +169,7 @@ describe("工作区资源页（M4-2 / task-210）", () => {
      * <p>同一断言里还钉两件**不能一起坏**的事：h1 不许被塞进 tablist（tablist 的子元素按 ARIA
      * 只应是 tab），以及 tablist 的组名不许在补 h1 时被弄丢（task-90 同族判据）。</p>
      */
-    it("有且只有一个 h1，文本是资源页标题；h1 不在 tablist 内、tablist 仍有组名", async () => {
+    it("有且只有一个 h1，文本是资源页标题；h1 不在 tablist 内；页签集合 ≥2 时 tablist 仍带组名", async () => {
         const wrapper = await mountPage();
 
         const headings = wrapper.findAll("h1");
@@ -179,8 +179,18 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         // 层级核对：h1 是页面级标题，不得落进 tablist（那里按 ARIA 只应有 tab）。
         expect(headings[0].element.closest('[role="tablist"]')).toBeNull();
 
-        const tablist = wrapper.get('[role="tablist"]');
-        expect(tablist.attributes("aria-label")).toBe(messages["zh-CN"].workspaceNav.resources);
+        // task-162：本页页签只剩 1 个时**整条页签栏不渲染**，于是这里没有 tablist 可取。
+        // 组名判据（task-90 同族）改成条件式而不是删掉：页签集合长回 ≥2 时必须仍然带 aria-label，
+        // 只剩 1 个时必须一个 tablist 都没有 —— 两个方向都要咬住，否则「干脆不渲染组名」也能绿。
+        const tablists = wrapper.findAll('[role="tablist"]');
+        if (TAB_IDS.length > 1) {
+            expect(tablists).toHaveLength(1);
+            expect(tablists[0]!.attributes("aria-label")).toBe(
+                messages["zh-CN"].workspaceNav.resources,
+            );
+        } else {
+            expect(tablists).toHaveLength(0);
+        }
     });
     it("资源清单 = RESOURCE_DEFS 里「有 WORKSPACE 层」的派生结果（页面不持第二份清单）", async () => {
         const wrapper = await mountPage();
@@ -188,7 +198,8 @@ describe("工作区资源页（M4-2 / task-210）", () => {
             .findAll('[data-testid^="ws-resources-tab-"]')
             .map((node) => node.attributes("data-testid")?.replace("ws-resources-tab-", ""));
         // D-1432：派生结果减去「已迁走」的两个 = 本页页签。
-        expect(tabIds).toEqual([...TAB_IDS]);
+        // task-162：页签只剩 1 个时页签栏不渲染 ⇒ DOM 侧为空；清单本身由下面两条 SSOT 断言钉住。
+        expect(tabIds).toEqual(TAB_IDS.length > 1 ? [...TAB_IDS] : []);
         // 派生结果本身钉住一次（矩阵顺序），防止有人把 filter 条件改成「全部资源」还绿。
         // task-96：智能体撤出资源面 ⇒ 派生集合里不再有它（工作区层入口在 dock tab 与管理弹窗，不在这页）。
         expect([...DERIVED_IDS]).toEqual(["credentials", "mcp", "skills"]);
@@ -218,15 +229,16 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         expect(wrapper.find('[data-testid^="resource-layer-tab-"]').exists()).toBe(false);
     });
 
-    it("页签只剩 credentials（mcp/skills 已迁、智能体随资源区摘除）；点它不产生多余 replace", async () => {
+    it("页签只剩 credentials（mcp/skills 已迁、智能体随资源区摘除）⇒ 不渲染页签条，也不写 URL", async () => {
         const wrapper = await mountPage();
-        const tabs = wrapper.findAll('[data-testid^="ws-resources-tab-"]');
-        expect(tabs.map((node) => node.attributes("data-testid"))).toEqual([
-            "ws-resources-tab-credentials",
-        ]);
+        // task-162：单一页签不再渲染（1920×1080 真栈实测：原先这条 43px 高、满宽分隔线的带里
+        // 只有「凭据」一个字，点开不动任何东西）。资源名由 h1 + 面板自带标题表达，不靠这条带。
+        expect(wrapper.findAll('[data-testid^="ws-resources-tab-"]')).toHaveLength(0);
+        expect(wrapper.findAll('[role="tablist"]')).toHaveLength(0);
         expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(true);
-        // 深链写回只发生在**切换**时；唯一页签上点一下不该写 URL（否则每次点击都多一条历史）。
-        await wrapper.get('[data-testid="ws-resources-tab-credentials"]').trigger("click");
+        // 深链写回只发生在**切换**时；现在没有任何可点页签，挂载本身也不该写 URL
+        // （否则每次进页多一条历史）。原先这条是靠「点唯一页签 → 断言没 replace」咬住的，
+        // 页签不渲染后改成直接断言挂载后 replace 未被调用，承重不变。
         await flushPromises();
         expect(replaceSpy).not.toHaveBeenCalled();
     });
