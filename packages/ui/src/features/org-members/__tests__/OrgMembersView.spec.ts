@@ -367,9 +367,10 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         expect(levelOf("d-grand")).toBe("3");
 
         // task-10 / batch-2 ④（触控）：展开 chevron 的命中区必须 ≥24×24（SC 2.5.8）。
-        // 本仓 `--spacing` = 3.5px（main.css:339）⇒ 24 档 = **7 步 = 24.5px**；
-        // `h-6`/`size-6` 只有 21px，是「改了还违例」。jsdom 不求值 Tailwind ⇒ 钉类名，
-        // 真实 rect 由浏览器侧 rect 导出（task-51）复核。
+        // `--spacing` = Tailwind 默认 4px 步进（`@theme` 默认值；main.css:290 密度说明、
+        // :367-381 记 D-1842 删掉了此前的 0.21875rem=3.5px 覆盖）⇒ `min-h-7` = 7 步 = 28px，
+        // 比下限多出的 4px 是余量；`h-6`/`size-6` = 24px 恰好压在下限上（零余量），故仍禁。
+        // jsdom 不求值 Tailwind ⇒ 钉类名，真实 rect 由浏览器侧 rect 导出（task-51）复核。
         const toggles = wrapper.findAll('[data-testid^="org-tree-toggle-"]');
         expect(toggles.length).toBeGreaterThan(0);
         for (const toggle of toggles) {
