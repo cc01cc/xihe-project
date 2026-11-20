@@ -132,6 +132,21 @@ const ACTION_CLUSTER_MIN_PX = 32;
  */
 const MENU_ROW_MIN_HEIGHT_PX = 20;
 const MENU_ROW_MIN_WIDTH_PX = 120;
+/**
+ * ⑥ 导航面板**让位门**（task-158 口径修正）。
+ *
+ * <p>D-1829 的舒适线（`useWorkspaceLayout.ts` `computeWorkbenchSqueeze`，MAIN_COMFORT_MIN_WIDTH = 720）
+ * 在 **1440 档**会把导航面板收成 rail（56px + 1px 边框 ≈ 57.03；`WorkspaceWorkbench.vue:531` 记录了
+ * 2026-11-17 ui-41 的同档实测 57.03）。这是产品既定行为，不是缺陷。</p>
+ *
+ * <p>面板收成 rail 之后 `sidebar-new-chat` / `sidebar-session-search` 等**面板内动作压根没渲染**
+ * （boundingBox 全 0），于是「常驻可见」类断言在 1440 档量的是一个不存在的对象：2026-11-20 基线里
+ * ⑥E1a ×2 / ⑥E1' ×2 全部**只红在 1440**，52 与 56 的跑间差（E1a 0→2）也是同一原因。</p>
+ *
+ * <p>判据因此分形态：**面板展开态**量面板内动作（原判据一条不删）；**让位态**只钉「让位形态本身」
+ * （折叠条 + 展开按钮），形态切换另有 ⑥E2 专门判 rail。</p>
+ */
+const NAV_YIELD_MAX_PX = 100;
 /** A2 带层扫描容差：Σ(chromeBands.h) 与 chromeHeight 之差超此值即视为扫描被截断 */
 const BAND_SCAN_TOLERANCE_PX = 1;
 
@@ -1258,6 +1273,8 @@ async function runMatrix(
         //    F-6：旧「新建会话与搜索框纵向不重叠」立论已撤（D-1236/task-373 起该键就是两项菜单触发器），删除。
         //    可见性一律用 count/isVisible 判（F-7：不按 rect 猜）。
         const { newChat } = layout.sidebar;
+        // 让位态判据：侧栏盒宽 < 100 ⇒ rail 形态（展开态 336.39，让位态 57.03，见 NAV_YIELD_MAX_PX）。
+        const navYielded = (layout.sidebarBox?.w ?? 0) < NAV_YIELD_MAX_PX;
         // task-149（取代 task-120 F-8 的 count 兜底）：sidebar-new-workspace（Sidebar.vue:275）是区头**恒常**
         // 触发器；它的两个菜单项 sidebar-add-workspace（:285）/ sidebar-import-source（:292）在
         // DropdownMenuContent（:283）内，菜单未展开时**不在 DOM** ⇒ 旧写法按当前 DOM 取值结构性永远取不到
@@ -1336,142 +1353,174 @@ async function runMatrix(
         // DropdownMenuContent（Sidebar.vue:283，class="w-56"）里的 DropdownMenuItem，shadcn/reka 默认
         // 行高 ~28px，真机实测 27.7px 属 border-box 级差。20px = 鼠标可稳定命中下限，120px 防窄条。
         // 菜单项在菜单未展开时不在 DOM（见上方展开/关闭流程），这里量的都是「真展开后」的盒子。
-        // E1a：常驻动作下限 28×28（sidebar-new-chat）
-        if (newChat) {
-            const newChatMin = Math.min(newChat.w, newChat.h);
+        // 让位态（navYielded，1440 档的既定形态）：面板被夹到 rail 宽、内容被裁掉，但**没有被销毁**，
+        // 加宽窗口即原样恢复（S5-W2 渲染层让位，不改存储的 open）。
+        //
+        // 这里钉的是「让位 ≠ 用户折叠」这条设计规则（Sidebar.vue:73-75 / PLAN-0762 T2.1）：
+        // 让位态**不渲染** `sidebar-collapsed-strip`（那条只在用户手动折叠后出现，由 ⑥E2 判），
+        // 但 `sidebar-panel` 必须仍在 DOM 里 —— 少了它，加宽窗口就恢复不回来。
+        // 面板内动作（E1a / E1' / E3 / E4② / E2'）在让位态**没有对象可量**，见 NAV_YIELD_MAX_PX。
+        if (navYielded) {
+            const panelCount = await page.locator('[data-testid="sidebar-panel"]').count();
+            const stripCount = await page
+                .locator('[data-testid="sidebar-collapsed-strip"]')
+                .count();
             expect
                 .soft(
-                    newChatMin,
-                    `${tag} ⑥E1a 新建会话命中区 ${fmtRect(newChat)}（实测 min=${fmt(newChatMin)}，阈值 ≥${HIT_MIN_PX}×${HIT_MIN_PX} 归属卡 task-73 E1a）`,
+                    { panelCount, stripCount },
+                    `${tag} ⑥让位态 形态不符（panel=${panelCount} / 折叠条=${stripCount}；阈值 {panel:1, 折叠条:0}：D-1829 让位是渲染层夹宽、不销毁面板，且让位不是用户折叠 ⇒ 不得出现手动折叠的展开条）`,
                 )
-                .toBeGreaterThanOrEqual(HIT_MIN_PX);
+                .toEqual({ panelCount: 1, stripCount: 0 });
         }
-        // E1（浮层菜单行口径，见判定表）：可见 + 可用 + 高 ≥20 + 宽 ≥120 —— **不再套** 28/32。
-        // 这三项原来套的是常驻动作的 28/32，且因旧写法取不到元素而**从未真正执行**（空覆盖）；task-149
-        // 修好展开流程后它们首次执行，暴露的是「27.7px < 28」这种跨类误判，故按 Lead 裁定改成按类判定。
-        const menuRows = [
-            {
-                testId: "sidebar-add-workspace",
-                label: "新建工作区",
-                box: addWsBox,
-                enabled: addWsEnabled,
-            },
-            {
-                testId: "sidebar-import-source",
-                label: "导入源",
-                box: importSourceBox,
-                enabled: importSourceEnabled,
-            },
-        ];
-        for (const row of menuRows) {
-            const rowHeight = row.box?.height ?? 0;
-            const rowWidth = row.box?.width ?? 0;
+        // 面板**展开态**才量面板内动作（让位态下它们不在 DOM，量了就是空覆盖）。
+        if (!navYielded) {
+            // E1a：常驻动作下限 28×28（sidebar-new-chat）
+            if (newChat) {
+                const newChatMin = Math.min(newChat.w, newChat.h);
+                expect
+                    .soft(
+                        newChatMin,
+                        `${tag} ⑥E1a 新建会话命中区 ${fmtRect(newChat)}（实测 min=${fmt(newChatMin)}，阈值 ≥${HIT_MIN_PX}×${HIT_MIN_PX} 归属卡 task-73 E1a）`,
+                    )
+                    .toBeGreaterThanOrEqual(HIT_MIN_PX);
+            }
+            // E1（浮层菜单行口径，见判定表）：可见 + 可用 + 高 ≥20 + 宽 ≥120 —— **不再套** 28/32。
+            // 这三项原来套的是常驻动作的 28/32，且因旧写法取不到元素而**从未真正执行**（空覆盖）；task-149
+            // 修好展开流程后它们首次执行，暴露的是「27.7px < 28」这种跨类误判，故按 Lead 裁定改成按类判定。
+            const menuRows = [
+                {
+                    testId: "sidebar-add-workspace",
+                    label: "新建工作区",
+                    box: addWsBox,
+                    enabled: addWsEnabled,
+                },
+                {
+                    testId: "sidebar-import-source",
+                    label: "导入源",
+                    box: importSourceBox,
+                    enabled: importSourceEnabled,
+                },
+            ];
+            for (const row of menuRows) {
+                const rowHeight = row.box?.height ?? 0;
+                const rowWidth = row.box?.width ?? 0;
+                expect
+                    .soft(
+                        { visible: row.box !== null, enabled: row.enabled },
+                        `${tag} ⑥E1 浮层菜单行 ${row.testId} 不可用（可见=${row.box !== null}，enabled=${row.enabled}；口径：浮层行须同时可见且可用）`,
+                    )
+                    .toEqual({ visible: true, enabled: true });
+                expect
+                    .soft(
+                        rowHeight,
+                        `${tag} ⑥E1 浮层菜单行 ${row.testId}（${row.label}）高 ${fmt(rowHeight)}px（阈值 ≥${MENU_ROW_MIN_HEIGHT_PX}px：鼠标可稳定命中的下限；**不套**常驻动作的 ${HIT_MIN_PX}/${ACTION_CLUSTER_MIN_PX}，见判定表）`,
+                    )
+                    .toBeGreaterThanOrEqual(MENU_ROW_MIN_HEIGHT_PX);
+                expect
+                    .soft(
+                        rowWidth,
+                        `${tag} ⑥E1 浮层菜单行 ${row.testId}（${row.label}）宽 ${fmt(rowWidth)}px（阈值 ≥${MENU_ROW_MIN_WIDTH_PX}px：菜单行不得退化成窄条）`,
+                    )
+                    .toBeGreaterThanOrEqual(MENU_ROW_MIN_WIDTH_PX);
+            }
+
+            // E2'：新建会话必须在首个会话行之上（Sidebar.vue:279-337 现状仍在搜索行 ⇒ 改前必红）
+            // task-120 F-8：同上，0 条会话时 first().boundingBox() 会无限等待 ⇒ 先 count。
+            const sessionRows = page.locator('[data-testid="session-item"]');
+            const firstSessionRow =
+                (await sessionRows.count()) > 0 ? await sessionRows.first().boundingBox() : null;
+            if (newChat && firstSessionRow) {
+                const newChatBottom = newChat.y + newChat.h;
+                expect
+                    .soft(
+                        newChatBottom - firstSessionRow.y,
+                        `${tag} ⑥E2' 新建会话底边 ${fmt(newChatBottom)} 未高于首个会话行顶边 ${fmt(firstSessionRow.y)}（差值 ${fmt(newChatBottom - firstSessionRow.y)}px，阈值 ≤0 归属卡 task-73 E2'）`,
+                    )
+                    .toBeLessThanOrEqual(0);
+            } else {
+                expect
+                    .soft(
+                        { newChat, firstSessionRow },
+                        `${tag} ⑥E2' 取不到新建会话或首个会话行（不 skip，按 fail 暴露 归属卡 task-73 E2'）`,
+                    )
+                    .toBeNull();
+            }
+
+            // E3 / E4① / E4②：常驻可见性用 count + isVisible 判据
+            // task-158：`sidebar-group-add` 在 packages/ui/src 全仓 0 命中（git log -S 只命中 spec 提交
+            // 153e83cdf）⇒ 旧写法是**空覆盖**：产品把「组头新建会话」实现在工作区分组
+            // （WorkspaceSessionGroups.vue:484 `sidebar-workspace-group-new-<wsid>`，min-h-7 min-w-7 常驻）
+            // 与独立会话区（:403 `sidebar-standalone-group-new`）上。判据仍是不 hover 也可见，未放宽。
+            const groupAdd = page.locator(
+                '[data-testid^="sidebar-workspace-group-new-"], [data-testid="sidebar-standalone-group-new"]',
+            );
+            const groupAddCount = await groupAdd.count();
+            const groupAddVisible = groupAddCount > 0 ? await groupAdd.first().isVisible() : false;
             expect
                 .soft(
-                    { visible: row.box !== null, enabled: row.enabled },
-                    `${tag} ⑥E1 浮层菜单行 ${row.testId} 不可用（可见=${row.box !== null}，enabled=${row.enabled}；口径：浮层行须同时可见且可用）`,
+                    groupAddVisible,
+                    `${tag} ⑥E3 会话组头「+」不 hover 即不可见（实测 count=${groupAddCount} visible=${groupAddVisible}，阈值 可见=true 归属卡 task-73 E3）`,
                 )
-                .toEqual({ visible: true, enabled: true });
+                .toBe(true);
+            const sessionsHeaderCount = await page
+                .locator('[data-testid="sidebar-sessions-header"]')
+                .count();
             expect
                 .soft(
-                    rowHeight,
-                    `${tag} ⑥E1 浮层菜单行 ${row.testId}（${row.label}）高 ${fmt(rowHeight)}px（阈值 ≥${MENU_ROW_MIN_HEIGHT_PX}px：鼠标可稳定命中的下限；**不套**常驻动作的 ${HIT_MIN_PX}/${ACTION_CLUSTER_MIN_PX}，见判定表）`,
+                    sessionsHeaderCount,
+                    `${tag} ⑥E4① 会话区头计数 ${sessionsHeaderCount}（实测 ${sessionsHeaderCount}，阈值 =1 归属卡 task-73 E4①）`,
                 )
-                .toBeGreaterThanOrEqual(MENU_ROW_MIN_HEIGHT_PX);
+                .toBe(1);
+            // task-158：同一处空覆盖 —— 会话行「⋯」的真键是 SessionItem.vue:174 `session-item-more`
+            // （h-7 w-7，opacity-70 常驻，hover 才 100），`sidebar-session-more` 产品从未有过。
+            const sessionMoreVisible = await page
+                .locator('[data-testid="session-item-more"]')
+                .first()
+                .isVisible()
+                .catch(() => false);
             expect
                 .soft(
-                    rowWidth,
-                    `${tag} ⑥E1 浮层菜单行 ${row.testId}（${row.label}）宽 ${fmt(rowWidth)}px（阈值 ≥${MENU_ROW_MIN_WIDTH_PX}px：菜单行不得退化成窄条）`,
+                    sessionMoreVisible,
+                    `${tag} ⑥E4② 会话次级动作 session-item-more 不常驻（实测 visible=${sessionMoreVisible}，阈值 true 归属卡 task-73 E4②）`,
                 )
-                .toBeGreaterThanOrEqual(MENU_ROW_MIN_WIDTH_PX);
+                .toBe(true);
+            // 工作区行「⋯」真键带工作区 id：WorkspaceSessionGroups.vue:501 `sidebar-workspace-more-<wsid>`
+            // （h-7 w-7，opacity-70 常驻），无 id 的 `sidebar-workspace-more` 不存在。
+            const workspaceMoreVisible = await page
+                .locator('[data-testid^="sidebar-workspace-more-"]')
+                .first()
+                .isVisible()
+                .catch(() => false);
+            expect
+                .soft(
+                    workspaceMoreVisible,
+                    `${tag} ⑥E4② 工作区次级动作 sidebar-workspace-more-<wsid> 不常驻（实测 visible=${workspaceMoreVisible}，阈值 true 归属卡 task-73 E4②）`,
+                )
+                .toBe(true);
+
+            // E1'：三常驻动作（add-workspace / session-search / workspace-config）默认可见
+            const sessionSearchVisible = await page
+                .locator('[data-testid="sidebar-session-search"]')
+                .first()
+                .isVisible()
+                .catch(() => false);
+            expect
+                .soft(
+                    sessionSearchVisible,
+                    `${tag} ⑥E1' 会话检索入口不常驻（实测 visible=${sessionSearchVisible}，阈值 true 归属卡 task-73 E1'）`,
+                )
+                .toBe(true);
+            const configEntry = page.locator('[data-testid="sidebar-workspace-config"]');
+            const configEntryCount = await configEntry.count();
+            const configEntryVisible =
+                configEntryCount > 0 ? await configEntry.first().isVisible() : false;
+            expect
+                .soft(
+                    configEntryVisible,
+                    `${tag} ⑥E1' 工作区配置入口不常驻（实测 count=${configEntryCount} visible=${configEntryVisible}，阈值 可见=true 归属卡 task-73 E1'）`,
+                )
+                .toBe(true);
         }
-
-        // E2'：新建会话必须在首个会话行之上（Sidebar.vue:279-337 现状仍在搜索行 ⇒ 改前必红）
-        // task-120 F-8：同上，0 条会话时 first().boundingBox() 会无限等待 ⇒ 先 count。
-        const sessionRows = page.locator('[data-testid="session-item"]');
-        const firstSessionRow =
-            (await sessionRows.count()) > 0 ? await sessionRows.first().boundingBox() : null;
-        if (newChat && firstSessionRow) {
-            const newChatBottom = newChat.y + newChat.h;
-            expect
-                .soft(
-                    newChatBottom - firstSessionRow.y,
-                    `${tag} ⑥E2' 新建会话底边 ${fmt(newChatBottom)} 未高于首个会话行顶边 ${fmt(firstSessionRow.y)}（差值 ${fmt(newChatBottom - firstSessionRow.y)}px，阈值 ≤0 归属卡 task-73 E2'）`,
-                )
-                .toBeLessThanOrEqual(0);
-        } else {
-            expect
-                .soft(
-                    { newChat, firstSessionRow },
-                    `${tag} ⑥E2' 取不到新建会话或首个会话行（不 skip，按 fail 暴露 归属卡 task-73 E2'）`,
-                )
-                .toBeNull();
-        }
-
-        // E3 / E4① / E4②：常驻可见性用 count + isVisible 判据
-        const groupAdd = page.locator('[data-testid="sidebar-group-add"]');
-        const groupAddCount = await groupAdd.count();
-        const groupAddVisible = groupAddCount > 0 ? await groupAdd.first().isVisible() : false;
-        expect
-            .soft(
-                groupAddVisible,
-                `${tag} ⑥E3 会话组头「+」不 hover 即不可见（实测 count=${groupAddCount} visible=${groupAddVisible}，阈值 可见=true 归属卡 task-73 E3）`,
-            )
-            .toBe(true);
-        const sessionsHeaderCount = await page
-            .locator('[data-testid="sidebar-sessions-header"]')
-            .count();
-        expect
-            .soft(
-                sessionsHeaderCount,
-                `${tag} ⑥E4① 会话区头计数 ${sessionsHeaderCount}（实测 ${sessionsHeaderCount}，阈值 =1 归属卡 task-73 E4①）`,
-            )
-            .toBe(1);
-        const sessionMoreVisible = await page
-            .locator('[data-testid="sidebar-session-more"]')
-            .first()
-            .isVisible()
-            .catch(() => false);
-        expect
-            .soft(
-                sessionMoreVisible,
-                `${tag} ⑥E4② 会话次级动作 sidebar-session-more 不常驻（实测 visible=${sessionMoreVisible}，阈值 true 归属卡 task-73 E4②）`,
-            )
-            .toBe(true);
-        const workspaceMoreVisible = await page
-            .locator('[data-testid="sidebar-workspace-more"]')
-            .first()
-            .isVisible()
-            .catch(() => false);
-        expect
-            .soft(
-                workspaceMoreVisible,
-                `${tag} ⑥E4② 工作区次级动作 sidebar-workspace-more 不常驻（实测 visible=${workspaceMoreVisible}，阈值 true 归属卡 task-73 E4②）`,
-            )
-            .toBe(true);
-
-        // E1'：三常驻动作（add-workspace / session-search / workspace-config）默认可见
-        const sessionSearchVisible = await page
-            .locator('[data-testid="sidebar-session-search"]')
-            .first()
-            .isVisible()
-            .catch(() => false);
-        expect
-            .soft(
-                sessionSearchVisible,
-                `${tag} ⑥E1' 会话检索入口不常驻（实测 visible=${sessionSearchVisible}，阈值 true 归属卡 task-73 E1'）`,
-            )
-            .toBe(true);
-        const configEntry = page.locator('[data-testid="sidebar-workspace-config"]');
-        const configEntryCount = await configEntry.count();
-        const configEntryVisible =
-            configEntryCount > 0 ? await configEntry.first().isVisible() : false;
-        expect
-            .soft(
-                configEntryVisible,
-                `${tag} ⑥E1' 工作区配置入口不常驻（实测 count=${configEntryCount} visible=${configEntryVisible}，阈值 可见=true 归属卡 task-73 E1'）`,
-            )
-            .toBe(true);
 
         // E2：rail（折叠）态仍要有检索入口（现状 rail 只剩 28×28 展开按钮 ⇒ 改前必红）。
         //     这一步会改左栏形态，所以放在 ⑥ 最末，并在末尾点展开按钮复原。
