@@ -138,7 +138,10 @@ BEGIN
     FROM role_bindings b
     JOIN role_permissions rp ON rp.role_id = b.role_id
     WHERE b.subject_type = 'user' AND b.subject_id = '${user}'::uuid
-      AND rp.action_class NOT LIKE '%:%'
+      -- task-123: exclude the three capability atoms by name. A plain action atom may carry a
+      -- domain prefix (task-108: session:permission:configure), so the '%:%' shape no longer
+      -- means "capability": matching on it silently dropped a materializable atom.
+      AND rp.action_class NOT IN ('instance:super', 'instance:admin', 'workspace:admin')
     ORDER BY b.scope_type, b.scope_id, rp.action_class, rp.resource_pattern;
 END $$;`;
     execFileSync(
@@ -213,7 +216,9 @@ BEGIN
     JOIN role_permissions rp ON rp.role_id = b.role_id
     WHERE b.subject_type = 'user' AND b.subject_id = '${user}'::uuid
       AND b.scope_type = 'workspace' AND b.scope_id = '${workspace}'::uuid
-      AND rp.action_class NOT LIKE '%:%';
+      -- task-123: same rule as runRoleSeedSql above — name the three capability atoms instead of
+      -- matching the '%:%' shape, which also caught the domain-prefixed session:permission:configure.
+      AND rp.action_class NOT IN ('instance:super', 'instance:admin', 'workspace:admin');
 END $$;`;
     execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
