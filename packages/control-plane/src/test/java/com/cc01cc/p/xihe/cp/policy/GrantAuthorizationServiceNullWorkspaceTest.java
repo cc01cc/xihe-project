@@ -37,7 +37,8 @@ class GrantAuthorizationServiceNullWorkspaceTest {
                 mock(GrantPrincipalPathResolver.class),
                 new GrantIntersectionEvaluator(),
                 mock(WorkspaceRepository.class),
-                mock(com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService.class));
+                mock(com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService.class),
+                mock(SessionTemporaryGrantStore.class));
     }
 
     private PolicyRequest instanceScopeRequest() {
@@ -89,7 +90,8 @@ class GrantAuthorizationServiceNullWorkspaceTest {
                 mock(GrantPrincipalPathResolver.class),
                 new GrantIntersectionEvaluator(),
                 workspaces,
-                memberships);
+                memberships,
+                mock(SessionTemporaryGrantStore.class));
 
         PolicyRequest workspaceScoped = new PolicyRequest("manage_session_participants",
                 List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS), List.of("*"),

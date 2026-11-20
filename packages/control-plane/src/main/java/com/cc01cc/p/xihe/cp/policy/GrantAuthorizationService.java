@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +36,7 @@ public class GrantAuthorizationService {
     private final GrantIntersectionEvaluator evaluator;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceMembershipService memberships;
+    private final SessionTemporaryGrantStore temporaryGrants;
 
     public GrantAuthorizationService(AuthorizationGrantRepository grantRepository,
                                      AgentPrincipalRepository agentPrincipalRepository,
@@ -42,7 +44,8 @@ public class GrantAuthorizationService {
                                      GrantPrincipalPathResolver principalPathResolver,
                                      GrantIntersectionEvaluator evaluator,
                                      WorkspaceRepository workspaceRepository,
-                                     WorkspaceMembershipService memberships) {
+                                     WorkspaceMembershipService memberships,
+                                     SessionTemporaryGrantStore temporaryGrants) {
         this.grantRepository = grantRepository;
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.workspaceAgentRepository = workspaceAgentRepository;
@@ -50,6 +53,7 @@ public class GrantAuthorizationService {
         this.evaluator = evaluator;
         this.workspaceRepository = workspaceRepository;
         this.memberships = memberships;
+        this.temporaryGrants = temporaryGrants;
     }
 
     /**
@@ -106,12 +110,39 @@ public class GrantAuthorizationService {
             for (SessionReadService.SessionPathView session : path.sessionPath()) {
                 permissionPath.add(evaluator.parse(session.agentPermissionsSnapshot()));
             }
-            return evaluator.allows(request, permissionPath);
+            // DSD-1509 ②: a live session temporary grant is the one explicit exception to "every
+            // level holds the atom". Leaf-only by construction (G3): we read the request's own
+            // session and the principal the resolver just walked to, never an ancestor's row.
+            return evaluator.allows(request, permissionPath,
+                    liveSessionTokens(request, workspaceId, principal.getId()));
         } catch (IllegalArgumentException e) {
             logger.warn("[POLICY] event=grant_evaluation_fail_closed exceptionType={}",
                     e.getClass().getSimpleName());
             return false;
         }
+    }
+
+    /**
+     * The live tokens that may override the per-level holding test for this very session.
+     *
+     * <p>Read on every decision (the row is cheap and indexed, and nothing caches it), so a revocation
+     * takes effect on the next call instead of after {@code cp.capability-cache-ttl-ms}. A missing or
+     * malformed session id yields no tokens: an agent tool call always has a session, so "absent" means
+     * the request did not come from one and must not inherit a token from somewhere else.</p>
+     */
+    private List<GrantIntersectionEvaluator.GrantAtom> liveSessionTokens(PolicyRequest request,
+                                                                         UUID workspaceId,
+                                                                         UUID principalId) {
+        if (request.sessionId() == null || request.sessionId().isBlank()) {
+            return List.of();
+        }
+        UUID sessionId;
+        try {
+            sessionId = UUID.fromString(request.sessionId());
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        return temporaryGrants.tokenAtoms(sessionId, principalId, workspaceId, Instant.now());
     }
 
     /** User-driven UI mutations use only the user principal; Session is an audit container, not an Agent. */

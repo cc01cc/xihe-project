@@ -122,15 +122,33 @@ public class RequesterAuthority {
      * visibility must stay exactly as before.</p>
      */
     public boolean allowsForUser(PolicyRequest request, UUID scopeWorkspaceId) {
+        return explainForUser(request, scopeWorkspaceId).allowed();
+    }
+
+    /**
+     * DSD-1497 (task-125): the user path <b>with its trail</b>. {@link #allowsForUser} returns this
+     * result's {@code allowed()} bit instead of keeping a second copy of the sequence — the scoped
+     * row read, the org-unit union and the kernel call are shared, so the explanation of a user-path
+     * decision cannot drift from the decision.
+     *
+     * <p>The single level is labelled {@code user-grants}: the user path intersects exactly one
+     * principal (the requesting user), which is why {@code scopeWorkspaceId} is a parameter here and
+     * not derived from the request (design #11: instance rows always participate, workspace rows
+     * only for the addressed workspace).</p>
+     */
+    public GrantIntersectionEvaluator.GrantExplanation explainForUser(PolicyRequest request,
+                                                                     UUID scopeWorkspaceId) {
         if (request == null || request.userId() == null) {
-            return false;
+            return GrantIntersectionEvaluator.GrantExplanation.deniedBeforeEvaluation(
+                    GrantIntersectionEvaluator.REASON_NO_SUBJECT);
         }
         UUID subjectId = UUID.fromString(request.userId());
-        Set<GrantIntersectionEvaluator.PermissionAtom> grants = evaluator.union(
+        List<GrantIntersectionEvaluator.GrantAtom> atoms = evaluator.unionAttributed(
                 withOrgUnitGrants(GrantPrincipalPathResolver.USER, subjectId,
                         grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, subjectId,
                                 GrantSources.EVALUATION_SOURCES, scopeWorkspaceId)));
-        return evaluator.allows(request, List.of(grants));
+        return evaluator.explain(request, List.of(
+                new GrantIntersectionEvaluator.PrincipalLevel("user-grants", atoms)));
     }
 
     /**

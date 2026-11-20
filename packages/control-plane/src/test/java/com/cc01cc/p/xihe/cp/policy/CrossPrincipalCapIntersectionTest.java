@@ -82,7 +82,8 @@ class CrossPrincipalCapIntersectionTest {
                 .thenReturn(new GrantPrincipalPathResolver.AgentPath(LEAF, List.copyOf(path)));
 
         return new GrantAuthorizationService(grants, principals, bindings, resolver,
-                new GrantIntersectionEvaluator(), workspaces, mock(WorkspaceMembershipService.class));
+                new GrantIntersectionEvaluator(), workspaces, mock(WorkspaceMembershipService.class),
+                mock(SessionTemporaryGrantStore.class));
     }
 
     @Test
@@ -115,7 +116,7 @@ class CrossPrincipalCapIntersectionTest {
         GrantAuthorizationService service = new GrantAuthorizationService(grants,
                 mock(AgentPrincipalRepository.class), mock(WorkspaceAgentRepository.class), resolver,
                 new GrantIntersectionEvaluator(), mock(WorkspaceRepository.class),
-                mock(WorkspaceMembershipService.class));
+                mock(WorkspaceMembershipService.class), mock(SessionTemporaryGrantStore.class));
 
         assertFalse(service.allows(request(NETWORK)),
                 "cross-user / cross-workspace / broken-lineage chains keep denying after the fix");

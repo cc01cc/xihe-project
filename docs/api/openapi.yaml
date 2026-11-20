@@ -1711,7 +1711,7 @@ paths:
         '400': { description: 'INVALID_REQUEST — sessionId is not a UUID (checked before visibility)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-        '404': { description: SESSION_NOT_FOUND — unknown, archived or not readable by the caller (one code, no existence oracle), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'SESSION_NOT_FOUND — unknown, archived or not readable by the caller (one code, no existence oracle)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
     patch:
       tags: [session]
@@ -1742,6 +1742,82 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'NOT_SESSION_OWNER | NO_CAPABILITY | TIER_UNREADABLE (the guard code itself) plus denyReason for the UI', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: SESSION_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
+  /api/v1/sessions/{sessionId}/temporary-grants:
+    get:
+      tags: [session]
+      operationId: listSessionTemporaryGrants
+      summary: Session-scoped temporary capability tokens (task-124 / DSD-1509 ②); live rows only
+      description: |
+        The one explicit exception to "every level of the permission intersection must hold the
+        atom": a live row of this table makes (actionClass, resource) reachable inside THIS session
+        only, replacing the per-level holding check for exactly those pairs. Everything the row does
+        not list is still intersected level by level, and a resource keeps its ordinary matching, so
+        the token neither widens an action class nor bypasses fs: declaration-key semantics.
+        Liveness is a SQL predicate (revoked_at IS NULL AND expires_at > now()): no scheduler and no
+        capability cache sits in front of it, so an expired or revoked row is ineffective on the very
+        next decision (cp.capability-cache-ttl-ms caches principal capabilities, never these rows).
+        Read = any participant who can read the session (owner or enabled invited human); unknown,
+        archived or unreadable is 404 SESSION_NOT_FOUND, never a distinguishable forbidden.
+        Rows are keyed by the leaf session — a parent's, sibling's or child's token is not inherited —
+        and they disappear with the session through ON DELETE CASCADE.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: 'Live rows, newest first (a JSON array; empty when none)', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SessionTemporaryGrantView' } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'SESSION_NOT_FOUND — unknown, archived or not readable by the caller (one code, no existence oracle)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
+    post:
+      tags: [session]
+      operationId: issueSessionTemporaryGrant
+      summary: Issue a session-scoped temporary capability token
+      description: |
+        The write face needs three things, all checked in SessionTemporaryGrantService: the caller is
+        the session creator (sessions.user_id, the same pin the tier face uses), the caller holds the
+        session:permission:configure atom in the addressed workspace, and every requested atom is
+        covered by an atom the caller already holds there — same actionClass and, for fs: declaration
+        keys, the requested prefix inside the caller's prefix; capability atoms (instance:admin,
+        workspace:admin, instance:super) are refused outright because they are decided by the
+        capability kernel and must never travel through a session row. ttlSeconds defaults to 900 and
+        must sit in [60, 28800]; out-of-range is 400 rather than a silent clamp. The token is bound to
+        the session's own PRIMARY agent principal (never a caller-supplied id) and to the session row
+        itself, so a grant cannot be replayed onto another session. Audited as
+        session.temporary_grant.granted with the grant id, the atoms and the expiry.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionTemporaryGrantRequest' }
+      responses:
+        '201': { description: The created row (same shape as the list items), content: { application/json: { schema: { $ref: '#/components/schemas/SessionTemporaryGrantView' } } } }
+        '400': { description: 'INVALID_REQUEST — atoms missing/empty/malformed/over 20, unknown atom field, a capability atom, or ttlSeconds outside [60, 28800]', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — not the session creator, or the caller lacks session:permission:configure; PRIVILEGE_ESCALATION — an atom the caller does not hold', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SESSION_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
+  /api/v1/sessions/{sessionId}/temporary-grants/{grantId}:
+    delete:
+      tags: [session]
+      operationId: revokeSessionTemporaryGrant
+      summary: Revoke one temporary capability token of this session
+      description: |
+        Revocation is open to any participant who can read the session (tightening never needs the
+        configure atom, the same asymmetry the tier face uses). The row is marked revoked, not
+        deleted, so the audit trail keeps it; the decision stops seeing it immediately because every
+        request reads the row. Absent, already revoked, expired and another session's id all answer
+        the same 404 TEMPORARY_GRANT_NOT_FOUND — a revocation must not become an existence oracle.
+        Audited as session.temporary_grant.revoked.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: grantId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: '{grantId, revoked: true}', content: { application/json: { schema: { type: object, additionalProperties: false, required: [grantId, revoked], properties: { grantId: { type: string, format: uuid }, revoked: { type: boolean, enum: [true] } } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'TEMPORARY_GRANT_NOT_FOUND — absent, revoked, expired or another session''s; SESSION_NOT_FOUND — the session is not readable', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
   /api/v1/sessions/{sessionId}/delegation-spawn:
     post:
@@ -2904,6 +2980,57 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/authorization/explain:
+    post:
+      tags: [config]
+      operationId: explainAuthorization
+      summary: Explain a would-be authorization decision
+      description: |
+        DSD-1497 mechanism 1 (task-125): the read-only twin of the decision itself. The request is
+        the shape the kernel already consumes -- one action class plus the resource string, with an
+        optional sessionId -- and the response carries the verdict together with the trail:
+        deepestMissingLevel (-1 when allowed, and also when the request was refused before any
+        level was evaluated), the atom that stopped the intersection (missingAtom), one entry per
+        missing level, the rows that authorized (matchedGrantRefs, cited by grantId plus source)
+        and every level that was consulted (evaluatedLevels).
+
+        Why the verdict is the real one: explanation and enforcement share a single kernel --
+        allows is decide(record=false).allowed(), explain is decide(record=true) -- and
+        ExplainMatchesGoldenBaselineTest replays all 49 intersection rows of
+        authz-golden-baseline.json, asserting the two faces agree row by row. This face therefore
+        cannot drift into a second, gentler opinion.
+
+        Whose grants: always the authenticated caller own. The subject comes from the tenant
+        context and is not a request field, so this face cannot explain anybody else; only rows on
+        that caller own principal path are cited (grant id and source), and no other principal
+        grants, member lists or resource details are returned.
+
+        Scope: sessionId (optional) contributes that session workspace context and must be readable
+        by the caller (otherwise 404 SESSION_NOT_FOUND, no existence oracle); without it the
+        current workspace context applies. The call writes nothing -- no row, no cache entry, and
+        no audit detail beyond the request id.
+
+        Vocabulary: an actionClass outside the action-class catalog (for example the capability
+        atom instance:admin) is refused before any level is evaluated, with reason
+        unknown-action-class and deepestMissingLevel -1, so this face never pretends to explain
+        capability atoms. A denied request is a 200 with allowed=false: the endpoint answered the
+        question it was asked.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthorizationExplainRequest' }
+      responses:
+        '200':
+          description: The verdict plus the evaluation trail (allowed=false is still a 200)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthorizationExplainResponse' }
+        '400': { description: 'INVALID_REQUEST -- a missing actionClass, or a field that is not a string', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_FORBIDDEN -- the tenant gate could not resolve a workspace membership for the caller', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'SESSION_NOT_FOUND -- the sessionId is not readable by this caller (one not-区分 answer, no existence oracle)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/user-events:
     get:
       tags: [event]
@@ -8898,6 +9025,68 @@ components:
         mode: { $ref: '#/components/schemas/PolicyMode' }
         tier: { type: [string, 'null'], enum: [view, workspace, full, null], description: 'the stored tier after the write (mode above is its derived value)' }
         scope: { type: string, enum: [session] }
+    AuthorizationExplainRequest:
+      type: object
+      additionalProperties: false
+      required: [actionClass]
+      description: |
+        The same shape the kernel consumes: one action class plus the resource string. A missing or
+        blank resource is normalized to the wildcard *, matching what a blank atom means inside the
+        kernel.
+      properties:
+        actionClass: { type: string, description: 'an action class such as read, write, exec or MANAGE_ROLES; capability atoms are refused by the kernel' }
+        resource: { type: string, description: 'the resource, for example * or fs:<rootId>/a/b; defaults to * when absent or blank' }
+        sessionId: { type: string, format: uuid, description: 'optional; puts the request in that session workspace context and must be readable by the caller' }
+    AuthorizationExplainReason:
+      type: string
+      enum: [empty-request, empty-principal-path, no-subject, unknown-action-class, blank-resource, level-without-grants, no-matching-atom]
+      description: |
+        Why an evaluation stopped. The first five are pre-checks that answer before any level is
+        looked at; level-without-grants means the level held no grants at all, while
+        no-matching-atom means the level held grants but none of them covered the request -- the
+        difference is the actionable part of the answer.
+    AuthorizationExplainMissingLevel:
+      type: object
+      additionalProperties: false
+      required: [level, levelLabel, actionClass, resource, reason]
+      properties:
+        level: { type: integer, description: 'index into the principal path; -1 for a pre-check refusal' }
+        levelLabel: { type: string, description: 'human-readable level name, for example user-grants' }
+        actionClass: { type: string }
+        resource: { type: string }
+        reason: { $ref: '#/components/schemas/AuthorizationExplainReason' }
+    AuthorizationExplainMatchedGrant:
+      type: object
+      additionalProperties: false
+      required: [level, levelLabel, actionClass, resource, grantId, grantSource]
+      description: A grant row of the caller own principal path that authorized the request.
+      properties:
+        level: { type: integer }
+        levelLabel: { type: string }
+        actionClass: { type: string }
+        resource: { type: string }
+        grantId: { type: string, format: uuid }
+        grantSource: { type: string, description: 'how the grant was created, for example role or template' }
+    AuthorizationExplainLevel:
+      type: object
+      additionalProperties: false
+      required: [level, label, atomCount, matched]
+      properties:
+        level: { type: integer }
+        label: { type: string }
+        atomCount: { type: integer, minimum: 0, description: 'how many atoms this level contributed (0 tells empty apart from mismatched)' }
+        matched: { type: boolean }
+    AuthorizationExplainResponse:
+      type: object
+      additionalProperties: false
+      required: [allowed, deepestMissingLevel, missingAtom, missingLevels, matchedGrantRefs, evaluatedLevels]
+      properties:
+        allowed: { type: boolean }
+        deepestMissingLevel: { type: integer, description: '-1 when allowed, or when a pre-check refused the request before any level was evaluated (see missingAtom.reason)' }
+        missingAtom: { oneOf: [{ $ref: '#/components/schemas/AuthorizationExplainMissingLevel' }, { type: 'null' }], description: 'the deepest missing atom (null when allowed)' }
+        missingLevels: { type: array, items: { $ref: '#/components/schemas/AuthorizationExplainMissingLevel' } }
+        matchedGrantRefs: { type: array, items: { $ref: '#/components/schemas/AuthorizationExplainMatchedGrant' } }
+        evaluatedLevels: { type: array, items: { $ref: '#/components/schemas/AuthorizationExplainLevel' } }
     SessionTierSource:
       type: string
       enum: [session, workspace, none]
@@ -8933,6 +9122,45 @@ components:
       required: [tier]
       properties:
         tier: { $ref: '#/components/schemas/PermissionTier' }
+    SessionTemporaryGrantRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        The write face of task-124 / DSD-1509 ②: {atoms, ttlSeconds?}. Every atom must be covered by
+        one the caller already holds in this workspace (resource prefixes for fs: keys are compared as
+        prefixes inside the same root); capability atoms are refused.
+      required: [atoms]
+      properties:
+        atoms:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: '#/components/schemas/SessionTemporaryGrantAtom' }
+        ttlSeconds: { type: integer, minimum: 60, maximum: 28800, default: 900, description: 'bounded lifetime; out of range is 400, never a silent clamp' }
+    SessionTemporaryGrantAtom:
+      type: object
+      additionalProperties: false
+      description: Same closed field set as grants.permissions; an unknown field is a client bug.
+      required: [actionClass]
+      properties:
+        actionClass: { type: string, description: 'a built-in action class; capability atoms are refused by the write face' }
+        resource: { type: string, default: '*', description: 'resource pattern; fs:<workspaceId>[/rel] declaration keys keep their prefix semantics' }
+    SessionTemporaryGrantView:
+      type: object
+      additionalProperties: false
+      description: |
+        One live (or just-issued) token. Live rows only: revoked and expired rows never appear in a
+        response, and revocation answers {grantId, revoked} instead of the row.
+      required: [id, sessionId, principalId, atoms, grantedBy, grantedAt, expiresAt, revokedAt]
+      properties:
+        id: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        principalId: { type: string, format: uuid, description: 'the session''s own PRIMARY agent principal' }
+        atoms: { type: array, items: { $ref: '#/components/schemas/SessionTemporaryGrantAtom' } }
+        grantedBy: { type: string, format: uuid, description: 'the human who issued it (always the session creator)' }
+        grantedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time, description: 'null for every row the list face returns' }
     Tier1ChainStatus:
       type: object
       additionalProperties: false

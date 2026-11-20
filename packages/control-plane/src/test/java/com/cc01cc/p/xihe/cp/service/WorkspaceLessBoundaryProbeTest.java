@@ -116,7 +116,8 @@ class WorkspaceLessBoundaryProbeTest {
                 mock(GrantPrincipalPathResolver.class),
                 new GrantIntersectionEvaluator(),
                 mock(WorkspaceRepository.class),
-                mock(WorkspaceMembershipService.class));
+                mock(WorkspaceMembershipService.class),
+                mock(com.cc01cc.p.xihe.cp.policy.SessionTemporaryGrantStore.class));
 
         PolicyRequest request = new PolicyRequest("manage_session_participants_instance",
                 List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS), List.of("*"),

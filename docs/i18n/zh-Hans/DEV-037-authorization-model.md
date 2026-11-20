@@ -223,11 +223,69 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 
 | 机制 | 作用 | 现状（2026-11-20） |
 |---|---|---|
-| explain（决策链解释） | 说清「哪一级命中、哪一级缺哪个原子」 | 设计在办（task-110），本篇不作契约承诺 |
-| golden（判据回归基线） | 固化的三元组到 ALLOW / DENY 用例集 | 设计在办（task-110） |
+| explain（决策链解释） | 说清「哪一级命中、哪一级缺哪个原子」 | **已落地（task-125 / DSD-1497 机制①，2026-11-20）**：`POST /api/v1/authorization/explain`，与判据共用一个内核，判据见本篇 §10 |
+| golden（判据回归基线） | 固化的三元组到 ALLOW / DENY 用例集 | **已落地（task-110 / DSD-1497）**：`packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/policy/authz-golden-baseline.json` 59 行（放行 30 / 拒绝 29），`AuthzGoldenBaselineTest` 逐行裁决；task-125 起 explain 对同一 59 行复算 |
 | PEP 清单 | 哪些工具面与通道真的连了判据 | 已产出证据（`internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`） |
 
-## 10. 读者地图
+## 10. 可解释性：explain 面（DSD-1497 机制①，task-125）
+
+「为什么这次被拒」在 XH 不是靠读日志猜，而是有一个只读端点当场回答：`POST /api/v1/authorization/explain`，请求 `{actionClass, resource, sessionId?}`，响应 `{allowed, deepestMissingLevel, missingAtom, missingLevels[], matchedGrantRefs[], evaluatedLevels[]}`。
+
+### 10.1 一条判据，两副面孔
+
+explain 不是第二套判据。`GrantIntersectionEvaluator` 里只有一个 `decide(request, levels, record)`：
+
+- 授权实际调用的是 `allows(...)` ≡ `decide(..., record=false).allowed()`；
+- explain 是 `explain(...)` ≡ `decide(..., record=true)`（同一份守卫、同一套 `matchesResource`、同一次交集扫描，只是顺手把命中行与缺失级记下来）。
+
+为什么值得为此改内核而不是在控制器里重算：重算就是第二份判据，两份判据分叉时「explain 说放行、真实调用被拒」会变成一个永远查不清的 bug。防分叉的证据是 `ExplainMatchesGoldenBaselineTest` —— 它把基线里 49 条 gate=intersection 的行逐条同时喂给 `allows` 与 `explain`，断言两侧结论逐行相同，并要求放行行 `deepestMissingLevel = -1`、`missingAtom = null`、`matchedGrantRefs` 非空。
+
+### 10.2 字段怎么读
+
+| 字段 | 含义 | 判读要点 |
+|---|---|---|
+| `allowed` | 与真实放行同一个布尔 | 被拒也是 HTTP 200（端点已回答问题，不是端点失败） |
+| `deepestMissingLevel` | 缺失级里索引最大者，`-1` = 放行 | 也算「求值前就被拒」（见 `missingAtom.reason`） |
+| `missingAtom` | 最深的那条缺失（放行时为 null） | 带 `reason`：`level-without-grants`（该级根本没有 grants）与 `no-matching-atom`（有 grants 但都不覆盖）是两回事，这正是可操作的那一半信息 |
+| `missingLevels[]` | 所有缺失级 | 多级同时缺时不会只告诉你最深那条 |
+| `matchedGrantRefs[]` | 真正授权的那些行 | 每条带 `grantId` 与 `grantSource`（role / template 等），可回查到来源 |
+| `evaluatedLevels[]` | 每个被扫过的级 | 带 `atomCount` 与 `matched`：`atomCount=0` 与「有原子但不匹配」在这里能区分开 |
+
+`reason` 词表：`empty-request` / `empty-principal-path` / `no-subject` / `unknown-action-class` / `blank-resource` 属求值前的拒绝；`level-without-grants` / `no-matching-atom` 属级内拒绝。
+
+### 10.3 能力原子不在 explain 面
+
+`actionClass` 只接受动作类词表（`ToolFaceRegistry.builtinActionClasses()`）。把能力原子当 `actionClass` 传（例如 `instance:admin`）会在任何级被扫之前被拒，返回 `allowed=false` + `reason=unknown-action-class` + `deepestMissingLevel=-1`。这是刻意的：能力原子不在交集里求值，explain 若假装能解释它就是编答案。
+
+### 10.4 暴露边界
+
+- **主体不可选**：subject 取 `TenantContext` 的当前用户，不是请求字段 ⇒ 结构上无法解释他人，响应里也只可能出现调用者自己路径上的 grant 行（id + 来源），不含他人 grants、成员名单或资源细节。
+- **不写任何东西**：不落行、不缓存（DSD-1497 M2-10a 禁求值侧缓存）、响应体不进审计明细（审计只留 requestId）。
+- **scope**：`sessionId` 可选，用于把请求放进该会话的 workspace 上下文，且必须对该调用者可读（否则 404 `SESSION_NOT_FOUND`，与其他会话读面同样是「不区分」式 404，不做存在性探针）；不带则用当前 workspace 上下文。
+- **租户门**：面本身非 GET，但写门分类器不把 `/api/v1/authorization/**` 视为工作区写面 ⇒ 任何已解析出 workspace 成员身份的角色都过；没有 workspace 上下文的调用者会被租户门挡在 `403 WORKSPACE_FORBIDDEN`，与其它非豁免路由一致。
+
+### 10.5 源码锚点
+
+| 位置 | 作用 |
+|---|---|
+| `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/policy/GrantIntersectionEvaluator.java` | 唯一内核 `decide` + `allows` / `explain` 两副面孔 + `GrantExplanation` 一带记录 |
+| `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/policy/RequesterAuthority.java` | `explainForUser` 装配用户路径；`allowsForUser` 就是它的 `.allowed()` |
+| `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/policy/AuthorizationExplainController.java` | HTTP 面（`POST /api/v1/authorization/explain`）与 wire 形状 |
+| `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/policy/ExplainMatchesGoldenBaselineTest.java` | 59 行基线与 explain 的对齐证明 |
+| `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/policy/GrantExplanationKernelTest.java` | 六类缺失面（交汇 / 父链两级 / fs 前缀 / instance-only / 能力原子 / 空 grants）的级号与 reason 断言 |
+## 11. 会话级临时能力令牌（task-124 / DSD-1509 ②）
+
+- **一句话**：交集授权只有这一处显式例外——一张按**叶子会话**键控的临时表，把有限几个 `(actionClass, resource)` 在**这一个会话里**变成可达；它不是第六个求值层，而是在那几对上**替代**「每一级都要持有」的判断，其余动作类照常逐级求交。
+- **为什么需要它**：DSD-1500 R2 把 exec 从 `AGENT_USER`（实例级）与 `WS_EDITOR`（工作区级）同时撤掉，而会话快照在创建时冻结，旧会话无法事后补原子；没有这条令牌，「已在跑的会话需要一次性执行」就只剩「给主体常驻 exec」一条路，等于把 DSD-1500 撤掉的东西装回去。
+- **判定怎么参与**：`GrantAuthorizationService.allows` 构造完 `permissionPath` 后追加 `liveSessionTokens(...)`（按 `request.sessionId()` + 解析出的 leaf principal + workspace 三键直读），`GrantIntersectionEvaluator.decide` 在 `actionClass × resource` 循环里先查令牌：命中即跳过逐级扫描（explain 记为 `level=-1`、`levelLabel=session-token`），未命中仍走原三重循环；资源匹配仍是 `matchesResource`，`fs:` 声明键前缀语义不绕过。
+- **为什么没有缓存与定时任务**：活跃性就是 SQL 谓词（`revoked_at IS NULL AND expires_at > now()`）；`cp.capability-cache-ttl-ms` 只缓存主体系能力，不缓存这张表 ⇒ 撤销与过期都在下一次判定立即生效。
+- **写面三道门**（`SessionTemporaryGrantService.issue`）：会话创建者（`sessions.user_id`）+ 在该工作区持有 `session:permission:configure` + 子集门（每个原子都要被调用者在该工作区持有的同 actionClass 原子覆盖，`fs:` 按根内前缀比较；能力原子一律拒绝）。TTL `[60, 28800]` 秒、默认 900，越界 400 而非静默截断。
+- **读面与撤销面**：读与撤销都不设新原子——任一能读该会话的人（创建者或已邀请的人类）都可读列表、可撤销（与 tier 面「收紧不需要额外授权」同口径）；撤销只写 `revoked_at`/`revoked_by_user_id`，重复撤销或撤销他人会话的行一律 404 `TEMPORARY_GRANT_NOT_FOUND`。读不到该会话的人先拿 404 `SESSION_NOT_FOUND` 再看创建者判定，**不把 403 当作存在性预言**。
+- **生命周期**：`session_temporary_grants`（V180）的 `session_id` 外键 `ON DELETE CASCADE`，会话删行即清；撤销打 `revoked_at` 而不删行（审计留痕）。审计动作 `session.temporary_grant.granted` / `session.temporary_grant.revoked`。
+- **边界**：只对 leaf 会话生效（祖先、子、兄弟会话都不继承）；主体必须是该会话自己的 PRIMARY agent principal，绝不由调用方指定；`source=session_temp` 不进 `GrantSources.EVALUATION_SOURCES`（它读的是另一张表），只用于 explain 归因。
+- **源码锚点**：`policy/SessionTemporaryGrantService.java`、`policy/SessionTemporaryGrantStore.java`、`policy/SessionTemporaryGrantController.java`、`resources/db/migration/V180__dsd1509_session_temporary_grants.sql`、`policy/GrantIntersectionEvaluator.java`（`allows(…, sessionTokens)` / `explain(…, sessionTokens)`）。
+
+## 12. 读者地图
 
 | 你要做的事 | 读哪里 | 本篇的角色 |
 |---|---|---|
@@ -236,3 +294,4 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 | 看 CP 架构里的策略子系统 | `A03-xihe/docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md` §8e、§8e-2 | 本篇补「为什么这样设计」 |
 | 查术语该写哪个词 | `A03-xihe/docs/i18n/zh-Hans/DEV-032-terminology.md` | 本篇是词条的依据文档 |
 | 审 PEP 覆盖或换型 | 本篇 §5、§8、§9 | — |
+| 查「为什么这次被拒」怎么回答 | 本篇 §10 与 `A03-xihe/docs/api/openapi.yaml` 的 `explainAuthorization` | 本篇给判据理由，契约字段以 OpenAPI 为准 |

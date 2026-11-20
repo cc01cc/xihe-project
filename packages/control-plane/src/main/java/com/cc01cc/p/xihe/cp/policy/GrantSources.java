@@ -44,6 +44,15 @@ public final class GrantSources {
     public static final String PLUGIN_BINDING = "plugin_binding";
 
     /**
+     * task-124 / DSD-1509: the atoms of a live {@code session_temporary_grants} row. It is not in
+     * {@link #EVALUATION_SOURCES} or {@link #WRITABLE_SOURCES} on purpose — this source never lives in
+     * {@code grants} (the temporary token has its own table, see V180) and it must never be reconciled
+     * by {@link RoleGrantMaterializer}, which owns the standing sources. The constant exists so a
+     * decision explanation can attribute a matched atom to a temporary token instead of guessing.
+     */
+    public static final String SESSION_TEMP = "session_temp";
+
+    /**
      * Sources that participate in a decision (design §3.4 step ②). {@code default}/{@code direct}
      * are absent by design — T1.6 deletes the direct branch instead of keeping a second mechanism.
      */

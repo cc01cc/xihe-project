@@ -17,6 +17,7 @@
 4. Tool face / action class；
 5. built-in hard guard（L0，任何模式/规则不可覆盖）；
 6. **带作用域的 grants 一跳查表**：主体 `source ∈ {role, spawn, template, credential_binding, agent_default}` 且 `(scope_type='instance' OR (scope_type='workspace' AND scope_id=当前 ws))` 的原子并集 并按 `(actionClass × resource)` 逐对求值，**主体派生链每一级都必须持有该原子，任一级缺即拒**（path intersection；`policy/GrantIntersectionEvaluator.java:97` 的 javadoc 与 `:103-120` 三重循环一致）；命中 → 过，未命中 → deny（制度拒，**不进入 approval、不建 pending approval**）。另有**写入期**前置上限：绑定 cap 必须 ⊆ 主体已持原子且 ⊆ 操作者已持原子，越界 403 `AGENT_PERMISSION_SCOPE_EXCEEDED`（`service/AgentPrincipalService.java:539-563`）——这是落库前的边界校验，**不是读期语义**；判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md` §4；
+    - **唯一的显式例外：会话级临时能力令牌（task-124 / DSD-1509 ②）**。它**不是第六个求值层**，只是在「本会话 + 本 leaf 主体 + 行未撤销未过期」的条件下，对行里列出的那些 `(actionClass, resource)` **替代各级持有判断**；未列出的动作类仍按上面逐级求交，资源前缀语义照旧。活跃性是 SQL 谓词（无定时任务、无缓存），写面要「会话创建者 + `session:permission:configure` + 原子子集」，生命周期随 `sessions` 级联。机制与判据见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md` §11；
 7. **approval-policy `askActionClasses[]`**：在册且 `mode=manual` → `ASK`；`mode=auto` → 放行并记 `allowed_by`；不在册 → 授权过后直过；
 8. audit：grant 决策与 `allowed_by` 记录。
 

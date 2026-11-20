@@ -277,7 +277,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
 
         GrantAuthorizationService service = new GrantAuthorizationService(grantRepository,
                 principalRepository, bindingRepository, resolver, new GrantIntersectionEvaluator(),
-                workspaceRepository, memberships);
+                workspaceRepository, memberships, mock(SessionTemporaryGrantStore.class));
         PolicyRequest request = new PolicyRequest("spawn_agent", List.of("SPAWN_AGENT"), List.of("*"),
                 ToolShape.STRUCTURED, userId, workspaceId.toString(), sessionId);
         return new UnitFixture(grantRepository, bindingRepository, resolver, service, principalId, request);
