@@ -15,6 +15,8 @@ import { readSidecar, sha256File, writeSidecarForJar } from './lib/cp-jar-sideca
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
 import { ensureEnvFromUser } from './lib/user-env.mjs'
 import { classifyChildExit } from './lib/e2e-child-exit.mjs'
+// task-117 (DSD-1501): PG readiness freshness is a pure, clock-free judgement.
+import { evaluatePgInstanceFreshness } from './lib/pg-readiness.mjs'
 import { CARGO_TARGET_ROOT_ENV } from './lib/stack-cargo-target.mjs'
 import {
   AUTHORIZATION_SURFACE_TABLES,
@@ -1110,7 +1112,12 @@ async function startIsolatedPostgres() {
     POSTGRES_USER: pgUser,
     POSTGRES_PASSWORD: pgPassword,
   }
-  const startedAtMs = Date.now()
+  // task-117 (DSD-1501): freshness is judged by container IDENTITY, never by the wall clock.
+  // Docker Desktop reports State.StartedAt from its WSL2 VM clock, so a host clock drifting
+  // ahead (measured ~+5 s on this machine) makes every freshly created container look older
+  // than the `up` that created it. `--force-recreate` always replaces the container, so
+  // id != priorId is a clock-free witness that this is the instance we just started.
+  const priorContainerId = await readPgContainerId()
   const result = await dockerCompose(['up', '-d', '--no-deps', '--wait', '--force-recreate', 'postgres'], {
     env,
     stdio: 'inherit',
@@ -1121,8 +1128,8 @@ async function startIsolatedPostgres() {
   // task-237: `up` 返回 ≠ 这个**新**容器已经在 published 端口上服务。旧代码直接进 wire 探针，
   // 探针可能命中"上一次运行的旧容器/正在 recreate 的瞬间"，于是 CP 拿到 Connection refused。
   // 这里先按容器身份硬等：本项目的容器、running、health=healthy（若有 healthcheck）、
-  // 且 StartedAt 必须晚于本次 `up` 的开始。
-  await waitForPostgresContainerHealthy(startedAtMs)
+  // 且容器 Id 必须与 `up` 之前读到的既有 Id 不同（task-117 / DSD-1501：不再拿 StartedAt 对墙钟）。
+  await waitForPostgresContainerHealthy(priorContainerId)
 }
 
 async function migrateIsolatedSchema() {
@@ -2435,8 +2442,19 @@ async function cleanup() {
 // 几十毫秒窗口里。这里用 **容器身份** 硬等，避免把"上一次运行的旧容器 / recreate 中间态"当成就绪：
 //   ① 容器存在且 State.Status=running；
 //   ② 有 healthcheck 时 State.Health.Status 必须 healthy；
-//   ③ State.StartedAt 必须晚于本次 `up` 的开始（证明是本轮新起的实例）。
-async function waitForPostgresContainerHealthy(startedAtMs, timeoutMs = 60_000) {
+//   ③ State.Id 必须与本次 `up` 之前读到的既有 Id 不同（证明是本轮新起的实例；
+//      task-117/DSD-1501 把它从 wall-clock 的 StartedAt 对比改成容器身份对比，
+//      因为 StartedAt 来自 Docker VM 时钟，宿主时钟漂移会把它恒判成「旧容器」）。
+// task-117 (DSD-1501): read the container id that already exists, if any, BEFORE `up`.
+// An absent container is not an error here — it is the normal cold-start case ('') and the
+// pure judge treats it as fresh. Only a changed id after `up` proves we created a new instance.
+async function readPgContainerId() {
+  const inspect = await runCapture('docker', ['inspect', `${pgProjectName}-postgres-1`, '-f', '{{.Id}}'])
+  if (inspect.code !== 0) return ''
+  return inspect.stdout.trim()
+}
+
+async function waitForPostgresContainerHealthy(priorContainerId, timeoutMs = 60_000) {
   const container = `${pgProjectName}-postgres-1`
   const deadline = Date.now() + timeoutMs
   let last = ''
@@ -2447,14 +2465,14 @@ async function waitForPostgresContainerHealthy(startedAtMs, timeoutMs = 60_000) 
     ])
     if (inspect.code === 0) {
       const [status, health, startedAt, id] = inspect.stdout.trim().split('|')
-      last = `status=${status} health=${health} startedAt=${startedAt}`
-      const startedAtDate = Date.parse(startedAt)
-      const freshInstance = Number.isFinite(startedAtDate) ? startedAtDate >= startedAtMs - 2_000 : true
-      if (status === 'running' && (health === 'healthy' || health === 'none') && freshInstance) {
-        console.log(`[e2e-host] PostgreSQL container ready (${last}, id=${(id ?? '').slice(0, 12)})`)
+      const freshness = evaluatePgInstanceFreshness({ id, priorId: priorContainerId })
+      // StartedAt/Id stay in the record for forensics; they no longer decide anything.
+      last = `status=${status} health=${health} startedAt=${startedAt} id=${(id ?? '').slice(0, 12)} freshness=${freshness.reason}`
+      if (status === 'running' && (health === 'healthy' || health === 'none') && freshness.fresh) {
+        console.log(`[e2e-host] PostgreSQL container ready (${last})`)
         return
       }
-      if (status === 'running' && (health === 'healthy' || health === 'none') && !freshInstance) {
+      if (status === 'running' && (health === 'healthy' || health === 'none') && !freshness.fresh) {
         await new Promise((resolve) => setTimeout(resolve, 500))
         continue
       }
@@ -2465,7 +2483,7 @@ async function waitForPostgresContainerHealthy(startedAtMs, timeoutMs = 60_000) 
   }
   throw new Error(
     `PostgreSQL container ${container} did not become ready within ${timeoutMs}ms (last: ${last}); `
-    + 'refusing to boot CP against an unpublishable/older container (task-237)',
+    + 'refusing to boot CP against an unpublishable/older container (task-237/task-117)',
   )
 }
 

@@ -11,6 +11,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
+import { evaluatePgInstanceFreshness, PG_FRESHNESS_REASONS } from './lib/pg-readiness.mjs'
 import {
     buildInfoPath,
     evaluateCpFreshness,
@@ -249,4 +250,63 @@ test('Windows preflight queries dev-only stack ports, not only the e2e block', (
     assert.match(branch, /const queryRanges = \[\.\.\.ranges, \.\.\.dev\.map\(\(\{ port \}\) => \[port, port\]\)\]/u)
     assert.match(branch, /const rangeLiteral = queryRanges\.map/u)
     assert.doesNotMatch(branch, /const rangeLiteral = ranges\.map/u)
+})
+
+// task-117 (DSD-1501): the PG readiness gate must judge freshness by container identity.
+// These cases pin the judgement that replaced the wall-clock 2 s tolerance: on this host the
+// Windows clock runs ~+5 s ahead of the Docker VM clock, so `StartedAt >= upMicros - 2 s`
+// rejected a healthy, freshly created container on every run (task-27: two runs, exit 1,
+// zero tests executed).
+
+test('host clock running 10 s ahead still counts as fresh once the container id changed', () => {
+    // Expressed the way the runner sees it: the new container's StartedAt looks *older* than
+    // the moment `up` began (VM clock behind the host), but --force-recreate replaced the
+    // container, so the identity is new. Clock data must not enter the judgement at all.
+    const result = evaluatePgInstanceFreshness({
+        id: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+        priorId: '0f0e0d0c0b0a09080706050403020100ffeeddccbbaa99887766554433221100',
+        startedAt: '2026-11-20T12:11:41.459675896Z',
+        upBeganAtMs: Date.parse('2026-11-20T12:11:51.459Z'),
+    })
+    assert.equal(result.fresh, true)
+    assert.equal(result.reason, PG_FRESHNESS_REASONS.INSTANCE_REPLACED)
+})
+
+test('an unchanged container id is stale even when status/health look ready', () => {
+    const same = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2'
+    const result = evaluatePgInstanceFreshness({ id: same, priorId: same })
+    assert.equal(result.fresh, false)
+    assert.equal(result.reason, PG_FRESHNESS_REASONS.SAME_INSTANCE)
+})
+
+test('a cold start with no pre-existing container is fresh', () => {
+    for (const priorId of ['', '   ', undefined, null]) {
+        const result = evaluatePgInstanceFreshness({ id: 'a1b2c3d4', priorId })
+        assert.equal(result.fresh, true, `priorId=${JSON.stringify(priorId)} must be treated as absent`)
+        assert.equal(result.reason, PG_FRESHNESS_REASONS.NO_PRIOR_CONTAINER)
+    }
+})
+
+test('an unknown current id is fail-closed (never fresh)', () => {
+    for (const id of ['', '   ', undefined, null, 42]) {
+        const result = evaluatePgInstanceFreshness({ id, priorId: 'deadbeef' })
+        assert.equal(result.fresh, false, `id=${JSON.stringify(id)} must not be judged fresh`)
+        assert.equal(result.reason, PG_FRESHNESS_REASONS.ID_MISSING)
+    }
+})
+
+test('e2e-host wires the pure judgement and no longer compares StartedAt against the host clock', () => {
+    const source = readFileSync(new URL('./e2e-host.mjs', import.meta.url), 'utf8')
+    assert.match(source, /import \{ evaluatePgInstanceFreshness \} from '\.\/lib\/pg-readiness\.mjs'/u)
+    // The removed defect: any wall-clock tolerance expressed as a Date.now() baseline.
+    assert.doesNotMatch(source, /startedAtMs/u)
+    assert.doesNotMatch(source, /startedAtDate >= startedAtMs - 2_000/u)
+    // prior id must be read BEFORE `up`, otherwise --force-recreate would hand back the new id
+    // and the comparison could never detect a stale container.
+    const priorReadIdx = source.indexOf('const priorContainerId = await readPgContainerId()')
+    const upIdx = source.indexOf("dockerCompose(['up', '-d', '--no-deps', '--wait', '--force-recreate', 'postgres']")
+    assert.ok(priorReadIdx > 0, 'startIsolatedPostgres must read the prior container id')
+    assert.ok(upIdx > priorReadIdx, 'the prior id must be read before compose up')
+    assert.match(source, /waitForPostgresContainerHealthy\(priorContainerId\)/u)
+    assert.match(source, /async function readPgContainerId\(\)/u)
 })
