@@ -16,10 +16,10 @@ const messages = {
             settings: "设置",
             logout: "退出登录",
             admin: "管理",
-            toggle: "切换侧边栏",
+            toggle: "切换导航面板",
             // task-214：footer 顺序断言要读 `global-rail-toggle` 的 aria-label（随态变化）。
-            collapse: "收起侧边栏",
-            expand: "展开侧边栏",
+            collapse: "收起导航面板",
+            expand: "展开导航面板",
             // 夹具补齐（本条与本卡改动无关的存量缺口）：`GlobalRailModule` 用到
             // `sidebar.moduleMenu`，而本夹具的 messages 没这条 ⇒ 该文件在 HEAD 上就红
             // （"渲染结果里出现裸 i18n 键"）。补键不改判据、不放宽断言。
@@ -243,7 +243,7 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         // 折起态仍可见：DOM 里存在且是**原生 button**（Enter/Space 可切由它保证，不靠额外 keydown 绑定）。
         expect(toggle.element.tagName).toBe("BUTTON");
         expect(toggle.attributes("aria-expanded")).toBe("false");
-        expect(toggle.attributes("aria-label")).toBe("展开侧边栏");
+        expect(toggle.attributes("aria-label")).toBe("展开导航面板");
 
         // 点一下换态：aria 三件（expanded / label / 文案）一起跟，顺序不受影响。
         await toggle.trigger("click");
@@ -253,7 +253,7 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
             "true",
         );
         expect(wrapper.get('[data-testid="global-rail-toggle"]').attributes("aria-label")).toBe(
-            "收起侧边栏",
+            "收起导航面板",
         );
         expect(footerActionOrder(wrapper)).toEqual([
             "global-rail-module-settings",

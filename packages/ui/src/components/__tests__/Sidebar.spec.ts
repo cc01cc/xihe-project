@@ -468,7 +468,7 @@ describe("Sidebar", () => {
 
         const collapse = wrapper.get('[data-testid="sidebar-collapse"]');
         expect(collapse.attributes("aria-expanded")).toBe("true");
-        expect(collapse.attributes("aria-label")).toBe("收起侧边栏");
+        expect(collapse.attributes("aria-label")).toBe("收起导航面板");
 
         await collapse.trigger("click");
 

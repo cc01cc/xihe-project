@@ -136,11 +136,11 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         const toggle = page.getByTestId("global-rail-toggle");
         await expect(toggle).toBeVisible();
         await expect(toggle).toHaveAttribute("aria-expanded", "false");
-        await expect(toggle).toHaveAttribute("aria-label", "展开侧边栏");
+        await expect(toggle).toHaveAttribute("aria-label", "展开导航面板");
 
         await toggle.click();
         await expect(toggle).toHaveAttribute("aria-expanded", "true");
-        await expect(toggle).toHaveAttribute("aria-label", "收起侧边栏");
+        await expect(toggle).toHaveAttribute("aria-label", "收起导航面板");
 
         // 宽度是 CSS 过渡出来的（`transition-[width] duration-200`）⇒ 必须轮询到过渡结束，
         // 不能点完就量：实测点完那一帧量到 67.3px（56 → 192 动画的中间值），会假红。

@@ -138,8 +138,8 @@ async function collapseThenReopenFromCollapsedStrip(page: Page): Promise<void> {
     // 且不与面板头控件共存（两个控件同时可见就是新缺陷，不是「多一条路」）。
     const reopen = page.getByTestId("sidebar-expand");
     await expect(reopen).toBeVisible();
-    await expect(reopen).toHaveAttribute("aria-label", "展开侧边栏");
-    await expect(reopen).toHaveAttribute("title", "展开侧边栏");
+    await expect(reopen).toHaveAttribute("aria-label", "展开导航面板");
+    await expect(reopen).toHaveAttribute("title", "展开导航面板");
     // 旧 `NavRail` 的展开按钮带 `aria-controls`/`aria-expanded`，折叠条这版只有 label/title
     // （`Sidebar.vue:160-169`）⇒ 这里只断它确实位于折叠条内，不断言那两个属性。
     await expect(strip.getByTestId("sidebar-expand")).toHaveCount(1);
