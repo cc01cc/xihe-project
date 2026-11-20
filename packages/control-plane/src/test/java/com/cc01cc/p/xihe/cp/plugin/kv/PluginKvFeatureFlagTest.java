@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * PLAN-0691 T1.5 / D-66: with {@code cp.plugin.enabled=false} (the shipped default) the KV data plane
+ * PLAN-0691/D-66 (T1.5): with {@code cp.plugin.enabled=false} (the shipped default) the KV data plane
  * must look like a build that never had it — <b>404</b>, not 401 and not 403.
  *
  * <p>That is a two-part obligation, and both parts are easy to break:
@@ -54,7 +54,7 @@ class PluginKvFeatureFlagTest extends AbstractIntegrationTest {
         ResponseEntity<String> response = get(KV_PATH, null);
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode(),
-                "D-66: feature-off answers 404, got " + response.getStatusCode() + " " + response.getBody());
+                "PLAN-0691/D-66: feature-off answers 404, got " + response.getStatusCode() + " " + response.getBody());
         assertFalse(response.getBody() != null && response.getBody().contains("AUTHORIZATION_REQUIRED"),
                 "a flagged-off surface must not ask for credentials");
     }

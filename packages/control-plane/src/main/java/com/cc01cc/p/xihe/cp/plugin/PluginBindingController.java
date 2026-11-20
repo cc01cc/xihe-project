@@ -25,7 +25,7 @@ import java.util.UUID;
 /**
  * PLAN-0691 T1.2: binding routes 8–13 of {@code spec/openapi-delta.md} §1.
  *
- * <p>D-66: like the catalog surface, the whole controller is behind {@code cp.plugin.enabled} — with
+ * <p>PLAN-0691/D-66: like the catalog surface, the whole controller is behind {@code cp.plugin.enabled} — with
  * the flag off these paths answer <b>404</b>, exactly as if the build had no plugin feature.</p>
  *
  * <p>Thin by design (CP architecture gate): no repository, no rules; the workspace comes from

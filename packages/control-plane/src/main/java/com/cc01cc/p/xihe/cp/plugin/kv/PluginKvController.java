@@ -21,7 +21,7 @@ import java.util.UUID;
  * PLAN-0691 T1.5: the four KV data-plane routes of {@code spec/data-plane.md} API-1..API-4, all under
  * {@code /internal/v1/plugin-bindings/{bindingId}/kv}.
  *
- * <p>D-66: the whole class is behind {@code cp.plugin.enabled}. With the flag off no handler is
+ * <p>PLAN-0691/D-66: the whole class is behind {@code cp.plugin.enabled}. With the flag off no handler is
  * mapped, so these paths answer <b>404</b> — the same "this build has no plugin feature" answer the
  * catalog and binding surfaces give, and the reason {@code SecurityConfig} must let a flagged-off
  * request fall through to the dispatcher instead of answering 401/403.

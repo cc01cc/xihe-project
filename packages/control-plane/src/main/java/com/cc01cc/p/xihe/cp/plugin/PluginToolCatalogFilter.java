@@ -35,7 +35,7 @@ import java.util.Optional;
  *       id) must not be silently reduced to "all plugin tools dropped" — that would hide plugins
  *       from every workspace the moment one is registered. The run-scoped path is what T3.1's
  *       real-stack validation exercises.</li>
- *   <li>{@code cp.plugin.enabled=false} (D-66 shipped default) ⇒ no-op ({@code feature-off}); the
+ *   <li>{@code cp.plugin.enabled=false} (PLAN-0691/D-66 shipped default) ⇒ no-op ({@code feature-off}); the
  *       filter is plugin behaviour and must not appear while the plugin surface is 404.</li>
  * </ul>
  *

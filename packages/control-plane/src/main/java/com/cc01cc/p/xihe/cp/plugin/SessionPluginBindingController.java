@@ -22,7 +22,7 @@ import java.util.Map;
  * PLAN-0691 T1.2: session attach routes 14–16 of {@code spec/openapi-delta.md} §1.
  *
  * <p>Separate controller instead of hanging these off the session controller: the plugin feature is
- * conditional ({@code cp.plugin.enabled}, D-66), and a conditional bean that owns only its own
+ * conditional ({@code cp.plugin.enabled}, PLAN-0691/D-66), and a conditional bean that owns only its own
  * sub-paths keeps the session surface unaffected when the flag is off (routes answer 404).</p>
  *
  * <p>The workspace scope is the session's own workspace ({@code X-Workspace-Id} must match), and a

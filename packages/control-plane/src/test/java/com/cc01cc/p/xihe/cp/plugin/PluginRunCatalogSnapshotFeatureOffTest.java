@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0691 T1.6b / D-66: with the shipped default {@code cp.plugin.enabled=false}, admission must
+ * PLAN-0691/D-66 (T1.6b): with the shipped default {@code cp.plugin.enabled=false}, admission must
  * capture nothing — the document stays {@code {}} ("not captured"), not
  * {@code {"catalogVersion":0,"items":[]}}.
  *
@@ -75,7 +75,7 @@ class PluginRunCatalogSnapshotFeatureOffTest extends AbstractH2Test {
 
         JsonNode captured = snapshots.capture(session.getId());
         assertTrue(captured.isEmpty(),
-                "D-66: feature off means the Run is admitted with {} (not captured), not a frozen"
+                "PLAN-0691/D-66: feature off means the Run is admitted with {} (not captured), not a frozen"
                         + " catalog of rows the feature-off routes could not have produced");
         assertTrue(snapshots.capture(null).isEmpty(), "no session means nothing to capture");
     }

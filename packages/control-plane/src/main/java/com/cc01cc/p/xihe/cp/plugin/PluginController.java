@@ -25,7 +25,7 @@ import java.util.Map;
 /**
  * PLAN-0691 T1.1: catalog/lifecycle routes 1–7 of spec/openapi-delta.md.
  *
- * <p>D-66: the whole surface is behind {@code cp.plugin.enabled}; while the flag is off the
+ * <p>PLAN-0691/D-66: the whole surface is behind {@code cp.plugin.enabled}; while the flag is off the
  * controller bean does not exist and these paths answer <b>404</b> (never 400), so an M1 deployment
  * with plugins off looks exactly like a build without the feature.</p>
  *

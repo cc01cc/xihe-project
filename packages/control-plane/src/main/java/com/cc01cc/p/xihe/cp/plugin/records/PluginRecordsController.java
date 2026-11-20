@@ -22,7 +22,7 @@ import java.util.UUID;
  * PLAN-0691 T2.3: the four records data-plane routes of {@code spec/data-plane.md} API-5..API-7, all
  * under {@code /internal/v1/plugin-bindings/{bindingId}/records}.
  *
- * <p>D-66: the whole class sits behind {@code cp.plugin.enabled}; with the flag off no handler is mapped
+ * <p>PLAN-0691/D-66: the whole class sits behind {@code cp.plugin.enabled}; with the flag off no handler is mapped
  * and these paths answer 404, exactly like {@link com.cc01cc.p.xihe.cp.plugin.kv.PluginKvController}.
  *
  * <p>Thin by construction (CP architecture gate): no repository, no SQL, no policy. Every decision lives

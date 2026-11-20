@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * PLAN-0691 T2.1 / D-66: with the shipped default {@code cp.plugin.enabled=false}, the run-snapshot
+ * PLAN-0691/D-66 (T2.1): with the shipped default {@code cp.plugin.enabled=false}, the run-snapshot
  * catalogue filter is a <b>no-op</b> — the plugin surface must not appear while its routes are 404.
  *
  * <p>The other half of the two-state pair is {@code PluginToolCatalogTest} (flag on: licensed tools

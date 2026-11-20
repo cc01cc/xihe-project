@@ -58,7 +58,7 @@ import java.time.temporal.ChronoUnit;
  * write starts from, which is a separate decision. This job reaps orphans only.
  *
  * <p><b>Gating and the time seam.</b> The bean is conditional on {@code cp.plugin.enabled} for the same
- * reason the plugin controllers are (D-66) plus one of its own: the two tables only exist where
+ * reason the plugin controllers are (PLAN-0691/D-66) plus one of its own: the two tables only exist where
  * Flyway ran, and the H2 lane creates them for no JPA entity, so an ungated hourly job would fail on
  * every H2 context. {@link #purgeBefore(Instant)} takes the cutoff as an argument instead of reading a
  * clock bean, which lets tests prove both the grace arithmetic and the SQL without sleeping.

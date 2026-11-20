@@ -27,7 +27,7 @@ import java.util.Objects;
 @IdClass(Plugin.PluginKey.class)
 public class Plugin {
 
-    /** D-66 vocabulary: a plugin row is either enabled or disabled (fail-closed default). */
+    /** PLAN-0691/D-66 vocabulary: a plugin row is either enabled or disabled (fail-closed default). */
     public static final String STATE_ENABLED = "enabled";
     public static final String STATE_DISABLED = "disabled";
 

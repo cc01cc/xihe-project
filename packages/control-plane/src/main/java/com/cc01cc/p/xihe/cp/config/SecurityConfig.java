@@ -155,11 +155,11 @@ public class SecurityConfig {
     }
 
     /**
-     * PLAN-0691 T1.5: the plugin KV data plane's URL rule (spec/data-plane.md SEC-1/SEC-2, D-66).
+     * PLAN-0691 T1.5: the plugin KV data plane's URL rule (spec/data-plane.md SEC-1/SEC-2; see PLAN-0691/D-66).
      *
      * <p>Two different answers on purpose:
      * <ul>
-     *   <li><b>feature off</b> — allow the request through. D-66 says a flagged-off plugin feature
+     *   <li><b>feature off</b> — allow the request through. PLAN-0691/D-66 says a flagged-off plugin feature
      *       must look like a build without it, and the KV controller is not registered in that case,
      *       so the request falls through to the dispatcher and the error dispatch answers 404. Had
      *       this rule denied instead, the same call would answer 401/403, i.e. the disabled feature

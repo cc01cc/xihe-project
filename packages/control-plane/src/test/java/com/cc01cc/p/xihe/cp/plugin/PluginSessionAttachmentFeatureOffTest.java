@@ -24,7 +24,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * PLAN-0691 T1.6a / D-66: with {@code cp.plugin.enabled=false} (the shipped default) the session
+ * PLAN-0691/D-66 (T1.6a): with {@code cp.plugin.enabled=false} (the shipped default) the session
  * attach/detach routes must look like a build that never had them — <b>404</b>, not a 403 and not a
  * successful no-op.
  *
@@ -69,7 +69,7 @@ class PluginSessionAttachmentFeatureOffTest extends AbstractH2Test {
 
         assertEquals(HttpStatus.NOT_FOUND, exchange(actor, HttpMethod.GET,
                 "/api/v1/sessions/" + session + "/plugins", null).getStatusCode(),
-                "D-66: a flagged-off session plugin surface must answer 404, not 403");
+                "PLAN-0691/D-66: a flagged-off session plugin surface must answer 404, not 403");
         assertEquals(HttpStatus.NOT_FOUND, exchange(actor, HttpMethod.POST,
                 "/api/v1/sessions/" + session + "/plugins",
                 Map.of("bindingId", UUID.randomUUID().toString())).getStatusCode(),
@@ -92,7 +92,7 @@ class PluginSessionAttachmentFeatureOffTest extends AbstractH2Test {
 
     @Test
     void anAnonymousCallIsUnauthorizedNotAnExistenceProbe() {
-        // Recorded behaviour, not a promise of D-66: the /api/v1 user-principal rule answers before the
+        // Recorded behaviour, not a promise of PLAN-0691/D-66: the /api/v1 user-principal rule answers before the
         // dispatcher, so an anonymous call is 401. It does not disclose that the route exists.
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Workspace-Id", "00000000-0000-0000-0000-000000000000");
