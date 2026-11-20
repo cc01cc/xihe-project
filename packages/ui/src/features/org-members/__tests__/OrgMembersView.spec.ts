@@ -41,7 +41,7 @@ const MEMBERS = [
     },
 ];
 
-type FetchHandler = (url: URL) => { status: number; body: unknown };
+type FetchHandler = (url: URL, method: string) => { status: number; body: unknown };
 let calls: string[] = [];
 /** 与 calls 并行：task-136 起「开窗口」与「提交」要分开断言，光看路径分不出读/写。 */
 let methods: string[] = [];
@@ -54,7 +54,7 @@ function mockFetch(handler: FetchHandler) {
         const url = new URL(raw, "http://localhost");
         calls.push(url.pathname + url.search);
         methods.push((init?.method ?? "GET").toUpperCase());
-        const { status, body } = handler(url);
+        const { status, body } = handler(url, methods[methods.length - 1] ?? "GET");
         return Promise.resolve(
             new Response(JSON.stringify(body), {
                 status,
@@ -299,6 +299,58 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
                 (call) => call.startsWith("/api/v1/org-units") && !call.includes("parentId="),
             ).length;
             expect(reloads).toBeGreaterThan(1);
+        });
+        wrapper.unmount();
+    });
+
+    /**
+     * 揭示路径（真栈 2026-11-21 实测的坑）：新单元挂在选中单元下，若该单元在树上是收起的，
+     * 重取之后新节点仍然不出现 —— 用户只看到「已提交」却找不到东西。页面在 create 成功后
+     * 让树展开父单元，节点本身仍然来自服务端读面（J5：不往本地塞节点）。
+     */
+    it("新建子单元后自动展开父单元：新节点来自重取的读面，不是本地插入", async () => {
+        const created = {
+            id: "u-new",
+            name: "数据平台",
+            parentId: "u-root",
+            depth: 1,
+            hasChildren: false,
+        };
+        let posted = false;
+        mockFetch((url, method) => {
+            if (url.pathname.endsWith("/org-units") && method === "POST") {
+                posted = true;
+                return { status: 201, body: { id: "u-new", path: "u-root.u-new" } };
+            }
+            if (url.pathname.endsWith("/org-units")) {
+                if (url.searchParams.get("parentId") === "u-root") {
+                    return { status: 200, body: { nodes: posted ? [CHILD, created] : [CHILD] } };
+                }
+                return { status: 200, body: { nodes: [ROOT] } };
+            }
+            if (url.pathname.endsWith("/org-units/u-root/members")) {
+                return { status: 200, body: { members: MEMBERS } };
+            }
+            return { status: 200, body: { nodes: [], members: [] } };
+        });
+        const wrapper = await mountView();
+        // 刻意不展开根：childrenLoaded=false ⇒ 重取时 ensureChildren 不会覆盖到 u-root。
+        await wrapper.get('[data-testid="org-tree-label-u-root"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="org-write-new-unit"]').trigger("click");
+        await flushPromises();
+        const input = document.body.querySelector(
+            '[data-testid="org-write-name"]',
+        ) as HTMLInputElement;
+        input.value = "数据平台";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushPromises();
+        const submit = document.body.querySelector(
+            '[data-testid="org-write-submit"]',
+        ) as HTMLButtonElement;
+        submit.click();
+        await vi.waitFor(() => {
+            expect(wrapper.find('[data-testid="org-tree-label-u-new"]').exists()).toBe(true);
         });
         wrapper.unmount();
     });

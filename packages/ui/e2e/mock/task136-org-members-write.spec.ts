@@ -1,6 +1,5 @@
 import type { Page } from "@playwright/test";
 import { setupMockAuth } from "./helpers/auth";
-import { selectByDomClick } from "../helpers/select";
 // 走 mock 车道的公共失败门禁（BL-318）：console error / pageerror / 非预期 >=400 自动断言。
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 
@@ -26,6 +25,22 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 
 /** 桩端点故意回 4xx（409 确认门 / 422 环 / 403 原子缺失）⇒ 逐条放行，不放行整条门。 */
 test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/api/v1/org-units`] });
+
+/**
+ * 在 Dialog 里选 reka Select 的一项：**必须真点击**。
+ *
+ * <p>`selectByDomClick`（DOM `element.click()` 兜底）在对话框内的 Select 上不可靠：
+ * 弹层拿不到 pointer 事件就不会关闭，它留下的 `data-slot="dialog-overlay" aria-hidden="true"`
+ * 会一直 intercept 后续点击（实测 2026-11-21：`org-write-submit` 点不动）；另一种表现是
+ * 选项没进 v-model，提交按钮恒 disabled（`org-write-role-add-submit`）。</p>
+ */
+async function pickOption(page: Page, triggerTestId: string, label: string): Promise<void> {
+    await page.getByTestId(triggerTestId).click();
+    const option = page.getByRole("option", { name: label, exact: true }).first();
+    await option.waitFor({ state: "visible", timeout: 5_000 });
+    await option.click();
+    await expect(option).toBeHidden({ timeout: 5_000 });
+}
 
 const CALLER_ID = "user-1";
 
@@ -360,7 +375,7 @@ test.describe("task-136 组织写面（mock lane）", () => {
 
         await page.getByTestId("org-write-move").click();
         // 父候选 = 树里已加载的单元（含自己）——环由服务端判定，界面不拦。
-        await selectByDomClick(page.getByTestId("org-write-parent"), "研发部");
+        await pickOption(page, "org-write-parent", "研发部");
         await page.getByTestId("org-write-submit").click();
 
         await expect.poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/parent").length).toBe(1);
@@ -459,7 +474,7 @@ test.describe("task-136 组织写面（mock lane）", () => {
         });
         await expect(page.getByTestId("org-write-role-baseline")).toBeVisible();
 
-        await selectByDomClick(page.getByTestId("org-write-role-add"), "组织治理员");
+        await pickOption(page, "org-write-role-add", "组织治理员");
         await page.getByTestId("org-write-role-add-submit").click();
 
         await expect

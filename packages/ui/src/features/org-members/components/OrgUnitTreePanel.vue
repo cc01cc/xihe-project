@@ -154,6 +154,30 @@ watch(
 );
 
 /**
+ * 写入后揭示结果：把某单元标记为展开并拉它的子层。
+ *
+ * <p>新建子单元落在当前选中单元下；若那个单元在树上是收起的，重取之后新节点依然不出现 ——
+ * 用户只看到「已提交」却找不到东西（task-136 真栈实测 2026-11-21）。这里只做「展开 + 拉子层」，
+ * 不往本地塞任何节点：节点永远来自服务端读面（J5）。</p>
+ */
+async function expandUnit(id: string): Promise<void> {
+    if (!findItem(tree.roots.value, id) && !findItem(tree.searchResults.value ?? [], id)) return;
+    tree.rememberExpanded([id]);
+    await tree.ensureChildren(id);
+}
+
+function findItem(items: readonly OrgTreeItem[], id: string): OrgTreeItem | null {
+    for (const item of items) {
+        if (item.key === id) return item;
+        const hit = findItem(item.children, id);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+defineExpose({ expandUnit });
+
+/**
  * 树级错误文案（卡面 ② 在列表侧还有一份同款判据）：404 与 403 不许混 ——
  * not-found 是「单元不存在 / 你不是任何单元的成员」，atom-denied 是「缺 READ_ORG_UNIT_MEMBERS
  * 原子」。"other" 才有重试键；404/403 重试没有意义（状态不会自己变）。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import OrgUnitTreePanel from "../components/OrgUnitTreePanel.vue";
 import OrgUnitMemberList from "../components/OrgUnitMemberList.vue";
@@ -31,11 +31,16 @@ function onSelect(unit: ApiOrgUnitNode) {
  */
 const treeRefresh = ref(0),
     memberRefresh = ref(0),
-    writePanel = ref<InstanceType<typeof OrgUnitWritePanel> | null>(null);
+    writePanel = ref<InstanceType<typeof OrgUnitWritePanel> | null>(null),
+    treePanel = ref<InstanceType<typeof OrgUnitTreePanel> | null>(null);
 
-function onWritten(_kind: OrgWriteKind): void {
+function onWritten(kind: OrgWriteKind): void {
     treeRefresh.value += 1;
     memberRefresh.value += 1;
+    if (kind !== "create-unit" || !selectedUnit.value) return;
+    // 新单元挂在选中单元下；该单元若在树上收起，重取后新节点仍不可见 ⇒ 展开它（只展开，不塞节点）。
+    const parentId = selectedUnit.value.id;
+    void nextTick(() => treePanel.value?.expandUnit(parentId));
 }
 
 /** 详情抽屉的写入口 → 页面写窗口（预选该成员）。 */
@@ -95,7 +100,7 @@ function onMemberWrite(mode: "remove-member" | "roles", member: ApiOrgUnitMember
             class="mx-auto grid w-full max-w-6xl grid-cols-1 gap-0 px-6 pb-6 lg:h-[420px] lg:shrink-0 lg:grid-cols-[320px_1fr]"
         >
             <div class="min-h-0 rounded-md border lg:me-4" data-testid="org-tree-scope">
-                <OrgUnitTreePanel :refresh-token="treeRefresh" @select="onSelect" />
+                <OrgUnitTreePanel ref="treePanel" :refresh-token="treeRefresh" @select="onSelect" />
             </div>
             <div class="min-h-0 rounded-md border max-lg:mt-4">
                 <OrgUnitMemberList

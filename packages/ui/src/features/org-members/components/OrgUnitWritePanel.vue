@@ -79,7 +79,9 @@ const mode = ref<WriteMode | null>(null),
     removeCandidates = ref<ApiOrgUnitMember[]>([]),
     removeLoading = ref(false),
     removeError = ref(""),
-    notice = ref("");
+    notice = ref(""),
+    /** 工具条提示的色调：成功走中性色，缺选中走警示色。 */
+    noticeOk = ref(false);
 
 const writes = useOrgUnitWrites({
     onWritten: (kind) => emit("written", kind),
@@ -137,6 +139,7 @@ function resetTransient(): void {
     removeCandidates.value = [];
     removeError.value = "";
     notice.value = "";
+    noticeOk.value = false;
     writes.clearProblem();
     writes.closeMemberMoveConfirmation();
     writes.closeMemberRemovalConfirmation();
@@ -149,6 +152,7 @@ function requiresUnit(target: WriteMode): boolean {
 async function open(target: WriteMode): Promise<void> {
     resetTransient();
     if (requiresUnit(target) && !props.unit) {
+        noticeOk.value = false;
         notice.value = t("orgMembers.writeNeedsSelection");
         return;
     }
@@ -310,6 +314,7 @@ function finish(): void {
     // 成功才关窗：失败必须把原文留在屏幕上（J2），所以关窗与否由各 submit 决定。
     mode.value = null;
     writes.clearProblem();
+    noticeOk.value = true;
     notice.value = t("orgMembers.writeOk");
 }
 
@@ -389,7 +394,12 @@ defineExpose({ open, openForMember });
                 {{ t(action.labelKey) }}
             </Button>
             <p class="w-full text-xs text-muted-foreground">{{ t("orgMembers.writeHint") }}</p>
-            <p v-if="notice" class="w-full text-xs text-destructive" data-testid="org-write-notice">
+            <p
+                v-if="notice"
+                class="w-full text-xs"
+                :class="noticeOk ? 'text-muted-foreground' : 'text-destructive'"
+                data-testid="org-write-notice"
+            >
                 {{ notice }}
             </p>
         </div>

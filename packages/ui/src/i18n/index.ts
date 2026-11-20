@@ -121,7 +121,7 @@ const messages = {
             // task-509 补提交：403 卡**仍点名缺失原子**（`OrgMembersView.spec.ts` 与
             // `packages/ui/AGENTS.md` 的 atom-denied 口径都要求点名），只把内部术语换成用户话。
             title: "组织成员",
-            desc: "按组织架构查看人类成员与智能体；写操作随后续批次开放，当前为只读预览。",
+            desc: "按组织架构查看人类成员与智能体；新建/改名/搬移单元、加成员、移成员、改角色都已接真实契约，写入失败时照显服务端原文。",
             searchPlaceholder: "在可见组织树内搜索名称…",
             searchEmpty: "没有命中的组织单元。",
             treeEmpty: "当前账号不在任何组织单元中，或组织树为空。",
@@ -4274,7 +4274,7 @@ const messages = {
         },
         orgMembers: {
             title: "Org members",
-            desc: "Browse humans and agent principals by org structure; write actions open in a later batch — read-only preview.",
+            desc: "Browse humans and agent principals by org structure; creating, renaming and moving units plus member and role changes all call the real contract, and server errors are shown verbatim.",
             searchPlaceholder: "Search names in the visible tree…",
             searchEmpty: "No org unit matched.",
             treeEmpty: "This account belongs to no org unit, or the tree is empty.",
