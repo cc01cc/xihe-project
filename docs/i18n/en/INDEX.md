@@ -64,6 +64,11 @@ These guides exist only as Chinese originals in [`zh-Hans`](../zh-Hans/) today. 
 
 The Chinese [README](../zh-Hans/README.md) is **intentionally** zh-only: the repository root `README.md` is the English GitHub facade and the Chinese docs page is a separate artefact (DEV-030 §layout).
 
+**English-only guides (no Chinese counterpart)** — English originals that have no Chinese page and are not on the translation backlog: the ADR/RFC series is an English-first design record, so a `zh-Hans` page would be a second original rather than a translation. The dev-i18n drift check reads this block, so a guide listed here counts as an intentionally one-sided page instead of a translation gap (the mirror-image convention is the "Chinese-only guides" section above).
+
+- [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
+- [RFC-001: Session Domain Model](RFC-001-session-domain-model.md) — deprecated; kept as the historical design record, not translated.
+
 ## Contract Entry (PLAN-0328)
 
 - [API OpenAPI](../../api/openapi.yaml) and [API inventory](../../api/inventory.md) are the canonical contract for current public/internal routes and JSON fields.

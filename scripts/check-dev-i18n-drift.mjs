@@ -81,7 +81,7 @@ const BLIND_SPOTS = [
     "  d. 不覆盖：组件名 / data-testid / CSS 类 / 参数值域 / 路由表（这些只能人读或另立专用门）。",
     "  e. 登记面取「出现过」而非「被定义为条目」：正文顺带提一句也算已登记 ⇒ 会漏掉「从未定义、只被引用」的号；",
     "  f. 小节标题对拍的残余盲区：无签名标题按「同层出现顺序」配对 ⇒ 两侧条数相同而内容互换（改名 + 换序）不报；章号在两册故意分叉（en DEV-011 第 10 节自己写着别按编号平移）⇒ H2 条数相同就不报。",
-    "  g. 单边篇（task-73 起）进「登记面存在性」，但不做中英对称差与标题对拍 —— 它们没有对侧，这两个判据在单边篇上本来就没有对象。task-85 起按 INDEX 声明面分档：已声明 10 篇（en 缺）报 W，未声明的 ADR-001 / RFC-001 仍报 E；声明面本身只认 INDEX 原文，INDEX 没说的一律按未声明算。",
+    "  g. 单边篇（task-73 起）进「登记面存在性」，但不做中英对称差与标题对拍 —— 它们没有对侧，这两个判据在单边篇上本来就没有对象。task-85 / task-107 起按 INDEX 的**双向**声明面分档：zh 缺篇看 en/INDEX 的 Chinese-only 段，en 缺篇看 en/INDEX 的 English-only 块或段；命中声明面报 W、未声明仍报 E（不整体放宽，按 E 收口）。声明面本身只认 INDEX 原文，INDEX 没说的一律按未声明算。",
 ];
 
 function readText(file) {
@@ -272,6 +272,8 @@ function compareHeadings(name, zhText, enText, findings) {
 // 把「已声明的不译」当成缺口。判据改成：单边篇先查 INDEX 声明面 —— 在册 ⇒ 降 W 级并计数；不在册 ⇒ 保持 E。
 // **不从代码里 hardcode 文件清单**：声明只能从 INDEX 解析（en 侧解析链接目标，zh 侧解析「保留中文原册」句里点名的编号，
 // 编号按目录实际文件名解析而不是拼字符串）。声明面不可读时**不降级**：全部按未声明处理，E 照旧（fail-closed）。
+// task-107（DSD-1496）：声明面改为**双向对称** —— en/INDEX.md 的 "English-only" 段声明 en 独有篇（ADR/RFC 是英文原文
+// 系列，按 DSD-1496 不是待译残稿）；未声明仍报 E，声明面缺失仍 fail-closed（两条反向判据在 selftest 里钉住）。
 function parseDeclaredUnpaired(zhDir, enDir, errors) {
     const names = new Set();
     const sources = [];
@@ -279,26 +281,62 @@ function parseDeclaredUnpaired(zhDir, enDir, errors) {
     const zhIndex = path.join(zhDir, "INDEX.md");
     const resEn = readTextSafe(enIndex);
     if (resEn.ok) {
-        let inSection = false;
+        // task-107（DSD-1496）：一个 INDEX 里的两段声明各管一个方向，写法与位置对称：
+        //   · "Chinese-only" 段 —— 链接 ../zh-Hans/*.md ⇒ 声明 zh 独有篇；
+        //   · "English-only" 块 —— 同目录相对链接 *.md ⇒ 声明 en 独有篇（ADR/RFC 英文原文系列）。
+        // 两种写法都认：标题段（"### ... english-only"）与加粗导语块（"**English-only guides ...**"）。
+        // 后者不新增标题 ⇒ 配对 INDEX.md 的小节标题对拍读数不会因本卡改动而漂移（task-107 实测：
+        // 加 H3 会多报 1 条 H3 分叉，而两侧标题数一致是这张卡的验收项）。
+        // 边界：标题段到下一个同级或更高级标题为止；加粗块到首个空行（且已收到链接）或下一个标题为止。
+        // 声明只能来自 INDEX，代码里不硬编码清单。
+        let section = null; // "zh" | "en"
         let level = 0;
-        let listed = 0;
+        let boldBlock = false;
+        const counted = { zh: 0, en: 0 };
         for (const line of resEn.text.split(/\r?\n/)) {
             const h = line.match(/^(#{2,6})\s+(.*)$/);
             if (h) {
+                boldBlock = false;
                 if (/chinese-only/i.test(h[2])) {
-                    inSection = true;
+                    section = "zh";
                     level = h[1].length;
                     continue;
                 }
-                if (inSection && h[1].length <= level) inSection = false;
+                if (/english-only/i.test(h[2])) {
+                    section = "en";
+                    level = h[1].length;
+                    continue;
+                }
+                if (section !== null && h[1].length <= level) section = null;
+                continue;
             }
-            if (!inSection) continue;
-            for (const m of line.matchAll(/\]\(\s*\.\.\/zh-Hans\/([^)\s#]+\.md)\s*\)/g)) {
-                names.add(path.basename(m[1]));
-                listed += 1;
+            if (!line.trim()) {
+                if (boldBlock && counted.en > 0) {
+                    section = null;
+                    boldBlock = false;
+                }
+                continue;
+            }
+            if (/^\*\*English-only guides\b/i.test(line)) {
+                section = "en";
+                level = 0;
+                boldBlock = true;
+                continue;
+            }
+            if (section === "zh") {
+                for (const m of line.matchAll(/\]\(\s*\.\.\/zh-Hans\/([^)\s#]+\.md)\s*\)/g)) {
+                    names.add(path.basename(m[1]));
+                    counted.zh += 1;
+                }
+            } else if (section === "en") {
+                for (const m of line.matchAll(/\]\(\s*(?:\.\/)?([A-Za-z0-9][A-Za-z0-9._-]*\.md)\s*\)/g)) {
+                    names.add(path.basename(m[1]));
+                    counted.en += 1;
+                }
             }
         }
-        if (listed > 0) sources.push(`en/INDEX.md Chinese-only 段（${listed} 条链接）`);
+        if (counted.zh > 0) sources.push(`en/INDEX.md Chinese-only 段（${counted.zh} 条链接）`);
+        if (counted.en > 0) sources.push(`en/INDEX.md English-only 段（${counted.en} 条链接）`);
     } else if (fs.existsSync(enIndex)) {
         errors.push({ code: "E_INPUT_MISSING", detail: `en/INDEX.md 读取失败（${resEn.error}）⇒ 声明面不完整，未声明判定按 fail-closed 处理`, path: enIndex, source: "declaration" });
     }
@@ -327,8 +365,9 @@ function parseDeclaredUnpaired(zhDir, enDir, errors) {
 // task-73（a）：单边篇的说明文字。真树上 en 缺篇 10 篇 / zh 缺篇 2 篇（ADR-001 / RFC-001 是 en 独有历史档），
 // 前者是真缺口（归 task-62 的 en 译稿面），后者按设计不参与对称差。门只报「这一侧无对侧」，不替人判定归属。
 const UNPAIRED_NOTE = "该篇只有一侧可读 ⇒ 中英对称差与标题对拍在这一篇上没有对象（这本身就是 E 级覆盖缺口，不是 W 级措辞差异）";
-// task-85：已声明的不译不是缺口。原文见 zh-Hans/INDEX.md:55 与 en/INDEX.md Chinese-only 段。
-const DECLARED_NOTE = "该篇在 INDEX 的「保留中文原册」声明面内（英文页需要时链中文文件并标 (zh)，不维护过期英文残稿）⇒ 属已裁定不译，降 W 级计数，不报 E";
+// task-85 / task-107：已声明的单边篇不是缺口。zh 侧声明面 = zh-Hans/INDEX.md「保留中文原册」句；
+// en 侧声明面 = en/INDEX.md "English-only" 段（英文原文系列，不另出中文版 ⇒ 不是待译残稿）。
+const DECLARED_NOTE = "该篇在 INDEX 的单边篇声明面内（zh 侧=「保留中文原册」不译，英文页链中文文件并标 (zh)；en 侧=英文原文系列，不另出中文版）⇒ 属已裁定单边篇，降 W 级计数，不报 E";
 function scan({ workspace, a03 }) {
     const i18nRoot = path.join(a03, "docs", "i18n");
     const zhDir = path.join(i18nRoot, "zh-Hans");
@@ -427,7 +466,8 @@ function scan({ workspace, a03 }) {
         surface.enSpans += countCodeSpans(t);
         const eIds = extractIds(t);
         for (const c of CLASSES) for (const id of eIds[c.key]) seenEn[c.key].add(id);
-        // task-85：同一条声明面也用于 en 独有篇（ADR-001 / RFC-001 是 en 独有历史档，INDEX 未声明 ⇒ 保持 E）。
+        // task-85 / task-107：同一条声明面也用于 en 独有篇 —— ADR-001 / RFC-001 属英文原文系列，
+        // 在 en/INDEX.md 的 "English-only" 段声明后降 W；未声明仍保持 E（不整体放宽）。
         if (declared.names.has(name)) {
             surface.declaredUnpaired += 1;
             findings.push({ kind: "unpairedDeclared", severity: "W", file: name, side: "en", note: DECLARED_NOTE });
@@ -525,7 +565,7 @@ function render(result) {
         for (const f of result.findings) {
             n += 1;
             if (f.kind === "unpairedDeclared") {
-                lines.push(`  ${n}. [W] 单边篇（INDEX 已声明保留中文原册）· ${f.file} · 仅 ${f.side} 有 ⇒ 已裁定不译，属声明面内计数，不算缺口`);
+                lines.push(`  ${n}. [W] 单边篇（INDEX 声明面内：zh 侧=保留中文原册不译 / en 侧=英文原文系列不另出中文版）· ${f.file} · 仅 ${f.side} 有 ⇒ 已裁定单边，属声明面内计数，不算缺口`);
             } else if (f.kind === "unpaired") {
                 lines.push(`  ${n}. [E] 单边篇（**未**在 INDEX 声明面内）· ${f.file} · 仅 ${f.side} 有 ⇒ 对称差与标题对拍在这一篇上无对象（E 级覆盖缺口，非 W 级措辞差异）`);
             } else if (f.kind === "asymmetry") {
@@ -834,6 +874,72 @@ function runSelftest() {
                 noDecl.surface.declarationNote.length > 0 &&
                 render(noDecl).includes("未解析到任何声明"),
             noDecl.surface.declarationNote + " / " + JSON.stringify(noDecl.findings.filter((f) => f.kind.startsWith("unpaired"))),
+        );
+
+        // ── task-107（DSD-1496）：声明面双向 —— en 独有篇的三条正反 + 一种写法覆盖 ──
+        // en 独有篇 = 只在 en 目录里、无 zh 对侧（真树上的 ADR-001 / RFC-001 同形）。它们在 INDEX 的
+        // "English-only" 块里声明后降 W；未声明保持 E；把声明删掉必须立刻升回 E（证明判据不是空转）。
+        const enOnlyDeclared = path.join(fx.en, "E9.md");
+        const enOnlyUndeclared = path.join(fx.en, "E8.md");
+        fs.writeFileSync(enOnlyDeclared, "English-only page, cites `D-0002`." + LF_CH, "utf8");
+        fs.writeFileSync(enOnlyUndeclared, "English-only page that nobody declares, cites `D-0002`." + LF_CH, "utf8");
+        const boldIndexBody = [
+            "# Fixture index",
+            "",
+            "## Chinese-only guides (not translated yet)",
+            "",
+            "- [Z9: declared fixture](../zh-Hans/Z9.md)",
+            "",
+            "**English-only guides (no Chinese counterpart)** — English originals; the drift check reads this block.",
+            "",
+            "- [E9: declared English-only fixture](E9.md)",
+            "",
+            "## Other",
+            "",
+            "- [not a declaration](T1.md)",
+            "",
+        ].join(LF_CH);
+        fs.writeFileSync(enIndexPath, boldIndexBody, "utf8");
+        fs.writeFileSync(zhIndexPath, "# 夹具索引" + LF_CH, "utf8");
+        const enDeclared = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "24 正：en 独有篇在 English-only 块声明 ⇒ 降 W（side=en），不报 E",
+            enDeclared.findings.some((f) => f.kind === "unpairedDeclared" && f.severity === "W" && f.file === "E9.md" && f.side === "en") &&
+                !enDeclared.findings.some((f) => f.kind === "unpaired" && f.file === "E9.md"),
+            JSON.stringify(enDeclared.findings.filter((f) => f.kind.startsWith("unpaired"))) + " / sources " + JSON.stringify(enDeclared.surface.declarationSources),
+        );
+
+        check(
+            "25 反一：en 独有但未声明（E8）仍报 E，且声明面来源点名 English-only 块",
+            enDeclared.findings.some((f) => f.kind === "unpaired" && f.severity === "E" && f.file === "E8.md" && f.side === "en") &&
+                enDeclared.surface.declarationSources.some((s) => s.includes("English-only")),
+            JSON.stringify(enDeclared.findings.filter((f) => f.kind.startsWith("unpaired"))) + " / sources " + JSON.stringify(enDeclared.surface.declarationSources),
+        );
+
+        // 反二：删掉声明块 ⇒ E9 立刻升回 E。顺带钉「块边界」：块后面的 "## Other" 段里的链接（T1.md）不算声明。
+        fs.writeFileSync(enIndexPath, boldIndexBody.split(LF_CH).filter((l) => !/English-only|E9/.test(l)).join(LF_CH), "utf8");
+        const enRevoked = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "26 反二：删掉 English-only 声明 ⇒ E9 立刻升回 E",
+            enRevoked.findings.some((f) => f.kind === "unpaired" && f.severity === "E" && f.file === "E9.md" && f.side === "en"),
+            JSON.stringify(enRevoked.findings.filter((f) => f.kind.startsWith("unpaired"))),
+        );
+
+        // 写法覆盖：标题式 "### English-only guides" 段同样生效（未来若给 zh 侧补对称标题也不会失效）
+        fs.writeFileSync(enIndexPath, [
+            "# Fixture index",
+            "",
+            "### English-only guides (no Chinese counterpart)",
+            "",
+            "- [E9: heading form](E9.md)",
+            "",
+        ].join(LF_CH), "utf8");
+        const enHeading = scan({ workspace: fx.root, a03: fx.a03 });
+        check(
+            "27 标题式 English-only 段同样生效 ⇒ E9 降 W",
+            enHeading.findings.some((f) => f.kind === "unpairedDeclared" && f.file === "E9.md" && f.side === "en") &&
+                !enHeading.findings.some((f) => f.kind === "unpaired" && f.file === "E9.md"),
+            JSON.stringify(enHeading.findings.filter((f) => f.kind.startsWith("unpaired"))),
         );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
