@@ -1088,3 +1088,58 @@ description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**ta
 [tasks."docs:api:html"]
 run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
 description = "从 openapi.yaml 生成单文件 HTML 文档到 .tmp/api-docs/index.html（gitignored）"
+
+# ============================================================================
+# 孤儿门接线（task-22，2026-11-20；D-985 同族，接 task-18 / b083bcdc7 先例）
+#
+# 本树 `mise run check:gate-executors` 报「无执行者 9 个」（14 个非执行引用起）。逐门复查后分三类：
+#
+# ① **真有门、真没人跑**（4 个，本轮接线，实测全绿）：
+#      scripts/check-lint-rule-registry.mjs   135 条 off / 135 条已登记 ⇒ exit 0
+#      scripts/check-fixture-schema.mjs       report-only；389 schema / 368 operation / 404 spec ⇒ exit 0
+#      scripts/check-versions.mjs             PASS: 4 manifests, 19 checks ⇒ exit 0
+#      scripts/gate-parity.mjs                梯次 24 / SSOT 27 / mise 102 ⇒ PASS/exit 0
+#    姿态照 task-18：**独立任务、report-only、不进 validate 依赖**（不进 validate 的理由不是「没想清楚」：
+#    这 4 个都依赖别的仓/生成物状态，塞进每次提交的路径会拖慢并被绕过，D-1046 / D-1074 同族）。
+#
+# ② **已经有执行者，但审计器看不见**（3 个 packages/ui 门，本轮只补「一条可复算命令」）：
+#      packages/ui/scripts/check-{agents-md-budget,e2e-time-named-dirs,value-namespace}.mjs
+#    它们的真执行者是 `pnpm run lint`（本文件的 `lint:ui`）→ `packages/ui/scripts/lint-gates.mjs`
+#    的 --gate 门清单。**审计器判不出的机制**（task-22 复核查明，不是「门名被拼接」那种泛泛原因）：
+#    packages/ui/package.json 的 lint 是一行 `"lint": "node scripts/lint-gates.mjs --gate \"id=cmd\" …"`，
+#    内层引号被 JSON 转义成 `\"` ⇒ 审计器 wiredInManifest 的正则 `"[^"]*":\s*"[^"]*<门名>`
+#    在第一个 `\"` 处就断开，只能看见第一个 --gate 之前的片段。**不改审计器判据**（本卡口径：只接线、不放宽），
+#    改为在同一条链之外再加一个具名入口 —— 这样存量读数能归零，同时手动复跑不必先跑整条 lint。
+#
+# ③ **不该做成无参任务**（2 个，本轮只登记、不接线，理由逐条写在下方注释里）：
+#      scripts/check-api-types-drift.mjs   无生成物 ⇒ 恒 exit 2（E_NO_ARTIFACT），恒 2 的任务等于没有任务
+#      scripts/gate-screenshot-preflight.mjs 无 --pages ⇒ 恒 exit 2（E_NO_PAGES），它是拍图批次的前置门
+# ============================================================================
+
+[tasks."check:lint-rule-registry"]
+run = "node packages/ui/scripts/check-lint-rule-registry.mjs"
+description = "Lint-rule registry parity (task-171 ①): every `off` in packages/ui/.oxlintrc.json must have a registration row inside packages/ui/docs/lint-rule-registry.md between the begin/end markers, and no stale row; exit 1 = mismatch with per-row naming. Current reading: 135 off / 135 registered (main 57 + override0-5 1 each + override6 72) ⇒ exit 0. Report-only: not part of validate."
+
+[tasks."check:fixture-schema"]
+run = "node scripts/check-fixture-schema.mjs"
+description = "Fixture shape ⊇ contract required (task-166/172): YAML via backend venv PyYAML, TS via packages/ui typescript compiler API; rules ① error-body NOTE ② factory return-literal ⊇ required ③ undecidable by design. Report-only (exit 0 unless --enforce). Current reading: 389 schemas / 368 operations / 404 spec files; total=76 ok=9 missing=0 undecidable=49 nonschema=18 carrier=3 ⇒ exit 0."
+
+[tasks."check:versions"]
+run = "node scripts/check-versions.mjs"
+description = "PLAN-0534 version consistency: the four manifests are the only authority, production source carries no version literal, derivation anchors exist, CHANGELOG structure intact. Also exported as checkVersions(root) for `xihe version --check` (PLAN-0574 T1.4, no duplicated logic). Current reading: PASS: 4 manifests, 19 checks ⇒ exit 0."
+
+[tasks."gate-parity"]
+run = "node scripts/gate-parity.mjs"
+description = "Gate-set parity (task-105 / D-853): ① window ladder (scripts/gate-ladder.json) ② SSOT registry (xh-verify-gates.mjs DEFAULT_GATES) ③ mise.toml task exists; named exemptions instead of silent gaps. Current reading: ladder 24 / SSOT 27 / mise 102 ⇒ PASS (exit 0)."
+
+[tasks."check:ui-agents-md-budget"]
+run = "node packages/ui/scripts/check-agents-md-budget.mjs"
+description = "UI packages/ui/AGENTS.md injection budget: must stay <= 63,488 B (DSH 65,536 B injection budget minus 2 KiB); exit 1 prints over-budget bytes plus the three largest lines. Real executor is `pnpm run lint` (lint:ui); this task is the named manual entry (auditor blind spot, see section ② above). Current reading: 56,541 B / 63,488 B ⇒ exit 0."
+
+[tasks."check:ui-e2e-time-named-dirs"]
+run = "node packages/ui/scripts/check-e2e-time-named-dirs.mjs"
+description = "e2e host workspace dir naming (task-71 / D-1724): only the `e2e-ws-` family, only timestamp-without-seq/nonce shapes (deliberately narrow — the first version hit 63 mostly-false positives). Real executor is `pnpm run lint` (lint:ui). Current reading: 381 files / 0 hits ⇒ exit 0."
+
+[tasks."check:ui-value-namespace"]
+run = "node packages/ui/scripts/check-value-namespace.mjs"
+description = "Value-namespace imports (task-261 / Lead A1): `import * as X` on runtime values is flagged, `import type * as X` passes (oxlint import/no-namespace has no allowTypeOnly, 1.83.0). Real executor is `pnpm run lint` (lint:ui). Current reading: 1475 files / 0 hits ⇒ exit 0."
