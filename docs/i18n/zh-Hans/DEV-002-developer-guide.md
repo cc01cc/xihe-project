@@ -135,7 +135,7 @@ sequenceDiagram
 
 要点（锚点：`mise.toml: dev:host` + `scripts/dev-host-watch.mjs`）：
 
-- PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。**开发栈 PG 无口令（`POSTGRES_HOST_AUTH_METHOD: trust` + 空 `POSTGRES_PASSWORD`，DSD-1491 明确保留）且端口只绑回环**：`docker-compose.yml` 的 ports 写作 `127.0.0.1:${XIHE_PG_PORT:-12634}:5432`，本机 `localhost:12634` 照旧可用，同网段其它主机连不上（task-97，2026-11-20）。
+- PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。**开发栈 PG 无口令（`POSTGRES_HOST_AUTH_METHOD: trust` + 空 `POSTGRES_PASSWORD`，DSD-1491 明确保留）且端口只绑回环**：`docker-compose.yml` 的 ports 写作 `127.0.0.1:${XIHE_PG_PORT:-12634}:5432`，本机 `localhost:12634` 照旧可用，同网段其它主机连不上（task-97，2026-11-20）。因此 CP 启动校验对空白数据库口令在 dev 只 WARN，并由 `.env.dev` 内置的 `XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK=true` 静音；`XIHE_ENV=prod` 下该开关被忽略，`XIHE_CP_DATASOURCE_PASSWORD` 仍必填（task-98 / DSD-1491 ②）。
 - 启动前先跑一次 `mise run check:runtime-target`（runtime target 水位；watch 只打印，FORCE 线 ≥20GB 或 H 余量 <5GB 会阻止启动）。
 - 默认启动**不导入配置，也不创建/更新 Provider Connection**。
 - 需要配置时，CP ready 后显式运行 `mise run dev:host:import-config`；该命令只导入非密钥 JSONC。

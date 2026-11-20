@@ -49,7 +49,7 @@
 ## 5 验证映射
 
 - 启动校验的键集合与行为以 `§6` 为准；CP / Agent / Runtime 各自的校验器（`SecurityDefaultsValidator`、`security_defaults.py`、`security_defaults.rs`）实现本清单。
-- 变更 `§6` 时，三模块实现 + `DEV-003` + 本文件须同批更新。
+- 变更 `§6` 时，三模块实现 + `DEV-003` + 本文件须同批更新；**例外**：数据库口令类键（`XIHE_CP_DATASOURCE_PASSWORD*`）是 CP 专属——Agent / Runtime 不连数据库，`security_defaults.py` / `security_defaults.rs` 无对应实现，只改 `SecurityDefaultsValidator` 与本文件（`task-98` / `DSD-1491` ②，2026-11-20）。
 
 ## 6 危险默认键清单（prod fail-fast）
 
@@ -66,3 +66,5 @@
 | `XIHE_CP_CREDENTIALS_KEY` / `XIHE_CP_CREDENTIALS_KEY_RING` | 两者皆未配置 | 提供 key 或 key ring |
 | `XIHE_CP_CREDENTIALS_FINGERPRINT_KEY` | 未配置 | 提供独立 base64 32-byte HMAC key（不得复用加密 key/环，PLAN-0576） |
 | `XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY` | 为 `true` | 置 `false` |
+| `XIHE_CP_DATASOURCE_PASSWORD` | 未配置（空）且未开下一行的 dev 豁免开关 | 提供 CP 连接数据库的口令；打包启动器（`Launcher.java:1076`）每次生成并注入 |
+| `XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK` | 为 `true` 时豁免上一行的空白口令检查（**仅非 `prod` 生效**；`XIHE_ENV=prod` 下该开关被忽略） | dev 栈 PG 免密（`POSTGRES_HOST_AUTH_METHOD: trust`）时置 `true`（`.env.dev` 已内置）；prod 不得依赖它 |

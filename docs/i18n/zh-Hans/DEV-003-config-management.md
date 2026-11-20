@@ -138,7 +138,7 @@ CLI --set KEY=VALUE（最高，启动日志掩码标注；PLAN-0574 M4 起实际
 
 **secret 通道归位（决策 #37/T3.7）**：`XIHE_*_API_KEY` 一律标注**离线兜底**语义，常规路径为 CP 加密租约（DB 侧仅存信封密文）；secret 禁止写入入库的 `.env*` 文件（`.env`/`.env.$XIHE_ENV` 仅非敏感占位值），个人本地调试只允许 `.env.local`（gitignore）；**禁止 `.env.prod.local`**——生产配置只来自入库基线或部署注入（IaC/CI secret），本机文件覆盖生产不可复现、不可审计（反模式，加载器不设该层级）。
 
-**危险默认 fail-fast（决策 #7/#25/#32/T3.4）**：各模块启动时校验最终生效值——显式 `XIHE_ENV=prod` 命中出厂态危险默认（JWT secret/服务 token/allow-dev-key/加密 key）即**拒绝启动**并列键与修复指引；未设或 dev 仅 WARN；发布门禁强制显式 `prod`。清单见 `spec/config-env-target.md` §6。
+**危险默认 fail-fast（决策 #7/#25/#32/T3.4）**：各模块启动时校验最终生效值——显式 `XIHE_ENV=prod` 命中出厂态危险默认（JWT secret/服务 token/allow-dev-key/加密 key）即**拒绝启动**并列键与修复指引；未设或 dev 仅 WARN；发布门禁强制显式 `prod`。清单见 `spec/config-env-target.md` §6。数据库口令 `XIHE_CP_DATASOURCE_PASSWORD` 空白同样算危险默认；dev 栈 PG 免密（`POSTGRES_HOST_AUTH_METHOD: trust`）由显式开关 `XIHE_CP_DATASOURCE_PASSWORD_ALLOW_BLANK=true` 放宽（`.env.dev` 已内置），`XIHE_ENV=prod` 下该开关被忽略、口令仍必填（`task-98` / `DSD-1491` ②）。
 
 **配置归属速查**：
 
