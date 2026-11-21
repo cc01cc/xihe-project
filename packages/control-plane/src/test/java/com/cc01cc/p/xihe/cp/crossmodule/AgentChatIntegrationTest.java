@@ -498,16 +498,20 @@ class AgentChatIntegrationTest extends AbstractWireMockPgTest {
             assertEquals("succeeded", run.getStatus());
         });
 
-        ArgumentCaptor<Object> payloads = ArgumentCaptor.forClass(Object.class);
-        verify(sseEmitterManager, Mockito.atLeastOnce())
-                .send(eq(sessionId), eq("done"), payloads.capture(), any());
-        Map<?, ?> relayedDone = payloads.getAllValues().stream()
-                .filter(value -> value instanceof Map<?, ?> map && map.containsKey("agentContextTruncation"))
-                .map(value -> (Map<?, ?>) value)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("relayed done must carry agentContextTruncation"));
-        assertEquals(expected, objectMapper.valueToTree(relayedDone.get("agentContextTruncation")),
-                "durable value and the relayed SSE value must be the same object");
+        // The durable row commits before the SSE relay writes the done event (same run, later hop),
+        // so a bare verify() races the relay. Wait for the relay instead of the durable row.
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            ArgumentCaptor<Object> payloads = ArgumentCaptor.forClass(Object.class);
+            verify(sseEmitterManager, Mockito.atLeastOnce())
+                    .send(eq(sessionId), eq("done"), payloads.capture(), any());
+            Map<?, ?> relayedDone = payloads.getAllValues().stream()
+                    .filter(value -> value instanceof Map<?, ?> map && map.containsKey("agentContextTruncation"))
+                    .map(value -> (Map<?, ?>) value)
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("relayed done must carry agentContextTruncation"));
+            assertEquals(expected, objectMapper.valueToTree(relayedDone.get("agentContextTruncation")),
+                    "durable value and the relayed SSE value must be the same object");
+        });
     }
 
     /**
