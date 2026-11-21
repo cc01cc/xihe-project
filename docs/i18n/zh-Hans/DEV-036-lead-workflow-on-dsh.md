@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-11-20
-updated: 2026-11-20
+updated: 2026-11-21
 description: XH 交付线在 DSH（DeepSeek Harness）上的 Lead 编排规范：三个角色、两条硬边界、派工四步、卡面模板、chief-1 提交、巡检自我校准、验收假绿形态、复用清单。全部条目来自 2026-11-20 那次会话的实证。
 tags:
   - workflow
@@ -65,6 +65,12 @@ tags:
 
 **铁律**：自称"通过"但没给真实 exit code 与命令原文的回执，一律退回重报。判据不是"他说绿了"，而是"我照抄他给的命令能复现同一个 exit code"。
 
+**卡面三条硬口径**（2026-11-21 交付线实证：task-16 / task-37）：
+
+- **write_scopes 里的 evidence 子目录是预约，不是事实。** 判据：卡面预写的 `internal/A03-xihe/evidence/<日期>-<主题>/` 只表示"预计落这里"；收工以 `git -C one status --short` 的实际路径为准，同一件活拆成两个目录也正常（task-16 最终落 `2026-11-21-window1/` 与 `2026-11-21-ui-baseline-executor/`）。反例：按卡面预写路径核不到就报"证据缺失"。
+- **零 diff 卡跑门撞上别人的红，只报 Lead 不改。** 判据：本卡 `git diff --numstat` 为空时，红点文件必须不在本卡 write_scopes 内，回执写位置 + 归属卡即可（task-16 跑 `packages/ui` 的 typecheck 撞 `packages/ui/src/views/settings/AuthorizationOverviewView.vue` 的红，归属 uifit-1 的 task-8）。反例：顺手改他人 WIP 把门弄绿。
+- **卡面前提被证伪时必须先纠正口径，不许顺错前提凑绿。** 判据：核判据时发现前提不成立（task-37 第 4 条「`--list` 仍 `Total: 6 tests`」只在带 `--grep @host` 时成立，整 spec 是 9 条），回执先写更正再报实测，断言 / 计数 / skip 一律不动。反例：为让「6」成立去改用例收集范围。
+
 ## 4. 提交由 chief-1 执行，Lead 只复核
 
 提交是独立环节：成员留工作树不改 git，Lead 审 diff 与自跑门，chief-1 只执行原语提交。
@@ -83,6 +89,9 @@ tags:
 | 删除与移索引 | 删文件用 `--delete`，只移索引保工作树用 `--drop`（须显式 `--repo`） | `xh-commit.mjs:171-175` |
 | 声明文件数 | `--expect` 必须等于实际涉及文件数（含 move 展开） | `xh-commit.mjs:179-180` |
 | 取退出码 | 禁走管道——管道读到的是 `tail` 的 0 | 同族实测：`cmd \| tail` 恒 0 |
+| 同卡第 N 笔 body 引前笔 sha | 一卡跨两仓或拆多笔时，后一笔 body 写明前一笔 sha（task-176：DEV-011 双语 `3f66296b2`、证据 `9d130d7fa`） | 交接时可按 body 串起整卡 |
+| body 失准不回改历史 | 被引用文件本身正确、只是 body 描述与事实有偏差时，只落台账与后续提交说明 | workspace `AGENTS.md` §Git 操作约束（D-1522）：误夹带用后续提交更正，不改写历史 |
+| `.tmp` 只作旁注 | `.tmp/` 日志只用于过程复核，不得成为证据指针 | 证据只落 `internal/A03-xihe/evidence/` |
 | 绝对禁止 | `git reset` 任何形式、`checkout --`、`clean -fd`、目录级暂存、`push` | workspace `AGENTS.md` §Git 操作约束 |
 
 `xh-commit.mjs` 是十三条守卫的 CAS 原语：消息门禁 ⑦ 物理上最先跑（`commit-tree` 不触发任何钩子，所以门禁只能由原语自检），其后是临时索引隔离、空提交拒绝、CR 归一、祖先证明、三重校验、gitignore 预检、嵌套仓拒绝、直提与窗口判定。**它没有绕过开关**——能事前拦的不要事后补。
@@ -100,6 +109,12 @@ tags:
 - 编排利用率算不出时写 `unknown` + 原因，**不是 0%**（协议 §5.1 第 ④ 问）：板龄不可信、板上无 running 槽都属这一类；把 `unknown` 读成 0% 会凭空造出 P1。
 - `.tmp` 欠账与可重建缓存分开报：可重建缓存（`target/`、`node_modules`、构建产物）不算欠账，混在一起报会让真实欠账淹没在噪音里。
 
+读数面另三条（2026-11-21 交付线补）：
+
+- **命令必须带 cwd 与仓。** 判据：跨仓命令一律 `git -C <仓>`，跑脚本前先 `ls` 确认它在哪个仓（one 根的文档门在 `scripts/`，`internal/A03-xihe/scripts/` 下没有 `check-md-tables.mjs`）。反例：在 one 根按 A03 前缀调脚本 ⇒ `MODULE_NOT_FOUND`，被读成"门红"。
+- **件数只从全量枚举聚合，禁 `head` 当总数。** 判据：未跟踪用 `git -C <仓> ls-files -o --exclude-standard | wc -l`、已跟踪用 `git -C <仓> ls-tree -r HEAD | wc -l`（2026-11-21 A03 实测 7 / 4,126）；工具侧同理（glob 上限 100、grep 上限 250）。反例：`git status --short | head -20` 报"20 条脏"，实际 24 条（同日 A03 实测）。
+- **行号不当常量，长度读数带单位。** 判据：`文件:行` 只写"当前 HEAD 实测"并附可 grep 的定位串，跨提交重取（`a133fd522` / `392a23ce4` 即 task-178 两次指针重锚）；字节与行数分列写清单位（`packages/ui/e2e/real/ui-baseline.spec.ts` 126,264 B / 2,213 行，不写"约 123K"）。反例：沿用交接档旧行号当 SSOT，文档重整后指向另一段。
+
 自校准：每轮结束按三块分列（谁在跑 / 等什么信号 / 下一步动作）。"我盯着等结果"是空转占位，算编排事故（workspace `AGENTS.md:216`）。
 
 ## 6. 验收纪律：本会话实证的假绿形态
@@ -116,6 +131,12 @@ tags:
 | 队友说"完成了" | 全部 | 只信可复跑命令与真实 exit code |
 
 补充一条与门本身有关的：**门看不见的面不等于干净**。`scripts/check-md-tables.mjs` 的默认扫描根是 `AGENTS.md`、`internal`、`docs`、`tools`、`plans`（`:83`），`A03-xihe/spec` 不在其中——所以 spec 目录里的表格债当前没有任何门在拦（2026-11-20 实测 3 处存量问题无人报）。报"某门绿"时必须同时说清它的作用面。
+
+证据面三条（2026-11-21 交付线补）：
+
+- **gitignored 路径不得作证据唯一入口。** 判据：`.tmp/` 日志只能当过程留痕，结论必须落 `internal/A03-xihe/evidence/`（task-16 的 `--help` 探针日志在 `one/.tmp/xh/help-probe.log`，读数写进 evidence 对应小节）。反例：证据指针只给 `.tmp` 路径，下一窗清扫即失效。
+- **证据文件为空，有时正是结论。** 判据：`i18n-scan` 通过时零输出、有问题才 exit 1 逐条点名，`check-md-emphasis` 打 `0 命中`——空输出必须配命令原文与 exit code 才成立。反例：把 0 字节日志当"命令没跑"，反复重跑。
+- **快照不回改，只加陈旧指针行。** 判据：`evidence/` 里的读数快照保持当时原样，口径变化另立小节并在原处加一行"已知陈旧：<项> 见 <节>"（task-37 的 `--list` 6 条即如此处理：原读数保留，另加小节说明整 spec 9 条 / `@host` 6 条）。反例：直接把快照里的 `6` 改成 `9`。
 
 ## 7. 复用清单（下一个会话照此开工）
 
