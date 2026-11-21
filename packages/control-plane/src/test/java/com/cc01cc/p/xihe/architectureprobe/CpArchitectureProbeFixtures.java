@@ -122,4 +122,61 @@ public final class CpArchitectureProbeFixtures {
     }
 
     public static class ChainB { }
+
+    /**
+     * task-123 bad probe: two constructors, no @Autowired and no public no-arg fallback - the exact
+     * FirstRunAccountService shape of task-122 (D-1535) that stopped the context in every
+     * @SpringBootTest file. The gate must catch this even while src/main has no such class left.
+     */
+    @Service
+    public static class BadAmbiguousConstructorService {
+        private final ProbeRepository repository;
+        private final Object clock;
+
+        public BadAmbiguousConstructorService(ProbeRepository repository) { this(repository, new Object()); }
+
+        BadAmbiguousConstructorService(ProbeRepository repository, Object clock) {
+            this.repository = repository;
+            this.clock = clock;
+        }
+    }
+
+    /**
+     * task-123 good probe: two constructors with exactly one @Autowired, written as a fully qualified name
+     * on purpose - that is how three production classes spell it (CheckpointRevertAudit,
+     * SessionSnapshotAudit, SessionParticipantService). A gate matching the literal text "@Autowired" would
+     * flag this class as a violation; a gate resolving the annotation by type does not. This fixture is the
+     * regression guard for that distinction, so keep the dotted spelling - do not "tidy" it into an import,
+     * which would also push the package comment below line 15 (pinned by AGENTS.md).
+     */
+    @Service
+    public static class FqnAutowiredConstructorService {
+        private final ProbeRepository repository;
+        private final Object clock;
+
+        @org.springframework.beans.factory.annotation.Autowired
+        public FqnAutowiredConstructorService(ProbeRepository repository) { this(repository, new Object()); }
+
+        FqnAutowiredConstructorService(ProbeRepository repository, Object clock) {
+            this.repository = repository;
+            this.clock = clock;
+        }
+    }
+
+    /**
+     * task-123 good probe: two constructors, no @Autowired, but a public no-arg one - the fourth safe form,
+     * i.e. Spring's documented "no-arg or explicit annotation" fallback
+     * ({@code EnvOverlayRegistry:47}, {@code ResourceGovernor:88}, {@code SessionPolicyState:67},
+     * {@code ScheduledTaskContracts:87}, {@code BuildVersion:32}, {@code RequestQueue:34} in src/main).
+     * Without this fixture the exemption could be deleted and the gate would stay green on production code,
+     * because every production multi-constructor bean also happens to carry @Autowired.
+     */
+    @Service
+    public static class NoArgFallbackConstructorService {
+        private final Object clock;
+
+        public NoArgFallbackConstructorService() { this(new Object()); }
+
+        NoArgFallbackConstructorService(Object clock) { this.clock = clock; }
+    }
 }

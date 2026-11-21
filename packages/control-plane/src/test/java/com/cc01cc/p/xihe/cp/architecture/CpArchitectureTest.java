@@ -51,13 +51,13 @@ class CpArchitectureTest {
         // task-617: the origin predicate now comes from the rule itself (CpArchitectureRules.CLASS_TARGETS).
         // The old positional list paired rule i with predicate i, so reordering ALL silently mislabelled
         // every row of the baseline.
-        List<DescribedPredicate<JavaClass>> targets = List.of(CpArchitectureRules.CONTROLLERS,
-                CpArchitectureRules.CONTROLLERS, CpArchitectureRules.REPOSITORIES, CpArchitectureRules.CONTROLLERS,
-                CpArchitectureRules.CP_BUSINESS_PACKAGES, CpArchitectureRules.APPLICATIONS);
         for (int index = 0; index < CpArchitectureRules.ALL.size(); index++) {
             ArchRule rule = CpArchitectureRules.ALL.get(index);
             var origin = CpArchitectureRules.CLASS_TARGETS.get(rule);
-            var target = targets.get(index);
+            // task-123: the dependency-side predicate is keyed by rule too, so appending a rule to ALL
+            // cannot pair it with a stale predicate any more. Constructor-shape rules have no dependency
+            // target; their row says so instead of pretending "0 pairs = 0 dependencies".
+            var target = CpArchitectureRules.DEPENDENCY_TARGETS.get(rule);
             // task-617: strict on the full import - a rule that selects nothing is red, not green.
             var result = CpArchitectureRules.forFullImport(rule).evaluate(production);
             Map<String, Object> row = new LinkedHashMap<>();
@@ -66,11 +66,16 @@ class CpArchitectureTest {
             row.put("matched", production.stream().filter(origin).count());
             row.put("violationCount", result.getFailureReport().getDetails().size());
             row.put("violations", result.getFailureReport().getDetails().stream().sorted().toList());
-            row.put("classPairs", production.stream().filter(origin)
-                    .flatMap(type -> type.getDirectDependenciesFromSelf().stream())
-                    .filter(dependency -> target.test(dependency.getTargetClass()))
-                    .map(dependency -> dependency.getOriginClass().getName() + " -> " + dependency.getTargetClass().getName())
-                    .distinct().sorted().toList());
+            row.put("classPairs", target == null ? "not a dependency rule - this one inspects the class's"
+                    + " own constructor set, so there is no target class to pair"
+                    : dependencyPairs(production, origin, target));
+            // task-123: a constructor-shape rule has no dependency pairs to show, so its row names the
+            // classes it selected together with the Spring form each one resolved to. Without this,
+            // matched=<n> is a number nobody can audit by name, and the "which classes are exempt because
+            // they use the no-arg fallback" question could only be answered by a regex sweep again.
+            if (target == null) {
+                row.put("constructorForms", constructorCensus(production, origin));
+            }
             rules.add(row);
         }
         Map<String, Object> baseline = new LinkedHashMap<>();
@@ -146,6 +151,38 @@ class CpArchitectureTest {
         } catch (java.net.URISyntaxException ex) {
             throw new IllegalStateException("cannot resolve this class's code source location", ex);
         }
+    }
+
+    /**
+     * task-123: census of the classes a constructor-shape rule selected, with the Spring form each one
+     * resolved to. Uses {@link CpArchitectureRules#injectionFormOf}, i.e. the same classifier the gate
+     * enforces, so the reported form cannot disagree with the verdict.
+     */
+    private static List<Map<String, Object>> constructorCensus(JavaClasses production,
+            DescribedPredicate<JavaClass> origin) {
+        return production.stream().filter(origin).map(type -> {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("class", type.getName());
+            entry.put("constructors", type.getConstructors().size());
+            entry.put("autowired", type.getConstructors().stream()
+                    .filter(CpArchitectureRules.AUTOWIRED_CONSTRUCTOR).count());
+            entry.put("form", CpArchitectureRules.injectionFormOf(type).name());
+            return entry;
+        }).sorted(java.util.Comparator.comparing(entry -> (String) entry.get("class"))).toList();
+    }
+
+    /**
+     * task-123: the {@code origin -> target} dependency pairs a rule with a dependency should-clause saw.
+     * Extracted from the baseline loop so the loop stays readable now that a rule may have no target side.
+     */
+    private static List<String> dependencyPairs(JavaClasses production,
+            DescribedPredicate<JavaClass> origin, DescribedPredicate<JavaClass> target) {
+        return production.stream().filter(origin)
+                .flatMap(type -> type.getDirectDependenciesFromSelf().stream())
+                .filter(dependency -> target.test(dependency.getTargetClass()))
+                .map(dependency -> dependency.getOriginClass().getName() + " -> "
+                        + dependency.getTargetClass().getName())
+                .distinct().sorted().toList();
     }
 
     static List<List<String>> stronglyConnectedOwners(Map<String, Set<String>> graph) {
