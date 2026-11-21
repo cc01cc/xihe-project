@@ -286,6 +286,48 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     }
 
     /**
+     * task-58: {@code requireActiveWorkspaceBinding} has an {@code OR} because a principal may reach
+     * a workspace through a <b>workspace-scoped role binding alone</b> — the legacy
+     * {@code workspace_agents} row is optional narrowing, not the reach itself. That second arm is
+     * exactly what the "list every binding of the workspace, then contains()" code answered, so the
+     * existence probe must keep answering it: with a role binding and <b>no</b> legacy row the cap
+     * still resolves (no 403 FORBIDDEN "holds no role binding").
+     */
+    @Test
+    void workspaceRoleBindingWithoutALegacyAgentRowStillResolves() {
+        AgentPrincipal principal = createPlainPrincipal("probeNoLegacyRow");
+        UUID principalId = principal.getId();
+        assertFalse(workspaceAgentRepository.findById(
+                        new com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId(principalId, workspaceId)).isPresent(),
+                "precondition: the principal has no legacy workspace_agents row");
+
+        roleBindingRepository.saveAndFlush(new AccessRoleBinding(SystemAccessRoleCatalog.WS_EDITOR_ID,
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId,
+                UUID.fromString(userId)));
+        roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                UUID.fromString(userId), workspaceId.toString());
+
+        var cap = agentPrincipalService.resolveCapFor(principalId, workspaceId);
+        assertTrue(cap.toString().contains("read"),
+                "a workspace role binding alone must resolve the cap (second arm of the OR): " + cap);
+        assertTrue(roleBindingRepository.existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId),
+                "the probe itself must see that row");
+
+        // The probe's scope predicate is load-bearing: the same principal in *another* workspace owns
+        // no binding there, so the reach gate must still answer 403 — the existence probe must never
+        // degrade into "this subject has a binding somewhere".
+        // A brand-new workspace (ensureOwnedWorkspace is idempotent and would hand back the same
+        // one) — the fixture createWorkspace() variant opens no membership, which is what makes this
+        // an unbound workspace for the principal.
+        UUID otherWorkspace = workspaceFixture.createWorkspace("task-58 other workspace").getId();
+        CpApiException elsewhere = assertThrows(CpApiException.class,
+                () -> agentPrincipalService.resolveCapFor(principalId, otherWorkspace));
+        assertEquals(HttpStatus.FORBIDDEN, elsewhere.getStatus(),
+                "an unbound workspace must not resolve through another workspace's role binding");
+    }
+
+    /**
      * BL-352：**首绑的正确入口是 PUT**（结构化默认绑定，不受 cap 门约束），roles 端点只在有 cap 后可用。
      * 这条闭环同时证明：①纯 API 自举可行 ②严格路径（会话/派发前置）未被放宽 ③cap 不变量仍然生效。
      */

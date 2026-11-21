@@ -835,16 +835,6 @@ public class AgentPrincipalService {
         return merged.values().stream().sorted(WORKSPACE_AGENT_LIST_ORDER).toList();
     }
 
-    /** PLAN-0629: principals holding a role binding in this workspace, resolved in one query. */
-    private java.util.Set<UUID> roleBoundPrincipalIds(UUID workspaceId) {
-        return roleBindingRepository
-                .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                        "workspace", workspaceId)
-                .stream()
-                .map(AccessRoleBinding::getSubjectId)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-    }
-
     static final java.util.Comparator<WorkspaceAgentView> WORKSPACE_AGENT_LIST_ORDER = java.util.Comparator
             .comparing((WorkspaceAgentView view) -> view.name() == null
                     ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
@@ -1155,7 +1145,10 @@ public class AgentPrincipalService {
         WorkspaceAgent binding = workspaceAgentRepository
                 .findById(new WorkspaceAgentId(principalId, workspaceId))
                 .orElse(null);
-        if (binding == null && !roleBoundPrincipalIds(workspaceId).contains(principalId)) {
+        // task-58: existence probe, not "list the whole workspace then contains" (see
+        // AccessRoleBindingRepository#existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId).
+        if (binding == null && !roleBindingRepository.existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId(
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Agent principal holds no role binding for this Workspace");
         }

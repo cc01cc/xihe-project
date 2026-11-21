@@ -25,6 +25,21 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
     List<AccessRoleBinding> findBySubjectTypeAndScopeTypeAndScopeId(String subjectType,
                                                                    String scopeType, UUID scopeId);
 
+    /**
+     * task-58: single-row existence probe of one subject's binding inside one scope.
+     *
+     * <p>Replaces the "load every binding of this workspace, then {@code contains(principalId)}"
+     * pattern at the workspace-reach gate: that form materialised every
+     * {@code agent_principal} binding of the workspace (O(all bindings of the instance)) to answer
+     * a yes/no question, and the table has no index leading with {@code scope_type/scope_id}, so
+     * the planner could only use {@code idx_role_bindings_subject(subject_type, subject_id)} as an
+     * equality prefix and discard the rest with a filter (measured: {@code rows=80},
+     * {@code Rows Removed by Filter: 79}). The exists form is answered by the same index with a
+     * 1-row table lookup and no collection allocation.
+     */
+    boolean existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId(String subjectType, UUID subjectId,
+                                                                 String scopeType, UUID scopeId);
+
     List<AccessRoleBinding> findByRoleId(UUID roleId);
 
     long countByRoleId(UUID roleId);
