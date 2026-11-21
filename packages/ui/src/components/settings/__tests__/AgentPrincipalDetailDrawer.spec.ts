@@ -369,6 +369,21 @@ describe("AgentPrincipalDetailDrawer", () => {
         expect(maybe('[data-testid="apd-hooks-event-1"]')).not.toBeNull();
     });
 
+    it("工作区角色：列表读到但为空 ⇒ apd-roles-none，且不是 404 的 apd-roles-empty（task-219）", async () => {
+        mountDrawer({ workspaceId: "ws-1" });
+        await flushPromises();
+
+        // 默认桩（spec 顶部）：getAgentRoles resolves [] —— 「成功但空」。
+        expect(maybe('[data-testid="apd-roles-none"]'), "空列表分支必须可定位").not.toBeNull();
+        expect(q('[data-testid="apd-roles-none"]').textContent).toContain("角色");
+        expect(
+            maybe('[data-testid="apd-roles-empty"]'),
+            "空列表不是「主体不存在」，不许复用 404 的 testid",
+        ).toBeNull();
+        expect(maybe('[data-testid="apd-roles-error"]')).toBeNull();
+        expect(maybe('[data-testid="apd-roles-bind"]'), "空列表不给去绑定入口").toBeNull();
+    });
+
     it("工作区角色 404：走区块空态 + 去绑定入口 + 可重试，不占错误卡位（task-151 ④）", async () => {
         const roles = vi
             .spyOn(api, "getAgentRoles")
@@ -378,6 +393,10 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         expect(q('[data-testid="apd-roles-empty"]').textContent).toContain("角色");
+        expect(
+            maybe('[data-testid="apd-roles-none"]'),
+            "404 不是「成功但空」，两者不得同时出现",
+        ).toBeNull();
         expect(maybe('[data-testid="apd-roles-error"]')).toBeNull();
         expect(q('[data-testid="apd-roles-bind"]').getAttribute("href")).toBe("/settings/roles");
         await click("apd-roles-retry");

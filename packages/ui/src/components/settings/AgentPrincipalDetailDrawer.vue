@@ -1205,9 +1205,13 @@ function discardAndClose() {
                             </a>
                         </div>
                     </template>
+                    <!-- task-219：「请求成功但列表为空」与上面那个「404 主体不存在」是两个语义，
+                         testid 必须分开（apd-roles-none / apd-roles-empty）—— 合并成一个，
+                         将来两分支被谁合成一处都没人能发现。 -->
                     <p
                         v-else-if="!roles || roles.length === 0"
                         class="text-sm text-muted-foreground"
+                        data-testid="apd-roles-none"
                     >
                         {{ t(K + "rolesEmpty") }}
                     </p>
