@@ -246,7 +246,7 @@ public class ConfigController {
         try {
             raw = layer != null
                     ? readLayer(domain, layer, userId, workspaceId)
-                    : configService.resolveDomain(domain, userId, workspaceId);
+                    : configService.resolveDomainWithReadFaceDefaults(domain, userId, workspaceId);
         } catch (ConfigService.ConfigAccessException e) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration layer is not readable");

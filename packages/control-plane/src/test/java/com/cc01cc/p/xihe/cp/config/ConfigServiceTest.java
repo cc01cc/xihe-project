@@ -1459,4 +1459,24 @@ class ConfigServiceTest {
                 configService, "envOverlay", originalOverlay);
         }
     }
+
+    @Test
+    void readFaceDefaultsDoNotLeakIntoTheExecutionResolver() {
+        // task-167: resolveDomain (execution) must keep answering "no effective value" for the
+        // three domains that only gained read-face defaults.
+        assertTrue(configService.resolveDomain("approval-policy", userA, wsA).isEmpty());
+        assertTrue(configService.resolveDomain("context-policy", userA, wsA).isEmpty());
+        assertTrue(configService.resolveDomain("user-preference", userA, wsA).isEmpty());
+
+        assertEquals("manual",
+            configService.resolveDomainWithReadFaceDefaults("approval-policy", userA, wsA).get("mode"));
+        assertEquals(CONTEXT_POLICY_DEFAULTS,
+            configService.resolveDomainWithReadFaceDefaults("context-policy", userA, wsA).get("defaults"));
+        assertEquals("system",
+            configService.resolveDomainWithReadFaceDefaults("user-preference", userA, wsA).get("theme"));
+    }
+
+    private static final String CONTEXT_POLICY_DEFAULTS =
+        "{\"fingerprintEnabled\":true,\"maxInputTokens\":128000,\"pruneWindowChars\":80000,"
+            + "\"recoveryBand\":0.8,\"summaryProvider\":\"rule\",\"summaryTimeoutMs\":15000}";
 }

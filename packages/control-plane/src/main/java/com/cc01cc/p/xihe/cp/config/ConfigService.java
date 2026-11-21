@@ -192,6 +192,43 @@ public class ConfigService {
     }
 
     /**
+     * task-167 (DSD-1519 R1): code defaults for the **merged read face only**.
+     *
+     * <p>Why not {@link #CODE_DEFAULTS}: that map is merged inside {@link #effective} and
+     * {@link #resolve}, so every execution reader would see it —
+     * {@code ChatController.resolveMaxInputTokens} would stop answering null, the Agent per-run
+     * snapshot ({@code AGENT_RUN_OVERRIDE_DOMAINS}) would gain a defaults document, and
+     * {@code DbPolicyContextProvider} would see {@code mode=manual} instead of nothing. This map is
+     * read by {@link #resolveDomainWithReadFaceDefaults} and by {@link #meta} only, so
+     * {@code effective()} / {@code resolve()} / {@code /internal/v1/config/effective} are untouched.</p>
+     *
+     * <p>Every value below is the fallback the execution code itself applies when the key is
+     * absent (per-key evidence lives in
+     * {@code internal/A03-xihe/evidence/2026-11-21-config-code-defaults-readface}). Keys without
+     * such a fallback stay absent on purpose: the read face must keep answering "no effective
+     * value" rather than invent one.</p>
+     */
+    private static final Map<String, Map<String, String>> READ_FACE_DEFAULTS = Map.of(
+        // PolicyEngine.java:278-280 / PolicyController.java:112 / ApprovalService.java:1144
+        "approval-policy", Map.of(
+            "mode", "manual"),
+        // fingerprintEnabled: ContextFingerprintRecorder.java:171-192; maxInputTokens:
+        // packages/agent/src/xihe_agent/context_policy.py:17 + context/compaction.py:142 (the Agent
+        // owns this fallback, CP keeps its per-run override empty — the read face reports the value
+        // a run actually uses); pruneWindowChars: context_policy.py:18 / LlmSummaryProvider.java:46;
+        // recoveryBand: context_policy.py:19; summaryProvider: LlmSummaryProvider.java:287;
+        // summaryTimeoutMs: LlmSummaryProvider.java:41. The remaining defaults.* leaves have no
+        // runtime consumer at all, so they are deliberately not listed.
+        "context-policy", Map.of(
+            "defaults", "{\"fingerprintEnabled\":true,\"maxInputTokens\":128000,"
+                + "\"pruneWindowChars\":80000,\"recoveryBand\":0.8,"
+                + "\"summaryProvider\":\"rule\",\"summaryTimeoutMs\":15000}"),
+        // UI facts: stores/settings.ts:91 (theme default "system"), i18n/locale.ts:11 (DEFAULT_LOCALE).
+        "user-preference", Map.of(
+            "theme", "system",
+            "language", "zh-CN"));
+
+    /**
      * Decision #24: resolved/effective include code defaults so the UI and the
      * execution modules agree on fallback values.
      */
@@ -353,6 +390,56 @@ public class ConfigService {
     public Map<String, String> resolveDomain(String domain, UUID userId, UUID workspaceId) {
         EffectiveConfig effective = effective(domain, userId, workspaceId);
         return effective.entries();
+    }
+
+    /**
+     * task-167 (DSD-1519 R1): the merged read face of {@code GET /api/v1/config/{domain}}
+     * (no {@code layer}), with the documented code defaults on top.
+     *
+     * <p>Execution keeps calling {@link #resolveDomain}: this method is the only place that
+     * adds {@link #READ_FACE_DEFAULTS}, and it never writes anything.</p>
+     *
+     * <p>A blank row counts as absent. Only the instance layer can delete a row; the user and
+     * workspace layers clear by writing {@code ""} (they have no DELETE endpoint), so treating
+     * {@code ""} as a value would pin the key to empty and make "cleared" indistinguishable from
+     * "explicitly nothing".</p>
+     */
+    public Map<String, String> resolveDomainWithReadFaceDefaults(String domain, UUID userId, UUID workspaceId) {
+        return mergeReadFaceDefaults(domain, resolveDomain(domain, userId, workspaceId));
+    }
+
+    /** Package-private so the read-face test can pin the merge without a database. */
+    static Map<String, String> mergeReadFaceDefaults(String domain, Map<String, String> resolved) {
+        if (resolved == null) {
+            return null;
+        }
+        Map<String, String> readFace = READ_FACE_DEFAULTS.getOrDefault(domain, Map.of());
+        if (readFace.isEmpty()) {
+            return resolved;
+        }
+        Map<String, String> merged = new LinkedHashMap<>(resolved);
+        readFace.forEach((key, value) -> {
+            String current = merged.get(key);
+            if (current == null || current.isBlank()) {
+                merged.put(key, value);
+            }
+        });
+        return merged;
+    }
+
+    /**
+     * task-167: provenance face = execution defaults ∪ read-face defaults. {@link #meta} reports
+     * these keys as {@code source=code} / {@code defaultPresent=true}; the merge order keeps the
+     * execution map authoritative wherever both would define a key.
+     */
+    private static Map<String, String> withReadFaceDefaults(String domain, Map<String, String> execution) {
+        Map<String, String> readFace = READ_FACE_DEFAULTS.getOrDefault(domain, Map.of());
+        if (readFace.isEmpty()) {
+            return execution;
+        }
+        Map<String, String> union = new LinkedHashMap<>(execution);
+        readFace.forEach(union::putIfAbsent);
+        return union;
     }
 
     public String resolve(String domain, String key, UUID userId, UUID workspaceId) {
@@ -581,7 +668,7 @@ public class ConfigService {
             ? rowsToMap(rowsForLayer("workspace", domain, null, workspaceId))
             : Map.of();
         Map<String, String> env = envOverlay.activeOverrides(domain);
-        Map<String, String> defaults = CODE_DEFAULTS.getOrDefault(domain, Map.of());
+        Map<String, String> defaults = withReadFaceDefaults(domain, CODE_DEFAULTS.getOrDefault(domain, Map.of()));
         Map<String, String> adminLocked = adminLockReasons(domain);
 
         java.util.Set<String> keys = new java.util.TreeSet<>();

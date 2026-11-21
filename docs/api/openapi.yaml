@@ -3828,6 +3828,13 @@ paths:
       tags: [config]
       operationId: getConfig
       summary: Get config of one domain (merged effective, or one explicit layer)
+      description: >-
+        Domains that declare code defaults answer them on the merged read (no `layer`):
+        `approval-policy.mode=manual`, `context-policy.defaults` (fingerprintEnabled,
+        maxInputTokens, pruneWindowChars, recoveryBand, summaryProvider, summaryTimeoutMs) and
+        `user-preference` (theme=system, language=zh-CN). A blank row counts as absent, so
+        clearing an override falls back to the code default; `{}` still means the domain has no
+        effective value at all. Raw-layer reads (`layer=<name>`) never carry code defaults.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
