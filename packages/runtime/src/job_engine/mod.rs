@@ -60,6 +60,10 @@ pub enum JobEngineError {
     OutputMissing(String),
     /// Operation not supported on this platform.
     Unsupported(String),
+    /// Host policy artifact missing/malformed, or the plan disagrees with it.
+    /// Runtime-internal code `POLICY_DENIED`: it must not collapse into
+    /// `RUNTIME_UNAVAILABLE`, otherwise a policy refusal reads as a broken backend.
+    PolicyDenied(String),
 }
 
 impl JobEngineError {
@@ -70,6 +74,7 @@ impl JobEngineError {
                 "RUNTIME_UNAVAILABLE"
             }
             Self::Unsupported(_) => "RUNTIME_UNAVAILABLE",
+            Self::PolicyDenied(_) => "POLICY_DENIED",
             Self::NotFound => "JOB_NOT_FOUND",
         }
     }
@@ -80,7 +85,8 @@ impl JobEngineError {
             | Self::Unavailable(reason)
             | Self::InvalidPath(reason)
             | Self::OutputMissing(reason)
-            | Self::Unsupported(reason) => reason.clone(),
+            | Self::Unsupported(reason)
+            | Self::PolicyDenied(reason) => reason.clone(),
             Self::NotFound => "job handle not found".to_string(),
         }
     }
@@ -757,11 +763,27 @@ impl JobEngine {
     ) -> Result<JobHandle, JobEngineError> {
         use std::os::windows::io::AsRawHandle;
 
+        // Ordering contract: InvalidPath first (unchanged behaviour for a bad cwd),
+        // then the host policy artifact. See job_policy::enforce docs.
         let cwd = validate_cwd(&plan)?;
+        let host_policy = crate::job_policy::enforce(&plan)?;
         let mut command = build_command(&plan);
+        command.current_dir(&cwd);
+        match &host_policy {
+            // windows-host: never inherit the parent environment. The child gets
+            // the plugin-runner system allowlist plus the artifact-sanctioned keys.
+            Some(policy) => {
+                command
+                    .env_clear()
+                    .envs(crate::job_policy::child_env(policy, &plan.env));
+            }
+            // windows-mxc keeps the inherited environment on purpose: wxc-exec
+            // needs PATH/SYSTEMROOT and its plan.env is empty by construction.
+            None => {
+                command.envs(&plan.env);
+            }
+        }
         command
-            .current_dir(&cwd)
-            .envs(&plan.env)
             .stdin(if stdin.is_some() {
                 Stdio::piped()
             } else {
@@ -1491,6 +1513,19 @@ mod tests {
 
         fn plan_for(arguments: &[&str], timeout_ms: u64) -> LaunchPlan {
             let root = std::env::temp_dir();
+            // task-204: windows-host plans must carry a policy artifact; the
+            // engine now fails closed without one (see job_policy::enforce).
+            // Unique sub-directory: several tests call plan_for concurrently and a
+            // shared artifact path would be read mid-write (malformed => denied).
+            let artifact_dir = root.join(format!("host-policy-{}", uuid::Uuid::new_v4()));
+            let policy_artifact = crate::job_policy::write_artifact(
+                &crate::job_policy::HostJobPolicy {
+                    read_write_roots: vec![root.clone()],
+                    ..Default::default()
+                },
+                &artifact_dir,
+            )
+            .expect("host policy artifact");
             LaunchPlan {
                 backend_kind: "windows-host".to_string(),
                 backend_revision: "test".to_string(),
@@ -1504,7 +1539,7 @@ mod tests {
                     read_only_roots: Vec::new(),
                     read_write_roots: vec![root],
                 },
-                policy_artifact: None,
+                policy_artifact: Some(policy_artifact),
             }
         }
 
@@ -1672,6 +1707,73 @@ mod tests {
                 other => panic!("expected fail-closed, got {other:?}"),
             }
             assert_eq!(engine.active_count(), 0);
+        }
+
+        #[test]
+        fn missing_host_policy_artifact_fails_closed_with_policy_denied() {
+            // task-204: "windows-host" must never launch without an artifact, and
+            // the refusal must be a policy code, not RUNTIME_UNAVAILABLE.
+            let engine = JobEngine::new("boot-test", temp_root("no-artifact"));
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let mut plan = plan_for(&["/C", "exit 0"], 0);
+            plan.policy_artifact = None;
+            let error = engine.start(&job_id, plan).expect_err("must fail closed");
+            assert_eq!(error.code(), "POLICY_DENIED");
+            assert_ne!(error.code(), "RUNTIME_UNAVAILABLE");
+            assert_eq!(engine.active_count(), 0, "no job may be registered");
+        }
+
+        #[test]
+        fn plan_env_outside_the_artifact_allowlist_fails_closed() {
+            let engine = JobEngine::new("boot-test", temp_root("env-grant"));
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let mut plan = plan_for(&["/C", "exit 0"], 0);
+            plan.env
+                .insert("XIHE_ENGINE_TEST_SECRET".to_string(), "leak".to_string());
+            let error = engine.start(&job_id, plan).expect_err("must fail closed");
+            assert_eq!(error.code(), "POLICY_DENIED");
+            assert!(error.reason().contains("env key not allowed"));
+            assert_eq!(engine.active_count(), 0);
+        }
+
+        #[test]
+        fn host_job_child_never_sees_parent_only_environment() {
+            // Real spawn: the child writes its own environment to a file; a
+            // parent-only key must be absent while PATH (allowlisted) survives.
+            // lib.rs forbids unsafe_code, so the test cannot set a sentinel key;
+            // it uses a key the parent already has and the allowlist excludes.
+            let parent_only = ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "CARGO_HOME"]
+                .into_iter()
+                .find(|key| {
+                    std::env::var_os(key).is_some()
+                        && !crate::plugin::spec::INHERITED_ENV_KEYS.contains(key)
+                })
+                .expect("a parent-only env key must exist for this assertion");
+            let root = temp_root("child-env");
+            std::fs::create_dir_all(&root).expect("root");
+            let engine = JobEngine::new("boot-test", temp_root("child-env-jobs"));
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let mut plan = plan_for(&["/C", "set > child-env.txt"], 0);
+            plan.cwd = Some(root.clone());
+            plan.grants = FilesystemPolicy {
+                read_only_roots: Vec::new(),
+                read_write_roots: vec![root.clone()],
+            };
+            engine.start(&job_id, plan).expect("start");
+            let snapshot = wait_terminal(&engine, &job_id);
+            assert_eq!(snapshot.status, JobStatus::Succeeded);
+            let dump = std::fs::read_to_string(root.join("child-env.txt")).expect("child env dump");
+            assert!(
+                !dump
+                    .to_ascii_uppercase()
+                    .contains(&format!("{parent_only}=")),
+                "parent-only env {parent_only} leaked into the child:\n{dump}"
+            );
+            assert!(
+                dump.to_ascii_uppercase().contains("PATH="),
+                "PATH must survive"
+            );
+            engine.cleanup(&job_id).expect("cleanup");
         }
 
         #[test]

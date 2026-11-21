@@ -22,6 +22,7 @@ pub mod inventory;
 pub mod job_engine;
 pub mod job_host_adapter;
 pub mod job_mxc_adapter;
+pub mod job_policy;
 pub mod lifecycle;
 pub mod log_redact;
 pub mod mcp_session;

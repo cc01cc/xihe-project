@@ -2217,6 +2217,9 @@ fn job_engine_problem(error: JobEngineError) -> (StatusCode, AxumJson<serde_json
         | JobEngineError::InvalidPath(_)
         | JobEngineError::OutputMissing(_)
         | JobEngineError::Unsupported(_) => StatusCode::BAD_GATEWAY,
+        // task-204: a policy refusal is a deliberate "not allowed with this artifact",
+        // not a broken backend, so it must not read as 502 RUNTIME_UNAVAILABLE.
+        JobEngineError::PolicyDenied(_) => StatusCode::CONFLICT,
     };
     (
         status,
@@ -2411,12 +2414,14 @@ async fn start_direct_attach_job(
             env: env.unwrap_or_default(),
             timeout_secs,
         },
+        &app.job_engine.output_dir(job_id),
     )
     .map_err(job_engine_problem)?;
     tracing::warn!(
         workspace_id = %workspace_path,
         job_id = %job_id,
         backend_kind = plan.backend_kind,
+        policy_artifact = ?plan.policy_artifact,
         "PLAN-0395: starting an unrestricted host job (no filesystem isolation)"
     );
     match app.job_engine.start_in_workspace(Some(ws_id), job_id, plan) {

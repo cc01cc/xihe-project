@@ -31,6 +31,15 @@ fn temp_root(label: &str) -> PathBuf {
 }
 
 fn host_plan(root: &Path, program: &str, args: &[&str], timeout_ms: u64) -> LaunchPlan {
+    // task-204: windows-host plans must carry a policy artifact.
+    let policy_artifact = xihe_runtime::job_policy::write_artifact(
+        &xihe_runtime::job_policy::HostJobPolicy {
+            read_write_roots: vec![root.to_path_buf()],
+            ..Default::default()
+        },
+        root,
+    )
+    .expect("host policy artifact");
     LaunchPlan {
         backend_kind: "windows-host".to_string(),
         backend_revision: "it".to_string(),
@@ -44,7 +53,7 @@ fn host_plan(root: &Path, program: &str, args: &[&str], timeout_ms: u64) -> Laun
             read_only_roots: Vec::new(),
             read_write_roots: vec![root.to_path_buf()],
         },
-        policy_artifact: None,
+        policy_artifact: Some(policy_artifact),
     }
 }
 

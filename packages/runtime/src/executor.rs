@@ -1066,6 +1066,7 @@ impl WorkspaceExecutionRouter {
                             env,
                             timeout_secs: timeout_ms.div_ceil(1_000),
                         },
+                        &self.job_engine.output_dir(&job_id),
                     )
                     .map_err(job_engine_error)?
                 };
