@@ -25,9 +25,10 @@ import {
  *
  * <p><b>PLAN-0772 M2（2026-11-12）三个数变了</b>：资源面搬出 `/settings` 成了第三个顶层入口 ⇒
  * 实例层 22 → **17**（12 域 + 2 运维 + 3 安全）、用户层 12 → **9**（只剩 9 域），另立
- * 资源模块 **5**（5 资源 × 层 tab）。<b>两条断言形态都保留</b>：`toEqual` 仍写死数字、
- * `toHaveLength(5)` 仍写死字面量 5 —— 不许换成「由生成函数自己算」的恒真式（那样就没人会发现
- * 有条目被搬走）。</p>
+ * 资源模块 **5**（5 资源 × 层 tab；task-96 撤智能体后再降为 **4**，见下方 `:43`）。
+ * <b>两条断言形态都保留</b>：`toEqual` 仍写死数字、`toHaveLength(...)` 仍写死字面量 —— 不许换成
+ * 「由生成函数自己算」的恒真式（那样就没人会发现有条目被搬走）。写死的数字必须**同时写明组成**，
+ * 否则下一个改矩阵的人只能靠猜（task-68 补）。</p>
  */
 describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
     // task-485（2026-11-14）：`agent-profile` 迁出设置区 ⇒ 实例层 12 → **11 域**。
@@ -35,6 +36,12 @@ describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
     // 「平台智能体」（3 → **4**）⇒ 实例层 16 → **17**（11 + 2 + 4）。
     // task-8（2026-11-21）：安全组末尾加「授权总览」（4 → **5**）⇒ 实例层 17 → **18**（11 + 2 + 5）。
     it("设置区两个层：实例层 18 = 11 域 + 2 运维 + 5 安全；用户层 8 = 8 域；资源 4", () => {
+        // 三个写死数字的组成（task-68；口径 = `data.ts:201-205` 的 `NAV_COUNTS` 现算：
+        //   instance = domains.length + opsItems.length + securityItems.length
+        //            = 11 域（`LAYER_DOMAINS.instance`，task-485 撤 `agent-profile`）+ 2 运维 + 5 安全（task-8 加「授权总览」）
+        //   user     = `domainsForLayer("user").length` = 8 域（同上撤 `agent-profile`）
+        //   resources= `resourceGroups().length` = 4 个资源条目（**不是**工作区层域数，那是 3）
+        // 这里刻意保留字面量而不写成「由生成函数自己算」：本文件的判据性质就是防漂移（见文件头）。
         expect(NAV_COUNTS).toEqual({ instance: 18, user: 8, resources: 4 });
         expect(domains).toHaveLength(11);
         expect(opsItems).toHaveLength(2);

@@ -3,7 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { LAYER_DOMAINS } from "../../../stores/config";
-import { navItemsForLayer } from "../../../lib/settingsIa";
+import { instanceOpsGroups, navItemsForLayer } from "../../../lib/settingsIa";
 import SettingsSidebar from "../SettingsSidebar.vue";
 
 /**
@@ -223,6 +223,11 @@ describe("SettingsSidebar", () => {
         expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
         // config-locks 走能力位（BL-392），atom-only 下必须隐藏 —— 证明两组门没有互相污染。
         expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(false);
+        // task-70（audit-1 实测）：这一档**可见条目 = 6**（5 条恒显安全/运维 + roles；
+        // 2 个 ops + 4 个安全里 config-locks 被能力位挡住，domains 8 条被能力位挡住）；
+        // 徽标仍报 **14**（= 8 域条目 + 6 个可见 ops/安全项，其余条目被权限门挡掉）。
+        expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(6);
+        expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain("14");
     });
 
     it("T4.0 → M2：资源组已整体搬出设置区（两层都不再渲染任何资源条目）", async () => {
@@ -249,11 +254,19 @@ describe("SettingsSidebar", () => {
         // `isInstanceAdmin` 能力位、没有 `MANAGE_ROLES` 原子）：
         //   · 能力位 + MANAGE_ROLES 都在 ⇒ **15**（本用例）
         //   · 有 `isInstanceAdmin`、无 MANAGE_ROLES ⇒ **14**（roles 被权限门隐藏）
-        //   · 两者皆无（atom-only）⇒ **13**（roles + config-locks 都被挡）
-        // 与 `e2e/mock/resources-ia.spec.ts:82` 的 `NAV_COUNTS.instance = 18` **互证**：那边钉的是
+        //   · atom-only（**有** MANAGE_ROLES、无 `isInstanceAdmin`）⇒ 徽标仍 **14**、可见条目 **6**
+        //     （8 域条目被能力位挡住；ops/安全 6 条可⻅，config-locks 仍被能力位挡）—— 实测钉在
+        //     "BL-552: keeps the roles entry visible for an atom-only user" 用例里（task-70）。
+        //   · 两者皆无 ⇒ 实例段**整段不渲染**（能力位与 MANAGE_ROLES 都不在），此时"13"只是
+        //     `instanceEntryCount` 的未渲染计算值，**不是任何用户看得到的口径**，别拿它当断言。
+        // 与 `src/preview/mock/data.ts:201-205` 的 `NAV_COUNTS.instance = 18` **互证**：那边钉的是
         // 未折叠条目数（18），这边钉的是折叠后条目数（15），差的 3 正是两个折叠组省下的条目。
         // 用户层 = 5 条目（task-227 把三个模型域折成一个组条目）。
-        const instanceCount = navItemsForLayer("instance").length + 7;
+        // 2 + 5 也从 SSOT 现算（task-68）：旧写法 `+ 7` 是魔法常数，改一处计数就得回头猜 7 是什么。
+        const opsAndSecurityEntryCount = instanceOpsGroups()
+            .filter((group) => group.id === "ops" || group.id === "security")
+            .reduce((sum, group) => sum + group.items.length, 0);
+        const instanceCount = navItemsForLayer("instance").length + opsAndSecurityEntryCount;
         expect(instanceCount).toBe(15);
         expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain("15");
         expect(wrapper.find('[data-testid="settings-nav-count-user"]').text()).toContain(

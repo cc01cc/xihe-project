@@ -5,6 +5,9 @@ import { permissionAtomsWithout, setupMockAuth } from "./helpers/auth";
 // 共用同一份数据，不再各自手抄。`e2e → src/lib` 是既有惯例（同目录 `plan-0752-settings-ia.spec.ts`
 // 就引 `src/lib/settingsIaRequests`），不是本卡新开的依赖方向。
 import { LEGACY_RESOURCE_PATHS } from "../../src/lib/legacyRoutes";
+// task-68：模块条数的期望从 SSOT 取，不再写死字面量（同 `session-management.spec.ts:189`、
+// `global-rail-dual-state.spec.ts:120` 的既有范式）。
+import { GLOBAL_MODULES } from "../../src/lib/globalModules";
 
 /**
  * PLAN-0772 M2：资源面搬出 `/settings`、成为**第三个顶层入口**（`/resources/*`）。
@@ -47,11 +50,13 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-1");
         const rail = page.getByTestId("global-rail-module-resources");
         await expect(rail).toBeVisible();
-        // 计数口径（`task-11` 起 5，此前 4）：`GLOBAL_MODULES` 五项，rail 把它劈成主区（除 `settings`
-        // 的四项）+ footer（`settings` 一项），两处共用 `global-rail-module-*` 前缀 ⇒ **5 = 4 + 1**。
-        // **不只改数字**——单独一个计数下次还会过期，所以把「哪五个」也逐个钉住：多一个少一个/
-        // 换了 id，红点会点名到具体模块，而不是只报「期望 5 实际 6」。
-        await expect(page.locator('[data-testid^="global-rail-module-"]')).toHaveCount(5);
+        // 计数口径（`task-11` 起 5，此前 4）：rail 把 `GLOBAL_MODULES` 劈成主区（除 `settings`
+        // 的其余项）+ footer（`settings` 一项），两处共用 `global-rail-module-*` 前缀。
+        // **期望值从 SSOT 现算**（task-68）：写死字面量会被产品演进甩下 —— 本文件的 3→4→5 已经连踩两次。
+        // 「哪五个」仍逐个钉住下面的 id 清单（带名基线），所以派生计数不会把判据变弱。
+        await expect(page.locator('[data-testid^="global-rail-module-"]')).toHaveCount(
+            GLOBAL_MODULES.length,
+        );
         for (const moduleId of [
             "workbench",
             "org-members",

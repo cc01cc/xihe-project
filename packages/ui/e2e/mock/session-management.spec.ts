@@ -178,8 +178,10 @@ async function expectNoAdminEntryOnGlobalRail(page: Page): Promise<void> {
     // 模块入口**按 SSOT 派生的条数**校验，不写死数字（task-141，2026-11-15）。
     // 旧写法写死「三个模块」：`dc3603db6`（PLAN-0773 M3 / task-240，组织成员页；Lead 裁 (a)：
     // 实例级面进全局模块）把 `GLOBAL_MODULES` 加成了四个（workbench / org-members / resources / settings，
-    // 见 `src/lib/globalModules.ts:27` 的 id 联合与 `:84` 起的模块表）⇒ 那条期望自那时起就过期；
-    // `resources-ia.spec.ts:50` 早已按 4 断言，两条互相矛盾本身就说明写死数字会被产品演进甩下。
+    // 见 `src/lib/globalModules.ts:27` 的 id 联合与 `:113` 起的模块表）；`task-11`（`D-1220` ③ 回退）
+    // 再加第五个 `scheduled-tasks`（末位）⇒ 现在是五个。那条写死的期望自 task-240 起就过期；
+    // `resources-ia.spec.ts:39` 的计数也已按 SSOT 派生（`GLOBAL_MODULES.length`），两条互相矛盾本身
+    // 就说明写死数字会被产品演进甩下。
     // 本条意图是「全局条只有表里的模块 + 旧 NavRail admin 入口不再出现」，不是「恰好 N 个」——
     // 所以两侧对撞：落点从 DOM 取、期望集从 SSOT 取（`D-1137` 锚独立基准）。
     for (const module of GLOBAL_MODULES) {
