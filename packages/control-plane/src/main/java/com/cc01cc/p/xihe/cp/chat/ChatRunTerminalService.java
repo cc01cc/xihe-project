@@ -367,7 +367,11 @@ public class ChatRunTerminalService {
 
     /**
      * PLAN-0464 T2.1: the waiting link is read from the child run row itself.
-     * Lock order stays parent Session → parent Run → child Session → child Run.
+     * Lock order (task-85): parent Session → child Session → parent Run → child Run — every
+     * Session row before every chat_runs row, tree-wide. The child Session lock used to be taken
+     * by {@link #terminalize} *after* this method had already locked the parent Run; the wake path
+     * (WakeDispatchService, which locks the parent Run and then the child Session row through the
+     * event-sequence lock) inverted that order and the spawn path deadlocked with SQLSTATE 40P01.
      *
      * <p>A non-terminal spawn child MUST carry the link: {@code
      * createSpawnFromParent} writes it in the same transaction as the run, so a
@@ -409,6 +413,15 @@ public class ChatRunTerminalService {
             return new ParentLink(parentSessionId, parentRunId, waitingToolCallId, true, false, null);
         }
         entityManager.refresh(parentSession);
+
+        // task-85 (lock order): every Session row is locked BEFORE any chat_runs row, tree-wide.
+        // The child Session lock used to be taken by terminalize() only *after* this method had
+        // already locked the parent Run, and the wake path (WakeDispatchService) asks for the child
+        // Session row after taking the parent Run — two opposite orders on the same pair of rows,
+        // which deadlocked the spawn path with SQLSTATE 40P01. A replay (already-terminal child)
+        // returned above, so this never adds a lock to the LOST fast path; terminalize() re-locks
+        // the same row afterwards and simply finds it held.
+        sessions.findByIdForUpdate(childSessionLocator.getId());
 
         ChatRun parentRun = chatRuns.findByIdForUpdate(parentRunId).orElse(null);
         if (parentRun == null) {

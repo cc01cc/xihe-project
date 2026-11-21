@@ -438,6 +438,15 @@ public class WakeDispatchService {
                                              String triggerSource, String wakeRoundId, UUID parentRunId,
                                              String parentRunIdRaw) {
         dbLockTimeout.apply();
+        // task-85 (lock order): Session rows are locked BEFORE any chat_runs row, tree-wide.
+        // This hop is the one place that used to invert it: the parent-run lock below came first,
+        // and the context-event append later in the same transaction (wakeupAs →
+        // EventStoreService#lockSessionForSequence → SessionLockService#lockRow) then asked for the
+        // child Session row — while ChatRunTerminalService holds Session then Run. Two transactions
+        // with opposite orders on (sessions, chat_runs) deadlocked the spawn path with SQLSTATE
+        // 40P01 under load. Taking the Session row here makes this transaction "session → run" too,
+        // and the later append re-locks a row it already owns instead of requesting a new one.
+        sessionRepository.findByIdForUpdate(sessionId);
         ChatRun parentRun = chatRunRepository.findByIdForUpdate(parentRunId).orElse(null);
         if (parentRun == null) {
             return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
