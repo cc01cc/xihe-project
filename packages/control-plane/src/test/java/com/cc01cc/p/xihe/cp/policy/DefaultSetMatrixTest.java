@@ -126,7 +126,13 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // TEAM_TASK_MANAGE base atom arrives the same way MANAGE_PERSONAL_SKILLS did — no
             // second literal, just inheritance (the measured parity gate forced the ADMIN seed,
             // so removing it would REMOVE the ability, not tighten it).
-            "TEAM_TASK_MANAGE");
+            "TEAM_TASK_MANAGE",
+            // task-108 / D-1908 rev3 (V178): the session-relaxation atom joined the ADMIN seed
+            // (SystemAccessRoleCatalog.java:262, migration V178:31-34), so the fixed
+            // instance-administrator set grows by one more literal — same reasoning as V157/V172
+            // above: the seed is what the role holds, and dropping it here would assert a set the
+            // code no longer builds (V178:44-55 also backfills it onto existing ADMIN bindings).
+            "session:permission:configure");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

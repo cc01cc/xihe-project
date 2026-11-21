@@ -242,7 +242,8 @@ class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
 
         WakeDispatchService.WakeFireResult first = wakeDispatchService.fire(bee.getId(), "chain",
                 "wake:chain:" + rootRunId + ":" + bee.getId(), session.getId(), rootRunId);
-        assertTrue(first.dispatched(), "the depth-1 hop is admitted before the ceiling tightens");
+        assertTrue(first.dispatched(),
+                "the depth-1 hop is admitted before the ceiling tightens (" + describe(first) + ")");
 
         configService.putLayer("instance", "agent-runtime",
                 Map.of("wakeChainMaxDepth", "1"), "test", null, null);
@@ -343,10 +344,34 @@ class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
         var snapshot = objectMapper.createObjectNode();
         snapshot.set("permissions", objectMapper.createArrayNode());
         principal.setTemplateSnapshot(snapshot);
+        principal = withDerivedRunSurface(principal);
         principal = agentPrincipalRepository.saveAndFlush(principal);
         principalId = principal.getId();
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId,
                 objectMapper.createArrayNode()));
+    }
+
+    /**
+     * Marks a fixture principal as one that may receive delegation-derived runs (task-86): the tool
+     * surface of such a run comes from the WOKEN principal's own
+     * {@code context_policy->>'derivedRunToolMode'}, and a missing key is a refusal
+     * ({@code derived_tool_surface_no_key}), not a default. Fixture-only change (task-203 J1).
+     */
+    private AgentPrincipal withDerivedRunSurface(AgentPrincipal principal) {
+        var policy = objectMapper.createObjectNode();
+        policy.put("derivedRunToolMode", "workspace");
+        principal.setContextPolicy(policy);
+        return principal;
+    }
+
+    /**
+     * Renders a wake result for assertion messages so a refusal carries its reason
+     * ({@code refused|derived_tool_surface_no_key}, …) instead of a bare boolean (task-203 J2).
+     */
+    private static String describe(WakeDispatchService.WakeFireResult result) {
+        return result == null ? "null"
+                : "dispatched=" + result.dispatched() + ", outcome=" + result.outcome()
+                        + ", detail=" + result.detail();
     }
 
     /** A bound agent session the scheduled-wakeup admission path accepts. */
@@ -399,6 +424,7 @@ class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
         var snapshot = objectMapper.createObjectNode();
         snapshot.set("permissions", objectMapper.createArrayNode());
         extra.setTemplateSnapshot(snapshot);
+        extra = withDerivedRunSurface(extra);
         extra = agentPrincipalRepository.saveAndFlush(extra);
         extraPrincipalIds.add(extra.getId());
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(extra.getId().toString(), workspaceId,

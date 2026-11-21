@@ -106,8 +106,12 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         bindToWorkspace(principal.getId());
 
         List<String> atoms = roleAtomNames(principal.getId());
-        assertTrue(atoms.containsAll(List.of("read", "write", "exec")),
+        // DSD-1500 (Q-93) R2 / V179: exec left the editor default, so the expected set is the
+        // workspace read/write/delete triangle — asserting exec here would pin the retired atom.
+        assertTrue(atoms.containsAll(List.of("read", "write", "delete")),
                 "WS_EDITOR atoms must be materialized right away: " + atoms);
+        assertFalse(atoms.contains("exec"),
+                "DSD-1500 (V179) retired exec from WS_EDITOR: " + atoms);
         assertTrue(roleBindingRepository
                         .findBySubjectTypeAndScopeTypeAndScopeId(
                                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, "workspace", workspaceId)
@@ -127,8 +131,12 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         bindToWorkspace(principal.getId());
 
         List<String> atoms = roleAtomNames(principal.getId());
-        assertTrue(atoms.containsAll(List.of("read", "write", "exec")),
+        // DSD-1500 (Q-93) R2 / V179: the retired exec atom is not part of the editor default any
+        // more; the triangle it must still carry is read/write/delete.
+        assertTrue(atoms.containsAll(List.of("read", "write", "delete")),
                 "the editor binding must take effect: " + atoms);
+        assertFalse(atoms.contains("exec"),
+                "DSD-1500 (V179) retired exec from WS_EDITOR: " + atoms);
         assertFalse(atoms.contains(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
                 "BL-349: a workspace role must not hand MEMORY_WRITE_SELF (agent-forbidden) to an agent");
         assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(atoms),

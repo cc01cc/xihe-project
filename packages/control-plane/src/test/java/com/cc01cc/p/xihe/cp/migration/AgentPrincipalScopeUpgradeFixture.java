@@ -158,6 +158,11 @@ public final class AgentPrincipalScopeUpgradeFixture {
         // task-188 MVP⑤ (V172, 2026-11-18) is the same shape one more time: TEAM_TASK_MANAGE joined
         // WS_OWNER + WS_EDITOR (the teammate claim path), so the fixture's "current set" grows by
         // one more atom — same reasoning as V157 above, verbatim.
+        // task-108 / D-1908 rev3 (V178) is the fourth round: session:permission:configure joined
+        // ADMIN + WS_OWNER + WS_EDITOR (V178:31-34) and V178:44-55 backfilled it onto every
+        // existing binding of those four roles, so the fixture's "current set" grows by that atom
+        // too. A cap snapshot without it would answer 409 ROLE_BINDING_EXCEEDS_CAP for the
+        // WS_EDITOR binding the behaviour tests exercise.
         insertWorkspaceBinding(connection, WORKSPACE_PRINCIPAL_ID,
                 "[{\"actionClass\": \"read\"}, {\"actionClass\": \"write\"},"
                         + " {\"actionClass\": \"delete\"}, {\"actionClass\": \"exec\"},"
@@ -167,7 +172,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
                         + " {\"actionClass\": \"PLUGIN_INVOKE\"},"
                         + " {\"actionClass\": \"WRITE_WORKSPACE_CONTENT\"},"
                         + " {\"actionClass\": \"MANAGE_WORKSPACE_MCP\"},"
-                        + " {\"actionClass\": \"TEAM_TASK_MANAGE\"}]");
+                        + " {\"actionClass\": \"TEAM_TASK_MANAGE\"},"
+                        + " {\"actionClass\": \"session:permission:configure\"}]");
         insertWorkspaceBinding(connection, INSTANCE_PRINCIPAL_ID, "[{\"actionClass\": \"write\"}]");
 
         insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
@@ -187,7 +193,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
         // for exactly the same reason, so it is in this loop too.
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE",
-                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE"}) {
+                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE",
+                "session:permission:configure"}) {
             // `role` is the authoritative source (2026-11-04 ruling). Seeding it keeps the fixture
             // deterministic even after another test triggers the role materializer: a principal with
             // role rows no longer falls back to its legacy template snapshot.
@@ -214,7 +221,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 + " 'V19 legacy workspace', 'fixture-only pre-upgrade workspace role', FALSE)");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE",
-                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE"}) {
+                "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE",
+                "session:permission:configure"}) {
             execute(connection, "INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
                     + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', '" + atom + "', '*')");
         }

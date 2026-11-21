@@ -339,7 +339,7 @@ public final class PermissionAtomCatalog {
     }
 
     /**
-     * The action atoms, in canonical order (41). The count in this sentence is prose, not the gate:
+     * The action atoms, in canonical order (42). The count in this sentence is prose, not the gate:
      * {@link PolicyVocabularyCountProseTest} derives it from this collection at test time, while
      * {@code P0ManagementAtomSeedMigrationTest} and {@code SkillReadFaceTest} pin the vocabulary itself.
      */

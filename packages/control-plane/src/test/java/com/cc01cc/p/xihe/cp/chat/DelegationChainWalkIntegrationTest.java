@@ -238,7 +238,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         WakeDispatchService.WakeFireResult wake = wakeDispatchService.fire(
                 participant.getId(), "chain", round, UUID.fromString(child.sessionId()), child.runId());
 
-        assertFalse(wake.dispatched(), "a broken chain never creates a wake run");
+        assertFalse(wake.dispatched(), "a broken chain never creates a wake run (" + describe(wake) + ")");
         assertEquals("chain_refused", wake.outcome());
         assertEquals(runsBeforeWake, runCount(), "no wake run for the orphaned chain");
         assertEquals(eventsBefore + 1, chainRefusedEventCount(child.sessionId()),
@@ -280,7 +280,8 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(second.get());
 
         assertTrue(first.get().dispatched() != second.get().dispatched(),
-                "exactly one of the two concurrent hops is admitted");
+                "exactly one of the two concurrent hops is admitted (first: " + describe(first.get())
+                        + "; second: " + describe(second.get()) + ")");
         WakeDispatchService.WakeFireResult refused =
                 first.get().dispatched() ? second.get() : first.get();
         assertEquals("chain_refused", refused.outcome(),
@@ -339,7 +340,8 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
 
         WakeDispatchService.WakeFireResult first = wakeDispatchService.fire(bee.getId(), "chain",
                 "wake:chain:" + rootRunId + ":" + bee.getId(), session.getId(), rootRunId);
-        assertTrue(first.dispatched(), "the depth-1 link commits durably before the 'restart'");
+        assertTrue(first.dispatched(),
+                "the depth-1 link commits durably before the 'restart' (" + describe(first) + ")");
 
         // Tighten the wake ceiling to 1 AFTER the depth-1 link exists: the next hop would be depth 2.
         configService.putLayer("instance", "agent-runtime",
@@ -370,6 +372,33 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * Marks a fixture principal as one that may receive delegation-derived runs.
+     *
+     * <p>task-86: a derived run's tool surface is resolved from the WOKEN principal's own
+     * {@code context_policy->>'derivedRunToolMode'}. The absence of the key is a refusal
+     * ({@code derived_tool_surface_no_key}), never a default, so a fixture that expects a dispatch
+     * must carry the grant — the same grant a real principal receives through the context-policy
+     * write face (task-16). Keeping it in the fixture leaves the product rule untouched (task-203 J1).
+     */
+    private AgentPrincipal withDerivedRunSurface(AgentPrincipal principal) {
+        var policy = objectMapper.createObjectNode();
+        policy.put("derivedRunToolMode", "workspace");
+        principal.setContextPolicy(policy);
+        return principal;
+    }
+
+    /**
+     * Renders a wake result for assertion messages: a refused hop then reads with its reason
+     * ({@code refused|derived_tool_surface_no_key}, {@code chain_refused|ancestor_missing}, …) instead
+     * of a bare {@code expected: <true> but was: <false>} (task-203 J2).
+     */
+    private static String describe(WakeDispatchService.WakeFireResult result) {
+        return result == null ? "null"
+                : "dispatched=" + result.dispatched() + ", outcome=" + result.outcome()
+                        + ", detail=" + result.detail();
+    }
+
     /** A workspace-bound agent principal with a single-token name so {@code @Name} parses. */
     private UUID extraPrincipal(String name) {
         AgentPrincipal extra = TestAgentPrincipals.newUserAgentPrincipal();
@@ -378,6 +407,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         var snapshot = objectMapper.createObjectNode();
         snapshot.set("permissions", objectMapper.createArrayNode());
         extra.setTemplateSnapshot(snapshot);
+        extra = withDerivedRunSurface(extra);
         extra = agentPrincipalRepository.saveAndFlush(extra);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(extra.getId().toString(), workspaceId,
                 objectMapper.createArrayNode()));
@@ -452,6 +482,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         var snapshot = objectMapper.createObjectNode();
         snapshot.set("permissions", objectMapper.createArrayNode());
         principal.setTemplateSnapshot(snapshot);
+        principal = withDerivedRunSurface(principal);
         principal = agentPrincipalRepository.saveAndFlush(principal);
         principalId = principal.getId();
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId,
@@ -462,6 +493,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         var wokenSnapshot = objectMapper.createObjectNode();
         wokenSnapshot.set("permissions", objectMapper.createArrayNode());
         woken.setTemplateSnapshot(wokenSnapshot);
+        woken = withDerivedRunSurface(woken);
         woken = agentPrincipalRepository.saveAndFlush(woken);
         wokenPrincipalId = woken.getId();
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(wokenPrincipalId.toString(), workspaceId,
