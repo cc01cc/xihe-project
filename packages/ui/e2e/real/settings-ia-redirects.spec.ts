@@ -43,7 +43,7 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
  *
  * <p>依赖：`scripts/e2e-host.mjs`（`mise run test:e2e:host`）提供的真实 CP + UI。
  * 只有 V2 的实例层用例需要管理员（凭据由 e2e-host 以 `XIHE_E2E_ADMIN_PASSWORD` 注入，
- * 同 plan-0503-config-catalog.spec.ts）；工作区页与 V3 404 用新注册账号自带的工作区，
+ * 同 plan-0504-profile-effective.spec.ts）；工作区页与 V3 404 用新注册账号自带的工作区，
  * 避免「管理员不是首个工作区成员」这类与判据无关的耦合（同 approval-policy.spec.ts）。</p>
  *
  * <p>本文件在 mock 车道不运行（mock 侧同判据由 plan-0752-settings-ia.spec.ts 承担）。</p>
