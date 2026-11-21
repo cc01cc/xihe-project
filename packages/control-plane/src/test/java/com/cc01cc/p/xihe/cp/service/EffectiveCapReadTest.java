@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
+import com.cc01cc.p.xihe.cp.policy.OrgUnitGovernancePolicy;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
@@ -72,9 +73,23 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
     private UUID workspaceRoleId;
     private UUID outsiderId;
     private String token;
+    /** task-57: the org-unit fixture's unit and its governance role (cleaned in {@link #cleanFixtures()}). */
+    private UUID orgUnitId;
+    private UUID orgUnitRoleId;
 
     @AfterEach
     void cleanFixtures() {
+        // task-57 fixture first: org_unit_members / org_unit_role_bindings hold RESTRICT FKs onto
+        // org_units and roles, so the unit tree has to go before the role rows below.
+        if (orgUnitId != null) {
+            jdbcTemplate.update("DELETE FROM org_unit_members WHERE org_unit_id = ?", orgUnitId);
+            jdbcTemplate.update("DELETE FROM org_unit_role_bindings WHERE org_unit_id = ?", orgUnitId);
+            jdbcTemplate.update("DELETE FROM org_units WHERE id = ?", orgUnitId);
+        }
+        if (orgUnitRoleId != null) {
+            jdbcTemplate.update("DELETE FROM role_permissions WHERE role_id = ?", orgUnitRoleId);
+            jdbcTemplate.update("DELETE FROM roles WHERE id = ?", orgUnitRoleId);
+        }
         if (workspaceRoleId != null) {
             jdbcTemplate.update("DELETE FROM role_bindings WHERE role_id = ?", workspaceRoleId);
             jdbcTemplate.update("DELETE FROM roles WHERE id = ?", workspaceRoleId);
@@ -159,6 +174,60 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
         assertEquals(Boolean.FALSE, body.get("bound"), "no cap binding row ⇒ bound=false");
         JsonNode internal = agentPrincipalService.resolveCapFor(principalId, workspaceId);
         assertEquals(objectMapper.valueToTree(internal), objectMapper.valueToTree(body.get("effectiveCap")));
+    }
+
+    /**
+     * task-57（判据包 {@code CRITERIA-A-filter-null.md} V2）：<b>读面 500 的现场</b>。
+     *
+     * <p>状态：agent principal 没有 {@code workspace_agents} 行（⇒ cap 走 role-binding 支），但它是某个
+     * 组织单元的成员，该单元上挂着一个治理角色。展开出来的授权是<b>内存行</b>
+     * （{@code OrgUnitGrantExpander.toGrant} 故意把 id 留 null），一旦那个 null 进了
+     * {@code provenance.*GrantIds}，{@code WorkspaceAgentController.toEffectiveCapView} 的
+     * {@code UUID::toString} 就抛 NPE ⇒ 500 而不是 cap。</p>
+     *
+     * <p><b>为什么用真行而不是 {@code @Primary} stub</b>：本类继承
+     * {@code AbstractReusableIntegrationTest}，该桶禁止 {@code @TestConfiguration}
+     * （context-reuse guard R1），而生产用的 {@code JdbcOrgUnitGrantSource} 正是当初产生 500 的那条链路。</p>
+     *
+     * <p><b>三条防假绿</b>：①id 列表按<b>值与数量</b>钉成恰好那一条落库 grant，不是「不含 null」；
+     * ②binding 侧同样只能出现落库行（两侧由同一批行列表派生），org-unit 合成的行在任何一侧都不出现
+     * —— 多个 null 被 {@code distinct()} 折成一个也骗不过 ① ②；
+     * ③{@code effectiveCap} 必须仍等于内部单点求值且带着治理原子 —— 否则「列表干净」可能只是「整个丢权」。</p>
+     */
+    @Test
+    void roleBindingWithOrgUnitGrants_answersProvenanceWithoutSyntheticIds() throws Exception {
+        fixture();
+        bindWorkspaceScopedRoleToPrincipal();
+        bindOrgUnitGovernanceRole();
+        List<AuthorizationGrant> persistedRows = grantRepository
+                .findBySubjectTypeAndSubjectId("agent_principal", principalId);
+        assertEquals(1, persistedRows.size(),
+                "fixture invariant: exactly one persisted grant row, so the id lists below are pinned "
+                        + "by value AND count");
+        String persistedId = persistedRows.get(0).getId().toString();
+
+        ResponseEntity<Map> response = get();
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        Map<?, ?> body = response.getBody();
+        assertNotNull(body);
+        assertEquals("role-binding", ((Map<?, ?>) body.get("capSource")).get("binding"),
+                "no workspace_agents row ⇒ the cap comes from the role binding");
+        assertEquals(Boolean.FALSE, body.get("bound"));
+
+        Map<?, ?> provenance = (Map<?, ?>) body.get("provenance");
+        assertEquals(List.of(persistedId), provenance.get("principalGrantIds"),
+                "the id list must be exactly the persisted grant row — value AND count, because "
+                        + "'contains no null' also passes when several nulls were folded into one");
+        assertEquals(List.of(persistedId), provenance.get("bindingGrantIds"),
+                "both sides derive from the same row lists, so the binding side carries the same "
+                        + "persisted row and no synthetic one");
+
+        assertEquals(objectMapper.valueToTree(agentPrincipalService.resolveCapFor(principalId, workspaceId)),
+                objectMapper.valueToTree(body.get("effectiveCap")),
+                "task-57 touched provenance only: the wire cap still equals the single internal evaluation");
+        assertTrue(body.get("effectiveCap").toString()
+                        .contains(OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNITS),
+                "the org-unit governance atom must still reach the cap: " + body.get("effectiveCap"));
     }
 
     @Test
@@ -298,6 +367,30 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
                         + " scope_id, granted_at) VALUES (gen_random_uuid(), ?, 'agent_principal', ?,"
                         + " 'workspace', ?, NOW())",
                 workspaceRoleId, principalId, workspaceId);
+    }
+
+    /**
+     * task-57: one real org-unit governance chain — unit + membership + role carrying the governance
+     * atom + {@code org_unit_role_bindings} — so the production {@code JdbcOrgUnitGrantSource} feeds
+     * the expander (which is the path that produced the 500).
+     */
+    private void bindOrgUnitGovernanceRole() {
+        orgUnitId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO org_units (id, parent_id, name, path, depth)"
+                        + " VALUES (?, NULL, ?, ?::ltree, 0)",
+                orgUnitId, "task57-unit-" + orgUnitId.toString().substring(0, 8),
+                orgUnitId.toString().replace("-", ""));
+        jdbcTemplate.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
+                + " VALUES (?, 'agent_principal', ?)", orgUnitId, principalId);
+        orgUnitRoleId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO roles (id, name, display_name, description, is_system)"
+                        + " VALUES (?, ?, ?, ?, FALSE)",
+                orgUnitRoleId, "TEST_T57_" + orgUnitRoleId.toString().substring(0, 8).toUpperCase(),
+                "Org-unit governance role", "task-57 fixture");
+        jdbcTemplate.update("INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+                + " VALUES (?, ?, '*')", orgUnitRoleId, OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNITS);
+        jdbcTemplate.update("INSERT INTO org_unit_role_bindings (id, org_unit_id, role_id, granted_at)"
+                + " VALUES (gen_random_uuid(), ?, ?, NOW())", orgUnitId, orgUnitRoleId);
     }
 
     private void addPrincipalGrant(String actionClass, String resource) throws Exception {

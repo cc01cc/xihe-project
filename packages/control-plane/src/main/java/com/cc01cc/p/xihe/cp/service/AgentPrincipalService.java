@@ -1057,15 +1057,26 @@ public class AgentPrincipalService {
     private record AtomEvaluation(Set<GrantIntersectionEvaluator.PermissionAtom> atoms, List<UUID> grantIds,
                                   Map<String, String> grantSources) {}
 
-    /** task-448: distinct grant-row ids across the scoped rows and the org-unit expansion. */
+    /**
+     * task-448: distinct grant-row ids across the scoped rows and the org-unit expansion.
+     *
+     * <p>task-57: an org-unit synthetic row never contributes an id — the expander leaves it null
+     * because {@code @PrePersist} fills it, so the id is unavailable on the read path. Such a grant
+     * is not dropped from the cap: its existence is expressed by the atom it contributes (DEV-018),
+     * and only the id list stays free of the synthetic entry.
+     */
     private static List<UUID> grantIds(List<AuthorizationGrant> rows,
                                        java.util.Collection<AuthorizationGrant> expanded) {
         List<UUID> ids = new java.util.ArrayList<>();
         for (AuthorizationGrant grant : rows) {
-            ids.add(grant.getId());
+            if (grant.getId() != null) {
+                ids.add(grant.getId());
+            }
         }
         for (AuthorizationGrant grant : expanded) {
-            ids.add(grant.getId());
+            if (grant.getId() != null) {
+                ids.add(grant.getId());
+            }
         }
         return ids.stream().distinct().toList();
     }
@@ -1166,8 +1177,10 @@ public class AgentPrincipalService {
      * task-448: live-cap read-face result. {@code effectiveCap} is byte-identical to
      * {@link #resolveCapFor}; {@code bindingSource} is the hit source of the binding atoms
      * ({@code binding-snapshot} or {@code role-binding}); the grant-id lists are the provenance
-     * (P1-1). A disabled principal never reaches a 200 here (409 upstream), so {@code disabled} is
-     * always false on the wire and kept only to document the state dimension.
+     * (P1-1). Neither id list ever carries an org-unit synthetic entry: that row has no id yet
+     * (filled by {@code @PrePersist}, DEV-018) and its existence is expressed only by the cap atom
+     * it contributes. A disabled principal never reaches a 200 here (409 upstream), so
+     * {@code disabled} is always false on the wire and kept only to document the state dimension.
      */
     public record EffectiveCapResult(UUID principalId, UUID workspaceId, JsonNode effectiveCap,
                                      String bindingSource, List<UUID> principalGrantIds,

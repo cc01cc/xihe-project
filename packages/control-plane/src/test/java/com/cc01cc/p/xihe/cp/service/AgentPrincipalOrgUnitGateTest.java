@@ -180,6 +180,41 @@ class AgentPrincipalOrgUnitGateTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // task-57：org_unit 合成行贡献原子，但绝不贡献 grant 行 id
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * task-57（判据包 {@code CRITERIA-A-filter-null.md} V1）：组织单元展开出来的是<b>内存行</b>，
+     * {@code id} 由 {@code @PrePersist} 才填，所以 {@code OrgUnitGrantExpander.toGrant} 故意留 null。
+     * 那个 null 一旦进了 {@code CapEvaluation} 的 id 列表，读面做 {@code UUID::toString} 就 500。
+     *
+     * <p><b>为什么断言写成三件事而不是只查「不含 null」</b>：只查 null 在「整个丢权」时也会绿。
+     * 所以此处同时钉：①两个 id 列表都为空（不是「有 1 条非 null」）；②{@code effectiveCap} 恰好 1 条
+     * 且就是治理原子 —— 少了 ②，一件把所有 org-unit 行丢掉的重构会让 ① 绿得莫名其妙。</p>
+     */
+    @Test
+    void anOrgUnitRowContributesItsAtomsButNoGrantRowId() throws Exception {
+        Fixture fixture = fixture("provenance-null");
+        stubRows = orgUnitRows(fixture);
+
+        AgentPrincipalService.EffectiveCapResult result = agentPrincipalService.resolveCapWithSourceFor(
+                fixture.owner().getId().toString(),
+                fixture.principal().getId().toString(),
+                fixture.workspace().getId().toString());
+
+        // ① 内存行的 id 不得出现在任何一个 provenance 列表里（task-57 修前此处是 [null]）。
+        assertEquals(List.of(), result.principalGrantIds(),
+                "an org-unit row carries no grant-row id: this list held [null] before task-57");
+        assertEquals(List.of(), result.bindingGrantIds(),
+                "the binding side expands the same rows and must stay id-free as well");
+        // ② 阴性对照：原子必须还在，否则「清空了 id 列表」可能只是「什么都没展开」。
+        assertEquals(1, result.effectiveCap().size(),
+                "the governance atom must still reach the cap: " + result.effectiveCap());
+        assertEquals(GOVERNANCE_ATOM, result.effectiveCap().path(0).path("actionClass").asText(),
+                "task-57 is a provenance fix, not a grant change: " + result.effectiveCap());
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // fixtures
     // ---------------------------------------------------------------------------------------------
 
