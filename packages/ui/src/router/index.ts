@@ -425,6 +425,19 @@ const router = createRouter({
                     component: () => import("../views/settings/AuditView.vue"),
                     meta: { settingsLayer: "instance" },
                 },
+                /**
+                 * task-8（DSD-1516 收窄后）：授权总览 = **已登录者视角**。与 `monitoring` /
+                 * `data` 同形：不是配置域，路径不进 `LAYER_DOMAINS`，所以 `settingsLayer`
+                 * **必须显式写**（`lib/settingsIa.ts` 的 `settingsLayerForPath` 对未知路径
+                 * 一律兜底 "instance"，靠兜底写层就是 task-160 那类隐式 bug；本行由
+                 * `router/__tests__/authorizationOverviewRoute.spec.ts` 钉住）。
+                 */
+                {
+                    path: "authorization-overview",
+                    name: "settings-authorization-overview",
+                    component: () => import("../views/settings/AuthorizationOverviewView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
                 {
                     // PLAN-0610 W5c：principal-grants 已退役，旧书签落到替代页
                     path: "principal-grants",
