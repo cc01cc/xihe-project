@@ -165,8 +165,11 @@ describe("SettingsSidebar", () => {
         expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(13);
 
         // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
-        // security(config-locks,roles,agent-principals,audit)。
+        // security(config-locks,roles,agent-principals,audit,**authorization-overview**)。
         // task-91：`agent-principals` = 平台智能体的新家（资源区摘除后它的唯一入口）。
+        // task-8：`authorization-overview`（授权总览）加在安全组**末尾** —— 恒显、不受
+        // MANAGE_ROLES 门控（它只读登录者自己的 `/me/permissions` 与自我 explain），
+        // 所以它是唯一一条「有无该原子都在」的安全项；本断言钉的是**全权档 7 条**。
         const ops = wrapper.findAll('[data-testid^="settings-nav-ops-"]');
         expect(ops.map((item) => item.attributes("data-testid"))).toEqual([
             "settings-nav-ops-monitoring",
@@ -175,6 +178,7 @@ describe("SettingsSidebar", () => {
             "settings-nav-ops-roles",
             "settings-nav-ops-agent-principals",
             "settings-nav-ops-audit",
+            "settings-nav-ops-authorization-overview",
         ]);
         expect(ops.map((item) => item.attributes("to"))).toEqual([
             "/settings/monitoring",
@@ -183,6 +187,7 @@ describe("SettingsSidebar", () => {
             "/settings/roles",
             "/settings/instance/agent-principals",
             "/settings/audit",
+            "/settings/authorization-overview",
         ]);
     });
 
@@ -236,13 +241,21 @@ describe("SettingsSidebar", () => {
             true,
         );
         expect(wrapper.find('[data-testid="settings-nav-ops-audit"]').exists()).toBe(true);
-        // 入口计数 = 条目数（不是域数）：实例层 = 8 条目 + 2 运维 + 4 安全 = **14**
-        // （task-91 把「平台智能体」加进安全组，故 3 → 4），
+        // 入口计数 = 条目数（不是域数）：实例层 = 8 条目 + 2 运维 + **5** 安全 = **15**。
+        // 算式必须可复算（只改数字等于改断言凑绿）：**18 未折叠 − 3 折叠 = 15**
+        //   18 = 11 定位域 + 2 运维 + 5 安全；3 折叠 = 3 模型域折 1 组（−2）+ 2 智能体域折 1 组（−1）。
+        // task-8 把「授权总览」加进安全组 ⇒ 4 → 5（本用例断言的就是这条基线）。
+        // **三档口径一起看，别与 `e2e/mock/resources-ia.spec.ts` 的 14 混**（那边只给
+        // `isInstanceAdmin` 能力位、没有 `MANAGE_ROLES` 原子）：
+        //   · 能力位 + MANAGE_ROLES 都在 ⇒ **15**（本用例）
+        //   · 有 `isInstanceAdmin`、无 MANAGE_ROLES ⇒ **14**（roles 被权限门隐藏）
+        //   · 两者皆无（atom-only）⇒ **13**（roles + config-locks 都被挡）
+        // 与 `e2e/mock/resources-ia.spec.ts:82` 的 `NAV_COUNTS.instance = 18` **互证**：那边钉的是
+        // 未折叠条目数（18），这边钉的是折叠后条目数（15），差的 3 正是两个折叠组省下的条目。
         // 用户层 = 5 条目（task-227 把三个模型域折成一个组条目）。
-        const instanceCount = navItemsForLayer("instance").length + 6;
-        expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain(
-            String(instanceCount),
-        );
+        const instanceCount = navItemsForLayer("instance").length + 7;
+        expect(instanceCount).toBe(15);
+        expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain("15");
         expect(wrapper.find('[data-testid="settings-nav-count-user"]').text()).toContain(
             String(navItemsForLayer("user").length),
         );
