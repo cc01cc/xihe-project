@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
+import { i18n } from "../../i18n";
+import SettingsLayout from "../../layouts/SettingsLayout.vue";
+import router from "../../router";
 import {
     defaultLayerPath,
     defaultResourcePath,
@@ -8,6 +13,7 @@ import {
     isInstanceOnlyForUser,
     layersForDomain,
     layersForResource,
+    navItemsForLayer,
     resolveLayerRoute,
     resolveResourceLayer,
     RESOURCE_DEFS,
@@ -18,7 +24,9 @@ import {
     SETTINGS_LAYERS_LOW_TO_HIGH,
     settingsDomainPath,
     settingsLayerForPath,
+    settingsPageTitleKey,
     type ConfigDomain,
+    type SettingsLayer,
 } from "../settingsIa";
 // task-485：需要区分「域宇宙」与「设置矩阵」——前者不减，后者减了两格。
 import { INSTANCE_DOMAINS } from "../../stores/config";
@@ -211,6 +219,150 @@ describe("instance ops groups", () => {
         expect(domains).toContain("logging");
     });
 });
+/**
+ * task-74（**只加守卫测试**，不改产品行为）：面包屑末段「没有第三条路」。
+ *
+ * <p>缺陷面（task-73 盘点 R1）：末段只有三个来源 —— L1 组（`meta.settingsGroup` →
+ * `group.labelKey`，`SettingsLayout.vue:85-88`）、L2 域（`meta.settingsDomain` →
+ * `DOMAIN_LABEL_KEY[domain]`，`:89-90`）、L3 页标题键（`settingsPageTitleKey(path)`，
+ * `:93-94`）。三路都不命中就落 L4（`undefined`），`SettingsLayerHeader.vue:129-136` 会把
+ * **层段**标成当前页 —— 面包屑读作「设置 › 实例层」，用户看不到自己在哪一页。</p>
+ *
+ * <p>新建一个既不是域也不是组的设置页、又忘登记 `pageTitleKey` 时，这个退化是**静默**的：
+ * 改动前没有任何用例会红。本文件让「没有第四条路」变成必须红的一条断言 —— 而且断言的是
+ * **布局真实渲染出的末段**（挂 `SettingsLayout`、只看它传给 `SettingsLayerHeader` 的
+ * `domain`），不是把回落链在测试里抄一遍：抄一遍的写法在有人删掉 L3 分支时依然全绿。</p>
+ *
+ * <p>分支不按路径字符串猜：路由 `meta` 用 `router.resolve(path)` 取真路由表那一份
+ * （设置路由的 meta 由 `router/index.ts` 从 `LAYER_DOMAINS` / `SETTINGS_GROUPS` 派生）。</p>
+ */
+const routeState = vi.hoisted(() => ({
+    path: "/settings/instance/rag",
+    meta: {} as Record<string, unknown>,
+}));
+
+// 只替换 useRoute / useRouter：router/index.ts 仍要真的 createRouter / createWebHistory 与
+// resolve（meta 必须来自产品路由表）。骨架同 `layouts/__tests__/SettingsLayout.backToChat.spec.ts:52-70`。
+vi.mock("vue-router", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("vue-router")>();
+    return {
+        ...actual,
+        useRoute: () => ({
+            meta: routeState.meta,
+            path: routeState.path,
+            fullPath: routeState.path,
+            query: {},
+        }),
+        useRouter: () => ({
+            push: vi.fn<() => Promise<void>>(),
+            replace: vi.fn<() => Promise<void>>(),
+        }),
+    };
+});
+
+type RegisteredEntry = { layer: SettingsLayer; id: string; labelKey: string; path: string };
+
+const REGISTERED_ENTRIES: RegisteredEntry[] = (() => {
+    const entries: RegisteredEntry[] = [];
+    for (const layer of SETTINGS_LAYERS) {
+        for (const item of navItemsForLayer(layer)) {
+            entries.push({ layer, id: item.id, labelKey: item.labelKey, path: item.path });
+        }
+    }
+    for (const group of instanceOpsGroups()) {
+        for (const item of group.items) {
+            entries.push({
+                layer: "instance",
+                id: item.id,
+                labelKey: item.labelKey,
+                path: item.path,
+            });
+        }
+    }
+    return entries;
+})();
+
+/**
+ * 跑一次真实布局，返回面包屑末段（= 布局传给 `SettingsLayerHeader` 的 `domain`）。
+ * 空串 = 落 L4。只 stub 重子组件，布局自己的回落链一行不 stub。
+ */
+function tailRenderedFor(path: string): string {
+    routeState.path = path;
+    routeState.meta = router.resolve(path).meta as Record<string, unknown>;
+    const wrapper = mount(SettingsLayout, {
+        global: {
+            plugins: [i18n, createPinia()],
+            stubs: {
+                SettingsSidebar: { template: '<div data-testid="settings-sidebar-stub" />' },
+                SettingsLayerHeader: {
+                    props: { layer: String, domain: String, trail: Array },
+                    template:
+                        '<div data-testid="settings-breadcrumb-tail">{{ domain ?? "" }}</div>',
+                },
+                BackToChatButton: { template: "<button />" },
+                RouterView: { template: '<div data-testid="router-view-stub" />' },
+            },
+        },
+    });
+    const tail = wrapper.find('[data-testid="settings-breadcrumb-tail"]').text();
+    wrapper.unmount();
+    return tail;
+}
+
+describe("面包屑末段标题来源守卫（task-74）", () => {
+    it("全部已登记 path 的末段标题 = 页标题键，或该条目自己的 labelKey（没有第三条路）", () => {
+        // task-73 盘点读数：23 条（instance 15 = 8 域/组 + 7 运维安全 / user 5 / workspace-default 3）
+        // ⇒ 新增或删除条目时这条必须显式跟着改，不许改成「等于当前实际有什么」。
+        expect(REGISTERED_ENTRIES).toHaveLength(23);
+
+        // 左栏条目必须真有条：新增条目却忘了注册路由 ⇒ 点进去 404，先在这里红。
+        const unrouted = REGISTERED_ENTRIES.filter(
+            (entry) => router.resolve(entry.path).name === "settings-not-found",
+        ).map((entry) => `${entry.layer}/${entry.id} → ${entry.path}`);
+        expect(unrouted).toEqual([]);
+
+        // L3 命中的**精确成员表**（task-73 读数：7 条，占 23 条的 30%，全在 instance 运维/安全组）。
+        const keyed = REGISTERED_ENTRIES.filter(
+            (entry) => settingsPageTitleKey(entry.path) !== undefined,
+        );
+        expect(keyed.map((entry) => entry.id)).toEqual([
+            "monitoring",
+            "data",
+            "config-locks",
+            "roles",
+            "agent-principals",
+            "audit",
+            "authorization-overview",
+        ]);
+        expect(REGISTERED_ENTRIES.length - keyed.length).toBe(16);
+
+        // 没有第三条路：L3 未命中的每一条都必须靠 L1/L2 拿到**该条目自己的** labelKey
+        // （= 目的页标题键，域页 h2 与组页 h2 读同一个键）。宽判据（不抛错 / 命中任一）不算。
+        const mismatched = REGISTERED_ENTRIES.flatMap((entry) => {
+            const expected = i18n.global.t(settingsPageTitleKey(entry.path) ?? entry.labelKey);
+            const actual = tailRenderedFor(entry.path);
+            return actual === expected
+                ? []
+                : [
+                      `${entry.layer}/${entry.id}: ${entry.path} 期望「${expected}」实渲染「${actual}」`,
+                  ];
+        });
+        expect(mismatched).toEqual([]);
+    });
+
+    it("未登记的 path 落 L4：末段不渲染（显式可测，不是无声退化）", () => {
+        const path = "/settings/instance/__unknown";
+        const resolved = router.resolve(path);
+        expect(resolved.name).toBe("settings-not-found");
+        expect(resolved.meta.settingsGroup).toBeUndefined();
+        expect(resolved.meta.settingsDomain).toBeUndefined();
+        expect(settingsPageTitleKey(path)).toBeUndefined();
+        // 布局把末段留空 ⇒ SettingsLayerHeader.vue:129-136 把层段标成当前页；那条可见行为由
+        // components/settings/__tests__/SettingsLayerHeader.spec.ts:53-68 锁，这里锁它的输入侧。
+        expect(tailRenderedFor(path)).toBe("");
+    });
+});
+
 describe("资源×层矩阵（PLAN-0772 M2）", () => {
     it("四个资源 + 各自的真实层（缺的层不许自己补）", () => {
         // task-96（用户裁定「智能体是组织成员，不是资源」）：智能体撤出资源面 ⇒ 5 → 4。
