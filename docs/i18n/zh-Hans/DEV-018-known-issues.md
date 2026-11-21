@@ -326,6 +326,8 @@ updated: 2026-10-25
 - **UI toast 基础样式缺失**（2026-09-13 由 PLAN-0323 验证发现；**2026-09-14 已修复，PLAN-0325**）：原状：`vue-sonner/style.css`（含 `[data-sonner-toaster]{position:fixed}`）从未被导入（全仓零引用；JS bundle 仅设置 `data-sonner-toaster` 属性、无内联 CSS）→ toaster 无定位样式，toast 以未样式化元素落文档流底部（实测 `rect.y=1080` 视口外、`position: static`），全应用 toast 反馈实际不可见。修复：`packages/ui/src/components/ui/sonner/Sonner.vue` 显式 `import "vue-sonner/style.css"`；浏览器复验 = 真实时间用例 `toBeInViewport()` 通过 + 截图可见（`sse-liveness.spec.ts`，`.local/plan-0323/` 留档）。
 - **存量盘点入口**：调用链/审批/物化/SSE 未闭环项与去向以 workspace `plans/PLAN-0318-XH-call-chain-audit/evidence/call-chain-audit-2026-09.md` §9 活表为准；跨来源（审计/缺口审计/挂起项/架构收敛）统一总表见 `internal/A03-xihe/docs/xh-backlog-and-debt.md`（本文件技术债段为项目侧入口，三者互为补充）。
 
+- **effective-cap 读面的组织单元授权来源不可见（2026-11-21，task-56 定性；用户裁「不做」）**：`org_unit` 授权能算进 `effective-cap`，但读面 `provenance` 只覆盖 durable `grants` 行（合成行 id 恒 `null`）⇒ 列不出来源；按用户 18:36 裁定取选项 3 记缺口、不扩字段（选项 1「滤 null 止血」仍按 task-57 落）。将来若要显示「来自组织单元 X 的角色 Y」，须另立卡请用户点头。
+
 ## 工具能力门与多模态输入残余（PLAN-0591 收尾登记，2026-10-31）
 
 - **能力门已闭环（BL-149）**：工具能力下沉为 catalog `supportedApiTypes[].capability.tools`（`catalogRevision=v2`），不支持的 apiType 在 dispatch 前以 `LLM_TOOL_ROUTE_UNSUPPORTED` 显式失败（`attempt=0`、0 `tools/call`、0 文件）；契约见 `spec/capability-gate.md` 与 `spec/protocol/provider-api-types.md`，证据见 `plans/PLAN-0591-XH-provider-tool-capability/evidence/`。
