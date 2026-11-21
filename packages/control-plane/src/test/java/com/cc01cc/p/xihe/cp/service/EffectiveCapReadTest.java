@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -11,9 +12,13 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
+import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -58,6 +63,8 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private SessionRepository sessionRepository;
+    @Autowired private GrantAuthorizationService grantAuthorizationService;
 
     private UUID userId;
     private UUID workspaceId;
@@ -73,9 +80,12 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
             jdbcTemplate.update("DELETE FROM roles WHERE id = ?", workspaceRoleId);
         }
         if (workspaceId != null && principalId != null) {
-            bindingRepository.deleteById(new WorkspaceAgentId(principalId, workspaceId));
+            // 幂等：task-193 选项 0 的快照用例会主动删掉这条 binding 行（删行正是被测状态）。
+            bindingRepository.findById(new WorkspaceAgentId(principalId, workspaceId))
+                    .ifPresent(bindingRepository::delete);
         }
         if (workspaceId != null) {
+            jdbcTemplate.update("DELETE FROM sessions WHERE workspace_id = ?", workspaceId);
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userId));
             jdbcTemplate.update("DELETE FROM audit_logs WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId.toString());
             workspaceRepository.deleteById(workspaceId);
@@ -190,6 +200,70 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
                 "the read face gate is workspace membership, not a role special-case");
     }
 
+    /**
+     * task-77 (task-193 选项 0 / Lead m01783)：**读面与工具面在同一状态下读数相反**的快照用例。
+     *
+     * <p>状态：principal 持有 workspace 作用域 role binding（裸 SQL 造，同 {@link #roleBindingSource_whenNoBindingRow()}）
+     * 但**没有** {@code workspace_agents} 行。此时
+     * <ul>
+     *   <li>读面 {@code GET .../effective-cap} 答 200 且 {@code capSource.binding=role-binding}（role 分支，
+     *       {@code AgentPrincipalService.evaluateCap} 的 {@code binding == null} 支）；</li>
+     *   <li>工具面 {@code GrantAuthorizationService.allows()} 答 false（该方法在绑定快照之前就
+     *       {@code if (binding == null) return false;}）。</li>
+     * </ul>
+     *
+     * <p><b>这不是 bug 的证明，是 bug 的快照。</b>该状态在现行树只能由夹具/裸 SQL 产生，
+     * 生产不可达（证据：internal/A03-xihe/evidence/2026-11-21-task193-cap-asymmetry/README.md §10.5）。
+     * <b>改任何一侧都必须同时改这条测试</b>：读面若收紧为 403，删掉读面那两条断言；工具面若放宽为
+     * 认 role binding，删掉 {@code assertFalse} 那一条并改成 {@code assertTrue}。</p>
+     *
+     * <p>正控在同一夹具里先跑一次绑定行存在时的 {@code allows()=true}，证明后面的 false 不是
+     * path 解析或夹具缺件造成的（否则这条测试会「绿得莫名其妙」）。</p>
+     */
+    @Test
+    void readFaceAnswersButToolFaceDenies_whenRoleBindingWithoutCapRow() throws Exception {
+        fixture();
+        bindWorkspaceScopedRoleToPrincipal();
+        WorkspaceAgent binding = bindSnapshot("[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]");
+        addPrincipalGrant("write", "*");
+        Session session = saveAgentSession("[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]");
+        PolicyRequest request = request(session, "write", "src/main.java");
+
+        // 正控：有绑定行时同一请求放行 ⇒ 下面的 false 可归因到「删了绑定行」，不是夹具/链路问题。
+        assertTrue(grantAuthorizationService.allows(request),
+                "control: with the workspace_agents row in place the same request is allowed");
+
+        bindingRepository.delete(binding);
+        bindingRepository.flush();
+
+        // 读面：仍然 200，来源标为 role-binding，bound=false —— 与一侧放行同时成立。
+        ResponseEntity<Map> response = get();
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        Map<?, ?> body = response.getBody();
+        assertNotNull(body);
+        assertEquals("role-binding", ((Map<?, ?>) body.get("capSource")).get("binding"),
+                "read face still resolves the cap from the role binding");
+        assertEquals(Boolean.FALSE, body.get("bound"), "no cap binding row ⇒ bound=false");
+
+        // 工具面：同一状态、同一请求，硬拒绝。两条读数必须成对，缺一条这条测试就失去意义。
+        assertFalse(grantAuthorizationService.allows(request),
+                "tool face fails closed on the missing workspace_agents row (GrantAuthorizationService.java:98-102)");
+    }
+
+    private Session saveAgentSession(String permissionsJson) throws Exception {
+        Session session = new Session(workspaceId.toString(), userId.toString(), "Effective cap asymmetry");
+        session.setId(UUID.randomUUID());
+        session.setAgentPermissionsSnapshot(objectMapper.readTree(permissionsJson));
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
+    }
+
+    private PolicyRequest request(Session session, String actionClass, String resource) {
+        return new PolicyRequest("write_file", List.of(actionClass), List.of(resource), ToolShape.STRUCTURED,
+                userId.toString(), workspaceId.toString(), session.getId().toString());
+    }
+
     private void fixture() throws Exception {
         User user = userRepository.saveAndFlush(new User("effective-cap-" + UUID.randomUUID() + "@test.com",
                 "hash", "Effective Cap Test"));
@@ -209,8 +283,8 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
         token = TestDataFactory.createWorkspaceToken(userId.toString(), user.getEmail(), "USER", workspaceId.toString(), 0);
     }
 
-    private void bindSnapshot(String permissionsJson) throws Exception {
-        bindingRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId.toString(),
+    private WorkspaceAgent bindSnapshot(String permissionsJson) throws Exception {
+        return bindingRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId.toString(),
                 objectMapper.readTree(permissionsJson)));
     }
 
