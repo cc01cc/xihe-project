@@ -205,6 +205,38 @@ describe("SettingsSidebar", () => {
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);
     });
 
+    /**
+     * task-70 第三条分叉：「能力位与 MANAGE_ROLES 皆无」时实例段**整段不渲染**。
+     *
+     * <p>为什么这条值得单独钉：`SettingsSidebar.vue:343` 的 `v-if="canSeeInstanceLayer || canSeeInstanceOps"`
+     * 是左栏唯一的「整段消失」分叉（:133 `canSeeInstanceLayer = auth.hasInstanceAdminCapability`、
+     * :140 `canSeeInstanceOps = canSeeInstanceLayer || auth.canManageRoles`）。它此前只被
+     * "fail-closed" 用例顺带覆盖过一次条目数，没有正面判据 —— 将来谁把这个 `||` 改成 `&&`
+     * 或去掉一个操作数，就会给「没有任何实例权限的人」画出一个点进去必然 403 的层组。</p>
+     *
+     * <p><b>三档语义差（改这里之前先读）</b>：
+     * 15 = instance-admin（能力位 + MANAGE_ROLES）→ 域 8 条 + ops/安全 7 条（本文件首例）；
+     * 14 = atom-only（**有** MANAGE_ROLES、无能力位）→ 可见 ops/安全 6 条 + 徽标 14（BL-552 例）；
+     * 「皆无」= 实例段整段不渲染 ⇒ **不存在 13 这个可见值**（13 只是 `instanceEntryCount` 的
+     * 未渲染计算值：8 域条目 + 5 个不被能力位/权限门挡掉的 ops/安全项）。</p>
+     */
+    it("task-70: renders no instance section at all when the capability and MANAGE_ROLES are both absent", () => {
+        state.capability = false;
+        state.canManageRoles = false;
+        const wrapper = mountSidebar("user", "rag");
+
+        // 正向对照（必须先证明侧栏本身画出来了，否则「整段不渲染」在整侧栏挂掉时也会绿）：
+        expect(wrapper.get('[data-testid="settings-sidebar"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(5);
+
+        // 判据取**段判据**而不是徽标：这个 v-if 分支里唯一的锚点是它的组头（组头只在段渲染时存在；
+        // 两层的组头共用同一个 testid ⇒ 只剩 1 个 = 实例段整段不在），外加 e2e 用的 id 锚点。
+        expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
+        expect(wrapper.find("#settings-nav-instance").exists()).toBe(false);
+        // 兜底否定：段内任何可见条目都不许漏出来（不是靠文案判断）。
+        expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);
+    });
+
     // BL-552 / PLAN-0651 T4.2 case 3：atom-only（有 MANAGE_ROLES、无 cap:instance:admin）
     // 必须仍看到 roles 入口 —— 修复前实例层整段被能力位遮住，该用例即当时真栈失败面。
     it("BL-552: keeps the roles entry visible for an atom-only user (no capability)", async () => {
