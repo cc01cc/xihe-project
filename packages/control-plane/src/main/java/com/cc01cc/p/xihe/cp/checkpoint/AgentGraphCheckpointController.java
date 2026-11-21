@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /** Internal service-Bearer API for CP-owned LangGraph checkpoint data. */
 @RestController
@@ -22,6 +23,18 @@ import java.util.List;
 public class AgentGraphCheckpointController {
 
     private final AgentGraphCheckpointService service;
+
+    /**
+     * task-142: the Problem Details body this face answers with must carry the rejection branch
+     * ({@code CpApiException#getExtra()}). The three-argument {@code problemResponse} overload drops
+     * {@code extra}, so every handler here routes through the overload that publishes it; without it
+     * the split codes would be distinguishable in the log but not on the wire, which was the whole
+     * point of the card.
+     */
+    private static ResponseEntity<Map<String, Object>> problem(CpApiException e) {
+        return ProblemDetailsHandler.problemResponse(
+                e.getStatus(), e.getCode(), e.getMessage(), e.getExtra());
+    }
 
     public AgentGraphCheckpointController(AgentGraphCheckpointService service) {
         this.service = service;
@@ -32,7 +45,7 @@ public class AgentGraphCheckpointController {
         try {
             return ResponseEntity.status(HttpStatus.CREATED).body(service.createLineage(request));
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 
@@ -49,7 +62,7 @@ public class AgentGraphCheckpointController {
                     threadId, new AgentGraphCheckpointService.LineageLookupRequest(
                             sessionId, userId, workspaceId, sourceRunId, probeId)));
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 
@@ -61,7 +74,7 @@ public class AgentGraphCheckpointController {
             service.putCheckpoint(threadId, request);
             return ResponseEntity.noContent().build();
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 
@@ -83,7 +96,7 @@ public class AgentGraphCheckpointController {
             }
             return ResponseEntity.ok(checkpoint);
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 
@@ -104,7 +117,7 @@ public class AgentGraphCheckpointController {
                     checkpointNs, beforeCheckpointId, limit, filterSource, filterStep);
             return ResponseEntity.ok(checkpoints);
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 
@@ -116,7 +129,7 @@ public class AgentGraphCheckpointController {
             service.putWrites(threadId, request);
             return ResponseEntity.noContent().build();
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 
@@ -128,7 +141,7 @@ public class AgentGraphCheckpointController {
             service.deleteThread(threadId, request);
             return ResponseEntity.noContent().build();
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            return problem(e);
         }
     }
 }

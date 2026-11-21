@@ -4867,6 +4867,8 @@ paths:
         '201': { description: Created (or already existing) lineage, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointLineageView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'Four causes, four readings — disambiguate with the `branch` field (task-142). `CHECKPOINT_SCOPE_MISMATCH` `SESSION_OWNER_TRIPLE_UNMATCHED` (no Session matches the triple, archived included); `CHECKPOINT_TARGET_NOT_FOUND` `SOURCE_RUN_UNAVAILABLE` (the named source Run is absent from this scope or carries no branch); `CHECKPOINT_TARGET_NOT_FOUND` `BRANCH_MISSING_FOR_SESSION` (the target branch row is gone); `CHECKPOINT_LINEAGE_NOT_FOUND` `LINEAGE_ROW_UNREADABLE` (the row just inserted cannot be read back). A foreign thread is never distinguished from an absent one.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'Confirmed key collision, distinguished by `branch`: `CHECKPOINT_KEY_CONFLICT` `LINEAGE_KEY_ALREADY_BOUND` (the identity key was taken by a row that is not visible under this scope) or `LINEAGE_IDENTITY_AMBIGUOUS` (more than one row claims the same identity).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/agent/checkpoints/lineages/{threadId}:
     x-owner: cp
     get:
@@ -4886,7 +4888,7 @@ paths:
         '200': { description: Lineage, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointLineageView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'Distinguish with `branch` (task-142): `CHECKPOINT_LINEAGE_NOT_FOUND` `THREAD_NOT_BOUND_TO_OWNER` (no lineage for this thread under this owner triple — deliberately identical for foreign and absent); `CHECKPOINT_SCOPE_MISMATCH` `SESSION_OWNER_TRIPLE_UNMATCHED` / `LOOKUP_IDENTITY_SHAPE` (owner triple unmatched, or `sourceRunId`/`probeId` not exactly one); `CHECKPOINT_TARGET_NOT_FOUND` `SOURCE_RUN_UNAVAILABLE` / `BRANCH_MISSING_FOR_SESSION`; `CHECKPOINT_SCOPE_MISMATCH` `BOUND_IDENTITY_DIFFERS` (the lineage is bound to another run/probe/branch, e.g. a sibling branch of the same Session).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/agent/checkpoints/{threadId}:
     x-owner: cp
     delete:
@@ -4902,6 +4904,7 @@ paths:
         '204': { description: Deleted (idempotent) }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'Same codes and `branch` values as `GET /lineages/{threadId}` — the delete runs through the same owner-scope check (`THREAD_NOT_BOUND_TO_OWNER` / `SESSION_OWNER_TRIPLE_UNMATCHED` / `BRANCH_MISSING_FOR_SESSION`). Per-branch check (task-142): the delete path reaches only notFound predicates, so it answers **no 409** — a matched lineage cascades to checkpoints and pending writes, an unmatched one is 404, and a thread that stored nothing stays idempotent 204.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/agent/checkpoints/{threadId}/checkpoints:
     x-owner: cp
     put:
@@ -4917,6 +4920,8 @@ paths:
         '204': { description: Stored }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'Distinguish with `branch` (task-142). Owner-scope family, identical to `GET /lineages/{threadId}`: `CHECKPOINT_LINEAGE_NOT_FOUND` `THREAD_NOT_BOUND_TO_OWNER`, `CHECKPOINT_SCOPE_MISMATCH` `SESSION_OWNER_TRIPLE_UNMATCHED`, `CHECKPOINT_TARGET_NOT_FOUND` `BRANCH_MISSING_FOR_SESSION`. Storage family: `CHECKPOINT_TARGET_NOT_FOUND` `CONFLICTED_CHECKPOINT_ROW_MISSING` — the upsert reports the saver key as taken while the scoped read-back finds no row, so CP cannot claim the key holds *different* data; a `409` would assert a comparison that never happened, and this route keeps its previous 404 status. The code + `branch` are what make it distinguishable.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: '`CHECKPOINT_KEY_CONFLICT` `CHECKPOINT_KEY_BOUND_TO_OTHER_DATA` — the saver key `(thread_id, checkpoint_ns, checkpoint_id)` (V72 `uq_agent_graph_checkpoints_saver_key`) already holds a different payload/parent/metadata. Not retryable: the same key with the same bytes replays idempotently.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     get:
       tags: [service-agent]
       operationId: listAgentCheckpoints
@@ -4937,13 +4942,14 @@ paths:
         '200': { description: Checkpoints, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AgentCheckpointView' } } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'Owner-scope rejection only (the list reaches no storage predicate): `CHECKPOINT_LINEAGE_NOT_FOUND` `THREAD_NOT_BOUND_TO_OWNER`, `CHECKPOINT_SCOPE_MISMATCH` `SESSION_OWNER_TRIPLE_UNMATCHED`, `CHECKPOINT_TARGET_NOT_FOUND` `BRANCH_MISSING_FOR_SESSION`. A page that is merely empty answers 200 with `[]`.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/agent/checkpoints/{threadId}/checkpoints/{checkpointId}:
     x-owner: cp
     get:
       tags: [service-agent]
       operationId: getAgentCheckpoint
       summary: Read one checkpoint (owner-scoped)
-      description: 'Single checkpoint incl. pending writes; a checkpoint that does not exist for this owner/thread answers `404 CHECKPOINT_NOT_FOUND`.'
+      description: 'Single checkpoint incl. pending writes. Two different 404s (task-142 makes them distinguishable): the **checkpoint** is absent for this owner/thread → `404 CHECKPOINT_NOT_FOUND` (empty result, no `branch`); the **lineage/scope** around it is unavailable → `CHECKPOINT_LINEAGE_NOT_FOUND` `THREAD_NOT_BOUND_TO_OWNER`, `CHECKPOINT_SCOPE_MISMATCH` `SESSION_OWNER_TRIPLE_UNMATCHED`, or `CHECKPOINT_TARGET_NOT_FOUND` `BRANCH_MISSING_FOR_SESSION`. A caller that retried the missing-checkpoint case after a `PUT .../checkpoints` returned 204 should check the scope codes first.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
@@ -4956,14 +4962,14 @@ paths:
         '200': { description: Checkpoint, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'Codes above; read `branch` to tell an absent checkpoint (none) from an owner-scope rejection (`THREAD_NOT_BOUND_TO_OWNER` / `SESSION_OWNER_TRIPLE_UNMATCHED` / `BRANCH_MISSING_FOR_SESSION`).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/agent/checkpoints/{threadId}/writes:
     x-owner: cp
     post:
       tags: [service-agent]
       operationId: putAgentCheckpointWrites
       summary: Store pending writes for one checkpoint (owner-scoped)
-      description: 'Persists the pending writes of the checkpoint''s next tasks (`taskId`/`taskPath` + `writes[]`). Idempotent per `(checkpointId, taskPath, channel)`: a re-post replaces the same write instead of appending.'
+      description: 'Persists the pending writes of the checkpoint''s next tasks (`taskId`/`taskPath` + `writes[]`). **Idempotent per `(thread_id, checkpoint_ns, checkpoint_id, task_id, write_index)`** — the V72 saver key `uq_agent_graph_checkpoint_writes_saver_key`, not `(checkpointId, taskPath, channel)` as this description used to claim. A re-post of the same key with the **same** `taskPath`/`channel`/`payloadType`/bytes is skipped idempotently; a re-post with **different** values on that key is rejected (`409`), never replaced — `channel` is a compared field, not part of the key, so a same-key different-channel post conflicts instead of overwriting. `writeIndex` defaults to the position in `writes[]` when omitted.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
@@ -4972,6 +4978,8 @@ paths:
         '204': { description: Stored }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'This is the code the window-2 incident saw. Distinguish with `branch` (task-142): owner-scope family (`THREAD_NOT_BOUND_TO_OWNER`, `SESSION_OWNER_TRIPLE_UNMATCHED`, `BRANCH_MISSING_FOR_SESSION`); `CHECKPOINT_TARGET_NOT_FOUND` `CHECKPOINT_ROW_MISSING` (the `FOR UPDATE` read found no checkpoint for this `checkpointId`/`checkpointNs` — the checkpoint never landed, or landed in another namespace); `CHECKPOINT_TARGET_NOT_FOUND` `PENDING_WRITE_ROW_MISSING_AFTER_CONFLICT` (the insert reported the saver-key conflict and the row then read back empty). Both storage branches deliberately stay **404**: the Agent waits for the checkpoint insert to become visible and retries the 404 family only.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: '`CHECKPOINT_WRITE_CONFLICT` `PENDING_WRITE_KEY_BOUND_TO_OTHER_DATA` — the saver key `(thread_id, checkpoint_ns, checkpoint_id, task_id, write_index)` already holds a write whose `taskPath`/`channel`/`payloadType`/bytes differ. Not retryable with the same payload: the producer must use a new `taskId`/`writeIndex` or the same values. Budget exhaustion is a separate `400 INVALID_CHECKPOINT_REQUEST`.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /internal/v1/context/{sessionId}/snapshot:
     get:
       tags: [service-misc]
@@ -10452,6 +10460,7 @@ components:
         dependency: { type: string, description: 'PLAN-0557: unavailable dependency (runtime|agent) on MCP/models proxy failures.' }
         reason: { type: string, description: 'PLAN-0557: frozen dependency failure reason (unreachable|timeout|auth_failed|upstream_error).' }
         outcome: { type: string, enum: [success, error, partial, ambiguous] }
+        branch: { type: string, description: 'task-142: which rejection branch produced this problem, as an upper-snake constant name. Published by faces that carry several distinct failures under one status/code (the CP checkpoint face enumerates its values per operation). Absent when the face has nothing to disambiguate.' }
     JobOutputChunk:
       type: object
       description: 'Durable Job output chunk. `jobId` is the Workspace Job domain identity and `runtimeJobId` is the backend handle. `nextOffset` is always a UTF-8 rune boundary; `truncated` means the output file hit the 1 MiB JOB_CAP.'

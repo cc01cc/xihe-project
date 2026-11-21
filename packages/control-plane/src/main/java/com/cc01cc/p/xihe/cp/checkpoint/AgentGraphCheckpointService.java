@@ -83,7 +83,7 @@ public class AgentGraphCheckpointService {
                     (rs, rowNum) -> rs.getObject("branch_id", UUID.class),
                     sourceRunId, sessionId, userId, workspaceId);
             if (runBranches.size() != 1 || runBranches.getFirst() == null) {
-                throw notFound();
+                throw targetNotFound(CheckpointBranch.SOURCE_RUN_UNAVAILABLE);
             }
             branchId = runBranches.getFirst();
         } else {
@@ -110,7 +110,8 @@ public class AgentGraphCheckpointService {
         if (inserted == 0) {
             existing = findLineage(sessionId, userId, workspaceId, branchId, sourceRunId, probeId);
             if (existing == null) {
-                throw conflict("Checkpoint lineage key is already bound");
+                throw conflict("Checkpoint lineage key is already bound",
+                        CheckpointBranch.LINEAGE_KEY_ALREADY_BOUND);
             }
             return existing;
         }
@@ -118,7 +119,7 @@ public class AgentGraphCheckpointService {
                 "SELECT created_at FROM agent_graph_checkpoint_lineages WHERE lineage_id = ?",
                 OffsetDateTime.class, lineageId);
         if (createdAt == null) {
-            throw notFound();
+            throw lineageNotFound(CheckpointBranch.LINEAGE_ROW_UNREADABLE);
         }
         // The source Run is a logical reference: lineage retention follows Session retention,
         // so deleting one Run must not delete graph state still owned by the Session.
@@ -158,7 +159,8 @@ public class AgentGraphCheckpointService {
                             rs.getString("producer_version"));
                 }, args.toArray());
         if (lineages.size() > 1) {
-            throw conflict("Checkpoint lineage identity is ambiguous");
+            throw conflict("Checkpoint lineage identity is ambiguous",
+                    CheckpointBranch.LINEAGE_IDENTITY_AMBIGUOUS);
         }
         return lineages.isEmpty() ? null : lineages.getFirst();
     }
@@ -170,7 +172,7 @@ public class AgentGraphCheckpointService {
         UUID expectedSourceRunId = optionalUuid(request.sourceRunId(), "sourceRunId");
         UUID expectedProbeId = optionalUuid(request.probeId(), "probeId");
         if ((expectedSourceRunId == null) == (expectedProbeId == null)) {
-            throw notFound();
+            throw scopeMismatch(CheckpointBranch.LOOKUP_IDENTITY_SHAPE);
         }
         UUID expectedBranchId;
         if (expectedSourceRunId == null) {
@@ -183,14 +185,14 @@ public class AgentGraphCheckpointService {
                     (rs, rowNum) -> rs.getObject("branch_id", UUID.class),
                     expectedSourceRunId, scope.sessionId(), scope.userId(), scope.workspaceId());
             if (runBranches.size() != 1 || runBranches.getFirst() == null) {
-                throw notFound();
+                throw targetNotFound(CheckpointBranch.SOURCE_RUN_UNAVAILABLE);
             }
             expectedBranchId = runBranches.getFirst();
         }
         if (!java.util.Objects.equals(scope.sourceRunId(), expectedSourceRunId)
                 || !java.util.Objects.equals(scope.probeId(), expectedProbeId)
                 || !scope.branchId().equals(expectedBranchId)) {
-            throw notFound();
+            throw scopeMismatch(CheckpointBranch.BOUND_IDENTITY_DIFFERS);
         }
         return new LineageView(
                 scope.lineageId().toString(), scope.threadId().toString(), scope.sessionId().toString(),
@@ -219,7 +221,7 @@ public class AgentGraphCheckpointService {
                 (rs, rowNum) -> rs.getObject("branch_id", UUID.class),
                 sourceRunId, sessionId, userId, workspaceId);
         if (runBranches.size() != 1 || runBranches.getFirst() == null) {
-            throw notFound();
+            throw targetNotFound(CheckpointBranch.SOURCE_RUN_UNAVAILABLE);
         }
         UUID expectedBranchId = runBranches.getFirst();
 
@@ -236,11 +238,11 @@ public class AgentGraphCheckpointService {
                 rs.getInt("schema_version"), rs.getObject("created_at", OffsetDateTime.class).toString(),
                 rs.getString("producer_version")), sourceRunId, sessionId, userId, workspaceId);
         if (lineages.size() != 1) {
-            throw notFound();
+            throw lineageNotFound(CheckpointBranch.SOURCE_RUN_HAS_NO_LINEAGE);
         }
         Scope scope = lineages.getFirst();
         if (!expectedBranchId.equals(scope.branchId()) || scope.probeId() != null) {
-            throw notFound();
+            throw scopeMismatch(CheckpointBranch.LINEAGE_BRANCH_OR_PROBE_DIFFERS);
         }
         requireBranch(sessionId, scope.branchId());
 
@@ -261,12 +263,17 @@ public class AgentGraphCheckpointService {
         Map<String, Object> metadata = parseMetadata(checkpoint.metadataJson());
         Long eventSequence = exactLong(metadata.get("eventSequence"));
         if (eventSequence == null || eventSequence < 0) {
-            throw notFound();
+            // task-142 lead ruling: the row EXISTS here -- only its cursor is unreadable. Wording must
+            // not read like "nothing was stored", or callers will treat an undecidable checkpoint as an
+            // absent one and start a fresh branch instead of repairing the producer.
+            throw targetNotFound(CheckpointBranch.CHECKPOINT_CURSOR_UNDECIDABLE,
+                    "Checkpoint row exists but carries no decidable eventSequence cursor");
         }
         long currentVisibleBranchHead = contextService.latestVisibleSequence(
                 sessionId.toString(), scope.branchId().toString());
         if (eventSequence > currentVisibleBranchHead) {
-            throw conflict("Checkpoint cursor is beyond the visible branch head");
+            throw conflict("Checkpoint cursor is beyond the visible branch head",
+                    CheckpointBranch.CURSOR_BEYOND_VISIBLE_HEAD);
         }
         return new ContinuationCheckpointView(
                 scope.lineageId().toString(), scope.threadId().toString(), checkpoint.checkpointId(),
@@ -301,7 +308,8 @@ public class AgentGraphCheckpointService {
             long visibleBranchHead = contextService.latestVisibleSequence(
                     scope.sessionId().toString(), scope.branchId().toString());
             if (eventSequence < 0 || eventSequence > visibleBranchHead) {
-                throw conflict("Checkpoint cursor is outside the visible branch history");
+                throw conflict("Checkpoint cursor is outside the visible branch history",
+                        CheckpointBranch.CURSOR_OUTSIDE_VISIBLE_HISTORY);
             }
             if (parentCheckpointId != null) {
                 List<String> parentMetadata = jdbc.query(
@@ -310,7 +318,8 @@ public class AgentGraphCheckpointService {
                 if (parentMetadata.size() == 1) {
                     Long parentSequence = exactLong(parseMetadata(parentMetadata.getFirst()).get("eventSequence"));
                     if (parentSequence != null && eventSequence < parentSequence) {
-                        throw conflict("Checkpoint cursor cannot move backward");
+                        throw conflict("Checkpoint cursor cannot move backward",
+                                CheckpointBranch.CURSOR_MOVING_BACKWARD);
                     }
                 }
             }
@@ -332,7 +341,12 @@ public class AgentGraphCheckpointService {
                      WHERE lineage_id = ? AND thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?
                     """, CHECKPOINT_ROW, scope.lineageId(), scope.threadId(), checkpointNs, checkpointId);
             if (existing.isEmpty()) {
-                throw notFound();
+                // task-142 lead ruling #1 ("only a proven conflict may answer 409"): the upsert says the
+                // saver key was taken, yet the scoped read-back finds no row -- so CP cannot claim the
+                // key is bound to *different data*. Answering 409 here would assert a comparison that
+                // never happened. The status stays 404 as before (this card changes no status); the
+                // distinguishability comes from the code + branch.
+                throw targetNotFound(CheckpointBranch.CONFLICTED_CHECKPOINT_ROW_MISSING);
             }
             CheckpointRow row = existing.getFirst();
             boolean same = row.payloadType().equals(payloadType)
@@ -340,7 +354,8 @@ public class AgentGraphCheckpointService {
                     && java.util.Objects.equals(row.parentCheckpointId(), parentCheckpointId)
                     && parseMetadata(row.metadataJson()).equals(normalizedMetadata);
             if (!same) {
-                throw conflict("Checkpoint key is already bound to different data");
+                throw conflict("Checkpoint key is already bound to different data",
+                        CheckpointBranch.CHECKPOINT_KEY_BOUND_TO_OTHER_DATA);
             }
         }
     }
@@ -418,7 +433,7 @@ public class AgentGraphCheckpointService {
                 """, (rs, rowNum) -> rs.getObject("checkpoint_row_id", UUID.class),
                 scope.lineageId(), scope.threadId(), checkpointNs, checkpointId);
         if (checkpointRows.size() != 1) {
-            throw notFound();
+                throw targetNotFound(CheckpointBranch.CHECKPOINT_ROW_MISSING);
         }
         Long writeCount = jdbc.queryForObject("""
                 SELECT count(*) FROM agent_graph_checkpoint_writes
@@ -452,7 +467,7 @@ public class AgentGraphCheckpointService {
                 ExistingWrite row = existingRows.getFirst();
                 if (!row.taskPath().equals(taskPath) || !row.channel().equals(channel)
                         || !row.payloadType().equals(payloadType) || !Arrays.equals(row.blob(), blob)) {
-                    throw conflict("Pending write key is already bound to different data");
+                    throw writeConflict(CheckpointBranch.PENDING_WRITE_KEY_BOUND_TO_OTHER_DATA);
                 }
                 continue;
             }
@@ -479,12 +494,14 @@ public class AgentGraphCheckpointService {
                         rs.getString("payload_type"), rs.getBytes("value_blob")),
                         scope.lineageId(), scope.threadId(), checkpointNs, checkpointId, taskId, writeIndex);
                 if (conflictedRows.isEmpty()) {
-                    throw notFound();
+                    // 404 family on purpose, same reasoning as the checkpoint conflict re-read above:
+                    // the writes FK is what the Agent's retry loop waits for. See evidence README.
+                    throw targetNotFound(CheckpointBranch.PENDING_WRITE_ROW_MISSING_AFTER_CONFLICT);
                 }
                 ExistingWrite row = conflictedRows.getFirst();
                 if (!row.taskPath().equals(taskPath) || !row.channel().equals(channel)
                         || !row.payloadType().equals(payloadType) || !Arrays.equals(row.blob(), blob)) {
-                    throw conflict("Pending write key is already bound to different data");
+                    throw writeConflict(CheckpointBranch.PENDING_WRITE_KEY_BOUND_TO_OTHER_DATA);
                 }
             } else {
                 admittedCount++;
@@ -589,7 +606,7 @@ public class AgentGraphCheckpointService {
                 rs.getObject("created_at", OffsetDateTime.class).toString(), rs.getString("producer_version")),
                 threadId, sessionId, userId, workspaceId);
         if (scopes.size() != 1) {
-            throw notFound();
+            throw lineageNotFound(CheckpointBranch.THREAD_NOT_BOUND_TO_OWNER);
         }
         Scope scope = scopes.getFirst();
         requireBranch(sessionId, scope.branchId());
@@ -601,7 +618,7 @@ public class AgentGraphCheckpointService {
                 "SELECT count(*) FROM session_branches WHERE session_id = ? AND id = ?",
                 Integer.class, sessionId, branchId);
         if (matchingBranches == null || matchingBranches != 1) {
-            throw notFound();
+            throw targetNotFound(CheckpointBranch.BRANCH_MISSING_FOR_SESSION);
         }
     }
 
@@ -615,7 +632,7 @@ public class AgentGraphCheckpointService {
     private Session requireSession(UUID sessionId, UUID userId, UUID workspaceId) {
         return sessions.findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
                         sessionId, userId.toString(), workspaceId.toString())
-                .orElseThrow(AgentGraphCheckpointService::notFound);
+                .orElseThrow(() -> scopeMismatch(CheckpointBranch.SESSION_OWNER_TRIPLE_UNMATCHED));
     }
 
     static Map<String, Object> normalizeMetadata(Map<String, Object> input) {
@@ -720,13 +737,52 @@ public class AgentGraphCheckpointService {
         return new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_CHECKPOINT_REQUEST", detail);
     }
 
-    private static CpApiException notFound() {
-        return new CpApiException(HttpStatus.NOT_FOUND, "CHECKPOINT_LINEAGE_NOT_FOUND",
-                "Checkpoint lineage is unavailable");
+    /**
+     * task-142: one rejection predicate, one code, one branch. Fifteen sites used to share
+     * {@code 404 CHECKPOINT_LINEAGE_NOT_FOUND} + one sentence, so an incident could not be located
+     * from the error code (window 2: run {@code 7bac51bf}, {@code user_questions} 0 rows, one 404).
+     * The status of every branch is unchanged: each 404 stays 404 and each 409 stays 409, because the
+     * Agent retries exactly the 404 family (see the evidence README).
+     */
+    private static CpApiException problem(
+            HttpStatus status, String code, String detail, CheckpointBranch branch) {
+        return new CpApiException(status, code, detail).withExtra(Map.of("branch", branch.name()));
     }
 
-    private static CpApiException conflict(String detail) {
-        return new CpApiException(HttpStatus.CONFLICT, "CHECKPOINT_KEY_CONFLICT", detail);
+    /** No lineage row is bound to the thread/owner/source-run the caller named. */
+    private static CpApiException lineageNotFound(CheckpointBranch branch) {
+        return problem(HttpStatus.NOT_FOUND, "CHECKPOINT_LINEAGE_NOT_FOUND",
+                "Checkpoint lineage is unavailable", branch);
+    }
+
+    /** A row was found, but the caller's owner/scope claim does not match what it is bound to. */
+    private static CpApiException scopeMismatch(CheckpointBranch branch) {
+        return problem(HttpStatus.NOT_FOUND, "CHECKPOINT_SCOPE_MISMATCH",
+                "Checkpoint scope does not match the requested owner", branch);
+    }
+
+    /** The run / checkpoint / branch object the caller referenced is unavailable. */
+    private static CpApiException targetNotFound(CheckpointBranch branch) {
+        return targetNotFound(branch, "Checkpoint target is unavailable");
+    }
+
+    /**
+     * Same as {@link #targetNotFound(CheckpointBranch)} with a branch-specific sentence, used where
+     * "absent" and "present but undecidable" must not read alike.
+     */
+    private static CpApiException targetNotFound(CheckpointBranch branch, String detail) {
+        return problem(HttpStatus.NOT_FOUND, "CHECKPOINT_TARGET_NOT_FOUND", detail, branch);
+    }
+
+    /** An already-stored key carries different data (or an identity cannot be resolved uniquely). */
+    private static CpApiException conflict(String detail, CheckpointBranch branch) {
+        return problem(HttpStatus.CONFLICT, "CHECKPOINT_KEY_CONFLICT", detail, branch);
+    }
+
+    /** A pending-write key is bound to different data; only ever raised after reading that row. */
+    private static CpApiException writeConflict(CheckpointBranch branch) {
+        return problem(HttpStatus.CONFLICT, "CHECKPOINT_WRITE_CONFLICT",
+                "Pending write key is already bound to different data", branch);
     }
 
     private static final RowMapper<CheckpointRow> CHECKPOINT_ROW = AgentGraphCheckpointService::mapCheckpoint;
@@ -738,6 +794,34 @@ public class AgentGraphCheckpointService {
                 rs.getString("parent_checkpoint_id"), rs.getString("payload_type"),
                 rs.getBytes("checkpoint_blob"), rs.getString("metadata_json"),
                 rs.getObject("created_at", OffsetDateTime.class).toString());
+    }
+
+    /**
+     * task-142: which predicate rejected the request. Carried in the RFC 9457 body as {@code branch}
+     * ({@code CpApiException#getExtra()} is published by {@code ProblemDetailsHandler}); the wire value
+     * is this constant name, so a log line pins the branch without reading the source.
+     */
+    enum CheckpointBranch {
+        SOURCE_RUN_UNAVAILABLE,
+        LINEAGE_ROW_UNREADABLE,
+        LOOKUP_IDENTITY_SHAPE,
+        BOUND_IDENTITY_DIFFERS,
+        SOURCE_RUN_HAS_NO_LINEAGE,
+        LINEAGE_BRANCH_OR_PROBE_DIFFERS,
+        CHECKPOINT_CURSOR_UNDECIDABLE,
+        CONFLICTED_CHECKPOINT_ROW_MISSING,
+        CHECKPOINT_ROW_MISSING,
+        PENDING_WRITE_ROW_MISSING_AFTER_CONFLICT,
+        THREAD_NOT_BOUND_TO_OWNER,
+        BRANCH_MISSING_FOR_SESSION,
+        SESSION_OWNER_TRIPLE_UNMATCHED,
+        LINEAGE_KEY_ALREADY_BOUND,
+        LINEAGE_IDENTITY_AMBIGUOUS,
+        CURSOR_BEYOND_VISIBLE_HEAD,
+        CURSOR_OUTSIDE_VISIBLE_HISTORY,
+        CURSOR_MOVING_BACKWARD,
+        CHECKPOINT_KEY_BOUND_TO_OTHER_DATA,
+        PENDING_WRITE_KEY_BOUND_TO_OTHER_DATA
     }
 
     public record OwnerRequest(String sessionId, String userId, String workspaceId) {}
