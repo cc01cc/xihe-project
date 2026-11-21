@@ -108,6 +108,15 @@ public class SecurityConfig {
                 // A human-user surface: the service identity keeps its own channels
                 // (/internal/** and /api/v1/mcp) and must not gain the user API just because it
                 // is "authenticated" (PLAN-0610 W1b keeps the pre-existing denial).
+                // D-1535 (task-5): the first-run credential disclosure runs before any usable
+                // credential exists, so it cannot require a Bearer principal. Only these two paths
+                // are opened, and their real gate is local-only (FirstRunLocalAccess: loopback
+                // peer + Host + Origin, prod fail-closed; FirstRunAccountService: one-account
+                // count). Registering them for every method is deliberate — the controller serves
+                // POST only, so a GET must reach the dispatcher and answer 405 rather than the
+                // chain's 401.
+                .requestMatchers("/api/v1/bootstrap/first-run-account",
+                        "/api/v1/bootstrap/first-run-account/rewrite").permitAll()
                 .requestMatchers("/api/v1/**").access((authentication, context) -> userPrincipalOnly(authentication.get()))
                 // PLAN-0691 T1.5 (SEC-1): the plugin KV data plane accepts exactly one credential —
                 // a binding-scoped token minted by PluginKvTokenService. It is deliberately registered

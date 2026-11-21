@@ -134,6 +134,60 @@ paths:
       summary: Check whether the instance still needs bootstrap
       security: []
       responses: { '200': { description: 'Onboarding status {initialized} (always 200, ungated)' } }
+  /api/v1/bootstrap/first-run-account:
+    post:
+      tags: [auth]
+      operationId: discloseFirstRunAccount
+      summary: Disclose the first-run administrator credential exactly once
+      description: |
+        D-1535 (task-5, formerly task-149): one-time disclosure of the first-run administrator
+        credential. POST only — a disclosure has a consuming side effect, so GET (and every other
+        method) is refused 405 instead of being reachable by prefetchers, proxies and access logs.
+        The local gate has four parts and each one closes the endpoint fail-closed (403
+        `FIRST_RUN_ACCOUNT_NOT_AVAILABLE`): the TCP peer address must be loopback; `Host` must name
+        a loopback host (`127.0.0.1` / `localhost` / `[::1]`); a present `Origin` must likewise be
+        an http(s) loopback origin (a browser request always carries one, so a cross-site page is
+        refused); and the instance must hold exactly one usable account (the seeded admin). With
+        `XIHE_ENV=prod` the endpoint is closed unconditionally. The endpoint sits inside the window
+        where no credential exists yet, so it cannot require a Bearer token.
+        The plaintext lives only in CP process memory for this boot, is returned exactly once and is
+        never logged. The second call answers 410 `FIRST_RUN_ACCOUNT_ALREADY_DISCLOSED` — the
+        "already initialized" marker — with no secret in the body. Path C (password pinned through
+        `XIHE_DEV_ADMIN_PASSWORD`, env or the .env chain) answers `state: operator-provided` with
+        `secret: null`: an operator secret is never echoed; recover or rotate it through
+        `POST /api/v1/users/{userId}/password-reset` (`cap:instance:admin`).
+      security: []
+      responses:
+        '200': { description: 'generated-secret carries {value, issuedAt} exactly once; operator-provided carries secret: null and source: env', content: { application/json: { schema: { $ref: '#/components/schemas/FirstRunAccountDisclosure' } } } }
+        '403': { $ref: '#/components/responses/Problem', description: 'FIRST_RUN_ACCOUNT_NOT_AVAILABLE — not this boot, cp.bootstrap.seed-admin off, the instance has another account, a non-loopback peer/Host/Origin, or XIHE_ENV=prod' }
+        '405': { description: 'Only POST is served; GET and every other method are refused' }
+        '410': { $ref: '#/components/responses/Problem', description: 'FIRST_RUN_ACCOUNT_ALREADY_DISCLOSED — the plaintext was already handed out (or the account was rewritten) in this boot; no secret is repeated' }
+  /api/v1/bootstrap/first-run-account/rewrite:
+    post:
+      tags: [auth]
+      operationId: rewriteFirstRunAccount
+      summary: Rewrite the first-run administrator username and password in place
+      description: |
+        D-1535 ④: the rewrite face carries `username?` + `password` only. `email` is not editable
+        here — sending it is refused 400 `INVALID_REQUEST`; a placeholder first-run email is changed
+        later through the admin surface. Same local gate as the disclosure endpoint (loopback peer,
+        loopback Host, loopback Origin when present, one usable account, prod closed). The new
+        password is stored as a hash only, and both token epochs are bumped in the same transaction
+        so every token minted for the previous credential stops working on its next use. The
+        disclosure window is single-shot per boot: a second rewrite answers 409
+        `FIRST_RUN_ACCOUNT_ALREADY_REWRITTEN`. Password length follows the registration bounds
+        (8–128); username follows the shared name rule (400 `INVALID_NAME_FORMAT`), and a taken
+        handle answers 409 `USERNAME_TAKEN`.
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/FirstRunAccountRewriteRequest' } } }
+      responses:
+        '200': { description: 'Rewritten; the one-time disclosure is now closed', content: { application/json: { schema: { $ref: '#/components/schemas/FirstRunAccountRewriteResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem', description: 'INVALID_REQUEST (missing/oversized password, or an email field on this face) or INVALID_NAME_FORMAT (username shape)' }
+        '403': { $ref: '#/components/responses/Problem', description: 'FIRST_RUN_ACCOUNT_NOT_AVAILABLE — local gate failure, seed switched off, or the instance is no longer a single-account first run' }
+        '405': { description: 'Only POST is served; GET and every other method are refused' }
+        '409': { $ref: '#/components/responses/Problem', description: 'FIRST_RUN_ACCOUNT_ALREADY_REWRITTEN, or USERNAME_TAKEN' }
   /api/v1/workspaces/current:
     get: { tags: [workspace], operationId: getCurrentWorkspace, summary: Get the caller's current workspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Current workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces:
@@ -7992,6 +8046,9 @@ components:
     AgentRunCancelRequest: { type: object, additionalProperties: false, properties: { reason: { type: string, description: 'Free-form cancel reason; the Agent defaults to user_requested when absent.' }, workspaceId: { type: [string, 'null'], format: uuid, description: 'Workspace the run belongs to; logged on the LIFECYCLE correlation line.' } } }
     AgentRunCancelResponse: { type: object, required: [status, runId], properties: { status: { type: string, enum: [accepted, unknown, failed] }, runId: { type: string }, code: { type: string, description: 'Set only when status=failed (CANCEL_FAILED).' } } }
     RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Required; PLAN-0758 removed the server-generated local-mode password.' }, name: { type: string }, username: { type: string, maxLength: 32, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'PLAN-0565 ruling #7 + 决策 v29 (2026-11-04): optional; blank derives a unique default from the email local part. Explicit values follow the shared name rule (letters any case / Chinese characters / digits, no leading digit, no spaces or symbols, 1-32 chars); invalid shape is 400 USERNAME_INVALID, taken is 409 USERNAME_TAKEN.' } } }
+    FirstRunAccountDisclosure: { type: object, additionalProperties: false, required: [state, account], properties: { state: { type: string, enum: [generated-secret, operator-provided], description: 'generated-secret = this boot minted the password and the body carries it once; operator-provided = the password came from deployment configuration and the body never carries it (D-1535 ②).' }, account: { type: object, additionalProperties: false, required: [email, username], properties: { email: { type: string, description: 'The seeded account email. A placeholder never becomes editable on the rewrite face (D-1535 ④).' }, username: { type: string, description: 'The seeded account handle; rewritable through POST /api/v1/bootstrap/first-run-account/rewrite.' } } }, secret: { type: [object, 'null'], additionalProperties: false, properties: { value: { type: string, description: 'The plaintext password. Present exactly once per boot and only for state=generated-secret; never logged.' }, issuedAt: { type: string, format: date-time, description: 'When this value was minted (process start).' } }, description: 'null for operator-provided: an operator secret is never echoed (D-1535 ②).' }, source: { type: [string, 'null'], enum: [env, null], description: 'Where an operator-provided password came from; null for generated-secret.' } } }
+    FirstRunAccountRewriteRequest: { type: object, additionalProperties: false, required: [password], properties: { username: { type: string, minLength: 1, maxLength: 32, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Optional replacement handle; the shared v29 name rule (letters any case / Chinese characters / digits, no leading digit, no spaces or symbols, 1-32 chars). Invalid shape is 400 INVALID_NAME_FORMAT, taken is 409 USERNAME_TAKEN.' }, password: { type: string, minLength: 8, maxLength: 128, description: 'New password, stored as a hash only; both token epochs are bumped so the previous credential and its tokens stop working. email is deliberately absent (D-1535 ④) — sending it is 400 INVALID_REQUEST.' } } }
+    FirstRunAccountRewriteResponse: { type: object, additionalProperties: false, required: [account, secretRevoked], properties: { account: { type: object, additionalProperties: false, required: [email, username], properties: { email: { type: string }, username: { type: string } } }, secretRevoked: { type: boolean, description: 'Always true: the one-time disclosure window is closed after a successful rewrite.' } } }
     LoginRequest: { type: object, required: [identifier, password], properties: { identifier: { type: string, description: 'PLAN-0565 ruling #7: email (contains @) or username; renamed from the former email field.' }, password: { type: string } } }
     MemberView: { type: object, required: [userId, username, email, role, createdAt], properties: { userId: { type: string, format: uuid }, username: { type: string }, email: { type: string }, name: { type: [string, 'null'] }, role: { type: string, enum: [OWNER, EDITOR, VIEWER], description: 'Canonical role; legacy ADMIN/MEMBER rows project as EDITOR (PLAN-0559).' }, createdAt: { type: string, format: date-time, description: 'Membership creation time (the joined-at value).' } } }
     MemberAddRequest: { type: object, required: [username, role], properties: { username: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Unique account username (PLAN-0565 ruling #7). 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, role: { type: string, enum: [EDITOR, VIEWER] } } }

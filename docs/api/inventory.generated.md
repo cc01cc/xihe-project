@@ -5,13 +5,13 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**379** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 275 · 服务间 104
+- 规模：**381** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 277 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（379 / 379 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（381 / 381 个操作带 tag）。
 
-## public（275 operations · 公开 · 17 tags）
+## public（277 operations · 公开 · 17 tags）
 
-### auth（12）
+### auth（14）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -20,6 +20,8 @@
 | `GET /api/v1/auth/me` | `currentUser` | `bearerAuth` | Get the current authenticated user | 公开 |
 | `POST /api/v1/auth/refresh` | `refresh` | `public` | Refresh an expired access token | 公开 |
 | `POST /api/v1/auth/register` | `register` | `public` | Register a new user account | 公开 |
+| `POST /api/v1/bootstrap/first-run-account` | `discloseFirstRunAccount` | `public` | Disclose the first-run administrator credential exactly once | 公开 |
+| `POST /api/v1/bootstrap/first-run-account/rewrite` | `rewriteFirstRunAccount` | `public` | Rewrite the first-run administrator username and password in place | 公开 |
 | `GET /api/v1/instance/owner` | `getInstanceOwner` | `bearerAuth` | Read the instance owner pointer (PLAN-0580) | 公开 |
 | `PUT /api/v1/instance/owner` | `transferInstanceOwner` | `bearerAuth` | Transfer instance ownership (PLAN-0580) | 公开 |
 | `GET /api/v1/me/permissions` | `myPermissions` | `bearerAuth` | Effective capabilities of the caller (PLAN-0610 W3-2b) | 公开 |
