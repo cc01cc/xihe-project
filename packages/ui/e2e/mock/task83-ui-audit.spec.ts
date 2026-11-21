@@ -878,9 +878,16 @@ test.describe("task-83 ⑤ 点击验证", () => {
  * `elementFromPoint` 打到的是后面的 `a[workspace-nav-sessions]` ⇒ 量出来的「圆心到邻居矩形=0px」
  * 是**两个不同 UI 区域的几何重叠**，不是「与邻居贴死」。桌面展开态才是它们真正可交互的地方。
  *
- * 这条同时是**变异腿的主判据**：把 `sidebar-workspaces-header` 的 `gap-1` 改 0（或把
- * `gap` 换成负值）时，`导入工作区目录` / `添加 Workspace` 的「圆心到邻居矩形」会掉到 10.5
- * ⇒ 本用例必须红。若它不红，说明过滤把真违例一起滤掉了。
+ * **变异腿（task-49 2026-11-21 复核：原判据已失效，此处如实改写）**：原注释写「区头 `gap-1`
+ * 改 0 时 `导入工作区目录` / `添加 Workspace` 的圆心到邻居矩形掉到 10.5 ⇒ 本用例必须红」。
+ * 两处都对不上现状：①`导入工作区目录` 自 44d2e7e14 起已是下拉菜单项，不常驻、不参与本测量；
+ * ②区头三个动作是 `h-8 w-8` = 32×32（Sidebar.vue:373/:400/:413）⇒ 全部 ≥24，
+ * **不进 `under24` 行**，spacing 判决对它们根本不生效。实测：临时把区头 `gap-1.5` 改成 `gap-0`
+ * 后本用例仍是 `1 passed`（临时删改后已还原，`git status --porcelain --
+ * src/components/sidebar/Sidebar.vue` 空输出），故不能声称这条是变异腿。
+ * 现状的真实覆盖：这些控件的合规由「尺寸 ≥24」本身承担（`under24` = 0..1 个）；
+ * spacing 判决只对有 undersized 目标的场景有意义 —— 若将来区头出现 <24 的图标按钮，
+ * 这条注释描述的变异腿才重新成立，届时按那时的实测量重写。
  */
 test.describe("task-89 ② 桌面展开态触控目标", () => {
     test.use({ viewport: { width: 1440, height: 900 } });
@@ -927,9 +934,21 @@ test.describe("task-89 ② 桌面展开态触控目标", () => {
             console.log("[desktop]   EXCLUDED " + JSON.stringify(e.label) + " ← " + e.reason);
         }
         expect(violate, "桌面展开态不得有 spacing 违例").toHaveLength(0);
-        // 这三个目标必须在**被判定**的集合里（而不是被过滤掉的），
+        // 这几个目标必须在**被判定**的集合里（而不是被过滤掉的），
         // 否则上面那句「0 违例」可能只是「一个都没量」。
-        for (const want of ["导入工作区目录", "添加 Workspace", "在此工作区新建会话"]) {
+        //
+        // task-49（2026-11-21）：原清单首项是「导入工作区目录」，该断言在 HEAD 上恒红。
+        // 根因是**测试面缺陷，不是产品缺陷**：44d2e7e14（task-365 B，D-1220 ②）把导入源从
+        // 区头常驻图标降为 sidebar-new-workspace 下拉里的 DropdownMenuItem
+        // （Sidebar.vue:388-394，包在 :380 DropdownMenuContent 内）。未展开下拉时它不在 DOM 可见集合，
+        // elementFromPoint 根本点不到 ⇒ measureTargets 的 sel（不带 role=menuitem）也选不中，
+        // 它**按定义就不是常驻触控目标**。断言它 = 要求「一个不存在的常驻目标被测量」。
+        // 判据取 lead 给的 ②「改断言到真实存在的标签」，口径是**区头现在真正常驻的动作**
+        // （Sidebar.vue:352-417 区头：⊕新建工作区 / 搜索 / 折叠）+ 行上「在此工作区新建会话」
+        // （WorkspaceSessionGroups.vue:517 aria-label，常驻）。
+        // 不改成「打开下拉再量」：那会把 portal 层菜单项混进同一套 spacing 判决，
+        // 改变本用例的测量域（spacing 判决只对 undersized 目标生效，区头三个动作都是 32×32）。
+        for (const want of ["添加 Workspace", "搜索会话", "收起导航面板", "在此工作区新建会话"]) {
             expect(data.labels, "目标「" + want + "」必须可感知且被测量").toContain(want);
         }
     });
