@@ -12,6 +12,7 @@ import { useConfigStore } from "../../../stores/config";
 import { setOnlySelectValue } from "../../../test-utils/select";
 import { toast } from "vue-sonner";
 import type * as providerConnectionServiceModule from "../../../services/providerConnectionService";
+import type * as vueI18nModule from "vue-i18n";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderCatalog: vi.fn<typeof providerConnectionServiceModule.listProviderCatalog>(),
@@ -28,7 +29,17 @@ vi.mock("vue-sonner", () => ({
         error: vi.fn<(message: string) => void>(),
     },
 }));
-vi.mock("vue-i18n", () => ({
+/**
+ * task-126：只替 `useI18n`（组件取词那一处），其余保持真实（`importOriginal`）。
+ *
+ * <p>`stores/config.ts` → `stores/session.ts` → `i18n/index.ts` 在模块加载期就调用
+ * `createI18n`；整块 mock 掉 `vue-i18n` 会把它一并换成 undefined，报
+ * `No "createI18n" export is defined on the "vue-i18n" mock` ⇒ 整份 spec 收集失败
+ * （`Tests no tests`，不是某条用例红）。形态照抄仓内先例
+ * `src/components/__tests__/WorkspacePicker.spec.ts`（task-52 同源根因）。</p>
+ */
+vi.mock<typeof vueI18nModule>("vue-i18n", async (importOriginal) => ({
+    ...(await importOriginal()),
     // task-288：带插值参数时把参数拼进返回值，否则「另有 {count} 个」这类文案的 N
     // 在断言里根本看不见（只返回 key 就等于把该参数从测试面上删掉了）。
     useI18n: () => ({
