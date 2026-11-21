@@ -66,15 +66,21 @@ class CpArchitectureTest {
             row.put("matched", production.stream().filter(origin).count());
             row.put("violationCount", result.getFailureReport().getDetails().size());
             row.put("violations", result.getFailureReport().getDetails().stream().sorted().toList());
-            row.put("classPairs", target == null ? "not a dependency rule - this one inspects the class's"
-                    + " own constructor set, so there is no target class to pair"
-                    : dependencyPairs(production, origin, target));
-            // task-123: a constructor-shape rule has no dependency pairs to show, so its row names the
-            // classes it selected together with the Spring form each one resolved to. Without this,
-            // matched=<n> is a number nobody can audit by name, and the "which classes are exempt because
-            // they use the no-arg fallback" question could only be answered by a regex sweep again.
-            if (target == null) {
+            if (target != null) {
+                row.put("classPairs", dependencyPairs(production, origin, target));
+            } else if (rule == CpArchitectureRules.SPRING_BEAN_WITH_MULTIPLE_CONSTRUCTORS_NEEDS_EXPLICIT_AUTOWIRED) {
+                // task-123: a constructor-shape rule has no dependency pairs to show, so its row names the
+                // classes it selected together with the Spring form each one resolved to. Without this,
+                // matched=<n> is a number nobody can audit by name, and "which classes are exempt because they
+                // use the no-arg fallback" could only be answered by a regex sweep again.
                 row.put("constructorForms", constructorCensus(production, origin));
+            } else {
+                // task-132: the slice rule's audit trail — every owner edge ArchUnit sees, tagged with whether
+                // it closes a cycle today and whether the baseline admits it. This is the artifact the Lead
+                // shrinks the whitelist against; matched=<n> alone would not say which edges are loaded.
+                row.put("sliceEdges", sliceEdgeCensus(production));
+                row.put("sliceCycleBaselineEdges", CpArchitectureRules.sliceCycleBaselineEdges().size());
+                row.put("sliceCycleReviewBy", CpArchitectureRules.SLICE_CYCLE_REVIEW_BY);
             }
             rules.add(row);
         }
@@ -169,6 +175,59 @@ class CpArchitectureTest {
             entry.put("form", CpArchitectureRules.injectionFormOf(type).name());
             return entry;
         }).sorted(java.util.Comparator.comparing(entry -> (String) entry.get("class"))).toList();
+    }
+
+    /**
+     * task-132: the owner-level edge census the slice whitelist is audited against. Rebuilds the same graph
+     * ArchUnit builds (attribution via {@link CpModuleAssignment}, never by package prefix), tags every edge
+     * with whether it closes a cycle <i>today</i> and whether the baseline admits it, and prints the totals so
+     * the "148 of 181" figure behind this card's premise deviation is quotable from the build log instead of
+     * from a throwaway script.
+     */
+    private static List<Map<String, Object>> sliceEdgeCensus(JavaClasses production) {
+        var ownership = new CpModuleAssignment();
+        Map<String, Set<String>> graph = new TreeMap<>();
+        for (var type : production) {
+            String from = ownership.ownerOf(type);
+            if (from == null) {
+                continue;
+            }
+            graph.computeIfAbsent(from, key -> new TreeSet<>());
+            for (var dependency : type.getDirectDependenciesFromSelf()) {
+                String to = ownership.ownerOf(dependency.getTargetClass());
+                if (to != null && !to.equals(from)) {
+                    graph.get(from).add(to);
+                }
+            }
+        }
+        Set<String> baseline = CpArchitectureRules.sliceCycleBaselineEdges();
+        List<Map<String, Object>> edges = new ArrayList<>();
+        int cycleClosing = 0;
+        int whitelisted = 0;
+        for (String from : graph.keySet()) {
+            for (String to : graph.get(from)) {
+                boolean closes = reaches(graph, to, from);
+                boolean admitted = baseline.contains(from + "->" + to);
+                if (closes) {
+                    cycleClosing++;
+                }
+                if (admitted) {
+                    whitelisted++;
+                }
+                Map<String, Object> edge = new LinkedHashMap<>();
+                edge.put("edge", from + "->" + to);
+                edge.put("closesCycle", closes);
+                edge.put("inBaseline", admitted);
+                // An edge outside the baseline that closes a cycle is exactly what the gate now fails on.
+                edge.put("blocksBuild", closes && !admitted);
+                edges.add(edge);
+            }
+        }
+        System.out.println("CP slice graph: slices=" + graph.size() + " edges=" + edges.size()
+                + " cycleClosing=" + cycleClosing + " whitelisted=" + whitelisted
+                + " blocking=" + edges.stream().filter(edge -> Boolean.TRUE.equals(edge.get("blocksBuild"))).count()
+                + " (baseline review by " + CpArchitectureRules.SLICE_CYCLE_REVIEW_BY + ")");
+        return edges;
     }
 
     /**

@@ -20,9 +20,9 @@ import java.util.regex.Pattern;
  *
  * <p><b>Why the path rules are duplicated here instead of calling
  * {@code NestedAgentsMdResolver.normalizeTouchedPath}:</b> {@code cp.skill} must not depend on
- * {@code cp.context}, or {@code CpArchitectureTest}'s {@code slices().should().beFreeOfCycles()}
- * fails. The <i>rule family</i> is the same (normalise backslashes, reject absolute / drive prefix /
- * {@code ..} / NUL); keeping the spelling local is what keeps the slice graph acyclic.</p>
+ * {@code cp.context}, and that edge is now a build failure: {@code CpArchitectureRules} asserts it (task-132 —
+ * before that card this comment described a gate that only wrote a report). The <i>rule family</i> is the same
+ * (normalise backslashes, reject absolute / drive prefix / {@code ..} / NUL); the local spelling is the guard.</p>
  *
  * <p>Item-level problems are returned (the import endpoint reports them in {@code rejected[]} and
  * keeps going); only request-level problems throw.</p>

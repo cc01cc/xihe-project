@@ -9,17 +9,23 @@ import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import com.tngtech.archunit.library.dependencies.SliceAssignment;
+import com.tngtech.archunit.library.dependencies.SliceIdentifier;
+import com.tngtech.archunit.library.dependencies.SliceRule;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.repository.Repository;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 final class CpArchitectureRules {
 
@@ -118,6 +124,224 @@ final class CpArchitectureRules {
     static final DescribedPredicate<JavaClass> READ_SERVICE_TYPES =
             DescribedPredicate.describe("read services (assignable to ChatRunReadService)",
                     type -> type.isAssignableTo(ChatRunReadService.class));
+
+    /**
+     * task-132: everything the slice rules actually look at, i.e. the classes {@link CpModuleAssignment}
+     * resolves to an owner. Used as this rule's {@link #CLASS_TARGETS} entry so
+     * {@code ArchitectureRuleMatchedCountTest} can assert the selection is non-empty: a slice gate whose
+     * assignment matched no class would be a green no-op, which is the failure task-617 was written about.
+     */
+    static final DescribedPredicate<JavaClass> CP_SLICE_OWNED_CLASSES =
+            DescribedPredicate.describe("classes owned by a CP capability slice",
+                    type -> new CpModuleAssignment().ownerOf(type) != null);
+
+    /**
+     * task-132: one slice edge of the CP capability ownership graph, expressed as a pair of predicates so it
+     * can be used on both sides of {@code that(...).should().dependOnClassesThat(...)} — the same idiom as
+     * {@link #CONTROLLERS}/{@link #APPLICATIONS}.
+     *
+     * <p>Attribution goes through {@link CpModuleAssignment}, i.e. the <b>frozen ownership matrix</b>, not the
+     * package name. Measured: 6 of the 51 context-owned production classes sit outside {@code cp.context} (all
+     * of them in {@code cp.service} — {@code ContextTemplateService} and {@code ContextTemplateSourceService}
+     * plus their nested types), and it is precisely {@code ContextTemplateSourceService} that holds today's
+     * {@code context -> skill} edge. A {@code getPackageName().startsWith("cp.context")} predicate would treat
+     * those 6 classes as if they belonged to no slice, so a {@code cp.skill} class depending on the one class
+     * that actually joins the two slices would be green (same reasoning task-617 records for the crypto
+     * predicate, where a wrong prefix test matched zero classes and nobody noticed).</p>
+     */
+    static DescribedPredicate<JavaClass> ownedBySlice(String owner) {
+        return ownedBySlice(owner, new CpModuleAssignment());
+    }
+
+    /**
+     * task-132: overload taking the assignment explicitly, so a probe can pin the classifier it tested.
+     */
+    static DescribedPredicate<JavaClass> ownedBySlice(String owner, CpModuleAssignment assignment) {
+        return DescribedPredicate.describe("is owned by slice " + owner,
+                type -> owner.equals(assignment.ownerOf(type)));
+    }
+
+    /**
+     * task-132: the invariant {@code cp/skill/SkillImportValidator}'s javadoc has been claiming since
+     * PLAN-0628 — {@code cp.skill} must not depend on {@code cp.context}, because the path-rule family is
+     * deliberately duplicated locally rather than imported.
+     *
+     * <p>Until now the claim was a <b>prose-only gate</b>: {@code CpArchitectureTest} computed
+     * {@code slices().should().beFreeOfCycles()} with {@code evaluate(...)} and wrote the details into
+     * {@code baseline.json} without asserting on them, and no slice rule was in {@link #ALL}. A reader of the
+     * comment therefore believed a violation would fail the build. It would not (task-124 census, item 1;
+     * reproduced independently by Lead 2026-11-22).</p>
+     *
+     * <p>Why this direction ban and not a general {@code beFreeOfCycles} assertion: measured on the same
+     * production import, the owner graph is <b>one 23-slice strongly-connected component</b> — 148 of its 181
+     * edges close a cycle, 43 pairs are mutually dependent, and ArchUnit's own diagnostics stop at the
+     * detection limit (100 entries reported, so even the count of existing cycles is a floor, not a total).
+     * An unconditional acyclicity rule is therefore red on HEAD by construction, which is why the graph rule
+     * ({@link #CP_SLICE_GRAPH_HAS_NO_CYCLES_OUTSIDE_BASELINE}) carries an explicit whitelist. That whitelist
+     * alone would <b>not</b> protect this invariant: {@code ignoreDependency} removes an edge from the cycle
+     * graph, so a new {@code skill -> context} edge completes only cycles whose other side
+     * ({@code context -> skill}) is already suppressed — the graph rule would stay green on precisely the edge
+     * the javadoc warns about (measured: once the 148 edges are suppressed, {@code context} does not reach
+     * {@code skill} at all, so the new edge closes no cycle in the graph the rule still sees). A direct ban
+     * cannot be bought off that way, so it is asserted
+     * here independently: zero violations today, and the only way to keep it green is not to add the
+     * dependency. The claim being guarded has been in the source since {@code cc050e11e} (2026-11-02,
+     * PLAN-0628).</p>
+     */
+    /**
+     * task-132: the ban as a factory over both slice names, so a probe can run the identical construction
+     * against two fixture slices and watch the <b>should</b> side fire.
+     *
+     * <p>Without that, {@code ownedBySlice("context")} — the predicate the whole rule exists to reject — would
+     * only ever be exercised by the production graph, where it matches 51 classes and 0 dependencies. That is
+     * the task-617 failure shape exactly: a selector that matches nothing on the target side makes a green gate
+     * mean "nothing was tested", and it was caught here only because the probe made the two sides observable
+     * separately.</p>
+     */
+    static ArchRule sliceMustNotDependOnSlice(String from, String to) {
+        return noClasses().that(ownedBySlice(from))
+                .should().dependOnClassesThat(ownedBySlice(to));
+    }
+
+    static final ArchRule SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE =
+            sliceMustNotDependOnSlice("skill", "context")
+                    .as("Slice skill must not depend on slice context (SkillImportValidator keeps its path rules"
+                            + " local; the reverse edge context -> skill already exists, so this direction is the"
+                            + " one that can stay free)");
+
+    /**
+     * task-132: the review deadline every whitelisted slice edge carries. Shared on purpose: the whole
+     * baseline is one decision with one date, so a per-entry date could only ever be copy-pasted, and a
+     * copy-pasted deadline is decoration rather than accountability.
+     */
+    static final String SLICE_CYCLE_REVIEW_BY = "2026-12-31";
+
+    /** task-132: one whitelisted slice edge (origin slice -> target slice) plus its review deadline. */
+    record SliceCycleBaselineEntry(String from, Set<String> to, String reviewBy) { }
+
+    /**
+     * task-132: explicit baseline of the slice edges that already close a cycle today, keyed by owner slice
+     * through {@link CpModuleAssignment} (never by package prefix).
+     *
+     * <p>Measured on the same production import as {@code CpArchitectureTest} (1440 classes, 34 slices,
+     * 181 owner edges): <b>23 of those slices form a single strongly-connected component</b>, and 148 of the
+     * 181 edges lie inside it, i.e. every one of them is cycle-closing. ArchUnit's own diagnostics stop at its
+     * detection limit (exactly 100 reported entries), so even "how many cycles are there" is only a floor.</p>
+     *
+     * <p>That measurement is why this baseline exists and why the card's premise ("if stock cycles exist, list
+     * them") is a much bigger number than it looks: an unconditional {@code beFreeOfCycles} is red on HEAD by
+     * construction. Suppressing these 148 edges is still a real gate, and the honest way to say so is about
+     * what it catches: it bans <b>new</b> cycles that are not already exempt. It is not the rule that keeps the
+     * {@code SkillImportValidator} promise — see the next paragraph for why it cannot, and
+     * {@link #SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE} for the ban that does.</p>
+     *
+     * <p>What this rule does and does not catch, stated so nobody has to re-derive it: {@code ignoreDependency}
+     * removes an edge from the cycle graph, so this rule can only fail on a cycle <b>all of whose edges are
+     * outside the baseline</b> — it bans new fully-unlisted cycles. It cannot guard the specific edge the
+     * {@code SkillImportValidator} javadoc warns about: measured after suppression, {@code context} no longer
+     * reaches {@code skill}, so a new {@code skill -> context} edge closes no cycle the rule still sees. That
+     * is why {@link #SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE} exists as a separate, unconditional ban,
+     * and the pair (not either one alone) is what makes the prose claim true. Both properties, plus the fact
+     * that {@code skill->context} must never enter the baseline, are asserted in
+     * {@code SliceCycleRuleProbeTest}.</p>
+     *
+     * <p>Shrink-only, enforced twice in {@code SliceCycleRuleProbeTest}: the flattened edge count must equal
+     * {@link #SLICE_CYCLE_BASELINE_EDGE_COUNT} (so adding an exemption is a deliberate edit, and deleting an
+     * already-fixed edge must lower the number in the same commit), and every baseline entry must still exist
+     * as a live owner edge in the production graph (so the list cannot rot into exemptions for edges nobody has
+     * — the task-617 "green because nothing matched" failure shape).</p>
+     */
+    static final List<SliceCycleBaselineEntry> CP_SLICE_CYCLE_BASELINE = List.of(
+            entry("audit", "chat", "config", "mcp", "operation", "policy", "workspace"),
+            entry("auth", "audit", "config", "policy", "telemetry", "workspace"),
+            entry("chat", "audit", "auth", "checkpoint", "config", "context", "event", "files", "mcp",
+                    "operation", "plugin", "policy", "principal", "provider", "runtime", "scheduled", "skill",
+                    "status", "usage", "workspace"),
+            entry("checkpoint", "audit", "chat", "config", "context", "runtime", "workspace"),
+            entry("config", "audit", "auth", "chat", "context", "files", "mcp", "plugin", "policy",
+                    "principal", "provider", "workspace"),
+            entry("context", "chat", "config", "policy", "principal", "provider", "runtime", "skill", "usage"),
+            entry("credentials", "audit", "config", "policy"),
+            entry("event", "config", "workspace"),
+            entry("files", "chat", "config", "policy", "provider", "runtime", "workspace"),
+            entry("importjob", "config", "runtime", "workspace"),
+            entry("mcp", "audit", "chat", "config", "credentials", "operation", "plugin", "policy", "principal",
+                    "runtime", "skill", "status", "workspace"),
+            entry("operation", "config", "runtime", "workspace"),
+            entry("plugin", "audit", "chat", "config", "event", "mcp", "policy"),
+            entry("policy", "audit", "auth", "chat", "config", "credentials", "mcp", "principal", "provider",
+                    "workspace"),
+            entry("principal", "audit", "auth", "chat", "config", "credentials", "policy", "provider", "skill",
+                    "workspace"),
+            entry("provider", "auth", "chat", "config", "context", "credentials", "policy", "workspace"),
+            entry("runtime", "config", "event", "importjob", "workspace"),
+            entry("scheduled", "audit", "auth", "chat", "config", "event", "operation", "policy", "principal",
+                    "workspace"),
+            entry("skill", "auth", "chat", "config", "policy", "principal", "workspace"),
+            entry("status", "files"),
+            entry("telemetry", "config"),
+            entry("usage", "chat", "config", "context"),
+            entry("workspace", "audit", "auth", "chat", "config", "event", "operation", "policy", "principal",
+                    "runtime"));
+
+    private static SliceCycleBaselineEntry entry(String from, String... to) {
+        return new SliceCycleBaselineEntry(from, Set.of(to), SLICE_CYCLE_REVIEW_BY);
+    }
+
+    /** Flattened {@code from -> to} pairs of {@link #CP_SLICE_CYCLE_BASELINE}, for counting and reporting. */
+    static Set<String> sliceCycleBaselineEdges() {
+        Set<String> edges = new LinkedHashSet<>();
+        for (SliceCycleBaselineEntry item : CP_SLICE_CYCLE_BASELINE) {
+            for (String to : item.to().stream().sorted().toList()) {
+                edges.add(item.from() + "->" + to);
+            }
+        }
+        return Collections.unmodifiableSet(edges);
+    }
+
+    /** task-132: the whitelisted edge count, i.e. the ceiling the shrink-only test enforces. */
+    static final int SLICE_CYCLE_BASELINE_EDGE_COUNT = 148;
+
+    /**
+     * task-132: build the slice-cycle rule for an arbitrary assignment and baseline. Extracted as a factory so
+     * the reverse probe can run the <b>same</b> construction against fixtures with an empty baseline — a rule
+     * nobody has seen fail is not a gate (task-123 §5 of the orchestration doc: 门要能证伪).
+     */
+    static SliceRule sliceCyclesFreeFrom(SliceAssignment assignment, List<SliceCycleBaselineEntry> baseline) {
+        SliceRule rule = slices().assignedFrom(assignment).should().beFreeOfCycles();
+        for (SliceCycleBaselineEntry item : baseline) {
+            for (String to : item.to()) {
+                rule = rule.ignoreDependency(assignedToSlice(assignment, item.from()),
+                        assignedToSlice(assignment, to));
+            }
+        }
+        return rule;
+    }
+
+    /**
+     * task-132: the exemption predicate must be derived from the <b>same</b> assignment the rule is built on.
+     *
+     * <p>This is the bug the reverse probe caught. Reusing {@link #ownedBySlice(String)} here looked equivalent
+     * and was not: it classifies through {@link CpModuleAssignment}, so for any other assignment it returns
+     * false for every class, {@code ignoreDependency} suppresses nothing, and a baseline can be silently inert
+     * while the rule still reads green on the fixtures it was supposed to exempt. Same shape as task-617's
+     * crypto prefix that matched zero classes — a gate whose exemption matches nothing is decoration.</p>
+     */
+    static DescribedPredicate<JavaClass> assignedToSlice(SliceAssignment assignment, String slice) {
+        return DescribedPredicate.describe("is assigned to slice " + slice,
+                type -> SliceIdentifier.of(slice).equals(assignment.getIdentifierOf(type)));
+    }
+
+    /**
+     * task-132: the production gate. See {@link #CP_SLICE_CYCLE_BASELINE} for what is whitelisted and why the
+     * remaining assertion is still worth having.
+     */
+    static final ArchRule CP_SLICE_GRAPH_HAS_NO_CYCLES_OUTSIDE_BASELINE =
+            sliceCyclesFreeFrom(new CpModuleAssignment(), CP_SLICE_CYCLE_BASELINE)
+                    .as("CP capability slices must stay free of cycles outside the explicit task-132 baseline"
+                            + " (a new cycle whose edges are all outside the baseline is a build failure;"
+                            + " the skill -> context edge is banned by"
+                            + " SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE, not by this rule)");
 
     /**
      * PLAN-0470 #27: technical facilities (crypto) stay lower — no CP business deps.
@@ -295,6 +519,11 @@ final class CpArchitectureRules {
         // how many production classes the gate looked at.
         targets.put(SPRING_BEAN_WITH_MULTIPLE_CONSTRUCTORS_NEEDS_EXPLICIT_AUTOWIRED,
                 AMBIGUOUS_CTOR_BEAN_CANDIDATES);
+        // task-132: a slice rule has no single that() class predicate, so its matched=<n> counts the classes
+        // the ownership assignment resolves at all.
+        targets.put(CP_SLICE_GRAPH_HAS_NO_CYCLES_OUTSIDE_BASELINE, CP_SLICE_OWNED_CLASSES);
+        // task-132: the direct ban, attributed by owner, not by package prefix.
+        targets.put(SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE, ownedBySlice("skill"));
         return Collections.unmodifiableMap(targets);
     }
 
@@ -321,6 +550,7 @@ final class CpArchitectureRules {
         targets.put(PERSISTENCE_TO_CONTROLLER, CONTROLLERS);
         targets.put(TECHNICAL_FACILITY_STAYS_LOWER, CP_BUSINESS_PACKAGES);
         targets.put(REPOSITORY_STAYS_BELOW_SERVICES, APPLICATIONS);
+        targets.put(SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE, ownedBySlice("context"));
         return Collections.unmodifiableMap(targets);
     }
 
@@ -354,7 +584,9 @@ final class CpArchitectureRules {
     static final List<ArchRule> ALL = List.of(CONTROLLER_TO_CONTROLLER, APPLICATION_TO_CONTROLLER,
             CONTROLLER_TO_REPOSITORY, PERSISTENCE_TO_CONTROLLER,
             TECHNICAL_FACILITY_STAYS_LOWER, REPOSITORY_STAYS_BELOW_SERVICES,
-            SPRING_BEAN_WITH_MULTIPLE_CONSTRUCTORS_NEEDS_EXPLICIT_AUTOWIRED);
+            SPRING_BEAN_WITH_MULTIPLE_CONSTRUCTORS_NEEDS_EXPLICIT_AUTOWIRED,
+            CP_SLICE_GRAPH_HAS_NO_CYCLES_OUTSIDE_BASELINE,
+            SKILL_SLICE_MUST_NOT_DEPEND_ON_CONTEXT_SLICE);
 
     private CpArchitectureRules() { }
 }
