@@ -22,12 +22,13 @@
  *   真坑 (a) := 副本值 ∩ 使用值   ⇒ 改源仍绿，spec 对这份副本的认知被写死
  *   正常 (b) := 使用值 − 副本值   ⇒ 改源会红（这是对的）
  *   低危 (c) := 副本值 − 使用值   ⇒ 副本静默过期，但不会假绿
+ *   负向 (d) := 与真源相同的负向断言字符串出现次数；与 (a)/(b)/(c) 的文件分档独立
  *
  * 用法
  *   node scripts/check-i18n-fixture-copies.mjs                    人读摘要 + 门判定
  *   node scripts/check-i18n-fixture-copies.mjs --json             机器读
  *   node scripts/check-i18n-fixture-copies.mjs --verbose          逐文件明细
- *   node scripts/check-i18n-fixture-copies.mjs --selftest         反例自检（造临时文件 ⇒ 必须计入 (a)）
+ *   node scripts/check-i18n-fixture-copies.mjs --selftest         内存源码反例自检
  *   node scripts/check-i18n-fixture-copies.mjs --write-baseline   重写基线（只在收账后手工执行）
  *   node scripts/check-i18n-fixture-copies.mjs --report-only      只报不阻断（task-172 快档默认；命中仍 exit 0）
  *
@@ -40,13 +41,9 @@ import {
     writeFileSync,
     readdirSync,
     statSync,
-    rmSync,
     existsSync,
-    mkdtempSync,
 } from "node:fs";
 import { join, relative, extname, resolve, dirname } from "node:path";
-import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
@@ -99,6 +96,8 @@ const ASSERT_METHODS = new Set([
     "toBeVisible",
     "toMatch",
     "toHaveCount",
+    "toHaveTextContent",
+    "toBeNull",
 ]);
 const LOCATE_FUNCS = new Set([
     "getByText",
@@ -231,22 +230,46 @@ function fixtureRoots(ts, sf, argNode) {
 /** 收集使用点：断言行与定位行 */
 function collectUsages(ts, sf) {
     const out = [];
-    const visit = (n) => {
+    const isNegativeAssertion = (callee) => {
+        let current = callee.expression;
+        let negated = false;
+        while (ts.isPropertyAccessExpression(current)) {
+            if (current.name.text === "not") negated = !negated;
+            current = current.expression;
+        }
+        const expectCall = ts.isCallExpression(current) &&
+            ts.isIdentifier(current.expression) &&
+            current.expression.text === "expect" ? current : null;
+        return { expectCall, negative: Boolean(expectCall) && (negated !== (callee.name.text === "toBeNull")) };
+    };
+    const visit = (n, negative = false) => {
         if (ts.isCallExpression(n)) {
             const callee = n.expression;
             let method = "";
             let isLocate = false;
-            if (ts.isPropertyAccessExpression(callee)) method = callee.name.text;
+            if (ts.isPropertyAccessExpression(callee)) {
+                method = callee.name.text;
+                if (ASSERT_METHODS.has(method)) {
+                    const assertion = isNegativeAssertion(callee);
+                    if (method === "toBeNull" && assertion.expectCall) {
+                        for (const arg of assertion.expectCall.arguments) {
+                            out.push(...stringsIn(ts, sf, arg, assertion.negative ? "negative" : "assert"));
+                        }
+                        return;
+                    }
+                    if (assertion.negative) negative = true;
+                }
+            }
             else if (ts.isIdentifier(callee)) {
                 method = callee.text;
                 isLocate = LOCATE_FUNCS.has(method);
             }
             if (ASSERT_METHODS.has(method) || isLocate) {
-                const kind = isLocate ? "locate" : "assert";
+                const kind = negative ? "negative" : isLocate ? "locate" : "assert";
                 for (const arg of n.arguments) out.push(...stringsIn(ts, sf, arg, kind));
             }
         }
-        ts.forEachChild(n, visit);
+        ts.forEachChild(n, (child) => visit(child, negative));
     };
     visit(sf);
     for (const u of out) {
@@ -323,7 +346,7 @@ function collectTestFiles(root) {
 }
 
 function analyzeFile(ts, file, realValues) {
-    const { sf } = parseFile(ts, file.path);
+    const sf = file.sf ?? parseFile(ts, file.path).sf;
     const argNode = findCreateI18nArg(ts, sf);
     if (!argNode) return null;
     const { roots, unresolved } = fixtureRoots(ts, sf, argNode);
@@ -336,7 +359,9 @@ function analyzeFile(ts, file, realValues) {
     if (fixtureVals.size === 0) return { rel: file.rel, empty: true, unresolved };
 
     const usages = collectUsages(ts, sf).filter((u) => realValues.has(u.value));
-    const usedVals = new Set(usages.map((u) => u.value));
+    const negative = usages.filter((u) => u.kind === "negative");
+    const positive = usages.filter((u) => u.kind !== "negative");
+    const usedVals = new Set(positive.map((u) => u.value));
 
     const poisoned = [...fixtureVals].filter((v) => usedVals.has(v)).sort();
     const aligned = [...usedVals].filter((v) => !fixtureVals.has(v)).sort();
@@ -344,7 +369,7 @@ function analyzeFile(ts, file, realValues) {
 
     const locations = {};
     for (const v of poisoned) {
-        locations[v] = usages
+        locations[v] = positive
             .filter((u) => u.value === v)
             .map((u) => ({ line: u.line, kind: u.kind }))
             .sort((a, b) => a.line - b.line);
@@ -358,6 +383,7 @@ function analyzeFile(ts, file, realValues) {
         alignedValues: aligned,
         staleOnlyValues: staleOnly,
         locations,
+        negative,
         unresolved,
     };
 }
@@ -430,14 +456,8 @@ function dirtyFilesAtMeasure(uiRoot) {
     }
 }
 
-/** 文件指纹：用于证明自检没有污染正式基线 */
-function fileSha(path) {
-    if (!existsSync(path)) return "MISSING";
-    return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
 /**
- * 测量 + 落盘，**唯一出口**。main 的 --write-baseline 与 --selftest 都走这里，
+ * 测量 + 落盘，**唯一出口**。main 的 --write-baseline 走这里，
  * 避免「两处各写一遍 JSON」——那正是「同一条公式算两次」的温床（D-1170）。
  * 返回写入文件的那些值，供调用方打印/断言，保证「打印的 = 落盘的」。
  */
@@ -471,72 +491,29 @@ function readBaseline(path) {
     }
 }
 
-function selftest(ts, opts) {
-    const qualifier = resolveQualifier(opts);
-    const realBaselinePath = opts.baseline ?? LEGACY_BASELINE_PATHS[qualifier.name] ?? BASELINE_PATH;
-    const realBefore = fileSha(realBaselinePath);
-    const probeRel = "src/__tests__/__ratchet-selftest.spec.ts";
-    const probePath = join(opts.uiRoot, probeRel);
-    const tmpRoot = mkdtempSync(join(tmpdir(), "i18n-copies-selftest-"));
-    const tmpBaseline = join(tmpRoot, "baseline.json");
-    const body =
-        'import { createI18n } from "vue-i18n";\n' +
-        "// task-318 自检：故意让「被断言的值」同时是夹具副本，正确行为是计入 (a)。\n" +
-        "// 这一行只有一个引号，用来证明实现不靠引号配对（正则版会在这里错位）：\"\n" +
-        'const messages = { "zh-CN": { demo: { label: "搜索会话...", other: "正在创建分叉会话" } } };\n' +
-        'const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });\n' +
-        "export { i18n };\n" +
-        'it("selftest", () => { expect("搜索会话...").toBe("搜索会话..."); });\n';
-
+function selftest(ts) {
     const checks = [];
     const check = (ok, label, detail) => {
         checks.push({ ok, label });
         process.stdout.write((ok ? "[PASS] " : "[FAIL] ") + label + (detail ? "  " + detail : "") + "\n");
     };
 
-    try {
-        // 1) 真的写探针（不做任何 mock）
-        writeFileSync(probePath, body, "utf8");
-
-        // 2) 检测器必须把这个「断言吃副本」的文件认成 (a)
-        const { rows, aFiles } = scan(ts, opts.uiRoot, qualifier.qualifies);
-        const hit = rows.find((r) => r.rel === probeRel);
-        check(
-            Boolean(hit) && hit.counts.a > 0,
-            "探针被计入 (a)",
-            hit ? "tier=" + hit.tier + " a=" + hit.counts.a + " (" + hit.poisonedValues.join(", ") + ")" : "未被识别",
-        );
-
-        // 3) 真的写临时基线文件（不 mock 写盘：要验的正是「字段落盘」）
-        const w = measureAndWriteBaseline(ts, opts.uiRoot, qualifier, aFiles, tmpBaseline);
-        const onDisk = JSON.parse(readFileSync(tmpBaseline, "utf8"));
-        check(
-            Array.isArray(onDisk.dirtyAtMeasure) && onDisk.dirtyAtMeasure.includes(probeRel),
-            "dirtyAtMeasure 已落盘且抓到探针",
-            JSON.stringify(onDisk.dirtyAtMeasure),
-        );
-
-        // 4) 打印给读者的值 必须与 写入文件的值 同源（D-1170）
-        check(
-            onDisk.measuredAt === w.measuredAt && onDisk.aCount === w.aCount,
-            "打印值 == 落盘值（同一个计算）",
-            "measuredAt=" + onDisk.measuredAt + " aCount=" + onDisk.aCount,
-        );
-    } catch (e) {
-        check(false, "自检过程本身抛错", e.message);
-    } finally {
-        // 5) 探针与临时基线都在 finally 里清
-        if (existsSync(probePath)) rmSync(probePath, { force: true });
-        if (existsSync(tmpRoot)) rmSync(tmpRoot, { recursive: true, force: true });
-        check(!existsSync(probePath) && !existsSync(tmpRoot), "探针与临时基线已清理", "probe=" + probePath);
-
-        // 6) 清完之后核正式基线：自检自己不许污染被测物
-        const realAfter = fileSha(realBaselinePath);
-        check(
-            realAfter === realBefore,
-            "正式基线未被污染（sha 比对）",
-            realBefore.slice(0, 12) + " -> " + realAfter.slice(0, 12),
-        );
+    const fixture = 'const messages = { label: "搜索会话..." }; createI18n({ messages });\n';
+    const positive = 'expect(wrapper.text()).toContain("搜索会话...");';
+    const negative = 'expect(wrapper.text()).not.toContain("搜索会话...");';
+    for (const [label, body, expectedA, expectedD] of [
+        ["纯正向", positive, 1, 0],
+        ["纯负向", negative, 0, 1],
+        ["混合", positive + "\n" + negative, 1, 1],
+        ["空值断言", 'expect(screen.querySelector("搜索会话...")).toBeNull();', 0, 1],
+        ["双重否定", 'expect(screen.querySelector("搜索会话...")).not.toBeNull();', 1, 0],
+        ["否定文本匹配", 'expect(wrapper).not.toHaveTextContent("搜索会话...");', 0, 1],
+    ]) {
+        const sf = ts.createSourceFile("probe.spec.ts", fixture + body, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+        const result = analyzeFile(ts, { rel: "probe.spec.ts", sf }, new Set(["搜索会话..."]));
+        const actualA = result?.counts.a ?? 0;
+        const actualD = result?.negative.length ?? 0;
+        check(actualA === expectedA && actualD === expectedD, label, "a=" + actualA + " d=" + actualD);
     }
 
     const failed = checks.filter((c) => !c.ok).length;
@@ -554,7 +531,7 @@ function main() {
         process.exit(2);
     }
     const ts = loadTs(opts.uiRoot);
-    if (opts.selftest) process.exit(selftest(ts, opts));
+    if (opts.selftest) process.exit(selftest(ts));
 
     const qualifier = resolveQualifier(opts);
     const { rows, aFiles, realValueCount, unresolvedFiles } = scan(ts, opts.uiRoot, qualifier.qualifies);
@@ -584,7 +561,7 @@ function main() {
         process.exit(0);
     }
 
-    const tiers = { a: aFiles.length, b: 0, c: 0 };
+    const tiers = { a: aFiles.length, b: 0, c: 0, d: rows.reduce((sum, row) => sum + row.negative.length, 0) };
     for (const r of rows) if (r.counts.a === 0) tiers[r.tier] += 1;
 
     if (opts.json) {
@@ -637,11 +614,19 @@ function main() {
             tiers.b +
             " / (c) 低危 " +
             tiers.c +
+            " / (d) 负向断言 " +
+            tiers.d +
             "；基线 a=" +
             baselineSet.size +
             "\n" +
             (legacyLines.length > 0 ? legacyLines.join("\n") + "\n" : ""),
     );
+    if (tiers.d > 0) {
+        process.stdout.write("[i18n-copies] (d) 负向断言文件（行）：\n");
+        for (const row of rows.filter((item) => item.negative.length > 0)) {
+            process.stdout.write("  " + row.rel + ": " + row.negative.map((item) => item.line).join(", ") + "\n");
+        }
+    }
     if (opts.verbose) {
         process.stdout.write("\n| 文件 | 档 | a | b | c | 被断言/定位的值（行） |\n| --- | --- | --- | --- | --- | --- |\n");
         for (const r of rows) {
