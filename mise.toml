@@ -1192,3 +1192,25 @@ description = "dev warmup list liveness (task-189): parse server.warmup.clientFi
 run = "node ../internal/A03-xihe/scripts/check-select-contract.mjs"
 description = "select/combobox popup contract (task-152 / DSD-1508 ③): the vendor SelectContent default used to be position=item-aligned — the popup anchors on the selected item, so a narrow dialog hides the field label and clips both ends — with a hard-coded min-w-36 that ignored the trigger width and a pseudo-translucent class cn-menu-translucent that has no definition in this repo. Step 1 flipped the vendor default to popper / align=start / sideOffset=4 / width-follows-trigger; this gate keeps it from regressing and grades call sites: SC1..SC4 red on the vendor default (popper, align, sideOffset, width-follows-trigger, opaque background), SC5 red when a call site writes position=item-aligned by hand, SC6 weak when a static min-w override has no reason comment, SC7 weak when one block holds more than 8 literal SelectItems (use components/ui/combobox instead), SC8 weak when a call-site panel-class override (min-w / max-w / w-) has no reason comment — the panel width is the component's single source of truth, each override must be a registered exception carrying measured evidence, and a third one should stop and be promoted to a component tier prop instead of spreading, SC9 red on the vendor ComboboxList (same contract, same ruler). --selftest runs 9 fixtures in a throwaway temp tree (one per rule plus a clean fixture, and each reason-comment rule also checks its negative direction). Report-only, not part of validate and not in the lint aggregate. Current reading: red 0 / weak 0 over 73 SelectContent call sites (38 files) ⇒ exit 0; selftest 9/9 ⇒ exit 0."
 
+# ── task-706 统一接线批次：三门内部门补执行者（report-only）─────────────────────────────
+# 三张门本体都在 one 侧 `internal/A03-xihe/scripts/`（task-157/158/700），此前只被 docs/卡面提及，
+# `scripts/audit-gate-executors.mjs` 判为「真孤儿：没人认领」。本仓已有 6 个同类内部门用
+# `node ../internal/A03-xihe/scripts/<gate>.mjs` 的独立任务挂在这里（check:readme-symlinks /
+# check:ui-four-dimensions / check:ui-route-scroll / check:retired-surfaces / check:vite-warmup /
+# check:select-contract），故沿用同一挂点。
+# 姿态 = **report-only**：只提供可执行的独立入口，不进 `validate`、也不进 `mise run lint`
+# （后者的门清单 `scripts/lint-run.mjs` 的 `LINT_GATES` 不在 task-706 写域内；若要并入 31 门聚合，
+# 由 Lead 另卡加 3 行）。接入时三张门在真实树上都是 exit 0，不是生而红。
+
+[tasks."check:env-file-hygiene"]
+run = "node ../internal/A03-xihe/scripts/check-env-file-hygiene.mjs"
+description = "Tracked .env* hygiene gate (task-157; wired by task-706): registered-key overlap / placeholder-shape / low-entropy secret heuristics over git-TRACKED .env* files; never prints values (file:line + key + kind/shape only); exit 0 clean / 1 violations / 2 git-unavailable-or-unparseable (unknown is not safe). Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 task-706): 5 tracked files / 14 domains / 0 violations, 6 NOTEs => exit 0."
+
+[tasks."check:locale-entry"]
+run = "node ../internal/A03-xihe/scripts/check-locale-entry.mjs"
+description = "Locale-switch single-entry gate (task-158; wired by task-706): packages/ui/AGENTS.md:123 — only src/i18n/locale.ts may write i18n.global.locale / <html lang>; test fixtures allowed, boot-preapply HTML judged by consistency (normalizeLocale(boot input) == documentElement.lang), everything else violation; exit 2 when the git face or entry-HTML completeness cannot be proven. Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 task-706): 1690 files / 1576 scannable, entry 2 + testFixture 4 + bootPreapply 2 consistent, violation 0 => exit 0."
+
+[tasks."check:agent-import-boundary"]
+run = "node ../internal/A03-xihe/scripts/check-agent-import-boundary.mjs"
+description = "Agent import-boundary gate (task-700; wired by task-706): (1) api/** and interfaces/** must not import langchain*/langgraph* (including importlib strings and TYPE_CHECKING) — blocking; (2) registry/** and agent/supervisor.py must not reach other modules' underscore-private symbols — blocking; (3) LLM code literals live only in llm/error_classification.py, ratchet against config/agent-llm-code-literals-baseline.json (decrease only) — blocking above baseline. Uses Python ast only (no text matching). Exit 0 clean / 1 violation or ratchet breach / 2 structural failure (no interpreter, missing package dir, ast parse failure, bad baseline) — unknown is not safe. Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 task-706): files=112 c1=0 c2=0 c3=62/baseline=62 findings=0 => exit 0."
+
