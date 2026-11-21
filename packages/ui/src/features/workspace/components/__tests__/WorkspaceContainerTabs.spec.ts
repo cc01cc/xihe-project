@@ -12,6 +12,9 @@ const i18n = createI18n({
             workspace: {
                 containerTree: "文件树",
                 containerMain: "主栏",
+                // task-38：nav 的 landmark 名 = 部件名（不是容器名）。
+                containerTabsLabelMain: "主栏容器页签行",
+                containerTabsLabelRight: "右栏容器页签行",
                 containerEmpty: "此容器暂无页签",
                 // task-155：溢出下拉触发器。
                 containerOverflow: "更多页签",
@@ -109,7 +112,7 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         );
         expect(
             wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
-        ).toBe("主栏");
+        ).toBe("主栏容器页签行");
     });
 
     it("task-17 W-1 反向：单 tab 但与容器不同名 ⇒ 容器标签保留（task-100 后 = DOM 保留、视觉隐藏）", () => {
@@ -139,7 +142,7 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
         expect(label.text()).toBe("主栏");
         expect(
             wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
-        ).toBe("主栏");
+        ).toBe("主栏容器页签行");
     });
 
     /**

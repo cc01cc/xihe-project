@@ -19,7 +19,7 @@ const i18n = createI18n({
             workspace: {
                 containerMain: "主栏",
                 containerRight: "右栏容器",
-                containerSwitcherLabel: "显示哪一栏",
+                containerSwitcherLabel: "容器切换行",
             },
         },
     },

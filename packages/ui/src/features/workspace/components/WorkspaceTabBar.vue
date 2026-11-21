@@ -279,7 +279,7 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
     <nav
         v-if="onWorkbenchRoute && tabs.length > 0 && tabRowClaims === 0"
         data-testid="workspace-tab-bar"
-        :aria-label="t('workspace.tabBarLabel')"
+        :aria-label="t('workspace.tabBarAriaLabel')"
         class="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"
     >
         <Tabs v-model="activeTab" class="min-w-0 flex-1">

@@ -178,10 +178,10 @@ watch(
                     class="flex flex-row items-center justify-between space-y-0 border-b px-3 py-2"
                 >
                     <SheetTitle class="text-sm font-medium">
-                        {{ t("settings.ia.menuButton") }}
+                        {{ t("settings.ia.drawerTitle") }}
                     </SheetTitle>
                     <SheetDescription class="sr-only">
-                        {{ t("settings.ia.menuButton") }}
+                        {{ t("settings.ia.drawerTitle") }}
                     </SheetDescription>
                     <SheetClose as-child>
                         <Button

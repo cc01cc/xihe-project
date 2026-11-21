@@ -15,6 +15,7 @@ const messages = {
         settings: {
             ia: {
                 menuButton: "菜单",
+                drawerTitle: "设置导航面板",
                 closeMenu: "关闭",
                 navMonitoring: "监控",
                 navData: "数据",

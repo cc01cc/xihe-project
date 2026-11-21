@@ -258,6 +258,7 @@ So two separate statements must be kept apart: (a) "the workspace page also carr
 | 14 | 摘要行 | `Session Settings Summary` | `session-settings-summary` (`D1450` / `D1463`) | "top settings entry": that entry was removed |
 | 15 | 工作区导航 | `Workspace Nav Strip` | `workspace-nav-*` (must count 0 on a session page) | "二级导航带": a form description, the sanctioned name is 工作区导航 (`DSD-1490`); "workspace tab" / "second-level tab": collides with both the tab bar and the container tab row |
 | 16 | 工作台导航 | `Workspace tab bar` | `WorkspaceTabBar.vue`, i18n `workspace.tabBarLabel` ("工作台页签", unchanged) | Same part as row 9: row 9 records the **form** (页签栏), this row the **structural name** (导航); the UI label stays `workspace.tabBarLabel` "工作台页签" and is not changed |
+| 17 | 设置导航 | `Settings navigation` | `SettingsSidebar.vue` (nav `navLabel`), `SettingsLayout.vue` (aside `navScopeLabel`, narrow-screen drawer title `drawerTitle`) | "settings menu" / "settings contents" / "settings sidebar": missing the 导航 root (`DSD-1490`); §10.2 prose already uses this name, so this row promotes it into the name table |
 
 **Additional prohibitions** (on top of the three disciplines in §10.1):
 
@@ -270,7 +271,7 @@ So two separate statements must be kept apart: (a) "the workspace page also carr
 
 **Relationship to the four-row table in §10.1**: it is extended, never deleted; the "content column" current state (nav panel / file tree / main area / dock) is the **not implemented** `ListPane`-to-`ContextPane` plan, while the two containers here are the **landed** `main` / `right` — different layers, never substitute one for the other.
 
-**i18n alignment (landed in the same batch; this subsection only records the wording)**: `containerMain` "内容" → "主栏" and `containerRight` "右栏" → "右栏容器" (English `Content` → `Main column`, `Right panel` → `Right container`). Rationale: "内容" does not hold for the main column (it can host the file tree and other panels too; per `D-1777` / `D-1778` the two containers are equivalent), and "右栏" violates §10.1 discipline 1.
+**i18n alignment (landed in the same batch; this subsection only records the wording)**: `containerMain` "内容" → "主栏" and `containerRight` "右栏" → "右栏容器" (English `Content` → `Main column`, `Right panel` → `Right container`). Rationale: "内容" does not hold for the main column (it can host the file tree and other panels too; per `D-1777` / `D-1778` the two containers are equivalent), and "右栏" violates §10.1 discipline 1. Four more alignments landed the same day: `workspace.tabBarAriaLabel` (an aria-only key, "工作台导航"; the visible `tabBarLabel` "工作台页签" is unchanged), `workspace.containerTabsLabelMain` / `containerTabsLabelRight` (a container tab row's landmark name is the **part** name - never the container name, never a question), `containerSwitcherLabel` -> "容器切换行", and `settings.ia.drawerTitle` (narrow-screen drawer title, split off from the button key `menuButton` "目录").
 
 ### 10.2 Three-level layout model and MVP scope
 

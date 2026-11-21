@@ -723,6 +723,9 @@ const messages = {
             editorEdit: "编辑",
             editorDiff: "差异",
             tabBarLabel: "工作台页签",
+            // task-38（DSD-1490「定语+导航」）：可见标签是产品文案（行 16 明写不改），
+            // nav 地标的辅助技术语义另用 aria 专用键，带「导航」词根。
+            tabBarAriaLabel: "工作台导航",
             // task-52 / batch-02（P1）：新建会话的**默认标题**（原先是前端硬编码英文
             // `"New Chat"`，见 `stores/session.ts#createSession`）。
             //
@@ -748,7 +751,11 @@ const messages = {
             containerMoveNoNeighbor: "没有可移入的相邻容器",
             // task-174 / D-1545：窄屏切换「显示哪一栏」与右栏容器名。
             containerRight: "右栏容器",
-            containerSwitcherLabel: "显示哪一栏",
+            // task-38（DSD-1490「定语+导航」/ 命名缺口）：容器页签行的 landmark 名一律用**部件名**，
+            // 不复用容器名（`containerMain` / `containerRight`），也不得用疑问句。
+            containerTabsLabelMain: "主栏容器页签行",
+            containerTabsLabelRight: "右栏容器页签行",
+            containerSwitcherLabel: "容器切换行",
             containerMoveModelPending: "当前布局不支持把面板移到其它容器（等容器化布局启用）",
             // task-174 A1（D-1538）：成员页一级 tab —— 成员 / 智能体（工具栏 Bot 入口移除后归这里）。
             membersTabMembers: "成员",
@@ -2502,6 +2509,9 @@ const messages = {
                 // 左栏 complementary、页头 banner。名字描述内容，不用「导航」重复占位。
                 navLabel: "设置分组导航",
                 navScopeLabel: "设置导航面板",
+                // task-38（DSD-1490）：窄屏抽屉标题独立键。`menuButton`「目录」被抽屉开钮与
+                // 关闭按钮共用，标题若复用同一个键，改标题会连按钮文字一起改。
+                drawerTitle: "设置导航面板",
                 headerLabel: "设置区页头",
                 layerInstance: "实例配置",
                 layerUser: "个人配置",
@@ -4952,6 +4962,9 @@ const messages = {
             editorEdit: "Edit",
             editorDiff: "Diff",
             tabBarLabel: "Workbench tabs",
+            // task-38 (DSD-1490): the visible label is product copy (row 16 keeps it unchanged);
+            // the nav landmark gets an aria-only key carrying the "navigation" root.
+            tabBarAriaLabel: "Workbench navigation",
             sessionDefaultTitle: "Untitled session",
             tabChatFallback: "Chat",
             tabClose: "Close tab",
@@ -4968,7 +4981,11 @@ const messages = {
             containerMoveNoNeighbor: "No adjacent container to move into",
             // task-174 / D-1545: narrow-screen column switcher and the right column name.
             containerRight: "Right container",
-            containerSwitcherLabel: "Which column to show",
+            // task-38 (DSD-1490 "qualifier + navigation" / naming gap): a container tab row's
+            // landmark name is the **part** name, never the container name, never a question.
+            containerTabsLabelMain: "Main container tab row",
+            containerTabsLabelRight: "Right container tab row",
+            containerSwitcherLabel: "Container switch row",
             containerMoveModelPending: "This layout cannot move panels between containers yet",
             // task-174 A1 (D-1538): members-page tabs — members / agents.
             membersTabMembers: "Members",
@@ -6761,8 +6778,12 @@ const messages = {
                 breadcrumbLabel: "Breadcrumb",
                 // task-89: name the three unnamed landmarks in settings — the section nav (APG requires unique
                 // labels per navigation), the sidebar complementary, and the header banner.
-                navLabel: "Settings section navigation",
+                navLabel: "Settings group navigation",
                 navScopeLabel: "Settings navigation panel",
+                // task-38 (DSD-1490): title-only key for the narrow-screen drawer. `menuButton`
+                // ("Contents") is shared by the drawer trigger and the close button, so reusing it
+                // for the title would rename the buttons too.
+                drawerTitle: "Settings navigation panel",
                 headerLabel: "Settings header",
                 layerInstance: "Instance settings",
                 layerUser: "Personal settings",

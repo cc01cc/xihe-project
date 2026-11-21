@@ -259,6 +259,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 | 14 | 摘要行 | `Session Settings Summary` | `session-settings-summary`（`D1450` / `D1463`） | 禁用「顶部设置入口」：该入口已取消 |
 | 15 | 工作区导航 | `Workspace Nav Strip` | `workspace-nav-*`（会话页面计数须为 0） | 禁用「二级导航带」：形态称法，正名取「工作区导航」（`DSD-1490`）；禁用「工作区 tab」「二级 tab」：与页签栏、容器页签行三者撞名 |
 | 16 | 工作台导航 | `Workspace tab bar` | `WorkspaceTabBar.vue`、i18n `workspace.tabBarLabel`（「工作台页签」，不改） | 与第 9 行同指一个部件：第 9 行记的是**形态名**（页签栏），本行记的是**结构正名**（导航）；界面标签仍用 `workspace.tabBarLabel`「工作台页签」，不改 |
+| 17 | 设置导航 | `Settings navigation` | `SettingsSidebar.vue`（nav `navLabel`）、`SettingsLayout.vue`（aside `navScopeLabel`、窄屏抽屉标题 `drawerTitle`） | 禁用「设置菜单」「设置目录」「设置侧栏」：缺「导航」词根（`DSD-1490`）；§10.2 散文既已用此名，本行把它升为称呼表条目 |
 
 **补充禁用词表**（在 §10.1 三条纪律之上）：
 
@@ -271,7 +272,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 **与 §10.1 既有四行表的关系**：新增补充、不删旧行；「内容列」四段现状（导航面板 / 文件树 / 主区 / dock）是**未落地**的 `ListPane`-`MainPane`-`ContextPane` 设想，本节的两栏容器是**已落地**的 `main` / `right`，两者不是同一层东西，不得互相替换引用。
 
-**附：i18n 两处对齐（同批另行落地，本节只登记口径）**：`containerMain`「内容」→「主栏」、`containerRight`「右栏」→「右栏容器」（英文 `Content`→`Main column`、`Right panel`→`Right container`）；理由 =「内容」在主栏里不成立（主栏也可承载文件树等面板，`D-1777`/`D-1778` 两容器等价），「右栏」违反 §10.1 纪律 1。同步点见 `D1468` §五。
+**附：i18n 两处对齐（同批另行落地，本节只登记口径）**：`containerMain`「内容」→「主栏」、`containerRight`「右栏」→「右栏容器」（英文 `Content`→`Main column`、`Right panel`→`Right container`）；理由 =「内容」在主栏里不成立（主栏也可承载文件树等面板，`D-1777`/`D-1778` 两容器等价），「右栏」违反 §10.1 纪律 1。同步点见 `D1468` §五。同日另补四条对齐：`workspace.tabBarAriaLabel`（aria 专用键「工作台导航」，可见文案 `tabBarLabel`「工作台页签」不改）、`workspace.containerTabsLabelMain` / `containerTabsLabelRight`（容器页签行 landmark 名一律用**部件名**，不得是容器名、不得是疑问句）、`containerSwitcherLabel` 改「容器切换行」、`settings.ia.drawerTitle`（窄屏抽屉标题，与按钮键 `menuButton`「目录」拆开）。
 
 ### 10.2 三层布局模型与 MVP 范围
 

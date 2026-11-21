@@ -101,6 +101,17 @@ const containerLabel = computed(() =>
     props.containerId === "right" ? t("workspace.containerRight") : t("workspace.containerMain"),
 );
 
+/**
+ * task-38（DSD-1490「定语 + 导航」/ 命名缺口）：本行是 nav 地标，landmark 名必须是**部件名**
+ * （主栏容器页签行 / 右栏容器页签行），不复用容器名（那会让地标名变成「主栏」这种容器名），
+ * 也不得用疑问句。可见的容器名仍走 `containerLabel`（`workspace-container-label` 节点）。
+ */
+const containerTabsLabel = computed(() =>
+    props.containerId === "right"
+        ? t("workspace.containerTabsLabelRight")
+        : t("workspace.containerTabsLabelMain"),
+);
+
 /** 页签/close 的 testid：右栏行走 dock-tab-* 前缀（见 props 注释），其余走容器形默认名。 */
 function tabTestid(id: string): string {
     return props.testidPrefix
@@ -160,7 +171,7 @@ const activeTab = computed<string>({
         class="flex h-8 shrink-0 items-center gap-1 border-b bg-card px-2"
         data-testid="workspace-container-tabs"
         :data-container="containerId"
-        :aria-label="containerLabel"
+        :aria-label="containerTabsLabel"
         @keydown="onRowKeydown"
     >
         <!--

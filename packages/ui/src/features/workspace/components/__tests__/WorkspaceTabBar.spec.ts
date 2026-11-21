@@ -41,6 +41,7 @@ const i18n = createI18n({
         en: {
             workspace: {
                 tabBarLabel: "Workbench tabs",
+                tabBarAriaLabel: "Workbench navigation",
                 tabChatFallback: "Chat",
                 tabClose: "Close tab",
             },
