@@ -9,7 +9,8 @@ import java.time.zone.ZoneRulesException;
 
 /**
  * PLAN-0489 T1.2（design 决策 #3）：cron 求值 = Spring {@code CronExpression} +
- * 5→6 段映射（前缀 {@code "0 "} 秒字段），ZoneId 按任务 timezone 快照（0486 D3-A）。
+ * 5 段（分 时 日 月 周）→ 6 段映射（前缀 {@code "0 "} 秒字段），ZoneId 按任务 timezone
+ * 快照（0486 D3-A）。段数口径只认 5 段（task-96，用户 18:56 裁案 5）。
  *
  * <p>零新依赖（否决 cron-utils）；非法表达式/时区抛
  * {@link IllegalArgumentException} 供 API 层转 400（T1.4 {@code INVALID_CRON_EXPR}/
@@ -21,7 +22,10 @@ public final class CronExpressions {
 
     private CronExpressions() {}
 
-    /** 5 段（分 时 日 月 周）→ Spring 6 段（前缀秒字段 "0 "）；6 段原样通过。 */
+    /**
+     * 5 段（分 时 日 月 周）→ Spring 6 段（前缀秒字段 "0 "）。其余段数（含 Spring 原生 6 段）一律拒绝：
+     * 平台 cron 只有分钟粒度，秒字段恒为 "0 "（task-96 收紧，原 6 段「原样通过」分支已删）。
+     */
     public static String toSpringCron(String cronExpr) {
         if (cronExpr == null || cronExpr.isBlank()) {
             throw new IllegalArgumentException("cron expression is required");
@@ -29,9 +33,6 @@ public final class CronExpressions {
         String[] fields = cronExpr.trim().split("\\s+");
         if (fields.length == 5) {
             return "0 " + cronExpr.trim();
-        }
-        if (fields.length == 6) {
-            return cronExpr.trim();
         }
         throw new IllegalArgumentException("cron expression must have 5 fields (minute-grain), got "
                 + fields.length);

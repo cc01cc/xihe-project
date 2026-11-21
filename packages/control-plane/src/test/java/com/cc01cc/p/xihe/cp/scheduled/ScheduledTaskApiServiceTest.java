@@ -132,6 +132,23 @@ class ScheduledTaskApiServiceTest {
         assertEquals("INVALID_CRON_EXPR", error.getCode());
     }
 
+    /**
+     * 校验层判据：Spring 原生 6 段（带秒字段）在 API 面必须 400，与解析层
+     * {@code CronExpressionsTest#rejects_six_field_cron_instead_of_passing_it_through} 同一口径
+     * （task-96，用户 18:56 裁案 5）。
+     */
+    @Test
+    void create_rejects_six_field_cron_with_400() {
+        allowAll();
+        CpApiException error = assertThrows(CpApiException.class, () -> service.create(
+                WORKSPACE_ID, USER_ID, cronRequest("0 30 9 * * *", "UTC")));
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, error.getStatus());
+        assertEquals("INVALID_CRON_EXPR", error.getCode());
+        assertTrue(error.getMessage().contains("5 fields"),
+                "message must name the 5-field rule: " + error.getMessage());
+        verify(repository, never()).save(any());
+    }
+
     @Test
     void create_rejects_invalid_timezone_with_400() {
         allowAll();
