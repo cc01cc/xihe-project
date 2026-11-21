@@ -23,9 +23,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            listWorkspaceAgentSpawnSessions: vi.fn<
-                typeof apiModule.api.listWorkspaceAgentSpawnSessions
-            >(),
+            listWorkspaceAgentSpawnSessions:
+                vi.fn<typeof apiModule.api.listWorkspaceAgentSpawnSessions>(),
         },
     };
 });
@@ -96,16 +95,16 @@ describe("AgentDelegatedSessionsTable（task-153 S3-a）", () => {
         expect(wrapper.get('[data-testid="agent-bindings-sessions-count-all"]').text()).toContain(
             "7",
         );
-        expect(wrapper.get('[data-testid="agent-bindings-sessions-count-all"]').text()).not.toContain(
-            "5 个",
-        );
+        expect(
+            wrapper.get('[data-testid="agent-bindings-sessions-count-all"]').text(),
+        ).not.toContain("5 个");
         expect(
             wrapper.get('[data-testid="agent-bindings-sessions-count-direct"]').text(),
         ).toContain("2");
         // 截断必须显式说清"只显示前 5 条"，否则读者会把 5 当全量。
-        expect(
-            wrapper.get('[data-testid="agent-bindings-sessions-limit-note"]').text(),
-        ).toContain("5");
+        expect(wrapper.get('[data-testid="agent-bindings-sessions-limit-note"]').text()).toContain(
+            "5",
+        );
         expect(wrapper.findAll('[data-testid^="agent-bindings-sessions-row-s-"]')).toHaveLength(5);
         // 只查已绑的候选工作区；includeArchived 默认不带。
         expect(mockedApi.listWorkspaceAgentSpawnSessions).toHaveBeenCalledTimes(1);
@@ -183,7 +182,9 @@ describe("AgentDelegatedSessionsTable（task-153 S3-a）", () => {
         await flushPromises();
         expect(mockedApi.listWorkspaceAgentSpawnSessions).toHaveBeenCalledTimes(1);
 
-        await wrapper.get('[data-testid="agent-bindings-sessions-archived-toggle"]').trigger("click");
+        await wrapper
+            .get('[data-testid="agent-bindings-sessions-archived-toggle"]')
+            .trigger("click");
         await flushPromises();
 
         expect(mockedApi.listWorkspaceAgentSpawnSessions).toHaveBeenCalledTimes(2);
@@ -191,9 +192,9 @@ describe("AgentDelegatedSessionsTable（task-153 S3-a）", () => {
             includeArchived: true,
         });
         // 默认态写明「计数不含已归档」，切到含已归档后这条说明消失。
-        expect(
-            wrapper.find('[data-testid="agent-bindings-sessions-archived-note"]').exists(),
-        ).toBe(false);
+        expect(wrapper.find('[data-testid="agent-bindings-sessions-archived-note"]').exists()).toBe(
+            false,
+        );
     });
 
     it("没有已绑工作区 ⇒ 给「先绑定」空态且零请求（不编 0）", async () => {

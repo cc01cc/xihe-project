@@ -1025,9 +1025,7 @@ export interface AgentPrincipalSummary {
  * 套字段），所以解析只写一份：两边各写一份，迟早会有一边漏掉某个字段而没人发现。返回 `null` 表示
  * 这一行缺 `principalId`/`name`（契约 required）——列表侧丢弃该行，单条侧由调用方决定失败方式。
  */
-function parseAgentPrincipalSummaryRow(
-    row: Record<string, unknown>,
-): AgentPrincipalSummary | null {
+function parseAgentPrincipalSummaryRow(row: Record<string, unknown>): AgentPrincipalSummary | null {
     const principalId = typeof row.principalId === "string" ? row.principalId : "";
     const name = typeof row.name === "string" ? row.name : "";
     if (!principalId || !name) return null;

@@ -73,7 +73,10 @@ describe("AgentPrincipalsPanel · 详情入口", () => {
         ]);
 
         mount(AgentPrincipalsPanel, {
-            global: { plugins: [i18n, createPinia()], stubs: { RouterLink: { template: "<a><slot /></a>" } } },
+            global: {
+                plugins: [i18n, createPinia()],
+                stubs: { RouterLink: { template: "<a><slot /></a>" } },
+            },
             attachTo: document.body,
         });
         await flushPromises();
@@ -105,7 +108,10 @@ describe("AgentPrincipalsPanel · 详情入口", () => {
         vi.spyOn(api, "listMyAgentPrincipals").mockRejectedValue(new Error("boom"));
 
         mount(AgentPrincipalsPanel, {
-            global: { plugins: [i18n, createPinia()], stubs: { RouterLink: { template: "<a><slot /></a>" } } },
+            global: {
+                plugins: [i18n, createPinia()],
+                stubs: { RouterLink: { template: "<a><slot /></a>" } },
+            },
             attachTo: document.body,
         });
         await flushPromises();
