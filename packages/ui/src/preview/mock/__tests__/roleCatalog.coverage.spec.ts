@@ -130,7 +130,8 @@ const AGENT_FORBIDDEN = new Set(values(parenBody(PAC, "AGENT_FORBIDDEN_ATOMS = S
 const CAPABILITY_CONSTANTS = values(parenBody(PAC, "CAPABILITY_ATOM_NAMES = List.of"));
 
 /**
- * 独立读的 8 个系统角色名：`new RoleSeed(UUID, NAME, displayName, description, atoms)` 的**第二个**实参。
+ * 独立读的系统角色名（数量随 CP `roleSeeds()` 变，不在这里写死）：
+ * `new RoleSeed(UUID, NAME, displayName, description, atoms)` 的**第二个**实参。
  *
  * <p>第一个实参是 `SUPER_ADMIN_ID` 这类 `public static final UUID`（不是 String 常量），所以按
  * 「`new RoleSeed(` 之后走一遍顶层逗号切分」取第 2 段 —— 与派生侧**各算一遍**（同源同法只能证明
@@ -366,8 +367,15 @@ describe("task-84 · /roles/catalog mock 夹具（形状与派生）", () => {
         expect(zh.some((name) => /[\u4e00-\u9fa5]/.test(name))).toBe(true);
     });
 
-    it("defaultGrants：8 个系统角色 + atoms 是字符串数组（openapi RoleDefaultGrantView）", () => {
-        expect(CATALOG.defaultGrants).toHaveLength(8);
+    it("defaultGrants：角色集合与 CP roleSeeds() 派生一致 + atoms 是字符串数组（openapi RoleDefaultGrantView）", () => {
+        // task-186：原来写死 toHaveLength(8)，而 CP 已 11 个 RoleSeed（task-116 加了 AGENT_READER /
+        // AGENT_WORKER / WS_RUNNER）⇒ 每加一个角色这道门就红一次，且红在数字上读不出「谁变了」。
+        // 改为与 SYSTEM_ROLE_NAMES 比数量：它就是从 SystemAccessRoleCatalog.roleSeeds() 源码派生的
+        // 名单（本文件 :174 起），CP 再加角色这条自动跟；下面的 arrayContaining 是给派生器本身的锚。
+        expect(SYSTEM_ROLE_NAMES, "roleSeeds() 派生失败 ⇒ 数量比较会退化成 0=0").toEqual(
+            expect.arrayContaining(["AGENT_READER", "AGENT_WORKER", "WS_RUNNER"]),
+        );
+        expect(CATALOG.defaultGrants).toHaveLength(SYSTEM_ROLE_NAMES.length);
         expect(CATALOG.defaultGrants.map((grant) => grant.roleName)).toEqual(SYSTEM_ROLE_NAMES);
         const known = new Set(CATALOG.atoms.map((atom) => atom.name));
         for (const grant of CATALOG.defaultGrants) {
@@ -430,7 +438,8 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
         expect(Array.isArray(body.atoms)).toBe(true);
         expect(body.atoms).toHaveLength(45);
         expect(body.scopes).toEqual(["instance", "workspace"]);
-        expect(body.defaultGrants).toHaveLength(8);
+        // task-186：同 defaultGrants 那条 —— 数量取 CP 派生的名单长度，不写死。
+        expect(body.defaultGrants).toHaveLength(SYSTEM_ROLE_NAMES.length);
         // 形状对齐 openapi RoleAtomView（字段齐、类型对）。
         for (const atom of body.atoms as Record<string, unknown>[]) {
             for (const key of [

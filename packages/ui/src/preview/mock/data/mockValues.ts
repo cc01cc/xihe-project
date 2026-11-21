@@ -47,6 +47,10 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
         delegationMaxCountCeiling: 12,
         delegationMaxDepthCeiling: 4,
         loopExemptTools: ["workspace.read_file", "workspace.list_dir", "workspace.stat"],
+        // task-186：b73f60027（task-106 / D-928）追平 CP schema 时只加了 catalog 未补值 ⇒
+        // task-127 覆盖门 1 红（与 :31 的 task-136 同一坑）。默认智能体是「调用方没给
+        // agentPrincipalId、工作区也没默认绑定」时的兜底主体，取值形态同 defaultParticipants 的主体 id。
+        defaultAgentPrincipalId: "3a2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
         // D-1438 / task-94：独立会话默认参与者（数组键，schema 为 json）——
         // 新增 schema 字段必须同批补 mock 取值，否则 task-127 覆盖门会红。
         defaultParticipants: [

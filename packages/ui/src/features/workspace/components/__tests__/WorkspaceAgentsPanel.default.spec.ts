@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import type { VueWrapper } from "@vue/test-utils";
+import { createPinia } from "pinia";
 import { i18n } from "../../../../i18n";
 import WorkspaceAgentsPanel from "../WorkspaceAgentsPanel.vue";
 
@@ -17,6 +18,20 @@ import WorkspaceAgentsPanel from "../WorkspaceAgentsPanel.vue";
  * - `api.clearWorkspaceAgentDefault(workspaceId, principalId)` = DELETE .../default；
  * - testid 家族 `workspace-agent-default-*`（badge / set / clear / hint / error / disabled）。
  */
+
+/**
+ * task-186：见 WorkspaceAgentsPanel.spec.ts 同款说明 —— 面板挂出的抽屉读 config store，真实 store 会拉
+ * `/api/v1/provider-connections`（jsdom 里相对 URL 直接算失败）。这里只替换那条网络调用。
+ */
+vi.mock("../../../../services/providerConnectionService", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return {
+        ...actual,
+        listProviderConnections: vi.fn<() => Promise<{ connections: unknown[] }>>(async () => ({
+            connections: [],
+        })),
+    };
+});
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 const DEFAULT_AGENT_ID = "77777777-7777-4777-8777-777777777777";
@@ -124,7 +139,7 @@ function mountPanel() {
         attachTo: document.body,
         props: { workspaceId: WORKSPACE_ID },
         global: {
-            plugins: [i18n],
+            plugins: [i18n, createPinia()],
             stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
         },
     }) as VueWrapper;

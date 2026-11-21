@@ -1,9 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
 
 import { api, type AgentPrincipalSummary } from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import AgentPrincipalsPanel from "../AgentPrincipalsPanel.vue";
+
+/**
+ * task-186：补 pinia 后抽屉的 `useConfigStore()`（AgentPrincipalDetailDrawer.vue:120）会真的去拉
+ * `/api/v1/provider-connections`；相对 URL 在 Node fetch 下抛 ERR_INVALID_URL，成为 unhandled rejection
+ * 让整个 vitest 进程 exit 1（用例本身全绿）。只换掉这条网络调用，store 逻辑照旧。
+ */
+vi.mock("../../../services/providerConnectionService", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return {
+        ...actual,
+        listProviderConnections: vi.fn<() => Promise<{ connections: unknown[] }>>(async () => ({
+            connections: [],
+        })),
+    };
+});
 
 /**
  * task-191 · **入口可达性**：user 层列表行上的「配置」必须能把详情抽屉打开，且带的就是这一行。
@@ -57,7 +73,7 @@ describe("AgentPrincipalsPanel · 详情入口", () => {
         ]);
 
         mount(AgentPrincipalsPanel, {
-            global: { plugins: [i18n] },
+            global: { plugins: [i18n, createPinia()], stubs: { RouterLink: { template: "<a><slot /></a>" } } },
             attachTo: document.body,
         });
         await flushPromises();
@@ -89,7 +105,7 @@ describe("AgentPrincipalsPanel · 详情入口", () => {
         vi.spyOn(api, "listMyAgentPrincipals").mockRejectedValue(new Error("boom"));
 
         mount(AgentPrincipalsPanel, {
-            global: { plugins: [i18n] },
+            global: { plugins: [i18n, createPinia()], stubs: { RouterLink: { template: "<a><slot /></a>" } } },
             attachTo: document.body,
         });
         await flushPromises();

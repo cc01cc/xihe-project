@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import type { VueWrapper } from "@vue/test-utils";
+import { createPinia } from "pinia";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { i18n } from "../../../../i18n";
@@ -52,6 +53,22 @@ const CREATE_ACCOUNT_MISSING = {
     workspaces: [],
 };
 
+/**
+ * task-186：面板现在挂出 AgentPrincipalDetailDrawer，它的 setup 读 `useConfigStore()`（抽屉 :120）
+ * ⇒ 真实的 config store 会在 jsdom 里拉 `/api/v1/provider-connections`；相对 URL 在 Node fetch 下直接
+ * ERR_INVALID_URL，变成 unhandled rejection 把同文件其余用例一起拖红。抽屉自己的 spec 是整块 mock
+ * store，这里只把那条网络调用换成空列表 —— 补的是装配（缺 pinia 后新暴露的副作用），不改被测定行为。
+ */
+vi.mock("../../../../services/providerConnectionService", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    return {
+        ...actual,
+        listProviderConnections: vi.fn<() => Promise<{ connections: unknown[] }>>(async () => ({
+            connections: [],
+        })),
+    };
+});
+
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = (await importOriginal()) as Record<string, unknown>;
     return {
@@ -97,7 +114,7 @@ async function mountOpenedPanel() {
         attachTo: document.body,
         props: { workspaceId: WORKSPACE_ID },
         global: {
-            plugins: [i18n],
+            plugins: [i18n, createPinia()],
             stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
         },
     });
@@ -110,7 +127,7 @@ function mountPanel() {
         attachTo: document.body,
         props: { workspaceId: WORKSPACE_ID },
         global: {
-            plugins: [i18n],
+            plugins: [i18n, createPinia()],
             stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
         },
     });
@@ -1266,7 +1283,7 @@ describe("WorkspaceAgentManagementDialog mobile shell (PLAN-0626 M3)", () => {
             attachTo: document.body,
             props: { open, workspaceId: WORKSPACE_ID },
             global: {
-                plugins: [i18n],
+                plugins: [i18n, createPinia()],
                 stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
             },
         });
@@ -2139,7 +2156,7 @@ describe("WorkspaceAgentsPanel task-44 deep-link expansion", () => {
             attachTo: document.body,
             props: { workspaceId: WORKSPACE_ID, expandPrincipalId: target },
             global: {
-                plugins: [i18n],
+                plugins: [i18n, createPinia()],
                 stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
             },
         });
