@@ -21,6 +21,8 @@ onUnmounted(() => {
 
 async function reveal() {
     if (busy.value || attempted.value) return;
+    disclosure.value = null;
+    password.value = "";
     attempted.value = true;
     busy.value = true;
     error.value = "";
@@ -31,6 +33,9 @@ async function reveal() {
         username.value = result.account.username;
     } catch (cause) {
         if (!active) return;
+        if (!(cause instanceof ApiError && [403, 410].includes(cause.problem.status))) {
+            attempted.value = false;
+        }
         error.value =
             cause instanceof ApiError && cause.problem.status === 410
                 ? "onboarding.firstRunConsumed"

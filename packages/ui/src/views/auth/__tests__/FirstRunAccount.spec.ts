@@ -72,14 +72,32 @@ describe("first-run account", () => {
         expect(wrapper.text()).not.toContain(i18n.global.t("onboarding.firstRunSecret"));
     });
 
-    it("does not retry a disclosure after an ambiguous failure", async () => {
-        mocks.disclose.mockRejectedValue(new Error("network"));
+    it.each([
+        ["server error", new ApiError({ status: 500, code: "ERROR", requestId: "test" })],
+        ["network error", new Error("network")],
+    ])("allows retry after a %s", async (_label, failure) => {
+        mocks.disclose.mockRejectedValue(failure);
+        const wrapper = mountView();
+        await wrapper.get("button").trigger("click");
+        await flushPromises();
+        expect(wrapper.find("button").exists()).toBe(true);
+        expect(wrapper.get('[role="alert"]').text()).toBe(
+            i18n.global.t("onboarding.firstRunRevealFailed"),
+        );
+        expect(mocks.disclose).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry an unavailable disclosure", async () => {
+        mocks.disclose.mockRejectedValue(
+            new ApiError({ status: 403, code: "FIRST_RUN_ACCOUNT_UNAVAILABLE", requestId: "test" }),
+        );
         const wrapper = mountView();
         await wrapper.get("button").trigger("click");
         await flushPromises();
         expect(wrapper.find("button").exists()).toBe(false);
-        expect(wrapper.text()).toContain(i18n.global.t("onboarding.firstRunRevealFailed"));
-        expect(mocks.disclose).toHaveBeenCalledTimes(1);
+        expect(wrapper.get('[role="alert"]').text()).toBe(
+            i18n.global.t("onboarding.firstRunUnavailable"),
+        );
     });
 
     it("reports a consumed disclosure without showing a secret", async () => {
@@ -94,6 +112,28 @@ describe("first-run account", () => {
         await wrapper.get("button").trigger("click");
         await flushPromises();
         expect(wrapper.text()).toContain(i18n.global.t("onboarding.firstRunConsumed"));
+        expect(wrapper.find("button").exists()).toBe(false);
         expect(wrapper.find("form").exists()).toBe(false);
+    });
+
+    it("shows the disclosure after a successful retry", async () => {
+        mocks.disclose.mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce({
+            state: "operator-provided",
+            account: { email: "admin@example.invalid", username: "admin" },
+            secret: null,
+            source: "env",
+        });
+        const wrapper = mountView();
+        await wrapper.get("button").trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[role="alert"]').text()).toBe(
+            i18n.global.t("onboarding.firstRunRevealFailed"),
+        );
+        await wrapper.get("button").trigger("click");
+        await flushPromises();
+        expect(mocks.disclose).toHaveBeenCalledTimes(2);
+        expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+        expect(wrapper.text()).toContain(i18n.global.t("onboarding.firstRunOperator"));
+        expect(wrapper.find("form").exists()).toBe(true);
     });
 });
