@@ -2,12 +2,15 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * PLAN-0625 M2 (D25-10/12/14): the hook registry — the seam the gate asks for advice.
@@ -27,6 +30,8 @@ import java.util.Set;
 @Component
 public class HookAdvisorRegistry {
 
+    private static final Logger logger = LoggerFactory.getLogger(HookAdvisorRegistry.class);
+
     /** First event-class of the frozen action vocabulary (D25-12); more classes extend this set. */
     public static final String ACTION_APPROVAL_ASK = "approval.ask";
 
@@ -34,6 +39,13 @@ public class HookAdvisorRegistry {
     public static final Set<String> ALLOWED_ACTION_CLASSES = Set.of(ACTION_APPROVAL_ASK);
 
     private final List<HookAdvisor> advisors;
+
+    /**
+     * task-53: dedup key for the unregistered-kind warning. Open kind set means an unknown kind is
+     * legal at write time (the plugin may not be installed yet); the warning is per process, per
+     * action class and kind, so one misconfigured row cannot flood the log on every approval.
+     */
+    private final Set<String> warnedUnregisteredKinds = ConcurrentHashMap.newKeySet();
 
     public HookAdvisorRegistry(List<HookAdvisor> advisors) {
         this.advisors = List.copyOf(advisors);
@@ -62,7 +74,44 @@ public class HookAdvisorRegistry {
         if (kinds.isEmpty()) {
             return List.of();
         }
+        warnUnregisteredKinds(kinds, actionClass);
         return advisors.stream().filter(advisor -> kinds.contains(advisor.kind())).toList();
+    }
+
+    /**
+     * task-53: subscribed kinds that no registered {@link HookAdvisor} answers. Because the kind
+     * set is open (D25-10: implementing the interface is the plugin contract), a non-empty result
+     * is not an error — it is the "configured but currently inert" case the write face deliberately
+     * accepts. The parse face makes it observable instead of silently dropping it.
+     */
+    public Set<String> unregisteredKinds(JsonNode hooks, String actionClass) {
+        Set<String> subscribed = subscribedKinds(hooks, actionClass);
+        if (subscribed.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> unknown = new LinkedHashSet<>(subscribed);
+        unknown.removeAll(registeredKinds());
+        return Set.copyOf(unknown);
+    }
+
+    private Set<String> registeredKinds() {
+        Set<String> registered = new LinkedHashSet<>();
+        for (HookAdvisor advisor : advisors) {
+            registered.add(advisor.kind());
+        }
+        return registered;
+    }
+
+    private void warnUnregisteredKinds(Set<String> subscribed, String actionClass) {
+        Set<String> unknown = new LinkedHashSet<>(subscribed);
+        unknown.removeAll(registeredKinds());
+        for (String kind : unknown) {
+            if (warnedUnregisteredKinds.add(actionClass + "\u0000" + kind)) {
+                logger.warn("[LIFECYCLE] service=cp event=hook_advisor_kind_unregistered"
+                                + " actionClass={} kind={} registeredKinds={}",
+                        actionClass, kind, registeredKinds());
+            }
+        }
     }
 
     /** The subscribed advisor kinds for one action class (exact match against the whitelist). */
