@@ -756,4 +756,64 @@ class ProviderConnectionServiceTest {
 
         verify(auditRepository, never()).save(any());
     }
+
+    // ------------------------------------------------------------------
+    // task-146 (DSD-1512): bind a connection to an existing credential
+    // ------------------------------------------------------------------
+
+    private ProviderConnectionService.ConnectionInput credentialLinkInput(String apiKey, String credentialId) {
+        return new ProviderConnectionService.ConnectionInput(
+                "deepseek", "Linked", "USER", apiKey, null, null, List.of(), null,
+                "linked", credentialId, null, null, null, null, null);
+    }
+
+    @Test
+    void createLinksExistingCredentialThroughUsableCheck() {
+        TenantContext.setUserId("user-1");
+        TenantContext.setWorkspaceId("workspace-1");
+        stubCatalogForCreate();
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                "USER", "user-1", "deepseek", "linked")).thenReturn(Optional.empty());
+        UUID credentialId = UUID.randomUUID();
+
+        ProviderConnection connection = service.create(credentialLinkInput(null, credentialId.toString()));
+
+        assertEquals(credentialId, connection.getCredentialId());
+        assertEquals(ProviderConnection.STATUS_VERIFYING, connection.getStatus());
+        verify(credentialAccess).requireUsable(credentialId, "user-1", "workspace-1");
+        // Binding an existing credential must not quick-create a second one.
+        verify(credentialService, never()).create(any(), anyString());
+    }
+
+    @Test
+    void updateBindsExistingCredentialThroughUsableCheck() {
+        TenantContext.setUserId("user-1");
+        TenantContext.setWorkspaceId("workspace-1");
+        ProviderConnection connection = connection("user-1", "deepseek", "Personal");
+        connection.setCredentialId(UUID.randomUUID());
+        when(repository.findById(connection.getId())).thenReturn(Optional.of(connection));
+        UUID credentialId = UUID.randomUUID();
+
+        ProviderConnection saved = service.update(connection.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        null, null, null, null, null, null, null, null, null,
+                        credentialId.toString(), null, null, null, null, null));
+
+        assertEquals(credentialId, saved.getCredentialId());
+        verify(credentialAccess).requireUsable(credentialId, "user-1", "workspace-1");
+        verify(credentialService, never()).create(any(), anyString());
+    }
+
+    @Test
+    void createRejectsApiKeyTogetherWithCredentialId() {
+        TenantContext.setUserId("user-1");
+        TenantContext.setWorkspaceId("workspace-1");
+        stubCatalogForCreate();
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service.create(credentialLinkInput("sk-test-key", UUID.randomUUID().toString())));
+
+        assertEquals("apiKey and credentialId are mutually exclusive", error.getMessage());
+        verify(credentialService, never()).create(any(), anyString());
+    }
 }
