@@ -152,12 +152,13 @@ const toggleExpanded = () => {
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <p class="pt-1 mk-caption leading-5 text-muted-foreground">
-                                [裁定 PLAN-0762 T2.3 / DEV-010 §10.2] 全局导航 MVP
-                                <strong>只放两个模块</strong>：主体工作区 /
-                                设置页，<strong>不加第三个</strong>；第三个模块何时进、进什么，[裁定]
-                                待用户裁定（DEV-010 §10.6）。 [引用 M3] M3 建议 collapsed rail 放
-                                3–7 个目的地 —— <strong>我们比它更严，取 2</strong>，不是 M3
-                                让我们放 3。56px 见 DEV-010 §10 与 RAIL_WIDTH。
+                                [裁定 PLAN-0762 T2.3 / DEV-010 §10.2，其后被三次裁定扩面] 全局导航
+                                <strong>当前承载五个实例级模块</strong>：工作台 / 组织成员 / 资源 /
+                                设置 / 自动化任务——与产品侧 src/lib/globalModules.ts 的
+                                GLOBAL_MODULES 逐项同名同序（本稿 v-for 同一份 modules）。增量出处：
+                                PLAN-0772 M2 加「资源」（D-1011）；task-240 / PLAN-0773 M3 加
+                                「组织成员」（Lead 裁 a）；task-11 / D-1220 ③ 把「自动化任务」由
+                                窗口期模块改为恒在实例级。56px 见 DEV-010 §10 与 RAIL_WIDTH。
                             </p>
                         </div>
                     </SidebarInset>
