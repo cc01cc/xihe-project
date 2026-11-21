@@ -30,7 +30,10 @@ const messages = {
                 backToUserLayer: "去用户层",
             },
             domainRag: "检索增强",
-            authorizationOverview: { title: "授权总览" },
+            authorizationOverview: {
+                title: "授权总览",
+                explain: { actionClassExample: "read" },
+            },
         },
         common: { loading: "加载中" },
     },

@@ -22,7 +22,10 @@ const i18n = createI18n({
             files: { titleFiles: "文件" },
             nav: { open: "打开导航" },
             chat: { titleChat: "对话" },
-            settings: { providerHub: { defaultPlaceholder: "如：default" } },
+            settings: {
+                providerHub: { defaultPlaceholder: "如：default" },
+                authorizationOverview: { explain: { actionClassExample: "read" } },
+            },
         },
     },
 });

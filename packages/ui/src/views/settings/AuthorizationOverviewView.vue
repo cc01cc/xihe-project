@@ -854,7 +854,9 @@ onMounted(async () => {
                         v-model="explainActionClass"
                         data-testid="authorization-explain-action-class"
                         class="w-56"
-                        placeholder="read"
+                        :placeholder="
+                            t('settings.authorizationOverview.explain.actionClassExample')
+                        "
                     />
                 </label>
                 <label class="space-y-1">
