@@ -5,7 +5,9 @@ import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
@@ -69,6 +71,10 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository accessRoleRepository;
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository roleBindingRepository;
+    @Autowired
+    private RoleGrantMaterializer roleMaterializer;
+    @Autowired
+    private AuthzContext authzContext;
 
     private final List<UUID> seededRoleBindingIds = new ArrayList<>();
 
@@ -444,6 +450,139 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 "D-174: stable name order (the source key is gone)");
     }
 
+    // -----------------------------------------------------------------------------------------
+    // task-195: GET /api/v1/agent-principals/{principalId} — one row of the personal view. The
+    // contract is "the list's visibility, on one row", so every assertion below is anchored to the
+    // list: same projection, same 404 for unreadable AND unknown, and the N1 holder reading someone
+    // else's row is the *same* arm that widens the list.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void theSingleReadAnswersExactlyTheListRowItBelongsTo() {
+        User alice = newUser("single-alice");
+        grantDefaultService.ensureUserDefault(alice);
+        // The real user-level door: no workspace header → CREATE_OWN_AGENT → 201, bare {principalId}.
+        ResponseEntity<Map> created = exchange(HttpMethod.POST, "/api/v1/agent-principals",
+                globalToken(alice), Map.of("name", "SingleReadAgent"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
+        principals.add(principalId);
+
+        ResponseEntity<Map> read = single(alice, principalId);
+        assertEquals(HttpStatus.OK, read.getStatusCode(), String.valueOf(read.getBody()));
+        assertNotNull(read.getBody());
+        Map<String, Object> listRow = personalList(alice).stream()
+                .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the principal is missing from its own list"));
+        // One projection, one wire shape: the whole row (all 13 keys) is identical, so a consumer
+        // that renders a list row cannot drift from the single read.
+        assertEquals(listRow, read.getBody(), "task-195: the single read is the list projection");
+        assertEquals(13, read.getBody().size(), read.getBody().toString());
+    }
+
+    @Test
+    void aRowThisCallerMayNotReadAnswersTheSame404AsAnUnknownId() {
+        User alice = newUser("single-404-alice");
+        User bob = newUser("single-404-bob");
+        grantDefaultService.ensureUserDefault(alice);
+        grantDefaultService.ensureUserDefault(bob);
+        UUID bobOwned = createUserLevelPrincipal(bob, "BobSingleRead");
+
+        ResponseEntity<Map> foreign = single(alice, bobOwned);
+        assertEquals(HttpStatus.NOT_FOUND, foreign.getStatusCode(), String.valueOf(foreign.getBody()));
+        ResponseEntity<Map> unknown = single(alice, UUID.randomUUID());
+        assertEquals(HttpStatus.NOT_FOUND, unknown.getStatusCode(), String.valueOf(unknown.getBody()));
+
+        // Same code AND same wording: a 403 for "exists but not yours" would let a caller tell a
+        // real id from a random one, which the list deliberately does not reveal (it just omits).
+        assertEquals("AGENT_PRINCIPAL_NOT_FOUND", foreign.getBody().get("code"));
+        assertEquals("AGENT_PRINCIPAL_NOT_FOUND", unknown.getBody().get("code"));
+        for (String key : List.of("type", "title", "status", "code", "detail")) {
+            assertEquals(unknown.getBody().get(key), foreign.getBody().get(key),
+                    "the unreadable row must be indistinguishable from an unknown id, key=" + key);
+        }
+    }
+
+    @Test
+    void anInstanceOwnedRowIsA404OnTheUserPrefixEvenForItsCreator() {
+        User alice = newUser("single-instance-alice");
+        grantDefaultService.ensureUserDefault(alice);
+        AgentPrincipal instanceOwned = TestAgentPrincipals.newUserAgentPrincipal();
+        instanceOwned.setName("PlatformAgentSingle");
+        instanceOwned.setTemplateSnapshot(objectMapper.createObjectNode());
+        instanceOwned.setCreatedByUserId(alice.getId().toString());
+        instanceOwned.setOwnership(AgentPrincipal.OWNERSHIP_INSTANCE);
+        UUID principalId = principalRepository.saveAndFlush(instanceOwned).getId();
+        principals.add(principalId);
+
+        ResponseEntity<Map> read = single(alice, principalId);
+
+        // task-173 / D-1540 ①: the user prefix answers these rows exactly like an unknown id — the
+        // instance prefix is their surface. (Deliberately NOT the write faces' 403
+        // AGENT_PRINCIPAL_INSTANCE_OWNED: on a read that code would itself confirm the row exists.)
+        assertEquals(HttpStatus.NOT_FOUND, read.getStatusCode(), String.valueOf(read.getBody()));
+        assertEquals("AGENT_PRINCIPAL_NOT_FOUND", read.getBody().get("code"));
+    }
+
+    @Test
+    void theManagementAtomReadsSomebodyElsesRowJustLikeTheListShowsIt() {
+        User admin = newUser("single-n1-admin");
+        User bob = newUser("single-n1-bob");
+        User carol = newUser("single-n1-carol");
+        grantDefaultService.ensureUserDefault(admin);
+        grantDefaultService.ensureUserDefault(bob);
+        grantDefaultService.ensureUserDefault(carol);
+        makeInstanceAdmin(admin);
+        UUID bobOwned = createUserLevelPrincipal(bob, "BobN1Visible");
+
+        // A plain caller who is neither the creator nor N1 gets the 404 (control), so the 200 below
+        // cannot be "everyone reads everything".
+        assertEquals(HttpStatus.NOT_FOUND, single(carol, bobOwned).getStatusCode());
+        ResponseEntity<Map> read = single(admin, bobOwned);
+        assertEquals(HttpStatus.OK, read.getStatusCode(), String.valueOf(read.getBody()));
+        assertEquals(bobOwned.toString(), String.valueOf(read.getBody().get("principalId")));
+        // The list arm and the single read stay one rule: the row is in the N1 holder's list too.
+        assertTrue(personalIds(personalList(admin)).contains(bobOwned.toString()),
+                "N1 widens the list and the single read together");
+    }
+
+    @Test
+    void aMalformedPrincipalIdIsA400NotA500() {
+        User alice = newUser("single-bad-uuid");
+        grantDefaultService.ensureUserDefault(alice);
+
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/agent-principals/not-a-uuid", globalToken(alice), null);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("INVALID_REQUEST", response.getBody().get("code"));
+    }
+
+    /**
+     * task-195: authentication is judged before the id is, so an anonymous caller cannot turn the
+     * status code into an existence probe either — a real row and a random UUID both answer 401
+     * (and neither answers 404).
+     */
+    @Test
+    void anAnonymousSingleReadIs401ForBothARealAndAnUnknownId() {
+        User alice = newUser("single-anon");
+        grantDefaultService.ensureUserDefault(alice);
+        UUID real = createOwnedRow(alice, "AnonProbe");
+
+        for (String id : List.of(real.toString(), UUID.randomUUID().toString())) {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    url("/api/v1/agent-principals/" + id), HttpMethod.GET,
+                    new HttpEntity<>(null, new HttpHeaders()), Map.class);
+            assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode(), String.valueOf(response.getBody()));
+            assertEquals("AUTHORIZATION_REQUIRED", response.getBody().get("code"));
+        }
+    }
+    private ResponseEntity<Map> single(User caller, UUID principalId) {
+        return exchange(HttpMethod.GET, "/api/v1/agent-principals/" + principalId,
+                globalToken(caller), null);
+    }
+
     private List<Map<String, Object>> listAgents(User caller, Workspace workspace) {
         ResponseEntity<Map> response = exchange(HttpMethod.GET,
                 "/api/v1/workspaces/" + workspace.getId() + "/agents",
@@ -454,13 +593,19 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         return agents;
     }
 
-    /** Seeds a real instance ADMIN tier binding (capability authority reads bindings, not grants). */
+    /** Seeds a real instance ADMIN binding <b>and</b> materializes it: the atom is read from grants. */
     private void makeInstanceAdmin(User user) {
         var adminRole = accessRoleRepository.findByName("ADMIN")
                 .orElseThrow(() -> new IllegalStateException("ADMIN role missing (V87)"));
         var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.AccessRoleBinding(
                 adminRole.getId(), "user", user.getId(), AccessScope.INSTANCE, null, user.getId()));
         seededRoleBindingIds.add(binding.getId());
+        // Without these two lines the fixture would assert a door it never opened: the management
+        // atom (MANAGE_AGENT_PRINCIPALS) is evaluated on the materialized grants of the caller, so a
+        // bare binding row plus a warm capability cache answers "nobody" (task-195 needed a real N1
+        // holder, not a decorative binding).
+        roleMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, user.getId(), user.getId(), null);
+        authzContext.invalidate(user.getId());
     }
 
     private User newUser(String label) {

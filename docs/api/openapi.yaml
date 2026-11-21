@@ -1063,6 +1063,37 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/agent-principals/{principalId}:
+    get:
+      tags: [agent]
+      operationId: getAgentPrincipal
+      summary: Read one Agent principal visible to the caller
+      description: |
+        task-195: the single-row read of the same surface `GET /api/v1/agent-principals` lists.
+        The row is the **same flat `AgentPrincipalView` object the list emits per item** — there is
+        no envelope and no second projection, so a consumer that renders a list row cannot drift
+        from this route. (The list wraps rows in `{principals:[...]}`; a single row answers bare,
+        exactly like `POST /api/v1/agent-principals` and the PATCH below.)
+
+        **Visibility is the list's, verbatim** (no new atom, no new rule): a holder of the
+        instance-tier `MANAGE_AGENT_PRINCIPALS` (N1) may read any row; every other caller may read
+        only the rows they **created** (`created_by_user_id` = self — user-level creates never write
+        `owner_user_id`, PLAN-0750 M2 / G13=(a)). An `ownership = INSTANCE` row is not readable on
+        this prefix at all (task-173 / V170 / D-1540 ①): those rows belong to
+        `GET /api/v1/instance/agent-principals`.
+
+        **An unknown id and a row this caller may not read answer the same `404
+        AGENT_PRINCIPAL_NOT_FOUND`** — never 403. "Exists but not yours" would be an existence
+        oracle: the list already answers the same question by omitting the row, and UUIDv4 ids are
+        unguessable, so this route must not be the cheaper probe. The instance-owned case collapses
+        into the same 404 on purpose (a read has nothing to redirect to that the code would not also
+        leak); the write faces keep their distinct 403 `AGENT_PRINCIPAL_INSTANCE_OWNED`.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: One Agent principal row (identical to a list item), content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
     patch:
       tags: [agent]
       operationId: updateAgentPrincipalDocuments
@@ -6142,7 +6173,7 @@ paths:
       tags: [admin]
       operationId: getRoleCatalog
       summary: Access-role atom catalog (PLAN-0610 W3-2a; labels PLAN-0651 D51-37)
-      description: 'The permission vocabulary of the access-role model: 44 atoms = 41 action atoms + 3 capability atoms (PLAN-0651 adds N1–N10; PLAN-0673 M2 adds GRANT_ANY_ATOM, instance-only). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5). Since migration V125 (PLAN-0673 D-168) the built-in ADMIN role holds MANAGE_ROLES as well.'
+      description: 'The permission vocabulary of the access-role model: 45 atoms = 42 action atoms + 3 capability atoms (PLAN-0651 adds N1–N10; PLAN-0673 M2 adds GRANT_ANY_ATOM, instance-only). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5). Since migration V125 (PLAN-0673 D-168) the built-in ADMIN role holds MANAGE_ROLES as well.'
       parameters:
         - name: locale
           in: query

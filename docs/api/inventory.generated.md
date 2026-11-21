@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**376** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 272 · 服务间 104
+- 规模：**377** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 273 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（376 / 376 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（377 / 377 个操作带 tag）。
 
-## public（272 operations · 公开 · 17 tags）
+## public（273 operations · 公开 · 17 tags）
 
 ### auth（12）
 
@@ -96,12 +96,13 @@
 | `DELETE /api/v1/workspaces/{workspaceId}/roots/{rootId}` | `deleteWorkspaceRoot` | `bearerAuth` | Soft-delete a root (PLAN-0639 D39-3) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/runtime/release` | `releaseWorkspaceRuntime` | `bearerAuth` | Release workspace execution resources (any accessible member) | 公开 |
 
-### agent（30）
+### agent（31）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
 | `GET /api/v1/agent-principals` | `listAgentPrincipals` | `bearerAuth` | List Agent principals visible to the caller | 公开 |
 | `POST /api/v1/agent-principals` | `createAgentPrincipal` | `bearerAuth` | Create an Agent principal from a readable template snapshot | 公开 |
+| `GET /api/v1/agent-principals/{principalId}` | `getAgentPrincipal` | `bearerAuth` | Read one Agent principal visible to the caller | 公开 |
 | `PATCH /api/v1/agent-principals/{principalId}` | `updateAgentPrincipalDocuments` | `bearerAuth` | Replace an Agent principal's hook subscriptions and/or memory policy | 公开 |
 | `POST /api/v1/agent-principals/{principalId}/disable` | `disableAgentPrincipal` | `bearerAuth` | Disable an Agent principal (bodies are never hard-deleted) | 公开 |
 | `GET /api/v1/agent-principals/{principalId}/memories` | `listAgentMemories` | `bearerAuth` | List one agent's memory (subject-level, V107) | 公开 |

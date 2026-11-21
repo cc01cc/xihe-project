@@ -69,6 +69,33 @@ public class AgentPrincipalController {
         }
     }
 
+    /**
+     * task-195: `GET /api/v1/agent-principals/{principalId}` — one row of the personal view.
+     *
+     * <p>The body is the <b>same flat projection the list emits per row</b>
+     * ({@link AgentPrincipalWireView#principalView}): there is no second wire shape for a single row,
+     * so a consumer that already renders a list row cannot drift from this route. No envelope — like
+     * {@code POST /api/v1/agent-principals} and the PATCH below, a single row answers bare.</p>
+     *
+     * <p>Visibility and the 404 rule live in the service (single gate); this method only supplies the
+     * actor and translates {@link CpApiException} into the problem shape.</p>
+     */
+    @GetMapping("/api/v1/agent-principals/{principalId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> get(@PathVariable String principalId) {
+        String actorUserId = TenantContext.getUserId();
+        if (actorUserId == null || actorUserId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        try {
+            var view = agentPrincipalService.getPrincipal(actorUserId, parseUuid(principalId));
+            return ResponseEntity.ok(AgentPrincipalWireView.principalView(view, objectMapper));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
     /** PLAN-0622 M1.2: `POST /api/v1/agent-principals/{id}/disable` → `204` (idempotent). */
     @PostMapping("/api/v1/agent-principals/{principalId}/disable")
     @PreAuthorize("isAuthenticated()")

@@ -1019,6 +1019,39 @@ export interface AgentPrincipalSummary {
 }
 
 /**
+ * task-195：列表与**单条读面**共用这一个行解析器。
+ *
+ * CP 的 `GET /api/v1/agent-principals/{id}` 返回的就是列表项的同一个扁平投影（无 envelope、无第二
+ * 套字段），所以解析只写一份：两边各写一份，迟早会有一边漏掉某个字段而没人发现。返回 `null` 表示
+ * 这一行缺 `principalId`/`name`（契约 required）——列表侧丢弃该行，单条侧由调用方决定失败方式。
+ */
+function parseAgentPrincipalSummaryRow(
+    row: Record<string, unknown>,
+): AgentPrincipalSummary | null {
+    const principalId = typeof row.principalId === "string" ? row.principalId : "";
+    const name = typeof row.name === "string" ? row.name : "";
+    if (!principalId || !name) return null;
+    return {
+        principalId,
+        name,
+        templateId: typeof row.templateId === "string" ? row.templateId : null,
+        templateName: typeof row.templateName === "string" ? row.templateName : null,
+        createdAt: typeof row.createdAt === "string" ? row.createdAt : "",
+        disabled: typeof row.disabledAt === "string" && row.disabledAt.length > 0,
+        defaultModelProvider:
+            typeof row.defaultModelProvider === "string" ? row.defaultModelProvider : null,
+        defaultModelName: typeof row.defaultModelName === "string" ? row.defaultModelName : null,
+        // task-191：列表视图本就携带的文档字段（fail-closed 解析：非对象/畸形一律 null，
+        // 与 getWorkspaceAgents 的 hooks 口径一致，不让单行畸形污染整列）。
+        allowedModels: parseAgentModelRefs(row.allowedModels),
+        hooks: isPlainRecord(row.hooks) ? row.hooks : null,
+        contextPolicy: isPlainRecord(row.contextPolicy) ? row.contextPolicy : null,
+        delegationPolicy: isPlainRecord(row.delegationPolicy) ? row.delegationPolicy : null,
+        ownership: row.ownership === "INSTANCE" ? "INSTANCE" : "USER",
+    };
+}
+
+/**
  * task-191：`PATCH /api/v1/agent-principals/{id}` 请求体（openapi `AgentPrincipalUpdateRequest`）。
  * `undefined` = 不触碰该文档；显式 `null` = 清空。模型两半在 CP 侧按 merged 结果做
  * both-or-neither 校验（单清一半 400 `INVALID_AGENT_PRINCIPAL`），UI 前端先做同款校验。
@@ -4005,36 +4038,36 @@ export const api = {
             logger.warn("[agent-principals] agent principal envelope malformed; treated as empty");
             return [];
         }
+        // task-195：行解析与单条读面共用 parseAgentPrincipalSummaryRow —— 两处各写一份，
+        // 迟早会有一边漏字段而没人发现。
         return raw.principals.flatMap((row) => {
-            const principalId = typeof row.principalId === "string" ? row.principalId : "";
-            const name = typeof row.name === "string" ? row.name : "";
-            if (!principalId || !name) return [];
-            return [
-                {
-                    principalId,
-                    name,
-                    templateId: typeof row.templateId === "string" ? row.templateId : null,
-                    templateName: typeof row.templateName === "string" ? row.templateName : null,
-                    createdAt: typeof row.createdAt === "string" ? row.createdAt : "",
-                    disabled: typeof row.disabledAt === "string" && row.disabledAt.length > 0,
-                    defaultModelProvider:
-                        typeof row.defaultModelProvider === "string"
-                            ? row.defaultModelProvider
-                            : null,
-                    defaultModelName:
-                        typeof row.defaultModelName === "string" ? row.defaultModelName : null,
-                    // task-191：列表视图本就携带的文档字段（fail-closed 解析：非对象/畸形一律 null，
-                    // 与 getWorkspaceAgents 的 hooks 口径一致，不让单行畸形污染整列）。
-                    allowedModels: parseAgentModelRefs(row.allowedModels),
-                    hooks: isPlainRecord(row.hooks) ? row.hooks : null,
-                    contextPolicy: isPlainRecord(row.contextPolicy) ? row.contextPolicy : null,
-                    delegationPolicy: isPlainRecord(row.delegationPolicy)
-                        ? row.delegationPolicy
-                        : null,
-                    ownership: row.ownership === "INSTANCE" ? "INSTANCE" : "USER",
-                },
-            ];
+            const parsed = parseAgentPrincipalSummaryRow(row);
+            return parsed ? [parsed] : [];
         });
+    },
+
+    /**
+     * task-195：`GET /api/v1/agent-principals/{id}` —— 个人面（`/api/v1/agent-principals`）的单条读。
+     *
+     * <p>返回的就是列表项**同一个扁平投影**（无 envelope、无第二套字段），所以解析走同一个
+     * {@link parseAgentPrincipalSummaryRow}；与列表的区别只有失败语义：列表可以丢弃畸形行，单条
+     * 读没有「丢弃」这个选项，缺 required 字段直接抛错。</p>
+     *
+     * <p>CP 侧对**不可见**与**不存在**返回同一个 `404 AGENT_PRINCIPAL_NOT_FOUND`（D-1540：不让读面
+     * 变成存在性预言机；instance-owned 行在这个前缀上同样并入 404）。调用方不要试图区分两者，
+     * 也不要把它翻译成「已删除」之类的产品话术。</p>
+     */
+    async getAgentPrincipal(principalId: string): Promise<AgentPrincipalSummary> {
+        const row = await request<Record<string, unknown>>(
+            `/agent-principals/${encodeURIComponent(principalId)}`,
+        );
+        const parsed = parseAgentPrincipalSummaryRow(row);
+        if (parsed === null) {
+            throw new Error(
+                "[agent-principals] single read returned a row without principalId/name",
+            );
+        }
+        return parsed;
     },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         const raw = await request<{ agents: Array<Record<string, unknown>> }>(

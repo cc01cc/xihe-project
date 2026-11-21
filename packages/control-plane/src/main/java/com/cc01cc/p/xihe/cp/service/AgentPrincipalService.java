@@ -907,6 +907,52 @@ public class AgentPrincipalService {
     }
 
     /**
+     * task-195: {@code GET /api/v1/agent-principals/{principalId}} — one row of the personal view.
+     *
+     * <p><b>The visibility is {@link #listPrincipals}'s, not a second rule.</b> Without a
+     * {@code workspaceId} that method answers "a {@code MANAGE_AGENT_PRINCIPALS} holder sees every
+     * row, everyone else the rows they created" and then drops INSTANCE-owned rows; this method
+     * evaluates exactly those two predicates on the single row, so a row that a list omits can never
+     * be readable here (and vice versa — the project's own gate: "能看见却点不动比看不见更糟" only
+     * holds if read and write surfaces agree).</p>
+     *
+     * <p><b>Unknown id and unreadable row answer the same 404.</b> A 403 for "exists but not yours"
+     * would be an existence oracle: UUIDv4 ids are unguessable, and the caller learns nothing extra
+     * from this route than from the list (which simply omits the row). The code is the family's
+     * existing one ({@code AGENT_PRINCIPAL_NOT_FOUND}), not a new "not visible" spelling.</p>
+     *
+     * <p>An INSTANCE-owned row is a 404 here rather than the write faces' 403
+     * {@code AGENT_PRINCIPAL_INSTANCE_OWNED}: on a read there is nothing to redirect ("go to the
+     * instance prefix") that the 403 does not also leak, and the list's contract for these rows is
+     * "not on this surface at all" (task-173 / D-1540 ①).</p>
+     */
+    @Transactional(readOnly = true)
+    public AgentPrincipalView getPrincipal(String actorUserId, UUID principalId) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
+                .orElseThrow(AgentPrincipalService::principalNotFound);
+        // task-173 / D-1540 ①: the user prefix never answers an INSTANCE-owned row.
+        if (principal.isInstanceOwned()) {
+            throw principalNotFound();
+        }
+        // PLAN-0750 M2 (G13=(a)): user-level rows carry no owner_user_id, so the creator column is the
+        // visibility fact — the same branch listPrincipals takes (findByCreatedByUserId).
+        boolean readable = holdsAgentPrincipalManagementAtom(actorId)
+                || actorId.toString().equals(principal.getCreatedByUserId());
+        if (!readable) {
+            throw principalNotFound();
+        }
+        return toPrincipalView(principal);
+    }
+
+    /** The family's one "no such principal for this caller" answer (404, same code and detail). */
+    private static CpApiException principalNotFound() {
+        return new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
+                "Agent principal not found");
+    }
+
+    /**
      * task-179 (PLAN-0771 M3, contract {@code d533613c}): the instance-layer read face.
      *
      * <p>The contract is explicit that this list is <b>not</b> caller-scoped: "GET
