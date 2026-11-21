@@ -1,0 +1,604 @@
+{
+  "$comment": "task-133 固定 waitForTimeout 存量基线：只许降。判据与双向 ratchet 见 scripts/check-e2e-timeouts.mjs 文件头；匹配键 = file + 掩码后整行签名（不按行号）。新增调用必须先登记并带 reason；条目失效必须同批删除。",
+  "version": 1,
+  "generatedBy": "scripts/check-e2e-timeouts.mjs --write-fixed-wait-baseline",
+  "generatedAt": "2026-11-22",
+  "rule": "packages/ui/AGENTS.md:125 — 新 E2E 禁止固定 sleep/waitForTimeout",
+  "scan": "packages/ui/e2e/**/*.{ts,mjs}（注释/字符串先掩码）",
+  "entries": [
+    {
+      "file": "packages/ui/e2e/helpers/frame-gate.ts",
+      "line": 59,
+      "signature": "await page.waitForTimeout(pollMs);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/approval.spec.ts",
+      "line": 573,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl316-scroll-follow.spec.ts",
+      "line": 116,
+      "signature": "await page.waitForTimeout(50);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl316-scroll-follow.spec.ts",
+      "line": 280,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl329-long-session-budget.spec.ts",
+      "line": 142,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl329-long-session-budget.spec.ts",
+      "line": 184,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl329-long-session-budget.spec.ts",
+      "line": 202,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl329-long-session-budget.spec.ts",
+      "line": 214,
+      "signature": "await page.waitForTimeout(150);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl340-anchor-invariant.spec.ts",
+      "line": 401,
+      "signature": "await page.waitForTimeout(STABLE_POLL_MS);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl348-heap-sample.spec.ts",
+      "line": 120,
+      "signature": "await page.waitForTimeout(PROTOCOL.settleBeforeSampleMs);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl348-heap-sample.spec.ts",
+      "line": 129,
+      "signature": "await page.waitForTimeout(PROTOCOL.sampleIntervalMs);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl348-longrun.spec.ts",
+      "line": 87,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl348-longrun.spec.ts",
+      "line": 120,
+      "signature": "await page.waitForTimeout(100);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl556-mem-compare.spec.ts",
+      "line": 116,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl556-mem-compare.spec.ts",
+      "line": 126,
+      "signature": "await page.waitForTimeout(100);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl556-mem-compare.spec.ts",
+      "line": 137,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl556-mem-compare.spec.ts",
+      "line": 139,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl556-mem-compare.spec.ts",
+      "line": 145,
+      "signature": "await page.waitForTimeout(100);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/bl576-workbench-panel-widths.spec.ts",
+      "line": 81,
+      "signature": "await page.waitForTimeout(50);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/chat-scroll.spec.ts",
+      "line": 47,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/chat-scroll.spec.ts",
+      "line": 56,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/chat-scroll.spec.ts",
+      "line": 101,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/chat-scroll.spec.ts",
+      "line": 106,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/confirm-modal.spec.ts",
+      "line": 32,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/data-controls.spec.ts",
+      "line": 49,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/global-rail-dual-state.spec.ts",
+      "line": 95,
+      "signature": "await page.waitForTimeout(900);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/global-rail-dual-state.spec.ts",
+      "line": 115,
+      "signature": "await page.waitForTimeout(900);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/knowledge-base.spec.ts",
+      "line": 62,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/knowledge-base.spec.ts",
+      "line": 89,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/knowledge-base.spec.ts",
+      "line": 151,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/measure-sse-connects.spec.ts",
+      "line": 85,
+      "signature": "await page.waitForTimeout(WINDOW_MS);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/plan-0750-principal-refusal.spec.ts",
+      "line": 219,
+      "signature": "await page.waitForTimeout(600);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/preview-screenshots.mjs",
+      "line": 32,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/preview-screenshots.mjs",
+      "line": 63,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/preview-sheets-check.mjs",
+      "line": 40,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/probe-task187-admin.spec.ts",
+      "line": 18,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/probe-task187.spec.ts",
+      "line": 160,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/tab-navigation.spec.ts",
+      "line": 31,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/task2-splitter-pointer-drag.spec.ts",
+      "line": 108,
+      "signature": "await page.waitForTimeout(50);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/task353-center-container.spec.ts",
+      "line": 91,
+      "signature": "await page.waitForTimeout(50);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/task585-wsless-header-audit.spec.ts",
+      "line": 112,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/task590-sendable-fixture.spec.ts",
+      "line": 72,
+      "signature": "await page.waitForTimeout(ACTION_TIMEOUT_MS * 2);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/task81-focus-share.spec.ts",
+      "line": 119,
+      "signature": "await page.waitForTimeout(120);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/task83-ui-audit.spec.ts",
+      "line": 831,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/three-width-overflow.spec.ts",
+      "line": 61,
+      "signature": "await page.waitForTimeout(100);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/toast.spec.ts",
+      "line": 30,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/toast.spec.ts",
+      "line": 46,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/toast.spec.ts",
+      "line": 62,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-html-selfcheck.spec.ts",
+      "line": 103,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-html-selfcheck.spec.ts",
+      "line": 109,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-html-selfcheck.spec.ts",
+      "line": 151,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 462,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 554,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 571,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 588,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 599,
+      "signature": "await page.waitForTimeout(300);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 622,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 639,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/mock/x-demo-to-cc.spec.ts",
+      "line": 674,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/agent-config-shots.spec.ts",
+      "line": 81,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/agent-config-shots.spec.ts",
+      "line": 98,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/bl382-session-scale.spec.ts",
+      "line": 428,
+      "signature": "await page.waitForTimeout(PROTOCOL.sampleIntervalMs);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/chat-interactions.spec.ts",
+      "line": 52,
+      "signature": "await page.waitForTimeout(800);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/chat-interactions.spec.ts",
+      "line": 86,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/chat-interactions.spec.ts",
+      "line": 90,
+      "signature": "await page.waitForTimeout(800);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/chat-interactions.spec.ts",
+      "line": 105,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/chat-interactions.spec.ts",
+      "line": 115,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/chat.spec.ts",
+      "line": 189,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/combobox-tab-228.spec.ts",
+      "line": 191,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/container-persistence.spec.ts",
+      "line": 224,
+      "signature": "if (remaining > 0) await page.waitForTimeout(remaining);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/container-persistence.spec.ts",
+      "line": 351,
+      "signature": "await page.waitForTimeout(SETTLED_READ_OFFSET_MS);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/journey-a.spec.ts",
+      "line": 280,
+      "signature": "await page.waitForTimeout(8000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/journey-a.spec.ts",
+      "line": 283,
+      "signature": "await page.waitForTimeout(2000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/mention-cursor-badge.spec.ts",
+      "line": 85,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/mention-cursor-badge.spec.ts",
+      "line": 140,
+      "signature": "await page.waitForTimeout(600);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/mobile-viewport.spec.ts",
+      "line": 52,
+      "signature": "await page.waitForTimeout(800);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/pdf-viewer.spec.ts",
+      "line": 83,
+      "signature": "await page.waitForTimeout(1000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan-0559-tabs.spec.ts",
+      "line": 98,
+      "signature": "await page.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan-0559-tabs.spec.ts",
+      "line": 100,
+      "signature": "await pageB.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan-0559-tabs.spec.ts",
+      "line": 116,
+      "signature": "await pageB.waitForTimeout(1500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan-0559-tabs.spec.ts",
+      "line": 193,
+      "signature": "await viewerPage.waitForTimeout(1200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan-0559-tabs.spec.ts",
+      "line": 215,
+      "signature": "await editorPage.waitForTimeout(800);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan-0750-v10-principal-missing.spec.ts",
+      "line": 250,
+      "signature": "await page.waitForTimeout(600);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan0572-toolcalls-refresh.spec.ts",
+      "line": 161,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan0630-delegation-walkthrough.spec.ts",
+      "line": 104,
+      "signature": "await page.waitForTimeout(1_000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/plan0649-refusal-visible.spec.ts",
+      "line": 423,
+      "signature": "await page.waitForTimeout(2_000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/ui-baseline.spec.ts",
+      "line": 588,
+      "signature": "await page.waitForTimeout(pollMs);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/ui-baseline.spec.ts",
+      "line": 1280,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/ui-baseline.spec.ts",
+      "line": 1435,
+      "signature": "await page.waitForTimeout(200);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 84,
+      "signature": "await page.waitForTimeout(700);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 94,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 177,
+      "signature": "await page.waitForTimeout(3000);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 197,
+      "signature": "await page.waitForTimeout(1800);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 219,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 227,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 235,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 310,
+      "signature": "await page.waitForTimeout(400);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 315,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    },
+    {
+      "file": "packages/ui/e2e/real/x-demo-real-to-cc.spec.ts",
+      "line": 327,
+      "signature": "await page.waitForTimeout(500);",
+      "reason": "grandfathered 2026-11-22 (task-133)：存量固定等待，只许降；归零后删除条目"
+    }
+  ]
+}
