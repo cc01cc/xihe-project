@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Bot, Link2, Plus, RefreshCw, Settings2 } from "@lucide/vue";
@@ -500,6 +501,25 @@ onMounted(refresh);
                         </p>
                     </div>
                     <div class="flex shrink-0 items-center gap-2">
+                        <!--
+                            task-153 S1：绑定整页的入口（列表页一侧）。
+                            刻意**不用** canBind 门控：这一页是读 + 写两面，没有原子的人进去也能看到
+                            「你没有可管理的工作区智能体权限」这句实话，比"按钮消失、不知道为什么"好。
+                            链接走**路由名**而不是手拼路径，路径只在一处（router/index.ts）定义；
+                            也不需要主体名（task-195 前 name 读面缺失，靠 id 就能进 ⇒ 不等 195）。
+                        -->
+                        <Button as-child variant="outline" size="sm">
+                            <RouterLink
+                                :to="{
+                                    name: 'settings-agent-principal-bindings',
+                                    params: { id: agent.principalId },
+                                }"
+                                :data-testid="`agent-principals-bindings-${agent.principalId}`"
+                            >
+                                <Link2 aria-hidden="true" />
+                                {{ t("agentBindings.openPage") }}
+                            </RouterLink>
+                        </Button>
                         <Button
                             type="button"
                             variant="outline"

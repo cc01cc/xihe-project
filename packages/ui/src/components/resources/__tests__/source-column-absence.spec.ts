@@ -220,7 +220,7 @@ const SourceColumnStub = defineComponent({
 function mountPanel(component: unknown, props: Record<string, unknown> = {}) {
     return mount(component as never, {
         props,
-        global: { plugins: [i18n] },
+        global: { plugins: [i18n], stubs: { RouterLink: { template: "<a><slot /></a>" } } },
         attachTo: document.body,
     });
 }
@@ -368,7 +368,7 @@ describe("来源列扫描器自检（绊线必须能解释自己为什么红）"
      */
     it("扫描器能抓到列头/取值/testid 三路信号（防止负断言空转）", () => {
         const wrapper = mount(SourceColumnStub, {
-            global: { plugins: [i18n] },
+            global: { plugins: [i18n], stubs: { RouterLink: { template: "<a><slot /></a>" } } },
             attachTo: document.body,
         });
 

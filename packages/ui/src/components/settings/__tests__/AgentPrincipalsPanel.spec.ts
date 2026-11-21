@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import type * as apiModule from "../../../composables/api";
 import { api } from "../../../composables/api";
 import { i18n } from "../../../i18n";
@@ -82,10 +83,30 @@ function selfPermissions(options: {
     };
 }
 
+/**
+ * task-153 S1：行内多了指向「绑定整页」的 `RouterLink` ⇒ 面板 spec 必须给一个真 router。
+ *
+ * <p>刻意**不 stub RouterLink**：stub 掉就只剩"调了这个组件"，链接目标写成什么都不会红；
+ * 这里要的是**解析后的 href**（拼错名字/漏 params 立刻红）。路由只放本卡那一条，不用整份
+ * `router/index.ts` —— 那份带守卫与懒加载，面板 spec 不需要为它承担噪声。</p>
+ */
+function makeRouter(): Router {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            {
+                path: "/settings/instance/agent-principals/:id/bindings",
+                name: "settings-agent-principal-bindings",
+                component: { template: "<div />" },
+            },
+        ],
+    });
+}
+
 function mountPanel() {
     // task-138 起详情抽屉在 setup 读配置 store（选连接）⇒ 面板 spec 必须给 pinia，否则整文件红。
     return mount(AgentPrincipalsPanel, {
-        global: { plugins: [i18n, createPinia()] },
+        global: { plugins: [i18n, createPinia(), makeRouter()] },
         attachTo: document.body,
     });
 }
@@ -255,7 +276,7 @@ describe("AgentPrincipalsPanel — 嵌入模式（task-135 J4 标题去重）", 
         const wrapper = mount(AgentPrincipalsPanel, {
             props: { embedded: true },
             slots: { heading: '<h2 data-testid="host-heading">宿主标题</h2>' },
-            global: { plugins: [i18n, createPinia()] },
+            global: { plugins: [i18n, createPinia(), makeRouter()] },
             attachTo: document.body,
         });
         await flushPromises();
@@ -275,6 +296,43 @@ describe("AgentPrincipalsPanel — 嵌入模式（task-135 J4 标题去重）", 
 
         expect(wrapper.find('[data-testid="agent-principals-heading"]').exists()).toBe(true);
         expect(wrapper.text()).toContain(i18n.global.t("settings.eyebrow.agentPrincipals"));
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-153 S1：列表页跳「绑定整页」的入口。
+ *
+ * <p>两件必须咬住：① 链接**按 id 拼路由名**解析（不是手拼字符串，也不是靠主体名）；
+ * ② 入口**不受 canBind 门控** —— 没有 MANAGE_WORKSPACE_AGENTS 的人进去也要能看到页面上的
+ * 「你没有可管理的工作区智能体权限」，而不是按钮消失、连"为什么"都看不到（reader ≠ writer）。</p>
+ */
+describe("AgentPrincipalsPanel — 绑定整页入口（task-153 S1）", () => {
+    it("行内入口解析成 /settings/instance/agent-principals/{id}/bindings（只靠 id，不等 task-195 的名称读面）", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const link = wrapper.find('[data-testid="agent-principals-bindings-p-1"]');
+        expect(link.exists()).toBe(true);
+        expect(link.attributes("href")).toBe("/settings/instance/agent-principals/p-1/bindings");
+        expect(link.text()).toContain(i18n.global.t("agentBindings.openPage"));
+        // 名字缺失也照样能进：href 里不含主体名，只含 id。
+        expect(link.attributes("href")).not.toContain("MyAgent");
+        wrapper.unmount();
+    });
+
+    it("没有 MANAGE_WORKSPACE_AGENTS 原子时入口仍在（读面入口不等于写面按钮）", async () => {
+        mockedApi.getSelfPermissions.mockResolvedValue(
+            selfPermissions({ instanceAtoms: ["CREATE_OWN_AGENT"], workspaces: [] }),
+        );
+
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        // 写面入口（行内绑定小窗）按能力位隐藏 —— 既有行为，别动。
+        expect(wrapper.find('[data-testid="agent-principals-bind-p-1"]').exists()).toBe(false);
+        // 整页入口照旧在：进去能看到「你没有可管理的工作区智能体权限」这句实话。
+        expect(wrapper.find('[data-testid="agent-principals-bindings-p-1"]').exists()).toBe(true);
         wrapper.unmount();
     });
 });
