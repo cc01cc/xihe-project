@@ -255,7 +255,7 @@ describe("SettingsSidebar", () => {
         //   · 能力位 + MANAGE_ROLES 都在 ⇒ **15**（本用例）
         //   · 有 `isInstanceAdmin`、无 MANAGE_ROLES ⇒ **14**（roles 被权限门隐藏）
         //   · atom-only（**有** MANAGE_ROLES、无 `isInstanceAdmin`）⇒ 徽标仍 **14**、可见条目 **6**
-        //     （8 域条目被能力位挡住；ops/安全 6 条可⻅，config-locks 仍被能力位挡）—— 实测钉在
+        //     （8 域条目被能力位挡住；ops/安全 6 条可见，config-locks 仍被能力位挡）—— 实测钉在
         //     "BL-552: keeps the roles entry visible for an atom-only user" 用例里（task-70）。
         //   · 两者皆无 ⇒ 实例段**整段不渲染**（能力位与 MANAGE_ROLES 都不在），此时"13"只是
         //     `instanceEntryCount` 的未渲染计算值，**不是任何用户看得到的口径**，别拿它当断言。
