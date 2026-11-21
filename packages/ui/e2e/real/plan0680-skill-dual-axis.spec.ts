@@ -185,18 +185,27 @@ test("@host 0680-J1 跨工作区不生效：绑他工作区私有技能定义 �
     );
     expect(principalId).toMatch(UUID);
 
-    // 他工作区的私有技能定义：在 W 上下文里按「不存在」处理（:100）
+    // 他工作区的私有技能定义：在 W 上下文里按「不存在」处理（:100）。
+    // task-78：不再因「库里恰好没有资产」而 skip —— 先以他工作区为授权上下文导入一条
+    // workspace 档定义（`headersOf` 取 identity.workspaceId，故传入覆盖 workspaceId 的身份），
+    // 再用导入响应里的 skillId（wire 字段 `results[].skillId`，清单项同名字段）去绑。
+    const foreignIdentity: Identity = { ...owner, workspaceId: otherWorkspaceId };
+    const foreignSkillId = await importSkill(
+        request,
+        foreignIdentity,
+        { type: "workspace", workspaceId: otherWorkspaceId },
+        "ws",
+    );
     const otherSkills = await request.get(SKILLS_PATH(otherWorkspaceId, "workspace"), {
         headers: { ...headersOf(owner), "X-Workspace-Id": otherWorkspaceId },
     });
     expect(otherSkills.status(), await otherSkills.text()).toBe(200);
     const otherItems =
-        ((await otherSkills.json()) as { items?: Array<{ id: string }> }).items ?? [];
-    if (otherItems.length === 0) {
-        test.skip(true, "他工作区无私有技能定义，需先导入（见 bl355 矩阵 B 的导入步骤）后重跑");
-        return;
-    }
-    const foreignSkillId = otherItems[0].id;
+        ((await otherSkills.json()) as { items?: Array<{ skillId: string }> }).items ?? [];
+    expect(
+        otherItems.map((row) => row.skillId),
+        "刚导入的他工作区私有定义必须出现在该工作区清单里（否则下面的 404 断言无意义）",
+    ).toContain(foreignSkillId);
 
     const foreignBind = await request.post(SKILL_BINDING_PATH(principalId, owner.workspaceId), {
         headers: headersOf(owner),
@@ -212,18 +221,26 @@ test("@host 0680-J1 跨工作区不生效：绑他工作区私有技能定义 �
     );
 
     // 本工作区私有定义可绑（:100 后半句）；无资产时跳过而非伪造
+    // 本工作区私有定义可绑（:100 后半句）：同样先导入再绑，201 为硬断言（task-78 去掉 skip）。
+    const ownSkillId = await importSkill(
+        request,
+        owner,
+        { type: "workspace", workspaceId: owner.workspaceId },
+        "ws",
+    );
     const ownSkills = await request.get(SKILLS_PATH(owner.workspaceId, "workspace"), {
         headers: headersOf(owner),
     });
     expect(ownSkills.status(), await ownSkills.text()).toBe(200);
-    const ownItems = ((await ownSkills.json()) as { items?: Array<{ id: string }> }).items ?? [];
-    if (ownItems.length === 0) {
-        test.skip(true, "本工作区无私有技能定义，J1 的 201 半段待导入后重跑（404 半段已断言）");
-        return;
-    }
+    const ownItems =
+        ((await ownSkills.json()) as { items?: Array<{ skillId: string }> }).items ?? [];
+    expect(
+        ownItems.map((row) => row.skillId),
+        "本工作区清单必须含刚导入的私有定义",
+    ).toContain(ownSkillId);
     const ownBind = await request.post(SKILL_BINDING_PATH(principalId, owner.workspaceId), {
         headers: headersOf(owner),
-        data: { skillId: ownItems[0].id },
+        data: { skillId: ownSkillId },
     });
     expect(ownBind.status(), await ownBind.text()).toBe(201);
 });
@@ -384,10 +401,12 @@ test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspac
         await page.getByTestId(`agent-skills-toggle-${principalId}`).click();
         await expect(page.getByTestId("agent-skills-list")).toBeVisible();
         const badge = page.locator(`[data-testid="agent-skill-scope-${scope}"]`);
-        if ((await badge.count()) === 0) {
-            test.skip(true, `无 ${scope} 档绑定行，徽标未渲染，需先造绑定数据后重跑`);
-            return;
-        }
+        // task-78：本用例开头已造齐前置（两档定义 + 两档各一条绑定，服务端派生档位）⇒
+        // 徽标缺失就是真缺陷，硬断言可见（失败即红），不再 skip 退让。
+        await expect(
+            badge.first(),
+            `${locale} 下 ${scope} 档徽标必须渲染（前置绑定已造；为 0 ⇒ 面板未渲染绑定行）`,
+        ).toBeVisible();
         await expect(badge.first(), `${locale} 下 ${scope} 徽标文案应为「${text}」`).toHaveText(
             text,
         );

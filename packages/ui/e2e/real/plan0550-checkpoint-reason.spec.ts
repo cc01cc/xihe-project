@@ -10,7 +10,7 @@
  * The shadow `objects` directory is renamed (not deleted) before the Run and is
  * restored in `finally`; the isolated stack is torn down by the runner.
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import {
@@ -60,22 +60,16 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
     });
 
     test("GIT_FAILED propagates to CP durable state and the marker", async ({ page, request }) => {
-        // BL-142 (test premise obsolete, needs a new forced-failure seam):
-        // parking the shadow `objects` directory still makes the C0 materialize
-        // checkpoint log `GIT_FAILED`, but the Runtime re-bootstraps the shadow
-        // repo at run start (`runtime.log`: "shadow git repository bootstrapped"
-        // immediately after "C0 checkpoint capture skipped ... GIT_FAILED") and
-        // the run checkpoint ends `captured` instead of `degraded`. Reproduced in
-        // both mock and write_file lanes (2026-10-29), so this spec's mechanism
-        // no longer reaches the degraded surface. Self-heal appears to be a
-        // deliberate Runtime capability (`checkpoint.rs` BOOTSTRAP_MARKER /
-        // bootstrap path); whether `degraded` must still be surfaced for a
-        // forced git failure is a product decision → rewrite the seam, do not
-        // weaken the assertion. Tracked as BL-142.
-        test.skip(
-            true,
-            "BL-142: Runtime self-heals a parked shadow repo, so run checkpoints no longer surface degraded/GIT_FAILED; needs a new forced-failure seam (and a product decision on the degraded contract)",
-        );
+        // BL-142 / task-78：seam 已重写，用例恢复真跑（不再 skip）。
+        // 旧 seam 只 park `objects`，Runtime 在 run start 会把被掏空的 shadow repo 重新
+        // bootstrap（`runtime.log`: "shadow git repository bootstrapped"），checkpoint 终态
+        // `captured` 而非 `degraded`（2026-10-29 mock 与 write_file 两车道复现）。
+        // 新 seam 同时做两件事，把自愈短路掉：
+        //   1. 在 shadow repo 根落 `.xihe-bootstrapped`（`checkpoint.rs` BOOTSTRAP_MARKER，
+        //      `ensure_initialized` 命中即 return Ok(())），Runtime 不再 init/修配置；
+        //   2. `objects` 改名后在原位放一个同名**普通文件**，git 无法在其下建临时对象目录
+        //      （ENOTDIR）⇒ 捕获必然失败、degraded + GIT_FAILED 稳定外露。
+        // 判据不变（state=degraded / unrollableReason=GIT_FAILED / 标记文案），finally 完整还原。
         const hostDir = path.join(HOST_ROOT, ctx.workspaceId);
         mkdirSync(hostDir, { recursive: true });
         writeFileSync(path.join(hostDir, "seed.md"), "seed before corrupting shadow\n");
@@ -99,8 +93,12 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
             })
             .toBe(true);
         const parked = `${objects}.plan0550-bak`;
+        const bootstrapMarker = path.join(shadowDir, ".xihe-bootstrapped");
+        const hadBootstrapMarker = existsSync(bootstrapMarker);
         try {
             renameSync(objects, parked);
+            writeFileSync(objects, "plan0550: objects is a file, not a directory\n");
+            writeFileSync(bootstrapMarker, "bootstrapped\n");
             const runId = await startRun(
                 page,
                 request,
@@ -131,7 +129,9 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
                 fullPage: true,
             });
         } finally {
+            if (existsSync(objects) && !statSync(objects).isDirectory()) unlinkSync(objects);
             if (existsSync(parked) && !existsSync(objects)) renameSync(parked, objects);
+            if (!hadBootstrapMarker && existsSync(bootstrapMarker)) unlinkSync(bootstrapMarker);
         }
     });
 });

@@ -77,18 +77,11 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
         );
         expect(verified.ok(), await verified.text()).toBe(true);
 
-        // 1. Save the whole profile unit through the real settings UI.
+        // 1. Save the whole profile unit through the API.
         // PLAN-0752 迁移：profile 保存面（`llm-provider-profile` / `llm-profile-*`）在本次 IA
-        // 重构中被 ProviderHub 模型身份区取代（src 0 命中），本用例的 UI 保存步骤待产品侧
-        // 给出口径后重写（已报 Lead）。
-        test.fixme(
-            true,
-            "PLAN-0752: llm-provider-profile / llm-profile-* testids retired (0 hits in src)",
-        );
-
-        // task-134：旧保存面（llm-provider-profile / llm-profile-*）已退役 —— 保留退休判据
-        // （负向断言，门按判据不计 E），并把「整 unit 写入」这一契约换到 API 侧执行，
-        // 后续步骤（配置合并缓存 / 首条消息的实际 provider+model）因此仍可真跑。
+        // 重构中被 ProviderHub 模型身份区取代（src 0 命中）——task-134 把「整 unit 写入」这一
+        // 契约换到 API 侧执行，旧保存面只保留退休判据（负向断言，门按判据不计 E），
+        // 后续步骤（配置合并缓存 / 首条消息的实际 provider+model）因此仍可真跑（task-78 起不再 fixme）。
         await expect(page.getByTestId("llm-provider-profile")).toHaveCount(0);
         const saveResponse = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
             headers,

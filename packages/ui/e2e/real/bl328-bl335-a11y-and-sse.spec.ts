@@ -7,9 +7,9 @@
  * | BL | 本文件覆盖 | 说明 |
  * |---|---|---|
  * | **BL-332** | ✅ | 同 context 两页 ⇒ workspace 上游 `/api/v1/events?workspaceId=…` **恰好 1 条**；依据 `useWorkspaceSSE.ts:190` 的 `useSharedEventLeader(channelKey, upstreamConnect, …)` |
- * | **BL-335** | ⏭ skipped | 需把**同一用户**的并发订阅推过 8（CP `UserChannelSseManager.java:103/136` 第 9 条回 `429 USER_CHANNEL_FULL`）⇒ 需要 ≥9 个**独立 context**（共享 leader 让同 context 不撞限）；单跑次成本超出本轮盒，**标 skipped 并写明原因**，不降级为 mock |
- * | **BL-328** | ⏭ skipped | 依赖真审批卡（agent 工具调用需审批）⇒ 需要 approval 场景夹具；本轮盒内不做，不伪造 |
- * | **BL-333** | ⏭ skipped | 同上 + 双标签页审批同步；依赖 approval 场景 |
+ * | **BL-335** | ✅ | 需把**同一用户**的并发订阅推过 8（CP `UserChannelSseManager.java:103/136` 第 9 条回 `429 USER_CHANNEL_FULL`）⇒ 9 个**独立 context**（共享 leader 让同 context 不撞限）；原表写「skipped」是旧状态，task-78 更正 |
+ * | **BL-328** | ↗ | 真实现已迁至 `bl328-bl333-a11y-and-sse.spec.ts`（approval 车道：Escape ⇒ 焦点落 pill ⇒ 点 pill 重开）；本文件旧占位只有 skip 声明、无 body，task-78 已删 |
+ * | **BL-333** | ↗ | 同上文件（A 页决定 ⇒ B 页卡片 1s 级消失且再点不发请求 + 草稿保留） |
  *
  * 必须经 `scripts/e2e-host.mjs` 运行。
  */
@@ -165,18 +165,4 @@ test("@host BL-335 第 9 条并发订阅触发上限横幅（9 个独立 context
             `reason=${await limitNotice.first().getAttribute("data-reason")}`,
     );
     for (const context of contexts) await context.close();
-});
-test("@host BL-328 Escape 关闭审批卡后焦点回 pill（skipped：需真审批卡夹具）", async () => {
-    test.skip(
-        true,
-        "需要真审批卡出现在真栈（agent 工具调用触发审批），本轮盒内未构造 approval 场景；不伪造。" +
-            "组件层证据见 packages/ui/src/features/workspace/chat/__tests__/ChatPanel.spec.ts（pending-approval-reopen-pill）。",
-    );
-});
-
-test("@host BL-333 A 页审批 ⇒ B 页 1s 内卡片消失（skipped：需真审批卡 + 双页）", async () => {
-    test.skip(
-        true,
-        "依赖与 BL-328 相同的 approval 场景夹具 + 双标签页同步；本轮盒内未构造，标 skipped。",
-    );
 });

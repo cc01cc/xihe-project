@@ -12,7 +12,8 @@
  * `selectOption` → `create-agent-session`，且**等 `agentSelect` 可见**而不是等 `chat-input`）。
  * 前两次自建版本失败的原因就是"照抄一半"（等错了元素），故本文件以照搬为准。
  *
- * 车道：`--llm-mode=approval`（其它 mode 自动 skip）。
+ * 车道：`--llm-mode=approval`。**不用 env 前置 skip**（DEV-020 §3.6.1：`--llm-mode` 不经 env 透传，
+ * env 门恒 skip ⇒ 低频路径静默腐烂）：改为运行时判定 —— 发消息后审批卡不出现即**红**，报错文案点名车道。
  * 焦点判据：headless 下 `document.activeElement` 可用，但报告须标注"未经 headed 复核"。
  */
 import { randomUUID } from "node:crypto";
@@ -191,14 +192,12 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     const approval = page.getByTestId("approval-modal-content");
     await page.getByTestId("chat-input").fill("please delete README.md");
     await page.getByTestId("chat-send-button").click();
-    try {
-        await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-    } catch {
-        test.skip(
-            true,
-            "本车道未出现审批卡（需 --llm-mode=approval 且 fake LLM 走 delete 工具），实测已尝试一轮",
-        );
-    }
+    // task-78：原 try/catch ⇒ test.skip 已删。审批卡不出现就是缺陷（车道不符或 fake LLM 未走
+    // delete 工具），必须红并点名车道要求，不能再以 skip 掩掉焦点判据。
+    await expect(
+        approval,
+        "本用例需要 approval 车道（node scripts/e2e-host.mjs --llm-mode=approval）且 fake LLM 走 delete 工具：审批卡未出现",
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     // Escape ⇒ 本地关闭（不提交任何决定）
     await page.keyboard.press("Escape");
