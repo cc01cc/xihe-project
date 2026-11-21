@@ -363,10 +363,34 @@ describe("mock live effective-cap 读面（task-469）", () => {
             const provenance = view.provenance as Record<string, unknown>;
             expect(Array.isArray(provenance.principalGrantIds)).toBe(true);
             expect(Array.isArray(provenance.bindingGrantIds)).toBe(true);
+            const grantSources = provenance.grantSources as Record<string, unknown>;
+            expect(typeof grantSources).toBe("object");
+            expect(grantSources).not.toBeNull();
+            // task-91：键集 == 两个 id 数组的并集（契约原文），值只能是 string。
+            const union = [
+                ...(provenance.principalGrantIds as string[]),
+                ...(provenance.bindingGrantIds as string[]),
+            ];
+            expect(Object.keys(grantSources).sort()).toEqual([...new Set(union)].sort());
+            for (const source of Object.values(grantSources)) {
+                expect(typeof source).toBe("string");
+            }
             expect(Array.isArray((view.defaultGrants as { readFace: unknown }).readFace)).toBe(
                 true,
             );
         }
+    });
+
+    it("effective-cap mock 自带一例 unknown 来源，演练前端缺标签兜底", async () => {
+        const sources = await Promise.all(
+            Object.values(MOCK_AGENT_PRINCIPAL_IDS).map(async (pid) => {
+                const view = await viewOf(pid);
+                return Object.values(
+                    (view.provenance as { grantSources: Record<string, string> }).grantSources,
+                );
+            }),
+        );
+        expect(sources.flat()).toContain("unknown");
     });
 
     it("binding-snapshot：绑定原子保留到主体生效上限 ⇒ live 比快照少一条（不是快照副本）", async () => {

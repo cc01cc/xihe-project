@@ -938,6 +938,17 @@ const messages = {
             agentEffectiveCapProvenancePrincipal: "主体授权行",
             agentEffectiveCapProvenanceBinding: "绑定授权行",
             agentEffectiveCapReadFace: "本读面默认授予：工作区成员",
+            agentEffectiveCapProvenanceLabelled: "有来源标签 {labelled} 条 · 来源未知 {unknown} 条",
+            agentEffectiveCapSource: {
+                role: "角色授权",
+                spawn: "派生授予",
+                template: "模板授予",
+                credentialBinding: "凭据绑定",
+                agentDefault: "默认智能体",
+                pluginBinding: "插件绑定",
+                orgUnit: "组织单元授予",
+                unknown: "来源未知",
+            },
             editAgentCap: "编辑工作区角色",
             saveAgentCap: "保存权限",
             unbindAgent: "解绑",
@@ -2556,7 +2567,8 @@ const messages = {
                     cap: "生效上限",
                     capUnavailable: "生效上限读面不可用：该主体未绑定此工作区。",
                     capNote:
-                        "上限来源：{binding}；principalGrantIds {count} 条 —— 只有 grant id，没有 source 标签。",
+                        "上限来源：{binding}；principalGrantIds {count} 条；grant 来源：{sources}。",
+                    capSourcesNone: "无可用的 grant 行",
                     userBindings: "用户主体绑定",
                     userBindingsDenied:
                         "当前身份没有 MANAGE_ROLES，无法列出 user 主体绑定；服务端原文：",
@@ -5239,6 +5251,18 @@ const messages = {
             agentEffectiveCapProvenancePrincipal: "Principal grant rows",
             agentEffectiveCapProvenanceBinding: "Binding grant rows",
             agentEffectiveCapReadFace: "Read-face default grant: workspace members",
+            agentEffectiveCapProvenanceLabelled:
+                "{labelled} labelled · {unknown} with no source label",
+            agentEffectiveCapSource: {
+                role: "Role grant",
+                spawn: "Spawn grant",
+                template: "Template grant",
+                credentialBinding: "Credential binding",
+                agentDefault: "Agent default",
+                pluginBinding: "Plugin binding",
+                orgUnit: "Org unit grant",
+                unknown: "Source unknown",
+            },
             editAgentCap: "Edit workspace role",
             saveAgentCap: "Save permissions",
             unbindAgent: "Unbind",
@@ -6899,7 +6923,8 @@ const messages = {
                     capUnavailable:
                         "The effective-cap read face is unavailable: this principal is not bound to this workspace.",
                     capNote:
-                        "Cap source: {binding}; {count} principalGrantIds — grant ids only, no source labels.",
+                        "Cap source: {binding}; {count} principalGrantIds; grant sources: {sources}.",
+                    capSourcesNone: "no grant rows",
                     userBindings: "User subject bindings",
                     userBindingsDenied:
                         "Your identity has no MANAGE_ROLES, so user subject bindings cannot be listed; server text:",

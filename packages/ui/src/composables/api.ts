@@ -1120,7 +1120,7 @@ export interface WorkspaceAgentPermission {
 
 /**
  * task-469（417 P1-6）：`GET /workspaces/{ws}/agents/{pid}/effective-cap` 的 UI 投影。
- * 契约名 **`EffectiveCapView`**（`docs/api/openapi.yaml:6994`，**7 个字段全 required**）。
+ * 契约名 **`EffectiveCapView`**（`docs/api/openapi.yaml:7996`，**7 个字段全 required**）。
  *
  * <p>**与 `permissionsSnapshot` 不是同一件事，两者并存不互相覆盖**：契约原文说 effectiveCap 是
  * **LIVE `resolveCapFor` 求值**（binding 原子保留到主体生效上限）、与内部 cap 逐字节相同且已排序，
@@ -1138,7 +1138,19 @@ export interface WorkspaceAgentEffectiveCap {
     workspaceId: string;
     effectiveCap: WorkspaceAgentPermission[];
     capSource: { binding: "binding-snapshot" | "role-binding" };
-    provenance: { principalGrantIds: string[]; bindingGrantIds: string[] };
+    /**
+     * task-91（Q-112 档 B）：`grantSources` = `grantId → source`（词表 SSOT = `docs/api/openapi.yaml`
+     * 的 `EffectiveCapView.provenance.grantSources.additionalProperties.enum`，CP 真身
+     * `.../cp/policy/GrantSources.java`）。**键集 == 两个数组的并集**，空集为 `{}`。
+     *
+     * <p>两种容错口径（都不许静默丢）：**整字段缺失** = 旧 CP 滚动部署窗口 ⇒ 解析为 `{}`（全渲染「来源未知」）；
+     * **形状错**（非对象 / 值非 string）⇒ 抛 malformed，不退化成 `{}`。</p>
+     */
+    provenance: {
+        principalGrantIds: string[];
+        bindingGrantIds: string[];
+        grantSources: Record<string, string>;
+    };
     defaultGrants: { readFace: string[] };
     bound: boolean;
 }
@@ -4790,9 +4802,29 @@ export const api = {
             Array.isArray(value) && value.every((item) => typeof item === "string")
                 ? (value as string[])
                 : null;
+        /**
+         * task-91：`grantId → source` 的解析。**必须显式处置**——此前重建对象只带两个数组，
+         * CP 发来的 `grantSources` 会被**静默丢弃**（不抛错、不渲染、单测全绿），这是本卡第一优先缺陷。
+         * `undefined` ⇒ `{}`（旧 CP 容忍）；`null`/数组/值非 string ⇒ `null` ⇒ 走 malformed。
+         */
+        const grantSourceMap = (value: unknown): Record<string, string> | null => {
+            if (value === undefined) return {};
+            if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+            const labels: Record<string, string> = {};
+            for (const [grantId, source] of Object.entries(value as Record<string, unknown>)) {
+                if (typeof source !== "string") return null;
+                labels[grantId] = source;
+            }
+            return labels;
+        };
         const principalGrantIds = grantIds(provenance?.principalGrantIds);
         const bindingGrantIds = grantIds(provenance?.bindingGrantIds);
+        const grantSources = grantSourceMap(provenance?.grantSources);
         const readFace = grantIds(defaultGrants?.readFace);
+        // `EffectiveCapView` 顶层仍是 **7 个字段**（数清它们就不用再猜；加子字段时此数字不变）：
+        // principalId / workspaceId / effectiveCap / capSource / provenance / defaultGrants / bound。
+        // `provenance` 的三个子键在此一并校验：principalGrantIds / bindingGrantIds / grantSources
+        // —— 所以下面那句报错里的数字说的是**顶层**计数，不是子字段数（文案字节不动）。
         if (
             !record ||
             typeof record.principalId !== "string" ||
@@ -4801,6 +4833,7 @@ export const api = {
             !isEnumValue(binding, ["binding-snapshot", "role-binding"] as const) ||
             principalGrantIds === null ||
             bindingGrantIds === null ||
+            grantSources === null ||
             readFace === null ||
             typeof record.bound !== "boolean"
         ) {
@@ -4823,7 +4856,7 @@ export const api = {
             workspaceId: record.workspaceId,
             effectiveCap,
             capSource: { binding },
-            provenance: { principalGrantIds, bindingGrantIds },
+            provenance: { principalGrantIds, bindingGrantIds, grantSources },
             defaultGrants: { readFace },
             bound: record.bound,
         };

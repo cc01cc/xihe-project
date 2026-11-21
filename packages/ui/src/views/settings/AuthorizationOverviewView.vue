@@ -5,6 +5,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
+import { grantSourceLabelKey } from "../../i18n/grantSourceLabels";
 import {
     api,
     ApiError,
@@ -309,6 +310,27 @@ function capBindingLabel(binding: string): string {
         return t(`settings.authorizationOverview.subjects.capSource.${binding}`);
     }
     return binding;
+}
+
+/**
+ * task-91：`provenance.grantSources` 的来源分布摘要。按两个 id 数组的并集计数，
+ * 所以「有 grant 行但缺 source 键」的行会落进「来源未知」而不是从摘要里消失；
+ * 词表外的值原样显示 + 标「来源未知」，不回落成默认来源。
+ */
+function capSourcesSummary(cap: WorkspaceAgentEffectiveCap): string {
+    const ids = [
+        ...new Set([...cap.provenance.principalGrantIds, ...cap.provenance.bindingGrantIds]),
+    ];
+    if (ids.length === 0) return t("settings.authorizationOverview.subjects.capSourcesNone");
+    const unknown = t("workspace.agentEffectiveCapSource.unknown");
+    const counts = new Map<string, number>();
+    for (const id of ids) {
+        const raw = cap.provenance.grantSources[id];
+        const key = raw === undefined ? null : grantSourceLabelKey(raw);
+        const label = raw === undefined ? unknown : key ? t(key) : `${raw} · ${unknown}`;
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([label, count]) => `${label} ×${count}`).join(" · ");
 }
 
 /** user 主体绑定也 20/页：真栈这一栈有 476 条，不分页等于把整表塞进 DOM。 */
@@ -717,6 +739,7 @@ onMounted(async () => {
                                                 ),
                                                 count: detailCap.provenance.principalGrantIds
                                                     .length,
+                                                sources: capSourcesSummary(detailCap),
                                             })
                                         }}
                                     </p>

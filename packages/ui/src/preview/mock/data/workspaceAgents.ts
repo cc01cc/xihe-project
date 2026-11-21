@@ -287,13 +287,17 @@ const ROLE_ATOM_CEILING: Record<string, MockAgentAtom[]> = {
     [ROLE_VIEWER]: [{ actionClass: "file_read", resource: "workspace" }],
 };
 
-/** live 读面的 mock 投影（契约 `EffectiveCapView`，openapi:6994，**7 个 required**）。 */
+/** live 读面的 mock 投影（契约 `EffectiveCapView`，openapi:7996，**7 个 required**）。 */
 export interface MockEffectiveCapView {
     principalId: string;
     workspaceId: string;
     effectiveCap: MockAgentAtom[];
     capSource: { binding: "binding-snapshot" | "role-binding" };
-    provenance: { principalGrantIds: string[]; bindingGrantIds: string[] };
+    provenance: {
+        principalGrantIds: string[];
+        bindingGrantIds: string[];
+        grantSources: Record<string, string>;
+    };
     defaultGrants: { readFace: string[] };
     bound: boolean;
 }
@@ -342,15 +346,21 @@ export function effectiveCapOfAgent(
                 `${b.actionClass}:${b.resource ?? "*"}`,
             ),
         );
+    const principalGrantIds = [`g1f0c4d2-7b3e-4c55-8f10-${principalId.slice(-12)}`];
+    const bindingGrantIds = hasCapBinding ? [] : bindings.map((item) => item.bindingId);
+    // 契约：`grantSources` 的键集 == 两个 id 数组的并集。造真实可达值（template / role）
+    // 外加一例 `unknown` 演练前端兜底；`org_unit` 线上不可达（合成行 id 恒 null），不造。
+    const grantSources: Record<string, string> = {};
+    for (const grantId of principalGrantIds) grantSources[grantId] = "template";
+    bindingGrantIds.forEach((grantId, index) => {
+        grantSources[grantId] = index === 0 ? "unknown" : "role";
+    });
     return {
         principalId,
         workspaceId,
         effectiveCap,
         capSource: { binding: hasCapBinding ? "binding-snapshot" : "role-binding" },
-        provenance: {
-            principalGrantIds: [`g1f0c4d2-7b3e-4c55-8f10-${principalId.slice(-12)}`],
-            bindingGrantIds: hasCapBinding ? [] : bindings.map((item) => item.bindingId),
-        },
+        provenance: { principalGrantIds, bindingGrantIds, grantSources },
         defaultGrants: { readFace: ["workspace-member"] },
         bound: hasCapBinding,
     };

@@ -164,7 +164,7 @@ beforeEach(() => {
         workspaceId: WORKSPACE_ID,
         effectiveCap: [],
         capSource: { binding: "role-binding" },
-        provenance: { principalGrantIds: [], bindingGrantIds: [] },
+        provenance: { principalGrantIds: [], bindingGrantIds: [], grantSources: {} },
         defaultGrants: { readFace: ["workspace-member"] },
         bound: false,
     });
@@ -1988,7 +1988,11 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
         workspaceId: WORKSPACE_ID,
         effectiveCap: liveAtoms,
         capSource: { binding: "binding-snapshot" },
-        provenance: { principalGrantIds: [GRANT_A], bindingGrantIds: [] },
+        provenance: {
+            principalGrantIds: [GRANT_A],
+            bindingGrantIds: [],
+            grantSources: { [GRANT_A]: "role" },
+        },
         defaultGrants: { readFace: ["workspace-member"] },
         bound: true,
         ...over,
@@ -2058,7 +2062,11 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
             liveView({
                 capSource: { binding: "role-binding" },
                 bound: false,
-                provenance: { principalGrantIds: [GRANT_A], bindingGrantIds: [GRANT_B] },
+                provenance: {
+                    principalGrantIds: [GRANT_A],
+                    bindingGrantIds: [GRANT_B],
+                    grantSources: { [GRANT_A]: "role", [GRANT_B]: "role" },
+                },
             }),
         );
         await openEditing(roleReach, PID_A);
@@ -2079,7 +2087,11 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
         const wrapper = await mountRows(
             [row(PID_A, snapshotAtoms, "explicit")],
             liveView({
-                provenance: { principalGrantIds: [GRANT_A], bindingGrantIds: [GRANT_B] },
+                provenance: {
+                    principalGrantIds: [GRANT_A],
+                    bindingGrantIds: [GRANT_B],
+                    grantSources: { [GRANT_A]: "role", [GRANT_B]: "role" },
+                },
             }),
         );
         await openEditing(wrapper, PID_A);
@@ -2092,6 +2104,69 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
         expect(wrapper.get('[data-testid="workspace-agent-effective-cap-read-face"]').text()).toBe(
             tt("workspace.agentEffectiveCapReadFace"),
         );
+    });
+
+    it("a grant id with no grantSources key still renders, labelled 来源未知", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit")],
+            liveView({
+                provenance: {
+                    principalGrantIds: [GRANT_A, GRANT_B],
+                    bindingGrantIds: [],
+                    // 只给第一条的来源；第二条缺键（旧 CP / 契约漂移）。
+                    grantSources: { [GRANT_A]: "role" },
+                },
+            }),
+        );
+        await openEditing(wrapper, PID_A);
+        const ids = wrapper.get('[data-testid="workspace-agent-effective-cap-provenance-ids"]');
+        // 缺标签不许过滤掉这条 grant：两个 id 都在。
+        expect(ids.findAll("code")).toHaveLength(2);
+        expect(ids.text()).toContain(GRANT_B);
+        const sources = wrapper.findAll(
+            '[data-testid="workspace-agent-effective-cap-provenance-source"]',
+        );
+        expect(sources).toHaveLength(2);
+        expect(sources[0].text()).toBe(tt("workspace.agentEffectiveCapSource.role"));
+        expect(sources[1].text()).toBe(tt("workspace.agentEffectiveCapSource.unknown"));
+    });
+
+    it("an out-of-vocabulary source keeps the grant and shows the raw value plus 来源未知", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit")],
+            liveView({
+                provenance: {
+                    principalGrantIds: [GRANT_A],
+                    bindingGrantIds: [],
+                    grantSources: { [GRANT_A]: "mystery" },
+                },
+            }),
+        );
+        await openEditing(wrapper, PID_A);
+        const ids = wrapper.get('[data-testid="workspace-agent-effective-cap-provenance-ids"]');
+        expect(ids.findAll("code")).toHaveLength(1);
+        const source = wrapper.get(
+            '[data-testid="workspace-agent-effective-cap-provenance-source"]',
+        );
+        // 词表外值原样直出，再追加「来源未知」——不回落成任何已知来源，也不隐藏该行。
+        expect(source.text()).toContain("mystery");
+        expect(source.text()).toContain(tt("workspace.agentEffectiveCapSource.unknown"));
+    });
+
+    it("the same grant id in both arrays renders exactly once", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit")],
+            liveView({
+                provenance: {
+                    principalGrantIds: [GRANT_A],
+                    bindingGrantIds: [GRANT_A],
+                    grantSources: { [GRANT_A]: "role" },
+                },
+            }),
+        );
+        await openEditing(wrapper, PID_A);
+        const ids = wrapper.get('[data-testid="workspace-agent-effective-cap-provenance-ids"]');
+        expect(ids.findAll("code")).toHaveLength(1);
     });
 
     it("a failed live read is shown as a failure, never silently replaced by the snapshot", async () => {
@@ -2122,7 +2197,11 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
         apiMock.getWorkspaceAgentEffectiveCap.mockResolvedValue(
             liveView({
                 principalId: PID_B,
-                provenance: { principalGrantIds: [GRANT_B], bindingGrantIds: [] },
+                provenance: {
+                    principalGrantIds: [GRANT_B],
+                    bindingGrantIds: [],
+                    grantSources: { [GRANT_B]: "role" },
+                },
             }),
         );
         await openEditing(wrapper, PID_B);

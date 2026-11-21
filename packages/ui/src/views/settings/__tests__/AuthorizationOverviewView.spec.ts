@@ -79,7 +79,11 @@ const CAP: apiModule.WorkspaceAgentEffectiveCap = {
     workspaceId: "ws-1",
     effectiveCap: [{ actionClass: "read", resource: "*" }],
     capSource: { binding: "binding-snapshot" },
-    provenance: { principalGrantIds: ["pg-1", "pg-2"], bindingGrantIds: [] },
+    provenance: {
+        principalGrantIds: ["pg-1", "pg-2"],
+        bindingGrantIds: [],
+        grantSources: { "pg-1": "role", "pg-2": "unknown" },
+    },
     defaultGrants: { readFace: ["workspace-member"] },
     bound: true,
 };
@@ -303,6 +307,9 @@ describe("按主体（读面能到的部分）", () => {
         // 命中来源要翻成短标签：真栈上这里原先直接把 wire 枚举 binding-snapshot 塞进中文句子。
         expect(note).toContain("绑定快照");
         expect(note).not.toContain("binding-snapshot");
+        // task-91：来源标签随 grantSources 进来；unknown 是前端防御值，不回落成角色授权。
+        expect(note).toContain("角色授权");
+        expect(note).toContain("来源未知");
         await w.get('[data-testid="authorization-workspace-tab-ws-2"]').trigger("click");
         await flushPromises();
         expect(mocks.getWorkspaceAgents).toHaveBeenCalledWith("ws-2");

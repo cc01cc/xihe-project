@@ -6,6 +6,7 @@ import { principalNameError } from "../../../lib/principalName";
 import { mergeMemoryEnabled, readMemoryEnabled, readMemoryTypesMissing } from "./memoryPolicy";
 import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
+import { grantSourceLabelKey } from "../../../i18n/grantSourceLabels";
 import {
     ApiError,
     api,
@@ -104,6 +105,33 @@ const permissions = ref<WorkspaceAgentPermission[]>([]),
      * `explicit` = 传数组，其中 `[]` 是**零权限**而不是「用基线」（46C 已否决）。
      */
     capMode = ref<"inherit" | "explicit">("explicit");
+/**
+ * task-91（Q-112 档 B）：逐 grant id 的来源标签（消费 task-87 的 `provenance.grantSources`）。
+ *
+ * <p>id 取两个数组的并集并去重（契约说并集；若漂移成同一 id 出现在两边，也只渲染一次）。
+ * **缺键 / 词表外值都不许吞掉这条 grant**：缺键显示「来源未知」，词表外值原样直出再追加
+ * 「来源未知」——显示 wire 真值比显示一个猜错的来源诚实。</p>
+ */
+const effectiveCapProvenanceChips = computed(() => {
+    const cap = effectiveCap.value;
+    if (!cap) return [];
+    const ids = [
+        ...new Set([...cap.provenance.principalGrantIds, ...cap.provenance.bindingGrantIds]),
+    ];
+    const unknown = t("workspace.agentEffectiveCapSource.unknown");
+    return ids.map((grantId) => {
+        const raw = cap.provenance.grantSources[grantId];
+        if (raw === undefined) return { grantId, label: unknown, labelled: false };
+        const key = grantSourceLabelKey(raw);
+        return key
+            ? { grantId, label: t(key), labelled: true }
+            : { grantId, label: `${raw} · ${unknown}`, labelled: false };
+    });
+});
+const effectiveCapProvenanceLabelled = computed(() => ({
+    labelled: effectiveCapProvenanceChips.value.filter((chip) => chip.labelled).length,
+    unknown: effectiveCapProvenanceChips.value.filter((chip) => !chip.labelled).length,
+}));
 /**
  * PLAN-0629 M1-4 C：只读「记忆」区。同一时刻只展开一个主体的记忆（一次一个请求），
  * 展开状态与数据都留在本组件内——不新建 store、不做缓存，只读面按需拉取。
@@ -2047,21 +2075,30 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                                 {{ t("workspace.agentEffectiveCapProvenancePrincipal") }}
                                 {{ effectiveCap.provenance.principalGrantIds.length }} ·
                                 {{ t("workspace.agentEffectiveCapProvenanceBinding") }}
-                                {{ effectiveCap.provenance.bindingGrantIds.length }}
+                                {{ effectiveCap.provenance.bindingGrantIds.length }} ·
+                                {{
+                                    t(
+                                        "workspace.agentEffectiveCapProvenanceLabelled",
+                                        effectiveCapProvenanceLabelled,
+                                    )
+                                }}
                             </p>
                             <div
                                 class="flex flex-wrap gap-1"
                                 data-testid="workspace-agent-effective-cap-provenance-ids"
                             >
                                 <code
-                                    v-for="grantId in [
-                                        ...effectiveCap.provenance.principalGrantIds,
-                                        ...effectiveCap.provenance.bindingGrantIds,
-                                    ]"
-                                    :key="grantId"
+                                    v-for="chip in effectiveCapProvenanceChips"
+                                    :key="chip.grantId"
                                     class="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground"
                                 >
-                                    {{ grantId }}
+                                    {{ chip.grantId }}
+                                    <span
+                                        class="ml-1 opacity-80"
+                                        data-testid="workspace-agent-effective-cap-provenance-source"
+                                    >
+                                        {{ chip.label }}
+                                    </span>
                                 </code>
                             </div>
                             <p

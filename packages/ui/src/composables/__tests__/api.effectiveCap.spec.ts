@@ -17,7 +17,11 @@ const VIEW = {
     workspaceId: WS,
     effectiveCap: [{ actionClass: "file_read", resource: "workspace" }],
     capSource: { binding: "binding-snapshot" },
-    provenance: { principalGrantIds: [GRANT], bindingGrantIds: [] },
+    provenance: {
+        principalGrantIds: [GRANT],
+        bindingGrantIds: [],
+        grantSources: { [GRANT]: "role" },
+    },
     defaultGrants: { readFace: ["workspace-member"] },
     bound: true,
 };
@@ -68,6 +72,23 @@ describe("api.getWorkspaceAgentEffectiveCap（task-469 fail-closed）", () => {
         expect(view.effectiveCap).toEqual([{ actionClass: "tool_execute" }]);
     });
 
+    // Lead m02700 裁定 D：整字段缺失 = 旧 CP 滚动部署窗口 ⇒ 容忍为空 map（渲染层全标未知），
+    // 形状错则必须抛错——**不许静默当 `{}`**。
+    it("grantSources 整字段缺失 ⇒ 容忍为空 map，不抛错", async () => {
+        stubFetch({
+            ...VIEW,
+            provenance: { principalGrantIds: [GRANT], bindingGrantIds: [] },
+        });
+        const view = await api.getWorkspaceAgentEffectiveCap(WS, PID);
+        expect(view.provenance.grantSources).toEqual({});
+    });
+
+    it("grantSources 原样投影到视图模型（grantId → source）", async () => {
+        stubFetch(VIEW);
+        const view = await api.getWorkspaceAgentEffectiveCap(WS, PID);
+        expect(view.provenance.grantSources).toEqual({ [GRANT]: "role" });
+    });
+
     // 7 个 required 逐条抽掉/改坏都必须抛错 —— **不是返回快照、不是补默认值**。
     it.each([
         ["缺 bound", { ...VIEW, bound: undefined }],
@@ -85,6 +106,35 @@ describe("api.getWorkspaceAgentEffectiveCap（task-469 fail-closed）", () => {
         [
             "grant id 非字符串",
             { ...VIEW, provenance: { principalGrantIds: [1], bindingGrantIds: [] } },
+        ],
+        [
+            "grantSources 是数组",
+            {
+                ...VIEW,
+                provenance: { principalGrantIds: [GRANT], bindingGrantIds: [], grantSources: [] },
+            },
+        ],
+        [
+            "grantSources 为 null",
+            {
+                ...VIEW,
+                provenance: {
+                    principalGrantIds: [GRANT],
+                    bindingGrantIds: [],
+                    grantSources: null,
+                },
+            },
+        ],
+        [
+            "grantSources 值非字符串",
+            {
+                ...VIEW,
+                provenance: {
+                    principalGrantIds: [GRANT],
+                    bindingGrantIds: [],
+                    grantSources: { [GRANT]: 1 },
+                },
+            },
         ],
         ["缺 defaultGrants.readFace", { ...VIEW, defaultGrants: {} }],
         ["原子缺 actionClass", { ...VIEW, effectiveCap: [{ resource: "workspace" }] }],
