@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -80,6 +81,13 @@ public class FirstRunAccountService {
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.OPEN);
     private final Instant issuedAt = Instant.now();
 
+    /**
+     * Spring's entry point. The {@code @Autowired} is required because the env/property seam below adds
+     * a second constructor: with more than one candidate, Spring falls back to "no-arg or explicit
+     * annotation" and a class with two plain constructors fails to instantiate. Same shape as
+     * {@code LoginAttemptService}.
+     */
+    @Autowired
     public FirstRunAccountService(UserRepository users, PasswordEncoder passwordEncoder,
                                   @Value("${cp.bootstrap.seed-admin:false}") boolean seedAdmin) {
         this(users, passwordEncoder, seedAdmin, FirstRunLocalAccess::envValue,
