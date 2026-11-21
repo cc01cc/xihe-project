@@ -710,6 +710,18 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                     path: "/settings/instance/agent-principals",
                 },
                 { id: "audit", labelKey: "settings.ia.navAudit", path: "/settings/audit" },
+                /**
+                 * task-8（DSD-1516 收窄后）：授权总览 = 已登录者视角，**人人可见**（和 audit
+                 * 一样恒显）——它读的是 `/me/permissions` 与自我 explain，不含别人的数据。
+                 *
+                 * <p>放安全组末尾而不是另起一组：它是「安全与权限」的读面补充，不是新域；
+                 * `router/index.ts` 里同一条路由显式写 `meta.settingsLayer: "instance"`。</p>
+                 */
+                {
+                    id: "authorization-overview",
+                    labelKey: "settings.ia.navAuthorizationOverview",
+                    path: "/settings/authorization-overview",
+                },
             ],
         },
     ];

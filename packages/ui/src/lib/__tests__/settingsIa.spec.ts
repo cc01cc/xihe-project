@@ -189,10 +189,13 @@ describe("path helpers", () => {
 });
 
 describe("instance ops groups", () => {
-    it("keeps the design's two groups with five entries", () => {
+    it("keeps the design's two groups with seven entries", () => {
         const groups = instanceOpsGroups();
         expect(groups.map((group) => group.id)).toEqual(["ops", "security"]);
         // task-74 T3.3 后 tool-faces 已并入 approval-policy 域页签，运维分组回到 2 项（不再有过渡项）。
+        //
+        // 这条钉的是「实例层运维与安全两组的**精确成员表**」，不是「有几条」——所以新增条目
+        // 必须显式列进这里（task-8 加 `authorization-overview`），不许改成「等于当前实际有什么」。
         expect(groups.flatMap((group) => group.items.map((item) => item.id))).toEqual([
             "monitoring",
             "data",
@@ -201,6 +204,8 @@ describe("instance ops groups", () => {
             // task-91：平台智能体的落点（资源区摘除后它的新家）。
             "agent-principals",
             "audit",
+            // task-8：授权总览（安全组末尾；已登录者视角，人人可见）。
+            "authorization-overview",
         ]);
         const domains = domainsForLayer("instance") as readonly ConfigDomain[];
         expect(domains).toContain("logging");

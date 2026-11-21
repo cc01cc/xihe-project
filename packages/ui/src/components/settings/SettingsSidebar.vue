@@ -182,7 +182,9 @@ const userDomains = computed<SettingsNavItem[]>(() => navItemsForLayer("user"));
  *
  * <p>为什么不再保留资源组：资源条目现在挂在顶层「资源」入口（`/resources/*`，层由页内 tab 表达），
  * 留在设置区会让同一个「凭据」出现两次（task-88 修掉的重名病会以另一种形式回来）。
- * 计数也随之变化：实例层 22 → **17**（12 域 + 5 运维安全），用户层 12 → **9**（只剩 9 域）。</p>
+ * 计数也随之变化：实例层 22 → **17**（11 域 + 2 运维 + 4 安全），task-8 加「授权总览」后 → **18**
+ * （11 域 + 2 运维 + 5 安全；算式与 `preview/mock/__tests__/navReconciliation.spec.ts` 保持一致），
+ * 用户层 12 → **9**（只剩 9 域）。</p>
  */
 
 const opsGroups = computed(() =>
@@ -233,6 +235,8 @@ const OPS_ICONS: Record<string, Component> = {
     "config-locks": Lock,
     roles: KeyRound,
     audit: FileSearch,
+    // task-8：授权总览（已登录者视角的读面补充）——盾牌表示「授权」而非「审计记录」。
+    "authorization-overview": ShieldCheck,
 };
 const LAYER_ICONS: Record<string, Component> = {
     instance: Server,
