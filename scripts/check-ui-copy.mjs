@@ -16,7 +16,7 @@
  * 用法
  *   node scripts/check-ui-copy.mjs                # report-only（默认）
  *   node scripts/check-ui-copy.mjs --enforce      # 阻断（手工 / :enforce 任务）
- *   node scripts/check-ui-copy.mjs --selftest     # 决策逻辑夹具（6 例）+ 一次真跑冒烟
+ *   node scripts/check-ui-copy.mjs --selftest     # 决策逻辑夹具（8 例，含 DSD-1531 两条反向夹具）+ 一次真跑冒烟
  *
  * 转阻断判据（照 check:a11y-refs 形态）：连续两个窗口 findings=0 才提 :enforce 接线。
  */
@@ -39,9 +39,17 @@ export function classify(result, enforce) {
     if (status === null || status === undefined) return { exit: 2, ran: false, failed: false, reason: "vitest killed (no exit status)" };
     const ran = /Test Files\s+\d/.test(output) && /Tests\s+\d/.test(output);
     if (!ran) return { exit: 2, ran: false, failed: false, reason: "no vitest summary (crash before/at run)" };
-    const failed = /Tests\s+[^\n]*?(\d+) failed/.test(output);
-    if (!failed) return { exit: 0, ran: true, failed: false, reason: "clean" };
-    return { exit: enforce ? 1 : 0, ran: true, failed: true, reason: "test failures" };
+    // DSD-1531（task-223 J2）：绿 = exit 0 ∧ 无 Errors 行 ∧ Tests 行无 failed，三条缺一不可。
+    // 旧版只看 Tests 文本行 ⇒ 「Tests 111 passed (111)」+「Errors 1 error」+ exit 1 会被判绿
+    // （unhandled rejection 不计入 Tests 计数，只在 Errors 行与 exit code 上体现）。
+    const textFailed = /Tests\s+[^\n]*?(\d+) failed/.test(output);
+    const errorsLine = /^\s*Errors\s+\d+\s+error\S*/m.exec(output);
+    const why = [];
+    if (textFailed) why.push("Tests 行有 failed");
+    if (status !== 0) why.push("vitest exit=" + status);
+    if (errorsLine) why.push("有 Errors 行（" + errorsLine[0].trim() + "）");
+    if (why.length === 0) return { exit: 0, ran: true, failed: false, reason: "clean" };
+    return { exit: enforce ? 1 : 0, ran: true, failed: true, reason: why.join("；") };
 }
 
 function runVitest() {
@@ -74,6 +82,14 @@ function selftest() {
     check("有失败：report-only ⇒ 0，enforce ⇒ 1", classify({ spawnError: null, status: 1, output: failOut }, false).exit === 0 && classify({ spawnError: null, status: 1, output: failOut }, true).exit === 1);
     check("有失败时 failed=true（供打印分支）", classify({ spawnError: null, status: 1, output: failOut }, false).failed === true);
 
+    // DSD-1531 反向夹具（task-223 J3）：文本全绿但进程异常 ⇒ 必须判红。
+    const greenTextButExit = " Test Files  4 passed (4)\n      Tests  42 passed (42)\n";
+    const unhandledGreen = " Test Files  4 passed (4)\n      Tests 111 passed (111)\n\n⎯⎯ Unhandled Errors ⎯⎯\n\n      Errors  1 error\n";
+    const v1 = classify({ spawnError: null, status: 1, output: greenTextButExit }, false);
+    check("反向：Tests 全绿但 vitest exit=1 ⇒ 判红（旧版会判绿）", v1.failed === true && classify({ spawnError: null, status: 1, output: greenTextButExit }, true).exit === 1, "reason=" + v1.reason);
+    const v2 = classify({ spawnError: null, status: 0, output: unhandledGreen }, false);
+    check("反向：Tests 全绿但输出有 Errors 行 ⇒ 判红（旧版会判绿）", v2.failed === true && classify({ spawnError: null, status: 0, output: unhandledGreen }, true).exit === 1, "reason=" + v2.reason);
+
     // 真跑冒烟：只断言 vitest 确实跑起来（ran），不耦合产品文案是否全绿。
     const real = runVitest();
     const verdict = classify(real, false);
@@ -99,7 +115,7 @@ function main() {
         process.exit(2);
     }
     if (verdict.failed) {
-        console.error("[check:ui-copy] mode=" + mode + " 文案判据有失败" + (enforce ? "（阻断）" : "（只报不阻断；转阻断见 check:ui-copy:enforce）"));
+        console.error("[check:ui-copy] mode=" + mode + " 文案判据有失败" + (enforce ? "（阻断）" : "（只报不阻断；转阻断见 check:ui-copy:enforce）") + "：" + verdict.reason);
         const summary = result.output.split("\n").filter((l) => /FAIL|Test Files|Tests |×/.test(l)).slice(0, 40);
         console.error(summary.join("\n"));
         process.exit(verdict.exit);
