@@ -1,19 +1,19 @@
 {
   "_note": "task-700 判据③ ratchet 基线（grandfather）。登记的是「`LLM_*` 码字面量出现在 llm/error_classification.py 之外」的存量，按「文件 → 计数」。只许降不许升：任一条目升高 ⇒ check-agent-import-boundary.mjs exit 1。降低后请跑 `--write-baseline` 收紧并 review 差异。本基线不代表这些字面量都合规——分类结论与本文件的收口建议见 internal/A03-xihe/evidence/2026-11-22-agent-import-gate/README.md。",
-  "generatedAt": "2026-11-21T22:13:44.272Z",
-  "a03Commit": "9c6fb3c0a",
+  "generatedAt": "2026-11-21T22:26:58.524Z",
+  "a03Commit": "e8eaf6a7b",
   "scanRoot": "packages/agent/src/xihe_agent",
   "canonicalFile": "llm/error_classification.py",
-  "total": 77,
-  "distinctCodes": 15,
+  "total": 62,
+  "distinctCodes": 11,
   "files": {
     "adapters/api_chat_model.py": 1,
-    "api/chat.py": 3,
+    "api/chat.py": 1,
     "api/judge.py": 1,
-    "app_state.py": 4,
-    "llm/api_request.py": 5,
-    "llm/api_sender.py": 44,
-    "llm/models.py": 13,
+    "app_state.py": 1,
+    "llm/api_request.py": 4,
+    "llm/api_sender.py": 42,
+    "llm/models.py": 6,
     "llm/vision_render.py": 6
   }
 }

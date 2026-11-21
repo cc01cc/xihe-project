@@ -75,6 +75,7 @@ from xihe_agent.interfaces.message import TextMessage
 from xihe_agent.interfaces.tool import ToolSpec
 from xihe_agent.llm.api_request import ApiRequestError, render_request, uses_rag_context, validate_snapshot
 from xihe_agent.llm.base import LLMConfig, parse_model_params
+from xihe_agent.llm.error_classification import LLM_PROVIDER_UNREACHABLE
 from xihe_agent.llm.models import fetch_model_catalog  # noqa: F401  (import parity with prior main)
 from xihe_agent.llm.vision_render import fetch_image_data_urls, normalize_image_refs
 from xihe_agent.rag.chat_context import retrieve_chat_context
@@ -925,7 +926,7 @@ async def chat(request: Request):
                         terminal_outcome = (
                             "ambiguous"
                             if llm_request_started
-                            and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
+                            and terminal_error_code in {LLM_PROVIDER_UNREACHABLE, "AGENT_STREAM_FAILED"}
                             else "partial"
                             if assistant_chars > 0
                             else "error"
@@ -1064,7 +1065,7 @@ async def chat(request: Request):
             terminal_error_code, error_detail, retryable = _classify_llm_exception(exc)
             terminal_outcome = (
                 "ambiguous"
-                if llm_request_started and terminal_error_code in {"LLM_PROVIDER_UNREACHABLE", "AGENT_STREAM_FAILED"}
+                if llm_request_started and terminal_error_code in {LLM_PROVIDER_UNREACHABLE, "AGENT_STREAM_FAILED"}
                 else "partial"
                 if assistant_chars > 0
                 else "error"

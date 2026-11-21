@@ -44,7 +44,13 @@ from xihe_agent.llm.base import (
     LLMRouteConfigError,
     create_llm,
 )
-from xihe_agent.llm.error_classification import LLM_REQUEST_REJECTED, classify_provider_exception
+from xihe_agent.llm.error_classification import (
+    LLM_CREDENTIALS_INVALID,
+    LLM_NOT_CONFIGURED,
+    LLM_PROVIDER_UNREACHABLE,
+    LLM_REQUEST_REJECTED,
+    classify_provider_exception,
+)
 from xihe_agent.llm.models import _models_router
 from xihe_agent.llm.token_counter import TokenCounter
 from xihe_agent.rag import VectorStore  # noqa: F401  (test seam; request-scoped since PLAN-0485)
@@ -603,9 +609,9 @@ def _llm_readiness_error_code(readiness: str) -> str:
     # `_derive_llm_ready`); the live per-run gap is reported by the
     # LLM_NOT_CONFIGURED response inside `/chat`.
     return {
-        "missing_credentials": "LLM_NOT_CONFIGURED",
-        "invalid_credentials": "LLM_CREDENTIALS_INVALID",
-        "unreachable": "LLM_PROVIDER_UNREACHABLE",
+        "missing_credentials": LLM_NOT_CONFIGURED,
+        "invalid_credentials": LLM_CREDENTIALS_INVALID,
+        "unreachable": LLM_PROVIDER_UNREACHABLE,
         "model_unavailable": "LLM_MODEL_UNAVAILABLE",
     }.get(readiness, "AGENT_UNAVAILABLE")
 

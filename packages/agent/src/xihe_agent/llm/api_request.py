@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from xihe_agent.llm.error_classification import LLM_PROVIDER_UNREACHABLE
 from xihe_agent.log_redact import redact_text
 
 
@@ -21,7 +22,7 @@ class ApiRequestError(RuntimeError):
         self.code = {
             "LLM_PROVIDER_INVALID_RESPONSE": "AGENT_STREAM_FAILED",
             "LLM_PROVIDER_STREAM_TRUNCATED": "AGENT_STREAM_FAILED",
-            "LLM_PROVIDER_TIMEOUT": "LLM_PROVIDER_UNREACHABLE",
+            "LLM_PROVIDER_TIMEOUT": LLM_PROVIDER_UNREACHABLE,
             "LLM_PROVIDER_ERROR": "AGENT_STREAM_FAILED",
         }.get(code, code)
         # task-111: a bounded, redacted diagnostic fragment travels with the

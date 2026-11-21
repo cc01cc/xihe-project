@@ -19,7 +19,12 @@ import httpx
 from loguru import logger
 
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, strict_json, validate_body
-from xihe_agent.llm.error_classification import classify_output_truncation, classify_rejected_body
+from xihe_agent.llm.error_classification import (
+    LLM_PROVIDER_UNREACHABLE,
+    LLM_TOOL_ROUTE_UNSUPPORTED,
+    classify_output_truncation,
+    classify_rejected_body,
+)
 from xihe_agent.llm.transport_metrics import TransportMetricsCollector
 
 # PLAN-0416 T2.3: provider counters surfaced on the REGULAR usage wire. A counter
@@ -614,7 +619,7 @@ class ApiSender:
         # rejected request never counts as an outbound attempt and never reaches
         # the provider.
         if tools_non_empty(body) and not self.tools_supported:
-            raise ApiRequestError("LLM_TOOL_ROUTE_UNSUPPORTED")
+            raise ApiRequestError(LLM_TOOL_ROUTE_UNSUPPORTED)
         # PLAN-0605: vision gate. Two independent reasons to fail closed before the
         # attempt opens: the apiType is not declared vision-capable, or this build has
         # no renderer for it. Neither may degrade into dropping the image silently.
@@ -738,7 +743,7 @@ class ApiSender:
                 probe.failed(error)
             raise error from exc
         except httpx.HTTPError as exc:
-            error = ApiRequestError("LLM_PROVIDER_UNREACHABLE", 502)
+            error = ApiRequestError(LLM_PROVIDER_UNREACHABLE, 502)
             if probe is not None:
                 probe.failed(error)
             raise error from exc

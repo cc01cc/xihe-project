@@ -8,6 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
 from xihe_agent.llm.base import fallback_provider_configs
+from xihe_agent.llm.error_classification import (
+    LLM_CREDENTIALS_INVALID,
+    LLM_NOT_CONFIGURED,
+    LLM_PROVIDER_UNREACHABLE,
+)
 from xihe_agent.service_token import resolve_service_token
 
 router = APIRouter()
@@ -123,7 +128,7 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
                 results[provider_id] = []
                 provider_catalog[provider_id] = {
                     "status": "missing_credentials",
-                    "reasonCode": "LLM_NOT_CONFIGURED",
+                    "reasonCode": LLM_NOT_CONFIGURED,
                     "models": [],
                     "verifiedAt": None,
                     "configRevision": config_client.config_revision,
@@ -141,10 +146,10 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
                 )
                 if resp.status_code in (401, 403):
                     status = "invalid_credentials"
-                    reason_code = "LLM_CREDENTIALS_INVALID"
+                    reason_code = LLM_CREDENTIALS_INVALID
                 elif resp.status_code >= 400:
                     status = "unreachable"
-                    reason_code = "LLM_PROVIDER_UNREACHABLE"
+                    reason_code = LLM_PROVIDER_UNREACHABLE
                 else:
                     data = resp.json()
                     raw_models = data.get("data") if isinstance(data, dict) else None
@@ -176,7 +181,7 @@ async def fetch_model_catalog(config_client: Any) -> dict[str, Any]:
                     exc,
                 )
                 status = "unreachable"
-                reason_code = "LLM_PROVIDER_UNREACHABLE"
+                reason_code = LLM_PROVIDER_UNREACHABLE
 
             results.setdefault(provider_id, [])
             provider_catalog[provider_id] = {
@@ -261,10 +266,10 @@ async def fetch_connection_catalog(
                     )
                     if response.status_code in (401, 403):
                         status = "invalid_credentials"
-                        reason_code = "LLM_CREDENTIALS_INVALID"
+                        reason_code = LLM_CREDENTIALS_INVALID
                     elif response.status_code >= 400:
                         status = "unreachable"
-                        reason_code = "LLM_PROVIDER_UNREACHABLE"
+                        reason_code = LLM_PROVIDER_UNREACHABLE
                     else:
                         data = response.json()
                         raw_models = data.get("data") if isinstance(data, dict) else None
@@ -315,7 +320,7 @@ async def fetch_connection_catalog(
                     "scope": descriptor.get("scope", "USER"),
                     "displayName": descriptor.get("displayName", provider_id),
                     "status": "unreachable",
-                    "reasonCode": "LLM_PROVIDER_UNREACHABLE",
+                    "reasonCode": LLM_PROVIDER_UNREACHABLE,
                     "models": [],
                     "verifiedAt": None,
                     "connectionRevision": descriptor.get("connectionRevision"),
