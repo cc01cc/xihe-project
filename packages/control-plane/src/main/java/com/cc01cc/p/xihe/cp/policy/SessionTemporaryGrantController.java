@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -38,21 +39,34 @@ import java.util.Map;
  * {@code PRIVILEGE_ESCALATION} (atom outside the caller's own holdings); 404
  * {@code SESSION_NOT_FOUND} / {@code TEMPORARY_GRANT_NOT_FOUND} (revocation never distinguishes
  * "absent" from "another session's").</p>
+ *
+ * <p><b>Wire binding (task-200).</b> The body is bound as a plain {@code Map<String, Object>}, not as
+ * a node: Boot 4 hands request bodies to the Jackson-3 mapper, which cannot construct a Jackson-2
+ * {@code com.fasterxml.jackson.databind.JsonNode}, so the original binding answered 500 before this
+ * handler ever ran. The map is the wire shape only; the {@code atoms} array is tree-ified inside the
+ * handler (Jackson 2, the CP's policy tree) and {@code ttlSeconds} is validated here, so every rule
+ * downstream — including "unknown atom field" and "absent resource means wildcard" — stays exactly
+ * where it was. This is the same split {@code AgentPrincipalWireBody.parseCreate} uses for the
+ * principal face; {@code architecture.Jackson2NodeInboundScanTest} guards it.</p>
  */
 @RestController
 @RequestMapping("/api/v1/sessions/{sessionId}/temporary-grants")
 public class SessionTemporaryGrantController {
 
     private final SessionTemporaryGrantService service;
+    /** Jackson 2: the CP policy tree. Used <em>inside</em> the handler, never as a binding type. */
+    private final ObjectMapper objectMapper;
 
-    public SessionTemporaryGrantController(SessionTemporaryGrantService service) {
+    public SessionTemporaryGrantController(SessionTemporaryGrantService service,
+                                           ObjectMapper objectMapper) {
         this.service = service;
+        this.objectMapper = objectMapper;
     }
 
     @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<?> issue(@PathVariable String sessionId,
-                                   @RequestBody(required = false) JsonNode body) {
+                                   @RequestBody(required = false) Map<String, Object> body) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || userId.isBlank() || workspaceId == null || workspaceId.isBlank()) {
@@ -63,8 +77,7 @@ public class SessionTemporaryGrantController {
             // ttlSeconds() validates and can reject the body, so it belongs inside the mapping — a
             // thrown CpApiException outside would surface as a 500 instead of a 400.
             Integer ttl = ttlSeconds(body);
-            row = service.issue(userId, workspaceId, sessionId,
-                    body == null ? null : body.get("atoms"), ttl);
+            row = service.issue(userId, workspaceId, sessionId, atomsTree(body), ttl);
         } catch (CpApiException e) {
             return problem(e);
         }
@@ -122,17 +135,33 @@ public class SessionTemporaryGrantController {
         return payload;
     }
 
+    /**
+     * The {@code atoms} array as the service's Jackson-2 tree. The map is only the wire shape: the
+     * tree is built here so the service keeps its single write-side shape gate (unknown field,
+     * non-object atom, absent-vs-null {@code resource} all still answer from {@code parseAtoms}).
+     */
+    private JsonNode atomsTree(Map<String, Object> body) {
+        Object atoms = body == null ? null : body.get("atoms");
+        return atoms == null ? null : objectMapper.valueToTree(atoms);
+    }
+
     /** {@code ttlSeconds} is optional (the service defaults it) but must be an integral number if present. */
-    private static Integer ttlSeconds(JsonNode body) {
-        JsonNode value = body == null ? null : body.get("ttlSeconds");
-        if (value == null || value.isNull()) {
+    private static Integer ttlSeconds(Map<String, Object> body) {
+        Object value = body == null ? null : body.get("ttlSeconds");
+        if (value == null) {
             return null;
         }
-        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "ttlSeconds must be an integer number of seconds");
+        if (value instanceof Integer integer) {
+            return integer;
         }
-        return value.intValue();
+        if (value instanceof Long longValue
+                && longValue >= Integer.MIN_VALUE && longValue <= Integer.MAX_VALUE) {
+            return longValue.intValue();
+        }
+        // JSON has one number type; the mapper picks Integer/Long/BigInteger/Double. Anything that is
+        // not an integral value in int range is refused with the same message as before task-200.
+        throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                "ttlSeconds must be an integer number of seconds");
     }
 
     private static ResponseEntity<?> problem(CpApiException e) {
