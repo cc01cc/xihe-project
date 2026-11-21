@@ -3,16 +3,16 @@
  * task-32 / task-6（register P-4）：mise lint 窗内三条读数的**只读解析器**。
  *
  * 为什么需要它：窗口内只做三步（应用 `MISE_JOBS = "30"` 补丁 → `mise run lint` → 本解析器读日志），
- * 判据必须由**日志本身**得出，不能靠人眼在 30 行表里数。判据口径与
+ * 判据必须由**日志本身**得出，不能靠人眼在门表里数。判据口径与
  * `internal/A03-xihe/docs/task30-lint-wiring-plan.md` §3 一致：
- *   C1 并行度      —— 声明门数全部**启动**过（启动证据 = mise 的 `[gate] $ <cmd>` 行）
+ *   C1 并行度      —— 声明门数（`LINT_GATES.length`，不写死）全部**启动**过（启动证据 = mise 的 `[gate] $ <cmd>` 行）
  *   C2 首红后其余门确有执行 —— 未启动 0 门，且首红之后仍有门开始（keep-going 生效）
  *   C3 每门计时有值 —— 每门都有 `Finished in`，且汇总表无裸「—」
  *
  * 恒只读：只读一个日志文件，不跑门、不起栈、不写任何文件。
  *
  * 用法：
- *   node scripts/xh-mise-jobs-readings.mjs <log-file> [--expected=30]
+ *   node scripts/xh-mise-jobs-readings.mjs <log-file> [--expected=<门数>]   # 默认 LINT_GATES.length
  *   node scripts/xh-mise-jobs-readings.mjs --selftest
  *
  * 退出码（fail-closed）：
@@ -130,7 +130,7 @@ export function judge(facts, expected = LINT_GATES.length) {
     const timed = started.filter((g) => facts.timed.has(g));
     const rows = [];
 
-    // C1：启动 30/30（启动证据 = 每门的 `[gate] $ <cmd>` 行）
+    // C1：声明门全部启动（N/N，N = LINT_GATES.length；启动证据 = 每门的 `[gate] $ <cmd>` 行）
     rows.push({
         id: "C1",
         name: "并行度：声明门全部启动",
@@ -265,10 +265,17 @@ export function selftest() {
     check(a.elapsed === 23000, "墙钟读回 23000ms", String(a.elapsed));
 
     // ② 首红 keep-going：第 7 门红，其后仍有门开始 ⇒ C2 PASS、C1 PASS
-    const b = judge(parseLog(fixtureGates(LINT_GATES, { red: LINT_GATES[6] })));
-    check(b.rows.find((r) => r.id === "C1").pass, "首红样本 ⇒ C1 仍 PASS（30 门都启动过）");
+    // 期望值一律从 LINT_GATES 派生（task-75）：门数 30→31 时这条曾写死「其后仍有 23 门」而自测即红。
+    const RED_INDEX = 6; // 首红门 = 启动序第 7 个
+    const expectedAfterRed = LINT_GATES.length - (RED_INDEX + 1);
+    const b = judge(parseLog(fixtureGates(LINT_GATES, { red: LINT_GATES[RED_INDEX] })));
+    check(b.rows.find((r) => r.id === "C1").pass, "首红样本 ⇒ C1 仍 PASS（" + LINT_GATES.length + " 门都启动过）");
     check(b.rows.find((r) => r.id === "C2").pass, "首红样本 ⇒ C2 PASS（首红后仍有门开始）");
-    check(/其后仍有 23 门开始执行/.test(b.rows.find((r) => r.id === "C2").reading), "C2 报出首红后启动门数", b.rows.find((r) => r.id === "C2").reading);
+    check(
+        new RegExp("其后仍有 " + expectedAfterRed + " 门开始执行").test(b.rows.find((r) => r.id === "C2").reading),
+        "C2 报出首红后启动门数（期望 " + expectedAfterRed + " = " + LINT_GATES.length + " − " + (RED_INDEX + 1) + "）",
+        b.rows.find((r) => r.id === "C2").reading,
+    );
 
     // ③ 裸「—」⇒ C3 必须红
     const c = judge(parseLog(fixtureGates(LINT_GATES, { bareDash: LINT_GATES[3] })));
@@ -300,7 +307,7 @@ export function selftest() {
     ].join("\n");
     const real = judge(parseLog(real2));
     check(real.started === 2, "真实样本 ⇒ 识别出 2 门启动", String(real.started));
-    check(!real.rows.find((r) => r.id === "C1").pass, "真实样本（不足 30 门）⇒ C1 FAIL（fail-closed）");
+    check(!real.rows.find((r) => r.id === "C1").pass, "真实样本（不足 " + LINT_GATES.length + " 门）⇒ C1 FAIL（fail-closed）");
     check(real.elapsed === 4560, "真实样本 ⇒ 读回内层整体耗时 4560ms", String(real.elapsed));
 
     console.log(fails.length === 0 ? "selftest: ALL PASS" : "selftest: " + fails.length + " FAIL");
@@ -310,7 +317,7 @@ export function selftest() {
 function main(argv) {
     if (argv.includes("--selftest")) return selftest();
     if (argv.length === 0 || argv[0].startsWith("--")) {
-        console.error("用法：node scripts/xh-mise-jobs-readings.mjs <lint-log-file> [--expected=30]");
+        console.error("用法：node scripts/xh-mise-jobs-readings.mjs <lint-log-file> [--expected=<门数>]（默认 LINT_GATES.length）");
         console.error("      node scripts/xh-mise-jobs-readings.mjs --selftest");
         return 2;
     }
