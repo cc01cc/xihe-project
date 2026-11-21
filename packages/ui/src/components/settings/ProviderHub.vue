@@ -1342,13 +1342,10 @@ onMounted(() => {
                     >
                         {{ t("settings.providerHub.empty") }}
                     </div>
-                    <div v-else class="space-y-4">
-                        <p
-                            v-if="connectionGroups.length === 0 && !defaultConnection"
-                            class="text-sm text-muted-foreground"
-                        >
-                            {{ t("settings.providerHub.noMatch") }}
-                        </p>
+                    <!-- task-94：零连接时不能整枝跳过（原来这里是 v-else，空态命中即短路），
+                         否则 profile 指向的失效连接条目会被藏起来；只要存在漂移就渲染这一块，
+                         连接列表与筛选提示各自再有条件渲染。 -->
+                    <div v-if="connections.length > 0 || driftedProfile" class="space-y-4">
                         <!-- PLAN-0523 T3.2 漂移：存储的默认连接已不可见 → 顶部保留琥珀色失效条目 -->
                         <article
                             v-if="driftedProfile"
@@ -1375,6 +1372,16 @@ onMounted(() => {
                                 {{ t("settings.providerHub.driftDesc") }}
                             </p>
                         </article>
+                        <p
+                            v-if="
+                                connections.length > 0 &&
+                                connectionGroups.length === 0 &&
+                                !defaultConnection
+                            "
+                            class="text-sm text-muted-foreground"
+                        >
+                            {{ t("settings.providerHub.noMatch") }}
+                        </p>
                         <!-- PLAN-0523 T3.2 默认连接置顶（徽标） -->
                         <article
                             v-if="defaultConnection"
