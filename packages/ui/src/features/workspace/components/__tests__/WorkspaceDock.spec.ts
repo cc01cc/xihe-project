@@ -23,6 +23,10 @@ const i18n = createI18n({
                 containerRight: "Right container",
                 containerMain: "Main container",
                 containerEmpty: "No tabs in this container",
+                // task-38（DSD-1490）：页签行的 landmark 名 = 部件名，右栏走 containerTabsLabelRight。
+                // 本 spec 自 task-38 起恒红就是缺这两键（WorkspaceContainerTabs.vue:111）。
+                containerTabsLabelMain: "Main container tab row",
+                containerTabsLabelRight: "Right container tab row",
                 // task-97（D-1754 ②）：右栏行「+」= 重开已关闭面板；菜单项走 panel* 键。
                 containerPlusReopen: "Reopen a closed panel",
                 // task-88 ②：「+」升级为「新建页签 → 选类型」；0 页签时的空态 + 菜单里的已打开标记。

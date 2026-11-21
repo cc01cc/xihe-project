@@ -34,6 +34,11 @@ vi.mock("vue-router", () => ({
         push: vi.fn<Router["push"]>(),
         replace: vi.fn<Router["replace"]>(),
     }),
+    // 整模块 mock 必须补齐 useDraftLeaveGuard 注册的两条守卫钩子
+    // （AgentPrincipalDetailDrawer → useDraftLeaveGuard.ts:71/77 读它们），
+    // 缺导出时用例报 `No "onBeforeRouteLeave" export is defined on the "vue-router" mock`。
+    onBeforeRouteLeave: () => undefined,
+    onBeforeRouteUpdate: () => undefined,
 }));
 
 vi.mock("../../../composables/api", async (importOriginal) => {
