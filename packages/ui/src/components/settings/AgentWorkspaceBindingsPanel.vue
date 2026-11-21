@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
 import { Button } from "../ui/button";
@@ -33,6 +33,7 @@ const { t } = useI18n();
  */
 const emit = defineEmits<{
     "bound-workspaces": [rows: Array<{ workspaceId: string; workspaceName: string }>];
+    dirty: [boolean];
 }>();
 
 const bindings = useAgentBindings({ principalId: () => props.principalId });
@@ -81,6 +82,15 @@ const pending = computed(() =>
 );
 
 const canSave = computed(() => pending.value.length > 0 && !saving.value);
+
+/**
+ * task-92（缺口二）：本面板的草稿**就是 `pending`**（勾选攒批），不另立布尔 —— 勾回原值后
+ * `pending` 自然归零，脏态随之消失，不需要「还原」按钮也不需要清标志。
+ *
+ * <p>「设为默认」不参与：它一改即存（每次点击都已写服务端），不是草稿。</p>
+ */
+watch(pending, (rows) => emit("dirty", rows.length > 0), { immediate: true });
+onBeforeUnmount(() => emit("dirty", false));
 
 /**
  * 读失败态（task-41）：能力投影失败与清单失败都要能被分辨，且**都**给重试入口。

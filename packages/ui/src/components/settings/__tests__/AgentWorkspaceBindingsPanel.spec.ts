@@ -458,3 +458,56 @@ describe("AgentWorkspaceBindingsPanel（task-41 读态语义）", () => {
         expect(denied.find('[data-testid="agent-bindings-retry"]').exists()).toBe(false);
     });
 });
+
+/**
+ * task-92 缺口二（面板段）：勾选攒批的草稿必须能被页面守卫看见。
+ *
+ * <p>钉三件事：① 载入完成即广播 false（页面守卫的初始态，不广播就是 undefined ⇒ 页面判成「不确定」）；
+ * ② 勾一行 ⇒ true；**勾回原值 ⇒ false**（不需要「还原」按钮，脏态由 `pending` 派生）；
+ * ③ 保存成功后复位 false。</p>
+ */
+describe("AgentWorkspaceBindingsPanel · 勾选草稿广播（task-92）", () => {
+    function lastDirty(wrapper: ReturnType<typeof mountPanel>): boolean | undefined {
+        const events = wrapper.emitted("dirty") ?? [];
+        return events.length ? (events[events.length - 1]?.[0] as boolean) : undefined;
+    }
+
+    it("载入完成即广播 false，勾选一行广播 true", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        expect(lastDirty(wrapper), "载入后草稿为空，页面守卫必须收到确定的 false").toBe(false);
+
+        await wrapper.find('[data-testid="agent-bindings-check-w-1"]').trigger("click");
+        await flushPromises();
+        expect(lastDirty(wrapper), "勾选一行 = 有未保存的绑定改动").toBe(true);
+    });
+
+    it("勾回原值 ⇒ 草稿消失、广播 false（取消不是新草稿）", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        const check = wrapper.find('[data-testid="agent-bindings-check-w-1"]');
+        await check.trigger("click");
+        await flushPromises();
+        expect(lastDirty(wrapper)).toBe(true);
+
+        await check.trigger("click");
+        await flushPromises();
+        expect(lastDirty(wrapper), "勾回原值后 pending 归零，不该继续拦导航").toBe(false);
+        expect(
+            wrapper.find('[data-testid="agent-bindings-pending"]').exists(),
+            "pending 归零后待提交计数整块不渲染",
+        ).toBe(false);
+    });
+
+    it("保存成功后广播 false（草稿随 picked 清空，不靠手动复位）", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        await wrapper.find('[data-testid="agent-bindings-check-w-1"]').trigger("click");
+        await flushPromises();
+        expect(lastDirty(wrapper)).toBe(true);
+
+        await wrapper.find('[data-testid="agent-bindings-save"]').trigger("click");
+        await flushPromises();
+        expect(lastDirty(wrapper), "保存成功后不再有草稿").toBe(false);
+    });
+});

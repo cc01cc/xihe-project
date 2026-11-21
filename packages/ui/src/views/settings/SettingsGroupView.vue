@@ -7,6 +7,18 @@ import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
 import LayerPrecedenceBadges from "../../components/settings/LayerPrecedenceBadges.vue";
 import SettingsForbiddenView from "./SettingsForbiddenView.vue";
 import InstanceReadonlyNotice from "./InstanceReadonlyNotice.vue";
+// task-92（缺口一）：组页与域页同一套整页草稿离开判据，确认框复用 vendor AlertDialog（不自造 modal）。
+import { Button } from "../../components/ui/button";
+import {
+    AlertDialog,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
 import {
     DOMAIN_LABEL_KEY,
     WORKSPACE_DEFAULT_CONFIG_ATOM,
@@ -95,6 +107,19 @@ onMounted(() => {
 function anchorHref(domain: string): string {
     return "#settings-domain-" + domain;
 }
+
+/**
+ * task-92（缺口一）：组页原先裸挂 `ConfigLayerPanels`，面板广播的 dirty 无人接收 ⇒ 改完不保存
+ * 就切层/切域，草稿静默丢失。这里把域页那套接线原样接上：**判定与监听全在 composable**，
+ * 本页只负责把面板聚合出的标签推进去（不自己推断草稿、不新增第二套 dirty 信号）。
+ */
+const {
+    draftLabels,
+    promptOpen: leavePromptOpen,
+    setDrafts,
+    keepEditing,
+    discardDrafts,
+} = useDraftLeaveGuard();
 </script>
 
 <template>
@@ -146,7 +171,42 @@ function anchorHref(domain: string): string {
         </nav>
 
         <div class="mt-4">
-            <ConfigLayerPanels :layer="layer" :domains="domains" :readonly="panelReadonly" />
+            <ConfigLayerPanels
+                :layer="layer"
+                :domains="domains"
+                :readonly="panelReadonly"
+                @dirty-change="(payload) => setDrafts(payload.labels)"
+            />
         </div>
+        <!--
+            task-92：整页草稿的离开确认（与域页 `SettingsDomainView` 的 settings-leave-confirm 同形同 testid——
+            这是同一个动作「离开这一页」，e2e 按 testid 覆盖时不该因为落在一组里就换一套选择器）。
+        -->
+        <AlertDialog
+            :open="leavePromptOpen"
+            @update:open="(value: boolean) => !value && keepEditing()"
+        >
+            <AlertDialogContent data-testid="settings-leave-confirm">
+                <AlertDialogHeader>
+                    <AlertDialogTitle>{{ t("settings.ia.leaveDraftTitle") }}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        {{ t("settings.ia.leaveDraftDesc", { domains: draftLabels.join(" / ") }) }}
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel data-testid="settings-leave-keep" @click="keepEditing">
+                        {{ t("settings.ia.leaveDraftKeep") }}
+                    </AlertDialogCancel>
+                    <Button
+                        type="button"
+                        variant="destructive"
+                        data-testid="settings-leave-discard"
+                        @click="discardDrafts"
+                    >
+                        {{ t("settings.ia.leaveDraftDiscard") }}
+                    </Button>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </section>
 </template>

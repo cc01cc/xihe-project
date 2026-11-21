@@ -6,6 +6,18 @@ import AgentDelegatedSessionsTable from "../../components/settings/AgentDelegate
 import AgentWorkspaceBindingsPanel from "../../components/settings/AgentWorkspaceBindingsPanel.vue";
 import { useSettingsTrail } from "../../components/settings/settingsTrail";
 import { api } from "../../composables/api";
+// task-92（缺口二）：绑定面板的勾选草稿是整页草稿，离开本页要确认；复用域页/组页/角色页同一套 composable。
+import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
+import {
+    AlertDialog,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Button } from "../../components/ui/button";
 
 /**
  * task-153 S1：一个 agent 主体的**工作区绑定**整页（Lead C1=B）。
@@ -33,6 +45,22 @@ const boundWorkspaces = ref<Array<{ workspaceId: string; workspaceName: string }
 
 function onBoundWorkspaces(rows: Array<{ workspaceId: string; workspaceName: string }>): void {
     boundWorkspaces.value = rows;
+}
+
+/**
+ * task-92（缺口二）：页面层只做「脏没脏 → 点名」的翻译，不自己推断草稿（与 `SettingsDomainView`、
+ * `RolesView` 同一分工）。点名用主体名 —— 用户在这一页看的标题就是它。
+ */
+const {
+    draftLabels,
+    promptOpen: leavePromptOpen,
+    setDrafts,
+    keepEditing,
+    discardDrafts,
+} = useDraftLeaveGuard();
+
+function onBindingsDirty(dirty: boolean): void {
+    setDrafts(dirty ? [displayName.value] : []);
 }
 
 const resolvedName = ref<string | null>(null);
@@ -93,6 +121,7 @@ onMounted(async () => {
             <AgentWorkspaceBindingsPanel
                 :principal-id="principalId"
                 @bound-workspaces="onBoundWorkspaces"
+                @dirty="onBindingsDirty"
             />
             <!-- S3-a：委派子会话读面（spawn-sessions count 为准；数据源只认这个端点）。 -->
             <AgentDelegatedSessionsTable
@@ -100,5 +129,37 @@ onMounted(async () => {
                 :workspaces="boundWorkspaces"
             />
         </div>
+
+        <!-- task-92：整页勾选草稿的离开确认（与域页/组页/角色页同 testid 同一动作）。 -->
+        <AlertDialog
+            :open="leavePromptOpen"
+            @update:open="(value: boolean) => !value && keepEditing()"
+        >
+            <AlertDialogContent data-testid="settings-leave-confirm">
+                <AlertDialogHeader>
+                    <AlertDialogTitle>{{ t("settings.ia.leaveDraftTitle") }}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        {{
+                            t("settings.ia.leaveDraftDesc", {
+                                domains: draftLabels.join(" / "),
+                            })
+                        }}
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel data-testid="settings-leave-keep" @click="keepEditing">
+                        {{ t("settings.ia.leaveDraftKeep") }}
+                    </AlertDialogCancel>
+                    <Button
+                        type="button"
+                        variant="destructive"
+                        data-testid="settings-leave-discard"
+                        @click="discardDrafts"
+                    >
+                        {{ t("settings.ia.leaveDraftDiscard") }}
+                    </Button>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </section>
 </template>

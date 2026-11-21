@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle, Plus, RotateCcw, X } from "@lucide/vue";
 import { api, ApiError, type AgentModelRef, type AgentRoleBinding } from "../../composables/api";
 import { presentCauseError, type ErrorPresentation } from "../../lib/errorMessages";
+// task-92（缺口二，抽屉段）：换页时的整页草稿守卫；与 widget 内 `unsavedConfirmOpen` 共用同一 dirty 真源。
+import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
 import { formatDate } from "../../lib/dateFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -471,6 +473,29 @@ async function saveDirtySections(): Promise<void> {
 
 // task-151 / task-172 §17.4：开关类即时写不算 dirty；表单类（模型 / 委派 / 钩子）有草稿才算。
 const unsavedDraft = computed(() => modelDirty.value || delegationDirty.value || hooksDirty.value);
+
+/**
+ * task-92（缺口二，抽屉段）：**路由级**离开守卫。
+ *
+ * <p>与抽屉自己的关闭确认（`closeDrawer` / `apd-unsaved-confirm`）是两件事：那条守「关抽屉」，
+ * 这条守「换页/换路由」。原先换页直接卸载抽屉，草稿静默丢失 —— 而 `closeDrawer` 只被
+ * `update:open` 调用，路由离开时压根不会经过它。</p>
+ *
+ * <p>两者共用 {@link unsavedDraft} 一个真源（判据只有一处），但各自持有一个 `open`：关抽屉只弹
+ * 「未保存，关不关」，换页只弹「未保存，走不走」，互不串（单测各钉一例）。</p>
+ */
+const {
+    draftLabels: routeLeaveLabels,
+    promptOpen: routeLeaveOpen,
+    setDrafts: setRouteDrafts,
+    keepEditing: keepRouteHere,
+    discardDrafts: discardAndLeave,
+} = useDraftLeaveGuard();
+
+watch(unsavedDraft, (dirty) => setRouteDrafts(dirty ? [props.principal?.name ?? ""] : []), {
+    immediate: true,
+});
+onBeforeUnmount(() => setRouteDrafts([]));
 const unsavedConfirmOpen = ref(false);
 
 const memoryTypesMissing = computed(() => {
@@ -1354,6 +1379,42 @@ function discardAndClose() {
                             @click="discardAndClose"
                         >
                             {{ t(K + "unsavedDiscard") }}
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <!--
+                task-92：**换页**用的离开确认。与上面那条（关抽屉）刻意分成两个对话框：
+                动作不同（关窗 vs 换页），用户的选择也不同；共用 `unsavedDraft` 一个真源保证
+                「有没有草稿」不会两条路径各判一次。两个 testid 各自独立，互不串。
+            -->
+            <AlertDialog
+                :open="routeLeaveOpen"
+                @update:open="(value: boolean) => !value && keepRouteHere()"
+            >
+                <AlertDialogContent data-testid="settings-leave-confirm">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{{ t("settings.ia.leaveDraftTitle") }}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {{
+                                t("settings.ia.leaveDraftDesc", {
+                                    domains: routeLeaveLabels.join(" / "),
+                                })
+                            }}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel data-testid="settings-leave-keep" @click="keepRouteHere">
+                            {{ t("settings.ia.leaveDraftKeep") }}
+                        </AlertDialogCancel>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            data-testid="settings-leave-discard"
+                            @click="discardAndLeave"
+                        >
+                            {{ t("settings.ia.leaveDraftDiscard") }}
                         </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>

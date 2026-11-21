@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
     api,
@@ -22,7 +22,7 @@ const props = defineProps<{
     workspaceId: string;
     roles: ApiRole[];
 }>();
-const emit = defineEmits<{ notice: [message: string] }>();
+const emit = defineEmits<{ notice: [message: string]; dirty: [boolean] }>();
 const { t } = useI18n();
 
 const agents = ref<AgentPrincipalOption[]>([]);
@@ -45,6 +45,13 @@ const isDirty = computed(() => {
         .join("\n");
     return current !== [...desiredRoleIds.value].sort().join("\n");
 });
+/**
+ * task-92（缺口二）：本段草稿（已绑定集合 vs 期望集合）**外报**给宿主 —— 段自己知道脏，
+ * 宿主只知道「这一段挂了没」。判据同 `isDirty`，不另算一套。
+ */
+watch(isDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+onBeforeUnmount(() => emit("dirty", false));
+
 const availableRoles = computed(() =>
     props.roles.filter((role) => roleFitsScope(role) && !desiredRoleIds.value.includes(role.id)),
 );

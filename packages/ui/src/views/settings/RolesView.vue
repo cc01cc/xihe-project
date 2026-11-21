@@ -18,6 +18,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
     AlertDialog,
+    AlertDialogCancel,
     AlertDialogContent,
     AlertDialogDescription,
     AlertDialogFooter,
@@ -25,6 +26,8 @@ import {
     AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { LoaderCircle, Pencil, Plus, ShieldCheck, Trash2 } from "@lucide/vue";
+// task-92（缺口二）：两段绑定草稿的整页离开守卫，复用域页/组页同一套 composable 与确认框形态。
+import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
 import {
     Empty,
     EmptyContent,
@@ -57,6 +60,22 @@ const auth = useAuthStore();
  * atom-less principal still gets the forbidden view instead of a page that would 403.
  */
 const canManageRoles = computed(() => auth.canManageRoles);
+
+/**
+ * task-92（缺口二）：`RoleBindingsPanel` 只报「当前段脏没脏」，这里只负责把它翻成一个能给用户
+ * 点名的标签推进守卫（页面层不自己推断草稿 —— 与 `SettingsDomainView` 同一分工）。
+ */
+const {
+    draftLabels,
+    promptOpen: leavePromptOpen,
+    setDrafts,
+    keepEditing,
+    discardDrafts,
+} = useDraftLeaveGuard();
+
+function onBindingsDirty(dirty: boolean): void {
+    setDrafts(dirty ? [t("settings.rolesTitle")] : []);
+}
 
 type Tab = "roles" | "bindings";
 
@@ -435,6 +454,7 @@ watch(
                     :roles="roles"
                     :workspaces="workspaces"
                     @notice="notice = $event"
+                    @dirty="onBindingsDirty"
                 />
 
                 <RoleEditorDialog
@@ -480,6 +500,46 @@ watch(
                                     aria-hidden="true"
                                 />
                                 {{ t("settings.rolesDelete") }}
+                            </Button>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+
+                <!--
+                    task-92：整页草稿的离开确认。与 `RoleEditorDialog`（模态内草稿，D 类）不是一回事：
+                    那条守的是「关弹窗」，这条守的是「换页」。testid 与域页/组页同一套（同一个动作）。
+                -->
+                <AlertDialog
+                    :open="leavePromptOpen"
+                    @update:open="(value: boolean) => !value && keepEditing()"
+                >
+                    <AlertDialogContent data-testid="settings-leave-confirm">
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>{{
+                                t("settings.ia.leaveDraftTitle")
+                            }}</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                {{
+                                    t("settings.ia.leaveDraftDesc", {
+                                        domains: draftLabels.join(" / "),
+                                    })
+                                }}
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel
+                                data-testid="settings-leave-keep"
+                                @click="keepEditing"
+                            >
+                                {{ t("settings.ia.leaveDraftKeep") }}
+                            </AlertDialogCancel>
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                data-testid="settings-leave-discard"
+                                @click="discardDrafts"
+                            >
+                                {{ t("settings.ia.leaveDraftDiscard") }}
                             </Button>
                         </AlertDialogFooter>
                     </AlertDialogContent>

@@ -38,6 +38,25 @@ vi.mock("../../../services/providerConnectionService", async (importOriginal) =>
     };
 });
 
+/**
+ * task-92（缺口二，抽屉段）：抽屉里新接了路由级离开守卫（`useDraftLeaveGuard`），
+ * 它要 `onBeforeRouteLeave/Update` 才能注册；这里把两条钩子收进数组，由用例手动触发。
+ */
+const guardHooks = vi.hoisted(() => ({ leave: [] as Array<() => unknown> }));
+vi.mock("vue-router", () => ({
+    useRoute: () => ({ params: {}, query: {} }),
+    useRouter: () => ({
+        replace: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+        push: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+    }),
+    onBeforeRouteLeave: (guard: () => unknown) => {
+        guardHooks.leave.push(guard);
+    },
+    onBeforeRouteUpdate: (guard: () => unknown) => {
+        guardHooks.leave.push(guard);
+    },
+}));
+
 vi.mock("vue-sonner", () => ({
     toast: {
         success: vi.fn<(message: string) => void>(),
@@ -674,5 +693,69 @@ describe("AgentPrincipalDetailDrawer", () => {
         ]);
         // 连接 id 不上 wire（契约：主体不持有 provider connection）。
         expect(JSON.stringify(body.allowedModels)).not.toContain("conn-");
+    });
+});
+
+/**
+ * task-92 缺口二（抽屉段）：换页（路由离开）与关抽屉是**两个动作**，草稿只判一次、提示各弹一个。
+ *
+ * <p>钉两件事：① 关抽屉只弹「未保存，关不关」，路由守卫不被触碰；② 换页只弹「未保存，走不走」，
+ * 抽屉不会自己关（`update:open` 一次都不发）。两条都断言另一个对话框不在场 —— 这就是「互不串」。</p>
+ */
+describe("AgentPrincipalDetailDrawer · 换页与关抽屉互不串（task-92）", () => {
+    beforeEach(() => {
+        guardHooks.leave.length = 0;
+        document.body.innerHTML = "";
+    });
+
+    it("关抽屉：只弹 apd-unsaved-confirm，settings-leave-confirm 不在场", async () => {
+        const wrapper = mountDrawer();
+        await flushPromises();
+        await pickAnthropic(wrapper);
+
+        q('[data-slot="dialog-close"]').click();
+        await flushPromises();
+        expect(maybe('[data-testid="apd-unsaved-confirm"]')).not.toBeNull();
+        expect(
+            maybe('[data-testid="settings-leave-confirm"]'),
+            "关抽屉不该同时弹换页确认",
+        ).toBeNull();
+
+        await click("apd-unsaved-keep");
+        expect(maybe('[data-testid="apd-unsaved-confirm"]')).toBeNull();
+        expect(wrapper.emitted("update:open")).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("换页：只弹 settings-leave-confirm、抽屉不自己关，“丢弃并离开”放行导航", async () => {
+        const wrapper = mountDrawer();
+        await flushPromises();
+        await pickAnthropic(wrapper);
+        expect(guardHooks.leave.length, "抽屉也要注册 leave + update 两条守卫").toBe(2);
+
+        const decision = guardHooks.leave[0]() as Promise<boolean>;
+        await flushPromises();
+        const dialog = maybe('[data-testid="settings-leave-confirm"]');
+        expect(dialog, "有草稿时换页必须拦下").not.toBeNull();
+        expect(dialog?.textContent, "确认框要点名主体").toContain("ResearchAgent");
+        expect(maybe('[data-testid="apd-unsaved-confirm"]'), "换页不该同时弹关抽屉确认").toBeNull();
+        expect(wrapper.emitted("update:open"), "拦下期间抽屉不得自己关").toBeUndefined();
+
+        await click("settings-leave-discard");
+        await expect(decision, "丢弃 = 放行导航").resolves.toBe(true);
+        wrapper.unmount();
+    });
+
+    it("换页确认「继续编辑」：取消导航，抽屉留在原地", async () => {
+        const wrapper = mountDrawer();
+        await flushPromises();
+        await pickAnthropic(wrapper);
+
+        const decision = guardHooks.leave[1]() as Promise<boolean>;
+        await flushPromises();
+        await click("settings-leave-keep");
+        await expect(decision, "继续编辑 = 取消导航").resolves.toBe(false);
+        expect(wrapper.emitted("update:open")).toBeUndefined();
+        wrapper.unmount();
     });
 });

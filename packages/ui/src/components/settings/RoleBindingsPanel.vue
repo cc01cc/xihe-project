@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
     api,
@@ -37,7 +37,7 @@ const props = defineProps<{
     workspaces: ApiWorkspace[];
     /** Role atoms are needed for the local "scope compatibility" hint. */
 }>();
-const emit = defineEmits<{ notice: [message: string] }>();
+const emit = defineEmits<{ notice: [message: string]; dirty: [boolean] }>();
 
 const { t } = useI18n();
 
@@ -51,6 +51,25 @@ const bindingSet = ref<ApiBindingSet | null>(null),
 
 /** Pending rows: the panel's editable copy of the scope's complete binding set. */
 const rows = ref<ApiBindingInput[]>([]);
+
+/**
+ * task-92（缺口二）：草稿基准**派生自服务端回来的 `bindingSet`**（不维护布尔，「脏」永远等于
+ * 「期望集合 ≠ 已存集合」）；`save()` 成功后 `syncRows()` 把两者重新对齐 ⇒ 自动复位，不需要手动清标志。
+ *
+ * <p>两段草稿的口径：只算**当前 subjectType** 那一段 —— 另一段此刻不可见也改不了，算进来会让用户
+ * 在看不到它的界面上被拦下。切段后 `agentDirty` 由 `AgentRoleBindingsSection` 重挂时的广播复位。</p>
+ */
+function rowKey(row: ApiBindingInput): string {
+    return `${row.subjectType ?? "user"}|${row.subjectId}|${row.roleId}`;
+}
+const bindingKey = computed(() => (bindingSet.value?.bindings ?? []).map(rowKey).sort().join("\n"));
+const userDirty = computed(() => rows.value.map(rowKey).sort().join("\n") !== bindingKey.value);
+const agentDirty = ref(false);
+const panelDirty = computed(() =>
+    subjectType.value === "user" ? userDirty.value : agentDirty.value,
+);
+watch(panelDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+onBeforeUnmount(() => emit("dirty", false));
 
 const subjectQuery = ref(""),
     subjectResults = ref<ApiAdminUser[]>([]),
@@ -510,6 +529,7 @@ defineExpose({ load });
             :workspace-id="workspaceId"
             :roles="roles"
             @notice="emit('notice', $event)"
+            @dirty="(value) => (agentDirty = value)"
         />
     </section>
 </template>
