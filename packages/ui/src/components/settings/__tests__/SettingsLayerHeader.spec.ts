@@ -116,6 +116,56 @@ describe("SettingsLayerHeader (PLAN-0752 T1.1b)", () => {
     });
 });
 
+/**
+ * task-153：`trail` 是「层段之后的运行时尾段」（主体名这类动态段不能进 route.meta）。
+ *
+ * <p>判据是**两头都要咬**：传了 trail ⇒ 四段（含 3 个分隔符、aria-current 只在末段、
+ * 中间有 `to` 的段渲染成链接）；**不传 ⇒ DOM 与加这个 prop 之前逐字相同**（仍是
+ * 「根 → 层 →（可选）域」，段数/分隔符数/current 段一个都不变）。只测"传了能渲染"会漏掉
+ * 回归：把零变化分支写坏时，既有设置页会集体多一段。</p>
+ */
+describe("SettingsLayerHeader trail（task-153）", () => {
+    it("不传 trail ⇒ 与现状一致：两段、一个分隔符、current 在层段", () => {
+        const wrapper = mountHeader({ layer: "instance" });
+        expect(navText(wrapper)).toMatch(/^设置\s*实例层$/);
+        expect(wrapper.findAll('[data-slot="breadcrumb-separator"]')).toHaveLength(1);
+        expect(wrapper.findAll('[aria-current="page"]')).toHaveLength(1);
+        expect(wrapper.find('[aria-current="page"]').text()).toBe("实例层");
+        expect(wrapper.text()).not.toContain("智能体主体");
+    });
+
+    it("传 trail ⇒ 四段，末段 current，第二段是链回上级的链接", () => {
+        const wrapper = mountHeader({
+            layer: "instance",
+            trail: [
+                { label: "智能体主体", to: "/settings/instance/agent-principals" },
+                { label: "Coder" },
+                { label: "绑定" },
+            ],
+        });
+        expect(navText(wrapper)).toMatch(/^设置\s*智能体主体\s*Coder\s*绑定$/);
+        expect(wrapper.findAll('[data-slot="breadcrumb-separator"]')).toHaveLength(3);
+        const currents = wrapper.findAll('[aria-current="page"]');
+        expect(currents).toHaveLength(1);
+        expect(currents[0]!.text()).toBe("绑定");
+
+        const links = wrapper.findAll("router-link");
+        // 根 + 第二段；中间段（主体名）与末段都不是链接。
+        expect(links.map((link) => link.attributes("to"))).toEqual([
+            "/settings",
+            "/settings/instance/agent-principals",
+        ]);
+        // trail 生效时层段文案让位（否则会出现两套「当前页」）。
+        expect(wrapper.text()).not.toContain("实例层");
+    });
+
+    it("空 trail 数组按「没传」处理（零变化）", () => {
+        const wrapper = mountHeader({ layer: "user", trail: [] });
+        expect(navText(wrapper)).toMatch(/^设置\s*用户层$/);
+        expect(wrapper.findAll('[data-slot="breadcrumb-separator"]')).toHaveLength(1);
+    });
+});
+
 function navText(wrapper: ReturnType<typeof mount>): string {
     return wrapper.find('[data-testid="settings-breadcrumb"]').text();
 }

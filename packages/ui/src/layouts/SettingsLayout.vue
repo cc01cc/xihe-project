@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, provide, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { Menu, Search, X } from "@lucide/vue";
 import BackToChatButton from "../components/settings/BackToChatButton.vue";
 import SettingsCommandPalette from "../components/settings/SettingsCommandPalette.vue";
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
+import {
+    SETTINGS_TRAIL_KEY,
+    type SettingsTrail,
+    type SettingsTrailSetter,
+} from "../components/settings/settingsTrail";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
 import { Button } from "../components/ui/button";
 // task-510：移动抽屉换成 vendor Sheet（reka Dialog 自带焦点陷阱 + Esc）。
@@ -54,6 +59,23 @@ const layer = computed(() =>
  * <p>task-485：组名不再写死 `model-config` 一个，改为查组注册表（`groupDefFor`）——
  * 新增组只加注册表一行，面包屑自动跟上。</p>
  */
+/**
+ * task-153：面包屑动态尾段。页面（如主体绑定页）在拿到运行时数据后写入，
+ * **onUnmounted 清空**（守则由 `useSettingsTrail` 收口）；这里再按路径兜底清一次，
+ * 免得某一页忘了清就把上一个主体名带进下一页。
+ */
+const trail = ref<SettingsTrail | null>(null);
+provide(SETTINGS_TRAIL_KEY, ((next: SettingsTrail | null) => {
+    trail.value = next && next.length > 0 ? next : null;
+}) as SettingsTrailSetter);
+
+watch(
+    () => route.path,
+    () => {
+        trail.value = null;
+    },
+);
+
 const domainLabel = computed(() => {
     const group = isSettingsGroup(route.meta.settingsGroup)
         ? groupDefFor(route.meta.settingsGroup)
@@ -195,7 +217,7 @@ watch(
                 </Button>
             </div>
 
-            <SettingsLayerHeader :layer="layer" :domain="domainLabel">
+            <SettingsLayerHeader :layer="layer" :domain="domainLabel" :trail="trail ?? undefined">
                 <div class="mt-2 flex flex-wrap items-center gap-2">
                     <!-- T3.4：可见入口（键盘 ⌘K 之外的那条路；触屏/鼠标用户也够得到）。
                          按钮与 ⌘K 都只改同一个 `paletteOpen`。 -->

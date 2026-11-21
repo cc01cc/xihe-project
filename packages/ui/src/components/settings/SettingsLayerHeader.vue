@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { SettingsLayer } from "../../lib/settingsIa";
+import type { SettingsTrailItem } from "./settingsTrail";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -34,6 +35,15 @@ const props = defineProps<{
     /** 当前域显示名；空 = 层首页（面包屑只有两段）。 */
     domain?: string;
     summary?: string;
+    /**
+     * task-153：层段之后的动态尾段（运行时数据才有的段，如「智能体主体 / {主体名} / 绑定」）。
+     *
+     * <p>契约：**不传（或传空数组）时本组件行为与加这个 prop 之前逐字相同** —— 仍走
+     * 「根 → 层 →（可选）域」两条既有分支。传了则改走「根 → trail[0] → … → trail[n-1]」，
+     * 末段固定为当前页（`aria-current="page"`），中间段有 `to` 才是链接。域段与 trail
+     * 互斥：trail 里已经包含层级语义，两者同时出现会出现两套「当前页」。</p>
+     */
+    trail?: readonly SettingsTrailItem[];
 }>();
 
 const { t } = useI18n();
@@ -56,6 +66,10 @@ const LAYER_CRUMB_KEYS: Record<SettingsLayer, string> = {
 
 const layerTitle = computed(() => t(LAYER_TITLE_KEYS[props.layer]));
 const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
+
+/** 有尾段时改走 trail 分支；空数组按「没传」处理（零变化）。 */
+const hasTrail = computed(() => (props.trail?.length ?? 0) > 0);
+const trailLastIndex = computed(() => (props.trail?.length ?? 0) - 1);
 </script>
 
 <template>
@@ -81,13 +95,42 @@ const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
                             }}</router-link>
                         </BreadcrumbLink>
                     </BreadcrumbItem>
-                    <BreadcrumbSeparator class="text-muted-foreground [&>svg]:size-3" />
+                    <!-- task-153：动态尾段（设置 / 智能体主体 / {主体名} / 绑定）。
+                         末段 = 当前页（aria-current 由 BreadcrumbPage 提供），中间段有 to 才是链接。 -->
+                    <template v-if="hasTrail">
+                        <template
+                            v-for="(item, index) in trail ?? []"
+                            :key="`${index}-${item.label}`"
+                        >
+                            <BreadcrumbSeparator class="text-muted-foreground [&>svg]:size-3" />
+                            <BreadcrumbItem v-if="index === trailLastIndex">
+                                <BreadcrumbPage class="font-medium">{{
+                                    item.label
+                                }}</BreadcrumbPage>
+                            </BreadcrumbItem>
+                            <BreadcrumbItem v-else-if="item.to">
+                                <BreadcrumbLink
+                                    as-child
+                                    class="underline-offset-4 hover:text-foreground hover:underline"
+                                >
+                                    <router-link :to="item.to">{{ item.label }}</router-link>
+                                </BreadcrumbLink>
+                            </BreadcrumbItem>
+                            <BreadcrumbItem v-else>
+                                <span class="font-medium text-foreground">{{ item.label }}</span>
+                            </BreadcrumbItem>
+                        </template>
+                    </template>
+                    <BreadcrumbSeparator
+                        v-if="!hasTrail"
+                        class="text-muted-foreground [&>svg]:size-3"
+                    />
                     <!-- 层首页：层段即当前页（aria-current 由 BreadcrumbPage 提供）。 -->
-                    <BreadcrumbItem v-if="!domain">
+                    <BreadcrumbItem v-if="!hasTrail && !domain">
                         <BreadcrumbPage class="font-medium">{{ layerCrumb }}</BreadcrumbPage>
                     </BreadcrumbItem>
                     <!-- 域页：层段是可回溯的父级（不带 aria-current），域段才是当前页。 -->
-                    <template v-else>
+                    <template v-else-if="!hasTrail">
                         <BreadcrumbItem>
                             <span class="font-medium text-foreground">{{ layerCrumb }}</span>
                         </BreadcrumbItem>
