@@ -41,8 +41,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -1016,6 +1018,7 @@ public class AgentPrincipalService {
         Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions;
         String bindingSource;
         List<UUID> bindingGrantIds;
+        Map<String, String> bindingGrantSources;
         if (binding.workspaceAgent() == null) {
             // PLAN-0629: access granted by a workspace role binding, no binding row involved.
             List<AuthorizationGrant> roleGrantRows = grantRepository.findScopedGrants(
@@ -1026,23 +1029,33 @@ public class AgentPrincipalService {
             bindingPermissions = evaluator.union(orgUnitGrants.merge(roleGrantRows, expanded));
             bindingSource = "role-binding";
             bindingGrantIds = grantIds(roleGrantRows, expanded);
+            bindingGrantSources = grantSources(roleGrantRows, expanded);
         } else {
             bindingPermissions = parsePermissions(binding.workspaceAgent().getPermissionsSnapshot());
             bindingSource = "binding-snapshot";
             bindingGrantIds = List.of();
+            bindingGrantSources = Map.of();
         }
         Set<GrantIntersectionEvaluator.PermissionAtom> effective =
                 retainCovered(bindingPermissions, principalEval.atoms());
-        return new CapEvaluation(effective, bindingSource, principalEval.grantIds(), bindingGrantIds, binding);
+        // task-87: ONE label map for the whole provenance face, keyed by grant id and covering the
+        // union of both id lists (the contract shape). Merging here — not in the caller — keeps the
+        // "single computation point" property: the wire can never label an id it did not return.
+        Map<String, String> grantSources = new LinkedHashMap<>(principalEval.grantSources());
+        grantSources.putAll(bindingGrantSources);
+        return new CapEvaluation(effective, bindingSource, principalEval.grantIds(), bindingGrantIds,
+                grantSources, binding);
     }
 
     /** task-448: effective cap plus hit source and grant provenance (the single evaluation result). */
     private record CapEvaluation(Set<GrantIntersectionEvaluator.PermissionAtom> effective,
                                  String bindingSource, List<UUID> principalGrantIds,
-                                 List<UUID> bindingGrantIds, ActiveWorkspaceBinding binding) {}
+                                 List<UUID> bindingGrantIds, Map<String, String> grantSources,
+                                 ActiveWorkspaceBinding binding) {}
 
     /** task-448: an atom set plus the grant-row ids that produced it (read-face provenance). */
-    private record AtomEvaluation(Set<GrantIntersectionEvaluator.PermissionAtom> atoms, List<UUID> grantIds) {}
+    private record AtomEvaluation(Set<GrantIntersectionEvaluator.PermissionAtom> atoms, List<UUID> grantIds,
+                                  Map<String, String> grantSources) {}
 
     /** task-448: distinct grant-row ids across the scoped rows and the org-unit expansion. */
     private static List<UUID> grantIds(List<AuthorizationGrant> rows,
@@ -1055,6 +1068,41 @@ public class AgentPrincipalService {
             ids.add(grant.getId());
         }
         return ids.stream().distinct().toList();
+    }
+
+    /**
+     * task-87: grant id → source label, covering the same rows as {@link #grantIds} (scoped rows plus
+     * the org-unit expansion). The map is the contract's {@code provenance.grantSources}; its key set
+     * must equal the union of the two id lists, so both are derived from the SAME row lists.
+     *
+     * <p>A row whose {@code id} is null is skipped: {@code OrgUnitGrantExpander.toGrant} leaves the
+     * id null on purpose (an id is filled by {@code @PrePersist}, so null witnesses "never persisted")
+     * — and such a row cannot key a map at all. That is why {@code org_unit} stays an unreachable
+     * label on the wire today (DEV-018); the vocabulary still carries it so a future persisted
+     * org-unit row is not mislabelled.</p>
+     *
+     * <p>Package-private for the null-id regression test: the wire cannot produce such a row without
+     * an org-unit binding, so the boundary is asserted directly on this seam.</p>
+     */
+    static Map<String, String> grantSources(List<AuthorizationGrant> rows,
+                                            java.util.Collection<AuthorizationGrant> expanded) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (AuthorizationGrant grant : rows) {
+            putGrantSource(labels, grant);
+        }
+        for (AuthorizationGrant grant : expanded) {
+            putGrantSource(labels, grant);
+        }
+        return labels;
+    }
+
+    private static void putGrantSource(Map<String, String> labels, AuthorizationGrant grant) {
+        if (grant.getId() == null) {
+            return;
+        }
+        // putIfAbsent: the same row can appear in both lists (rows ∪ expansion); first label wins and
+        // the key set stays exactly one label per id.
+        labels.putIfAbsent(grant.getId().toString(), GrantSources.provenanceSource(grant.getSource()));
     }
 
     /** 2026-11-04 P0（task-24）：主体的默认模型身份；未设置时两个字段都为 null。 */
@@ -1110,7 +1158,8 @@ public class AgentPrincipalService {
         AgentPrincipal principal = eval.binding().principal();
         return new EffectiveCapResult(principalId, workspaceId, toJson(eval.effective()),
                 eval.bindingSource(), eval.principalGrantIds(), eval.bindingGrantIds(),
-                eval.binding().workspaceAgent() != null, principal.getDisabledAt() != null);
+                eval.grantSources(), eval.binding().workspaceAgent() != null,
+                principal.getDisabledAt() != null);
     }
 
     /**
@@ -1122,7 +1171,8 @@ public class AgentPrincipalService {
      */
     public record EffectiveCapResult(UUID principalId, UUID workspaceId, JsonNode effectiveCap,
                                      String bindingSource, List<UUID> principalGrantIds,
-                                     List<UUID> bindingGrantIds, boolean bound, boolean disabled) {}
+                                     List<UUID> bindingGrantIds, Map<String, String> grantSources,
+                                     boolean bound, boolean disabled) {}
 
     /**
      * PLAN-0622 M1.3: existence check expressed through the single entry — the binding/active
@@ -1298,13 +1348,13 @@ public class AgentPrincipalService {
                 orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId);
         if (!roleRows.isEmpty()) {
             return new AtomEvaluation(evaluator.union(orgUnitGrants.merge(roleRows, expanded)),
-                    grantIds(roleRows, expanded));
+                    grantIds(roleRows, expanded), grantSources(roleRows, expanded));
         }
         List<AuthorizationGrant> evaluationRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 GrantSources.EVALUATION_SOURCES, workspaceId);
         return new AtomEvaluation(evaluator.union(orgUnitGrants.merge(evaluationRows, expanded)),
-                grantIds(evaluationRows, expanded));
+                grantIds(evaluationRows, expanded), grantSources(evaluationRows, expanded));
     }
 
     /**

@@ -453,6 +453,10 @@ public class WorkspaceAgentController {
         Map<String, Object> provenance = new LinkedHashMap<>();
         provenance.put("principalGrantIds", result.principalGrantIds().stream().map(UUID::toString).toList());
         provenance.put("bindingGrantIds", result.bindingGrantIds().stream().map(UUID::toString).toList());
+        // task-87: grant id → source label for the SAME ids (union of both lists). Always emitted,
+        // empty object when neither list has a row — a caller must be able to iterate it without a
+        // null check, and an absent key would read as "this face has no labels" instead of "none yet".
+        provenance.put("grantSources", new LinkedHashMap<>(result.grantSources()));
         view.put("provenance", provenance);
         // P1-2 defaultGrants: the read-face authorization default grant set (workspace members; the
         // gate is membership, evaluated at the atom layer — no role-name special-case).

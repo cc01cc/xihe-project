@@ -63,6 +63,39 @@ public final class GrantSources {
     public static final List<String> WRITABLE_SOURCES = List.of(
             ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
+    /**
+     * task-87: the {@code org_unit} label of in-memory expanded rows ({@code OrgUnitGrantExpander}).
+     * It is <b>not</b> in {@link #EVALUATION_SOURCES} / {@link #WRITABLE_SOURCES} / the DB constraint
+     * — such a row never enters {@code grants} — but it is part of the provenance vocabulary so a
+     * label is never invented for it.
+     */
+    public static final String ORG_UNIT = OrgUnitGrantExpander.SOURCE;
+
+    /**
+     * task-87: the defensive provenance label. {@code ck_grants_source} (V139) plus
+     * {@code source NOT NULL} (V38) mean a persisted row cannot reach this value; it exists only for
+     * a mapping/regression that hands an out-of-vocabulary string to the read face, so the wire says
+     * "unknown" instead of silently relabelling the row as a real source.
+     */
+    public static final String UNKNOWN = "unknown";
+
+    /**
+     * task-87: the labels the grant-row provenance may carry — the six persisted values plus
+     * {@link #ORG_UNIT} (in-memory only) and {@link #UNKNOWN} (defensive). {@code session_temp} is
+     * absent on purpose: it never lives in {@code grants} (V180 has its own table).
+     */
+    public static final List<String> PROVENANCE_SOURCES = List.of(
+            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING, ORG_UNIT);
+
+    /**
+     * task-87: normalise a stored/expanded {@code source} into a {@link #PROVENANCE_SOURCES} label.
+     * Anything outside the vocabulary (including {@code null}) answers {@link #UNKNOWN} — never a
+     * default such as {@link #ROLE}: a wrong label is worse than an honest "unknown".
+     */
+    public static String provenanceSource(String raw) {
+        return raw != null && PROVENANCE_SOURCES.contains(raw) ? raw : UNKNOWN;
+    }
+
     private GrantSources() {
     }
 }
