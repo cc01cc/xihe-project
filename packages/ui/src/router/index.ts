@@ -430,6 +430,31 @@ const router = createRouter({
                     path: "principal-grants",
                     redirect: { name: "settings-roles" },
                 },
+                /**
+                 * task-153（Lead C1=B）：主体绑定**整页**——绑定面 = 工作区多选 × 每项 cap
+                 * + 委派会话表两处数据密集面，塞进详情抽屉会踩 check-form-contract 的 F4
+                 * （DEV-011 §17.8：抽屉顶级 section ≤6，当前正好 6 组）。
+                 *
+                 * <p>`meta.settingsLayer` **必须显式写**：`lib/settingsIa.ts:142
+                 * settingsLayerForPath` 对未知路径一律回 "instance"，靠兜底写层就是 task-160
+                 * 那次「/settings/workspace-default/rag 顶着『用户配置』」的同款错。由
+                 * `src/router/__tests__/agentBindingsRoutes.spec.ts` 钉住。</p>
+                 *
+                 * <p>`props: true`：页面同时读 props.id 与 route.params.id（防将来换壳漏接）。</p>
+                 *
+                 * <p>路径带 `instance/` 层前缀（Lead 2026-11-21 10:52 裁定）：本文件所有 settings
+                 * 路由都按 `<layer>/<domain>` 排，只有这条 detail 丢过 layer 前缀是全表唯一例外。
+                 * 带上之后**路径推导与 meta 两路都得 instance**，meta 从「唯一判据」降为冗余护栏 ——
+                 * 与 `settingsLayerForPath` 对无前缀路径只能兜底、兜底值恰好等于 instance 的
+                 * 「看起来对」区分开。路由未发布 ⇒ 按 DSD-1472 直接改净，不加 redirect。</p>
+                 */
+                {
+                    path: "instance/agent-principals/:id/bindings",
+                    name: "settings-agent-principal-bindings",
+                    component: () => import("../views/settings/AgentPrincipalBindingsView.vue"),
+                    props: true,
+                    meta: { settingsLayer: "instance" },
+                },
                 {
                     // V3/V25：层×域矩阵里没有的组合（含手输 URL 与外部书签）⇒ 404 视图。
                     // 注意**不写** meta.settingsLayer：兜底路由没有层参数，写死任意一层都会让 404
