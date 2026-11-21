@@ -117,9 +117,35 @@ public class AgentPrincipalBindingAuthority {
                 || isCreator(principal, actor);
         if (!visible) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
-                    "Agent principal not found");
+                    NOT_VISIBLE_DETAIL);
         }
     }
+
+    /**
+     * task-166: the visibility 404 must say two things the operator actually needs, and must not
+     * say a third one that is wrong.
+     *
+     * <ol>
+     *   <li>"It may exist" — the principal can be real and still not be visible to this caller,
+     *       because visibility is produced by a workspace binding (or by being its creator);</li>
+     *   <li>"Here is the way forward" — the supported first-bind entry is the PUT below (which
+     *       additionally demands workspace membership, see AgentPrincipalService#setWorkspaceCap),
+     *       or the principal's creator can do it;</li>
+     *   <li><b>not</b> "permission denied" — authority failures are a separate 403 emitted earlier
+     *       in {@link #require}, so reading this 404 as "no rights" sends the caller down the wrong
+     *       path (the whole point of BL-352 is that a missing binding is the common cause).</li>
+     * </ol>
+     *
+     * <p>The three 404 causes (absent / disabled / not-yet-visible) still share one code on
+     * purpose; only the wording distinguishes "you cannot see it" from "it is gone" as far as we
+     * honestly can.</p>
+     */
+    private static final String NOT_VISIBLE_DETAIL =
+            "Agent principal is not visible to you in this workspace - it may exist without being "
+                    + "bound here. Bind it first with PUT /api/v1/workspaces/{workspaceId}/agents/"
+                    + "{principalId} (that path also requires workspace membership), or ask the "
+                    + "principal's creator to bind it. Missing, disabled and not-yet-visible share "
+                    + "this 404 on purpose; authority failures are reported separately as 403.";
 
     /** BL-352: the creator may see (and therefore first-bind) the principal it created. */
     private boolean isCreator(UUID principalId, String actor) {

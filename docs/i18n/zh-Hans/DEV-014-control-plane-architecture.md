@@ -494,8 +494,10 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 |---|---|---|
 | 建主体（①） | instance 级 `MANAGE_AGENT_PRINCIPALS` | 无（instance 面） |
 | 首绑（②） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS` | **请求头 `X-Workspace-Id`** + 路径里的 `{workspaceId}` |
-| 增删角色（④） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS`（或 instance 级） | **`X-Workspace-Id` 头优先、`?workspaceId=` 兼容**；两者冲突 ⇒ 400 `WORKSPACE_CONTEXT_CONFLICT`（BL-351 已修） |
+| 增删角色（④） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS`；**instance 级 `MANAGE_AGENT_PRINCIPALS` 只对 instance 作用域（不带 workspace 上下文）成立** | **`X-Workspace-Id` 头优先、`?workspaceId=` 兼容**；两者冲突 ⇒ 400 `WORKSPACE_CONTEXT_CONFLICT`（BL-351 已修） |
 | 会话/派发前置 | 主体必须已在该工作区绑定（`resolveCapFor` 严格路径） | 路径 `{workspaceId}` |
+
+**④ 的两种作用域别混（task-166 校正）**：带 workspace 上下文时，过了授权门（`MANAGE_WORKSPACE_AGENTS`，或调用者持 instance 级 `MANAGE_AGENT_PRINCIPALS`）**还有一道可见性门**——主体必须已绑定在该工作区，或调用者就是它的创建者（BL-352 的 `createdByUserId` 例外）；否则返回 `404 AGENT_PRINCIPAL_NOT_FOUND`（`AgentPrincipalBindingAuthority.requireVisible`）。所以「instance 级 `MANAGE_AGENT_PRINCIPALS`」**只免授权门、不免可见性门**：实例管理员要动别人的主体，仍得自己对那个工作区有成员身份、并先走 ② 首绑（`AgentPrincipalService.setWorkspaceCap` 第一道是 `requireWorkspaceMember`）。这个 404 是**故意的三合一**（不存在 / 已禁用 / 你还看不见），不等于「权限不足」——权限不足是更早的 403。
 
 **相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles/skills 端点曾只认 query、忽略头；已修：头优先 + 冲突 400）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。（en 侧暂无本文档，翻译随批次补齐）
 

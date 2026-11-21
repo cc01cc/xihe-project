@@ -5,12 +5,17 @@ import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -38,6 +43,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,6 +83,10 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     private WorkspaceFixture workspaceFixture;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    private RoleGrantMaterializer roleMaterializer;
+    @Autowired
+    private AuthzContext authzContext;
 
     private String userId;
     private String token;
@@ -334,6 +344,77 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         ResponseEntity<Map> response = bindRoleAs(principal.getId(), nobody.token());
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), String.valueOf(response.getBody()));
+    }
+
+    /**
+     * task-166 T1：**instance 级管理员 + 带 workspace 上下文 + 既非创建者也未绑定** ⇒ 走可见性门 404。
+     *
+     * <p>这条补的正是既有四例都缺的那一格：原子够了（instance 级 {@code MANAGE_AGENT_PRINCIPALS}），
+     * 但 {@code requireVisible} 的 workspace 分支只认「已绑定」或「创建者」，instanceTier 在该分支不参与
+     * 判定 ⇒ 404 {@code AGENT_PRINCIPAL_NOT_FOUND}，而不是 403（原子不足）或 409（cap 门，更晚）。
+     * 它同时是「instance 级只免授权门、不免可见性门」的代码级证据（DEV-014 §14b 校正条）。</p>
+     */
+    @Test
+    void instanceAdminNeitherCreatorNorBoundGetsTheVisibilityNotFound() {
+        // 实例管理员必须是该工作区成员，否则 listWorkspaceAgents 的 requireWorkspaceMember 先抛 403
+        // （WORKSPACE_ACCESS_DENIED），就测不到可见性门这一层了。
+        Bl352Caller instanceAdmin = registerWithRole("bl352-instanceadmin", WorkspaceRole.VIEWER);
+        grantInstanceAdminRole(instanceAdmin.userId());
+        AgentPrincipal principalsOwnedBySomeoneElse = createPlainPrincipal("bl352othersubject");
+
+        ResponseEntity<Map> response = bindRoleAs(principalsOwnedBySomeoneElse.getId(), instanceAdmin.token());
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("AGENT_PRINCIPAL_NOT_FOUND", response.getBody().get("code"));
+        // 404 的 message 必须说清「可能只是看不见」并给出 PUT 前进路径，而不是让人以为是权限不足。
+        String detail = String.valueOf(response.getBody().get("detail"));
+        assertTrue(detail.contains("may exist"), "404 must say the principal may exist unseen: " + detail);
+        assertTrue(detail.contains("PUT /api/v1/workspaces/"), "404 must name the supported entry: " + detail);
+    }
+
+    /**
+     * task-166 T2：**创建者首绑永不机械 404**，而且必须真的走 PUT 自举（不是只断言 roles 200）。
+     *
+     * <p>BL-352 的设计是：roles 端点不是首绑入口（没 cap ⇒ 409 ROLE_BINDING_EXCEEDS_CAP），
+     * 首绑走 {@code PUT /workspaces/{workspaceId}/agents/{principalId}}；创建者可见性例外（createdByUserId）
+     * 保证这条路上第一步不会掉进「绑定要求可见、可见由绑定产生」的死锁。</p>
+     */
+    @Test
+    void creatorFirstBindViaPutIsNeverMechanically404() {
+        AgentPrincipal principal = createPlainPrincipal("bl352creatorbootstrap");
+
+        // ① 首绑前打 roles：创建者可见性例外放行（不是 404），撞的是「还没有工作区角色绑定」
+        //    （403 FORBIDDEN，AgentPrincipalService.requireActiveWorkspaceBinding:1158-1161）。
+        ResponseEntity<Map> beforePut = bindRoleAs(principal.getId(), token);
+        assertNotEquals(HttpStatus.NOT_FOUND, beforePut.getStatusCode(),
+                "the creator must never be told the principal does not exist: " + beforePut.getBody());
+        assertEquals(HttpStatus.FORBIDDEN, beforePut.getStatusCode(), String.valueOf(beforePut.getBody()));
+        assertTrue(String.valueOf(beforePut.getBody().get("detail")).contains("holds no role binding"),
+                "pre-bootstrap refusal must name the missing binding: " + beforePut.getBody());
+
+        // ② 真的调 PUT（首绑入口），而不是假设它能行。
+        ResponseEntity<Map> put = putWorkspaceAgent(principal.getId(), token, List.of());
+        assertEquals(HttpStatus.OK, put.getStatusCode(), String.valueOf(put.getBody()));
+
+        // ③ 首绑后主体进入该工作区可见集 —— 可见性由绑定产生（BL-352 未放宽这条不变式）。
+        assertTrue(agentPrincipalService.listWorkspaceAgents(userId, workspaceId).stream()
+                        .anyMatch(view -> principal.getId().equals(view.principalId())),
+                "the PUT bootstrap must make the principal visible in the workspace");
+
+        // ④ 再打 roles：仍受空 cap 约束（409），全程没有 404。
+        ResponseEntity<Map> afterPut = bindRoleAs(principal.getId(), token);
+        assertEquals(HttpStatus.CONFLICT, afterPut.getStatusCode(), String.valueOf(afterPut.getBody()));
+        assertEquals("ROLE_BINDING_EXCEEDS_CAP", afterPut.getBody().get("code"));
+    }
+
+    /** 给一个已注册用户绑 instance 级 ADMIN 角色并立即物化（范本：AgentPrincipalOwnershipIntegrationTest:271-286）。 */
+    private void grantInstanceAdminRole(String instanceAdminUserId) {
+        UUID adminId = UUID.fromString(instanceAdminUserId);
+        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
+        roleBindingRepository.saveAndFlush(new AccessRoleBinding(adminRole.getId(),
+                AuthzContext.SUBJECT_USER, adminId, AccessScope.INSTANCE, null, adminId));
+        roleMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, adminId, adminId, null);
+        authzContext.invalidate(adminId);
     }
 
     private record Bl352Caller(String token, String userId) {}
