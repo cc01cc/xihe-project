@@ -583,7 +583,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 真实读数：`internal/A03-xihe/evidence/2026-11-19-ui-live-review/README.md` §F-1 表 —— 1366×768 实测会话页 `workspace-secondary-nav` y0–32（h=32）+ `workspace-toolbar` y32–72（**h=40**）+ 容器页签 32 = **3 条带 / 104px**，其余 5 页只有 1 条 32px；复算 `node internal/A03-xihe/evidence/2026-11-19-ui-live-review/probe.mjs`，原始读数在同目录 `probe-readings.json`。
 
-**静态守卫尚未存在（照实写）**：本条此前引用的 `packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts` **在仓内不存在** —— 2026-11-19 `task-24` 用 `find A03-xihe/packages/ui/src -name "*TopBar*"` 与全仓 grep 核实均 0 命中；真实相关代码只有 `WorkspaceSecondaryNav.vue:68` 的 `id="workspace-nav-actions"` 与 `WorkspaceToolbar.vue:314` 的 `<Teleport to="#workspace-nav-actions">`。⇒ 本条判红目前只能靠真机读数，别把不存在的单测当已有守卫。
+**静态守卫尚未存在（照实写）**：本条此前引用的 `packages/ui/src/features/workspace/__tests__/TopBarSingleRow.spec.ts` **在仓内不存在** —— 2026-11-19 `task-24` 用 `find A03-xihe/packages/ui/src -name "*TopBar*"` 与全仓 grep 核实均 0 命中；真实的挂载点是 `WorkspaceWorkbench.vue:1228` 的 `id="workspace-nav-actions"`（在容器页签行的 `#actions` 槽里，`:1209`）—— `task-118`（D-1907 rev7）把它从 `WorkspaceSecondaryNav.vue:68` 与 `WorkspaceToolbar.vue:314` 迁出，这两处现在只剩迁移说明（`WorkspaceSecondaryNav.vue:63-64`、`WorkspaceToolbar.vue:52`）。⇒ 本条判红目前只能靠真机读数，别把不存在的单测当已有守卫。
 
 ### 13.2 输入域三级视觉权重
 
@@ -677,7 +677,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 | 必填项 | 本条的取值 |
 | --- | --- |
 | **量什么** | 渲染文本过 9 条正则的命中数，**命中项与命中串都要点名** |
-| **在哪量** | 两把轴：① `document.querySelector("main").innerText`（判红轴，老账不变）；② `document.body` 直接子层里**不含 `main`** 的每棵子树（portal 族）逐块取 `innerText`，**每块带身份**（默认只报不判红，`--portals-enforce` 才并账）。取文根优先级 `main` → 面声明的 `container` → `body` 兜底，**实际用了哪一把必须落进读数**：`/members` 按设计没有 `<main>`（`OrgMembersView.vue:40`），旧版静默落 body，2937 字符里混着整条导航 chrome，报告却只写字符数。**不用 `textContent`** —— 它把 `sr-only`、`display:none` 子树与脚本串一起吞进来 ⇒ 假阳 |
+| **在哪量** | 两把轴：① `document.querySelector("main").innerText`（判红轴，老账不变）；② `document.body` 直接子层里**不含 `main`** 的每棵子树（portal 族）逐块取 `innerText`，**每块带身份**（默认只报不判红，`--portals-enforce` 才并账）。取文根优先级 `main` → 面声明的 `container` → `body` 兜底，**实际用了哪一把必须落进读数**：`/members` 早期没有 `<main>`（`task-81` 起页面根就是 `main`：`src/features/org-members/pages/OrgMembersView.vue:65`，`:54-57` 的注释记着「旧说法已过期」），旧版静默落 body，2937 字符里混着整条导航 chrome，报告却只写字符数。**不用 `textContent`** —— 它把 `sr-only`、`display:none` 子树与脚本串一起吞进来 ⇒ 假阳 |
 | **在哪些层读** | ① **渲染文本层 = 唯一判据层**；② 组件源码层（`t()` 键引用完整性，归 `lint:i18n`）；③ i18n 源层（**仅供定位，不作判据**）。**读数必须写明读的是哪一层** |
 | **何时量** | 路由 `networkidle` 后 **+ 逐个展开 `role=tab`**；一次性 `role="status"` 与 toast **不计**（按设计是临时的） |
 | **红的样子** | 逐条点名「面 / 正则名 / 命中串」，例：`条目 noDocList 命中「类名」形态：RagProxyController`。**必须能红**：`task-47` 已做变异验证 —— 把 `RagProxyController` 注回正文，2 条断言转红、其余 6 绿。`task-75` 再加**反例锚点** `--anchor`：把一条只在 portal 内可见的泄露串注入 body 级子树，判据两侧都钉 —— 改前（`main` 一把根）必须 0 命中（证盲区真实存在），改后（portal 轴）必须报出（证收敛）。「改后 0 命中」不算通过 |
@@ -874,7 +874,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 - `DelegationPolicyFields.vue:84` 整块只有一句 hint，没有任何字段级标签 ⇒ 读者只能靠 hint 猜每个输入是什么。
 - `AgentModelBindingFields.vue` 有 `<Label :for>`（`:200`、`:229`、`:260`），但同一文案又被塞进 `SelectValue` 的 placeholder（`:214`、`:244`、`:277`）⇒ 空态看起来像已经选好（同族缺陷 `task-139` D7 已登记）。
-- 钩子 kind 只有 placeholder（`APD:925-932`，文案 `i18n/index.ts:3970`「advisor 类型，例如 guard」），既无标签也无必填/可选标注。
+- 钩子 kind 是 `Select`（`ADVISOR_KINDS = ["guard"]`，`AgentPrincipalDetailDrawer.vue:174`）+ `__custom__` 项（`:176`）展开的自定义标签 `Input`（`apd-hooks-custom-tag`，`:1087-1097`）；控件的可访问名取 `t(K + 'hooksKindLabel')`（`:1070`，文案 `i18n/index.ts:3988`），自定义项文案 `hooksKindCustom`（`:1083`，`i18n/index.ts:3989`）⇒ 原「只有 placeholder、无标签」已不成立；但自定义腿仍是自由文本。
 
 **改后判据**
 
@@ -942,7 +942,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 **现状反例**
 
-- 钩子 advisor kind 是自由文本：`apd-hooks-kind:927` 的 `Input` 加 placeholder（`i18n/index.ts:3970`），`newAdvisorKind` 直接 `trim()` 后入列表（`APD:568-570`）⇒ 打错一个字就是另一个「类型」；而 on 白名单今天只有 `approval.ask`（`APD:909` 硬写徽标），说明取值本就有限。
+- 钩子 advisor kind 的自定义腿仍是自由文本：`apd-hooks-kind` 是 `Select`（`ADVISOR_KINDS = ["guard"]`，`APD:174`）加 `__custom__` 项（`APD:176`）展开的 `Input`（`apd-hooks-custom-tag`，`APD:1087-1097`，placeholder `hooksCustomPlaceholder`），值 `trim()` 后入列表（`APD:568-570`）⇒ 打错一个字就是另一个「类型」；而 on 白名单今天只有 `approval.ask`（`ADVISOR_EVENTS`，`APD:175`，也是 `Select`），说明取值本就有限。
 - 侧栏/设置页那批裸机器枚举（domain slug、action 英文）同属本条的镜像缺陷，详见 `task-139` D3 与 `check-ui-rulings` 的 R 规则族。
 
 **改后判据**

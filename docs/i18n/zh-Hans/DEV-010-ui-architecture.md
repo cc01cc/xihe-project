@@ -296,14 +296,14 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 | 项 | 状态 | 位置 |
 | --- | --- | --- |
-| 三处分隔条 + a11y | 已实现 | 导航 `layouts/AppLayout.vue:449-461`（`sidebar-resizer`）、文件树 `features/workspace/components/WorkspaceWorkbench.vue:674-686`（`tree-resizer`）、dock `features/workspace/components/WorkspaceDock.vue:342-356`（`dock-resizer`）：`role="separator"` + `aria-orientation` + `aria-valuenow/min/max` |
-| 4–6px 命中区 / 无箭头按钮 | 已实现 | 三处均 `w-1`（4px）+ `cursor-col-resize` + `hover:bg-primary/20` / `focus-visible:bg-primary/30` |
+| 两处分隔条 + a11y | 已实现 | 导航 `layouts/AppLayout.vue:449-461`（`sidebar-resizer`）、dock `features/workspace/components/WorkspaceDock.vue:342-359`（`dock-resizer`）：`role="separator"` + `aria-orientation` + `aria-valuenow/min/max`。文件树不再有独立分隔条 —— D-1777/D-1778（`e88bfd492`）把它并进右栏 `files` 面板，宽度即 dock 宽，`tree-resizer` 已整段删除；其「不存在」由 `WorkspaceWorkbench.spec.ts:1176` 的正向判据钉住 |
+| 4–6px 命中区 / 无箭头按钮 | 已实现 | 两处均 `w-1`（4px）+ `cursor-col-resize` + `hover:bg-primary/20` / `focus-visible:bg-primary/30` |
 | 键盘 ±16 / `Home`·`End` | 已实现 | 常量 `composables/useWorkspaceLayout.ts:55/41/48`；dock 显式处理 `WorkspaceDock.vue:313-318`（`Home`→MIN、`End`→MAX）；导航与文件树经 `composables/useSplitterPanelBridge.ts:73` 的 `RESIZE_KEYS` |
 | 拖拽 px 浮标 | 已实现（dock） | `WorkspaceDock.vue:361+`，`data-testid="dock-resize-bubble"`，仅显示不持久化 |
-| 双击复位 | 已实现 | 三处 `@dblclick`（`AppLayout.vue:460` / `WorkspaceWorkbench.vue:685` / `WorkspaceDock.vue:354`） |
+| 双击复位 | 已实现 | 两处 `@dblclick`（`AppLayout.vue:460` / `WorkspaceDock.vue:354`；树那一处随 `tree-resizer` 一起删了） |
 | 折叠态与宽度分开持久化 | 已实现 | `composables/useWorkspaceLayout.ts:33-34`（`xihe-layout-global` / `xihe-layout-ws:<id>`）、`:88-99`（`navOpen` / `treeCollapsed` / `dockCollapsed` 与各自宽度分开） |
 | 窄屏夹取不写回 | 已实现 | `composables/useSplitterPanelBridge.ts:29`（stored-width clamp 只作用于 keyboard/dblclick/release）；`clampNavWidthForViewport` 同口径 |
-| **hover 竖向三点抓手** | **未落地** | 仅注释提到 `GripVertical`（`WorkspaceWorkbench.vue:673`），`src` 无实际引入；现状是 hover 背景高亮 |
+| **hover 竖向三点抓手** | **已落地**（`PLAN-0762 M4 T4.1`） | 统一定义在 `components/shared/SashGrip.vue:2`（引入 `GripVertical`），标记 `:24-29`；导航 `AppLayout.vue:462`（`sidebar-resizer-grip`）与 dock `WorkspaceDock.vue:358`（`dock-resizer-grip`）都在用；原「仅注释提到、src 无引入」已不成立 |
 | **全局导航双态 / `SidebarRail` / `⌘B`** | **已落地**（`f97bdf039`） | `components/ui/sidebar/` 已 vendor **26 个文件（24 个 `.vue` + `index.ts`/`utils.ts`）**（计数命令见证据）—— **原理由「`shadcn-vue Sidebar` 组件族尚未 vendor」已不成立**；`SidebarProvider.vue:57-62` 即 `⌘/Ctrl+B`，`SidebarRail.vue` hover 切换，`GlobalRail.vue:62-71` 在用；单测 `components/__tests__/GlobalRail.spec.ts:118-130` |
 
 **复用而非新建**：布局几何的唯一 owner 是 `composables/useWorkspaceLayout.ts`（常量 `:24-51`、状态接口 `:88-99`）与 `composables/useSplitterPanelBridge.ts`；新增列一律走这套，**不另建第二份布局状态**。

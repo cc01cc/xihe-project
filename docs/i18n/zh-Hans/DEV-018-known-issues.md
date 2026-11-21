@@ -213,11 +213,16 @@ updated: 2026-10-25
 
 **解冻步骤**（按顺序执行，一处开关；文件与属性名写全，避免接手人再翻代码）：
 
-1. **恢复测试基类的后端开关**：把这 4 个文件里的 `XIHE_WORKSPACE_DOCKER_BACKEND` 从 `disabled`（或删除该属性）改回 `enabled`：
-   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractH2Test.java:20`
-   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractIntegrationTest.java:29`
+1. **恢复测试基类的后端开关**：把这 5 个文件里的 `XIHE_WORKSPACE_DOCKER_BACKEND` 从 `disabled`（或删除该属性）改回 `enabled`：
+   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractH2Test.java:27`
+   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractIntegrationTest.java:42`
+   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractReusableIntegrationTest.java:46`（task-251 的复用上下文试点基类，91 个子类；2026-11-08 `9c432c333` 新增，不继承上面三个基类，解冻漏掉它等于 91 个类仍停在冻结态）
    - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/crossmodule/AbstractWireMockTest.java:32`
-   - `packages/control-plane/src/test/resources/application-test.properties:29`（test profile 兜底键）
+   - `packages/control-plane/src/test/resources/application-test.properties:38`（test profile 兜底键）
+
+   另有 4 个单类自钉同值 —— `service/AgentPrincipalScopeUpgradeBehaviorTest.java:59`、`plugin/kv/PluginKvFeatureFlagTest.java:43`、`config/OnboardingFirstRunWithoutSeedTest.java:28`、`config/OnboardingSeededAdminLoginTest.java:32`：它们的用途是**与 `.env.dev` 的研发默认隔离**（不继承上面任何基类），不是冻结面，解冻时按需一并处理。
+
+   这 4 条 lane 注释仍停在冻结前的措辞（写着「lane 需要 docker 后端可用」，而属性值在 PLAN-0618 M3 已翻成 `disabled`）：`AbstractH2Test.java:24-25`、`AbstractIntegrationTest.java:37-40`、`AbstractWireMockTest.java:27-30`、`application-test.properties:35-37`。解冻时连注释一起改回，否则下一个读代码的人会以为「注释与值相反是笔误」。
 2. **放开冻结分组**：清空 `packages/control-plane/pom.xml` 里 `PLAN-0618 M3` 新增的属性 `<docker.frozen.excludedGroups>docker-frozen</docker.frozen.excludedGroups>`（Surefire 的 `<excludedGroups>${docker.frozen.excludedGroups}</excludedGroups>` 随之失效），或运行时覆盖：`mvn -o test "-Ddocker.frozen.excludedGroups="`。只想单独跑冻结组时用 `mvn -o test "-Ddocker.frozen.excludedGroups=" -Dgroups=docker-frozen`。
 3. **恢复 E2E 收集**：给受影响批次加 `--include-docker-frozen`（PLAN-0618 M3 的 runner 开关；口径以 `m3-frozen-tests.md` 定稿为准），并按该文件逐条核对应恢复全绿的 spec（冻结清单 6 条 CP 用例 + E2E spec 列表都在里面）。
 4. **产品面开关只用于解冻/取证**：`XIHE_WORKSPACE_DOCKER_BACKEND=enabled` 只在解冻验证或取证时注入，不写进 `.env.dev` 日常默认（见 `.env.example`）；恢复后 `POST /api/v1/workspaces` 才重新接受 `storageMode=managed_import`。
@@ -260,7 +265,7 @@ updated: 2026-10-25
 - **现象**：`e2e/mock/full-ui-acceptance.spec.ts` 的 ProviderHub-creates 用例在 develop 基线（e42d95c0）即红：点击 provider 卡片后 `provider-connection-modal`（连接表单）不出现，15s 超时。同轮 sidebar、message-search（PLAN-0401 evidence 已登记同族）、workspace-file、PDF、FileEditor 共 6 个红点。0505 的双端对照实证见 `plans/PLAN-0505-*/evidence/reports/plan0505-baseline-mock.log`。
 - **影响**：mock lane 对 ProviderHub 表单类流程（创建/类型变更 UI 流）失去回归能力；0505 删除流的浏览器证据由 real lane `plan-0505-delete-impact.spec.ts` 承载（真实链路一次通过），不受影响。
 - **修复方向**：独立小批次修 mock 夹具（route mock 与组件接线的对齐），修好后补删除流桌面/移动断言。真实链路回归不可因此省略（0505 复跑曾靠 real lane 逮住单测漏掉的对话框回归）。
-- **PLAN-0560 复核（2026-10-27）**：develop `3516901b` 与 `plan-0560` worktree 双侧仍红，与 0505 同根（picker→connection form 打开链路），同族新增 `e2e/mock/provider-protocol-groups.spec.ts:133`（discovery select 选项缺失，同为 picker 表单链路）。另发现独立根因一例：`workspace-management.spec.ts:65` empty-state——router 守卫对 `/workspace/new` 执行 `writeTabWorkspaceId("new")`，而 helper 对任意 id 的 `GET /api/v1/workspaces/*` 一律返回 Mock Workspace，导致空态分支永不可达。三例均已在两侧复跑归因（`one/plans/PLAN-0560-*/evidence/m4-wave.md`）。全量 mock lane 并行 run 在两侧都大面积环境性 flaky（分支 17F / develop ≥25F，失败集互相重叠且含大量非 ProviderHub spec），逐 spec 串行为准。
+- **PLAN-0560 复核（2026-10-27）**：develop `3516901b` 与 `plan-0560` worktree 双侧仍红，与 0505 同根（picker→connection form 打开链路），同族新增 `e2e/mock/provider-protocol-groups.spec.ts:133`（discovery select 选项缺失，同为 picker 表单链路）。另发现独立根因一例：`workspace-management.spec.ts:180` empty-state（`workspace-picker-empty` 断言；用例 `page.goto("/workspace")` 起于 `:177`）——router 守卫对 `/workspace/new` 执行 `writeTabWorkspaceId("new")`，而 helper 对任意 id 的 `GET /api/v1/workspaces/*` 一律返回 Mock Workspace，导致空态分支永不可达。三例均已在两侧复跑归因（`one/plans/PLAN-0560-*/evidence/m4-wave.md`）。全量 mock lane 并行 run 在两侧都大面积环境性 flaky（分支 17F / develop ≥25F，失败集互相重叠且含大量非 ProviderHub spec），逐 spec 串行为准。
 - **修复（PLAN-0577，2026-10-29，合入 develop `b4f3f051`）**：8 例单进程串行复跑 **8 passed**（`--workers=1 --retries=0`）。根因分三类：① mock provider catalog 缺 `supportedApiTypes`/`defaultApiType`，组件 `resetForm` 读取即中断 picker→form 链路（ProviderHub、protocol groups）；② workspace 空态入口误用 `/workspace/new`，改为 `/workspace`，managed 创建按现行对话框不传 `executionMode`；③ 新增根因：未 mock 的 `/api/v1/chat/sessions/*/monitor` 经 dev 代理命中真实 CP 返回 401，触发全局登出，使 sidebar/message-search/workspace-file 依赖外部服务状态——已在 `helpers/auth.ts` 补 SSE 桩。两处过时断言按现行契约更新（discovery 四种模式见 PLAN-0438；managed 跳过执行模式），未放宽为纯删除：`LiteLLM Catalog` 改正向断言、退役标签仍拒绝。real lane `plan-0505-delete-impact.spec.ts` 补齐桌面 `1920x1080` + 移动 `390x844` 双视口、取消后服务端零变更读回，隔离栈 1 passed 并完成截图复核。并行 flaky（D4）未修，仍按逐 spec 串行口径。证据：`one/plans/PLAN-0577-XH-fixture-debt-batch/evidence/m1-mock.md`。
 
 ## PLAN-0505 审查次生回归 — 状态机守卫须双侧验证（已修复，供回溯）

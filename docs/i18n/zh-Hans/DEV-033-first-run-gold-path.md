@@ -47,7 +47,7 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 
 ## 3. 首跑（登录 dev 管理员 → 空白起步）
 
-**「空白实例」= 没有工作区，不是没有账号**：CP 启动时 `DataSeeder` 在**非**本地模式下建 `admin@xihe.local`，并在同一事务里把它绑成 instance owner + `SUPER_ADMIN`（`DataSeeder.java:65-89`）。所以首跑不需要注册，也不需要（已放弃的）本地模式。
+**「空白实例」= 没有工作区，不是没有账号**：CP 启动时 `DataSeeder` **仅在 `cp.bootstrap.seed-admin=true`（`XIHE_SEED_ADMIN`，默认 false，D-1532 ④）时**建 `admin@xihe.local`，并在同一事务里把它绑成 instance owner + `SUPER_ADMIN`（`config/DataSeeder.java:121-161`；开关关时实例保持未初始化，首账号由 onboarding 建）。所以首跑不需要注册，也不需要（已放弃的）本地模式。
 
 密码从哪来，按你的起栈方式二选一：
 

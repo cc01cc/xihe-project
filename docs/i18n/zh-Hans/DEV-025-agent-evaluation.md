@@ -251,7 +251,7 @@ gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`d
 | Provider Connection | WORKSPACE scope、`openai` / `openai-chat-completions` v1、verify READY。**不能用 `custom-openai-compatible`**：该 provider 的 `openai-chat-completions` v1 是 `capability.tools=false`（`provider-catalog/providers.json:328`），工具类任务在传输前即 `LLM_TOOL_ROUTE_UNSUPPORTED` |
 | instance profile | `llm-provider` 指向该 connection（`eval-fake-llm` / `eval-fake-model`；否则 Agent `llmReady=missing_credentials`） |
 | workspace 预算 | `agent-runtime.runMaxTurns=2`（否则 180s 内跑不出刹车码） |
-| workspace 上下文 | WORKSPACE-scope 写（建 agent principal、写 workspace 层配置）**必须显式带 `X-Workspace-Id`**，否则 `409 WORKSPACE_CONTEXT_REQUIRED`（PLAN-0622）：写路径不猜 workspace，CP 的「首个活跃成员」回退只用于读（`AgentPrincipalService.java:196-211`） |
+| workspace 上下文 | WORKSPACE-scope 写（建 agent principal、写 workspace 层配置）**必须显式带 `X-Workspace-Id`**，否则 `409 WORKSPACE_CONTEXT_REQUIRED`（PLAN-0622）：写路径不猜 workspace，CP 的「首个活跃成员」回退只用于读（`AgentPrincipalService.java:1526` 是 throw 处；方法级 javadoc `:1459-1470`（BL-326/D22：上下文检查必须先于 `findById`，否则 404/403 成存在性 oracle）与 `:1471+`（D-196/BL-336：改成 scope-aware）记着取舍） |
 | 授权来源 | `grants.source='direct'` 已被 V88 / PLAN-0610 T1.6 退役——`ck_grants_source` 现值 `('role','spawn','template','credential_binding','agent_default')`，直接种 direct grant 会被约束拒绝，且 `direct` 不在 `GrantSources.EVALUATION_SOURCES`（`GrantSources.java:59-60`）⇒ 即使插入也不参与授权判定。授权应靠角色物化 `source='role'` + workspace agent cap |
 | token | `--token` 或 `XIHE_EVAL_TOKEN` |
 
