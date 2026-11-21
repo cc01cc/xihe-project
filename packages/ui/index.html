@@ -9,15 +9,49 @@
         <!-- task-294：声明本页支持双配色，原生控件（滚动条/焦点环/日期选择器/autofill）才跟随深浅 -->
         <meta name="color-scheme" content="light dark" />
         <title>xihe - AI Agent Platform</title>
+        <!--
+            task-707：首屏语言表必须与 src/i18n/locale.ts 的 normalizeLocale 保持一致，
+            改一处必须改两处。这里是防 FOUC 的解析期内联前置（无 import），运行时真值来源
+            仍是 applyLocale()；未知取值一律回落 zh-CN，不得用前缀匹配扩大产品语义。
+        -->
         <script>
             (function () {
                 try {
                     var value = localStorage.getItem("xihe-language") || "zh-CN";
-                    if (value.charAt(0) === '"') {
-                        value = JSON.parse(value);
+                    // 与 normalizeLocale 的 stripJsonQuotes 同形：只认成对的双引号 JSON 字符串。
+                    if (
+                        value.length >= 2 &&
+                        value.charAt(0) === '"' &&
+                        value.charAt(value.length - 1) === '"'
+                    ) {
+                        try {
+                            var parsed = JSON.parse(value);
+                            if (typeof parsed === "string") {
+                                value = parsed;
+                            }
+                        } catch (e) {}
                     }
                     var key = String(value).trim().toLowerCase().replace(/_/g, "-");
-                    document.documentElement.lang = key.indexOf("en") === 0 ? "en-US" : "zh-CN";
+                    // task-707：别名表与 normalizeLocale 逐条对应（含默认回落），改一处必须改两处。
+                    var lang;
+                    switch (key) {
+                        case "zh":
+                        case "zh-cn":
+                        case "zh-hans":
+                        case "zh-hans-cn":
+                        case "zh-chs":
+                            lang = "zh-CN";
+                            break;
+                        case "en":
+                        case "en-us":
+                        case "en-gb":
+                        case "en-lang":
+                            lang = "en-US";
+                            break;
+                        default:
+                            lang = "zh-CN";
+                    }
+                    document.documentElement.lang = lang;
                 } catch (e) {}
             })();
             (function () {
