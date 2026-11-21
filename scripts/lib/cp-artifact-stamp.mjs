@@ -14,7 +14,10 @@
  * The fix is not "also write the sidecar in that branch" (a third copy of the order would drift the
  * same way). It is this module: one call that stamps and fingerprints, with the ordering pinned in
  * one place — the stamp first (it is the cheaper, in-jar read), the sidecar second and only after the
- * jar exists, so `builtAt` can never predate the artifact it describes.
+ * jar exists. **This ordering is not a safety property on its own** (task-703): it only means the
+ * fingerprint is computed over bytes that are already on disk. Whether those bytes came from *this*
+ * build is a separate question, answered by `verifyJarRepackaged()` in `cp-jar-sidecar.mjs`, which
+ * both producers must call before stamping.
  *
  * Both producers in `scripts/e2e-host.mjs` call this and nothing else: `e2e-host-readiness.test.mjs`
  * asserts there are no direct `writeBuildInfo` / `writeSidecarForJar` call sites left, so a future
@@ -58,8 +61,13 @@ export function stampCpArtifact({ projectDir, targetDir, jarPath, writtenBy, run
       }
     : { ok: false, file: null, commit: null, dirty: null, error: `git HEAD is unavailable (${head.error})` }
   // The sidecar is written **after** the stamp and only after the jar exists (this function is only
-  // ever called post-packaging); the writer itself refuses a jar older than a few seconds, so a
-  // manifest can never be forged onto an artifact from an earlier build.
+  // ever called post-packaging). This ordering is NOT a forge-proof: `buildSidecar` only bounds how
+  // far the jar's mtime may lag (and, since task-703, run ahead by `DEFAULT_MAX_FUTURE_MTIME_MS`), so
+  // a manifest can still be stamped onto bytes that were never rebuilt whenever the *build tool*
+  // skipped packaging — which `maven-jar-plugin` does silently when the jar is newer than the classes.
+  // That is exactly what happened in task-42 Run A. The content-level defence lives in
+  // `verifyJarRepackaged()` (in `cp-jar-sidecar.mjs`, the module that owns the jar's byte identity),
+  // and both producers in `scripts/e2e-host.mjs` must call it.
   const sidecar = writeSidecarForJar({ projectDir, jarPath, writtenBy, run, ...sidecarDeps })
   return { head, buildInfo, sidecar, paired: buildInfo.ok && sidecar.ok === true }
 }
@@ -86,7 +94,12 @@ export function describeStamp({ buildInfo, sidecar, label }) {
         + ` CP tree ${String(data.sourceTreeSha256).slice(0, 12)}…, commit ${String(data.commit).slice(0, 12)}, dirty=${data.dirty})`,
     )
     if (sidecar.clockSkewMs > 0) {
-      lines.push(`[e2e-host] WARN: ${label}: sidecar builtAt was clamped by ${sidecar.clockSkewMs} ms: the system clock is behind the jar mtime`)
+      // task-703: `builtAt` is no longer clamped upward, so this must not claim a clamp. The skew is
+      // reported as what it is — the jar's mtime is ahead of the writer's clock, inside tolerance.
+      lines.push(
+        `[e2e-host] WARN: ${label}: the jar mtime is ${sidecar.clockSkewMs} ms ahead of the clock that wrote the sidecar`
+          + ' (inside the future-mtime tolerance; `builtAt` is the writer clock, not the jar mtime)',
+      )
     }
   } else {
     lines.push(

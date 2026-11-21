@@ -11,7 +11,7 @@ import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
 import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
-import { evaluateSidecar, readSidecar, resolveArtifactTruth, sha256File } from './lib/cp-jar-sidecar.mjs'
+import { evaluateSidecar, readSidecar, resolveArtifactTruth, sha256File, verifyJarRepackaged } from './lib/cp-jar-sidecar.mjs'
 // task-180: the jar's two identities are written by ONE call, so no branch can write half a pair.
 import { describeStamp, stampCpArtifact } from './lib/cp-artifact-stamp.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
@@ -606,6 +606,33 @@ function selfHealIsNeeded(snapshot) {
   }
 }
 
+// task-703: the content-level FAIL-FAST shared by BOTH jar producers (the `build-then-use` branch of
+// resolveCpBootPlan and the preflight 前自愈 branch). Neither `mvn`'s exit code nor an mtime comparison
+// proves the bytes changed — `maven-jar-plugin` skips repackaging silently when the jar is newer than
+// target/classes, and that is how task-42 Run A produced "mvn green + fresh sidecar + stale content".
+// One function, one exit policy: the judgement must not be able to drift between the two sites.
+// `beforeSha256` comes from the shared sample the boot plan already took, so this adds no second read.
+//
+// `requireChange` keeps the guard from inventing a NEW false red. When the pre-build sample already
+// judged the artifact `fresh` (bytes and HEAD tree both match — e.g. `--jar-mode=rebuild` on a current
+// tree), an unchanged sha is the honest outcome: there was nothing to rebuild. The check is mandatory
+// exactly in the case Run A was: the content said the jar was behind, so the bytes had to move.
+function assertJarRepackaged({ beforeSha256, jarPath, jarName, label, requireChange = true }) {
+  if (!requireChange) {
+    console.log(`[e2e-host] ${label}: the artifact already matched HEAD before the build; an unchanged jar is expected here, so the byte comparison is not applied`)
+    return { ok: true, reason: null, skipped: true }
+  }
+  const checked = verifyJarRepackaged({ beforeSha256, jarPath, jarName, label })
+  if (!checked.ok) {
+    console.error(`[e2e-host] FAIL-FAST: ${checked.reason}`)
+    process.exit(1)
+  }
+  if (!checked.skipped) {
+    console.log(`[e2e-host] ${label}: jar bytes changed after the build (sha256 ${String(checked.afterSha256).slice(0, 12)}…) — the artifact really was repackaged`)
+  }
+  return checked
+}
+
 // R2 decision table (--jar-mode): auto = fresh jar, else build-then-use (a MISSING jar
 // is built once and reused instead of falling into `mvn spring-boot:run`, which never
 // produces a jar — BL-205 ②); use = always boot the existing jar; rebuild = always
@@ -636,7 +663,9 @@ async function resolveCpBootPlan() {
   // task-42 ①: this is refresh point 1. Every decision below (stale by mtime, identity mismatch, and the
   // reader's own tree verdict) comes out of ONE read of the artifact, and the same read is what the
   // window gate will consume. No second hash, no second sidecar read.
-  const { state } = recordJarSample({ sampledBy: 'boot-plan' })
+  // task-703: that single read also carries the **pre-build** jar hash, which is what the rebuild below
+  // is compared against — proving the bytes changed costs no extra read of the artifact.
+  const { state, snapshot: bootPlanSnapshot } = recordJarSample({ sampledBy: 'boot-plan' })
   // task-90: an artifact that is not the one its sidecar describes cannot be trusted on mtime alone,
   // so it takes the same "build before boot" path as a stale jar (never booted silently).
   const identityMismatch = state.sidecar.state === 'ok' && state.sidecar.identity === false
@@ -681,6 +710,21 @@ async function resolveCpBootPlan() {
     console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
     return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
   }
+  // task-703: `mvn` exiting 0 does not mean it repackaged anything, and neither does the mtime check
+  // above — a jar whose mtime was pushed forward passes it while holding bytes from an older tree
+  // (task-42 Run A). Compare the content before any mark is written: content first, marks second.
+  // The byte requirement is keyed to the *reader's* verdict on the pre-build sample, not to the mtime
+  // flag: a forged future mtime makes `staleByMtime` false while the tree is still behind HEAD, and
+  // `--jar-mode=rebuild` takes this branch regardless. Only a sample the reader called `fresh` (bytes
+  // and HEAD tree both match) makes an unchanged jar legitimate — anything else must produce new bytes.
+  const bootPlanJudgement = selfHealIsNeeded(bootPlanSnapshot)
+  assertJarRepackaged({
+    beforeSha256: bootPlanSnapshot?.jarSha256 ?? null,
+    jarPath: after.jar.path,
+    jarName: after.jar.name,
+    label: 'rebuild',
+    requireChange: bootPlanJudgement.shared.verdict !== 'fresh',
+  })
   const stamp = stampCpArtifact({
     projectDir,
     targetDir: e2eCpTargetDir,
@@ -2776,6 +2820,19 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
         console.error('[e2e-host] FAIL-FAST: 自愈重建后找不到 CP jar；拒绝继续（preflight 会判 artifact 缺失）')
         process.exit(1)
       }
+      // task-703: same content check as the rebuild branch, same function — this branch is exactly where
+      // Run A failed: mvn skipped repackaging, the sha never changed, and the marks below would have
+      // stamped HEAD's tree onto an artifact from an older tree. Compared against the **shared sample**
+      // taken before mvn, so the judgement costs no second read of the artifact.
+      assertJarRepackaged({
+        beforeSha256: snapshot?.jarSha256 ?? null,
+        jarPath: healed.jar.path,
+        jarName: healed.jar.name,
+        label: 'preflight 前自愈',
+        // This branch only runs when `selfHealIsNeeded()` said the shared sample is stale, so the bytes
+        // must move — that is precisely the Run A condition.
+        requireChange: true,
+      })
       const stamp = stampCpArtifact({
         projectDir,
         targetDir: e2eCpTargetDir,

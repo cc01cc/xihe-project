@@ -27,7 +27,8 @@
  * - `sourceTreeSha256`     — sha256 of `git ls-tree -r HEAD -- packages/control-plane` (free,
  *                            deterministic, recomputable by hand; see `sourceTreeSha256Command()`)
  * - `sourceScope`          — the pathspec the tree hash covers
- * - `builtAt`              — **packaging completion** time (ISO), never earlier than the jar mtime
+ * - `builtAt`              — **packaging completion** time (ISO), the writer's own clock — never the
+ *                            jar's mtime, because an mtime can be set to the future (task-703)
  * - `dirty` / `writtenBy`  — honest provenance: a tree that was dirty at build time cannot be
  *                            proven from `commit`
  *
@@ -46,7 +47,7 @@
  * - trust `builtAt` / mtime order: that is exactly the mtime-as-truth defect task-84 removed.
  * - hash the jar but skip the tree hash: then "same jar, newer sources" is undetectable.
  *
- * ## Forging must stay impossible-by-accident (measured 2026-11-08)
+ * ## Forging must stay impossible-by-accident (measured 2026-11-08; both directions since task-703)
  * The one thing this module cannot verify is that the *current* tree actually produced the jar it is
  * told about — that is the producer's attestation. A demo run exposed the gap concretely: writing a
  * manifest for the existing shared jar (built from `bd4dcf5c` 81 minutes earlier) made the reader
@@ -58,8 +59,18 @@
  * production path would be the wrong shape, and the truthful-but-old manifest is exactly the thing
  * a hand-run forge would produce.
  *
+ * **The lag guard alone is one-directional and that was a defect (task-703).** A jar mtime in the
+ * *future* makes `writeLagMs` negative, so `writeLagMs > maxWriteLagMs` can never fire — measured in a
+ * real run: `mtime = now + 5 min` ⇒ the guard stayed silent, `maven-jar-plugin` saw the jar as newer
+ * than `target/classes` and **skipped repackaging**, and the self-heal branch stamped a manifest for
+ * HEAD's tree onto jar bytes that had not changed (sha256 identical to an 11-file-older build). The
+ * old `Math.max(nowMs, jarMtimeMs)` made that worse: it *laundered* the future mtime into a
+ * self-consistent `builtAt` and left only a WARN. `buildSidecar` now also refuses when the jar's mtime
+ * is later than `maxFutureMtimeMs`, and `builtAt` is always the writer's clock.
+ *
  * ## What the write-lag guard does NOT cover (two separate gates)
- * `maxWriteLagMs` bounds **time**: "you are writing now about something built long ago". It says
+ * `maxWriteLagMs`/`maxFutureMtimeMs` bound **time**: "you are writing now about something built long
+ * ago" and "…or about something whose mtime claims to be built later than now". They say
  * nothing about the **tree changing during the build** — there `sourceTreeSha256` honestly records
  * the HEAD that was read, yet the jar may hold half-finished code. That axis is carried by `dirty`
  * plus the tree hash comparison: `dirty=true` or tree ≠ HEAD ⇒ the reader reports `degraded`/`stale`
@@ -88,6 +99,25 @@ export const DEFAULT_SOURCE_SCOPE = 'packages/control-plane';
  * fail-closed: the caller warns and the content path judges the artifact instead.
  */
 export const DEFAULT_MAX_WRITE_LAG_MS = 120_000;
+
+/**
+ * How far the jar's mtime may run **ahead of the writer's clock** and still be a real artifact
+ * (default 2 s, task-703).
+ *
+ * The lag guard only bounds `now - mtime`, so a mtime in the future produced a negative lag and could
+ * never exceed it. This is the missing second direction. The window is not zero because filesystem
+ * timestamps are coarse and a real producer can be a fraction of a second behind the artifact it just
+ * wrote (NTFS writes 100 ns granularity but `mtime` is rounded; a clock slewed during a long build is
+ * also normal) — zero would refuse legitimate producers for noise. 2 s covers that without letting a
+ * hand-set future mtime through: the measured abuse was `+5 min`, and `maven-jar-plugin`'s
+ * skip-repackaging decision needs the jar to look newer by more than the class files' gap, i.e.
+ * minutes, not seconds.
+ *
+ * Deliberately **not** a knob to widen in the production path: this direction has no bypass flag and
+ * no environment escape. A refused write falls back to the content-evidence path, which is the same
+ * fail-closed shape as the lag guard.
+ */
+export const DEFAULT_MAX_FUTURE_MTIME_MS = 2_000;
 
 /** Field order is also the on-disk key order (byte-stable files diff cleanly). */
 export const SIDECAR_FIELDS = Object.freeze([
@@ -172,10 +202,16 @@ export function computeSourceTreeSha256({ projectDir, scope = DEFAULT_SOURCE_SCO
 /**
  * Build the sidecar payload for a jar that was just produced. Pure apart from the injected deps.
  *
- * `builtAt` is **clamped** to the jar's mtime: a clock behind the filesystem would otherwise let a
- * manifest claim it predates the artifact it describes (`builtAt < jar.mtime` is the ordering task-90
- * verifies). A jar that is *older* than `maxWriteLagMs` is refused outright — see the module docblock
- * ("Forging must stay impossible-by-accident").
+ * `builtAt` is the **writer's clock** (`nowMs`) and nothing else (task-703). It used to be
+ * `Math.max(nowMs, jarMtimeMs)`, which took a future mtime as a legitimate build time: that turned a
+ * forged or clock-skewed mtime into self-consistent evidence instead of a refusal. The ordering
+ * invariant task-90 verifies (`builtAt >= jar.mtime`) is now protected the other way round — a jar
+ * whose mtime is ahead of the writer is **refused** unless it is within `maxFutureMtimeMs`, and inside
+ * that tolerance `clockSkewMs` reports the skew instead of hiding it.
+ *
+ * Two refusals, one per direction: older than `maxWriteLagMs` (an after-the-fact manifest) or newer
+ * than `maxFutureMtimeMs` (a jar that cannot have been built yet — and which makes a build tool skip
+ * repackaging, so the bytes may be from an older tree at all).
  *
  * @param {{
  *   projectDir: string,
@@ -184,6 +220,7 @@ export function computeSourceTreeSha256({ projectDir, scope = DEFAULT_SOURCE_SCO
  *   scope?: string,
  *   now?: () => number,
  *   maxWriteLagMs?: number,
+ *   maxFutureMtimeMs?: number,
  *   run?: typeof spawnSync,
  *   readFile?: typeof readFileSync,
  *   stat?: typeof statSync,
@@ -197,6 +234,7 @@ export function buildSidecar({
   scope = DEFAULT_SOURCE_SCOPE,
   now = Date.now,
   maxWriteLagMs = DEFAULT_MAX_WRITE_LAG_MS,
+  maxFutureMtimeMs = DEFAULT_MAX_FUTURE_MTIME_MS,
   run = spawnSync,
   readFile = readFileSync,
   stat = statSync,
@@ -221,13 +259,32 @@ export function buildSidecar({
         + ' the fingerprint exists to prevent — run the build and write the sidecar from the same invocation',
     };
   }
+  // task-703: the guard above is one-directional. `writeLagMs` goes *negative* for a future mtime, so
+  // `writeLagMs > maxWriteLagMs` can never fire — and a future mtime is the more dangerous case, because
+  // `maven-jar-plugin` then treats the jar as up to date and silently skips repackaging. Refusing here
+  // is what stops a manifest for HEAD's tree from being stamped onto bytes that were never rebuilt.
+  const futureSkewMs = jarMtimeMs - nowMs;
+  if (Number.isFinite(maxFutureMtimeMs) && futureSkewMs > maxFutureMtimeMs) {
+    return {
+      ok: false,
+      data: null,
+      error:
+        `refusing to fingerprint a jar whose mtime is ${Math.round(futureSkewMs / 1000)}s later than the current time (limit ${Math.round(maxFutureMtimeMs / 1000)}s):`
+        + ' an artifact cannot have been packaged in the future. A jar touched forward makes maven-jar-plugin skip'
+        + ' repackaging, so this manifest would vouch for bytes that were never rebuilt — the same false green the'
+        + ' write-lag guard exists to prevent, approached from the other side of the clock.'
+        + ' Set the mtime to the past, or rebuild without forging it, and write the sidecar from the same invocation',
+    };
+  }
   const hashed = sha256File(jarPath, { readFile });
   if (!hashed.ok) return { ok: false, data: null, error: `cannot hash the jar: ${hashed.error}` };
   const head = gitHead({ cwd: projectDir, run });
   if (!head.commit) return { ok: false, data: null, error: `cannot resolve git HEAD (${head.error}); refusing to write an unstamped sidecar` };
   const tree = computeSourceTreeSha256({ projectDir, scope, run });
   if (!tree.ok) return { ok: false, data: null, error: `cannot hash the CP source tree: ${tree.error}` };
-  const builtAtMs = Math.max(nowMs, jarMtimeMs);
+  // The writer's own clock. Never `max(nowMs, jarMtimeMs)`: that laundered a future mtime into a
+  // build time the reader would take at face value (task-703).
+  const builtAtMs = nowMs;
   const data = {
     schema: SIDECAR_SCHEMA,
     jarName: basename(jarPath),
@@ -245,8 +302,9 @@ export function buildSidecar({
     data,
     error: null,
     file,
-    // Reported so a caller can log "the clock was behind" instead of silently reordering.
-    clockSkewMs: nowMs < jarMtimeMs ? jarMtimeMs - nowMs : 0,
+    // Reported so a caller can log "the jar's mtime is ahead of my clock" instead of silently
+    // reordering. Only reachable inside `maxFutureMtimeMs` — beyond it the write is refused above.
+    clockSkewMs: futureSkewMs > 0 ? futureSkewMs : 0,
     treeEntries: tree.entries,
   };
 }
@@ -255,7 +313,10 @@ export function buildSidecar({
  * Write the sidecar atomically (temp file + rename in the same directory).
  *
  * Ordering contract: the caller writes **after** the jar has been produced, so
- * `mtime(sidecar) >= mtime(jar)` and `builtAt >= jar.mtime`. A crash between the two leaves the
+ * `mtime(sidecar) >= mtime(jar)`. `builtAt` is the writer's clock, so it is >= the jar mtime except
+ * inside `DEFAULT_MAX_FUTURE_MTIME_MS`, where a slightly-ahead mtime is tolerated and reported as
+ * `clockSkewMs` rather than folded into `builtAt` (task-703: taking the max used to launder a forged
+ * future mtime into evidence). A crash between the two leaves the
  * previous sidecar describing a jar that no longer exists → the reader reports
  * `identity-mismatch` (stale, non-deferrable) rather than a false green.
  *
@@ -310,6 +371,69 @@ export function writeSidecarForJar(input) {
   if (!built.ok) return { ok: false, file, data: null, error: built.error };
   const written = writeSidecarAtomic({ sidecarPath: file, data: built.data, writeFile: input.writeFile, rename: input.rename });
   return { ok: written.ok, file: written.file, data: built.data, error: written.error, clockSkewMs: built.clockSkewMs };
+}
+
+/**
+ * Did the build actually produce new **bytes**? (task-703 — the content-level FAIL-FAST.)
+ *
+ * Both jar producers in `scripts/e2e-host.mjs` (`label: 'rebuild'` and `label: 'preflight 前自愈'`)
+ * used to trust `mvn`'s exit code plus an mtime comparison. Neither proves anything about the bytes:
+ * `maven-jar-plugin` **silently skips repackaging** when the jar is newer than `target/classes`, so
+ * "mvn succeeded" + "a fresh sidecar" + "stale content" can all be true at once. Measured in task-42
+ * Run A: the jar's mtime had been pushed 5 min into the future, packaging was skipped, sha256 stayed
+ * `eee4cb1d…` (identical to an artifact 11 CP files older), and the self-heal branch wrote HEAD's tree
+ * into the manifest anyway — the strongest evidence, manufactured onto the wrong bytes.
+ *
+ * Comparing the hash before and after the build catches both failure shapes (packaging skipped; the
+ * build genuinely produced no change). It is also why the Lead rejected `-Dmaven.jar.forceCreation=true`
+ * for this: that flag only rewrites zip timestamps, so a changed sha would no longer mean changed
+ * content and this judgement would lose its meaning.
+ *
+ * Lives here rather than in `cp-artifact-stamp.mjs` because the byte identity of the jar is this
+ * module's fact; the stamp module remains the single place the two marks are **written**.
+ *
+ * @param {{
+ *   beforeSha256: string|null|undefined,
+ *   jarPath: string,
+ *   jarName?: string,
+ *   label?: string,
+ *   sha256?: typeof sha256File,
+ * }} input `beforeSha256` must be the hash taken **before** the build ran — the shared sample
+ *   (`buildJarSnapshot().jarSha256`) already holds it, so the producers need no extra read.
+ * @returns {{ok: boolean, reason: string|null, afterSha256: string|null, skipped: boolean}}
+ *   `skipped: true` when there was no jar before the build, so there is nothing to compare — a first
+ *   build is not a failure and must not be reported as one.
+ */
+export function verifyJarRepackaged({ beforeSha256, jarPath, jarName, label = 'rebuild', sha256 = sha256File }) {
+  if (!beforeSha256) {
+    return { ok: true, reason: null, afterSha256: null, skipped: true };
+  }
+  const hashed = sha256(jarPath);
+  if (!hashed?.ok) {
+    return {
+      ok: false,
+      reason:
+        `${label}: cannot hash ${jarName ?? jarPath} after the build to prove it was repackaged`
+        + ` (${hashed?.error ?? 'unknown error'}) — refusing to continue with an artifact whose bytes cannot be verified`,
+      afterSha256: null,
+      skipped: false,
+    };
+  }
+  if (hashed.sha256 === beforeSha256) {
+    return {
+      ok: false,
+      reason:
+        `${label}: the CP jar is byte-identical to the artifact that existed before the build (sha256 ${String(hashed.sha256).slice(0, 12)}… unchanged)`
+        + ' — maven-jar-plugin skipped repackaging, so this jar cannot contain the current tree.'
+        + ' Usual cause: the jar mtime is newer than target/classes (a hand-set or future mtime makes the'
+        + ' plugin consider the jar up to date). Delete the jar or let the build rewrite it; do NOT move the'
+        + ' mtime forward again. Continuing would stamp a manifest for HEAD onto stale bytes — the exact'
+        + ' false green task-42 Run A measured.',
+      afterSha256: hashed.sha256,
+      skipped: false,
+    };
+  }
+  return { ok: true, reason: null, afterSha256: hashed.sha256, skipped: false };
 }
 
 /**

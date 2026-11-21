@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  DEFAULT_MAX_FUTURE_MTIME_MS,
+  DEFAULT_MAX_WRITE_LAG_MS,
   DEFAULT_SOURCE_SCOPE,
   SIDECAR_SCHEMA,
   buildSidecar,
@@ -31,6 +33,7 @@ import {
   sourceTreeSha256Command,
   writeSidecarAtomic,
   writeSidecarForJar,
+  verifyJarRepackaged,
 } from './cp-jar-sidecar.mjs';
 
 const TREE_TEXT = '100644 blob aaaa\tpackages/control-plane/pom.xml\n100644 blob bbbb\tpackages/control-plane/src/main/resources/application.properties\n';
@@ -141,16 +144,21 @@ test('T4: source tree hash covers the raw ls-tree bytes and counts entries', () 
   assert.match(empty.error, /listed no files/);
 });
 
-test('T5: buildSidecar records identity + provenance, and clamps builtAt to the jar mtime', () => {
+test('T5: buildSidecar records identity + provenance, and builtAt is the writer clock (never the jar mtime)', () => {
+  // task-703 rewrote the second half of this test. It used to assert `builtAt === max(now, jar mtime)`
+  // with the jar mtime in 2030, i.e. it **codified the laundering**: a future mtime became a legitimate
+  // build time and the only trace was a WARN. `builtAt` is now the writer's own clock; a mtime ahead of
+  // it is reported as skew, and beyond the tolerance it is refused outright (T25).
   const dir = tempDir();
   const jarPath = writeJar(dir);
-  const jarMtimeMs = Date.UTC(2030, 0, 1); // far future: a "now" earlier than this must be clamped
+  const jarMtimeMs = Date.UTC(2030, 0, 1);
   utimesSync(jarPath, jarMtimeMs / 1000, jarMtimeMs / 1000);
+  const nowMs = jarMtimeMs - 1_000; // the mtime is 1 s ahead: inside the tolerance, so it is a real artifact
   const built = buildSidecar({
     projectDir: 'C:/proj',
     jarPath,
     writtenBy: 'scripts/e2e-host.mjs',
-    now: () => jarMtimeMs - 60_000,
+    now: () => nowMs,
     run: fakeGit().run,
   });
   assert.equal(built.ok, true);
@@ -160,11 +168,13 @@ test('T5: buildSidecar records identity + provenance, and clamps builtAt to the 
   assert.equal(built.data.sourceTreeSha256, TREE_SHA);
   assert.equal(built.data.dirty, false);
   assert.equal(built.data.writtenBy, 'scripts/e2e-host.mjs');
-  // the clamp keeps the ordering invariant the card verifies on a real build
-  assert.equal(Date.parse(built.data.builtAt), jarMtimeMs);
-  assert.equal(built.clockSkewMs, 60_000);
+  // the laundering is gone: the manifest does not adopt the artifact's future mtime as its build time
+  assert.equal(Date.parse(built.data.builtAt), nowMs);
+  assert.notEqual(Date.parse(built.data.builtAt), jarMtimeMs);
+  // …and the skew is reported instead of hidden
+  assert.equal(built.clockSkewMs, 1_000);
 
-  // and when the clock is ahead of the artifact (the normal case) it is not touched
+  // when the clock is ahead of the artifact (the normal producer case) nothing is touched
   const ahead = buildSidecar({ projectDir: 'C:/proj', jarPath, now: () => jarMtimeMs + 5_000, run: fakeGit().run });
   assert.equal(Date.parse(ahead.data.builtAt), jarMtimeMs + 5_000);
   assert.equal(ahead.clockSkewMs, 0);
@@ -532,4 +542,157 @@ test('T24: every mode that skips the artifact section says so out loud (a silent
   assert.match(preflight, /XIHE_E2E_EXTERNAL_SERVER === '1'/u, 'external reuse is the one cause observable at this boundary');
   assert.match(preflight, /--jar-mode=use\|native/u, 'the other two modes are named (the runner collapses them into --ignore-build)');
   assert.doesNotMatch(preflight, /CP artifact freshness skipped \(--ignore-build\)/u, 'the old INFO line stated the skip but not the consequence');
+});
+
+// ── task-703: the write-lag guard was one-directional ──────────────────────────────────────────
+// A jar mtime in the future made `writeLagMs` negative, so it could never exceed the limit; combined
+// with `Math.max(now, mtime)` that turned "the producer touched the artifact forward" into a *clean*
+// manifest for bytes that were never rebuilt. Measured in task-42 Run A (jar sha unchanged, 11 CP
+// files behind HEAD). These cases are the regression net for both directions and for the content check.
+
+test('task-703 ①: a jar whose mtime is in the future is refused outright (the guard now runs both ways)', () => {
+  const dir = tempDir('xihe-sidecar-future-');
+  const jarPath = writeJar(dir);
+  const future = Date.now() + 5 * 60_000; // the exact shape of the Run A forgery: +5 min
+  utimesSync(jarPath, future / 1000, future / 1000);
+  const refused = writeSidecarForJar({ projectDir: 'C:/proj', jarPath, run: fakeGit().run });
+  assert.equal(refused.ok, false, 'a future mtime must not be accepted just because the lag guard cannot see it');
+  assert.match(refused.error, /mtime is \d+s later than the current time/u);
+  assert.match(refused.error, /skip repackaging/u, 'the error must name the consequence, not only the anomaly');
+  assert.match(refused.error, /false green/u, 'and must say why this is the false green the fingerprint exists to stop');
+  // fail-closed: nothing half-written, and the reader keeps the OLD manifest (identity mismatch), never a green
+  assert.deepEqual(readdirSync(dir), ['control-plane-0.1.0.jar']);
+});
+
+test('task-703 ①b: the refusal is about the mtime, not the clock — a normal producer still passes', () => {
+  const dir = tempDir('xihe-sidecar-normal-');
+  const jarPath = writeJar(dir); // mtime ≈ now, written by this test itself
+  const built = writeSidecarForJar({ projectDir: 'C:/proj', jarPath, run: fakeGit().run });
+  assert.equal(built.ok, true, built.error);
+  assert.ok(built.clockSkewMs <= DEFAULT_MAX_FUTURE_MTIME_MS, `a just-written jar must sit inside the tolerance (skew ${built.clockSkewMs}ms)`);
+});
+
+test('task-703 ②: a future mtime inside the tolerance passes, and builtAt does NOT adopt it', () => {
+  const dir = tempDir('xihe-sidecar-skew-');
+  const jarPath = writeJar(dir);
+  const nowMs = Date.now();
+  const jarMtimeMs = nowMs + 1_000; // ahead, but within DEFAULT_MAX_FUTURE_MTIME_MS
+  utimesSync(jarPath, jarMtimeMs / 1000, jarMtimeMs / 1000);
+  const built = buildSidecar({ projectDir: 'C:/proj', jarPath, now: () => nowMs, run: fakeGit().run });
+  assert.equal(built.ok, true);
+  assert.equal(Date.parse(built.data.builtAt), nowMs, 'builtAt is the writer clock; the old Math.max laundered the artifact mtime into it');
+  assert.equal(built.clockSkewMs, 1_000, 'the skew is reported instead of silently reordered');
+});
+
+test('task-703 ③: verifyJarRepackaged — unchanged bytes after a build is a refusal, changed bytes are proof', () => {
+  const dir = tempDir('xihe-jar-repackage-');
+  const jarPath = writeJar(dir);
+  const before = sha256File(jarPath);
+  assert.equal(before.ok, true);
+
+  // The Run A shape: mvn exited 0 but maven-jar-plugin skipped the jar goal ⇒ same bytes.
+  const stale = verifyJarRepackaged({ beforeSha256: before.sha256, jarPath, jarName: 'control-plane-0.1.0.jar', label: 'preflight 前自愈' });
+  assert.equal(stale.ok, false, 'byte-identical after a "successful" build must not be treated as rebuilt');
+  assert.match(stale.reason, /byte-identical to the artifact that existed before the build/u);
+  assert.match(stale.reason, /maven-jar-plugin skipped repackaging/u);
+  assert.match(stale.reason, /do NOT move the\s+mtime forward/u, 'and it must tell the operator what not to do again');
+  assert.match(stale.reason, /preflight 前自愈:/u, 'the reason names which branch caught it');
+  assert.equal(stale.skipped, false);
+
+  // A real rebuild: the bytes differ ⇒ proof, not just a lack of complaint.
+  writeFileSync(jarPath, Buffer.concat([JAR_BYTES, Buffer.from('repackaged\n', 'utf8')]));
+  const fresh = verifyJarRepackaged({ beforeSha256: before.sha256, jarPath, jarName: 'control-plane-0.1.0.jar', label: 'rebuild' });
+  assert.equal(fresh.ok, true, fresh.reason);
+  assert.equal(fresh.skipped, false);
+  assert.notEqual(fresh.afterSha256, before.sha256);
+
+  // A first build has nothing to compare against — that is not a failure and must not be reported as one.
+  const first = verifyJarRepackaged({ beforeSha256: null, jarPath });
+  assert.equal(first.ok, true);
+  assert.equal(first.skipped, true);
+
+  // An artifact that cannot be hashed is unverifiable, which is a refusal (unknown is never green).
+  const unhashable = verifyJarRepackaged({ beforeSha256: before.sha256, jarPath, sha256: () => ({ ok: false, error: 'EACCES' }) });
+  assert.equal(unhashable.ok, false);
+  assert.match(unhashable.reason, /cannot hash/u);
+});
+
+test('task-703 ③b: both e2e-host jar producers call the ONE content guard, before any mark is written', () => {
+  // Requirement: the two producers must not grow two copies of this judgement (task-90 drifted that way).
+  const host = readFileSync(join(import.meta.dirname, '..', 'e2e-host.mjs'), 'utf8');
+  assert.match(host, /import \{[^}]*verifyJarRepackaged[^}]*\} from '\.\/lib\/cp-jar-sidecar\.mjs'/u, 'the guard comes from the lib, not a second local implementation');
+  // The wrapper's own definition has the same opening, so count call sites, not textual matches:
+  // exactly two producers must go through it (a third copy is how task-90 drifted).
+  const calls = host.match(/(?<!function )assertJarRepackaged\(\{/gu) ?? [];
+  assert.equal(calls.length, 2, 'exactly two producers: the rebuild branch and the preflight self-heal');
+  const wrapperSites = host.match(/function assertJarRepackaged\(/gu) ?? [];
+  assert.equal(wrapperSites.length, 1, 'both sites go through one wrapper');
+
+  // The wrapper must be a FAIL-FAST, not a warning that lets the run continue onto stale bytes.
+  const wrapper = host.slice(host.indexOf('function assertJarRepackaged('), host.indexOf('function assertJarRepackaged(') + 1200);
+  assert.match(wrapper, /console\.error\(`\[e2e-host\] FAIL-FAST: \$\{checked\.reason\}`\)/u);
+  assert.match(wrapper, /process\.exit\(1\)/u, 'sha unchanged ⇒ non-zero exit');
+  assert.match(wrapper, /jar bytes changed after the build/u, 'a genuine rebuild is logged as proof');
+
+  // Ordering: at each site the content check must come **before** stampCpArtifact, otherwise the false
+  // manifest is already on disk by the time the bytes are examined.
+  for (const anchor of ["label: 'rebuild'", "label: 'preflight 前自愈'"]) {
+    const at = host.indexOf(anchor);
+    assert.ok(at >= 0, `anchor ${anchor} missing`);
+    const stampAt = host.indexOf('stampCpArtifact({', at);
+    assert.ok(stampAt > at, `${anchor}: the stamp must follow the content guard`);
+  }
+
+  // The pre-build hash must come from the shared sample, so this adds no second read of the artifact.
+  assert.match(host, /beforeSha256: bootPlanSnapshot\?\.jarSha256/u, 'the rebuild site reuses the boot-plan sample');
+  assert.match(host, /beforeSha256: snapshot\?\.jarSha256/u, 'the self-heal site reuses the same shared sample');
+});
+
+test('task-703 ③c: the byte requirement is keyed to why the build ran (no new false red for a forced no-op rebuild)', () => {
+  // The guard must catch Run A (content behind HEAD ⇒ the bytes had to move) without inventing a
+  // failure for `--jar-mode=rebuild` on an already-current tree, where mvn legitimately produces the
+  // same artifact. That distinction is `requireChange`, and it is driven by the branch's own stale flag.
+  const host = readFileSync(join(import.meta.dirname, '..', 'e2e-host.mjs'), 'utf8');
+  const rebuildAt = host.indexOf("label: 'rebuild',");
+  assert.ok(rebuildAt > 0, "the rebuild site's label must exist");
+  const rebuildSite = host.slice(rebuildAt, rebuildAt + 400);
+  // Keyed to the reader's verdict, not to the mtime flag: a forged future mtime leaves `staleByMtime`
+  // false while the tree is still behind HEAD, so an mtime-keyed exemption would reopen Run A here.
+  assert.match(rebuildSite, /requireChange: bootPlanJudgement\.shared\.verdict !== 'fresh'/u, "the rebuild site requires new bytes unless the pre-build sample was judged fresh");
+  assert.match(host, /const bootPlanJudgement = selfHealIsNeeded\(bootPlanSnapshot\)/u, 'the judgement comes from the same single-sample reader');
+  const healSite = host.slice(host.indexOf("label: 'preflight 前自愈',"));
+  assert.match(healSite, /requireChange: true/u, 'the self-heal branch always requires new bytes — it only runs when content says the jar is behind');
+
+  // `requireChange: false` must be an explicit, logged pass-through — never a silent skip.
+  const wrapper = host.slice(host.indexOf('function assertJarRepackaged('), host.indexOf('// R2 decision table'));
+  assert.match(wrapper, /if \(!requireChange\) \{[\s\S]*?console\.log\(/u, 'a skipped check must be announced');
+  assert.match(wrapper, /return \{ ok: true, reason: null, skipped: true \}/u, 'and it reports skipped, not verified');
+});
+
+test('task-703 ④: the tightening added no bypass and lowered no existing threshold', () => {
+  // Requirement 6 — the judgement is stricter, never configurable away.
+  assert.equal(DEFAULT_MAX_WRITE_LAG_MS, 120_000, 'the lag limit must not have been loosened');
+  assert.equal(DEFAULT_MAX_FUTURE_MTIME_MS, 2_000, 'the future window is a tolerance, not an invitation');
+  const sidecar = readFileSync(join(import.meta.dirname, 'cp-jar-sidecar.mjs'), 'utf8');
+  // Assert on **code**, not prose: the docblock names the removed expression precisely to explain why
+  // it was wrong, so a whole-file match would fail on the explanation of the fix.
+  const code = sidecar
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+  assert.doesNotMatch(code, /allowFutureMtime|ignoreFutureMtime|skipFutureCheck/u, 'no escape-hatch flag may exist');
+  assert.doesNotMatch(code, /maxFutureMtimeMs\s*=\s*(Infinity|Number\.POSITIVE_INFINITY|0\s*\/\s*0)/u, 'the future window cannot be disabled by its default');
+  assert.doesNotMatch(code, /Math\.max\(nowMs,\s*jarMtimeMs\)/u, 'the laundering expression must be gone from the code');
+  const host = readFileSync(join(import.meta.dirname, '..', 'e2e-host.mjs'), 'utf8');
+  assert.doesNotMatch(host, /forceCreation/u, 'the rejected alternative must not have been smuggled in');
+});
+
+test('task-703: the stale "forging is impossible" comments are gone (an out-of-date comment is worse than none)', () => {
+  const sidecar = readFileSync(join(import.meta.dirname, 'cp-jar-sidecar.mjs'), 'utf8');
+  const stamp = readFileSync(join(import.meta.dirname, 'cp-artifact-stamp.mjs'), 'utf8');
+  assert.match(sidecar, /one-directional and that was a defect \(task-703\)/u, 'the docblock must state the gap it now closes');
+  assert.match(stamp, /This ordering is NOT a forge-proof|not a safety property on its own/u, 'the stamp module must stop claiming write ordering proves content');
+  assert.doesNotMatch(stamp, /so a\s+\n?\s*\/\/?\s*manifest can never be forged onto an artifact from an earlier build/u);
+  assert.doesNotMatch(stamp, /so `builtAt` can never predate the artifact it describes/u, 'that sentence was the false security claim');
+  assert.doesNotMatch(stamp, /builtAt was clamped by/u, 'the WARN must not claim a clamp that no longer happens');
 });
