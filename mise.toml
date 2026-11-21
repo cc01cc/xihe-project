@@ -467,7 +467,7 @@ alias = "test:e2e:host:real"
 [tasks."e2e:ui-baseline"]
 run = "node scripts/e2e-host.mjs --expect-tests=6 e2e/real/ui-baseline.spec.ts"
 description = "DEV-011 17.4 leave-guard suite: the six @host cases against a dedicated native stack (report-only, not wired into lint-run or validate-run)"
-alias = "e2e:ui-baseline"
+alias = ["e2e:ui-baseline", "test:e2e:ui-baseline"]
 
 [tasks."test:integration"]
 depends = ["test:integration:t2", "test:integration:t3"]
