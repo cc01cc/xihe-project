@@ -914,7 +914,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 
 - Playwright 真栈可判：改一个字段 → 断言 dirty 指示可见 → 关闭弹窗 → 断言出现拦截提示，或（若裁定不拦截）断言关闭前有「未保存」明写文案。
 - 纯静态门判不了这条，必须真栈。
-- 执行者 = `mise run e2e:ui-baseline`（`e2e-host` 自起一次性原生栈，跑 `e2e/real/ui-baseline.spec.ts` 里本卡新增的 6 条 `@host` 用例：beforeunload / 路由离开守卫 / 抽屉关闭确认，各一正一负，收集数由 `--expect-tests=6` 钉住）。本卡只新增这 6 条；上面矩阵三条仍按 T-2318 人工或预览跑，不进 host 车道。前半「可见 dirty 指示」今天仓库里没有对象：**等到 `task-151` 定 testid，本卡补断言；在此之前该判据为 UNCOVERED（不是 PASS）**。
+- 执行者 = `mise run e2e:ui-baseline`（`e2e-host` 自起一次性原生栈，跑 `e2e/real/ui-baseline.spec.ts` 里本卡新增的 6 条 `@host` 用例：beforeunload / 路由离开守卫 / 抽屉关闭确认，各一正一负，收集数由 `--expect-tests=6` 钉住；任务原文见 `mise.toml:467-470`，别名 `e2e:ui-baseline` / `test:e2e:ui-baseline`）。**真跑读数（2026-11-21，两次，均为 `exit 1`）**：窗口 1 首跑 `3 failed / 3 passed`，其中 2152/2163 是无效红（落点 `/settings` 下 `config-text-*` 计数 0 ⇒ 辅助函数抛 `NO_CONFIG_TEXT_MSG`，用例未进入用例体）；task-37 把落点改为 `/settings/instance/context-policy`、并把抽屉保存键对齐 task-34 统一提交点（`apd-hooks-save` → `apd-save-all`）后复跑 ⇒ **`2 failed / 4 passed (22.8s)`**：2136 ✗ 断言级（`beforeunload` 计数 `fired` = 0，归 `task-190` J7）、2152 ✗ 断言级（切路由后 url 落 `/login`，归 `task-190` J1 **产品缺口：17.4 守卫未生效**）、2145 ✓ / 2163 ✓ / 2171 ✓（由辅助函数级红转绿）/ 2190 ✓。本卡只新增这 6 条；上面矩阵三条仍按 T-2318 人工或预览跑，不进 host 车道。前半「可见 dirty 指示」今天仓库里没有对象：**等到 `task-151` 定 testid，本卡补断言；在此之前该判据为 UNCOVERED（不是 PASS）**。
 
 ### 17.5 错误就地、按区块降级
 
@@ -999,7 +999,7 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 | 17.1 | 可（静态） | `check-form-contract.mjs` 规则 A：可编辑 section 命中双列 grid | 新门草案 | **已落地** = `F1` 违规 2 / 债 2、`F2` 违规 2 / 债 0 |
 | 17.2 | 可（组件单测） | 每个可编辑控件断言 label[for] 命中且 placeholder 不等于 label | 组件 spec | 静态面 = `F11` 违规 11 / 债 0（写控件缺关联 label）；「placeholder 复述标签」的组件正反例仍缺 |
 | 17.3 | 可（静态） | 规则 B：同一 section 内 Switch / Checkbox 与 Save testid 并存 | 新门草案 | 该族 = `F7`，实测恒 0（违规 0 / 债 0）：判据要求开关与保存键同在一个 section 且无表单根，真实站点不是这个形状 ⇒ **判据失效**，待 rule-1 重做形状判定；不得当作「已机判」引用 |
-| 17.4 | 不可静态，需真栈 | Playwright：改字段 → dirty 指示 → 关闭拦截 | 真栈 spec | **执行者已接（2026-11-21）**：`mise run e2e:ui-baseline`（任务 `[tasks."e2e:ui-baseline"]` 在 `A03-xihe/mise.toml:467`，`--expect-tests=6`，report-only，不进 lint-run / validate-run）跑本文件 6 条 `@host` 用例；同批补 `⑥E1'` 断言锚点后 `check-decision-test-map` 违规 1 → 0。6 条窗内未真跑，窗后一次性栈实跑才收口；「可见 dirty 指示」= **UNCOVERED（不是 PASS）**，等到 `task-151` 定 testid 再补断言 |
+| 17.4 | 不可静态，需真栈 | Playwright：改字段 → dirty 指示 → 关闭拦截 | 真栈 spec | **执行者已接（2026-11-21）**：`mise run e2e:ui-baseline`（任务 `[tasks."e2e:ui-baseline"]` 在 `A03-xihe/mise.toml:467`，`--expect-tests=6`，report-only，不进 lint-run / validate-run）跑本文件 6 条 `@host` 用例；同批补 `⑥E1'` 断言锚点后 `check-decision-test-map` 违规 1 → 0。6 条已在窗口 1 与窗后各真跑一次（2026-11-21，两次均 `exit 1`）：窗口 1 `3 failed / 3 passed`（2152/2163 为落点漂移导致的无效红），落点修正 + 对齐 task-34 提交点后 `2 failed / 4 passed (22.8s)` —— 2136 ✗ 归 `task-190` J7（`beforeunload` 计数 0）、2152 ✗ 归 `task-190` J1 产品缺口（路由守卫未拦截，url 落 `/login`），2145/2163/2171/2190 ✓；「可见 dirty 指示」= **UNCOVERED（不是 PASS）**，等到 `task-151` 定 testid 再补断言 |
 | 17.5 | 半可（静态 + 真栈） | 规则 C：ErrorBlock 调用点缺 retry 即红；断网重试走真栈 | 新门草案 + 真栈 | 静态面已落地 = `F3` 违规 10 / 债 2、`F8` 违规 3 / 债 0（保存按钮无 disabled 兜底）；断网 → 重试成功的端到端仍需真栈 |
 | 17.6 | 可（静态） | 规则 D：枚举字段 testid 落在文本输入即红 | 新门草案 | **已落地** = `F4` 违规 4 / 债 0、`F5` 违规 4 / 债 0、`F6` 违规 23（枚举词根 20 + 长度 3）/ 债 32 |
 | 17.7 | 可（组件单测） | 分层选择器必须有继承项与生效值，≥5 例 | 组件 spec | 静态面 = `F9` 违规 0 / 债 10（只有输入框、无档位提示）；组件面只有 `ConfigDomainPanel.spec.ts` 的 `lockLayered` 一条（钉「锁死面不渲染档位控件」），生效值 + 继承项正例随 `task-155` |
