@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from langchain_core.callbacks import AsyncCallbackManagerForToolRun
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import BaseTool, InjectedToolCallId
+from langchain_core.tools import BaseTool, InjectedToolCallId, ToolException
 from loguru import logger
 from pydantic import BaseModel, create_model
 
@@ -485,11 +485,28 @@ class LCToolAdapter(BaseTool):
             name=tool.spec.name,
             description=tool.spec.description,
             args_schema=_build_args_schema(tool.spec),
+            handle_tool_error=bool(tool.spec.checkpoint_safe_schema),
         )
         self._tool = tool
         self._context = context
         self._event_store = event_store
         self._credential_handoff = credential_handoff
+
+    def _parse_input(
+        self, tool_input: str | dict[str, Any], tool_call_id: str | None
+    ) -> str | dict[str, Any]:
+        safe_schema = self._tool.spec.checkpoint_safe_schema
+        if safe_schema is None:
+            return super()._parse_input(tool_input, tool_call_id)
+        try:
+            safe_schema.project_input(tool_input)
+        except (TypeError, ValueError):
+            raise ToolException("INVALID_TOOL_ARGUMENTS") from None
+        provided = set(tool_input) if isinstance(tool_input, dict) else set()
+        parsed = super()._parse_input(tool_input, tool_call_id)
+        if isinstance(parsed, dict):
+            return {key: value for key, value in parsed.items() if key in provided or key == "tool_call_id"}
+        return parsed
 
     async def _arun(
         self,
