@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { i18n as sourceI18n } from "../../../../i18n";
 import { describe, expect, it } from "vitest";
 
 import WorkspaceContainerTabs from "../WorkspaceContainerTabs.vue";
@@ -13,9 +14,9 @@ const i18n = createI18n({
                 containerTree: "文件树",
                 containerMain: "主栏",
                 // task-38：nav 的 landmark 名 = 部件名（不是容器名）。
-                containerTabsLabelMain: "主栏容器页签行",
+                containerTabsLabelMain: sourceI18n.global.t("workspace.containerTabsLabelMain"),
                 containerTabsLabelRight: "右栏容器页签行",
-                containerEmpty: "此容器暂无页签",
+                containerEmpty: sourceI18n.global.t("workspace.containerEmpty"),
                 // task-155：溢出下拉触发器。
                 containerOverflow: "更多页签",
                 tabClose: "关闭页签",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { i18n as sourceI18n } from "../../../../i18n";
 import WorkspaceContainerAddButton from "../WorkspaceContainerAddButton.vue";
 
 const i18n = createI18n({
@@ -9,7 +10,11 @@ const i18n = createI18n({
     messages: {
         en: {
             workspace: {
-                containerPlusNew: "New tab: choose a panel type",
+                containerPlusNew: sourceI18n.global.t(
+                    "workspace.containerPlusNew",
+                    {},
+                    { locale: "en-US" },
+                ),
                 dockTabOpen: "Open",
             },
         },

@@ -77,11 +77,19 @@ const i18n = createI18n({
                 createSession: "New chat",
                 // task-52：新建会话的默认标题（`stores/session.ts#createSession` 的默认参数）。
                 sessionDefaultTitle: "Untitled session",
-                usageCostUnmapped: "Not priced",
+                usageCostUnmapped: globalI18n.global.t(
+                    "workspace.usageCostUnmapped",
+                    {},
+                    { locale: "en-US" },
+                ),
                 usageCostNoteNoTokenCounts: "no token counts",
                 usageCostNoteNoPricing: "model not in pricing config",
                 usageCostNoteUnknown: "No cost explanation",
-                usageSourceReal: "Real billing",
+                usageSourceReal: globalI18n.global.t(
+                    "workspace.usageSourceReal",
+                    {},
+                    { locale: "en-US" },
+                ),
                 usageSourceEstimated: "Estimated",
                 usageSourceFallback: "Usage fallback",
                 chooseAgentTitle: "Choose an Agent",

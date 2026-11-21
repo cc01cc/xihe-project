@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { h, nextTick } from "vue";
 import { createI18n } from "vue-i18n";
+import { i18n as sourceI18n } from "../../../i18n";
 import { RESOURCE_DEFS, visibleLayersForResource } from "../../../lib/settingsIa";
 
 /**
@@ -37,7 +38,7 @@ const messages = {
             // task-52 / batch-02 ③：说明合并成可折叠摘要（默认收起）。
             resourcesHintSummary: "关于本页资源的层级与去处",
             resourcesHintShow: "查看说明",
-            resourcesHintHide: "收起说明",
+            resourcesHintHide: sourceI18n.global.t("resources.resourcesHintHide"),
             layerTab: {
                 credentials: { USER: "个人", WORKSPACE: "本工作区", INSTANCE: "平台" },
                 mcp: { WORKSPACE: "本工作区", INSTANCE: "平台" },

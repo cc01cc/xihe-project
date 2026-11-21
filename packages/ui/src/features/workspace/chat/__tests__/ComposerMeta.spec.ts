@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { i18n as sourceI18n } from "../../../../i18n";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import type * as ConfigModule from "../../../../stores/config";
@@ -131,9 +132,9 @@ const messages = {
             delegation: { reasonUnknown: "未知原因", button: "委派" },
             composerMeta: {
                 model: "模型 · 路由",
-                modelUnbound: "未绑定模型",
+                modelUnbound: sourceI18n.global.t("chat.composerMeta.modelUnbound"),
                 modelUnboundHint: "发送前需绑定 provider 连接（点此打开模型设置）",
-                modelChangeHint: "点此打开模型设置",
+                modelChangeHint: sourceI18n.global.t("chat.composerMeta.modelChangeHint"),
                 rounds: "轮 {value}",
                 steps: "步 {value}",
                 speed: "{value} tok/s",
@@ -145,8 +146,8 @@ const messages = {
                 modelSourceProfile: "全局配置",
                 modelSourceNone: "无可用来源",
                 modelSourceHint: "来源：{source} · {model}",
-                modelSourceResolving: "正在判定模型来源…",
-                modelSourceUnknown: "来源未知",
+                modelSourceResolving: sourceI18n.global.t("chat.composerMeta.modelSourceResolving"),
+                modelSourceUnknown: sourceI18n.global.t("chat.composerMeta.modelSourceUnknown"),
                 modelSourceUnknownHint:
                     "名册或主体默认读取失败，UI 无法判定来源；这只表示「读不到」，不代表没有来源。",
                 modelOutOfCatalogBadge: "本地清单未发现",
@@ -155,10 +156,10 @@ const messages = {
             },
         },
         sessionSettings: {
-            tierLabel: "权限档位",
-            tierView: "只看不改",
-            tierWorkspace: "工作区内修改",
-            tierFull: "完全权限",
+            tierLabel: sourceI18n.global.t("sessionSettings.tierLabel"),
+            tierView: sourceI18n.global.t("sessionSettings.tierView"),
+            tierWorkspace: sourceI18n.global.t("sessionSettings.tierWorkspace"),
+            tierFull: sourceI18n.global.t("sessionSettings.tierFull"),
         },
         multimodal: { image: "图片", screenshot: "截图", voice: "语音" },
         common: { cancel: "取消" },
@@ -432,7 +433,7 @@ describe("task-133 权限档位 chip：进工具行、不新增行高、可切�
         await openSelect(wrapper, TIER_CHIP);
         expect(selectItemValuesFor(wrapper, TIER_CHIP)).toEqual(["view", "workspace", "full"]);
         expect(selectItemTextsFor(wrapper, TIER_CHIP)).toEqual([
-            "只看不改",
+            "仅可查看",
             "工作区内修改",
             "完全权限",
         ]);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { i18n as sourceI18n } from "../../i18n";
 import { createPinia } from "pinia";
 import SettingsLayout from "../SettingsLayout.vue";
 
@@ -31,7 +32,7 @@ const messages = {
             },
             domainRag: "检索增强",
             authorizationOverview: {
-                title: "授权总览",
+                title: sourceI18n.global.t("settings.authorizationOverview.title"),
                 explain: { actionClassExample: "read" },
             },
         },
