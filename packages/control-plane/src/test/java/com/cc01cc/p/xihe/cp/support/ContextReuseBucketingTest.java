@@ -87,6 +87,15 @@ class ContextReuseBucketingTest {
 
     static final String PER_CLASS_BASE = "AbstractIntegrationTest";
 
+    /**
+     * 基类判定正则（task-205）：只在 {@link #stripComments(String)} 之后匹配，注释里的同形短语不参与分桶。
+     *
+     * <p>为什么单独抽常量：{@link #baseOf(String)} 与回归测试都要用它；抽出来后「剥注释口径」是单点，
+     * 改回 {@code matcher(source)} 会让 {@code commentMentioningOtherBaseDoesNotFlipBucketing} 当场红。</p>
+     */
+    static final Pattern EXTENDS_PATTERN =
+            Pattern.compile("extends\\s+(" + PER_CLASS_BASE + "|" + REUSABLE_BASE + ")\\b");
+
     /** 判定码枚举（与 TSV 表头同源）。 */
     record Marker(String code, Pattern pattern, boolean strict) {
     }
@@ -239,8 +248,13 @@ class ContextReuseBucketingTest {
         // crossmodule/AbstractWireMockPgTest（抽象基类，本身直接继承 AbstractIntegrationTest），
         // 该基类自己也被 scanner 计入 per-class ⇒ 白名单 +1 行（与 plugin/kv、plugin/records 两个抽象基类
         // 的既有惯例一致，:78/:83），常量按实读 101→102。判据仍是一字未改的「未登记即红」。
-        // 注：本行刻意不写 scanner 那条正则的字面量——scanner 只按文本找「extends + 基类名」，
-        // 注释里出现同样的短语会把这个守卫文件自己判成 per-class（task-205 的已知盲区）。
+        // task-205（341afb2e1 修主缺陷，本卡补残留）：基类判定已改成「先 stripComments 再匹配」
+        // （见 baseOf()），注释里的「extends + 基类名」短语**不再**参与分桶。下面这行是本况描述，
+        // 同时是刻意的回归锚点：「extends AbstractIntegrationTest」字样留在本文件注释里，
+        // 一旦有人把 baseOf() 改回 matcher(source)，本文件会把自己判成 per-class 而当场红
+        // （另一条独立兜底：commentMentioningOtherBaseDoesNotFlipBucketing）。
+        // 已剥口径的边界：stripComments 只剥注释，不剥字符串字面量/文本块（"extends Abstract…"
+        // 这样的字符串仍会被计入）；当前树无此形态，真要收紧须另立口径。
         assertEquals(102, whitelist.size(), "per-class 白名单 = 102（89 task-31 后基线 + task-194 补登 12 个迁移/新建类 + 1 个 task-202 抽象基类）");
         assertEquals(102, perClass, "per-class 类数必须等于白名单条目数（实读 102）");
         // 2026-11-13（task-157）：9b356e6a9（PLAN-0774）新增 WorkspaceAgentCapSourceIntegrationTest（@SpringBootTest）
@@ -299,19 +313,28 @@ class ContextReuseBucketingTest {
         return Set.of(MANUAL_CHAT_RUN_DISPATCH);
     }
 
+    /**
+     * 基类判定（task-205）：{@link #stripComments(String)} 之后再取首处「extends &lt;基类&gt;」。
+     *
+     * <p>抽成纯函数有两个目的：①scan() 与回归测试共用同一口径（单点，改回原始文本必红）；
+     * ②测试可以对合成输入断言，不必在共享树里造临时 {@code .java} 夹具（卡面硬约束）。</p>
+     */
+    static String baseOf(String source) {
+        Matcher matcher = EXTENDS_PATTERN.matcher(stripComments(source));
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
     private static List<ScannedClass> scan() throws IOException {
         assertTrue(Files.isDirectory(TEST_SOURCES), "守卫必须在 packages/control-plane 目录下运行（src/test/java 缺失）");
         List<ScannedClass> classes = new ArrayList<>();
         try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
             for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
-                String scanned = stripComments(source);
-                Matcher extendsMatcher = Pattern.compile("extends\\s+(" + PER_CLASS_BASE + "|" + REUSABLE_BASE + ")\\b").matcher(scanned);
-                if (!extendsMatcher.find()) {
+                String base = baseOf(source);
+                if (base == null) {
                     continue;
                 }
                 String relative = TEST_SOURCES.relativize(file).toString().replace('\\', '/');
-                String base = extendsMatcher.group(1);
                 String fqcn = relative.replace(".java", "").replace('/', '.');
                 classes.add(new ScannedClass(fqcn, relative, base, derive(source), manual(fqcn), source));
             }
@@ -446,6 +469,28 @@ class ContextReuseBucketingTest {
         }
         assertFalse(known.isEmpty(), "判定码枚举不能为空");
         assertEquals(List.of(), unknown, "白名单出现枚举外的判定码：" + unknown);
+    }
+
+    // --------------------------------------- task-205 残留：注释不参与分桶的回归自证
+
+    /**
+     * task-205 回归自证：注释里出现「extends &lt;另一基类&gt;」不得翻转分桶。
+     *
+     * <p>输入刻意做成 task-194 实踩时的形态——注释先声明 reusable，真实声明是 per-class。三条断言各管一件事：
+     * ①原始文本匹配确实会翻到 reusable（证明这个输入真有翻转能力，不是空断言）；
+     * ②{@link #baseOf(String)}（scan() 的同一口径）只认真实声明；
+     * ③守卫文件自身不被注释里的字样计入（本卡红线：不许整类豁免守卫自身，只能证明它本来就不该被计入）。</p>
+     */
+    @Test
+    void commentMentioningOtherBaseDoesNotFlipBucketing() throws IOException {
+        String sample = "// 维护提示：本类应 " + "extends " + REUSABLE_BASE + "（注释措辞，回归锚点）\n"
+                + "class CommentAnchorSample " + "extends " + PER_CLASS_BASE + " {\n}\n";
+        Matcher naive = EXTENDS_PATTERN.matcher(sample);
+        assertTrue(naive.find(), "样本必须含 extends 短语（否则回归锚点失效）");
+        assertEquals(REUSABLE_BASE, naive.group(1), "原始文本口径确实会被注释翻转——这是修复前的错判输入");
+        assertEquals(PER_CLASS_BASE, baseOf(sample), "剥注释口径只能认真实声明（task-205 主判据）");
+        assertTrue(scan().stream().noneMatch(candidate -> candidate.fqcn().endsWith(".support.ContextReuseBucketingTest")),
+                "守卫文件自身不得被注释里的 extends 字样计入");
     }
 
     // ------------------------------------------------- R4 (task-29 context-key ratchet)
