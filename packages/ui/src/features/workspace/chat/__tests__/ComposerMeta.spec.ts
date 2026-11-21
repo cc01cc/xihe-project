@@ -42,7 +42,7 @@ const modelSource = vi.hoisted(() => ({
         source: "none",
         inDiscoveredList: null,
     } as {
-        status: "loading" | "ready";
+        status: "loading" | "ready" | "unavailable";
         provider: string | null;
         model: string | null;
         source: "session" | "agent-principal" | "llm-profile" | "none";
@@ -146,6 +146,9 @@ const messages = {
                 modelSourceNone: "无可用来源",
                 modelSourceHint: "来源：{source} · {model}",
                 modelSourceResolving: "正在判定模型来源…",
+                modelSourceUnknown: "来源未知",
+                modelSourceUnknownHint:
+                    "名册或主体默认读取失败，UI 无法判定来源；这只表示「读不到」，不代表没有来源。",
                 modelOutOfCatalogBadge: "本地清单未发现",
                 modelOutOfCatalogHint:
                     "本地模型清单里没有它；发送口径仍以来源为准，清单只用于候选项与角标。",
@@ -367,6 +370,27 @@ describe("task-140 模型 chip：来源三态化，清单只做角标", () => {
         expect(chip.attributes("aria-label")).toContain("发送前需绑定 provider 连接");
         await chip.trigger("click");
         expect(wrapper.emitted("settings")).toHaveLength(1);
+    });
+
+    it("来源读不到时画「来源未知」：既不画成未绑定，也不冒充某个来源", () => {
+        modelSource.value = {
+            status: "unavailable",
+            provider: null,
+            model: null,
+            source: "none",
+            inDiscoveredList: null,
+        };
+        const wrapper = mountInputArea();
+        const chip = wrapper.find(CHIP);
+        // 名册/主体默认读取失败 ⇒ 读不到 ≠ 没有来源，画成「未绑定模型」就是假否定。
+        expect(chip.text()).toBe("来源未知");
+        expect(chip.attributes("data-source")).toBe("unknown");
+        expect(chip.classes()).toContain("border-dashed");
+        // 但不是 amber 警示：不该催用户去绑定 provider（来源可能本来就在）。
+        expect(chip.classes()).not.toContain("border-amber-500/60");
+        expect(chip.attributes("title")).toContain("读不到");
+        expect(chip.attributes("aria-label")).toContain("不代表没有来源");
+        expect(chip.attributes("aria-label")).toContain("点此打开模型设置");
     });
 
     it("判定中不画成未绑定：文案是「正在判定模型来源…」，且没有 amber", () => {

@@ -14,6 +14,7 @@ import {
     type ChatModelSourceKind,
 } from "../features/workspace/chat/modelDisplay";
 import { useSessionParticipantsStore } from "../features/workspace/stores/sessionParticipants";
+import { useSessionStore } from "./session";
 
 /**
  * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**全局设置不再暴露 workspace 层** ——
@@ -204,11 +205,17 @@ const MODEL_CACHE_KEY = "xihe-model-cache",
     MERGED_CONFIG_KEY = "xihe-config-merged";
 
 /**
- * task-140：模型来源判定的结果。`loading` 与 `none` 必须分开 ——
- * 前者是"数据还没到，不确定"，后者是"链路上确实没有来源"；把前者渲染成后者
- * 会让用户在正常加载时看到"未绑定模型"的告警态。
+ * task-140：模型来源判定的结果。`loading`、`unavailable` 与 `none` 必须分开 ——
+ * `loading` 是"数据还没到，不确定"，`unavailable` 是"该读的读失败了，仍然不确定"
+ * （名册 403/失败、工作区主体默认读失败），`none` 才是"链路上确实没有来源"。
+ * 把前两者渲染成 `none` 会让用户看到"未绑定模型"的告警态 —— 那是假否定：
+ * CP 侧同一会话仍可能从主体默认/profile 解析出模型并发送成功。
+ *
+ * task-2（task-140 收尾）：`unavailable` 是本轮新增的第三态。它**不猜来源**：
+ * provider/model 置 null、source 保持 `none`，由展示层画「来源未知」并指向 explain 面
+ * （模型来源 explain 端点属 task-8，命名以本状态串 `unavailable` 为准，别另造）。
  */
-export type ChatModelSourceStatus = "loading" | "ready";
+export type ChatModelSourceStatus = "loading" | "ready" | "unavailable";
 
 export interface ChatModelSourceResolution {
     status: ChatModelSourceStatus;
@@ -498,6 +505,15 @@ export const useConfigStore = defineStore("config", () => {
         Record<string, Record<string, { provider: string; model: string } | null>>
     >({});
     const workspaceAgentDefaultsInflight = new Map<string, Promise<void>>();
+    /**
+     * task-2：按 workspaceId 记"这份主体默认读失败了"。
+     *
+     * 为什么需要它：`ensureWorkspaceAgentDefaults` 失败时把该工作区写成 `{}`（与"读到但没有默认"
+     * 同形），于是 `getChatModelSource` 会把「没读到」判成「主体没有默认」再回落到 profile，
+     * 最后甚至可能落在 `none` 显示"未绑定模型" —— 这就是 Lead 说的"取不到来源时不许猜"。
+     * 失败面单独记，展示层据此画「来源未知」而不是「没有来源」。
+     */
+    const workspaceAgentDefaultsFailed = ref<Record<string, boolean>>({});
 
     function getActiveModel(sessionId: string): SessionModelBinding | undefined {
         return sessionModels.value[sessionId];
@@ -598,6 +614,11 @@ export const useConfigStore = defineStore("config", () => {
                     ...workspaceAgentDefaults.value,
                     [workspaceId]: {},
                 };
+                // task-2：读失败要和"读到但没有默认"分开记，否则下一句就变成猜。
+                workspaceAgentDefaultsFailed.value = {
+                    ...workspaceAgentDefaultsFailed.value,
+                    [workspaceId]: true,
+                };
             } finally {
                 workspaceAgentDefaultsInflight.delete(workspaceId);
             }
@@ -610,11 +631,18 @@ export const useConfigStore = defineStore("config", () => {
     function invalidateWorkspaceAgentDefaults(workspaceId?: string): void {
         if (!workspaceId) {
             workspaceAgentDefaults.value = {};
+            // 失效即作废失败标记：下次 ensure 是一条新的读取，成败都重新记。
+            workspaceAgentDefaultsFailed.value = {};
             return;
         }
         const next = { ...workspaceAgentDefaults.value };
         delete next[workspaceId];
         workspaceAgentDefaults.value = next;
+        if (workspaceAgentDefaultsFailed.value[workspaceId]) {
+            const failedNext = { ...workspaceAgentDefaultsFailed.value };
+            delete failedNext[workspaceId];
+            workspaceAgentDefaultsFailed.value = failedNext;
+        }
     }
 
     function discoveredChatModels(provider: string | null): string[] | null {
@@ -639,7 +667,13 @@ export const useConfigStore = defineStore("config", () => {
         const roster = useSessionParticipantsStore();
         const participants = roster.participants;
         const principalId = primaryAgentPrincipalId(participants);
-        const sessionBinding = sessionModels.value[sessionId];
+        // 第 1 层的数据源顺序：本地镜像（手选/自动回填，含连接与修订号）→ 会话行四列（CP dispatch 的真源）。
+        const mirror = sessionModels.value[sessionId];
+        const mirrorBound = Boolean(
+            (mirror?.provider ?? "").trim() && (mirror?.model ?? "").trim(),
+        );
+        const row = mirrorBound ? { complete: null, partial: false } : sessionRowBinding(sessionId);
+        const sessionBinding = mirrorBound ? mirror : (row.complete ?? mirror);
         const sessionBound = Boolean(
             (sessionBinding?.provider ?? "").trim() && (sessionBinding?.model ?? "").trim(),
         );
@@ -651,12 +685,29 @@ export const useConfigStore = defineStore("config", () => {
             source: "none",
             inDiscoveredList: null,
         });
+        // task-2：读失败 = 仍然不知道，**不等于**没有来源。provider/model 一律 null，
+        // 由展示层画「来源未知」并指向 explain 面（task-8），绝不回落到下一层去猜。
+        const unreadable = (): ChatModelSourceResolution => ({
+            status: "unavailable",
+            provider: null,
+            model: null,
+            source: "none",
+            inDiscoveredList: null,
+        });
 
         // 会话覆盖优先 ⇒ 名册还没到也不影响答案（它只会影响第 2 步）。
         if (!sessionBound) {
-            if (participants === null && !roster.forbidden && !roster.error) return pending();
-            if (principalId && workspaceId && !workspaceAgentDefaults.value[workspaceId]) {
+            // 会话行半绑（CP 409 partial_binding）：既不是"没绑"，也不能替 CP 看下一层。
+            if (row.partial) return unreadable();
+            if (participants === null) {
+                // 名册 403/失败 ⇒ To 主体是谁都不知道，第二步无从判定。
+                if (roster.forbidden || roster.error) return unreadable();
                 return pending();
+            }
+            if (principalId && workspaceId) {
+                // 主体默认模型读失败（不是"读到但没有默认"）⇒ 第二步同样无从判定。
+                if (workspaceAgentDefaultsFailed.value[workspaceId]) return unreadable();
+                if (!workspaceAgentDefaults.value[workspaceId]) return pending();
             }
         }
 
@@ -670,6 +721,42 @@ export const useConfigStore = defineStore("config", () => {
             discoveredModels: discoveredChatModels(base.provider),
         });
         return { status: "ready", ...resolved };
+    }
+
+    /**
+     * task-2（J1 同构）：**会话行**的模型绑定 —— 会话覆盖那一层的唯一真源。
+     *
+     * 为什么必须读会话行、而不是只读 `sessionModels` 本地镜像：CP 的 dispatch 用的是会话行四列
+     * （`ChatSubmissionService.java:1110-1122` + `ApiRequestTemplateService.java:637-648`：
+     * provider/model/providerConnectionId/connectionRevision 全有 = complete）。
+     * 而 `sessionModels` 只在「用户手选模型」或「bind-defaults 自动回填」时才写，
+     * 真栈里打开一个历史会话根本不会写它 —— 于是 chip 会跳过第 1 层直接报 `llm-profile`，
+     * 与 CP 实际派发的模型相反（实测 8/8 会话：行里是 deepseek/deepseek-chat，chip 却说全局配置）。
+     *
+     * `partial`：CP 对「四列有值但不全」抛 409 `API_TYPE_REBIND_REQUIRED`（reason=partial_binding），
+     * 那不是"没有来源"也不是"看下一层" —— 判定为不可知，绝不回落到主体默认/profile 去猜。
+     *
+     * **判据只用三列（provider/model/providerConnectionId），不看 connectionRevision**：
+     * 会话列表投影不返回该列（实测 `GET /api/v1/sessions` 每行只有前三列，参
+     * `stores/session.ts` 的 toSession 与 `ChatPanel.vue:107-115` BL-270 同类投影缺口）。
+     * 若照 CP 的四列判据，真栈里每个已绑会话都会被判成 partial ⇒ 全部显示"未绑定"，
+     * 比现状更假。因此：三列齐 = 会话覆盖（已足够回答"这层有没有绑定"），
+     * partial 只认"三列部分有值"。与 CP 四列判据的偏差登记在此，不做静默对齐。
+     */
+    function sessionRowBinding(sessionId: string): {
+        complete: { provider: string; model: string } | null;
+        partial: boolean;
+    } {
+        const row = useSessionStore().sessions.find((item) => item.id === sessionId);
+        if (!row) return { complete: null, partial: false };
+        const provider = (row.modelProvider ?? "").trim();
+        const model = (row.modelName ?? "").trim();
+        const connectionId = (row.providerConnectionId ?? "").trim();
+        const complete = Boolean(provider && model && connectionId);
+        return {
+            complete: complete ? { provider, model } : null,
+            partial: !complete && Boolean(provider || model || connectionId),
+        };
     }
 
     /** 幂等补齐 `getChatModelSource` 需要的数据（名册 + 工作区主体默认）。 */
@@ -714,6 +801,7 @@ export const useConfigStore = defineStore("config", () => {
         providerConnectionsError.value = false;
         // task-140：主体默认模型是"某个工作区里某个主体的"数据，换用户必须一起丢。
         workspaceAgentDefaults.value = {};
+        workspaceAgentDefaultsFailed.value = {};
         workspaceAgentDefaultsInflight.clear();
     }
 

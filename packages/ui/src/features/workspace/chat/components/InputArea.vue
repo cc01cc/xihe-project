@@ -926,6 +926,23 @@ const composerModelChip = computed(() => {
         };
     }
 
+    if (resolved.status === "unavailable") {
+        // 读不到来源 ≠ 没有来源：名册/主体默认读取失败时，CP 仍可能照常解析并发送。
+        // 这里绝不画成「未绑定」（那是假否定），也不冒充某个具体来源（那是猜）。
+        const hint = t("chat.composerMeta.modelSourceUnknownHint");
+        const unknownLabel = t("chat.composerMeta.modelSourceUnknown");
+        return {
+            label: unknownLabel,
+            bound: false,
+            source: "unknown",
+            inCatalog: null as boolean | null,
+            title: `${unknownLabel} · ${hint} ${t("chat.composerMeta.modelChangeHint")}`,
+            ariaLabel: `${unknownLabel}. ${hint} ${t("chat.composerMeta.modelChangeHint")}`,
+            className:
+                "hidden min-w-0 max-w-56 items-center truncate rounded-md border border-dashed border-muted-foreground/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
+        };
+    }
+
     const sourceLabel = t(MODEL_SOURCE_LABEL_KEYS[resolved.source]);
     if (resolved.source !== "none" && resolved.provider && resolved.model) {
         const label = [resolved.provider, resolved.model].filter(Boolean).join(" · ");

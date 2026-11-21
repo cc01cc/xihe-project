@@ -1789,6 +1789,9 @@ const messages = {
                 modelSourceNone: "无可用来源",
                 modelSourceHint: "来源：{source} · {model}",
                 modelSourceResolving: "正在判定模型来源…",
+                modelSourceUnknown: "来源未知",
+                modelSourceUnknownHint:
+                    "名册或主体默认读取失败，UI 无法判定来源；这只表示「读不到」，不代表没有来源。",
                 modelOutOfCatalogBadge: "本地清单未发现",
                 modelOutOfCatalogHint:
                     "本地模型清单里没有它；发送口径仍以来源为准，清单只用于候选项与角标。",
@@ -6041,6 +6044,9 @@ const messages = {
                 modelSourceNone: "no source",
                 modelSourceHint: "Source: {source} · {model}",
                 modelSourceResolving: "Resolving the model source…",
+                modelSourceUnknown: "source unknown",
+                modelSourceUnknownHint:
+                    'The roster or the agent default could not be read, so the UI cannot tell the source; this only means "unreadable", not "no source".',
                 modelOutOfCatalogBadge: "not in local catalog",
                 modelOutOfCatalogHint:
                     "The local model catalog does not list it; the source still decides what is sent — the catalog only feeds candidates and this badge.",

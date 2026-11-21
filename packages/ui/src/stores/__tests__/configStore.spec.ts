@@ -9,6 +9,7 @@ import {
 } from "../config";
 import { api } from "../../composables/api";
 import { useSessionParticipantsStore } from "../../features/workspace/stores/sessionParticipants";
+import { useSessionStore } from "../session";
 import type { SessionParticipantView } from "../../types/participant";
 
 beforeEach(() => {
@@ -38,6 +39,42 @@ function seedRoster(
     roster.participants = participants;
     roster.forbidden = extra.forbidden ?? false;
     roster.error = extra.error ?? "";
+}
+
+/** task-2：会话行是"会话覆盖"那层的真源（CP 用四列判定），直接写 store 列表投影。 */
+function seedSessionRow(
+    id: string,
+    row: {
+        modelProvider?: string | null;
+        modelName?: string | null;
+        providerConnectionId?: string | null;
+        connectionRevision?: number | null;
+    },
+) {
+    const sessions = useSessionStore();
+    sessions.sessions = [
+        {
+            id,
+            title: "t",
+            createdAt: "2026-11-21T00:00:00Z",
+            updatedAt: "2026-11-21T00:00:00Z",
+            workspaceId: "ws-1",
+            agentPrincipalId: null,
+            kind: null,
+            spawnedFromSessionId: null,
+            spawnedAt: null,
+            modelProvider: row.modelProvider ?? null,
+            modelName: row.modelName ?? null,
+            providerConnectionId: row.providerConnectionId ?? null,
+            connectionRevision: row.connectionRevision ?? null,
+            context: {
+                agents: [],
+                ragContext: undefined,
+                mcpContext: undefined,
+                fileContext: undefined,
+            },
+        } as never,
+    ];
 }
 
 function primaryAgent(principalId: string): SessionParticipantView {
@@ -552,6 +589,190 @@ describe("useConfigStore", () => {
             expect(store.getEffectiveModel("s1")).toEqual(
                 expect.objectContaining({ provider: source.provider, model: source.model }),
             );
+        });
+
+        // ---- task-2：三态之外的第三种「不知道」——读失败不许猜成「没有来源」 ----
+
+        it("reports unavailable (not none) when the roster read failed", () => {
+            const store = useConfigStore();
+            // 403/失败 ⇒ To 主体是谁都不知道；此时若回落到 profile 就是猜。
+            seedRoster(null, { error: "boom" });
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
+            };
+
+            expect(store.getChatModelSource("s1", "ws-1")).toEqual({
+                status: "unavailable",
+                provider: null,
+                model: null,
+                source: "none",
+                inDiscoveredList: null,
+            });
+        });
+
+        it("reports unavailable when the roster is forbidden", () => {
+            const store = useConfigStore();
+            seedRoster(null, { forbidden: true });
+            expect(store.getChatModelSource("s1", "ws-1").status).toBe("unavailable");
+        });
+
+        it("reports unavailable (not the profile) when the workspace defaults read failed", async () => {
+            const store = useConfigStore();
+            vi.spyOn(api, "getWorkspaceAgents").mockRejectedValue(new Error("network down"));
+            seedRoster([primaryAgent("agent-1")]);
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "gpt-4o",
+                    }),
+                },
+            };
+
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+
+            // 关键反证：profile 是**下一层**；主体默认没读到就断言 profile，等于替 CP 猜。
+            const source = store.getChatModelSource("s1", "ws-1");
+            expect(source.status).toBe("unavailable");
+            expect(source.provider).toBeNull();
+            expect(source.model).toBeNull();
+        });
+
+        // ---- task-2：会话覆盖那层必须读**会话行**（CP dispatch 的真源），不是本地镜像 ----
+
+        it("reads the session-row binding as the session override", () => {
+            const store = useConfigStore();
+            seedSessionRow("s1", {
+                modelProvider: "deepseek",
+                modelName: "deepseek-chat",
+                providerConnectionId: "conn-1",
+                connectionRevision: 7,
+            });
+            seedRoster(null);
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "fake-openai",
+                    }),
+                },
+            };
+
+            // 反证：只读本地镜像时这里会答 llm-profile/openai，与 CP 实际派发的 deepseek 相反。
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                status: "ready",
+                provider: "deepseek",
+                model: "deepseek-chat",
+                source: "session",
+            });
+        });
+
+        it("treats three session-row columns as a bound session even without connectionRevision", () => {
+            const store = useConfigStore();
+            // 会话列表投影不返回 connectionRevision（实测 GET /api/v1/sessions），
+            // 照 CP 四列判据会把真栈里每个已绑会话都判成半绑 ⇒ 全站"未绑定"。
+            seedSessionRow("s1", {
+                modelProvider: "deepseek",
+                modelName: "deepseek-chat",
+                providerConnectionId: "conn-1",
+            });
+            seedRoster(null);
+
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                status: "ready",
+                source: "session",
+                provider: "deepseek",
+                model: "deepseek-chat",
+            });
+        });
+
+        it("reports unavailable for a partial session-row binding instead of guessing a lower layer", () => {
+            const store = useConfigStore();
+            // 四列有值但不全 ⇒ CP 抛 409 API_TYPE_REBIND_REQUIRED(partial_binding)。
+            seedSessionRow("s1", { modelProvider: "deepseek", modelName: "deepseek-chat" });
+            seedRoster(null);
+            store.mergedConfig = {
+                "llm-provider": {
+                    profile: JSON.stringify({
+                        providerId: "openai",
+                        connectionKey: "default",
+                        model: "fake-openai",
+                    }),
+                },
+            };
+
+            const source = store.getChatModelSource("s1", "ws-1");
+            expect(source.status).toBe("unavailable");
+            expect(source.provider).toBeNull();
+        });
+
+        it("lets an explicit local override win over the session row", () => {
+            const store = useConfigStore();
+            seedSessionRow("s1", {
+                modelProvider: "deepseek",
+                modelName: "deepseek-chat",
+                providerConnectionId: "conn-1",
+                connectionRevision: 7,
+            });
+            store.setSessionModel("s1", "openai", "gpt-4o", "conn-2", 3);
+
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                source: "session",
+                provider: "openai",
+                model: "gpt-4o",
+            });
+        });
+
+        it("falls back to the session row after the local override is cleared", () => {
+            const store = useConfigStore();
+            seedSessionRow("s1", {
+                modelProvider: "deepseek",
+                modelName: "deepseek-chat",
+                providerConnectionId: "conn-1",
+                connectionRevision: 7,
+            });
+            store.setSessionModel("s1", "", "");
+
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                source: "session",
+                provider: "deepseek",
+                model: "deepseek-chat",
+            });
+        });
+
+        it("recovers to ready after a failed workspace-defaults read is retried", async () => {
+            const store = useConfigStore();
+            vi.spyOn(api, "getWorkspaceAgents")
+                .mockRejectedValueOnce(new Error("network down"))
+                .mockResolvedValueOnce([
+                    {
+                        principalId: "agent-1",
+                        defaultModelProvider: "deepseek",
+                        defaultModelName: "deepseek-flash",
+                    } as never,
+                ]);
+            seedRoster([primaryAgent("agent-1")]);
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+            expect(store.getChatModelSource("s1", "ws-1").status).toBe("unavailable");
+
+            // 失效即作废失败标记：下一次 ensure 是新读取，成功就回到 ready。
+            store.invalidateWorkspaceAgentDefaults("ws-1");
+            await store.ensureWorkspaceAgentDefaults("ws-1");
+
+            expect(store.getChatModelSource("s1", "ws-1")).toMatchObject({
+                status: "ready",
+                provider: "deepseek",
+                model: "deepseek-flash",
+                source: "agent-principal",
+            });
         });
     });
 
