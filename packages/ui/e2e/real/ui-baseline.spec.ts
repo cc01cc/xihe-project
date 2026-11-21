@@ -2048,12 +2048,17 @@ test("设置页顶带（A4/F1）待 task-78 取证", async () => {
 //      不触发会话或工作区资源创建（Lead 裁 1a）。
 //   4. 零数据一律 fail 不 skip，理由写在抛错文本里（Lead 裁 3，与 discoverSession 同口径）。
 const MEMBERS_PAGE_PATH = "/members";
-const SETTINGS_PAGE_PATH = "/settings";
+// task-37：落点必须是「有可编辑文本项」的实例域。/settings 会重定向到 /settings/instance/llm-provider
+// （ProviderHub，config-text-* 计数 0），辅助函数会抛 NO_CONFIG_TEXT_MSG、用例根本没进入用例体。
+// context-policy 是实测有 1 个 config-text-* 的域（判据 ConfigDomainPanel.vue:973-981 的 !readonly 分支）。
+const SETTINGS_PAGE_PATH = "/settings/instance/context-policy";
 const PRINCIPAL_CONFIGURE_SEL = '[data-testid^="agent-principals-configure-"]';
 const APD_DRAWER_SEL = '[data-testid="agent-principal-detail-drawer"]';
 const APD_HOOKS_KIND_SEL = '[data-testid="apd-hooks-kind"]';
 const APD_HOOKS_ADD_SEL = '[data-testid="apd-hooks-add"]';
-const APD_HOOKS_SAVE_SEL = '[data-testid="apd-hooks-save"]';
+// task-34（0652f42fa）把三段表单收敛成抽屉底部统一提交点 apd-save-all，per-section 的
+// apd-hooks-save 已删除（删于 1fc5d4b57..edf51cbf 之间，窗口 1 钉靶时还在）；task-37 扩卡对齐新契约。
+const APD_SAVE_ALL_SEL = '[data-testid="apd-save-all"]';
 const APD_HOOKS_ROW_SEL = '[data-testid^="apd-hooks-remove-"]';
 const CONFIG_TEXT_SEL = '[data-testid^="config-text-"]';
 const ALERT_DIALOG_SEL = '[role="alertdialog"]';
@@ -2086,7 +2091,8 @@ async function openAgentDrawerWithDraft(page: Page, _draft: string | null): Prom
         );
     }
     // apd-hooks-kind 是 reka Select trigger（不是 input）：点「添加订阅」即可脏化，
-    // 判据仍是「行数 +1 且保存键可点」，语义不变。
+    // 判据仍是「行数 +1 且统一提交点可点」（task-34 后 = apd-save-all；其 disabled = readonly ||
+    // saving || pendingSectionCount===0，所以「有草稿 ⇒ 可点」仍能证明存在未保存状态）。
     const rowsBefore = await page.locator(APD_HOOKS_ROW_SEL).count();
     await page.locator(APD_HOOKS_ADD_SEL).click({ timeout: 5_000 });
     const rowsAfter = await page.locator(APD_HOOKS_ROW_SEL).count();
@@ -2094,8 +2100,8 @@ async function openAgentDrawerWithDraft(page: Page, _draft: string | null): Prom
         rowsAfter,
         "脏化步骤本身失效：advisors 行数没有 +1（前 " + rowsBefore + " 后 " + rowsAfter + "）",
     ).toBe(rowsBefore + 1);
-    const saveEnabled = await page.locator(APD_HOOKS_SAVE_SEL).isEnabled();
-    expect(saveEnabled, "加草稿后保存键仍禁用：无法证明存在未保存状态").toBe(true);
+    const saveEnabled = await page.locator(APD_SAVE_ALL_SEL).isEnabled();
+    expect(saveEnabled, "加草稿后统一提交点仍禁用：无法证明存在未保存状态").toBe(true);
 }
 
 /** 打开设置页并（可选）在第一个可编辑文本项里留下本地草稿（不保存）。 */
