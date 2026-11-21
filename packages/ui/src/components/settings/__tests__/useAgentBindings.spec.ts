@@ -420,3 +420,102 @@ describe("useAgentBindings（task-153 S2 角色读面 + 默认开关）", () => 
         expect(notFoundCause?.problem?.code).toBe("AGENT_PRINCIPAL_NOT_FOUND");
     });
 });
+
+/**
+ * task-41（Lead 2026-11-21 裁定 A/B）：`canManage` 的第三态 —— 「清单还没回 / 读失败」时必须是 `null`，
+ * 不许退化成本地算出来的 `false`。
+ *
+ * <p>原理由：旧实现先置 `capabilityState = "ready"` 再 `await listWorkspaces()`，清单 pending 期间
+ * `workspaces` 是空数组 ⇒ `canManage` 算出 `false`，面板落下「你没有可管理的工作区智能体权限」。
+ * 真栈 11:10 那次误判就是这么来的（org1-probe-race：延迟 /workspaces 时该分支稳定复现）。</p>
+ */
+describe("useAgentBindings（task-41 读态语义）", () => {
+    it("清单未回 ⇒ canManage 是 null（不是 false）；回来后才 true 并读绑定", async () => {
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+            const raw =
+                typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            const url = new URL(raw, "http://127.0.0.1");
+            calls.push({
+                method: (init?.method ?? "GET").toUpperCase(),
+                path: url.pathname,
+                body: "",
+            });
+            if (url.pathname === "/api/v1/me/permissions") {
+                return new Response(
+                    JSON.stringify(permissionView({ instanceAtoms: [MANAGE_AGENTS_ATOM] })),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                );
+            }
+            if (url.pathname === "/api/v1/workspaces") {
+                await gate;
+                return new Response(JSON.stringify(WORKSPACES), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            return new Response(JSON.stringify({ agents: [] }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            });
+        });
+
+        const bindings = useAgentBindings({ principalId: () => "p-1" });
+        const loading = bindings.load();
+        await vi.waitFor(() =>
+            expect(calls.some((call) => call.path === "/api/v1/workspaces")).toBe(true),
+        );
+
+        // 投影已到、清单未回：判据不齐 ⇒ null。空数组不得被当成"没有可管理的工作区"。
+        expect(bindings.canManage.value).toBeNull();
+        expect(bindings.manageableWorkspaces.value).toEqual([]);
+        // 判据没齐就不读绑定（不许拿空候选集去发请求，也不许让 readState 变 ready）。
+        expect(bindings.readState.value).toBe("idle");
+        expect(calls.some((call) => call.path.endsWith("/agents"))).toBe(false);
+
+        release();
+        await loading;
+
+        expect(bindings.workspacesState.value).toBe("ready");
+        expect(bindings.canManage.value).toBe(true);
+        expect(bindings.manageableWorkspaces.value.length).toBe(WORKSPACES.length);
+        // 清单回来后确实去读了每个工作区的绑定。
+        expect(bindings.readState.value).toBe("ready");
+        expect(calls.filter((call) => call.path.endsWith("/agents")).length).toBe(
+            WORKSPACES.length,
+        );
+    });
+
+    it("清单读失败 ⇒ workspacesState=failed 且 canManage 仍是 null（不降级成 false / 空清单）", async () => {
+        mockApi((seen) => {
+            if (seen.path === "/api/v1/me/permissions") {
+                return {
+                    status: 200,
+                    body: permissionView({ instanceAtoms: [MANAGE_AGENTS_ATOM] }),
+                };
+            }
+            if (seen.path === "/api/v1/workspaces") {
+                return { status: 500, body: { code: "INTERNAL", detail: "boom" } };
+            }
+            return { status: 200, body: { agents: [] } };
+        });
+
+        const bindings = useAgentBindings({ principalId: () => "p-1" });
+        await bindings.load();
+
+        expect(bindings.workspacesState.value).toBe("failed");
+        // 原始 cause 保留给界面透出 code（读失败 ≠ 没权限，两种输入必须能分辨）。
+        expect(bindings.workspacesCause.value).not.toBeNull();
+        expect(bindings.canManage.value).toBeNull();
+        expect(bindings.manageableWorkspaces.value).toEqual([]);
+        // 读不到清单就不读绑定，也不落 ready（否则面板会说"读完了，什么都没有"）。
+        expect(bindings.readState.value).toBe("idle");
+        expect(calls.map((call) => call.path)).toEqual([
+            "/api/v1/me/permissions",
+            "/api/v1/workspaces",
+        ]);
+    });
+});

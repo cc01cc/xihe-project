@@ -22,6 +22,11 @@ export const MANAGE_AGENTS_ATOM = "MANAGE_WORKSPACE_AGENTS";
 /** `loading` = 能力投影还没回来 ⇒ 调用方必须禁用入口，但**不许**说"你没权限"。 */
 export type AgentBindingsCapabilityState = "loading" | "ready" | "failed";
 export type AgentBindingsReadState = "idle" | "loading" | "ready";
+/**
+ * 工作区清单读面状态（task-41）。与能力投影分开记：清单读失败**不许**降级成「空清单」——
+ * 空清单在界面上等于「没有可管理工作区」，而读失败只说明「这次没读成」。
+ */
+export type AgentBindingsWorkspacesState = "loading" | "ready" | "failed";
 
 /**
  * 一行「该主体 × 一个可管理工作区」。
@@ -77,6 +82,9 @@ export function useAgentBindings(options: UseAgentBindingsOptions) {
     const instanceAtoms = ref<string[]>([]);
     const workspaceAtoms = ref<Record<string, string[]>>({});
     const workspaces = ref<ApiWorkspace[]>([]);
+    /** 清单读面状态与原始 cause：`failed` 时面板要说「读不到」并给重试，不能说「没权限」。 */
+    const workspacesState = ref<AgentBindingsWorkspacesState>("loading");
+    const workspacesCause = ref<unknown>(null);
     const readState = ref<AgentBindingsReadState>("idle");
     const rows = ref<Record<string, BindingRow>>({});
     /** 这次读失败的可管理工作区（`bound` 为 null 的那些）。 */
@@ -96,10 +104,17 @@ export function useAgentBindings(options: UseAgentBindingsOptions) {
         workspaces.value.filter((workspace) => canManageAgentsIn(workspace.id)),
     );
 
-    /** `null` = 能力投影未回 ⇒ 调用方禁用但不说"你没权限"。 */
-    const canManage = computed<boolean | null>(() =>
-        capabilityState.value === "ready" ? manageableWorkspaces.value.length > 0 : null,
-    );
+    /**
+     * `null` = 判据还没齐（能力投影未回，**或**工作区清单未回/读失败）⇒ 调用方禁用但不说"你没权限"。
+     *
+     * <p>清单未回也算 `null`：`manageableWorkspaces` 依赖 `workspaces`，清单 pending 时它是空数组，
+     * 此时若返回 `false`，界面就把「还不知道」画成「没有可管理的工作区」（task-41 的竞态根因）。</p>
+     */
+    const canManage = computed<boolean | null>(() => {
+        if (capabilityState.value !== "ready") return null;
+        if (workspacesState.value !== "ready") return null;
+        return manageableWorkspaces.value.length > 0;
+    });
 
     const bindingViews = computed<WorkspaceBindingView[]>(() =>
         manageableWorkspaces.value.map((workspace) => {
@@ -129,10 +144,16 @@ export function useAgentBindings(options: UseAgentBindingsOptions) {
      * 能力投影 + 工作区清单（fail-closed）。
      *
      * <p>原子读失败 ⇒ `failed` 并 return：不显示写入口，也不断言"你没权限"（读失败证明不了权限）。
-     * 工作区清单读失败 ⇒ 空数组（那是名字/候选面，不是授权判据）。</p>
+     * 清单读失败 ⇒ `workspacesState = "failed"` 并保留原始 cause（面板据此显示「读不到」+ 重试）——
+     * **不再**把清单置空：空清单会把读失败画成「没有可管理的工作区」，正是 task-41 的第二处缺口。</p>
+     *
+     * <p>顺序约束：`capabilityState` 只在**清单也回来之后**才置 `ready`。提前置 ready 会让
+     * `canManage` 在清单 pending 期间算出 `false`（而不是 `null`），面板就会在清单回来前先落「没权限」空态。</p>
      */
     async function loadCapability(): Promise<void> {
         capabilityState.value = "loading";
+        workspacesState.value = "loading";
+        workspacesCause.value = null;
         try {
             const self = await api.getSelfPermissions();
             instanceAtoms.value = (self.instancePermissions ?? []).map((atom) => atom.actionClass);
@@ -143,16 +164,21 @@ export function useAgentBindings(options: UseAgentBindingsOptions) {
                 );
             }
             workspaceAtoms.value = atomsByWorkspace;
-            capabilityState.value = "ready";
+            // 投影读到了，但**这里先不置 ready**（Lead 2026-11-21 裁定 A：先取数、后置 ready）。
         } catch {
             capabilityState.value = "failed";
             return;
         }
         try {
             workspaces.value = await api.listWorkspaces();
-        } catch {
-            workspaces.value = [];
+            workspacesState.value = "ready";
+        } catch (cause) {
+            workspacesCause.value = cause;
+            workspacesState.value = "failed";
         }
+        // 两轴都取完才置 ready。清单失败也从这里走：投影本身是读到了的，
+        // 失败记在 workspacesState 上（界面据此显示「读不到清单」+ 重试，而不是永远 loading）。
+        capabilityState.value = "ready";
     }
 
     /**
@@ -281,6 +307,9 @@ export function useAgentBindings(options: UseAgentBindingsOptions) {
     /** 首次进入：能力 → 清单 → 绑定。三步串行是有意的（后者依赖前者的可管理集）。 */
     async function load(): Promise<void> {
         await loadCapability();
+        // 判据没齐就不读绑定：清单读失败时读绑定等于拿空候选集发请求，而 `readState = ready`
+        // 会让面板把「没读成」看成「读完了、什么都没有」（task-41）。
+        if (capabilityState.value !== "ready" || workspacesState.value !== "ready") return;
         await loadBindings();
     }
 
@@ -316,6 +345,8 @@ export function useAgentBindings(options: UseAgentBindingsOptions) {
 
     return {
         capabilityState,
+        workspacesState,
+        workspacesCause,
         readState,
         workspaces,
         manageableWorkspaces,

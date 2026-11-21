@@ -82,6 +82,26 @@ const pending = computed(() =>
 
 const canSave = computed(() => pending.value.length > 0 && !saving.value);
 
+/**
+ * 读失败态（task-41）：能力投影失败与清单失败都要能被分辨，且**都**给重试入口。
+ *
+ * <p>两者文案不同、绝不落到「你没有可管理的工作区智能体权限」：那句只在
+ * `canManage === false`（判据已齐、且确实没有可管理的工作区）时才允许出现。</p>
+ */
+const readFailure = computed<{ copy: string; code: string | null } | null>(() => {
+    if (bindings.capabilityState.value === "failed") {
+        return { copy: t("agentBindings.readFailed"), code: null };
+    }
+    if (bindings.workspacesState.value === "failed") {
+        const cause = bindings.workspacesCause.value as { problem?: { code?: string } } | null;
+        return {
+            copy: t("agentBindings.workspacesFailed"),
+            code: cause?.problem?.code ?? null,
+        };
+    }
+    return null;
+});
+
 function discarding() {
     picked.value = {};
     saved.value = false;
@@ -205,6 +225,8 @@ watch(
             <p
                 v-if="
                     bindings.capabilityState.value === 'loading' ||
+                    (bindings.capabilityState.value === 'ready' &&
+                        bindings.workspacesState.value === 'loading') ||
                     bindings.readState.value === 'loading'
                 "
                 class="flex items-center gap-2 text-sm text-muted-foreground"
@@ -214,14 +236,35 @@ watch(
                 {{ t("agentBindings.loading") }}
             </p>
 
-            <!-- fail-closed：能力投影读不到 ⇒ 只说"读不到"，不说"你没权限"（读失败证明不了权限）。 -->
-            <p
-                v-else-if="bindings.capabilityState.value === 'failed'"
+            <!-- fail-closed：读不到 ⇒ 只说"读不到"，不说"你没权限"（读失败证明不了权限）。
+                 能力投影与工作区清单各有自己的失败文案，且都带重试入口（task-41）。 -->
+            <div
+                v-else-if="readFailure"
                 class="rounded-md border border-dashed p-4 text-sm text-muted-foreground"
                 data-testid="agent-bindings-read-failed"
             >
-                {{ t("agentBindings.readFailed") }}
-            </p>
+                <p data-testid="agent-bindings-read-failed-copy">{{ readFailure.copy }}</p>
+                <p v-if="readFailure.code" class="mt-1 text-xs">
+                    {{ t("errors.errorCodeLabel") }}
+                    <code
+                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px]"
+                        data-testid="agent-bindings-read-failed-code"
+                        >{{ readFailure.code }}</code
+                    >
+                </p>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="mt-2"
+                    data-testid="agent-bindings-retry"
+                    :disabled="saving"
+                    @click="refresh"
+                >
+                    <RefreshCw class="size-4" aria-hidden="true" />
+                    {{ t("agentBindings.retry") }}
+                </Button>
+            </div>
 
             <p
                 v-else-if="bindings.canManage.value === false"

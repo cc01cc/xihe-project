@@ -3902,6 +3902,9 @@ const messages = {
             loading: "正在读取工作区与权限…",
             readFailed:
                 "读不到你的权限投影，因此无法判断能不能改这里的绑定。这是读取失败，不是没有权限。",
+            workspacesFailed:
+                "读不到工作区清单，因此无法判断你能管理哪些工作区。这是读取失败，不是没有权限。",
+            retry: "重试",
             noPermission: "你没有可管理的工作区智能体权限，这里的绑定不可修改。",
             empty: "还没有任何工作区可绑定。",
             badgeDefault: "工作区默认",
@@ -8207,6 +8210,9 @@ const messages = {
             loading: "Reading workspaces and permissions…",
             readFailed:
                 "Your permission projection could not be read, so it is unknown whether these bindings may be changed. This is a read failure, not a lack of permission.",
+            workspacesFailed:
+                "The workspace list could not be read, so it is unknown which workspaces you may manage. This is a read failure, not a lack of permission.",
+            retry: "Retry",
             noPermission:
                 "You have no manageable workspace-agent permission, so these bindings are read-only for you.",
             empty: "No workspace is available for binding yet.",

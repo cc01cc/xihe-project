@@ -360,3 +360,101 @@ describe("AgentWorkspaceBindingsPanel（task-153 S2 角色读面 + 默认开关�
         expect(wrapper.find('[data-testid="agent-bindings-error"]').exists()).toBe(false);
     });
 });
+
+/**
+ * task-41（Lead 2026-11-21 裁定 A/B）：读态语义 —— 「判据没齐」不许画成「没权限」。
+ *
+ * <p>原理由：`useAgentBindings` 曾先置 `capabilityState = "ready"` 再 `await listWorkspaces()`，
+ * 于是清单往返的那几百毫秒里 `canManage` 算出 `false`（而不是 `null`），面板直接落
+ * 「你没有可管理的工作区智能体权限」。三例分别钉：未回 ⇒ null、回了 ⇒ true + 行数、失败 ⇒ 错误态 + 重试。</p>
+ */
+describe("AgentWorkspaceBindingsPanel（task-41 读态语义）", () => {
+    it("清单延迟未回 ⇒ 停在加载态，不出现「没有权限」也不出现空态；回来后才列行", async () => {
+        let release: (rows: apiModule.ApiWorkspace[]) => void = () => {};
+        mockedApi.listWorkspaces.mockImplementation(
+            () =>
+                new Promise<apiModule.ApiWorkspace[]>((resolve) => {
+                    release = resolve;
+                }),
+        );
+
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        // 能力投影已回、清单未回：判据不齐 ⇒ 只能说"还在读"。
+        expect(wrapper.find('[data-testid="agent-bindings-loading"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-bindings-no-permission"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="agent-bindings-empty"]').exists()).toBe(false);
+        expect(wrapper.text()).not.toContain("没有可管理的工作区智能体权限");
+        // 判据没齐时提交不可点（能看见为什么不能点）。
+        expect(
+            wrapper.find('[data-testid="agent-bindings-save"]').attributes("disabled"),
+        ).toBeDefined();
+
+        release(WORKSPACES);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-bindings-loading"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="agent-bindings-no-permission"]').exists()).toBe(false);
+        // 行数 = 清单返回值，不是 0。
+        expect(wrapper.findAll('[data-testid^="agent-bindings-row-"]').length).toBe(
+            WORKSPACES.length,
+        );
+        // 清单回来后也确实去读了每个工作区的绑定（判据齐了才发这 N 个 GET）。
+        expect(mockedApi.getWorkspaceAgents.mock.calls.length).toBe(WORKSPACES.length);
+    });
+
+    it("清单读失败 ⇒ 可区分的错误态 + 重试入口，不渲染「没有权限」也不渲染空态", async () => {
+        mockedApi.listWorkspaces.mockRejectedValue(
+            new ApiError({ status: 500, code: "INTERNAL", detail: "boom", requestId: "req-ws" }),
+        );
+
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-bindings-read-failed"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-bindings-read-failed-copy"]').text()).toContain(
+            "读不到工作区清单",
+        );
+        expect(wrapper.find('[data-testid="agent-bindings-retry"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-bindings-no-permission"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="agent-bindings-empty"]').exists()).toBe(false);
+        expect(wrapper.text()).not.toContain("没有可管理的工作区智能体权限");
+        // 清单都没读到，就不该逐个工作区去读绑定（省掉注定 403 的请求）。
+        expect(mockedApi.getWorkspaceAgents).not.toHaveBeenCalled();
+
+        // 重试：修好后点一下就回到列表 —— 失败态不是死路。
+        mockedApi.listWorkspaces.mockResolvedValue(WORKSPACES);
+        await wrapper.find('[data-testid="agent-bindings-retry"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-bindings-read-failed"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid^="agent-bindings-row-"]').length).toBe(
+            WORKSPACES.length,
+        );
+    });
+
+    it("能力投影真没权限 vs 清单读失败：两种输入渲染不同（这张卡的核心判据）", async () => {
+        mockedApi.getSelfPermissions.mockResolvedValue(permissions(["VIEW_WORKSPACE"]));
+        const denied = mountPanel();
+        await flushPromises();
+        const deniedCopy = denied.find('[data-testid="agent-bindings-no-permission"]').text();
+
+        mockedApi.getSelfPermissions.mockResolvedValue(permissions([MANAGE]));
+        mockedApi.listWorkspaces.mockRejectedValue(
+            new ApiError({ status: 500, code: "INTERNAL", detail: "boom", requestId: "req-ws" }),
+        );
+        const unreadable = mountPanel();
+        await flushPromises();
+        const failedCopy = unreadable
+            .find('[data-testid="agent-bindings-read-failed-copy"]')
+            .text();
+
+        expect(deniedCopy).not.toBe(failedCopy);
+        expect(deniedCopy).toContain("没有可管理的工作区智能体权限");
+        expect(failedCopy).not.toContain("没有可管理的工作区智能体权限");
+        expect(unreadable.find('[data-testid="agent-bindings-retry"]').exists()).toBe(true);
+        // 真没权限时不给重试（重试不会变出权限，只会给用户一个假的出口）。
+        expect(denied.find('[data-testid="agent-bindings-retry"]').exists()).toBe(false);
+    });
+});
