@@ -17,10 +17,13 @@ import {
     SETTINGS_LAYERS,
     defaultLayerPath,
     domainsForLayer,
+    instanceOpsGroups,
     settingsDomainPath,
     type SettingsLayer,
+    type SettingsNavItem,
 } from "../../lib/settingsIa";
 import { SUPPORTED_LOCALES } from "../../i18n/locale";
+import { useAuthStore } from "../../stores/auth";
 
 /**
  * PLAN-0762 T3.4：`⌘K` / `Ctrl+K` 搜索**配置域**并跳转。
@@ -37,6 +40,14 @@ import { SUPPORTED_LOCALES } from "../../i18n/locale";
  * `⌘/Ctrl+B` 由 vendor `ui/sidebar/SidebarProvider.vue:57` 自己注册（全局条那一份），本组件
  * **不碰 b 键**、也不引入第三个全局监听器 —— 两个快捷键各自的属主清晰。</p>
  *
+ * <p>**结果 = 层内配置域 + 实例层运维/安全页**（task-63）：左栏能点的实例层页，⌘K 必须也能搜到。
+ * 运维/安全页同样来自 `instanceOpsGroups()` 一处定义（`path` 与 `labelKey` 都取自那里），
+ * 本组件不再另写第二个页清单。</p>
+ *
+ * <p>**无权限的页绝不出现**（task-63 判据）：`config-locks` 需实例管理员能力、`roles` 需
+ * `MANAGE_ROLES` 原子，其余恒显 —— 与 `SettingsSidebar.vue` 的过滤判据同一份。⌘K 的语义是
+ * 「跳到我能打开的页」，把 403 页搜出来等于造死项。</p>
+ *
  * <p>**缺口项不进结果**（判据）：`resourceGroups()` 里的 `gaps` 条目**不是配置域**、且**没有
  * path**（PLAN-0772 M2 起这些资源已搬出设置区，本组件只搜设置侧的域与运维项）——
  * 而 ⌘K 的语义是「跳转」。把它们塞进结果会造出「按 Enter 什么都不发生」的死项，正是本卡
@@ -52,6 +63,7 @@ const emit = defineEmits<{ "update:open": [value: boolean] }>();
 
 const { t, locale, getLocaleMessage } = useI18n();
 const router = useRouter();
+const auth = useAuthStore();
 
 /**
  * 另一语言的标签（task-46）：中文界面要能用 `log` 搜到「日志」，英文界面要能用「日志」搜到
@@ -77,9 +89,9 @@ const otherLocale = computed(
     () => SUPPORTED_LOCALES.find((item) => item !== locale.value) ?? locale.value,
 );
 
-/** 搜索别名：`域名 key + 另一语言标签`（当前语言标签由 `label` 单独渲染）。 */
-function searchAlias(domain: string, labelKey: string): string {
-    return `${domain} ${labelIn(otherLocale.value, labelKey)}`.trim();
+/** 搜索别名：`条目 id（域 / 运维页名）+ 另一语言标签`（当前语言标签由 `label` 单独渲染）。 */
+function searchAlias(id: string, labelKey: string): string {
+    return `${id} ${labelIn(otherLocale.value, labelKey)}`.trim();
 }
 
 /** 层名文案键（与 `SettingsLayerHeader.vue` 的 `LAYER_TITLE_KEYS` 同键；这不是域清单）。 */
@@ -90,33 +102,66 @@ const LAYER_LABEL_KEY: Record<SettingsLayer, string> = {
 };
 
 interface PaletteEntry {
-    /** 唯一值：`层:域` —— 同域在不同层是两条不同的跳转目标。 */
+    /** 唯一值：`层:条目 id` —— 同域在不同层是两条不同的跳转目标，同层的运维页 id 与域 id 不碰撞。 */
     value: string;
     label: string;
     path: string;
     /** 视觉隐藏的搜索别名（见 `searchAlias`），只喂 vendor 的 textContent 过滤器。 */
     alias: string;
+    /** 条目种类：配置域页 / 实例层运维安全页（task-63，供测试与样式区分，不参与过滤）。 */
+    kind: "domain" | "ops";
 }
 
-const currentItems = computed<PaletteEntry[]>(() =>
-    domainsForLayer(props.layer).map((domain) => ({
-        value: `${props.layer}:${domain}`,
+/**
+ * 实例层运维/安全页里**当前用户能打开**的那些（task-63）。
+ *
+ * <p>判据与 `SettingsSidebar.vue` 的可见性过滤同一份：`config-locks` 要实例管理员能力、
+ * `roles` 要 `MANAGE_ROLES` 原子，其余恒显（授权总览按 task-8 裁定对已登录者人人可见）。
+ * 本函数只做过滤，不新增页清单。</p>
+ */
+function visibleOpsItems(): SettingsNavItem[] {
+    return instanceOpsGroups()
+        .flatMap((group) => group.items)
+        .filter((item) => {
+            if (item.id === "config-locks") return auth.hasInstanceAdminCapability;
+            if (item.id === "roles") return auth.canManageRoles;
+            return true;
+        });
+}
+
+function domainEntries(layer: SettingsLayer): PaletteEntry[] {
+    return domainsForLayer(layer).map((domain) => ({
+        value: `${layer}:${domain}`,
         label: t(DOMAIN_LABEL_KEY[domain]),
-        path: settingsDomainPath(props.layer, domain),
+        path: settingsDomainPath(layer, domain),
         alias: searchAlias(domain, DOMAIN_LABEL_KEY[domain]),
-    })),
-);
+        kind: "domain",
+    }));
+}
+
+/** 运维/安全页只属实例层（`instanceOpsGroups` 的定义就是实例层两组的结构）。 */
+function opsEntries(layer: SettingsLayer): PaletteEntry[] {
+    if (layer !== "instance") return [];
+    return visibleOpsItems().map((item) => ({
+        value: `${layer}:${item.id}`,
+        label: t(item.labelKey),
+        path: item.path,
+        alias: searchAlias(item.id, item.labelKey),
+        kind: "ops",
+    }));
+}
+
+function entriesForLayer(layer: SettingsLayer): PaletteEntry[] {
+    return [...domainEntries(layer), ...opsEntries(layer)];
+}
+
+const currentItems = computed<PaletteEntry[]>(() => entriesForLayer(props.layer));
 
 const crossLayerGroups = computed(() =>
     SETTINGS_LAYERS.filter((layer) => layer !== props.layer).map((layer) => ({
         layer,
         label: t(LAYER_LABEL_KEY[layer]),
-        items: domainsForLayer(layer).map<PaletteEntry>((domain) => ({
-            value: `${layer}:${domain}`,
-            label: t(DOMAIN_LABEL_KEY[domain]),
-            path: settingsDomainPath(layer, domain),
-            alias: searchAlias(domain, DOMAIN_LABEL_KEY[domain]),
-        })),
+        items: entriesForLayer(layer),
     })),
 );
 
@@ -203,6 +248,7 @@ useEventListener("keydown", (event: KeyboardEvent) => {
                     :key="item.value"
                     :value="item.value"
                     :data-testid="`commandk-item-${item.value}`"
+                    :data-commandk-kind="item.kind"
                     @select="go(item.path)"
                 >
                     <span>{{ item.label }}</span>
@@ -223,6 +269,7 @@ useEventListener("keydown", (event: KeyboardEvent) => {
                         :key="item.value"
                         :value="item.value"
                         :data-testid="`commandk-item-${item.value}`"
+                        :data-commandk-kind="item.kind"
                         @select="go(item.path)"
                     >
                         <span class="mr-auto">{{ item.label }}</span>

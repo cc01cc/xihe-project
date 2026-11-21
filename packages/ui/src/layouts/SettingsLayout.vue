@@ -28,6 +28,7 @@ import {
     isSettingsGroup,
     isSettingsLayer,
     settingsLayerForPath,
+    settingsPageTitleKey,
 } from "../lib/settingsIa";
 
 /**
@@ -58,6 +59,10 @@ const layer = computed(() =>
  *
  * <p>task-485：组名不再写死 `model-config` 一个，改为查组注册表（`groupDefFor`）——
  * 新增组只加注册表一行，面包屑自动跟上。</p>
+ *
+ * <p>task-63：运维/安全页（监控、数据、配置锁定、角色、平台智能体、审计、授权总览）
+ * 既不是域也不是组，末段改为查 `settingsPageTitleKey(route.path)`（登记在
+ * `instanceOpsGroups()` 同一条目上）—— 面包屑说的是**目的页叫什么**，不是左栏入口名。</p>
  */
 /**
  * task-153：面包屑动态尾段。页面（如主体绑定页）在拿到运行时数据后写入，
@@ -82,8 +87,11 @@ const domainLabel = computed(() => {
         : undefined;
     if (group) return t(group.labelKey);
     const domain = route.meta.settingsDomain;
-    if (!isConfigDomain(domain)) return undefined;
-    return t(DOMAIN_LABEL_KEY[domain]);
+    if (isConfigDomain(domain)) return t(DOMAIN_LABEL_KEY[domain]);
+    // task-63：运维/安全页不是配置域，末段取「目的页页标题」（登记在 settingsIa 的
+    // instanceOpsGroups 里，不在这里另造映射）；取不到就不渲染末段。
+    const pageTitleKey = settingsPageTitleKey(route.path);
+    return pageTitleKey ? t(pageTitleKey) : undefined;
 });
 
 const drawerOpen = ref(false);

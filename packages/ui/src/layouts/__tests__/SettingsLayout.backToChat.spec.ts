@@ -30,6 +30,7 @@ const messages = {
                 backToUserLayer: "去用户层",
             },
             domainRag: "检索增强",
+            authorizationOverview: { title: "授权总览" },
         },
         common: { loading: "加载中" },
     },
@@ -37,11 +38,17 @@ const messages = {
 
 const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });
 
+/** task-63：路径要能按用例改（面包屑末段取 `settingsPageTitleKey(route.path)`）。 */
+const routeState = vi.hoisted(() => ({
+    path: "/settings/instance/rag",
+    meta: {} as Record<string, unknown>,
+}));
+
 vi.mock("vue-router", () => ({
     useRoute: () => ({
-        meta: {},
-        path: "/settings/instance/rag",
-        fullPath: "/settings/instance/rag",
+        meta: routeState.meta,
+        path: routeState.path,
+        fullPath: routeState.path,
         query: {},
     }),
     useRouter: () => ({
@@ -82,6 +89,54 @@ function mountLayout() {
         attachTo: document.body,
     });
 }
+
+/**
+ * task-63：面包屑末段 = **目的页页标题**，不是左栏入口名。
+ *
+ * <p>判据两例（卡面要求）：登记过的运维/安全页 ⇒ 渲染末段；未登记的路径 ⇒ 不渲染末段
+ * （宁缺不猜，别把入口名或路径硬翻成一句人话）。`domain` 由布局算好后传给
+ * `SettingsLayerHeader`，这里用能读取 props 的 stub 观察它 —— 不去断言子组件的 DOM 结构。</p>
+ */
+describe("SettingsLayout 面包屑末段取目的页页标题（task-63）", () => {
+    function mountWithHeaderProbe() {
+        return mount(SettingsLayout, {
+            global: {
+                plugins: [i18n, createPinia()],
+                stubs: {
+                    SettingsSidebar: { template: '<div data-testid="settings-sidebar-stub" />' },
+                    SettingsLayerHeader: {
+                        props: { layer: String, domain: String, trail: Array },
+                        template:
+                            '<div data-testid="settings-layer-header-stub">{{ domain ?? "" }}</div>',
+                    },
+                    BackToChatButton: { template: "<button />" },
+                    RouterView: { template: '<div data-testid="router-view-stub" />' },
+                },
+            },
+            attachTo: document.body,
+        });
+    }
+
+    it("运维/安全页（授权总览）渲染页名末段", () => {
+        routeState.path = "/settings/authorization-overview";
+        routeState.meta = { settingsLayer: "instance" };
+        const wrapper = mountWithHeaderProbe();
+        expect(wrapper.get('[data-testid="settings-layer-header-stub"]').text()).toBe("授权总览");
+        wrapper.unmount();
+        routeState.path = "/settings/instance/rag";
+        routeState.meta = {};
+    });
+
+    it("未登记的路径不渲染末段（空串，不猜）", () => {
+        routeState.path = "/settings/not-registered-page";
+        routeState.meta = { settingsLayer: "instance" };
+        const wrapper = mountWithHeaderProbe();
+        expect(wrapper.get('[data-testid="settings-layer-header-stub"]').text()).toBe("");
+        wrapper.unmount();
+        routeState.path = "/settings/instance/rag";
+        routeState.meta = {};
+    });
+});
 
 describe("SettingsLayout 返回聊天入口 (task-156)", () => {
     it("keeps the back-to-chat button only on mobile (container is lg:hidden)", () => {

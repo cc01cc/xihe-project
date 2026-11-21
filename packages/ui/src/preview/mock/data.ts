@@ -6,8 +6,10 @@ import {
     KeyRound,
     Languages,
     LayoutTemplate,
+    ListChecks,
     LockKeyhole,
     MessageSquare,
+    Network,
     ScrollText,
     ShieldCheck,
     SlidersHorizontal,
@@ -24,9 +26,10 @@ import { domainsForLayer, instanceOpsGroups, resourceGroups } from "@/lib/settin
 /**
  * Mock data for the task-233 sheets.
  *
- * Counts are the **CP matrix facts** already used by `src/lib/settingsIa.ts` (instance 12
- * domains + 2 ops + 3 security), re-stated here so these sheets do not depend on that module's
- * `SettingsLayer` shape. Nothing is invented; nothing is fetched.
+ * Counts are the **CP matrix facts** already used by `src/lib/settingsIa.ts` (instance 11
+ * domains + 2 ops + 5 security, task-485 撤 `agent-profile` 后的读数), re-stated here so these
+ * sheets do not depend on that module's `SettingsLayer` shape. Nothing is invented; nothing is
+ * fetched.
  */
 export interface NavItem {
     id: string;
@@ -172,7 +175,7 @@ export const resourceItems: NavItem[] = resourceGroups().map((resource) =>
  * （CP 矩阵 `LAYER_DOMAINS.user` 含 `user-preference`）。所以它出现在两个分组里是矩阵事实，
  * 不是重复条目——这也是为什么左栏必须按层分组：同一条目在不同层是不同的写入目标。</p>
  */
-// 用户层只剩 9 个配置域（`domainsForLayer("user")`，含 user-preference：它在两层都存在，是矩阵事实）。
+// 用户层只剩 8 个配置域（`domainsForLayer("user")`，含 user-preference：它在两层都存在，是矩阵事实）。
 // 3 条资源入口已随 PLAN-0772 M2 搬到资源模块（`/resources/*`），设置区不再有资源条目。
 export const userItems: NavItem[] = domainsForLayer("user").map((domain) =>
     item(domain, badgeOf(domain)),
@@ -182,7 +185,8 @@ export const userItems: NavItem[] = domainsForLayer("user").map((domain) =>
  * **对账表**（稿页直接打印，2026-11-11 裁定）：每段条目数由生成结果现算，不写死。
  *
  * <p>为什么把表放在页面上而不是只写在汇报里：下一轮评审的人不必读代码、也不必问谁，
- * 自己在稿上就能数「实例 12+2+3+4=21 / 用户 9+3=12」对不对得上产品左栏。</p>
+ * 自己在稿上就能数「实例 11+2+5=18 / 用户 8」对不对得上产品左栏（旧读数「12+2+3+4=21 /
+ * 用户 9+3=12」是 task-485 撤 `agent-profile` 之前的数字，已作废）。</p>
  */
 export const NAV_RECONCILIATION: { segment: string; count: number }[] = [
     { segment: "实例层 · 配置域", count: domains.length },
@@ -195,8 +199,10 @@ export const NAV_RECONCILIATION: { segment: string; count: number }[] = [
 /**
  * 徽标口径（与产品 `SettingsSidebar.vue` 的入口数一致：域 + ops 条目；资源已搬走不再计入）。
  *
- * <p>PLAN-0772 M2 的三个数（task-485 撤 agent-profile、task-96 撤智能体资源并加平台智能体入口后）：
- * 实例层 **17** = 11 域 + 2 运维 + 4 安全；用户层 **8** = 8 域；资源模块 **4** = 4 资源条目。</p>
+ * <p>PLAN-0772 M2 的三个数（task-485 撤 agent-profile、task-96 撤智能体资源并加平台智能体入口、
+ * task-8 加「授权总览」后）：实例层 **18** = 11 域 + 2 运维 + 5 安全（权限过滤前；缺
+ * `MANAGE_ROLES` 时少 `roles` 一行 = 17，也非实例管理员时再少 `config-locks` = 16）；
+ * 用户层 **8** = 8 域；资源模块 **4** = 4 资源条目。</p>
  */
 export const NAV_COUNTS = {
     instance: domains.length + opsItems.length + securityItems.length,
@@ -205,17 +211,26 @@ export const NAV_COUNTS = {
 };
 
 /**
- * 全局条（模块切换）：**只有两个** —— 工作区 / 设置。
+ * 全局条（模块切换）：**五个**实例级模块 —— 工作台 / 组织成员 / 资源 / 设置 / 自动化任务。
  *
- * [裁定 PLAN-0762 T2.3 / DEV-010 §10.2] MVP 的全局条只放「主体工作区 / 设置页」两个模块，
- * **不加第三个**；第三个模块何时进、进什么，[裁定] 待用户裁定（DEV-010 §10.6）。
- * 2026-11-11 返工：此处原有一个 `observability / 观测` 项 —— **它不是模块**
- * （[源码] `monitoring` 只是设置页路由 `settings-monitoring`，见 `router/index.ts:121-122`），已删。
+ * <p><b>为什么不是「只有两个」</b>：旧裁定 PLAN-0762 T2.3 / DEV-010 §10.2「MVP 只放主体工作区 +
+ * 设置页，不加第三个」已被后续三条裁定逐次 supersede —— PLAN-0772 M2 加「资源」（D-1011）、
+ * task-240 / PLAN-0773 M3 加「组织成员」（Lead 裁 (a)：「实例级面进全局模块」）、task-11 /
+ * D-1220 ③ 回退把「自动化任务」从工作区上下文面板改成恒在的实例级模块。
+ * 产品侧同源：`src/lib/globalModules.ts:113-170` 的 `GLOBAL_MODULES`（本数组与它逐项同名同序，
+ * 判据是 id 与顺序一致；文案仍由各自 i18n 键给值，稿页这里写死中文只为脱离 i18n 运行）。</p>
+ *
+ * <p>2026-11-11 返工：此处原有一个 `observability / 观测` 项 —— **它不是模块**
+ * （[源码] `monitoring` 只是设置页路由 `settings-monitoring`，见 `router/index.ts:121-122`），已删。</p>
  */
 export const modules: NavItem[] = [
-    { id: "workspace", label: "工作区", icon: MessageSquare },
-    // PLAN-0772 M2（design.md 目标 1）：第三个模块入口。上一轮「不加第三个」的裁定（PLAN-0762 T2.3）
-    // 已被本计划 supersede —— 资源面独立成入口正是 D-1011 的结论，不是随手加项。
+    // 产品 id 是 workbench（labelKey `sidebar.workbench`「工作台」）；旧稿写成 workspace/工作区，
+    // 与「工作区」这个**内容面**概念撞名（DSD-1490 称呼表第 1/2 行），按产品对齐。
+    { id: "workbench", label: "工作台", icon: MessageSquare },
+    // task-240 / PLAN-0773 M3：实例级「组织成员」面进全局模块（产品图标 Network，见 globalModules.ts:126）。
+    { id: "org-members", label: "组织成员", icon: Network },
     { id: "resources", label: "资源", icon: Wrench },
     { id: "settings", label: "设置", icon: SlidersHorizontal },
+    // task-11 / D-1220 ③ 回退：恒在的实例级「自动化任务」总览（产品图标 ListChecks，globalModules.ts:159）。
+    { id: "scheduled-tasks", label: "自动化任务", icon: ListChecks },
 ];

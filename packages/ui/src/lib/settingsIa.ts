@@ -10,13 +10,18 @@ import {
  *
  * <p>为什么单独成模块（task-66）：路由注册、左栏、404 判定三处必须用**同一份**矩阵，
  * 否则"左栏能看到但路由 404"这类不一致会随域分批实施反复出现。矩阵本身不在前端另造：
- * `LAYER_DOMAINS`（stores/config）已是 CP 白名单的镜像 —— **实例 12 / 用户 9 /
- * 工作区层 4**（工作区层 = `workspace-default` 与 per-workspace 层共用同一张矩阵），
- * 本模块只做**查询与分组**。</p>
+ * `LAYER_DOMAINS`（stores/config）已是 CP 白名单的镜像 —— **实例 11 / 用户 8 /
+ * 工作区层 3**（工作区层 = `workspace-default` 与 per-workspace 层共用同一张矩阵），
+ * 本模块只做**查询与分组**。域宇宙 `INSTANCE_DOMAINS` 仍是 12 —— `agent-profile`
+ * 不进设置区（认证面用），**矩阵格数 ≠ 域宇宙**是有意的。</p>
  *
- * <p><b>2026-11-13 D-1122 49A / PLAN-0766 T2.4 后工作区层是 4 域</b>（agent-runtime /
- * approval-policy / agent-templates / job-policy）：模型 4 域（llm-provider / context-policy /
- * embedding / rag）退出了工作区层。注意 `logging` 只有实例层（`WORKSPACE_WRITABLE_DOMAINS`
+ * <p><b>工作区层当前是 3 域</b>（agent-runtime / approval-policy / job-policy）：2026-11-13
+ * D-1122 49A / PLAN-0766 T2.4 先把模型 4 域（llm-provider / context-policy / embedding / rag）
+ * 退出工作区层（→ 4 域），随后 **task-485 / task-226（2026-11-14 用户裁定）再把 `agent-templates`
+ * 撤下 ⇒ 3 域**（用户原话「工作区没有智能体模板与角色，工作区（能）有的是能用的智能体」）。
+ * <b>旧读数「12 / 9 / 4」</b>（实例 12、用户 9、工作区 4）是 task-485 撤 `agent-profile`（实例、用户
+ * 各减 1）与撤 `agent-templates`（工作区减 1）**之前**的数字，不得再引用；现值以 `LAYER_DOMAINS`
+ * 为唯一事实（`stores/config.ts:177-193`）。注意 `logging` 只有实例层（`WORKSPACE_WRITABLE_DOMAINS`
  * 从不含它），`context-templates` 是 service-only（通用 config API 不收）。改这里之前先核
  * CP `ConfigService.java` 的 `WORKSPACE_WRITABLE_DOMAINS` 与 `WORKSPACE_DEFAULT_WRITABLE_DOMAINS`。</p>
  */
@@ -285,6 +290,15 @@ export interface SettingsNavItem {
     id: string;
     labelKey: string;
     path: string;
+    /**
+     * task-63：**目的页的页标题键**（左栏条目名之外的正名）。
+     *
+     * <p>为什么左栏条目与页标题要分开两个键：左栏是「入口名」（短，如「监控」），页头是
+     * 「这一页是什么」（如「系统状态」）。硬要求两者同名会把页头压成两个字的菜单词；
+     * 但面包屑末段必须显示页名而不是入口名，所以这里显式登记，由
+     * `settingsPageTitleKey()` 供面包屑查——单一来源，不在布局里另造映射表。</p>
+     */
+    pageTitleKey?: string;
 }
 
 export function navItemsForLayer(layer: SettingsLayer): SettingsNavItem[] {
@@ -680,9 +694,15 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                 {
                     id: "monitoring",
                     labelKey: "settings.ia.navMonitoring",
+                    pageTitleKey: "settings.monitoringTitle",
                     path: "/settings/monitoring",
                 },
-                { id: "data", labelKey: "settings.ia.navData", path: "/settings/data" },
+                {
+                    id: "data",
+                    labelKey: "settings.ia.navData",
+                    pageTitleKey: "settings.dataControls",
+                    path: "/settings/data",
+                },
             ],
         },
         {
@@ -692,9 +712,15 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                 {
                     id: "config-locks",
                     labelKey: "settings.ia.navConfigLocks",
+                    pageTitleKey: "settings.configLockTitle",
                     path: "/settings/config-locks",
                 },
-                { id: "roles", labelKey: "settings.ia.navRoles", path: "/settings/roles" },
+                {
+                    id: "roles",
+                    labelKey: "settings.ia.navRoles",
+                    pageTitleKey: "settings.rolesTitle",
+                    path: "/settings/roles",
+                },
                 /**
                  * task-91（用户裁定「智能体是组织成员，不是资源」）：平台智能体的落点。
                  *
@@ -707,9 +733,15 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                 {
                     id: "agent-principals",
                     labelKey: "settings.ia.resourceAgents",
+                    pageTitleKey: "settings.ia.resourceAgents",
                     path: "/settings/instance/agent-principals",
                 },
-                { id: "audit", labelKey: "settings.ia.navAudit", path: "/settings/audit" },
+                {
+                    id: "audit",
+                    labelKey: "settings.ia.navAudit",
+                    pageTitleKey: "settings.auditTitle",
+                    path: "/settings/audit",
+                },
                 /**
                  * task-8（DSD-1516 收窄后）：授权总览 = 已登录者视角，**人人可见**（和 audit
                  * 一样恒显）——它读的是 `/me/permissions` 与自我 explain，不含别人的数据。
@@ -719,10 +751,27 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                  */
                 {
                     id: "authorization-overview",
-                    labelKey: "settings.ia.navAuthorizationOverview",
+                    // task-63：入口名与页标题本来就该同值，不另造第二个键（原
+                    // `settings.ia.navAuthorizationOverview` 与页标题键重复，已删）。
+                    labelKey: "settings.authorizationOverview.title",
+                    pageTitleKey: "settings.authorizationOverview.title",
                     path: "/settings/authorization-overview",
                 },
             ],
         },
     ];
+}
+
+/**
+ * task-63：按路径取「目的页页标题键」（面包屑末段用）。
+ *
+ * <p>为什么从 `instanceOpsGroups()` 反查而不是另写一张 path→key 表：运维/安全页的路由
+ * 与左栏条目本来就是同一份定义，第二张表一定漂移（本卡修的四处过期读数就是这么来的）。</p>
+ */
+export function settingsPageTitleKey(path: string): string | undefined {
+    for (const group of instanceOpsGroups()) {
+        const hit = group.items.find((item) => item.path === path);
+        if (hit?.pageTitleKey) return hit.pageTitleKey;
+    }
+    return undefined;
 }

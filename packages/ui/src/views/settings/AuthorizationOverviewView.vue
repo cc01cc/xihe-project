@@ -368,9 +368,10 @@ onMounted(async () => {
 <template>
     <div class="space-y-6" data-testid="authorization-overview">
         <header class="space-y-1">
-            <h1 class="text-lg font-semibold text-foreground">
+            <!-- task-189/task-63：页面标题必须是 h2 —— 层标题（SettingsLayerHeader）是唯一 h1。 -->
+            <h2 class="text-lg font-semibold text-foreground">
                 {{ t("settings.authorizationOverview.title") }}
-            </h1>
+            </h2>
             <p class="text-sm text-muted-foreground">
                 {{ t("settings.authorizationOverview.description") }}
             </p>

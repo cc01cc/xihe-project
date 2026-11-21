@@ -6,17 +6,38 @@ import { i18n } from "../../../i18n";
 import {
     DOMAIN_LABEL_KEY,
     domainsForLayer,
+    instanceOpsGroups,
     settingsDomainPath,
     type SettingsLayer,
+    type SettingsNavItem,
 } from "../../../lib/settingsIa";
 import { SUPPORTED_LOCALES } from "../../../i18n/locale";
 
 /**
+ * task-63：面板数据源多出「实例层运维/安全页」，可见性按权限过滤 —— 与本 spec 同批钉住
+ * 「无权限的页绝不出现」。用 `vi.hoisted` 是因为 `vi.mock` 的工厂在 import 期执行，
+ * 普通 `const` 会撞 TDZ。
+ */
+const authState = vi.hoisted(() => ({ capability: true, canManageRoles: true }));
+
+vi.mock("../../../stores/auth", () => ({
+    useAuthStore: () => ({
+        get hasInstanceAdminCapability() {
+            return authState.capability;
+        },
+        get canManageRoles() {
+            return authState.canManageRoles;
+        },
+    }),
+}));
+
+/**
  * PLAN-0762 T3.4：⌘K 搜配置域。
  *
- * 本 spec 钉三件最容易退化的东西：
- * ① **域清单来自矩阵**：条目数必须恒等于 `domainsForLayer(layer).length`，且每个域都在结果里
- *    —— 任何人想「顺手加一条硬编码入口」都会让这条红；
+ * 本 spec 钉四件最容易退化的东西：
+ * ① **条目清单来自单一来源**：本层条目 = `domainsForLayer(layer)` + 实例层`instanceOpsGroups()`
+ *    的**可见**页（task-63），每个条目都在结果里 —— 任何人想「顺手加一条硬编码入口」都会让这条红；
+ * ①b **无权限页不出现**：`roles` 要 `MANAGE_ROLES`、`config-locks` 要实例管理员能力；
  * ② **跨层显式**：其他层条目必须带目标层徽标（不静默换层）；
  * ③ **空态有出口**：无匹配时给「清除搜索 / 打开本层默认页」两个按钮，不是只显示空列表。
  *
@@ -89,6 +110,9 @@ afterEach(() => {
     wrapper?.unmount();
     wrapper = undefined;
     document.body.innerHTML = "";
+    // 权限状态是模块级（`vi.hoisted`），每条用例之间必须复位，否则顺序决定结果。
+    authState.capability = true;
+    authState.canManageRoles = true;
 });
 
 // ---------------------------------------------------------------------------
@@ -112,16 +136,46 @@ function otherLocaleOf(uiLocale: UiLocale): string {
     return SUPPORTED_LOCALES.find((item) => item !== uiLocale) ?? uiLocale;
 }
 
-/** 契约：任一字段（当前语言标签 / 另一语言标签 / 域名 key）**包含**该查询即命中。 */
+/**
+ * 面板的可见运维/安全页：与 `SettingsCommandPalette.vue` 的 `visibleOpsItems()` 同一判据
+ * （`config-locks` 要实例管理员能力、`roles` 要 `MANAGE_ROLES`，其余恒显）。
+ */
+function visibleOps(): SettingsNavItem[] {
+    return instanceOpsGroups()
+        .flatMap((group) => group.items)
+        .filter((item) => {
+            if (item.id === "config-locks") return authState.capability;
+            if (item.id === "roles") return authState.canManageRoles;
+            return true;
+        });
+}
+
+interface ExpectedEntry {
+    id: string;
+    labelKey: string;
+}
+
+/** 本层应出现的全部条目（域 + 实例层可见运维页）—— 期望集从这里现算，不写死条数。 */
+function entriesOf(layer: SettingsLayer): ExpectedEntry[] {
+    const domains = domainsForLayer(layer).map((domain) => ({
+        id: domain as string,
+        labelKey: DOMAIN_LABEL_KEY[domain],
+    }));
+    if (layer !== "instance") return domains;
+    return [...domains, ...visibleOps().map((item) => ({ id: item.id, labelKey: item.labelKey }))];
+}
+
+/** 契约：任一字段（当前语言标签 / 另一语言标签 / 条目 id）**包含**该查询即命中。 */
 function expectedHits(layer: SettingsLayer, query: string, uiLocale: UiLocale): string[] {
     const other = otherLocaleOf(uiLocale);
     const needle = query.toLowerCase();
-    return domainsForLayer(layer).filter((domain) => {
-        const labelKey = DOMAIN_LABEL_KEY[domain];
-        return [labelIn(uiLocale, labelKey), labelIn(other, labelKey), domain].some((field) =>
-            field.toLowerCase().includes(needle),
-        );
-    });
+    return entriesOf(layer)
+        .filter(({ id, labelKey }) =>
+            [labelIn(uiLocale, labelKey), labelIn(other, labelKey), id].some((field) =>
+                field.toLowerCase().includes(needle),
+            ),
+        )
+        .map(({ id }) => id);
 }
 
 async function withLocale<T>(locale: UiLocale, run: () => Promise<T>): Promise<T> {
@@ -163,8 +217,12 @@ describe("SettingsCommandPalette 搜索面（task-46 中英互搜）", () => {
                 (el.getAttribute("data-testid") ?? "").replace("commandk-item-instance:", ""),
             );
             expect(shown.sort()).toEqual(
-                expected.filter((domain) => domainsForLayer("instance").includes(domain)).sort(),
+                expected
+                    .filter((id) => entriesOf("instance").some((entry) => entry.id === id))
+                    .sort(),
             );
+            // 前提自检：运维页里确有命中项（英文别名 `Audit log` 含 `log`），否则下面这行等于没测
+            expect(shown).toContain("audit");
             // 命中项显示的是**中文标签**，不是 key
             expect(itemText("commandk-item-instance:logging")).toContain("日志");
         });
@@ -242,19 +300,79 @@ describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {
         expect(wrapper!.emitted("update:open")).toHaveLength(1);
     });
 
-    it("本层条目恒等于矩阵域集合，且每条都指向 settingsDomainPath", async () => {
+    it("本层条目 = 矩阵域 + 可见运维/安全页，逐条渲染当前语言标签", async () => {
         const layer: SettingsLayer = "instance";
         mountPalette(layer);
         await flushPromises();
 
-        const matrix = domainsForLayer(layer);
+        const entries = entriesOf(layer);
         const items = qa('[data-testid^="commandk-item-instance:"]');
-        expect(items).toHaveLength(matrix.length);
-        for (const domain of matrix) {
-            const item = q(`[data-testid="commandk-item-instance:${domain}"]`);
-            expect(item, domain).toBeTruthy();
-            expect(item!.textContent ?? "").toContain(i18n.global.t(DOMAIN_LABEL_KEY[domain]));
+        expect(items).toHaveLength(entries.length);
+        for (const entry of entries) {
+            const item = q(`[data-testid="commandk-item-instance:${entry.id}"]`);
+            expect(item, entry.id).toBeTruthy();
+            expect(item!.textContent ?? "").toContain(i18n.global.t(entry.labelKey));
         }
+    });
+
+    it("实例层运维与安全页全部可搜到（域 11 + 运维安全 7 = 18 条，与左栏徽标同一条算术）", async () => {
+        mountPalette("instance");
+        await flushPromises();
+
+        expect(visibleOps()).toHaveLength(instanceOpsGroups().flatMap((g) => g.items).length);
+        expect(entriesOf("instance")).toHaveLength(domainsForLayer("instance").length + 7);
+        expect(qa('[data-testid^="commandk-item-instance:"]')).toHaveLength(18);
+
+        // 七页逐条点名（含 task-8 新增的授权总览），且标记为 ops 而不是域
+        for (const id of [
+            "monitoring",
+            "data",
+            "config-locks",
+            "roles",
+            "agent-principals",
+            "audit",
+            "authorization-overview",
+        ]) {
+            const item = q(`[data-testid="commandk-item-instance:${id}"]`);
+            expect(item, id).toBeTruthy();
+            expect(item!.getAttribute("data-commandk-kind"), id).toBe("ops");
+        }
+        // 域条目的 kind 仍是 domain（反向断言：别把整个列表都标成 ops）
+        expect(
+            q('[data-testid="commandk-item-instance:rag"]')!.getAttribute("data-commandk-kind"),
+        ).toBe("domain");
+    });
+
+    it("无权限的页不出现：缺 MANAGE_ROLES 少 roles（17），再非实例管理员少 config-locks（16）", async () => {
+        authState.canManageRoles = false;
+        mountPalette("instance");
+        await flushPromises();
+
+        expect(q('[data-testid="commandk-item-instance:roles"]')).toBeNull();
+        expect(q('[data-testid="commandk-item-instance:config-locks"]')).toBeTruthy();
+        expect(qa('[data-testid^="commandk-item-instance:"]')).toHaveLength(17);
+
+        wrapper?.unmount();
+        wrapper = undefined;
+        document.body.innerHTML = "";
+
+        authState.capability = false;
+        mountPalette("instance");
+        await flushPromises();
+
+        expect(q('[data-testid="commandk-item-instance:config-locks"]')).toBeNull();
+        expect(q('[data-testid="commandk-item-instance:roles"]')).toBeNull();
+        // 恒显的三页仍在（授权总览对已登录者人人可见，task-8 裁定）
+        for (const id of [
+            "monitoring",
+            "data",
+            "audit",
+            "authorization-overview",
+            "agent-principals",
+        ]) {
+            expect(q(`[data-testid="commandk-item-instance:${id}"]`), id).toBeTruthy();
+        }
+        expect(qa('[data-testid^="commandk-item-instance:"]')).toHaveLength(16);
     });
 
     it("其他层条目单独成组并带目标层徽标（跨层显式，不静默换层）", async () => {
@@ -294,14 +412,14 @@ describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {
 
         const empty = q('[data-slot="command-empty"]');
         expect(empty).toBeTruthy();
-        expect(empty!.textContent ?? "").toContain("没有匹配的配置域");
+        expect(empty!.textContent ?? "").toContain("没有匹配的设置项");
         expect(q('[data-testid="commandk-clear"]')).toBeTruthy();
         expect(q('[data-testid="commandk-default-page"]')).toBeTruthy();
 
         await click('[data-testid="commandk-clear"]');
         await flushPromises();
         expect(qa('[data-testid^="commandk-item-instance:"]')).toHaveLength(
-            domainsForLayer("instance").length,
+            entriesOf("instance").length,
         );
     });
 });
