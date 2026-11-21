@@ -353,13 +353,18 @@ function persist(theme: Theme, records: unknown[]): void {
     );
 }
 
-/** 口令运行时从文件读入（不进日志、不进参数、不进截图、不进 fixture）。 */
+/** 口令运行时读入（不进日志、不进参数、不进截图、不进 fixture）。
+ *  host 车道上 e2e-host 每跑随机生成口令并经 XIHE_E2E_ADMIN_PASSWORD 注入子进程
+ *  （scripts/e2e-host.mjs:361/:2189/:3035）⇒ env 优先、文件回落；
+ *  不进 host 车道的直跑真栈仍走 .local/dev/admin-password。 */
 function readAdminPassword(): string {
-    const password = readFileSync(PASSWORD_FILE, "utf8").trim();
+    const fromEnv = (process.env.XIHE_E2E_ADMIN_PASSWORD ?? "").trim();
+    const useEnv = fromEnv.length > 0;
+    const password = useEnv ? fromEnv : readFileSync(PASSWORD_FILE, "utf8").trim();
     // 只断言"非空"，绝不回显口令本身。
     expect(
         password.length,
-        `口令文件 ${path.relative(ONE_ROOT, PASSWORD_FILE)} 为空`,
+        `口令来源 ${useEnv ? "XIHE_E2E_ADMIN_PASSWORD" : path.relative(ONE_ROOT, PASSWORD_FILE)} 为空`,
     ).toBeGreaterThan(0);
     return password;
 }
@@ -2032,9 +2037,12 @@ test("设置页顶带（A4/F1）待 task-78 取证", async () => {
 // 口径：
 //   1. 三条判据 = beforeunload 监听 / 路由离开守卫 / 浮层关闭确认。正例脏化后必须被拦住，
 //      负例不脏化必须照常放行（负例今天即绿，作用是防「为修红把离开一律拦死」这种反做）。
-//   2. 正例今天为红 = 产品现状：全仓 grep beforeunload / onBeforeRouteLeave 在
-//      AgentPrincipalDetailDrawer.vue 与设置页面上都是 0 命中（2026-11-21 实测），
-//      关闭抽屉走 closeDrawer() 直接 emit，草稿随 resetDrafts 丢弃。缺陷本体归 task-151。
+//   2. 正例状态按 task-151 落地后的现状读（2026-11-21）：
+//      · 抽屉关闭确认（Esc / 关闭键）= task-151 已落地，草稿未提交时走 apd-unsaved-confirm
+//        （alertdialog）并留住抽屉 ⇒ 已转绿；抽屉「刷新页面」那条 beforeunload 仍未实现（仍红），
+//        归属 = task-190 J7（Lead 2026-11-21 裁定并入，与 J2 共用同一聚合 dirty 判定，非无归属）；
+//      · 设置页整页草稿的离开守卫 = UNCOVERED，由 task-190 J1/J2 覆盖（Lead 已立卡；不读成 PASS）。
+//      ⇒ 首跑预期红 2 条，归属同为 task-190：J1 设置页路由守卫 + J7 抽屉刷新守卫（Lead 裁 5，非零退出是设计如此，不放宽判据、不加 --allow-skip、不 skip）。
 //   3. 脏化只写本地草稿：抽屉走钩子新增行（apd-hooks-add 只改前端 advisors 数组），
 //      设置页走 config-text 输入框且绝不点 config-save。六条都只开成员页/设置页，
 //      不触发会话或工作区资源创建（Lead 裁 1a）。
@@ -2054,8 +2062,12 @@ const NO_PRINCIPAL_MSG =
 const NO_CONFIG_TEXT_MSG =
     "设置页没有可编辑文本项：config-text-* 未出现（该层可能全为 env 锁定项），17.4 用例无脏化落点；判 fail 不判 skip";
 
-/** 打开第一个 principal 的可编辑抽屉；draft 非空时加一条本地钩子草稿（不点保存、不发请求）。 */
-async function openAgentDrawerWithDraft(page: Page, draft: string | null): Promise<void> {
+/**
+ * 打开第一个 principal 的可编辑抽屉；draft 非空时加一条本地钩子草稿（不点保存、不发请求）。
+ * draft 只是「要不要脏化」的标记：钩子行由「添加订阅」直接产出（kind 默认 guard，非空），
+ * 不再往 apd-hooks-kind 里打字 —— 它是 reka Select 的 trigger 按钮，不是 input。
+ */
+async function openAgentDrawerWithDraft(page: Page, _draft: string | null): Promise<void> {
     await loginViaForm(page);
     await page.goto(MEMBERS_PAGE_PATH, { waitUntil: "load" });
     if (
@@ -2067,13 +2079,14 @@ async function openAgentDrawerWithDraft(page: Page, draft: string | null): Promi
     if (!(await waitReadyFor(page, APD_DRAWER_SEL, "visible", SESSION_SURFACE_DEADLINE_MS))) {
         throw new Error("抽屉未打开：agent-principal-detail-drawer 未在当前 20s 窗口内可见");
     }
-    if (draft === null) return;
+    if (_draft === null) return;
     if (!(await waitReadyFor(page, APD_HOOKS_KIND_SEL, "visible", 8_000))) {
         throw new Error(
             "钩子分区不可写：apd-hooks-kind 未渲染（editableSections 不含 hooks 或该 principal 无写权）",
         );
     }
-    await page.locator(APD_HOOKS_KIND_SEL).fill(draft, { timeout: 5_000 });
+    // apd-hooks-kind 是 reka Select trigger（不是 input）：点「添加订阅」即可脏化，
+    // 判据仍是「行数 +1 且保存键可点」，语义不变。
     const rowsBefore = await page.locator(APD_HOOKS_ROW_SEL).count();
     await page.locator(APD_HOOKS_ADD_SEL).click({ timeout: 5_000 });
     const rowsAfter = await page.locator(APD_HOOKS_ROW_SEL).count();
@@ -2125,7 +2138,7 @@ test.describe("DEV-011 17.4 未保存状态与离开策略（task-176）", () =>
         const fired = await countDialogsOfType(page, "beforeunload");
         expect(
             fired,
-            "带未保存草稿刷新页面没有任何 beforeunload 提示（DEV-011 17.4；缺陷本体归 task-151）",
+            "带未保存草稿刷新页面没有任何 beforeunload 提示（DEV-011 17.4；task-151 只收敛了关闭确认，刷新守卫归 task-190 J7）",
         ).toBeGreaterThan(0);
     });
 
@@ -2135,12 +2148,15 @@ test.describe("DEV-011 17.4 未保存状态与离开策略（task-176）", () =>
         expect(fired, "无未保存状态却拦刷新：离开策略过头").toBe(0);
     });
 
-    test("@host 17.4 正例：设置页带未保存草稿走路由导航必须被拦住", async ({ page }) => {
+    // UNCOVERED：设置页整页草稿的离开守卫由 task-190 覆盖（Lead 已立卡，J1/J2 判据），本用例在它落地前不得读成 PASS。
+    test("@host 17.4 正例：设置页带未保存草稿走路由导航必须被拦住（UNCOVERED → task-190）", async ({
+        page,
+    }) => {
         await openSettingsWithDraft(page, "e2e-17-4-draft");
         await page.goBack({ waitUntil: "load" });
         expect(
             page.url(),
-            "带未保存草稿仍能直接换路由：缺离开守卫或离开确认（DEV-011 17.4；缺陷本体归 task-151）",
+            "带未保存草稿仍能直接换路由：缺离开守卫或离开确认（DEV-011 17.4；UNCOVERED → task-190）",
         ).toContain(SETTINGS_PAGE_PATH);
     });
 
@@ -2167,7 +2183,7 @@ test.describe("DEV-011 17.4 未保存状态与离开策略（task-176）", () =>
             .catch(() => false);
         expect(
             confirmVisible || drawerStillOpen,
-            "按 Esc 直接丢弃未保存草稿：既无确认层也未留住抽屉（DEV-011 17.4；缺陷本体归 task-151）",
+            "按 Esc 直接丢弃未保存草稿：既无确认层也未留住抽屉（DEV-011 17.4；task-151 已落地，此处应转绿）",
         ).toBe(true);
     });
 
