@@ -166,6 +166,32 @@ export default defineConfig(({ mode }) => {
             fileParallelism: false,
             maxWorkers: 1,
             minWorkers: 1,
+            // task-151 —— 显式钉死 `default` reporter，**不要删**。
+            //
+            // <p>**要钉的是什么**：vitest 4.1.11 在 `resolved.reporters` 为空时走
+            // `resolved.reporters.push([isAgent ? "agent" : "default", {}])`（dist 实测位置
+            // `vitest/dist/chunks/coverage.*.js:455`，同一处 :451 是「CLI `--reporter` 覆盖本项」）。
+            // `agent`/`minimal` 都指向 `MinimalReporter extends DefaultReporter`，它把 `silent` 硬钉成
+            // `"passed-only"`（`vitest/dist/chunks/index.*.js:3871`），于是 `shouldLog()` 对**通过用例**
+            // 的 console 日志返回 false（同文件 :2429）⇒ **一条 `[i18n]` 告警都不打印**，连 `stderr | …`
+            // 分段头都没有。本仓 `std-env` 判 `isAgent: true`（codex 规则 = `CODEX_SANDBOX`/`CODEX_THREAD_ID`；
+            // 实测清掉这两个仍命中 `pi` 规则 ⇒ 不解），所以**在 agent harness 里不带 flag 跑单 spec
+            // 会得到「零告警」的假绿读数**。</p>
+            //
+            // <p>**为什么这条判据必须能被看见**：裸 i18n 键护栏（`src/test-utils/i18nKeys.ts`）与
+            // `[SLOW TEST]`（`src/tests/setup.ts`）都是 `console.warn` 落地的 —— 它们**只在日志里存在**。
+            // 实证：task-121 普查据此把「全量 18 条 / 单跑 0 条」记成了一条**跨文件 i18n 状态泄漏**，
+            // 而 task-128 实测证伪：单跑带 `--reporter=default` 同样是 18 条 / 28 键，与全量逐字节相同；
+            // 32 个告警 spec 单独成批重跑仍是 305 行、逐 spec 全等 ⇒ 告警由**各自局部夹具**决定，与顺序无关。
+            // 也就是说：这条假绿差点换来一次「修一个不存在的泄漏」的返工。</p>
+            //
+            // <p>**与 CI/机器可读 reporter 共存**：CLI 显式给 `--reporter` 时**整表替换**本项（:451，只保留
+            // 同名项的 options），所以 `--reporter=json --outputFile.json=…` 与 `--reporter=default
+            // --reporter=json` 都照旧可用（实测：json 文件正常产出、`numTotalTests 18`）。本卡**不需要**在
+            // 这里挂 json —— 需要机器可读报告时在命令行追加即可。
+            // 被否决的替代：只在文档里写「记得加 `--reporter=default`」—— 靠人遵守的约定正是这次踩坑的形态，
+            // 而配置层钉死是零成本的（只改默认 reporter，不动 `pool`/`isolate`/`environment`）。</p>
+            reporters: ["default"],
         },
         resolve: {
             alias: {
