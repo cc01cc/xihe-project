@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
+import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
@@ -32,8 +33,20 @@ import java.util.UUID;
 
 /**
  * DSD-1513 / task-148: the first-run <b>content</b> seed — one default Workspace, one instance
- * provider connection and three Agent subjects (Lead / WorkerA / WorkerB) — run from
- * {@link DataSeeder} right after the seeded admin exists.
+ * provider connection and three Agent subjects (Lead / WorkerA / WorkerB).
+ *
+ * <h2>Two product-path callers (task-18)</h2>
+ * <p>{@link DataSeeder} runs it right after the <em>seeded</em> admin exists
+ * ({@code cp.bootstrap.seed-admin=true}, the packaged launcher's lane), and
+ * {@link FirstRunContentSeedTrigger} runs it from the real first-install flow — the onboarding
+ * {@code POST /api/v1/auth/register} that creates the first account when the seed-admin switch is off
+ * (the shipped default). Both callers are idempotent through the keys below and both are gated by
+ * {@code cp.bootstrap.seed-content}.</p>
+ *
+ * <h2>Model intent (task-18 J4)</h2>
+ * <p>The subjects' model intent comes from the provider catalog
+ * ({@link FirstRunSeedModelIntent}); when the catalog declares no model id for the provider it is
+ * left empty and reported as "待绑定" — never a literal name nothing can resolve.</p>
  *
  * <h2>Table split (DSD-1520 D1, unchanged)</h2>
  * <p>{@code org_units} rows are static and therefore live in {@code V181} SQL; everything this class
@@ -88,8 +101,15 @@ public class FirstRunContentSeeder {
     static final String PROVIDER_ID = "ollama";
     static final String CONNECTION_KEY = "default";
     static final String CONNECTION_LABEL = "Ollama (local)";
-    /** Declared intent only — the seed never claims the model was fetched or verified. */
-    static final String MODEL_NAME = "llama3.2";
+
+    /**
+     * task-18 J4: the greppable "待绑定" marker. It is a log/diagnostic fact, not a
+     * {@link #lastRunWarnings()} entry: that list is the degradation contract the backfill test
+     * asserts, and "the catalog declares no model id" is a state, not a failure.
+     */
+    static final String MODEL_INTENT_PENDING = "seed-content: model intent 待绑定"
+            + " -- the provider catalog declares no model id for this provider"
+            + " (modelDiscovery=remote-models); bind one in the provider face after the runtime answers";
 
     static final String WORKSPACE_NAME = "Default workspace";
     static final String WORKSPACE_DESCRIPTION = "Seeded on first start so the first session has somewhere to run.";
@@ -123,6 +143,8 @@ public class FirstRunContentSeeder {
     private final InstanceIdentityService instanceIdentity;
     private final InstanceOwnershipService instanceOwnership;
     private final Environment environment;
+    /** task-18 J4: the only source of the subjects' model intent (never a literal model name). */
+    private final ProviderCatalogService providerCatalog;
 
     private final boolean postgres;
     private final String seedContent;
@@ -130,6 +152,9 @@ public class FirstRunContentSeeder {
 
     /** Warnings of the last run, for the first-run page (task-149); never null, never unmodifiable. */
     private final List<String> lastRunWarnings = new ArrayList<>();
+
+    /** task-18 J4: the last run left the subjects unbound ("待绑定") because the catalog had no model id. */
+    private boolean lastModelIntentPending;
 
     public FirstRunContentSeeder(WorkspaceService workspaceService,
                                  WorkspaceRepository workspaces,
@@ -144,7 +169,8 @@ public class FirstRunContentSeeder {
                                  Environment environment,
                                  @Value("${spring.datasource.url:}") String datasourceUrl,
                                  @Value("${cp.bootstrap.seed-content:auto}") String seedContent,
-                                 @Value("${cp.bootstrap.seed-workspace-root:}") String seedWorkspaceRoot) {
+                                 @Value("${cp.bootstrap.seed-workspace-root:}") String seedWorkspaceRoot,
+                                 ProviderCatalogService providerCatalog) {
         this.workspaceService = workspaceService;
         this.workspaces = workspaces;
         this.providerConnectionService = providerConnectionService;
@@ -156,6 +182,7 @@ public class FirstRunContentSeeder {
         this.instanceIdentity = instanceIdentity;
         this.instanceOwnership = instanceOwnership;
         this.environment = environment;
+        this.providerCatalog = providerCatalog;
         // Same predicate as DataSeeder: the org-unit tables and the org half of the seed only exist
         // on PostgreSQL, and the H2 lane runs with Flyway off (see AbstractWireMockTest's javadoc).
         this.postgres = datasourceUrl != null
@@ -170,11 +197,21 @@ public class FirstRunContentSeeder {
     }
 
     /**
+     * task-18 J4: {@code true} when the most recent run left the three subjects' model intent unbound
+     * ("待绑定") because the provider catalog declared no model id. The DB reading is the same fact
+     * ({@code default_model_provider}/{@code default_model_name} both {@code null}).
+     */
+    public boolean lastModelIntentPending() {
+        return lastModelIntentPending;
+    }
+
+    /**
      * Seeds the content group for {@code admin}, in the caller's transaction. Idempotent: see the
      * class javadoc for the three keys, and reads {@code cp.bootstrap.seed-content} for the gate.
      */
     public void seed(User admin) {
         lastRunWarnings.clear();
+        lastModelIntentPending = false;
         if (!postgres) {
             logger.info(H2_SKIP_MESSAGE);
             return;
@@ -335,10 +372,16 @@ public class FirstRunContentSeeder {
                     + LEADERS_UNIT_ID + " / " + EXECUTION_UNIT_ID + " are missing (V181 has not reached this"
                     + " database); the subjects are created without a unit");
         }
+        FirstRunSeedModelIntent.Intent intent = modelIntent(connection);
+        if (intent.pendingBinding()) {
+            // task-18 J4: leave it empty and say so, instead of writing a model name nothing resolves.
+            lastModelIntentPending = true;
+            logger.warn(MODEL_INTENT_PENDING);
+        }
         List<AgentPrincipal> created = new ArrayList<>();
-        created.add(seedSubject(admin, LEAD_NAME, connection));
+        created.add(seedSubject(admin, LEAD_NAME, intent));
         for (String workerName : WORKER_NAMES) {
-            created.add(seedSubject(admin, workerName, connection));
+            created.add(seedSubject(admin, workerName, intent));
         }
         if (!treeReady) {
             return;
@@ -356,20 +399,37 @@ public class FirstRunContentSeeder {
     }
 
     /** @return the new subject, or {@code null} when a subject of that name already exists. */
-    private AgentPrincipal seedSubject(User admin, String name, ProviderConnection connection) {
+    private AgentPrincipal seedSubject(User admin, String name, FirstRunSeedModelIntent.Intent intent) {
         String adminId = admin.getId().toString();
         for (AgentPrincipal existing : agentPrincipals.findByCreatedByUserId(adminId)) {
             if (name.equals(existing.getName())) {
                 return null;
             }
         }
-        String provider = connection == null ? null : connection.getProviderId();
-        String model = connection == null ? null : MODEL_NAME;
+        String provider = intent.provider();
+        String model = intent.model();
         AgentPrincipal created = agentPrincipalService.createPrincipalFromTemplate(adminId, name, null,
                 provider, model, null, null, null, null, null);
         logger.info("seed-content: seeded the subject name={} id={} model={}/{}", name, created.getId(),
                 provider, model);
         return created;
+    }
+
+    /**
+     * task-18 J4: take the provider from the seeded connection when there is one (the connection is
+     * the narrower scope), otherwise the catalog-declared default provider this seeder would seed —
+     * but only the catalog decides whether a model id exists. A pending answer keeps both fields
+     * {@code null}: the principal API refuses provider-without-model.
+     */
+    private FirstRunSeedModelIntent.Intent modelIntent(ProviderConnection connection) {
+        String providerId = connection == null ? PROVIDER_ID : connection.getProviderId();
+        try {
+            return FirstRunSeedModelIntent.fromCatalog(providerCatalog, providerId);
+        } catch (IllegalArgumentException unknownProvider) {
+            logger.warn("seed-content: model intent 待绑定 -- provider '{}' is not in the catalog",
+                    providerId);
+            return FirstRunSeedModelIntent.Intent.pending();
+        }
     }
 
     /**

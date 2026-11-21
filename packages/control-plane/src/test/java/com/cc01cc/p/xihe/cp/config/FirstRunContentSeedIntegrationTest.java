@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.PathKey;
+import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
@@ -93,6 +94,8 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private Environment environment;
     @Autowired
+    private ProviderCatalogService providerCatalog;
+    @Autowired
     private JdbcTemplate jdbc;
 
     /** The workspace root the seed must create; a plain absolute path, never the operator's data dir. */
@@ -161,9 +164,15 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         Map<String, AgentPrincipal> byName = subjects.stream()
                 .collect(Collectors.toMap(AgentPrincipal::getName, subject -> subject));
         for (AgentPrincipal subject : subjects) {
-            assertEquals(FirstRunContentSeeder.PROVIDER_ID, subject.getDefaultModelProvider());
-            assertEquals(FirstRunContentSeeder.MODEL_NAME, subject.getDefaultModelName());
+            // task-18 J4: the catalog declares no model id for ollama (modelDiscovery=remote-models),
+            // so the intent is left empty and reported as 待绑定 instead of a literal "llama3.2".
+            assertNull(subject.getDefaultModelProvider(),
+                    "no catalog-resolvable model id => the provider is left empty too");
+            assertNull(subject.getDefaultModelName(),
+                    "the seed must never write a model name nothing in the catalog declares");
         }
+        assertTrue(first.lastModelIntentPending(),
+                "the run must report the 待绑定 state instead of silently claiming a model");
         assertEquals(FirstRunContentSeeder.LEADERS_UNIT_ID,
                 orgUnitMembers.findUnitOf(FirstRunContentSeeder.AGENT_MEMBER_KIND, byName.get("Lead").getId())
                         .orElseThrow(() -> new AssertionError("Lead must sit in the leaders unit")));
@@ -235,7 +244,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 providerConnections, agentPrincipalService, agentPrincipals, orgUnits, orgUnitMembers,
                 instanceIdentity, instanceOwnership, environment,
                 "jdbc:postgresql://127.0.0.1:1/xihe-unused-only-for-the-postgres-predicate", mode,
-                workspaceRoot.toString());
+                workspaceRoot.toString(), providerCatalog);
     }
 
     private int count(String table) {

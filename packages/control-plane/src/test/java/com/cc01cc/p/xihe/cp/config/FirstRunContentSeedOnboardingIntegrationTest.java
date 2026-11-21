@@ -1,0 +1,216 @@
+package com.cc01cc.p.xihe.cp.config;
+
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * task-18 J1/J5: the first-run content seed must land on the <b>real first-install path</b> — an
+ * empty instance whose first account is created by the onboarding
+ * {@code POST /api/v1/auth/register} — and not only through {@code DataSeeder}'s seeded-admin branch.
+ *
+ * <p>Why this is the decisive reading: the context runs with the <b>shipped defaults</b>
+ * ({@code cp.bootstrap.seed-admin=false}) and the content gate at {@code auto}, so {@code DataSeeder}
+ * returns before its content line ({@code DataSeeder:133-139}). {@code admin@xihe.local} must be
+ * absent, and the only thing that can have written the workspace/connection/subject rows is the
+ * trigger bound to the real register request ({@link FirstRunContentSeedRequestFilter} ->
+ * {@link FirstRunContentSeedTrigger}).</p>
+ *
+ * <p>The three readings J5 asks for are in one method, in the card's order: the full first install,
+ * the second login/registration inserting nothing, and the catalog-empty model intent staying
+ * "待绑定" ({@code provider}/{@code model} both null instead of a literal {@code llama3.2}).</p>
+ */
+@TestPropertySource(properties = {
+        "cp.bootstrap.seed-admin=false",
+        "cp.bootstrap.seed-content=auto"
+})
+class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTest {
+
+    /** The runtime the direct-attach probe talks to; answers {@code available:true}. */
+    private static final FirstRunSeedProbeStub PROBE =
+            FirstRunSeedProbeStub.reportingAvailability(true, "windows-mxc");
+
+    /** An absolute, disposable workspace root: never the operator's real data directory. */
+    private static final Path WORKSPACE_ROOT = tempRoot();
+
+    private static Path tempRoot() {
+        try {
+            return Files.createTempDirectory("xihe-onboarding-seed-");
+        } catch (IOException failure) {
+            throw new UncheckedIOException("cannot create the seed workspace root", failure);
+        }
+    }
+
+    @DynamicPropertySource
+    static void runtimeProbe(DynamicPropertyRegistry registry) {
+        registry.add("cp.mcp.runtime-url", PROBE::baseUrl);
+        registry.add("cp.bootstrap.seed-workspace-root", () -> WORKSPACE_ROOT.toString());
+    }
+
+    @AfterAll
+    static void stopProbe() {
+        PROBE.stop();
+    }
+
+    @Autowired
+    private UserRepository users;
+    @Autowired
+    private WorkspaceRepository workspaces;
+    @Autowired
+    private AgentPrincipalRepository agentPrincipals;
+    @Autowired
+    private FirstRunContentSeeder seeder;
+    @Autowired
+    private FirstRunContentSeedTrigger trigger;
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @Test
+    void onboardingRegistrationSeedsTheContentGroupOnceInTheShippedDefault() {
+        // ── baseline: the product default really is "no account, no content" ──────────────────────
+        assertEquals(0, count("users"), "cp.bootstrap.seed-admin=false must start with zero accounts");
+        assertTrue(users.findByEmail("admin@xihe.local").isEmpty(),
+                "the convenience admin must not exist: otherwise this lane is the seed-admin branch");
+        assertEquals(0, count("workspaces"), "no workspace before the first run");
+        assertEquals(0, count("provider_connections"), "no provider connection before the first run");
+        assertEquals(0, count("agent_principals"), "no subject before the first run");
+        dumpReadings("baseline");
+
+        // ── the real product path: the onboarding UI's register call ─────────────────────────────
+        ResponseEntity<String> registered = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                Map.of("email", "first-admin@xihe.test", "password", "first-run-pass-1A",
+                        "name", "First Admin"),
+                String.class);
+        assertEquals(HttpStatus.CREATED, registered.getStatusCode(),
+                "the onboarding registration itself must succeed; got: " + registered.getBody());
+
+        // The trigger runs after the response on the server thread; wait on the database reading.
+        awaitSeeded();
+
+        User first = users.findByEmail("first-admin@xihe.test")
+                .orElseThrow(() -> new AssertionError("the onboarding account must be persisted"));
+        assertEquals(1, count("users"), "exactly the onboarding account; the seeded admin never ran");
+        assertTrue(users.findByEmail("admin@xihe.local").isEmpty(),
+                "DataSeeder's seed-admin branch is off on this lane, so it cannot be the writer");
+
+        assertEquals(1, count("workspaces"), "the first-install path seeds the default workspace");
+        Workspace workspace = workspaces
+                .findByCreateIdempotencyKeyAndDeletedAtIsNull(FirstRunContentSeeder.WORKSPACE_IDEMPOTENCY_KEY)
+                .orElseThrow(() -> new AssertionError("the workspace must carry the seed idempotency key"));
+        assertEquals(FirstRunContentSeeder.WORKSPACE_NAME, workspace.getName());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                        + " WHERE b.subject_type = 'user' AND b.subject_id = ?::uuid"
+                        + " AND b.scope_type = 'workspace' AND b.scope_id = ?::uuid AND r.name = 'WS_OWNER'",
+                Integer.class, first.getId().toString(), workspace.getId().toString()),
+                "the onboarding account owns the workspace it got by default");
+
+        // Domain fact this card must not hide: the instance-scoped connection needs an instance
+        // owner + cap:instance:admin, and a fresh onboarding account is USER tier only (the launcher's
+        // D-1818 "claim chicken-and-egg" note). The seeder warns and skips it; it does not crash.
+        assertEquals(0, count("provider_connections"),
+                "the instance connection is skipped while the instance has no owner/instance admin");
+        assertTrue(seeder.lastRunWarnings().stream().anyMatch(w -> w.contains("no owner yet")),
+                "the skip must be reported, not silent; got: " + seeder.lastRunWarnings());
+
+        List<AgentPrincipal> subjects = agentPrincipals.findByCreatedByUserId(first.getId().toString());
+        assertEquals(Set.of(FirstRunContentSeeder.LEAD_NAME, "WorkerA", "WorkerB"),
+                subjects.stream().map(AgentPrincipal::getName).collect(Collectors.toSet()),
+                "the three first-run subjects are created by the onboarding account");
+        for (AgentPrincipal subject : subjects) {
+            assertEquals(first.getId().toString(), subject.getCreatedByUserId());
+            // J4 / J5 reading 3: the catalog declares no model id (ollama is remote-models), so the
+            // intent must stay empty and be labelled 待绑定 — never the literal "llama3.2".
+            assertNull(subject.getDefaultModelProvider(), "no catalog-resolvable model => provider empty");
+            assertNull(subject.getDefaultModelName(), "no catalog-resolvable model => model empty");
+        }
+        assertTrue(seeder.lastModelIntentPending(),
+                "the 待绑定 state must be reported by the run, not claimed as a bound model");
+        assertEquals(3, count("org_units"), "the seed adds no org unit of its own");
+        assertEquals(3, count("org_unit_members"), "the three subjects are placed in the V181 tree");
+        dumpReadings("after-onboarding-register");
+
+        // ── reading 2: a second product call inserts nothing ─────────────────────────────────────
+        ResponseEntity<String> login = restTemplate.postForEntity(url("/api/v1/auth/login"),
+                Map.of("identifier", "first-admin@xihe.test", "password", "first-run-pass-1A"),
+                String.class);
+        assertEquals(HttpStatus.OK, login.getStatusCode(), "the fresh account can log in");
+        restTemplate.getForEntity(url("/api/v1/auth/bootstrap-status"), String.class);
+        ResponseEntity<String> secondRegistration = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                Map.of("email", "second-user@xihe.test", "password", "second-pass-1A", "name", "Second"),
+                String.class);
+        assertEquals(HttpStatus.CREATED, secondRegistration.getStatusCode());
+
+        assertEquals(2, count("users"), "the second account exists");
+        assertEquals(1, count("workspaces"), "a second account/login seeds no second workspace");
+        assertEquals(3, count("agent_principals"), "and no second set of subjects");
+        assertEquals(0, count("provider_connections"), "and no connection appears out of nowhere");
+        assertEquals(3, count("org_unit_members"), "nobody was moved by the repeat");
+        assertFalse(trigger.retryPending(), "the first attempt succeeded, so no retry is owed");
+        dumpReadings("after-second-account");
+    }
+
+    /** Poll the database — the trigger runs after the response is already on the wire. */
+    private void awaitSeeded() {
+        long deadline = System.nanoTime() + 30_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            if (count("workspaces") == 1 && count("agent_principals") == 3) {
+                return;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while waiting for the first-run seed", interrupted);
+            }
+        }
+        throw new AssertionError("the onboarding path did not seed within 30s; readings: "
+                + "workspaces=" + count("workspaces") + " agent_principals=" + count("agent_principals")
+                + " warnings=" + seeder.lastRunWarnings());
+    }
+
+    private int count(String table) {
+        Integer rows = jdbc.queryForObject("SELECT count(*) FROM " + table, Integer.class);
+        assertNotNull(rows, "count(*) must never be null for " + table);
+        return rows;
+    }
+
+    private void dumpReadings(String stage) {
+        System.out.println("[seed-readings] stage=" + stage
+                + " users=" + count("users")
+                + " workspaces=" + count("workspaces")
+                + " provider_connections=" + count("provider_connections")
+                + " agent_principals=" + count("agent_principals")
+                + " org_units=" + count("org_units")
+                + " org_unit_members=" + count("org_unit_members")
+                + " pendingModelIntent=" + seeder.lastModelIntentPending()
+                + " warnings=" + seeder.lastRunWarnings());
+    }
+}

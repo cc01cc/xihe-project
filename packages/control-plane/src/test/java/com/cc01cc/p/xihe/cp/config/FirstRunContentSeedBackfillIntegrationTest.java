@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
@@ -86,6 +87,8 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
     @Autowired
     private Environment environment;
     @Autowired
+    private ProviderCatalogService providerCatalog;
+    @Autowired
     private JdbcTemplate jdbc;
 
     @TempDir
@@ -136,7 +139,7 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
                 providerConnections, agentPrincipalService, agentPrincipals, orgUnits, orgUnitMembers,
                 instanceIdentity, instanceOwnership, environment,
                 "jdbc:postgresql://127.0.0.1:1/xihe-unused-only-for-the-postgres-predicate", mode,
-                workspaceRoot.toString());
+                workspaceRoot.toString(), providerCatalog);
     }
 
     private int count(String table) {
