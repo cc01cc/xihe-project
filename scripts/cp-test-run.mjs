@@ -31,6 +31,16 @@
  *      「环境冲突」变成「偶发绿」，正好掩盖要看见的事（Lead 否决重跑）。
  * 退出码：0 通过 / 1 mvn 失败 / 2 包装器自身错 / **3 并发拒绝** / **4 环境冲突（fork 期）**。
  * 自检：`--selftest`（注入 runner 与进程表，**不起真 mvn**；真 mvn 只在手工验收里跑）。
+ *
+ * task-116（audit-1, 2026-11-22）：**基线 / 新红自动分类接进包装器**。
+ * 旧口径（BL-368 原注释）说「不接进 test:cp，否则会吞掉 mvn 输出」——实测不成立：mvn 以
+ * `stdio: 'inherit'` 跑完，分类器在它**之后**以子进程跑（stdout 走管道解析、stderr 原样转述），
+ * mvn 的输出一个字不少。现在无论 mvn 成败都多打一行「N 条失败中 基线 a / 新红 b」，
+ * **只加读数、不改退出码**（`check-cp-baseline.mjs` 自己的 exit code 永不覆盖 mvn 的）。
+ * **exit 4 与用例红分开记账，但两者都出读数**：exit 4 回答的是「本轮证据是否可信」，
+ * 「基线 / 新红」回答的是「用例账」。实测（2026-11-22）默认树**每轮**都会落一个 fork
+ * classpath dumpstream（2026-11-21 一天 13 个，含全绿轮），若在 exit 4 分支跳过分类，
+ * 这一行就永远不会被打出来，本卡的目标也就落空。
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -334,6 +344,87 @@ export function classifyForkConflict({
 
 /* ------------------------------------------------------------ 主流程 */
 
+/* ------------------------------------------------------------ 基线 / 新红分类（task-116） */
+
+/** 分类器脚本名（与包装器同目录）。 */
+export const BASELINE_SCRIPT = 'check-cp-baseline.mjs';
+
+/**
+ * 把「本轮 surefire 里的红」机械分成**已知基线**与**新红**，只打一行读数。
+ *
+ * 纪律（四条，全部由被调用方 `check-cp-baseline.mjs` 自己判定，本函数一律不放宽）：
+ *   1. 基线只许缩小 —— 本函数**从不写** `cp-known-baseline.json`，只读；
+ *   2. 条目转绿必须删 —— 由分类器的 `greenEntries` WARN 负责，这里原样转述；
+ *   3. `reviewBy` 过期即失败 —— 分类器 exit 1 / `expired`，这里不改判；
+ *   4. 报告早于 HEAD ⇒ exit 2 要求重跑 —— **不传 `--allow-stale-reports`**，
+ *      拿不到可判定的 JSON 时如实报「不可判定」，绝不把旧树的失败当成新树的读数。
+ *
+ * 退出码不参与：返回值只用于打印，`main()` 的 return 与它无关（卡面要求 2）。
+ *
+ * @returns {{state:'ok'|'indeterminate'|'error', failures?:number, baseline?:number, fresh?:number, code?:number} | null}
+ */
+export function classifyBaseline({
+  root = ROOT,
+  targetDir,
+  // 这两个只用于 `--selftest` 的三情形判据（在临时目录造红/造绿）。**生产路径保持 null**
+  // ⇒ 分类器读真实的 `scripts/cp-known-baseline.json` 与真实 HEAD 时刻，判据不被放宽。
+  baselineFile = null,
+  headTime = null,
+  execPath = process.execPath,
+  spawn = spawnSync,
+  log = defaultLog,
+} = {}) {
+  const script = path.join(root, 'scripts', BASELINE_SCRIPT);
+  const reports = path.join(targetDir, 'surefire-reports');
+  const argv = [script, '--reports', reports, '--json'];
+  if (baselineFile) argv.push('--baseline', baselineFile);
+  if (headTime) argv.push('--head-time', String(headTime));
+  let result;
+  try {
+    result = spawn(execPath, argv, {
+      cwd: root,
+      // stdout 走管道解析，stderr **原样 inherit**：过期条目 / 新红点名 / report-health WARN
+      // 一条都不许被这个包装器吞掉。
+      stdio: ['ignore', 'pipe', 'inherit'],
+      encoding: 'utf8',
+    });
+  } catch (error) {
+    log(`[cp-baseline] 分类未运行（子进程启动失败：${error?.message ?? error}）⇒ 跳过读数，不影响退出码`);
+    return { state: 'error' };
+  }
+  const code = result?.status;
+  let payload = null;
+  try {
+    payload = JSON.parse(String(result?.stdout ?? '').trim());
+  } catch {
+    payload = null;
+  }
+  if (code !== 0 && code !== 1) {
+    // exit 2 = 缺报告 / 基线文件读不出 / **报告早于 HEAD**；null = 分类器自身崩了。
+    // 这一档不是「没有红」，是「本轮判不了」——措辞必须区分，否则又造出一个假绿。
+    log(
+      `[cp-baseline] 分类**不可判定**（exit ${code ?? 'n/a'}）：surefire 报告缺失或早于 HEAD ⇒` +
+        ' 先确认 `mise run test:cp` 真跑了本轮，勿拿旧树判新树（不影响退出码）',
+    );
+    return { state: 'indeterminate', code: code ?? null };
+  }
+  if (!payload || !Array.isArray(payload.failures) || !Array.isArray(payload.newFailures)) {
+    log('[cp-baseline] 分类**不可判定**：--json 输出解析失败 ⇒ 请手工跑 `mise run test:cp:baseline`');
+    return { state: 'indeterminate', code: code ?? null };
+  }
+  const failures = payload.failures.length;
+  const fresh = payload.newFailures.length;
+  const baseline = failures - fresh;
+  const expired = Array.isArray(payload.expired) ? payload.expired.length : 0;
+  const green = Array.isArray(payload.greenEntries) ? payload.greenEntries.length : 0;
+  log(
+    `[cp-baseline] ${failures} 条失败中 基线 ${baseline} / 新红 ${fresh}` +
+      `（exit ${code} 仅供人看，不改本任务退出码 · 过期条目 ${expired} · 已转绿待删 ${green} · ` +
+      `判据日 ${payload.today ?? '?'}）`,
+  );
+  return { state: 'ok', failures, baseline, fresh };
+}
+
 /**
  * @param {{argv?:string[], deps?:object}} [options]
  * @returns {number} 退出码（0/1/2/3/4）
@@ -448,9 +539,18 @@ export function main({ argv = process.argv.slice(2), deps = {} } = {}) {
         for (const item of verdict.evidence)
           log(`  证据 ${item.file}\n         ${item.reason}：${item.detail}`);
         log('[cp-test-run] ⇒ exit 4（按裁定不自动重跑；确认无并发后原样重跑即可）');
+        // 卡面要求 1「跑完 mvn 后**无论成败**都调一次」⇒ 这一档也要出读数，但**分开记账**：
+        // exit 4 是包装器对「本轮证据是否可信」的判定，不是用例红；真正的用例账由下面这行的
+        // 「基线 a / 新红 b」回答。实测（task-116, 2026-11-22）dumpstream 在默认树里**每轮都在**
+        // （2026-11-21 一天 13 个 dumpstream，含全绿轮），若在 exit 4 分支跳过分类，
+        // 「基线 / 新红」就永远不会被打出来——正是本卡要消灭的「红点被当存量长期放过」。
+        log('[cp-baseline] 注：本轮已被判 exit 4（fork 期 target 漂移）——该判定与下面这行的用例账**分开记**');
+        classifyBaseline({ root, targetDir, execPath, spawn, log });
         return 4;
       }
       if (verdict.note) log(`[cp-test-run] 分类：${verdict.note}`);
+      // mvn 因**用例**红而失败：先出分类读数（打印在 mvn 输出之后），退出码仍按 mvn 定。
+      classifyBaseline({ root, targetDir, execPath, spawn, log });
       return maven.status ?? 1;
     }
 
@@ -478,6 +578,9 @@ export function main({ argv = process.argv.slice(2), deps = {} } = {}) {
     // report-only 下这一项**永不**改变退出码；enforce 下「有残留」和「查不到」都算不通过
     // （把未知读成干净是典型的假绿）。
     const residueFails = enforceResidue && (residue.count > 0 || residue.unverifiable !== null);
+    // 成功路径同样分类一次：全绿时应读出「0 条失败中 基线 0 / 新红 0」，
+    // 这也是「基线没被悄悄扩容」的正面证据（entries 仍为空 ⇒ 任何红都会判新红）。
+    classifyBaseline({ root, targetDir, execPath, spawn, log });
     return guardStatus !== 0 ? guardStatus : residueFails ? 2 : 0;
   } finally {
     if (lock) lock.release();
@@ -920,6 +1023,120 @@ export function runSelftest({ deps = {} } = {}) {
       JSON.stringify(spawnCalls),
     );
     assert(!fsImpl.existsSync(lockPathFor(tree)), 'no-lock must not leave a lock');
+  });
+  // 卡面要求 2：分类**不得改退出码**；要求 1：**无论成败**都要分类。
+  const blTree = path.join(tmpRoot, 'tree-exitcode');
+  fsImpl.mkdirSync(path.join(blTree, 'surefire-reports'), { recursive: true });
+  const blTreeArg = `-Dxihe.target.dir=${blTree}`;
+  check('主流程：mvn 因用例红而失败 ⇒ 退出码仍是 mvn 的，且分类器已被调用', () => {
+    spawnCalls.length = 0;
+    const deps = {
+      ...mainDeps,
+      spawn: (cmd, args) => {
+        spawnCalls.push([cmd, ...(args ?? [])].join(' '));
+        // mvn 红，且本轮报告里**没有**并发证据 ⇒ 不走 exit 4。
+        return cmd === 'mvn' || /mvn(\.cmd)?$/i.test(cmd)
+          ? { status: 1, stdout: '', stderr: '' }
+          : { status: 0, stdout: '', stderr: '' };
+      },
+    };
+    const code = main({ argv: ['--no-lock', blTreeArg], deps });
+    assert(code === 1, `期望 mvn 的退出码 1（分类器 exit 不得覆盖），实得 ${code}`);
+    assert(
+      spawnCalls.some((call) => call.includes('check-cp-baseline.mjs')),
+      `失败路径必须分类：${JSON.stringify(spawnCalls)}`,
+    );
+  });
+  check('主流程：fork 期冲突 ⇒ 仍 exit 4，但分类照跑（分开记账，不静默跳过）', () => {
+    const raceTree = path.join(tmpRoot, 'tree-exit4');
+    const raceReports = path.join(raceTree, 'surefire-reports');
+    fsImpl.mkdirSync(raceReports, { recursive: true });
+    // 本轮 dumpstream（mtime 新于注入的 now=2023）⇒ classifyForkConflict 命中。
+    fsImpl.writeFileSync(
+      path.join(raceReports, '2026-11-22T00-46-51_042.dumpstream'),
+      "Boot Manifest-JAR contains absolute paths in classpath 'H:\\p\\target\\test-classes'\n'other' has different root\n",
+    );
+    spawnCalls.length = 0;
+    const deps = {
+      ...mainDeps,
+      spawn: (cmd, args) => {
+        spawnCalls.push([cmd, ...(args ?? [])].join(' '));
+        return { status: 1, stdout: '', stderr: '' };
+      },
+    };
+    const code = main({ argv: ['--no-lock', `-Dxihe.target.dir=${raceTree}`], deps });
+    assert(code === 4, `期望 exit 4（判定不变），实得 ${code}`);
+    assert(
+      spawnCalls.some((call) => call.includes('check-cp-baseline.mjs')),
+      `exit 4 也要出「基线 / 新红」读数：${JSON.stringify(spawnCalls)}`,
+    );
+  });
+
+  // ⑥ 基线 / 新红分类（task-116）：三种情形各给原文读数。
+  // 这里**真跑** `check-cp-baseline.mjs` 子进程（不起 mvn），所以读数就是分类器的真实判定；
+  // 临时目录里的 baseline 与生产 `cp-known-baseline.json` 无关，生产文件全程只读、不写。
+  const blPkg = path.join(tmpRoot, 'bl-tree');
+  const blReports = path.join(blPkg, 'surefire-reports');
+  fsImpl.mkdirSync(blReports, { recursive: true });
+  const blBaseline = path.join(tmpRoot, 'bl-baseline.json');
+  /** head-time 取 1：临时报告永远「不比 HEAD 旧」，新鲜度门由 check-cp-baseline.test.mjs 单独覆盖。 */
+  const blOpts = { root: ROOT, targetDir: blPkg, baselineFile: blBaseline, headTime: 1, fsImpl, log: silent };
+  const writeBlReport = (lines) => {
+    fsImpl.writeFileSync(
+      path.join(blReports, 'com.acme.BlFixtureTest.txt'),
+      ['Test set: com.acme.BlFixtureTest', ...lines, ''].join('\n'),
+    );
+  };
+  const redLine = (name, kind) => `com.acme.BlFixtureTest.${name} -- Time elapsed: 0.01 s <<< ${kind}!`;
+  check('基线分类：1 条已知基线红 ⇒「基线 1 / 新红 0」', () => {
+    writeBlReport([
+      'Tests run: 2, Failures: 1, Errors: 0, Skipped: 0',
+      redLine('known', 'FAILURE'),
+      'org.opentest4j.AssertionFailedError: boom',
+    ]);
+    fsImpl.writeFileSync(
+      blBaseline,
+      JSON.stringify({
+        reviewedAt: '2026-11-22',
+        entries: [
+          { test: 'com.acme.BlFixtureTest.known', kind: 'fail', reason: 'fixture', reviewBy: '2999-01-01' },
+        ],
+      }),
+    );
+    const got = classifyBaseline(blOpts);
+    assert(got.state === 'ok', JSON.stringify(got));
+    assert(
+      got.failures === 1 && got.baseline === 1 && got.fresh === 0,
+      `期望 基线 1 / 新红 0，实得 ${JSON.stringify(got)}`,
+    );
+  });
+  check('基线分类：1 条不在基线的红 ⇒「基线 0 / 新红 1」', () => {
+    writeBlReport([
+      'Tests run: 1, Failures: 1, Errors: 0, Skipped: 0',
+      redLine('brandNew', 'FAILURE'),
+      'org.opentest4j.AssertionFailedError: boom',
+    ]);
+    fsImpl.writeFileSync(blBaseline, JSON.stringify({ reviewedAt: '2026-11-22', entries: [] }));
+    const got = classifyBaseline(blOpts);
+    assert(got.state === 'ok', JSON.stringify(got));
+    assert(
+      got.failures === 1 && got.baseline === 0 && got.fresh === 1,
+      `期望 基线 0 / 新红 1，实得 ${JSON.stringify(got)}`,
+    );
+  });
+  check('基线分类：全绿 ⇒「基线 0 / 新红 0」', () => {
+    writeBlReport(['Tests run: 3, Failures: 0, Errors: 0, Skipped: 0']);
+    const got = classifyBaseline(blOpts);
+    assert(got.state === 'ok', JSON.stringify(got));
+    assert(
+      got.failures === 0 && got.baseline === 0 && got.fresh === 0,
+      `期望 基线 0 / 新红 0，实得 ${JSON.stringify(got)}`,
+    );
+  });
+  check('基线分类：报告缺失 ⇒ 判「不可判定」且不改退出码（不冒充 0/0）', () => {
+    const got = classifyBaseline({ ...blOpts, targetDir: path.join(tmpRoot, 'no-such-tree') });
+    assert(got.state === 'indeterminate', JSON.stringify(got));
+    assert(got.code === 2, `期望分类器 exit 2（缺证据），实得 ${got.code}`);
   });
 
   const failed = cases.filter((item) => !item.ok);

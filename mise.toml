@@ -290,7 +290,7 @@ alias = "gate:agent-quality"
 [tasks."test:cp"]
 depends = ["check:openapi"]
 run = "node ../../scripts/cp-test-run.mjs"
-description = "Run the control plane test suite (check:openapi first; zero-execution guard on success)"
+description = "Run the control plane test suite (check:openapi first; zero-execution guard on success). task-116: after mvn finishes — pass or fail — the wrapper also prints one line 「N 条失败中 基线 a / 新红 b」 from check-cp-baseline.mjs; read-only, exit code still decided by mvn (a fork-period exit 4 prints no such line)."
 dir = "packages/control-plane"
 alias = "test:cp"
 
@@ -302,12 +302,14 @@ run = "node ../../scripts/check-test-executed.mjs"
 dir = "packages/control-plane"
 description = "Fail (exit 1) when the latest surefire reports show zero executed tests (BL-461)"
 
-# BL-368 (2026-11-06；2026-11-08 更正口径)：当前基线 0 条（scripts/cp-known-baseline.json 的 entries 为空）。
+# BL-368 (2026-11-06；2026-11-08 更正口径；**2026-11-22 task-116 已接线**)：当前基线 0 条（scripts/cp-known-baseline.json 的 entries 为空）。
 # 此前本行写"2 条已登记基线"，与事实不符——那是立项时的数字，条目现已清零。CP 全量现存预存红（最近记录
 # 10 条，主因 PLAN-0691 插件面未同步，见 BL-489），所以 `mise run test:cp` 现在仍会红、本任务也吸收不了
-# 任何红点；修好后 test:cp 才会绿。下面这条是独立任务：不接进 test:cp（否则会吞掉 mvn 输出）；用法：
-# 先跑 `mise run test:cp`（红），再跑本任务读它刚写的 surefire 报告。基线只许缩小、转绿必须删、
-# reviewBy 过期即失败。
+# 任何红点；修好后 test:cp 才会绿。**旧注释说「不接进 test:cp（否则会吞掉 mvn 输出）」——该顾虑实测不成立：
+# task-116 起 `cp-test-run.mjs` 已在 mvn 之后调本脚本（stderr 原样 inherit、stdout 只用于解析），
+# 只加一行「N 条失败中 基线 a / 新红 b」读数，不改退出码语义、不写基线文件。**本任务仍是独立入口：
+# 手工对任意一轮报告单独判定（先跑 `mise run test:cp`，再跑本任务读它刚写的 surefire 报告）。
+# 基线只许缩小、转绿必须删、reviewBy 过期即失败、报告早于 HEAD ⇒ exit 2 要求重跑（四条均未因接线而放宽）。
 [tasks."test:cp:baseline"]
 run = "node scripts/check-cp-baseline.mjs"
 description = "Classify CP surefire failures against scripts/cp-known-baseline.json (exit 0 only if every failure is a fresh known baseline; run after mise run test:cp)"
