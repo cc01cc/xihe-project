@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+// H2 lane is trustworthy for this class: WorkspaceMemberService.java:250-253 computes the
+// instance-admin bypass atom unconditionally, but :254-255 decides on memberships.roleOf (JPA) —
+// the assertion exercises the role path, not the atom.
 /**
  * PLAN-0618 (Lead 裁定 B): {@code WorkspaceMembershipSeamIntegrationTest#workspaceCreationBindsTheCreatorAsOwner}
  * moved here verbatim, because creating a workspace through the public API now needs an explicit

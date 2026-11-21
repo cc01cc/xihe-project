@@ -55,6 +55,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.nio.file.Path;
 
+// H2 lane is trustworthy for this class: the only action atom on its path is
+// WorkspaceEnvironmentController.java:88-89 (ACTION_USE_WORKSPACE_RUNTIME), and :90 lets workspace
+// membership decide the 200/404 — the verdict comes from JPA-backed workspace_members, not the atom.
 class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
 
     @DynamicPropertySource

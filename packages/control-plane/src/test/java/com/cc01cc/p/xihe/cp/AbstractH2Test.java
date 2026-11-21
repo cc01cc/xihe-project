@@ -18,11 +18,15 @@ import java.io.IOException;
 // has no entity, so create-drop cannot build it: RequesterAuthority's org-unit lookup throws, every
 // atom resolves to the empty set, and instance-scope gates answer 403 while 404s appear where a
 // caller is really visible. Eight such classes were moved to AbstractIntegrationTest; new tests that
-// touch instance atoms, org units or workspace roles belong on the PostgreSQL lane as well.
+// touch action atoms (instance or workspace scope) or org units belong on the PostgreSQL lane.
+// Scope of the defect, precisely: only action atoms fall back to the empty set — capability atoms
+// (AuthzContext, backed by access_role_bindings / access_role_permissions) and workspace roles
+// (workspace_members) are JPA tables and keep their normal meaning on H2.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("h2")
 // PLAN-0612 M4: see AbstractWireMockTest — `.env.dev` sets the frozen default as a system property,
 // while the H2 lane needs the docker workspace backend available for its workspace fixtures.
+// 现值 = disabled（486e83083 / PLAN-0618 M3 冻结 docker 后端；上句是冻结前口径）。
 @org.springframework.test.context.TestPropertySource(
         properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
 // L2 Phase 3 (2026-11-03): the AFTER_CLASS @DirtiesContext STAYS HERE — this line was temporarily

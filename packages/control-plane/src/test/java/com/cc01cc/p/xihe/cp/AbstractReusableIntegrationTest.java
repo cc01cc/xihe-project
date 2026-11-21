@@ -43,6 +43,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @Import(ReusableTestContextConfiguration.class)
+// 本类未继承上面三个基类，但属性照抄同一批冻结：现值 = disabled（486e83083 / PLAN-0618 M3，
+// 2026-11-08 `9c432c333` 新增本类时即如此）。
 @TestPropertySource(properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
 public abstract class AbstractReusableIntegrationTest {
 

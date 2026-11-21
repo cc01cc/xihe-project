@@ -28,6 +28,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 // exports it as a system property; the H2 lane still needs docker-backed workspaces to exercise
 // materialize/import/jobs, so an inlined test property overrides it (the frozen-by-default contract
 // is asserted by WorkspaceBackendPolicyTest).
+// 现值 = disabled（486e83083 / PLAN-0618 M3 冻结 docker 后端；上句「still needs docker-backed workspaces」是冻结前口径）。
 @org.springframework.test.context.TestPropertySource(
         properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
 // L2 Phase 3 (2026-11-03): the AFTER_CLASS @DirtiesContext that used to sit here is gone.
@@ -37,6 +38,25 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 // by each subclass's @BeforeEach. Keeping it cost one full context startup (~1.5 s) per class for
 // every subclass. If a subclass turns out to need a fresh context, add the annotation back ON THAT
 // CLASS with a written reason - not on the base.
+/**
+ * task-118 (DSD-1502): on this H2 lane <b>action atoms are always empty</b>, so a subclass can only
+ * prove the deny direction — never that a caller is allowed.
+ *
+ * <p>Why: every action-atom evaluation is joined with the org-unit read —
+ * {@code RequesterAuthority.holdsActionAtom} → {@code actionAtoms} →
+ * {@code JdbcOrgUnitGrantSource.rowsFor} → {@code OrgUnitGrantRowsRepository.memberUnitChain}
+ * (native ltree SQL). The {@code org_units} family (V162–V167) has no JPA entity and this lane runs
+ * {@code ddl-auto=create-drop} with Flyway off ({@code spring.flyway.enabled}), so those tables do not
+ * exist: the SQL throws, {@code RequesterAuthority} catches it and returns {@code Set.of()}
+ * (fail-closed).
+ *
+ * <p>Consequences: ① a green "expected deny" here is <b>not</b> evidence (with empty atoms everybody
+ * is denied); ② a red "expected allow" is still meaningful — the failure is one-sided, so an allow
+ * case that goes red really does depend on an atom being granted, and such a class belongs on the
+ * PostgreSQL lane ({@link com.cc01cc.p.xihe.cp.AbstractIntegrationTest}). What still works here:
+ * capability atoms ({@code AuthzContext}, access_role_bindings / access_role_permissions) and
+ * workspace roles ({@code workspace_members}) — both are JPA tables.
+ */
 public abstract class AbstractWireMockTest {
 
     protected static final WireMockServer wireMock = new WireMockServer(wireMockConfig().dynamicPort());

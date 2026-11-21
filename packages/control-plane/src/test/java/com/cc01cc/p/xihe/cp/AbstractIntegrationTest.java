@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
 // imports). `.env.dev` carries the production default (disabled) and the dotenv loader writes it as
 // a system property, which outranks application-test.properties; an inlined test property outranks
 // both. The frozen-by-default contract itself is asserted by WorkspaceBackendPolicyTest.
+// 现值 = disabled（486e83083 / PLAN-0618 M3 冻结 docker 后端；上句「exercises the docker backend」是冻结前口径）。
 @org.springframework.test.context.TestPropertySource(
         properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
