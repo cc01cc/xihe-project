@@ -19,4 +19,5 @@ overrides:
     "source-map-js@1.2.1": 1.2.2
 
 patchedDependencies:
+    reka-ui@2.11.0: patches/reka-ui@2.11.0.patch
     source-map-resolve@0.6.0: patches/source-map-resolve@0.6.0.patch

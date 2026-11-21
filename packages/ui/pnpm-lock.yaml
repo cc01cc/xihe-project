@@ -13,6 +13,9 @@ overrides:
   source-map-js@1.2.1: 1.2.2
 
 patchedDependencies:
+  reka-ui@2.11.0:
+    hash: 98d6f47a606de21a2b519c1c5774ea7703a040a3e455a23ce8c523f29a5c86d6
+    path: patches/reka-ui@2.11.0.patch
   source-map-resolve@0.6.0:
     hash: 99cf3f6214ef5c4155badd29017815309ea260c795b61a5b236de8310e6b8bfc
     path: patches/source-map-resolve@0.6.0.patch
@@ -104,7 +107,7 @@ importers:
         version: 4.7.1(pinia@4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.44(typescript@6.0.3)))
       reka-ui:
         specifier: ^2.11.0
-        version: 2.11.0(vue@3.5.44(typescript@6.0.3))
+        version: 2.11.0(patch_hash=98d6f47a606de21a2b519c1c5774ea7703a040a3e455a23ce8c523f29a5c86d6)(vue@3.5.44(typescript@6.0.3))
       shiki:
         specifier: ^4.4.3
         version: 4.5.0
@@ -7267,7 +7270,7 @@ snapshots:
     dependencies:
       jsesc: 3.1.0
 
-  reka-ui@2.11.0(vue@3.5.44(typescript@6.0.3)):
+  reka-ui@2.11.0(patch_hash=98d6f47a606de21a2b519c1c5774ea7703a040a3e455a23ce8c523f29a5c86d6)(vue@3.5.44(typescript@6.0.3)):
     dependencies:
       '@floating-ui/vue': 2.0.1(vue@3.5.44(typescript@6.0.3))
       '@internationalized/date': 3.12.4

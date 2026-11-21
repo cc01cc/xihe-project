@@ -41,6 +41,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
         >
             <SelectScrollUpButton />
             <SelectViewport
+                tabindex="-1"
                 :data-position="position"
                 :class="
                     cn(

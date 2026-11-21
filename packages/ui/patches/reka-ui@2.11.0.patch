@@ -1,0 +1,92 @@
+diff --git a/dist/Select/SelectContentImpl.cjs b/dist/Select/SelectContentImpl.cjs
+index f72824b..137b347 100644
+--- a/dist/Select/SelectContentImpl.cjs
++++ b/dist/Select/SelectContentImpl.cjs
+@@ -194,9 +194,28 @@ var SelectContentImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE__
+ 				document.removeEventListener("pointerup", handlePointerUp, { capture: true });
+ 			});
+ 		});
++		let tabFocusedOut = false;
++		function isCandidateVisible(node) {
++			if (typeof node.checkVisibility === "function") return node.checkVisibility({ checkVisibilityCSS: true });
++			return node.getClientRects().length > 0;
++		}
++		function tabFocusOut() {
++			tabFocusedOut = true;
++			const trigger = rootContext.triggerElement.value;
++			const scope = trigger?.getRootNode() ?? document;
++			const candidates = [...scope.querySelectorAll("a[href],button,input,select,textarea,[tabindex]")].filter((node) => node.tabIndex >= 0 && !node.disabled && !(node.tagName === "INPUT" && node.type === "hidden") && !content.value?.contains(node) && isCandidateVisible(node));
++			const index = trigger ? candidates.indexOf(trigger) : -1;
++			const next = index === -1 ? candidates[0] : candidates[index + 1];
++			(next ?? trigger)?.focus({ preventScroll: true });
++		}
+ 		function handleKeyDown(event) {
+ 			const isModifierKey = event.ctrlKey || event.altKey || event.metaKey;
+-			if (event.key === "Tab") event.preventDefault();
++			if (event.key === "Tab" && !isModifierKey) {
++				event.preventDefault();
++				if (!event.shiftKey) tabFocusOut();
++				onOpenChange(false);
++				return;
++			}
+ 			if (event.code === "Space") {
+ 				if (search.value === "") return;
+ 				event.preventDefault();
+@@ -267,6 +286,11 @@ var SelectContentImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE__
+ 					onUnmountAutoFocus: _cache[7] || (_cache[7] = (event) => {
+ 						emits("closeAutoFocus", event);
+ 						if (event.defaultPrevented) return;
++						if (tabFocusedOut) {
++							tabFocusedOut = false;
++							event.preventDefault();
++							return;
++						}
+ 						(0, vue.unref)(rootContext).triggerElement.value?.focus({ preventScroll: true });
+ 						event.preventDefault();
+ 					})
+diff --git a/dist/Select/SelectContentImpl.js b/dist/Select/SelectContentImpl.js
+index 0f4d27f..298e63b 100644
+--- a/dist/Select/SelectContentImpl.js
++++ b/dist/Select/SelectContentImpl.js
+@@ -193,9 +193,28 @@ var SelectContentImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE__
+ 				document.removeEventListener("pointerup", handlePointerUp, { capture: true });
+ 			});
+ 		});
++		let tabFocusedOut = false;
++		function isCandidateVisible(node) {
++			if (typeof node.checkVisibility === "function") return node.checkVisibility({ checkVisibilityCSS: true });
++			return node.getClientRects().length > 0;
++		}
++		function tabFocusOut() {
++			tabFocusedOut = true;
++			const trigger = rootContext.triggerElement.value;
++			const scope = trigger?.getRootNode() ?? document;
++			const candidates = [...scope.querySelectorAll("a[href],button,input,select,textarea,[tabindex]")].filter((node) => node.tabIndex >= 0 && !node.disabled && !(node.tagName === "INPUT" && node.type === "hidden") && !content.value?.contains(node) && isCandidateVisible(node));
++			const index = trigger ? candidates.indexOf(trigger) : -1;
++			const next = index === -1 ? candidates[0] : candidates[index + 1];
++			(next ?? trigger)?.focus({ preventScroll: true });
++		}
+ 		function handleKeyDown(event) {
+ 			const isModifierKey = event.ctrlKey || event.altKey || event.metaKey;
+-			if (event.key === "Tab") event.preventDefault();
++			if (event.key === "Tab" && !isModifierKey) {
++				event.preventDefault();
++				if (!event.shiftKey) tabFocusOut();
++				onOpenChange(false);
++				return;
++			}
+ 			if (event.code === "Space") {
+ 				if (search.value === "") return;
+ 				event.preventDefault();
+@@ -266,6 +285,11 @@ var SelectContentImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE__
+ 					onUnmountAutoFocus: _cache[7] || (_cache[7] = (event) => {
+ 						emits("closeAutoFocus", event);
+ 						if (event.defaultPrevented) return;
++						if (tabFocusedOut) {
++							tabFocusedOut = false;
++							event.preventDefault();
++							return;
++						}
+ 						unref(rootContext).triggerElement.value?.focus({ preventScroll: true });
+ 						event.preventDefault();
+ 					})
