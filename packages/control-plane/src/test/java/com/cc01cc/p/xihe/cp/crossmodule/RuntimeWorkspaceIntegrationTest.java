@@ -55,10 +55,15 @@ import java.util.Map;
 import java.util.UUID;
 import java.nio.file.Path;
 
-// H2 lane is trustworthy for this class: the only action atom on its path is
-// WorkspaceEnvironmentController.java:88-89 (ACTION_USE_WORKSPACE_RUNTIME), and :90 lets workspace
-// membership decide the 200/404 — the verdict comes from JPA-backed workspace_members, not the atom.
-class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
+// task-109: this class belongs on the PostgreSQL lane. Its load-bearing assertion is an ALLOW
+// (200 + a per-workspace status), and the only action atom on that path is
+// WorkspaceEnvironmentController's ACTION_USE_WORKSPACE_RUNTIME read — which runs BEFORE the
+// workspace-membership fallback that decides 200/404. On H2 the org_units family does not exist, so
+// that read throws and (since task-25 b2b062543) answers 500 POLICY_EVALUATION_FAILED without ever
+// reaching the fallback: the allow case could not be proven there. The H2 comment this replaces
+// claimed the verdict came from workspace_members and therefore never touched the atom — that was
+// true only while the atom layer silently returned an empty set.
+class RuntimeWorkspaceIntegrationTest extends AbstractWireMockPgTest {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -159,7 +164,11 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
     void createWorkspaceDoesNotCallRuntime() {
         // Lazy workspace execution: CP only persists metadata; the Runtime
         // materializes the Sandbox when it fetches the WorkspaceExecutionSpec.
-        createdWorkspace = workspaceService.createWorkspace("test-ws-" + UUID.randomUUID().toString().substring(0, 8), null, UUID.randomUUID().toString(), "coding", null, "managed_import", null, "docker", null);
+        // task-109 (PG lane): the creator must be a real user row. Creating a workspace binds the
+        // owner role with granted_by = actor, and V87 gives that column a FK to users(id); the old
+        // dangling random UUID only worked on the H2 create-drop lane, which has no such constraint.
+        String ownerId = createWorkspaceOwner("test-ws");
+        createdWorkspace = workspaceService.createWorkspace("test-ws-" + UUID.randomUUID().toString().substring(0, 8), null, ownerId, "coding", null, "managed_import", null, "docker", null);
 
         assertNotNull(createdWorkspace.getId());
         assertEquals(createdWorkspace.getId().toString(), createdWorkspace.getStorageRef());
@@ -259,7 +268,7 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/delete"))
                 .willReturn(aResponse().withStatus(200)));
 
-        String ownerId = UUID.randomUUID().toString();
+        String ownerId = createWorkspaceOwner("del-ws");
         createdWorkspace = workspaceService.createWorkspace("del-ws-" + UUID.randomUUID().toString().substring(0, 8), null, ownerId, "coding", null, "managed_import", null, "docker", null);
 
         workspaceService.deleteWorkspace(createdWorkspace.getId().toString(), ownerId);

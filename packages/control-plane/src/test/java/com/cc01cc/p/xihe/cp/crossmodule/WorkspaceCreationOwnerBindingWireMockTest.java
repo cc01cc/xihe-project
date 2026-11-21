@@ -22,9 +22,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-// H2 lane is trustworthy for this class: WorkspaceMemberService.java:250-253 computes the
-// instance-admin bypass atom unconditionally, but :254-255 decides on memberships.roleOf (JPA) —
-// the assertion exercises the role path, not the atom.
+// task-109: this class belongs on the PostgreSQL lane. It asserts an ALLOW (the API-created
+// workspace binds its creator as WS_OWNER) and reads it back through GET /members, whose
+// requireRosterRead computes the instance-scope MANAGE_WORKSPACE_MEMBERS atom unconditionally
+// BEFORE it consults memberships.roleOf. On H2 that atom read throws and (since task-25 b2b062543)
+// answers 500 POLICY_EVALUATION_FAILED, so the role path was never exercised there at all — the
+// previous "H2 is trustworthy because :254-255 decides on roleOf" comment only held while the atom
+// layer swallowed the error into an empty set.
 /**
  * PLAN-0618 (Lead 裁定 B): {@code WorkspaceMembershipSeamIntegrationTest#workspaceCreationBindsTheCreatorAsOwner}
  * moved here verbatim, because creating a workspace through the public API now needs an explicit
@@ -32,7 +36,7 @@ import java.util.UUID;
  * Runtime. The WireMock lane can stub the probe, so the original assertion ("API creation binds the
  * creator as WS_OWNER") keeps its full meaning instead of being downgraded to a fixture bypass.
  */
-class WorkspaceCreationOwnerBindingWireMockTest extends AbstractWireMockTest {
+class WorkspaceCreationOwnerBindingWireMockTest extends AbstractWireMockPgTest {
 
     /** Point the CP's Runtime client at this class' WireMock so the direct_attach probe is stubbed. */
     @org.springframework.test.context.DynamicPropertySource

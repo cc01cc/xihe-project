@@ -47,13 +47,16 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
  * {@code JdbcOrgUnitGrantSource.rowsFor} → {@code OrgUnitGrantRowsRepository.memberUnitChain}
  * (native ltree SQL). The {@code org_units} family (V162–V167) has no JPA entity and this lane runs
  * {@code ddl-auto=create-drop} with Flyway off ({@code spring.flyway.enabled}), so those tables do not
- * exist: the SQL throws, {@code RequesterAuthority} catches it and returns {@code Set.of()}
- * (fail-closed).
+ * exist: the SQL throws. Since task-25 ({@code b2b062543}) that throw is no longer swallowed into
+ * {@code Set.of()}: an unreadable grant store now surfaces as HTTP 500
+ * {@code POLICY_EVALUATION_FAILED} (fail-closed <b>and</b> identifiable — task-213,
+ * {@code RequesterAuthority.evaluationUnavailable}).
  *
  * <p>Consequences: ① a green "expected deny" here is <b>not</b> evidence (with empty atoms everybody
  * is denied); ② a red "expected allow" is still meaningful — the failure is one-sided, so an allow
  * case that goes red really does depend on an atom being granted, and such a class belongs on the
- * PostgreSQL lane ({@link com.cc01cc.p.xihe.cp.AbstractIntegrationTest}). What still works here:
+ * PostgreSQL lane ({@link com.cc01cc.p.xihe.cp.AbstractIntegrationTest}; WireMock-flavoured variant:
+ * {@link AbstractWireMockPgTest}). What still works here:
  * capability atoms ({@code AuthzContext}, access_role_bindings / access_role_permissions) and
  * workspace roles ({@code workspace_members}) — both are JPA tables.
  */
