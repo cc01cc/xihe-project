@@ -81,6 +81,70 @@ class DynamicAccessRoleMigrationTest {
         }
     }
 
+    private static Set<String> codeAtomsOf(SystemAccessRoleCatalog.RoleSeed seed) {
+        Set<String> atoms = new HashSet<>();
+        for (SystemAccessRoleCatalog.AtomRef atom : seed.atoms()) {
+            atoms.add(atom.actionClass() + "@" + atom.resourcePattern());
+        }
+        return atoms;
+    }
+
+    private static Set<String> v87AtomsOf(UUID roleId) throws SQLException {
+        Set<String> atoms = new HashSet<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT action_class, resource_pattern"
+                     + " FROM role_permissions WHERE role_id = '" + roleId + "'::uuid")) {
+            while (rs.next()) {
+                atoms.add(rs.getString(1) + "@" + rs.getString(2));
+            }
+        }
+        return atoms;
+    }
+
+    /**
+     * A V87 seed row that a later migration withdrew on purpose. V87 is history and cannot be edited
+     * (Flyway checksums the whole file), so the one-directional guard below has to be told which
+     * rows a later migration deleted — with the migration name, the commit and the reason, so the
+     * entry can be re-checked instead of silently outliving its justification.
+     */
+    private record RetiredSeed(UUID roleId, String roleName, String atom, String withdrawnBy,
+            String commit, String reason) {
+    }
+
+    /**
+     * task-201: the only entries here are V87 rows that a later migration removes at head. Every
+     * entry must still describe a real V87 row ({@code everyRetiredSeedEntryStillDescribesAV87Row})
+     * and must not widen into a blanket exemption ({@code retiredSeedsDoNotSwallowUnknownAtoms}).
+     */
+    private static final List<RetiredSeed> RETIRED_V87_SEEDS = List.of(
+            new RetiredSeed(SystemAccessRoleCatalog.WS_EDITOR_ID, SystemAccessRoleCatalog.WS_EDITOR,
+                    "exec@*",
+                    "V179__dsd1500_agent_exec_retirement_and_presets.sql",
+                    "bf5cb083d",
+                    "DSD-1500 (Q-93) R2 withdrew exec from the editor default; V179 deletes the"
+                            + " V87 seed row at head"));
+
+    private static Set<String> allowedAtoms(UUID roleId, Set<String> codeAtoms) {
+        Set<String> allowed = new HashSet<>(codeAtoms);
+        for (RetiredSeed retired : RETIRED_V87_SEEDS) {
+            if (retired.roleId().equals(roleId)) {
+                allowed.add(retired.atom());
+            }
+        }
+        return allowed;
+    }
+
+    /**
+     * V87 rows the head code catalog no longer knows, minus the ones a later migration withdrew on
+     * purpose. A non-empty result is a real regression: V87 seeded an atom nobody ever retired.
+     */
+    private static Set<String> unexplainedAtoms(UUID roleId, Set<String> codeAtoms,
+            Set<String> dbAtoms) {
+        Set<String> unexplained = new HashSet<>(dbAtoms);
+        unexplained.removeAll(allowedAtoms(roleId, codeAtoms));
+        return unexplained;
+    }
+
     private static UUID createUser() throws SQLException {
         UUID userId = UUID.randomUUID();
         executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
@@ -329,20 +393,13 @@ class DynamicAccessRoleMigrationTest {
         for (SystemAccessRoleCatalog.RoleSeed seed : v87Seeds) {
             assertEquals(seed.name(), namesById.get(seed.id()),
                     "fixed id must map to the same role name on both sides: " + seed.name());
-            Set<String> codeAtoms = new HashSet<>();
-            for (SystemAccessRoleCatalog.AtomRef atom : seed.atoms()) {
-                codeAtoms.add(atom.actionClass() + "@" + atom.resourcePattern());
-            }
-            try (Statement statement = connection.createStatement();
-                 ResultSet rs = statement.executeQuery("SELECT action_class, resource_pattern"
-                         + " FROM role_permissions WHERE role_id = '" + seed.id() + "'::uuid")) {
-                while (rs.next()) {
-                    String atom = rs.getString(1) + "@" + rs.getString(2);
-                    assertTrue(codeAtoms.contains(atom),
-                            "V87 seeds an atom the code catalog does not know: " + seed.name()
-                                    + " -> " + atom);
-                }
-            }
+            Set<String> unexplained = unexplainedAtoms(seed.id(), codeAtomsOf(seed),
+                    v87AtomsOf(seed.id()));
+            assertTrue(unexplained.isEmpty(),
+                    "V87 seeds atoms the code catalog does not know and no later migration"
+                            + " withdrew: " + seed.name() + " -> " + unexplained
+                            + " (a withdrawn atom needs a RETIRED_V87_SEEDS entry naming the"
+                            + " migration, its commit and the reason)");
         }
     }
 
@@ -355,6 +412,82 @@ class DynamicAccessRoleMigrationTest {
                 "instance", null), "uq_grants_default_subject still applies");
         assertNull(scalarString("SELECT to_regclass('public.workspace_members')"),
                 "PLAN-0610 does not create a second membership table");
+    }
+
+    @Test
+    void retiredSeedsDoNotSwallowUnknownAtoms() {
+        // task-201: the exemption is per (role, atom). It must not turn into "WS_EDITOR may seed
+        // anything", and it must not leak to another role that happens to ship no exec atom.
+        Map<String, Set<String>> dbRows = Map.of(
+                "editor", Set.of("read@*", "exec@*", "network@*", "exec@x"),
+                "viewer", Set.of("exec@*"));
+        Set<String> editorKnown = Set.of("read@*");
+        Set<String> editorUnexplained = unexplainedAtoms(
+                SystemAccessRoleCatalog.WS_EDITOR_ID, editorKnown, dbRows.get("editor"));
+        assertEquals(Set.of("network@*", "exec@x"), editorUnexplained,
+                "only the exact retired atom is explained; a different action class or a scoped"
+                        + " pattern is still a regression");
+        Set<String> viewerUnexplained = unexplainedAtoms(
+                SystemAccessRoleCatalog.WS_VIEWER_ID, Set.of(), dbRows.get("viewer"));
+        assertEquals(Set.of("exec@*"), viewerUnexplained,
+                "the exemption belongs to WS_EDITOR only; WS_VIEWER seeding exec is still a"
+                        + " regression");
+        assertTrue(unexplainedAtoms(SystemAccessRoleCatalog.WS_EDITOR_ID, editorKnown,
+                Set.of("read@*", "exec@*")).isEmpty(),
+                "the retired editor atom is explained when nothing else is off");
+    }
+
+    @Test
+    void everyRetiredSeedEntryStillDescribesAV87Row() throws SQLException {
+        // The exemption list is only honest while each entry names a row V87 actually seeded.
+        // A future V88-style rewrite that stops seeding the row must delete the entry instead of
+        // leaving an explanation for a row nobody wrote.
+        for (RetiredSeed retired : RETIRED_V87_SEEDS) {
+            int rows = scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
+                    + retired.roleId() + "'::uuid AND action_class = '"
+                    + retired.atom().substring(0, retired.atom().indexOf('@'))
+                    + "' AND resource_pattern = '"
+                    + retired.atom().substring(retired.atom().indexOf('@') + 1) + "'");
+            assertEquals(1, rows, "RETIRED_V87_SEEDS entry no longer describes a V87 row: "
+                    + retired.roleName() + " -> " + retired.atom() + " (drop the entry)");
+            String catalogName = SystemAccessRoleCatalog.roleSeeds().stream()
+                    .filter(seed -> seed.id().equals(retired.roleId()))
+                    .map(SystemAccessRoleCatalog.RoleSeed::name)
+                    .findFirst()
+                    .orElse(null);
+            assertEquals(catalogName, retired.roleName(),
+                    "the entry names the role the same way the code catalog does: "
+                            + retired.roleId());
+            assertTrue(retired.withdrawnBy().matches("V\\d+__[A-Za-z0-9_]+\\.sql"),
+                    "the withdrawing migration is named for the reader: " + retired.withdrawnBy());
+            assertTrue(retired.commit().matches("[0-9a-f]{7,40}"),
+                    "the withdrawing commit is recorded so the reason can be re-checked: "
+                            + retired.commit());
+            assertTrue(!retired.reason().isBlank(), "every exemption carries a reason");
+        }
+    }
+
+    @Test
+    void anUnexplainedSeedRowTurnsTheGuardRed() throws SQLException {
+        // The guard must still fail on a seed row nobody retired: prove it by adding one, reading
+        // it back through the same helper the main assertion uses, then removing it in finally.
+        String probe = "sabotage_probe";
+        executeUpdate("INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+                + " VALUES ('" + SystemAccessRoleCatalog.WS_VIEWER_ID + "'::uuid, '" + probe
+                + "', '*')");
+        try {
+            Set<String> unexplained = unexplainedAtoms(SystemAccessRoleCatalog.WS_VIEWER_ID,
+                    Set.of("read@*"), v87AtomsOf(SystemAccessRoleCatalog.WS_VIEWER_ID));
+            assertEquals(Set.of(probe + "@*"), unexplained,
+                    "a seed row with no retirement keeps the guard red");
+        } finally {
+            executeUpdate("DELETE FROM role_permissions WHERE role_id = '"
+                    + SystemAccessRoleCatalog.WS_VIEWER_ID + "'::uuid AND action_class = '" + probe
+                    + "'");
+        }
+        assertTrue(unexplainedAtoms(SystemAccessRoleCatalog.WS_VIEWER_ID, Set.of("read@*"),
+                v87AtomsOf(SystemAccessRoleCatalog.WS_VIEWER_ID)).isEmpty(),
+                "removing the probe restores green");
     }
 }
 

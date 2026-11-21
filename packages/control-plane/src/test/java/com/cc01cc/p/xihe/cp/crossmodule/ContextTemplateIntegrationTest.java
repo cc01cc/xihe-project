@@ -74,7 +74,7 @@ import java.util.UUID;
  * binding (Model override → Connection default → built-in Type pin) and the
  * atomic ChatRun snapshot isolation guarantee.
  */
-class ContextTemplateIntegrationTest extends AbstractWireMockTest {
+class ContextTemplateIntegrationTest extends AbstractWireMockPgTest {
 
     private static final String TEMPLATE_ID = "11111111-1111-4111-8111-111111111111";
     private static final String COMPONENT_ID = "22222222-2222-4222-8222-222222222222";

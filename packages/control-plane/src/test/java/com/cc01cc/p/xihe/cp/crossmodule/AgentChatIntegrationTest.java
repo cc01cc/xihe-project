@@ -62,7 +62,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-class AgentChatIntegrationTest extends AbstractWireMockTest {
+class AgentChatIntegrationTest extends AbstractWireMockPgTest {
 
     /**
      * PLAN-0439: the published api-request-templates revision must pass the chat
