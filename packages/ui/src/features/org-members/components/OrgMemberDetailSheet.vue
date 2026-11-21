@@ -236,7 +236,7 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
 
 <template>
     <Sheet :open="open" @update:open="(value: boolean) => emit('update:open', value)">
-        <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent side="right" width="config" class="w-full overflow-y-auto">
             <SheetHeader>
                 <SheetTitle data-testid="org-member-detail-title">
                     {{ t("orgMembers.detailTitle") }}

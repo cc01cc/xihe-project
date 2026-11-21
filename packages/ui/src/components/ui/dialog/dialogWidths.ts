@@ -41,6 +41,31 @@ export function dialogWidthClass(tier?: DialogWidthTier | null): string {
     return DIALOG_WIDTH_TIERS[DEFAULT_DIALOG_WIDTH_TIER];
 }
 
+/**
+ * Sheet（侧边抽屉）的侧向：只有 `left` / `right` 两档宽度语义。
+ *
+ * <p>`top` / `bottom` 抽屉是「贴边满幅 + 限高」形态，宽度由 `inset-x-0` 决定，不下发宽度 class。</p>
+ */
+export type SheetSide = "top" | "right" | "bottom" | "left";
+
+/**
+ * Sheet 宽度 class —— **档位值仍只从上面那张表取**，这里只加一层「侧向前缀」包装（task-185，Lead 裁定）。
+ *
+ * <p><b>为什么必须带前缀</b>：vendor SheetContent 的默认宽度写成侧向变体
+ * `data-[side=right]:sm:max-w-sm`。调用点给裸 `sm:max-w-lg` 时，两者**不在同一个变体命名空间**，
+ * twMerge 不视作冲突 ⇒ 两条都下发；而 `data-[side=right]` 编译出的 `[data-side="right"]` 属性选择器
+ * 特异性高于裸 `sm:` 媒体查询 ⇒ 默认 384px 胜出。这就是 task-182 实测「写了 `sm:max-w-lg` 仍是 384」
+ * 的机制，也是 Dialog 侧同一类缺口的成因（task-98 / task-137）。</p>
+ *
+ * <p><b>为什么不另立 `sheetWidths.ts` 第二张表</b>：Sheet 与 Dialog 只是承载面不同，四档语义与 px
+ * 完全一致；两张表存同一组数字必然漂移——task-98 时 20 个调用点各自拼四套刻度、宽度照样被默认值
+ * 压回窄档，就是前车。所以这里只包一层前缀，宽度值仍然只有 `DIALOG_WIDTH_TIERS` 一处可改。</p>
+ */
+export function sheetWidthClass(side: SheetSide, tier?: DialogWidthTier | null): string {
+    if (side !== "left" && side !== "right") return "";
+    return `data-[side=${side}]:` + dialogWidthClass(tier);
+}
+
 /** 运行期校验：任意字符串是否为已登记档位（用于 report-only 报警与测试夹具）。 */
 export function isDialogWidthTier(value: unknown): value is DialogWidthTier {
     return (

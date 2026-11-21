@@ -19,9 +19,14 @@
  *       真正拦回归的是规则 1（宽度 token 一律不许出现），它可静态判、无豁免表。</li>
  * </ol>
  *
- * <p><b>没有豁免表</b>：`src/**` 全部 `.vue` 逐文件扫，唯一不进判定的路径是两个 vendor 原语目录
- * （`components/ui/dialog`、`components/ui/alert-dialog`）—— 那里是档位表的落地实现，不是被判的调用方。
- * Sheet 抽屉不在本判据范围（侧向语义归 task-135 域，本卡不动）。</p>
+ * <p><b>没有豁免表</b>：`src/**` 全部 `.vue` 逐文件扫，不进判定的只有三个 vendor 原语目录
+ * （`components/ui/dialog`、`components/ui/alert-dialog`、`components/ui/sheet`）—— 那里是档位表的落地实现，
+ * 不是被判的调用方。</p>
+ *
+ * <p><b>Sheet 已并入本判据（task-185）</b>：`<SheetContent>`（含 kebab 拼法）与 Dialog 同规则 ——
+ * 静态 class 里不得出现宽度 token，宽度只能来自 `width="confirm|form|config|workbench"`。
+ * Sheet 与 Dialog 共用同一张 px 表，差别只在 Sheet 的宽度必须带 `data-[side=*]:` 前缀才能压过原语默认值
+ * （跨变体不折叠，见下方「机制自证」用例），所以档位 class 由 `sheetWidthClass(side, tier)` 包一层前缀。</p>
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -31,8 +36,10 @@ import {
     DIALOG_WIDTH_TIERS,
     DIALOG_WIDTH_TIER_PX,
     isDialogWidthTier,
+    sheetWidthClass,
     type DialogWidthTier,
 } from "../dialogWidths";
+import { cn } from "../../../../lib/utils";
 
 const SRC = resolve(process.cwd(), "src");
 
@@ -41,13 +48,19 @@ const WIDTH_BEARING_ELEMENTS = [
     "DialogContent",
     "AlertDialogContent",
     "DialogScrollContent",
+    "SheetContent",
+    "sheet-content",
     "dialog-content",
     "alert-dialog-content",
     "dialog-scroll-content",
 ] as const;
 
 /** vendor 原语本体（档位表的实现处，不是判据对象）。 */
-const PRIMITIVE_DIRS = ["components/ui/dialog", "components/ui/alert-dialog"] as const;
+const PRIMITIVE_DIRS = [
+    "components/ui/dialog",
+    "components/ui/alert-dialog",
+    "components/ui/sheet",
+] as const;
 
 /** 布局用的 max-w（不是"宽度档位"，不参与判定）。 */
 const ALLOWED_MAX_W = new Set(["max-w-full", "max-w-none", "max-w-[calc(100%-2rem)]"]);
@@ -422,6 +435,81 @@ describe("对话框宽度只能来自档位表（task-137，承接 task-98）", 
             }
         }
         expect(Array.isArray(report.unarchived)).toBe(true);
+    });
+});
+
+describe("Sheet 宽度必须来自档位表（task-185，J1/J2）", () => {
+    it("正例：width 档位 ⇒ 绿且计入显式档位；反例：写死 sm:max-w-lg ⇒ 红", () => {
+        const tier = checkElement(
+            "SheetContent",
+            '<SheetContent side="right" width="config" class="w-full overflow-y-auto">',
+            "synthetic.vue",
+            10,
+        );
+        expect(tier.findings).toEqual([]);
+        expect(tier.unarchived).toEqual([]);
+        expect(tier.explicitTier).toBe(true);
+
+        const hardcoded = checkElement(
+            "SheetContent",
+            '<SheetContent side="right" class="w-full sm:max-w-lg">',
+            "synthetic.vue",
+            10,
+        );
+        expect(hardcoded.findings).toHaveLength(1);
+        expect(hardcoded.findings[0].detail).toContain("sm:max-w-lg");
+
+        const hardcodedDefault = scanSource(
+            '<SheetContent side="left" class="max-w-sm">',
+            "synthetic.vue",
+        );
+        expect(hardcodedDefault.findings).toHaveLength(1);
+        expect(hardcodedDefault.elements).toBe(1);
+    });
+
+    it("包装面：左/右侧下发带侧向前缀的档位 class；上/下侧不下发宽度", () => {
+        expect(sheetWidthClass("right", "config")).toBe("data-[side=right]:sm:max-w-3xl");
+        expect(sheetWidthClass("left", "form")).toBe("data-[side=left]:sm:max-w-lg");
+        expect(sheetWidthClass("top", "config")).toBe("");
+        expect(sheetWidthClass("bottom", "config")).toBe("");
+        // 未登记档位仍回落默认档，但侧向前缀不丢（否则会静默变回跨变体形态）。
+        const unknownTier = "huge" as unknown as DialogWidthTier;
+        expect(sheetWidthClass("right", unknownTier)).toBe(
+            "data-[side=right]:" + DIALOG_WIDTH_TIERS.confirm,
+        );
+    });
+
+    it("机制自证：跨变体不折叠（裸 class 被原语默认值压回 384 的成因），同变体才折叠", () => {
+        const bare = cn("data-[side=right]:sm:max-w-sm", "sm:max-w-lg").split(/\s+/);
+        expect(bare).toContain("data-[side=right]:sm:max-w-sm");
+        expect(bare).toContain("sm:max-w-lg");
+
+        const tier = cn("data-[side=right]:sm:max-w-sm", sheetWidthClass("right", "config")).split(
+            /\s+/,
+        );
+        expect(tier).not.toContain("data-[side=right]:sm:max-w-sm");
+        expect(tier).toContain("data-[side=right]:sm:max-w-3xl");
+    });
+
+    it("原语面：SheetContent.vue 不再自带 sm:max-w-sm 字面量，宽度只走 sheetWidthClass", () => {
+        const source = readFileSync(join(SRC, "components/ui/sheet/SheetContent.vue"), "utf8");
+        expect(source).not.toContain("sm:max-w-sm");
+        expect(source).toContain("sheetWidthClass(props.side, props.width)");
+        expect(source).toContain('width: "confirm"');
+        expect(source).toContain(":data-sheet-width=");
+    });
+
+    it("仓库实况：成员详情抽屉走 config 档（J3 ≥640），且 Sheet 调用点零宽度 token", () => {
+        const source = readFileSync(
+            join(SRC, "features/org-members/components/OrgMemberDetailSheet.vue"),
+            "utf8",
+        );
+        expect(source).toContain('width="config"');
+        expect(DIALOG_WIDTH_TIER_PX.config).toBeGreaterThanOrEqual(640);
+        expect(scanSource(source, "OrgMemberDetailSheet.vue").findings).toEqual([]);
+
+        const report = scanRepo();
+        expect(report.findings.map(describeFinding)).toEqual([]);
     });
 });
 

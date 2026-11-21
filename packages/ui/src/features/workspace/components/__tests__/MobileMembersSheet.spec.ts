@@ -7,6 +7,7 @@ import {
     DIALOG_WIDTH_TIERS,
     DIALOG_WIDTH_TIER_PX,
     dialogWidthClass,
+    sheetWidthClass,
 } from "../../../../components/ui/dialog/dialogWidths";
 
 /**
@@ -45,15 +46,20 @@ function classListOf(element: HTMLElement): string[] {
 }
 
 describe("MobileMembersSheet width tier (task-170 R5)", () => {
-    it("renders the width class from the dialog width tier table, not a bare max-w-*", () => {
+    it("renders the side-prefixed tier class via the width prop, not a bare max-w-*", () => {
         const wrapper = mountSheet();
-        const widthClasses = classListOf(sheetElement()).filter((name) =>
-            /^[a-z0-9-]*:?max-w-/.test(name),
-        );
+        const element = sheetElement();
+        const widthClasses = classListOf(element).filter((name) => /max-w-/.test(name));
 
         expect(DIALOG_WIDTH_TIERS.confirm).toBe("sm:max-w-sm");
         expect(dialogWidthClass("confirm")).toBe(DIALOG_WIDTH_TIERS.confirm);
-        expect(widthClasses).toEqual([DIALOG_WIDTH_TIERS.confirm]);
+        // task-185：档位值仍只从档位表取，但必须带侧向前缀（与 vendor 默认同命名空间）才不会被压回 384。
+        expect(sheetWidthClass("right", "confirm")).toBe(
+            `data-[side=right]:${DIALOG_WIDTH_TIERS.confirm}`,
+        );
+        expect(widthClasses).toEqual([sheetWidthClass("right", "confirm")]);
+        // 宽度走 width 属性（单一入口），调用点不再自己拼档位 class。
+        expect(element.getAttribute("data-sheet-width")).toBe("confirm");
         wrapper.unmount();
     });
 

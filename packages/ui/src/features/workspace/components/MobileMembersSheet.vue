@@ -3,7 +3,6 @@ import { computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
 import { cn } from "../../../lib/utils";
-import { dialogWidthClass } from "../../../components/ui/dialog/dialogWidths";
 import Sheet from "../../../components/ui/sheet/Sheet.vue";
 import SheetContent from "../../../components/ui/sheet/SheetContent.vue";
 import SheetTitle from "../../../components/ui/sheet/SheetTitle.vue";
@@ -87,7 +86,8 @@ function handleOpenChange(open: boolean) {
     <Sheet :open="open" @update:open="handleOpenChange">
         <SheetContent
             side="right"
-            :class="cn('flex w-[88vw] flex-col gap-0 p-0 md:hidden', dialogWidthClass('confirm'))"
+            width="confirm"
+            :class="cn('flex w-[88vw] flex-col gap-0 p-0 md:hidden')"
             data-testid="mobile-members-sheet"
             role="dialog"
             aria-modal="true"

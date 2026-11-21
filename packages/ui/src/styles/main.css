@@ -1,4 +1,9 @@
 @import "tailwindcss";
+
+/* task-185：Sheet 宽度档位 class 由 sheetWidthClass 运行时拼接（前缀 data-[side=…]: + 档位表 sm:max-w-*）。
+ * Tailwind 4.3.3 的源码扫描器看不见拼接结果 ⇒ 这一行是这 8 个组合进入产物的唯一路径。
+ * 它不是样式覆盖，是 safelist：删掉它，档位在生产会静默塌回 384（confirm）。 */
+@source inline("data-[side={left,right}]:sm:max-w-{sm,lg,3xl,5xl}");
 @import "tw-animate-css";
 @import "./shadcn-vue-tailwind.css";
 @import "markstream-vue/index.tailwind.css" layer(components);
