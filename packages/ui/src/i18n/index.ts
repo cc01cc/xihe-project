@@ -2505,6 +2505,85 @@ const messages = {
                 clear: "清除搜索",
                 openDefault: "打开本层默认页",
             },
+            // task-8（DSD-1516 收窄后）：授权总览 = 已登录者视角，只展示读面可得的来源。
+            authorizationOverview: {
+                title: "授权总览",
+                description:
+                    "以当前身份查看生效授权，并查询某个动作是否被允许；页内不提供选择他人的入口。",
+                scopeNote:
+                    "本页只展示读面可得的来源；spawn / template 与按主体反查的凭据绑定、插件绑定来源需新增 CP 读面，尚未实现",
+                selfTitle: "我的生效授权",
+                selfHint:
+                    "按来源分组列出投影里的每个原子；同一原子在不同层会各占一行，缺少 sources 的原子不计入任何来源。",
+                loading: "加载中…",
+                sourceEmpty: "该来源当前没有可用读数。",
+                pagerPrev: "上一页",
+                pagerNext: "下一页",
+                scopeInstance: "实例",
+                scopeWorkspace: "工作区 {id}",
+                source: {
+                    role: "角色",
+                    credential_binding: "凭据绑定",
+                    agent_default: "主体默认",
+                    plugin_binding: "插件绑定",
+                },
+                readface: {
+                    title: "六来源读面",
+                    hint: "三档读面：有读面 / 仅反向查询 / 无读面。",
+                    open: "打开",
+                    noInference: "无读面的来源不展示任何推断数据。",
+                    tierA: "有读面",
+                    tierB: "仅反向查询",
+                    tierC: "无读面",
+                    role: "角色",
+                    credential_binding: "凭据绑定",
+                    agent_default: "主体默认",
+                    plugin_binding: "插件绑定",
+                    spawn: "派生",
+                    template: "模板",
+                },
+                subjects: {
+                    title: "按主体",
+                    workspaceHint: "智能体主体只在工作区上下文里有读面，角色与上限都来自该工作区。",
+                    pickWorkspace: "选择工作区",
+                    agentsEmpty: "该工作区没有绑定智能体。",
+                    snapshotAtoms: "快照原子 {count} 条",
+                    roles: "角色绑定",
+                    rolesUnavailable: "角色读面不可用。",
+                    rolesEmpty: "该主体没有角色绑定。",
+                    cap: "生效上限",
+                    capUnavailable: "生效上限读面不可用：该主体未绑定此工作区。",
+                    capNote:
+                        "上限来源：{binding}；principalGrantIds {count} 条 —— 只有 grant id，没有 source 标签。",
+                    userBindings: "用户主体绑定",
+                    userBindingsDenied:
+                        "当前身份没有 MANAGE_ROLES，无法列出 user 主体绑定；服务端原文：",
+                    userBindingsEmpty: "当前身份没有任何 user 主体绑定。",
+                    capSource: {
+                        "binding-snapshot": "绑定快照",
+                        "role-binding": "角色绑定",
+                    },
+                    capMode: {
+                        baseline: "角色基线",
+                        explicit: "显式冻结",
+                        none: "未标注",
+                    },
+                },
+                explain: {
+                    title: "以当前身份查询",
+                    note: "查询的是登录者自己的授权；不提供选择主体的入口。",
+                    actionClass: "动作",
+                    resource: "资源（留空即 *）",
+                    submit: "查询",
+                    needActionClass: "请先填写动作。",
+                    allowed: "允许",
+                    denied: "不允许",
+                    missingAtom: "最深缺失原子",
+                    evaluated: "分层求值",
+                    matched: "命中授权",
+                    noMatch: "没有命中的授权。",
+                },
+            },
             ia: {
                 breadcrumbRoot: "设置",
                 breadcrumbLabel: "面包屑",
@@ -2594,6 +2673,8 @@ const messages = {
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",
+                // task-8：授权总览入口（安全组末尾，人人可见）。
+                navAuthorizationOverview: "授权总览",
                 // task-509（E-03）：**取数失败 ≠ 保存失败**。两种失败指向不同的用户动作
                 // （重试读取 / 检查我的编辑），文案不许互相借用。
                 domainLoadFailed: "配置加载失败，请重试。",
@@ -6765,6 +6846,88 @@ const messages = {
                 clear: "Clear search",
                 openDefault: "Open this layer's default page",
             },
+            // task-8 (after DSD-1516 narrowing): authorization overview from the signed-in
+            // identity's own perspective; only sources with a read face are shown.
+            authorizationOverview: {
+                title: "Authorization overview",
+                description:
+                    "Inspect your own effective grants and ask whether an action is allowed; this page has no subject picker.",
+                scopeNote:
+                    "This page only shows sources that have a read face; spawn / template, and per-subject lookup of credential-binding / plugin-binding sources, need new control-plane read faces and are not implemented yet",
+                selfTitle: "My effective grants",
+                selfHint:
+                    "Atoms grouped by source; the same atom appears once per layer, and atoms without sources are not counted under any source.",
+                loading: "Loading…",
+                sourceEmpty: "No readings for this source yet.",
+                pagerPrev: "Previous",
+                pagerNext: "Next",
+                scopeInstance: "Instance",
+                scopeWorkspace: "Workspace {id}",
+                source: {
+                    role: "Role",
+                    credential_binding: "Credential binding",
+                    agent_default: "Principal default",
+                    plugin_binding: "Plugin binding",
+                },
+                readface: {
+                    title: "Read faces of the six sources",
+                    hint: "Three tiers: has read face / reverse lookup only / no read face.",
+                    open: "Open",
+                    noInference: "Sources without a read face show no inferred data.",
+                    tierA: "Has read face",
+                    tierB: "Reverse lookup only",
+                    tierC: "No read face",
+                    role: "Role",
+                    credential_binding: "Credential binding",
+                    agent_default: "Principal default",
+                    plugin_binding: "Plugin binding",
+                    spawn: "Spawn",
+                    template: "Template",
+                },
+                subjects: {
+                    title: "By subject",
+                    workspaceHint:
+                        "Agent principals only have a read face inside a workspace; roles and caps come from that workspace.",
+                    pickWorkspace: "Pick a workspace",
+                    agentsEmpty: "This workspace has no bound agents.",
+                    snapshotAtoms: "{count} snapshot atoms",
+                    roles: "Role bindings",
+                    rolesUnavailable: "The role read face is unavailable.",
+                    rolesEmpty: "This principal has no role binding.",
+                    cap: "Effective cap",
+                    capUnavailable:
+                        "The effective-cap read face is unavailable: this principal is not bound to this workspace.",
+                    capNote:
+                        "Cap source: {binding}; {count} principalGrantIds — grant ids only, no source labels.",
+                    userBindings: "User subject bindings",
+                    userBindingsDenied:
+                        "Your identity has no MANAGE_ROLES, so user subject bindings cannot be listed; server text:",
+                    userBindingsEmpty: "Your identity has no user subject bindings.",
+                    capSource: {
+                        "binding-snapshot": "binding snapshot",
+                        "role-binding": "role binding",
+                    },
+                    capMode: {
+                        baseline: "role baseline",
+                        explicit: "explicitly frozen",
+                        none: "unspecified",
+                    },
+                },
+                explain: {
+                    title: "Ask as the current identity",
+                    note: "The query always runs for the signed-in user; there is no subject picker.",
+                    actionClass: "Action",
+                    resource: "Resource (blank = *)",
+                    submit: "Ask",
+                    needActionClass: "Enter an action first.",
+                    allowed: "Allowed",
+                    denied: "Not allowed",
+                    missingAtom: "Deepest missing atom",
+                    evaluated: "Evaluated levels",
+                    matched: "Matched grants",
+                    noMatch: "No matching grants.",
+                },
+            },
             ia: {
                 breadcrumbRoot: "Settings",
                 breadcrumbLabel: "Breadcrumb",
@@ -6849,6 +7012,7 @@ const messages = {
                 navConfigLocks: "Config locks",
                 navRoles: "Roles & grants",
                 navAudit: "Audit log",
+                navAuthorizationOverview: "Authorization overview",
                 domainLoadFailed: "Failed to load this configuration; retry.",
                 domainLoading: "Loading configuration…",
                 // task-18 (source: task-6 candidate C-2): no data-model vocabulary.

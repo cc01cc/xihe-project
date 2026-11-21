@@ -1184,17 +1184,91 @@ export interface DelegateSpawnSessions {
     limit: number;
 }
 
+/**
+ * task-8：一条 atom 的授权**来源**行（CP `CapabilityProjectionService.AtomSource`）。
+ *
+ * <p>wire 实抓 2026-11-21（stack-2 CP 12641，`GET /api/v1/me/permissions`）：122/122 atom
+ * 都带 `sources[]`，条目就是这五个键。`source` 是**闭集**，见 CP
+ * `policy/GrantSources.java`：`role` / `spawn` / `template` / `credential_binding` /
+ * `agent_default` / `plugin_binding`。当前开发库里只有 `role` 有行 —— 那是**这份库没有
+ * 其它来源的 grant 行**，不是 UI 丢字段。</p>
+ */
+export interface PermissionAtomSourceView {
+    source: string;
+    roleName?: string | null;
+    scopeType?: string | null;
+    scopeId?: string | null;
+    grantId?: string | null;
+}
+
+/**
+ * 一条 atom + 它的来源行。`sources` 可选只为兼容旧 fixture（真 wire 必带）；消费方必须
+ * 按「缺 `sources` ⇒ 未观测」处理，不得当成「无来源」。
+ */
+export interface PermissionAtomView {
+    actionClass: string;
+    resource: string;
+    sources?: PermissionAtomSourceView[];
+}
+
 /** CP 的 `GET /api/v1/me/permissions` 投影（PLAN-0621 F-01：前端唯一的权威能力来源）。 */
 export interface SelfPermissionsView {
     userId: string;
     instanceCapabilities: string[];
-    instancePermissions: Array<{ actionClass: string; resource: string }>;
+    instancePermissions: PermissionAtomView[];
     workspaces?: Array<{
         workspaceId: string;
         workspaceRole?: string;
         workspaceAdmin?: boolean;
-        permissions?: Array<{ actionClass: string; resource: string }>;
+        permissions?: PermissionAtomView[];
     }>;
+}
+
+/**
+ * task-8：`POST /api/v1/authorization/explain` 的 `missingAtom` / `missingLevels[]` 行
+ * （CP `policy/AuthorizationExplainController.render()`）。
+ */
+export interface AuthorizationExplainAtomView {
+    level: string;
+    levelLabel?: string | null;
+    actionClass: string;
+    resource: string;
+    reason?: string | null;
+}
+
+/** explain 的 `matchedGrantRefs[]` 行：命中的 grant 与它自己的来源标签。 */
+export interface AuthorizationExplainGrantRefView {
+    level: string;
+    levelLabel?: string | null;
+    actionClass: string;
+    resource: string;
+    grantId: string;
+    grantSource: string;
+}
+
+/** explain 的 `evaluatedLevels[]` 行：每一授权层数了几条 atom、命中几条。 */
+export interface AuthorizationExplainLevelView {
+    level: string;
+    label?: string | null;
+    atomCount: number;
+    matched: number;
+}
+
+/**
+ * CP `POST /api/v1/authorization/explain` 的响应。
+ *
+ * <p>**主体恒为登录者**：CP 侧取 `TenantContext.getUserId()`，且控制器是
+ * `@RequestBody Map<String,Object>` 只读 `actionClass`/`resource`/`sessionId` 三键
+ * （`policy/AuthorizationExplainController.java:22-36,52-61`）—— 请求里没有、也不接受
+ * 任何主体参数。</p>
+ */
+export interface AuthorizationExplainView {
+    allowed: boolean;
+    deepestMissingLevel?: string | null;
+    missingAtom?: AuthorizationExplainAtomView | null;
+    missingLevels?: AuthorizationExplainAtomView[];
+    matchedGrantRefs?: AuthorizationExplainGrantRefView[];
+    evaluatedLevels?: AuthorizationExplainLevelView[];
 }
 
 export interface WorkspaceAgentCapResponse {
@@ -4484,6 +4558,24 @@ export const api = {
      */
     getSelfPermissions(): Promise<SelfPermissionsView> {
         return request<SelfPermissionsView>("/me/permissions");
+    },
+    /**
+     * task-8：**以当前身份**解释一条 atom（`POST /api/v1/authorization/explain`）。
+     *
+     * <p>主体由 CP 从租户上下文取（见 `AuthorizationExplainView` 注释），所以 UI 只发
+     * `actionClass` + 可选 `resource`；这里**刻意不发** `sessionId`——本页没有会话上下文，
+     * 带上它 CP 会先走 `sessionService.requireReadable` 的会话可读性校验。</p>
+     */
+    explainAuthorization(
+        actionClass: string,
+        resource?: string,
+    ): Promise<AuthorizationExplainView> {
+        const body: Record<string, string> = { actionClass: actionClass.trim() };
+        if (resource !== undefined && resource.trim().length > 0) body.resource = resource.trim();
+        return request<AuthorizationExplainView>("/authorization/explain", {
+            method: "POST",
+            body: JSON.stringify(body),
+        });
     },
     /**
      * PLAN-0610 W3-2a: the access-role definition surface. The atom vocabulary is **not** in the UI —
