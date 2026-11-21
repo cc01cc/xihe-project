@@ -99,6 +99,10 @@ describe("SettingsGroupView · 整页草稿离开确认（task-92）", () => {
         expect(dialog?.textContent).toContain("有未保存的改动");
         expect(dialog?.textContent, "确认框要点名是哪几个域").toContain("模型配置");
         expect(dialog?.textContent).toContain("上下文策略");
+        expect(
+            document.body.querySelectorAll('[data-testid="settings-leave-confirm"]').length,
+            "计数 1：一次导航只挂一个确认框（task-98 验收①）",
+        ).toBe(1);
 
         const discard = document.body.querySelector<HTMLElement>(
             '[data-testid="settings-leave-discard"]',

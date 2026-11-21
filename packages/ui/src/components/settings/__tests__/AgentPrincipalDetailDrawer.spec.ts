@@ -756,6 +756,40 @@ describe("AgentPrincipalDetailDrawer · 换页与关抽屉互不串（task-92）
         await click("settings-leave-keep");
         await expect(decision, "继续编辑 = 取消导航").resolves.toBe(false);
         expect(wrapper.emitted("update:open")).toBeUndefined();
+
+        // 草稿仍在（task-98 验收②）：取消导航没有顺手清草稿 —— 关抽屉照样拦。
+        q('[data-slot="dialog-close"]').click();
+        await flushPromises();
+        expect(
+            maybe('[data-testid="apd-unsaved-confirm"]'),
+            "取消换页后草稿必须还在",
+        ).not.toBeNull();
+        expect(maybe('[data-testid="settings-leave-confirm"]')).toBeNull();
         wrapper.unmount();
+    });
+
+    it("换页丢弃只丢换页那份：抽屉自己的草稿仍在，关抽屉照样弹 apd-unsaved-confirm", async () => {
+        const wrapper = mountDrawer();
+        await flushPromises();
+        await pickAnthropic(wrapper);
+
+        const decision = guardHooks.leave[0]() as Promise<boolean>;
+        await flushPromises();
+        expect(maybe('[data-testid="settings-leave-confirm"]')).not.toBeNull();
+        await click("settings-leave-discard");
+        await expect(decision, "丢弃 = 放行导航").resolves.toBe(true);
+        expect(maybe('[data-testid="settings-leave-confirm"]'), "换页那份已丢").toBeNull();
+
+        // 另一份（抽屉自己的未保存草稿）不得被顺手清掉：再关抽屉仍要确认。
+        q('[data-slot="dialog-close"]').click();
+        await flushPromises();
+        expect(
+            maybe('[data-testid="apd-unsaved-confirm"]'),
+            "换页丢弃不得连带清掉关抽屉那份草稿（task-98 验收③）",
+        ).not.toBeNull();
+        expect(maybe('[data-testid="settings-leave-confirm"]')).toBeNull();
+        expect(wrapper.emitted("update:open")).toBeUndefined();
+        wrapper.unmount();
+        document.body.innerHTML = "";
     });
 });
