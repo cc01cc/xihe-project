@@ -21,7 +21,9 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  *       `GET /me/permissions` 的 header 作为**对照**（必须等于 11111111-1111-4111-8111-111111111111），
  *       再抓 `POST /agent-principals` 的 header（必须没有工作区 id）。两个一起才说明
  *       "抑制生效"而不是"这个浏览器根本没发过这个头"。</li>
- *   <li><b>T3.2</b>——没有任何可管理工作区时，绑定动作给**显式提示**而不是一个点了才 403 的按钮。</li>
+ *   <li><b>task-153 S4</b>——列表页只留创建 / 配置 / 停用；绑定整页入口在列表行**唯一存在**，
+ *       旧行内绑定小窗与「没有可管理工作区」提示已删除（删的是形态，不是判据：那条判据现在由
+ *       整页的 `useAgentBindings` 读态与 S5 的真栈读数承担）。</li>
  * </ol>
  *
  * <p>跑法：`pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/agent-principals.spec.ts`。</p>
@@ -158,8 +160,6 @@ test.describe("PLAN-0750 M3: user-level agent-principals surface", () => {
         });
         await expect(page.getByTestId("agent-principals-empty")).toBeVisible();
 
-        // T3.2：这类账号没有可管理工作区 ⇒ 显式提示，且不渲染绑定按钮。
-        await expect(page.getByTestId("agent-principals-bind-denied")).toBeVisible();
         await capture(page, "plan0750-m3-agent-principals-empty");
 
         // U1：创建表单里**没有**工作区选择器。
@@ -174,6 +174,11 @@ test.describe("PLAN-0750 M3: user-level agent-principals surface", () => {
         await expect(page.getByTestId(`agent-principals-row-${CREATED_PRINCIPAL_ID}`)).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
+        // task-153 S4：绑定入口在创建后仍**唯一**且指向整页（旧行内小窗已删，这里不写"它不存在"，
+        // 写的是"真入口在"——删干净不是产品行为，不能变成断言）。
+        await expect(
+            page.getByTestId(`agent-principals-bindings-${CREATED_PRINCIPAL_ID}`),
+        ).toBeVisible();
         await capture(page, "plan0750-m3-agent-principals-created");
 
         // ---- 网络层证据（判据本体） ----

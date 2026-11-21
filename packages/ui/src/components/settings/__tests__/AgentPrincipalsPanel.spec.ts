@@ -16,7 +16,8 @@ import AgentPrincipalsPanel from "../AgentPrincipalsPanel.vue";
  *       （无 ws 上下文）；`createAgentPrincipal`（工作区门）一次都不许被调到。</li>
  *   <li><b>R3</b>——列表只读 `listMyAgentPrincipals`（个人视图）。</li>
  *   <li><b>U2</b>——本面板不碰 `WorkspaceAgentPrincipalsPanel` 的单门；绑定只是工作区能力。</li>
- *   <li><b>T3.2</b>——没有任何可管理工作区时给**显式提示**，不是渲染点了才 403 的按钮。</li>
+ *   <li><b>task-153 S4</b>——行内绑定小窗与「没有可管理工作区」提示已删；本页只留创建 / 配置 / 停用，
+ *       唯一的绑定入口是行内指向整页的链接（删前那套 T3.2 判据整段落到了整页与 useAgentBindings）。</li>
  * </ol>
  */
 
@@ -30,9 +31,9 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             createOwnAgentPrincipal: vi.fn<typeof apiModule.api.createOwnAgentPrincipal>(),
             createAgentPrincipal: vi.fn<typeof apiModule.api.createAgentPrincipal>(),
             getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
-            listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
+            // task-153 S4：本页不再拉工作区清单 / 工作区智能体，也不写工作区绑定
+            // ⇒ 只保留 getWorkspaceAgents 作为「个人视图不读工作区面」的负向钉子。
             getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
-            updateWorkspaceAgentCap: vi.fn<typeof apiModule.api.updateWorkspaceAgentCap>(),
         },
     };
 });
@@ -116,11 +117,7 @@ beforeEach(() => {
     document.body.innerHTML = "";
     mockedApi.listMyAgentPrincipals.mockResolvedValue([agentRow("p-1", "MyAgent")]);
     mockedApi.getSelfPermissions.mockResolvedValue(selfPermissions({}));
-    mockedApi.listWorkspaces.mockResolvedValue([
-        { id: "ws-1", name: "Workspace One" },
-    ] as apiModule.ApiWorkspace[]);
     mockedApi.getWorkspaceAgents.mockResolvedValue([]);
-    mockedApi.updateWorkspaceAgentCap.mockResolvedValue({ permissions: [] });
     mockedApi.createOwnAgentPrincipal.mockResolvedValue({
         principalId: "p-2",
         templateId: null,
@@ -196,72 +193,36 @@ describe("AgentPrincipalsPanel — 创建走用户级门 (U1)", () => {
     });
 });
 
-describe("AgentPrincipalsPanel — 绑定动作 (T3.2)", () => {
-    it("binds through the workspace cap call and reports the binding", async () => {
-        const wrapper = mountPanel();
-        await flushPromises();
-
-        await wrapper.find('[data-testid="agent-principals-bind-p-1"]').trigger("click");
-        await flushPromises();
-        const submit = document.querySelector('[data-testid="agent-principals-bind-submit"]');
-        expect(submit).not.toBeNull();
-        (submit as HTMLElement).click();
-        await flushPromises();
-
-        // 空 cap = 绑定但不授予工具权限；工作区 id 来自可管理工作区列表。
-        expect(mockedApi.updateWorkspaceAgentCap).toHaveBeenCalledWith("ws-1", "p-1", []);
-        expect(wrapper.find('[data-testid="agent-principals-bound-p-1"]').text()).toContain(
-            "Workspace One",
-        );
-        wrapper.unmount();
-    });
-
-    it("states the missing permission explicitly when no workspace is manageable", async () => {
+/**
+ * task-153 S4：列表页只留创建 / 配置 / 停用，绑定整页是**唯一**的绑定入口。
+ *
+ * <p>删掉行内小窗后，本页不该再出现第二处绑定入口，也不该出现「你没有可管理的工作区智能体权限」
+ * 这类按能力位隐藏的提示 —— 绑定权限的读态语义只在整页里表达（`useAgentBindings`，task-41）。</p>
+ */
+describe("AgentPrincipalsPanel — 绑定入口唯一（task-153 S4）", () => {
+    it("没有可管理工作区时，列表行仍只有一处绑定入口且指向整页（不再渲染任何权限提示）", async () => {
         mockedApi.getSelfPermissions.mockResolvedValue(
-            selfPermissions({
-                instanceAtoms: ["CREATE_OWN_AGENT"],
-                workspaces: [
-                    {
-                        workspaceId: "ws-1",
-                        workspaceRole: "VIEWER",
-                        workspaceAdmin: false,
-                        permissions: [],
-                    },
-                ],
-            }),
+            selfPermissions({ instanceAtoms: ["CREATE_OWN_AGENT"], workspaces: [] }),
         );
+
         const wrapper = mountPanel();
         await flushPromises();
 
-        // T3.2：无权限要**显式提示**，不是留一个点了才 403 的按钮。
-        expect(wrapper.find('[data-testid="agent-principals-bind-denied"]').exists()).toBe(true);
+        const entry = wrapper.find('[data-testid="agent-principals-bindings-p-1"]');
+        expect(entry.exists()).toBe(true);
+        expect(entry.attributes("href")).toBe("/settings/instance/agent-principals/p-1/bindings");
+        // S4 删除面：旧的行内绑定按钮不在本页，本页也不再替整页猜权限。
         expect(wrapper.find('[data-testid="agent-principals-bind-p-1"]').exists()).toBe(false);
         wrapper.unmount();
     });
 
-    it("treats an instance-scope MANAGE_WORKSPACE_AGENTS as manageable everywhere", async () => {
-        mockedApi.getSelfPermissions.mockResolvedValue(
-            selfPermissions({
-                instanceAtoms: ["CREATE_OWN_AGENT", "MANAGE_WORKSPACE_AGENTS"],
-                workspaces: [
-                    {
-                        workspaceId: "ws-2",
-                        workspaceRole: "VIEWER",
-                        workspaceAdmin: false,
-                        permissions: [],
-                    },
-                ],
-            }),
-        );
-        mockedApi.listWorkspaces.mockResolvedValue([
-            { id: "ws-2", name: "Workspace Two" },
-        ] as apiModule.ApiWorkspace[]);
+    it("列表行绑定入口唯一：唯一匹配 agent-principals-bind 前缀的就是整页入口", async () => {
         const wrapper = mountPanel();
         await flushPromises();
 
-        // CP 的 holdsActionAtom 求值是「实例行 ∪ 工作区行」，UI 必须照抄，否则藏掉真实可绑入口。
-        expect(wrapper.find('[data-testid="agent-principals-bind-denied"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="agent-principals-bind-p-1"]').exists()).toBe(true);
+        const entries = wrapper.findAll('[data-testid^="agent-principals-bind"]');
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.attributes("data-testid")).toBe("agent-principals-bindings-p-1");
         wrapper.unmount();
     });
 });
@@ -304,8 +265,9 @@ describe("AgentPrincipalsPanel — 嵌入模式（task-135 J4 标题去重）", 
  * task-153 S1：列表页跳「绑定整页」的入口。
  *
  * <p>两件必须咬住：① 链接**按 id 拼路由名**解析（不是手拼字符串，也不是靠主体名）；
- * ② 入口**不受 canBind 门控** —— 没有 MANAGE_WORKSPACE_AGENTS 的人进去也要能看到页面上的
- * 「你没有可管理的工作区智能体权限」，而不是按钮消失、连"为什么"都看不到（reader ≠ writer）。</p>
+ * ② 入口**不按能力位隐藏**（S4 起这是本页唯一的绑定入口）—— 没有 MANAGE_WORKSPACE_AGENTS 的人
+ * 进去也要能看到页面上的「你没有可管理的工作区智能体权限」，而不是按钮消失、连"为什么"都看不到
+ * （reader ≠ writer）。</p>
  */
 describe("AgentPrincipalsPanel — 绑定整页入口（task-153 S1）", () => {
     it("行内入口解析成 /settings/instance/agent-principals/{id}/bindings（只靠 id，不等 task-195 的名称读面）", async () => {
@@ -329,9 +291,8 @@ describe("AgentPrincipalsPanel — 绑定整页入口（task-153 S1）", () => {
         const wrapper = mountPanel();
         await flushPromises();
 
-        // 写面入口（行内绑定小窗）按能力位隐藏 —— 既有行为，别动。
-        expect(wrapper.find('[data-testid="agent-principals-bind-p-1"]').exists()).toBe(false);
-        // 整页入口照旧在：进去能看到「你没有可管理的工作区智能体权限」这句实话。
+        // 整页入口照旧在（S4 删掉行内小窗后它是唯一入口）：进去能看到
+        // 「你没有可管理的工作区智能体权限」这句实话。
         expect(wrapper.find('[data-testid="agent-principals-bindings-p-1"]').exists()).toBe(true);
         wrapper.unmount();
     });

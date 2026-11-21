@@ -8,14 +8,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
 import { Input } from "../ui/input";
-import Dialog from "../ui/dialog/Dialog.vue";
-import DialogContent from "../ui/dialog/DialogContent.vue";
-import DialogHeader from "../ui/dialog/DialogHeader.vue";
-import DialogTitle from "../ui/dialog/DialogTitle.vue";
-import DialogDescription from "../ui/dialog/DialogDescription.vue";
-import DialogFooter from "../ui/dialog/DialogFooter.vue";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { api, type AgentPrincipalSummary, type ApiWorkspace } from "../../composables/api";
+import { api, type AgentPrincipalSummary } from "../../composables/api";
 import { formatDate } from "../../lib/dateFormat";
 import { problemDetailText } from "../../lib/errorMessages";
 import { principalNameError } from "../../lib/principalName";
@@ -37,9 +30,10 @@ import AgentPrincipalDetailDrawer, {
  *   <li><b>列表</b>——走 {@code api.listMyAgentPrincipals}，即 `GET /agent-principals`
  *       **不带 `?workspaceId=`** 的个人视图（矩阵 R3：CP 只回 `created_by=self`，
  *       不是 `owner_user_id`）。</li>
- *   <li><b>绑定</b>——卡片上的显式动作（T3.2）。绑定是**工作区侧**的管理能力：
- *       只列出发起人真的持 `MANAGE_WORKSPACE_AGENTS` 的工作区；一个都没有时给
- *       **显式提示**（`agent-principals-bind-denied`），而不是渲染一个点了才 403 的按钮。</li>
+ *   <li><b>绑定</b>——task-153 S4 起**不在本页**：工作区多选与会话绑定在独立整页
+ *       `/settings/agent-principals/:id/bindings`（入口在列表行），列表页只留创建 / 配置 / 停用。
+ *       旧的行内绑定小窗与「没有可管理工作区」提示已删除，删除面与证据见
+ *       `internal/A03-xihe/evidence/2026-11-21-agent-bindings-unified/task7-s4-s5.md`。</li>
  * </ul>
  */
 
@@ -60,35 +54,10 @@ const loadError = ref("");
 /** `null` = 能力投影还没回来（按钮禁用但**不谎报**无权限）。 */
 const capabilityState = ref<"loading" | "ready" | "failed">("loading");
 const instanceAtoms = ref<string[]>([]);
-/** principalId → 已绑定的工作区显示名（只含发起人有权管理的工作区）。 */
-const bindings = ref<Record<string, string[]>>({});
-
-const workspaces = ref<ApiWorkspace[]>([]);
-/** workspaceId → 该工作区里发起人持有的原子名。 */
-const workspaceAtoms = ref<Record<string, string[]>>({});
 
 const canCreateOwnAgent = computed<boolean | null>(() => {
     if (capabilityState.value === "loading") return null;
     return instanceAtoms.value.includes("CREATE_OWN_AGENT");
-});
-
-/**
- * CP 的 `holdsActionAtom(atom, workspaceId)` 求值是「实例行 ∪ 该工作区的行」，
- * 所以实例级持有 `MANAGE_WORKSPACE_AGENTS` 的人在每个工作区都能管理；工作区级
- * 只对它自己那一个生效。这里照抄同一个判定，不引入第二套规则。
- */
-function canManageAgentsIn(workspaceId: string): boolean {
-    if (instanceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS")) return true;
-    return (workspaceAtoms.value[workspaceId] ?? []).includes("MANAGE_WORKSPACE_AGENTS");
-}
-
-const manageableWorkspaces = computed(() =>
-    workspaces.value.filter((workspace) => canManageAgentsIn(workspace.id)),
-);
-
-const canBind = computed<boolean | null>(() => {
-    if (capabilityState.value === "loading") return null;
-    return manageableWorkspaces.value.length > 0;
 });
 
 // ---- create ----------------------------------------------------------------
@@ -163,108 +132,23 @@ async function loadAgents() {
 }
 
 /**
- * 能力投影 + 工作区清单 + 已有绑定。
+ * 能力投影（只取实例级原子）。
  *
- * <p>三个来源各有分工：`GET /me/permissions` 给**原子**（授权判据，不是角色名），
- * `GET /workspaces` 给人读的名字，`GET /workspaces/{id}/agents` 给「这个主体已经属于
- * 哪些工作区」。绑定列表是**尽力而为**的：某个工作区读失败不该让整页变成错误页，
- * 只是那一片不显示"已绑定"。</p>
+ * <p>task-153 S4：本页只剩「创建」。绑定面（工作区多选 / 会话绑定）在独立整页，读态语义由
+ * `useAgentBindings` 一条路径负责 —— 本页不再自己拉 `/workspaces` 与
+ * `/workspaces/{id}/agents`，旧实现「先置 ready 再取清单、清单失败置空」的同型缺陷
+ * 因此整段消失（task-41 修的是 `useAgentBindings`，本页这份是删而不是修）。</p>
  */
 async function loadCapability() {
     capabilityState.value = "loading";
     try {
         const self = await api.getSelfPermissions();
         instanceAtoms.value = (self.instancePermissions ?? []).map((atom) => atom.actionClass);
-        const atomsByWorkspace: Record<string, string[]> = {};
-        for (const workspace of self.workspaces ?? []) {
-            atomsByWorkspace[workspace.workspaceId] = (workspace.permissions ?? []).map(
-                (atom) => atom.actionClass,
-            );
-        }
-        workspaceAtoms.value = atomsByWorkspace;
         capabilityState.value = "ready";
     } catch {
-        // fail-closed：原子读不到 ⇒ 不显示创建/绑定入口，但也不断言"你没权限"。
+        // fail-closed：原子读不到 ⇒ 不显示创建入口，但也不断言"你没权限"。
         capabilityState.value = "failed";
-        return;
     }
-
-    try {
-        workspaces.value = await api.listWorkspaces();
-    } catch {
-        workspaces.value = [];
-    }
-    await loadBindings();
-}
-
-async function loadBindings() {
-    const next: Record<string, string[]> = {};
-    await Promise.all(
-        manageableWorkspaces.value.map(async (workspace) => {
-            try {
-                const rows = await api.getWorkspaceAgents(workspace.id);
-                for (const row of rows) {
-                    const names = next[row.principalId] ?? [];
-                    names.push(workspace.name || workspace.id);
-                    next[row.principalId] = names;
-                }
-            } catch {
-                // 单工作区不可读不影响其它片；不把"读不到"显示成"未绑定"以外的结论。
-            }
-        }),
-    );
-    bindings.value = next;
-}
-
-// ---- bind (T3.2) -----------------------------------------------------------
-const bindTarget = ref<AgentPrincipalSummary | null>(null);
-const bindWorkspaceId = ref("");
-const binding = ref(false);
-const bindError = ref("");
-
-function openBind(agent: AgentPrincipalSummary) {
-    bindTarget.value = agent;
-    // 预选第一个可管理工作区：大多数账号只有一个，预选省一次点击；多工作区时仍可改。
-    bindWorkspaceId.value = manageableWorkspaces.value[0]?.id ?? "";
-    bindError.value = "";
-}
-
-function closeBind() {
-    bindTarget.value = null;
-    bindError.value = "";
-}
-
-const bindBlocked = computed(
-    () => !bindWorkspaceId.value || binding.value || canBind.value !== true,
-);
-
-async function submitBind() {
-    if (bindBlocked.value || !bindTarget.value) return;
-    const target = bindTarget.value;
-    const workspaceId = bindWorkspaceId.value;
-    binding.value = true;
-    bindError.value = "";
-    try {
-        // 空 cap = 绑定但不授予任何工具权限（CP 仍按工作区原子判权；提权在工作区设置里做）。
-        await api.updateWorkspaceAgentCap(workspaceId, target.principalId, []);
-        const workspaceName =
-            workspaces.value.find((workspace) => workspace.id === workspaceId)?.name || workspaceId;
-        toast.success(t("agentPrincipals.bindSuccess", { workspace: workspaceName }));
-        const names = bindings.value[target.principalId] ?? [];
-        if (!names.includes(workspaceName)) names.push(workspaceName);
-        bindings.value = { ...bindings.value, [target.principalId]: names };
-        bindTarget.value = null;
-    } catch (e) {
-        bindError.value = problemDetailText(e, t("agentPrincipals.bindFailed"));
-    } finally {
-        binding.value = false;
-    }
-}
-
-function boundLabel(principalId: string): string {
-    const names = bindings.value[principalId] ?? [];
-    if (names.length === 0) return t("agentPrincipals.unbound");
-    return t("agentPrincipals.boundTo", { workspaces: names.join(" / ") });
 }
 
 // ---- 详情配置（task-191；Q1 persona 只读、Q2 instance 只读不涉及本层） --------------------
@@ -430,15 +314,6 @@ onMounted(refresh);
             {{ loadError }}
         </div>
 
-        <!-- 绑定权限：一个可管理工作区都没有时**显式说明**，不渲染点了才 403 的按钮。 -->
-        <p
-            v-if="canBind === false"
-            data-testid="agent-principals-bind-denied"
-            class="mb-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground"
-        >
-            {{ t("agentPrincipals.bindNoPermission") }}
-        </p>
-
         <section class="min-w-0 rounded-lg border border-border bg-card">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
                 <h2 class="text-sm font-medium" data-testid="agent-principals-list-heading">
@@ -493,19 +368,14 @@ onMounted(refresh);
                                 })
                             }}
                         </p>
-                        <p
-                            class="mt-1 text-xs text-muted-foreground"
-                            :data-testid="`agent-principals-bound-${agent.principalId}`"
-                        >
-                            {{ boundLabel(agent.principalId) }}
-                        </p>
                     </div>
                     <div class="flex shrink-0 items-center gap-2">
                         <!--
-                            task-153 S1：绑定整页的入口（列表页一侧）。
-                            刻意**不用** canBind 门控：这一页是读 + 写两面，没有原子的人进去也能看到
-                            「你没有可管理的工作区智能体权限」这句实话，比"按钮消失、不知道为什么"好。
-                            链接走**路由名**而不是手拼路径，路径只在一处（router/index.ts）定义；
+                            task-153 S1 + S4：绑定整页的**唯一**入口（位于列表行）。
+                            S4 删掉行内绑定小窗后，本行只剩这一处绑定入口，不再有第二个同动作入口。
+                            刻意**不按** MANAGE_WORKSPACE_AGENTS 门控：这一页是读 + 写两面，没有原子的人
+                            进去也能看到「你没有可管理的工作区智能体权限」这句实话，比"按钮消失、不知道
+                            为什么"好。链接走**路由名**而不是手拼路径，路径只在一处（router/index.ts）定义；
                             也不需要主体名（task-195 前 name 读面缺失，靠 id 就能进 ⇒ 不等 195）。
                         -->
                         <Button as-child variant="outline" size="sm">
@@ -530,92 +400,10 @@ onMounted(refresh);
                             <Settings2 aria-hidden="true" />
                             {{ t("agentPrincipalDetail.configure") }}
                         </Button>
-                        <Button
-                            v-if="canBind === true"
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            :data-testid="`agent-principals-bind-${agent.principalId}`"
-                            @click="openBind(agent)"
-                        >
-                            <Link2 aria-hidden="true" />
-                            {{ t("agentPrincipals.bind") }}
-                        </Button>
                     </div>
                 </li>
             </ul>
         </section>
-
-        <Dialog
-            :open="bindTarget !== null"
-            @update:open="(value: boolean) => !value && closeBind()"
-        >
-            <DialogContent width="form" data-testid="agent-principals-bind-dialog">
-                <DialogHeader>
-                    <DialogTitle>
-                        {{ t("agentPrincipals.bindTitle", { name: bindTarget?.name ?? "" }) }}
-                    </DialogTitle>
-                    <DialogDescription>{{ t("agentPrincipals.bindDesc") }}</DialogDescription>
-                </DialogHeader>
-                <div class="space-y-3">
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="agent-principals-bind-workspace">{{
-                            t("agentPrincipals.bindWorkspace")
-                        }}</label>
-                        <Select
-                            :model-value="bindWorkspaceId"
-                            @update:model-value="(value) => (bindWorkspaceId = String(value))"
-                        >
-                            <SelectTrigger
-                                id="agent-principals-bind-workspace"
-                                data-testid="agent-principals-bind-select"
-                                class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                            >
-                                <SelectValue :placeholder="t('agentPrincipals.bindWorkspace')" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem
-                                    v-for="workspace in manageableWorkspaces"
-                                    :key="workspace.id"
-                                    :value="workspace.id"
-                                >
-                                    {{ workspace.name || workspace.id }}
-                                </SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <p
-                        v-if="bindError"
-                        data-testid="agent-principals-bind-error"
-                        class="rounded-md border border-destructive/30 bg-background p-2 text-sm text-destructive"
-                    >
-                        {{ bindError }}
-                    </p>
-                </div>
-                <DialogFooter>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        data-testid="agent-principals-bind-cancel"
-                        @click="closeBind"
-                    >
-                        {{ t("agentPrincipals.close") }}
-                    </Button>
-                    <Button
-                        type="button"
-                        size="sm"
-                        data-testid="agent-principals-bind-submit"
-                        :disabled="bindBlocked"
-                        @click="submitBind"
-                    >
-                        {{
-                            binding ? t("agentPrincipals.binding") : t("agentPrincipals.bindSubmit")
-                        }}
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
 
         <AgentPrincipalDetailDrawer
             v-model:open="detailOpen"

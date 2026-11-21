@@ -3969,20 +3969,6 @@ const messages = {
             createdAt: "创建于 {date}",
             templateFallback: "默认模板",
             disabledBadge: "已停用",
-            bind: "绑定到工作区",
-            bindTitle: "把「{name}」绑定到工作区",
-            bindDesc:
-                "绑定后该工作区的会话才能选到这个智能体；解绑请到工作区设置。绑定默认不授予工具权限。",
-            bindWorkspace: "选择工作区",
-            bindSubmit: "绑定",
-            binding: "绑定中…",
-            bindNoPermission:
-                "你在任何工作区都没有 MANAGE_WORKSPACE_AGENTS —— 无法发起绑定。这不是功能缺失：绑定是工作区侧的管理动作。",
-            bindSuccess: "已绑定到「{workspace}」",
-            bindFailed: "绑定失败，请重试",
-            boundTo: "已绑定：{workspaces}",
-            unbound: "未绑定任何工作区",
-            close: "关闭",
         },
         // task-191：主体详情抽屉（三层共用）与委派预算字段组。
         agentPrincipalDetail: {
@@ -8296,20 +8282,6 @@ const messages = {
             createdAt: "Created {date}",
             templateFallback: "Default template",
             disabledBadge: "Disabled",
-            bind: "Bind to workspace",
-            bindTitle: 'Bind "{name}" to a workspace',
-            bindDesc:
-                "Only after binding can that workspace's sessions select this agent; unbind from the workspace settings. Binding grants no tool permissions by default.",
-            bindWorkspace: "Select workspace",
-            bindSubmit: "Bind",
-            binding: "Binding…",
-            bindNoPermission:
-                "You hold MANAGE_WORKSPACE_AGENTS in no workspace, so you cannot start a binding. This is not a missing feature: binding is a workspace-side management action.",
-            bindSuccess: 'Bound to "{workspace}"',
-            bindFailed: "Binding failed, please retry",
-            boundTo: "Bound: {workspaces}",
-            unbound: "Not bound to any workspace",
-            close: "Close",
         },
         // task-191: shared principal detail drawer (three layers) + delegation budget fields.
         agentPrincipalDetail: {
