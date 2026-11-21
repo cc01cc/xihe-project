@@ -9,11 +9,9 @@
 @ActiveProfiles	com/cc01cc/p/xihe/cp/AbstractIntegrationTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/AbstractReusableIntegrationTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/ChatControllerNpeTest.java	profile-variant
-@ActiveProfiles	com/cc01cc/p/xihe/cp/chat/ChatControllerTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/E2eGuidanceBarrierAbsentOutsideE2eProfileTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/E2eGuidanceBarrierHttpIntegrationTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/MessageControllerTest.java	profile-variant
-@ActiveProfiles	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigDomainSchemaCoverageTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	profile-variant

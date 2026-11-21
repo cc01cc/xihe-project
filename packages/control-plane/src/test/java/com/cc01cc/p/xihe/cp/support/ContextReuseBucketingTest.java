@@ -26,14 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * task-11（task-255 全量分桶）静态守卫：把 148 个 AbstractIntegrationTest 体系类锁进两个互斥且穷尽的桶——
+ * task-11（task-255 全量分桶）静态守卫：把 193 个 AbstractIntegrationTest 体系类锁进两个互斥且穷尽的桶——
  * reusable（AbstractReusableIntegrationTest，共享 1 个上下文）与 per-class（白名单
  * context-reuse/per-class-whitelist.tsv，保持原基类/原 context key）。
  *
  * <p>三道锁：(R1) reusable 类不得带 per-class 标记，@DynamicPropertySource/@TestPropertySource/
  * @ActiveProfiles/@DirtiesContext/mockito bean override 属 context key 本体**无逃生口**；@BeforeAll/@AfterAll/
  * @Nested/@Async 等可选标记只允许带 // context-reuse-ok: <理由> 且逐条打印（预算 10）。
- * (R2/R3) 白名单与复用桶互斥且穷尽 148 类；白名单判定码与源码推导严格一致、类必须存在（stale/漂移即红）。
+ * (R2/R3) 白名单与复用桶互斥且穷尽 193 类；白名单判定码与源码推导严格一致、类必须存在（stale/漂移即红）。
  *
  * <p>判定码推导是静态文本启发式（去注释 + 行首注解 + 并发/SSE 类型 + 类自己的 @SpringBootTest 参数变体）。
  * 它是 ratchet 不是证明：误判成 per-class 只损失时间；漏判方向由 R2 兜住（未迁移类必须在白名单显式登记）。
@@ -221,15 +221,28 @@ class ContextReuseBucketingTest {
                 problems.add("白名单条目对应类不存在（stale）：" + fqcn);
             }
         }
-        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 172 类：" + problems);
+        // 计数写进消息里会随常量一起过期（本轮就先写死 192、改成 193 又得再改一次），改由实读拼接。
+        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 " + classes.size() + " 类：" + problems);
         // cp-2（L1 预存清偿）：跨车道新增 10 个 per-class 类补登（audit×2 / chat×1 / config×2 /
         // controller×1 / service OrgUnit×4），并把 AgentPrincipalOrgUnitGateTest 按守卫设计从
         // reusable 移入 per-class（它带 @TestConfiguration，严格标记无逃生口）⇒ 77→88。
         // task-31（0cc9fb449 / D-1866 规则命名）：新增 chat/SessionTitleNamingIntegrationTest（基底类 = per-class 那一支），
         // 带 @DynamicPropertySource(:82) + @TestConfiguration(:334) 两个严格标记 ⇒ 按 R1 只能 per-class，补登白名单 1 行；
         // 常量取守卫实读（-Dtest=ContextReuseBucketingTest 报 expected <88> but was <89>）。判据与派生逻辑一字未改。
-        assertEquals(89, whitelist.size(), "per-class 白名单 = 89（88 cp-2 后基线 + task-31 补登 D-1866 新增 per-class 类 1）");
-        assertEquals(89, perClass, "per-class 类数必须等于白名单条目数（实读 89）");
+        // task-194（2026-11-21）：2026-11-19/20 的 H2→PG 迁移与新建类（a8a6f557c 八类 / 7311d4897 两类 /
+        // ae6e0f207 ConfigBundle / f6c7e54fc JdbcOrgUnit）改基类为 AbstractIntegrationTest 时未登记白名单，
+        // 该守卫自 2026-11-20 起一直红且期间未保护任何东西（门红了没人跑）。本轮只为这 12 类补登记 +
+        // 按实读重算常量：perClass 89→101 / reusable 85→91 / total 174→192（TeamTaskCreatePersistenceTest
+        // 由 task-188 新增、基底属复用桶（即上面 REUSABLE_BASE）⇒ 计入 reusable，不进白名单）。
+        // 判据（problems 空集 + 互斥穷尽 + 判定码严格相等）一字未改，也未改成「从集合长度推导」。
+        // task-194（同批追加）：task-202 的 caf2937e8 把 crossmodule 两类的基类换成新的
+        // crossmodule/AbstractWireMockPgTest（抽象基类，本身直接继承 AbstractIntegrationTest），
+        // 该基类自己也被 scanner 计入 per-class ⇒ 白名单 +1 行（与 plugin/kv、plugin/records 两个抽象基类
+        // 的既有惯例一致，:78/:83），常量按实读 101→102。判据仍是一字未改的「未登记即红」。
+        // 注：本行刻意不写 scanner 那条正则的字面量——scanner 只按文本找「extends + 基类名」，
+        // 注释里出现同样的短语会把这个守卫文件自己判成 per-class（task-205 的已知盲区）。
+        assertEquals(102, whitelist.size(), "per-class 白名单 = 102（89 task-31 后基线 + task-194 补登 12 个迁移/新建类 + 1 个 task-202 抽象基类）");
+        assertEquals(102, perClass, "per-class 类数必须等于白名单条目数（实读 102）");
         // 2026-11-13（task-157）：9b356e6a9（PLAN-0774）新增 WorkspaceAgentCapSourceIntegrationTest（@SpringBootTest）
         // ⇒ 进 reusable 桶 +1：78→79，合计 155→156。只更新由实现推导出的常量，上面的判据
         // （problems 空集 + 白名单/复用桶互斥穷尽）一字未改；也未改成「从集合长度推导」——那样等于同义反复。
@@ -240,8 +253,8 @@ class ContextReuseBucketingTest {
         // task-31（0cc9fb449 / D-1866）：chat/SessionTitleNamingIntegrationTest 属 per-class ⇒ per-class 88→89、
         // 合计 173→174，reusable 不变（下面 :reusable 断言先通过，即是本轮实读）。三个数字都取自守卫读数：
         // 「白名单 = 88 ⇒ was 89」/「per-class 类数 = 88 ⇒ was 89」/「173 ⇒ was 174」。判据与派生逻辑一字未改。
-        assertEquals(85, reusable, "reusable 桶 = 85（实测读数：cp-2 跨车道新增 5 类 + task-23 跨主体委派集成测试 1 类）");
-        assertEquals(174, classes.size(), "174 = 89 per-class + 85 reusable（task-31 实测）");
+        assertEquals(91, reusable, "reusable 桶 = 91（实测读数：85 task-23 后基线 + 本轮实读补差 6；其中 TeamTaskCreatePersistenceTest 为 task-188 新增）");
+        assertEquals(193, classes.size(), "193 = 102 per-class + 91 reusable（task-194 实测，含 task-202 的新抽象基类）");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {

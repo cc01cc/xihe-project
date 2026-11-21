@@ -97,3 +97,16 @@ com.cc01cc.p.xihe.cp.service.OrgUnitWriteServiceIntegrationTest		继承 Abstract
 com.cc01cc.p.xihe.cp.service.UserAdminIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.service.WorkspaceMemberControllerContractTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.session.SessionIntegrationTest	test-configuration,async-sse	@Import/@TestConfiguration/@ContextConfiguration；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ChatControllerTest	dynamic-property-source,mockito-bean,test-configuration,async-sse	@DynamicPropertySource(:82)/@MockitoBean/@TestConfiguration + 异步 SSE（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.chat.SessionAuxReadFacesParticipantTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.chat.SessionWorkspaceBindingNegativeTest	dynamic-property-source,test-configuration	@DynamicPropertySource/@TestConfiguration（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.config.ConfigBundleControllerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-84 ae6e0f207 新建即 per-class，未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.config.ConfigControllerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.config.ConfigLockControllerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.config.ConfigWorkspaceDefaultLayerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.config.UserPreferenceLayoutContractTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-120 迁移 7311d4897 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.controller.ExecutionModeAuthorityTest	dynamic-property-source,before-all	@DynamicPropertySource + @BeforeAll 静态探针（task-120 迁移 7311d4897 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.policy.CapabilityAuthorityPipelineTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.policy.CrossWorkspaceGrantGateTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.policy.JdbcOrgUnitGrantSourceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-33 f6c7e54fc 新建即 per-class，未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.crossmodule.AbstractWireMockPgTest	before-all	WireMock 的 PG lane 抽象基类（AbstractWireMockTest 孪生）；继承 AbstractIntegrationTest 的 RANDOM_PORT 上下文 + 自有 @AfterAll 静态清理（task-202 caf2937e8 迁入，未登记；task-194 补登）
