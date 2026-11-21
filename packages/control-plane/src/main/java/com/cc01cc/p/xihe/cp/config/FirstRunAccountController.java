@@ -1,9 +1,5 @@
-package com.cc01cc.p.xihe.cp.controller;
+package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.config.FirstRunAccountService;
-import com.cc01cc.p.xihe.cp.config.FirstRunLocalAccess;
-import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -27,6 +23,13 @@ import java.util.function.Function;
  * {@code Host}, loopback {@code Origin} when present, prod closed) plus the single-account count in
  * {@link FirstRunAccountService}. The window precedes any usable login, so there is no principal to
  * check and no new capability atom (D-1535 ③).</p>
+ *
+ * <p><b>Why this lives in {@code cp.config}</b> (not {@code cp.controller}): the bootstrap seed it
+ * discloses belongs to the config slice ({@code DataSeeder}, {@code FirstRunContentSeeder},
+ * {@code ConfigController} already sit here), and {@code cp.controller} is one of the "mixed"
+ * packages whose module assignment is a class-name matrix — a new {@code FirstRun*} name there would
+ * abort {@code CpArchitectureTest} as an unassigned type. D-1493 asks for capability slices first;
+ * this package is the capability slice of the first-run seed.</p>
  */
 @RestController
 @RequestMapping("/api/v1/bootstrap/first-run-account")

@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.config;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.cc01cc.p.xihe.cp.controller.FirstRunAccountController;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
