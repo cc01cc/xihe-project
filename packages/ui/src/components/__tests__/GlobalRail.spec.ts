@@ -88,9 +88,9 @@ vi.mock("vue-router", () => ({
     createWebHistory: () => ({}),
     useRouter: () => ({
         push: pushSpy,
-        // task-365 C-1：rail 现在也派生工作区面板项（`useWorkspaceNav`）⇒ 桩必须提供
-        // `getRoutes` / `resolve`。**两条记录**：一条在允许清单里（定时任务）、一条不在
-        // （环境）—— 后者是负例，证明 rail 不是把工作区页整份倒进来。
+        // task-11：rail 不再派生工作区面板项（`useWorkspaceNav` 已从 GlobalRail 摘除），
+        // 这两条记录只剩「不用的桩也不许留下假证据」意义 —— 保留 `getRoutes` / `resolve`
+        // 是因为同一份 mock 也被其它 spec 复用（vue-router 的模块级 mock 是文件级的）。
         getRoutes: () => mockRouteRecords,
         resolve: (target: { name: string; params: Record<string, string> }) => ({
             href:
@@ -437,61 +437,17 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
 });
 
 /**
- * task-365 C-1（`D-1220` ③）：把**已存在的工作区页**注册成 rail 的面板项，而不是在页内再加一行。
- * 四条判据，缺一条这张卡就可能做成半成品：
- * ① 有工作区上下文时面板项可达、点了去带 id 的地址；
- * ② 允许清单之外的页**不**进 rail（负例：环境页有 meta 但不该出现）；
- * ③ 无工作区上下文时整组不渲染（没有目标的入口 = 假入口）；
- * ④ 面板项不是模块 —— `global-rail-module-*` 的条数不变（task-11 已把自动化任务加成第 5 个
- *    实例级模块，所以这里钉 5；面板项自身不该再改变这个数）。
- */
-describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
-    it("registers the allowlisted workspace page and navigates to its workspace-scoped path", async () => {
-        const auth = patchAuth();
-        auth.$patch({ workspace: { id: "ws-1", name: "WS One" } });
-        routeState.params = {};
-        routeState.name = "workspace";
-        routeState.path = "/workspace/ws-1";
-        const wrapper = await mountRail();
-
-        const panel = wrapper.get('[data-testid="global-rail-panel-scheduled-tasks"]');
-        expect(panel.text()).toContain("自动化任务");
-        // ④ 面板不是模块：模块行数不受影响。
-        expect(wrapper.findAll('[data-testid^="global-rail-module-"]')).toHaveLength(5);
-        await panel.trigger("click");
-        expect(pushSpy).toHaveBeenCalledWith("/workspace/ws-1/scheduled-tasks");
-        wrapper.unmount();
-    });
-
-    it("does not pull non-allowlisted workspace pages into the rail", async () => {
-        const auth = patchAuth();
-        auth.$patch({ workspace: { id: "ws-1", name: "WS One" } });
-        const wrapper = await mountRail();
-        expect(wrapper.find('[data-testid="global-rail-panel-environment"]').exists()).toBe(false);
-        wrapper.unmount();
-    });
-
-    it("renders no panel group without a workspace context (no dead entry)", async () => {
-        patchAuth();
-        routeState.params = {};
-        const wrapper = await mountRail();
-        expect(wrapper.find('[data-testid="global-rail-panels"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="global-rail-panel-scheduled-tasks"]').exists()).toBe(
-            false,
-        );
-        wrapper.unmount();
-    });
-});
-
-/**
- * task-11（`D-1220` ③ 回退，本笔只落模块侧）：自动化任务从「rail 的工作区面板项」改成**实例级
- * 模块**（`lib/globalModules.ts` 第五项 + 顶层 `/scheduled-tasks` 页），入口不再随工作区上下文
+ * task-11（`D-1220` ③ **部分回退**）：rail 不再渲染工作区面板组。自动化任务改成**实例级模块**
+ * （`lib/globalModules.ts` 第五项 + 顶层 `/scheduled-tasks` 页），入口不再随工作区上下文
  * 出现/消失 —— 旧形态在无工作区时整组消失，等于同一功能有两种可见性。
  *
- * 这里的判据只有一条但要求**带名字**：行数与顺序之外逐个对齐「testid → 收起态 aria-label」。
- * 只比个数的话，加一个模块或换一个标签都不会红。
+ * 三条判据（正向断言，不是「找不到就算过」）：
+ * ① 模块行是 rail **唯一**的入口族，且行数/顺序/标签名逐条对齐（数字基线带名字，
+ *    加一个模块或改一个标签都会红，而不是只比个数）；
+ * ② 面板组 testid 族（`global-rail-panels` / `global-rail-panel-*`）在任何上下文都不存在；
+ * ③ 有工作区上下文也不还原面板项（否则「回退」只回退了一半）。
  */
-describe("GlobalRail module rows (task-11)", () => {
+describe("GlobalRail renders modules only (task-11 / D-1220 ③ 回退)", () => {
     /** 模块行的带名基线：testid → 收起态 aria-label（名来自 i18n，不是硬编码中文）。 */
     const MODULE_ROW_BASELINE: ReadonlyArray<readonly [string, string]> = [
         ["global-rail-module-workbench", "工作台"],
@@ -508,10 +464,28 @@ describe("GlobalRail module rows (task-11)", () => {
             .map((row) => [row.attributes("data-testid"), row.attributes("aria-label")] as const);
     }
 
-    it("keeps a named baseline for module rows", async () => {
+    it("keeps module rows as the only rail entry family, with a named baseline", async () => {
         patchAuth();
         const wrapper = await mountRail();
+        // ① 数字与名字一起对：只比个数的话，多一个模块或换一个标签都不会红。
         expect(moduleRows(wrapper)).toEqual(MODULE_ROW_BASELINE);
+        // ② 面板族整族不存在（前缀形态，防止换个 id 又溜回来）。
+        expect(wrapper.find('[data-testid="global-rail-panels"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid^="global-rail-panel-"]')).toHaveLength(0);
+        wrapper.unmount();
+    });
+
+    it("does not resurrect panel entries when a workspace context is present", async () => {
+        const auth = patchAuth();
+        auth.$patch({ workspace: { id: "ws-1", name: "WS One" } });
+        routeState.params = {};
+        routeState.name = "workspace";
+        routeState.path = "/workspace/ws-1";
+        const wrapper = await mountRail();
+        // ③ 带上下文时模块基线不变，且面板族仍然一个都没有。
+        expect(moduleRows(wrapper)).toEqual(MODULE_ROW_BASELINE);
+        expect(wrapper.find('[data-testid="global-rail-panels"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid^="global-rail-panel-"]')).toHaveLength(0);
         wrapper.unmount();
     });
 });
