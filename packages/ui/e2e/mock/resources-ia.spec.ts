@@ -12,13 +12,16 @@ import { LEGACY_RESOURCE_PATHS } from "../../src/lib/legacyRoutes";
  * <p>本 spec 只钉 M2 的**可判定**部分（信息架构与布线，不重测各面板的读写链路 —— 那些由
  * `skills-import` / `agent-principals` / `credential-manager` 等既有 spec 继续覆盖）：</p>
  * <ul>
- *   <li>全局条**四个**入口（`workbench` / `org-members` / `resources` / `settings`），
+ *   <li>全局条**五个**实例级入口（`workbench` / `org-members` / `resources` / `settings` / `scheduled-tasks`），
  *       `/resources` 上「资源」是当前项；设置区左栏**一个资源条目都没有**
  *       （负数判据：两个入口 = 双入口）。**为什么是四个而不是三个（task-350）**：本 spec 写于
  *       `08cae77b9`（task-188 资源区搬家），当时 `GLOBAL_MODULES` 只有三项；`dc3603db6`
  *       （`task-240` / PLAN-0773 M3，Lead 裁 (a)「实例级面进全局模块」）加了第 2 位的
  *       `org-members`，产品侧单测 `src/lib/__tests__/globalModules.spec.ts` 同批改成「四个模块」，
  *       而**本文件的 `3` 没跟着改** ⇒ 到 HEAD 上必红。判为「规格落后产品」，不是副作用。</li>
+ *   <li><b>再改一次（`task-11` / `D-1220` ③ 回退）</b>：`D-1220` ③ 曾把「定时任务」做成跟着工作区上下文出现的
+ *       rail 面板组；`task-11` 把面板组整段摘除、改为**第五个实例级模块**（顶层 `/scheduled-tasks`），
+ *       于是 `GLOBAL_MODULES` 从四项变五项 ⇒ 本文件计数 4→5。同前例：规格落后产品，不是副作用。</li>
  *   <li>层 tab 的**存在性**必须等于后端真实层（凭据 3 / MCP 2 / 技能 3）：多画一层就是编造能力，
  *       少画一层就是藏能力。</li>
  *   <li>层 tab **写回 `?layer=`**（决策 9 的新能力：每个层都是可分享深链）。</li>
@@ -44,11 +47,18 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/session-1");
         const rail = page.getByTestId("global-rail-module-resources");
         await expect(rail).toBeVisible();
-        // task-350：计数从 3 改 4（原因见文件头）。**不只改数字**——单独一个计数下次还会过期，
-        // 所以把「哪四个」也逐个钉住：多一个少一个/换了 id，红点会点名到具体模块，
-        // 而不是只报「期望 4 实际 5」。
-        await expect(page.locator('[data-testid^="global-rail-module-"]')).toHaveCount(4);
-        for (const moduleId of ["workbench", "org-members", "resources", "settings"]) {
+        // 计数口径（`task-11` 起 5，此前 4）：`GLOBAL_MODULES` 五项，rail 把它劈成主区（除 `settings`
+        // 的四项）+ footer（`settings` 一项），两处共用 `global-rail-module-*` 前缀 ⇒ **5 = 4 + 1**。
+        // **不只改数字**——单独一个计数下次还会过期，所以把「哪五个」也逐个钉住：多一个少一个/
+        // 换了 id，红点会点名到具体模块，而不是只报「期望 5 实际 6」。
+        await expect(page.locator('[data-testid^="global-rail-module-"]')).toHaveCount(5);
+        for (const moduleId of [
+            "workbench",
+            "org-members",
+            "resources",
+            "settings",
+            "scheduled-tasks",
+        ]) {
             await expect(page.getByTestId(`global-rail-module-${moduleId}`)).toHaveCount(1);
         }
 
