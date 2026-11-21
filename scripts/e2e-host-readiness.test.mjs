@@ -237,7 +237,9 @@ test('task-180: the rebuild branch writes the fresh jar\'s two marks through ONE
     // in the preflight self-heal branch; the self-heal copy refreshed only the stamp, so every run
     // compared a NEW jar against an OLD sidecar (task-141 run1: exit 1, Playwright never started).
     const source = readFileSync(new URL('./e2e-host.mjs', import.meta.url), 'utf8')
-    const start = source.indexOf('const after = resolveCpJarState(e2eCpTargetDir)')
+    // task-42 moved this read behind the shared sampler: the re-inspection after `mvn package` is a
+    // **refresh point**, so the anchor is the sampler call that produces it.
+    const start = source.indexOf("const { state: after } = recordJarSample({ sampledBy: 'after-rebuild', publish: false })")
     const end = source.indexOf("return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }")
     assert.ok(start >= 0 && end > start, 'rebuild branch anchors must exist')
     const branch = source.slice(start, end)
@@ -258,6 +260,30 @@ test('task-180: the preflight self-heal branch shares that one call, so a rebuil
     assert.match(region, /jarPath: healed\.jar\.path/u)
     const callSites = source.match(/stampCpArtifact\(\{/gu) ?? []
     assert.equal(callSites.length, 2, 'exactly two producers: the rebuild branch and the preflight self-heal')
+})
+
+test('task-42 J3: the boot plan and the window gate consume ONE published sample (same source, same id)', () => {
+    // The defect was two independent reads: the boot plan judged one sample, `e2e-preflight.mjs` read the
+    // same artifact again, and the self-heal branch could only fire when they disagreed (a read gap).
+    // These are the structural half of the fix — the behavioural half is `cp-jar-snapshot.test.mjs`,
+    // which proves the record round-trips into the same reader input.
+    const host = readFileSync(new URL('./e2e-host.mjs', import.meta.url), 'utf8')
+    // ① one sampler: every refresh point goes through `recordJarSample`, and the gate reuses `jarSnapshot`
+    // instead of calling the raw reader again.
+    const gate = host.slice(host.indexOf('async function runPreflightGate('), host.indexOf('async function runSkipPreflightDiskGate('))
+    assert.ok(gate.length > 0, 'gate anchors must exist')
+    assert.match(gate, /const snapshot = jarSnapshot \?\? recordJarSample\(/u, 'the gate must reuse the boot plan sample')
+    assert.doesNotMatch(gate, /[^a-zA-Z]resolveCpJarState\(/u, 'the gate must not open a second read of the artifact')
+    // ② an observable id, printed where the sample is taken and handed to the child by path.
+    assert.match(gate, /--jar-snapshot=\$\{jarSnapshotFile\}/u, 'the sample must be handed to the preflight by path')
+    assert.match(host, /describeSnapshotSource\(\{/u)
+    // ③ the preflight verifies the handoff and judges **its** bytes.
+    const preflight = readFileSync(new URL('./e2e-preflight.mjs', import.meta.url), 'utf8')
+    assert.match(preflight, /loadJarSnapshot\(\{ file: jarSnapshotFile \|\| null, targetDir: cpTarget \}\)/u)
+    assert.match(preflight, /evaluateSidecar\(\{ jarPath: cpJar\.path, projectDir, sample: sharedSample \}\)/u,
+        'the artifact section must feed the shared sample to the same reader state machine')
+    assert.match(preflight, /source=own-read/u, 'a standalone run must say it sampled for itself')
+    assert.match(preflight, /shared jar sample REFUSED/u, 'a bad handoff must be loud, not a silent re-read')
 })
 
 test('task-180: the stamp lands before the fingerprint, and the pair describes this jar', () => {

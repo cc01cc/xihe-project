@@ -11,7 +11,7 @@ import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
 import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
-import { readSidecar, sha256File } from './lib/cp-jar-sidecar.mjs'
+import { evaluateSidecar, readSidecar, resolveArtifactTruth, sha256File } from './lib/cp-jar-sidecar.mjs'
 // task-180: the jar's two identities are written by ONE call, so no branch can write half a pair.
 import { describeStamp, stampCpArtifact } from './lib/cp-artifact-stamp.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
@@ -91,6 +91,16 @@ import {
   parseDiskLine,
   preflightGatePolicy,
 } from './lib/e2e-preflight-gate.mjs'
+// task-42: the boot plan and the window gate consume **one** jar-state sample (see the lib header for
+// why two independent reads made the self-heal branch unreachable except by a read gap).
+import {
+  JAR_SNAPSHOT_FILE_NAME,
+  buildJarSnapshot,
+  describeSnapshotSource,
+  decideSharedSample,
+  sampleCpJarBytes,
+  writeJarSnapshotFile,
+} from './lib/cp-jar-snapshot.mjs'
 // task-86 (第五形态): the ORDER in which this runner opens a window is data, not something a
 // reader has to trust. `bootPhasePlan()` is the single source and `main()` must `enter()` each
 // phase — a gate-before-rebuild drift (defect ① of PLAN-0680) now throws instead of staying green.
@@ -423,6 +433,12 @@ let checkpointProbeControlUrl = null
 // repo) and consumed single-use below, so a crash-restart loop cannot be forgiven twice.
 let declaredExitDir = null
 let agentDatabaseConfigPresent = null
+// task-42: the ONE jar-state sample this run makes, plus where it was published for the gate's child
+// process. `jarSnapshotSeq` is what makes the id observable: it only advances at a refresh point, and a
+// refresh point is only ever **after** a jar was written. Nothing else re-reads the artifact.
+let jarSnapshot = null
+let jarSnapshotFile = null
+let jarSnapshotSeq = 0
 let cleaned = false
 let teardownResult = { ok: true, failures: [] }
 let result = { code: 0 }
@@ -499,12 +515,17 @@ function resolveCpJarState(targetDir = join(projectDir, 'packages', 'control-pla
   // replaced behind it (hand-run `mvn package`, a copied jar). Hashing ~78 MB costs a few hundred ms
   // and only happens when a sidecar exists; without one `identity` stays null and mtime decides.
   let sidecar = { state: 'missing', file: null, data: null, identity: null, reason: 'no sidecar manifest' }
+  // task-42: the bytes and the manifest are read **here and only here**. `sample` is carried out of the
+  // sampler so the snapshot, the boot plan and the window gate all judge the same read — before this,
+  // `e2e-preflight.mjs` hashed the same jar and re-read the same sidecar a second time, and the
+  // self-heal branch was only reachable when those two samples disagreed.
+  const sample = jar ? sampleCpJarBytes({ jarPath: jar.path, readSidecar, sha256File }) : { sidecarRead: null, jarHash: null }
   if (jar) {
-    const read = readSidecar({ jarPath: jar.path })
+    const read = sample.sidecarRead
     if (read.state === 'invalid') {
       sidecar = { state: 'invalid', file: read.file, data: null, identity: false, reason: `the sidecar is unusable: ${read.error}` }
     } else if (read.state === 'ok') {
-      const actual = sha256File(jar.path)
+      const actual = sample.jarHash
       const identity = actual.ok ? actual.sha256 === read.data.jarSha256 && jar.name === read.data.jarName : null
       sidecar = {
         state: 'ok',
@@ -521,7 +542,68 @@ function resolveCpJarState(targetDir = join(projectDir, 'packages', 'control-pla
       sidecar = { state: 'missing', file: read.file, data: null, identity: null, reason: 'no sidecar manifest' }
     }
   }
-  return { cpDir, jar, newestSource, sidecar }
+  return { cpDir, jar, newestSource, sidecar, sample }
+}
+
+// task-42 ①: **one** jar-state sample per refresh point, and the only two refresh points are
+// "the boot plan looked" and "a jar was just written" (`after-rebuild` / `after-self-heal`).
+// The window gate's child process is handed this record instead of reading the artifact again: before
+// this change `e2e-preflight.mjs` hashed the same jar and re-read the same sidecar a second time, so
+// the preflight 前自愈 branch was reachable only when the two reads disagreed — reachability by luck.
+// Publishing is best-effort by design: when the file cannot be written the gate samples for itself and
+// says so, which is the pre-task-42 behaviour (never a silent pass).
+function recordJarSample({ sampledBy, publish = true, targetDir = e2eCpTargetDir }) {
+  const state = resolveCpJarState(targetDir)
+  jarSnapshotSeq += 1
+  jarSnapshot = buildJarSnapshot({ state, targetDir, runId: e2eRunId, seq: jarSnapshotSeq, sampledBy })
+  if (!publish) {
+    // A sample that was never written must not leave an *older* file looking current: drop the handoff,
+    // so the gate self-samples and reports that it did.
+    jarSnapshotFile = null
+    return { state, snapshot: jarSnapshot }
+  }
+  jarSnapshotFile = join(e2eLogDir, JAR_SNAPSHOT_FILE_NAME)
+  const written = writeJarSnapshotFile({ file: jarSnapshotFile, snapshot: jarSnapshot })
+  if (written.ok) {
+    console.log(`[e2e-host] ${describeSnapshotSource({
+      id: jarSnapshot.id,
+      jarName: jarSnapshot.jar?.name ?? null,
+      sampledAt: jarSnapshot.sampledAt,
+      source: sampledBy,
+    })} → ${written.file}`)
+  } else {
+    console.warn(
+      `[e2e-host] WARN: jar snapshot ${jarSnapshot.id} was not published (${written.error});`
+      + ' the preflight will sample the artifact itself and say so',
+    )
+    jarSnapshotFile = null
+  }
+  return { state, snapshot: jarSnapshot }
+}
+
+// task-42 ③: the self-heal branch must fire on **content**, not on a read gap. `decideSharedSample`
+// runs the reader's own state machine (scripts/lib/cp-jar-sidecar.mjs) over the shared sample, so the
+// one condition only the gate used to see — "the sidecar's CP tree is no longer HEAD's tree" (`build`
+// scope, which the pre-gate rebuild is the documented cure for) — now reaches this branch by name.
+// The judgement is not widened anywhere: `unverifiable` (an unusable manifest) stays out of `stale`, so
+// it is still the gate's non-deferrable `artifact-truth` refusal, and `--jar-mode` semantics are
+// untouched (this branch only ever ran for `auto`/`rebuild`).
+function selfHealIsNeeded(snapshot) {
+  const shared = decideSharedSample({
+    snapshot,
+    targetDir: e2eCpTargetDir,
+    projectDir,
+    evaluateSidecar,
+    resolveArtifactTruth,
+  })
+  const staleByMtime = Boolean(snapshot?.jar)
+    && Number.isFinite(snapshot.newestSourceMtimeMs)
+    && snapshot.newestSourceMtimeMs > snapshot.jar.mtimeMs
+  return {
+    needed: Boolean(snapshot?.jar) && (shared.verdict === 'stale' || staleByMtime),
+    shared,
+    staleByMtime,
+  }
 }
 
 // R2 decision table (--jar-mode): auto = fresh jar, else build-then-use (a MISSING jar
@@ -551,7 +633,10 @@ async function resolveCpBootPlan() {
       reason: 'forced native executable',
     }
   }
-  const state = resolveCpJarState(e2eCpTargetDir)
+  // task-42 ①: this is refresh point 1. Every decision below (stale by mtime, identity mismatch, and the
+  // reader's own tree verdict) comes out of ONE read of the artifact, and the same read is what the
+  // window gate will consume. No second hash, no second sidecar read.
+  const { state } = recordJarSample({ sampledBy: 'boot-plan' })
   // task-90: an artifact that is not the one its sidecar describes cannot be trusted on mtime alone,
   // so it takes the same "build before boot" path as a stale jar (never booted silently).
   const identityMismatch = state.sidecar.state === 'ok' && state.sidecar.identity === false
@@ -584,15 +669,18 @@ async function resolveCpBootPlan() {
     console.warn(`[e2e-host] CP jar rebuild failed (exit=${rebuild.code}); falling back to mvn spring-boot:run`)
     return { mode: 'run', jar: null, reason: 'rebuild failed' }
   }
-  const after = resolveCpJarState(e2eCpTargetDir)
-  if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
-    console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
-    return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
-  }
   // task-180: the stamp (in-jar build-info) and the fingerprint (sidecar) are ONE write point,
   // called only after the successful build and the fresh-jar check above. The old hand-written
   // copy here was one of two producers that could drift apart; `stampCpArtifact` is the only
   // place the order (stamp first, sidecar second) is expressed now.
+  //
+  // task-42 ① refresh point 2: the state is re-sampled **after** the jar was produced, so what the gate
+  // is handed describes the new artifact and the new manifest — never a pre-rebuild half-truth.
+  const { state: after } = recordJarSample({ sampledBy: 'after-rebuild', publish: false })
+  if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
+    console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
+    return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
+  }
   const stamp = stampCpArtifact({
     projectDir,
     targetDir: e2eCpTargetDir,
@@ -600,6 +688,9 @@ async function resolveCpBootPlan() {
     writtenBy: 'scripts/e2e-host.mjs',
   })
   for (const line of describeStamp({ ...stamp, label: 'rebuild' })) console.log(line)
+  // task-42: the pair is on disk now, so this is where the snapshot is republished — the gate reuses the
+  // post-stamp sample and the rebuild it just watched cannot be judged against a stale manifest.
+  recordJarSample({ sampledBy: 'after-rebuild-stamped' })
   console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
   return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
 }
@@ -2643,11 +2734,28 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
   // 等入口走不到那段 ⇒ 这里在 preflight **之前**补一次同语义动作：stale jar ⇒ 重建；
   // 重建失败 ⇒ 明确 fail-fast（不让它退化成"preflight 拒绝"这种看不出根因的失败）。
   if ((jarMode === 'auto' || jarMode === 'rebuild') && !externalServer) {
-    const state = resolveCpJarState(e2eCpTargetDir)
-    const identityMismatch = state.sidecar?.state === 'ok' && state.sidecar.identity === false
-    const stale = Boolean(state.jar) && (state.newestSource.mtimeMs > state.jar.mtimeMs || identityMismatch)
+    // task-42 ①: the gate consumes the sample taken a moment ago by `resolveCpBootPlan()` instead of
+    // re-reading the artifact (that second read used to be the only thing that could make this branch
+    // fire). The mtime/identity conditions are re-derived from that same record, and
+    // `selfHealIsNeeded()` adds the reader's `build`-scope verdict — the condition this branch exists to
+    // repair and which previously only the preflight could see.
+    const snapshot = jarSnapshot ?? recordJarSample({ sampledBy: 'preflight-gate' }).snapshot
+    const { needed: stale, shared: sharedVerdict } = selfHealIsNeeded(snapshot)
+    // Same guard as before task-42: only a *usable* manifest can call the jar "not the artifact it
+    // describes". An unusable manifest (`state: 'invalid'`) is the reader's `unverifiable`, which stays
+    // out of `stale` above and remains the gate's non-deferrable refusal.
+    const identityMismatch = snapshot?.identity?.state === 'ok' && snapshot.identity.identity === false
     if (stale) {
-      console.log(`[e2e-host] preflight 前自愈：CP jar ${state.jar.name} 过期 ⇒ 重建（与 --jar-mode=rebuild 同语义）`)
+      console.log(`[e2e-host] preflight 前自愈：CP jar ${snapshot.jar.name} 过期 ⇒ 重建（与 --jar-mode=rebuild 同语义）`)
+      console.log(`[e2e-host]   ${describeSnapshotSource({
+        id: snapshot.id,
+        jarName: snapshot.jar.name,
+        sampledAt: snapshot.sampledAt,
+        source: snapshot.sampledBy,
+      })}; reader verdict=${sharedVerdict.verdict}${sharedVerdict.blocking ? `/${sharedVerdict.blocking}` : ''} reason=${sharedVerdict.reason}`)
+      if (identityMismatch) {
+        console.log(`[e2e-host]   identity mismatch on the shared sample: ${snapshot.identity.reason}`)
+      }
       const rebuild = await run(mvnCommand, ['-q', '-DskipTests', ...e2eCpBuildArgs, 'package'], {
         cwd: join(projectDir, 'packages', 'control-plane'),
         stdio: 'inherit',
@@ -2660,7 +2768,10 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
       // Before this, only the in-jar stamp was refreshed, so the very next preflight compared the
       // NEW jar against the OLD sidecar and refused on artifact-truth (task-141 run1: exit 1,
       // Playwright never started). Same single write point, so the pair cannot drift again.
-      const healed = resolveCpJarState(e2eCpTargetDir)
+      //
+      // task-42 ① refresh point: re-sample **after** the jar was produced (publish is deferred until the
+      // stamp exists, so the gate is never handed a half-written pair).
+      const { state: healed } = recordJarSample({ sampledBy: 'after-self-heal', publish: false })
       if (!healed.jar) {
         console.error('[e2e-host] FAIL-FAST: 自愈重建后找不到 CP jar；拒绝继续（preflight 会判 artifact 缺失）')
         process.exit(1)
@@ -2672,12 +2783,20 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
         writtenBy: 'scripts/e2e-host.mjs',
       })
       for (const line of describeStamp({ ...stamp, label: 'preflight 前自愈' })) console.log(line)
+      // task-42 ②: publish the post-stamp sample and name it in the log, so this branch's own green run
+      // is identifiable afterwards: the id here and the id in the preflight's artifact section match.
+      const published = recordJarSample({ sampledBy: 'after-self-heal-stamped' })
+      console.log(`[e2e-host] preflight 前自愈完成：gate 将复用 ${published.snapshot.id}（不再二次读盘）`)
     }
   }
-  console.log(`[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs${policy.ignoreBuild ? ' --ignore-build' : ''}`)
+  const snapshotArg = jarSnapshotFile ? ` --jar-snapshot=${jarSnapshotFile}` : ''
+  console.log(`[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs${policy.ignoreBuild ? ' --ignore-build' : ''}${snapshotArg}`)
   const selfPids = [process.pid, ...extraSelfPids.filter((pid) => Number.isInteger(pid) && pid > 0)]
   const preflightArgs = [join(projectDir, 'scripts', 'e2e-preflight.mjs'), `--self-pid=${selfPids.join(',')}`]
   if (policy.ignoreBuild) preflightArgs.push('--ignore-build')
+  // task-42 ①: hand the gate the sample. Without it the gate self-samples and prints `source=own-read`,
+  // which is the honest pre-task-42 behaviour (a standalone preflight run has nothing to reuse).
+  if (jarSnapshotFile) preflightArgs.push(`--jar-snapshot=${jarSnapshotFile}`)
   if (allowPorts.length > 0) preflightArgs.push(`--allow-ports=${allowPorts.join(',')}`)
   if (ownRunId) preflightArgs.push(`--own-run-id=${ownRunId}`)
   if (allowResidual.length > 0) {

@@ -35,6 +35,12 @@
 //                  Postgres volume preserved for post-mortem). Names are matched
 //                  exactly — no wildcards — printed as INFO and carried into the
 //                  run header; omitted ⇒ residue stays blocking (default).
+//   --jar-snapshot=FILE  task-42: the ONE CP jar-state sample the runner's boot plan already took
+//                  (`<runRoot>/logs/cp-jar-snapshot.json`). The artifact section then judges **those**
+//                  bytes instead of re-reading the jar, so the boot plan and this gate cannot disagree
+//                  through a read gap. A snapshot that is expired / for another build dir / whose jar
+//                  was replaced is refused as blocking `artifact-truth`. Omitted ⇒ this is a standalone
+//                  run and the section samples the artifact itself (printed as `source=own-read`).
 //
 // Exit codes: 0 = no blocking finding; 1 = needs handling; 2 = usage error.
 //
@@ -103,6 +109,10 @@ import {
 } from './lib/e2e-build-artifact.mjs'
 import { readBuildInfo } from './lib/cp-build-info.mjs'
 import { evaluateSidecar, resolveArtifactTruth } from './lib/cp-jar-sidecar.mjs'
+// task-42: the runner hands over the ONE jar-state sample its boot plan already took. Verifying that
+// handoff (age, build dir, artifact substitution) is what keeps "reuse the sample" from becoming
+// "trust an old read": anything questionable is refused as a **blocking** finding, never quietly re-read.
+import { describeSnapshotSource, loadJarSnapshot, sampleFromSnapshot } from './lib/cp-jar-snapshot.mjs'
 import {
   DISK_THRESHOLDS,
   diskExitCode,
@@ -163,6 +173,9 @@ let logCount = 8
 let strict = false
 let ignoreBuild = false
 let diskOnly = false
+// task-42: path of the sample the runner published (`--jar-snapshot=`). Empty ⇒ this is a standalone
+// preflight and the artifact section reads the disk for itself, exactly as it did before task-42.
+let jarSnapshotFile = ''
 const selfPids = new Set()
 let ownRunId = ''
 const allowedPorts = new Set()
@@ -208,6 +221,9 @@ for (const arg of process.argv.slice(2)) {
   } else if (arg.startsWith('--logs=')) {
     logCount = Number(arg.slice('--logs='.length))
     if (!Number.isInteger(logCount) || logCount < 1 || logCount > 50) usage(`invalid --logs: ${arg}`)
+  } else if (arg.startsWith('--jar-snapshot=')) {
+    jarSnapshotFile = arg.slice('--jar-snapshot='.length).trim()
+    if (!jarSnapshotFile) usage(`invalid --jar-snapshot: ${arg}`)
   } else if (arg.startsWith('--ports=')) {
     const parsed = []
     for (const part of arg.slice('--ports='.length).split(',')) {
@@ -225,7 +241,7 @@ if (!e2eRanges) e2eRanges = [E2E_DEFAULT_RANGE]
 
 function usage(message) {
   console.error(`e2e-preflight: ${message}`)
-  console.error('usage: node scripts/e2e-preflight.mjs [--ports=A-B[,A-B]] [--logs=N] [--strict] [--ignore-build] [--disk-only] [--self-pid=N]')
+  console.error('usage: node scripts/e2e-preflight.mjs [--ports=A-B[,A-B]] [--logs=N] [--strict] [--ignore-build] [--disk-only] [--self-pid=N] [--jar-snapshot=FILE]')
   process.exit(2)
 }
 
@@ -481,13 +497,56 @@ if (existsSync(cpTarget)) {
     }
   }
 }
+// task-42 ①③: when the runner published its sample, this section judges **those** bytes instead of
+// reading the artifact a second time. A handoff that cannot be vouched for is a blocking finding —
+// silently falling back to a fresh read here is precisely the read gap this card removes.
+const snapshotCheck = loadJarSnapshot({ file: jarSnapshotFile || null, targetDir: cpTarget })
+if (snapshotCheck.verdict === 'ok') {
+  const snap = snapshotCheck.snapshot
+  console.log(`  INFO  ${describeSnapshotSource({
+    id: snap.id,
+    jarName: snap.jar?.name ?? null,
+    sampledAt: snap.sampledAt,
+    source: `runner:${snap.sampledBy}`,
+  })}`)
+  if (snap.jar) {
+    // The sample is what the boot plan will boot, so judge that artifact — `loadJarSnapshot` already
+    // proved it is still on disk with the same mtime/bytes (otherwise the verdict would not be `ok`).
+    cpJar = { path: join(cpTarget, snap.jar.name), name: snap.jar.name, mtimeMs: snap.jar.mtimeMs }
+  } else {
+    console.log('  INFO  the sample holds no jar (none existed when the boot plan looked) — this section judges the directory itself')
+  }
+} else if (snapshotCheck.id || jarSnapshotFile) {
+  add(
+    'FAIL',
+    'artifact-truth',
+    `the jar snapshot handed over by the runner is not usable (${snapshotCheck.verdict}): ${snapshotCheck.reason}`,
+    'task-42 made the window gate consume the boot plan\'s single sample; a stale/foreign/substituted sample'
+      + ' must be re-decided by the runner (it refreshes the sample after every jar write), not re-read here'
+      + ` (file ${snapshotCheck.file ?? jarSnapshotFile ?? 'none'})`,
+  )
+  console.log(`  FAIL  shared jar sample REFUSED — ${snapshotCheck.verdict}: ${snapshotCheck.reason}`)
+  console.log(`        ${describeSnapshotSource({
+    id: snapshotCheck.id,
+    jarName: snapshotCheck.snapshot?.jar?.name ?? null,
+    sampledAt: snapshotCheck.snapshot?.sampledAt,
+    source: 'rejected-handoff',
+  })}`)
+} else {
+  // No handoff (a human ran the gate, or the runner could not publish): say which read decided, so a
+  // green artifact section is never mistaken for "the same sample the boot plan used".
+  console.log('  INFO  shared sample source=own-read — no --jar-snapshot was handed over; this section read the artifact itself')
+}
+const sharedSample = snapshotCheck.verdict === 'ok'
+  ? sampleFromSnapshot({ snapshot: snapshotCheck.snapshot, targetDir: cpTarget })
+  : null
 if (!cpJar) {
   console.log(`  INFO  control-plane: no fat jar in the E2E build dir (${e2eCpTargetDir}) — the runner builds one on first boot (mvn package -Dxihe.target.dir=...; no stale-jar risk)`)
 } else {
   // BL-477 / task-90: ask the artifact first. A sidecar manifest (`<jar>.buildinfo.json`) written by
   // the same code path that produced the jar carries the jar's own sha256 plus the CP source-tree
   // hash, so identity is provable without touching mtimes or scanning 8 files one by one.
-  const sidecar = evaluateSidecar({ jarPath: cpJar.path, projectDir })
+  const sidecar = evaluateSidecar({ jarPath: cpJar.path, projectDir, sample: sharedSample })
   const truth = resolveArtifactTruth({
     sidecar,
     // BL-477 / task-84 (unchanged when no sidecar exists): `mtime` is the trigger, never the verdict.

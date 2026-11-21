@@ -475,7 +475,9 @@ test('T21: producer inventory — every producer stamps through ONE write point,
   const preflight = readFileSync(join(scriptsDir, 'e2e-preflight.mjs'), 'utf8');
   assert.match(preflight, /import \{ evaluateSidecar, resolveArtifactTruth \} from '\.\/lib\/cp-jar-sidecar\.mjs'/u);
   assert.match(preflight, /runFallback: \(\) => \{/u, 'the content-evidence path must remain the fallback');
-  const sidecarCall = preflight.indexOf('evaluateSidecar({ jarPath: cpJar.path, projectDir })');
+  // task-42: the reader is called with the **shared sample**, so the gate judges the bytes the boot plan
+  // already sampled instead of opening a second read (that gap was the self-heal branch's only trigger).
+  const sidecarCall = preflight.indexOf('evaluateSidecar({ jarPath: cpJar.path, projectDir, sample: sharedSample })');
   const fallbackCall = preflight.indexOf('decideArtifactFreshness({');
   assert.ok(sidecarCall >= 0 && fallbackCall > sidecarCall, 'the sidecar is consulted before the per-file scan');
 });

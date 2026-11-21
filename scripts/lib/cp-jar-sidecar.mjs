@@ -366,6 +366,13 @@ export function readSidecar({ jarPath, readFile = readFileSync }) {
 /**
  * The whole reader decision for one jar.
  *
+ * **task-42: a sample may be handed in.** `sample` is what `sampleCpJarBytes()` read from disk. When the
+ * caller already sampled the artifact (the runner's boot plan does, and the window gate must reuse it),
+ * passing it here means the *same* bytes decide both judgements — no second read, and therefore no
+ * "boot plan said fresh, gate said stale" gap for the self-heal branch to hide in. Everything that is
+ * **not** in the sample (HEAD, the CP tree hash) is still read here, so a handed-in sample cannot make
+ * a stale tree look fresh. Omitting `sample` reproduces the pre-task-42 behaviour exactly.
+ *
  * States (all consumed by `resolveArtifactTruth`):
  * - `fresh`             identity ok **and** the recorded tree == the tree checked out now
  * - `stale`             identity ok, but the jar was built from a different CP tree than HEAD
@@ -381,16 +388,17 @@ export function readSidecar({ jarPath, readFile = readFileSync }) {
  *   scope?: string,
  *   run?: typeof spawnSync,
  *   readFile?: typeof readFileSync,
+ *   sample?: {sidecarRead: object|null, jarHash: object|null}|null,
  *   now?: () => number,
  * }} input
  */
-export function evaluateSidecar({ jarPath, projectDir, scope = DEFAULT_SOURCE_SCOPE, run = spawnSync, readFile = readFileSync }) {
-  const read = readSidecar({ jarPath, readFile });
+export function evaluateSidecar({ jarPath, projectDir, scope = DEFAULT_SOURCE_SCOPE, run = spawnSync, readFile = readFileSync, sample = null }) {
+  const read = sample?.sidecarRead ?? readSidecar({ jarPath, readFile });
   if (read.state === 'missing') return { state: 'missing', file: read.file, data: null, reason: 'no sidecar manifest next to the jar' };
   if (read.state === 'invalid') return { state: 'invalid', file: read.file, data: null, reason: `the sidecar is unusable: ${read.error}` };
 
   const data = read.data;
-  const actual = sha256File(jarPath, { readFile });
+  const actual = sample?.jarHash ?? sha256File(jarPath, { readFile });
   if (!actual.ok) {
     // The artifact itself is unreadable: that is not "no manifest", it is unprovable.
     return { state: 'invalid', file: read.file, data, reason: `cannot hash the jar to check the manifest: ${actual.error}` };
