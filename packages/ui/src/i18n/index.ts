@@ -2594,6 +2594,11 @@ const messages = {
                 // 可区分；keyCount 语义不动（仍是本层 entries 键数）。门见 settingsCopyRules.spec.ts。
                 domainKeysCount: "本层存有 {count} 个配置值（含只读）",
                 domainEditableCount: "可编辑 {count} 项",
+                // task-190 J1/J5：设置页整页草稿的离开确认（与抽屉关闭确认 apd-unsaved-confirm 同族不复用）。
+                leaveDraftTitle: "有未保存的改动",
+                leaveDraftDesc: "以下配置域有未保存的改动：{domains}。离开这一页会丢弃这些修改。",
+                leaveDraftKeep: "继续编辑",
+                leaveDraftDiscard: "丢弃并离开",
                 // task-285：计数只数静态可枚举字段；`context-policy` 的按模型覆盖子表行数另计，
                 // 不写这句读者会以为「13 项」就是全部（Lead 2026-11-13 裁定：计数不完整须自述口径）。
                 domainEditableCountNote: "（按模型覆盖 {rows} 行另计）",
@@ -3889,6 +3894,42 @@ const messages = {
             emailRequired: "请填写邮箱",
             emailInvalid: "邮箱格式不正确",
             passwordRequired: "请填写密码",
+        },
+        agentBindings: {
+            title: "工作区绑定",
+            desc: "决定这个智能体在哪些工作区可以被委派。勾选即绑定，取消即解绑；每次保存都逐条写服务端并重新读取读面。",
+            refresh: "重新读取",
+            loading: "正在读取工作区与权限…",
+            readFailed:
+                "读不到你的权限投影，因此无法判断能不能改这里的绑定。这是读取失败，不是没有权限。",
+            noPermission: "你没有可管理的工作区智能体权限，这里的绑定不可修改。",
+            empty: "还没有任何工作区可绑定。",
+            badgeDefault: "工作区默认",
+            stateBound: "已绑定",
+            stateUnbound: "未绑定",
+            stateUnreadable: "读面失败：读不到这个工作区的绑定状态，不能当作未绑定处理。",
+            save: "保存绑定",
+            saving: "正在保存…",
+            saved: "已保存，读面已重新读取。",
+            discard: "撤销选择",
+            pendingCount: "待提交 {count} 项",
+            saveFailed: "保存工作区绑定时服务端拒绝了这次请求。",
+            crumbSubjects: "智能体主体",
+            crumbBindings: "绑定",
+            nameUnavailable: "名称读面未提供",
+            subjectIdLabel: "主体 ID",
+            openPage: "工作区绑定",
+            rolesLoading: "正在读取该工作区的角色…",
+            rolesNone: "该工作区还没有绑定任何角色。",
+            rolesNotFound: "这个工作区下读不到该主体的角色（这是「读不到」，不是「没有角色」）。",
+            rolesFallback: "角色读面返回了错误，因此读不到这个主体在该工作区有哪些角色。",
+            defaultSet: "设为工作区默认",
+            defaultClear: "取消工作区默认",
+            defaultFailed: "修改工作区默认智能体时服务端拒绝了这次请求。",
+            sessionsDesc:
+                "按工作区查看这个主体委派出的子会话：数字取服务端计数（不受列表条数上限影响），列表默认不含已归档，并明示上限与实际条数。",
+            sessionsWorkspace: "选择工作区",
+            sessionsNeedBinding: "先在上方把主体绑定到工作区，才有可查的委派子会话。",
         },
         agentPrincipals: {
             title: "智能体主体",
@@ -6797,6 +6838,13 @@ const messages = {
                 // keyCount semantics unchanged (entries stored at this layer).
                 domainKeysCount: "{count} stored values in this layer (incl. read-only)",
                 domainEditableCount: "{count} editable",
+                // task-190 J1/J5: leave confirmation for page-level drafts (not shared with the
+                // drawer close confirmation apd-unsaved-confirm).
+                leaveDraftTitle: "Unsaved changes",
+                leaveDraftDesc:
+                    "These settings domains have unsaved edits: {domains}. Leaving this page discards them.",
+                leaveDraftKeep: "Keep editing",
+                leaveDraftDiscard: "Discard and leave",
                 domainEditableCountNote: "(plus {rows} per-model override rows)",
                 domainEditableCountNoteEmpty: "(plus the per-model override table)",
                 switchToUserLayer: "Switch to the personal layer",
@@ -8149,6 +8197,47 @@ const messages = {
             emailRequired: "Email is required",
             emailInvalid: "Enter a valid email address",
             passwordRequired: "Password is required",
+        },
+        agentBindings: {
+            title: "Workspace bindings",
+            desc: "Decides which workspaces may delegate to this agent. Checking binds, unchecking unbinds; every save writes each entry to the server and re-reads the read model.",
+            refresh: "Re-read",
+            loading: "Reading workspaces and permissions…",
+            readFailed:
+                "Your permission projection could not be read, so it is unknown whether these bindings may be changed. This is a read failure, not a lack of permission.",
+            noPermission:
+                "You have no manageable workspace-agent permission, so these bindings are read-only for you.",
+            empty: "No workspace is available for binding yet.",
+            badgeDefault: "Workspace default",
+            stateBound: "Bound",
+            stateUnbound: "Not bound",
+            stateUnreadable:
+                "Read failed: this workspace's binding state could not be read, and it must not be treated as unbound.",
+            save: "Save bindings",
+            saving: "Saving…",
+            saved: "Saved; the read model was re-read.",
+            discard: "Discard selection",
+            pendingCount: "{count} pending change(s)",
+            saveFailed: "The server rejected this workspace-binding save.",
+            crumbSubjects: "Agent principals",
+            crumbBindings: "Bindings",
+            nameUnavailable: "name read model not available",
+            subjectIdLabel: "Subject ID",
+            openPage: "Workspace bindings",
+            rolesLoading: "Reading this workspace's roles…",
+            rolesNone: "No role is bound in this workspace yet.",
+            rolesNotFound:
+                "This agent's roles cannot be read in this workspace (this is not the same as having no roles).",
+            rolesFallback:
+                "The role read model returned an error, so this agent's roles in this workspace are unknown.",
+            defaultSet: "Set as workspace default",
+            defaultClear: "Clear workspace default",
+            defaultFailed: "The server rejected this workspace-default change.",
+            sessionsDesc:
+                "Delegated child sessions of this agent, per workspace: numbers come from the server counts (not capped by the list limit), archived rows are excluded by default, and the limit plus the shown row count are stated.",
+            sessionsWorkspace: "Choose a workspace",
+            sessionsNeedBinding:
+                "Bind this agent to a workspace above first; then its delegated child sessions can be inspected.",
         },
         agentPrincipals: {
             title: "Agent principals",
