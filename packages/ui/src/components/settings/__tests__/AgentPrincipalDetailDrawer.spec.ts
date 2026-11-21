@@ -205,7 +205,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         await pickAnthropic(wrapper);
-        await click("apd-model-save");
+        await click("apd-save-all");
 
         expect(update).toHaveBeenCalledTimes(1);
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
@@ -229,7 +229,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         await pick(wrapper, "apd-model-binding-provider", "anthropic");
-        const save = q<HTMLButtonElement>('[data-testid="apd-model-save"]');
+        const save = q<HTMLButtonElement>('[data-testid="apd-save-all"]');
         expect(save.disabled).toBe(true);
         save.click();
         await flushPromises();
@@ -251,7 +251,7 @@ describe("AgentPrincipalDetailDrawer", () => {
 
         await setName("delegation-policy-max-count", "");
         await setName("delegation-policy-max-depth", "");
-        await click("apd-delegation-save");
+        await click("apd-save-all");
 
         expect(update).toHaveBeenCalledTimes(1);
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
@@ -316,15 +316,47 @@ describe("AgentPrincipalDetailDrawer", () => {
         ]);
     });
 
-    it("保存点收敛：表单组各一个提交点，记忆组只有开关（task-151 ①）", async () => {
+    it("保存点收敛：三段表单共用一个提交点、分区保存键为 0，记忆组只有开关（task-34 / task-151 ①）", async () => {
         mountDrawer({ editableSections: ["model", "delegation", "memory", "hooks"] });
         await flushPromises();
 
+        // task-34 J1：分区保存键必须彻底消失（计数 0），只剩页脚统一提交点。
         for (const testid of ["apd-model-save", "apd-delegation-save", "apd-hooks-save"]) {
-            expect(document.body.querySelectorAll('[data-testid="' + testid + '"]').length).toBe(1);
+            expect(document.body.querySelectorAll('[data-testid="' + testid + '"]').length).toBe(0);
         }
+        expect(document.body.querySelectorAll('[data-testid="apd-save-all"]').length).toBe(1);
         expect(maybe('[data-testid="apd-memory-save"]')).toBeNull();
         expect(document.body.querySelectorAll('[data-testid="apd-memory-switch"]').length).toBe(1);
+    });
+
+    it("统一提交点：无草稿时禁用；多段有草稿时一次点击按段顺序 PATCH（task-34 J2）", async () => {
+        const update = vi.spyOn(api, "updateAgentPrincipal").mockResolvedValue({
+            principalId: "p-1",
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-x",
+            allowedModels: null,
+            hooks: null,
+            contextPolicy: null,
+            delegationPolicy: null,
+        });
+        const wrapper = mountDrawer();
+        await flushPromises();
+
+        const saveAll = q<HTMLButtonElement>('[data-testid="apd-save-all"]');
+        expect(saveAll.disabled).toBe(true);
+
+        await pickAnthropic(wrapper);
+        await click("apd-hooks-remove-0");
+        expect(q<HTMLButtonElement>('[data-testid="apd-save-all"]').disabled).toBe(false);
+        expect(q('[data-testid="apd-save-all-hint"]').textContent).toContain("2");
+
+        await click("apd-save-all");
+        await flushPromises();
+
+        // 两段各一次 PATCH，顺序固定（模型 → 委派 → 钩子），未被改动的段不发。
+        expect(update).toHaveBeenCalledTimes(2);
+        const bodies = update.mock.calls.map((call) => Object.keys(call[1] as object));
+        expect(bodies).toEqual([["defaultModelProvider", "defaultModelName"], ["hooks"]]);
     });
 
     it("钩子：移除后保存；清空全部 ⇒ hooks 显式 null", async () => {
@@ -341,7 +373,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         await click("apd-hooks-remove-0");
-        await click("apd-hooks-save");
+        await click("apd-save-all");
 
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
         expect(Object.keys(body)).toEqual(["hooks"]);
@@ -434,7 +466,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         await pickAnthropic(wrapper);
-        await click("apd-model-save");
+        await click("apd-save-all");
 
         const error = q('[data-testid="apd-model-error"]');
         expect(error.textContent).toContain(hint);
@@ -454,6 +486,8 @@ describe("AgentPrincipalDetailDrawer", () => {
         // 记忆组没有保存键，只读必须靠在控件自身 disabled 上（不是靠隐藏假装只读）。
         expect(q<HTMLButtonElement>('[data-testid="apd-memory-switch"]').disabled).toBe(true);
         expect(maybe('[data-testid="apd-hooks-save"]')).toBeNull();
+        // task-34：只读档连统一提交点都不给（不是靠禁用假装有写面）。
+        expect(maybe('[data-testid="apd-save-all"]')).toBeNull();
         // 三段选择器全部 disabled（不是靠隐藏假装只读）。
         expect(wrapper.findAllComponents(Select)[0]!.props("disabled")).toBe(true);
         expect(
@@ -502,7 +536,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         await pickAnthropic(wrapper);
-        q('[data-testid="apd-model-save"]').click();
+        q('[data-testid="apd-save-all"]').click();
         await nextTick();
 
         await wrapper.setProps({ open: false, principal: null });
@@ -603,7 +637,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await flushPromises();
 
         await click("apd-allowed-add");
-        const save = q<HTMLButtonElement>('[data-testid="apd-model-save"]');
+        const save = q<HTMLButtonElement>('[data-testid="apd-save-all"]');
         expect(save.disabled).toBe(true);
         save.click();
         await flushPromises();
@@ -630,7 +664,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         await pick(wrapper, "apd-allowed-1-provider", "anthropic");
         await pick(wrapper, "apd-allowed-1-connection", "conn-anthropic");
         await pick(wrapper, "apd-allowed-1-model-name", "claude-x");
-        await click("apd-model-save");
+        await click("apd-save-all");
 
         const body = update.mock.calls[0]![1] as Record<string, unknown>;
         expect(Object.keys(body)).toEqual(["allowedModels"]);

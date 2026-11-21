@@ -425,12 +425,13 @@ function addAllowedModel(): void {
 const delegationDirty = computed(() =>
     delegationPolicyDirty(delegationBaseline.value, delegationDraft.value),
 );
+/** 校验与子组件用同一纯函数 —— 规则只有一份，不复制第二套。 */
+const delegationValid = computed(() => delegationPolicyValid(delegationDraft.value));
 const delegationSaveBlocked = computed(
     () =>
-        // 校验与子组件用同一纯函数 —— 规则只有一份，不复制第二套。
         props.readonly ||
         !delegationDirty.value ||
-        !delegationPolicyValid(delegationDraft.value) ||
+        !delegationValid.value ||
         delegationSaving.value,
 );
 
@@ -438,6 +439,35 @@ const memoryDirty = computed(() => memoryEnabled.value !== memoryBaseline.value)
 
 const hooksDirty = computed(() => JSON.stringify(advisors.value) !== advisorsBaseline.value);
 const hooksSaveBlocked = computed(() => props.readonly || !hooksDirty.value || hooksSaving.value);
+
+/**
+ * task-34：模型 / 委派 / 钩子三段表单**共用一个提交点**（页脚「保存更改」），分区保存键已移除
+ * （J1：apd-{model,delegation,hooks}-save 计数必须为 0）。记忆段仍是布尔即时写，不进这个组
+ * —— §17.2 布尔控件的提交点就是它自己。
+ * 只有「有草稿且校验通过」的段才计入待提交数：非法草稿不拦别的段，但也不被静默发出去。
+ */
+const pendingSectionCount = computed(() => {
+    let count = 0;
+    if (modelDirty.value && modelValid.value) count += 1;
+    if (delegationDirty.value && delegationValid.value) count += 1;
+    if (hooksDirty.value) count += 1;
+    return count;
+});
+
+const groupSaving = computed(
+    () => modelSaving.value || delegationSaving.value || hooksSaving.value,
+);
+
+const groupSaveBlocked = computed(
+    () => props.readonly || groupSaving.value || pendingSectionCount.value === 0,
+);
+
+/** 顺序提交：三段共用同一 view 回填，串行避免后一段拿旧 view 覆盖前一段；每段错误各自落位。 */
+async function saveDirtySections(): Promise<void> {
+    if (modelDirty.value && modelValid.value) await saveModel();
+    if (delegationDirty.value && delegationValid.value) await saveDelegation();
+    if (hooksDirty.value) await saveHooks();
+}
 
 // task-151 / task-172 §17.4：开关类即时写不算 dirty；表单类（模型 / 委派 / 钩子）有草稿才算。
 const unsavedDraft = computed(() => modelDirty.value || delegationDirty.value || hooksDirty.value);
@@ -870,25 +900,13 @@ function discardAndClose() {
                     >
                         {{ t(K + "unknownSectionHint") }}
                     </p>
-                    <div class="flex items-center gap-2">
-                        <Button
-                            v-if="canEdit('model')"
-                            type="button"
-                            size="sm"
-                            data-testid="apd-model-save"
-                            :disabled="modelSaveBlocked"
-                            @click="saveModel"
-                        >
-                            {{ modelSaving ? t(K + "saving") : t(K + "modelSave") }}
-                        </Button>
-                        <span
-                            v-if="canEdit('model') && modelDirty"
-                            class="text-xs text-amber-600 dark:text-amber-400"
-                            data-testid="apd-model-unsaved"
-                        >
-                            {{ t(K + "unsaved") }}
-                        </span>
-                    </div>
+                    <span
+                        v-if="canEdit('model') && modelDirty"
+                        class="text-xs text-amber-600 dark:text-amber-400"
+                        data-testid="apd-model-unsaved"
+                    >
+                        {{ t(K + "unsaved") }}
+                    </span>
                     <div v-if="sectionErrors.model" class="space-y-2">
                         <ErrorBlock :presentation="sectionErrors.model" testid="apd-model-error" />
                         <Button
@@ -926,25 +944,13 @@ function discardAndClose() {
                         v-model="delegationDraft"
                         :disabled="!canEdit('delegation')"
                     />
-                    <div class="flex items-center gap-2">
-                        <Button
-                            v-if="canEdit('delegation')"
-                            type="button"
-                            size="sm"
-                            data-testid="apd-delegation-save"
-                            :disabled="delegationSaveBlocked"
-                            @click="saveDelegation"
-                        >
-                            {{ delegationSaving ? t(K + "saving") : t(K + "delegationSave") }}
-                        </Button>
-                        <span
-                            v-if="canEdit('delegation') && delegationDirty"
-                            class="text-xs text-amber-600 dark:text-amber-400"
-                            data-testid="apd-delegation-unsaved"
-                        >
-                            {{ t(K + "unsaved") }}
-                        </span>
-                    </div>
+                    <span
+                        v-if="canEdit('delegation') && delegationDirty"
+                        class="text-xs text-amber-600 dark:text-amber-400"
+                        data-testid="apd-delegation-unsaved"
+                    >
+                        {{ t(K + "unsaved") }}
+                    </span>
                     <div v-if="sectionErrors.delegation" class="space-y-2">
                         <ErrorBlock
                             :presentation="sectionErrors.delegation"
@@ -1124,24 +1130,13 @@ function discardAndClose() {
                                 {{ t(K + "hooksAdd") }}
                             </Button>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <Button
-                                type="button"
-                                size="sm"
-                                data-testid="apd-hooks-save"
-                                :disabled="hooksSaveBlocked"
-                                @click="saveHooks"
-                            >
-                                {{ hooksSaving ? t(K + "saving") : t(K + "hooksSave") }}
-                            </Button>
-                            <span
-                                v-if="hooksDirty"
-                                class="text-xs text-amber-600 dark:text-amber-400"
-                                data-testid="apd-hooks-unsaved"
-                            >
-                                {{ t(K + "unsaved") }}
-                            </span>
-                        </div>
+                        <span
+                            v-if="hooksDirty"
+                            class="text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="apd-hooks-unsaved"
+                        >
+                            {{ t(K + "unsaved") }}
+                        </span>
                     </div>
                     <div v-if="sectionErrors.hooks" class="space-y-2">
                         <ErrorBlock :presentation="sectionErrors.hooks" testid="apd-hooks-error" />
@@ -1267,6 +1262,38 @@ function discardAndClose() {
                         :presentation="disableError"
                         testid="apd-disable-error"
                     />
+                </div>
+                <!-- task-34：三段表单（模型 / 委派 / 钩子）的统一提交点。粘在抽屉底部滚到哪都能提交；
+                     分区保存键已删，记忆段仍即时写（它不进这个组）。
+                     spacer 紧跟其前：粘性条是覆盖式的（sticky bottom-0），滚到底时会盖住最后一节
+                     （真栈实测过「工作区角色」标题被盖掉一半），留一条与条等高的空白让覆盖区落在空处。 -->
+                <div
+                    v-if="canEdit('model') || canEdit('delegation') || canEdit('hooks')"
+                    class="h-14"
+                    aria-hidden="true"
+                    data-testid="apd-save-bar-spacer"
+                />
+                <div
+                    v-if="canEdit('model') || canEdit('delegation') || canEdit('hooks')"
+                    class="sticky bottom-0 -mx-6 flex items-center gap-2 border-t border-border bg-background px-6 py-3"
+                    data-testid="apd-save-bar"
+                >
+                    <Button
+                        type="button"
+                        size="sm"
+                        data-testid="apd-save-all"
+                        :disabled="groupSaveBlocked"
+                        @click="saveDirtySections"
+                    >
+                        {{ groupSaving ? t(K + "saving") : t(K + "saveAll") }}
+                    </Button>
+                    <span
+                        v-if="pendingSectionCount > 0"
+                        class="text-xs text-muted-foreground"
+                        data-testid="apd-save-all-hint"
+                    >
+                        {{ t(K + "saveAllPending", { count: pendingSectionCount }) }}
+                    </span>
                 </div>
             </div>
 
