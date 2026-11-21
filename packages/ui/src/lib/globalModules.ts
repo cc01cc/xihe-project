@@ -1,5 +1,5 @@
 import type { Component } from "vue";
-import { Boxes, Briefcase, Network, Settings } from "@lucide/vue";
+import { Boxes, Briefcase, ListChecks, Network, Settings } from "@lucide/vue";
 import {
     defaultLayerPath,
     DOMAIN_LABEL_KEY,
@@ -24,7 +24,12 @@ import {
  * <p>判据（可复算）：本文件**不得出现** `/resources/`、`/settings/instance/` 这类路径字面量，
  * 也不得出现域/资源的名字字符串 —— 一旦出现就说明有人把清单手写回来了。
  */
-export type GlobalModuleId = "workbench" | "org-members" | "resources" | "settings";
+export type GlobalModuleId =
+    | "workbench"
+    | "org-members"
+    | "resources"
+    | "scheduled-tasks"
+    | "settings";
 
 export interface GlobalMenuItem {
     /** 稳定 id：资源 id / 配置域 id / 工作台自身。 */
@@ -70,6 +75,20 @@ const WORKBENCH_CONTAINER_PREFIX = "/workspace";
  * —— 路由表里的 `/members` 与本常量同源（判据同 WORKBENCH_PATH 注释）。
  */
 export const ORG_MEMBERS_PATH = "/members";
+
+/**
+ * 自动化任务总览的落地路径（task-11 / `D-1220` ③ 回退）。
+ *
+ * <p>为什么要有这个**显式常量**而不是像资源/设置那样由 `settingsIa.ts` 派生：它既不是配置域
+ * 也不是资源，是**实例级的读面**（列表跨工作区聚合，数据面在 CP 的 `GET /api/v1/scheduled-tasks`，
+ * 来源 task-10）。所以它和工作台 / 组织成员同一类：一条全局路由、二级菜单只有「回到本页」一项。</p>
+ *
+ * <p><b>与 `WORKBENCH_CONTAINER_PREFIX` 同一口径</b>：本文件只持有**这一个**字面量，不持有页面段；
+ * 路由表里的 `/scheduled-tasks` 与该常量同源。容器内的 `/workspace/:id/scheduled-tasks` 是**另一个面**
+ * （工作区作用域，本来就有），两者不互相挂载 —— 与「组织成员 `/members` vs 容器 `/workspace/:id/members`」
+ * 是同一条既有裁定。</p>
+ */
+export const SCHEDULED_TASKS_PATH = "/scheduled-tasks";
 
 function resourceItems(): GlobalMenuItem[] {
     return RESOURCE_DEFS.map((def) => ({
@@ -125,6 +144,28 @@ export const GLOBAL_MODULES: readonly GlobalModuleDef[] = [
         // 落地页与 `GlobalRail` 的「设置」跳转同一个派生函数（`settingsIa.ts:136`）。
         path: defaultLayerPath("instance"),
         items: settingsItems(),
+    },
+    {
+        /**
+         * task-11：原先是 rail 里的**工作区面板项**（`D-1220` ③ / task-365 C-1），随工作区上下文
+         * 出现或消失 —— 同一个功能两种可见性。回退成**实例级模块**：入口恒在，作用域由数据面决定。
+         *
+         * <p>labelKey 复用 `workspaceNav.scheduledTasks`（zh「自动化任务」/ en「Automations」）——
+         * 该键在两侧 locale 都已存在且值未被改动（`DSD-1490` 只冻结值，不禁复用为 labelKey），
+         * 所以本模块**不需要新增 i18n 键**就能通过「两侧都能解析」的判据。</p>
+         */
+        id: "scheduled-tasks",
+        labelKey: "workspaceNav.scheduledTasks",
+        icon: ListChecks,
+        basePath: SCHEDULED_TASKS_PATH,
+        path: SCHEDULED_TASKS_PATH,
+        items: [
+            {
+                id: "scheduled-tasks",
+                labelKey: "workspaceNav.scheduledTasks",
+                path: SCHEDULED_TASKS_PATH,
+            },
+        ],
     },
 ];
 

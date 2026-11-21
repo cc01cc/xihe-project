@@ -6,6 +6,7 @@ import {
     isModulePathMatch,
     moduleForPath,
     ORG_MEMBERS_PATH,
+    SCHEDULED_TASKS_PATH,
     WORKBENCH_PATH,
 } from "../globalModules";
 import {
@@ -24,14 +25,18 @@ import {
  * **对撞**，任何一侧手写了一份新清单（改动了域/资源但没改投影、或反过来），这里会红。</p>
  */
 describe("globalModules：菜单内容由 SSOT 派生", () => {
-    it("四个模块，顺序与 id 固定", () => {
+    it("五个模块，顺序与 id 固定", () => {
         // task-240（PLAN-0773 M3，Lead 裁 (a) 全局模块落点）：组织成员是实例级面，进全局 rail
         // 第 2 位（工作台之后）——入口按作用域归位：实例级面进全局模块，工作区作用域面进容器页。
+        // task-11（D-1220 ③ 回退）：自动化任务从「工作区面板项」回退成实例级模块，落**末位**
+        // （卡面 r6 裁定 ③「位次 = settings 之后」）—— 与「实例级面进全局模块」同一条归位判据，
+        // 不再随工作区上下文出现/消失。
         expect(GLOBAL_MODULES.map((module) => module.id)).toEqual([
             "workbench",
             "org-members",
             "resources",
             "settings",
+            "scheduled-tasks",
         ]);
     });
 
@@ -68,6 +73,17 @@ describe("globalModules：菜单内容由 SSOT 派生", () => {
         expect(globalModule("settings").path).toBe(defaultLayerPath("instance"));
     });
 
+    it("自动化任务模块：单一路由 + 单一项 + 指向 SCHEDULED_TASKS_PATH（task-11）", () => {
+        const scheduledTasks = globalModule("scheduled-tasks");
+        expect(scheduledTasks.path).toBe(SCHEDULED_TASKS_PATH);
+        expect(scheduledTasks.basePath).toBe(SCHEDULED_TASKS_PATH);
+        // 单一项 = 「回到本页」；与工作台/组织成员同构（不做二级菜单，避免同一面两种入口形态）。
+        expect(scheduledTasks.items).toHaveLength(1);
+        expect(scheduledTasks.items[0].path).toBe(SCHEDULED_TASKS_PATH);
+        // 标签**复用**既有工作区页的键（DSD-1490 只冻结值、不禁复用）：不为一个 labelKey 新增 i18n 键。
+        expect(scheduledTasks.labelKey).toBe("workspaceNav.scheduledTasks");
+    });
+
     it("工作台模块子项只有一项且指向 /workbench（task-34 模块入口改名）", () => {
         expect(globalModule("workbench").items).toHaveLength(1);
         expect(globalModule("workbench").items[0].path).toBe(WORKBENCH_PATH);
@@ -101,6 +117,10 @@ describe("globalModules：模块路径判定", () => {
         expect(moduleForPath("/workbench")?.id).toBe("workbench");
         expect(moduleForPath("/workspace/ws-1")?.id).toBe("workbench");
         expect(moduleForPath("/resources/credentials")?.id).toBe("resources");
+        // task-11：实例级自动化任务总览归自己的模块，**不**被 /workspace 容器前缀吞成工作台。
+        expect(moduleForPath("/scheduled-tasks")?.id).toBe("scheduled-tasks");
+        // 容器内的同名子页仍归工作台 —— 两个面不互相挂载（判据写在 SCHEDULED_TASKS_PATH 注释里）。
+        expect(moduleForPath("/workspace/ws-1/scheduled-tasks")?.id).toBe("workbench");
         expect(moduleForPath("/chat/abc")?.id).toBeUndefined();
     });
 

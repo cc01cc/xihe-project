@@ -190,6 +190,8 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
             "global-rail-module-workbench",
             "global-rail-module-org-members",
             "global-rail-module-resources",
+            // task-11（D-1220 ③ 回退）：自动化任务从工作区面板项回退成实例级模块，落 content 区末位。
+            "global-rail-module-scheduled-tasks",
         ]);
         expect(wrapper.get('[data-testid="global-rail-module-workbench"]').text()).toContain(
             "工作台",
@@ -412,6 +414,7 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
             "global-rail-module-workbench": "工作台",
             "global-rail-module-org-members": "组织成员",
             "global-rail-module-resources": "资源",
+            "global-rail-module-scheduled-tasks": "自动化任务",
             "global-rail-module-settings": "设置",
             "global-rail-logout": "退出登录",
         };
@@ -439,7 +442,8 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
  * ① 有工作区上下文时面板项可达、点了去带 id 的地址；
  * ② 允许清单之外的页**不**进 rail（负例：环境页有 meta 但不该出现）；
  * ③ 无工作区上下文时整组不渲染（没有目标的入口 = 假入口）；
- * ④ 面板项不是模块 —— `global-rail-module-*` 的条数不变（既有 e2e 钉「4 个模块」）。
+ * ④ 面板项不是模块 —— `global-rail-module-*` 的条数不变（task-11 已把自动化任务加成第 5 个
+ *    实例级模块，所以这里钉 5；面板项自身不该再改变这个数）。
  */
 describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
     it("registers the allowlisted workspace page and navigates to its workspace-scoped path", async () => {
@@ -453,7 +457,7 @@ describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
         const panel = wrapper.get('[data-testid="global-rail-panel-scheduled-tasks"]');
         expect(panel.text()).toContain("自动化任务");
         // ④ 面板不是模块：模块行数不受影响。
-        expect(wrapper.findAll('[data-testid^="global-rail-module-"]')).toHaveLength(4);
+        expect(wrapper.findAll('[data-testid^="global-rail-module-"]')).toHaveLength(5);
         await panel.trigger("click");
         expect(pushSpy).toHaveBeenCalledWith("/workspace/ws-1/scheduled-tasks");
         wrapper.unmount();
@@ -477,7 +481,47 @@ describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
         );
         wrapper.unmount();
     });
+});
 
+/**
+ * task-11（`D-1220` ③ 回退，本笔只落模块侧）：自动化任务从「rail 的工作区面板项」改成**实例级
+ * 模块**（`lib/globalModules.ts` 第五项 + 顶层 `/scheduled-tasks` 页），入口不再随工作区上下文
+ * 出现/消失 —— 旧形态在无工作区时整组消失，等于同一功能有两种可见性。
+ *
+ * 这里的判据只有一条但要求**带名字**：行数与顺序之外逐个对齐「testid → 收起态 aria-label」。
+ * 只比个数的话，加一个模块或换一个标签都不会红。
+ */
+describe("GlobalRail module rows (task-11)", () => {
+    /** 模块行的带名基线：testid → 收起态 aria-label（名来自 i18n，不是硬编码中文）。 */
+    const MODULE_ROW_BASELINE: ReadonlyArray<readonly [string, string]> = [
+        ["global-rail-module-workbench", "工作台"],
+        ["global-rail-module-org-members", "组织成员"],
+        ["global-rail-module-resources", "资源"],
+        // task-11：第五个模块的标签复用 `workspaceNav.scheduledTasks`（值「自动化任务」未动）。
+        ["global-rail-module-scheduled-tasks", "自动化任务"],
+        ["global-rail-module-settings", "设置"],
+    ];
+
+    function moduleRows(wrapper: Awaited<ReturnType<typeof mountRail>>) {
+        return wrapper
+            .findAll('[data-testid^="global-rail-module-"]')
+            .map((row) => [row.attributes("data-testid"), row.attributes("aria-label")] as const);
+    }
+
+    it("keeps a named baseline for module rows", async () => {
+        patchAuth();
+        const wrapper = await mountRail();
+        expect(moduleRows(wrapper)).toEqual(MODULE_ROW_BASELINE);
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-84（rail 可寻址 + 可跳过）与 task-89（标签唯一性）：HEAD 里这两段挂在「工作区面板组」
+ * describe 之下，但它们与面板项无关；task-11 回退会把面板组整段删掉，所以单独起一个 describe，
+ * 免得删那一段时顺带把这两段带走（也就不会再出现「删功能顺手删掉别的守卫」）。
+ */
+describe("GlobalRail landmarks and label uniqueness (task-84 / task-89)", () => {
     // task-84（rail 可寻址 + 可跳过）与 task-89（标签唯一性）的行为断言。
     // monitor 报的是「源码变更未伴配对测试」：本文件在 HEAD 里有，但一条也没测这两件事。
     it("rail 是可寻址的 navigation 地标，且 skip-link 是第一个可交互元素", async () => {
