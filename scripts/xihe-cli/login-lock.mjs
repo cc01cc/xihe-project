@@ -1,6 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pidIsAlive, resolveTokenPath } from './token-store.mjs';
+// task-43：锁原语抽到 lib/file-lock.mjs（wx 独占 / staleness / pid 守卫 release），本文件只保留
+// 「等待 + backoff + reuse」这层登录特有语义。落盘格式与 stale 判据逐字不变。
+import {
+  isLockStale,
+  readLockHolder,
+  releaseLock as releaseFileLock,
+  tryCreateLock,
+} from '../lib/file-lock.mjs';
 
 // BL-396 / PLAN-0643 V23: cross-process first-login single-flight.
 //
@@ -39,93 +47,27 @@ export function loginLockPath(env = {}, platform = process.platform) {
 }
 
 function readHolder(lockAbs, { fsImpl, now }) {
-  let raw;
-  try {
-    raw = fsImpl.readFileSync(lockAbs, 'utf8');
-  } catch (error) {
-    // ENOENT = released between the failed create and this read; anything else is
-    // unreadable and must not be treated as "no holder".
-    if (error?.code === 'ENOENT') return { kind: 'absent' };
-    return { kind: 'holder', unreadable: true, pid: null, acquiredAt: null, ageMs: 0 };
-  }
-  let stats = null;
-  try {
-    stats = fsImpl.statSync(lockAbs);
-  } catch {
-    // Vanished between read and stat: report the best available view; the caller
-    // retries the create immediately and will observe the truth then.
-  }
-  let parsed = null;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // A half-written or foreign lock body carries no pid; the mtime age is the
-    // only staleness signal left, so keep it in the record.
-  }
-  const ageMs = stats ? now() - stats.mtimeMs : 0;
-  return {
-    kind: 'holder',
-    pid: Number.isInteger(parsed?.pid) ? parsed.pid : null,
-    acquiredAt: typeof parsed?.acquiredAt === 'string' ? parsed.acquiredAt : null,
-    ageMs,
-    unreadable: false,
-  };
+  // 委托 lib/file-lock.mjs（task-43）：ENOENT⇒absent、不可读≠无人、ageMs 取 mtime 的语义不变。
+  return readLockHolder(lockAbs, { fsImpl, now });
 }
 
 function tryCreate(lockAbs, { fsImpl, now }) {
-  // Cold first login: the cache directory does not exist yet (persistToken only
-  // creates it after a successful login), so the lock create would ENOENT and
-  // every process would silently degrade to an unlocked login. Create the
-  // directory first — `recursive` keeps concurrent creators idempotent.
-  if (typeof fsImpl.mkdirSync === 'function') {
-    try {
-      fsImpl.mkdirSync(path.dirname(lockAbs), { recursive: true });
-    } catch (error) {
-      return { kind: 'unusable', path: lockAbs, reason: error?.code ?? 'unknown' };
-    }
-  }
-  try {
-    fsImpl.writeFileSync(lockAbs, `${JSON.stringify({ pid: process.pid, acquiredAt: new Date(now()).toISOString() })}\n`, {
-      flag: 'wx',
-      mode: 0o600,
-    });
-    return { kind: 'acquired', path: lockAbs };
-  } catch (error) {
-    if (error?.code === 'EEXIST') return { kind: 'held', path: lockAbs };
-    // The directory is missing/unwritable: the lock cannot arbitrate here, so the
-    // caller degrades to the pre-BL-396 single-process path instead of failing.
-    return { kind: 'unusable', path: lockAbs, reason: error?.code ?? 'unknown' };
-  }
+  // 委托 lib/file-lock.mjs（task-43）：先 recursive 建目录（冷启动首登时缓存目录还不存在），
+  // 再 `wx` 独占写 `{pid, acquiredAt}\n`（0o600）；EEXIST⇒held、其它⇒unusable 的分支不变。
+  return tryCreateLock(lockAbs, {
+    fsImpl,
+    payload: { pid: process.pid, acquiredAt: new Date(now()).toISOString() },
+  });
 }
 
-function isStale(holder, { staleMs, alive, now: _now }) {
-  if (!holder || holder.kind !== 'holder') return false;
-  if (holder.unreadable) return holder.ageMs > staleMs;
-  if (holder.pid === null) return holder.ageMs > staleMs;
-  if (!alive(holder.pid)) return true;
-  return holder.ageMs > staleMs;
+function isStale(holder, { staleMs, alive }) {
+  // 委托 lib/file-lock.mjs（task-43）：不可读 / 无 pid ⇒ 看龄期，pid 已死 ⇒ 立即可接管。
+  return isLockStale(holder, { staleMs, alive });
 }
 
 /** Remove the lock only when it still belongs to this process (never steal a live holder's). */
 function releaseLock(lockAbs, { fsImpl }) {
-  let holder;
-  try {
-    holder = JSON.parse(fsImpl.readFileSync(lockAbs, 'utf8'));
-  } catch (error) {
-    // ENOENT: already released or swept by another process — nothing to do.
-    // Unparseable: it is not ours to delete; the stale check retires it.
-    if (error?.code === 'ENOENT') return false;
-    return false;
-  }
-  if (holder?.pid !== process.pid) return false;
-  try {
-    fsImpl.rmSync(lockAbs, { force: true });
-    return true;
-  } catch {
-    // A live holder sweeping a dead lock can race this remove on Windows; the
-    // caller is exiting and the stale check covers the leftover.
-    return false;
-  }
+  return releaseFileLock(lockAbs, { fsImpl, pid: process.pid });
 }
 
 /**

@@ -185,6 +185,17 @@ export function commandLineOf(pid) {
   return processInfo(pid)?.commandLine ?? '';
 }
 
+/**
+ * 进程全表（`Map<pid, {parentPid, commandLine}>`；非 Windows 或探测失败时为空表）。
+ *
+ * task-43：`cp-test-run.mjs` 需要「有没有别家 mvn 正在写同一棵 target」这一判断，复用本模块
+ * 已带 3s TTL 缓存的批量探测（逐 pid 起 PowerShell 实测把 acquire 拖到 32s，见上）。调用方必须
+ * 把**空表**读成「无法判定」而不是「没有别的 mvn」——不要在这里偷偷造一条 mvn 记录。
+ */
+export function processTable() {
+  return loadProcessTable();
+}
+
 /** 这条 pid 的命令行是不是我们的 wrapper（`stack-run.mjs` 起的服务树）。 */
 export function isOurWrapper(pid) {
   if (process.platform !== 'win32' && !processFacts?.info) return true; // 非 Windows 保持旧语义（无命令行可查）
