@@ -112,7 +112,10 @@ class ScheduledTaskContractsTest {
         return new ScheduledTaskApiService(repository, dispatcher, workspaceService, sessionService,
                 evaluator, grantRepository, agentPrincipalRepository, workspaceAgentRepository,
                 userRepository, auditLogger, eventManager, sessionParticipantRepository,
-                OrgUnitGrantsTestFixture.withoutRows(), contracts);
+                OrgUnitGrantsTestFixture.withoutRows(), contracts,
+                new ScheduledTaskCursorCodec("test-scheduled-task-cursor-secret",
+                        new tools.jackson.databind.ObjectMapper()),
+                org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService.class));
     }
 
     /** job_dispatch is the action that needs no pre-existing Session, so it isolates the trigger. */

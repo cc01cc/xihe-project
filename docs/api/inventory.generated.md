@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**377** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 273 · 服务间 104
+- 规模：**379** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 275 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（377 / 377 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（379 / 379 个操作带 tag）。
 
-## public（273 operations · 公开 · 17 tags）
+## public（275 operations · 公开 · 17 tags）
 
 ### auth（12）
 
@@ -343,10 +343,12 @@
 | `GET /api/v1/sessions/{sessionId}/attachments/{fileId}` | `getAttachment` | `bearerAuth` | Get one session attachment | 公开 |
 | `DELETE /api/v1/sessions/{sessionId}/attachments/{fileId}` | `deleteAttachment` | `bearerAuth` | Delete one session attachment | 公开 |
 
-### job（11）
+### job（13）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
+| `GET /api/v1/scheduled-tasks` | `listAggregatedScheduledTasks` | `bearerAuth` | List scheduled tasks across the caller's Workspaces (task-163) | 公开 |
+| `GET /api/v1/sessions/{sessionId}/scheduled-tasks` | `listSessionScheduledTasks` | `bearerAuth` | List scheduled tasks targeting one Session (task-163) | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/jobs` | `listWorkspaceJobs` | `bearerAuth` | List jobs of one workspace | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/jobs` | `startWorkspaceJob` | `bearerAuth` | Start a Workspace-scoped durable Job | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel` | `cancelWorkspaceJob` | `bearerAuth` | Cancel one workspace job | 公开 |

@@ -41,6 +41,75 @@ public interface ScheduledTaskRepository extends JpaRepository<ScheduledTask, UU
     long countByWorkspaceIdAndUserIdAndStatusIn(UUID workspaceId, UUID userId,
             Collection<String> statuses);
 
+    /*
+     * task-163 (DSD-1518 A+C): the quota counts above are origin-blind, so a system projection row
+     * (participant wake, V94 `origin='system'`) silently consumes a user slot. The two queries below
+     * are the quota predicates the API actually uses: only rows a human/agent CREATED
+     * (`origin='user'`) count. The two methods above stay untouched — ScheduledTaskNullabilityTest
+     * pins their status-based semantics against the real JPQL, and other readers still use them.
+     */
+    long countByWorkspaceIdAndStatusInAndOrigin(UUID workspaceId, Collection<String> statuses,
+            String origin);
+
+    long countByWorkspaceIdAndUserIdAndStatusInAndOrigin(UUID workspaceId, UUID userId,
+            Collection<String> statuses, String origin);
+
+    /*
+     * task-163 read faces. Both lists are keyset pages ordered by (created_at DESC, id DESC): the
+     * instant alone is not unique (a batch of tasks can be created inside one millisecond), so the id
+     * is the tiebreaker the cursor carries. The "*Before" twins exist because a nullable comparison
+     * parameter would make the WHERE clause UNKNOWN on the first page (SQL three-valued logic) —
+     * the same reason ScheduledTaskNullabilityTest documents for the claim CAS.
+     */
+
+    /** task-163 workspace list face: user-created rows of one workspace, first page. */
+    List<ScheduledTask> findByWorkspaceIdAndOriginOrderByCreatedAtDescIdDesc(
+            UUID workspaceId, String origin, Pageable pageable);
+
+    /** task-163 workspace list face: rows strictly after the cursor. */
+    @Query("select t from ScheduledTask t where t.workspaceId = :workspaceId "
+            + "and t.origin = :origin and (t.createdAt < :lastCreatedAt "
+            + "or (t.createdAt = :lastCreatedAt and t.id < :lastId)) "
+            + "order by t.createdAt desc, t.id desc")
+    List<ScheduledTask> findWorkspacePageBefore(@Param("workspaceId") UUID workspaceId,
+            @Param("origin") String origin,
+            @Param("lastCreatedAt") Instant lastCreatedAt,
+            @Param("lastId") UUID lastId,
+            Pageable pageable);
+
+    /** task-163 aggregate face: user-created rows of the caller's member workspaces, first page. */
+    List<ScheduledTask> findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(
+            Collection<UUID> workspaceIds, String origin, Pageable pageable);
+
+    /** task-163 aggregate face: rows strictly after the cursor. */
+    @Query("select t from ScheduledTask t where t.workspaceId in :workspaceIds "
+            + "and t.origin = :origin and (t.createdAt < :lastCreatedAt "
+            + "or (t.createdAt = :lastCreatedAt and t.id < :lastId)) "
+            + "order by t.createdAt desc, t.id desc")
+    List<ScheduledTask> findWorkspacesPageBefore(@Param("workspaceIds") Collection<UUID> workspaceIds,
+            @Param("origin") String origin,
+            @Param("lastCreatedAt") Instant lastCreatedAt,
+            @Param("lastId") UUID lastId,
+            Pageable pageable);
+
+    /**
+     * task-163 session face: rows whose {@code target_session_id} is this session, in BOTH origins —
+     * the session view is where a system wake projection belongs (it is not listable to the UI's
+     * automation tab, which is origin='user' only, V94:13-14).
+     */
+    List<ScheduledTask> findByTargetSessionIdOrderByCreatedAtDescIdDesc(UUID targetSessionId,
+            Pageable pageable);
+
+    /** task-163 session face: rows strictly after the cursor (any origin, see above). */
+    @Query("select t from ScheduledTask t where t.targetSessionId = :targetSessionId "
+            + "and (t.createdAt < :lastCreatedAt "
+            + "or (t.createdAt = :lastCreatedAt and t.id < :lastId)) "
+            + "order by t.createdAt desc, t.id desc")
+    List<ScheduledTask> findTargetSessionPageBefore(@Param("targetSessionId") UUID targetSessionId,
+            @Param("lastCreatedAt") Instant lastCreatedAt,
+            @Param("lastId") UUID lastId,
+            Pageable pageable);
+
     /**
      * PLAN-0489 T1.5 事件面：与 {@link #expireDueOnceTasks} 同谓词的受影响
      * distinct workspace_id 收集——update 前查询（同参数同一谓词，行只可能离开

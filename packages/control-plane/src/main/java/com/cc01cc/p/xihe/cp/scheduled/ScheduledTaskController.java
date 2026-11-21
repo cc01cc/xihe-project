@@ -33,6 +33,50 @@ public class ScheduledTaskController {
         this.scheduledTaskApiService = scheduledTaskApiService;
     }
 
+    /**
+     * task-163 (DSD-1518 A): the caller-wide automation list. Deliberately <b>not</b> the list above —
+     * that one answers "rows of this workspace", this one answers "rows of every workspace I belong
+     * to", so it takes no {@code workspaceId} and cannot reuse {@code ListPage} (whose shell carries a
+     * workspace and whose rows carry none).
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/api/v1/scheduled-tasks")
+    public ResponseEntity<?> listAggregated(
+            @RequestParam(name = "size", defaultValue = "100") int size,
+            @RequestParam(name = "cursor", required = false) String cursor) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
+        }
+        try {
+            return ResponseEntity.ok(scheduledTaskApiService.listAggregated(userId, size, cursor));
+        } catch (CpApiException e) {
+            return problem(e);
+        }
+    }
+
+    /**
+     * task-163: the session-scoped automation face, shaped like
+     * {@code GET /api/v1/sessions/{sessionId}/team-tasks}. It answers both origins: a system wake
+     * projection targets a session and only shows up here.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/api/v1/sessions/{sessionId}/scheduled-tasks")
+    public ResponseEntity<?> listBySession(@PathVariable String sessionId,
+            @RequestParam(name = "size", defaultValue = "100") int size,
+            @RequestParam(name = "cursor", required = false) String cursor) {
+        String userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
+        }
+        try {
+            return ResponseEntity.ok(scheduledTaskApiService.listBySession(
+                    sessionId, userId, TenantContext.getWorkspaceId(), size, cursor));
+        } catch (CpApiException e) {
+            return problem(e);
+        }
+    }
+
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/api/v1/workspaces/{workspaceId}/scheduled-tasks")
     public ResponseEntity<?> list(@PathVariable String workspaceId,

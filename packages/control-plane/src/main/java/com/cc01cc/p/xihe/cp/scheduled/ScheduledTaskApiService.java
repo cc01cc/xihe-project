@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
@@ -25,13 +26,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -59,6 +64,8 @@ public class ScheduledTaskApiService {
     public static final int LIST_PROMPT_MAX = 120;
     public static final int LIST_DEFAULT_SIZE = 100;
     public static final int LIST_MAX_SIZE = 200;
+    /** task-163: the aggregate/session read faces summarise a prompt to this many characters. */
+    public static final int PROMPT_SUMMARY_MAX = 80;
 
     private static final Logger logger = LoggerFactory.getLogger(ScheduledTaskApiService.class);
 
@@ -92,6 +99,10 @@ public class ScheduledTaskApiService {
     private final com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants;
     /** D-1706 stage one: the trigger+action contract table (one row per accepted kind). */
     private final ScheduledTaskContracts contracts;
+    /** task-163: opaque keyset cursors for the two automation read faces. */
+    private final ScheduledTaskCursorCodec cursorCodec;
+    /** task-163: the aggregate face's visible set is exactly this subject's workspace bindings. */
+    private final WorkspaceMembershipService workspaceMembershipService;
 
     public ScheduledTaskApiService(ScheduledTaskRepository scheduledTaskRepository,
                                    ScheduledTaskDispatcher dispatcher,
@@ -106,7 +117,9 @@ public class ScheduledTaskApiService {
                                    WorkspaceEventManager workspaceEventManager,
                                    SessionParticipantRepository sessionParticipants,
                                    com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants,
-                                   ScheduledTaskContracts contracts) {
+                                   ScheduledTaskContracts contracts,
+                                   ScheduledTaskCursorCodec cursorCodec,
+                                   WorkspaceMembershipService workspaceMembershipService) {
         this.scheduledTaskRepository = scheduledTaskRepository;
         this.dispatcher = dispatcher;
         this.workspaceService = workspaceService;
@@ -121,6 +134,8 @@ public class ScheduledTaskApiService {
         this.sessionParticipants = sessionParticipants;
         this.orgUnitGrants = orgUnitGrants;
         this.contracts = contracts;
+        this.cursorCodec = cursorCodec;
+        this.workspaceMembershipService = workspaceMembershipService;
     }
 
     /** 读 DTO createdBy（0486 #9：principal 名 + 类型 human/agent）。 */
@@ -137,6 +152,23 @@ public class ScheduledTaskApiService {
                            String createdAt, String updatedAt) {}
 
     public record ListPage(String workspaceId, int page, int size, List<TaskView> tasks) {}
+
+    /**
+     * task-163 aggregate row. It carries the two facts the flat list needs and the workspace list
+     * does not: which workspace the row belongs to (the page merges several) and its origin (a client
+     * can tell a user-created row from a system projection even on the session face).
+     */
+    public record AutomationRow(String workspaceId, String origin, TaskView task) {
+    }
+
+    /** task-163 aggregate page: caller-wide, keyset-paged, {@code tasks} summarise the prompt. */
+    public record AggregatePage(int size, boolean hasMore, String nextCursor,
+            List<AutomationRow> tasks) {
+    }
+
+    /** task-163 session page: rows targeting one session, both origins, keyset-paged. */
+    public record SessionPage(String sessionId, int size, boolean hasMore, String nextCursor,
+            List<AutomationRow> tasks) {}
 
     public record DisposeResult(String taskId, String status, boolean changed, TaskView task) {}
 
@@ -164,8 +196,13 @@ public class ScheduledTaskApiService {
         workspaceService.requireAccessibleWorkspace(workspaceId, userId);
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), LIST_MAX_SIZE);
-        List<ScheduledTask> tasks = scheduledTaskRepository.findByWorkspaceIdOrderByCreatedAtDesc(
-                UUID.fromString(workspaceId), PageRequest.of(safePage, safeSize));
+        // task-163: this route is the UI's automation tab, and V94:13-14 fixes its vocabulary to
+        // origin='user' — system wake projections target a session and belong to the session face.
+        // The offset paging stays (this route's contract has page/size); only the predicate changed.
+        List<ScheduledTask> tasks =
+                scheduledTaskRepository.findByWorkspaceIdAndOriginOrderByCreatedAtDescIdDesc(
+                        UUID.fromString(workspaceId), ScheduledTask.ORIGIN_USER,
+                        PageRequest.of(safePage, safeSize));
         List<TaskView> items = tasks.stream()
                 .map(task -> toView(task, true))
                 .toList();
@@ -175,6 +212,123 @@ public class ScheduledTaskApiService {
     public TaskView detail(String workspaceId, String userId, String taskId) {
         workspaceService.requireAccessibleWorkspace(workspaceId, userId);
         return toView(requireTask(workspaceId, taskId), false);
+    }
+
+    // ── task-163 聚合读面 / 会话读面 ────────────────────────────────────────
+
+    /**
+     * task-163 (DSD-1518 A): the automation tab's flat list across every workspace the caller
+     * belongs to. The visible set is <b>exactly</b> {@link WorkspaceMembershipService#workspaceRolesOf}
+     * — membership bindings are the only membership fact since V89, and an instance administrator is
+     * not an exception (nothing in this path branches on an instance role).
+     *
+     * <p>Rows are {@code origin='user'} only: V94:13-14 states the UI tab lists user-created rows, so
+     * the system participant-wake projections belong to the session face below, not here. An empty
+     * visible set is an empty page — never a widened read and never a 500.
+     */
+    public AggregatePage listAggregated(String userId, int size, String cursor) {
+        int safeSize = safeSize(size);
+        List<UUID> visible = visibleWorkspaceIds(userId);
+        if (visible.isEmpty()) {
+            return new AggregatePage(safeSize, false, null, List.of());
+        }
+        ScheduledTaskCursorCodec.Position position = decodeCursor(cursor,
+                ScheduledTaskCursorCodec.SCOPE_AGGREGATE, userId.trim());
+        Pageable limit = PageRequest.of(0, safeSize + 1);
+        List<ScheduledTask> rows = position == null
+                ? scheduledTaskRepository.findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(
+                        visible, ScheduledTask.ORIGIN_USER, limit)
+                : scheduledTaskRepository.findWorkspacesPageBefore(visible,
+                        ScheduledTask.ORIGIN_USER, position.lastCreatedAt(), position.lastId(), limit);
+        Paged paged = paged(ScheduledTaskCursorCodec.SCOPE_AGGREGATE, userId.trim(), safeSize, rows);
+        return new AggregatePage(safeSize, paged.hasMore(), paged.nextCursor(), paged.tasks());
+    }
+
+    /**
+     * task-163: the session-scoped face. The predicate is {@code target_session_id = this session} in
+     * <b>both</b> origins — a system wake projection is exactly what a session view should show, even
+     * though it never appears in the user-facing automation tab above.
+     *
+     * <p>The read gate mirrors {@code chat/TeamTaskController}: the caller must be able to read the
+     * session ({@link SessionService#requireReadable}), which answers 404 {@code SESSION_NOT_FOUND} for
+     * a non-owner, a missing row and an archived row alike (no existence oracle).
+     */
+    public SessionPage listBySession(String sessionId, String userId, String workspaceId, int size,
+                                     String cursor) {
+        Session session = sessionService.requireReadable(sessionId, userId, workspaceId);
+        int safeSize = safeSize(size);
+        String binding = session.getId().toString();
+        ScheduledTaskCursorCodec.Position position = decodeCursor(cursor,
+                ScheduledTaskCursorCodec.SCOPE_SESSION, binding);
+        Pageable limit = PageRequest.of(0, safeSize + 1);
+        List<ScheduledTask> rows = position == null
+                ? scheduledTaskRepository.findByTargetSessionIdOrderByCreatedAtDescIdDesc(
+                        session.getId(), limit)
+                : scheduledTaskRepository.findTargetSessionPageBefore(session.getId(),
+                        position.lastCreatedAt(), position.lastId(), limit);
+        Paged paged = paged(ScheduledTaskCursorCodec.SCOPE_SESSION, binding, safeSize, rows);
+        return new SessionPage(binding, safeSize, paged.hasMore(), paged.nextCursor(),
+                paged.tasks());
+    }
+
+    /** The aggregate face's visible set: this subject's workspace bindings, deduplicated, stable. */
+    private List<UUID> visibleWorkspaceIds(String userId) {
+        UUID subject;
+        try {
+            subject = UUID.fromString(userId.trim());
+        } catch (RuntimeException e) {
+            // A non-UUID principal holds no workspace binding; the honest answer is an empty set.
+            return List.of();
+        }
+        Set<UUID> ids = new LinkedHashSet<>();
+        for (WorkspaceMembershipService.WorkspaceRoleRef ref
+                : workspaceMembershipService.workspaceRolesOf(subject)) {
+            ids.add(ref.workspaceId());
+        }
+        return List.copyOf(ids);
+    }
+
+    private static int safeSize(int size) {
+        return Math.min(Math.max(size, 1), LIST_MAX_SIZE);
+    }
+
+    private ScheduledTaskCursorCodec.Position decodeCursor(String cursor, String scope,
+                                                           String binding) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        return cursorCodec.decode(cursor, scope, binding);
+    }
+
+    /** One page of a read face: the rows to send, whether more exist, and the cursor for them. */
+    private record Paged(List<AutomationRow> tasks, boolean hasMore, String nextCursor) {}
+
+    /**
+     * Cuts one keyset page. The query was asked for {@code size + 1} rows, so "there is a next page"
+     * needs no second count query — the extra row both answers that and anchors the cursor.
+     */
+    private Paged paged(String scope, String binding, int safeSize, List<ScheduledTask> rows) {
+        boolean hasMore = rows.size() > safeSize;
+        List<ScheduledTask> pageRows = hasMore ? rows.subList(0, safeSize) : rows;
+        List<AutomationRow> items = new ArrayList<>(pageRows.size());
+        for (ScheduledTask task : pageRows) {
+            items.add(new AutomationRow(
+                    task.getWorkspaceId() == null ? null : task.getWorkspaceId().toString(),
+                    task.getOrigin(),
+                    toView(task, PROMPT_SUMMARY_MAX)));
+        }
+        String nextCursor = null;
+        if (hasMore && !pageRows.isEmpty()) {
+            ScheduledTask last = pageRows.get(pageRows.size() - 1);
+            if (last.getCreatedAt() != null) {
+                // Every persisted row carries created_at; the null guard only protects a
+                // hand-assembled fixture, where stopping pagination beats emitting a bad cursor.
+                nextCursor = cursorCodec.encode(new ScheduledTaskCursorCodec.Position(
+                        ScheduledTaskCursorCodec.VERSION, scope, binding, last.getCreatedAt(),
+                        last.getId()));
+            }
+        }
+        return new Paged(items, hasMore, nextCursor);
     }
 
     // ── 创建 ──────────────────────────────────────────────────────────────
@@ -442,14 +596,17 @@ public class ScheduledTaskApiService {
     // ── 校验与仓储助手 ─────────────────────────────────────────────────────
 
     private void requireQuota(UUID workspaceUuid, UUID userUuid) {
-        long workspaceCount = scheduledTaskRepository.countByWorkspaceIdAndStatusIn(
-                workspaceUuid, ACTIVE_STATUSES);
+        // task-163: only rows someone CREATED consume quota — a system participant-wake projection
+        // (origin='system', V94) must never eat a user slot. See ScheduledTaskRepository.
+        long workspaceCount = scheduledTaskRepository.countByWorkspaceIdAndStatusInAndOrigin(
+                workspaceUuid, ACTIVE_STATUSES, ScheduledTask.ORIGIN_USER);
         if (workspaceCount >= WORKSPACE_LIMIT) {
             throw new CpApiException(HttpStatus.CONFLICT, "SCHEDULED_TASK_LIMIT",
                     "Workspace already has the maximum of " + WORKSPACE_LIMIT + " active scheduled tasks");
         }
-        long principalCount = scheduledTaskRepository.countByWorkspaceIdAndUserIdAndStatusIn(
-                workspaceUuid, userUuid, ACTIVE_STATUSES);
+        long principalCount =
+                scheduledTaskRepository.countByWorkspaceIdAndUserIdAndStatusInAndOrigin(
+                        workspaceUuid, userUuid, ACTIVE_STATUSES, ScheduledTask.ORIGIN_USER);
         if (principalCount >= PRINCIPAL_LIMIT) {
             throw new CpApiException(HttpStatus.CONFLICT, "SCHEDULED_TASK_PRINCIPAL_LIMIT",
                     "Principal already has the maximum of " + PRINCIPAL_LIMIT
@@ -601,9 +758,19 @@ public class ScheduledTaskApiService {
     // ── 读 DTO 投影 ───────────────────────────────────────────────────────
 
     private TaskView toView(ScheduledTask task, boolean truncatePrompt) {
+        return toView(task, truncatePrompt ? LIST_PROMPT_MAX : 0);
+    }
+
+    /**
+     * task-163: the same 17-field DTO with a caller-chosen prompt cap. {@code promptMax <= 0} keeps
+     * the full text (detail route); the workspace list caps at 120 and the automation read faces cap
+     * at {@link #PROMPT_SUMMARY_MAX} (80) — a flat list spanning workspaces is narrower than one
+     * workspace's table.
+     */
+    private TaskView toView(ScheduledTask task, int promptMax) {
         String prompt = task.getPrompt();
-        if (truncatePrompt && prompt != null && prompt.length() > LIST_PROMPT_MAX) {
-            prompt = prompt.substring(0, LIST_PROMPT_MAX);
+        if (promptMax > 0 && prompt != null && prompt.length() > promptMax) {
+            prompt = prompt.substring(0, promptMax);
         }
         return new TaskView(
                 task.getId().toString(),

@@ -242,6 +242,14 @@ anchor 是**呈现层投影**，MUST 由既有读面合成；MUST NOT 新增 SSE
 5. **投影契约**：列表投影 MUST 使用 `SessionSummary`（`required` 含
    `kind/spawnedFromSessionId/spawnedAt`）；单会话 `Session` MUST 声明同一 lineage（optional）。
    UI 投影 MUST 保留 OpenAPI `required` 字段；列表缺字段逐行丢弃 + WARN，单条读抛 typed error。
+6. **会话派生读面判权【task-163】**：`GET /api/v1/sessions/{sessionId}/scheduled-tasks` 是会话的只读投影，
+   读者谓词 MUST 复用条款 1 的内容读 primitive（`SessionReadAccess.requireReadable`）；非读者与不存在的
+   Session MUST 同为 `404 SESSION_NOT_FOUND`（沿用条款 3，不新增存在性 oracle）。该面 MUST 同时列出
+   `origin='user'` 与 `origin='system'` 行（系统投影行在 `scheduled_tasks` 里存在但不对应任何人的写面，
+   隐藏它会让 UI 看不到真实排期）；跨 Workspace 的自动化列表 `GET /api/v1/scheduled-tasks` 则 MUST 只列
+   调用者自己的 membership bindings（服务端求值，客户端不得传 scope，`instance:admin` 不例外）且只列
+   `origin='user'` 行（V94 `scheduled_tasks.origin` 的既有语义）。字段与错误形状以
+   `docs/api/openapi.yaml` 与 `docs/api/inventory.md` 为准。
 ## 承接与验证
 
 - Session 固定 Workspace 与跨 Session 延续：PLAN-0348。条款 1–2（固定绑定、不 rebind）已负向验证：CP 跨 Workspace 作用域拒绝（404）+ Agent 跨 workspace `fail-closed`；跨 Session 延续入口**未实施**（退 backlog）。证据见 PLAN-0348 `evidence/`。

@@ -15,6 +15,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
@@ -75,6 +76,7 @@ class ScheduledTaskApiServiceTest {
     private SessionParticipantRepository sessionParticipantRepository;
     private AuditLogger auditLogger;
     private WorkspaceEventManager eventManager;
+    private WorkspaceMembershipService membershipService;
     private ScheduledTaskApiService service;
 
     @BeforeEach
@@ -91,14 +93,21 @@ class ScheduledTaskApiServiceTest {
         auditLogger = Mockito.mock(AuditLogger.class);
         eventManager = Mockito.mock(WorkspaceEventManager.class);
         sessionParticipantRepository = Mockito.mock(SessionParticipantRepository.class);
+        membershipService = Mockito.mock(WorkspaceMembershipService.class);
         service = new ScheduledTaskApiService(repository, dispatcher, workspaceService, sessionService,
                 evaluator, grantRepository, agentPrincipalRepository, workspaceAgentRepository,
                 userRepository, auditLogger, eventManager, sessionParticipantRepository,
                 com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows(),
-                new ScheduledTaskContracts());
+                new ScheduledTaskContracts(), cursorCodec(), membershipService);
         when(repository.countByWorkspaceIdAndStatusIn(any(), anyCollection())).thenReturn(0L);
         when(repository.countByWorkspaceIdAndUserIdAndStatusIn(any(), any(), anyCollection()))
                 .thenReturn(0L);
+        // task-163: the quota now reads origin-aware counts; both sets are stubbed so a test that
+        // forgets one gets 0 (empty) rather than a Mockito null-unboxing failure.
+        when(repository.countByWorkspaceIdAndStatusInAndOrigin(any(), anyCollection(), anyString()))
+                .thenReturn(0L);
+        when(repository.countByWorkspaceIdAndUserIdAndStatusInAndOrigin(
+                any(), any(), anyCollection(), anyString())).thenReturn(0L);
         when(evaluator.union(anyCollection())).thenReturn(Set.of());
         when(userRepository.findById(any())).thenReturn(Optional.of(user()));
     }
@@ -154,7 +163,7 @@ class ScheduledTaskApiServiceTest {
     @Test
     void create_conflicts_at_workspace_limit() {
         allowAll();
-        when(repository.countByWorkspaceIdAndStatusIn(any(), anyCollection()))
+        when(repository.countByWorkspaceIdAndStatusInAndOrigin(any(), anyCollection(), anyString()))
                 .thenReturn((long) ScheduledTaskApiService.WORKSPACE_LIMIT);
         CpApiException error = assertThrows(CpApiException.class, () -> service.create(
                 WORKSPACE_ID, USER_ID, cronRequest("* * * * *", "UTC")));
@@ -165,7 +174,8 @@ class ScheduledTaskApiServiceTest {
     @Test
     void create_conflicts_at_principal_limit() {
         allowAll();
-        when(repository.countByWorkspaceIdAndUserIdAndStatusIn(any(), any(), anyCollection()))
+        when(repository.countByWorkspaceIdAndUserIdAndStatusInAndOrigin(
+                any(), any(), anyCollection(), anyString()))
                 .thenReturn((long) ScheduledTaskApiService.PRINCIPAL_LIMIT);
         CpApiException error = assertThrows(CpApiException.class, () -> service.create(
                 WORKSPACE_ID, USER_ID, cronRequest("* * * * *", "UTC")));
@@ -210,6 +220,12 @@ class ScheduledTaskApiServiceTest {
     }
 
     /** A service whose org-unit source grants one governance-or-not atom to the human actor. */
+    /** task-163: a real codec over a throwaway key — the wiring, not the crypto, is under test here. */
+    static ScheduledTaskCursorCodec cursorCodec() {
+        return new ScheduledTaskCursorCodec(
+                "test-scheduled-task-cursor-secret", new tools.jackson.databind.ObjectMapper());
+    }
+
     private ScheduledTaskApiService serviceWithOrgUnitGrant(String atom) {
         UUID unit = UUID.fromString("00000000-0000-4000-8000-0000000000a0");
         UUID role = UUID.fromString("22222222-2222-4222-8222-222222222221");
@@ -225,7 +241,8 @@ class ScheduledTaskApiServiceTest {
                 new GrantIntersectionEvaluator(), grantRepository, agentPrincipalRepository,
                 workspaceAgentRepository, userRepository, auditLogger, eventManager,
                 sessionParticipantRepository,
-                new OrgUnitGrants(new OrgUnitGrantExpander(), source), new ScheduledTaskContracts());
+                new OrgUnitGrants(new OrgUnitGrantExpander(), source), new ScheduledTaskContracts(),
+                cursorCodec(), membershipService);
     }
 
     // ── create 权限与 agent 边界 ───────────────────────────────────────────
@@ -269,7 +286,8 @@ class ScheduledTaskApiServiceTest {
     @Test
     void create_rejection_does_not_publish_workspace_event() {
         allowAll();
-        when(repository.countByWorkspaceIdAndStatusIn(any(), anyCollection())).thenReturn(50L);
+        when(repository.countByWorkspaceIdAndStatusInAndOrigin(any(), anyCollection(), anyString()))
+                .thenReturn(50L);
 
         CpApiException error = assertThrows(CpApiException.class, () -> service.create(
                 WORKSPACE_ID, USER_ID, delayRequest(Instant.now().plus(2, ChronoUnit.HOURS))));
@@ -531,7 +549,7 @@ class ScheduledTaskApiServiceTest {
         ScheduledTask task = scheduledTask(ScheduledTask.STATUS_SCHEDULED, UUID.fromString(USER_ID));
         task.setPrompt(longPrompt);
         when(repository.findById(task.getId())).thenReturn(Optional.of(task));
-        when(repository.findByWorkspaceIdOrderByCreatedAtDesc(any(), any()))
+        when(repository.findByWorkspaceIdAndOriginOrderByCreatedAtDescIdDesc(any(), any(), any()))
                 .thenReturn(java.util.List.of(task));
 
         ScheduledTaskApiService.ListPage page = service.list(WORKSPACE_ID, USER_ID, 0, 20);
@@ -602,6 +620,234 @@ class ScheduledTaskApiServiceTest {
         assertEquals("User One", degraded.createdBy().name());
     }
 
+
+    // ── task-163 聚合读面 / 会话读面 ──────────────────────────────────────
+
+    /**
+     * The aggregate face's visible set is exactly the subject's workspace bindings: a row of a
+     * workspace the caller is not bound to cannot appear, however many rows the repository would
+     * return. The mock here would happily hand back rows of both workspaces, so only the query
+     * argument proves the filter — and the query is asked for exactly the bound id.
+     */
+    @Test
+    void aggregate_visible_set_is_the_callers_workspace_bindings_only() {
+        UUID mine = UUID.fromString(WORKSPACE_ID);
+        UUID foreign = UUID.fromString("77777777-7777-4777-8777-777777777777");
+        when(membershipService.workspaceRolesOf(UUID.fromString(USER_ID)))
+                .thenReturn(List.of(new WorkspaceMembershipService.WorkspaceRoleRef(
+                        mine, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER)));
+        when(repository.findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(any(), any(), any()))
+                .thenReturn(List.of(taskIn(mine, ScheduledTask.ORIGIN_USER)));
+
+        ScheduledTaskApiService.AggregatePage page = service.listAggregated(USER_ID, 20, null);
+
+        ArgumentCaptor<java.util.Collection<UUID>> ids =
+                ArgumentCaptor.forClass(java.util.Collection.class);
+        ArgumentCaptor<String> origin = ArgumentCaptor.forClass(String.class);
+        verify(repository).findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(
+                ids.capture(), origin.capture(), any());
+        assertEquals(List.of(mine), List.copyOf(ids.getValue()),
+                "the aggregate face must query exactly the caller's bindings");
+        assertFalse(ids.getValue().contains(foreign), "an unbound workspace must never be queried");
+        assertEquals(ScheduledTask.ORIGIN_USER, origin.getValue(),
+                "the automation tab lists user-created rows only (V94:13-14)");
+        assertEquals(1, page.tasks().size());
+        assertEquals(WORKSPACE_ID, page.tasks().get(0).workspaceId());
+    }
+
+    /** A caller with no workspace binding gets an empty page, not a widened read and not a 500. */
+    @Test
+    void aggregate_without_any_binding_is_an_empty_page() {
+        when(membershipService.workspaceRolesOf(UUID.fromString(USER_ID))).thenReturn(List.of());
+
+        ScheduledTaskApiService.AggregatePage page = service.listAggregated(USER_ID, 20, null);
+
+        assertTrue(page.tasks().isEmpty());
+        assertFalse(page.hasMore());
+        assertNull(page.nextCursor());
+        verify(repository, never()).findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(
+                any(), any(), any());
+    }
+
+    /**
+     * task-163 卡面判据⑤: the automation faces summarise a prompt to 80 characters. The 17-field DTO
+     * is unchanged (same record, different cap), so a client sees one contract with a narrower list
+     * projection — the workspace list keeps its own 120.
+     */
+    @Test
+    void aggregate_summarises_prompt_to_eighty_characters() {
+        UUID mine = UUID.fromString(WORKSPACE_ID);
+        String longPrompt = "p".repeat(300);
+        ScheduledTask row = taskIn(mine, ScheduledTask.ORIGIN_USER);
+        row.setPrompt(longPrompt);
+        when(membershipService.workspaceRolesOf(UUID.fromString(USER_ID)))
+                .thenReturn(List.of(new WorkspaceMembershipService.WorkspaceRoleRef(
+                        mine, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER)));
+        when(repository.findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(any(), any(), any()))
+                .thenReturn(List.of(row));
+
+        ScheduledTaskApiService.AggregatePage page = service.listAggregated(USER_ID, 20, null);
+
+        assertEquals(ScheduledTaskApiService.PROMPT_SUMMARY_MAX,
+                page.tasks().get(0).task().prompt().length());
+        assertEquals(17, ScheduledTaskApiService.TaskView.class.getRecordComponents().length,
+                "the read DTO stays the frozen 17-field contract");
+    }
+
+    /**
+     * task-163 判据③: the session face matches {@code target_session_id} in BOTH origins — that is
+     * where a system participant-wake projection belongs. The gate is the session read gate, so a
+     * caller who may not read the session never reaches the query.
+     */
+    @Test
+    void session_face_includes_both_origins_and_gates_on_the_read_guard() {
+        UUID sessionId = UUID.fromString(SESSION_ID);
+        ScheduledTask projection = taskIn(UUID.fromString(WORKSPACE_ID), ScheduledTask.ORIGIN_SYSTEM);
+        projection.setTargetSessionId(sessionId);
+        when(sessionService.requireReadable(SESSION_ID, USER_ID, WORKSPACE_ID))
+                .thenReturn(sessionBoundTo(SESSION_ID));
+        when(repository.findByTargetSessionIdOrderByCreatedAtDescIdDesc(any(), any()))
+                .thenReturn(List.of(projection));
+
+        ScheduledTaskApiService.SessionPage page =
+                service.listBySession(SESSION_ID, USER_ID, WORKSPACE_ID, 20, null);
+
+        assertEquals(1, page.tasks().size());
+        assertEquals(ScheduledTask.ORIGIN_SYSTEM, page.tasks().get(0).origin(),
+                "the session face must not filter the system projection away");
+        assertEquals(SESSION_ID, page.sessionId());
+    }
+
+    /** A caller the session read gate refuses never sees a page (404, not an empty list). */
+    @Test
+    void session_face_propagates_the_read_gate_404() {
+        when(sessionService.requireReadable(SESSION_ID, OTHER_USER_ID, WORKSPACE_ID))
+                .thenThrow(new CpApiException(org.springframework.http.HttpStatus.NOT_FOUND,
+                        "SESSION_NOT_FOUND", "session not found"));
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.listBySession(SESSION_ID, OTHER_USER_ID, WORKSPACE_ID, 20, null));
+
+        assertEquals("SESSION_NOT_FOUND", error.getCode());
+        verify(repository, never()).findByTargetSessionIdOrderByCreatedAtDescIdDesc(any(), any());
+    }
+
+    /**
+     * Keyset wiring: {@code size + 1} rows are asked for, the page cuts back to {@code size}, and the
+     * cursor it returns is one this endpoint accepts on the second call — i.e. the round trip through
+     * the codec works and the position is the last row of page one.
+     */
+    @Test
+    void aggregate_paginates_with_a_cursor_the_same_endpoint_accepts() {
+        UUID mine = UUID.fromString(WORKSPACE_ID);
+        List<ScheduledTask> rows = List.of(taskAt(mine, 3), taskAt(mine, 2), taskAt(mine, 1));
+        when(membershipService.workspaceRolesOf(UUID.fromString(USER_ID)))
+                .thenReturn(List.of(new WorkspaceMembershipService.WorkspaceRoleRef(
+                        mine, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER)));
+        when(repository.findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(any(), any(), any()))
+                .thenReturn(rows);
+
+        ScheduledTaskApiService.AggregatePage first = service.listAggregated(USER_ID, 2, null);
+
+        assertTrue(first.hasMore());
+        assertEquals(2, first.tasks().size());
+        assertNotNull(first.nextCursor());
+
+        when(repository.findWorkspacesPageBefore(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(rows.get(2)));
+        ScheduledTaskApiService.AggregatePage second =
+                service.listAggregated(USER_ID, 2, first.nextCursor());
+
+        assertEquals(1, second.tasks().size());
+        assertFalse(second.hasMore());
+        ArgumentCaptor<UUID> lastId = ArgumentCaptor.forClass(UUID.class);
+        verify(repository).findWorkspacesPageBefore(any(), any(), any(), lastId.capture(), any());
+        assertEquals(rows.get(1).getId(), lastId.getValue(),
+                "the second page must resume strictly after the last row of the first");
+    }
+
+    /**
+     * A cursor is scoped: one issued by the aggregate face must not be replayable against the session
+     * face (different authorization question, so a crossed cursor would silently widen the read set).
+     */
+    @Test
+    void cursor_from_the_other_face_is_rejected_with_invalid_cursor() {
+        UUID mine = UUID.fromString(WORKSPACE_ID);
+        List<ScheduledTask> rows = List.of(taskAt(mine, 2), taskAt(mine, 1));
+        when(membershipService.workspaceRolesOf(UUID.fromString(USER_ID)))
+                .thenReturn(List.of(new WorkspaceMembershipService.WorkspaceRoleRef(
+                        mine, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER)));
+        when(repository.findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(any(), any(), any()))
+                .thenReturn(rows);
+        String aggregateCursor = service.listAggregated(USER_ID, 1, null).nextCursor();
+
+        when(sessionService.requireReadable(SESSION_ID, USER_ID, WORKSPACE_ID))
+                .thenReturn(sessionBoundTo(SESSION_ID));
+        CpApiException error = assertThrows(CpApiException.class, () -> service.listBySession(
+                SESSION_ID, USER_ID, WORKSPACE_ID, 20, aggregateCursor));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, error.getStatus());
+        assertEquals("INVALID_CURSOR", error.getCode());
+        verify(repository, never()).findTargetSessionPageBefore(any(), any(), any(), any());
+    }
+
+    /** A tampered cursor is refused before any query runs. */
+    @Test
+    void tampered_cursor_is_rejected_before_querying() {
+        UUID mine = UUID.fromString(WORKSPACE_ID);
+        when(membershipService.workspaceRolesOf(UUID.fromString(USER_ID)))
+                .thenReturn(List.of(new WorkspaceMembershipService.WorkspaceRoleRef(
+                        mine, com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER)));
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.listAggregated(USER_ID, 20, "not-a-cursor"));
+
+        assertEquals("INVALID_CURSOR", error.getCode());
+        verify(repository, never()).findByWorkspaceIdInAndOriginOrderByCreatedAtDescIdDesc(
+                any(), any(), any());
+    }
+
+    /**
+     * task-163 判据④ (Lead 加码): the quota must count only rows a principal CREATED. A system
+     * projection row is not the caller's, so it cannot push the workspace over its limit — but the
+     * user-origin count still does, which is the other half of the same assertion.
+     */
+    @Test
+    void quota_counts_user_origin_rows_only() {
+        allowAll();
+        when(repository.countByWorkspaceIdAndStatusInAndOrigin(any(), anyCollection(), anyString()))
+                .thenReturn(0L);
+        when(repository.countByWorkspaceIdAndUserIdAndStatusInAndOrigin(
+                any(), any(), anyCollection(), anyString())).thenReturn(0L);
+        when(repository.save(any())).thenAnswer(invocation -> {
+            ScheduledTask task = invocation.getArgument(0);
+            task.setId(UUID.randomUUID());
+            return task;
+        });
+
+        service.create(WORKSPACE_ID, USER_ID, delayRequest(Instant.now().plus(1, ChronoUnit.HOURS)));
+
+        ArgumentCaptor<String> origin = ArgumentCaptor.forClass(String.class);
+        verify(repository).countByWorkspaceIdAndStatusInAndOrigin(any(), anyCollection(),
+                origin.capture());
+        assertEquals(ScheduledTask.ORIGIN_USER, origin.getValue(),
+                "a system projection must not consume a user quota slot");
+    }
+
+    /** The workspace limit still bites on user-origin rows (positive half of the same predicate). */
+    @Test
+    void workspace_quota_still_rejects_at_the_limit_for_user_rows() {
+        allowAll();
+        when(repository.countByWorkspaceIdAndStatusInAndOrigin(any(), anyCollection(), eq(ScheduledTask.ORIGIN_USER)))
+                .thenReturn((long) ScheduledTaskApiService.WORKSPACE_LIMIT);
+
+        CpApiException error = assertThrows(CpApiException.class, () -> service.create(
+                WORKSPACE_ID, USER_ID, cronRequest("* * * * *", "UTC")));
+
+        assertEquals("SCHEDULED_TASK_LIMIT", error.getCode());
+        verify(repository, never()).save(any());
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────
 
     private void allowAll() {
@@ -619,8 +865,30 @@ class ScheduledTaskApiServiceTest {
                         : Optional.empty());
     }
 
-    private static Session sessionBoundTo(String principalId) {
+    /** task-163: a row of a given workspace/origin; every read-face test is about those two facts. */
+    private static ScheduledTask taskIn(UUID workspaceId, String origin) {
+        ScheduledTask task = scheduledTask(ScheduledTask.STATUS_SCHEDULED, UUID.fromString(USER_ID));
+        task.setWorkspaceId(workspaceId);
+        task.setOrigin(origin);
+        return task;
+    }
+
+    /**
+     * task-163 keyset: a row created {@code secondsAgo} in the past. {@code created_at} is written by
+     * {@code @PrePersist} and has no setter, so the fixture sets the field the same way the persistence
+     * provider would (ReflectionTestUtils is the established pattern in this test tree).
+     */
+    private static ScheduledTask taskAt(UUID workspaceId, int secondsAgo) {
+        ScheduledTask task = taskIn(workspaceId, ScheduledTask.ORIGIN_USER);
+        org.springframework.test.util.ReflectionTestUtils.setField(task, "createdAt",
+                Instant.now().minusSeconds(secondsAgo));
+        return task;
+    }
+
+    /** A session the read gate admits, carrying the id the face binds its cursor to. */
+    private static Session sessionBoundTo(String sessionId) {
         Session session = new Session();
+        session.setId(UUID.fromString(sessionId));
         return session;
     }
 

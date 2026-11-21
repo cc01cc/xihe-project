@@ -5449,6 +5449,65 @@ paths:
         - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
         - { in: path, name: jobId, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: 'Cancel outcome: jobId/status/changed (domain jobId)', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceJobCancelResult' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: 'WORKSPACE_NOT_FOUND (foreign or missing; no 403) or JOB_ARCHIVE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'JOB_CANCEL_UNCONFIRMED (termination unconfirmed; archive unchanged) or RUNTIME_UNAVAILABLE', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
+  /api/v1/scheduled-tasks:
+    get:
+      tags: [job]
+      operationId: listAggregatedScheduledTasks
+      summary: List scheduled tasks across the caller's Workspaces (task-163)
+      description: |
+        task-163 (PLAN-0489 follow-up): read-only aggregate over `scheduled_tasks` for the
+        automation tab of the global page. The visible set is **the caller's own Workspace
+        membership bindings** (`WorkspaceMembershipService.workspaceRolesOf`), resolved
+        server-side — the client cannot widen it by passing a scope, and `instance:admin` is
+        not an exception. Rows are newest-created first (keyset, `created_at DESC, id DESC`)
+        and list `origin='user'` rows only (V94:13-14): system wake projections belong to the
+        session face below, not to the user's automation list. Each row carries the owning
+        `workspaceId` and its `origin`, which the per-Workspace list could not express
+        (that page keys its rows by the path `workspaceId` only). `prompt` is summarised to
+        80 characters here (the workspace list keeps 120; the detail route returns the full
+        text). `createdBy` projects the creating principal (name + type `human`/`agent`).
+        Paging is opaque-cursor: pass back the `nextCursor` verbatim; a cursor issued by
+        another face (or tampered with) answers 400 `INVALID_CURSOR`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: size, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        '200':
+          description: Aggregate page of the caller's automation rows
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskAggregatePage' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'INVALID_CURSOR (not a cursor issued by this endpoint)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/sessions/{sessionId}/scheduled-tasks:
+    get:
+      tags: [job]
+      operationId: listSessionScheduledTasks
+      summary: List scheduled tasks targeting one Session (task-163)
+      description: |
+        task-163 (PLAN-0489 follow-up): the automation rows whose `target_session_id` is this
+        Session, newest-created first, keyset-paged like the aggregate face. **Both origins are
+        listed here**: a user-created `session_wakeup` row and the system participant-wake
+        projection that keeps an idle Session alive are both automations of this conversation,
+        so filtering by origin would hide half the tab. Access is the Session read gate
+        (`SessionReadAccess.requireReadable`: owner, or an invited enabled human participant);
+        a non-reader gets the same 404 `SESSION_NOT_FOUND` as a missing Session (no existence
+        oracle). `prompt` is summarised to 80 characters. A cursor from the aggregate face is
+        refused with 400 `INVALID_CURSOR` (the two faces answer different authorization
+        questions, so a crossed cursor would widen the read set).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: size, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        '200':
+          description: Session-scoped page of automation rows
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledTaskSessionPage' } } }
+        '400': { description: 'INVALID_REQUEST (sessionId not a UUID) or INVALID_CURSOR', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'SESSION_NOT_FOUND (missing, archived, or not readable by the caller)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/scheduled-tasks:
     get:
       tags: [job]
@@ -10097,6 +10156,30 @@ components:
         page: { type: integer, minimum: 0 }
         size: { type: integer, minimum: 1, maximum: 200 }
         tasks: { type: array, items: { $ref: '#/components/schemas/ScheduledTask' } }
+    ScheduledTaskAutomationRow:
+      type: object
+      required: [workspaceId, origin, task]
+      properties:
+        workspaceId: { type: [string, 'null'], format: uuid, description: Owning Workspace of the row; null only for a legacy row with no workspace (never for user-created rows). }
+        origin: { type: string, enum: [user, system], description: '"user" = a principal created this row; "system" = a CP projection (participant wake) maintains it. V94:13-14 separates them.' }
+        task: { $ref: '#/components/schemas/ScheduledTask' }
+    ScheduledTaskAggregatePage:
+      type: object
+      required: [size, hasMore, tasks]
+      properties:
+        size: { type: integer, minimum: 1, maximum: 200, description: Page size actually applied (clamped server-side). }
+        hasMore: { type: boolean, description: 'true when at least one more row follows the returned page.' }
+        nextCursor: { type: [string, 'null'], description: 'Opaque keyset cursor; pass it back verbatim as cursor. Null when hasMore is false.' }
+        tasks: { type: array, items: { $ref: '#/components/schemas/ScheduledTaskAutomationRow' } }
+    ScheduledTaskSessionPage:
+      type: object
+      required: [sessionId, size, hasMore, tasks]
+      properties:
+        sessionId: { type: string, format: uuid }
+        size: { type: integer, minimum: 1, maximum: 200 }
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, 'null'], description: Opaque keyset cursor scoped to this session face. }
+        tasks: { type: array, items: { $ref: '#/components/schemas/ScheduledTaskAutomationRow' } }
     ScheduledTaskDisposeResult:
       type: object
       required: [taskId, status, changed, task]
