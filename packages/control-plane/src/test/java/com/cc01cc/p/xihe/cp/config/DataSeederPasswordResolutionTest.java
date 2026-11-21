@@ -111,7 +111,7 @@ class DataSeederPasswordResolutionTest {
      * no Spring context, no database, no global state mutation (the appender is detached again).
      */
     private static DataSeeder bareSeeder() {
-        return new DataSeeder(null, null, null, null, null, null, null, "", false);
+        return new DataSeeder(null, null, null, null, null, null, null, null, "", false);
     }
     private static void assertNoValueLogged(boolean created) {
         Logger logger = (Logger) LoggerFactory.getLogger(DataSeeder.class);

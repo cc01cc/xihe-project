@@ -255,8 +255,12 @@ class ContextReuseBucketingTest {
         // （另一条独立兜底：commentMentioningOtherBaseDoesNotFlipBucketing）。
         // 已剥口径的边界：stripComments 只剥注释，不剥字符串字面量/文本块（"extends Abstract…"
         // 这样的字符串仍会被计入）；当前树无此形态，真要收紧须另立口径。
-        assertEquals(102, whitelist.size(), "per-class 白名单 = 102（89 task-31 后基线 + task-194 补登 12 个迁移/新建类 + 1 个 task-202 抽象基类）");
-        assertEquals(102, perClass, "per-class 类数必须等于白名单条目数（实读 102）");
+        // task-148（DSD-1513 首启内容组）：新增 config/FirstRunContentSeedIntegrationTest 与
+        // config/FirstRunContentSeedBackfillIntegrationTest，两者都自带 @DynamicPropertySource（本地
+        // direct-attach 探针桩，context key 唯一）⇒ 只能进 per-class ⇒ 白名单 102→104、合计 193→195。
+        // 判据（problems 空集 + 互斥穷尽 + 判定码严格相等）一字未改，只更新实测常量。
+        assertEquals(104, whitelist.size(), "per-class 白名单 = 104（task-194 后基线 102 + task-148 新增 2 类）");
+        assertEquals(104, perClass, "per-class 类数必须等于白名单条目数（实读 104）");
         // 2026-11-13（task-157）：9b356e6a9（PLAN-0774）新增 WorkspaceAgentCapSourceIntegrationTest（@SpringBootTest）
         // ⇒ 进 reusable 桶 +1：78→79，合计 155→156。只更新由实现推导出的常量，上面的判据
         // （problems 空集 + 白名单/复用桶互斥穷尽）一字未改；也未改成「从集合长度推导」——那样等于同义反复。
@@ -268,7 +272,7 @@ class ContextReuseBucketingTest {
         // 合计 173→174，reusable 不变（下面 :reusable 断言先通过，即是本轮实读）。三个数字都取自守卫读数：
         // 「白名单 = 88 ⇒ was 89」/「per-class 类数 = 88 ⇒ was 89」/「173 ⇒ was 174」。判据与派生逻辑一字未改。
         assertEquals(91, reusable, "reusable 桶 = 91（实测读数：85 task-23 后基线 + 本轮实读补差 6；其中 TeamTaskCreatePersistenceTest 为 task-188 新增）");
-        assertEquals(193, classes.size(), "193 = 102 per-class + 91 reusable（task-194 实测，含 task-202 的新抽象基类）");
+        assertEquals(195, classes.size(), "195 = 104 per-class + 91 reusable（task-148 实测，含 task-202 的新抽象基类）");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {

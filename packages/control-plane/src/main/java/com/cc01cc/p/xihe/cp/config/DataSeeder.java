@@ -84,12 +84,20 @@ public class DataSeeder implements CommandLineRunner {
      * unreachable.
      */
     private final boolean seedAdmin;
+    /**
+     * task-148 (DSD-1513): the first-run content group — one default workspace, one instance provider
+     * connection and three Agent subjects. It lives in its own component because it needs the running
+     * runtime (the direct-attach capability probe), the provider catalog and the org units, and
+     * because the onboarding path (task-183) must be able to trigger it without this class.
+     */
+    private final FirstRunContentSeeder contentSeeder;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
                       GrantDefaultService grantDefaultService,
                       com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
                       com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog,
                       OrgUnitReadRepository orgUnits, OrgUnitMemberRepository orgUnitMembers,
+                      FirstRunContentSeeder contentSeeder,
                       @Value("${spring.datasource.url:}") String datasourceUrl,
                       @Value("${cp.bootstrap.seed-admin:false}") boolean seedAdmin) {
         this.userRepository = userRepository;
@@ -103,6 +111,7 @@ public class DataSeeder implements CommandLineRunner {
                 && (datasourceUrl.startsWith("jdbc:postgresql:")
                 || datasourceUrl.startsWith("jdbc:tc:postgresql:"));
         this.seedAdmin = seedAdmin;
+        this.contentSeeder = contentSeeder;
     }
 
     static String seededAdminPassword() {
@@ -159,6 +168,11 @@ public class DataSeeder implements CommandLineRunner {
         // nothing if the subject is missing (an empty tree 404s the page that needs it) or if the
         // placement is not re-runnable (a restart must not duplicate or move it).
         placeSeedAdminInRootUnit(admin);
+        // DSD-1513 (task-148): the content group rides on the seeded admin, so it must stay inside
+        // this branch — an instance that is still uninitialised (seed-admin=false, the product
+        // default) is seeded by the onboarding path instead (task-183). The call is idempotent and
+        // gates itself on cp.bootstrap.seed-content.
+        contentSeeder.seed(admin);
     }
 
     /**

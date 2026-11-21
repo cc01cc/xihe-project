@@ -104,6 +104,8 @@ com.cc01cc.p.xihe.cp.config.ConfigBundleControllerTest		继承 AbstractIntegrati
 com.cc01cc.p.xihe.cp.config.ConfigControllerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
 com.cc01cc.p.xihe.cp.config.ConfigLockControllerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
 com.cc01cc.p.xihe.cp.config.ConfigWorkspaceDefaultLayerTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）
+com.cc01cc.p.xihe.cp.config.FirstRunContentSeedIntegrationTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一，指向本地 direct-attach 探针桩）；@AfterAll 停桩（task-148 新建）
+com.cc01cc.p.xihe.cp.config.FirstRunContentSeedBackfillIntegrationTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一，指向本地 direct-attach 探针桩）；@AfterAll 停桩（task-148 新建）
 com.cc01cc.p.xihe.cp.config.UserPreferenceLayoutContractTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-120 迁移 7311d4897 时未登记；task-194 补登）
 com.cc01cc.p.xihe.cp.controller.ExecutionModeAuthorityTest	dynamic-property-source,before-all	@DynamicPropertySource + @BeforeAll 静态探针（task-120 迁移 7311d4897 时未登记；task-194 补登）
 com.cc01cc.p.xihe.cp.policy.CapabilityAuthorityPipelineTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（task-118 迁移 a8a6f557c 时未登记；task-194 补登）

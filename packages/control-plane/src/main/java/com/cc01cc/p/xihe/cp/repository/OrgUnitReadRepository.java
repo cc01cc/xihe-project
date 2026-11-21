@@ -26,8 +26,15 @@ import java.util.UUID;
 @Repository
 public class OrgUnitReadRepository {
 
-    /** One unit row; {@code path} is the de-hyphenated ltree text (D-1116). */
-    public record UnitRow(UUID id, UUID parentId, String name, String path, int depth) {}
+    /**
+     * One unit row; {@code path} is the de-hyphenated ltree text (D-1116), and {@code nameKey} is the
+     * nullable i18n key a SEEDED unit carries (V181 / DSD-1520 D3c). The row keeps the stored
+     * {@code name} because that is the fallback for every unit without a key -- a user-created or
+     * user-renamed unit has {@code nameKey == null} and must render exactly its stored name. The
+     * translation itself does not happen here: a repository that picked a locale would be a second
+     * source of truth beside the request, so the service resolves it (OrgUnitReadService.nodes).
+     */
+    public record UnitRow(UUID id, UUID parentId, String name, String nameKey, String path, int depth) {}
 
     /** One membership row plus the unit's path, so callers can compare subtree membership. */
     public record MembershipRow(UUID orgUnitId, String path) {}
@@ -40,7 +47,8 @@ public class OrgUnitReadRepository {
      */
     public record MemberRow(UUID orgUnitId, String memberKind, UUID memberId, String displayName) {}
 
-    private static final String UNIT_COLUMNS = "id, parent_id, name, path::text AS path, depth";
+    private static final String UNIT_COLUMNS =
+            "id, parent_id, name, name_key, path::text AS path, depth";
 
     private final JdbcTemplate jdbc;
 
@@ -96,6 +104,8 @@ public class OrgUnitReadRepository {
      * granted.
      */
     public List<UnitRow> searchByName(String q, String scopePath) {
+        // Search matches the STORED name, not the seed key: the key is an internal label the caller
+        // never sees, so matching it would return rows whose visible name does not contain the term.
         String like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
         if (scopePath == null) {
             return jdbc.query(
@@ -157,6 +167,7 @@ public class OrgUnitReadRepository {
                 rs.getObject("id", UUID.class),
                 rs.getObject("parent_id", UUID.class),
                 rs.getString("name"),
+                rs.getString("name_key"),
                 rs.getString("path"),
                 rs.getInt("depth"));
     }

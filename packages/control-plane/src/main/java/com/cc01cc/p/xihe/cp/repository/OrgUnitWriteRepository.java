@@ -39,8 +39,20 @@ public class OrgUnitWriteRepository {
                 id, parentId, name, path, depth);
     }
 
+    /**
+     * Renames one unit. {@code name_key} is cleared <b>in the same statement</b> (DSD-1520 Q2): the
+     * read face translates a unit by its key, so a rename that left the seed key behind would be
+     * silently undone at render time — the operator would type a new name and keep seeing the old
+     * label. Clearing it is what makes "the key applies only while the name is the seeded one" a
+     * fact of the data rather than a convention two files have to agree on.
+     *
+     * <p>One statement, not two: a separate UPDATE would leave a window in which the row carries the
+     * new name and the old key, and any read inside that window shows the operator's rename as
+     * ineffective.</p>
+     */
     public void rename(UUID id, String name) {
-        jdbc.update("UPDATE org_units SET name = ?, updated_at = now() WHERE id = ?", name, id);
+        jdbc.update("UPDATE org_units SET name = ?, name_key = NULL, updated_at = now() WHERE id = ?",
+                name, id);
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.OrgUnitNameKeys;
 import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
@@ -52,25 +53,45 @@ public class OrgUnitReadService {
         this.access = access;
     }
 
-    /** Tree top, lazy-loaded children, or a name search inside the caller's visible subtree. */
+    /**
+     * Tree top, lazy-loaded children, or a name search inside the caller's visible subtree.
+     *
+     * <p>Two overloads rather than one three-argument method: the locale-less form is what the
+     * existing call sites use (and is not a lesser API — {@code null} locale resolves to the default
+     * exactly as an omitted header does), so adding the parameter must not turn every reader into
+     * an editor. The pair is deliberately adjacent so a future change to one is visible in the
+     * other's diff.</p>
+     */
     @Transactional(readOnly = true)
     public OrgUnitWireView.NodeList list(String parentIdValue, String q) {
+        return list(parentIdValue, q, null);
+    }
+
+    /**
+     * The same read face with an explicit locale for the seeded unit names (DSD-1520 D3c).
+     *
+     * <p>Only {@code name} is localized; ids, depth, hasChildren and the gate order are untouched.
+     * A unit with no {@code name_key} (every user-created and user-renamed unit) renders its stored
+     * name in every locale, so this parameter cannot change what a user named themselves.</p>
+     */
+    @Transactional(readOnly = true)
+    public OrgUnitWireView.NodeList list(String parentIdValue, String q, String locale) {
         OrgUnitAccess.Scope scope = access.resolve(READ_ATOM);
         if (q != null && !q.isBlank()) {
             List<OrgUnitReadRepository.UnitRow> hits = units.searchByName(q.trim(), scope.path());
-            return new OrgUnitWireView.NodeList(nodes(hits, scope));
+            return new OrgUnitWireView.NodeList(nodes(hits, scope, locale));
         }
         UUID parentId = OrgUnitAccess.parseUuid(parentIdValue, "INVALID_ORG_UNIT_ID");
         if (parentId == null) {
             List<OrgUnitReadRepository.UnitRow> top = scope.path() == null
                     ? units.findChildren(null)
                     : List.of(units.findUnit(scope.unitId()).orElseThrow(OrgUnitAccess::notFound));
-            return new OrgUnitWireView.NodeList(nodes(top, scope));
+            return new OrgUnitWireView.NodeList(nodes(top, scope, locale));
         }
         OrgUnitReadRepository.UnitRow parent = units.findUnit(parentId)
                 .orElseThrow(OrgUnitAccess::notFound);
         scope.requireWithin(parent.path());
-        return new OrgUnitWireView.NodeList(nodes(units.findChildren(parentId), scope));
+        return new OrgUnitWireView.NodeList(nodes(units.findChildren(parentId), scope, locale));
     }
 
     /** Members of one unit, or of its whole subtree when `includeDescendants` is true. */
@@ -94,7 +115,7 @@ public class OrgUnitReadService {
     }
 
     private List<OrgUnitWireView.Node> nodes(List<OrgUnitReadRepository.UnitRow> rows,
-                                            OrgUnitAccess.Scope scope) {
+                                            OrgUnitAccess.Scope scope, String locale) {
         if (rows.isEmpty()) {
             return List.of();
         }
@@ -102,7 +123,8 @@ public class OrgUnitReadService {
         return rows.stream()
                 .filter(row -> scope.path() == null || OrgUnitAccess.within(row.path(), scope.path()))
                 .map(row -> new OrgUnitWireView.Node(
-                        row.id(), row.name(), row.parentId(), row.depth(), parents.contains(row.id())))
+                        row.id(), OrgUnitNameKeys.label(row.nameKey(), row.name(), locale),
+                        row.parentId(), row.depth(), parents.contains(row.id())))
                 .toList();
     }
 

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.config.OrgUnitNameKeys;
 import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitRoleBindingService;
@@ -8,6 +9,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -66,12 +68,23 @@ public class OrgUnitController {
         this.roleBindingService = roleBindingService;
     }
 
+    /**
+     * The tree read face. {@code locale} localizes the <b>seeded</b> unit names only (DSD-1520 D3c);
+     * it comes from {@code ?locale=} when given, else the {@code Accept-Language} header, else
+     * {@code zh-CN} ({@link OrgUnitNameKeys#normalize}) — the same resolution the permission-atom
+     * labels use, so a client that already passes a locale for one surface does not need a second
+     * convention for this one. A unit without {@code name_key} renders its stored name verbatim in
+     * every locale.
+     */
     @PreAuthorize("isAuthenticated()")
     @GetMapping
     public OrgUnitWireView.NodeList list(
             @RequestParam(required = false) String parentId,
-            @RequestParam(required = false) String q) {
-        return readService.list(parentId, q);
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String locale,
+            @RequestHeader(name = "Accept-Language", required = false) String acceptLanguage) {
+        return readService.list(parentId, q,
+                OrgUnitNameKeys.normalize(locale != null ? locale : acceptLanguage));
     }
 
     @PreAuthorize("isAuthenticated()")
