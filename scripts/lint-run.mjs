@@ -23,7 +23,7 @@
 //   task-30（W2 窗内）＝ 把 [tasks.lint] 的 depends 整行换成 run = "node scripts/lint-run.mjs"。
 // ⇒ 本文件此刻是**零行为变化**的：没有任何入口调用它，改动不影响现行 mise run lint。
 //
-// 跑法：node scripts/lint-run.mjs                # 跑全 30 门（keep-going）+ 逐门 PASS/FAIL 表
+// 跑法：node scripts/lint-run.mjs                # 跑全 31 门（keep-going）+ 逐门 PASS/FAIL 表（门数随 LINT_GATES 变，以 --list 为准）
 //       node scripts/lint-run.mjs --selftest     # 纯函数自检（不碰真实门）
 //       node scripts/lint-run.mjs --list         # 只打印门清单（供与 mise.toml depends 对账）
 import { spawnSync } from "node:child_process";
