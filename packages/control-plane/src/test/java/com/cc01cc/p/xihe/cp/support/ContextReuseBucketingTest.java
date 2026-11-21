@@ -305,7 +305,8 @@ class ContextReuseBucketingTest {
         try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
             for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
-                Matcher extendsMatcher = Pattern.compile("extends\\s+(" + PER_CLASS_BASE + "|" + REUSABLE_BASE + ")\\b").matcher(source);
+                String scanned = stripComments(source);
+                Matcher extendsMatcher = Pattern.compile("extends\\s+(" + PER_CLASS_BASE + "|" + REUSABLE_BASE + ")\\b").matcher(scanned);
                 if (!extendsMatcher.find()) {
                     continue;
                 }
