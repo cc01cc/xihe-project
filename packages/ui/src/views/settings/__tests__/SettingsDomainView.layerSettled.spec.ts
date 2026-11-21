@@ -28,6 +28,9 @@ vi.mock("../../../composables/api", async () => {
 vi.mock("vue-router", () => ({
     useRoute: () => ({ query: {} }),
     useRouter: () => ({ replace: vi.fn<() => Promise<void>>(() => Promise.resolve()) }),
+    // task-190：域页经 useDraftLeaveGuard 注册两条路由守卫 —— 整模块 mock 会缺这两个导出。
+    onBeforeRouteLeave: () => undefined,
+    onBeforeRouteUpdate: () => undefined,
 }));
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({ hasInstanceAdminCapability: true }),

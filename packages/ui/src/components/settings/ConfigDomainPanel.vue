@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import type { ConfigDomain, ConfigKeyMeta, ConfigLayer } from "../../stores/config";
@@ -10,6 +10,7 @@ import { formatJsonText } from "./jsonFieldFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { isDraftKeyDirty, isMaskedFieldKey } from "./configDraft";
 import { Button } from "../ui/button";
 import { FieldControl, FieldError, FieldRoot } from "reka-ui";
 import { FieldDescription, FieldLabel } from "../ui/field";
@@ -70,6 +71,11 @@ const props = defineProps<{
 const emit = defineEmits<{
     save: [body: Record<string, string>];
     reset: [key: string];
+    /**
+     * task-190 J1：本域草稿是否含未保存编辑。设置页整页离开守卫的**数据源在这里**，
+     * 不在页面层 —— 草稿只存在于本组件（`editing`），页面层臆造第二个 dirty 判据必然与之漂移。
+     */
+    dirty: [dirty: boolean];
 }>();
 
 /**
@@ -102,7 +108,7 @@ const expanded = ref(true),
  * 必须拿它与草稿比，不能拿**新到的** entries 与草稿比：后者会把「服务端刚改了这个键」
  * 误判成「用户改了这个键」，于是永远不同步（正是 task-464 的缺陷形态）。
  */
-let syncedEntries: Record<string, string> = {};
+const syncedEntries = shallowRef<Record<string, string>>({});
 
 function entriesSnapshot(): Record<string, string> {
     const snap: Record<string, string> = {};
@@ -121,7 +127,7 @@ watch(
     (open) => {
         if (!open) return;
         editing.value = initDraft();
-        syncedEntries = entriesSnapshot();
+        syncedEntries.value = entriesSnapshot();
     },
     { immediate: true },
 );
@@ -150,14 +156,40 @@ watch(
         const merged: Record<string, string> = { ...editing.value };
         for (const field of props.schema) {
             const key = field.key;
-            const dirty = (editing.value[key] ?? "") !== (syncedEntries[key] ?? "");
+            const dirty = (editing.value[key] ?? "") !== (syncedEntries.value[key] ?? "");
             if (!dirty) merged[key] = next[key];
         }
         editing.value = merged;
-        syncedEntries = next;
+        syncedEntries.value = next;
     },
     { deep: true },
 );
+
+/**
+ * task-190 J1（Lead 2026-11-21「先建聚合 dirty 信号再挂守卫」）：**本域**草稿是否有未保存编辑。
+ *
+ * <p>这是设置页离开守卫的**唯一** dirty 源：判据与 task-464 的同步基准同源（草稿 vs `syncedEntries`），
+ * 不另立「用户动过哪些键」的第二份记录 —— 两份记录必然漂移。</p>
+ *
+ * <p>保存成功后会自然回落 false：`reloadLayer()` 把 entries 追平草稿 ⇒ 基准也追平 ⇒ 两侧相等。
+ * 因此这里**不监听保存事件清标志** —— 保存失败时那样会把未保存改动误报成已保存。</p>
+ *
+ * <p>锁定 / 只读键用户改不动，两侧恒等，不必在这里额外排除。</p>
+ */
+const draftDirty = computed(() => {
+    for (const field of props.schema) {
+        if (isDraftKeyDirty(field, editing.value[field.key], syncedEntries.value[field.key])) {
+            return true;
+        }
+    }
+    return false;
+});
+watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+/**
+ * task-190：面板卸载时把 dirty 归零 —— 父组件的聚合表按域记录，域卡被切走/移除后残留 true
+ * 会让离开守卫永远拦人。导航离开时路由守卫**先于**组件卸载执行，所以这条不会把该拦的离开放过。
+ */
+onBeforeUnmount(() => emit("dirty", false));
 
 function toggle() {
     expanded.value = !expanded.value;
@@ -491,14 +523,11 @@ onBeforeUnmount(() => {
     if (highlightTimer) clearTimeout(highlightTimer);
 });
 
-function isPasswordKey(key: string): boolean {
-    const normalized = key.toLowerCase();
-    return (
-        normalized.includes("apikey") ||
-        normalized.includes("secret") ||
-        normalized.includes("password")
-    );
-}
+/**
+ * 掩码渲染判据。task-190 起实现搬到 `configDraft.isMaskedFieldKey` —— 渲染与 dirty 判定
+ * 必须是**同一份**启发式，两处各写一份迟早对不上（渲染掩码而 dirty 判真，或反之）。
+ */
+const isPasswordKey = isMaskedFieldKey;
 
 /** Sentinel option value that flips a select into free-text mode (PLAN-0503). */
 const CUSTOM_OPTION = "__custom__";
@@ -646,7 +675,13 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
 </script>
 
 <template>
-    <div :data-testid="`config-domain-${domain}`" class="border rounded-lg mb-2 overflow-hidden">
+    <!-- task-190：`data-draft-dirty` 是「本域草稿是否有未保存编辑」的可断言出口（e2e / 单测读它，
+         不必去点保存按钮再比 toast）。 -->
+    <div
+        :data-testid="`config-domain-${domain}`"
+        :data-draft-dirty="draftDirty ? 'true' : 'false'"
+        class="border rounded-lg mb-2 overflow-hidden"
+    >
         <!--
             task-169 / F-10（用户审阅：「折叠卡只有一个远距箭头，页面像没加载」）：
             折叠态把箭头搬到标签**同行**（原先在 1080 px 卡的最右端，离标签 ~1000 px），

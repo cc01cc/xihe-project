@@ -23,7 +23,18 @@ import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Alert, AlertAction, AlertDescription } from "../../components/ui/alert";
+// task-190 J1：离开确认复用 vendor AlertDialog（与抽屉关闭确认同一族，不自造 modal）。
+import {
+    AlertDialog,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
 import { logger } from "../../lib/logger";
+import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
 
 /**
  * PLAN-0752 T1.2 / M1 骨架：一个域页（后续 M3 按批铺其余域，不在此一次铺开）。
@@ -251,6 +262,18 @@ watch(
 watch(projectionPending, (pending) => {
     if (!pending) void load();
 });
+
+/**
+ * task-190（J1/J2）：设置页**整页草稿**的离开守卫 —— 判定与监听全在 `useDraftLeaveGuard`，
+ * 这里只负责把 `ConfigLayerPanels` 聚合出的 dirty 标签推进去（页面层不自己推断草稿）。
+ */
+const {
+    draftLabels,
+    promptOpen: leavePromptOpen,
+    setDrafts,
+    keepEditing,
+    discardDrafts,
+} = useDraftLeaveGuard();
 </script>
 
 <template>
@@ -522,7 +545,42 @@ watch(projectionPending, (pending) => {
                 :readonly="panelReadonly"
                 @editable-count="editableCount = $event"
                 @editable-count-note="editableCountNote = $event"
+                @dirty-change="(payload) => setDrafts(payload.labels)"
             />
         </div>
+        <!--
+            task-190 J1：整页草稿的离开确认。与抽屉关闭确认（apd-unsaved-confirm）**同族不复用**：
+            那条守的是「关抽屉」，这条守的是「换页 / 切层 / 切域」；两处的动作集合也不同
+            （抽屉是 keep/close，这里是 keep/navigate）。复用同一个 testid 会让 e2e 分不清
+            拦下来的是哪一种离开。
+        -->
+        <AlertDialog
+            :open="leavePromptOpen"
+            @update:open="(value: boolean) => !value && keepEditing()"
+        >
+            <AlertDialogContent data-testid="settings-leave-confirm">
+                <AlertDialogHeader>
+                    <AlertDialogTitle>{{ t("settings.ia.leaveDraftTitle") }}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        {{ t("settings.ia.leaveDraftDesc", { domains: draftLabels.join(" / ") }) }}
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <!-- 「继续编辑」= 取消这次导航；AlertDialogCancel 自带关闭语义，这里显式调 keepEditing
+                         把挂起的导航 Promise 按「不放行」收口。 -->
+                    <AlertDialogCancel data-testid="settings-leave-keep" @click="keepEditing">
+                        {{ t("settings.ia.leaveDraftKeep") }}
+                    </AlertDialogCancel>
+                    <Button
+                        type="button"
+                        variant="destructive"
+                        data-testid="settings-leave-discard"
+                        @click="discardDrafts"
+                    >
+                        {{ t("settings.ia.leaveDraftDiscard") }}
+                    </Button>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </section>
 </template>

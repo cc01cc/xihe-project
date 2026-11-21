@@ -37,9 +37,18 @@ const state = {
 };
 
 // 域页要读 ?tab=（approval-policy 的域内页签，T3.3）⇒ 组件测试需要 router 的两个入口。
+// task-190：整页离开守卫经 useDraftLeaveGuard 注册 onBeforeRouteLeave/Update。这里把两者**收下来**，
+// 供「接线」用例直接调用守卫函数（真导航语义由 useDraftLeaveGuard.spec.ts 用真 router 覆盖）。
+const guardHooks = vi.hoisted(() => ({ leave: [] as Array<() => unknown> }));
 vi.mock("vue-router", () => ({
     useRoute: () => ({ query: state.routeQuery }),
     useRouter: () => ({ replace: state.replace }),
+    onBeforeRouteLeave: (guard: () => unknown) => {
+        guardHooks.leave.push(guard);
+    },
+    onBeforeRouteUpdate: (guard: () => unknown) => {
+        guardHooks.leave.push(guard);
+    },
 }));
 
 vi.mock("../../../stores/auth", () => ({
@@ -98,6 +107,11 @@ const messages = {
                 instanceReadonlyDetail: "写入需要 {atom}（{label}）。",
                 domainKeysCount: "本层存有 {count} 个配置值（含只读）",
                 domainEditableCount: "可编辑 {count} 项",
+                // task-190：整页草稿的离开确认四键（zh 侧真值同形）。
+                leaveDraftTitle: "有未保存的改动",
+                leaveDraftDesc: "以下配置域有未保存的改动：{domains}。离开这一页会丢弃这些修改。",
+                leaveDraftKeep: "继续编辑",
+                leaveDraftDiscard: "丢弃并离开",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail: "{domain} 不在用户层的可写域清单里",
@@ -693,5 +707,79 @@ describe("SettingsDomainView 加载态与页签键盘（task-510）", () => {
         const toolFaces = wrapper.get('[data-testid="settings-domain-tab-tool-faces"]');
         expect(document.activeElement).toBe(toolFaces.element);
         expect(toolFaces.attributes("aria-selected")).toBe("true");
+    });
+});
+
+/**
+ * task-190 J1：视图层的**接线**判据 —— 面板广播的 dirty 是否真的喂进守卫、确认框是否真的绑在
+ * 守卫的挂起决策上。真导航语义由 `useDraftLeaveGuard.spec.ts`（真 memory router）覆盖，这里只证明
+ * 「SettingsDomainView 把三者接对了」：dirty-change ⇒ draftLabels、守卫返回挂起 Promise ⇒ 弹窗、
+ * 点「丢弃」⇒ 该 Promise 解析为放行。少接一根线，用户就会在无提示的情况下丢草稿。
+ */
+describe("SettingsDomainView · 整页草稿离开确认（task-190）", () => {
+    beforeEach(() => {
+        guardHooks.leave.length = 0;
+    });
+
+    function panelsStub(wrapper: ReturnType<typeof mountView>) {
+        return wrapper.getComponent({ name: "ConfigLayerPanels" });
+    }
+
+    it("无草稿：守卫立即放行，不弹确认框", async () => {
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(guardHooks.leave.length, "leave 与 update 两条守卫都要注册").toBe(2);
+        await expect(guardHooks.leave[0]() as Promise<boolean>).resolves.toBe(true);
+        expect(document.body.querySelector('[data-testid="settings-leave-confirm"]')).toBeNull();
+        wrapper.unmount();
+    });
+
+    it("有草稿：守卫挂起并弹确认框（点名域），「丢弃并离开」放行且无保存动作", async () => {
+        const wrapper = mountView("instance", "logging", {}, { attach: true });
+        await flushPromises();
+        panelsStub(wrapper).vm.$emit("dirty-change", { count: 1, labels: ["日志"] });
+        await flushPromises();
+
+        const decision = guardHooks.leave[0]() as Promise<boolean>;
+        await flushPromises();
+        const dialog = document.body.querySelector('[data-testid="settings-leave-confirm"]');
+        expect(dialog, "有草稿时必须真的把确认框挂出来").not.toBeNull();
+        expect(dialog?.textContent).toContain("有未保存的改动");
+        expect(dialog?.textContent, "确认框要点名是哪个域").toContain("日志");
+
+        const loadsBefore = state.loadLayerDomains.mock.calls.length;
+        const discard = document.body.querySelector<HTMLElement>(
+            '[data-testid="settings-leave-discard"]',
+        );
+        expect(discard).not.toBeNull();
+        discard?.click();
+        await flushPromises();
+        await expect(decision, "丢弃 = 放行导航").resolves.toBe(true);
+        expect(document.body.querySelector('[data-testid="settings-leave-confirm"]')).toBeNull();
+        // 「丢弃」不许顺手走保存+重取：那会让「丢弃」实际把改动存下来再离开。判据取「配置读面调用次数没变」
+        // —— 保存成功后必然 reloadLayer()（再走一次 loadLayerDomains），一次没变说明这条路上没有保存。
+        expect(state.loadLayerDomains.mock.calls.length).toBe(loadsBefore);
+        wrapper.unmount();
+        document.body.innerHTML = "";
+    });
+
+    it("有草稿：「继续编辑」取消这次导航，确认框关闭", async () => {
+        const wrapper = mountView("instance", "logging", {}, { attach: true });
+        await flushPromises();
+        panelsStub(wrapper).vm.$emit("dirty-change", { count: 1, labels: ["日志"] });
+        await flushPromises();
+
+        const decision = guardHooks.leave[1]() as Promise<boolean>;
+        await flushPromises();
+        const keep = document.body.querySelector<HTMLElement>(
+            '[data-testid="settings-leave-keep"]',
+        );
+        expect(keep).not.toBeNull();
+        keep?.click();
+        await flushPromises();
+        await expect(decision, "继续编辑 = 取消导航").resolves.toBe(false);
+        expect(document.body.querySelector('[data-testid="settings-leave-confirm"]')).toBeNull();
+        wrapper.unmount();
+        document.body.innerHTML = "";
     });
 });

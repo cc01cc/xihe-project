@@ -76,6 +76,11 @@ const emit = defineEmits<{
      * 一起打碎（additive 才不伤）。
      */
     "editable-count-note": [note: string];
+    /**
+     * task-190 J1：本层**聚合后的**草稿状态（哪些域有未保存编辑）。页面层据此决定是否挂
+     * 路由离开守卫与 beforeunload —— 判据只在这里汇总，页面层不自己数面板。
+     */
+    "dirty-change": [payload: { count: number; labels: string[] }];
 }>();
 
 const settings = useSettingsStore();
@@ -661,6 +666,31 @@ const editableCountNote = computed<string>(() => {
         ? t("settings.ia.domainEditableCountNote", { rows })
         : t("settings.ia.domainEditableCountNoteEmpty");
 });
+/**
+ * task-190 J1：域级 dirty 的聚合表（域名 → 是否含未保存编辑）。
+ *
+ * <p>为什么聚合放在这里而不是页面层：面板只存在于本组件的 `v-for="domain in visibleDomains"` 里，
+ * 页面层拿不到面板实例；而本组件正是那个「知道当前有哪些域卡」的地方。</p>
+ *
+ * <p>记录的是**域名集合**而不是单个布尔：确认框要能点名「哪几域有改动」，只留一个 boolean
+ * 就只能说「有未保存的改动」，用户无法判断丢掉的是什么。</p>
+ */
+const draftDomains = ref<Record<string, true>>({});
+function onDomainDirty(domain: string, dirty: boolean) {
+    const next = { ...draftDomains.value };
+    if (dirty) next[domain] = true;
+    else delete next[domain];
+    draftDomains.value = next;
+}
+const dirtyDomainLabels = computed(() =>
+    visibleDomains.value.filter((domain) => draftDomains.value[domain]).map(domainLabel),
+);
+watch(
+    dirtyDomainLabels,
+    (labels) => emit("dirty-change", { count: labels.length, labels: [...labels] }),
+    { immediate: true, deep: true },
+);
+
 watchEffect(() => emit("editable-count", editableFieldCount.value));
 watchEffect(() => emit("editable-count-note", editableCountNote.value));
 
@@ -1021,6 +1051,7 @@ async function handleReset(domain: string, key: string) {
             :effective="effectiveFor(domain)"
             @save="handleSave(domain, $event)"
             @reset="handleReset(domain, $event)"
+            @dirty="onDomainDirty(domain, $event)"
         />
         <!-- task-285：`context-policy` 的第二个键（models）是「按模型覆盖」子表。
              它**不进** domainSchemas，所以该域页面上一个 json 字段都没有；未登记键由子表原样保留。 -->
