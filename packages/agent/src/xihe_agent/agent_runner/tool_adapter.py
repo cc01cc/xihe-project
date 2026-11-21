@@ -498,6 +498,7 @@ class LCToolAdapter(BaseTool):
         safe_schema = self._tool.spec.checkpoint_safe_schema
         if safe_schema is None:
             return super()._parse_input(tool_input, tool_call_id)
+        # String input is unreachable via the production graph: api_sender._call requires object args.
         try:
             safe_schema.project_input(tool_input)
         except (TypeError, ValueError):

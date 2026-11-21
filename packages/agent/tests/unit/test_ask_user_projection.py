@@ -55,3 +55,15 @@ async def test_framework_rejects_invalid_input_without_executing(extra):
     tool.execute.assert_not_awaited()
     assert published == []
     assert tool.coordinator.pending_by_run == {}
+
+
+@pytest.mark.asyncio
+async def test_framework_rejects_string_input_without_executing():
+    tool, adapter, published, _ready = _adapter()
+    tool.execute = AsyncMock()
+    result = await adapter.arun('{"question":"Choose?"}', tool_call_id="call-1")
+    assert result.status == "error"
+    assert result.content == "INVALID_TOOL_ARGUMENTS"
+    tool.execute.assert_not_awaited()
+    assert published == []
+    assert tool.coordinator.pending_by_run == {}
