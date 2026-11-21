@@ -682,6 +682,19 @@ function onDomainDirty(domain: string, dirty: boolean) {
     else delete next[domain];
     draftDomains.value = next;
 }
+/**
+ * task-26：五个**专用面板**（ProviderHub / AgentTemplatesPanel / ContextTemplatesPanel /
+ * EmbeddingSettingsPanel / ContextModelOverrides）的脏状态也走上面这张**同一张**聚合表。
+ *
+ * <p>为什么不另开一张表：离开守卫消费的是「哪几域有未保存编辑」这一个集合；两张表必然漂移，
+ * 而漂移的表现是「改了 A 面板却提示 B 域」或「两个都改了只提示一个」。</p>
+ *
+ * <p>只读层（工作区层继承/被锁）用户根本改不动 ⇒ 即使面板报了脏也不进表：否则守卫会拦住
+ * 一个用户无法保存的页面（拦了也没法解除）。</p>
+ */
+function onPanelDirty(domain: string, dirty: boolean) {
+    onDomainDirty(domain, dirty && !props.readonly);
+}
 const dirtyDomainLabels = computed(() =>
     visibleDomains.value.filter((domain) => draftDomains.value[domain]).map(domainLabel),
 );
@@ -973,6 +986,7 @@ async function handleReset(domain: string, key: string) {
                         :layer="llmProviderLayer"
                         :scope="layer === 'instance' ? 'INSTANCE' : 'USER'"
                         :readonly="readonly"
+                        @dirty="onPanelDirty(domain, $event)"
                     />
                     <ConfigSourceSummary
                         v-if="layer !== 'instance'"
@@ -990,6 +1004,7 @@ async function handleReset(domain: string, key: string) {
                 :saving="savingDomains[domain] || false"
                 :readonly="readonly"
                 @save="handleSave(domain, $event)"
+                @dirty="onPanelDirty(domain, $event)"
             />
             <ConfigSourceSummary
                 domain="agent-templates"
@@ -1006,6 +1021,7 @@ async function handleReset(domain: string, key: string) {
                 :readonly="readonly"
                 :submit="submitTemplates"
                 @save="handleSave(domain, $event)"
+                @dirty="onPanelDirty(domain, $event)"
             />
             <ConfigSourceSummary
                 domain="api-request-templates"
@@ -1023,6 +1039,7 @@ async function handleReset(domain: string, key: string) {
                 :layer="layer"
                 :saving="savingDomains[domain] || false"
                 :readonly="readonly"
+                @dirty="onPanelDirty(domain, $event)"
             />
             <ConfigSourceSummary
                 domain="embedding"
@@ -1061,6 +1078,7 @@ async function handleReset(domain: string, key: string) {
             :readonly="readonly"
             :saving="savingDomains[domain] || false"
             @save="handleSave(domain, $event)"
+            @dirty="onPanelDirty(domain, $event)"
         />
     </div>
 </template>

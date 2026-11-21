@@ -28,7 +28,11 @@ const props = defineProps<{
      */
     submit?: (entries: Record<string, string>) => Promise<void>;
 }>();
-const emit = defineEmits<{ save: [entries: Record<string, string>] }>();
+const emit = defineEmits<{
+    save: [entries: Record<string, string>];
+    /** task-26：接进设置页离开守卫的**同一套**域级 dirty 通道（父组件聚合表），不是第二套信号。 */
+    dirty: [dirty: boolean];
+}>();
 const { t } = useI18n();
 /**
  * api-request-templates 只有 instance/user 两层显式读（契约 readTemplateConfig 的 type），
@@ -210,6 +214,56 @@ async function refreshTemplatesFromServer() {
     );
     if (persisted) selected.value = { ...persisted };
 }
+
+/**
+ * 正文的**格式无关**形态：能解析就按 JSON 值比较，解析不了才退回原文比较。
+ *
+ * <p>为什么不直接比字符串：`JsonFieldEditor` 首次拿到值会**格式化**（缩进态）并 emit
+ * 回 v-model（`JsonFieldEditor.vue:89-99 seedOnce`）⇒ 一进面板 `bodySource` 就从
+ * 压缩态变成缩进态。按原文比较会把这次纯排版改动判成「未保存编辑」，
+ * 表现是刚打开模板页、什么都没动，离开就弹确认框。</p>
+ */
+function canonicalBody(text: string | undefined): string {
+    if (!text) return "";
+    try {
+        return JSON.stringify(JSON.parse(text));
+    } catch {
+        return text;
+    }
+}
+/** 参与"是否改过"比较的字段（`version` 单独比，因为它决定是「改这一版」还是「出新一版」）。 */
+function templateSignature(item: ApiRequestTemplate | null): string {
+    if (!item) return "";
+    return JSON.stringify([
+        item.id,
+        item.version,
+        item.name,
+        item.description,
+        item.apiTypeId,
+        item.apiTypeVersion,
+        canonicalBody(item.bodySource),
+        item.status,
+    ]);
+}
+/**
+ * task-26：本域草稿是否有未保存编辑。
+ *
+ * <p>判据 = 当前编辑副本 vs **同一 id+version 的已存版本**；`create()` 产出的新模板在已存列表里
+ * 找不到同 id 同 version ⇒ 判为脏（它确实还没落库）。`select()`(`:124`) 只是复制一份已存模板，
+ * 不改字段 ⇒ 选中本身不算改动，不会一进页面就弹离开确认。</p>
+ */
+const draftDirty = computed(() => {
+    const current = selected.value;
+    if (!current) return false;
+    const persisted = templates.value.find(
+        (item) => item.id === current.id && item.version === current.version,
+    );
+    if (!persisted) return true;
+    return templateSignature(persisted) !== templateSignature(current);
+});
+watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+// 卸载归零，理由同 ConfigDomainPanel.vue:188-192。
+onBeforeUnmount(() => emit("dirty", false));
 
 async function save(publish: boolean) {
     // 按钮在 busy 时已禁用；这里只兜并发重复点击，不再「静默无反应」。

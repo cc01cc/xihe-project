@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { ApiError } from "../../composables/api";
@@ -40,6 +40,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: "saved"): void;
+    /**
+     * task-26：接进设置页离开守卫的**同一套**域级 dirty 通道（父组件聚合表），不是第二套信号。
+     * 判据只有一处：本面板的选中连接 vs **已保存 profile 反解出来的连接**
+     * （`currentProfileConnectionId`，:77-86 用 providerId+connectionKey 反查，不另存基准）。
+     */
+    (e: "dirty", dirty: boolean): void;
 }>();
 
 const { t } = useI18n(),
@@ -118,6 +124,19 @@ async function load() {
         loading.value = false;
     }
 }
+
+/**
+ * task-26：本域草稿是否有未保存编辑。
+ *
+ * <p>为什么比较的是「连接 id」而不是整个 profile 对象：本面板唯一可编辑项就是连接选择
+ * （model/dimension 是 CP 的 pinned 契约，只读展示）。载入后 `load()` 会把
+ * `selectedConnectionId` 设成 `currentProfileConnectionId`（:114），所以「没动」恒为 false ——
+ * 不会出现一进页面就脏、离开就弹框的假拦截。</p>
+ */
+const draftDirty = computed(() => selectedConnectionId.value !== currentProfileConnectionId.value);
+watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+// 卸载归零，理由同 ConfigDomainPanel.vue:188-192。
+onBeforeUnmount(() => emit("dirty", false));
 
 async function handleSave() {
     const writeLayer = persistLayer.value;

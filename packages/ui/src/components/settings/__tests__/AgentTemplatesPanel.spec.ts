@@ -39,6 +39,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
         await wrapper.get('[data-testid="agent-role-name"]').setValue("Reader v2");
         await wrapper.get('[data-testid="agent-role-form"]').trigger("submit");
         const roleUpdate = wrapper.emitted("save")?.at(-1)?.[0] as Record<string, string>;
+
         expect(JSON.parse(roleUpdate.roles)).toMatchObject([
             {
                 id: role.id,
@@ -161,5 +162,69 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
         expect(wrapper.get('[role="alert"]').exists()).toBe(true);
         expect(wrapper.get('[data-testid="agent-role-save"]').attributes("disabled")).toBeDefined();
         expect(wrapper.emitted("save")).toBeUndefined();
+    });
+});
+
+describe("AgentTemplatesPanel dirty 上报（task-26）", () => {
+    beforeEach(() => {
+        setActivePinia(createPinia());
+    });
+
+    it("载入即不脏；改模板名才脏；改回原样回落", async () => {
+        const wrapper = mount(AgentTemplatesPanel, {
+            props: { entries: {} },
+            global: { plugins: [i18n] },
+        });
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+
+        await wrapper.get('[data-testid="agent-template-name"]').setValue("Reviewer");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+
+        await wrapper.get('[data-testid="agent-template-name"]').setValue("");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+    });
+
+    it("角色表单的权限集合顺序不同不算改动（比排序后的文本，不比原顺序）", async () => {
+        const wrapper = mount(AgentTemplatesPanel, {
+            props: {
+                entries: {
+                    roles: JSON.stringify([
+                        {
+                            id: "role-1",
+                            name: "Reader",
+                            permissions: [
+                                { actionClass: "read", resource: "src/*" },
+                                { actionClass: "write", resource: "docs/*" },
+                            ],
+                        },
+                    ]),
+                },
+            },
+            global: { plugins: [i18n] },
+        });
+        await wrapper.get('[data-testid="agent-role-edit-role-1"]').trigger("click");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        await wrapper.get('[data-testid="agent-role-name"]').setValue("Reader v2");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+        await wrapper.get('[data-testid="agent-role-name"]').setValue("Reader");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+    });
+
+    it("保存后父层回填 entries ⇒ 自然回落 false；卸载归零", async () => {
+        const wrapper = mount(AgentTemplatesPanel, {
+            props: { entries: {} },
+            global: { plugins: [i18n] },
+        });
+        await wrapper.get('[data-testid="agent-template-name"]').setValue("Reviewer");
+        await wrapper.get('[data-testid="agent-template-prompt"]').setValue("Be terse.");
+        await wrapper.get('[data-testid="agent-template-form"]').trigger("submit");
+        const saved = wrapper.emitted("save")?.at(-1)?.[0] as Record<string, string>;
+        await wrapper.setProps({ entries: saved, saving: true });
+        await wrapper.setProps({ saving: false });
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
     });
 });

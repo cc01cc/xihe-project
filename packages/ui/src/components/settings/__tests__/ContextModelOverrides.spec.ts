@@ -96,6 +96,45 @@ describe("ContextModelOverrides（按模型覆盖子表）", () => {
         expect(payload["gpt-4o"]?.legacyKnob).toBe("keep-me");
     });
 
+    /**
+     * task-26：按模型覆盖草稿的脏状态必须上报给离开守卫，且**一进页面不能就脏**。
+     * 判据基准：`composeModels(modelsRaw, rows)`（contextPolicyForm.ts:169-186）在「原样重放」时返回
+     * null（:186 用 stableStringify 相等即 null）；行名为空的行被 :178 continue 跳过 ⇒ 空行不算脏。
+     */
+    it("task-26：载入即不脏、改值才脏、改回原值回落", async () => {
+        const wrapper = mountPanel();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+
+        await wrapper.find("[data-testid='ctx-model-0-summaryTimeoutMs']").setValue("12345");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+
+        await wrapper.find("[data-testid='ctx-model-0-summaryTimeoutMs']").setValue("20000");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+    });
+
+    it("task-26：空表 + 新增空行都不算脏（只在真正填了行名/值时才脏）", async () => {
+        const wrapper = mountPanel("{}");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        await wrapper.find("[data-testid='ctx-models-add']").trigger("click");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        await wrapper.find("[data-testid='ctx-model-name-0']").setValue("gpt-4o-mini");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+    });
+
+    it("task-26：保存后父层回填新值 ⇒ 回落 false；卸载时归零", async () => {
+        const wrapper = mountPanel();
+        await wrapper.find("[data-testid='ctx-model-0-summaryTimeoutMs']").setValue("12345");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+        await wrapper.setProps({
+            modelsRaw: JSON.stringify({
+                "gpt-4o": { summaryTimeoutMs: 12345, legacyKnob: "keep-me" },
+            }),
+        });
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+    });
+
     it("空表给出空态文案而不是空白卡", () => {
         const wrapper = mountPanel("{}");
         expect(wrapper.findAll("[data-testid='ctx-model-row']")).toHaveLength(0);

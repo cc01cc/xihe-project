@@ -431,3 +431,45 @@ describe("API request template · task-152 面板下限", () => {
         wrapper.unmount();
     });
 });
+
+describe("ContextTemplatesPanel dirty 上报（task-26）", () => {
+    function mountTemplates(entries: Record<string, string>, layer: "user" | "instance" = "user") {
+        return mount(Panel, { props: { entries, saving: false, layer } });
+    }
+
+    it("选中已存模板不算改动；改名才脏；改回原值回落", async () => {
+        const wrapper = mountTemplates({ templates: JSON.stringify([builtin]) });
+        await flushPromises();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+
+        await wrapper.get('[data-testid="api-request-name"]').setValue("Renamed");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+
+        await wrapper.get('[data-testid="api-request-name"]').setValue(builtin.name);
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+    });
+
+    it("新建模板（尚未落库）即为脏；空 entries 下不脏", async () => {
+        const empty = mountTemplates({});
+        await flushPromises();
+        expect(empty.emitted("dirty")?.at(-1)).toEqual([false]);
+        empty.unmount();
+
+        const wrapper = mountTemplates({ templates: JSON.stringify([builtin]) });
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-new"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+        wrapper.unmount();
+    });
+
+    it("卸载时归零（父层切域后不会留一个幽灵脏域）", async () => {
+        const wrapper = mountTemplates({ templates: JSON.stringify([builtin]) });
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-name"]').setValue("Renamed");
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+        wrapper.unmount();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+    });
+});

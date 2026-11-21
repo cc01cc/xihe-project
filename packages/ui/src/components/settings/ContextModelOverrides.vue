@@ -10,7 +10,7 @@
  * `models.additionalProperties.properties`），**不手抄第二份**；未登记的键原样保留并在行内点名，
  * 因为「UI 不认识就丢掉」是静默丢数据。
  */
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
@@ -31,7 +31,11 @@ const props = defineProps<{
     saving?: boolean;
 }>();
 
-const emit = defineEmits<{ save: [payload: Record<string, string>] }>();
+const emit = defineEmits<{
+    save: [payload: Record<string, string>];
+    /** task-26：接进设置页离开守卫的**同一套**域级 dirty 通道（父组件聚合表），不是第二套信号。 */
+    dirty: [dirty: boolean];
+}>();
 
 const fields = modelOverrideFields();
 const rows = ref<ModelRowDraft[]>([]);
@@ -49,6 +53,20 @@ const nameProblem = computed<boolean>(() => {
     const names = rows.value.map((row) => row.name.trim());
     return names.some((name) => name === "") || new Set(names).size !== names.length;
 });
+
+/**
+ * task-26：**本域**草稿是否有未保存编辑。
+ *
+ * <p>判据直接复用 `composeModels` 的「有变化」谓词（`null` = 与原文深度相等）—— 不另写一套
+ * 逐键比较：保存走的正是这个函数，两者分家就会出现「界面说脏、点保存却不发请求」的假脏。</p>
+ *
+ * <p>行名为空的新行被 `composeModels` 跳过 ⇒ 不算改动（此时保存也本来什么都不写），
+ * 与「空行不算数据」一致；一旦落了模型名，草稿即成真改动。</p>
+ */
+const draftDirty = computed(() => composeModels(props.modelsRaw, rows.value) !== null);
+watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+// 卸载归零，理由同 ConfigDomainPanel.vue:188-192（域卡切走后残留 true 会让守卫永远拦人）。
+onBeforeUnmount(() => emit("dirty", false));
 
 function addRow(): void {
     rows.value.push({ name: "", values: {} });

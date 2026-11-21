@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
 import { api } from "../../composables/api";
@@ -35,6 +35,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     save: [body: Record<string, string>];
+    /** task-26：接进设置页离开守卫的**同一套**域级 dirty 通道（父组件聚合表），不是第二套信号。 */
+    dirty: [dirty: boolean];
 }>();
 
 const { t } = useI18n();
@@ -150,6 +152,47 @@ function parseArray<T>(value: string | undefined, isItem: (item: unknown) => ite
         return [];
     }
 }
+
+/** 角色权限的稳定文本：按 actionClass+resource 排序后再比，避免「同一个集合、顺序不同」被当成改动。 */
+function permissionsText(list: Permission[]): string {
+    return JSON.stringify(
+        [...list]
+            .map((item) => `${item.actionClass}\u0000${item.resource ?? ""}`)
+            .sort((a, b) => a.localeCompare(b)),
+    );
+}
+/** 模板表单相对**已存模板**的差异；新建态(`selectedTemplateId` 为空)基准全为空。 */
+function templateFormDirty(): boolean {
+    const base = templates.value.find((item) => item.id === selectedTemplateId.value);
+    return (
+        name.value.trim() !== (base?.name ?? "").trim() ||
+        description.value.trim() !== (base?.description ?? "").trim() ||
+        systemPrompt.value !== (base?.systemPrompt ?? "") ||
+        toolMode.value !== (base?.toolMode ?? "none") ||
+        provider.value !== (base?.provider ?? "") ||
+        model.value !== (base?.model ?? "") ||
+        roleId.value !== (base?.roleId ?? "")
+    );
+}
+/** 角色表单相对**已存角色**的差异；新建角色态基准 = 空名 + 空权限。 */
+function roleFormDirty(): boolean {
+    const base = roles.value.find((item) => item.id === editingRoleId.value);
+    return (
+        roleName.value.trim() !== (base?.name ?? "").trim() ||
+        permissionsText(rolePermissions.value) !== permissionsText(base?.permissions ?? [])
+    );
+}
+/**
+ * task-26：本域草稿是否有未保存编辑（模板表单 **或** 角色表单）。
+ *
+ * <p>基准取自 `props.entries` 解析出来的 `templates`/`roles`（:68-93 的 watch 同步），
+ * 而保存成功后父层回填 entries 会让两侧自然相等 ⇒ 不需要在保存回调里手动清标志
+ * （手动清会在保存失败时把未保存改动误报成已保存）。</p>
+ */
+const draftDirty = computed(() => templateFormDirty() || roleFormDirty());
+watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+// 卸载归零，理由同 ConfigDomainPanel.vue:188-192。
+onBeforeUnmount(() => emit("dirty", false));
 
 function persist(nextRoles: Role[], nextTemplates: Template[], message: string) {
     if (malformedConfig.value || pendingPayload.value) return;

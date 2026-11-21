@@ -4,7 +4,7 @@ import ConnectionResourceLimits from "./ConnectionResourceLimits.vue";
 // reka-based `Select` (see src/components/ui/VENDOR.md). Keep this pilot small:
 // the remaining native selects stay untouched until the L2 batch.
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
@@ -71,6 +71,14 @@ const props = withDefaults(
         readonly: false,
     },
 );
+
+const emit = defineEmits<{
+    /**
+     * task-26：接进设置页离开守卫的**同一套**域级 dirty 通道（`ConfigLayerPanels.onDomainDirty`
+     * 聚合表），不是第二套 dirty 状态。本组件只在「按模型采样参数草稿」存在时发 true。
+     */
+    dirty: [dirty: boolean];
+}>();
 
 const { t } = useI18n();
 
@@ -409,6 +417,42 @@ const storedModelParams = computed<Record<string, ModelSamplingParams>>(() => {
         return {};
     }
 });
+/**
+ * task-26：采样参数草稿与**已存值**的比较口径 —— 比较「解析后的数值」，不是输入框字符串。
+ *
+ * <p>为什么不比字符串：`saveModelParams` 存的是 `parse()` 出来的 number（:430-435），
+ * 存完回读 `storedModelParams` 得到 `5` 而草稿仍是 `"5.0"`/ `" 5 "` —— 比字符串会让保存后
+ * 依然「脏」，离开时无故弹确认框。用与保存**同一个** `parseParamValue` 归一，才谈得上
+ * 「保存后自然回落 false」。</p>
+ */
+function parseParamValue(raw: string | number): number | undefined {
+    const trimmed = String(raw).trim();
+    if (!trimmed) return undefined;
+    const value = Number(trimmed);
+    return Number.isFinite(value) ? value : undefined;
+}
+/**
+ * task-26：本域草稿是否有未保存编辑（只看已展开、有草稿的模型）。
+ *
+ * <p>基准层 = 当前设置层的 `llm-provider.modelParams` 整域 map（`storedModelParams` :403-411，
+ * 由 `layerLlmEntries.value.modelParams` 解析而来），不是内存里的历史拷贝 ——
+ * 所以切层、外部改配置后不会残留旧的「已存值」。</p>
+ */
+const draftDirty = computed(() =>
+    Object.entries(paramDrafts).some(([model, draft]) => {
+        if (!draft) return false;
+        const stored = storedModelParams.value[model] ?? {};
+        return (
+            parseParamValue(draft.maxTokens) !== stored.maxTokens ||
+            parseParamValue(draft.temperature) !== stored.temperature ||
+            parseParamValue(draft.timeout) !== stored.timeout
+        );
+    }),
+);
+watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
+// 卸载归零，理由同 ConfigDomainPanel.vue:188-192。
+onBeforeUnmount(() => emit("dirty", false));
+
 function toggleModel(model: string) {
     if (expandedModel.value === model) {
         expandedModel.value = null;
@@ -427,12 +471,7 @@ async function saveModelParams(model: string) {
     if (props.readonly || savingParams.value) return;
     const draft = paramDrafts[model];
     if (!draft) return;
-    const parse = (raw: string | number): number | undefined => {
-        const trimmed = String(raw).trim();
-        if (!trimmed) return undefined;
-        const value = Number(trimmed);
-        return Number.isFinite(value) ? value : undefined;
-    };
+    const parse = parseParamValue;
     savingParams.value = true;
     try {
         await configStore.putLayerConfig(currentLayer.value, "llm-provider", {

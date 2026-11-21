@@ -846,6 +846,62 @@ describe("ProviderHub 就地默认与每模型配置 (PLAN-0523 T3.2/T3.3)", () 
         wrapper.unmount();
     });
 
+    /**
+     * task-26：ProviderHub 必须把「每模型采样参数草稿 vs 已存值」接进离开守卫的同一套 dirty 信号。
+     * 口径要点三条（对应 Lead 收紧 ⑤）：
+     * ① 基准层 = 当前层的 `llm-provider.modelParams`（`storedModelParams`，ProviderHub.vue:411-419），不是内存历史拷贝；
+     * ② 比较「解析后的数值」而不是输入框字符串（ProviderHub.vue:428-433 `parseParamValue` 与保存同一份解析）；
+     * ③ 保存后必须自然回落 false —— 靠 `saveModelParams` :488 重取层配置驱动，不靠手动清标志。
+     */
+    it("task-26：采样参数草稿脏状态按数值比较，未改不脏 / 改数值才脏 / 保存后回落", async () => {
+        let storedParams = JSON.stringify({ "mimo-v2.5": { maxTokens: 4096 } });
+        vi.mocked(request).mockImplementation((input, init) => {
+            const url = typeof input === "string" ? input : input.url,
+                parsed = new URL(url, "http://localhost");
+            if (init?.method === "PUT") {
+                const body = JSON.parse(String(init.body ?? "{}")) as Record<string, string>;
+                if (typeof body.modelParams === "string") storedParams = body.modelParams;
+                return Promise.resolve({} as never);
+            }
+            if (parsed.pathname.endsWith("/models")) return Promise.resolve(catalog as never);
+            if (parsed.pathname.includes("/config/")) {
+                return Promise.resolve({
+                    domain: "llm-provider",
+                    entries: { profile: PROFILE_PRIMARY, modelParams: storedParams },
+                    envOverridden: {},
+                } as never);
+            }
+            return Promise.resolve({ types: [] } as never);
+        });
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [user, second] });
+        const wrapper = await mountHub();
+
+        await wrapper.get('[data-testid="provider-model-mimo-v2.5"] button').trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+
+        const maxTokensInput = () =>
+            wrapper.get(
+                `input[aria-label="${i18n.global.t("settings.providerHub.maxTokensAria", {
+                    model: "mimo-v2.5",
+                })}"]`,
+            );
+        // 同值重输（字符串 "4096" vs 已存 number 4096）不算脏 —— 比字符串会在这里假脏。
+        await maxTokensInput().setValue("4096");
+        await flushPromises();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+
+        await maxTokensInput().setValue("6000");
+        await flushPromises();
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([true]);
+
+        await wrapper.get('[data-testid="provider-model-params-save-mimo-v2.5"]').trigger("click");
+        await flushPromises();
+        expect(JSON.parse(storedParams)["mimo-v2.5"].maxTokens).toBe(6000);
+        expect(wrapper.emitted("dirty")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+    });
+
     it("shows model details with catalog metadata and 未知 fallbacks (T3.3)", async () => {
         mockHubFetch({ profile: PROFILE_PRIMARY });
         vi.mocked(listProviderConnections).mockResolvedValue({ connections: [user] });
