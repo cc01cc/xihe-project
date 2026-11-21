@@ -3072,7 +3072,9 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
         isAuthEndpoint =
             path === "/auth/login" ||
             path === "/auth/register" ||
-            path === "/auth/bootstrap-status",
+            path === "/auth/bootstrap-status" ||
+            path === "/bootstrap/first-run-account" ||
+            path === "/bootstrap/first-run-account/rewrite",
         // PLAN-0498 T3.1: a wrong reveal step-up password is a 401 domain outcome,
         // not session expiry — it must stay inline in the reveal dialog.
         isStepUpEndpoint = /^\/credentials\/[^/]+\/reveal$/.test(path);
@@ -3547,7 +3549,30 @@ function normalizeSessionListPayload(payload: unknown): SessionListResponse {
         workspace: normalizeWorkspace(root?.workspace),
     };
 }
+export interface FirstRunAccountDisclosure {
+    state: "generated-secret" | "operator-provided";
+    account: { email: string; username: string };
+    secret?: { value?: string; issuedAt?: string } | null;
+    source?: "env" | null;
+}
+
 export const api = {
+    discloseFirstRunAccount() {
+        return request<FirstRunAccountDisclosure>("/bootstrap/first-run-account", {
+            method: "POST",
+            cache: "no-store",
+        });
+    },
+    rewriteFirstRunAccount(password: string, username?: string) {
+        return request<{ account: { email: string; username: string }; secretRevoked: boolean }>(
+            "/bootstrap/first-run-account/rewrite",
+            {
+                method: "POST",
+                cache: "no-store",
+                body: JSON.stringify({ password, ...(username ? { username } : {}) }),
+            },
+        );
+    },
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
         return request<{

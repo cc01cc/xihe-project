@@ -23,7 +23,11 @@ vi.mock("vue-router", () => ({
 vi.mock("vue-i18n", () => ({
     useI18n: () => ({
         t: (key: string, params?: Record<string, unknown>) =>
-            params ? `${key} ${JSON.stringify(params)}` : key,
+            key === "onboarding.firstRunEntry"
+                ? "查看首启管理员账号"
+                : params
+                  ? `${key} ${JSON.stringify(params)}`
+                  : key,
     }),
 }));
 

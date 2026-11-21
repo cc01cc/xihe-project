@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { Sun } from "@lucide/vue";
+import FirstRunAccount from "./FirstRunAccount.vue";
 
 const { t } = useI18n(),
     router = useRouter(),
@@ -65,11 +66,22 @@ async function handleSubmit() {
         <div class="w-full max-w-md p-8 bg-background rounded-xl shadow-sm border">
             <div class="text-center mb-6">
                 <div class="mb-2 text-3xl"><Sun class="mx-auto size-8" aria-hidden="true" /></div>
-                <h1 class="text-2xl font-bold">{{ t("onboarding.title") }}</h1>
-                <p class="text-sm text-muted-foreground mt-1">{{ t("onboarding.hint") }}</p>
+                <h1 class="text-2xl font-bold">
+                    {{
+                        t(
+                            route.query.firstRun === "1"
+                                ? "onboarding.firstRunTitle"
+                                : "onboarding.title",
+                        )
+                    }}
+                </h1>
+                <p v-if="route.query.firstRun !== '1'" class="text-sm text-muted-foreground mt-1">
+                    {{ t("onboarding.hint") }}
+                </p>
             </div>
 
-            <form class="space-y-4" @submit.prevent="handleSubmit">
+            <FirstRunAccount v-if="route.query.firstRun === '1'" />
+            <form v-else class="space-y-4" @submit.prevent="handleSubmit">
                 <div>
                     <label class="block text-sm font-medium mb-1" for="email">{{
                         t("onboarding.email")

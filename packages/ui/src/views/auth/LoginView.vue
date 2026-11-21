@@ -146,6 +146,13 @@ async function handleSubmit() {
                         t("login.register")
                     }}</router-link>
                 </p>
+                <p class="text-sm text-center">
+                    <router-link
+                        :to="{ name: 'onboarding', query: { firstRun: '1' } }"
+                        class="text-primary hover:underline"
+                        >{{ t("onboarding.firstRunEntry") }}</router-link
+                    >
+                </p>
             </form>
         </div>
     </main>

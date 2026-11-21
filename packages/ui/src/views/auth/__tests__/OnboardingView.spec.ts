@@ -2,25 +2,32 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import OnboardingView from "../OnboardingView.vue";
 
-const { authMock, pushMock } = vi.hoisted(() => ({
+const { authMock, pushMock, routeMock } = vi.hoisted(() => ({
     authMock: {
         register: vi.fn<(email: string, password: string, name: string) => Promise<boolean>>(),
         error: null as string | null,
     },
     pushMock: vi.fn<(location: unknown) => Promise<unknown>>(),
+    routeMock: { query: {} as Record<string, string> },
 }));
 
 vi.mock("../../../stores/auth", () => ({ useAuthStore: () => authMock }));
 vi.mock("vue-router", () => ({
     useRouter: () => ({ push: pushMock }),
-    useRoute: () => ({ query: {} }),
+    useRoute: () => routeMock,
 }));
 vi.mock("vue-i18n", () => ({
-    useI18n: () => ({ t: (key: string) => key }),
+    useI18n: () => ({
+        t: (key: string) => (key === "onboarding.firstRunTitle" ? "首启管理员账号" : key),
+    }),
 }));
 
 function mountView() {
-    return mount(OnboardingView, { global: { stubs: { Sun: true } } });
+    return mount(OnboardingView, {
+        global: {
+            stubs: { Sun: true, FirstRunAccount: { template: "<div data-testid='first-run' />" } },
+        },
+    });
 }
 
 async function settle() {
@@ -33,9 +40,16 @@ beforeEach(() => {
     authMock.register.mockResolvedValue(true);
     authMock.error = null;
     pushMock.mockReset();
+    routeMock.query = {};
 });
 
 describe("OnboardingView validation (BL-151)", () => {
+    it("uses the existing onboarding shell for the first-run entry", () => {
+        routeMock.query = { firstRun: "1" };
+        const wrapper = mountView();
+        expect(wrapper.find('[data-testid="first-run"]').exists()).toBe(true);
+        expect(wrapper.find("#email").exists()).toBe(false);
+    });
     it("uses a native email input", async () => {
         const wrapper = mountView();
         await settle();
