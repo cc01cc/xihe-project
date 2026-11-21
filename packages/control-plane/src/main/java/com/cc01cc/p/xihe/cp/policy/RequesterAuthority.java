@@ -166,10 +166,11 @@ public class RequesterAuthority {
                     grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
                             subjectId, GrantSources.EVALUATION_SOURCES, workspaceId)));
         } catch (RuntimeException e) {
-            // Fail closed: an unreadable/!canonical grant row must never widen authority.
-            logger.error("[POLICY] event=action_atom_evaluation_failed subject={} workspaceId={}"
-                    + " failureType={}", subjectId, workspaceId, e.getClass().getSimpleName(), e);
-            return Set.of();
+            // task-213 (fail-closed, Lead ruling A): an unreadable grant store must never widen
+            // authority, and it must not masquerade as "the subject holds nothing" either - a 403
+            // would blame the caller for a server-side failure. Refuse with a 500 that names the
+            // failure type so the real cause stays visible in the response and the log.
+            throw evaluationUnavailable("action_atom_evaluation_failed", subjectId, workspaceId, e);
         }
         Set<String> names = new LinkedHashSet<>();
         atoms.forEach(atom -> names.add(atom.actionClass()));
@@ -183,8 +184,29 @@ public class RequesterAuthority {
      * of an opaque "allowed".
      */
     public Set<String> atomSources(UUID subjectId, String actionClass, UUID workspaceId) {
+        // Kept as the degrade-by-default view (Lead ruling A: the audit-only faces may not start
+        // failing writes). Callers that must tell "no source" from "could not look" use
+        // {@link #atomSourceLookup}, which carries the three-state status instead of flattening it.
+        return atomSourceLookup(subjectId, actionClass, workspaceId).sources();
+    }
+
+    /**
+     * task-213: the three-state atom-source lookup. {@code atomSources} used to fold "the grant
+     * store could not be read" into the same empty set that means "the subject holds the atom from
+     * no source", so a missing table/column turned into a {@code source=none} deny audit line and a
+     * 403 escalation refusal. This variant keeps the degrade (an audit face must not fail a write)
+     * but the caller can now see <b>which</b> of the three situations it got:
+     *
+     * <ul>
+     *   <li>{@link AtomSourceStatus#PRESENT} — rows carried the atom; {@code sources} is non-empty;</li>
+     *   <li>{@link AtomSourceStatus#NONE} — the lookup succeeded and no row carried it;</li>
+     *   <li>{@link AtomSourceStatus#UNAVAILABLE} — the lookup <b>failed</b>; {@code failureType} holds
+     *       the exception simple name and {@code sources} is empty.</li>
+     * </ul>
+     */
+    public AtomSourceLookup atomSourceLookup(UUID subjectId, String actionClass, UUID workspaceId) {
         if (subjectId == null || actionClass == null) {
-            return Set.of();
+            return AtomSourceLookup.none();
         }
         LinkedHashSet<String> sources = new LinkedHashSet<>();
         try {
@@ -202,11 +224,11 @@ public class RequesterAuthority {
                 }
             }
         } catch (RuntimeException e) {
-            logger.warn("[POLICY] event=workspace_atom_source_lookup_failed subject={} atom={} failureType={}",
+            logger.warn("[POLICY] event=workspace_atom_source_lookup_failed subject={} atom={} failureType={} status=unavailable",
                     subjectId, actionClass, e.getClass().getSimpleName());
-            return Set.of();
+            return AtomSourceLookup.unavailable(e.getClass().getSimpleName());
         }
-        return Set.copyOf(sources);
+        return sources.isEmpty() ? AtomSourceLookup.none() : AtomSourceLookup.present(Set.copyOf(sources));
     }
 
     /**
@@ -222,13 +244,14 @@ public class RequesterAuthority {
      */
     public void logActionAtomDenied(String atom, UUID subjectId, UUID workspaceId) {
         String catalogAtom = PermissionAtomCatalog.allAtomNames().contains(atom) ? atom : "-";
-        Set<String> sources = atomSources(subjectId, catalogAtom, workspaceId);
-        // Deterministic log output: atomSources is an unordered Set.copyOf view, sort before join.
-        String joined = sources.stream().sorted().collect(java.util.stream.Collectors.joining(","));
+        AtomSourceLookup lookup = atomSourceLookup(subjectId, catalogAtom, workspaceId);
+        // Deterministic log output: atomSourceLookup's set is an unordered Set.copyOf view, sort first.
+        String joined = lookup.sources().stream().sorted()
+                .collect(java.util.stream.Collectors.joining(","));
         logger.warn("[POLICY] event=action_atom_denied atom={} subject={} workspaceId={} source={}",
                 catalogAtom, subjectId == null ? "-" : subjectId,
                 workspaceId == null ? "-" : workspaceId,
-                sources.isEmpty() ? "none" : joined);
+                lookup.sourceField(joined));
     }
 
     /** Canonical action/resource rows at the evaluator's exact scope, retaining resource bounds. */
@@ -242,9 +265,10 @@ public class RequesterAuthority {
                     grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
                             subjectId, GrantSources.EVALUATION_SOURCES, workspaceId)));
         } catch (RuntimeException e) {
-            logger.error("[POLICY] event=tool_permission_evaluation_failed subject={} workspaceId={}"
-                    + " failureType={}", subjectId, workspaceId, e.getClass().getSimpleName(), e);
-            return Set.of();
+            // task-213 (Lead ruling A): this was the swallow that made task-202's 27 reds look like
+            // "the caller holds nothing" at GrantabilityGuard (403 "Cannot grant atoms the caller does
+            // not hold"). It now surfaces as an identifiable 500 instead of a permissions verdict.
+            throw evaluationUnavailable("tool_permission_evaluation_failed", subjectId, workspaceId, e);
         }
     }
 
@@ -326,6 +350,65 @@ public class RequesterAuthority {
     /** The caller holds {@code MANAGE_ROLES}; used by unit tests and callers outside SpEL. */
     public boolean canManageRoles() {
         return holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_ROLES);
+    }
+
+    /**
+     * task-213: the stable problem code for "the authorization store could not be read". The
+     * decision is fail-closed <b>and</b> identifiable: 500 (a server-side failure, never the
+     * caller's permissions) with a code that says so, instead of the old empty-set ⇒ 403 disguise.
+     */
+    public static final String POLICY_EVALUATION_FAILED = "POLICY_EVALUATION_FAILED";
+
+    /**
+     * task-213: build the {@code 500 POLICY_EVALUATION_FAILED} refusal for an unreadable grant
+     * store. One shape for every evaluation read so the wire response, the problem code and the
+     * log line cannot drift apart ({@code event=…} keeps each site distinguishable).
+     */
+    private CpApiException evaluationUnavailable(String event, UUID subjectId, UUID workspaceId,
+                                                 RuntimeException cause) {
+        logger.error("[POLICY] event={} subject={} workspaceId={} failureType={} decision=fail-closed status=500",
+                event, subjectId, workspaceId, cause.getClass().getSimpleName(), cause);
+        return new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR, POLICY_EVALUATION_FAILED,
+                "Authorization could not be evaluated (" + cause.getClass().getSimpleName()
+                        + "); the request is refused (fail-closed)", cause);
+    }
+
+    /** task-213: which of the three situations an atom-source lookup ended in. */
+    public enum AtomSourceStatus {
+        /** Rows carried the atom; the source set is non-empty. */
+        PRESENT,
+        /** The lookup succeeded and no row carried the atom. */
+        NONE,
+        /** The lookup failed; the degrade returned an empty set that must not be read as "none". */
+        UNAVAILABLE
+    }
+
+    /**
+     * task-213: the three-state result of {@link #atomSourceLookup}. {@code failureType} is the
+     * exception simple name when {@link AtomSourceStatus#UNAVAILABLE}, otherwise {@code "-"}.
+     */
+    public record AtomSourceLookup(Set<String> sources, AtomSourceStatus status, String failureType) {
+
+        static AtomSourceLookup present(Set<String> sources) {
+            return new AtomSourceLookup(sources, AtomSourceStatus.PRESENT, "-");
+        }
+
+        static AtomSourceLookup none() {
+            return new AtomSourceLookup(Set.of(), AtomSourceStatus.NONE, "-");
+        }
+
+        static AtomSourceLookup unavailable(String failureType) {
+            return new AtomSourceLookup(Set.of(), AtomSourceStatus.UNAVAILABLE, failureType);
+        }
+
+        /** The deny-log {@code source=} field: {@code none} / {@code unavailable} / {@code a,b}. */
+        public String sourceField(String joinedSources) {
+            return switch (status) {
+                case UNAVAILABLE -> "unavailable";
+                case NONE -> "none";
+                case PRESENT -> joinedSources;
+            };
+        }
     }
 
     private static UUID parse(String value) {

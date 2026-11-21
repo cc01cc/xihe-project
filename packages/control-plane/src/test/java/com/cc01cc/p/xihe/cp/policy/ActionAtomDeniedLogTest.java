@@ -101,14 +101,17 @@ class ActionAtomDeniedLogTest {
     }
 
     @Test
-    void sourceLookupFailureStaysFailOpenToNone() {
+    void sourceLookupFailureIsNoLongerFlattenedToNone() {
+        // task-213: "the store could not be read" and "no row carries the atom" used to be the same
+        // word on this line, which is exactly what made a missing table look like a permissions
+        // verdict. The degrade stays (an audit face must not fail a write), the word changes.
         when(grants.findScopedGrants(any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("db down"));
 
         authority.logActionAtomDenied(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 UUID.randomUUID(), UUID.randomUUID());
 
-        assertEquals("none", deniedFields().get("source"));
+        assertEquals("unavailable", deniedFields().get("source"));
     }
 
     @Test
