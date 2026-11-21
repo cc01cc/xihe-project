@@ -4,13 +4,15 @@
 //
 //   node --test scripts/e2e-host-readiness.test.mjs
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
+import { describeStamp, stampCpArtifact } from './lib/cp-artifact-stamp.mjs'
+import { evaluateSidecar, parseSidecar, sidecarPathFor } from './lib/cp-jar-sidecar.mjs'
 import { evaluatePgInstanceFreshness, PG_FRESHNESS_REASONS } from './lib/pg-readiness.mjs'
 import {
     buildInfoPath,
@@ -209,33 +211,122 @@ test('BL-524: non-CP changes do not affect the judgement (dirty is scoped to pac
     }
 })
 
-test('e2e-host rebuild branch stamps the fresh jar with the current HEAD', () => {
-    // e2e-host.mjs cannot be imported without booting, so pin the wiring itself: the stamp
-    // must live after the fresh-jar check and use gitHead's real values.
+const STAMP_TREE_TEXT = '100644 blob aaaa\tpackages/control-plane/pom.xml\n'
+const STAMP_COMMIT = 'b'.repeat(40)
+const JAR_BYTES = Buffer.from('task-180: bytes are bytes\n', 'utf8')
+
+/** The four git answers stampCpArtifact needs (HEAD, CP-scoped dirty, source tree listing). */
+function fakeStampGit({ headFails = false } = {}) {
+    return (cmd, args) => {
+        if (cmd !== 'git') return { status: 1, stdout: '', stderr: 'unexpected command' }
+        if (args[0] === 'rev-parse') {
+            return headFails
+                ? { status: 128, stdout: '', stderr: 'fatal: HEAD unknown' }
+                : { status: 0, stdout: `${STAMP_COMMIT}\n`, stderr: '' }
+        }
+        if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' }
+        if (args[0] === 'ls-tree') return { status: 0, stdout: Buffer.from(STAMP_TREE_TEXT, 'utf8'), stderr: '' }
+        return { status: 1, stdout: '', stderr: `unexpected git ${args[0]}` }
+    }
+}
+
+test('task-180: the rebuild branch writes the fresh jar\'s two marks through ONE call', () => {
+    // The stamp (in-jar build-info) and the fingerprint (sidecar) may only be written by the path that
+    // produced the jar, and only *after* packaging finished — otherwise `builtAt` predates the artifact
+    // it describes (the exact failure mode of the in-jar stamp). Both used to be hand-written here and
+    // in the preflight self-heal branch; the self-heal copy refreshed only the stamp, so every run
+    // compared a NEW jar against an OLD sidecar (task-141 run1: exit 1, Playwright never started).
     const source = readFileSync(new URL('./e2e-host.mjs', import.meta.url), 'utf8')
-    const start = source.indexOf("const after = resolveCpJarState(e2eCpTargetDir)")
+    const start = source.indexOf('const after = resolveCpJarState(e2eCpTargetDir)')
     const end = source.indexOf("return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }")
     assert.ok(start >= 0 && end > start, 'rebuild branch anchors must exist')
     const branch = source.slice(start, end)
-    assert.match(branch, /const head = gitHead\(\{ cwd: projectDir \}\)/u)
-    assert.match(branch, /writeBuildInfo\(\{ targetDir: e2eCpTargetDir, commit: head\.commit, dirty: head\.dirty \}\)/u)
+    assert.match(branch, /const stamp = stampCpArtifact\(\{/u)
+    assert.match(branch, /jarPath: after\.jar\.path/u)
+    // A second call site is how the pair drifted: neither writer may be called directly any more.
+    assert.doesNotMatch(source, /writeBuildInfo\(/u)
+    assert.doesNotMatch(source, /writeSidecarForJar\(/u)
 })
 
-test('task-90: the CP jar sidecar is written inside the rebuild branch, after packaging and after the stamp', () => {
-    // The fingerprint may only be written by the path that produced the jar, and only *after* the
-    // package goal finished — otherwise `builtAt` predates the artifact it describes (the exact
-    // failure mode of the in-jar build-info stamp). Pin the ordering structurally.
+test('task-180: the preflight self-heal branch shares that one call, so a rebuilt jar is never half stamped', () => {
     const source = readFileSync(new URL('./e2e-host.mjs', import.meta.url), 'utf8')
-    const afterIdx = source.indexOf("const after = resolveCpJarState(e2eCpTargetDir)")
-    const stampIdx = source.indexOf('writeBuildInfo({ targetDir: e2eCpTargetDir', afterIdx)
-    const sidecarIdx = source.indexOf('writeSidecarForJar({ projectDir, jarPath: after.jar.path', afterIdx)
-    const returnIdx = source.indexOf("return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }", afterIdx)
-    assert.ok(afterIdx >= 0, 'the post-build re-inspection anchor must exist')
-    assert.ok(stampIdx > afterIdx, 'build-info must be stamped after re-inspecting the fresh jar')
-    assert.ok(sidecarIdx > stampIdx, 'the sidecar must be written after packaging AND after the stamp')
-    assert.ok(returnIdx > sidecarIdx, 'the sidecar must be written before the branch returns the jar')
-    // A sidecar write failure must stay a WARN (the run still has content evidence), never a silent pass.
-    assert.match(source.slice(sidecarIdx, returnIdx), /if \(!sidecarWrite\.ok\)/u)
+    const start = source.indexOf('preflight 前自愈：CP jar')
+    const end = source.indexOf('[e2e-host] preflight (read-only)')
+    assert.ok(start >= 0 && end > start, 'self-heal branch anchors must exist')
+    const region = source.slice(start, end)
+    assert.match(region, /stampCpArtifact\(\{/u, 'the self-heal branch must stamp through the shared lib')
+    assert.match(region, /jarPath: healed\.jar\.path/u)
+    const callSites = source.match(/stampCpArtifact\(\{/gu) ?? []
+    assert.equal(callSites.length, 2, 'exactly two producers: the rebuild branch and the preflight self-heal')
+})
+
+test('task-180: the stamp lands before the fingerprint, and the pair describes this jar', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'xihe-artifact-stamp-'))
+    try {
+        const targetDir = join(dir, 'target')
+        const jarPath = join(dir, 'control-plane-0.1.0.jar')
+        writeFileSync(jarPath, JAR_BYTES)
+        // The sidecar builder cannot be forged onto an older artifact (write-lag guard), so pin its
+        // clock to the jar's own mtime instead of depending on how fast this test writes it.
+        const jarMtimeMs = statSync(jarPath).mtimeMs
+        const buildInfoSeenAtFingerprint = []
+        const stamp = stampCpArtifact({
+            projectDir: dir,
+            targetDir,
+            jarPath,
+            writtenBy: 'scripts/e2e-host.mjs',
+            run: fakeStampGit(),
+            now: () => jarMtimeMs,
+            stat: (file) => {
+                buildInfoSeenAtFingerprint.push(existsSync(buildInfoPath(targetDir)))
+                return statSync(file)
+            },
+        })
+        assert.equal(stamp.paired, true)
+        assert.equal(stamp.buildInfo.ok, true)
+        assert.equal(stamp.buildInfo.commit, STAMP_COMMIT)
+        assert.equal(stamp.sidecar.ok, true)
+        // THE ordering assertion: when the fingerprint is computed, the stamp already exists.
+        assert.deepEqual(buildInfoSeenAtFingerprint, [true])
+        const written = parseSidecar(readFileSync(sidecarPathFor(jarPath), 'utf8'))
+        assert.equal(written.ok, true)
+        assert.equal(written.data.commit, STAMP_COMMIT)
+        assert.equal(written.data.writtenBy, 'scripts/e2e-host.mjs')
+        const lines = describeStamp({ ...stamp, label: 'rebuild' }).join('\n')
+        assert.match(lines, /\[e2e-host\] rebuild: CP build-info stamped for b{12} \(dirty=false\)/u)
+        assert.match(lines, /\[e2e-host\] rebuild: CP jar sidecar written: .+control-plane-0\.1\.0\.jar\.buildinfo\.json/u)
+        assert.doesNotMatch(lines, /WARN/u)
+    } finally {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('task-180 J2: a jar that is not the artifact its sidecar describes is still identity-mismatch', () => {
+    // The negative control for the whole card: sharing the write path must not weaken the READER. A
+    // jar replaced behind a valid manifest stays the non-deferrable identity failure — if this ever
+    // goes green, the fix "paired the writes" by loosening the judgement instead.
+    const dir = mkdtempSync(join(tmpdir(), 'xihe-artifact-stamp-neg-'))
+    try {
+        const targetDir = join(dir, 'target')
+        const jarPath = join(dir, 'control-plane-0.1.0.jar')
+        writeFileSync(jarPath, JAR_BYTES)
+        const jarMtimeMs = statSync(jarPath).mtimeMs
+        const stamp = stampCpArtifact({
+            projectDir: dir,
+            targetDir,
+            jarPath,
+            writtenBy: 'scripts/e2e-host.mjs',
+            run: fakeStampGit(),
+            now: () => jarMtimeMs,
+        })
+        assert.equal(stamp.paired, true, 'precondition: the pair was written first')
+        writeFileSync(jarPath, Buffer.from('a different jar, same file name\n', 'utf8'))
+        const verdict = evaluateSidecar({ jarPath, projectDir: dir, run: fakeStampGit() })
+        assert.equal(verdict.state, 'identity-mismatch')
+        assert.ok(verdict.actualJarSha256 !== verdict.expectedJarSha256)
+    } finally {
+        rmSync(dir, { recursive: true, force: true })
+    }
 })
 
 test('Windows preflight queries dev-only stack ports, not only the e2e block', () => {

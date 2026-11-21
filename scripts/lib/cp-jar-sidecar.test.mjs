@@ -443,10 +443,12 @@ test('T19: the manifest carries no absolute paths or host names (evidence is por
   assert.equal(text.includes(dir), false);
 });
 
-test('T21: producer inventory — only the shared-jar producer writes a sidecar, and the gate reads it', () => {
+test('T21: producer inventory — every producer stamps through ONE write point, and the gate reads it', () => {
   // Acceptance ①, made machine-checkable: the set of files that call `writeSidecarForJar` must be
-  // exactly {the module that defines it, the one script that produces the shared E2E CP jar}. A new
-  // artifact producer therefore cannot ship without stamping (this test fails until it is added).
+  // exactly {the module that defines it, task-180's shared stamp}. The jar's two marks (in-jar
+  // build-info + sidecar) are only ever written there, so a producer cannot stamp one without the
+  // other — before task-180 each caller duplicated the sequence and the copy in the preflight
+  // self-heal refreshed the stamp only, which left a new jar next to an old fingerprint.
   const scriptsDir = join(import.meta.dirname, '..');
   const files = readdirSync(scriptsDir, { recursive: true, encoding: 'utf8' })
     .filter((rel) => rel.endsWith('.mjs') && !rel.endsWith('.test.mjs'))
@@ -456,7 +458,18 @@ test('T21: producer inventory — only the shared-jar producer writes a sidecar,
     const text = readFileSync(file, 'utf8');
     if (/\bwriteSidecarForJar\(/u.test(text)) callSites.push(file.replaceAll('\\', '/').replace(/^.*?\/scripts\//u, 'scripts/'));
   }
-  assert.deepEqual(callSites.sort(), ['scripts/e2e-host.mjs', 'scripts/lib/cp-jar-sidecar.mjs']);
+  assert.deepEqual(callSites.sort(), ['scripts/lib/cp-artifact-stamp.mjs', 'scripts/lib/cp-jar-sidecar.mjs']);
+
+  // …and the producers reach it only through that stamp (the regression task-180 fixed).
+  const producers = {
+    'e2e-host.mjs': 2, // rebuild branch + preflight self-heal
+  };
+  for (const [rel, expected] of Object.entries(producers)) {
+    const text = readFileSync(join(scriptsDir, rel), 'utf8');
+    const stamps = text.match(/stampCpArtifact\(\{/gu) ?? [];
+    assert.equal(stamps.length, expected, `${rel} must route every jar write through stampCpArtifact`);
+    assert.doesNotMatch(text, /\bwriteBuildInfo\(/u, `${rel} must not stamp build-info by hand`);
+  }
 
   // …and the preflight must actually consume it, before the task-84 content path.
   const preflight = readFileSync(join(scriptsDir, 'e2e-preflight.mjs'), 'utf8');

@@ -8,10 +8,12 @@ import { connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
-import { cpTargetDir, externalCpBuildCheck, gitHead, writeBuildInfo } from './lib/cp-build-info.mjs'
+import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
 import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
-import { readSidecar, sha256File, writeSidecarForJar } from './lib/cp-jar-sidecar.mjs'
+import { readSidecar, sha256File } from './lib/cp-jar-sidecar.mjs'
+// task-180: the jar's two identities are written by ONE call, so no branch can write half a pair.
+import { describeStamp, stampCpArtifact } from './lib/cp-artifact-stamp.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
 import { ensureEnvFromUser } from './lib/user-env.mjs'
 import { classifyChildExit } from './lib/e2e-child-exit.mjs'
@@ -587,34 +589,17 @@ async function resolveCpBootPlan() {
     console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
     return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
   }
-  // The rebuild mvn goal does not write build-info, but the external-stack gate treats a
-  // missing stamp as a failure. Stamp only after the successful build and the fresh-jar
-  // check above, using the real HEAD/dirty state (never a hand-filled commit).
-  const head = gitHead({ cwd: projectDir })
-  if (!head.commit) {
-    console.warn(`[e2e-host] CP jar rebuilt but git HEAD is unavailable (${head.error}); build-info not stamped`)
-  } else {
-    writeBuildInfo({ targetDir: e2eCpTargetDir, commit: head.commit, dirty: head.dirty })
-    console.log(`[e2e-host] CP build-info stamped for ${head.commit} (dirty=${head.dirty})`)
-  }
-  // BL-477 / task-90: the fingerprint is written by the same code path that produced the jar and only
-  // *after* packaging finished — a manifest written any earlier would describe a jar that does not
-  // exist yet, and its `builtAt` would predate the artifact. It records the jar's own sha256, so a
-  // later reader can prove the manifest is about *this* file (unlike the in-jar build-info stamp,
-  // which the CP build reuses from an earlier generation).
-  const sidecarWrite = writeSidecarForJar({ projectDir, jarPath: after.jar.path, writtenBy: 'scripts/e2e-host.mjs' })
-  if (!sidecarWrite.ok) {
-    console.warn(`[e2e-host] CP jar rebuilt but its sidecar was NOT written (${sidecarWrite.error}); freshness will fall back to content evidence`)
-  } else {
-    const fingerprint = sidecarWrite.data
-    console.log(
-      `[e2e-host] CP jar sidecar written: ${sidecarWrite.file} (jar sha256 ${fingerprint.jarSha256.slice(0, 12)}…,`
-        + ` CP tree ${fingerprint.sourceTreeSha256.slice(0, 12)}…, commit ${fingerprint.commit.slice(0, 12)}, dirty=${fingerprint.dirty})`,
-    )
-    if (sidecarWrite.clockSkewMs > 0) {
-      console.warn(`[e2e-host] sidecar builtAt was clamped by ${sidecarWrite.clockSkewMs} ms: the system clock is behind the jar mtime`)
-    }
-  }
+  // task-180: the stamp (in-jar build-info) and the fingerprint (sidecar) are ONE write point,
+  // called only after the successful build and the fresh-jar check above. The old hand-written
+  // copy here was one of two producers that could drift apart; `stampCpArtifact` is the only
+  // place the order (stamp first, sidecar second) is expressed now.
+  const stamp = stampCpArtifact({
+    projectDir,
+    targetDir: e2eCpTargetDir,
+    jarPath: after.jar.path,
+    writtenBy: 'scripts/e2e-host.mjs',
+  })
+  for (const line of describeStamp({ ...stamp, label: 'rebuild' })) console.log(line)
   console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
   return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
 }
@@ -2671,9 +2656,22 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
         console.error(`[e2e-host] FAIL-FAST: CP jar 重建失败 (exit=${rebuild.code})；拒绝继续（否则 preflight 只会报"过期"）`)
         process.exit(1)
       }
-      const head = gitHead({ cwd: projectDir })
-      if (head.commit) writeBuildInfo({ targetDir: e2eCpTargetDir, commit: head.commit, dirty: head.dirty })
-      console.log(`[e2e-host] preflight 前自愈完成：jar 已重建${head.commit ? ` 并盖章 ${head.commit.slice(0, 12)}` : ''}`)
+      // task-180: a jar re-packaged here must get BOTH marks, exactly like the rebuild branch.
+      // Before this, only the in-jar stamp was refreshed, so the very next preflight compared the
+      // NEW jar against the OLD sidecar and refused on artifact-truth (task-141 run1: exit 1,
+      // Playwright never started). Same single write point, so the pair cannot drift again.
+      const healed = resolveCpJarState(e2eCpTargetDir)
+      if (!healed.jar) {
+        console.error('[e2e-host] FAIL-FAST: 自愈重建后找不到 CP jar；拒绝继续（preflight 会判 artifact 缺失）')
+        process.exit(1)
+      }
+      const stamp = stampCpArtifact({
+        projectDir,
+        targetDir: e2eCpTargetDir,
+        jarPath: healed.jar.path,
+        writtenBy: 'scripts/e2e-host.mjs',
+      })
+      for (const line of describeStamp({ ...stamp, label: 'preflight 前自愈' })) console.log(line)
     }
   }
   console.log(`[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs${policy.ignoreBuild ? ' --ignore-build' : ''}`)
