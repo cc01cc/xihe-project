@@ -71,16 +71,15 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         //  − 2 个智能体域（`agent-templates` / `agent-runtime`）折 1 个「智能体配置」组（task-485 新组）
         //  ⇒ 8 − 3 − 2 + 2 = **5 个入口**。域一个都没合并（锁定/继承/env 覆盖仍按域求值）。
         await expect(page.getByTestId("settings-nav-count-user")).toHaveText("5 个入口");
-        // 实例层同理，**13 个入口**（task-91/task-96 之后；此前是 12）。可复算：
-        //    11 个配置域（`agent-profile` 已迁出，12 → 11）
-        //  − 3 模型域 − 2 智能体域 + 2 个组入口 = 8
-        //  + 2 运维（`config-locks` / `audit`）+ 3 安全 = 13
-        //  + 1 平台智能体页（`settings-instance-agent-principals`，task-91 新建；资源区智能体页摘除后
-        //    旧 URL 302 到这里）= 14
-        //  − 1 按权限过滤（`roles` 要 `MANAGE_ROLES` 原子，本用例只给了 `isInstanceAdmin` 能力位）
-        //  ⇒ **13**。与用户层是同一条算术（域数 − 组折叠 + 组入口），两处互证。
+        // 实例层同理，**14 个入口**（task-8 加第 5 个安全项之后；此前是 13）。可复算，且与
+        // `navReconciliation.spec.ts` 的 `NAV_COUNTS.instance = 18` 是**同一条算术的两处投影**，
+        // 两处必须能互证：
+        //    IA 未折叠：11 个配置域（`agent-profile` 已迁出，12 → 11）+ 2 运维 + 5 安全 = 18
+        //  − 3：域折叠成 2 个组入口（3 模型域折 1 组 = −2；2 智能体域折 1 组 = −1）⇒ 11 → 8
+        //  − 1：按权限过滤（`roles` 要 `MANAGE_ROLES` 原子，本用例只给了 `isInstanceAdmin` 能力位）
+        //  ⇒ 18 − 3 − 1 = **14**。用户层是同一条算术（域数 − 组折叠 + 组入口），两处互证。
         // 不再写成 `1[34]` 这种「两值之一」—— 那等于把判据放宽到不会红（`spec-assertion-strength`）。
-        await expect(page.getByTestId("settings-nav-count-instance")).toHaveText("13 个入口");
+        await expect(page.getByTestId("settings-nav-count-instance")).toHaveText("14 个入口");
     });
 
     test("凭据：三层 tab、默认「我的凭据」、点全平台层写回 ?layer=INSTANCE", async ({ page }) => {
