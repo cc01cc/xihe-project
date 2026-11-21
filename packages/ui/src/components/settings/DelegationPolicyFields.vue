@@ -22,11 +22,25 @@ const emit = defineEmits<{ "update:modelValue": [value: DelegationPolicyValue] }
 const { t } = useI18n();
 const K = "agentPrincipalDetail.delegation.";
 
+/**
+ * task-45：setter 收到的**不一定是 string**。
+ *
+ * <p>宿主 `Input.vue` 用 `useVModel(passive)` 且模板是 `<input type="number" v-model>`，
+ * Vue 的 vModelText 对 number 输入会 `looseToNumber` 后回灌，于是这里收到的是 number；
+ * 清空时是 null。不归一就直接 `raw.trim()` 会抛 `TypeError: raw.trim is not a function`
+ * （真栈表现：输入框有值但 data-dirty 恒 false、保存键恒禁用）。
+ * 只在本地归一，**不动 Input.vue 的全局 passive 语义**（全仓 input 共用）。</p>
+ */
+function textOf(raw: unknown): string {
+    if (raw === null || raw === undefined) return "";
+    return typeof raw === "string" ? raw : String(raw);
+}
+
 // number input 的 v-model 中介：空串 ⇔ null，非法串原样保留让用户继续编辑。
 const countText = computed({
     get: () => (props.modelValue.maxCount === null ? "" : String(props.modelValue.maxCount)),
     set: (raw: string) => {
-        const trimmed = raw.trim();
+        const trimmed = textOf(raw).trim();
         emit("update:modelValue", {
             ...props.modelValue,
             maxCount: trimmed === "" ? null : Number(trimmed),
@@ -36,7 +50,7 @@ const countText = computed({
 const depthText = computed({
     get: () => (props.modelValue.maxDepth === null ? "" : String(props.modelValue.maxDepth)),
     set: (raw: string) => {
-        const trimmed = raw.trim();
+        const trimmed = textOf(raw).trim();
         emit("update:modelValue", {
             ...props.modelValue,
             maxDepth: trimmed === "" ? null : Number(trimmed),
