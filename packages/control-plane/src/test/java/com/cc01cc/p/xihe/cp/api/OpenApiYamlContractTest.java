@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.api;
 
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
@@ -7,6 +8,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -1132,6 +1134,56 @@ class OpenApiYamlContractTest {
         Set<String> residual = new HashSet<>(left);
         residual.removeAll(right);
         return residual;
+    }
+
+    /**
+     * task-104（task-87 测试轮，判据 4）：契约里 {@code grantSources} 的八值枚举必须与
+     * {@link GrantSources} 常量**机械**对齐 —— 双向断言（常量多一个 ⇒ 契约缺；契约多一个 ⇒ 常量缺），
+     * 并且两条 id 数组必须仍是 {@code array<string>}（task-87 只加键，不改旧形状）。
+     *
+     * <p>为什么放在这个类而不是新文件：{@link #parseContract()} 已经是全仓唯一「从模块 basedir 读
+     * openapi.yaml」的入口，另起一份路径解析只会多一处会漂的常量。断言不写死八值字面量 ——
+     * {@code GrantSources.PROVENANCE_SOURCES + UNKNOWN} 才是 SSOT，写死就等于把两份词表都冻住。</p>
+     */
+    @Test
+    void openApiGrantSourcesEnumMatchesTheGrantSourcesConstants() throws Exception {
+        Map<?, ?> document = parseContract();
+        Map<?, ?> components = (Map<?, ?>) document.get("components");
+        Map<?, ?> schemas = (Map<?, ?>) components.get("schemas");
+        Map<?, ?> view = (Map<?, ?>) schemas.get("EffectiveCapView");
+        assertInstanceOf(Map.class, view, "EffectiveCapView must be contracted");
+        Map<?, ?> properties = (Map<?, ?>) view.get("properties");
+        Map<?, ?> provenance = (Map<?, ?>) properties.get("provenance");
+        assertInstanceOf(Map.class, provenance);
+        Map<?, ?> provenanceProperties = (Map<?, ?>) provenance.get("properties");
+
+        assertTrue(provenanceProperties.containsKey("grantSources"),
+                "task-87: provenance 必须声明 grantSources");
+        assertTrue(requiredOf(provenance).contains("grantSources"),
+                "grantSources 在 required 里 —— 缺键读成「无标签面」和「暂无标签」是两回事");
+
+        Map<?, ?> grantSources = (Map<?, ?>) provenanceProperties.get("grantSources");
+        Map<?, ?> additional = (Map<?, ?>) grantSources.get("additionalProperties");
+        assertInstanceOf(Map.class, additional, "grantSources 必须声明 additionalProperties（map 形状）");
+        List<?> contractedValues = (List<?>) additional.get("enum");
+        assertInstanceOf(List.class, contractedValues, "additionalProperties 必须带 enum 词表");
+
+        Set<String> contracted = new LinkedHashSet<>();
+        contractedValues.forEach(value -> contracted.add(String.valueOf(value)));
+        Set<String> constants = new LinkedHashSet<>(GrantSources.PROVENANCE_SOURCES);
+        constants.add(GrantSources.UNKNOWN);
+        assertEquals(constants, contracted,
+                "契约枚举必须恰好等于 GrantSources 常量（双向：任一侧多/少一个都红）");
+
+        // task-87 只给 provenance 加键：两条旧数组必须逐字保持 array<string>/uuid。
+        for (String arrayField : List.of("principalGrantIds", "bindingGrantIds")) {
+            Map<?, ?> field = (Map<?, ?>) provenanceProperties.get(arrayField);
+            assertInstanceOf(Map.class, field, arrayField + " must stay declared");
+            assertEquals("array", field.get("type"), arrayField + " 形状不得被 task-87 改动");
+            Map<?, ?> items = (Map<?, ?>) field.get("items");
+            assertEquals("string", items.get("type"));
+            assertEquals("uuid", items.get("format"));
+        }
     }
 
     private static Map<?, ?> parseContract() throws Exception {

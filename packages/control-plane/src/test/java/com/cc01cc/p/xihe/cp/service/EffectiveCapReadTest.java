@@ -37,12 +37,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -317,6 +320,93 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
         // 工具面：同一状态、同一请求，硬拒绝。两条读数必须成对，缺一条这条测试就失去意义。
         assertFalse(grantAuthorizationService.allows(request),
                 "tool face fails closed on the missing workspace_agents row (GrantAuthorizationService.java:98-102)");
+    }
+
+    /**
+     * task-104（task-87 测试轮，判据 3）：wire 上 {@code provenance.grantSources} 恒在、是对象、
+     * 键集恰好等于两条 id 数组的并集，且每个键的标签就是该 grant 行的 {@code source}（夹具里那条
+     * {@code addPrincipalGrant} 写的是 TEMPLATE —— 断言取值而不是「存在吗」，错值才活不下来）。
+     */
+    @Test
+    void provenanceGrantSourcesLabelsExactlyTheReturnedIds() throws Exception {
+        fixture();
+        bindSnapshot("[{\"actionClass\":\"read\"}]");
+
+        ResponseEntity<Map> response = get();
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        Map<?, ?> body = response.getBody();
+        assertNotNull(body);
+        Map<?, ?> provenance = (Map<?, ?>) body.get("provenance");
+        assertTrue(provenance.containsKey("grantSources"),
+                "契约：grantSources 恒发 —— 缺键会被读成「本读面无标签面」，与「暂无标签」是两回事");
+        Object raw = provenance.get("grantSources");
+        assertInstanceOf(Map.class, raw, "grantSources 必须是对象（additionalProperties: string）");
+        Map<?, ?> labels = (Map<?, ?>) raw;
+
+        List<?> principalIds = (List<?>) provenance.get("principalGrantIds");
+        List<?> bindingIds = (List<?>) provenance.get("bindingGrantIds");
+        assertFalse(principalIds.isEmpty(), "夹具 invariant：主体持有至少一条落库 grant");
+        assertTrue(bindingIds.isEmpty(), "binding-snapshot 支没有 binding grant 行");
+
+        Set<String> expected = new LinkedHashSet<>();
+        principalIds.forEach(id -> expected.add(String.valueOf(id)));
+        bindingIds.forEach(id -> expected.add(String.valueOf(id)));
+        assertEquals(expected, labels.keySet(),
+                "键集必须恰好是两数组的并集（缺键=漏标、多键=drift）");
+        assertEquals(GrantSources.TEMPLATE, labels.get(String.valueOf(principalIds.get(0))),
+                "夹具 grant 的 source 是 TEMPLATE ⇒ 标签必须逐字是 template，不是 unknown/role 兜底");
+    }
+
+    /**
+     * task-104（判据 2/3 的 role-binding 支）：没有 {@code workspace_agents} 行时两条数组都由
+     * role 行派生，键集仍必须等于并集 —— 这一支才是「两边都有真实行」的形态，单看 binding 支会漏。
+     */
+    @Test
+    void provenanceGrantSourcesCoversBothArraysOnRoleBindingPath() throws Exception {
+        fixture();
+        bindWorkspaceScopedRoleToPrincipal();
+
+        ResponseEntity<Map> response = get();
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        Map<?, ?> provenance = (Map<?, ?>) response.getBody().get("provenance");
+        assertInstanceOf(Map.class, provenance.get("grantSources"));
+        Map<?, ?> labels = (Map<?, ?>) provenance.get("grantSources");
+        List<?> principalIds = (List<?>) provenance.get("principalGrantIds");
+        List<?> bindingIds = (List<?>) provenance.get("bindingGrantIds");
+
+        Set<String> expected = new LinkedHashSet<>();
+        principalIds.forEach(id -> expected.add(String.valueOf(id)));
+        bindingIds.forEach(id -> expected.add(String.valueOf(id)));
+        assertFalse(expected.isEmpty(), "role-binding 支应当有派生出行（否则并集为空、断言退化）");
+        assertEquals(expected, labels.keySet());
+        for (Object label : labels.values()) {
+            assertTrue(GrantSources.PROVENANCE_SOURCES.contains(label) || GrantSources.UNKNOWN.equals(label),
+                    () -> "标签越出词表: " + label);
+        }
+    }
+
+    /**
+     * task-104（判据 3 的空态）：两条 id 数组都空时，{@code grantSources} 必须是**空对象**，
+     * 不是缺键、也不是 null —— 「空集」是契约里的一个取值，null 会让调用方必须做空判断。
+     *
+     * <p>造法：绑定行给空快照（cap 为空但 bound=true ⇒ 仍 200）+ 删掉夹具那条主体 grant ⇒
+     * 两数组皆空。删行是安全动作（{@code cleanFixtures()} 本来就会按主体删 grant）。</p>
+     */
+    @Test
+    void emptyProvenanceIsAnEmptyObjectNotNull() throws Exception {
+        fixture();
+        bindSnapshot("[]");
+        grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("agent_principal", principalId));
+
+        ResponseEntity<Map> response = get();
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        Map<?, ?> provenance = (Map<?, ?>) response.getBody().get("provenance");
+        assertTrue(((List<?>) provenance.get("principalGrantIds")).isEmpty());
+        assertTrue(((List<?>) provenance.get("bindingGrantIds")).isEmpty());
+        assertTrue(provenance.containsKey("grantSources"), "空态也必须是「有键、值为 {}」");
+        assertInstanceOf(Map.class, provenance.get("grantSources"));
+        assertTrue(((Map<?, ?>) provenance.get("grantSources")).isEmpty(),
+                "空态是 empty object，不是 null、不是缺键");
     }
 
     private Session saveAgentSession(String permissionsJson) throws Exception {
