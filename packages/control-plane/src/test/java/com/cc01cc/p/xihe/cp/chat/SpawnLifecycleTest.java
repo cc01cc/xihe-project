@@ -119,10 +119,18 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
     private String workspaceId;
     private UUID principalId;
 
+    /**
+     * task-97: the chat runs this fixture created. {@code cleanFixtures} hands them to the cleanup
+     * gate as the explicitly declared wait scope (they are inserted non-terminal on purpose); a
+     * non-terminal run outside this list still fails the gate loudly.
+     */
+    private final java.util.List<String> fixtureRunIds = new java.util.ArrayList<>();
+
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId, fixtureRunIds);
+            fixtureRunIds.clear();
         }
         dropSpawnRunFailureTrigger();
         if (workspaceId != null) {
@@ -385,8 +393,12 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
     private ChatSubmissionService.SpawnResult spawnDirect(String parentRunId, String toolCallId) {
         ChatSubmissionService.SpawnInvocation invocation =
                 submissionService.prepareSpawnInvocation(parentRunId, toolCallId);
-        return submissionService.createSpawnFromParent(parentRunId, toolCallId,
+        ChatSubmissionService.SpawnResult created = submissionService.createSpawnFromParent(parentRunId, toolCallId,
                 new ChatSubmissionService.SpawnAuthorization(invocation.authorizationBody(), null, null));
+        // task-97: the spawned child run is a fixture product too — the suite drives it by hand, so
+        // its non-terminal status is declared here instead of being read as a leak.
+        fixtureRunIds.add(created.runId());
+        return created;
     }
 
     private String saveRun(Session session, String status) {
@@ -396,6 +408,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
                 "spawn-lifecycle-submit-" + runId, "spawn-lifecycle-hash-" + runId,
                 "provider", "model", "workspace", status));
         jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
+        fixtureRunIds.add(runId);
         return runId;
     }
 

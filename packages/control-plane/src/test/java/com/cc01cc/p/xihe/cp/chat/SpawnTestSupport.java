@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -87,7 +88,26 @@ final class SpawnTestSupport {
      */
     static void clearForWorkspace(McpInvocationRepository invocations, JdbcTemplate jdbc,
                                   String workspaceId) {
-        awaitRunsSettled(jdbc, workspaceId);
+        clearForWorkspace(invocations, jdbc, workspaceId, List.of());
+    }
+
+    /**
+     * task-97: same cleanup, with the run ids this fixture leaves non-terminal <em>on purpose</em>
+     * declared up front.
+     *
+     * <p>The primary gate above means "no run of this workspace is non-terminal". Several spawn
+     * fixtures insert a {@code running} parent run that is never terminalised, because a live parent
+     * is exactly what they exercise (delegation budget / depth / fork / cancel), so an unconditional
+     * workspace-wide wait can never be satisfied for them. The scope is narrowed, the judgement is
+     * not weakened: the gate still waits for every run the caller did <em>not</em> declare, and a
+     * non-terminal run outside the declaration still fails loudly with its id in the message.
+     *
+     * @param deliberatelyUnsettledRunIds run ids this fixture leaves non-terminal on purpose; an
+     *     empty collection (also the 3-argument overload) keeps the original workspace-wide wait
+     */
+    static void clearForWorkspace(McpInvocationRepository invocations, JdbcTemplate jdbc,
+                                  String workspaceId, Collection<String> deliberatelyUnsettledRunIds) {
+        awaitRunsSettled(jdbc, workspaceId, deliberatelyUnsettledRunIds);
         jdbc.update(
                 "DELETE FROM mcp_dispatch_history WHERE invocation_id IN "
                         + "(SELECT id FROM mcp_invocations WHERE CAST(workspace_id AS VARCHAR) = ?)",
@@ -99,19 +119,21 @@ final class SpawnTestSupport {
         jdbc.update("DELETE FROM mcp_invocations WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
     }
 
-    private static void awaitRunsSettled(JdbcTemplate jdbc, String workspaceId) {
-        String activeRunsSql = "SELECT COUNT(*) FROM chat_runs WHERE CAST(workspace_id AS VARCHAR) = ?"
-                + " AND status NOT IN (" + placeholders(ChatRunRepository.TERMINAL_STATUSES) + ")";
+    private static void awaitRunsSettled(JdbcTemplate jdbc, String workspaceId,
+                                         Collection<String> deliberatelyUnsettledRunIds) {
+        List<String> declared = List.copyOf(deliberatelyUnsettledRunIds);
         List<Object> args = new ArrayList<>();
-        args.add(workspaceId);
-        args.addAll(ChatRunRepository.TERMINAL_STATUSES);
+        String activeRunsSql = "SELECT COUNT(*) FROM chat_runs WHERE "
+                + activeRunsCondition(declared, args, workspaceId);
         try {
             await().atMost(TERMINAL_WAIT).pollInterval(Duration.ofMillis(50))
                     .until(() -> count(jdbc, activeRunsSql, args) == 0);
         } catch (ConditionTimeoutException e) {
             throw new AssertionError("chat run did not reach a terminal status within " + TERMINAL_WAIT
                     + " before fixture cleanup; refusing to delete invocation rows that a live run may still "
-                    + "reference (snapshot: " + snapshot(jdbc, workspaceId) + ")", e);
+                    + "reference (unsettledRuns=" + unsettledRuns(jdbc, workspaceId, declared)
+                    + ", declaredDeliberatelyUnsettled=" + declared
+                    + ", snapshot: " + snapshot(jdbc, workspaceId) + ")", e);
         }
 
         List<Long> previous = tableCounts(jdbc, workspaceId);
@@ -133,6 +155,30 @@ final class SpawnTestSupport {
                 + " never went quiet within " + QUIESCENCE_BUDGET
                 + "; something is still writing after the run reached a terminal status"
                 + " (snapshot: " + snapshot(jdbc, workspaceId) + ")");
+    }
+
+    /**
+     * task-97: the primary-gate predicate. Every non-terminal run of the workspace is in scope
+     * unless the caller declared it deliberately unsettled; {@code args} is filled in query order.
+     */
+    private static String activeRunsCondition(List<String> declared, List<Object> args, String workspaceId) {
+        StringBuilder condition = new StringBuilder("CAST(workspace_id AS VARCHAR) = ?")
+                .append(" AND status NOT IN (").append(placeholders(ChatRunRepository.TERMINAL_STATUSES)).append(")");
+        args.add(workspaceId);
+        args.addAll(ChatRunRepository.TERMINAL_STATUSES);
+        if (!declared.isEmpty()) {
+            condition.append(" AND CAST(id AS VARCHAR) NOT IN (").append(placeholders(declared)).append(")");
+            args.addAll(declared);
+        }
+        return condition.toString();
+    }
+
+    /** task-97: {@code id=status} of the runs the gate is waiting for; empty when it may proceed. */
+    private static List<String> unsettledRuns(JdbcTemplate jdbc, String workspaceId, List<String> declared) {
+        List<Object> args = new ArrayList<>();
+        String sql = "SELECT CAST(id AS VARCHAR) || '=' || status FROM chat_runs WHERE "
+                + activeRunsCondition(declared, args, workspaceId) + " ORDER BY created_at";
+        return jdbc.query(sql, (rs, rowNum) -> rs.getString(1), args.toArray());
     }
 
     private static String placeholders(List<String> values) {

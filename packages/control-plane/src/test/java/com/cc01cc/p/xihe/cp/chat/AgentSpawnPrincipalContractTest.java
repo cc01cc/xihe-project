@@ -146,6 +146,14 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private String userId;
     private String workspaceId;
     private UUID principalId;
+
+    /**
+     * task-97: the chat runs this fixture created (parent runs are inserted {@code running} on
+     * purpose and one test even walks one to {@code completed}, which is not terminal). They are the
+     * explicitly declared wait scope handed to the cleanup gate; a non-terminal run outside this list
+     * still fails the gate loudly.
+     */
+    private final java.util.List<String> fixtureRunIds = new java.util.ArrayList<>();
     private final List<UUID> restrictedPrincipalIds = new java.util.ArrayList<>();
     private final List<UUID> additionalWorkspaceIds = new java.util.ArrayList<>();
 
@@ -157,7 +165,8 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         if (workspaceId != null) {
             // Child-first fixed order (PLAN-0710): MCP invocations before the session cascade, and
             // the utility deletes chat_runs -> sessions with a 40P01 deadlock retry.
-            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId, fixtureRunIds);
+            fixtureRunIds.clear();
             TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
         }
         if (principalId != null && workspaceId != null
@@ -233,6 +242,9 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
 
         ChatRun spawnRun = chatRunRepository
                 .findById(UUID.fromString((String) body.get("runId"))).orElseThrow();
+        // task-97: the spawn route created this child run for the fixture parent and nothing here
+        // drives it to a terminal state, so the fixture declares it as deliberately unsettled.
+        fixtureRunIds.add(spawnRun.getId().toString());
         assertEquals(ChatRun.ORIGIN_SPAWN, spawnRun.getOrigin());
         assertEquals(child.getId().toString(), spawnRun.getSessionId());
         assertEquals(workspaceId, spawnRun.getWorkspaceId());
@@ -713,6 +725,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                 "restricted-parent-" + parentRunId, "restricted-parent-hash", "provider", "model", "workspace", "running");
         restrictedParentRun.setAgentPrincipalId(restricted.getId());
         chatRunRepository.saveAndFlush(restrictedParentRun);
+        fixtureRunIds.add(parentRunId);
         bindPrimaryParticipant(parentSession.getId().toString(), restricted.getId().toString());
         String toolCallId = UUID.randomUUID().toString();
         UUID invocationId = seedInvocation(parentSession.getId().toString(), parentRunId, toolCallId, toolName,
@@ -892,6 +905,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                 "parent-" + parentRunId, "parent-hash", "provider", "model", "workspace", "running");
         parentRun.setAgentPrincipalId(principalId);
         chatRunRepository.saveAndFlush(parentRun);
+        fixtureRunIds.add(parentRunId);
         bindPrimaryParticipant(parentSession.getId().toString(), principalId.toString());
         String toolCallId = UUID.randomUUID().toString();
         UUID invocationId = null;

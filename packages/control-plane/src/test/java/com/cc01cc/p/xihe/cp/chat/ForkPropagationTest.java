@@ -144,10 +144,18 @@ class ForkPropagationTest extends AbstractIntegrationTest {
     private String workspaceId;
     private UUID principalId;
 
+    /**
+     * task-97: the chat runs this fixture created. {@code cleanFixtures} hands them to the cleanup
+     * gate as the explicitly declared wait scope (they are inserted non-terminal on purpose); a
+     * non-terminal run outside this list still fails the gate loudly.
+     */
+    private final java.util.List<String> fixtureRunIds = new java.util.ArrayList<>();
+
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId, fixtureRunIds);
+            fixtureRunIds.clear();
             deleteWorkspaceSessions();
         }
         if (principalId != null && workspaceId != null
@@ -488,6 +496,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
                 "fork-propagation-submit-" + runId, "fork-propagation-hash-" + runId,
                 "provider", "model", "workspace", status));
         jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
+        fixtureRunIds.add(runId);
         return runId;
     }
 

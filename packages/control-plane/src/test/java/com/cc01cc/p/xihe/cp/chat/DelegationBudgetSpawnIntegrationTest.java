@@ -115,10 +115,18 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
     private String workspaceId;
     private UUID principalId;
 
+    /**
+     * task-97: the chat runs this fixture created (parents inserted as {@code running} on purpose and
+     * the spawned children it leaves in flight). {@code cleanFixtures} hands them to the cleanup gate
+     * as the explicitly declared wait scope; a non-terminal run outside this list still fails loud.
+     */
+    private final java.util.List<String> fixtureRunIds = new java.util.ArrayList<>();
+
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId, fixtureRunIds);
+            fixtureRunIds.clear();
             // context_events carries a plain FK to sessions (no cascade): clear it first, otherwise the
             // session delete fails and the failure masks the real assertion of the next test.
             jdbcTemplate.update("DELETE FROM context_events WHERE session_id IN "
@@ -272,6 +280,41 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
         assertEquals(grandChild.parentRunId(), committed.getWaitingOnRunId());
     }
 
+    // ------------------------------------------------- task-97 wait-scope pin
+
+    /**
+     * task-97: the wait scope is narrowed, the judgement is not.
+     *
+     * <p>A run the fixture did <em>not</em> declare (here: a plain {@code running} row this test never
+     * terminalises and never registers) must still make the cleanup gate fail loudly and name that
+     * run id. Without this pin the scoped wait could degenerate into "wait for nothing" and the whole
+     * workspace-wide protection introduced by task-27 would be gone.
+     */
+    @Test
+    void anUndeclaredNonTerminalRunStillFailsLoudBeforeCleanup() {
+        ensureWorkspace();
+        Session straySession = new Session(workspaceId, userId,
+                "Spawn settle scope stray " + UUID.randomUUID().toString().substring(0, 8));
+        straySession.setId(UUID.randomUUID());
+        sessionRepository.saveAndFlush(straySession);
+        String strayRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(
+                strayRunId, straySession.getId().toString(), userId, workspaceId,
+                "spawn-settle-scope-submit-" + strayRunId, "spawn-settle-scope-hash-" + strayRunId,
+                "provider", "model", "workspace", "running"));
+
+        AssertionError error = assertThrows(AssertionError.class,
+                () -> SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId,
+                        java.util.List.copyOf(fixtureRunIds)),
+                "an undeclared non-terminal run must still fail the cleanup gate loudly");
+        assertTrue(error.getMessage().contains(strayRunId),
+                "the fail-loud message must name the undeclared run, got: " + error.getMessage());
+
+        // Let the @AfterEach cleanup proceed: this pin is about the gate, not about leaving the
+        // workspace dirty for the next test.
+        jdbcTemplate.update("UPDATE chat_runs SET status = 'failed' WHERE id = CAST(? AS UUID)", strayRunId);
+    }
+
     // -------------------------------------------------------------- fixtures
 
     private record ParentFixture(String parentSessionId, String parentRunId, String toolCallId) {}
@@ -366,6 +409,7 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
                 "delegation-budget-submit-" + runId, "delegation-budget-hash-" + runId,
                 "provider", "model", "workspace", "running"));
         jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
+        fixtureRunIds.add(runId);
         return runId;
     }
 

@@ -98,10 +98,18 @@ class DelegationTimeoutPropagationIntegrationTest extends AbstractIntegrationTes
     private String workspaceId;
     private UUID principalId;
 
+    /**
+     * task-97: the chat runs this fixture created. {@code cleanFixtures} hands them to the cleanup
+     * gate as the explicitly declared wait scope (they are inserted non-terminal on purpose); a
+     * non-terminal run outside this list still fails the gate loudly.
+     */
+    private final java.util.List<String> fixtureRunIds = new java.util.ArrayList<>();
+
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId, fixtureRunIds);
+            fixtureRunIds.clear();
             // context_events carries a plain FK to sessions (no cascade): clear it first, otherwise
             // the session delete fails and masks the real assertion of the next test.
             jdbcTemplate.update("DELETE FROM context_events WHERE session_id IN "
@@ -227,8 +235,13 @@ class DelegationTimeoutPropagationIntegrationTest extends AbstractIntegrationTes
     private ChatSubmissionService.SpawnResult spawnDirect(ParentFixture parent) {
         ChatSubmissionService.SpawnInvocation invocation =
                 submissionService.prepareSpawnInvocation(parent.parentRunId(), parent.toolCallId());
-        return submissionService.createSpawnFromParent(parent.parentRunId(), parent.toolCallId,
+        ChatSubmissionService.SpawnResult created = submissionService.createSpawnFromParent(
+                parent.parentRunId(), parent.toolCallId,
                 new ChatSubmissionService.SpawnAuthorization(invocation.authorizationBody(), null, null));
+        // task-97: the spawned child run is a fixture product too — the suite drives it by hand, so
+        // its non-terminal status is declared here instead of being read as a leak.
+        fixtureRunIds.add(created.runId());
+        return created;
     }
 
     private String saveRun(Session session, String status) {
@@ -238,6 +251,7 @@ class DelegationTimeoutPropagationIntegrationTest extends AbstractIntegrationTes
                 "delegation-timeout-run-" + runId, "delegation-timeout-hash-" + runId,
                 "provider", "model", "workspace", status));
         jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
+        fixtureRunIds.add(runId);
         return runId;
     }
 

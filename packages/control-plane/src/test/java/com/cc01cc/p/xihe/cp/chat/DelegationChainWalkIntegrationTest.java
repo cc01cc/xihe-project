@@ -129,6 +129,13 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
     private String userId;
     private String workspaceId;
     private UUID principalId;
+
+    /**
+     * task-97: the chat runs this fixture created. {@code cleanFixtures} hands them to the cleanup
+     * gate as the explicitly declared wait scope (they are inserted non-terminal on purpose); a
+     * non-terminal run outside this list still fails the gate loudly.
+     */
+    private final java.util.List<String> fixtureRunIds = new java.util.ArrayList<>();
     /** A second agent principal so a woken participant never collides with the session PRIMARY. */
     private UUID wokenPrincipalId;
     /** A third principal: a mention target that never appears on the walked path (T3.6). */
@@ -138,7 +145,8 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
     void cleanFixtures() {
         configService.deleteKey("instance", "agent-runtime", "wakeChainMaxDepth", "test", null, null);
         if (workspaceId != null) {
-            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId, fixtureRunIds);
+            fixtureRunIds.clear();
             // context_events carries a plain FK to sessions (no cascade): clear it first, otherwise
             // the session delete fails and masks the real assertion of the next test.
             jdbcTemplate.update("DELETE FROM context_events WHERE session_id IN "
@@ -462,6 +470,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
                 "delegation-chain-run-" + runId, "delegation-chain-hash-" + runId,
                 "provider", "model", "workspace", status));
         jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
+        fixtureRunIds.add(runId);
         return runId;
     }
 
