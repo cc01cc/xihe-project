@@ -66,6 +66,9 @@ const ICONS: Record<string, typeof Wrench> = {
     // task-96：平台智能体的新家（`instanceOpsGroups()` 的安全组）；不加这一条 `missingNavMeta` 会红。
     "agent-principals": Bot,
     audit: ScrollText,
+    // task-8：授权总览（安全组末尾）。与 `SettingsSidebar.vue` 的 OPS_ICONS 同图标：
+    // 两处都缺就会让 `missingNavMeta` 记成「无图标」，稿页上出现「N 条无图标」。
+    "authorization-overview": ShieldCheck,
     // 资源模块的 id 来自 `resourceGroups()`（mcp/credentials/skills/knowledge）；
     // 同一组 id 在 `SettingsResourceNav.vue` 的 `RESOURCE_ICONS` 里另有一份组件内映射——
     // 两边都要有，否则 `missingNavMeta` 会把缺图标的条目记成「无图标」。
@@ -95,6 +98,9 @@ const LABELS: Record<string, string> = {
     roles: "角色与权限",
     "agent-principals": "平台智能体",
     audit: "审计日志",
+    // 标签必须与页面 h1 一致（DSD-1490「导航命名 = 定语+导航」）：页面标题是
+    // `settings.authorizationOverview.title` = 「授权总览」。
+    "authorization-overview": "授权总览",
     mcp: "MCP 服务",
     credentials: "凭据",
     skills: "技能",
