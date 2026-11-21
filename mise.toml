@@ -975,7 +975,7 @@ alias = "check:e2e-bypass"
 # 盲区（负向陈述 / 运行态 task 卡 / 相对子路由 / 不覆盖组件名与 testid）由脚本在输出里自己打印。
 [tasks."check:dev-i18n-drift"]
 run = "node scripts/check-dev-i18n-drift.mjs"
-description = "DEV i18n drift: zh/en id-set asymmetry (PLAN/D/task) + registration lookup in plans/ (incl. archive, files and dirs) and decision ledgers; prints scan surface (paired / en-missing / zh-missing counts) and blind spots. report-only for hits (exit 0), but task-73 2026-11-20: single-sided docs are E-level findings and missing registry inputs (plans dir / main ledger / archive) are E_INPUT_MISSING ⇒ exit 2; suppress unregistered false-reds when registry is unreadable. task-172: wired into mise run lint as a report-only member (still NOT in validate.depends). Measured 2026-11-20 on real tree: zh 29 / en 21 / paired 19 (en-missing 10, zh-missing 2), 18 hits = 6 paired-doc + 12 single-sided E, exit 0. Selftest: --selftest (19 cases, 19/19 pass)."
+description = "DEV i18n drift: zh/en id-set asymmetry (PLAN/D/task) + registration lookup in plans/ (incl. archive, files and dirs) and decision ledgers; prints scan surface (paired / en-missing / zh-missing counts) and blind spots. report-only for hits (exit 0), but task-73 2026-11-20: single-sided docs are E-level findings and missing registry inputs (plans dir / main ledger / archive) are E_INPUT_MISSING ⇒ exit 2; suppress unregistered false-reds when registry is unreadable. task-172: wired into mise run lint as a report-only member (still NOT in validate.depends). Measured 2026-11-21 on real tree (task-217 J6): zh 31 / en 21 / paired 19 (en-missing 12, zh-missing 2，已声明 14 篇降 W / 未声明 0 篇保持 E), exit 0；代码跨度 zh 12383 / en 5789，小节标题对拍 zh 378 / en 379。 Selftest: --selftest (19 cases, 19/19 pass)."
 alias = "check:dev-i18n-drift"
 
 # task-172：:enforce 兄弟（手工阻断态；**不接任何聚合**，转阻断须连续两窗 findings=0 后另议）。
@@ -1020,7 +1020,7 @@ alias = "check:copy-leak:enforce"
 # 必须 report-only 起步（直接阻断会当场搅红全树）；清账或登记后另议转阻断。脚本自带 --selftest（5 例）。
 [tasks."check:i18n-fixture-copies"]
 run = "node scripts/check-i18n-fixture-copies.mjs --report-only"
-description = "Report-only fixture i18n-copy ratchet (task-318 script, task-172 wiring): beyond-baseline (a) files print but exit 0; script/structure error exit 2. Currently 5 files beyond baseline ⇒ report-only first. Wired into mise run lint. Selftest: --selftest."
+description = "Report-only fixture i18n-copy ratchet (task-318 script, task-172 wiring): beyond-baseline (a) files print but exit 0; script/structure error exit 2. Currently 6 files beyond baseline (2026-11-21 task-217 J6 实测：基线 a=29 / 现 a=36) ⇒ report-only first. Wired into mise run lint. Selftest: --selftest."
 alias = "check:i18n-fixture-copies"
 
 [tasks."check:i18n-fixture-copies:enforce"]
@@ -1104,7 +1104,7 @@ description = "Blocking commit-message gate (type/scope, display-width <=72 cols
 #   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
 run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../../docs/api/openapi.yaml"
-description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a）；判据只有 errors：**基线 0、只许减不许增**（task-60 2026-11-19 把最后 4 条 `nullable` 清到 0；task-56 记的「基线 4」是当时读数，已被清账取代；明细 docs/api/openapi-lint-baseline.md）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 126 warnings 不阻断（存量 warnings 清账见 task-245）"
+description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a）；判据只有 errors：**基线 0、只许减不许增**（task-60 2026-11-19 把最后 4 条 `nullable` 清到 0；task-56 记的「基线 4」是当时读数，已被清账取代；明细 docs/api/openapi-lint-baseline.md）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 127 warnings 不阻断（2026-11-21 task-217 两口径实测：HEAD 导出副本与工作树同为 127 warnings / 0 errors；存量 warnings 清账见 task-245）"
 
 [tasks."docs:api:html"]
 run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
@@ -1143,7 +1143,7 @@ description = "Lint-rule registry parity (task-171 ①): every `off` in packages
 
 [tasks."check:fixture-schema"]
 run = "node scripts/check-fixture-schema.mjs"
-description = "Fixture shape ⊇ contract required (task-166/172): YAML via backend venv PyYAML, TS via packages/ui typescript compiler API; rules ① error-body NOTE ② factory return-literal ⊇ required ③ undecidable by design. Report-only (exit 0 unless --enforce). Current reading: 389 schemas / 368 operations / 404 spec files; total=76 ok=9 missing=0 undecidable=49 nonschema=18 carrier=3 ⇒ exit 0."
+description = "Fixture shape ⊇ contract required (task-166/172): YAML via backend venv PyYAML, TS via packages/ui typescript compiler API; rules ① error-body NOTE ② factory return-literal ⊇ required ③ undecidable by design. Report-only (exit 0 unless --enforce). Current reading (2026-11-21 task-217 J6): 403 schemas / 377 operations / 416 spec files; total=79 ok=9 missing=0 undecidable=52 nonschema=18 carrier=3 ⇒ exit 0."
 
 [tasks."check:versions"]
 run = "node scripts/check-versions.mjs"
@@ -1166,7 +1166,7 @@ description = "Retired-surface sentinel (task-145, ruling DSD-1511): A) retired 
 
 [tasks."gate-parity"]
 run = "node scripts/gate-parity.mjs"
-description = "Gate-set parity (task-105 / D-853): ① window ladder (scripts/gate-ladder.json) ② SSOT registry (xh-verify-gates.mjs DEFAULT_GATES) ③ mise.toml task exists; named exemptions instead of silent gaps. Current reading: ladder 24 / SSOT 27 / mise 102 ⇒ PASS (exit 0)."
+description = "Gate-set parity (task-105 / D-853): ① window ladder (scripts/gate-ladder.json) ② SSOT registry (xh-verify-gates.mjs DEFAULT_GATES) ③ mise.toml task exists; named exemptions instead of silent gaps. Current reading (2026-11-21 task-217 J6): ladder 24 / SSOT 27 / mise 117 ⇒ PASS (exit 0)."
 
 [tasks."check:ui-agents-md-budget"]
 run = "node packages/ui/scripts/check-agents-md-budget.mjs"
