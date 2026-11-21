@@ -38,11 +38,15 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
     },
     "components/settings/__tests__/ConfigDomainPanel.anchor.spec.ts": {
         keys: ["settings.configCardExpandHint", "settings.configCardFieldCount"],
-        note: "渲染出 2 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。",
-    },
-    "components/settings/__tests__/ConfigDomainPanelReset.spec.ts": {
-        keys: ["settings.configCardExpandHint", "settings.configCardFieldCount"],
-        note: "渲染出 2 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。",
+        // task-149（2026-11-22 全量复测，435 文件 / 324 行告警口径）：本条目 `[i18n]` 读数**仍为 0**，
+        // 但**不能按「零裸键」删除** —— 这两个键只在**折叠态**渲染（ConfigDomainPanel 里
+        // `v-if="!expanded"` 下的字段数徽标与摘要行），而护栏只在 `mount()` 返回那一刻扫一次
+        // `wrapper.html()`（src/test-utils/vueTestUtils.ts:47）。task-225 起域卡默认展开，折叠发生在
+        // 用例里点开合按钮之后 ⇒ **护栏结构上看不见它们**。同一份全量里 intlify 仍报 2 次缺键
+        // （挂在本 spec 的 TC-A2 段下），同目录 ConfigDomainPanel.asyncEntries.spec.ts 另报 4 次
+        // ⇒ 夹具确实缺、测试确实在查。正解是给这两个 spec 的局部 messages 补上 2 个键（i18n 回填卡），
+        // 补完才能删本条目。**不要因为「读数 0」就删**。
+        note: "折叠态渲染的 2 个裸键（字段数徽标 + 展开提示）：夹具 messages 缺键。护栏只在挂载时刻扫一次、域卡默认展开 ⇒ 本条目的 [i18n] 读数恒为 0（假阴性，不是已修好）。补齐这 2 个键后删除。",
     },
     "components/settings/__tests__/SettingsSidebar.spec.ts": {
         keys: [
