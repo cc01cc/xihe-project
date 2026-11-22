@@ -13,7 +13,7 @@
  *   3) pending ⇒ 必须有 card（承接卡号）；给了 file 就必须给 title
  *   4) not-testable ⇒ 必须有 reason（≥10 字），且占比 ≤ 20%
  *   5) file 白名单（五类前缀，task-53 放宽 + task-173 加 CP；越界仍报 E_PATH_OUTSIDE）：
- *        A03-xihe/packages/ui/** · A12-DSH-decision/packages/dsh-decision/tests/** ·
+ *        A03-xihe/packages/ui/** · A12-arbiter/packages/arbiter/tests/** ·
  *        internal/A03-xihe/scripts/** · scripts/**（one 仓仓库级门禁脚本的自测）·
  *        A03-xihe/packages/control-plane/src/test/**（CP 的 JUnit 判据）
  *      且必须是测试文件（禁止 .tmp/.local/node_modules 副本误绿）。测试文件两族口径见 TEST_FILE_RE /
@@ -67,7 +67,7 @@ const LEDGER = path.join('internal', 'A03-xihe', 'docs', 'lead-decisions-ledger.
 // 而是「这条判据的测试就在它该在的地方」。
 const TEST_PREFIXES = [
     'A03-xihe/packages/ui/',
-    'A12-DSH-decision/packages/dsh-decision/tests/',
+    'A12-arbiter/packages/arbiter/tests/',
     'internal/A03-xihe/scripts/',
     'scripts/',
     // task-173：DSD-1513 ①② 的判据是 CP 的 Spring 集成测试。前缀止于 src/test/ ——
@@ -358,7 +358,7 @@ function selftest() {
     // 每加一类前缀就必须有一条正向用例钉住它真的能登记，同时留一条「没开放的前缀仍然红」。
     const pointTo = (m, file, title, assert) => { const c = findCovered(m); c.file = file; c.title = title; c.assert = assert }
     run('白名单：A12 tests/** 可登记', (m) => {
-        pointTo(m, 'A12-DSH-decision/packages/dsh-decision/tests/host/tools.test.mjs', 'T2.1: the six tools register in contract order with distinct names', 'distinct names')
+        pointTo(m, 'A12-arbiter/packages/arbiter/tests/host/tools.test.mjs', 'T2.1: the six tools register in contract order with distinct names', 'distinct names')
     }, (r) => onlyDrift(r))
     run('白名单：internal/A03-xihe/scripts/** 可登记', (m) => {
         pointTo(m, 'internal/A03-xihe/scripts/trace-check.test.mjs', 'task-44: missing projection + working exporter => auto-regenerate once, then exit clean', '投影缺失，已自动重生成')

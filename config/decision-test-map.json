@@ -1,7 +1,7 @@
 {
   "version": 1,
   "updated": "2026-11-21",
-  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在五类白名单内（A03-xihe/packages/ui/ · A12-DSH-decision/packages/dsh-decision/tests/ · internal/A03-xihe/scripts/ · scripts/ · A03-xihe/packages/control-plane/src/test/；task-53 放宽、task-173 加 CP/Java），测试文件认 *.{spec,test}.[cm]?[jt]sx? 与 *Test.java（且须有 @Test 注解）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。决策号两种形态（task-59）：\"DSD-NNNN\" = DSD-1474 起的新裁定（只解析 DSD 侧、不做台账查重，dsd 可省略由 id 推导、给了就必须同值），\"D-####\" = 历史台账号（台账自 D-1903 冻结后按 DSD 库核对）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
+  "note": "决策条款 → 测试追溯表（task-124）。file 相对 one 根且必须落在五类白名单内（A03-xihe/packages/ui/ · A12-arbiter/packages/arbiter/tests/ · internal/A03-xihe/scripts/ · scripts/ · A03-xihe/packages/control-plane/src/test/；task-53 放宽、task-173 加 CP/Java），测试文件认 *.{spec,test}.[cm]?[jt]sx? 与 *Test.java（且须有 @Test 注解）；title/assert 是源码里逐字存在的子串，门 check-decision-test-map 校验存在性。决策号两种形态（task-59）：\"DSD-NNNN\" = DSD-1474 起的新裁定（只解析 DSD 侧、不做台账查重，dsd 可省略由 id 推导、给了就必须同值），\"D-####\" = 历史台账号（台账自 D-1903 冻结后按 DSD 库核对）。covered=测试已存在且通过校验；pending=条款已裁定但测试未写（必须有 card）；not-testable=无渲染/DOM 可判属性（必须有 reason，占比 ≤20%）。",
   "decisions": [
     {
       "id": "D-1904",

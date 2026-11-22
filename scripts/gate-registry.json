@@ -192,12 +192,12 @@
    "note": "task-104 首次点名的缺口；task-112 修门：md-tables 加该 spec 根"
   },
   {
-   "root": "A12-DSH-decision/docs",
+   "root": "A12-arbiter/docs",
    "kind": "doc-corpus",
    "gates": [
     "scripts/check-markdown-control-bytes.mjs"
    ],
-   "owner": "A12-DSH-decision",
+   "owner": "A12-arbiter",
    "note": "兄弟仓 docs：仅 control-bytes 的 <repo>/docs 扫描覆盖；md-tables/emphasis 默认面不含"
   },
   {
@@ -269,10 +269,10 @@
    "note": "2 个门型脚本"
   },
   {
-   "root": "A12-DSH-decision/scripts",
+   "root": "A12-arbiter/scripts",
    "kind": "gate-scripts",
    "gates": [],
-   "owner": "A12-DSH-decision",
+   "owner": "A12-arbiter",
    "discoveredCount": 3,
    "note": "3 个门型脚本"
   },
@@ -317,7 +317,7 @@
     "files": [
      "mise.toml",
      "A03-xihe/mise.toml",
-     "A12-DSH-decision/mise.toml"
+     "A12-arbiter/mise.toml"
     ],
     "reason": "祖先链同名：mise 任务名唯一、后加载者胜（task-103 §6.3 实测：A03 cwd 下 A03 定义胜，one 根定义永不随 A03 的 lint 跑）"
    }
