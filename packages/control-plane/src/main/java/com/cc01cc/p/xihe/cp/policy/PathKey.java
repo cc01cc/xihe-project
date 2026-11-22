@@ -106,7 +106,7 @@ public final class PathKey {
      * and stays a path; anything whose first colon comes before any separator is a scheme
      * ({@code credential:<uuid>}, {@code skill:<uuid>}, {@code fs:<rootScopeId>/<rel>}).</p>
      */
-    private static boolean isSchemeValue(String raw) {
+    static boolean isSchemeValue(String raw) {
         int colon = raw.indexOf(':');
         if (colon < 0) {
             return false;

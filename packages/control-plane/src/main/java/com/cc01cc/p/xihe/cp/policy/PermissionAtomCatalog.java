@@ -332,10 +332,9 @@ public final class PermissionAtomCatalog {
         return INSTANCE_ONLY_ATOMS.contains(name) ? SCOPE_CLASS_INSTANCE : SCOPE_CLASS_BOTH;
     }
 
+    /** task-830: canonical resources are derived by {@link ResourceNamespaces}, not here. */
     private static String actionResource(String actionClass) {
-        return ToolFaceRegistry.isCredentialActionClass(actionClass)
-                ? ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD
-                : WILDCARD;
+        return ResourceNamespaces.canonicalResourceFor(actionClass);
     }
 
     /**

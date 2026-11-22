@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
@@ -111,6 +112,22 @@ class GrantIntersectionResourceIdentityTest {
                 ResourceIdentity.parseDeclaration("fs:ws-1"), root));
         assertEquals("phys:d:/ws/a", ResourceIdentity.physicalKeyOf(
                 ResourceIdentity.parseDeclaration("fs:ws-1/a/"), root), "尾斜杠折叠后仍是 a，不是根");
+    }
+
+    /**
+     * task-830: a declaration key is root-relative, so the same {@code fs:} grant keeps matching when
+     * the workspace is mounted at a different host root (machine move / container / restored backup).
+     * This is why {@code phys:} must never be persisted — it would bake one of these roots in.
+     */
+    @Test
+    void oneFsKeyMatchesUnderEveryHostRoot() {
+        for (String root : List.of("H:/ws", "D:/data/workspace", "C:/Users/x/ws/")) {
+            GrantIntersectionEvaluator evaluator = withScopes(Map.of(
+                    "ws-1", new ResourceIdentity.RootScope(
+                            ResourceIdentity.ScopeKind.WORKSPACE, root)));
+            assertTrue(evaluator.matchesResource("fs:ws-1/src", "fs:ws-1/src/app.ts",
+                    ToolShape.STRUCTURED), "the fs: key must be root-independent: " + root);
+        }
     }
 
     /** ⑦ 解析不出 phys 时拒绝；两侧都不是声明键才回退（通配仍走原匹配器）。 */
