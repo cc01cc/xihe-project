@@ -57,6 +57,14 @@ public class WorkspaceService {
 
     private static final String DEFAULT_IMAGE = "xihe/workspace:latest";
     private static final String DEFAULT_EXECUTION_MODE = "docker";
+    /**
+     * The Runtime's MXC probe has its own 3 s budget. A cold `wxc-exec --probe`
+     * can exceed it once under load, so CP retries only that transient timeout;
+     * a persistent failure or a missing executable is still returned unchanged.
+     */
+    private static final int DIRECT_ATTACH_PROBE_ATTEMPTS = 2;
+    private static final String SANDBOX_PROBE_TIMEOUT_REASON =
+            "SANDBOX_PROBE_FAILED: probe timed out";
 
     private final WorkspaceRepository workspaceRepository;
     /** task-575: workspace creation is audited once per creation, under this action name. */
@@ -1169,8 +1177,8 @@ public class WorkspaceService {
         String normalizedHostPath = normalizeHostPath(hostPath, normalizedStorageMode);
         final Map<String, Object> snapshot;
         try {
-            snapshot = probeDirectAttachSnapshot(normalizedStorageMode, normalizedHostPath,
-                    normalizedExecutionMode);
+            snapshot = probeDirectAttachSnapshotWithRetry(normalizedStorageMode,
+                    normalizedHostPath, normalizedExecutionMode);
         } catch (CpApiException e) {
             // probeDirectAttachSnapshot only throws for transport/parse failures;
             // a reachable Runtime reporting unavailable is returned normally.
@@ -1186,7 +1194,8 @@ public class WorkspaceService {
     }
 
     private Map<String, Object> probeDirectAttach(String storageMode, String hostPath, String executionMode) {
-        Map<String, Object> snapshot = probeDirectAttachSnapshot(storageMode, hostPath, executionMode);
+        Map<String, Object> snapshot = probeDirectAttachSnapshotWithRetry(storageMode, hostPath,
+                executionMode);
         if (!Boolean.TRUE.equals(snapshot.get("available"))) {
             String reason = snapshot.get("reason") instanceof String value ? value : "CAPABILITY_UNAVAILABLE";
             throw new CpApiException(
@@ -1195,6 +1204,33 @@ public class WorkspaceService {
                     "direct attach backend is unavailable: " + reason);
         }
         return snapshot;
+    }
+
+    /**
+     * CP-side absorption of the Runtime's cold-start MXC probe timeout. The
+     * second attempt is bounded (exactly one retry) and only fires for the
+     * explicit {@code SANDBOX_PROBE_FAILED: probe timed out} reason, so an
+     * unavailable backend or a missing executable keeps its original outcome.
+     */
+    private Map<String, Object> probeDirectAttachSnapshotWithRetry(String storageMode,
+            String hostPath, String executionMode) {
+        Map<String, Object> snapshot = probeDirectAttachSnapshot(storageMode, hostPath,
+                executionMode);
+        for (int attempt = 1; attempt < DIRECT_ATTACH_PROBE_ATTEMPTS
+                && isTransientProbeTimeout(snapshot); attempt++) {
+            logger.warn("DIRECT_ATTACH_PROBE_TRANSIENT_TIMEOUT executionMode={} attempt={} reason={}",
+                    executionMode, attempt, snapshot.get("reason"));
+            snapshot = probeDirectAttachSnapshot(storageMode, hostPath, executionMode);
+        }
+        return snapshot;
+    }
+
+    private boolean isTransientProbeTimeout(Map<String, Object> snapshot) {
+        if (Boolean.TRUE.equals(snapshot.get("available"))) {
+            return false;
+        }
+        Object reason = snapshot.get("reason");
+        return reason instanceof String text && text.startsWith(SANDBOX_PROBE_TIMEOUT_REASON);
     }
 
     /**
