@@ -21,6 +21,11 @@ import {
     readBuildInfo,
     writeBuildInfo,
 } from './lib/cp-build-info.mjs'
+import {
+    PLATFORM_SKIP_WHITELIST,
+    classifyPlaywrightSkips,
+    judgeSkipClassification,
+} from './e2e-host.mjs'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 
@@ -426,4 +431,116 @@ test('e2e-host wires the pure judgement and no longer compares StartedAt against
     assert.ok(upIdx > priorReadIdx, 'the prior id must be read before compose up')
     assert.match(source, /waitForPostgresContainerHealthy\(priorContainerId\)/u)
     assert.match(source, /async function readPgContainerId\(\)/u)
+})
+
+function skipReport({ file = 'e2e/real/gated.spec.ts', line = 10, description, location } = {}) {
+    const annotations = description === undefined
+        ? []
+        : [{
+            type: 'skip',
+            description,
+            location: location ?? { file, line: line + 1, column: 1 },
+        }]
+    return {
+        stats: { expected: 0, unexpected: 0, flaky: 0, skipped: 1 },
+        suites: [{
+            file,
+            specs: [{
+                file,
+                line,
+                title: 'gated spec',
+                tests: [{
+                    expectedStatus: 'skipped',
+                    annotations,
+                    results: [{ status: 'skipped' }],
+                }],
+            }],
+        }],
+    }
+}
+
+test('BL-421 classifies a --llm-mode gate as an expected skip', () => {
+    const report = skipReport({
+        description: 'requires XIHE_E2E_LLM_MODE=success (provider wire); current: real',
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 1, platformGate: 0, laneGate: 0, unclassified: 0 })
+    assert.equal(judgeSkipClassification(classification, { expectedSkipped: 1 }).ok, true)
+})
+
+test('BL-421 classifies a whitelisted win32 visual baseline skip as a platform gate', () => {
+    const entry = PLATFORM_SKIP_WHITELIST.find((candidate) => candidate.file === 'e2e/helpers/visual.ts')
+    const report = skipReport({
+        description: `视觉基线只在 linux 平台比较（e2e/helpers/visual.ts）；当前平台 win32，matcher 未执行 ⇒ 记 skipped 而不是 passed`,
+        location: { file: 'H:\\zeogit\\one\\A03-xihe\\packages\\ui\\e2e\\helpers\\visual.ts', line: entry.line, column: 14 },
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 0, platformGate: 1, laneGate: 0, unclassified: 0 })
+    assert.equal(judgeSkipClassification(classification, { expectedSkipped: 1 }).ok, true)
+})
+
+test('BL-421 still fails a skip whose reason is neither a mode gate nor a platform gate', () => {
+    const report = skipReport({
+        file: 'e2e/real/provider-key.spec.ts',
+        line: 42,
+        description: 'requires an undeclared specialty lane',
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 0, platformGate: 0, laneGate: 0, unclassified: 1 })
+    const verdict = judgeSkipClassification(classification, { expectedSkipped: 1 })
+    assert.equal(verdict.ok, false)
+    assert.ok(verdict.problems.some((problem) => problem.includes('e2e/real/provider-key.spec.ts:42')))
+})
+
+test('BL-421 fails a platform skip that is not declared in the static whitelist', () => {
+    const report = skipReport({
+        description: '视觉基线只在 linux 平台比较（e2e/helpers/visual.ts）；当前平台 win32，matcher 未执行 ⇒ 记 skipped 而不是 passed',
+        location: { file: 'e2e/helpers/visual.ts', line: 99, column: 14 },
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 0, platformGate: 0, laneGate: 0, unclassified: 1 })
+    const verdict = judgeSkipClassification(classification, { expectedSkipped: 1 })
+    assert.equal(verdict.ok, false)
+    assert.ok(verdict.problems.some((problem) => problem.includes('e2e/helpers/visual.ts:99')))
+    assert.ok(verdict.problems.some((problem) => problem.includes('not declared in the static whitelist')))
+})
+
+test('BL-421 --allow-skip remains an explicit escape, not the default verdict', () => {
+    const report = skipReport({
+        description: 'requires an undeclared specialty lane',
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.equal(judgeSkipClassification(classification, { expectedSkipped: 1 }).ok, false)
+    assert.equal(judgeSkipClassification(classification, { expectedSkipped: 1, allowSkip: true }).ok, true)
+})
+
+test('BL-421 classifies a declared lane/environment gate as an expected skip', () => {
+    const report = skipReport({
+        description: 'requires the ratelimit auth lane (node scripts/e2e-host.mjs --auth-lane=ratelimit ...); current lane=exempt',
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 0, platformGate: 0, laneGate: 1, unclassified: 0 })
+    assert.equal(judgeSkipClassification(classification, { expectedSkipped: 1 }).ok, true)
+})
+
+test('BL-421 fails an undeclared "requires ..." reason instead of treating it as a lane gate', () => {
+    const report = skipReport({
+        file: 'e2e/real/undeclared-lane.spec.ts',
+        line: 77,
+        description: 'requires a service account token that is not declared anywhere',
+    })
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 0, platformGate: 0, laneGate: 0, unclassified: 1 })
+    const verdict = judgeSkipClassification(classification, { expectedSkipped: 1 })
+    assert.equal(verdict.ok, false)
+    assert.ok(verdict.problems.some((problem) => problem.includes('e2e/real/undeclared-lane.spec.ts:77')))
+})
+
+test('BL-421 always fails a skip with no annotation reason', () => {
+    const report = skipReport({})
+    const classification = classifyPlaywrightSkips(report, { platform: 'win32' })
+    assert.deepEqual(classification.counts, { modeGate: 0, platformGate: 0, laneGate: 0, unclassified: 1 })
+    const verdict = judgeSkipClassification(classification, { expectedSkipped: 1 })
+    assert.equal(verdict.ok, false)
+    assert.ok(verdict.problems.some((problem) => problem.includes('(no skip annotation reason)')))
 })

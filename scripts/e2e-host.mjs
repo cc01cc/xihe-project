@@ -6,6 +6,7 @@ import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/prom
 import { rm } from 'node:fs/promises'
 import { connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
+import { pathToFileURL } from 'node:url'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
@@ -2588,6 +2589,237 @@ async function runPlaywright() {
 }
 
 /**
+ * BL-421: not every self-skip is a hole. `scripts/e2e-batches.jsonc` is explicit that a
+ * batch selects one llm-mode and the specs gated for the other modes skip by design. Two
+ * classes are therefore acceptable, and they are proven from the report annotation rather
+ * than from the skip count:
+ *   - mode gate: the reason names the selected `--llm-mode`/`XIHE_E2E_LLM_MODE` mismatch;
+ *   - platform gate: the reason and source location match a static whitelist entry below.
+ * Every other skip is a silent hole and must fail with `spec:line — reason`.
+ *
+ * The whitelist is deliberately static: a new platform skip needs a code change and an
+ * explicit source line, never a wildcard keyed on a reason string alone.
+ */
+export const PLATFORM_SKIP_WHITELIST = Object.freeze([
+  Object.freeze({
+    file: 'e2e/helpers/visual.ts',
+    line: 28,
+    platforms: Object.freeze(['win32']),
+    reason: 'Linux-only visual baseline; on win32 the matcher is not executed and the test is recorded as skipped',
+    reasonIncludes: '视觉基线只在 linux 平台比较',
+  }),
+  Object.freeze({
+    file: 'e2e/real/plan0384-mxc-unavailable.spec.ts',
+    line: 131,
+    platforms: Object.freeze(['win32']),
+    reason: 'The host has a usable windows-mxc backend; this spec covers the unavailable-backend branch',
+    reasonIncludes: 'this host reports a usable windows-mxc backend',
+  }),
+  Object.freeze({
+    file: 'e2e/real/plan0384-mxc-unavailable.spec.ts',
+    line: 155,
+    platforms: Object.freeze(['win32']),
+    reason: 'The host has a usable windows-mxc backend; this spec covers the unavailable-backend branch',
+    reasonIncludes: 'this host reports a usable windows-mxc backend',
+  }),
+])
+
+const MODE_GATE_REASON_PATTERNS = Object.freeze([
+  /\bXIHE_E2E_LLM_MODE\s*=/,
+  /--llm-mode=/,
+  /\bmode gate\b/i,
+  /\bfake[- ]LLM\b/i,
+  /\bsuccess profile\b/i,
+  /\bcredential_acquire\b/,
+])
+
+const NO_SKIP_ANNOTATION_REASON = '(no skip annotation reason)'
+
+/**
+ * BL-421 lane/environment gates. Unlike mode/platform gates these are opt-in run
+ * profiles, frozen-backend declarations or credential prerequisites. Every entry is an
+ * explicit reason prefix with the source of the gate; matching is never a generic
+ * "contains requires" test. A spec that starts skipping for a new reason fails until a
+ * line is added here deliberately.
+ */
+export const LANE_GATE_REASON_WHITELIST = Object.freeze([
+  // team-c-group.spec.ts: requires XIHE_E2E_TEAM_C=1 on an owned e2e-host stack.
+  Object.freeze({ id: 'team-c', prefix: 'set XIHE_E2E_TEAM_C=1' }),
+  // journey-d/plan0630/plan0649/real-tool-roundtrip/loop-observation/run-budget:
+  // the real Xiaomi provider key was not supplied.
+  Object.freeze({ id: 'real-provider-key-xiaomi', prefix: 'requires a real provider key (XIHE_E2E_REAL_XIAOMI_KEY)' }),
+  // plan-0585-principal-grants.spec.ts: admin token or admin username/password absent.
+  Object.freeze({ id: 'admin-token', prefix: 'Set XIHE_E2E_ADMIN_TOKEN' }),
+  // guidance-consume/guidance-ui: deterministic approval tool-call fixture not booted.
+  Object.freeze({ id: 'approval-fixture', prefix: 'requires deterministic approval tool-call fixture' }),
+  // auth-lockout/auth-rate-limit.spec.ts: the opt-in ratelimit auth lane was not selected.
+  Object.freeze({ id: 'ratelimit-auth-lane', prefix: 'requires the ratelimit auth lane' }),
+  // bl382-session-scale.spec.ts: BL382 tier/session seed route is env-gated.
+  Object.freeze({ id: 'bl382-session-scale', prefix: 'requires the isolated e2e-host stack + XIHE_BL382_TIER' }),
+  // chat-availability.spec.ts: BL-148 real lane needs the runner provider identity.
+  Object.freeze({ id: 'bl148-real-lane', prefix: 'BL-148: real lane requires the runner-provided provider identity' }),
+  // checkpoint-resume.spec.ts: dedicated checkpoint-resume lane not selected.
+  Object.freeze({ id: 'checkpoint-resume-lane', prefix: 'requires the dedicated checkpoint-resume lane' }),
+  // checkpoint-saver-probe.spec.ts: dedicated checkpoint saver probe lane not selected.
+  Object.freeze({ id: 'checkpoint-saver-probe-lane', prefix: 'requires the dedicated checkpoint saver probe lane' }),
+  // first-install-l2.spec.ts: first-install + seed-admin state is an explicit env opt-in.
+  Object.freeze({ id: 'first-install', prefix: 'set XIHE_E2E_FIRST_INSTALL=1' }),
+  // journey-a.spec.ts: approval-expiry case needs the shortened approval timeout env.
+  Object.freeze({ id: 'approval-expire', prefix: 'set XIHE_E2E_APPROVAL_EXPIRE=1' }),
+  // k1-batch2-agent-to.spec.ts: the real provider lane (not the real-full batch) is required.
+  Object.freeze({ id: 'real-provider-lane', prefix: 'requires the real provider lane (XIHE_E2E_REAL_KEY)' }),
+  // Docker-backed specs: PLAN-0618 froze the workspace docker execution backend.
+  Object.freeze({ id: 'docker-frozen', prefix: 'DOCKER_FROZEN (PLAN-0618):' }),
+  // plan-0608-browser.spec.ts: zero-member workspace cannot be constructed by design;
+  // the behaviour is covered by SessionWorkspaceResolverTest.
+  Object.freeze({ id: 'zero-member-structural', prefix: '零成员态不可构造' }),
+  // plan0660-ask-user.spec.ts: the ask-user runbook window is an explicit env opt-in.
+  Object.freeze({ id: 'ask-user', prefix: '只有 XIHE_E2E_ASK_USER=1' }),
+  // run-trace.spec.ts: real Xiaomi provider key is not supplied (alternate wording).
+  Object.freeze({ id: 'real-provider-key-run-trace', prefix: 'requires XIHE_E2E_REAL_XIAOMI_KEY;' }),
+  // tool-face-reachability.spec.ts: opt-in probe flag not set.
+  Object.freeze({ id: 'tool-face-probe', prefix: 'opt-in probe: set XIHE_E2E_TOOL_FACE_PROBE=1' }),
+])
+
+function isLaneGateReason(reason) {
+  if (reason === '' || reason === NO_SKIP_ANNOTATION_REASON) return false
+  return LANE_GATE_REASON_WHITELIST.some((entry) => reason.startsWith(entry.prefix))
+}
+
+function normalizeSkipPath(file) {
+  return String(file ?? '').replaceAll('\\', '/')
+}
+
+function annotationLocationMatches(annotation, entry) {
+  const file = normalizeSkipPath(annotation.location?.file)
+  return (file === entry.file || file.endsWith('/' + entry.file))
+    && annotation.location?.line === entry.line
+}
+
+function isModeGateReason(reason) {
+  return MODE_GATE_REASON_PATTERNS.some((pattern) => pattern.test(reason))
+}
+
+function skipAnnotations(spec, test) {
+  const seen = new Set()
+  const annotations = []
+  for (const annotation of [...(spec.annotations ?? []), ...(test.annotations ?? [])]) {
+    if (annotation.type !== 'skip') continue
+    const key = `${annotation.description ?? ''}\u0000${normalizeSkipPath(annotation.location?.file)}:${annotation.location?.line ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    annotations.push(annotation)
+  }
+  return annotations
+}
+
+function isSkippedTest(test) {
+  const results = test.results ?? []
+  if (results.length === 0) return test.expectedStatus === 'skipped'
+  return results.every((result) => result.status === 'skipped')
+}
+
+/**
+ * Walk a Playwright JSON report and classify every skipped test by the reason in its
+ * `skip` annotation. Pure: the caller supplies the platform and whitelist.
+ */
+export function classifyPlaywrightSkips(report, options = {}) {
+  const platform = options.platform ?? process.platform
+  const whitelist = options.whitelist ?? PLATFORM_SKIP_WHITELIST
+  const modeGates = []
+  const platformGates = []
+  const laneGates = []
+  const unclassified = []
+
+  const walk = (suite, file) => {
+    const suiteFile = suite.file || file
+    for (const spec of suite.specs ?? []) {
+      const specFile = spec.file || suiteFile
+      for (const test of spec.tests ?? []) {
+        if (!isSkippedTest(test)) continue
+        const annotations = skipAnnotations(spec, test)
+        const descriptions = annotations.map((annotation) => String(annotation.description ?? '').trim())
+        const reason = descriptions.filter(Boolean).join(' | ') || NO_SKIP_ANNOTATION_REASON
+        const row = { file: specFile, line: spec.line, title: spec.title ?? '(untitled)', reason, annotations }
+
+        const listed = annotations.find((annotation) => whitelist.some((entry) =>
+          entry.platforms.includes(platform)
+          && annotationLocationMatches(annotation, entry)
+          && String(annotation.description ?? '').includes(entry.reasonIncludes),
+        ))
+        if (listed) {
+          platformGates.push(row)
+          continue
+        }
+
+        const unlistedPlatform = annotations.find((annotation) => {
+          const file = normalizeSkipPath(annotation.location?.file)
+          const relative = whitelist.find((entry) => file === entry.file || file.endsWith('/' + entry.file))
+          return relative !== undefined
+        })
+        if (unlistedPlatform) {
+          unclassified.push({
+            ...row,
+            reason: `platform skip is not declared in the static whitelist (${normalizeSkipPath(unlistedPlatform.location?.file)}:${unlistedPlatform.location?.line ?? '?'}): ${reason}`,
+          })
+          continue
+        }
+
+        if (descriptions.some((description) => description !== '' && isModeGateReason(description))) {
+          modeGates.push(row)
+          continue
+        }
+
+        if (isLaneGateReason(reason)) {
+          laneGates.push(row)
+          continue
+        }
+
+        unclassified.push(row)
+      }
+    }
+    for (const child of suite.suites ?? []) walk(child, suiteFile)
+  }
+
+  for (const suite of report?.suites ?? []) walk(suite, suite.file)
+
+  return {
+    total: modeGates.length + platformGates.length + laneGates.length + unclassified.length,
+    modeGates,
+    platformGates,
+    laneGates,
+    unclassified,
+    counts: {
+      modeGate: modeGates.length,
+      platformGate: platformGates.length,
+      laneGate: laneGates.length,
+      unclassified: unclassified.length,
+    },
+  }
+}
+
+/**
+ * Turn a classification into a verdict. `--allow-skip` still bypasses the judgement, but
+ * the default path fails on every unclassified skip and prints one `spec:line — reason`
+ * line per occurrence. A classified total that disagrees with Playwright's own `skipped`
+ * counter is also a failure: it means some skip was never inspected.
+ */
+export function judgeSkipClassification(classification, options = {}) {
+  const allowSkip = options.allowSkip ?? false
+  const expectedSkipped = options.expectedSkipped ?? classification.total
+  const problems = []
+  if (!allowSkip) {
+    if (classification.total !== expectedSkipped) {
+      problems.push(`classified ${classification.total} skipped test(s) but the Playwright report counts ${expectedSkipped}`)
+    }
+    for (const row of classification.unclassified) {
+      problems.push(`${row.file}:${row.line} — ${row.reason}`)
+    }
+  }
+  return { ok: problems.length === 0, problems }
+}
+
+/**
  * BL-421: a gated spec that self-skips still lets `playwright test` exit 0, so a lane could
  * report success while having executed nothing (the 0660 ask-user spec is exactly that shape:
  * `test.skip(!ENABLED, …)` behind `XIHE_E2E_ASK_USER`). Read the runner-owned JSON report and
@@ -2610,7 +2842,35 @@ async function assertExecutedTestCounts(result, statsPath) {
   }
   const summary = summarizePlaywrightReport(report)
   console.log(`[e2e-host] ${formatTestCounts(summary)}`)
-  const { ok, problems } = judgeTestCounts({ stats: summary, expectTests, allowSkip })
+  const classification = classifyPlaywrightSkips(report)
+  console.log(
+    `[e2e-host] BL-421 skip classes: total=${classification.total}`
+      + ` (mode-gate=${classification.counts.modeGate}`
+      + ` platform-gate=${classification.counts.platformGate}`
+      + ` lane-gate=${classification.counts.laneGate}`
+      + ` unclassified=${classification.counts.unclassified})`,
+  )
+  for (const row of classification.platformGates) {
+    console.log(`[e2e-host] BL-421 skip[platform-gate] ${row.file}:${row.line} — ${row.reason}`)
+  }
+  if (allowSkip) {
+    if (classification.counts.unclassified > 0) {
+      console.warn(`[e2e-host] BL-421: --allow-skip accepts ${classification.counts.unclassified} unclassified skip(s) this run`)
+    }
+  } else {
+    for (const row of classification.unclassified) {
+      console.error(`[e2e-host] BL-421 skip[unclassified] ${row.file}:${row.line} — ${row.reason}`)
+    }
+  }
+  // The skip rule is judged below from annotations; `judgeTestCounts` is kept for the
+  // `--expect-tests` pin only (its blanket "any skip fails" rule would defeat the split).
+  const countVerdict = judgeTestCounts({ stats: summary, expectTests, allowSkip: true })
+  const skipVerdict = judgeSkipClassification(classification, {
+    allowSkip,
+    expectedSkipped: summary.skipped,
+  })
+  const problems = [...countVerdict.problems, ...skipVerdict.problems]
+  const ok = problems.length === 0
   if (ok) return result
   for (const problem of problems) console.error(`[e2e-host] BL-421 FAIL: ${problem}`)
   return { ...result, code: result.code === 0 ? 1 : result.code }
@@ -3737,23 +3997,28 @@ async function main() {
   // isolation), so the old "dev runtime was stopped for this run" reminder is gone.
 }
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, async () => {
-    process.exitCode = 130
-    // Persistent mode hands stack ownership to --teardown; an interrupt
-    // (Ctrl+C or a supervisor kill) must not tear the stack down.
-    if (isPersistent) {
-      console.log('[e2e-host] persistent stack left running; tear down with: node scripts/e2e-host.mjs --teardown')
+const invokedDirectly = typeof process.argv[1] === 'string'
+  && pathToFileURL(process.argv[1]).href === import.meta.url
+
+if (invokedDirectly) {
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, async () => {
+      process.exitCode = 130
+      // Persistent mode hands stack ownership to --teardown; an interrupt
+      // (Ctrl+C or a supervisor kill) must not tear the stack down.
+      if (isPersistent) {
+        console.log('[e2e-host] persistent stack left running; tear down with: node scripts/e2e-host.mjs --teardown')
+        process.exit(130)
+      }
+      await cleanup()
       process.exit(130)
-    }
-    await cleanup()
-    process.exit(130)
+    })
+  }
+
+  main().catch(async (error) => {
+    console.error(`[e2e-host] ${error instanceof Error ? error.message : String(error)}`)
+    // task-237: 以前这里是 `await cleanup()` 无上限 —— 任一步卡住（compose down / waitForChildExit）
+    // 就是"父进程永远活着、fake server 还占端口"。现在 cleanup 带 deadline，超时即强杀并 exit。
+    await cleanupWithDeadline('main() failed', 1)
   })
 }
-
-main().catch(async (error) => {
-  console.error(`[e2e-host] ${error instanceof Error ? error.message : String(error)}`)
-  // task-237: 以前这里是 `await cleanup()` 无上限 —— 任一步卡住（compose down / waitForChildExit）
-  // 就是"父进程永远活着、fake server 还占端口"。现在 cleanup 带 deadline，超时即强杀并 exit。
-  await cleanupWithDeadline('main() failed', 1)
-})
