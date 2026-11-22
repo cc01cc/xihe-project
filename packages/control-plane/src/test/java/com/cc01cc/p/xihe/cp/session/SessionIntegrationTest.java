@@ -285,10 +285,11 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         principalGrant.setSource("template");
         principalGrant.setReadState("read");
         principalGrant.setPermissions(objectMapper.readTree(
-                "[{\"actionClass\":\"read\",\"resource\":\"*\"}]"));
+                "[{\"actionClass\":\"action:read\",\"resource\":\"*\"}]"));
         authorizationGrantRepository.saveAndFlush(principalGrant);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(), workspaceId,
-                objectMapper.readTree("[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]")));
+                objectMapper.readTree(
+                        "[{\"actionClass\":\"action:read\"},{\"actionClass\":\"action:write\"}]")));
 
         long before = sessionRepository.count();
         HttpHeaders headers = new HttpHeaders();
@@ -324,7 +325,8 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
                 sessionParticipantRepository.primaryPrincipalId(session.getId()).orElse(null),
                 "PLAN-0689 A7: Session creation writes the PRIMARY participant");
         assertEquals(1, session.getAgentPermissionsSnapshot().size());
-        assertEquals("read", session.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
+        assertEquals("action:read",
+                session.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
         assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), "default"));
     }
