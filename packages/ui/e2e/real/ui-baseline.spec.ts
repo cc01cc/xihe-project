@@ -2119,10 +2119,18 @@ async function openSettingsWithDraft(page: Page, draft: string | null): Promise<
         const field = fields.nth(index);
         const inner = field.locator("input, textarea").first();
         const target = (await inner.count()) > 0 ? inner : field;
-        if (!(await target.isVisible().catch(() => false))) continue;
-        if (!(await target.isEnabled().catch(() => false))) continue;
-        await target.fill(draft, { timeout: 5_000 });
+        // 面板取数晚于容器挂载：fill 自带 visible+enabled 等待，不能用单次 isVisible 判掉。
+        const filled = await target
+            .fill(draft, { timeout: 15_000 })
+            .then(() => true)
+            .catch(() => false);
+        if (!filled) continue;
         expect(await target.inputValue(), "脏化步骤本身失效：填写后读回不是草稿").toBe(draft);
+        // 等 dirty 信号真的落到面板上再返回：否则下一步导航可能早于 Vue 的 emit 传播。
+        await page
+            .locator('[data-testid^="config-domain-"][data-draft-dirty="true"]')
+            .first()
+            .waitFor({ state: "attached", timeout: 10_000 });
         return;
     }
     throw new Error(NO_CONFIG_TEXT_MSG + "（可见且可用的输入框为 0）");
@@ -2155,21 +2163,34 @@ test.describe("DEV-011 17.4 未保存状态与离开策略（task-176）", () =>
         expect(fired, "无未保存状态却拦刷新：离开策略过头").toBe(0);
     });
 
-    // UNCOVERED：设置页整页草稿的离开守卫由 task-190 覆盖（Lead 已立卡，J1/J2 判据），本用例在它落地前不得读成 PASS。
-    test("@host 17.4 正例：设置页带未保存草稿走路由导航必须被拦住（UNCOVERED → task-190）", async ({
-        page,
-    }) => {
+    test("@host 17.4 正例：设置页带未保存草稿走路由导航必须被拦住", async ({ page }) => {
         await openSettingsWithDraft(page, "e2e-17-4-draft");
-        await page.goBack({ waitUntil: "load" });
+        // task-776：原来用 page.goBack() = **整文档历史回退**，SPA 的 onBeforeRouteLeave 拦不到。
+        // 改成真实站内路由导航（设置左栏链接）后，守卫才在正确的位置被触发。
+        await page.getByTestId("settings-nav-domain-instance-logging").click();
+        const confirm = page.getByTestId("settings-leave-confirm");
+        await expect(confirm, "带未保存草稿走 SPA 路由导航没有弹离开确认（task-190）").toBeVisible({
+            timeout: 10_000,
+        });
         expect(
             page.url(),
-            "带未保存草稿仍能直接换路由：缺离开守卫或离开确认（DEV-011 17.4；UNCOVERED → task-190）",
+            "弹了确认但 URL 已经离开设置页：守卫没有真正挂起导航（DEV-011 17.4）",
         ).toContain(SETTINGS_PAGE_PATH);
+        await page.getByTestId("settings-leave-keep").click();
+        await expect(confirm).toBeHidden();
+        expect(page.url(), "点「继续编辑」后仍被带走").toContain(SETTINGS_PAGE_PATH);
+
+        // 二次导航并明确丢弃：确认「离开」确实放行，而不是永远卡在设置页。
+        await page.getByTestId("settings-nav-domain-instance-logging").click();
+        await expect(confirm).toBeVisible({ timeout: 10_000 });
+        await page.getByTestId("settings-leave-discard").click();
+        await page.waitForURL(/\/settings\/instance\/logging$/, { timeout: 10_000 });
     });
 
     test("@host 17.4 负例：设置页无草稿时路由导航不得拦截", async ({ page }) => {
         await openSettingsWithDraft(page, null);
-        await page.goBack({ waitUntil: "load" });
+        await page.getByTestId("settings-nav-domain-instance-logging").click();
+        await page.waitForURL(/\/settings\/instance\/logging$/, { timeout: 10_000 });
         expect(page.url(), "无未保存状态也被拦在设置页：离开策略误伤").not.toContain(
             SETTINGS_PAGE_PATH,
         );
