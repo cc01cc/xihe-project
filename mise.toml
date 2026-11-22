@@ -1224,3 +1224,12 @@ description = "Agent import-boundary gate (task-700; wired by task-706): (1) api
 run = "node scripts/check-swallowed-error.mjs"
 description = "Swallowed-Error gate (task-710; wired by Lead 2026-11-22): production sources only (Java/Python/TS-JS-Vue + Rust listed as blind spot) must not swallow Throwable/Error — Java catch(Throwable|Error|java.lang.Throwable) incl. multi-catch, Python bare except / except BaseException, TS/JS/Vue empty catch {}. Background: catch(Throwable) swallows OutOfMemoryError and lets the JVM keep serving; this project just migrated off a DSH OOM crash, so the rule is gated rather than remembered. Exemptions: grandfather baseline by (file, rule, count) in A03-xihe/config/swallowed-error-baseline.json — decrease only — plus same-line '// OK: <reason>' (Python '# OK:'). Exit 0 clean / 1 violation or above baseline / 2 structural (no git tree, missing/bad baseline, unknown rule, missing scan root) — unknown is not safe. Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 Lead): files=1655 hits=34 baseline=34 over=0 => exit 0."
 
+# ── task-712 DSD 对账门：git 台账是登记 SSOT，`.dsd/xh.sqlite` 只是查询面 ──
+# 库在本机（gitignore 挡住，二进制 + 可重建）；**没有库时本门 exit 2 = 判不了**，不是通过。
+# 首次使用：按 evidence/2026-11-22-dsd-codex-import/README.md 跑一次迁移器导入。
+# 姿态 = report-only；不进 lint 聚合、不进 validate（且有本机状态依赖，不适合所有人当阻断门）。
+
+[tasks."check:dsd-reconcile"]
+run = "node ../internal/A03-xihe/scripts/xh-dsd-reconcile.mjs"
+description = "DSD ledger↔DB reconcile gate (task-712; wired by Lead 2026-11-22): compares the git ledger (registration SSOT) with the local Codex-line DSD copy .dsd/xh.sqlite (query surface only). Five checks — non-probe row count equals ledger unique entries, external_id symmetric difference empty, formal voided count matches, decision_refs rows and ref-carrying decision count match ledger extraction, the pre-existing CLI probe row is preserved and voided. The DSH database (C:/Users/zeoneo/.dsh/profiles/desktop/decision.sqlite) is out of scope by user ruling: DSD must detach from DSH. Exit 0 consistent / 1 inconsistent (prints the diff) / 2 cannot judge (db missing, locked, unexpected schema, ledger unreadable) — unknown is not safe, so a fresh clone without the local DB reports 2 and needs the importer, not a green. Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 Lead): 1448 non-probe rows = ledger, refs 4799, probe 1 voided => exit 0."
+
