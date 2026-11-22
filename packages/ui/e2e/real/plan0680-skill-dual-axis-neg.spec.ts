@@ -387,19 +387,24 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
 /**
  * §J8 — BL-354 场景注记（`verify.md:38` V8「BL-354 不可判定」）。
  *
- * 为什么是 `test.fixme` 而不是写死断言：BL-354 未关闭前，continuation（后续轮次）
+ * 为什么是「带 reason 的 skip」而不是写死断言：BL-354 未关闭前，continuation（后续轮次）
  * 场景下 `skills_snapshot` 的取值语义**没有冻结结论**——快照是每轮重算还是沿用首轮，
  * 决定了「解绑后再续接」到底应该「少一项」还是「保持原样」。两种都可能被解释成
  * 正确实现，此时写任何断言都是把未定语义钉成绿，属假绿。
  *
- * 关闭条件：BL-354 关闭 + design/verify 写明 continuation 语义后，取消 fixme，
+ * 关闭条件：BL-354 关闭 + design/verify 写明 continuation 语义后，取消 skip，
  * 按冻结语义补断言，并把 `verify.md:38` 的 V8 一并判过。
  */
-test.fixme("@host 0680-T3.2c J8 BL-354 continuation 场景快照语义（不可判定，待 BL-354 关闭）", async () => {
+test("@host 0680-T3.2c J8 BL-354 continuation 场景快照语义（不可判定，待 BL-354 关闭）", async () => {
     // 意图（BL-354 关闭后照此实现）：
     //   1. 绑定 skillA → 跑首轮 → 断快照含 skillA
     //   2. 解绑 skillA → 在同一会话里发第二轮（continuation，不新建 session）
     //   3. 断言：快照按冻结语义要么「少一项」（每轮重算）要么「保持原样」（沿用首轮）
     //   4. 两种语义各写什么断言，等 design 裁定；现在写死任一种都会变成假绿
-    expect(true, "本用例当前不可判定，见上方注释与 BL-354").toBe(true);
+    // BL-421：`test.fixme` 的 annotation type 不是 `skip`，分类器读不到原因；改用带
+    // reason 的运行时 skip，保持「不执行、不臆造断言」，同时让 skip 原因可被逐条点名。
+    test.skip(
+        true,
+        "BL-354: continuation 场景 skills_snapshot 语义未冻结（PLAN-0680 V8 不可判定注记，待 SPEC 5 / BL-354 关闭后补断言）",
+    );
 });

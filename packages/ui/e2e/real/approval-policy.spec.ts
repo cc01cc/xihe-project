@@ -169,7 +169,10 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
     // field on reload (empty select observed in error-context). Tracked as
     // BL-144「UI reload 后 workspace 层 config 拉取慢/首屏 select 长时间为空」;
     // reinstate this case after the product fix.
-    test.fixme(
+    // BL-421：已知产品缺陷不是车道/环境门，但 fixme 标注不带 `skip` reason，
+    // 分类器只会看到 «no skip annotation reason»。用 skip(true, reason) 把 BL-144 明确写进
+    // skip annotation，便于 BL-421 逐条点名；恢复条件仍是 BL-144 产品修复后重写本用例。
+    test.skip(
         true,
         "BL-144: after reload the workspace-layer approval-policy select never populates (empty value at 20s) while the API read-back is 'auto'",
     );

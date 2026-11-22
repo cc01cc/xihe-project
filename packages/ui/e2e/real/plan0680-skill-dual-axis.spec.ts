@@ -337,9 +337,14 @@ test("@host 0680-J3 角色轴仍单轴：只开技能轴，角色绑定面维持
     expect(roleBind.status()).toBeLessThan(500);
 });
 
-test.skip("@host 0680-J8 BL-354 场景", async () => {
+test("@host 0680-J8 BL-354 场景", async () => {
     // BL-354 在冻结章 `spec/agent/principal-workspace-binding.md:72-125` 内无覆盖条款，
     // 按派活纪律「不确定就留 skip + 注释」，不臆造断言。窗口期需先取 BL-354 现状语义再补。
+    // BL-421：整用例停用必须带 skip annotation reason（不能只靠 test.skip(title, body)）。
+    test.skip(
+        true,
+        "BL-354: continuation 场景 skills_snapshot 语义未冻结（PLAN-0680 V8 不可判定注记，待 SPEC 5 / BL-354 关闭后补断言）",
+    );
 });
 
 test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspace scope/Instance scope）", async ({

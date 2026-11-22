@@ -1,20 +1,21 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
- * PLAN-0658 R5 @host — 停用主体后的候选 / 成员行过滤（UI）。
+ * PLAN-0658 R5 @host — 停用主体后的候选 / 成员行过滤。
  *
  * 权威定义（`evidence/r-matrix-source.md`）：R5 = 主体维度「停用主体后候选/成员行过滤」，
- * 断言面 **UI**。
+ * 断言面：候选过滤走 **API 投影**（D-1882③ 后 composer 代发入口已删），成员行仍走 UI。
  *
  * 产品语义（源码依据）：
- *  - composer「发送」栏候选 = `useSessionParticipantsStore().speakAsCandidates`
- *    = `selfOwned === true && !disabledAt`（`stores/sessionParticipants.ts:44`）——
- *    停用主体**不渲染成可点入口**（服务端会 403 `PARTICIPANT_DISABLED`，那是"根本不接受"）；
+ *  - 可选 responder = `useSessionParticipantsStore().speakAsCandidates`
+ *    = `selfOwned === true && !disabledAt`（`stores/sessionParticipants.ts:47-49`）——
+ *    停用主体不在其中（服务端会 403 `PARTICIPANT_DISABLED`，那是"根本不接受"）；
+ *    D-1882③（task-55）删除了 composer 代发控件（`InputArea.vue:117-131`），该集合只剩 API 投影可断言；
  *  - 成员行（`SessionParticipantsPanel` → `ParticipantRow`）**保留**停用行（软停用留审计），
  *    但打 `participant-disabled-badge-<id>` 并降透明度（`ParticipantRow.vue:142,148,196`）。
  *
  * 覆盖：
  *  1. R5-1 API 前置：AGENT 参与者 soft-disable 后名册 `disabledAt` 非空、`capabilities.speakAs` 仍真；
- *  2. R5-2 UI 候选：候选面里**没有**停用主体，也没有可点 chip（enabled 的 PRIMARY 在候选里）；
+ *  2. R5-2 API 候选：可选 responder 里**没有**停用主体，enabled 的 PRIMARY 仍在（证明非空集）；
  *  3. R5-3 UI 成员行：成员面板仍有该行，但带停用徽标；PRIMARY 行无徽标。
  */
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
@@ -27,7 +28,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceSessionPath } from "../../src/lib/routes";
-import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 import { openDockPanel } from "../helpers/dock";
 
 const NONCE = Date.now().toString(36);
@@ -217,47 +218,35 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
         expect(view.capabilities?.speakAs, "仍可 speak-as（有 enabled 候选）").toBe(true);
     });
 
-    test("R5-2 UI 候选：停用主体不出现在「发送」候选中", async ({ page }) => {
-        seedOwnerPage(page);
-        await page.goto(workspaceSessionPath(workspaceId, sessionId));
-        await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
+    /**
+     * D-1882③（task-55）：composer「代发身份」入口已删（`InputArea.vue:117-131`，全树 0 渲染
+     * `speak-as-input`），候选面没有 DOM 可断言。改为同一份 API 投影：
+     *  - `capabilities.speakAs === true`（仍有 enabled 候选）；
+     *  - 可选 responder = 名册 `selfOwned && !disabledAt`（`stores/sessionParticipants.ts:47-49`）；
+     *    停用主体不在其中，enabled 的 PRIMARY 在其中（证明不是空集）。
+     * 服务端 `isSelfOwned` 对停用行恒 false（`SessionParticipantService.java:749-753`），
+     * `capabilities.speakAs` 与行自洽（同文件 `:207-208`）。
+     */
+    test("R5-2 API 候选：停用主体不在可选 responder 列表内", async ({ request }) => {
+        const view = await roster(request);
+        expect(view.capabilities?.speakAs, "仍有 enabled 候选 ⇒ speakAs=true").toBe(true);
 
-        const field = page.getByTestId("speak-as-input");
-        await expect(field, "「发送」栏渲染（capabilities.speakAs=true）").toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        // 候选面语义（`RecipientField.vue:50-74`）：`filtered` 会同时排除**已选中**和停用的项，
-        // `open` 由 query 变化驱动。默认预选 PRIMARY ⇒ 先把它的 chip 移除，否则候选只剩空集
-        // （这会让人误判成"过滤掉了"）。移除后再输入两个 agent 共有的前缀 `AgentR5`：
-        // 只有 enabled 的那个出现在候选里，才证明停用主体被过滤。
-        const sharedPrefix = "AgentR5";
-        expect(primaryDisplayName.startsWith(sharedPrefix)).toBe(true);
-        expect(disabledDisplayName.startsWith(sharedPrefix)).toBe(true);
-        const chipRemove = page.getByTestId("speak-as-chip-remove");
-        if ((await chipRemove.count()) > 0) {
-            await chipRemove.first().click();
-            await expect(page.getByTestId("speak-as-chip"), "chip 已移除").toHaveCount(0);
-        }
-        await field.click();
-        await field.pressSequentially(sharedPrefix);
-        await expect(
-            page.getByTestId("speak-as-menu"),
-            "候选面打开（有 enabled 候选）",
-        ).toBeVisible({
-            timeout: ACTION_TIMEOUT_MS,
-        });
-        // 选项的**每项唯一标识是 DOM `id`**（`RecipientField` 的 `optionId()`），
-        // `data-testid` 对所有选项都是同一个 `speak-as-option`。
-        await expect(
-            page.locator(`#speak-as-option-${disabledParticipantId}`),
-            "停用主体不得成为可点候选",
-        ).toHaveCount(0);
-        await expect(
-            page.locator(`#speak-as-option-${primaryParticipantId}`),
-            "同一前缀下 enabled 主体在候选里（证明过滤而非空集）",
-        ).toHaveCount(1);
+        const responders = (view.participants ?? []).filter(
+            (row) => row.selfOwned && !row.disabledAt,
+        );
+        const responderIds = responders.map((row) => row.participantId);
+        expect(responderIds, "停用主体不得成为可选 responder").not.toContain(disabledParticipantId);
+        expect(responderIds, "enabled 的 PRIMARY 仍可代发（证明过滤而非空集）").toContain(
+            primaryParticipantId,
+        );
+        // 双保险：服务端对停用行的 selfOwned 已归约为 false。
+        const disabledRow = (view.participants ?? []).find(
+            (row) => row.participantId === disabledParticipantId,
+        );
+        expect(disabledRow?.selfOwned, "停用行 selfOwned=false").toBe(false);
+        expect(view.capabilities?.speakAs, "speakAs 与 responder 非空一致").toBe(
+            responders.length > 0,
+        );
     });
 
     test("R5-3 UI 成员行：停用行保留但带停用徽标", async ({ page }) => {

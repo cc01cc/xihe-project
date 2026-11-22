@@ -10,8 +10,12 @@
  *  2. 默认发送（不带 as）⇒ run 归属 PRIMARY agent（durable：`chat_runs.agent_principal_id`）；
  *  3. 显式 `asParticipantId` = 工作区 agent ⇒ 202 且 run 归属**该 agent**（D23-08 授权通过）；
  *  4. 越权 as：owner 冒充另一个**人类**参与者 ⇒ 403 `PARTICIPANT_CAP_DENIED`（不是 500、不是静默降级）；
- *  5. 停用主体：AGENT 参与者被 soft-disable 后，名册 `disabledAt` 非空（UI 候选据此过滤），
+ *  5. 停用主体：AGENT 参与者被 soft-disable 后，名册 `disabledAt` 非空（候选过滤依据），
  *     且 as 它发送 ⇒ 403 `PARTICIPANT_DISABLED`。
+ *
+ * D-1882③（task-55）已删除 composer「代发身份」入口（`InputArea.vue:117-131`，全树不再渲染
+ * `speak-as-input`），所以 R2-6 不再断言 composer DOM，改用同一份 API 投影：`capabilities.speakAs`
+ * + 名册里 `selfOwned && !disabledAt` 的可选 responder 集合 + `asParticipantId` 的 wire 归属。
  *
  * 断言只认产品权威读面（`GET /sessions/{id}/participants`、`GET /chat/runs/{runId}`）与
  * wire 稳定码；不改产品、不放宽断言。
@@ -27,8 +31,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
-import { workspaceSessionPath } from "../../src/lib/routes";
-import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -71,8 +74,6 @@ let extraPrincipalId = "";
 let memberUserId = "";
 let memberParticipantId = "";
 let extraAgentParticipantId = "";
-/** PLAN-0659 T1.3：消息头「发送→<显示名>」断言用的显示名（身份判定仍只用 id）。 */
-let extraAgentDisplayName = "";
 let ownerHeaders: Record<string, string> = {};
 let closeSse: (() => void) | null = null;
 
@@ -202,7 +203,6 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
                 defaultModelName: FAKE_LLM_MODEL,
             },
         );
-        extraAgentDisplayName = agentName("R2Extra", NONCE);
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: token, workspaceId },
@@ -336,82 +336,54 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
     });
 
     /**
-     * PLAN-0659 T2.1 §2（real 段）· T1.3 投递语义：**发送→<显示名>** 在真实链路上成立。
+     * PLAN-0659 T2.1 §2（real 段）· T1.3 投递语义（API 面）：**发送→<agent>** 的可达性由名册
+     * 投影与 wire 归属证明。
      *
-     * 只在真栈能验的两件事：①composer 选中的 `asParticipantId` 真的随发送落到该消息的本地
-     * 发送态视图（BL-239：TO/CC 无持久载体 ⇒ **刷新前**断言，刷新后按设计消失）；
-     * ②`message-delivery-to` 的显示名来自花名册真实数据（不是 mock 桩）。
+     * D-1882③（task-55）删除 composer「代发身份」入口后，`InputArea.vue:117-131` 不再渲染
+     * `RecipientField`、`emit("send")` 第 3 位恒 undefined；`speak-as-input` 全树 0 渲染。
+     * 因此本用例改断言：
+     *  ① 名册 `capabilities.speakAs === true`（owner 至少有一个可代发主体）；
+     *  ② 可选 responder = 名册里 `selfOwned && !disabledAt` 的行（`stores/sessionParticipants.ts:47-49`），
+     *     目标 agent 必须在其中；
+     *  ③ 以该 agent 的 participantId 发 `POST /chat` ⇒ 202 且 run 归属该 agent（wire 通路仍在）。
      * 本用例必须排在 R2-5 之前 —— R2-5 会把该 agent 停用。
      */
-    test("R2-6 UI 发送→：composer 选 as 后发送，消息头 message-delivery-to 指向该 agent", async ({
-        page,
+    test("R2-6 API 发送→：目标 agent 在可选 responder 内，as= 它发送后 run 归属该 agent", async ({
+        request,
     }) => {
-        await page.addInitScript(
-            ({ accessToken, ws }) => {
-                localStorage.setItem("xihe-token", accessToken);
-                localStorage.setItem(
-                    "xihe-user",
-                    JSON.stringify({
-                        id: "e2e-owner",
-                        email: "e2e-owner@test.com",
-                        name: "E2E Owner",
-                    }),
-                );
-                localStorage.setItem(
-                    "xihe-workspace",
-                    JSON.stringify({ id: ws, name: "R2 workspace" }),
-                );
-                sessionStorage.setItem(
-                    "xihe-workspace",
-                    JSON.stringify({
-                        id: ws,
-                        name: "R2 workspace",
-                        workspaceRole: "OWNER",
-                        ownerId: "x",
-                    }),
-                );
-            },
-            { accessToken: token, ws: workspaceId },
+        const roster = await participants(request);
+        expect(roster.capabilities?.speakAs, "capabilities.speakAs=true ⇒ 存在可代发主体").toBe(
+            true,
         );
-        await page.goto(workspaceSessionPath(workspaceId, sessionId));
-        await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
 
-        // 「发送」栏：先移除默认预选（PRIMARY 已选 ⇒ 候选里不会再出现），再挑 extra agent。
-        const field = page.getByTestId("speak-as-input");
-        await expect(field, "capabilities.speakAs=true ⇒ 发送栏渲染").toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        const chipRemove = page.getByTestId("speak-as-chip-remove");
-        if ((await chipRemove.count()) > 0) await chipRemove.first().click();
-        await field.click();
-        await field.pressSequentially(extraAgentDisplayName.slice(0, 6));
-        await expect(page.getByTestId("speak-as-menu"), "候选面打开").toBeVisible({
-            timeout: ACTION_TIMEOUT_MS,
-        });
-        const option = page.locator(`#speak-as-option-${extraAgentParticipantId}`);
-        await expect(option, "目标 agent 在候选里").toHaveCount(1);
-        await option.click();
-        await expect(
-            page.getByTestId("speak-as-chip").first(),
-            "选中后落 chip，且 chip 的 participantId 与候选一致",
-        ).toHaveAttribute("data-participant-id", extraAgentParticipantId);
+        // 服务端权威投影：`SessionParticipantService.isSelfOwned` 对停用行恒 false（:749-753）。
+        const responders = (roster.participants ?? []).filter(
+            (row) => row.selfOwned && !row.disabledAt,
+        );
+        const target = responders.find((row) => row.participantId === extraAgentParticipantId);
+        expect(target, "目标 agent 在可选 responder 列表内").toBeTruthy();
+        expect(target!.principalId, "responder 行指向该 agent 主体").toBe(extraPrincipalId);
 
-        const content = `R2 delivery-to ${NONCE}`;
-        await page.getByTestId("chat-input").fill(content);
-        await page.getByTestId("chat-send-button").click();
-        await expect(page.getByText(content, { exact: true }), "用户气泡出现").toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
+        const sent = await postChat(request, {
+            content: `R2 delivery-to ${NONCE}`,
+            asParticipantId: extraAgentParticipantId,
         });
+        expect(sent.status(), await sent.text()).toBe(202);
+        const accepted = (await sent.json()) as RunView;
+        expect(accepted.runId, "runId").toBeTruthy();
+        expect(accepted.agentPrincipalId, "发送→ 的归属仍是该 agent（wire 通路未删）").toBe(
+            extraPrincipalId,
+        );
 
-        // 投递行三态：只有 TO（发送），没有 @、没有抄送。
-        const deliveryTo = page.getByTestId("message-delivery-to");
-        await expect(deliveryTo, "message-delivery-to 恰好一条").toHaveCount(1);
-        await expect(deliveryTo, "文案 = 发送→<显示名>").toContainText("发送→");
-        await expect(deliveryTo, "显示名来自真实花名册").toContainText(extraAgentDisplayName);
-        await expect(page.getByTestId("message-delivery-mention"), "未 @ 任何人").toHaveCount(0);
-        await expect(page.getByTestId("message-delivery-cc"), "未抄送任何人").toHaveCount(0);
+        await expect
+            .poll(
+                async () => {
+                    const view = await runView(request, accepted.runId!);
+                    return TERMINAL.has(String(view.status ?? ""));
+                },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
+            )
+            .toBe(true);
     });
 
     test("R2-5 停用主体：名册 disabledAt 非空且 as 它被拒", async ({ request }) => {
