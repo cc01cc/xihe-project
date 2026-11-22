@@ -205,6 +205,7 @@ function run(command, args, { cwd, logFile, shell = false }) {
     shell,
     stdio: ["ignore", fd, fd],
     env: process.env,
+    windowsHide: true,
   });
   closeSync(fd);
   const seconds = Number(process.hrtime.bigint() - started) / 1e9;
@@ -213,7 +214,7 @@ function run(command, args, { cwd, logFile, shell = false }) {
 }
 
 function git(args, cwd = REPO_ROOT) {
-  const res = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const res = spawnSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
   if (res.status !== 0) {
     throw new Error(`git ${args.join(" ")} 失败: ${(res.stderr || "").trim()}`);
   }
