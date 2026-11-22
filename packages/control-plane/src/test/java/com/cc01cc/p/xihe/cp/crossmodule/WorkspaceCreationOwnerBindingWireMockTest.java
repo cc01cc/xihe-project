@@ -93,7 +93,7 @@ class WorkspaceCreationOwnerBindingWireMockTest extends AbstractWireMockPgTest {
 
         // the creator holds exactly one workspace-tier binding (WS_OWNER) — the original assertion
         List<String> roles = jdbcTemplate.queryForList(
-                "SELECT r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                "SELECT r.name FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
                         + " AND b.scope_type = 'workspace' AND b.scope_id = CAST(? AS UUID)",
                 String.class, userId, workspaceId);

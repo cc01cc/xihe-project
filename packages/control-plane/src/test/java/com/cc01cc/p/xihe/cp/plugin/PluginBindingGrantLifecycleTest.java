@@ -1,8 +1,8 @@
 package com.cc01cc.p.xihe.cp.plugin;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
@@ -10,10 +10,10 @@ import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization;
 import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization.GrantRow;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -95,13 +95,13 @@ class PluginBindingGrantLifecycleTest extends AbstractH2Test {
     private WorkspaceFixture workspaceFixture;
 
     @Autowired
-    private AccessRoleRepository accessRoles;
+    private GrantPresetRepository accessRoles;
 
     @Autowired
-    private AccessRoleBindingRepository roleBindings;
+    private GrantPresetBindingRepository roleBindings;
 
     @Autowired
-    private RoleGrantMaterializer roleGrantMaterializer;
+    private PresetGrantMaterializer roleGrantMaterializer;
 
     @Autowired
     private AuthorizationGrantRepository grantRepository;
@@ -373,8 +373,8 @@ class PluginBindingGrantLifecycleTest extends AbstractH2Test {
 
     private void grantInstanceAdmin(String userId) {
         UUID subject = UUID.fromString(userId);
-        AccessRole adminRole = accessRoles.findByName("ADMIN").orElseThrow();
-        roleBindings.save(new AccessRoleBinding(adminRole.getId(), AuthzContext.SUBJECT_USER,
+        GrantPreset adminRole = accessRoles.findByName("ADMIN").orElseThrow();
+        roleBindings.save(new GrantPresetBinding(adminRole.getId(), AuthzContext.SUBJECT_USER,
                 subject, "instance", null, subject));
         roleBindings.flush();
         roleGrantMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, subject, subject, null);

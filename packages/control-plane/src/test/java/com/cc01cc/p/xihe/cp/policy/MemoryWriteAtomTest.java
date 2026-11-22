@@ -30,12 +30,12 @@ class MemoryWriteAtomTest {
     private static final String MEMORY_WRITE_SELF = ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF;
 
     private static Set<String> atomsOf(String roleName) {
-        return SystemAccessRoleCatalog.roleSeeds().stream()
+        return SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> seed.name().equals(roleName))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("role seed missing: " + roleName))
                 .atoms().stream()
-                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
+                .map(SystemGrantPresetCatalog.AtomRef::actionClass)
                 .collect(Collectors.toSet());
     }
 
@@ -63,28 +63,28 @@ class MemoryWriteAtomTest {
         assertTrue(PermissionAtomCatalog.agentPrincipalForbiddenAtoms().contains(MEMORY_WRITE_SELF));
         assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(List.of(MEMORY_WRITE)),
                 "MEMORY_WRITE is workspace-capability-shaped (owner grants it), not instance administration");
-        assertFalse(atomsOf(SystemAccessRoleCatalog.AGENT_USER).contains(MEMORY_WRITE_SELF),
+        assertFalse(atomsOf(SystemGrantPresetCatalog.AGENT_USER).contains(MEMORY_WRITE_SELF),
                 "the agent default role must not inherit the forbidden self atom");
-        assertFalse(atomsOf(SystemAccessRoleCatalog.AGENT_DELEGATOR).contains(MEMORY_WRITE_SELF));
+        assertFalse(atomsOf(SystemGrantPresetCatalog.AGENT_DELEGATOR).contains(MEMORY_WRITE_SELF));
     }
 
     @Test
     void selfIsDefaultForHumanInstanceRolesOnly() {
-        for (String role : List.of(SystemAccessRoleCatalog.USER, SystemAccessRoleCatalog.ADMIN,
-                SystemAccessRoleCatalog.SUPER_ADMIN)) {
+        for (String role : List.of(SystemGrantPresetCatalog.USER, SystemGrantPresetCatalog.ADMIN,
+                SystemGrantPresetCatalog.SUPER_ADMIN)) {
             assertTrue(atomsOf(role).contains(MEMORY_WRITE_SELF),
                     role + " must be able to write memory of the principals it owns");
         }
         // BL-349 (P0): WS_* roles are bindable to agent principals, so they may not carry the
         // agent-forbidden self atom — that combination made every agent workspace binding 403.
-        for (String role : List.of(SystemAccessRoleCatalog.WS_OWNER, SystemAccessRoleCatalog.WS_EDITOR,
-                SystemAccessRoleCatalog.WS_VIEWER)) {
+        for (String role : List.of(SystemGrantPresetCatalog.WS_OWNER, SystemGrantPresetCatalog.WS_EDITOR,
+                SystemGrantPresetCatalog.WS_VIEWER)) {
             assertFalse(atomsOf(role).contains(MEMORY_WRITE_SELF),
                     role + " must not carry MEMORY_WRITE_SELF (BL-349: agent-bindable roles)");
         }
         // WS_OWNER additionally carries the workspace:admin CAPABILITY (agent-forbidden by design and
         // filtered by the binding gate), so only the action-only roles are fully bindable here.
-        for (String role : List.of(SystemAccessRoleCatalog.WS_EDITOR, SystemAccessRoleCatalog.WS_VIEWER)) {
+        for (String role : List.of(SystemGrantPresetCatalog.WS_EDITOR, SystemGrantPresetCatalog.WS_VIEWER)) {
             assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(atomsOf(role)),
                     role + " must stay bindable to an agent principal (BL-349 regression)");
         }
@@ -92,13 +92,13 @@ class MemoryWriteAtomTest {
 
     @Test
     void memoryWriteIsOnlySuperAdminAndWorkspaceAdmin() {
-        assertTrue(atomsOf(SystemAccessRoleCatalog.SUPER_ADMIN).contains(MEMORY_WRITE),
+        assertTrue(atomsOf(SystemGrantPresetCatalog.SUPER_ADMIN).contains(MEMORY_WRITE),
                 "SUPER_ADMIN holds every action atom");
-        assertTrue(atomsOf(SystemAccessRoleCatalog.WS_OWNER).contains(MEMORY_WRITE),
+        assertTrue(atomsOf(SystemGrantPresetCatalog.WS_OWNER).contains(MEMORY_WRITE),
                 "ruling B: workspace administrators write any subject");
-        for (String role : List.of(SystemAccessRoleCatalog.USER, SystemAccessRoleCatalog.ADMIN,
-                SystemAccessRoleCatalog.WS_EDITOR, SystemAccessRoleCatalog.WS_VIEWER,
-                SystemAccessRoleCatalog.AGENT_DELEGATOR, SystemAccessRoleCatalog.AGENT_USER)) {
+        for (String role : List.of(SystemGrantPresetCatalog.USER, SystemGrantPresetCatalog.ADMIN,
+                SystemGrantPresetCatalog.WS_EDITOR, SystemGrantPresetCatalog.WS_VIEWER,
+                SystemGrantPresetCatalog.AGENT_DELEGATOR, SystemGrantPresetCatalog.AGENT_USER)) {
             assertFalse(atomsOf(role).contains(MEMORY_WRITE),
                     role + " must not write arbitrary subjects: SELF is the user-tier atom");
         }

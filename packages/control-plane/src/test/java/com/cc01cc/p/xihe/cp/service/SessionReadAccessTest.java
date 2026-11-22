@@ -202,7 +202,7 @@ class SessionReadAccessTest {
      * D-1436 (task-48 phase-1 finding): a workspace-less session has no workspace tier to consult,
      * so the manager lookup answers {@code false} instead of parsing a null workspace id.
      *
-     * <p>The manager tier is scoped by {@code role_bindings.scope_type ∈ {instance, workspace}}
+     * <p>The manager tier is scoped by {@code grant_preset_bindings.scope_type ∈ {instance, workspace}}
      * (V87:49-52) — there is no session-scoped role binding, so "no workspace context" cannot mean
      * "manager". Before this guard the null id flowed into
      * {@code WorkspaceService.isWorkspaceMember} → {@code UUID.fromString(null)} (NPE), which the

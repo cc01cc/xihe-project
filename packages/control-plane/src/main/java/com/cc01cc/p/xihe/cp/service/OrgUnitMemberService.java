@@ -21,7 +21,7 @@ import java.util.UUID;
  * <p><b>Why the response has to carry {@code affectedWorkspaceIds}.</b> A subject's org-unit
  * membership decides which <i>atoms</i> it holds (design §4.1.1), while its {@code WS_OWNER} bindings
  * are untouched by the move — "the permission follows the person" (§4.6). So a move can silently
- * change what a workspace owner may do, and nothing in {@code role_bindings} records that it
+ * change what a workspace owner may do, and nothing in {@code grant_preset_bindings} records that it
  * happened. G1's judgement is therefore: <b>say which workspaces are affected, and require
  * confirmation when the answer is non-empty</b>.</p>
  *

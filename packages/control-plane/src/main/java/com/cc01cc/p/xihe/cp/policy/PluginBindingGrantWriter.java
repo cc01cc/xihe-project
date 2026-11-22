@@ -22,7 +22,7 @@ import java.util.UUID;
  * {@link PluginBindingAuthorization}.
  *
  * <p>Before this class the gate was installed but nothing ever issued the hold it asks for: every
- * {@code PLUGIN_BIND} row in {@code grants} came from a role ({@code source='role'}), so a
+ * {@code PLUGIN_BIND} row in {@code grants} came from a role ({@code source='preset'}), so a
  * binding-scoped authority had no origin and the "who holds the key to this binding" chain ended at
  * the role. Three write paths now share one lifecycle, all inside the caller's transaction:</p>
  * <ul>
@@ -293,7 +293,7 @@ public class PluginBindingGrantWriter {
 
     /**
      * Invalidates the subject's cached authorization now and again after the transaction ends,
-     * mirroring {@link RoleGrantMaterializer}: the grant set changed, so a lazily filled cache must
+     * mirroring {@link PresetGrantMaterializer}: the grant set changed, so a lazily filled cache must
      * not keep answering with the previous set even when the caller rolls back.
      */
     private void invalidateNowAndAfterCompletion(String subjectType, UUID subjectId) {

@@ -56,7 +56,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>What changed versus PLAN-0470/PLAN-0580 and what is still frozen:</p>
  *
  * <ul>
- *   <li>the user set is materialized as one {@code source='role'} row per atom (V87
+ *   <li>the user set is materialized as one {@code source='preset'} row per atom (V87
  *       {@code uq_grants_role_atom}) instead of one {@code source='default'} row;</li>
  *   <li>the Session/principal default snapshot moved to {@code source='agent_default'} and is
  *       still written once, frozen, and never reconciled by the materializer (round-2 P1-1);</li>
@@ -94,7 +94,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default;
         // the atom is agent-forbidden, so it never applies to agent subjects.
         atoms.add("MEMORY_WRITE_SELF");
-        // PLAN-0691 T1.3 (M1, spec B-4): SystemAccessRoleCatalog.BASE_ATOMS also carries PLUGIN_INVOKE
+        // PLAN-0691 T1.3 (M1, spec B-4): SystemGrantPresetCatalog.BASE_ATOMS also carries PLUGIN_INVOKE
         // — invoking an already-bound builtin plugin belongs to the base set every non-viewer role
         // carries, so the USER default carries it too. It is the only plugin atom an agent may hold;
         // WS_VIEWER stays out on purpose (invocation executes a tool face).
@@ -119,7 +119,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private WorkspaceFixture workspaceFixture;
 
-    private static final String MATERIALIZED_ACTION = "authorization_role_grant_materialized";
+    private static final String MATERIALIZED_ACTION = "authorization_preset_grant_materialized";
     private static final String AGENT_DEFAULT_ACTION = "authorization_agent_default_grant_created";
 
     @Autowired
@@ -497,7 +497,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
      */
     private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
-                        GrantSources.ROLE).stream()
+                        GrantSources.PRESET).stream()
                 .filter(grant -> "instance".equals(grant.getScopeType()))
                 .toList();
     }

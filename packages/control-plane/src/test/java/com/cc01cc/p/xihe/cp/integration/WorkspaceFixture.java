@@ -1,16 +1,16 @@
 package com.cc01cc.p.xihe.cp.integration;
 
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * PLAN-0610 W4b: test fixture for workspace membership now that {@code workspace_users} is gone.
  *
  * <p>V89 dropped the legacy table and {@code workspaces.owner_id}, so a fixture that needs "this
- * user is a member (role R) of this workspace" must write the {@code role_bindings} row — which is
+ * user is a member (role R) of this workspace" must write the {@code grant_preset_bindings} row — which is
  * what this helper does, including the same-transaction materialization the production seam performs
  * (otherwise policy checks in the test would see no atoms).</p>
  *
@@ -37,14 +37,14 @@ public class WorkspaceFixture {
 
     private static final String SUBJECT_USER = AuthzContext.SUBJECT_USER;
 
-    private final AccessRoleRepository roles;
-    private final AccessRoleBindingRepository bindings;
-    private final RoleGrantMaterializer materializer;
+    private final GrantPresetRepository roles;
+    private final GrantPresetBindingRepository bindings;
+    private final PresetGrantMaterializer materializer;
     private final WorkspaceRepository workspaces;
 
-    public WorkspaceFixture(AccessRoleRepository roles,
-                            AccessRoleBindingRepository bindings,
-                            RoleGrantMaterializer materializer,
+    public WorkspaceFixture(GrantPresetRepository roles,
+                            GrantPresetBindingRepository bindings,
+                            PresetGrantMaterializer materializer,
                             WorkspaceRepository workspaces) {
         this.roles = roles;
         this.bindings = bindings;
@@ -183,7 +183,7 @@ public class WorkspaceFixture {
         if (workspaceId == null || userId == null || role == null) {
             throw new IllegalArgumentException("workspaceId, userId and role are required");
         }
-        AccessRole accessRole = roles.findByName(roleName(role))
+        GrantPreset accessRole = roles.findByName(roleName(role))
                 .orElseThrow(() -> new IllegalStateException("System role " + roleName(role)
                         + " is missing (V87 must have been applied)"));
         bindings.findBySubjectTypeAndScopeTypeAndScopeId(SUBJECT_USER, AccessScope.WORKSPACE,
@@ -195,7 +195,7 @@ public class WorkspaceFixture {
                     bindings.delete(binding);
                     bindings.flush();
                 });
-        bindings.save(new AccessRoleBinding(accessRole.getId(), SUBJECT_USER, userId,
+        bindings.save(new GrantPresetBinding(accessRole.getId(), SUBJECT_USER, userId,
                 AccessScope.WORKSPACE, workspaceId, userId));
         bindings.flush();
         materializer.materializeSubject(SUBJECT_USER, userId, userId, null);
@@ -224,9 +224,9 @@ public class WorkspaceFixture {
 
     @Transactional
     public void unbindWorkspace(UUID workspaceId) {
-        List<AccessRoleBinding> existing = bindings.findBySubjectTypeAndScopeTypeAndScopeId(
+        List<GrantPresetBinding> existing = bindings.findBySubjectTypeAndScopeTypeAndScopeId(
                 SUBJECT_USER, AccessScope.WORKSPACE, workspaceId);
-        List<UUID> subjects = existing.stream().map(AccessRoleBinding::getSubjectId).distinct()
+        List<UUID> subjects = existing.stream().map(GrantPresetBinding::getSubjectId).distinct()
                 .toList();
         bindings.deleteAll(existing);
         bindings.flush();
@@ -242,10 +242,10 @@ public class WorkspaceFixture {
     /** Insert a binding row without touching {@code grants} (assertions that only look at rows). */
     @Transactional
     public void bindWorkspaceRoleRowOnly(UUID workspaceId, UUID userId, WorkspaceRole role) {
-        AccessRole accessRole = roles.findByName(roleName(role))
+        GrantPreset accessRole = roles.findByName(roleName(role))
                 .orElseThrow(() -> new IllegalStateException("System role " + roleName(role)
                         + " is missing (V87 must have been applied)"));
-        bindings.save(new AccessRoleBinding(accessRole.getId(), SUBJECT_USER, userId,
+        bindings.save(new GrantPresetBinding(accessRole.getId(), SUBJECT_USER, userId,
                 AccessScope.WORKSPACE, workspaceId, userId));
         bindings.flush();
     }
@@ -305,8 +305,8 @@ public class WorkspaceFixture {
 
     private Map<UUID, String> roleNamesById() {
         Map<UUID, String> names = new LinkedHashMap<>();
-        for (AccessRole role : roles.findByNameIn(List.of(SystemAccessRoleCatalog.WS_OWNER,
-                SystemAccessRoleCatalog.WS_EDITOR, SystemAccessRoleCatalog.WS_VIEWER))) {
+        for (GrantPreset role : roles.findByNameIn(List.of(SystemGrantPresetCatalog.WS_OWNER,
+                SystemGrantPresetCatalog.WS_EDITOR, SystemGrantPresetCatalog.WS_VIEWER))) {
             names.put(role.getId(), role.getName());
         }
         return names;
@@ -321,9 +321,9 @@ public class WorkspaceFixture {
             return null;
         }
         return switch (name) {
-            case SystemAccessRoleCatalog.WS_OWNER -> WorkspaceRole.OWNER;
-            case SystemAccessRoleCatalog.WS_EDITOR -> WorkspaceRole.EDITOR;
-            case SystemAccessRoleCatalog.WS_VIEWER -> WorkspaceRole.VIEWER;
+            case SystemGrantPresetCatalog.WS_OWNER -> WorkspaceRole.OWNER;
+            case SystemGrantPresetCatalog.WS_EDITOR -> WorkspaceRole.EDITOR;
+            case SystemGrantPresetCatalog.WS_VIEWER -> WorkspaceRole.VIEWER;
             default -> null;
         };
     }

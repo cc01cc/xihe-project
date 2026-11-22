@@ -113,10 +113,10 @@ class PluginBindingAuthorizationTest {
     void matchedSourceIsAuditedAndRetiredSourcesCannotAuthorize() {
         PluginBindingAuthorization.Decision viaRole = PluginBindingAuthorization.evaluate(
                 List.of(new PluginBindingAuthorization.GrantRow(
-                        ToolFaceRegistry.ACTION_PLUGIN_INVOKE, GrantSources.ROLE, null)),
+                        ToolFaceRegistry.ACTION_PLUGIN_INVOKE, GrantSources.PRESET, null)),
                 ToolFaceRegistry.ACTION_PLUGIN_INVOKE);
         assertTrue(viaRole.allowed());
-        assertEquals(GrantSources.ROLE, viaRole.matchedSource());
+        assertEquals(GrantSources.PRESET, viaRole.matchedSource());
 
         PluginBindingAuthorization.Decision viaBinding = PluginBindingAuthorization.evaluate(
                 List.of(new PluginBindingAuthorization.GrantRow(

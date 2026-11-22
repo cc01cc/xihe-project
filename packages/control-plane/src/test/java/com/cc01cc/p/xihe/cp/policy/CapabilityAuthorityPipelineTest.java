@@ -1,13 +1,13 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -59,16 +59,16 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
 
     @Autowired
-    private AccessRoleBindingRepository bindingRepository;
+    private GrantPresetBindingRepository bindingRepository;
 
     @Autowired
     private AuthorizationGrantRepository grantRepository;
 
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     @Autowired
     private AuthzContext authzContext;
@@ -79,7 +79,7 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.FORBIDDEN.value(), postLogs(session.token()),
                 "control: a registered USER has no instance-administration capability");
 
-        bindInstanceRole(session.userId(), SystemAccessRoleCatalog.ADMIN);
+        bindInstanceRole(session.userId(), SystemGrantPresetCatalog.ADMIN);
         assertTrue(authzContext.isInstanceAdmin(session.userId()),
                 "PLAN-0610 W4a: cap:instance:admin comes from the binding — users.role is not "
                         + "mapped any more, so the capability is the only decision input");
@@ -144,7 +144,7 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
                 "instance:admin covers every workspace (decision #15 / V12)");
 
         List<AuthorizationGrant> rows = grantRepository.findBySubjectTypeAndSubjectIdAndSource(
-                "user", admin.getId(), GrantSources.ROLE);
+                "user", admin.getId(), GrantSources.PRESET);
         assertEquals(PermissionAtomCatalog.actionAtoms().size(), rows.size(),
                 "SUPER_ADMIN materializes its 15 action atoms; the 3 capability atoms are authorities");
         rows.forEach(row -> assertFalse(
@@ -167,9 +167,9 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
     @Test
     void removingTheAdminBindingTakesWorkspaceAdminAwayImmediately() {
         Session operator = register("cap-v4d-operator-" + UUID.randomUUID() + "@test.com");
-        bindInstanceRole(operator.userId(), SystemAccessRoleCatalog.ADMIN);
+        bindInstanceRole(operator.userId(), SystemGrantPresetCatalog.ADMIN);
         Session target = register("cap-v4d-target-" + UUID.randomUUID() + "@test.com");
-        bindInstanceRole(target.userId(), SystemAccessRoleCatalog.ADMIN);
+        bindInstanceRole(target.userId(), SystemGrantPresetCatalog.ADMIN);
 
         UUID someWorkspace = UUID.randomUUID();
         assertTrue(authzContext.canWorkspaceAdmin(target.userId(), someWorkspace),
@@ -222,9 +222,9 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
 
     /** Replaces the subject's instance tier binding with the given system role. */
     private void bindInstanceRole(UUID userId, String roleName) {
-        AccessRole role = accessRoleRepository.findByName(roleName).orElseThrow();
+        GrantPreset role = accessRoleRepository.findByName(roleName).orElseThrow();
         bindingRepository.deleteAll(bindingRepository.findBySubjectTypeAndSubjectId("user", userId));
-        bindingRepository.save(new AccessRoleBinding(role.getId(), "user", userId,
+        bindingRepository.save(new GrantPresetBinding(role.getId(), "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
     }

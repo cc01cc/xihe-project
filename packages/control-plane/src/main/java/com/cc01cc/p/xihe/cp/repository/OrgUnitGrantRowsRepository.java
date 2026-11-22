@@ -33,9 +33,9 @@ import java.util.UUID;
  * between units must change authority on the next read, so a memoized chain would be a stale
  * answer — the class holds no state beyond the {@link JdbcTemplate}.</p>
  *
- * <p>The permission array is <b>not</b> built here: {@code role_permissions} rows are returned as
+ * <p>The permission array is <b>not</b> built here: {@code grant_preset_atoms} rows are returned as
  * atoms-in-rows and the policy side applies the same materialisation rules as
- * {@code RoleGrantMaterializer} (capability atoms skipped, wildcard resource omitted). Keeping that
+ * {@code PresetGrantMaterializer} (capability atoms skipped, wildcard resource omitted). Keeping that
  * rule out of the repository is what makes "one rule, two entry points" true rather than asserted.</p>
  */
 @Repository
@@ -46,8 +46,8 @@ public class OrgUnitGrantRowsRepository {
     }
 
     /**
-     * One {@code org_unit_role_bindings} row joined with <b>one</b> of its role's
-     * {@code role_permissions} rows, so a role with three atoms is three rows sharing
+     * One {@code org_unit_preset_bindings} row joined with <b>one</b> of its role's
+     * {@code grant_preset_atoms} rows, so a role with three atoms is three rows sharing
      * {@code (orgUnitId, roleId)}. {@code actionClass} is {@code null} only for a role with no
      * permission rows at all ({@code LEFT JOIN}), which the expander then drops as a non-governance
      * role rather than treating as "grants everything".
@@ -84,9 +84,9 @@ public class OrgUnitGrantRowsRepository {
     private static final String BINDINGS_ON_MEMBER_CHAIN =
             "SELECT b.org_unit_id AS org_unit_id, b.role_id AS role_id, r.name AS role_name,"
                     + " rp.action_class AS action_class, rp.resource_pattern AS resource_pattern"
-                    + " FROM org_unit_role_bindings b"
-                    + " JOIN roles r ON r.id = b.role_id"
-                    + " LEFT JOIN role_permissions rp ON rp.role_id = b.role_id"
+                    + " FROM org_unit_preset_bindings b"
+                    + " JOIN grant_presets r ON r.id = b.role_id"
+                    + " LEFT JOIN grant_preset_atoms rp ON rp.role_id = b.role_id"
                     + " WHERE b.org_unit_id IN ("
                     + "   SELECT chain.id FROM org_unit_members m"
                     + "   JOIN org_units own ON own.id = m.org_unit_id"

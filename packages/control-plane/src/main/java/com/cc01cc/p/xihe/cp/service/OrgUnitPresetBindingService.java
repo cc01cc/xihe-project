@@ -6,7 +6,7 @@ import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGovernancePolicy;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
-import com.cc01cc.p.xihe.cp.repository.OrgUnitRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.OrgUnitPresetBindingRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
@@ -27,26 +27,26 @@ import java.util.UUID;
  * first write</b> — a refused replace must leave both the binding rows and the audit count
  * untouched. Only then are rows rebuilt and the audit written, in the same transaction.</p>
  *
- * <p>The audit (`org_role_bindings_changed`) names the group principal (the unit's subtree) and
+ * <p>The audit (`org_preset_bindings_changed`) names the group principal (the unit's subtree) and
  * the union of `WS_OWNER` workspaces held by the subtree's members — the same G1 question a move
  * answers, asked here because binding a role changes what every current (and future) member may
  * do, and nothing in the row itself records whose workspaces that touched.</p>
  */
 @Service
-public class OrgUnitRoleBindingService {
+public class OrgUnitPresetBindingService {
 
-    public static final String AUDIT_EVENT = "org_role_bindings_changed";
+    public static final String AUDIT_EVENT = "org_preset_bindings_changed";
 
     private final OrgUnitReadRepository units;
-    private final OrgUnitRoleBindingRepository bindings;
+    private final OrgUnitPresetBindingRepository bindings;
     private final OrgUnitMemberRepository members;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final OrgUnitAccess access;
     private final AuditLogger audit;
     private final ObjectMapper objectMapper;
 
-    public OrgUnitRoleBindingService(OrgUnitReadRepository units,
-                                     OrgUnitRoleBindingRepository bindings,
+    public OrgUnitPresetBindingService(OrgUnitReadRepository units,
+                                     OrgUnitPresetBindingRepository bindings,
                                      OrgUnitMemberRepository members,
                                      OrgUnitAccess access, AuditLogger audit,
                                      ObjectMapper objectMapper,
@@ -91,7 +91,7 @@ public class OrgUnitRoleBindingService {
         // re-applies it on every read. This service only resolves role -> atoms and refuses
         // unknown roles on the same 409 path (unknown is not empty).
         for (UUID roleId : requested) {
-            List<String> roleNames = jdbc.queryForList("SELECT name FROM roles WHERE id = ?",
+            List<String> roleNames = jdbc.queryForList("SELECT name FROM grant_presets WHERE id = ?",
                     String.class, roleId);
             if (roleNames.isEmpty()) {
                 throw new CpApiException(HttpStatus.CONFLICT,
@@ -99,7 +99,7 @@ public class OrgUnitRoleBindingService {
                         "unknown role " + roleId + ": not empty, so not clearable-by-emptiness");
             }
             OrgUnitGovernancePolicy.requireGovernanceRole(roleNames.get(0),
-                    jdbc.queryForList("SELECT action_class FROM role_permissions WHERE role_id = ?",
+                    jdbc.queryForList("SELECT action_class FROM grant_preset_atoms WHERE role_id = ?",
                             String.class, roleId));
         }
 

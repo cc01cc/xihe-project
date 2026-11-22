@@ -220,7 +220,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
             grant.setGranterId(creator.getId());
             grant.setSubjectType("agent_principal");
             grant.setSubjectId(saved.getId());
-            grant.setSource("role");
+            grant.setSource("preset");
             grant.setReadState("read");
             try {
                 grant.setPermissions(objectMapper.readTree(

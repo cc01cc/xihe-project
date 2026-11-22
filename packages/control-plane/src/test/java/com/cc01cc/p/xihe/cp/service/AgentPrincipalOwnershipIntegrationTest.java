@@ -1,8 +1,8 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -12,11 +12,11 @@ import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -65,13 +65,13 @@ class AgentPrincipalOwnershipIntegrationTest extends AbstractReusableIntegration
 
     @Autowired private AuthzContext authzContext;
     @Autowired private RequesterAuthority requesterAuthority;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private AuditLogRepository auditLogRepository;
-    @Autowired private RoleGrantMaterializer roleMaterializer;
+    @Autowired private PresetGrantMaterializer roleMaterializer;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
@@ -271,8 +271,8 @@ class AgentPrincipalOwnershipIntegrationTest extends AbstractReusableIntegration
     /** Registers a user over HTTP (real token) and binds ADMIN at instance scope. */
     private UUID registerInstanceAdmin() {
         UUID userId = registerPlainUser();
-        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
-        AccessRoleBinding binding = new AccessRoleBinding(adminRole.getId(),
+        GrantPreset adminRole = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow();
+        GrantPresetBinding binding = new GrantPresetBinding(adminRole.getId(),
                 AuthzContext.SUBJECT_USER, userId, AccessScope.INSTANCE, null, userId);
         bindingRepository.saveAndFlush(binding);
         roleMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, userId, userId, null);

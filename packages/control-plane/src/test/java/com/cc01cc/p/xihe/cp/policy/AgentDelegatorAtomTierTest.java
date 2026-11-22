@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentDelegatorAtomTierTest {
 
     private static final String SPAWN_AGENT = ToolFaceRegistry.ACTION_SPAWN_AGENT;
-    /** 角色名用字面量：实现前 {@code SystemAccessRoleCatalog} 还没有这个常量，红测必须先能编译。 */
+    /** 角色名用字面量：实现前 {@code SystemGrantPresetCatalog} 还没有这个常量，红测必须先能编译。 */
     private static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
 
     @Test
@@ -72,12 +72,12 @@ class AgentDelegatorAtomTierTest {
 
     @Test
     void builtInDelegatorRoleExistsWithMinimalAtomSet() {
-        Optional<SystemAccessRoleCatalog.RoleSeed> seed = SystemAccessRoleCatalog.roleSeeds().stream()
+        Optional<SystemGrantPresetCatalog.PresetSeed> seed = SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(candidate -> AGENT_DELEGATOR.equals(candidate.name()))
                 .findFirst();
         assertTrue(seed.isPresent(), "内置角色目录里必须有 AGENT_DELEGATOR（随迁移下发，不靠人工建）");
         Set<String> atoms = seed.get().atoms().stream()
-                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
+                .map(SystemGrantPresetCatalog.AtomRef::actionClass)
                 .collect(Collectors.toSet());
         assertEquals(Set.of(SPAWN_AGENT), atoms,
                 "最小原子集：只含委派本身；不得含 MANAGE_WORKSPACE_AGENTS / MANAGE_ROLES / instance:*");
@@ -85,12 +85,12 @@ class AgentDelegatorAtomTierTest {
 
     @Test
     void superAdminRoleRemainsUnbindableToAgentPrincipals() {
-        Set<String> superAdminAtoms = SystemAccessRoleCatalog.roleSeeds().stream()
-                .filter(seed -> SystemAccessRoleCatalog.SUPER_ADMIN.equals(seed.name()))
+        Set<String> superAdminAtoms = SystemGrantPresetCatalog.presetSeeds().stream()
+                .filter(seed -> SystemGrantPresetCatalog.SUPER_ADMIN.equals(seed.name()))
                 .findFirst()
                 .orElseThrow()
                 .atoms().stream()
-                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
+                .map(SystemGrantPresetCatalog.AtomRef::actionClass)
                 .collect(Collectors.toSet());
         assertFalse(PermissionAtomCatalog.canBindToAgentPrincipal(superAdminAtoms),
                 "实例管理角色对 agent 主体仍然禁绑（2026-11-04 裁定）");

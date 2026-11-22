@@ -147,7 +147,7 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
         grant.setGranterId(userId);
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(userId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         ObjectNode atom = objectMapper.createObjectNode();
         atom.put("actionClass", actionClass);

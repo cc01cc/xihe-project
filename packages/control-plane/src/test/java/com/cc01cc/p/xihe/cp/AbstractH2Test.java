@@ -20,7 +20,7 @@ import java.io.IOException;
 // caller is really visible. Eight such classes were moved to AbstractIntegrationTest; new tests that
 // touch action atoms (instance or workspace scope) or org units belong on the PostgreSQL lane.
 // Scope of the defect, precisely: only action atoms fall back to the empty set — capability atoms
-// (AuthzContext, backed by access_role_bindings / access_role_permissions) and workspace roles
+// (AuthzContext, backed by access_grant_preset_bindings / access_grant_preset_atoms) and workspace roles
 // (workspace_members) are JPA tables and keep their normal meaning on H2.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("h2")

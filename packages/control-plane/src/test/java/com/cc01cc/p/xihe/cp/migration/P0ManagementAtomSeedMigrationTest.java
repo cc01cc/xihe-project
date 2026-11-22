@@ -114,12 +114,12 @@ class P0ManagementAtomSeedMigrationTest {
 
     @Test
     void zeroGapValidationQueryReturnsNoRows() throws SQLException {
-        String sql = "SELECT count(*) FROM role_bindings b "
-                + "JOIN role_permissions rp ON rp.role_id = b.role_id "
+        String sql = "SELECT count(*) FROM grant_preset_bindings b "
+                + "JOIN grant_preset_atoms rp ON rp.role_id = b.role_id "
                 + "WHERE rp.action_class IN ('MANAGE_AGENT_PRINCIPALS','MANAGE_WORKSPACE_MEMBERS') "
                 + "  AND NOT EXISTS (SELECT 1 FROM grants g "
                 + "                  WHERE g.subject_type='user' AND g.subject_id=b.subject_id "
-                + "                    AND g.source='role' AND g.scope_type=b.scope_type "
+                + "                    AND g.source='preset' AND g.scope_type=b.scope_type "
                 + "                    AND coalesce(g.scope_id,"
                 + "'00000000-0000-0000-0000-000000000000'::uuid)"
                 + "                      = coalesce(b.scope_id,"
@@ -144,16 +144,16 @@ class P0ManagementAtomSeedMigrationTest {
         // D51-30 zero-gap check: A9 no longer treats instance:admin as workspace administration.
         // Report-only: the migration must never rewrite custom roles, so this asserts the current
         // data is unaffected (XH not released => expected 0 on a fresh database).
-        assertEquals(0, scalar("SELECT count(*) FROM role_bindings b "
-                        + "JOIN roles r ON r.id = b.role_id AND r.is_system = FALSE "
-                        + "WHERE EXISTS (SELECT 1 FROM role_permissions rp "
+        assertEquals(0, scalar("SELECT count(*) FROM grant_preset_bindings b "
+                        + "JOIN grant_presets r ON r.id = b.role_id AND r.is_system = FALSE "
+                        + "WHERE EXISTS (SELECT 1 FROM grant_preset_atoms rp "
                         + "              WHERE rp.role_id = r.id AND rp.action_class = 'instance:admin') "
-                        + "  AND NOT EXISTS (SELECT 1 FROM role_permissions rp2 "
+                        + "  AND NOT EXISTS (SELECT 1 FROM grant_preset_atoms rp2 "
                         + "                  WHERE rp2.role_id = r.id "
                         + "                    AND rp2.action_class = 'workspace:admin')"),
                 "a custom role carrying instance:admin alone would lose workspace administration "
                         + "after T1.2 — if this ever fires, stop and report the count to the Lead");
-        assertEquals(1, scalar("SELECT count(*) FROM role_permissions WHERE role_id = '"
+        assertEquals(1, scalar("SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + ADMIN_ID + "'::uuid AND action_class = 'workspace:admin'"),
                 "the built-in ADMIN role is unaffected: V111 seeds workspace:admin for it");
     }
@@ -206,13 +206,13 @@ class P0ManagementAtomSeedMigrationTest {
     }
 
     private static int atomCount(UUID roleId, String actionClass) throws SQLException {
-        return scalar("SELECT count(*) FROM role_permissions WHERE role_id = '" + roleId
+        return scalar("SELECT count(*) FROM grant_preset_atoms WHERE role_id = '" + roleId
                 + "'::uuid AND action_class = '" + actionClass + "'");
     }
 
     private static int grantCount(String actionClass) throws SQLException {
         return scalar("SELECT count(*) FROM grants WHERE subject_type = 'user' AND subject_id = '"
-                + LEGACY_USER_ID + "'::uuid AND source = 'role' AND scope_type = 'instance'"
+                + LEGACY_USER_ID + "'::uuid AND source = 'preset' AND scope_type = 'instance'"
                 + " AND permissions->0->>'actionClass' = '" + actionClass + "'");
     }
 

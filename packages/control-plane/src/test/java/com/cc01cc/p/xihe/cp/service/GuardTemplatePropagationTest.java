@@ -47,7 +47,7 @@ class GuardTemplatePropagationTest {
     private AgentTemplateService templates;
     private WorkspaceAgentRepository bindings;
     private AgentPrincipalService service;
-    private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository roles;
+    private com.cc01cc.p.xihe.cp.repository.GrantPresetRepository roles;
 
     @BeforeEach
     void setUp() {
@@ -57,7 +57,7 @@ class GuardTemplatePropagationTest {
         com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceId(UUID.randomUUID().toString());
         com.cc01cc.p.xihe.cp.config.TenantContext.setWorkspaceSource("test");
         principals = mock(AgentPrincipalRepository.class);
-        roles = mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class);
+        roles = mock(com.cc01cc.p.xihe.cp.repository.GrantPresetRepository.class);
         AuthorizationGrantRepository grants = mock(AuthorizationGrantRepository.class);
         com.cc01cc.p.xihe.cp.auth.AuthService authService = mock(com.cc01cc.p.xihe.cp.auth.AuthService.class);
         when(authService.userExists(any())).thenReturn(true);
@@ -78,10 +78,10 @@ class GuardTemplatePropagationTest {
                 new ObjectMapper(), templates,
                 mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class),
                 // PLAN-0629: role bindings are the permission source, not the scope field.
-                mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
+                mock(com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository.class),
                 roles,
-                    mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
-                mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
+                    mock(com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository.class),
+                mock(com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer.class),
                 // PLAN-0651 T1.5-A1：建 principal 走共享内核 `RequesterAuthority.allowsForUser`
                 // （不是旧的 service 内联 evaluator 路径）。创建门自 T5.1 起只认
                 // MANAGE_WORKSPACE_AGENTS；BL-312（2026-11-09）移除 CREATE_OWN_AGENT 后声明集
@@ -99,8 +99,8 @@ class GuardTemplatePropagationTest {
         // 所以纯 Mockito 测试必须提供角色目录桩——这不是放宽校验，而是补齐新依赖。
         // D-180: the default role is validated (name → id) before the write, so BOTH catalog lookups
         // must resolve the same fixture row.
-        com.cc01cc.p.xihe.cp.entity.AccessRole defaultFixtureRole =
-                new com.cc01cc.p.xihe.cp.entity.AccessRole(
+        com.cc01cc.p.xihe.cp.entity.GrantPreset defaultFixtureRole =
+                new com.cc01cc.p.xihe.cp.entity.GrantPreset(
                         UUID.randomUUID(), "USER", "User", "fixture role", true);
         when(roles.findByName(any())).thenReturn(java.util.Optional.of(defaultFixtureRole));
         when(roles.findById(any())).thenReturn(java.util.Optional.of(defaultFixtureRole));

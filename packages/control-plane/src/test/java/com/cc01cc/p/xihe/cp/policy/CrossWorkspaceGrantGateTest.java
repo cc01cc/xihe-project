@@ -5,18 +5,18 @@ import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Repro shape (from the implementation audit): one user is {@code WS_OWNER} in workspace A and
  * only {@code WS_VIEWER} in workspace B. The workspace-A binding materializes
  * {@code MANAGE_WORKSPACE_AGENTS} / {@code CREATE_SCHEDULED_TASK} (both are {@code
- * scope_class=both}) into {@code grants(source='role')}. Because the gates read every grant row of
+ * scope_class=both}) into {@code grants(source='preset')}. Because the gates read every grant row of
  * the subject, the workspace-A atom satisfied the gate for a workspace-B mutation, while the
  * membership gate was already scoped — the two halves of the decision disagreed.</p>
  *
@@ -61,13 +61,13 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private ScheduledTaskApiService scheduledTaskApiService;
     @Autowired private ScheduledTaskRepository scheduledTaskRepository;
@@ -136,7 +136,7 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
         Fixture fixture = fixture("sql");
         // task-118: the fixture already owns workspace A, so re-binding here must stay idempotent.
         // The previous hand-rolled bindingRepository.save() produced a SECOND workspace binding row
-        // for the same (user, workspace) pair: H2's create-drop has no uq_role_bindings, so it
+        // for the same (user, workspace) pair: H2's create-drop has no uq_grant_preset_bindings, so it
         // passed there, while PostgreSQL rejects the duplicate key. bindWorkspaceRole() deletes the
         // existing workspace-scope binding first, so the intended post-state is identical.
         workspaceFixture.bindWorkspaceRole(fixture.workspaceA(), fixture.userId(), WorkspaceRole.OWNER);
@@ -155,8 +155,8 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
         // PLAN-0651 M2 T2.1: WS_VIEWER also carries USE_WORKSPACE_RUNTIME, so "B only sees read"
         // became "B only sees WS_VIEWER atoms". Derive the set from the catalog: the assertion is
         // about the workspace scope, not about the exact atom count.
-        java.util.Set<String> viewerAtoms = RoleAtomExpectations.materializedAtoms(
-                SystemAccessRoleCatalog.WS_VIEWER);
+        java.util.Set<String> viewerAtoms = PresetAtomExpectations.materializedAtoms(
+                SystemGrantPresetCatalog.WS_VIEWER);
         assertTrue(inB.stream().allMatch(row -> viewerAtoms.contains(
                         row.getPermissions().get(0).get("actionClass").asText())),
                 "everything workspace B sees comes from its own WS_VIEWER binding: " + viewerAtoms);
@@ -182,7 +182,7 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
 
         // task-118: bindWorkspaceRole() above already wrote (and materialized) the OWNER binding in A
         // and the VIEWER binding in B. The extra manual saves that used to sit here added duplicate
-        // rows for the same pairs -- invisible on H2 (no uq_role_bindings) and a duplicate-key error
+        // rows for the same pairs -- invisible on H2 (no uq_grant_preset_bindings) and a duplicate-key error
         // on PostgreSQL. The materialization below is kept because later assertions read the rows.
         materializer.materializeSubject("user", user.getId(), user.getId(), null);
 
@@ -201,11 +201,11 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
         UUID roleId = UUID.randomUUID();
         String roleSuffix = actionClass.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9_]", "_");
         String roleToken = roleId.toString().replace("-", "").substring(0, 8).toUpperCase(java.util.Locale.ROOT);
-        accessRoleRepository.save(new AccessRole(roleId, "GATE_" + roleSuffix + "_" + roleToken,
+        accessRoleRepository.save(new GrantPreset(roleId, "GATE_" + roleSuffix + "_" + roleToken,
                 "Gate test role", "test-only role carrying one 'both' atom", false));
-        permissionRepository.save(new AccessRolePermission(roleId, actionClass,
+        permissionRepository.save(new GrantPresetAtom(roleId, actionClass,
                 PermissionAtomCatalog.WILDCARD));
-        bindingRepository.save(new AccessRoleBinding(roleId, "user", userId,
+        bindingRepository.save(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.WORKSPACE, workspaceId, userId));
         materializer.materializeSubject("user", userId, userId, null);
     }

@@ -1,13 +1,13 @@
 package com.cc01cc.p.xihe.cp.plugin;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
@@ -51,13 +51,13 @@ class PluginSessionAttachmentFeatureOffTest extends AbstractH2Test {
     private WorkspaceFixture workspaceFixture;
 
     @Autowired
-    private AccessRoleRepository accessRoles;
+    private GrantPresetRepository accessRoles;
 
     @Autowired
-    private AccessRoleBindingRepository roleBindings;
+    private GrantPresetBindingRepository roleBindings;
 
     @Autowired
-    private RoleGrantMaterializer roleGrantMaterializer;
+    private PresetGrantMaterializer roleGrantMaterializer;
 
     @Autowired
     private AuthzContext authzContext;
@@ -141,8 +141,8 @@ class PluginSessionAttachmentFeatureOffTest extends AbstractH2Test {
     private Actor adminActor() {
         Actor actor = actor();
         UUID subject = UUID.fromString(actor.userId());
-        AccessRole adminRole = accessRoles.findByName("ADMIN").orElseThrow();
-        roleBindings.save(new AccessRoleBinding(adminRole.getId(), AuthzContext.SUBJECT_USER,
+        GrantPreset adminRole = accessRoles.findByName("ADMIN").orElseThrow();
+        roleBindings.save(new GrantPresetBinding(adminRole.getId(), AuthzContext.SUBJECT_USER,
                 subject, "instance", null, subject));
         roleBindings.flush();
         roleGrantMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, subject, subject, null);

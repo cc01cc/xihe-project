@@ -24,7 +24,7 @@ import java.util.UUID;
  * <pre>
  * member → org_unit_members (which unit)            -- case 2 when there is no row
  *        → org_units.path prefixes (self + all ancestors)   -- union, NOT the nearest level only
- *        → org_unit_role_bindings on those units             -- case 4 when empty
+ *        → org_unit_preset_bindings on those units             -- case 4 when empty
  *        → role atoms + permission array
  *        → AuthorizationGrant(scopeType='instance')          -- in memory, id stays null
  * </pre>
@@ -98,7 +98,7 @@ public final class OrgUnitGrantExpander {
     public record MembershipRow(String memberKind, UUID memberId, UUID orgUnitId) {
     }
 
-    /** An {@code org_unit_role_bindings} row joined with its role's atoms and permission array. */
+    /** An {@code org_unit_preset_bindings} row joined with its role's atoms and permission array. */
     public record RoleBindingRow(UUID orgUnitId, UUID roleId, String roleName, List<String> atoms,
                                  JsonNode permissions) {
     }

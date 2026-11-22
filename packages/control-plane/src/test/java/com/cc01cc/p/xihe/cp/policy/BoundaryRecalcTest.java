@@ -113,7 +113,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
 
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
                 atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read", "write", "SPAWN_AGENT"));
         Session session = saveAgentSession(workspaceId, userId, "Boundary recalc agent",
@@ -149,7 +149,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
 
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
                 atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read"));
         Session session = saveAgentSession(workspaceId, userId, "Boundary recalc cap agent",

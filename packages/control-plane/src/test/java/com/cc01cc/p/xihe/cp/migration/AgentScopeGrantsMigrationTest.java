@@ -34,8 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       (this fixture: read/write/exec ⇒ {@code WS_EDITOR});</li>
  *   <li><b>uncovered atoms</b> — a snapshot carrying an atom no seeded role covers gets the
  *       {@code agent-default} role instead of silently losing permission;</li>
- *   <li><b>materialization</b> — the binding is expanded into {@code source='role'} grants with the
- *       binding scope, i.e. the same rows {@code RoleGrantMaterializer} writes at runtime;</li>
+ *   <li><b>materialization</b> — the binding is expanded into {@code source='preset'} grants with the
+ *       binding scope, i.e. the same rows {@code PresetGrantMaterializer} writes at runtime;</li>
  *   <li><b>idempotency</b> — re-executing the migration SQL changes no row count;</li>
  *   <li><b>two states</b> — a principal with a binding is reachable through the read path's query, a
  *       principal without one is not.</li>
@@ -127,7 +127,7 @@ class AgentScopeGrantsMigrationTest {
     }
 
     @Test
-    void materializesRoleGrantsWithTheBindingScope() throws SQLException {
+    void materializesPresetGrantsWithTheBindingScope() throws SQLException {
         // V108 ran during the upgrade from V106; later migrations (0651 M2 T2.1) widened the seeded
         // role sets, and the backfill is deliberately re-runnable, so the settled state is measured.
         // Expected rows are derived from the CURRENT role_permissions rows, not a literal: WS_EDITOR
@@ -181,7 +181,7 @@ class AgentScopeGrantsMigrationTest {
                 "role binding ⇒ visible and usable in this workspace: " + reachable);
         assertTrue(!reachable.contains(UNBOUND_PRINCIPAL_ID.toString()),
                 "no role binding ⇒ not visible and not usable: " + reachable);
-        // And the atoms it authorized are on the evaluation path (`source='role'`).
+        // And the atoms it authorized are on the evaluation path (`source='preset'`).
         List<String> evaluationSources = queryStrings("SELECT DISTINCT source FROM grants "
                 + "WHERE subject_type = 'agent_principal' AND subject_id = '"
                 + EDITOR_PRINCIPAL_ID + "'");

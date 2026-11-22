@@ -6,8 +6,8 @@ import com.cc01cc.p.xihe.cp.auth.NameFormat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
@@ -16,7 +16,7 @@ import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ContextPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.DelegationPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
@@ -25,9 +25,9 @@ import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -87,13 +87,13 @@ public class AgentPrincipalService {
     private final RequesterAuthority requesterAuthority;
     /** D-180: the structural default workspace binding passes the grant-side subset guard. */
     private final com.cc01cc.p.xihe.cp.policy.GrantabilityGuard grantability;
-    /** D-180 锁序：instance mutex → role 行（稳定序）→ 主体/绑定/用户（RoleAdmin 同协议）。 */
+    /** D-180 锁序：instance mutex → role 行（稳定序）→ 主体/绑定/用户（GrantPresetAdmin 同协议）。 */
     private final com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository owners;
     /** PLAN-0629: roles are the permission source, so bindings and materialization live here. */
-    private final AccessRoleBindingRepository roleBindingRepository;
-    private final AccessRoleRepository roleRepository;
-    private final AccessRolePermissionRepository rolePermissionRepository;
-    private final RoleGrantMaterializer roleMaterializer;
+    private final GrantPresetBindingRepository roleBindingRepository;
+    private final GrantPresetRepository roleRepository;
+    private final GrantPresetAtomRepository rolePermissionRepository;
+    private final PresetGrantMaterializer roleMaterializer;
     /** PLAN-0773 M2-8b: the subject's org-unit governance grants join every evaluation read. */
     private final com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants;
 
@@ -108,10 +108,10 @@ public class AgentPrincipalService {
                                  ObjectMapper objectMapper,
                                  AgentTemplateService agentTemplateService,
                                  AuthzContext authzContext,
-                                 AccessRoleBindingRepository roleBindingRepository,
-                                 AccessRoleRepository roleRepository,
-                                 AccessRolePermissionRepository rolePermissionRepository,
-                                 RoleGrantMaterializer roleMaterializer,
+                                 GrantPresetBindingRepository roleBindingRepository,
+                                 GrantPresetRepository roleRepository,
+                                 GrantPresetAtomRepository rolePermissionRepository,
+                                 PresetGrantMaterializer roleMaterializer,
                                  RequesterAuthority requesterAuthority,
                                  com.cc01cc.p.xihe.cp.policy.GrantabilityGuard grantability,
                                  com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository owners,
@@ -389,7 +389,7 @@ public class AgentPrincipalService {
                                           JsonNode allowedModels, JsonNode hooks,
                                           String origin, String presetId, List<UUID> roleIds,
                                           String authorizationAction, String ownership) {
-        // D-180 锁序：instance mutex 是第一把锁（RoleAdmin/BindingAdmin 同协议），之后才
+        // D-180 锁序：instance mutex 是第一把锁（GrantPresetAdmin/BindingAdmin 同协议），之后才
         // ①锁角色行（validateGrantableRoles，稳定序）②写主体/绑定/用户。
         lockInstanceMutex();
         JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
@@ -425,7 +425,7 @@ public class AgentPrincipalService {
         }
         // LEGACY-ONLY（2026-11-04 裁定「role 行是唯一权威源」）：这里算出的 template 交集**不再落库**
         // —— createAgentPrincipalGrant 的 snapshot 写在 PLAN-0629 已删除，老库残留的
-        // template/agent_default 行只在"主体还没有 source='role' 行"时作为回退被求值。
+        // template/agent_default 行只在"主体还没有 source='preset' 行"时作为回退被求值。
         // 新增能力请走角色原子；反向契约见
         // AgentPrincipalCredentialBoundaryTest#legacySnapshotAtomDoesNotAuthorizeAWorkspaceCap。
         Set<GrantIntersectionEvaluator.PermissionAtom> effectivePermissions =
@@ -476,7 +476,7 @@ public class AgentPrincipalService {
         // exactly the ownership coupling the ruling removed. The old `createAgentPrincipalGrant`
         // snapshot write is intentionally gone; rows already in the database are left untouched
         // (deprecated, kept for rollback) and evaluation falls back to them only while a subject has
-        // no `source='role'` rows yet.
+        // no `source='preset'` rows yet.
         //
         // Accepted risk, on purpose: if the creator is demoted later, roles they granted keep working.
         // That is the point of the ruling — a role is an independent object; to revoke, edit the role
@@ -585,7 +585,7 @@ public class AgentPrincipalService {
 
         WorkspaceAgent savedBinding = workspaceAgentRepository.saveAndFlush(binding);
         // PLAN-0629: a binding materializes into a workspace role binding, so reachability has one
-        // source of truth. Idempotent; the existing materializer writes the `source='role'` grants.
+        // source of truth. Idempotent; the existing materializer writes the `source='preset'` grants.
         ensureWorkspaceRoleBinding(principalId, workspaceId, actorId);
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "MANAGE_WORKSPACE_AGENTS");
@@ -862,9 +862,9 @@ public class AgentPrincipalService {
                 .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
                         "workspace", workspaceId)
                 .stream()
-                .collect(java.util.stream.Collectors.groupingBy(AccessRoleBinding::getSubjectId,
+                .collect(java.util.stream.Collectors.groupingBy(GrantPresetBinding::getSubjectId,
                         java.util.LinkedHashMap::new,
-                        java.util.stream.Collectors.mapping(AccessRoleBinding::getRoleId,
+                        java.util.stream.Collectors.mapping(GrantPresetBinding::getRoleId,
                                 java.util.stream.Collectors.toList())));
     }
 
@@ -1209,7 +1209,7 @@ public class AgentPrincipalService {
                 .findById(new WorkspaceAgentId(principalId, workspaceId))
                 .orElse(null);
         // task-58: existence probe, not "list the whole workspace then contains" (see
-        // AccessRoleBindingRepository#existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId).
+        // GrantPresetBindingRepository#existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId).
         if (binding == null && !roleBindingRepository.existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
@@ -1226,7 +1226,7 @@ public class AgentPrincipalService {
                 .findBySubjectTypeAndSubjectIdAndScopeType(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance")
                 .stream()
-                .map(AccessRoleBinding::getRoleId)
+                .map(GrantPresetBinding::getRoleId)
                 .toList();
         for (UUID roleId : effective) {
             if (existing.contains(roleId)) {
@@ -1234,7 +1234,7 @@ public class AgentPrincipalService {
             }
             // Lead ruling 2026-11-05: this is the creation-time DEFAULT grant ⇒ seed binding
             // (immutable via ROLE_BINDING_IMMUTABLE). API bindings created later stay deletable.
-            AccessRoleBinding row = new AccessRoleBinding(roleId,
+            GrantPresetBinding row = new GrantPresetBinding(roleId,
                     GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance", null, actorId);
             row.setSeed(true);
             roleBindingRepository.save(row);
@@ -1273,7 +1273,7 @@ public class AgentPrincipalService {
         }
         for (UUID roleId : new java.util.LinkedHashSet<>(
                 effective.stream().sorted().toList())) {
-            AccessRole role = roleRepository.findByIdForUpdate(roleId)
+            GrantPreset role = roleRepository.findByIdForUpdate(roleId)
                     .orElseThrow(() -> notGrantable("roleId is not bindable"));
             List<String> atomNames = roleAtomNames(roleId);
             String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(atomNames);
@@ -1321,14 +1321,14 @@ public class AgentPrincipalService {
     }
 
     /**
-     * D-180 锁序（与 RoleAdminService/BindingAdminService 同协议）：instance_owner 写互斥是第一把锁，
+     * D-180 锁序（与 GrantPresetAdminService/BindingAdminService 同协议）：instance_owner 写互斥是第一把锁，
      * 其后才允许 role 行锁（稳定序）与主体/绑定/用户写入。
      */
     private void lockInstanceMutex() {
         owners.lockSingleton().orElseGet(() -> owners.save(new com.cc01cc.p.xihe.cp.entity.InstanceOwner()));
     }
 
-    private AccessRole requireRole(String name) {
+    private GrantPreset requireRole(String name) {
         return roleRepository.findByName(name)
                 .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                         "ROLE_CATALOG_INCONSISTENT", "Seeded role " + name + " is missing"));
@@ -1336,7 +1336,7 @@ public class AgentPrincipalService {
 
     /**
      * PLAN-0629: the permission source is the bound roles. A subject that already materialized
-     * {@code source='role'} rows is evaluated from those only; a legacy subject (no role rows yet,
+     * {@code source='preset'} rows is evaluated from those only; a legacy subject (no role rows yet,
      * e.g. rows written before the migration) keeps the pre-ruling behaviour — the frozen
      * {@code agent_default}/{@code template} snapshots — so nothing becomes unusable mid-upgrade and
      * the change stays reversible.
@@ -1356,7 +1356,7 @@ public class AgentPrincipalService {
     private AtomEvaluation principalEffectiveAtomsWithProvenance(UUID principalId, UUID workspaceId) {
         List<AuthorizationGrant> roleRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                List.of(GrantSources.ROLE, GrantSources.CREDENTIAL_BINDING), workspaceId);
+                List.of(GrantSources.PRESET, GrantSources.CREDENTIAL_BINDING), workspaceId);
         java.util.Collection<AuthorizationGrant> expanded =
                 orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId);
         if (!roleRows.isEmpty()) {
@@ -1377,14 +1377,14 @@ public class AgentPrincipalService {
      *
      * <p>Three sources, unioned:</p>
      * <ol>
-     *   <li>the materialized {@code source='role'} grants for this subject in this workspace
+     *   <li>the materialized {@code source='preset'} grants for this subject in this workspace
      *       (PLAN-0629 read path — reach is a role binding);</li>
      *   <li>{@code source='credential_binding'} grants (PLAN-0494 active mechanism) — leaving them
      *       out would let this frozen cap silently drop a credential atom at evaluation time;</li>
      *   <li>when no workspace role binding exists yet, the atoms {@code ensureWorkspaceRoleBinding}
      *       is about to materialize from the seeded default role. Reading them here (rather than
      *       moving the binding write earlier) keeps the zero-write refusal guarantees of D-180 —
-     *       a refused cap must leave role_bindings/grants at zero rows.</li>
+     *       a refused cap must leave grant_preset_bindings/grants at zero rows.</li>
      * </ol>
      * Capability atoms and agent-forbidden atoms are skipped: the materializer never turns them
      * into grants, so counting them would invent a capability the evaluator drops anyway.
@@ -1402,9 +1402,9 @@ public class AgentPrincipalService {
         Set<GrantIntersectionEvaluator.PermissionAtom> baseline = new LinkedHashSet<>(
                 evaluator.union(grantRepository.findScopedGrants(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                        List.of(GrantSources.ROLE, GrantSources.CREDENTIAL_BINDING), workspaceId)));
+                        List.of(GrantSources.PRESET, GrantSources.CREDENTIAL_BINDING), workspaceId)));
         if (workspaceRoleIds(principalId, workspaceId).isEmpty()) {
-            AccessRole defaultRole = requireRole(DEFAULT_AGENT_WORKSPACE_ROLE);
+            GrantPreset defaultRole = requireRole(DEFAULT_AGENT_WORKSPACE_ROLE);
             for (String name : roleAtomNames(defaultRole.getId())) {
                 if (!PermissionAtomCatalog.isActionAtom(name)
                         || PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(List.of(name)) != null) {
@@ -1424,20 +1424,20 @@ public class AgentPrincipalService {
                         "workspace", workspaceId)
                 .stream()
                 .filter(row -> principalId.equals(row.getSubjectId()))
-                .map(AccessRoleBinding::getRoleId)
+                .map(GrantPresetBinding::getRoleId)
                 .toList();
     }
 
     /**
      * PLAN-0629: binding a role is what grants access. The role binding is written first and the
-     * existing {@link RoleGrantMaterializer} then materializes `source='role'` grants, so the runtime
+     * existing {@link PresetGrantMaterializer} then materializes `source='preset'` grants, so the runtime
      * path and the V107 backfill produce the same rows — one materialization implementation, not two.
      */
     private void ensureWorkspaceRoleBinding(UUID principalId, UUID workspaceId, UUID actorId) {
         if (!workspaceRoleIds(principalId, workspaceId).isEmpty()) {
             return;
         }
-        AccessRole defaultRole = roleRepository.findByName(DEFAULT_AGENT_WORKSPACE_ROLE)
+        GrantPreset defaultRole = roleRepository.findByName(DEFAULT_AGENT_WORKSPACE_ROLE)
                 .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                         "ROLE_CATALOG_INCONSISTENT",
                         "Seeded role " + DEFAULT_AGENT_WORKSPACE_ROLE + " is missing"));
@@ -1452,18 +1452,18 @@ public class AgentPrincipalService {
         //    default role here; instance rows cover all workspaces, a workspace row covers only its
         //    own). A refusal throws inside the transaction ⇒ binding/workspace_agents/grants stay
         //    at zero rows (403 grantor gate — never the cap's 409).
-        List<String> defaultRoleAtoms = rolePermissionRepository.findByIdRoleId(defaultRole.getId())
+        List<String> defaultPresetAtoms = rolePermissionRepository.findByIdRoleId(defaultRole.getId())
                 .stream().map(row -> row.getId().getActionClass()).toList();
-        String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(defaultRoleAtoms);
+        String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(defaultPresetAtoms);
         if (forbidden != null) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "ROLE_NOT_GRANTABLE",
                     "default workspace role carries an atom that cannot be granted to an agent: "
                             + forbidden);
         }
-        grantabilityAs(actorId, new LinkedHashSet<>(defaultRoleAtoms),
+        grantabilityAs(actorId, new LinkedHashSet<>(defaultPresetAtoms),
                 com.cc01cc.p.xihe.cp.policy.AccessScope.workspace(workspaceId));
         // Lead ruling 2026-11-05: workspace-binding default grant ⇒ seed binding (immutable).
-        AccessRoleBinding row = new AccessRoleBinding(defaultRole.getId(),
+        GrantPresetBinding row = new GrantPresetBinding(defaultRole.getId(),
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId,
                 actorId);
         row.setSeed(true);
@@ -1474,7 +1474,7 @@ public class AgentPrincipalService {
 
     /** PLAN-0629: revoking the binding revokes the role binding and its materialized atoms. */
     private void revokeWorkspaceRoleBinding(UUID principalId, UUID workspaceId, UUID actorId) {
-        List<AccessRoleBinding> rows = roleBindingRepository
+        List<GrantPresetBinding> rows = roleBindingRepository
                 .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
                         "workspace", workspaceId)
                 .stream()

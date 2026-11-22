@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -11,10 +11,10 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The property that matters most is not "the row is written" but "the agent's capability changed
  * in the same transaction". That is why every write case also asserts the materialized
- * {@code grants(source='role')} rows: a later or async materialization would pass a row-count test
+ * {@code grants(source='preset')} rows: a later or async materialization would pass a row-count test
  * and still leave the agent unauthorized for its next session (the failure mode PLAN-0660 hit from
  * the other side).</p>
  */
@@ -60,12 +60,12 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentTemplateService agentTemplateService;
     @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private GrantIntersectionEvaluator evaluator;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -80,7 +80,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     @AfterEach
     void cleanFixtures() {
         if (principal != null) {
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE subject_type = 'agent_principal'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'agent_principal'"
                     + " AND subject_id = ?::uuid", principal.getId().toString());
             jdbcTemplate.update("DELETE FROM grants WHERE subject_type = 'agent_principal'"
                     + " AND subject_id = ?::uuid", principal.getId().toString());
@@ -92,14 +92,14 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         if (workspace != null) {
             jdbcTemplate.update("DELETE FROM workspace_agents WHERE workspace_id = ?::uuid",
                     workspace.getId().toString());
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'workspace'"
                     + " AND scope_id = ?::uuid", workspace.getId().toString());
             workspaceRepository.deleteById(workspace.getId());
         }
         if (owner != null) {
             jdbcTemplate.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = ?::uuid",
                     owner.getId().toString());
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                     + " AND subject_id = ?::uuid", owner.getId().toString());
             userRepository.deleteById(owner.getId());
         }
@@ -191,11 +191,11 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     @Test
     void seedBindingIsImmutable() {
         fixture();
-        AccessRole seedRole = roleRepository.findByName("WS_VIEWER").orElseThrow();
-        AccessRoleBinding seed = new AccessRoleBinding(seedRole.getId(), "agent_principal",
+        GrantPreset seedRole = roleRepository.findByName("WS_VIEWER").orElseThrow();
+        GrantPresetBinding seed = new GrantPresetBinding(seedRole.getId(), "agent_principal",
                 principal.getId(), "workspace", workspace.getId(), owner.getId());
         seed.setSeed(true);
-        AccessRoleBinding saved = roleBindingRepository.saveAndFlush(seed);
+        GrantPresetBinding saved = roleBindingRepository.saveAndFlush(seed);
         int before = totalBindingCount();
 
         ResponseEntity<Map> refused = deleteProblem("/roles/" + saved.getId()
@@ -210,7 +210,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     void adminRoleIsRefusedWithAtomNamesOnly() {
         fixture();
         int before = totalBindingCount();
-        AccessRole admin = roleRepository.findByName("ADMIN").orElseThrow();
+        GrantPreset admin = roleRepository.findByName("ADMIN").orElseThrow();
 
         ResponseEntity<Map> refused = post("/roles",
                 Map.of("roleId", admin.getId().toString()));
@@ -382,10 +382,10 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         // The binding API's instance tier: a test-only role with the N1 atom, materialized the
         // post-V88 way (role binding + materializer), never a direct grant row.
         UUID authorityRole = UUID.randomUUID();
-        roleRepository.save(new AccessRole(authorityRole, "TEST_RB_AUTH_" + shortId(),
+        roleRepository.save(new GrantPreset(authorityRole, "TEST_RB_AUTH_" + shortId(),
                 "Binding authority", "test-only", false));
-        permissionRepository.save(new AccessRolePermission(authorityRole, "MANAGE_AGENT_PRINCIPALS", "*"));
-        roleBindingRepository.save(new AccessRoleBinding(authorityRole, "user", owner.getId(),
+        permissionRepository.save(new GrantPresetAtom(authorityRole, "MANAGE_AGENT_PRINCIPALS", "*"));
+        roleBindingRepository.save(new GrantPresetBinding(authorityRole, "user", owner.getId(),
                 AccessScope.INSTANCE, null, owner.getId()));
         materializer.materializeSubject("user", owner.getId(), owner.getId(), null);
         authorityRoleIds.add(authorityRole);
@@ -411,10 +411,10 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
 
     private UUID createCustomRole(String... atoms) {
         UUID roleId = UUID.randomUUID();
-        roleRepository.save(new AccessRole(roleId, "TEST_RB_" + shortId(), "Test binding role",
+        roleRepository.save(new GrantPreset(roleId, "TEST_RB_" + shortId(), "Test binding role",
                 "test-only role", false));
         for (String atom : atoms) {
-            permissionRepository.save(new AccessRolePermission(roleId, atom, "*"));
+            permissionRepository.save(new GrantPresetAtom(roleId, atom, "*"));
         }
         testRoleId = roleId;
         return roleId;
@@ -438,11 +438,11 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         workspaceFixture.bindWorkspaceRole(workspace.getId(), manager.getId(),
                 com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
         UUID roleId = UUID.randomUUID();
-        roleRepository.save(new AccessRole(roleId, "TEST_WSM_" + shortId(),
+        roleRepository.save(new GrantPreset(roleId, "TEST_WSM_" + shortId(),
                 "Workspace manager (test-only)", "test-only", false));
-        permissionRepository.save(new AccessRolePermission(roleId, "MANAGE_WORKSPACE_AGENTS", "*"));
+        permissionRepository.save(new GrantPresetAtom(roleId, "MANAGE_WORKSPACE_AGENTS", "*"));
         authorityRoleIds.add(roleId);
-        roleBindingRepository.save(new AccessRoleBinding(roleId, "user", manager.getId(),
+        roleBindingRepository.save(new GrantPresetBinding(roleId, "user", manager.getId(),
                 AccessScope.WORKSPACE, workspace.getId(), owner.getId()));
         materializer.materializeSubject("user", manager.getId(), owner.getId(),
                 workspace.getId().toString());

@@ -17,12 +17,12 @@ import java.util.UUID;
  *
  * <p>They live next to the policy services (not in {@code auth/}) because the role model is owned by
  * this package; the controllers only translate HTTP. Every view is an explicit projection — the
- * entities {@code AccessRole}/{@code AccessRoleBinding} never reach the API, so an internal column
+ * entities {@code GrantPreset}/{@code GrantPresetBinding} never reach the API, so an internal column
  * (for example {@code is_system}'s storage shape) cannot leak by accident.</p>
  */
-public final class RoleAdminViews {
+public final class GrantPresetAdminViews {
 
-    private RoleAdminViews() {
+    private GrantPresetAdminViews() {
     }
 
     /**
@@ -33,7 +33,7 @@ public final class RoleAdminViews {
      *
      * <p>{@code resource} is the <b>pattern actually stored for this subject</b>: the catalog itself
      * reports {@link PermissionAtomCatalog.Atom#canonicalResource()} while a role row reports its
-     * own {@code role_permissions.resource_pattern}. Since task-81 that column may hold a declaration
+     * own {@code grant_preset_atoms.resource_pattern}. Since task-81 that column may hold a declaration
      * key ({@code fs:<workspaceId>/<rel>}), so a projection that always printed the canonical value
      * would hide the narrowing from the editor that has to display and diff it.</p>
      */
@@ -65,7 +65,7 @@ public final class RoleAdminViews {
 
     /**
      * task-415 (RBAC P1-2): one built-in role's seeded default grant set, from
-     * {@link SystemAccessRoleCatalog#roleSeeds()} — the code-level default, not the live DB rows
+     * {@link SystemGrantPresetCatalog#presetSeeds()} — the code-level default, not the live DB rows
      * ({@code GET /roles} lists the rows). This is what answers "who gets a new atom by default"
      * without reading code, the default-grant half of the permission-face rule.
      */
@@ -116,11 +116,11 @@ public final class RoleAdminViews {
      * <p>{@code atoms} follows {@link RoleCreate} — the whole set is replaced, and a resource pattern
      * travels with its atom.</p>
      */
-    public record RoleUpdate(String name, String displayName, String description,
+    public record PresetUpdate(String name, String displayName, String description,
                              List<AtomInput> atoms) {
 
         /** Text-only convenience constructor (same reason as {@link RoleCreate}). */
-        public RoleUpdate(String name, String displayName, String description,
+        public PresetUpdate(String name, String displayName, String description,
                           Collection<? extends CharSequence> atoms) {
             this(name, displayName, description, AtomInput.textOnly(atoms));
         }

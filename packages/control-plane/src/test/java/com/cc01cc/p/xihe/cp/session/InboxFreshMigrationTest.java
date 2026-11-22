@@ -119,9 +119,9 @@ class InboxFreshMigrationTest {
             // V89 dropped workspaces.owner_id: ownership is the WS_OWNER workspace-scope binding.
             execute(connection, "INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
                     + "'::uuid, 'inbox-fresh-ws')");
-            execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id,"
+            execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id,"
                     + " scope_type, scope_id) SELECT gen_random_uuid(), r.id, 'user', '" + userId
-                    + "'::uuid, 'workspace', '" + workspaceId + "'::uuid FROM roles r WHERE r.name = 'WS_OWNER'");
+                    + "'::uuid, 'workspace', '" + workspaceId + "'::uuid FROM grant_presets r WHERE r.name = 'WS_OWNER'");
             execute(connection, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('"
                     + parentSessionId + "'::uuid, '" + workspaceId + "'::uuid, '" + userId
                     + "'::uuid, 'inbox-parent')");

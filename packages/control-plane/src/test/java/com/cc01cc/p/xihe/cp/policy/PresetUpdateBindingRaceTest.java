@@ -2,17 +2,17 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.service.AgentPrincipalRoleBindingService;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalPresetBindingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,16 +43,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * interleaving, and it cannot demonstrate a deadlock by itself — the deadlock argument is the lock
  * order, which both paths now share.</p>
  */
-class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
+class PresetUpdateBindingRaceTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository accessRolePermissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
-    @Autowired private RoleAdminService roleAdmin;
-    @Autowired private AgentPrincipalRoleBindingService agentBindings;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository accessRolePermissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
+    @Autowired private GrantPresetAdminService roleAdmin;
+    @Autowired private AgentPrincipalPresetBindingService agentBindings;
     @Autowired private JdbcTemplate jdbcTemplate;
 
     /**
@@ -66,7 +66,7 @@ class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
         User author = newUser("race-u");
         User holder = newUser("race-h");
         Workspace workspace = workspaceFixture.createOwnedWorkspace("race-ws", author.getId().toString());
-        AccessRole role = newRole("RACE_ROLE", List.of(ToolFaceRegistry.ACTION_READ));
+        GrantPreset role = newRole("RACE_ROLE", List.of(ToolFaceRegistry.ACTION_READ));
         bind(role.getId(), holder.getId(), AccessScope.workspace(workspace.getId()), workspace.getId());
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
@@ -78,7 +78,7 @@ class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
             ready.countDown();
             try {
                 TenantContext.setUserId(author.getId().toString());
-                roleAdmin.update(role.getId(), new RoleAdminViews.RoleUpdate(null, null, null, List.of(
+                roleAdmin.update(role.getId(), new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(
                         ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
             } catch (Throwable t) {
                 failureA.set(t);
@@ -133,7 +133,7 @@ class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
         User holder = newUser("race-hd");
         Workspace owned = workspaceFixture.createOwnedWorkspace("race-ws-d", author.getId().toString());
         Workspace other = workspaceFixture.createWorkspace("race-ws-x");
-        AccessRole role = newRole("RACE_DENY", List.of(ToolFaceRegistry.ACTION_READ));
+        GrantPreset role = newRole("RACE_DENY", List.of(ToolFaceRegistry.ACTION_READ));
         bind(role.getId(), holder.getId(), AccessScope.workspace(other.getId()), other.getId());
 
         int permissionsBefore = permissionsOf(role.getId());
@@ -142,15 +142,15 @@ class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
 
         actAs(author);
         try {
-            roleAdmin.update(role.getId(), new RoleAdminViews.RoleUpdate(null, null, null, List.of(
+            roleAdmin.update(role.getId(), new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(
                     ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
             throw new AssertionError("the cross-workspace escalation must be denied");
         } catch (RuntimeException expected) {
             // the 403 path under test
         }
 
-        assertEquals(permissionsBefore, permissionsOf(role.getId()), "role_permissions unchanged");
-        assertEquals(bindingsBefore, countBindings(role.getId()), "role_bindings unchanged");
+        assertEquals(permissionsBefore, permissionsOf(role.getId()), "grant_preset_atoms unchanged");
+        assertEquals(bindingsBefore, countBindings(role.getId()), "grant_preset_bindings unchanged");
         assertEquals(grantsBefore, countGrants(holder.getId()), "grants unchanged");
         assertTrue(owned != null);
     }
@@ -167,19 +167,19 @@ class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
         TenantContext.setUserId(user.getId().toString());
     }
 
-    private AccessRole newRole(String name, List<String> atoms) {
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+    private GrantPreset newRole(String name, List<String> atoms) {
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, null, false));
         for (String atom : atoms) {
             PermissionAtomCatalog.Atom ref = PermissionAtomCatalog.atom(atom);
             accessRolePermissionRepository.saveAndFlush(
-                    new AccessRolePermission(role.getId(), ref.name(), ref.canonicalResource()));
+                    new GrantPresetAtom(role.getId(), ref.name(), ref.canonicalResource()));
         }
         return role;
     }
 
     private void bind(UUID roleId, UUID subjectId, AccessScope scope, UUID workspaceId) {
-        bindingRepository.saveAndFlush(new AccessRoleBinding(roleId, "user", subjectId,
+        bindingRepository.saveAndFlush(new GrantPresetBinding(roleId, "user", subjectId,
                 scope.type(), scope.id(), subjectId));
         materializer.materializeSubject("user", subjectId, subjectId,
                 workspaceId == null ? null : workspaceId.toString());
@@ -187,18 +187,18 @@ class RoleUpdateBindingRaceTest extends AbstractIntegrationTest {
 
     private int permissionsOf(UUID roleId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM role_permissions WHERE role_id = ?", Integer.class, roleId);
+                "SELECT count(*) FROM grant_preset_atoms WHERE role_id = ?", Integer.class, roleId);
     }
 
     private List<String> atomsOf(UUID roleId) {
         return jdbcTemplate.queryForList(
-                "SELECT action_class FROM role_permissions WHERE role_id = ? ORDER BY action_class",
+                "SELECT action_class FROM grant_preset_atoms WHERE role_id = ? ORDER BY action_class",
                 String.class, roleId);
     }
 
     private int countBindings(UUID roleId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM role_bindings WHERE role_id = ?", Integer.class, roleId);
+                "SELECT count(*) FROM grant_preset_bindings WHERE role_id = ?", Integer.class, roleId);
     }
 
     private int countGrants(UUID subjectId) {

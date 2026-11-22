@@ -79,10 +79,10 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
     void superAdminBindingShowsUpInCapabilitiesAndPermissions() throws Exception {
         AuthResponse registered = register("w3b-super@test.com");
         UUID userId = UUID.fromString(registered.getUser().getId());
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type)"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type)"
                 + " SELECT gen_random_uuid(), id, 'user', CAST(? AS UUID), 'instance'"
-                + " FROM roles WHERE name = 'SUPER_ADMIN'"
-                + " ON CONFLICT ON CONSTRAINT uq_role_bindings DO NOTHING", userId);
+                + " FROM grant_presets WHERE name = 'SUPER_ADMIN'"
+                + " ON CONFLICT ON CONSTRAINT uq_grant_preset_bindings DO NOTHING", userId);
         authzContext.invalidateAll();
 
         // PLAN-0614: registration no longer creates a workspace; the fixture creates one so the
@@ -153,7 +153,7 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
                 assertFalse(source.path("grantId").asText().isBlank(),
                         "the durable grant row is addressable for audit: " + source);
                 assertEquals("instance", source.path("scopeType").asText());
-                if ("role".equals(source.path("source").asText())) {
+                if ("preset".equals(source.path("source").asText())) {
                     sawRoleSource = true;
                     assertFalse(source.path("roleName").asText().isBlank(),
                             "a role source names the bound role: " + source);
@@ -187,7 +187,7 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
         String actionClass = first.path("actionClass").asText();
         String resource = first.path("resource").asText();
 
-        // A second, non-role grant of the SAME atom. The materializer only reconciles source='role'
+        // A second, non-role grant of the SAME atom. The materializer only reconciles source='preset'
         // rows, so this template row survives it — exactly the "two sources, one atom" case.
         String permissions = "[{\"actionClass\":\"" + actionClass + "\",\"resource\":\"" + resource + "\"}]";
         jdbc.update("INSERT INTO grants (id, subject_type, subject_id, permissions, source,"
@@ -212,7 +212,7 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
             boolean role = false;
             boolean template = false;
             for (JsonNode source : grouped.path("sources")) {
-                role |= "role".equals(source.path("source").asText());
+                role |= "preset".equals(source.path("source").asText());
                 template |= "template".equals(source.path("source").asText());
             }
             assertTrue(role && template, "the audit distinguishes the two provenances: " + grouped);

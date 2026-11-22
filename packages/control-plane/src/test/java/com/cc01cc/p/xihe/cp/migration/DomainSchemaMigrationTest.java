@@ -1370,8 +1370,8 @@ class DomainSchemaMigrationTest {
                     "V64 must rewrite the retired word (0494 #9)");
             for (String atom : new String[] {"credential_use", "credential_reveal", "credential_manage"}) {
                 // PLAN-0610 V88: the legacy source='default' row is replaced by the materialized
-                // source='role' rows, so the V64 rewrite is observed there after the full chain.
-                assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'role' "
+                // source='preset' rows, so the V64 rewrite is observed there after the full chain.
+                assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'preset' "
                         + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                         + "AND permissions @> '[{\"actionClass\":\"" + atom
                         + "\",\"resource\":\"credential:*\"}]'::jsonb"),

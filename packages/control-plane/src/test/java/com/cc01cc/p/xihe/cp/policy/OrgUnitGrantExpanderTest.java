@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PLAN-0773 M2-8a: the org-unit group expander, the five cases {@code tasks.md:103} names.
  *
  * <p><b>Evidence level, stated up front.</b> These are function-level tests over the in-memory row
- * shapes ({@code org_units} / {@code org_unit_members} / {@code org_unit_role_bindings}): the card
+ * shapes ({@code org_units} / {@code org_unit_members} / {@code org_unit_preset_bindings}): the card
  * is DB-free on purpose, so no table is touched here and the expander has no persistence
  * collaborator to call. "Not persisted" is therefore asserted <i>positively</i> — every expanded
  * row has {@code id == null}, and {@code AuthorizationGrant.onCreate()} is the only thing that

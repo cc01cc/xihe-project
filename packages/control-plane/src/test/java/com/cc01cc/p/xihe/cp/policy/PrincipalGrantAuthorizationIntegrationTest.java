@@ -116,9 +116,9 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
      * the row is written behind {@code AuthzContext}'s back.
      */
     private void grantInstanceAdmin(UUID userId) {
-        jdbcTemplate.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbcTemplate.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID), 'instance',"
-                + " NOW() FROM roles r WHERE r.name = 'ADMIN'", userId);
+                + " NOW() FROM grant_presets r WHERE r.name = 'ADMIN'", userId);
         // The tier binding alone authorizes nothing: capability atoms are evaluated from
         // MATERIALIZED grants, so the ADMIN row must be materialized through the same production
         // entry point registration uses. ensureInstanceTierBinding leaves an existing binding in
@@ -217,7 +217,7 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
     @Test
     void administratorWithoutWorkspaceContextAlsoUsesTheUserLevelDoor() {
         fixture();
-        // ADMIN derives from USER_DEFAULT_ATOMS (SystemAccessRoleCatalog:107-113), so it inherits
+        // ADMIN derives from USER_DEFAULT_ATOMS (SystemGrantPresetCatalog:107-113), so it inherits
         // CREATE_OWN_AGENT and creates its own principal through the same user-level door. Pinning
         // this stops a future "instance administration authorizes creation" drift: the atom, not the
         // role name, is what the gate decides on.

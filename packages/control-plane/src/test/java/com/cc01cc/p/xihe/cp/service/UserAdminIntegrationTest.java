@@ -98,7 +98,7 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         // baseline is "no instance binding at all" (the seeded SUPER_ADMIN included). Each test then
         // grants exactly the administrators it asserts about. users.role was dropped by V89, so the
         // reset only touches the account state and the bindings.
-        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'instance'");
         authzContext.invalidateAll();
         jdbc.update("UPDATE users SET status = 'ACTIVE', deleted_at = NULL,"
                 + " token_version = 0, session_version = 0");
@@ -517,9 +517,9 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
                 .getId().toString();
         String memberId = userIdOf(register("ws-member@test.com"));
         // PLAN-0610 W4b: membership is the WS_VIEWER binding (workspace_users is gone).
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID),"
-                + " 'workspace', CAST(? AS UUID), NOW() FROM roles r WHERE r.name = 'WS_VIEWER'",
+                + " 'workspace', CAST(? AS UUID), NOW() FROM grant_presets r WHERE r.name = 'WS_VIEWER'",
                 memberId, workspaceId);
 
         // workspace OWNER: own plane OK, instance plane refused.
@@ -574,14 +574,14 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
 
     /** PLAN-0651 T1.3: the member-face bypass reads materialised grants, so fixtures must materialise. */
     @org.springframework.beans.factory.annotation.Autowired
-    private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
+    private com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer roleGrantMaterializer;
 
     private void grantInstanceRole(String userId, String roleName) {
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID), 'instance',"
-                + " NOW() FROM roles r WHERE r.name = ?",
+                + " NOW() FROM grant_presets r WHERE r.name = ?",
                 UUID.randomUUID().toString(), userId, roleName);
         // PLAN-0651 T1.3 (d7847c49): the instance-admin bypass on the member face now reads the
         // **materialised** MANAGE_WORKSPACE_MEMBERS atom instead of cap:instance:admin, so a fixture
@@ -626,7 +626,7 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String workspaceOf(String userId) {
-        return jdbc.queryForObject("SELECT scope_id FROM role_bindings WHERE subject_type = 'user'"
+        return jdbc.queryForObject("SELECT scope_id FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = ? AND scope_type = 'workspace' LIMIT 1",
                 String.class, UUID.fromString(userId));
     }
@@ -643,8 +643,8 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
 
     /** PLAN-0610 W4a: usable administrators = ACTIVE accounts holding an instance admin tier binding. */
     private int usableAdminCount() {
-        return jdbc.queryForObject("SELECT COUNT(DISTINCT b.subject_id) FROM role_bindings b"
-                + " JOIN users u ON u.id = b.subject_id JOIN roles r ON r.id = b.role_id"
+        return jdbc.queryForObject("SELECT COUNT(DISTINCT b.subject_id) FROM grant_preset_bindings b"
+                + " JOIN users u ON u.id = b.subject_id JOIN grant_presets r ON r.id = b.role_id"
                 + " WHERE b.subject_type = 'user' AND b.scope_type = 'instance'"
                 + " AND r.name IN ('ADMIN', 'SUPER_ADMIN')"
                 + " AND u.status = 'ACTIVE' AND u.deleted_at IS NULL", Integer.class);

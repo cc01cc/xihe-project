@@ -63,7 +63,7 @@ public class OrgUnitMemberRepository {
     public List<UUID> ownedWorkspaceIds(String memberKind, UUID memberId) {
         String subjectType = "agent_principal".equals(memberKind) ? "agent_principal" : "user";
         return jdbc.query(
-                "SELECT b.scope_id FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                "SELECT b.scope_id FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE b.subject_type = ? AND b.subject_id = ?"
                         + " AND b.scope_type = 'workspace' AND r.name = ?"
                         + " ORDER BY b.scope_id",

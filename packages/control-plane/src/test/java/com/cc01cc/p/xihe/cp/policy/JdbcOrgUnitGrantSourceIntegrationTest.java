@@ -1,14 +1,14 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.PermissionAtom;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantExpander.MemberRef;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantExpander.Rows;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantExpander.UnitRow;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>{@link #anEmptyOrgTreeLeavesTheAtomSetIdenticalAndKeepsTheSameListInstance()} — the
  *       <b>empty-table equivalence</b> regression: today's atom set is not moved by the rewiring;</li>
  *   <li>{@link #oneBindingAddsExactlyItsGovernanceAtom()} — the positive case: one row in
- *       {@code org_unit_role_bindings} yields exactly one more atom, nothing else;</li>
+ *       {@code org_unit_preset_bindings} yields exactly one more atom, nothing else;</li>
  *   <li>{@link #thePermissionArrayOmitsTheWildcardAndKeepsAnExplicitResource()} — the permission
  *       JSON the expander consumes, not a re-derived copy of it;</li>
  *   <li>{@link #aNonGovernanceRoleOnTheChainIsDroppedNotHandedToTheEvaluator()} — the reader hands
@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       not know must fail, not silently shrink the atom set.</li>
  * </ul>
  *
- * <p>Writes go through SQL/entities on purpose: the write face ({@code OrgUnitRoleBindingService})
+ * <p>Writes go through SQL/entities on purpose: the write face ({@code OrgUnitPresetBindingService})
  * refuses non-governance roles, and a reader test that could only produce legal rows could never
  * show that the filter still works.</p>
  */
@@ -78,7 +78,7 @@ class JdbcOrgUnitGrantSourceIntegrationTest extends AbstractIntegrationTest {
     private UserRepository users;
 
     @Autowired
-    private AccessRoleRepository roles;
+    private GrantPresetRepository roles;
 
     @Autowired
     private AuthorizationGrantRepository grants;
@@ -93,7 +93,7 @@ class JdbcOrgUnitGrantSourceIntegrationTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("DELETE FROM org_unit_role_bindings");
+        jdbc.update("DELETE FROM org_unit_preset_bindings");
         jdbc.update("DELETE FROM org_unit_members");
         jdbc.update("DELETE FROM org_units");
         suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
@@ -286,26 +286,26 @@ class JdbcOrgUnitGrantSourceIntegrationTest extends AbstractIntegrationTest {
     private UUID insertRole(Map<String, String> atomToPattern) {
         String name = "ORG_GOV_" + suffix.toUpperCase() + "_" + UUID.randomUUID().toString()
                 .replace("-", "").substring(0, 6).toUpperCase();
-        AccessRole role = new AccessRole();
+        GrantPreset role = new GrantPreset();
         role.setName(name);
         role.setDisplayName(name);
         role.setSystem(false);
         role = roles.saveAndFlush(role);
         for (Map.Entry<String, String> entry : atomToPattern.entrySet()) {
-            jdbc.update("INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+            jdbc.update("INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)"
                     + " VALUES (?, ?, ?)", role.getId(), entry.getKey(), entry.getValue());
         }
         return role.getId();
     }
 
     private void bind(UUID unitId, UUID roleId) {
-        jdbc.update("INSERT INTO org_unit_role_bindings (id, org_unit_id, role_id, granted_by)"
+        jdbc.update("INSERT INTO org_unit_preset_bindings (id, org_unit_id, role_id, granted_by)"
                 + " VALUES (?, ?, ?, ?)", UUID.randomUUID(), unitId, roleId, member);
     }
 
     private String roleNameOf(UUID unitId) {
-        return jdbc.queryForObject("SELECT r.name FROM org_unit_role_bindings b"
-                + " JOIN roles r ON r.id = b.role_id WHERE b.org_unit_id = ?", String.class, unitId);
+        return jdbc.queryForObject("SELECT r.name FROM org_unit_preset_bindings b"
+                + " JOIN grant_presets r ON r.id = b.role_id WHERE b.org_unit_id = ?", String.class, unitId);
     }
 
     private void grantInstanceAtom(String actionClass) {
@@ -314,7 +314,7 @@ class JdbcOrgUnitGrantSourceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(member);
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(member);
-        grant.setSource(GrantSources.ROLE);
+        grant.setSource(GrantSources.PRESET);
         grant.setScopeType("instance");
         grant.setReadState("read");
         ArrayNode permissions = objectMapper.createArrayNode();

@@ -46,7 +46,7 @@ import org.springframework.web.client.RestTemplate;
  *   <li><b>plain user</b> — no binding at all.</li>
  * </ul>
  */
-class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
+class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String PASSWORD = "Roles-pass-1";
 
@@ -66,7 +66,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
     private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
 
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     private RestTemplate api;
 
@@ -80,12 +80,12 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
             }
         });
         // Custom roles from earlier cases must not survive: they would change the catalog counts.
-        jdbc.update("DELETE FROM role_bindings WHERE role_id IN"
-                + " (SELECT id FROM roles WHERE is_system = false)");
-        jdbc.update("DELETE FROM role_permissions WHERE role_id IN"
-                + " (SELECT id FROM roles WHERE is_system = false)");
-        jdbc.update("DELETE FROM roles WHERE is_system = false");
-        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'workspace' AND scope_id IN"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE role_id IN"
+                + " (SELECT id FROM grant_presets WHERE is_system = false)");
+        jdbc.update("DELETE FROM grant_preset_atoms WHERE role_id IN"
+                + " (SELECT id FROM grant_presets WHERE is_system = false)");
+        jdbc.update("DELETE FROM grant_presets WHERE is_system = false");
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'workspace' AND scope_id IN"
                 + " (SELECT id FROM workspaces WHERE name LIKE 'role-api-%')");
         jdbc.update("DELETE FROM workspaces WHERE name LIKE 'role-api-%'");
     }
@@ -186,7 +186,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
         JsonNode body = objectMapper.readTree(response.getBody());
         JsonNode defaults = body.path("defaultGrants");
-        List<SystemAccessRoleCatalog.RoleSeed> seeds = SystemAccessRoleCatalog.roleSeeds();
+        List<SystemGrantPresetCatalog.PresetSeed> seeds = SystemGrantPresetCatalog.presetSeeds();
         assertEquals(seeds.size(), defaults.size(),
                 "task-415: one default grant set per built-in role seed");
 
@@ -205,7 +205,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         // the administrator default set carries both — so a disabled button on a plain account is the
         // gate working, not a missing default grant.
         assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
-                "ADMIN's default set carries the instance-agent write atom (SystemAccessRoleCatalog:159)");
+                "ADMIN's default set carries the instance-agent write atom (SystemGrantPresetCatalog:159)");
         assertTrue(texts(byRole.get("SUPER_ADMIN").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
                 "SUPER_ADMIN holds every action atom by construction");
         assertFalse(texts(byRole.get("USER").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
@@ -272,7 +272,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/roles/" + roleId, null,
                 superToken);
         assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), deleted.getBody());
-        assertEquals(0, countRows("SELECT COUNT(*) FROM role_permissions WHERE role_id ="
+        assertEquals(0, countRows("SELECT COUNT(*) FROM grant_preset_atoms WHERE role_id ="
                 + " CAST(? AS UUID)", roleId), "the atom rows go with the role");
     }
 
@@ -346,7 +346,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertTrue(deleted.getBody().contains("SYSTEM_ROLE_IMMUTABLE"));
 
         // Restore the seeded display name so the shared database keeps the V87 state.
-        jdbc.update("UPDATE roles SET display_name = 'Administrator' WHERE name = 'ADMIN'");
+        jdbc.update("UPDATE grant_presets SET display_name = 'Administrator' WHERE name = 'ADMIN'");
     }
 
     @Test
@@ -393,8 +393,8 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertEquals(2, firstBody.path("bindings").size(),
                 "the workspace owner binding plus the granted viewer");
         int epochAfterFirst = tokenVersion(subjectId);
-        int auditsAfterFirst = auditCount("role_bindings_replaced");
-        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_VIEWER),
+        int auditsAfterFirst = auditCount("grant_preset_bindings_replaced");
+        assertEquals(PresetAtomExpectations.materializedAtomCount(SystemGrantPresetCatalog.WS_VIEWER),
                 grantRows(subjectId, "workspace", workspaceId),
                 "WS_VIEWER materializes one row per catalog atom (0651 M2 added USE_WORKSPACE_RUNTIME)");
         assertEquals(0, epochAfterFirst,
@@ -406,7 +406,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertEquals(HttpStatus.OK, second.getStatusCode(), second.getBody());
         assertEquals(desired.size(), objectMapper.readTree(second.getBody()).path("bindings").size());
         assertEquals(epochAfterFirst, tokenVersion(subjectId), "idempotent PUT must not bump");
-        assertEquals(auditsAfterFirst, auditCount("role_bindings_replaced"));
+        assertEquals(auditsAfterFirst, auditCount("grant_preset_bindings_replaced"));
 
         // The read surface returns the same set.
         ResponseEntity<String> listed = call(HttpMethod.GET,
@@ -442,7 +442,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         JsonNode firstBody = objectMapper.readTree(first.getBody());
         assertEquals(desired.size(), firstBody.path("bindings").size());
         int epochAfterFirst = tokenVersion(subjectId);
-        int auditsAfterFirst = auditCount("role_bindings_replaced");
+        int auditsAfterFirst = auditCount("grant_preset_bindings_replaced");
         assertEquals(2, bindingRows(subjectId),
                 "the registration USER tier plus the new role");
 
@@ -450,7 +450,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         ResponseEntity<String> second = putBindings(superToken, "instance", null, desired);
         assertEquals(HttpStatus.OK, second.getStatusCode(), second.getBody());
         assertEquals(epochAfterFirst, tokenVersion(subjectId));
-        assertEquals(auditsAfterFirst, auditCount("role_bindings_replaced"));
+        assertEquals(auditsAfterFirst, auditCount("grant_preset_bindings_replaced"));
         assertTrue(authzContext.authoritiesFor(UUID.fromString(superId))
                         .contains("cap:instance:super"),
                 "the caller keeps cap:instance:super after its own full-set write");
@@ -667,7 +667,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertEquals(pattern, role.path("atoms").get(0).path("resource").asText(),
                 "the response must show the stored pattern, not the catalog's canonical one");
         assertEquals(pattern, jdbc.queryForObject(
-                "SELECT resource_pattern FROM role_permissions WHERE role_id = CAST(? AS UUID)",
+                "SELECT resource_pattern FROM grant_preset_atoms WHERE role_id = CAST(? AS UUID)",
                 String.class, roleId), "the pattern is a persisted row, not a view-only field");
 
         ResponseEntity<String> listed = call(HttpMethod.GET, "/api/v1/roles", null, superToken);
@@ -690,7 +690,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertEquals(narrowed, objectMapper.readTree(patched.getBody())
                 .path("atoms").get(0).path("resource").asText());
         assertEquals(narrowed, jdbc.queryForObject(
-                "SELECT resource_pattern FROM role_permissions WHERE role_id = CAST(? AS UUID)",
+                "SELECT resource_pattern FROM grant_preset_atoms WHERE role_id = CAST(? AS UUID)",
                 String.class, roleId), "the PATCH row replacement keeps the new pattern");
     }
 
@@ -714,7 +714,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
                             + atom.path("name").asText());
         }
         String roleId = role.path("id").asText();
-        assertEquals(0, countRows("SELECT COUNT(*) FROM role_permissions WHERE role_id ="
+        assertEquals(0, countRows("SELECT COUNT(*) FROM grant_preset_atoms WHERE role_id ="
                         + " CAST(? AS UUID) AND resource_pattern <> ?", roleId,
                         PermissionAtomCatalog.WILDCARD),
                 "every old-form atom row is still the bare wildcard");
@@ -760,7 +760,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertEquals(HttpStatus.NOT_FOUND, unknown.getStatusCode(), unknown.getBody());
         assertTrue(unknown.getBody().contains("WORKSPACE_NOT_FOUND"), unknown.getBody());
 
-        assertEquals(0, countRows("SELECT COUNT(*) FROM roles WHERE name LIKE 'BAD_RES%'"),
+        assertEquals(0, countRows("SELECT COUNT(*) FROM grant_presets WHERE name LIKE 'BAD_RES%'"),
                 "a refused pattern must not leave a role behind");
     }
 
@@ -786,7 +786,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
                         "resource", "fs:" + foreignWorkspace + "/src"))), managerToken);
         assertEquals(HttpStatus.FORBIDDEN, attempt.getStatusCode(), attempt.getBody());
         assertTrue(attempt.getBody().contains("FORBIDDEN"), attempt.getBody());
-        assertEquals(0, countRows("SELECT COUNT(*) FROM roles WHERE name = 'RES_MANAGER_FOREIGN'"));
+        assertEquals(0, countRows("SELECT COUNT(*) FROM grant_presets WHERE name = 'RES_MANAGER_FOREIGN'"));
     }
 
     /** 原子自己的规则仍然压在 resource 之前：instance-only、capability、同原子双 pattern、未知字段。 */
@@ -828,7 +828,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
                 + "\"action_class\":\"read\"}]}";
         ResponseEntity<String> typo = call(HttpMethod.POST, "/api/v1/roles", typoBody, superToken);
         assertEquals(HttpStatus.BAD_REQUEST, typo.getStatusCode(), typo.getBody());
-        assertEquals(0, countRows("SELECT COUNT(*) FROM roles WHERE name = 'BAD_TYPO'"),
+        assertEquals(0, countRows("SELECT COUNT(*) FROM grant_presets WHERE name = 'BAD_TYPO'"),
                 "the typo must not create a role with a silently defaulted pattern");
     }
 
@@ -888,13 +888,13 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
                         + " AND source = ? AND scope_type = ?"
                         + (scopeId == null ? "" : " AND scope_id = CAST(? AS UUID)"),
                 scopeId == null
-                        ? new Object[] {subjectId, "role", scopeType}
-                        : new Object[] {subjectId, "role", scopeType, scopeId});
+                        ? new Object[] {subjectId, "preset", scopeType}
+                        : new Object[] {subjectId, "preset", scopeType, scopeId});
     }
 
     /** Instance-scope binding rows of one subject (workspace memberships excluded). */
     private int bindingRows(String subjectId) {
-        return countRows("SELECT COUNT(*) FROM role_bindings WHERE subject_id = CAST(? AS UUID)"
+        return countRows("SELECT COUNT(*) FROM grant_preset_bindings WHERE subject_id = CAST(? AS UUID)"
                 + " AND scope_type = 'instance'", subjectId);
     }
 
@@ -938,11 +938,11 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
     }
 
     private void grantInstanceRole(String userId, String roleName) {
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
-                        + " 'instance', NOW() FROM roles r WHERE r.name = ?",
+                        + " 'instance', NOW() FROM grant_presets r WHERE r.name = ?",
                 UUID.randomUUID().toString(), userId, roleName);
         // SQL-written bindings have no grants yet: materialize them exactly like the bootstrap
         // path does, otherwise MANAGE_ROLES (an action atom, read from grants) stays invisible.
@@ -952,7 +952,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
     }
 
     private String roleId(String name) {
-        return jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM roles WHERE name = ?",
+        return jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM grant_presets WHERE name = ?",
                 String.class, name);
     }
 

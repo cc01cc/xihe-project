@@ -11,8 +11,8 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -97,13 +97,13 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
     private ConfigJpaRepository configJpaRepository;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository accessRoleRepository;
+    private com.cc01cc.p.xihe.cp.repository.GrantPresetRepository accessRoleRepository;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository bindingRepository;
+    private com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository bindingRepository;
 
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     @Autowired
     private AuthzContext authzContext;
@@ -192,9 +192,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                 parentRunId.toString(), rootSession.getId().toString(), userId, workspaceId.toString(),
                 "root-run", "root-hash", "provider", "model", "workspace", "running"));
 
-        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "preset", null, null, atoms("read", "write"));
         UUID agentDefaultGrantId = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                principalId, "role", null, null, atoms("read", "write"));
+                principalId, "preset", null, null, atoms("read", "write"));
         assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
                 rootSession.getId().toString(), userId, workspaceId.toString(), true),
                 "a member's own user grant permits a user-direct mutation");
@@ -245,7 +245,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                         "write", "src/main.java")),
                 "User grants cannot authorize an Agent when its stable principal has no grant");
         addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                principalId, "role", null, null, atoms("read", "write"));
+                principalId, "preset", null, null, atoms("read", "write"));
         setBindingCap(workspaceId, atomWithResource("write", "src/*"));
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         rootSession, "write", "src/main.java")));
@@ -289,7 +289,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                         unboundWorkspaceSession, "write", "src/main.java")),
                 "removing Workspace binding denies the next Agent action");
 
-        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "role",
+        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "preset",
                 "admin", UUID.randomUUID(), atoms("unknown-action"));
         assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
                 rootSession.getId().toString(), userId, workspaceId.toString(), true),
@@ -342,9 +342,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
                 atoms("read", "write"));
-        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "preset", null, null, atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read", "write"));
 
         Session memberSession = saveAgentSession(workspaceId, userId, "Member agent", atoms("read", "write"));
@@ -407,11 +407,11 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
         // read@*/write@* 已由 ensureUserDefault 的 USER 角色物化（uq_grants_role_atom 唯一约束），无需再手插。
-        addGrant("user", UUID.fromString(userId), "role", null, null,
+        addGrant("user", UUID.fromString(userId), "preset", null, null,
                 atoms("MANAGE_WORKSPACE_AGENTS"));
         // BL-326/D22：`requireDisableAuthority` 只认 owner 或 MANAGE_AGENT_PRINCIPALS；0651 tier 移除后
         // workspace 作用域 principal 的 ownerUserId 为 null，所以"授权路径可用"必须由这个原子证明。
-        addGrant("user", UUID.fromString(userId), "role", null, null,
+        addGrant("user", UUID.fromString(userId), "preset", null, null,
                 atoms("MANAGE_AGENT_PRINCIPALS"));
 
         ObjectNode snapshot = objectMapper.createObjectNode();
@@ -430,15 +430,15 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         // B 类（BL-326，2026-11-05）：V127/D-174 之后 agent principal 的默认 instance 角色是
         // **AGENT_USER**（BL-312 移除 CREATE_OWN_AGENT 后，其种子即基础集），不再是 USER。
         // 期望集合从角色目录单一来源派生，不写字面量。
-        java.util.Set<String> expectedRoleAtoms =
-                RoleAtomExpectations.declaredAtoms(SystemAccessRoleCatalog.AGENT_USER);
+        java.util.Set<String> expectedPresetAtoms =
+                PresetAtomExpectations.declaredAtoms(SystemGrantPresetCatalog.AGENT_USER);
         java.util.Set<String> grantedAtoms = new java.util.LinkedHashSet<>();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
                 .forEach(grant -> grant.getPermissions()
                         .forEach(atom -> grantedAtoms.add(atom.path("actionClass").asText())));
-        assertEquals(expectedRoleAtoms, grantedAtoms,
+        assertEquals(expectedPresetAtoms, grantedAtoms,
                 "authority comes from the bound default role (one atom per row); the template "
                         + "snapshot write is gone");
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs "
@@ -478,11 +478,11 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         java.util.Set<String> roleAtomsAfterCap = new java.util.LinkedHashSet<>();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
                 .filter(grant -> !AccessScope.WORKSPACE.equals(grant.getScopeType()))
                 .forEach(grant -> grant.getPermissions()
                         .forEach(atom -> roleAtomsAfterCap.add(atom.path("actionClass").asText())));
-        assertEquals(expectedRoleAtoms, roleAtomsAfterCap,
+        assertEquals(expectedPresetAtoms, roleAtomsAfterCap,
                 "changing a Workspace cap must not mutate global (instance-scope) principal grants");
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs "
                 + "WHERE action = 'workspace_agent_cap_updated' AND workspace_id = ? AND resource_id = ?",
@@ -594,9 +594,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         // B 类（BL-326）：夹具现在走生产注册路径（ensureUserDefault），调用者同时持有 instance USER
         // 默认集与 WS_OWNER 工作区环，default 快照就是两者的并集。期望从目录派生（不写字面量）。
         java.util.Set<String> expectedDefaultAtoms = new java.util.LinkedHashSet<>(
-                RoleAtomExpectations.materializedAtoms(SystemAccessRoleCatalog.USER));
+                PresetAtomExpectations.materializedAtoms(SystemGrantPresetCatalog.USER));
         expectedDefaultAtoms.addAll(
-                RoleAtomExpectations.materializedAtoms(SystemAccessRoleCatalog.WS_OWNER));
+                PresetAtomExpectations.materializedAtoms(SystemGrantPresetCatalog.WS_OWNER));
         assertEquals(expectedDefaultAtoms, defaultAtoms,
                 "no selected template preserves the bare-default grant behavior (catalog-derived set: "
                         + "instance USER ∪ workspace WS_OWNER)");
@@ -760,14 +760,14 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
      * {@code users.role} column no longer authorizes anything.
      */
     private void grantInstanceAdmin(UUID userId) {
-        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        GrantPreset adminRole = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow();
         // One instance tier per subject: replace the registration USER binding before materializing,
         // otherwise the union of two tiers re-materializes atoms that already exist.
         bindingRepository.deleteAll(bindingRepository.findBySubjectTypeAndSubjectIdAndScopeType(
                 "user", userId, AccessScope.INSTANCE));
         bindingRepository.flush();
-        bindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userId,
+        bindingRepository.save(new GrantPresetBinding(adminRole.getId(), "user", userId,
                 AccessScope.INSTANCE, null, userId));
         // B 类（BL-326，2026-11-05）：必须**物化** ADMIN 的行动作原子（N2 READ_INSTANCE_CONTENT 等）。
         // 旧注释说"夹具已手写同原子行、capability 从绑定解析"——但 cap:instance:admin 是 capability，
@@ -921,7 +921,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
         bindPrincipal(workspaceId, atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "role", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
                 atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
         prefixSessionId = saveAgentSession(workspaceId, userId, "Prefix agent",
                 atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC)).getId().toString();

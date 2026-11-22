@@ -4,17 +4,17 @@ import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.CredentialAdminService;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -47,8 +47,8 @@ class CredentialInstanceOwnerIntegrationTest extends AbstractReusableIntegration
     @Autowired private AuthService authService;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AuthzContext authzContext;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private CredentialRepository credentialRepository;
 
     private final List<UUID> credentialIds = new ArrayList<>();
@@ -169,8 +169,8 @@ class CredentialInstanceOwnerIntegrationTest extends AbstractReusableIntegration
     }
 
     private void grantInstanceAdmin(UUID userId) {
-        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
-        AccessRoleBinding binding = new AccessRoleBinding(adminRole.getId(),
+        GrantPreset adminRole = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow();
+        GrantPresetBinding binding = new GrantPresetBinding(adminRole.getId(),
                 AuthzContext.SUBJECT_USER, userId, AccessScope.INSTANCE, null, userId);
         bindingRepository.saveAndFlush(binding);
         bindingIds.add(binding.getId());

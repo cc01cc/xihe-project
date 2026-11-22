@@ -33,7 +33,7 @@ import java.util.UUID;
  * (`path <@ own.path`); an <b>instance-level reader</b> (atom, no membership) sees the whole tree.
  * The second shape is not a back door — design §4.2 grants the instance admin the atoms at
  * instance scope, and there is no other way to hold `READ_ORG_UNIT_MEMBERS` without a membership
- * row today (`org_unit_role_bindings` is M1-9 and absent).</p>
+ * row today (`org_unit_preset_bindings` is M1-9 and absent).</p>
  *
  * <p>No caching (M2-10a): every call re-reads the membership row, so a move changes what a caller
  * sees on the next request. A memoized scope here would be the exact bug G2 exists to prevent.</p>

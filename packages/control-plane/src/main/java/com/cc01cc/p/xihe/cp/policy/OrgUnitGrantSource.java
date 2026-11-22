@@ -7,7 +7,7 @@ package com.cc01cc.p.xihe.cp.policy;
  * does not care whether they come from three JDBC reads (production), from a fixture (tests), or
  * from the placeholder that ships today. The split exists because <b>the query and the decision
  * have different blockers</b>: the decision ({@link OrgUnitGrantExpander}) has been testable since
- * {@code M2-8a} without a database, while a production reader needs {@code org_unit_role_bindings}
+ * {@code M2-8a} without a database, while a production reader needs {@code org_unit_preset_bindings}
  * — {@code M1-9}'s table, which does not exist yet.</p>
  *
  * <p><b>No caching, ever</b> ({@code M2-10a}): the caller invokes this on every evaluation. A

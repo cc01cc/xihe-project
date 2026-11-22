@@ -2,9 +2,9 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -13,12 +13,12 @@ import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -51,11 +51,11 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentPrincipalRepository principalRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private AgentTemplateService agentTemplateService;
     @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -77,7 +77,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         // N9 exists only in A — the pre-fix unscoped union let A's authority reach into B.
         workspaceFixture.bindWorkspaceRole(wsB.getId(), actor.getId(), WorkspaceRole.VIEWER);
         UUID manageInB = roleWith("TEST_A2B_MANAGE_B", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
-        bindingRepository.save(new AccessRoleBinding(manageInB, "user", actor.getId(),
+        bindingRepository.save(new GrantPresetBinding(manageInB, "user", actor.getId(),
                 AccessScope.WORKSPACE, wsB.getId(), actor.getId()));
         materializer.materializeSubject("user", actor.getId(), actor.getId(), wsB.getId().toString());
         UUID principal = newPrincipal(actor, "A2BP");
@@ -114,7 +114,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         UUID authority = roleWith("TEST_I2W_AUTH",
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
-        bindingRepository.save(new AccessRoleBinding(authority, "user", actor.getId(),
+        bindingRepository.save(new GrantPresetBinding(authority, "user", actor.getId(),
                 AccessScope.INSTANCE, null, actor.getId()));
         materializer.materializeSubject("user", actor.getId(), actor.getId(), null);
 
@@ -148,7 +148,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
 
     /** Automatic WS_EDITOR default binding must clear the grantor subset gate, zero rows otherwise. */
     @Test
-    void grantorWithoutDefaultRoleAtomsIsRefusedWithZeroWrites() {
+    void grantorWithoutDefaultPresetAtomsIsRefusedWithZeroWrites() {
         User weak = newUser("weak-grantor");
         grantDefaultService.ensureUserDefault(weak);
         // The target workspace belongs to someone else; weak is only a viewer (read+N7 there) and
@@ -160,9 +160,9 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         workspaceFixture.bindWorkspaceRole(ws.getId(), weak.getId(), WorkspaceRole.VIEWER);
         UUID principal = newPrincipal(host, "WeakP");
         jdbcTemplate.update("DELETE FROM grants WHERE subject_type='user' AND subject_id=?"
-                + " AND source IN ('default','role')", weak.getId());
+                + " AND source IN ('default','preset')", weak.getId());
         UUID manageOnly = roleWith("TEST_WEAK_MANAGE", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
-        bindingRepository.save(new AccessRoleBinding(manageOnly, "user", weak.getId(),
+        bindingRepository.save(new GrantPresetBinding(manageOnly, "user", weak.getId(),
                 AccessScope.INSTANCE, null, weak.getId()));
         materializer.materializeSubject("user", weak.getId(), weak.getId(), null);
 
@@ -171,7 +171,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
                         principal, json("[]")));
         assertEquals("PRIVILEGE_ESCALATION", denied.getCode());
         assertFalse(workspaceAgentRepository.existsById(new WorkspaceAgentId(principal, ws.getId())));
-        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM role_bindings"
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM grant_preset_bindings"
                 + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                 + " AND scope_type='workspace'", Integer.class,
                 principal.toString()), "zero workspace role_binding rows on refusal (creation-time"
@@ -190,10 +190,10 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         Workspace ws = workspaceFixture.createOwnedWorkspace("BypassWs", bypass.getId().toString());
         UUID principal = newPrincipal(bypass, "BypassP");
         jdbcTemplate.update("DELETE FROM grants WHERE subject_type='user' AND subject_id=?"
-                + " AND source IN ('default','role')", bypass.getId());
+                + " AND source IN ('default','preset')", bypass.getId());
         UUID bypassRole = roleWith("TEST_BYPASS_ROLE", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 ToolFaceRegistry.ACTION_GRANT_ANY_ATOM);
-        bindingRepository.save(new AccessRoleBinding(bypassRole, "user", bypass.getId(),
+        bindingRepository.save(new GrantPresetBinding(bypassRole, "user", bypass.getId(),
                 AccessScope.INSTANCE, null, bypass.getId()));
         materializer.materializeSubject("user", bypass.getId(), bypass.getId(), null);
 
@@ -231,7 +231,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         // must still answer the BL-287 cap gate with 409 — binding never bypasses the cap.
         UUID explicit = newPrincipal(owner, "PathB");
         agentPrincipalService.setWorkspaceCap(owner.getId().toString(), ws.getId(), explicit, readOnly);
-        UUID wsEditorRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_EDITOR)
+        UUID wsEditorRole = accessRoleRepository.findByName(SystemGrantPresetCatalog.WS_EDITOR)
                 .orElseThrow().getId();
         String token = TestDataFactory.createWorkspaceToken(owner.getId().toString(), owner.getEmail(),
                 "OWNER", ws.getId().toString(), 0);
@@ -271,10 +271,10 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     private UUID roleWith(String name, String... atoms) {
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, "test-only", false));
         for (String atom : atoms) {
-            permissionRepository.saveAndFlush(new AccessRolePermission(
+            permissionRepository.saveAndFlush(new GrantPresetAtom(
                     role.getId(), atom, com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog.atom(atom)
                             .canonicalResource()));
         }
@@ -282,7 +282,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     private void bindInstanceRole(UUID subjectId, UUID roleId, UUID granterUserId) {
-        bindingRepository.save(new AccessRoleBinding(roleId, "agent_principal", subjectId,
+        bindingRepository.save(new GrantPresetBinding(roleId, "agent_principal", subjectId,
                 AccessScope.INSTANCE, null, granterUserId));
         materializer.materializeSubject("agent_principal", subjectId, granterUserId, null);
     }

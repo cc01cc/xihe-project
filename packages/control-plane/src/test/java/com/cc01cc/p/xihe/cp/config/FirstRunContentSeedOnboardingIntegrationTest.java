@@ -145,7 +145,7 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
                 .findByCreateIdempotencyKeyAndDeletedAtIsNull(FirstRunContentSeeder.WORKSPACE_IDEMPOTENCY_KEY)
                 .orElseThrow(() -> new AssertionError("the workspace must carry the seed idempotency key"));
         assertEquals(FirstRunContentSeeder.WORKSPACE_NAME, workspace.getName());
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE b.subject_type = 'user' AND b.subject_id = ?::uuid"
                         + " AND b.scope_type = 'workspace' AND b.scope_id = ?::uuid AND r.name = 'WS_OWNER'",
                 Integer.class, first.getId().toString(), workspace.getId().toString()),

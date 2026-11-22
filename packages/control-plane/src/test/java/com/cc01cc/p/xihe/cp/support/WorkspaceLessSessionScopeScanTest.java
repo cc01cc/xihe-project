@@ -50,15 +50,15 @@ class WorkspaceLessSessionScopeScanTest {
                 "instance-scope agent-principal admin: grants/role materialization for admin faces");
         ALLOWLIST.put("service/AgentPrincipalSkillBindingService.java",
                 "instance-scope skill binding administration (admin face, not chat path)");
-        ALLOWLIST.put("service/AgentPrincipalRoleBindingService.java",
+        ALLOWLIST.put("service/AgentPrincipalPresetBindingService.java",
                 "instance-scope role binding administration (admin face, not chat path)");
         ALLOWLIST.put("policy/AccessScopeResolver.java",
                 "resolves the scope of an authenticated request; instance is the explicit fallback axis");
         ALLOWLIST.put("policy/BindingAdminService.java",
                 "instance binding administration: manages instance-scope grants");
-        ALLOWLIST.put("policy/RoleAdminService.java",
+        ALLOWLIST.put("policy/GrantPresetAdminService.java",
                 "instance role administration: manages instance-scope roles");
-        ALLOWLIST.put("policy/RoleGrantMaterializer.java",
+        ALLOWLIST.put("policy/PresetGrantMaterializer.java",
                 "materializes instance-scope grants for the role/binding admin faces");
     }
 
@@ -73,7 +73,7 @@ class WorkspaceLessSessionScopeScanTest {
     }
 
     @Test
-    void workspaceLessPathHasNoInstanceOrRoleAdminFallback() throws IOException {
+    void workspaceLessPathHasNoInstanceOrGrantPresetAdminFallback() throws IOException {
         List<String> hits = scan(SCAN_ROOTS);
         System.out.println("[plan-0704] enforced instance-fallback scan: hits=" + hits.size()
                 + " allowlisted=" + ALLOWLIST.size());

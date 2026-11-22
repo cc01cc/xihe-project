@@ -43,7 +43,7 @@ class ReuseSnapshotSeedFixtureTest extends AbstractReusableIntegrationTest {
                 "instance_owner.id=1 must point at the seeded admin (startup seed via snapshot)");
 
         Integer superAdminBindings = jdbcTemplate.queryForObject(
-                "select count(*) from role_bindings rb join roles r on rb.role_id = r.id "
+                "select count(*) from grant_preset_bindings rb join grant_presets r on rb.role_id = r.id "
                         + "where r.name = 'SUPER_ADMIN' and rb.subject_type = 'user' "
                         + "and rb.subject_id = ? and rb.scope_type = 'instance'",
                 Integer.class, adminId);

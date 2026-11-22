@@ -114,7 +114,7 @@ class SessionPermissionGuardTest {
         if (reason != null) {
             assertTrue(detail.contains("reason=" + reason), detail);
         }
-        if ("role".equals(sources)) {
+        if ("preset".equals(sources)) {
             assertTrue(detail.contains("atomSources=role"), detail);
         } else {
             assertTrue(detail.contains("atomSources=-"), detail);

@@ -7,9 +7,9 @@ import java.io.Serializable;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Composite key of {@code role_permissions}: one atom (action class + resource pattern) per role. */
+/** Composite key of {@code grant_preset_atoms}: one atom (action class + resource pattern) per role. */
 @Embeddable
-public class AccessRolePermissionId implements Serializable {
+public class GrantPresetAtomId implements Serializable {
 
     @Column(name = "role_id", columnDefinition = "uuid")
     private UUID roleId;
@@ -20,10 +20,10 @@ public class AccessRolePermissionId implements Serializable {
     @Column(name = "resource_pattern", length = 255)
     private String resourcePattern;
 
-    public AccessRolePermissionId() {
+    public GrantPresetAtomId() {
     }
 
-    public AccessRolePermissionId(UUID roleId, String actionClass, String resourcePattern) {
+    public GrantPresetAtomId(UUID roleId, String actionClass, String resourcePattern) {
         this.roleId = roleId;
         this.actionClass = actionClass;
         this.resourcePattern = resourcePattern;
@@ -43,7 +43,7 @@ public class AccessRolePermissionId implements Serializable {
         if (this == other) {
             return true;
         }
-        if (!(other instanceof AccessRolePermissionId that)) {
+        if (!(other instanceof GrantPresetAtomId that)) {
             return false;
         }
         return Objects.equals(roleId, that.roleId)

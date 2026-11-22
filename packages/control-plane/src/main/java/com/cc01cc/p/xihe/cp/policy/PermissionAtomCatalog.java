@@ -26,7 +26,7 @@ import java.util.Set;
  *       {@code grants} (decision #23).</li>
  * </ul>
  *
- * <p>{@code scope_class} is the SSOT of this class (a {@code role_permissions} row stores the
+ * <p>{@code scope_class} is the SSOT of this class (a {@code grant_preset_atoms} row stores the
  * atom name only, round-2 P1). Decision #27 collapses the vocabulary to exactly two classes:</p>
  *
  * <ul>

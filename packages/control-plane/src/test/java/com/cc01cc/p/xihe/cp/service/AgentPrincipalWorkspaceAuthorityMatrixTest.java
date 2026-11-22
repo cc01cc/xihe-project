@@ -2,9 +2,9 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -15,10 +15,10 @@ import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -65,10 +65,10 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private AuthzContext authzContext;
@@ -296,12 +296,12 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
     private Seeded seedManagementAtom(UUID userId, String scopeType, UUID scopeId, String atom,
                                       String resource) {
         UUID roleId = UUID.randomUUID();
-        accessRoleRepository.saveAndFlush(new AccessRole(roleId,
+        accessRoleRepository.saveAndFlush(new GrantPreset(roleId,
                 "TEST_MATRIX_" + roleId.toString().replace("-", "").substring(0, 10).toUpperCase(),
                 "Test matrix role", "test-only role for the BL-331 authority matrix", false));
-        permissionRepository.saveAndFlush(new AccessRolePermission(roleId, atom, resource));
+        permissionRepository.saveAndFlush(new GrantPresetAtom(roleId, atom, resource));
         seededRoleIds.add(roleId);
-        AccessRoleBinding binding = roleBindingRepository.saveAndFlush(new AccessRoleBinding(
+        GrantPresetBinding binding = roleBindingRepository.saveAndFlush(new GrantPresetBinding(
                 roleId, "user", userId, scopeType, scopeId, userId));
         materializer.materializeSubject("user", userId, userId,
                 AccessScope.WORKSPACE.equals(scopeType) ? scopeId.toString() : null);
@@ -310,8 +310,8 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
     }
 
     private void revoke(UUID bindingId, UUID roleId, UUID userId) {
-        jdbcTemplate.update("DELETE FROM role_permissions WHERE role_id = ?", roleId);
-        jdbcTemplate.update("DELETE FROM role_bindings WHERE id = ?", bindingId);
+        jdbcTemplate.update("DELETE FROM grant_preset_atoms WHERE role_id = ?", roleId);
+        jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE id = ?", bindingId);
         jdbcTemplate.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = ?",
                 userId);
         authzContext.invalidateAll();

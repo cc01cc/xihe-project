@@ -4,8 +4,8 @@ import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -14,13 +14,13 @@ import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -53,7 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * immediately, so this class asserts the two states plus the guard rails around them:
  *
  * <ol>
- *   <li>bind &rarr; effective <b>now</b> (the workspace's atoms appear as {@code source='role'});</li>
+ *   <li>bind &rarr; effective <b>now</b> (the workspace's atoms appear as {@code source='preset'});</li>
  *   <li>unbind &rarr; gone <b>now</b> (and the row disappears from the workspace list);</li>
  *   <li>an instance-administrator role cannot be bound to an agent principal at all;</li>
  *   <li>an unknown role id is refused with the same stable code (no existence leak);</li>
@@ -68,9 +68,9 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     @Autowired
     private AgentTemplateService agentTemplateService;
     @Autowired
-    private AccessRoleRepository roleRepository;
+    private GrantPresetRepository roleRepository;
     @Autowired
-    private AccessRoleBindingRepository roleBindingRepository;
+    private GrantPresetBindingRepository roleBindingRepository;
     @Autowired
     private AuthorizationGrantRepository grantRepository;
     @Autowired
@@ -84,7 +84,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     @Autowired
     private ObjectMapper objectMapper;
     @Autowired
-    private RoleGrantMaterializer roleMaterializer;
+    private PresetGrantMaterializer roleMaterializer;
     @Autowired
     private AuthzContext authzContext;
 
@@ -110,7 +110,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     @Test
     void bindTakesEffectImmediately() {
         AgentPrincipal principal = createPlainPrincipal("bindEffective");
-        assertEquals(0, roleGrants(principal.getId(), GrantSources.ROLE).size(),
+        assertEquals(0, roleGrants(principal.getId(), GrantSources.PRESET).size(),
                 "a fresh principal has no workspace role grants");
 
         bindToWorkspace(principal.getId());
@@ -186,11 +186,11 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     void unbindRevokesImmediately() {
         AgentPrincipal principal = createPlainPrincipal("unbind");
         bindToWorkspace(principal.getId());
-        assertFalse(roleGrants(principal.getId(), GrantSources.ROLE).isEmpty());
+        assertFalse(roleGrants(principal.getId(), GrantSources.PRESET).isEmpty());
 
         assertTrue(agentPrincipalService.unbindWorkspace(userId, workspaceId, principal.getId()));
 
-        assertEquals(0, roleGrants(principal.getId(), GrantSources.ROLE).size(),
+        assertEquals(0, roleGrants(principal.getId(), GrantSources.PRESET).size(),
                 "unbinding must remove the workspace role grants in the same transaction");
         assertFalse(agentPrincipalService.listWorkspaceAgents(userId, workspaceId).stream()
                         .anyMatch(view -> principal.getId().equals(view.principalId())),
@@ -199,7 +199,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
 
     @Test
     void instanceAdminRoleCannotBeBoundToAnAgentPrincipal() {
-        AccessRole admin = roleRepository.findByName("ADMIN").orElseThrow();
+        GrantPreset admin = roleRepository.findByName("ADMIN").orElseThrow();
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> createPlainPrincipal("adminRole", List.of(admin.getId())));
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus());
@@ -221,16 +221,16 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
      * PLAN-0673 V3.2 缺口闭合（audit-1 §5.2）：创建路径的**默认角色**（{@code AGENT_USER}）也是一次
      * 授予，creator 不持有它的原子时必须被拒 —— 且在任何 principal 行写入之前。
      *
-     * <p>为什么单列：{@code SetWorkspaceCapGate#grantorWithoutDefaultRoleAtomsIsRefusedWithZeroWrites}
+     * <p>为什么单列：{@code SetWorkspaceCapGate#grantorWithoutDefaultPresetAtomsIsRefusedWithZeroWrites}
      * 只覆盖 workspace 侧的结构性默认绑定，覆盖不到"创建路径的实例级默认角色"；而默认授予集恰好是
      * 最容易悄悄放水的地方（creator 被收窄后仍能造出带默认权限的 agent）。</p>
      *
-     * <p>零写入按三类行取数：{@code agent_principals} / {@code role_bindings} /
+     * <p>零写入按三类行取数：{@code agent_principals} / {@code grant_preset_bindings} /
      * {@code authorization_grants}。只数 principal 不够 —— 若实现先写绑定行再校验，绑定/授权行仍会
      * 留下孤儿行（PLAN-0673 V3.2 整改要求"断言无 role/binding 行落库"）。</p>
      */
     @Test
-    void creatingAPrincipalWhoseDefaultRoleAtomsTheCreatorLacksIsRefused() {
+    void creatingAPrincipalWhoseDefaultPresetAtomsTheCreatorLacksIsRefused() {
         User weakCreator = userRepository.saveAndFlush(new User(
                 "audit-weak-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com",
                 "hash", "Weak creator"));
@@ -265,7 +265,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         roleBindingRepository.deleteAll(roleBindingRepository
                 .findBySubjectTypeAndScopeTypeAndScopeId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, "workspace", workspaceId));
-        grantRepository.deleteAll(roleGrants(principal.getId(), GrantSources.ROLE));
+        grantRepository.deleteAll(roleGrants(principal.getId(), GrantSources.PRESET));
         AuthorizationGrant legacy = new AuthorizationGrant();
         legacy.setId(UUID.randomUUID());
         legacy.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
@@ -301,7 +301,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
                         new com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId(principalId, workspaceId)).isPresent(),
                 "precondition: the principal has no legacy workspace_agents row");
 
-        roleBindingRepository.saveAndFlush(new AccessRoleBinding(SystemAccessRoleCatalog.WS_EDITOR_ID,
+        roleBindingRepository.saveAndFlush(new GrantPresetBinding(SystemGrantPresetCatalog.WS_EDITOR_ID,
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId,
                 UUID.fromString(userId)));
         roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
@@ -452,8 +452,8 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     /** 给一个已注册用户绑 instance 级 ADMIN 角色并立即物化（范本：AgentPrincipalOwnershipIntegrationTest:271-286）。 */
     private void grantInstanceAdminRole(String instanceAdminUserId) {
         UUID adminId = UUID.fromString(instanceAdminUserId);
-        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
-        roleBindingRepository.saveAndFlush(new AccessRoleBinding(adminRole.getId(),
+        GrantPreset adminRole = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow();
+        roleBindingRepository.saveAndFlush(new GrantPresetBinding(adminRole.getId(),
                 AuthzContext.SUBJECT_USER, adminId, AccessScope.INSTANCE, null, adminId));
         roleMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, adminId, adminId, null);
         authzContext.invalidate(adminId);
@@ -522,7 +522,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     }
 
     private List<String> roleAtomNames(UUID principalId) {
-        return roleGrants(principalId, GrantSources.ROLE).stream()
+        return roleGrants(principalId, GrantSources.PRESET).stream()
                 .map(row -> row.getPermissions().path(0).path("actionClass").asText())
                 .toList();
     }

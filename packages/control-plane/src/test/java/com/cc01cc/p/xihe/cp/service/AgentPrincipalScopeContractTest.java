@@ -2,9 +2,9 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -14,10 +14,10 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -67,10 +67,10 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private WorkspaceAgentRepository bindingRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -515,11 +515,11 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
     /** Materializes one extra instance-scope action atom for the subject (user-tier grant). */
     private void addInstanceActionGrant(UUID userId, String actionClass, String resource) {
         UUID roleId = UUID.randomUUID();
-        accessRoleRepository.save(new AccessRole(roleId,
+        accessRoleRepository.save(new GrantPreset(roleId,
                 "TEST_M1_" + roleId.toString().replace("-", "").toUpperCase(),
                 "M1.1 test grant", "test-only role", false));
-        permissionRepository.save(new AccessRolePermission(roleId, actionClass, resource));
-        roleBindingRepository.save(new AccessRoleBinding(roleId, "user", userId,
+        permissionRepository.save(new GrantPresetAtom(roleId, actionClass, resource));
+        roleBindingRepository.save(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
         testRoleIds.add(roleId);
@@ -527,9 +527,9 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
 
     /** Seeds a real instance ADMIN tier binding (capability authority reads bindings, not grants). */
     private void addInstanceAdminTier(UUID userId) {
-        AccessRole adminRole = accessRoleRepository.findByName("ADMIN")
+        GrantPreset adminRole = accessRoleRepository.findByName("ADMIN")
                 .orElseThrow(() -> new IllegalStateException("ADMIN role missing (V87)"));
-        roleBindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userId,
+        roleBindingRepository.save(new GrantPresetBinding(adminRole.getId(), "user", userId,
                 AccessScope.INSTANCE, null, userId));
     }
 

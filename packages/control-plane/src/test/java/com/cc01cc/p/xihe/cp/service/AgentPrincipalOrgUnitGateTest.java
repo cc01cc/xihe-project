@@ -3,8 +3,8 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
@@ -12,8 +12,8 @@ import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantExpander;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantSource;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGovernancePolicy;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       <i>binding</i> side; reachability is supplied by a workspace-scoped role binding instead</li>
  *   <li><b>gate 971</b> is reached with <b>no</b> {@code grants} rows for the principal
  *       ({@code roleRows.isEmpty()}) — that is the fallback arm. The fixture inserts the role
- *       binding <i>without</i> running {@code RoleGrantMaterializer}, so "held a role" and
+ *       binding <i>without</i> running {@code PresetGrantMaterializer}, so "held a role" and
  *       "has a role row" are separated on purpose: only the latter decides the branch.</li>
  * </ul>
  *
@@ -94,9 +94,9 @@ class AgentPrincipalOrgUnitGateTest extends AbstractIntegrationTest {
     @Autowired
     private AuthorizationGrantRepository grantRepository;
     @Autowired
-    private AccessRoleBindingRepository roleBindingRepository;
+    private GrantPresetBindingRepository roleBindingRepository;
     @Autowired
-    private AccessRoleRepository roleRepository;
+    private GrantPresetRepository roleRepository;
     @Autowired
     private UserRepository userRepository;
     @Autowired
@@ -150,7 +150,7 @@ class AgentPrincipalOrgUnitGateTest extends AbstractIntegrationTest {
         Fixture fixture = fixture("orgunit-reaches");
         stubRows = orgUnitRows(fixture);
 
-        assertFalse(hasRoleGrants(fixture.principal()),
+        assertFalse(hasPresetGrants(fixture.principal()),
                 "fixture precondition: this case must take the no-role-row fallback (gate 971)");
 
         JsonNode cap = agentPrincipalService.resolveCapFor(fixture.principal().getId(),
@@ -245,8 +245,8 @@ class AgentPrincipalOrgUnitGateTest extends AbstractIntegrationTest {
 
         // Reachability only: a workspace-scoped role binding, with NO materialiser run and NO
         // workspace_agents row. "Holds a role" and "has role rows" are separated here on purpose.
-        AccessRole role = roleRepository.findAll().get(0);
-        roleBindingRepository.saveAndFlush(new AccessRoleBinding(role.getId(),
+        GrantPreset role = roleRepository.findAll().get(0);
+        roleBindingRepository.saveAndFlush(new GrantPresetBinding(role.getId(),
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, saved.getId(), "workspace",
                 workspace.getId(), owner.getId()));
 
@@ -266,7 +266,7 @@ class AgentPrincipalOrgUnitGateTest extends AbstractIntegrationTest {
                         "OrgGovernance", List.of(GOVERNANCE_ATOM), permissions)));
     }
 
-    private boolean hasRoleGrants(AgentPrincipal principal) {
+    private boolean hasPresetGrants(AgentPrincipal principal) {
         return !grantRepository.findBySubjectTypeAndSubjectId(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId()).isEmpty();
     }

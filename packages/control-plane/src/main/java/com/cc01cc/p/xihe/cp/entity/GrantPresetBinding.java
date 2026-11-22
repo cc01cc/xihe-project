@@ -10,7 +10,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * PLAN-0610 角色绑定（V87 {@code role_bindings}）：role × subject × scope。
+ * PLAN-0610 角色绑定（V87 {@code grant_preset_bindings}）：role × subject × scope。
  *
  * <p>Scopes are <b>explicit and non-inheriting</b> (design #11): an instance-scope binding does
  * not produce workspace-scoped atoms and a workspace binding does not reach the instance. The
@@ -19,11 +19,11 @@ import java.util.UUID;
  *
  * <p>{@code scope_id} references {@code workspaces(id) ON DELETE CASCADE}: a deleted workspace
  * must not leave a dangling binding. Instance bindings keep {@code scope_id} NULL (V87
- * {@code ck_role_bindings_scope}).</p>
+ * {@code ck_grant_preset_bindings_scope}).</p>
  */
 @Entity
-@Table(name = "role_bindings")
-public class AccessRoleBinding {
+@Table(name = "grant_preset_bindings")
+public class GrantPresetBinding {
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")
@@ -61,10 +61,10 @@ public class AccessRoleBinding {
     @Column(name = "granted_at", nullable = false, updatable = false)
     private Instant grantedAt;
 
-    public AccessRoleBinding() {
+    public GrantPresetBinding() {
     }
 
-    public AccessRoleBinding(UUID roleId, String subjectType, UUID subjectId,
+    public GrantPresetBinding(UUID roleId, String subjectType, UUID subjectId,
                              String scopeType, UUID scopeId, UUID grantedBy) {
         this.roleId = roleId;
         this.subjectType = subjectType;

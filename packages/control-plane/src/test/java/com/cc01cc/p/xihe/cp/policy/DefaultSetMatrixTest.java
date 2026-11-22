@@ -6,10 +6,10 @@ import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;import com.cc01cc.p.xihe.cp.entity.AuditLog;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -39,8 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The contract is unchanged — {@code USER} = 注册最小集, {@code ADMIN} = 全 allow 的一个集
  * including the PLAN-0496 credential atoms — but the storage shape moved: the set is no longer one
- * {@code source='default'} row, it is the union of {@code source='role'} rows (one row per atom,
- * V87 {@code uq_grants_role_atom}) produced by {@link RoleGrantMaterializer}. Capability atoms are
+ * {@code source='default'} row, it is the union of {@code source='preset'} rows (one row per atom,
+ * V87 {@code uq_grants_role_atom}) produced by {@link PresetGrantMaterializer}. Capability atoms are
  * part of the role definition and are <b>not</b> materialized (design #23), which is why ADMIN's
  * action atoms (and not its capability atoms) appear in {@code grants}.</p>
  *
@@ -128,7 +128,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // so removing it would REMOVE the ability, not tighten it).
             "TEAM_TASK_MANAGE",
             // task-108 / D-1908 rev3 (V178): the session-relaxation atom joined the ADMIN seed
-            // (SystemAccessRoleCatalog.java:262, migration V178:31-34), so the fixed
+            // (SystemGrantPresetCatalog.java:262, migration V178:31-34), so the fixed
             // instance-administrator set grows by one more literal — same reasoning as V157/V172
             // above: the seed is what the role holds, and dropping it here would assert a set the
             // code no longer builds (V178:44-55 also backfills it onto existing ADMIN bindings).
@@ -142,13 +142,13 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
     private AuthService authService;
 
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
 
     @Autowired
-    private AccessRoleBindingRepository accessRoleBindingRepository;
+    private GrantPresetBindingRepository accessRoleBindingRepository;
 
     @Autowired
-    private RoleGrantMaterializer roleGrantMaterializer;
+    private PresetGrantMaterializer roleGrantMaterializer;
 
     @Autowired
     private AuthzContext authzContext;
@@ -188,7 +188,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
         UUID userUuid = UUID.fromString(userId);
         grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userUuid));
         auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .filter(row -> "authorization_role_grant_materialized".equals(row.getAction()))
+                .filter(row -> "authorization_preset_grant_materialized".equals(row.getAction()))
                 .map(AuditLog::getId)
                 .forEach(auditLogRepository::deleteById);
         if (workspaceId != null) {
@@ -238,11 +238,11 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
     void adminRoleBindingMatchesSpec41AndTheEvidenceMatrixFullAllowColumn() {
         register();
         UUID userUuid = UUID.fromString(userId);
-        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        GrantPreset adminRole = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow();
         accessRoleBindingRepository.deleteAll(
                 accessRoleBindingRepository.findBySubjectTypeAndSubjectId("user", userUuid));
-        accessRoleBindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userUuid,
+        accessRoleBindingRepository.save(new GrantPresetBinding(adminRole.getId(), "user", userUuid,
                 AccessScope.INSTANCE, null, userUuid));
         roleGrantMaterializer.materializeSubject("user", userUuid, userUuid, null);
 
@@ -365,7 +365,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
      */
     private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
-                        GrantSources.ROLE).stream()
+                        GrantSources.PRESET).stream()
                 .filter(grant -> AccessScope.INSTANCE.equals(grant.getScopeType()))
                 .toList();
     }

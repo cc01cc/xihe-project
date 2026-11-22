@@ -1,10 +1,10 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -96,13 +96,13 @@ public class AuthzContext {
     private record Cached(Capabilities capabilities, long expiresAtNanos) {
     }
 
-    private final AccessRoleBindingRepository bindingRepository;
-    private final AccessRolePermissionRepository permissionRepository;
+    private final GrantPresetBindingRepository bindingRepository;
+    private final GrantPresetAtomRepository permissionRepository;
     private final ConcurrentHashMap<UUID, Cached> cache = new ConcurrentHashMap<>();
     private final long ttlNanos;
 
-    public AuthzContext(AccessRoleBindingRepository bindingRepository,
-                        AccessRolePermissionRepository permissionRepository,
+    public AuthzContext(GrantPresetBindingRepository bindingRepository,
+                        GrantPresetAtomRepository permissionRepository,
                         @Value("${cp.capability-cache-ttl-ms:30000}") long ttlMs) {
         this.bindingRepository = bindingRepository;
         this.permissionRepository = permissionRepository;
@@ -215,15 +215,15 @@ public class AuthzContext {
     }
 
     private Capabilities resolve(UUID subjectId) {
-        List<AccessRoleBinding> bindings = bindingRepository
+        List<GrantPresetBinding> bindings = bindingRepository
                 .findBySubjectTypeAndSubjectId(SUBJECT_USER, subjectId);
         if (bindings.isEmpty()) {
             return EMPTY;
         }
         Set<UUID> roleIds = new LinkedHashSet<>();
         bindings.forEach(binding -> roleIds.add(binding.getRoleId()));
-        Map<UUID, List<AccessRolePermission>> permissionsByRole = new HashMap<>();
-        for (AccessRolePermission permission : permissionRepository.findByIdRoleIdIn(roleIds)) {
+        Map<UUID, List<GrantPresetAtom>> permissionsByRole = new HashMap<>();
+        for (GrantPresetAtom permission : permissionRepository.findByIdRoleIdIn(roleIds)) {
             permissionsByRole.computeIfAbsent(permission.roleId(), ignored -> new ArrayList<>())
                     .add(permission);
         }
@@ -231,8 +231,8 @@ public class AuthzContext {
         Set<String> authorities = new HashSet<>();
         Set<UUID> workspaceAdminWorkspaces = new HashSet<>();
         boolean workspaceAdminAll = false;
-        for (AccessRoleBinding binding : bindings) {
-            for (AccessRolePermission permission : permissionsByRole.getOrDefault(
+        for (GrantPresetBinding binding : bindings) {
+            for (GrantPresetAtom permission : permissionsByRole.getOrDefault(
                     binding.getRoleId(), List.of())) {
                 String atom = permission.actionClass();
                 if (!PermissionAtomCatalog.isCapabilityAtom(atom)) {

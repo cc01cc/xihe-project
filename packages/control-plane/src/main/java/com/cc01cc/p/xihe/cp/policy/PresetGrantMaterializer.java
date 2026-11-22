@@ -1,11 +1,11 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +30,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * PLAN-0610 T1.5: materializes 「主体 × 作用域」 role bindings into {@code grants(source='role')}.
+ * PLAN-0610 T1.5: materializes 「主体 × 作用域」 role bindings into {@code grants(source='preset')}.
  *
  * <p>Replaces {@code GrantDefaultService}'s hard-coded default sets: the atom set of a subject is
  * now the <b>union of the permissions of every role bound to it, per scope</b>, and the result is
@@ -50,7 +50,7 @@ import java.util.UUID;
  *       {@link GrantIntersectionEvaluator.PermissionAtom}, so an unknown action class or a
  *       non-canonical credential resource fails closed instead of poisoning every evaluation.</li>
  *   <li><b>One row per atom</b> (round-2 P1-2), guarded by {@code uq_grants_role_atom}.</li>
- *   <li>Only {@code source='role'} rows of this subject are reconciled — {@code spawn},
+ *   <li>Only {@code source='preset'} rows of this subject are reconciled — {@code spawn},
  *       {@code template}, {@code credential_binding} and the frozen {@code agent_default}
  *       snapshot are owner-written and never touched (P1-1).</li>
  * </ul>
@@ -61,11 +61,11 @@ import java.util.UUID;
  * line of defence against a concurrent duplicate.</p>
  */
 @Service
-public class RoleGrantMaterializer {
+public class PresetGrantMaterializer {
 
-    private static final Logger logger = LoggerFactory.getLogger(RoleGrantMaterializer.class);
+    private static final Logger logger = LoggerFactory.getLogger(PresetGrantMaterializer.class);
 
-    public static final String SOURCE_ROLE = "role";
+    public static final String SOURCE_PRESET = "preset";
 
     private static final String READ_STATE_READ = "read";
 
@@ -77,8 +77,8 @@ public class RoleGrantMaterializer {
         }
     }
 
-    private final AccessRoleBindingRepository bindingRepository;
-    private final AccessRolePermissionRepository permissionRepository;
+    private final GrantPresetBindingRepository bindingRepository;
+    private final GrantPresetAtomRepository permissionRepository;
     private final AuthorizationGrantRepository grantRepository;
     private final UserRepository userRepository;
     private final GrantIntersectionEvaluator evaluator;
@@ -86,8 +86,8 @@ public class RoleGrantMaterializer {
     private final AuditLogger auditLogger;
     private final ObjectMapper objectMapper;
 
-    public RoleGrantMaterializer(AccessRoleBindingRepository bindingRepository,
-                                 AccessRolePermissionRepository permissionRepository,
+    public PresetGrantMaterializer(GrantPresetBindingRepository bindingRepository,
+                                 GrantPresetAtomRepository permissionRepository,
                                  AuthorizationGrantRepository grantRepository,
                                  UserRepository userRepository,
                                  GrantIntersectionEvaluator evaluator,
@@ -104,28 +104,28 @@ public class RoleGrantMaterializer {
         this.objectMapper = objectMapper;
     }
 
-    /** Recomputes the subject's {@code source='role'} rows for every bound scope. */
+    /** Recomputes the subject's {@code source='preset'} rows for every bound scope. */
     @Transactional
     public Result materializeSubject(String subjectType, UUID subjectId, UUID actorUserId,
                                      String auditWorkspaceId) {
         if (subjectType == null || subjectId == null) {
             throw new IllegalArgumentException("subjectType and subjectId are required");
         }
-        List<AccessRoleBinding> bindings = bindingRepository
+        List<GrantPresetBinding> bindings = bindingRepository
                 .findBySubjectTypeAndSubjectId(subjectType, subjectId);
 
         Set<UUID> roleIds = new LinkedHashSet<>();
         Map<AccessScope, Set<UUID>> rolesByScope = new LinkedHashMap<>();
-        for (AccessRoleBinding binding : bindings) {
+        for (GrantPresetBinding binding : bindings) {
             AccessScope scope = bindingScope(binding);
             roleIds.add(binding.getRoleId());
             rolesByScope.computeIfAbsent(scope, ignored -> new LinkedHashSet<>())
                     .add(binding.getRoleId());
         }
 
-        Map<UUID, List<AccessRolePermission>> permissionsByRole = new HashMap<>();
+        Map<UUID, List<GrantPresetAtom>> permissionsByRole = new HashMap<>();
         if (!roleIds.isEmpty()) {
-            for (AccessRolePermission permission : permissionRepository.findByIdRoleIdIn(roleIds)) {
+            for (GrantPresetAtom permission : permissionRepository.findByIdRoleIdIn(roleIds)) {
                 permissionsByRole.computeIfAbsent(permission.roleId(), ignored -> new ArrayList<>())
                         .add(permission);
             }
@@ -135,7 +135,7 @@ public class RoleGrantMaterializer {
         for (Map.Entry<AccessScope, Set<UUID>> entry : rolesByScope.entrySet()) {
             Set<GrantIntersectionEvaluator.PermissionAtom> atoms = new LinkedHashSet<>();
             for (UUID roleId : entry.getValue()) {
-                for (AccessRolePermission permission : permissionsByRole.getOrDefault(roleId, List.of())) {
+                for (GrantPresetAtom permission : permissionsByRole.getOrDefault(roleId, List.of())) {
                     GrantIntersectionEvaluator.PermissionAtom atom =
                             materializableAtom(permission, entry.getKey());
                     if (atom != null) {
@@ -184,14 +184,14 @@ public class RoleGrantMaterializer {
      * changed, so a no-op re-materialization does not log anybody out.</p>
      */
     @Transactional
-    public int materializeRole(UUID roleId, UUID actorUserId, String auditWorkspaceId) {
+    public int materializePreset(UUID roleId, UUID actorUserId, String auditWorkspaceId) {
         if (roleId == null) {
             throw new IllegalArgumentException("roleId is required");
         }
         int materialized = 0;
         Set<String> seen = new HashSet<>();
         List<UUID> changedUserSubjects = new ArrayList<>();
-        for (AccessRoleBinding binding : bindingRepository.findByRoleId(roleId)) {
+        for (GrantPresetBinding binding : bindingRepository.findByRoleId(roleId)) {
             String key = binding.getSubjectType() + "|" + binding.getSubjectId();
             if (!seen.add(key)) {
                 continue;
@@ -223,7 +223,7 @@ public class RoleGrantMaterializer {
      * ({@code User} carries no {@code @Version}), but it would (a) bypass {@code
      * User#bumpTokenVersion}, the single place that encodes the epoch contract, and silently
      * desynchronize an optimistic-lock column if one is added later; (b) drop the per-user
-     * {@code role_materialization_epoch_bump} log line (the only trace of a bump — bumps are not
+     * {@code preset_materialization_epoch_bump} log line (the only trace of a bump — bumps are not
      * written to {@code audit_logs}); and (c) still leave us iterating the id set for the per-subject
      * capability-cache invalidation, so the round-trip saving is the only gain. Sorted row locks keep
      * the entity semantics and give a provable order instead.</p>
@@ -247,7 +247,7 @@ public class RoleGrantMaterializer {
         userRepository.findByIdForUpdate(subjectId).ifPresent(user -> {
             user.bumpTokenVersion();
             userRepository.save(user);
-            logger.info("[POLICY] event=role_materialization_epoch_bump userId={} tokenVersion={}",
+            logger.info("[POLICY] event=preset_materialization_epoch_bump userId={} tokenVersion={}",
                     subjectId, user.getTokenVersion());
         });
     }
@@ -286,11 +286,11 @@ public class RoleGrantMaterializer {
         });
     }
 
-    /** Drops every {@code source='role'} row of a subject (subject deletion / binding wipe). */
+    /** Drops every {@code source='preset'} row of a subject (subject deletion / binding wipe). */
     @Transactional
     public int clearSubject(String subjectType, UUID subjectId) {
         List<AuthorizationGrant> existing = grantRepository
-                .findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId, SOURCE_ROLE);
+                .findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId, SOURCE_PRESET);
         if (!existing.isEmpty()) {
             grantRepository.deleteAll(existing);
         }
@@ -307,7 +307,7 @@ public class RoleGrantMaterializer {
                 new HashMap<>();
         List<AuthorizationGrant> malformed = new ArrayList<>();
         for (AuthorizationGrant grant : grantRepository.findBySubjectTypeAndSubjectIdAndSource(
-                subjectType, subjectId, SOURCE_ROLE)) {
+                subjectType, subjectId, SOURCE_PRESET)) {
             AccessScope scope = grantScope(grant);
             Set<GrantIntersectionEvaluator.PermissionAtom> atoms = evaluator.parse(grant.getPermissions());
             if (atoms.size() != 1) {
@@ -359,10 +359,10 @@ public class RoleGrantMaterializer {
         if (result.changed()) {
             auditLogger.recordDurableChange(
                     actorUserId == null ? null : actorUserId.toString(), auditWorkspaceId,
-                    "authorization_role_grant_materialized", "grant", subjectId.toString(),
+                    "authorization_preset_grant_materialized", "grant", subjectId.toString(),
                     "subjectType=" + subjectType + " created=" + result.created()
                             + " deleted=" + result.deleted() + " scopes=" + result.scopes());
-            logger.info("[POLICY] event=role_grant_materialized subjectType={} subjectId={}"
+            logger.info("[POLICY] event=preset_grant_materialized subjectType={} subjectId={}"
                             + " created={} deleted={} scopes={}",
                     subjectType, subjectId, result.created(), result.deleted(), result.scopes());
         }
@@ -370,18 +370,18 @@ public class RoleGrantMaterializer {
     }
 
     /**
-     * Converts one {@code role_permissions} row into an atom that may be stored in
+     * Converts one {@code grant_preset_atoms} row into an atom that may be stored in
      * {@code grants.permissions}, or {@code null} when the atom must not be materialized
      * (capability atoms, per design #23).
      */
     private GrantIntersectionEvaluator.PermissionAtom materializableAtom(
-            AccessRolePermission permission, AccessScope scope) {
+            GrantPresetAtom permission, AccessScope scope) {
         String actionClass = permission.actionClass();
         if (PermissionAtomCatalog.isCapabilityAtom(actionClass)) {
             return null;
         }
         if (!PermissionAtomCatalog.isActionAtom(actionClass)) {
-            throw new IllegalStateException("Unknown permission atom in role_permissions: " + actionClass);
+            throw new IllegalStateException("Unknown permission atom in grant_preset_atoms: " + actionClass);
         }
         PermissionAtomCatalog.requireScopeCompatible(actionClass, scope.type());
         String resourcePattern = permission.resourcePattern();
@@ -405,7 +405,7 @@ public class RoleGrantMaterializer {
             grant.setGranterType(AuthzContext.SUBJECT_USER);
             grant.setGranterId(actorUserId);
         }
-        grant.setSource(SOURCE_ROLE);
+        grant.setSource(SOURCE_PRESET);
         grant.setScopeType(scope.type());
         grant.setScopeId(scope.isInstance() ? null : scope.id());
         grant.setReadState(READ_STATE_READ);
@@ -424,14 +424,14 @@ public class RoleGrantMaterializer {
         return permissions;
     }
 
-    private static AccessScope bindingScope(AccessRoleBinding binding) {
+    private static AccessScope bindingScope(GrantPresetBinding binding) {
         if (AccessScope.INSTANCE.equals(binding.getScopeType())) {
             return AccessScope.instance();
         }
         if (AccessScope.WORKSPACE.equals(binding.getScopeType()) && binding.getScopeId() != null) {
             return AccessScope.workspace(binding.getScopeId());
         }
-        throw new IllegalStateException("role_bindings row has an invalid scope: " + binding.getId());
+        throw new IllegalStateException("grant_preset_bindings row has an invalid scope: " + binding.getId());
     }
 
     private static AccessScope grantScope(AuthorizationGrant grant) {

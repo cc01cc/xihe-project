@@ -11,21 +11,21 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * PLAN-0610 访问角色（access role，V87 {@code roles}）。
+ * PLAN-0610 授权预设（grant preset，V87 {@code roles}，V182 {@code grant_presets}）。
  *
- * <p>Role definitions are instance-wide; the <em>scope</em> of a role lives on the binding
- * ({@link AccessRoleBinding}) and on the materialized {@link AuthorizationGrant} row. A role
+ * <p>Preset definitions are instance-wide; the <em>scope</em> of a preset lives on the binding
+ * ({@link GrantPresetBinding}) and on the materialized {@link AuthorizationGrant} row. A role
  * therefore never means "instance role" or "workspace role" by itself — the atom set plus the
  * binding scope decide what it can address ({@code PermissionAtomCatalog} holds
  * {@code scope_class}).</p>
  *
- * <p>{@code is_system} roles are seeded by the migration and are immutable (no delete, no
+ * <p>{@code is_system} presets are seeded by the migration and are immutable (no delete, no
  * permission edit; display name only). The field is internal and must never reach an API view
  * directly — the W3 role view projects {name, displayName, description, isSystem}.</p>
  */
 @Entity
-@Table(name = "roles")
-public class AccessRole {
+@Table(name = "grant_presets")
+public class GrantPreset {
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")
@@ -49,10 +49,10 @@ public class AccessRole {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    public AccessRole() {
+    public GrantPreset() {
     }
 
-    public AccessRole(UUID id, String name, String displayName, String description, boolean system) {
+    public GrantPreset(UUID id, String name, String displayName, String description, boolean system) {
         this.id = id;
         this.name = name;
         this.displayName = displayName;

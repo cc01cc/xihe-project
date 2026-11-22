@@ -38,24 +38,24 @@ import java.util.UUID;
  * <p>PLAN-0667 addendum (Lead ruling 2026-11-05, real-stack gap 1): a caller who may <b>bind agents</b>
  * ({@code MANAGE_WORKSPACE_AGENTS} in the {@code workspaceId} context, or the instance-tier
  * {@code MANAGE_AGENT_PRINCIPALS}) can also {@code GET /roles} — but only the agent-bindable
- * subset ({@link RoleAdminService#listAgentBindable()}). Otherwise the 0667 binding picker had no
+ * subset ({@link GrantPresetAdminService#listAgentBindable()}). Otherwise the 0667 binding picker had no
  * candidates for a workspace OWNER (the old gate answered 403). Callers holding {@code MANAGE_ROLES}
  * keep the full admin list, so the role settings panel is unchanged.</p>
  *
  * <p>The controller only translates HTTP; validation, locking, materialization, cache invalidation
- * and auditing live in {@link RoleAdminService}.</p>
+ * and auditing live in {@link GrantPresetAdminService}.</p>
  */
 @RestController
 @RequestMapping("/api/v1/roles")
-public class RoleController {
+public class GrantPresetController {
 
     private static final String MANAGE_ROLES_GATE =
             "@requesterAuthority.holdsActionAtom('MANAGE_ROLES')";
 
-    private final RoleAdminService roleAdminService;
+    private final GrantPresetAdminService roleAdminService;
     private final RequesterAuthority requesterAuthority;
 
-    public RoleController(RoleAdminService roleAdminService, RequesterAuthority requesterAuthority) {
+    public GrantPresetController(GrantPresetAdminService roleAdminService, RequesterAuthority requesterAuthority) {
         this.roleAdminService = roleAdminService;
         this.requesterAuthority = requesterAuthority;
     }
@@ -67,7 +67,7 @@ public class RoleController {
      */
     @GetMapping("/catalog")
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public RoleAdminViews.CatalogView catalog(
+    public GrantPresetAdminViews.CatalogView catalog(
             @RequestParam(value = "locale", required = false) String locale) {
         return roleAdminService.catalog(locale);
     }
@@ -76,11 +76,11 @@ public class RoleController {
      * Admin view: every definition. Agent-binding view: only the bindable candidates, when the
      * caller manages agents in the given workspace (or holds the instance-tier atom). The optional
      * {@code workspaceId} is an authorization context only — role definitions are instance-wide, so
-     * there is no workspace-owned role to leak (see {@link RoleAdminService#listAgentBindable()}).
+     * there is no workspace-owned role to leak (see {@link GrantPresetAdminService#listAgentBindable()}).
      */
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<RoleAdminViews.RoleView>> list(
+    public ResponseEntity<List<GrantPresetAdminViews.RoleView>> list(
             @RequestParam(value = "workspaceId", required = false) String workspaceId) {
         if (requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_ROLES)) {
             return ResponseEntity.ok(roleAdminService.list());
@@ -101,15 +101,15 @@ public class RoleController {
 
     @PostMapping
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public ResponseEntity<RoleAdminViews.RoleView> create(
-            @RequestBody RoleAdminViews.RoleCreate request) {
+    public ResponseEntity<GrantPresetAdminViews.RoleView> create(
+            @RequestBody GrantPresetAdminViews.RoleCreate request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(roleAdminService.create(request));
     }
 
     @PatchMapping("/{roleId}")
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public RoleAdminViews.RoleView update(@PathVariable UUID roleId,
-                                          @RequestBody RoleAdminViews.RoleUpdate request) {
+    public GrantPresetAdminViews.RoleView update(@PathVariable UUID roleId,
+                                          @RequestBody GrantPresetAdminViews.PresetUpdate request) {
         return roleAdminService.update(roleId, request);
     }
 

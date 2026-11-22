@@ -7,7 +7,7 @@ import jakarta.persistence.Table;
 import java.util.UUID;
 
 /**
- * PLAN-0610 角色权限原子（V87 {@code role_permissions}）。
+ * PLAN-0610 角色权限原子（V87 {@code grant_preset_atoms}）。
  *
  * <p>Only the atom <em>name</em> is stored. The {@code scope_class} of an atom
  * ({@code instance} / {@code workspace} / {@code both}) lives in
@@ -19,21 +19,21 @@ import java.util.UUID;
  * authentication time by {@code AuthzContext}.</p>
  */
 @Entity
-@Table(name = "role_permissions")
-public class AccessRolePermission {
+@Table(name = "grant_preset_atoms")
+public class GrantPresetAtom {
 
     @EmbeddedId
-    private AccessRolePermissionId id;
+    private GrantPresetAtomId id;
 
-    public AccessRolePermission() {
+    public GrantPresetAtom() {
     }
 
-    public AccessRolePermission(AccessRolePermissionId id) {
+    public GrantPresetAtom(GrantPresetAtomId id) {
         this.id = id;
     }
 
-    public AccessRolePermission(UUID roleId, String actionClass, String resourcePattern) {
-        this.id = new AccessRolePermissionId(roleId, actionClass, resourcePattern);
+    public GrantPresetAtom(UUID roleId, String actionClass, String resourcePattern) {
+        this.id = new GrantPresetAtomId(roleId, actionClass, resourcePattern);
     }
 
     public UUID roleId() {
@@ -48,6 +48,6 @@ public class AccessRolePermission {
         return id == null ? null : id.getResourcePattern();
     }
 
-    public AccessRolePermissionId getId() { return id; }
-    public void setId(AccessRolePermissionId id) { this.id = id; }
+    public GrantPresetAtomId getId() { return id; }
+    public void setId(GrantPresetAtomId id) { this.id = id; }
 }

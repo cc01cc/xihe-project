@@ -80,7 +80,7 @@ class AgentPrincipalServiceGrantSourcesTest {
         assertEquals(GrantSources.UNKNOWN, labels.get(tempId.toString()));
         assertEquals(GrantSources.UNKNOWN, labels.get(nullId.toString()));
         assertEquals(3, labels.size());
-        assertFalse(labels.containsValue(GrantSources.ROLE),
+        assertFalse(labels.containsValue(GrantSources.PRESET),
                 "unknown 必须是 unknown，不是任何真实来源的默认回落");
     }
 
@@ -101,7 +101,7 @@ class AgentPrincipalServiceGrantSourcesTest {
     void nullIdRowIsSkippedWhileSiblingsSurvive() {
         UUID kept = UUID.randomUUID();
         Map<String, String> labels = AgentPrincipalService.grantSources(
-                List.of(row(GrantSources.ROLE, null), row(GrantSources.TEMPLATE, kept)),
+                List.of(row(GrantSources.PRESET, null), row(GrantSources.TEMPLATE, kept)),
                 List.of(row(GrantSources.ORG_UNIT, null)));
 
         assertEquals(Map.of(kept.toString(), GrantSources.TEMPLATE), labels);
@@ -113,9 +113,9 @@ class AgentPrincipalServiceGrantSourcesTest {
     void duplicateRowKeepsOneKeyFirstLabelWins() {
         UUID id = UUID.randomUUID();
         Map<String, String> labels = AgentPrincipalService.grantSources(
-                List.of(row(GrantSources.ROLE, id)), List.of(row(GrantSources.TEMPLATE, id)));
+                List.of(row(GrantSources.PRESET, id)), List.of(row(GrantSources.TEMPLATE, id)));
 
-        assertEquals(Map.of(id.toString(), GrantSources.ROLE), labels);
+        assertEquals(Map.of(id.toString(), GrantSources.PRESET), labels);
         assertEquals(1, labels.size());
     }
 
@@ -129,8 +129,8 @@ class AgentPrincipalServiceGrantSourcesTest {
         UUID principalA = UUID.randomUUID();
         UUID principalB = UUID.randomUUID();
         UUID bindingA = UUID.randomUUID();
-        List<AuthorizationGrant> rows = List.of(row(GrantSources.ROLE, principalA),
-                row(GrantSources.AGENT_DEFAULT, principalB), row(GrantSources.ROLE, null));
+        List<AuthorizationGrant> rows = List.of(row(GrantSources.PRESET, principalA),
+                row(GrantSources.AGENT_DEFAULT, principalB), row(GrantSources.PRESET, null));
         List<AuthorizationGrant> expanded = List.of(row(GrantSources.ORG_UNIT, null),
                 row(GrantSources.SPAWN, bindingA));
 

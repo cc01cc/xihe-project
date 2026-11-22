@@ -391,14 +391,14 @@ public class ToolFaceRegistry {
                 ACTION_MANAGE_PERSONAL_SKILLS,
                 // task-229 / PLAN-0773 (V157): the two workspace write faces. Same batch as their
                 // catalog entries, labels and seed rows — measured the hard way: a catalog entry
-                // without its vocabulary line makes RoleGrantMaterializer throw
+                // without its vocabulary line makes PresetGrantMaterializer throw
                 // "Unknown actionClass: MANAGE_WORKSPACE_MCP" the moment a seeded role is
                 // materialized, so this list is not decoration.
                 ACTION_WRITE_WORKSPACE_CONTENT, ACTION_MANAGE_WORKSPACE_MCP,
                 // PLAN-0773 M2-2 (V162): the three org-unit governance atoms join the action-class
                 // set in the same batch as their catalog entries, labels and seed row (SUPER_ADMIN),
                 // for the same mechanical reason V157 documents: a catalog entry without this line
-                // makes RoleGrantMaterializer throw "Unknown actionClass" the moment a seeded role is
+                // makes PresetGrantMaterializer throw "Unknown actionClass" the moment a seeded role is
                 // materialized, and MemoryWriteAtomTest asserts actionAtoms() == this set.
                 ACTION_MANAGE_ORG_UNITS, ACTION_MANAGE_ORG_UNIT_MEMBERS, ACTION_READ_ORG_UNIT_MEMBERS,
                 // task-188 MVP⑤ S2 (V172): the team-task board atom joins the action-class set in

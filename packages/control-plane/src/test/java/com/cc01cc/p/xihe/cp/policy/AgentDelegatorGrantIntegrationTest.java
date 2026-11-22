@@ -4,12 +4,12 @@ import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
@@ -56,8 +56,8 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
 
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalService agentPrincipalService;
-    @Autowired private RoleGrantMaterializer roleGrantMaterializer;
-    @Autowired private AccessRoleBindingRepository roleBindings;
+    @Autowired private PresetGrantMaterializer roleGrantMaterializer;
+    @Autowired private GrantPresetBindingRepository roleBindings;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ProviderConnectionRepository providerConnections;
 
@@ -75,7 +75,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
         connection = ChatBindingTestSupport.ensureChatConnection(providerConnections, "USER", ownerId,
                 "p25-" + UUID.randomUUID().toString().substring(0, 8));
         // 授予角色/上限要求操作者持有同样的原子：把 owner 提升为实例 SUPER_ADMIN（真实路径 = 角色绑定 + 物化）。
-        roleBindings.save(new AccessRoleBinding(SystemAccessRoleCatalog.SUPER_ADMIN_ID,
+        roleBindings.save(new GrantPresetBinding(SystemGrantPresetCatalog.SUPER_ADMIN_ID,
                 GrantPrincipalPathResolver.USER, UUID.fromString(ownerId), AccessScope.INSTANCE, null,
                 UUID.fromString(ownerId)));
         roleGrantMaterializer.materializeSubject(GrantPrincipalPathResolver.USER,
@@ -85,7 +85,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
     @Test
     void bindingTheDelegatorRoleLetsAnAgentSessionCarrySpawnAgent() {
         String principalId = createAgent("DelegatorAgent",
-                List.of(SystemAccessRoleCatalog.AGENT_DELEGATOR_ID));
+                List.of(SystemGrantPresetCatalog.AGENT_DELEGATOR_ID));
         bindAgentToWorkspace(principalId, SPAWN_ATOM_JSON);
 
         String sessionId = createSession(principalId);
@@ -127,7 +127,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
                 """
                 {"name":"AdminIshAgent","roleIds":["%s"]}"""
-                        .formatted(SystemAccessRoleCatalog.SUPER_ADMIN_ID));
+                        .formatted(SystemGrantPresetCatalog.SUPER_ADMIN_ID));
         assertEquals(HttpStatus.FORBIDDEN.value(), response.getStatusCode().value(),
                 "实例管理角色对 agent 主体仍然禁绑（2026-11-04 裁定）: " + response.getBody());
         assertNotNull(response.getBody());
@@ -158,7 +158,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
 
     /** 事后授予：真实写一条 workspace 作用域的角色绑定再物化（与产品绑定路径同语义）。 */
     private void grantDelegatorRole(String principalId) {
-        roleBindings.save(new AccessRoleBinding(SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
+        roleBindings.save(new GrantPresetBinding(SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, UUID.fromString(principalId),
                 AccessScope.WORKSPACE, UUID.fromString(workspaceId), UUID.fromString(ownerId)));
         roleGrantMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL,

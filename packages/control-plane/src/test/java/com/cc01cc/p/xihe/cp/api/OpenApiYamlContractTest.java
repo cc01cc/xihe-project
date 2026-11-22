@@ -351,8 +351,8 @@ class OpenApiYamlContractTest {
                 assertTrue(properties.containsKey(field), "MemberView must carry " + field);
             }
             assertTrue(schemas.containsKey("MemberAddRequest"), "MemberAddRequest schema is contracted");
-            assertTrue(schemas.containsKey("MemberRoleUpdateRequest"),
-                    "MemberRoleUpdateRequest schema is contracted");
+            assertTrue(schemas.containsKey("MemberPresetUpdateRequest"),
+                    "MemberPresetUpdateRequest schema is contracted");
 
             Map<?, ?> register = (Map<?, ?>) schemas.get("RegisterRequest");
             assertInstanceOf(Map.class, register, "RegisterRequest schema is contracted");

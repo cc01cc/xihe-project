@@ -12,7 +12,7 @@ import java.util.UUID;
 
 /**
  * PLAN-0628 M1 (V101): one skill binding, expressed on the <b>two axes</b> of D28-14 — exactly the
- * {@code role_bindings} shape (V87:40-61), not a single four-value enum.
+ * {@code grant_preset_bindings} shape (V87:40-61), not a single four-value enum.
  *
  * <p>{@code (subject_type × scope_type)} yields four combinations to a client; the fifth
  * "instance-wide shared" tier is deliberately <b>not</b> in v1 (no {@code subject_type='instance'}
@@ -39,7 +39,7 @@ import java.util.UUID;
 @Table(name = "skill_bindings")
 public class SkillBinding {
 
-    /** Same vocabulary as {@code role_bindings} (V87:43,49); mirrors the V101 CHECK. */
+    /** Same vocabulary as {@code grant_preset_bindings} (V87:43,49); mirrors the V101 CHECK. */
     public static final String SUBJECT_USER = "user";
     public static final String SUBJECT_AGENT_PRINCIPAL = "agent_principal";
     public static final List<String> SUBJECT_TYPES = List.of(SUBJECT_USER, SUBJECT_AGENT_PRINCIPAL);

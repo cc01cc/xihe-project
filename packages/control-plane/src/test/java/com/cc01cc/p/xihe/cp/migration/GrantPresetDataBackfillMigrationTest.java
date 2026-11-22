@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code ck_grants_source} and drops the V38/V65 fences. Runs on real PostgreSQL (Testcontainers);
  * the H2 unit profile never runs Flyway (application-h2.properties).</p>
  */
-class AccessRoleDataBackfillMigrationTest {
+class GrantPresetDataBackfillMigrationTest {
     /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
     static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("access_role_da");
 
@@ -359,7 +359,7 @@ class AccessRoleDataBackfillMigrationTest {
                 rs.next();
                 assertEquals(0, rs.getInt(1), "no legacy rows means no copied rows");
             }
-            try (ResultSet rs = statement.executeQuery("SELECT count(*) FROM role_bindings")) {
+            try (ResultSet rs = statement.executeQuery("SELECT count(*) FROM grant_preset_bindings")) {
                 rs.next();
                 assertEquals(0, rs.getInt(1), "no users means no bindings");
             }

@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,35 +35,35 @@ class AuthzContextTest {
     private static final UUID WORKSPACE_A = UUID.randomUUID();
     private static final UUID WORKSPACE_B = UUID.randomUUID();
 
-    private AccessRoleBindingRepository bindingRepository;
-    private AccessRolePermissionRepository permissionRepository;
+    private GrantPresetBindingRepository bindingRepository;
+    private GrantPresetAtomRepository permissionRepository;
 
     @BeforeEach
     void setUp() {
-        bindingRepository = mock(AccessRoleBindingRepository.class);
-        permissionRepository = mock(AccessRolePermissionRepository.class);
+        bindingRepository = mock(GrantPresetBindingRepository.class);
+        permissionRepository = mock(GrantPresetAtomRepository.class);
     }
 
     private AuthzContext context(long ttlMs) {
         return new AuthzContext(bindingRepository, permissionRepository, ttlMs);
     }
 
-    private void stub(List<AccessRoleBinding> bindings, AccessRolePermission... permissions) {
+    private void stub(List<GrantPresetBinding> bindings, GrantPresetAtom... permissions) {
         when(bindingRepository.findBySubjectTypeAndSubjectId("user", USER_ID)).thenReturn(bindings);
         when(permissionRepository.findByIdRoleIdIn(anyCollection())).thenReturn(List.of(permissions));
     }
 
-    private static AccessRolePermission capability(UUID roleId, String atom) {
-        return new AccessRolePermission(roleId, atom, "*");
+    private static GrantPresetAtom capability(UUID roleId, String atom) {
+        return new GrantPresetAtom(roleId, atom, "*");
     }
 
-    private static AccessRolePermission action(UUID roleId, String atom) {
-        return new AccessRolePermission(roleId, atom, "*");
+    private static GrantPresetAtom action(UUID roleId, String atom) {
+        return new GrantPresetAtom(roleId, atom, "*");
     }
 
     @Test
     void instanceScopeCapabilitiesBecomeGlobalAuthorities() {
-        stub(List.of(new AccessRoleBinding(SUPER_ROLE, "user", USER_ID, "instance", null, null)),
+        stub(List.of(new GrantPresetBinding(SUPER_ROLE, "user", USER_ID, "instance", null, null)),
                 capability(SUPER_ROLE, PermissionAtomCatalog.CAP_INSTANCE_SUPER),
                 capability(SUPER_ROLE, PermissionAtomCatalog.CAP_INSTANCE_ADMIN),
                 action(SUPER_ROLE, ToolFaceRegistry.ACTION_READ));
@@ -81,7 +81,7 @@ class AuthzContextTest {
 
     @Test
     void workspaceAdminBoundAtInstanceScopeCoversEveryWorkspace() {
-        stub(List.of(new AccessRoleBinding(WS_OWNER_ROLE, "user", USER_ID, "instance", null, null)),
+        stub(List.of(new GrantPresetBinding(WS_OWNER_ROLE, "user", USER_ID, "instance", null, null)),
                 capability(WS_OWNER_ROLE, PermissionAtomCatalog.CAP_WORKSPACE_ADMIN),
                 action(WS_OWNER_ROLE, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS));
 
@@ -96,7 +96,7 @@ class AuthzContextTest {
 
     @Test
     void workspaceScopeCapabilityOnlyCoversThatWorkspace() {
-        stub(List.of(new AccessRoleBinding(WS_OWNER_ROLE, "user", USER_ID, "workspace",
+        stub(List.of(new GrantPresetBinding(WS_OWNER_ROLE, "user", USER_ID, "workspace",
                         WORKSPACE_A, null)),
                 capability(WS_OWNER_ROLE, PermissionAtomCatalog.CAP_WORKSPACE_ADMIN));
 
@@ -109,7 +109,7 @@ class AuthzContextTest {
 
     @Test
     void corruptWorkspaceScopedInstanceCapabilityDoesNotElevate() {
-        stub(List.of(new AccessRoleBinding(ADMIN_ROLE, "user", USER_ID, "workspace",
+        stub(List.of(new GrantPresetBinding(ADMIN_ROLE, "user", USER_ID, "workspace",
                         WORKSPACE_A, null)),
                 capability(ADMIN_ROLE, PermissionAtomCatalog.CAP_INSTANCE_ADMIN));
 
@@ -121,7 +121,7 @@ class AuthzContextTest {
 
     @Test
     void cachedSnapshotIsReusedAndInvalidatedOnChange() {
-        stub(List.of(new AccessRoleBinding(SUPER_ROLE, "user", USER_ID, "instance", null, null)),
+        stub(List.of(new GrantPresetBinding(SUPER_ROLE, "user", USER_ID, "instance", null, null)),
                 capability(SUPER_ROLE, PermissionAtomCatalog.CAP_INSTANCE_ADMIN));
 
         AuthzContext authz = context(60_000);
@@ -136,7 +136,7 @@ class AuthzContextTest {
 
     @Test
     void zeroTtlAlwaysReResolves() {
-        stub(List.of(new AccessRoleBinding(SUPER_ROLE, "user", USER_ID, "instance", null, null)),
+        stub(List.of(new GrantPresetBinding(SUPER_ROLE, "user", USER_ID, "instance", null, null)),
                 capability(SUPER_ROLE, PermissionAtomCatalog.CAP_INSTANCE_ADMIN));
 
         AuthzContext authz = context(0);

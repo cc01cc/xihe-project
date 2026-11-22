@@ -43,19 +43,19 @@ public class BindingController {
 
     @GetMapping
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public RoleAdminViews.BindingSetView list(
+    public GrantPresetAdminViews.BindingSetView list(
             @RequestParam(value = "scope", required = false) String scope,
             @RequestParam(value = "scopeId", required = false) String scopeId) {
         return bindingAdminService.list(scope, scopeId);
     }
 
     /** Body of the full replacement; {@code bindings} is required (send {@code []} to clear). */
-    public record ReplaceBindingsRequest(List<RoleAdminViews.BindingInput> bindings) {
+    public record ReplaceBindingsRequest(List<GrantPresetAdminViews.BindingInput> bindings) {
     }
 
     @PutMapping
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public RoleAdminViews.BindingSetView replace(
+    public GrantPresetAdminViews.BindingSetView replace(
             @RequestParam(value = "scope", required = false) String scope,
             @RequestParam(value = "scopeId", required = false) String scopeId,
             @RequestBody ReplaceBindingsRequest request) {

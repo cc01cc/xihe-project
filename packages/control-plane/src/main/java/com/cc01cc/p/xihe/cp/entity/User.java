@@ -93,7 +93,7 @@ public class User {
 
     /**
      * PLAN-0610 W4a: {@code users.role} is no longer mapped. The instance tier lives in
-     * {@code role_bindings} (V88 copied it, W3-2a exposes the binding API) and V89 drops the
+     * {@code grant_preset_bindings} (V88 copied it, W3-2a exposes the binding API) and V89 drops the
      * column, so account creation no longer takes a role: {@code GrantDefaultService
      * .ensureUserDefault} writes the USER binding in the same transaction.
      */

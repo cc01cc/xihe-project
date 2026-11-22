@@ -105,7 +105,7 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
         assertEquals(1, matched.size(), response.getBody());
         assertEquals(grantId.toString(), matched.get(0).path("grantId").asText(),
                 "the referenced row must be the caller's own grant: " + response.getBody());
-        assertEquals(GrantSources.ROLE, matched.get(0).path("grantSource").asText(),
+        assertEquals(GrantSources.PRESET, matched.get(0).path("grantSource").asText(),
                 response.getBody());
         assertEquals(ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
                 matched.get(0).path("actionClass").asText(), response.getBody());
@@ -246,7 +246,7 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(subjectId);
-        grant.setSource(GrantSources.ROLE);
+        grant.setSource(GrantSources.PRESET);
         grant.setPermissions(permissions);
         return grantRepository.save(grant).getId();
     }

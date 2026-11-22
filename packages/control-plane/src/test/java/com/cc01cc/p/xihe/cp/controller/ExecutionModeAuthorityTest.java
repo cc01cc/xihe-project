@@ -3,20 +3,20 @@ package com.cc01cc.p.xihe.cp.controller;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.junit.jupiter.api.AfterAll;
@@ -125,16 +125,16 @@ class ExecutionModeAuthorityTest extends AbstractIntegrationTest {
     private WorkspaceService workspaceService;
 
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
 
     @Autowired
-    private AccessRolePermissionRepository permissionRepository;
+    private GrantPresetAtomRepository permissionRepository;
 
     @Autowired
-    private AccessRoleBindingRepository roleBindingRepository;
+    private GrantPresetBindingRepository roleBindingRepository;
 
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     @Autowired
     private AuthzContext authzContext;
@@ -304,7 +304,7 @@ class ExecutionModeAuthorityTest extends AbstractIntegrationTest {
     }
 
     /**
-     * Registration plus a {@code role_bindings} row — membership is that binding alone
+     * Registration plus a {@code grant_preset_bindings} row — membership is that binding alone
      * ({@code WorkspaceMembershipService.roleOf} maps role names to {@link WorkspaceRole}), and the
      * bound role is what the tenant gate grades. The atom under test is seeded separately.
      */
@@ -326,19 +326,19 @@ class ExecutionModeAuthorityTest extends AbstractIntegrationTest {
 
     /**
      * One atom at workspace scope, granted the way the production path grants it: role row,
-     * permission row, binding row, then {@code RoleGrantMaterializer} (the atom judgement reads
-     * materialized {@code source='role'} grants, not the bare binding) and a cache invalidation.
+     * permission row, binding row, then {@code PresetGrantMaterializer} (the atom judgement reads
+     * materialized {@code source='preset'} grants, not the bare binding) and a cache invalidation.
      * The role name must satisfy ck_roles_name_format (V87).
      */
     private void seedWorkspaceAtom(UUID userId, String atom) {
         UUID scopeId = UUID.fromString(workspaceId);
         UUID roleId = UUID.randomUUID();
-        accessRoleRepository.saveAndFlush(new AccessRole(roleId,
+        accessRoleRepository.saveAndFlush(new GrantPreset(roleId,
                 "TEST_EXECMODE_" + roleId.toString().replace("-", "").substring(0, 10).toUpperCase(),
                 "Execution mode atom role", "test-only role for the runtime atom (task-120)", false));
-        permissionRepository.saveAndFlush(new AccessRolePermission(roleId, atom,
+        permissionRepository.saveAndFlush(new GrantPresetAtom(roleId, atom,
                 PermissionAtomCatalog.WILDCARD));
-        roleBindingRepository.saveAndFlush(new AccessRoleBinding(roleId, "user", userId,
+        roleBindingRepository.saveAndFlush(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.WORKSPACE, scopeId, userId));
         materializer.materializeSubject("user", userId, userId, scopeId.toString());
         authzContext.invalidate(userId);

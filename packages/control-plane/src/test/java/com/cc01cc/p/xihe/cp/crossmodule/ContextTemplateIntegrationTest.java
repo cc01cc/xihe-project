@@ -19,8 +19,8 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -31,10 +31,10 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.service.InstanceIdentityService;
@@ -113,9 +113,9 @@ class ContextTemplateIntegrationTest extends AbstractWireMockPgTest {
     @Autowired private BranchPathService branchPathService;
     @Autowired private InstanceIdentityService instanceIdentity;
     @Autowired private AuthzContext authzContext;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
-    @Autowired private RoleGrantMaterializer roleGrantMaterializer;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
+    @Autowired private PresetGrantMaterializer roleGrantMaterializer;
 
     private String token;
     private String userId;
@@ -844,10 +844,10 @@ class ContextTemplateIntegrationTest extends AbstractWireMockPgTest {
 
     /** task-343: the fixture must really hold instance:admin, otherwise the 200 is meaningless. */
     private void grantInstanceAdmin(UUID target) {
-        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
-        bindingRepository.saveAndFlush(new AccessRoleBinding(adminRole.getId(),
+        GrantPreset adminRole = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow();
+        bindingRepository.saveAndFlush(new GrantPresetBinding(adminRole.getId(),
                 AuthzContext.SUBJECT_USER, target, AccessScope.INSTANCE, null, target));
-        // Action atoms are answered from the materialized grants(source='role') rows, not from
+        // Action atoms are answered from the materialized grants(source='preset') rows, not from
         // the binding itself: without this the capability cache says admin while the
         // @PreAuthorize atom gate still answers 403.
         roleGrantMaterializer.materializeSubject("user", target, target, null);

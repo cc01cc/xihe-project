@@ -14,19 +14,19 @@ import java.util.Set;
  * materialized row set equal what the catalog says for that role?", which is what this helper
  * answers.</p>
  *
- * <p>{@link #materializedAtoms(String)} excludes capability atoms: {@code RoleGrantMaterializer}
+ * <p>{@link #materializedAtoms(String)} excludes capability atoms: {@code PresetGrantMaterializer}
  * refuses to write them into {@code grants} (design #23), so a count of materialized rows must not
  * include them.</p>
  */
-public final class RoleAtomExpectations {
+public final class PresetAtomExpectations {
 
-    private RoleAtomExpectations() {
+    private PresetAtomExpectations() {
     }
 
-    /** Every action class declared by the built-in role in {@code SystemAccessRoleCatalog}. */
+    /** Every action class declared by the built-in role in {@code SystemGrantPresetCatalog}. */
     public static Set<String> declaredAtoms(String roleName) {
         Set<String> atoms = new LinkedHashSet<>();
-        SystemAccessRoleCatalog.roleSeeds().stream()
+        SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> seed.name().equals(roleName))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("built-in role missing from the catalog: " + roleName))
@@ -46,7 +46,7 @@ public final class RoleAtomExpectations {
         return atoms;
     }
 
-    /** Number of {@code source='role'} rows one binding of that role materializes. */
+    /** Number of {@code source='preset'} rows one binding of that role materializes. */
     public static int materializedAtomCount(String roleName) {
         return materializedAtoms(roleName).size();
     }

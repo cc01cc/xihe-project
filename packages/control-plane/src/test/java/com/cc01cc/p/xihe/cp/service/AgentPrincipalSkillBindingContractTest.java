@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -11,10 +11,10 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -66,11 +66,11 @@ class AgentPrincipalSkillBindingContractTest extends AbstractReusableIntegration
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentTemplateService agentTemplateService;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     @Autowired private SkillRepository skillRepository;
     @Autowired private SkillBindingRepository skillBindingRepository;
@@ -105,27 +105,27 @@ class AgentPrincipalSkillBindingContractTest extends AbstractReusableIntegration
         if (workspace != null) {
             jdbcTemplate.update("DELETE FROM workspace_agents WHERE workspace_id = ?::uuid",
                     workspace.getId().toString());
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'workspace'"
                     + " AND scope_id = ?::uuid", workspace.getId().toString());
             workspaceRepository.deleteById(workspace.getId());
         }
         if (owner != null) {
             jdbcTemplate.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = ?::uuid",
                     owner.getId().toString());
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                     + " AND subject_id = ?::uuid", owner.getId().toString());
             userRepository.deleteById(owner.getId());
         }
         for (UUID id : extraUsers) {
             jdbcTemplate.update("DELETE FROM grants WHERE subject_type = 'user'"
                     + " AND subject_id = ?::uuid", id.toString());
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                     + " AND subject_id = ?::uuid", id.toString());
             userRepository.deleteById(id);
         }
         for (UUID id : extraWorkspaceIds) {
             jdbcTemplate.update("DELETE FROM workspace_agents WHERE workspace_id = ?::uuid", id.toString());
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'workspace'"
                     + " AND scope_id = ?::uuid", id.toString());
             workspaceRepository.deleteById(id);
         }
@@ -477,10 +477,10 @@ class AgentPrincipalSkillBindingContractTest extends AbstractReusableIntegration
         grantDefaultService.ensureUserDefault(owner);
         ownerToken = TestDataFactory.createGlobalToken(owner.getId().toString(), owner.getEmail(), "USER", 0);
         UUID authorityRole = UUID.randomUUID();
-        roleRepository.save(new AccessRole(authorityRole, "TEST_SK_AUTH_" + shortId(),
+        roleRepository.save(new GrantPreset(authorityRole, "TEST_SK_AUTH_" + shortId(),
                 "Skill binding authority", "test-only", false));
-        permissionRepository.save(new AccessRolePermission(authorityRole, "MANAGE_AGENT_PRINCIPALS", "*"));
-        roleBindingRepository.save(new AccessRoleBinding(authorityRole, "user", owner.getId(),
+        permissionRepository.save(new GrantPresetAtom(authorityRole, "MANAGE_AGENT_PRINCIPALS", "*"));
+        roleBindingRepository.save(new GrantPresetBinding(authorityRole, "user", owner.getId(),
                 AccessScope.INSTANCE, null, owner.getId()));
         authorityRoleIds.add(authorityRole);
         materializer.materializeSubject("user", owner.getId(), owner.getId(), null);

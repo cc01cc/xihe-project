@@ -1,12 +1,12 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,9 +31,9 @@ class ToolFaceAdminAtomScopeIntegrationTest extends AbstractReusableIntegrationT
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private RequesterAuthority requesterAuthority;
 
     @Test
@@ -51,11 +51,11 @@ class ToolFaceAdminAtomScopeIntegrationTest extends AbstractReusableIntegrationT
     }
 
     @Test
-    void adminInstanceN9AuthorizesTheInstanceFaceAndRoleAdministrationAfterV125() {
+    void adminInstanceN9AuthorizesTheInstanceFaceAndGrantPresetAdministrationAfterV125() {
         User admin = newUser("toolface-scope-admin");
-        UUID adminRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        UUID adminRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(adminRoleId, "user", admin.getId(),
+        bindingRepository.save(new GrantPresetBinding(adminRoleId, "user", admin.getId(),
                 AccessScope.INSTANCE, null, admin.getId()));
         materializer.materializeSubject("user", admin.getId(), admin.getId(), null);
 

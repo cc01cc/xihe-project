@@ -14,7 +14,7 @@ import java.util.UUID;
  *
  * <p>The reference to the principal is <b>polymorphic</b> ({@code principal_kind} +
  * {@code principal_id}) and carries no foreign key — the same shape as
- * {@code role_bindings(subject_type, subject_id)} (V87). A HUMAN participant points at
+ * {@code grant_preset_bindings(subject_type, subject_id)} (V87). A HUMAN participant points at
  * {@code users.id}, an AGENT participant at {@code agent_principals.id}; the database cannot
  * enforce that with a single FK, so the service layer validates the referenced row exists.</p>
  *

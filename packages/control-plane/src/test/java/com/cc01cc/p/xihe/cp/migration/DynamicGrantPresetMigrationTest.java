@@ -1,7 +1,7 @@
 package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code agent_default} (P1-1), the scope CHECK + workspace cascade + per-source uniqueness
  * (P1-2) and the 18/9/5/6/4/1 atom counts of the seeded catalog (P1-3).</p>
  */
-class DynamicAccessRoleMigrationTest {
+class DynamicGrantPresetMigrationTest {
     /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
     static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("dynamic_access");
 
@@ -44,7 +44,7 @@ class DynamicAccessRoleMigrationTest {
         // PLAN-0610 W2: V87 is the intermediate shape of the one-shot window; its guarantees
         // (legacy sources still writable, V38/V65 fences still present) only hold before V88.
         // Pin this class to the V87 target; V88's end-state is asserted by
-        // AccessRoleDataBackfillMigrationTest.
+        // GrantPresetDataBackfillMigrationTest.
         Flyway.configure()
                 .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
@@ -81,9 +81,9 @@ class DynamicAccessRoleMigrationTest {
         }
     }
 
-    private static Set<String> codeAtomsOf(SystemAccessRoleCatalog.RoleSeed seed) {
+    private static Set<String> codeAtomsOf(SystemGrantPresetCatalog.PresetSeed seed) {
         Set<String> atoms = new HashSet<>();
-        for (SystemAccessRoleCatalog.AtomRef atom : seed.atoms()) {
+        for (SystemGrantPresetCatalog.AtomRef atom : seed.atoms()) {
             atoms.add(atom.actionClass() + "@" + atom.resourcePattern());
         }
         return atoms;
@@ -117,7 +117,7 @@ class DynamicAccessRoleMigrationTest {
      * and must not widen into a blanket exemption ({@code retiredSeedsDoNotSwallowUnknownAtoms}).
      */
     private static final List<RetiredSeed> RETIRED_V87_SEEDS = List.of(
-            new RetiredSeed(SystemAccessRoleCatalog.WS_EDITOR_ID, SystemAccessRoleCatalog.WS_EDITOR,
+            new RetiredSeed(SystemGrantPresetCatalog.WS_EDITOR_ID, SystemGrantPresetCatalog.WS_EDITOR,
                     "exec@*",
                     "V179__dsd1500_agent_exec_retirement_and_presets.sql",
                     "bf5cb083d",
@@ -167,7 +167,7 @@ class DynamicAccessRoleMigrationTest {
     // ---------------------------------------------------------------------
 
     @Test
-    void v87CreatesTheThreeAccessRoleTables() throws SQLException {
+    void v87CreatesTheThreeGrantPresetTables() throws SQLException {
         assertEquals(1, scalarInt("SELECT count(*) FROM flyway_schema_history "
                 + "WHERE version = '87' AND success = true"), "V87 must be recorded as applied");
         for (String table : new String[]{"roles", "role_permissions", "role_bindings"}) {
@@ -327,7 +327,7 @@ class DynamicAccessRoleMigrationTest {
                 + userId + "'::uuid"), "workspace-scoped bindings cascade with the workspace");
 
         assertThrows(SQLException.class, () -> executeUpdate(
-                "DELETE FROM roles WHERE id = '" + SystemAccessRoleCatalog.USER_ID + "'::uuid"),
+                "DELETE FROM roles WHERE id = '" + SystemGrantPresetCatalog.USER_ID + "'::uuid"),
                 "a role with bindings cannot be deleted (ON DELETE RESTRICT)");
     }
 
@@ -339,12 +339,12 @@ class DynamicAccessRoleMigrationTest {
     void v87SeedsTheSixSystemRolesWithTheP13AtomCounts() throws SQLException {
         assertEquals(6, scalarInt("SELECT count(*) FROM roles WHERE is_system = true"));
         Map<String, Integer> expectedAtoms = Map.of(
-                SystemAccessRoleCatalog.SUPER_ADMIN, 18,
-                SystemAccessRoleCatalog.ADMIN, 9,
-                SystemAccessRoleCatalog.USER, 5,
-                SystemAccessRoleCatalog.WS_OWNER, 6,
-                SystemAccessRoleCatalog.WS_EDITOR, 4,
-                SystemAccessRoleCatalog.WS_VIEWER, 1);
+                SystemGrantPresetCatalog.SUPER_ADMIN, 18,
+                SystemGrantPresetCatalog.ADMIN, 9,
+                SystemGrantPresetCatalog.USER, 5,
+                SystemGrantPresetCatalog.WS_OWNER, 6,
+                SystemGrantPresetCatalog.WS_EDITOR, 4,
+                SystemGrantPresetCatalog.WS_VIEWER, 1);
         for (Map.Entry<String, Integer> entry : expectedAtoms.entrySet()) {
             assertEquals(entry.getValue(), scalarInt("SELECT count(*) FROM role_permissions rp "
                             + "JOIN roles r ON r.id = rp.role_id WHERE r.name = '" + entry.getKey() + "'"),
@@ -384,13 +384,13 @@ class DynamicAccessRoleMigrationTest {
         // target, so only the V87-era roles participate here; the reverse direction (every code seed
         // is seeded at head) is asserted by
         // AgentPrincipalScopeMigrationTest#headSeedsMatchTheCodeSideCatalog.
-        List<SystemAccessRoleCatalog.RoleSeed> v87Seeds = SystemAccessRoleCatalog.roleSeeds().stream()
+        List<SystemGrantPresetCatalog.PresetSeed> v87Seeds = SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> namesById.containsKey(seed.id()))
                 .toList();
         assertEquals(6, namesById.size(), "V87 seeds exactly six built-in roles");
         assertEquals(v87Seeds.size(), namesById.size(),
                 "every V87-seeded role must be described by the code catalog");
-        for (SystemAccessRoleCatalog.RoleSeed seed : v87Seeds) {
+        for (SystemGrantPresetCatalog.PresetSeed seed : v87Seeds) {
             assertEquals(seed.name(), namesById.get(seed.id()),
                     "fixed id must map to the same role name on both sides: " + seed.name());
             Set<String> unexplained = unexplainedAtoms(seed.id(), codeAtomsOf(seed),
@@ -423,16 +423,16 @@ class DynamicAccessRoleMigrationTest {
                 "viewer", Set.of("exec@*"));
         Set<String> editorKnown = Set.of("read@*");
         Set<String> editorUnexplained = unexplainedAtoms(
-                SystemAccessRoleCatalog.WS_EDITOR_ID, editorKnown, dbRows.get("editor"));
+                SystemGrantPresetCatalog.WS_EDITOR_ID, editorKnown, dbRows.get("editor"));
         assertEquals(Set.of("network@*", "exec@x"), editorUnexplained,
                 "only the exact retired atom is explained; a different action class or a scoped"
                         + " pattern is still a regression");
         Set<String> viewerUnexplained = unexplainedAtoms(
-                SystemAccessRoleCatalog.WS_VIEWER_ID, Set.of(), dbRows.get("viewer"));
+                SystemGrantPresetCatalog.WS_VIEWER_ID, Set.of(), dbRows.get("viewer"));
         assertEquals(Set.of("exec@*"), viewerUnexplained,
                 "the exemption belongs to WS_EDITOR only; WS_VIEWER seeding exec is still a"
                         + " regression");
-        assertTrue(unexplainedAtoms(SystemAccessRoleCatalog.WS_EDITOR_ID, editorKnown,
+        assertTrue(unexplainedAtoms(SystemGrantPresetCatalog.WS_EDITOR_ID, editorKnown,
                 Set.of("read@*", "exec@*")).isEmpty(),
                 "the retired editor atom is explained when nothing else is off");
     }
@@ -450,9 +450,9 @@ class DynamicAccessRoleMigrationTest {
                     + retired.atom().substring(retired.atom().indexOf('@') + 1) + "'");
             assertEquals(1, rows, "RETIRED_V87_SEEDS entry no longer describes a V87 row: "
                     + retired.roleName() + " -> " + retired.atom() + " (drop the entry)");
-            String catalogName = SystemAccessRoleCatalog.roleSeeds().stream()
+            String catalogName = SystemGrantPresetCatalog.presetSeeds().stream()
                     .filter(seed -> seed.id().equals(retired.roleId()))
-                    .map(SystemAccessRoleCatalog.RoleSeed::name)
+                    .map(SystemGrantPresetCatalog.PresetSeed::name)
                     .findFirst()
                     .orElse(null);
             assertEquals(catalogName, retired.roleName(),
@@ -473,20 +473,20 @@ class DynamicAccessRoleMigrationTest {
         // it back through the same helper the main assertion uses, then removing it in finally.
         String probe = "sabotage_probe";
         executeUpdate("INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
-                + " VALUES ('" + SystemAccessRoleCatalog.WS_VIEWER_ID + "'::uuid, '" + probe
+                + " VALUES ('" + SystemGrantPresetCatalog.WS_VIEWER_ID + "'::uuid, '" + probe
                 + "', '*')");
         try {
-            Set<String> unexplained = unexplainedAtoms(SystemAccessRoleCatalog.WS_VIEWER_ID,
-                    Set.of("read@*"), v87AtomsOf(SystemAccessRoleCatalog.WS_VIEWER_ID));
+            Set<String> unexplained = unexplainedAtoms(SystemGrantPresetCatalog.WS_VIEWER_ID,
+                    Set.of("read@*"), v87AtomsOf(SystemGrantPresetCatalog.WS_VIEWER_ID));
             assertEquals(Set.of(probe + "@*"), unexplained,
                     "a seed row with no retirement keeps the guard red");
         } finally {
             executeUpdate("DELETE FROM role_permissions WHERE role_id = '"
-                    + SystemAccessRoleCatalog.WS_VIEWER_ID + "'::uuid AND action_class = '" + probe
+                    + SystemGrantPresetCatalog.WS_VIEWER_ID + "'::uuid AND action_class = '" + probe
                     + "'");
         }
-        assertTrue(unexplainedAtoms(SystemAccessRoleCatalog.WS_VIEWER_ID, Set.of("read@*"),
-                v87AtomsOf(SystemAccessRoleCatalog.WS_VIEWER_ID)).isEmpty(),
+        assertTrue(unexplainedAtoms(SystemGrantPresetCatalog.WS_VIEWER_ID, Set.of("read@*"),
+                v87AtomsOf(SystemGrantPresetCatalog.WS_VIEWER_ID)).isEmpty(),
                 "removing the probe restores green");
     }
 }

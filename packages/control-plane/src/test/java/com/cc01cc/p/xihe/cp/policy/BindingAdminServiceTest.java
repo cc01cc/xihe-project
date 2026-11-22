@@ -3,12 +3,12 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -35,13 +35,13 @@ import static org.mockito.Mockito.when;
  * PLAN-0773 M2-8c: the org-unit role-binding <b>write gate</b>, and its agreement with the
  * evaluation side.
  *
- * <p><b>Evidence level, stated up front.</b> {@code org_unit_role_bindings} is {@code M1-9}'s table
+ * <p><b>Evidence level, stated up front.</b> {@code org_unit_preset_bindings} is {@code M1-9}'s table
  * and does not exist yet, so there is no writer to interrupt and no {@code count(*)} to compare.
  * The two proofs available — and the ones this class makes — are:</p>
  *
  * <ol>
  *   <li><b>refused, and no writer was reached</b>: on a {@code 409} the only two things that can
- *       write a binding in this service ({@link AccessRoleBindingRepository} through the
+ *       write a binding in this service ({@link GrantPresetBindingRepository} through the
  *       materializer) were <i>never touched</i> ({@code verifyNoInteractions}). "No row was
  *       written" is a structural statement here, not an observation about an empty table;</li>
  *   <li><b>both sides agree on every atom set</b>: the gate refuses exactly the roles that
@@ -53,11 +53,11 @@ import static org.mockito.Mockito.when;
 class BindingAdminServiceTest {
 
     @Mock
-    private AccessRoleRepository roles;
+    private GrantPresetRepository roles;
     @Mock
-    private AccessRolePermissionRepository permissions;
+    private GrantPresetAtomRepository permissions;
     @Mock
-    private AccessRoleBindingRepository bindings;
+    private GrantPresetBindingRepository bindings;
     @Mock
     private UserRepository users;
     @Mock
@@ -65,7 +65,7 @@ class BindingAdminServiceTest {
     @Mock
     private InstanceOwnerRepository owners;
     @Mock
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
     @Mock
     private RequesterAuthority requester;
     @Mock
@@ -83,15 +83,15 @@ class BindingAdminServiceTest {
     private static final UUID USER_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID UNIT_ID = UUID.fromString("44444444-4444-4444-8444-444444444441");
 
-    private static AccessRole role(UUID id, String name) {
-        return new AccessRole(id, name, name, "", false);
+    private static GrantPreset role(UUID id, String name) {
+        return new GrantPreset(id, name, name, "", false);
     }
 
     private void stubRole(UUID roleId, String roleName, String... atomNames) {
         when(roles.findAllById(any())).thenReturn(List.of(role(roleId, roleName)));
         when(permissions.findByIdRoleIdIn(any())).thenReturn(
                 List.of(atomNames).stream()
-                        .map(atom -> new AccessRolePermission(roleId, atom, "*"))
+                        .map(atom -> new GrantPresetAtom(roleId, atom, "*"))
                         .toList());
     }
 
@@ -116,7 +116,7 @@ class BindingAdminServiceTest {
         assertTrue(refused.getMessage().contains(ToolFaceRegistry.ACTION_EXEC),
                 "the refusal must name the offending atom: " + refused.getMessage());
         // Structural: nothing that can write a binding row was reached at all. There is no
-        // org_unit_role_bindings writer in this repository yet (M1-9), and the gate precedes every
+        // org_unit_preset_bindings writer in this repository yet (M1-9), and the gate precedes every
         // writer there will be — asserted here so the ordering cannot silently invert later.
         verifyNoInteractions(bindings, materializer, audit);
     }
@@ -164,16 +164,16 @@ class BindingAdminServiceTest {
 
         for (List<String> atoms : cases) {
             // Fresh mocks per case: the judgement under test is the policy's, not Mockito's state.
-            AccessRoleRepository caseRoles = mock(AccessRoleRepository.class);
-            AccessRolePermissionRepository casePermissions = mock(AccessRolePermissionRepository.class);
+            GrantPresetRepository caseRoles = mock(GrantPresetRepository.class);
+            GrantPresetAtomRepository casePermissions = mock(GrantPresetAtomRepository.class);
             when(caseRoles.findAllById(any())).thenReturn(List.of(role(ROLE_ID, "ROLE_UNDER_TEST")));
             when(casePermissions.findByIdRoleIdIn(any())).thenReturn(atoms.stream()
-                    .map(atom -> new AccessRolePermission(ROLE_ID, atom, "*"))
+                    .map(atom -> new GrantPresetAtom(ROLE_ID, atom, "*"))
                     .toList());
             BindingAdminService caseService = new BindingAdminService(caseRoles, casePermissions,
-                    mock(AccessRoleBindingRepository.class), mock(UserRepository.class),
+                    mock(GrantPresetBindingRepository.class), mock(UserRepository.class),
                     mock(WorkspaceRepository.class), mock(InstanceOwnerRepository.class),
-                    mock(RoleGrantMaterializer.class), mock(RequesterAuthority.class),
+                    mock(PresetGrantMaterializer.class), mock(RequesterAuthority.class),
                     mock(AuditLogger.class), mock(DbLockTimeout.class), mock(GrantabilityGuard.class));
 
             boolean writeAccepted;
