@@ -79,6 +79,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/context/ContextLockTimeoutIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/context/ContextToolHistoryLiveChainTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/controller/ExecutionModeAuthorityTest.java	property-variant
+@DynamicPropertySource	com/cc01cc/p/xihe/cp/controller/WorkspaceCreateReadinessTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/credentials/CredentialRotationIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/AgentChatIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/AgentModelsIntegrationTest.java	property-variant
