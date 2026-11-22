@@ -5,10 +5,12 @@
  * UI 文案走 i18n。用户主文案的唯一入口是 `lib/errorMessages.ts#presentCauseError` /
  * `causeErrorToastText`。</p>
  *
- * <p><b>覆盖四面</b>（task-846 要求至少 chat / members / settings / auth）：
+ * <p><b>覆盖任务面</b>（task-846 要求至少 chat / members / settings / auth；task-855 扩到
+ * 三处净差文件）：
  * chat = `features/workspace/chat/**`；members = `WorkspaceMembersPanel.vue`；
  * settings = `ConfigLayerPanels.vue` + `ConfigSettings.vue`；auth = `stores/auth.ts` +
- * `views/auth/**`。</p>
+ * `views/auth/**`；error-followup = `AgentPrincipalsPanel.vue` + `roleErrorMessages.ts` +
+ * `WorkspaceAgentsPanel.vue`。</p>
  *
  * <p><b>为什么门文件放在 chat 目录</b>：task-846 的写域是
  * `packages/ui/src/features/workspace/chat`，扫描面不限于本目录（只读其他文件）。
@@ -26,6 +28,11 @@ const FACE_ROOTS: Record<string, string[]> = {
     members: ["features/workspace/components/WorkspaceMembersPanel.vue"],
     settings: ["components/settings/ConfigLayerPanels.vue", "views/settings/ConfigSettings.vue"],
     auth: ["stores/auth.ts", "views/auth"],
+    "error-followup": [
+        "components/settings/AgentPrincipalsPanel.vue",
+        "components/settings/roleErrorMessages.ts",
+        "features/workspace/components/WorkspaceAgentsPanel.vue",
+    ],
 };
 
 const SKIP_DIRS = new Set(["node_modules", "__tests__", "__poc__", "preview"]);
@@ -147,7 +154,7 @@ describe("task-846 核心面错误文案机械门", () => {
         for (const rule of RULES) expect(rule.re.test(samples[rule.id] as string)).toBe(true);
     });
 
-    it("chat / members / settings / auth 不直出原始异常或硬编码英文", () => {
+    it("chat / members / settings / auth / error-followup 不直出原始异常或硬编码英文", () => {
         const offenders: string[] = [];
         for (const abs of faceFiles()) {
             const file = relative(SRC, abs).replace(/\\/g, "/");

@@ -15,7 +15,7 @@ import { Empty, EmptyDescription, EmptyHeader } from "../ui/empty";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { LoaderCircle, X } from "@lucide/vue";
 /** T5.2: agent preset bindings live here so RoleBindingsPanel stays small. CP owns the gate;
- * ROLE_BINDING_EXCEEDS_CAP's detail is surfaced by presetErrorMessage (BL-288). */
+ * errors render localized copy + code via presetErrorMessage (task-855), never CP detail. */
 const props = defineProps<{
     scope: ApiBindingScope;
     scopeId: string;

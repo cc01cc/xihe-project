@@ -22,7 +22,7 @@ import {
     type WorkspaceAgentMemory,
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
-import { presentCauseError, problemDetailText } from "../../../lib/errorMessages";
+import { causeErrorToastText, presentCauseError, withErrorCode } from "../../../lib/errorMessages";
 import AgentPrincipalDetailDrawer, {
     type AgentPrincipalDetail,
 } from "../../../components/settings/AgentPrincipalDetailDrawer.vue";
@@ -408,7 +408,8 @@ async function loadCreateCapability() {
     } catch (cause) {
         // 投影拿不到就 fail-closed，并保留原因（不静默）。
         capabilityState.value = "failed";
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
+        logger.warn("Load agent capability failed", cause);
+        error.value = causeErrorToastText(t, cause, t("workspace.agentLoadFailed"));
     }
 }
 
@@ -463,7 +464,8 @@ async function loadAgents() {
     try {
         agents.value = await api.getWorkspaceAgents(props.workspaceId);
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
+        logger.warn("Load workspace agents failed", cause);
+        error.value = causeErrorToastText(t, cause, t("workspace.agentLoadFailed"));
     } finally {
         loading.value = false;
     }
@@ -513,12 +515,11 @@ async function loadMemories(principalId: string) {
             void loadMemories(principalId);
             return;
         }
+        logger.warn("Load agent memories failed", cause);
         memoryError.value =
             cause instanceof ApiError && cause.problem.code === "AGENT_PRINCIPAL_NOT_FOUND"
-                ? t("workspace.agentMemoryNotFound")
-                : cause instanceof ApiError
-                  ? cause.message
-                  : t("workspace.agentMemoryLoadFailed");
+                ? withErrorCode(t("workspace.agentMemoryNotFound"), cause.problem.code)
+                : causeErrorToastText(t, cause, t("workspace.agentMemoryLoadFailed"));
         memoryState.value = "failed";
     }
 }
@@ -597,29 +598,30 @@ async function loadRbac(principalId: string) {
     }
 }
 
-/** 409 三类码给可读文案；404 不当崩溃；其它沿用 CP problem message。 */
+/**
+ * 409 三类码给本地化文案；404 不当崩溃；其它码落通用文案。两类都附稳定错误码，
+ * CP 的英文 detail 只进 logger（不回到用户面）。
+ */
 function rbacErrorMessage(cause: unknown): string {
+    logger.warn("Workspace agent RBAC error", cause);
     if (cause instanceof ApiError) {
-        // PLAN-0651 V17 B4：该码的 detail 是未本地化的原子清单，不能直显，必须走本地化文案。
-        if (cause.problem.code === "AGENT_PRINCIPAL_FORBIDDEN_ATOMS") {
-            return t("workspace.agentRoleForbiddenAtoms");
+        const code = cause.problem.code;
+        if (code === "AGENT_PRINCIPAL_FORBIDDEN_ATOMS") {
+            return withErrorCode(t("workspace.agentRoleForbiddenAtoms"), code);
         }
-        // BL-288：可行动 detail（具体原子名/条数/上限）优先；无 detail 才回退本地化文案。
-        const detail = problemDetailText(cause, "");
-        if (detail) return detail;
-        switch (cause.problem.code) {
+        switch (code) {
             case "ROLE_BINDING_EXCEEDS_CAP":
-                return t("workspace.agentRoleExceedsCap");
+                return withErrorCode(t("workspace.agentRoleExceedsCap"), code);
             case "ROLE_BINDING_EXISTS":
-                return t("workspace.agentRoleBindingExists");
+                return withErrorCode(t("workspace.agentRoleBindingExists"), code);
             case "ROLE_BINDING_IMMUTABLE":
-                return t("workspace.agentRoleBindingImmutable");
+                return withErrorCode(t("workspace.agentRoleBindingImmutable"), code);
             case "AGENT_PRINCIPAL_NOT_FOUND":
             case "SKILL_NOT_FOUND":
             case "ROLE_NOT_FOUND":
-                return t("workspace.agentRbacNotFound");
+                return withErrorCode(t("workspace.agentRbacNotFound"), code);
             default:
-                return cause.message;
+                return withErrorCode(t("workspace.agentRbacFailed"), code);
         }
     }
     return t("workspace.agentRbacFailed");
@@ -722,8 +724,12 @@ async function toggleMemoryEnabled(agent: WorkspaceAgentBinding, next: boolean) 
             agents.value = nextAgents;
         }
     } catch (cause) {
-        memoryToggleError.value =
-            cause instanceof ApiError ? cause.message : t("workspace.agentMemoryToggleFailed");
+        logger.warn("Toggle agent memory failed", cause);
+        memoryToggleError.value = causeErrorToastText(
+            t,
+            cause,
+            t("workspace.agentMemoryToggleFailed"),
+        );
     } finally {
         memoryToggleBusy.value = false;
     }
@@ -760,14 +766,15 @@ function clearMemoryWriteDrafts() {
 
 function memoryFailureCopy(cause: unknown): string {
     if (cause instanceof ApiError) {
-        if (cause.problem.code === "MEMORY_WRITE_FORBIDDEN" || cause.problem.code === "FORBIDDEN") {
-            return t("workspace.agentMemoryWriteForbidden");
+        const code = cause.problem.code;
+        if (code === "MEMORY_WRITE_FORBIDDEN" || code === "FORBIDDEN") {
+            return withErrorCode(t("workspace.agentMemoryWriteForbidden"), code);
         }
-        if (cause.problem.code === "AGENT_PRINCIPAL_NOT_FOUND") {
-            return t("workspace.agentMemoryNotFound");
+        if (code === "AGENT_PRINCIPAL_NOT_FOUND") {
+            return withErrorCode(t("workspace.agentMemoryNotFound"), code);
         }
-        // CP 的 ProblemDetails 文案优先（它带具体原因），但只在已有码时使用。
-        return cause.message;
+        logger.warn("Agent memory write failed", cause);
+        return withErrorCode(t("workspace.agentMemoryWriteFailed"), code);
     }
     return t("workspace.agentMemoryWriteFailed");
 }
@@ -881,8 +888,8 @@ async function loadTemplates() {
             result.templates.map((template) => ({ layer: result.layer, template })),
         );
     } catch (cause) {
-        error.value =
-            cause instanceof ApiError ? cause.message : t("workspace.agentTemplateLoadFailed");
+        logger.warn("Load agent templates failed", cause);
+        error.value = causeErrorToastText(t, cause, t("workspace.agentTemplateLoadFailed"));
     }
 }
 
@@ -922,16 +929,16 @@ function setPermissionResource(actionClass: string, resource: string) {
 /**
  * PLAN-0585 M2 / F-02: a missing grant must read as an actionable localized hint that points at
  * the admin grant panel, never as the CP's raw English detail (`CREATE_ACCOUNT permission is
- * required`). Binding failures additionally surface the CP's actionable `detail` (BL-288),
- * so a 409 cap/atom refusal names the offending atom instead of a generic copy.
+ * required`). task-855: failures render localized copy + stable code; the CP `detail` is
+ * diagnostic only (logger), including 409 cap/atom refusals.
  */
 function agentErrorMessage(cause: unknown, forbiddenKey: string, fallbackKey: string): string {
     if (cause instanceof ApiError && cause.problem.code === "FORBIDDEN") {
-        return t(forbiddenKey);
+        return withErrorCode(t(forbiddenKey), cause.problem.code);
     }
-    const detail = problemDetailText(cause, "");
-    if (detail) return detail;
-    return t(fallbackKey);
+    logger.warn("Workspace agent action failed", cause);
+    const code = cause instanceof ApiError ? cause.problem?.code : undefined;
+    return withErrorCode(t(fallbackKey), code);
 }
 
 /**
@@ -1329,7 +1336,8 @@ async function unbind(agent: WorkspaceAgentBinding) {
         await loadAgents();
         status.value = t("workspace.agentUnboundSuccess");
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentUnbindFailed");
+        logger.warn("Delete workspace agent failed", cause);
+        error.value = causeErrorToastText(t, cause, t("workspace.agentUnbindFailed"));
     } finally {
         saving.value = false;
     }

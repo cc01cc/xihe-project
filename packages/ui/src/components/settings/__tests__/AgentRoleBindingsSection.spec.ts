@@ -147,7 +147,7 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         expect(mockedApi.bindAgentRole).not.toHaveBeenCalled();
     });
 
-    it("surfaces the 409 ROLE_BINDING_EXCEEDS_CAP detail instead of a generic message", async () => {
+    it("maps 409 ROLE_BINDING_EXCEEDS_CAP to localized copy + code, not the raw detail", async () => {
         mockedApi.getAgentRoles.mockResolvedValue([binding("role-seed", "seed-1", true)]);
         mockedApi.bindAgentRole.mockRejectedValue(
             new ApiError({
@@ -165,9 +165,12 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="agent-role-bindings-error"]').text()).toContain(
-            "cap exceeded: requires WRITE_SECRETS",
-        );
+        const zh = i18n.global.getLocaleMessage("zh-CN") as {
+            settings: { presetsError: Record<string, string> };
+        };
+        const text = wrapper.get('[data-testid="agent-role-bindings-error"]').text();
+        expect(text).toBe(`${zh.settings.presetsError.generic}（ROLE_BINDING_EXCEEDS_CAP）`);
+        expect(text).not.toContain("cap exceeded: requires WRITE_SECRETS");
     });
 
     it("localizes 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS instead of echoing the English detail", async () => {
@@ -194,7 +197,9 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         const en = i18n.global.getLocaleMessage("en-US") as {
             settings: { presetsError: Record<string, string> };
         };
-        expect(text).toBe(zh.settings.presetsError.agentPresetForbiddenAtoms);
+        expect(text).toBe(
+            `${zh.settings.presetsError.agentPresetForbiddenAtoms}（AGENT_PRINCIPAL_FORBIDDEN_ATOMS）`,
+        );
         expect(text).not.toContain("credential.use");
         expect(en.settings.presetsError.agentPresetForbiddenAtoms).toBeTruthy();
     });

@@ -1,19 +1,17 @@
 import { ApiError } from "../../composables/api";
-import { problemDetailText } from "../../lib/errorMessages";
+import { withErrorCode } from "../../lib/errorMessages";
 
 /**
- * Grant-preset/binding error copy. PLAN-0610 W5b originally **never** echoed the CP's English
- * `detail`;
- * BL-288 (2026-11-05) overrides that for actionable problems: when the Problem carries a `detail`
- * (e.g. `ROLE_BINDING_EXCEEDS_CAP` names the offending cap), the user must see it — the localized
- * mapped copy is only the fallback when there is no detail. The code is still logged by callers.
+ * Grant-preset/binding error copy: **localized copy + stable code**（`文案（CODE）`）。
+ *
+ * <p>task-855 收口：BL-288 的 detail-first 口径已撤销 — CP 的 `Problem.detail` 可能是英文原文，
+ * 只能进日志/诊断，不能当用户主文案。这里统一返回本地化映射文案，并附上稳定错误码供支持引用。</p>
  *
  * <p>The four codes the wave explicitly requires are the first four; the rest exist because the CP
  * can answer them on the same endpoints and a generic fallback would hide the reason.</p>
  *
- * <p>PLAN-0651 V17 B4: `AGENT_PRINCIPAL_FORBIDDEN_ATOMS` is the one exception to detail-first —
- * its `detail` is an untranslated list of atom identifiers, and the agent preset binding page must
- * show the localized copy instead (the code is still logged by callers).</p>
+ * <p>PLAN-0651 V17 B4: `AGENT_PRINCIPAL_FORBIDDEN_ATOMS` 的 `detail` 是未本地化的原子清单，
+ * 因此它同样只能走本地化文案（现在所有码都走本地化文案，这条只是保留语义说明）。</p>
  */
 export type PresetErrorKey =
     | "presetScopeMismatch"
@@ -73,12 +71,8 @@ export function presetErrorKey(cause: unknown): PresetErrorKey {
 
 /** `t` is passed in so this stays a pure function (no composable coupling, trivially testable). */
 export function presetErrorMessage(cause: unknown, t: (key: string) => string): string {
-    // PLAN-0651 V17 B4：该码的 detail 是未本地化的原子清单，绑定页必须显示本地化文案。
-    if (presetErrorKey(cause) === "agentPresetForbiddenAtoms") {
-        return t("settings.presetsError.agentPresetForbiddenAtoms");
-    }
-    // BL-288：可行动 detail（超限原子名/条数/上限）优先；无 detail 才回退本地化通用文案。
-    const detail = problemDetailText(cause, "");
-    if (detail) return detail;
-    return t(`settings.presetsError.${presetErrorKey(cause)}`);
+    const key = presetErrorKey(cause);
+    const code = cause instanceof ApiError ? cause.problem?.code : undefined;
+    // 一律本地化文案 + 码；CP 的英文 detail 只在调用方进 logger，不回到用户面。
+    return withErrorCode(t(`settings.presetsError.${key}`), code);
 }

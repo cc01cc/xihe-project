@@ -10,7 +10,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
 import { Input } from "../ui/input";
 import { api, type AgentPrincipalSummary } from "../../composables/api";
 import { formatDate } from "../../lib/dateFormat";
-import { problemDetailText } from "../../lib/errorMessages";
+import { causeErrorToastText } from "../../lib/errorMessages";
+import { logger } from "../../lib/logger";
 import { principalNameError } from "../../lib/principalName";
 import SettingsPermissionGate from "./SettingsPermissionGate.vue";
 import AgentPrincipalDetailDrawer, {
@@ -110,7 +111,8 @@ async function submitCreate() {
         name.value = "";
         await loadAgents();
     } catch (e) {
-        formError.value = problemDetailText(e, t("agentPrincipals.createFailed"));
+        logger.warn("Create agent principal failed", e);
+        formError.value = causeErrorToastText(t, e, t("agentPrincipals.createFailed"));
     } finally {
         saving.value = false;
     }
@@ -125,7 +127,8 @@ async function loadAgents() {
     try {
         agents.value = await api.listMyAgentPrincipals();
     } catch (e) {
-        loadError.value = problemDetailText(e, t("agentPrincipals.loadFailed"));
+        logger.warn("Load agent principals failed", e);
+        loadError.value = causeErrorToastText(t, e, t("agentPrincipals.loadFailed"));
     } finally {
         loading.value = false;
     }

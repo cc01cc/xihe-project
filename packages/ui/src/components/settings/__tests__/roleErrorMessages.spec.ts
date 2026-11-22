@@ -3,8 +3,8 @@ import { ApiError } from "../../../composables/api";
 import { presetErrorMessage } from "../roleErrorMessages";
 
 /**
- * BL-288：授权预设/绑定错误优先展示 CP Problem `detail`（可行动信息，如“超限的原子名”），
- * 无 detail 才回退本地化通用文案。策划判据来自 Lead 2026-11-05。
+ * task-855：授权预设/绑定错误统一「本地化文案 + （CODE）」。
+ * CP 的 Problem `detail` 只作诊断，不回到用户面（BL-288 detail-first 已撤销）。
  */
 const t = (key: string) => `copy:${key}`;
 
@@ -12,8 +12,8 @@ function apiError(code: string, detail?: string): ApiError {
     return new ApiError({ status: 409, code, requestId: "req-1", detail });
 }
 
-describe("presetErrorMessage (BL-288)", () => {
-    it("shows the Problem detail for ROLE_BINDING_EXCEEDS_CAP (offending atoms are in detail)", () => {
+describe("presetErrorMessage (task-855)", () => {
+    it("never surfaces the Problem detail, even when it names offending atoms", () => {
         const text = presetErrorMessage(
             apiError(
                 "ROLE_BINDING_EXCEEDS_CAP",
@@ -21,27 +21,29 @@ describe("presetErrorMessage (BL-288)", () => {
             ),
             t,
         );
-        expect(text).toContain("CREATE_ACCOUNT");
-        expect(text).toContain("MANAGE_WORKSPACE_AGENTS");
-        expect(text).not.toContain("copy:");
+        expect(text).toBe("copy:settings.presetsError.generic（ROLE_BINDING_EXCEEDS_CAP）");
+        expect(text).not.toContain("CREATE_ACCOUNT");
     });
 
-    it("falls back to the localized mapped copy when the Problem has no detail", () => {
+    it("maps known codes to localized copy and appends the stable code", () => {
         expect(presetErrorMessage(apiError("ROLE_NOT_FOUND"), t)).toBe(
-            "copy:settings.presetsError.presetNotFound",
+            "copy:settings.presetsError.presetNotFound（ROLE_NOT_FOUND）",
         );
         expect(presetErrorMessage(apiError("ROLE_BINDING_EXCEEDS_CAP"), t)).toBe(
-            "copy:settings.presetsError.generic",
+            "copy:settings.presetsError.generic（ROLE_BINDING_EXCEEDS_CAP）",
         );
         expect(presetErrorMessage(new Error("boom"), t)).toBe("copy:settings.presetsError.generic");
     });
 
-    it("keeps the detail for a mapped code too (detail wins over static copy)", () => {
+    it("drops the detail even when the code is mapped", () => {
         const text = presetErrorMessage(apiError("CONCURRENT_MODIFICATION", "版本 7 → 9"), t);
-        expect(text).toContain("版本 7 → 9");
+        expect(text).toBe(
+            "copy:settings.presetsError.concurrentModification（CONCURRENT_MODIFICATION）",
+        );
+        expect(text).not.toContain("版本 7 → 9");
     });
 
-    it("localizes AGENT_PRINCIPAL_FORBIDDEN_ATOMS instead of echoing the English detail", () => {
+    it("localizes AGENT_PRINCIPAL_FORBIDDEN_ATOMS instead of echoing the atom list", () => {
         const text = presetErrorMessage(
             apiError(
                 "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
@@ -49,7 +51,9 @@ describe("presetErrorMessage (BL-288)", () => {
             ),
             t,
         );
-        expect(text).toBe("copy:settings.presetsError.agentPresetForbiddenAtoms");
+        expect(text).toBe(
+            "copy:settings.presetsError.agentPresetForbiddenAtoms（AGENT_PRINCIPAL_FORBIDDEN_ATOMS）",
+        );
         expect(text).not.toContain("credential.use");
     });
 });

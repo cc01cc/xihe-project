@@ -286,12 +286,12 @@ export function withErrorCode(copy: string, code: string | undefined | null): st
 }
 
 export function chatErrorToastText(code: string | undefined, detail?: string | null): string {
-    const mapped = humanizeErrorCode(code, detail);
-    // When we have a dedicated mapping without embedding raw detail, still show code for support.
-    if (mapped !== `${code}: ${detail}` && code) {
-        return `${code} — ${mapped}`;
-    }
-    return mapped;
+    const key = (code ?? "").trim();
+    const mapped = mappedErrorCopy(key);
+    // 有专用文案 ⇒ 统一 `文案（CODE）`（与 causeErrorToastText / withErrorCode 同形）；
+    // 未知码走 humanizeErrorCode，它自己已把码放进同一形状的全角括号里。
+    if (mapped !== null) return key ? `${mapped}（${key}）` : mapped;
+    return humanizeErrorCode(code, detail);
 }
 
 /**

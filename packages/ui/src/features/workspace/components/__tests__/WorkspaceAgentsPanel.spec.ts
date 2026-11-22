@@ -605,7 +605,7 @@ describe("WorkspaceAgentsPanel pending principal recovery", () => {
         restored.unmount();
     });
 
-    it("keeps the pending card and surfaces the CP detail when PUT returns 409", async () => {
+    it("keeps the pending card and shows localized copy + code when PUT returns 409", async () => {
         apiMock.createAgentPrincipal.mockResolvedValue({
             principalId: PENDING_ID,
             templateId: null,
@@ -623,9 +623,10 @@ describe("WorkspaceAgentsPanel pending principal recovery", () => {
         await wrapper.find('[data-testid="agent-principal-bind"]').trigger("click");
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
-            "role atoms exceed cap: workspace.write",
-        );
+        const text = wrapper.find('[data-testid="agent-error"]').text();
+        expect(text).toContain(i18n.global.t("workspace.agentBindFailed"));
+        expect(text).toContain("（ROLE_BINDING_EXCEEDS_CAP）");
+        expect(text).not.toContain("role atoms exceed cap: workspace.write");
         expect(pendingCard(wrapper).exists()).toBe(true);
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<
             string,
@@ -911,7 +912,7 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
         );
     });
 
-    it("keeps the D-160 ③ two-sided atom detail for 403 AGENT_PERMISSION_SCOPE_EXCEEDED", async () => {
+    it("maps 403 AGENT_PERMISSION_SCOPE_EXCEEDED to localized copy + code, not raw detail", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.updateWorkspaceAgentCap.mockRejectedValue(
@@ -926,10 +927,10 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
         await saveCap().trigger("click");
         await flushPromises();
 
-        // D-160 ③ 的点名本身就是可操作文案（授权者要看原子清单），不走 FORBIDDEN 掩蔽。
-        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
-            "principal-exceeding=[write@*] actor-exceeding=[write@src/*]",
-        );
+        const text = wrapper.find('[data-testid="agent-error"]').text();
+        expect(text).toContain(i18n.global.t("workspace.agentSaveFailed"));
+        expect(text).toContain("（AGENT_PERMISSION_SCOPE_EXCEEDED）");
+        expect(text).not.toContain("principal-exceeding=");
     });
 
     it("maps a plain FORBIDDEN to the localized actionable hint, never the raw detail", async () => {
@@ -948,7 +949,7 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
         expect(text).not.toContain("CREATE_ACCOUNT permission is required");
     });
 
-    it("keeps the CP atom naming detail when the refusal is another code (D-160 ③ display)", async () => {
+    it("shows localized copy + code for ROLE_BINDING_EXCEEDS_CAP, not the CP detail", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.updateWorkspaceAgentCap.mockRejectedValue(
@@ -963,9 +964,10 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
         await saveCap().trigger("click");
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
-            "principal-exceeding=[write@*] actor-exceeding=[]",
-        );
+        const text = wrapper.find('[data-testid="agent-error"]').text();
+        expect(text).toContain(i18n.global.t("workspace.agentSaveFailed"));
+        expect(text).toContain("（ROLE_BINDING_EXCEEDS_CAP）");
+        expect(text).not.toContain("principal-exceeding=");
     });
 });
 
@@ -1678,7 +1680,9 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
             "role-editor",
         );
         const text = wrapper.get('[data-testid="agent-rbac-action-error"]').text();
-        expect(text).toBe(i18n.global.t("workspace.agentRoleForbiddenAtoms"));
+        expect(text).toBe(
+            `${i18n.global.t("workspace.agentRoleForbiddenAtoms")}（AGENT_PRINCIPAL_FORBIDDEN_ATOMS）`,
+        );
         expect(text).not.toContain("INSTANCE_ADMIN");
     });
 
@@ -1704,9 +1708,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toContain(
-            "CREATE_ACCOUNT,MANAGE_WORKSPACE_AGENTS",
+        const text = wrapper.get('[data-testid="agent-rbac-action-error"]').text();
+        expect(text).toBe(
+            `${i18n.global.t("workspace.agentRoleExceedsCap")}（ROLE_BINDING_EXCEEDS_CAP）`,
         );
+        expect(text).not.toContain("CREATE_ACCOUNT,MANAGE_WORKSPACE_AGENTS");
     });
 
     it("falls back to localized copy when the role binding Problem has no detail", async () => {
@@ -1722,7 +1728,7 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
         expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
-            i18n.global.t("workspace.agentRoleExceedsCap"),
+            `${i18n.global.t("workspace.agentRoleExceedsCap")}（ROLE_BINDING_EXCEEDS_CAP）`,
         );
     });
 
@@ -2175,7 +2181,7 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
         const wrapper = await mountOpenedPanel();
         await openEditing(wrapper, PID_A);
         expect(wrapper.get('[data-testid="workspace-agent-effective-cap-error"]').text()).toBe(
-            tt("workspace.agentEffectiveCapForbidden"),
+            `${tt("workspace.agentEffectiveCapForbidden")}（FORBIDDEN）`,
         );
         // 失败时**不渲染原子面**（回落快照会让「读了 live」与「显示快照」分不开，D-1281）。
         expect(wrapper.find('[data-testid="workspace-agent-effective-cap-atoms"]').exists()).toBe(

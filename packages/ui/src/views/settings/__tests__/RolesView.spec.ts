@@ -569,10 +569,10 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
     });
 
     /**
-     * 三条错误都用真实报文（2026-11-20 对运行中 stack-2 / CP=12641 的实测 HTTP 响应正文），
-     * 断言「原样展示」而不是「被压成保存失败」——这正是裁定选纯文本形态的理由。
+     * 三条错误都用真实报文（2026-11-20 对运行中 stack-2 / CP=12641 的实测 HTTP 响应正文）。
+     * task-855 起文案是本地化映射 + （CODE），CP 英文 detail 不再原样展示。
      */
-    it("400 INVALID_GRANT_RESOURCE 原样显示 CP 报文", async () => {
+    it("400 INVALID_GRANT_RESOURCE 显示本地化文案 + 错误码", async () => {
         const detail =
             "resource pattern 'src' is not valid for atom read: path patterns must be " +
             "fs:<workspaceId>[/<relative path>] without dot segments, wildcards, " +
@@ -588,14 +588,14 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
         await clickBody('[data-testid="role-editor-submit"]');
 
         await vi.waitFor(() =>
-            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
+            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(
+                `${i18n.global.t("settings.presetsError.invalidGrantResource")}（INVALID_GRANT_RESOURCE）`,
+            ),
         );
-        expect(wrapper.get('[data-testid="roles-error"]').text()).not.toBe(
-            i18n.global.t("settings.presetsError.generic"),
-        );
+        expect(wrapper.get('[data-testid="roles-error"]').text()).not.toContain(detail);
     });
 
-    it("403 FORBIDDEN 原样显示 CP 报文", async () => {
+    it("403 FORBIDDEN 显示本地化文案 + 错误码", async () => {
         const detail =
             "MANAGE_WORKSPACE_AGENTS is required to administer this workspace's bindings";
         mockedApi.createPreset.mockRejectedValue(
@@ -609,11 +609,14 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
         await clickBody('[data-testid="role-editor-submit"]');
 
         await vi.waitFor(() =>
-            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
+            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(
+                `${i18n.global.t("settings.presetsError.forbidden")}（FORBIDDEN）`,
+            ),
         );
+        expect(wrapper.get('[data-testid="roles-error"]').text()).not.toContain(detail);
     });
 
-    it("404 WORKSPACE_NOT_FOUND 原样显示 CP 报文", async () => {
+    it("404 WORKSPACE_NOT_FOUND 显示本地化文案 + 错误码", async () => {
         const detail = "Workspace not found: 00000000-0000-4000-8000-000000000000";
         mockedApi.createPreset.mockRejectedValue(
             new ApiError({ status: 404, code: "WORKSPACE_NOT_FOUND", detail, requestId: "t" }),
@@ -629,8 +632,11 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
         await clickBody('[data-testid="role-editor-submit"]');
 
         await vi.waitFor(() =>
-            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
+            expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(
+                `${i18n.global.t("settings.presetsError.workspaceNotFound")}（WORKSPACE_NOT_FOUND）`,
+            ),
         );
+        expect(wrapper.get('[data-testid="roles-error"]').text()).not.toContain(detail);
     });
 });
 
@@ -656,7 +662,9 @@ describe("RolesView delete flow", () => {
         await clickBody('[data-testid="role-delete-confirm"]');
 
         const error = wrapper.get('[data-testid="roles-error"]');
-        expect(error.text()).toBe(i18n.global.t("settings.presetsError.presetInUse"));
+        expect(error.text()).toBe(
+            `${i18n.global.t("settings.presetsError.presetInUse")}（ROLE_IN_USE）`,
+        );
         expect(error.text()).not.toContain("english detail");
     });
 
@@ -669,7 +677,7 @@ describe("RolesView delete flow", () => {
 
         await vi.waitFor(() =>
             expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(
-                i18n.global.t("settings.presetsError.systemPresetImmutable"),
+                `${i18n.global.t("settings.presetsError.systemPresetImmutable")}（SYSTEM_ROLE_IMMUTABLE）`,
             ),
         );
     });
@@ -814,7 +822,7 @@ describe("RoleBindingsPanel", () => {
 
         await vi.waitFor(() =>
             expect(wrapper.get('[data-testid="role-bindings-error"]').text()).toBe(
-                i18n.global.t(`settings.presetsError.${key}`),
+                `${i18n.global.t(`settings.presetsError.${key}`)}（${code}）`,
             ),
         );
         expect(wrapper.get('[data-testid="role-bindings-error"]').text()).not.toContain(
@@ -894,7 +902,7 @@ describe("presetErrorMessages", () => {
         expect(presetErrorKey(new Error("boom"))).toBe("generic");
 
         const message = presetErrorMessage(problemError(409, "ROLE_IN_USE"), (key) => key);
-        expect(message).toBe("settings.presetsError.presetInUse");
+        expect(message).toBe("settings.presetsError.presetInUse（ROLE_IN_USE）");
     });
 });
 
