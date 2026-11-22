@@ -113,6 +113,34 @@ type SessionOptions = {
 
 const DEFAULT_SYSTEM_PROMPT = "Use only the Workspace tools provided by CP.";
 
+/**
+ * task-824 / V179（DSD-1500 R2/R3）：`exec` 已从 AGENT_USER（默认实例角色）与 WS_EDITOR（默认工作区
+ * 角色）退役，只剩显式的 WS_RUNNER 携带。principal 的有效权限 = 角色基线 ∩ workspace cap，所以
+ * `exec@*` 的 cap 超过一个只绑了 AGENT_USER 的 principal，`setWorkspaceCap` 会 403
+ * `AGENT_PERMISSION_SCOPE_EXCEEDED`（principal-exceeding=[exec@*]）。
+ *
+ * 唯一能在 cap 出现之前写绑定的入口是创建请求的 `roleIds`（实例绑定不做 cap 校验）；反过来先建
+ * workspace 角色绑定会被「role atoms exceed the agent's workspace cap」409 拦住。默认实例角色不是
+ * 自动叠加的：`roleIds` 非空时 `bindInstanceRoles` 只绑这个集合，所以必须把 AGENT_USER 一起带上。
+ */
+const AGENT_USER_ROLE_NAME = "AGENT_USER";
+const WS_RUNNER_ROLE_NAME = "WS_RUNNER";
+
+async function instanceRoleIdsForCreate(
+    request: APIRequestContext,
+    headers: Record<string, string>,
+    workspaceId: string,
+): Promise<string[]> {
+    const res = await request.get(`${CP_URL}/api/v1/roles?workspaceId=${workspaceId}`, { headers });
+    expect(res.ok(), await res.text()).toBe(true);
+    const roles = (await res.json()) as Array<{ id?: string; name?: string }>;
+    return [AGENT_USER_ROLE_NAME, WS_RUNNER_ROLE_NAME].map((name) => {
+        const role = roles.find((row) => row.name === name);
+        expect(role?.id, `role ${name} must be listed for an agent-binding caller`).toBeTruthy();
+        return role!.id!;
+    });
+}
+
 function seedPrincipalManagementGrant(
     userId: string,
     workspaceId: string,
@@ -120,9 +148,14 @@ function seedPrincipalManagementGrant(
 ): void {
     // V64/V65: one direct grant row per subject — merge into the existing row
     // (the journey user may already carry a spec-seeded direct grant).
+    // task-824: WS_RUNNER 同时携带 USE_WORKSPACE_RUNTIME；实例绑定的 subset 守卫只认 caller 在
+    // **instance** 作用域的持有量，而普通账号的该 atom 只在 workspace 作用域（WS_OWNER/WS_EDITOR）。
     seedUserGrantPermissions(userId, [
         ...standardWorkspaceUserPermissions(workspaceId),
         ...actions.map((actionClass) => ({ actionClass, resource: "*" })),
+        ...(actions.includes("exec")
+            ? [{ actionClass: "USE_WORKSPACE_RUNTIME", resource: "*" }]
+            : []),
     ]);
 }
 
@@ -248,6 +281,9 @@ export async function provisionWorkspaceAgentPrincipal(
     const roleId = randomUUID(),
         templateId = randomUUID();
     const toolPermissions = actions.map((actionClass) => ({ actionClass, resource: "*" }));
+    const roleIds = actions.includes("exec")
+        ? await instanceRoleIdsForCreate(request, headers, auth.workspaceId)
+        : [];
     const template = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
@@ -275,6 +311,7 @@ export async function provisionWorkspaceAgentPrincipal(
         data: {
             name,
             templateId,
+            ...(roleIds.length > 0 ? { roleIds } : {}),
             // BL-343：D-174（`51d3fa95`）起 create 的 body 白名单不再收 `scope`
             // （"body 去 scope，旧值 400，无兼容分支"）；主体归属改由**工作区上下文**
             // （上面的 `X-Workspace-Id`）表达。这里既不送 `scope`，也不做"兼容旧值"分支——

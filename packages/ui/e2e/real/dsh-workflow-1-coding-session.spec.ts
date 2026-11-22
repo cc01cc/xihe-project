@@ -190,6 +190,9 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
             `现在在这个工作区里跑一条命令看看。 XIHE-E2E-EXEC dir`,
         );
         expect(run3, "turn 3 runId").toMatch(/^[0-9a-f-]{36}$/i);
+        // task-824：`exec` 在默认 ask 列表里（PolicyContext.DEFAULT_ASK_ACTION_CLASSES），第 3 轮
+        // 同样弹审批；不点掉它，run 停在 awaiting_approval，第 4 轮的发送会被 run 守卫锁住。
+        await approveCard(page);
         await expectAssistantMessage(page, `turn 3 (execute_command) 必须有回复`);
 
         // ── 第 4 轮：链耗尽 → 纯文本收尾 ───────────────────────────────────
@@ -198,8 +201,13 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
         await expectAssistantMessage(page, `turn 4 (收尾) 必须有回复`);
 
         // ── checkpoint：本 RUN 之后捕获行为可见 ────────────────────────────
+        // task-824：组件实际 testid 是 `run-checkpoint-marker`（RunCheckpointMarker.vue），
+        // 旧选择器 `checkpoint-*` 从未命中过；同时钉住 kind，避免 degraded/none 的空壳蒙混过关。
         const checkpointEntry = page
-            .locator('[data-testid="checkpoint-dialog"], [data-testid^="checkpoint-"]')
+            .locator(
+                '[data-testid="run-checkpoint-marker"][data-checkpoint-kind="captured"], ' +
+                    '[data-testid="run-checkpoint-marker"][data-checkpoint-kind="abnormal-captured"]',
+            )
             .first();
         await expect(checkpointEntry, "checkpoint 入口可见（捕获发生过）").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
