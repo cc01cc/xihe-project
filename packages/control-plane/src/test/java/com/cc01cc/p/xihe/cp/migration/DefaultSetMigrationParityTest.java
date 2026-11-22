@@ -262,9 +262,50 @@ class DefaultSetMigrationParityTest {
         // the SQL mirror fails here with an explicit message instead of a matrix diff.
         int catalogSize = PermissionAtomCatalog.actionAtoms().size()
                 + PermissionAtomCatalog.capabilityAtoms().size();
+        // task-870: the MCP ceiling is a second resource row per gateway action, not a new atom.
+        int mcpCeilingRows = SystemGrantPresetCatalog.mcpCeilingAtoms().size();
         Map<String, Set<String>> db = dbAtoms();
-        assertEquals(catalogSize, db.get(SystemGrantPresetCatalog.SUPER_ADMIN).size(),
-                "SUPER_ADMIN must materialize every action atom plus every capability atom");
+        assertEquals(catalogSize + mcpCeilingRows, db.get(SystemGrantPresetCatalog.SUPER_ADMIN).size(),
+                "SUPER_ADMIN must materialize every action atom, every capability atom, and the "
+                        + "`mcp:*` ceiling rows");
+    }
+
+    @Test
+    void mcpCeilingIsHumanAdministrationOnly() throws SQLException {
+        // task-870 / D-1921: `mcp:*` is the gateway channel ceiling. Only the human administration
+        // presets hold it; every agent preset must be granted per server explicitly.
+        Map<String, Set<String>> db = dbAtoms();
+        Set<String> fullCeiling = SystemGrantPresetCatalog.mcpCeilingAtoms().stream()
+                .map(ref -> ref.actionClass() + "|" + ref.resourcePattern())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        for (String role : List.of(SystemGrantPresetCatalog.SUPER_ADMIN,
+                SystemGrantPresetCatalog.ADMIN)) {
+            Set<String> missing = new LinkedHashSet<>(fullCeiling);
+            missing.removeAll(db.get(role));
+            assertEquals(Set.of(), missing, "role " + role + " must hold the full mcp ceiling");
+        }
+        // WS_OWNER holds no `network` atom, so its ceiling omits that row on both sides.
+        Set<String> ownerCeiling = fullCeiling.stream()
+                .filter(pair -> !pair.startsWith(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_NETWORK) + "|"))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        assertEquals(ownerCeiling, db.get(SystemGrantPresetCatalog.WS_OWNER).stream()
+                        .filter(pair -> pair.endsWith("|mcp:*"))
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                "WS_OWNER must hold exactly its own action set with mcp:*");
+        for (String role : List.of(SystemGrantPresetCatalog.USER,
+                SystemGrantPresetCatalog.WS_EDITOR,
+                SystemGrantPresetCatalog.WS_VIEWER,
+                SystemGrantPresetCatalog.AGENT_DELEGATOR,
+                SystemGrantPresetCatalog.AGENT_USER,
+                SystemGrantPresetCatalog.AGENT_READER,
+                SystemGrantPresetCatalog.AGENT_WORKER,
+                SystemGrantPresetCatalog.WS_RUNNER,
+                SystemGrantPresetCatalog.ORG_LEADER)) {
+            assertTrue(db.get(role).stream().noneMatch(pair -> pair.endsWith("|mcp:*")),
+                    "role " + role + " must not hold an mcp:* wildcard (explicit per-server grants only)");
+        }
     }
 
     @Test

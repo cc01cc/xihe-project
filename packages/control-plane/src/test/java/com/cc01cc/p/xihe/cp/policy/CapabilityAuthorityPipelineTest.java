@@ -145,8 +145,10 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
 
         List<AuthorizationGrant> rows = grantRepository.findBySubjectTypeAndSubjectIdAndSource(
                 "user", admin.getId(), GrantSources.PRESET);
-        assertEquals(PermissionAtomCatalog.actionAtoms().size(), rows.size(),
-                "SUPER_ADMIN materializes its 15 action atoms; the 3 capability atoms are authorities");
+        assertEquals(PermissionAtomCatalog.actionAtoms().size()
+                        + SystemGrantPresetCatalog.mcpCeilingAtoms().size(), rows.size(),
+                "SUPER_ADMIN materializes every action atom plus the mcp:* ceiling rows "
+                        + "(task-870); the 3 capability atoms are authorities");
         rows.forEach(row -> assertFalse(
                 PermissionAtomCatalog.isCapabilityAtom(
                         row.getPermissions().get(0).get("actionClass").asText()),

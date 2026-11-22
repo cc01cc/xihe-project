@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -85,6 +86,19 @@ public class PolicyEngine {
     /** Checks hard guard and current grants before the approval resolver is allowed to run. */
     public boolean allowsByGrant(PolicyContext context, String toolName, String body, String sessionId,
                                  String userId, String workspaceId, boolean userPrincipalOnly) {
+        return allowsByGrant(context, toolName, body, sessionId, userId, workspaceId,
+                userPrincipalOnly, List.of());
+    }
+
+    /**
+     * task-870 / D-1921: {@code additionalResources} are appended to (never substituted for) the
+     * resources extracted from the tool arguments. The MCP gateway passes {@code mcp:<serverId>}
+     * here, so a gateway call is authorized only when the principal holds every
+     * {@code (actionClass × resource)} pair — the object resource and the channel resource.
+     */
+    public boolean allowsByGrant(PolicyContext context, String toolName, String body, String sessionId,
+                                 String userId, String workspaceId, boolean userPrincipalOnly,
+                                 List<String> additionalResources) {
         if (grantAuthorizationService == null || context == null || toolName == null || toolName.isBlank()) {
             return false;
         }
@@ -95,7 +109,9 @@ public class PolicyEngine {
         // DSD-1500 R1 (task-115): the request carries every domain the tool touches, not just the
         // face's primary class -- a delete must reach HardGuard as "delete", a move as both.
         PolicyRequest request = new PolicyRequest(toolName, registry.actionClassesOf(toolName),
-                declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
+                mergeResources(
+                        declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
+                        additionalResources),
                 face.shape(), userId, workspaceId, sessionId);
         var hardDeny = hardGuard.checkWorkspaceResources(toolName, request.resources())
                 .or(() -> hardGuard.check(request));
@@ -107,6 +123,43 @@ public class PolicyEngine {
         return userPrincipalOnly
                 ? grantAuthorizationService.allowsUserOnly(request)
                 : grantAuthorizationService.allows(request);
+    }
+
+    /**
+     * task-870: a single {@code (actionClass × resource)} probe used by {@code tools/list}
+     * visibility filtering. It deliberately shares the request/guard path with
+     * {@link #allowsByGrant} instead of growing a second visibility matrix.
+     */
+    public boolean allowsResource(PolicyContext context, String actionClass, String resource,
+                                  String sessionId, String userId, String workspaceId,
+                                  boolean userPrincipalOnly) {
+        if (grantAuthorizationService == null || context == null
+                || actionClass == null || actionClass.isBlank()
+                || resource == null || resource.isBlank()) {
+            return false;
+        }
+        PolicyRequest request = new PolicyRequest("tools/list", List.of(actionClass),
+                List.of(resource), ToolShape.STRUCTURED, userId, workspaceId, sessionId);
+        var hardDeny = hardGuard.checkWorkspaceResources(request.tool(), request.resources())
+                .or(() -> hardGuard.check(request));
+        if (hardDeny.isPresent()) {
+            audit.record(sessionId, request.tool(), "policy_hard_deny",
+                    hardDeny.get().kind() + ":" + hardDeny.get().reason());
+            return false;
+        }
+        return userPrincipalOnly
+                ? grantAuthorizationService.allowsUserOnly(request)
+                : grantAuthorizationService.allows(request);
+    }
+
+    /** Appends extra resources without dropping or replacing any extracted resource. */
+    private static List<String> mergeResources(List<String> extracted, List<String> additional) {
+        if (additional == null || additional.isEmpty()) {
+            return extracted;
+        }
+        LinkedHashSet<String> merged = new LinkedHashSet<>(extracted);
+        merged.addAll(additional);
+        return List.copyOf(merged);
     }
 
     public boolean hasCurrentAgentToolCall(String userId, String workspaceId, String sessionId,
@@ -256,6 +309,18 @@ public class PolicyEngine {
 
     public PolicyVerdict evaluateVerdict(PolicyContext context, String toolName, String body,
                                          String sessionId, String mode, String userId, String workspaceId) {
+        return evaluateVerdict(context, toolName, body, sessionId, mode, userId, workspaceId,
+                List.of());
+    }
+
+    /**
+     * task-870: the verdict twin of the four-argument-plus overload above. The gate
+     * ({@link #allowsByGrant}) is the decisive check; passing the same extra resources here keeps
+     * the protected-file / approval surfaces reading one resource list.
+     */
+    public PolicyVerdict evaluateVerdict(PolicyContext context, String toolName, String body,
+                                         String sessionId, String mode, String userId,
+                                         String workspaceId, List<String> additionalResources) {
         if (toolName == null || toolName.isBlank()) {
             audit.record(sessionId, toolName, "policy_check", "deny_empty_tool");
             return PolicyVerdict.of(PolicyEffect.DENY, null, PolicyLayer.BUILTIN, mode, "tool name is required");
@@ -267,7 +332,9 @@ public class PolicyEngine {
 
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         PolicyRequest request = new PolicyRequest(toolName, registry.actionClassesOf(toolName),
-                declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
+                mergeResources(
+                        declarationResources(toolName, workspaceId, PolicyResourceExtractor.extract(body)),
+                        additionalResources),
                 face.shape(), userId, workspaceId, sessionId);
 
         var hardDeny = hardGuard.check(request);

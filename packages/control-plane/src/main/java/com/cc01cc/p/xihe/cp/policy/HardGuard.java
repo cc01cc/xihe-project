@@ -96,6 +96,12 @@ public class HardGuard {
                 }
                 continue;
             }
+            // task-870: `mcp:`/`credential:`/`skill:` are identities, not paths. Treating
+            // `mcp:server` as a file resource would either reject it as an absolute path or run
+            // `..`/segment checks that have no meaning on a server id.
+            if (!ResourceNamespaces.isPathResource(resource)) {
+                continue;
+            }
             String normalized = resource.replace('\\', '/');
             if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:.*")) {
                 return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "file resource must be workspace-relative"));
@@ -120,10 +126,14 @@ public class HardGuard {
                 continue;
             }
             String normalized = resource.replace('\\', '/').toLowerCase();
-            if (normalized.contains("..") && normalized.contains("/")) {
+            // task-870 consumer audit: the path-shaped checks below only apply to file
+            // namespaces. `mcp:` is not a drive letter or a path prefix; a server id that happens
+            // to contain `..` or `.git` must not be refused as a path escape / critical deletion.
+            boolean pathShaped = ResourceNamespaces.isPathResource(resource);
+            if (pathShaped && normalized.contains("..") && normalized.contains("/")) {
                 return Optional.of(new HardDeny(Kind.PATH_ESCAPE, "resource escapes workspace: " + resource));
             }
-            if (deletion) {
+            if (deletion && pathShaped) {
                 for (String segment : normalized.split("/", -1)) {
                     if (CRITICAL_SEGMENTS.contains(segment)) {
                         return Optional.of(new HardDeny(Kind.CRITICAL_PATH_DELETION,

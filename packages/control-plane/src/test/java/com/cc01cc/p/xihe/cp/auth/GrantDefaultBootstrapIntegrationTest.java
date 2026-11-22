@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.files.dto.BatchUploadResult;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
@@ -242,8 +243,10 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                         + "not a hard-coded count");
         assertTrue(seededAdminAtoms.contains(OWN_AGENT_ATOM),
                 "PLAN-0750 M1: SUPER_ADMIN carries the restored own-agent atom (parity mandate)");
-        assertEquals(PermissionAtomCatalog.actionAtoms().size(), seededAdminRows.size(),
-                "one materialized row per action atom; capability atoms are never rows");
+        assertEquals(PermissionAtomCatalog.actionAtoms().size()
+                        + SystemGrantPresetCatalog.mcpCeilingAtoms().size(), seededAdminRows.size(),
+                "one materialized row per action atom plus the task-870 mcp:* ceiling; "
+                        + "capability atoms are never rows");
 
         Session session = sessionService.create(userId, workspaceId, "Grant test Session", null, null);
         sessionId = session.getId().toString();

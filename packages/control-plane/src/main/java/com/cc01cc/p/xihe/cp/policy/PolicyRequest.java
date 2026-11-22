@@ -30,6 +30,15 @@ public record PolicyRequest(
         if (actionClasses.stream().anyMatch(ToolFaceRegistry::isCredentialActionClass)) {
             for (String resource : resources) {
                 if (!ToolFaceRegistry.isConcreteCredentialResource(resource)) {
+                    // task-870: an MCP gateway call adds `mcp:<serverId>` to the same list as the
+                    // concrete credential. Other registered namespaces are identities, not a
+                    // credential wildcard, so they do not weaken the concrete-uuid rule.
+                    String namespace = ResourceNamespaces.namespaceOf(resource);
+                    if (namespace != null
+                            && !ResourceNamespaces.CREDENTIAL.equals(namespace)
+                            && ResourceNamespaces.matcherOf(resource) != null) {
+                        continue;
+                    }
                     throw new IllegalArgumentException(
                             "credential requests must carry a concrete credential:<uuid> resource: " + resource);
                 }

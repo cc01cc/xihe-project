@@ -336,9 +336,12 @@ class AgentPrincipalScopeMigrationTest {
         Connection head = freshConnection;
         // BL-312 (option B, 2026-11-09): V147 removed the atom V91 planted, so the PostgreSQL seed
         // and the code catalog shrank together (33 → 32 action atoms).
-        assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
+        assertEquals(PermissionAtomCatalog.actionAtoms().size()
+                        + PermissionAtomCatalog.capabilityAtoms().size()
+                        + SystemGrantPresetCatalog.mcpCeilingAtoms().size(),
                 roleAtomCount(head, SystemGrantPresetCatalog.SUPER_ADMIN_ID),
-                "SUPER_ADMIN carries every action atom plus the capability atoms");
+                "SUPER_ADMIN carries every action atom plus the capability atoms plus the "
+                        + "task-870 mcp:* ceiling");
         // The per-role counts are derived from the code-side seeds: V91/V147 keep the SQL mirror of
         // SystemGrantPresetCatalog, so a hard-coded 10/6 would be the next thing to rot.
         assertEquals(seedAtomCount(SystemGrantPresetCatalog.ADMIN),

@@ -119,10 +119,43 @@ public class SystemGrantPresetCatalog {
     public record PresetSeed(UUID id, String name, String displayName, String description, List<AtomRef> atoms) {
     }
 
+    /** The complete {@code mcp:*} ceiling (all gateway actions), for SUPER_ADMIN and ADMIN. */
+    public static List<AtomRef> mcpCeilingAtoms() {
+        return mcpCeiling(MCP_GATEWAY_ACTIONS);
+    }
+
+    private static List<AtomRef> mcpCeiling(List<String> actions) {
+        return actions.stream()
+                .map(action -> new AtomRef(AtomNames.action(action), ResourceNamespaces.MCP_WILDCARD))
+                .toList();
+    }
+
     private static final List<AtomRef> CREDENTIAL_ATOMS = List.of(
             AtomRef.wildcard(ToolFaceRegistry.ACTION_CREDENTIAL_USE),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_CREDENTIAL_REVEAL),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE));
+
+    /**
+     * task-870 / D-1921: the action atoms whose calls can travel through the external MCP gateway.
+     * The {@code mcp:*} ceiling is seeded on the same actions, so a gateway call is
+     * {@code (action × objectResource) AND (action × mcp:<serverId>)}. Only the human
+     * administration presets receive the wildcard; agent presets get a server id explicitly.
+     */
+    private static final List<String> MCP_GATEWAY_ACTIONS = List.of(
+            ToolFaceRegistry.ACTION_READ,
+            ToolFaceRegistry.ACTION_WRITE,
+            ToolFaceRegistry.ACTION_DELETE,
+            ToolFaceRegistry.ACTION_EXEC,
+            ToolFaceRegistry.ACTION_NETWORK,
+            ToolFaceRegistry.ACTION_PLUGIN_INVOKE);
+
+    /** WS_OWNER does not hold {@code network}, so its MCP ceiling mirrors its own action set. */
+    private static final List<AtomRef> WS_OWNER_MCP_CEILING = mcpCeiling(List.of(
+            ToolFaceRegistry.ACTION_READ,
+            ToolFaceRegistry.ACTION_WRITE,
+            ToolFaceRegistry.ACTION_DELETE,
+            ToolFaceRegistry.ACTION_EXEC,
+            ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
 
     private static final List<AtomRef> BASE_ATOMS = List.of(
             AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
@@ -283,7 +316,8 @@ public class SystemGrantPresetCatalog {
                                         // approvals; the criterion is (action:approve, the request's
                                         // resource), never "is the run owner". The seed row carries the
                                         // request-scoped sentinel, not `*`.
-                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)))),
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)),
+                                mcpCeilingAtoms())),
                 new PresetSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
@@ -346,7 +380,8 @@ public class SystemGrantPresetCatalog {
                                         // task-835 (approval contract §2.3): a workspace owner decides
                                         // approvals for this workspace. Same request-scoped resource rule
                                         // as ADMIN; grant scope already limits the candidate set.
-                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)))),
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)),
+                                WS_OWNER_MCP_CEILING)),
                 new PresetSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         // DSD-1500 (Q-93) R2: exec left the editor default as well — the intersection
                         // requires every level to hold an atom, so leaving exec here would keep the
@@ -455,6 +490,8 @@ public class SystemGrantPresetCatalog {
         List<AtomRef> atoms = new java.util.ArrayList<>();
         PermissionAtomCatalog.actionAtoms().forEach(name -> atoms.add(AtomRef.wildcard(name)));
         PermissionAtomCatalog.capabilityAtoms().forEach(name -> atoms.add(AtomRef.wildcard(name)));
+        // task-870: the gateway ceiling is a second resource row per action atom, not a new action.
+        atoms.addAll(mcpCeilingAtoms());
         return List.copyOf(atoms);
     }
 

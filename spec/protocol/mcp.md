@@ -118,8 +118,9 @@ MCP 侧审计动作（T2.3 读回契约，新增动作须同批改本节与 [`se
 ### 3.4 可见性（现状与差距）
 
 - **原则**：工具可见性 MUST 与 `read` 面同源，不另立矩阵（`tools/list` 与 `tools/call` 共用同一 face 解析）。
-- **现状**：`tools/list` 只做目录合并（system tools + stdio 合并 + CP 自有三件套，`McpProxyController.java:325-340,565-610`），**没有**按 grants 过滤的分支；未持 `read` 的主体在目录里仍可能看到工具，调用时才被 fail-closed 拒绝。因此「未授权不可见」目前**不是**既有保证。
-- **冻结条款（已裁定）**：G8 三工具的 v1 判据 = **「不可调 + 可审计」**（调用侧 fail-closed + 拒绝有审计留痕）。目录侧过滤 **descope**，不在 v1 判据内（PLAN-0686 `review/round-2.md` P1-1 裁定 B，台账 D-63）；若未来要做目录过滤，属**新增实现**，须同批改本节 + `verify.md` V2 + OpenAPI/inventory。本文件不把未实现行为写成契约。
+- **外部 MCP server（task-870 / D-1921 已实现）**：`tools/list` 合并目录后，对每个**能从 catalog 解析到一行**的 serverId，用 `read × mcp:<canonicalServerId>` 求值（`PolicyEngine.allowsResource`，与调用侧同一 grant 路径）；不持有该资源对的主体看不到该 server 的工具。被过滤时审计流记 `tool=tools/list action=visibility_filtered`。不另立第二套可见性矩阵，也不新增表。
+- **内置工具（`__system__` / `__cp__`）**：没有 catalog 行，因此不参与 `mcp:` 过滤；G8 三工具（`git_status`/`git_diff`/`git_log`）仍是 CP 自有面，v1 判据维持 **「不可调 + 可审计」**（调用侧 fail-closed + 拒绝有审计留痕，PLAN-0686 `review/round-2.md` P1-1 裁定 B / D-63）。**MUST NOT** 把「目录里可见」读成「可调用」。
+- **catalog 行与 canonical 化**：只有能解析到 catalog 一行的 serverId 才追加 `mcp:`；没有 catalog 行的 id（内置 id、或目录刷新不可能产生的过期映射项）不追加，转发到该映射项本身也会失败。**canonical 化失败**（catalog 行存在但 id 不可用）时调用侧 fail-closed（`TOOL_GRANT_DENIED` + `mcp_resource_unresolved` 审计），目录侧不展示。写面拒绝 `__` 前缀 server 名，堵住「注册同名 server 继承内置排除」的绕过。
 
 ### 3.5 写型与拆分闸（不冻结未来矩阵）
 

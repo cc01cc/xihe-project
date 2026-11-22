@@ -219,6 +219,10 @@ public class GrantIntersectionEvaluator {
      * compare THERE (never as strings, 501 §10.4 #7). Anything else uses the shared matcher.
      */
     public boolean matchesResource(String grantResource, String requestResource, ToolShape shape) {
+        // task-870: the MCP channel is granted explicitly; `*` never covers it.
+        if (ResourceNamespaces.mcpChannelRequiresExplicitGrant(grantResource, requestResource)) {
+            return false;
+        }
         Boolean physical = ResourceIdentity.matchesDeclaration(grantResource, requestResource, scopeResolver);
         if (physical != null) {
             return physical;

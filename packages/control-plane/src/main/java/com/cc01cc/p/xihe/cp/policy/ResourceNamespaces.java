@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -57,6 +58,15 @@ public final class ResourceNamespaces {
     public static final String PHYS = "phys";
     public static final String CREDENTIAL = "credential";
     public static final String SKILL = "skill";
+    /**
+     * task-870 / D-1921: an external MCP server as a resource. {@code mcp:<serverId>} is appended
+     * to every gateway tool call's resources and ANDed with the object resource(s) the tool
+     * arguments produce. It is a <b>gate</b> (the channel), never a replacement for the object: a
+     * principal holding {@code write @ mcp:server} but not {@code write @ fs:ws/a} must still be
+     * refused. The built-in gateway ids ({@code __system__}/{@code __cp__}) are deliberately not
+     * addressed by this namespace — see {@link #BUILTIN_MCP_SERVER_IDS}.
+     */
+    public static final String MCP = "mcp";
 
     /** Context namespaces that look like resources but are not (empty on purpose). */
     public static final String WORKSPACE_CONTEXT = "workspace";
@@ -78,6 +88,23 @@ public final class ResourceNamespaces {
     public static final String CREDENTIAL_PREFIX = CREDENTIAL + ":";
     public static final String CREDENTIAL_WILDCARD = CREDENTIAL_PREFIX + WILDCARD;
     public static final String SKILL_PREFIX = SKILL + ":";
+    public static final String MCP_PREFIX = MCP + ":";
+    public static final String MCP_WILDCARD = MCP_PREFIX + WILDCARD;
+
+    /**
+     * The CP-owned gateway ids. They are not MCP servers a user can grant: they address the
+     * built-in tool surface ({@code write_file}, {@code spawn_agent}, …). Appending them as
+     * {@code mcp:__system__} would make every agent preset fail the AND gate, because agent
+     * presets hold no wildcard (task-870 hard condition).
+     */
+    public static final Set<String> BUILTIN_MCP_SERVER_IDS = Set.of("__system__", "__cp__");
+
+    /** A server id already in canonical shape: lowercase slug, optional {@code ~<8 hex>} suffix. */
+    private static final Pattern MCP_CANONICAL =
+            Pattern.compile("^[a-z0-9._-]+(~[0-9a-f]{8})?$");
+    private static final Pattern UUID_TEXT =
+            Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+    private static final int MCP_SLUG_MAX = 48;
 
     private static final Map<String, Namespace> REGISTRY = registry();
 
@@ -89,6 +116,7 @@ public final class ResourceNamespaces {
         register(namespaces, PHYS, Matcher.PREFIX, Grantability.EVALUATION_ONLY);
         register(namespaces, CREDENTIAL, Matcher.EXACT, Grantability.GRANTABLE);
         register(namespaces, SKILL, Matcher.PREFIX, Grantability.GRANTABLE);
+        register(namespaces, MCP, Matcher.EXACT, Grantability.GRANTABLE);
         return Collections.unmodifiableMap(namespaces);
     }
 
@@ -183,6 +211,104 @@ public final class ResourceNamespaces {
         return REQUEST_RESOURCE.equals(resource);
     }
 
+    /** True when the id is a CP-owned gateway id, which never becomes an {@code mcp:} resource. */
+    public static boolean isBuiltinMcpServerId(String serverId) {
+        return serverId != null && BUILTIN_MCP_SERVER_IDS.contains(serverId.trim());
+    }
+
+    /** True when {@code resource} is in the MCP gateway namespace. */
+    public static boolean isMcpResource(String resource) {
+        return MCP.equals(namespaceOf(resource));
+    }
+
+    /**
+     * The MCP channel is a <b>gate</b>: {@code *} (or any non-{@code mcp:} ceiling) must never
+     * imply it, otherwise every preset holding {@code write@*} — including every agent preset —
+     * would silently pass the gateway gate and the per-server default would be meaningless. Only
+     * {@code mcp:*} / {@code mcp:<id>} cover an {@code mcp:} candidate.
+     */
+    public static boolean mcpChannelRequiresExplicitGrant(String ceiling, String candidate) {
+        return isMcpResource(candidate) && !isMcpResource(ceiling);
+    }
+
+    /**
+     * task-870 / D-1921: the stable canonical id for an MCP server.
+     *
+     * <p>Two shapes exist in the mapping: a UUID (remote server rows and sticky aliases) and the
+     * legacy {@code mcp-config} string key (stdio server name). A UUID is already stable and is
+     * lowercased verbatim. Anything else is reduced to a lowercase {@code [a-z0-9._-]} slug; when
+     * that reduction is lossy (uppercase, spaces, punctuation, or truncation) an 8-hex SHA-256
+     * suffix distinguishes it from a different key that would otherwise collapse to the same slug.
+     * The function is idempotent: an already-canonical value is returned unchanged.</p>
+     *
+     * <p>Consequence, stated in the docs and not hidden: renaming a stdio server's config key
+     * changes its canonical id, so grants naming the old id stop matching. That is fail-closed and
+     * visible (the tool call is denied), never a silent widening.</p>
+     */
+    public static String canonicalMcpServerId(String rawServerId) {
+        if (rawServerId == null) {
+            return null;
+        }
+        String lower = rawServerId.trim().toLowerCase(java.util.Locale.ROOT);
+        if (lower.isEmpty()) {
+            return null;
+        }
+        if (UUID_TEXT.matcher(lower).matches()) {
+            return lower;
+        }
+        if (MCP_CANONICAL.matcher(lower).matches()) {
+            return lower;
+        }
+        String slug = lower.replaceAll("[^a-z0-9._-]+", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("^-+", "")
+                .replaceAll("-+$", "");
+        if (slug.isEmpty()) {
+            slug = "server";
+        }
+        if (slug.length() > MCP_SLUG_MAX) {
+            slug = slug.substring(0, MCP_SLUG_MAX).replaceAll("-+$", "");
+        }
+        return slug + "~" + shortHash(lower);
+    }
+
+    /**
+     * The canonical resource of a gateway tool call ({@code mcp:<canonicalId>}), or {@code null}
+     * for a built-in gateway id / an unusable id. {@code null} means "nothing to append"; the MCP
+     * gateway treats an unusable non-builtin id as fail-closed before it reaches this method.
+     */
+    public static String mcpServerResource(String rawServerId) {
+        if (isBuiltinMcpServerId(rawServerId)) {
+            return null;
+        }
+        String canonical = canonicalMcpServerId(rawServerId);
+        return canonical == null ? null : MCP_PREFIX + canonical;
+    }
+
+    /**
+     * True when the resource is a filesystem-shaped value. Only these participate in path
+     * containment / protected-file checks; {@code mcp:}, {@code credential:} and {@code skill:} are
+     * identities, not paths (task-870 consumer audit).
+     */
+    public static boolean isPathResource(String resource) {
+        String namespace = namespaceOf(resource);
+        return namespace == null || FS.equals(namespace) || PHYS.equals(namespace);
+    }
+
+    private static String shortHash(String value) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(8);
+            for (int i = 0; i < 4; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required by the JVM", impossible);
+        }
+    }
+
     /**
      * Namespace-aware coverage. Used by {@link ToolFaceRegistry#resourceCovers} for registered
      * namespaces; the credential family keeps its stricter canonical-form rule.
@@ -192,7 +318,7 @@ public final class ResourceNamespaces {
             return false;
         }
         if (WILDCARD.equals(pattern)) {
-            return true;
+            return !isMcpResource(value);
         }
         String patternNamespace = namespaceOf(pattern);
         String valueNamespace = namespaceOf(value);

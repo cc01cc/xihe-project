@@ -196,7 +196,7 @@ Only two things differ from §3: step 7 adds "condition", and step 8 "approval" 
 
 - Atom catalog: **42 action atoms + 3 capability atoms** (`policy/PermissionAtomCatalog.java`; the [measured] enumeration count is in `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`).
 - Action classes with a tool-face entry: **7** — `read`, `write`, `exec`, `network`, `credential_use`, `spawn_agent`, `team_task_manage` (`policy/ToolFaceRegistry.java:280-296`). The `delete` action class exists, but no tool maps to it today and `WRITE_TOOLS` contains no delete tool (`policy/ToolFaceRegistry.java:193-195`, `:254`), so that atom is unreachable through the tool chain.
-- Resource families (the value shapes on the resource axis): `fs:` declaration keys (**the only path form that may be written to a grant**), `phys:` evaluation keys (expanded only at evaluation time), `credential:` (`credential:*` or `credential:<uuid>`), `skill:` (`skill:*` or `skill:<uuid>`), plus bare paths / URLs / `*`. The prefix constants for `credential:` and `skill:` are at `policy/ToolFaceRegistry.java:168-169` and `:176`; `fs:` / `phys:` are at `policy/ResourceIdentity.java:24-25`.
+- Resource families (the value shapes on the resource axis): `fs:` declaration keys (**the only path form that may be written to a grant**), `phys:` evaluation keys (expanded only at evaluation time), `credential:` (`credential:*` or `credential:<uuid>`), `skill:` (`skill:*` or `skill:<uuid>`), `mcp:` (`mcp:*` or `mcp:<canonicalServerId>`, see §5.5), plus bare paths / URLs / `*`. Namespaces and matchers are registered once in `policy/ResourceNamespaces.java`; `fs:` / `phys:` parsing stays in `policy/ResourceIdentity.java`.
 
 Default action-atom counts for the eight built-in grant presets ([measured], same evidence):
 
@@ -217,7 +217,7 @@ PEP coverage: only 7 of the 42 atoms (about 17%) have a tool-face entry; the Win
 
 ### 5.1 Resource namespaces and name collisions
 
-A resource string has the canonical shape "namespace + value": `fs:<workspaceId>[/<rel>]`, `credential:<uuid>`, `skill:<uuid>`, and so on. The namespace registry (the single registration point delivered by task-830) is the source of truth: **an unregistered prefix in a grant resource must fail closed**; "it looks like a prefix" is not enough. The registry also declares matcher types (`exact` / `prefix` / `tree`); only `exact` and `prefix` are active today, and `tree` is a reserved type with no `org:` namespace registered (see §5.4).
+A resource string has the canonical shape "namespace + value": `fs:<workspaceId>[/<rel>]`, `credential:<uuid>`, `skill:<uuid>`, `mcp:<serverId>`, and so on. The namespace registry (the single registration point delivered by task-830 and extended to `mcp:` by task-870) is the source of truth: **an unregistered prefix in a grant resource must fail closed**; "it looks like a prefix" is not enough. The registry also declares matcher types (`exact` / `prefix` / `tree`); only `exact` and `prefix` are active today, and `tree` is a reserved type with no `org:` namespace registered (see §5.4).
 
 **Two name collisions must be kept apart**:
 
@@ -249,7 +249,20 @@ The org tree is **visibility scope** (`OrgUnitAccess.Scope`, an ltree path) and 
 
 The resource registry **reserves a `tree` matcher type**, but does not register an `org:` namespace today. If org units ever need to become resources, add one registry row (namespace + `tree` matcher + canonicalizer); no table change, no parser change, no evaluator change.
 
-### 5.5 Playbook for adding a resource category
+### 5.5 `mcp:` is a channel gate, not the object being acted on
+
+An external MCP server enters the judgement as a **channel resource**: every gateway tool call **appends** `mcp:<canonicalServerId>` to `PolicyRequest.resources`, and the object resource(s) parsed from the arguments are evaluated **at the same time**. Two hard constraints:
+
+1. **Append, never replace.** Replacing the object resource with `mcp:<sid>` would let `write × mcp:server` cover any object on that server — a widening, not a narrowing. Acceptance counterexample: an agent holding only `mcp:<sid>` + `mcp:*` and no object resource must still be refused when it calls a write tool.
+2. **`*` does not cover `mcp:`.** The channel gate must be granted explicitly; otherwise every preset holding `write@*` (including every agent preset) would silently pass it. Only `mcp:*` / `mcp:<id>` cover `mcp:<id>`.
+
+**Positive enumeration**: only a serverId that resolves to a catalog row (an `mcp_remote_servers` UUID or an `mcp_stdio_servers` name) is appended. CP-owned gateway ids (`__system__` / `__cp__`) have no catalog row and are excluded structurally — built-in `write_file` / `read_file` are unaffected by the channel gate (the task-853 first-install regression guard). The write face rejects `__`-prefixed server names so a holder of `MANAGE_WORKSPACE_MCP` cannot register a same-named server to inherit the built-in exclusion.
+
+**Canonical shape**: a UUID is lowercased verbatim; a non-UUID (legacy `mcp-config` key / stdio name) becomes a stable lowercase slug, with an 8-hex SHA-256 suffix when the reduction is lossy (case, spaces, punctuation, truncation). The function is idempotent; the write face accepts only the canonical value and returns 400 with the suggested form otherwise. Cost: **renaming a stdio server's config key changes the canonical id and invalidates the old grant** — fail-closed and visible, never a silent widening.
+
+**Default set**: `mcp:*` is granted only to `SUPER_ADMIN` / `ADMIN` / `WS_OWNER` (WS_OWNER excludes `network`, which it does not hold); agent presets are granted per server explicitly. After upgrade an un-granted agent is refused by every MCP server (fail-closed); the release note must say so.
+
+### 5.6 Playbook for adding a resource category
 
 To add a resource category such as memory or plugin later, follow this order; skipping a step means it is not done:
 
