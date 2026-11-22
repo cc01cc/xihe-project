@@ -11,6 +11,10 @@ export const PROBLEM_DETAIL_MAX_LENGTH = 200;
  * BL-288 —— 统一 error→用户文案：**优先后端 Problem `detail`**，没有才回退调用方的通用文案。
  *
  * - 只读 `problem.detail`（不展示 stack/内部字段；code 由日志/上报保留）；
+ * - **诊断字段专用**：CP 的 `detail` 可能是英文原文。本函数的返回值只允许进
+ *   `ErrorPresentation.technicalDetail`（折叠区）或日志，**不得**作为 toast / 内联错误主文案。
+ *   用户主文案的唯一入口是 `presentCauseError` / `causeErrorToastText`（本地化优先 + 错误码）；
+ *   `errorCopyHygiene.gate.spec.ts` 机械拦截本函数被当作主文案使用；
  * - 换行/控制字符折叠为单空格 ⇒ 单行；
  * - 超过 `maxLength` 个码点截断并加省略号；
  * - detail 为空/非字符串 ⇒ `fallback`。
@@ -268,6 +272,17 @@ export function causeErrorToastText(
     const presentation = presentCauseError(t, cause, fallback);
     const copy = presentation.copy === t("errors.unknownCode") ? fallback : presentation.copy;
     return presentation.code ? `${copy}（${presentation.code}）` : copy;
+}
+
+/**
+ * task-846：给**已有本地化文案**补上稳定错误码，格式与 `causeErrorToastText` 一致。
+ *
+ * 适用于已经按码做了专门文案的面（如成员面板的 `USER_NOT_FOUND` 等）：它们不需要再走
+ * `presentCauseError` 的通用表，但合同要求「可读文案 + 错误码」两件都在。
+ */
+export function withErrorCode(copy: string, code: string | undefined | null): string {
+    const normalized = (code ?? "").trim();
+    return normalized ? `${copy}（${normalized}）` : copy;
 }
 
 export function chatErrorToastText(code: string | undefined, detail?: string | null): string {

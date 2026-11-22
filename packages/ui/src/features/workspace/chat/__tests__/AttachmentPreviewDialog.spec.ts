@@ -193,7 +193,9 @@ describe("AttachmentPreviewDialog", () => {
         await flushPromises();
 
         expect(wrapper.find('[data-testid="attachment-preview-error"]').exists()).toBe(true);
-        expect(wrapper.text()).toContain("boom");
+        // task-846：错误面只给本地化文案（+ 稳定码），原始 Error.message 不进 UI。
+        expect(wrapper.text()).toContain("预览加载失败");
+        expect(wrapper.text()).not.toContain("boom");
 
         const retry = wrapper.findAll("button").find((button) => button.text() === "重试");
         expect(retry).toBeDefined();

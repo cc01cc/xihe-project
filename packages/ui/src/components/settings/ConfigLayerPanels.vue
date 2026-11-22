@@ -936,7 +936,8 @@ async function handleReset(domain: string, key: string) {
         toast.success(`${key} ${t("common.reset")}`);
     } catch (e) {
         logger.warn("Failed to reset config key", e);
-        toast.error(causeErrorToastText(t, e, t("settings.saveFailed")));
+        // task-846：重置失败不再借用「保存失败」文案（P1-1 同类语义错位），错误码照常附上。
+        toast.error(causeErrorToastText(t, e, t("settings.resetFailed")));
     }
 }
 </script>

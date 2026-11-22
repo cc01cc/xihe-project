@@ -1414,6 +1414,31 @@ describe("错误面本地化（task-755，替代 BL-288 的 detail 直显）", (
         expect(calls.some((message) => message.includes("（PAGINATION_REQUIRED）"))).toBe(true);
         expect(calls.join("\n")).not.toContain("Failed to load messages");
     });
+
+    it("task-846：英文 detail 不得成为用户文案（只认本地化文案 + 错误码）", async () => {
+        vi.mocked(toast.error).mockClear();
+        const englishDetail =
+            "Session 20001 exceeds the single-read limit; paginate or export instead";
+        vi.mocked(api.getMessages).mockRejectedValueOnce(
+            new ApiError({
+                status: 413,
+                code: "PAGINATION_REQUIRED",
+                requestId: "req-846",
+                detail: englishDetail,
+            }),
+        );
+        mountPanel();
+        await flushPromises();
+        await nextTick();
+        const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
+        // 本地化文案来自 i18n（不写死中文），错误码以稳定形式附在尾部。
+        expect(
+            calls.some((message) => message.includes(i18n.global.t("chat.loadMessagesFailed"))),
+        ).toBe(true);
+        expect(calls.some((message) => message.includes("（PAGINATION_REQUIRED）"))).toBe(true);
+        // 英文原文只允许进技术详情/日志，不得出现在 toast。
+        expect(calls.join("\n")).not.toContain("single-read limit");
+    });
 });
 
 /**

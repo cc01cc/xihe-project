@@ -10,6 +10,7 @@ import { useChatStore } from "../chat/stores/chat";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../../composables/api";
 import { useWorkspaceSSE } from "../composables/useWorkspaceSSE";
 import { logger } from "../../../lib/logger";
+import { causeErrorToastText } from "../../../lib/errorMessages";
 import { clearTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import { FolderTree } from "@lucide/vue";
@@ -303,7 +304,8 @@ async function selectSessionForWorkspace() {
             await router.replace({ name: "workspace-home" });
             return null;
         }
-        const message = cause instanceof ApiError ? cause.message : "Failed to load workspace";
+        // task-846：不再把 CP 英文 detail 当 toast 主文案；本地化文案 + 稳定错误码。
+        const message = causeErrorToastText(t, cause, t("workspace.loadFailed"));
         logger.error("Load workspace failed", cause);
         toast.error(message);
         return null;
@@ -338,7 +340,7 @@ async function submitAgentSession(
             logger.warn("Workspace default Agent rejected; falling back to the picker", cause);
             return { id: null, missingDefault: true };
         }
-        const message = cause instanceof ApiError ? cause.message : "Failed to create session";
+        const message = causeErrorToastText(t, cause, t("workspace.createSessionFailed"));
         logger.error("Create session failed", cause);
         toast.error(message);
         // PLAN-0608 (T1.5 / P0-2): a workspace-context rejection must be
@@ -385,8 +387,7 @@ async function createSessionForWorkspace() {
         showAgentSelection.value = true;
         return null;
     } catch (cause) {
-        const message =
-            cause instanceof ApiError ? cause.message : "Failed to load Workspace Agents";
+        const message = causeErrorToastText(t, cause, t("workspace.agentsLoadFailed"));
         logger.error("Load Workspace Agents failed", cause);
         toast.error(message);
         return null;

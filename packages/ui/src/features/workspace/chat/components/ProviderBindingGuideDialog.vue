@@ -53,7 +53,8 @@ const body = computed(() =>
             data-testid="provider-binding-guide-detail"
             class="mt-2 break-all text-xs text-muted-foreground/80"
         >
-            {{ detail }}
+            <!-- task-846：detail 是诊断字段（可能是 CP 英文原文），显式标成技术详情而非主文案。 -->
+            <span class="font-medium">{{ t("errors.technicalDetail") }}：</span>{{ detail }}
         </p>
         <div class="mt-5 flex justify-end gap-2">
             <Button

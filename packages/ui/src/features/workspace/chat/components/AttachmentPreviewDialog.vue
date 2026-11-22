@@ -22,6 +22,8 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import ImagePreview from "../../components/ImagePreview.vue";
+import { logger } from "../../../../lib/logger";
+import { causeErrorToastText } from "../../../../lib/errorMessages";
 import {
     ATTACHMENT_PREVIEW_BUDGET_BYTES,
     decodePreviewText,
@@ -124,10 +126,6 @@ function formatSize(bytes: number): string {
 
 function isAbortError(error: unknown): boolean {
     return error instanceof DOMException && error.name === "AbortError";
-}
-
-function messageOf(error: unknown): string {
-    return error instanceof Error && error.message ? error.message : "";
 }
 
 type PreviewState = "idle" | "loading" | "ready" | "error";
@@ -236,7 +234,9 @@ async function load() {
         applyPreview(preview);
     } catch (error) {
         if (current.signal.aborted || isAbortError(error)) return;
-        errorMessage.value = messageOf(error) || t("files.previewFailed");
+        // task-846：附件预览失败也只给本地化文案 + 稳定错误码，原始 Error.message 进日志。
+        logger.warn("Attachment preview failed", error);
+        errorMessage.value = causeErrorToastText(t, error, t("files.previewFailed"));
         state.value = "error";
     } finally {
         if (controller === current) controller = null;
@@ -269,7 +269,8 @@ async function loadRemainder() {
         refreshObjectUrl();
     } catch (error) {
         if (current.signal.aborted || isAbortError(error)) return;
-        loadMoreError.value = messageOf(error) || t("files.previewLoadMoreFailed");
+        logger.warn("Attachment preview remainder failed", error);
+        loadMoreError.value = causeErrorToastText(t, error, t("files.previewLoadMoreFailed"));
     } finally {
         if (controller === current) controller = null;
         loadingMore.value = false;

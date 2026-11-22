@@ -3,7 +3,11 @@ import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Diagnostic, ToolCall } from "../../../../types";
 import { ApiError, api } from "../../../../composables/api";
-import { toolRefusalCopyKey, toolRefusalHintKey } from "../../../../lib/errorMessages";
+import {
+    causeErrorToastText,
+    toolRefusalCopyKey,
+    toolRefusalHintKey,
+} from "../../../../lib/errorMessages";
 import { ChevronDown } from "@lucide/vue";
 import ProcessRow from "./ProcessRow.vue";
 import type { ProcessRowActor } from "./ProcessRow.vue";
@@ -198,9 +202,9 @@ async function submitJobCancel() {
                     ? t("chat.jobCancelUnconfirmed")
                     : err.problem.code === "RUNTIME_UNAVAILABLE"
                       ? t("chat.jobCancelUnavailable")
-                      : (err.problem.title ?? err.message);
+                      : causeErrorToastText(t, err, t("chat.jobCancelFailed"));
         } else {
-            cancelError.value = String(err);
+            cancelError.value = causeErrorToastText(t, err, t("chat.jobCancelFailed"));
         }
     } finally {
         cancelPending.value = false;
@@ -243,9 +247,9 @@ async function loadJobOutput(reset: boolean) {
                       ? t("chat.jobOutputExpired")
                       : err.problem.code === "RUNTIME_UNAVAILABLE"
                         ? t("chat.jobOutputUnavailable")
-                        : (err.problem.title ?? err.message);
+                        : causeErrorToastText(t, err, t("chat.jobOutputLoadFailed"));
         } else {
-            jobError.value = String(err);
+            jobError.value = causeErrorToastText(t, err, t("chat.jobOutputLoadFailed"));
         }
     } finally {
         jobLoading.value = false;

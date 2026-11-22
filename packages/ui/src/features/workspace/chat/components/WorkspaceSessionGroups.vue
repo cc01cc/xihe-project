@@ -32,7 +32,7 @@ import {
     Settings2,
     Users,
 } from "@lucide/vue";
-import { api, ApiError, type ApiWorkspace } from "../../../../composables/api";
+import { api, type ApiWorkspace } from "../../../../composables/api";
 import type { Session } from "../../../../types";
 import { useAuthStore } from "../../../../stores/auth";
 import { useSessionStore } from "../../../../stores/session";
@@ -43,6 +43,7 @@ import {
 import { writeTabWorkspace } from "../../../../lib/workspaceContext";
 import { workspaceSessionPath, workspacePath, workspaceSettingsPath } from "../../../../lib/routes";
 import { logger } from "../../../../lib/logger";
+import { causeErrorToastText } from "../../../../lib/errorMessages";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -159,8 +160,8 @@ async function loadStandalone(): Promise<void> {
     try {
         await sessionStore.loadWorkspacelessSessions();
     } catch (cause) {
-        standaloneError.value =
-            cause instanceof ApiError ? cause.message : t("sidebar.standaloneFailed");
+        // task-846：左栏错误行同样只给本地化文案 + 稳定错误码，不直出 CP 英文 detail。
+        standaloneError.value = causeErrorToastText(t, cause, t("sidebar.standaloneFailed"));
         logger.error("Load standalone sessions failed", cause);
     } finally {
         standaloneLoading.value = false;
@@ -173,8 +174,7 @@ function retryStandalone(): void {
             standaloneError.value = null;
         },
         (cause: unknown) => {
-            standaloneError.value =
-                cause instanceof ApiError ? cause.message : t("sidebar.standaloneFailed");
+            standaloneError.value = causeErrorToastText(t, cause, t("sidebar.standaloneFailed"));
             logger.error("Retry standalone sessions failed", cause);
         },
     );
@@ -222,7 +222,7 @@ async function loadWorkspaces(): Promise<void> {
     try {
         workspaces.value = await api.listWorkspaces();
     } catch (cause) {
-        listError.value = cause instanceof ApiError ? cause.message : t("sidebar.groupsFailed");
+        listError.value = causeErrorToastText(t, cause, t("sidebar.groupsFailed"));
         logger.error("Load workspaces for the sidebar groups failed", cause);
     } finally {
         listLoading.value = false;
@@ -248,8 +248,7 @@ async function ensureGroup(workspaceId: string): Promise<void> {
     } catch (cause) {
         failedGroups.value = {
             ...failedGroups.value,
-            [workspaceId]:
-                cause instanceof ApiError ? cause.message : t("sidebar.groupSessionsFailed"),
+            [workspaceId]: causeErrorToastText(t, cause, t("sidebar.groupSessionsFailed")),
         };
         logger.error("Load sessions for a workspace group failed", { workspaceId, cause });
     } finally {

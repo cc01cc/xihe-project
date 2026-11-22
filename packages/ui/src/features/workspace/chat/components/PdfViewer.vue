@@ -5,6 +5,7 @@ import { usePdfDocument } from "../../../../composables/usePdfDocument";
 import { api } from "../../../../composables/api";
 import { formatFileSize } from "../../../../lib/fileSize";
 import { logger } from "../../../../lib/logger";
+import { causeErrorToastText } from "../../../../lib/errorMessages";
 import { useAuthStore } from "../../../../stores/auth";
 import PdfToolbar from "./PdfToolbar.vue";
 import PdfPageCanvas from "./PdfPageCanvas.vue";
@@ -82,7 +83,7 @@ watch(
             return;
         }
         if (!authStore.currentWorkspaceId) {
-            chunkError.value = "Workspace context is required";
+            chunkError.value = t("files.pdfWorkspaceRequired");
             return;
         }
         chunkLoading.value = true;
@@ -92,7 +93,9 @@ watch(
             chunkContent.value = res.content;
             pageNum.value = 1;
         } catch (e) {
-            chunkError.value = "Failed to load chunk: " + (e as Error).message;
+            // task-846：本地化文案 + 稳定错误码；原始 Error.message 只留在诊断日志。
+            logger.warn("Failed to load PDF chunk", e);
+            chunkError.value = causeErrorToastText(t, e, t("files.pdfLoadFailed"));
         } finally {
             chunkLoading.value = false;
         }

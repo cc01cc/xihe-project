@@ -11,6 +11,7 @@ import {
 } from "../../../composables/api";
 import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
+import { withErrorCode } from "../../../lib/errorMessages";
 import { usernameError } from "../../../lib/principalName";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
@@ -184,7 +185,11 @@ async function handleAdd() {
         await load();
     } catch (cause) {
         logger.warn("Failed to add workspace member", cause);
-        const message = memberMessage(cause, "workspace.membersActionFailed");
+        // task-846：可读文案 + 稳定错误码（两个都在，toast 与内联行同一串）。
+        const message = withErrorCode(
+            memberMessage(cause, "workspace.membersActionFailed"),
+            errorCodeOf(cause),
+        );
         addError.value = message;
         toast.error(message);
     } finally {
@@ -205,7 +210,10 @@ async function handleRoleChange(member: ApiWorkspaceMember, role: MemberAssignab
         await load();
     } catch (cause) {
         logger.warn("Failed to update member role", cause);
-        const message = memberMessage(cause, "workspace.membersActionFailed");
+        const message = withErrorCode(
+            memberMessage(cause, "workspace.membersActionFailed"),
+            errorCodeOf(cause),
+        );
         actionError.value = message;
         toast.error(message);
     } finally {
@@ -233,7 +241,10 @@ async function handleRemove() {
         await load();
     } catch (cause) {
         logger.warn("Failed to remove workspace member", cause);
-        const message = memberMessage(cause, "workspace.membersActionFailed");
+        const message = withErrorCode(
+            memberMessage(cause, "workspace.membersActionFailed"),
+            errorCodeOf(cause),
+        );
         removeError.value = message;
         toast.error(message);
     } finally {

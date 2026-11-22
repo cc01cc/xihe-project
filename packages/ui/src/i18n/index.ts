@@ -146,6 +146,7 @@ const messages = {
             pdfTooLarge: "文件较大（{size}），是否拆分为较小分块以便预览？",
             sizeUnknown: "未知大小",
             pdfLoadFailed: "PDF 加载失败",
+            pdfWorkspaceRequired: "需要先选择工作区才能预览 PDF",
             pdfNotLoaded: "未加载 PDF",
             pdfLoading: "加载 PDF 中…",
             pdfLoadingChunk: "加载分块中…",
@@ -1486,6 +1487,10 @@ const messages = {
             membersActionFailed: "操作失败",
             membersRoleUpdated: "角色已更新",
             membersRemoved: "成员已移除",
+            // task-846：工作区面错误主文案（本地化 + 稳定错误码由 causeErrorToastText 附加）。
+            loadFailed: "加载工作区失败",
+            createSessionFailed: "创建会话失败",
+            agentsLoadFailed: "加载工作区智能体失败",
             membersRemove: "移除",
             membersRemoveTitle: "移除成员？",
             membersRemoveConfirmDesc:
@@ -2067,6 +2072,7 @@ const messages = {
             jobOutputLost: "任务输出已不可用（容器已销毁）",
             jobOutputExpired: "任务输出已过期（TTL 清理）",
             jobOutputUnavailable: "Runtime 暂不可达，请稍后重试",
+            jobOutputLoadFailed: "加载任务输出失败",
             jobCancelButton: "取消这个 job",
             jobCancelHint: "取消仅终止该 job，不影响本轮对话",
             jobCancelConfirmHint: "确认取消？该 job（{jobId}）的输出将保留，run 继续。",
@@ -2075,6 +2081,7 @@ const messages = {
             jobCancelPending: "取消中…",
             jobCancelDone: "已取消：该 job 已终止；本轮对话继续。",
             jobCancelOrphaned: "该 job 已失联，档案已按丢失收口。",
+            jobCancelFailed: "取消任务失败",
             jobCancelUnconfirmed: "取消未确认：进程可能仍在运行，可稍后重试",
             jobCancelUnavailable: "Runtime 暂不可达，请稍后重试",
             jobStatus: {
@@ -3216,6 +3223,7 @@ const messages = {
                 '{\n  "mcpServers": {\n    "filesystem": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]\n    }\n  }\n}',
             invalidJson: "JSON 格式无效，请检查",
             saveFailed: "保存失败，请重试",
+            resetFailed: "重置失败，请重试",
             authorize: "授权",
             authorized: "已授权",
             authorizationRequired: "需要授权",
@@ -4609,6 +4617,7 @@ const messages = {
             pdfTooLarge: "The file is large ({size}). Split it into smaller chunks for preview?",
             sizeUnknown: "unknown size",
             pdfLoadFailed: "Failed to load PDF",
+            pdfWorkspaceRequired: "Select a workspace before previewing a PDF",
             pdfNotLoaded: "No PDF loaded",
             pdfLoading: "Loading PDF…",
             pdfLoadingChunk: "Loading chunk…",
@@ -5958,6 +5967,10 @@ const messages = {
             membersActionFailed: "The action failed",
             membersRoleUpdated: "Role updated",
             membersRemoved: "Member removed",
+            // task-846: workspace-surface primary error copy (causeErrorToastText appends the code).
+            loadFailed: "Failed to load the workspace",
+            createSessionFailed: "Failed to create the session",
+            agentsLoadFailed: "Failed to load the workspace agents",
             membersRemove: "Remove",
             membersRemoveTitle: "Remove member?",
             membersRemoveConfirmDesc:
@@ -6545,6 +6558,7 @@ const messages = {
             jobOutputLost: "Job output is no longer available (container destroyed)",
             jobOutputExpired: "Job output expired (cleaned after TTL)",
             jobOutputUnavailable: "Runtime is temporarily unavailable; try again later",
+            jobOutputLoadFailed: "Failed to load the job output",
             jobCancelButton: "Cancel this job",
             jobCancelHint: "Only this job is terminated; the chat continues",
             jobCancelConfirmHint:
@@ -6554,6 +6568,7 @@ const messages = {
             jobCancelPending: "Cancelling…",
             jobCancelDone: "Cancelled: the job was terminated; this chat continues.",
             jobCancelOrphaned: "The job is gone; the archive was closed as orphaned.",
+            jobCancelFailed: "Failed to cancel the job",
             jobCancelUnconfirmed:
                 "Cancellation unconfirmed: the process may still be running; retry later",
             jobCancelUnavailable: "Runtime is temporarily unavailable; try again later",
@@ -7720,6 +7735,7 @@ const messages = {
                 '{\n  "mcpServers": {\n    "filesystem": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]\n    }\n  }\n}',
             invalidJson: "Invalid JSON format",
             saveFailed: "Failed to save, please retry",
+            resetFailed: "Failed to reset, please retry",
             authorize: "Authorize",
             authorized: "Authorized",
             authorizationRequired: "Authorization required",

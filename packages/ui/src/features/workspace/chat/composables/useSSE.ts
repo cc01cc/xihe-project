@@ -873,9 +873,10 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 },
                 onerror: (err) => {
                     if (generation !== connectionGeneration) return;
-                    const msg = err.message || "SSE connection error";
                     logger.warn("useSSE connection error", err);
-                    error.value = msg;
+                    // task-846：连接错误也只保留本地化文案（原始错误进 logger），不把
+                    // `err.message`（可能是英文/浏览器厂商串）当作用户可见文本。
+                    error.value = i18n.global.t("chat.sseNotConnected");
                     notifySessionConnection(currentSessionId, "offline");
                 },
                 onclose: () => {

@@ -50,8 +50,9 @@ export async function ensureProviderBinding(deps: EnsureProviderBindingDeps): Pr
         return true;
     } catch (cause) {
         const code = cause instanceof ApiError ? cause.problem.code : undefined;
-        const detail =
-            cause instanceof ApiError ? (cause.problem.detail ?? cause.message) : String(cause);
+        // task-846：只透传 CP 的 `problem.detail`（诊断字段），不再回退到 `Error.message` ——
+        // 后者可能是英文 `API error 500` 之类的合成串，引导弹窗会当二级说明渲染。
+        const detail = cause instanceof ApiError ? cause.problem.detail : undefined;
         if (code === "PROVIDER_REQUIRED" || code === "PROVIDER_CONNECTION_AMBIGUOUS") {
             deps.onGuide("provider_required", detail);
             return false;
