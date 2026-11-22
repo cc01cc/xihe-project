@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import ScheduledTasksOverviewView from "../ScheduledTasksOverviewView.vue";
+import { i18n } from "../../../i18n";
 
 /**
  * task-11（DSD-1518 B）：自动化任务总览页的**缺口呈现判据**。
@@ -20,7 +21,11 @@ import ScheduledTasksOverviewView from "../ScheduledTasksOverviewView.vue";
  * 不是泄露（本轮无栈，门在无实例时 SKIP，属已知盲区，已在证据里写明）。</p>
  */
 describe("ScheduledTasksOverviewView（task-11：数据面缺口的显式呈现）", () => {
-    const mountPage = () => mount(ScheduledTasksOverviewView, { attachTo: document.body });
+    const mountPage = () =>
+        mount(ScheduledTasksOverviewView, {
+            attachTo: document.body,
+            global: { plugins: [i18n] },
+        });
 
     it("缺口条真的渲染出来了，不是空白页", () => {
         const wrapper = mountPage();

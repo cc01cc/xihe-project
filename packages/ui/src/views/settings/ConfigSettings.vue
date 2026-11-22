@@ -54,14 +54,23 @@ const exporting = ref(false),
 
 const showImportExport = computed(() => activeTab.value === "instance");
 
+const fetchErrorCode = ref("");
+
+function errorCodeOf(cause: unknown): string {
+    const code = (cause as { problem?: { code?: unknown } } | null)?.problem?.code;
+    return typeof code === "string" ? code : "";
+}
+
 onMounted(async () => {
     fetchError.value = false;
+    fetchErrorCode.value = "";
     try {
         await configStore.loadLayerDomains(activeTab.value);
     } catch (e) {
         logger.warn("Failed to load config domains", e);
         fetchError.value = true;
-        toast.error("Failed to load configuration");
+        fetchErrorCode.value = errorCodeOf(e);
+        toast.error(t("settings.loadFailed"));
     }
 });
 
@@ -69,12 +78,14 @@ async function switchTab(tab: LayerTab) {
     if (activeTab.value === tab) return;
     activeTab.value = tab;
     fetchError.value = false;
+    fetchErrorCode.value = "";
     try {
         await configStore.loadLayerDomains(tab);
     } catch (e) {
         logger.warn("Failed to load config domains for layer " + tab, e);
         fetchError.value = true;
-        toast.error(t("settings.saveFailed"));
+        fetchErrorCode.value = errorCodeOf(e);
+        toast.error(t("settings.loadFailed"));
     }
 }
 
@@ -112,7 +123,12 @@ async function handleImportFile(event: Event) {
         const content = await file.text(),
             report = await configStore.importConfig(content);
         importWarnings.value = report.warnings ?? [];
-        toast.success(`${t("settings.importDone")}: +${report.imported} / skip ${report.skipped}`);
+        toast.success(
+            t("settings.importDoneDetail", {
+                imported: report.imported,
+                skipped: report.skipped,
+            }),
+        );
         if (importWarnings.value.length) toast.warning(importWarnings.value[0]);
         await reloadActiveLayer();
     } catch (e) {
@@ -136,8 +152,19 @@ async function handleImportFile(event: Event) {
                 {{ t("settings.configTab") }}
             </h2>
 
-            <div v-if="fetchError" class="mb-3 px-3 py-2 text-sm bg-red-100 text-red-800 rounded">
-                {{ t("common.error") }}: {{ t("settings.saveFailed") }}
+            <div
+                v-if="fetchError"
+                class="mb-3 px-3 py-2 text-sm bg-red-100 text-red-800 rounded"
+                data-testid="settings-load-error"
+            >
+                {{ t("common.error") }}: {{ t("settings.loadFailed") }}
+                <span
+                    v-if="fetchErrorCode"
+                    class="ml-2 text-xs"
+                    data-testid="settings-load-error-code"
+                >
+                    {{ t("errors.errorCodeLabel") }}: {{ fetchErrorCode }}
+                </span>
             </div>
 
             <div v-if="showInitialLoading" class="text-sm text-muted-foreground">

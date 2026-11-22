@@ -504,20 +504,19 @@ watch(isMobileViewport, (mobile) => {
         <div class="flex size-16 items-center justify-center rounded-2xl border border-dashed">
             <FolderTree class="size-7 text-muted-foreground" aria-hidden="true" />
         </div>
-        <h2 class="text-lg font-semibold">暂无工作区</h2>
+        <h2 class="text-lg font-semibold">{{ t("workspace.noWorkspaceTitle") }}</h2>
         <p class="max-w-sm text-sm text-muted-foreground">
-            上一个工作区已删除。创建一个新的工作区开始使用文件、终端与 Agent 工具。
+            {{ t("workspace.noWorkspaceBody") }}
         </p>
         <!-- PLAN-0631 反馈②：低频可逆的「创建工作区」入口不配主按钮层级，中性 ghost。 -->
         <button
             class="px-4 py-2 text-sm rounded border text-foreground transition-colors hover:bg-accent"
             @click="showCreateDialog = true"
         >
-            创建工作区
+            {{ t("workspace.noWorkspaceCreate") }}
         </button>
         <p class="max-w-md text-xs text-muted-foreground border-t border-dashed pt-3">
-            每账号同时持有 1 个活动工作区 · 物理目录由系统按 hostRoot/workspaceId
-            派生，宿主机可直接访问
+            {{ t("workspace.noWorkspaceFootnote") }}
         </p>
     </div>
     <div v-else class="flex h-full min-w-0">

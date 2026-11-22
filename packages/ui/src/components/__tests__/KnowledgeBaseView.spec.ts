@@ -27,6 +27,11 @@ const i18n = createI18n({
                 cancel: "Cancel",
                 confirmDelete: "Confirm delete",
             },
+            knowledge: {
+                dropHintPrefix: "Drag files here or ",
+                browse: "browse",
+                supportedFormats: "Supports PDF / TXT / Markdown",
+            },
         },
     },
 });

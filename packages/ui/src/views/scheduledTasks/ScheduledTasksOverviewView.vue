@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { Info } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 /**
  * task-11（DSD-1518 B / D-1220 ③ 回退）：自动化任务的**实例级总览页**。
@@ -37,9 +40,11 @@ import { Info } from "@lucide/vue";
     >
         <header class="border-b">
             <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
-                <h1 class="text-2xl leading-tight font-semibold tracking-tight">自动化任务总览</h1>
+                <h1 class="text-2xl leading-tight font-semibold tracking-tight">
+                    {{ t("workspace.scheduledTasks.overviewTitle") }}
+                </h1>
                 <p class="mt-1 max-w-3xl text-sm text-muted-foreground">
-                    实例内跨工作区的自动化任务清单。
+                    {{ t("workspace.scheduledTasks.overviewSubtitle") }}
                 </p>
             </div>
         </header>
@@ -50,11 +55,14 @@ import { Info } from "@lucide/vue";
             >
                 <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 <div class="min-w-0 flex-1">
-                    <p class="font-medium">数据面未接入：本页暂无任务清单，也不能开始操作</p>
+                    <p class="font-medium">{{ t("workspace.scheduledTasks.notWiredTitle") }}</p>
                     <p class="mt-0.5 leading-relaxed text-muted-foreground">
-                        清单数据来自控制面的 GET /api/v1/scheduled-tasks（来源
-                        task-10）。该端点尚未并入当前构建， 所以这里既不显示任务、也不显示条数 ——
-                        缺口如实呈现，不用空列表冒充「本来就没有任务」。
+                        {{
+                            t("workspace.scheduledTasks.notWiredBody", {
+                                endpoint: "GET /api/v1/scheduled-tasks",
+                                sourceTask: "task-10",
+                            })
+                        }}
                     </p>
                 </div>
             </div>

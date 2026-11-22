@@ -153,9 +153,12 @@ async function confirmRemoveDoc() {
                     />
                 </svg>
                 <p class="text-sm text-muted-foreground">
-                    拖拽文件到此处或 <span class="text-primary underline">浏览</span>
+                    {{ t("knowledge.dropHintPrefix")
+                    }}<span class="text-primary underline">{{ t("knowledge.browse") }}</span>
                 </p>
-                <p class="text-xs text-muted-foreground mt-1">支持 PDF / TXT / Markdown</p>
+                <p class="text-xs text-muted-foreground mt-1">
+                    {{ t("knowledge.supportedFormats") }}
+                </p>
             </div>
             <button
                 v-if="files.length"

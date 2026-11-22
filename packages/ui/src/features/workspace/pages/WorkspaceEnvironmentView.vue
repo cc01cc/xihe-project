@@ -16,7 +16,7 @@ import AlertDialogTitle from "../../../components/ui/alert-dialog/AlertDialogTit
 import { discloseHostPath, type HostPathPrincipal } from "../lib/hostPathDisclosure";
 import { formatDateTime } from "../../../lib/dateFormat";
 import { logger } from "../../../lib/logger";
-import { humanizeErrorCode } from "../../../lib/errorMessages";
+import { causeErrorToastText, humanizeErrorCode } from "../../../lib/errorMessages";
 import { toast } from "vue-sonner";
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
 import {
@@ -537,8 +537,7 @@ async function loadEnvironment() {
             );
         }
     } catch (cause) {
-        error.value =
-            cause instanceof ApiError ? cause.message : "Failed to load workspace environment";
+        error.value = causeErrorToastText(t, cause, t("workspace.environmentLoadFailed"));
     } finally {
         loading.value = false;
     }
@@ -565,11 +564,7 @@ async function handleExecutionModeChange(value: string) {
             // MXC probe failure: offer an explicit switch to host; never fall back automatically.
             toast.error(t("workspace.executionModeMxcFailed"));
         } else {
-            toast.error(
-                cause instanceof ApiError
-                    ? cause.message
-                    : t("workspace.executionModeUpdateFailed"),
-            );
+            toast.error(causeErrorToastText(t, cause, t("workspace.executionModeUpdateFailed")));
         }
     } finally {
         changingExecutionMode.value = false;
@@ -586,14 +581,14 @@ async function handlePrepare() {
     await nextTick();
     try {
         await api.materializeWorkspace(id);
-        toast.success("Materialization started — polling status");
+        toast.success(t("workspace.environmentMaterializeStarted"));
         startPolling();
     } catch (cause) {
-        const message =
-            cause instanceof ApiError ? cause.message : "Failed to start materialization";
         logger.error("Prepare workspace failed", cause);
-        prepareError.value = message;
-        toast.error(message);
+        prepareError.value = t("workspace.environmentMaterializeStartFailed");
+        toast.error(
+            causeErrorToastText(t, cause, t("workspace.environmentMaterializeStartFailed")),
+        );
         preparing.value = false;
     }
 }
@@ -611,7 +606,7 @@ function startPolling() {
             const s = (environment.value?.status ?? "").toLowerCase();
             if (s === "ready" || s === "blocked") {
                 stopPolling();
-                if (s === "ready") toast.success("Workspace is ready");
+                if (s === "ready") toast.success(t("workspace.environmentReady"));
             }
         } catch (cause) {
             logger.warn(

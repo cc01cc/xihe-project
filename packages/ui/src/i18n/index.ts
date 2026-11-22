@@ -607,6 +607,12 @@ const messages = {
         workspace: {
             panelCode: "代码",
             panelChanges: "变更",
+            noWorkspaceTitle: "暂无工作区",
+            noWorkspaceBody:
+                "上一个工作区已删除。创建一个新的工作区开始使用文件、终端与 Agent 工具。",
+            noWorkspaceCreate: "创建工作区",
+            noWorkspaceFootnote:
+                "每账号同时持有 1 个活动工作区 · 物理目录由系统按 hostRoot/workspaceId 派生，宿主机可直接访问",
             // D-1777/D-1778：目录树的面板身份（右栏容器），树不再有自己的容器行。
             panelFiles: "文件",
             gitReadfaceTitle: "仓库状态（待提交）",
@@ -1245,6 +1251,11 @@ const messages = {
                 title: "自动化任务",
                 subtitle:
                     "到点自动唤醒会话或执行任务；错过的任务不会自动补跑，会停在这里等你处理。",
+                overviewTitle: "自动化任务总览",
+                overviewSubtitle: "实例内跨工作区的自动化任务清单。",
+                notWiredTitle: "数据面未接入：本页暂无任务清单，也不能开始操作",
+                notWiredBody:
+                    "清单数据来自控制面的 {endpoint}（来源 {sourceTask}）。该端点尚未并入当前构建，所以这里既不显示任务、也不显示条数 —— 缺口如实呈现，不用空列表冒充「本来就没有任务」。",
                 create: "新建自动化任务",
                 refresh: "刷新",
                 loading: "正在加载自动化任务…",
@@ -1457,6 +1468,10 @@ const messages = {
             environmentUnmaterializedHint:
                 "首次物化将创建宿主机目录并启动沙盒容器（可能需拉取镜像，约 1–2 分钟）。也可以直接使用文件/对话功能，系统会自动准备。",
             environmentPrepare: "准备工作区",
+            environmentLoadFailed: "加载工作区环境失败",
+            environmentMaterializeStarted: "已开始物化，正在轮询状态",
+            environmentMaterializeStartFailed: "启动物化失败",
+            environmentReady: "工作区已就绪",
             environmentPreparePreparing: "准备中…",
             environmentStorageTitle: "存储",
             environmentExecutionTitle: "执行配置",
@@ -2477,6 +2492,11 @@ const messages = {
                 },
             },
         },
+        knowledge: {
+            dropHintPrefix: "拖拽文件到此处或 ",
+            browse: "浏览",
+            supportedFormats: "支持 PDF / TXT / Markdown",
+        },
         settings: {
             colorScheme: {
                 title: "配色方案",
@@ -3477,6 +3497,8 @@ const messages = {
             exportIncludeSecrets: "包含明文密钥",
             importConfig: "导入配置",
             importDone: "导入完成",
+            importDoneDetail: "导入完成：新增 {imported} 项，跳过 {skipped} 项",
+            loadFailed: "加载配置失败，请重试",
             importFailed: "导入失败",
             exportDone: "导出完成",
             exportFailed: "导出失败",
@@ -4976,6 +4998,12 @@ const messages = {
         workspace: {
             panelCode: "Code",
             panelChanges: "Changes",
+            noWorkspaceTitle: "No workspace yet",
+            noWorkspaceBody:
+                "The previous workspace was deleted. Create a new one to use files, terminals, and Agent tools again.",
+            noWorkspaceCreate: "Create workspace",
+            noWorkspaceFootnote:
+                "One active workspace per account · the host directory is derived from hostRoot/workspaceId and is directly reachable on the host",
             // D-1777/D-1778: the directory tree's panel identity inside the right container.
             panelFiles: "Files",
             gitReadfaceTitle: "Repository status (pending commit)",
@@ -5622,6 +5650,12 @@ const messages = {
                 title: "Automations",
                 subtitle:
                     "Wake a session or run a job at a set time; missed tasks never rerun automatically and wait here for your decision.",
+                overviewTitle: "Automations overview",
+                overviewSubtitle: "Automation tasks across every workspace in this instance.",
+                notWiredTitle:
+                    "Data surface not connected: no task list is available here, and no action can start",
+                notWiredBody:
+                    "The list comes from the control plane at {endpoint} (source {sourceTask}). That endpoint is not part of the current build yet, so this page shows neither tasks nor counts — the gap is stated as-is instead of pretending an empty list means there are no tasks.",
                 create: "New automation",
                 refresh: "Refresh",
                 loading: "Loading automations…",
@@ -5839,6 +5873,10 @@ const messages = {
             environmentUnmaterializedHint:
                 "Materializing creates the host directory and starts the sandbox container (this may pull an image and take 1–2 minutes). You can also just use files/chat and the system prepares it automatically.",
             environmentPrepare: "Prepare workspace",
+            environmentLoadFailed: "Failed to load the workspace environment",
+            environmentMaterializeStarted: "Materialization started — polling status",
+            environmentMaterializeStartFailed: "Failed to start materialization",
+            environmentReady: "Workspace is ready",
             environmentPreparePreparing: "Preparing…",
             environmentStorageTitle: "Storage",
             environmentExecutionTitle: "Execution config",
@@ -6880,6 +6918,11 @@ const messages = {
                 },
             },
         },
+        knowledge: {
+            dropHintPrefix: "Drag files here or ",
+            browse: "browse",
+            supportedFormats: "Supports PDF / TXT / Markdown",
+        },
         settings: {
             colorScheme: {
                 title: "Color scheme",
@@ -7902,6 +7945,8 @@ const messages = {
             exportIncludeSecrets: "Include plaintext secrets",
             importConfig: "Import Config",
             importDone: "Import finished",
+            importDoneDetail: "Import complete: {imported} added, {skipped} skipped",
+            loadFailed: "Failed to load configuration. Please retry.",
             importFailed: "Import failed",
             exportDone: "Export finished",
             exportFailed: "Export failed",
