@@ -61,6 +61,7 @@ import {
 } from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Clock, ShieldAlert } from "@lucide/vue";
 
 const props = withDefaults(
@@ -429,7 +430,7 @@ watch(pendingApproval, (approval, previous) => {
 
 const teamTasksStore = useTeamTasksStore();
 teamTasksStore.configure({
-    presentError: (cause) => presentCauseError(t, cause, t("teamBoard.errorTitle")).copy,
+    presentError: (cause) => causeErrorToastText(t, cause, t("teamBoard.errorTitle")),
 });
 watch(
     () => props.sessionId,
@@ -856,12 +857,9 @@ async function refreshFollowUpQueue(sessionId: string) {
         }
     } catch (cause) {
         if (props.sessionId !== sessionId || requestId !== followUpQueueRequestId) return;
-        // task-45：瞬时面（错误条 + toast）只给可读文案；原始 detail 由下方 logger 留痕。
-        followUpQueueError.value = presentCauseError(
-            t,
-            cause,
-            t("chat.followUpQueueLoadFailed"),
-        ).copy;
+        // task-782：瞬时面（错误条 + toast）= 本地化文案 + 稳定错误码；
+        // 原始 detail 由下方 logger 留痕，不进用户面。
+        followUpQueueError.value = causeErrorToastText(t, cause, t("chat.followUpQueueLoadFailed"));
         logger.error("Failed to load Session Follow-up queue", cause);
     }
 }
@@ -1269,8 +1267,8 @@ async function handleFollowUpQueue(
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration)
             return;
-        // task-45：可读文案进错误条 + toast，原始 detail 只进日志（瞬时面不塞折叠控件）。
-        const message = presentCauseError(t, cause, t("chat.followUpQueueFailed")).copy;
+        // task-782：可读文案 + 稳定码进错误条 + toast，原始 detail 只进日志。
+        const message = causeErrorToastText(t, cause, t("chat.followUpQueueFailed"));
         followUpQueueError.value = message;
         logger.error("Failed to enqueue Session Follow-up", cause);
         toast.error(message);
@@ -1297,8 +1295,8 @@ async function withdrawFollowUp(queueItemId: string) {
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
             return;
-        // task-45：可读文案进错误条 + toast，原始 detail 只进日志（瞬时面不塞折叠控件）。
-        const message = presentCauseError(t, cause, t("chat.followUpQueueFailed")).copy;
+        // task-782：可读文案 + 稳定码进错误条 + toast，原始 detail 只进日志。
+        const message = causeErrorToastText(t, cause, t("chat.followUpQueueFailed"));
         followUpQueueError.value = message;
         logger.error("Failed to withdraw Session Follow-up", cause);
         toast.error(message);
@@ -1324,8 +1322,8 @@ async function continueFollowUpQueue() {
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueActionGeneration)
             return;
-        // task-45：可读文案进错误条 + toast，原始 detail 只进日志（瞬时面不塞折叠控件）。
-        const message = presentCauseError(t, cause, t("chat.followUpQueueFailed")).copy;
+        // task-782：可读文案 + 稳定码进错误条 + toast，原始 detail 只进日志。
+        const message = causeErrorToastText(t, cause, t("chat.followUpQueueFailed"));
         followUpQueueError.value = message;
         logger.error("Failed to continue Session Follow-up queue", cause);
         toast.error(message);
@@ -1942,14 +1940,43 @@ watch(
             >
                 {{ t("steer.cancel") }}
             </button>
-            <p
+            <div
                 v-if="steerError"
                 role="alert"
                 class="basis-full text-destructive"
                 data-testid="steer-error"
             >
-                {{ steerError.copy }}
-            </p>
+                <p>{{ steerError.copy }}</p>
+                <p
+                    v-if="steerError.code"
+                    class="mt-0.5 text-muted-foreground"
+                    data-testid="steer-error-code"
+                >
+                    {{ t("errors.errorCodeLabel") }}
+                    <code
+                        class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px]"
+                        >{{ steerError.code }}</code
+                    >
+                </p>
+                <!-- task-782：CP 英文 detail 只允许进折叠区；无 detail 不渲染空壳。 -->
+                <Collapsible v-if="steerError.technicalDetail">
+                    <CollapsibleTrigger as-child>
+                        <button
+                            type="button"
+                            class="mt-1 rounded text-xs text-muted-foreground underline underline-offset-2"
+                            data-testid="steer-error-detail-toggle"
+                        >
+                            {{ t("errors.technicalDetail") }}
+                        </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <pre
+                            data-testid="steer-error-detail-body"
+                            class="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
+                            >{{ steerError.technicalDetail }}</pre>
+                    </CollapsibleContent>
+                </Collapsible>
+            </div>
         </div>
         <button
             v-else-if="steerEntryVisible"
