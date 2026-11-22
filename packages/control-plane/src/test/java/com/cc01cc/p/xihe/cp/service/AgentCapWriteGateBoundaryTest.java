@@ -64,8 +64,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
-    private static final String READ = ToolFaceRegistry.ACTION_READ;
-    private static final String WRITE = ToolFaceRegistry.ACTION_WRITE;
+    private static final String READ = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_READ);
+    private static final String WRITE = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_WRITE);
     private static final String CREATE_SCHEDULED_TASK = ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK;
     private static final String CAP_READ_ONLY = "[{\"actionClass\":\"read\",\"resource\":\"*\"}]";
 

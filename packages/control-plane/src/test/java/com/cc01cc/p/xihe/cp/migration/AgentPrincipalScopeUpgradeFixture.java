@@ -106,7 +106,9 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 + LEGACY_PRINCIPAL_ID + "', 'v19 legacy principal', '" + LEGACY_USER_ID + "')");
         // A pre-existing instance role for the legacy user: the same V89 seed shape the migration
         // test uses, so the account is a real actor after the replay.
-        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        // task-835 (V182 rename): this row is written at the V89 shape, i.e. before the rename, so
+        // the legacy table name is the only one that exists here.
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '"
                 + SystemGrantPresetCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
                 + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
@@ -122,8 +124,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
         insertTierPrincipal(connection, INSTANCE_PRINCIPAL_ID, "v19 instance-tier-agent", "INSTANCE", null);
         // The legacy role is schema-independent (V170 does not touch roles), so it is seeded once here
         // and reused by the head-side re-seed; creating it twice would be a primary-key collision.
-        seedLegacyWorkspaceRole(connection);
-        insertTierBindingsAndGrants(connection);
+        seedLegacyWorkspaceRole(connection, Stage.PRE_RENAME);
+        insertTierBindingsAndGrants(connection, Stage.PRE_RENAME);
     }
 
     /**
@@ -140,10 +142,11 @@ public final class AgentPrincipalScopeUpgradeFixture {
         insertTierPrincipalAtHead(connection, PERSONAL_PRINCIPAL_ID, "v19 personal-tier-agent", LEGACY_USER_ID);
         insertTierPrincipalAtHead(connection, WORKSPACE_PRINCIPAL_ID, "v19 workspace-tier-agent", null);
         insertTierPrincipalAtHead(connection, INSTANCE_PRINCIPAL_ID, "v19 instance-tier-agent", null);
-        insertTierBindingsAndGrants(connection);
+        insertTierBindingsAndGrants(connection, Stage.HEAD);
     }
 
-    private static void insertTierBindingsAndGrants(Connection connection) throws SQLException {
+    private static void insertTierBindingsAndGrants(Connection connection, Stage stage)
+            throws SQLException {
         insertWorkspaceBinding(connection, PERSONAL_PRINCIPAL_ID, "[]");
         // PLAN-0691 T1.3 (V137) added PLUGIN_INVOKE to the base set of every non-viewer role and
         // deliberately did NOT backfill existing grants ("existing bindings keep the atoms they were
@@ -176,14 +179,15 @@ public final class AgentPrincipalScopeUpgradeFixture {
                         + " {\"actionClass\": \"session:permission:configure\"}]");
         insertWorkspaceBinding(connection, INSTANCE_PRINCIPAL_ID, "[{\"actionClass\": \"write\"}]");
 
-        insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
+        insertRoleBinding(connection, stage, PERSONAL_PRINCIPAL_ID,
+                SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
                 "instance", null);
-        insertRoleBinding(connection, WORKSPACE_PRINCIPAL_ID, LEGACY_WORKSPACE_ROLE_ID,
+        insertRoleBinding(connection, stage, WORKSPACE_PRINCIPAL_ID, LEGACY_WORKSPACE_ROLE_ID,
                 "workspace", WORKSPACE_ID);
-        insertRoleBinding(connection, INSTANCE_PRINCIPAL_ID, SystemGrantPresetCatalog.USER_ID,
+        insertRoleBinding(connection, stage, INSTANCE_PRINCIPAL_ID, SystemGrantPresetCatalog.USER_ID,
                 "instance", null);
 
-        insertGrant(connection, PERSONAL_PRINCIPAL_ID, "read", "instance", null, "template");
+        insertGrant(connection, stage, PERSONAL_PRINCIPAL_ID, "read", "instance", null, "template");
         // The two task-229 atoms are part of this set as well, and that is not the cap snapshot
         // leaking into the grants: resolveCapFor() returns retainCovered(snapshot, principal atoms)
         // (AgentPrincipalService.java:739), so an atom the principal does not hold is dropped
@@ -198,9 +202,10 @@ public final class AgentPrincipalScopeUpgradeFixture {
             // `role` is the authoritative source (2026-11-04 ruling). Seeding it keeps the fixture
             // deterministic even after another test triggers the role materializer: a principal with
             // role rows no longer falls back to its legacy template snapshot.
-            insertGrant(connection, WORKSPACE_PRINCIPAL_ID, atom, "workspace", WORKSPACE_ID, "role");
+            insertGrant(connection, stage, WORKSPACE_PRINCIPAL_ID, atom, "workspace", WORKSPACE_ID,
+                    "role");
         }
-        insertGrant(connection, INSTANCE_PRINCIPAL_ID, "exec", "instance", null, "template");
+        insertGrant(connection, stage, INSTANCE_PRINCIPAL_ID, "exec", "instance", null, "template");
     }
 
     /**
@@ -215,15 +220,17 @@ public final class AgentPrincipalScopeUpgradeFixture {
      * without them would make a cap write silently shrink the cap by two atoms. V172's
      * TEAM_TASK_MANAGE is in the set for the identical reason.</p>
      */
-    private static void seedLegacyWorkspaceRole(Connection connection) throws SQLException {
-        execute(connection, "INSERT INTO grant_presets (id, name, display_name, description, is_system)"
+    private static void seedLegacyWorkspaceRole(Connection connection, Stage stage) throws SQLException {
+        execute(connection, "INSERT INTO " + stage.presetsTable()
+                + " (id, name, display_name, description, is_system)"
                 + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', 'V19_LEGACY_WORKSPACE',"
                 + " 'V19 legacy workspace', 'fixture-only pre-upgrade workspace role', FALSE)");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE",
                 "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE",
                 "session:permission:configure"}) {
-            execute(connection, "INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)"
+            execute(connection, "INSERT INTO " + stage.presetAtomsTable()
+                    + " (role_id, action_class, resource_pattern)"
                     + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', '" + atom + "', '*')");
         }
     }
@@ -274,7 +281,8 @@ public final class AgentPrincipalScopeUpgradeFixture {
         String ids = "'" + LEGACY_PRINCIPAL_ID + "', '" + PERSONAL_PRINCIPAL_ID + "', '"
                 + WORKSPACE_PRINCIPAL_ID + "', '" + INSTANCE_PRINCIPAL_ID + "'";
         execute(connection, "DELETE FROM workspace_agents WHERE principal_id IN (" + ids + ")");
-        execute(connection, "DELETE FROM grant_preset_bindings WHERE subject_type = 'agent_principal'"
+        // task-835 (V182): this runs at the V125 shape, before the rename.
+        execute(connection, "DELETE FROM role_bindings WHERE subject_type = 'agent_principal'"
                 + " AND subject_id IN (" + ids + ")");
         execute(connection, "DELETE FROM grants WHERE subject_type = 'agent_principal'"
                 + " AND subject_id IN (" + ids + ")");
@@ -287,20 +295,50 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 + " VALUES ('" + principalId + "', '" + WORKSPACE_ID + "', '" + permissions + "'::jsonb)");
     }
 
-    private static void insertRoleBinding(Connection connection, UUID principalId, UUID roleId,
+    private static void insertRoleBinding(Connection connection, Stage stage, UUID principalId, UUID roleId,
             String scopeType, UUID scopeId) throws SQLException {
-        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        execute(connection, "INSERT INTO " + stage.bindingsTable()
+                + " (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by, is_seed) VALUES ('" + UUID.randomUUID() + "', '" + roleId
                 + "', 'agent_principal', '" + principalId + "', '" + scopeType + "', "
                 + literal(scopeId) + ", '" + LEGACY_USER_ID + "', FALSE)");
     }
 
-    private static void insertGrant(Connection connection, UUID principalId, String atom, String scopeType,
-            UUID scopeId, String source) throws SQLException {
+    /**
+     * task-835 (V182): the fixture writes the same subjects twice — once at the V125 shape (before
+     * {@code roles}/{@code role_permissions}/{@code role_bindings} were renamed) and once at head
+     * (after it). The table name therefore has to follow the stage, or the pre-rename insert fails
+     * with {@code relation "grant_preset_bindings" does not exist}.
+     */
+    enum Stage {
+        PRE_RENAME,
+        HEAD;
+
+        String bindingsTable() {
+            return this == PRE_RENAME ? "role_bindings" : "grant_preset_bindings";
+        }
+
+        String presetsTable() {
+            return this == PRE_RENAME ? "roles" : "grant_presets";
+        }
+
+        String presetAtomsTable() {
+            return this == PRE_RENAME ? "role_permissions" : "grant_preset_atoms";
+        }
+
+        /** task-835 (V182): {@code ck_grants_source} says {@code role} before, {@code preset} after. */
+        String materializedSource() {
+            return this == PRE_RENAME ? "role" : "preset";
+        }
+    }
+
+    private static void insertGrant(Connection connection, Stage stage, UUID principalId, String atom,
+            String scopeType, UUID scopeId, String source) throws SQLException {
+        String storedSource = "role".equals(source) ? stage.materializedSource() : source;
         execute(connection, "INSERT INTO grants (id, subject_type, subject_id, permissions, source,"
                 + " scope_type, scope_id, read_state) VALUES ('" + UUID.randomUUID() + "',"
                 + " 'agent_principal', '" + principalId + "', '[{\"actionClass\": \"" + atom
-                + "\"}]'::jsonb, '" + source + "', '" + scopeType + "', " + literal(scopeId)
+                + "\"}]'::jsonb, '" + storedSource + "', '" + scopeType + "', " + literal(scopeId)
                 + ", 'unread')");
     }
 

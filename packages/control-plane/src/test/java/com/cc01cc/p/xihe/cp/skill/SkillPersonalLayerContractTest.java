@@ -156,7 +156,7 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
         String skillId = importPersonal(alice, "writing");
 
         jdbc.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = ? "
-                + "AND permissions->0->>'actionClass' = 'MANAGE_PERSONAL_SKILLS'",
+                + "AND permissions->0->>'actionClass' = 'action:MANAGE_PERSONAL_SKILLS'",
                 UUID.fromString(alice.getUser().getId()));
 
         Logger denyLogger = (Logger) LoggerFactory.getLogger(RequesterAuthority.class);
@@ -181,7 +181,7 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
                         "no [POLICY] event=action_atom_denied line was emitted for the refused personal write"));
-        assertTrue(denyLine.contains("atom=MANAGE_PERSONAL_SKILLS"), denyLine);
+        assertTrue(denyLine.contains("atom=action:MANAGE_PERSONAL_SKILLS"), denyLine);
         assertTrue(denyLine.contains("subject=" + alice.getUser().getId()), denyLine);
         assertTrue(denyLine.contains("workspaceId=-"), denyLine);
         assertTrue(denyLine.contains("source=none"), denyLine);

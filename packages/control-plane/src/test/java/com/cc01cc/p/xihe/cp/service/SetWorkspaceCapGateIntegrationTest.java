@@ -97,7 +97,8 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         assertTrue(denied.getMessage().contains("principal-exceeding=[]"),
                 "principal side holds N9 everywhere: " + denied.getMessage());
         assertTrue(denied.getMessage().contains("actor-exceeding=["
-                        + ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY + "@*]"),
+                        + com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY) + "@*]"),
                 "the actor-side exceeding atom is named: " + denied.getMessage());
         assertFalse(workspaceAgentRepository.existsById(new WorkspaceAgentId(principal, wsB.getId())),
                 "a refused cap write must leave zero rows");
@@ -141,7 +142,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         agentPrincipalService.setWorkspaceCap(owner.getId().toString(), ws.getId(), second,
                 json("[{\"actionClass\":\"read\",\"resource\":\"*\"}]"));
         JsonNode readOnly = agentPrincipalService.resolveCapFor(second, ws.getId());
-        assertEquals(Set.of("read"), readOnly.findValuesAsText("actionClass").stream().collect(java.util.stream.Collectors.toSet()),
+        assertEquals(Set.of("action:read"), readOnly.findValuesAsText("actionClass").stream().collect(java.util.stream.Collectors.toSet()),
                 "read-only cap ⇒ effective exactly {read}: " + readOnly);
         assertFalse(readOnly.findValuesAsText("actionClass").contains("write"));
     }
@@ -223,7 +224,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         agentPrincipalService.setWorkspaceCap(owner.getId().toString(), ws.getId(), structural, readOnly);
         assertTrue(workspaceAgentRepository.existsById(new WorkspaceAgentId(structural, ws.getId())));
         JsonNode effective = agentPrincipalService.resolveCapFor(structural, ws.getId());
-        assertEquals(Set.of("read"),
+        assertEquals(Set.of("action:read"),
                 effective.findValuesAsText("actionClass").stream().collect(java.util.stream.Collectors.toSet()),
                 "structural path: role ∩ cap = {read}");
 

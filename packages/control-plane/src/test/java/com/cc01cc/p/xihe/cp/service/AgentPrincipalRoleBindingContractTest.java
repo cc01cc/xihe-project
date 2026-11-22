@@ -138,7 +138,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
 
         assertEquals(before + 1, totalBindingCount(), "exactly one binding row is written");
         List<String> atoms = materializedAtoms();
-        assertTrue(atoms.contains("read"),
+        assertTrue(atoms.contains("action:read"),
                 "grants must be materialized in the same transaction, got " + atoms);
     }
 
@@ -151,7 +151,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
                 Map.of("roleId", roleId.toString()));
         assertEquals(HttpStatus.CREATED, created.getStatusCode());
         String bindingId = String.valueOf(created.getBody().get("bindingId"));
-        assertTrue(materializedAtoms().contains("read"));
+        assertTrue(materializedAtoms().contains("action:read"));
 
         ResponseEntity<String> deleted = delete("/roles/" + bindingId + "?workspaceId=" + workspace.getId());
 
@@ -294,7 +294,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     void roleCandidatesAreReadableByWorkspaceOwnerAndFilteredToBindableRoles() {
         fixture();
         ResponseEntity<List> listed = restTemplate.exchange(
-                url("/api/v1/roles?workspaceId=" + workspace.getId()), HttpMethod.GET,
+                url("/api/v1/presets?workspaceId=" + workspace.getId()), HttpMethod.GET,
                 new HttpEntity<>(authHeaders()), List.class);
 
         assertEquals(HttpStatus.OK, listed.getStatusCode(), String.valueOf(listed.getBody()));
@@ -323,13 +323,13 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(managerToken);
 
-        ResponseEntity<Map> withoutContext = restTemplate.exchange(url("/api/v1/roles"),
+        ResponseEntity<Map> withoutContext = restTemplate.exchange(url("/api/v1/presets"),
                 HttpMethod.GET, new HttpEntity<>(headers), Map.class);
         assertEquals(HttpStatus.FORBIDDEN, withoutContext.getStatusCode(), String.valueOf(withoutContext.getBody()));
         assertEquals("FORBIDDEN", withoutContext.getBody().get("code"));
 
         ResponseEntity<List> withContext = restTemplate.exchange(
-                url("/api/v1/roles?workspaceId=" + workspace.getId()), HttpMethod.GET,
+                url("/api/v1/presets?workspaceId=" + workspace.getId()), HttpMethod.GET,
                 new HttpEntity<>(headers), List.class);
         assertEquals(HttpStatus.OK, withContext.getStatusCode(), String.valueOf(withContext.getBody()));
         assertTrue(((List<Map<String, Object>>) withContext.getBody()).stream()
@@ -414,7 +414,8 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         roleRepository.save(new GrantPreset(roleId, "TEST_RB_" + shortId(), "Test binding role",
                 "test-only role", false));
         for (String atom : atoms) {
-            permissionRepository.save(new GrantPresetAtom(roleId, atom, "*"));
+            permissionRepository.save(new GrantPresetAtom(roleId,
+                    com.cc01cc.p.xihe.cp.policy.AtomNames.action(atom), "*"));
         }
         testRoleId = roleId;
         return roleId;

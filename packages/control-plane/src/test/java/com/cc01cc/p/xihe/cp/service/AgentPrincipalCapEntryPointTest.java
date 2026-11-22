@@ -102,7 +102,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
 
         JsonNode cap = agentPrincipalService.resolveCapFor(principal.getId(), boundIn.getId());
         assertNotNull(cap);
-        assertEquals("read", cap.path(0).path("actionClass").asText());
+        assertEquals("action:read", cap.path(0).path("actionClass").asText());
 
         CpApiException failure = assertThrows(CpApiException.class,
                 () -> agentPrincipalService.resolveCapFor(principal.getId(), unboundIn.getId()));
@@ -124,7 +124,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
         // This test thread never ran a request, so TenantContext is empty by construction.
         assertNull(com.cc01cc.p.xihe.cp.config.TenantContext.getUserId());
         JsonNode cap = agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId());
-        assertEquals("write", cap.path(0).path("actionClass").asText());
+        assertEquals("action:write", cap.path(0).path("actionClass").asText());
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -137,7 +137,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
         Workspace workspace = workspace("Cap cache", owner);
         AgentPrincipal principal = principal(owner, "FreshAgent");
         WorkspaceAgent binding = bind(principal, workspace, "[{\"actionClass\":\"read\"}]");
-        assertEquals("read", agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId())
+        assertEquals("action:read", agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId())
                 .path(0).path("actionClass").asText());
 
         binding.setPermissionsSnapshot(objectMapper.readTree("[{\"actionClass\":\"exec\"}]"));
