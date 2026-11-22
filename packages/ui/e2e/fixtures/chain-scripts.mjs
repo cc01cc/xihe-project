@@ -24,4 +24,10 @@ export const CHAIN_SCRIPTS = Object.freeze({
     //   回答落库后 run 解除阻塞，续请求（last role = tool）落回同一步并返回 prose，
     //   即「作答 → agent 继续」的端到端断言点（T5.23 判据 V8）。
     "ask-user": Object.freeze(["ask_user", "text"]),
+    // task-724 C1 negative control：发一个工具名不在注册表内的 tool call。
+    //   首轮请求发 `xihe_e2e_unregistered_schema_probe`；tool 结果后的续请求
+    //   （last role = tool）落回同一步并返回 prose，让 spec 能区分「闩住持久化」
+    //   与「run 直接崩掉」。关闭该链（普通 success）时 spec 找不到这个 tool call，
+    //   负控必须 FAIL，不能静默 PASS。
+    unregistered_schema: Object.freeze(["unregistered_schema", "text"]),
 });

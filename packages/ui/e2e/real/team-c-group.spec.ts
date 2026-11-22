@@ -643,6 +643,61 @@ function scanD1836(): { hits: number; lines: string[] } {
     return { hits: lines.length, lines };
 }
 
+/** 读 CP 日志（runner 把每个服务的 stdout/stderr 落在 HOST_ROOT/logs/*.log）。 */
+function scanCpLogs(pattern: RegExp): { hits: number; lines: string[] } {
+    const logsDir = path.join(HOST_ROOT, "logs");
+    if (!existsSync(logsDir)) return { hits: 0, lines: [] };
+    const lines: string[] = [];
+    for (const entry of readdirSync(logsDir)) {
+        if (!entry.endsWith(".log")) continue;
+        const file = path.join(logsDir, entry);
+        for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+            if (pattern.test(line)) lines.push(`${entry}: ${line.slice(0, 400)}`);
+        }
+    }
+    return { hits: lines.length, lines };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * task-724 C3：runner-owned Agent 故障注入（runner 只在 C 组一次性栈上暴露）
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const HOST_CONTROL_URL = process.env.XIHE_E2E_HOST_CONTROL_URL ?? "";
+const HOST_CONTROL_TOKEN = process.env.XIHE_E2E_HOST_CONTROL_TOKEN ?? "";
+const RESPOND_TARGET = "/internal/v1/agent/user-question/respond";
+
+async function agentFault(
+    action: "arm" | "disarm",
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+    if (!HOST_CONTROL_URL || !HOST_CONTROL_TOKEN) {
+        return { ok: false, status: 0, body: "host control is not exposed by the runner" };
+    }
+    const response = await fetch(`${HOST_CONTROL_URL}/agent-fault`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${HOST_CONTROL_TOKEN}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(action === "arm" ? { action, target: RESPOND_TARGET } : { action }),
+        signal: AbortSignal.timeout(10_000),
+    });
+    const text = await response.text();
+    let body: unknown = text;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        body = text;
+    }
+    return {
+        ok:
+            response.ok && action === "arm"
+                ? Boolean((body as { armed?: boolean }).armed)
+                : response.ok,
+        status: response.status,
+        body,
+    };
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * 用例
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -760,12 +815,79 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
                 : "FAIL",
         );
 
-        record(
-            "negative control (unregistered schema still latches)",
-            "same-shape unregistered-schema tool call must latch",
-            "UNMEASURED: no fixture chain emits an unregistered-schema tool call; adding one would require a new fake-LLM mode (out of task-12 write scope: e2e/fixtures is not in scope)",
-            "UNMEASURED",
+        // task-724 C1 negative control: the same-stack fixture chain
+        // `unregistered_schema` emits one tool call whose name is not in the
+        // graph registry. The Agent's chat model adapter (`_check_response`,
+        // api_chat_model.py) rejects it before the graph dispatches, so the run
+        // MUST fail closed with TOOL_NOT_AUTHORIZED and no checkpoint may be
+        // persisted. Turning the chain off (ordinary success) produces a
+        // succeeded run instead, so the first check below goes FAIL — this
+        // cannot silently pass.
+        const negativeSession = await newSession(request, fx, "task-12 C1 unregistered schema");
+        const negativeSse = await openSse(fx, negativeSession.sessionId);
+        const negativeAdmission = await submitChat(
+            request,
+            fx,
+            negativeSession,
+            "XIHE-E2E-CHAIN unregistered_schema C1 negative control",
         );
+        record(
+            "negative control chat admission",
+            "HTTP 202 + runId",
+            `HTTP ${negativeAdmission.status} ${negativeAdmission.text.slice(0, 200)}`,
+            negativeAdmission.status === 202 && negativeAdmission.runId ? "PASS" : "FAIL",
+        );
+        if (negativeAdmission.status === 202 && negativeAdmission.runId) {
+            const negativeRunId = negativeAdmission.runId;
+            const terminal = await pollUntil(
+                () => runStatus(negativeRunId),
+                (status) => /^(succeeded|failed|partial|cancelled|ambiguous)\|/.test(status),
+                BUDGET.wait,
+            );
+            const [negativeStatus, negativeCode] = terminal.value.split("|", 2);
+            const failedClosed =
+                terminal.ok &&
+                negativeStatus === "failed" &&
+                negativeCode === "TOOL_NOT_AUTHORIZED";
+            record(
+                "negative control: unregistered tool call fails closed",
+                "run status=failed with errorCode=TOOL_NOT_AUTHORIZED",
+                `status=${terminal.value} waited=${terminal.waitedMs}ms`,
+                failedClosed ? "PASS" : "FAIL",
+            );
+            const persistedCheckpoints = Number(
+                psqlScalar(
+                    `SELECT count(*) FROM agent_graph_checkpoints c ` +
+                        `JOIN agent_graph_checkpoint_lineages l ON l.lineage_id = c.lineage_id ` +
+                        `WHERE l.source_run_id = '${negativeRunId}' ` +
+                        `AND encode(c.checkpoint_blob,'escape') LIKE '%xihe_e2e_unregistered_schema_probe%'`,
+                ),
+            );
+            const persistedWrites = Number(
+                psqlScalar(
+                    `SELECT count(*) FROM agent_graph_checkpoint_writes w ` +
+                        `JOIN agent_graph_checkpoint_lineages l ON l.lineage_id = w.lineage_id ` +
+                        `WHERE l.source_run_id = '${negativeRunId}' ` +
+                        `AND encode(w.value_blob,'escape') LIKE '%xihe_e2e_unregistered_schema_probe%'`,
+                ),
+            );
+            record(
+                "negative control: checkpoint saver latched (no unknown schema persisted)",
+                "0 checkpoint payloads / 0 pending writes contain the unregistered tool call",
+                `checkpoints=${persistedCheckpoints} writes=${persistedWrites} runStatus=${runStatus(negativeRunId)}`,
+                failedClosed && persistedCheckpoints === 0 && persistedWrites === 0
+                    ? "PASS"
+                    : "FAIL",
+            );
+        } else {
+            record(
+                "negative control: unregistered tool call fails closed",
+                "run status=failed with errorCode=TOOL_NOT_AUTHORIZED",
+                "run was not admitted, so the latch cannot be proven",
+                "FAIL",
+            );
+        }
+        negativeSse.close();
 
         sse.close();
         const failed = checks.filter((check) => check.status === "FAIL").length;
@@ -991,6 +1113,18 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         }
         const questionId = pending.value[0]?.[0] ?? "";
         const answerText = `T12C C3 durable ${Date.now()}`;
+        // task-724: force the CP→Agent respond call to fail. The runner-owned
+        // transparent proxy answers only this path with 502; the Agent keeps
+        // running and the C3 flow (answer durable → park → replay) is real.
+        const controlExposed = Boolean(HOST_CONTROL_URL && HOST_CONTROL_TOKEN);
+        const arm = await agentFault("arm");
+        record(
+            "respond failpoint armed",
+            "HTTP 200 + armed=true on /internal/v1/agent/user-question/respond",
+            JSON.stringify(arm),
+            arm.ok ? "PASS" : controlExposed ? "FAIL" : "UNMEASURED",
+        );
+        let respondParked = false;
         const answer = await request.post(`${CP_URL}/api/v1/user-questions/${questionId}/answer`, {
             headers: fx.headers,
             data: { answer: answerText },
@@ -1012,6 +1146,37 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
             JSON.stringify(answeredRow),
             answeredRow[0] === "answered" && answeredRow[1] === answerText ? "PASS" : "FAIL",
         );
+        if (arm.ok) {
+            const parkLog = await pollUntil(
+                () => scanCpLogs(/chat_run_respond_failed_park_for_replay/),
+                (scan) => scan.hits > 0,
+                BUDGET.wait,
+            );
+            const parkedStatus = psqlScalar(`SELECT status FROM chat_runs WHERE id = '${runId}'`);
+            respondParked = parkLog.ok && parkedStatus === "queued";
+            record(
+                "forced respond failure parked the run",
+                "log signature chat_run_respond_failed_park_for_replay + chat_runs.status=queued",
+                `hits=${parkLog.value.hits} status=${parkedStatus} log=${JSON.stringify(parkLog.value.lines).slice(0, 400)}`,
+                respondParked ? "PASS" : "FAIL",
+            );
+            const disarm = await agentFault("disarm");
+            record(
+                "respond failpoint disarmed before replay",
+                "HTTP 200 + armed=false",
+                JSON.stringify(disarm),
+                disarm.ok ? "PASS" : "FAIL",
+            );
+        } else {
+            record(
+                "forced respond failure parked the run",
+                "log signature chat_run_respond_failed_park_for_replay + chat_runs.status=queued",
+                controlExposed
+                    ? "failpoint could not be armed; park path not exercised"
+                    : "UNMEASURED: runner did not expose XIHE_E2E_HOST_CONTROL_URL/TOKEN",
+                controlExposed ? "FAIL" : "UNMEASURED",
+            );
+        }
 
         const killed = await killCpDeclared();
         const restarted = await restartCp(cpRestartEnv());
@@ -1047,6 +1212,15 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
             replay.value,
             replay.ok ? "PASS" : "FAIL",
         );
+        if (respondParked) {
+            const replayState = replay.value.split("|", 1)[0];
+            record(
+                "parked run left queued after the drain",
+                "chat_run is no longer queued once the answer is replayed",
+                `state=${replayState} raw=${replay.value}`,
+                replay.ok && replayState !== "queued" ? "PASS" : "FAIL",
+            );
+        }
 
         const d1836 = scanD1836();
         record(
@@ -1057,14 +1231,121 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         record(
             "forced respond failure → park → replay",
-            "answer persists, run parks and replays on the terminal event",
-            "UNMEASURED: forcing the CP→Agent respond to fail needs a failpoint; the only in-tree failpoints are gated to the exact checkpoint-probe specs (scripts/e2e-host.mjs:1779), which this lane must not claim",
-            "UNMEASURED",
+            "answer persists, run parks and replays after the fault is removed",
+            controlExposed
+                ? `respondParked=${respondParked} replay=${replay.value}`
+                : "UNMEASURED: runner did not expose XIHE_E2E_HOST_CONTROL_URL/TOKEN",
+            controlExposed
+                ? respondParked && replay.ok && replay.value.split("|", 1)[0] !== "queued"
+                    ? "PASS"
+                    : "FAIL"
+                : "UNMEASURED",
         );
 
         sse.close();
         const failed = checks.filter((check) => check.status === "FAIL").length;
         writeRunFile("C3", { status: failed ? "FAIL" : "PASS", runId, checks });
+        expect(
+            checks.filter((check) => check.status === "FAIL"),
+            JSON.stringify(checks, null, 2),
+        ).toHaveLength(0);
+    });
+
+    test("C3 negative control — failpoint off ⇒ respond succeeds, no park signature", async ({
+        request,
+    }) => {
+        const checks: Check[] = [];
+        const record = (check: string, expected: string, observed: string, status: Status) =>
+            checks.push({
+                criterion: "C3",
+                check,
+                expected,
+                observed: scrub(observed),
+                status,
+                at: new Date().toISOString(),
+            });
+        const fx = await buildFixture(request, "c3neg");
+        const session = await newSession(request, fx, "task-12 C3 negative control");
+        const sse = await openSse(fx, session.sessionId);
+        const admission = await submitChat(
+            request,
+            fx,
+            session,
+            `XIHE-E2E-CHAIN ask-user XIHE-E2E-ASK T12C C3 negative ${Date.now()}`,
+        );
+        record(
+            "negative control chat admission",
+            "HTTP 202 + runId",
+            `HTTP ${admission.status} ${admission.text.slice(0, 200)}`,
+            admission.status === 202 && admission.runId ? "PASS" : "PRECONDITION_UNMET",
+        );
+        if (admission.status !== 202 || !admission.runId) {
+            sse.close();
+            writeRunFile("C3-negative-control", { status: "PRECONDITION_UNMET", checks });
+            test.skip(true, `ask_user run not admitted: HTTP ${admission.status}`);
+        }
+        const runId = admission.runId;
+        const pending = await waitPendingQuestion(runId);
+        record(
+            "pending question before the answer",
+            ">=1 pending row",
+            JSON.stringify(pending.value),
+            pending.ok ? "PASS" : "PRECONDITION_UNMET",
+        );
+        if (!pending.ok) {
+            sse.close();
+            writeRunFile("C3-negative-control", { status: "PRECONDITION_UNMET", runId, checks });
+            test.skip(true, "no pending question row for the negative control");
+        }
+        const questionId = pending.value[0]?.[0] ?? "";
+        const answerText = `T12C C3 negative ${Date.now()}`;
+
+        // Deliberately DO NOT arm /agent-fault: the same answer round-trip must
+        // succeed without the park signature. This is the falsification half of
+        // the C3 failpoint: proving park is caused by the injected 502, not by
+        // the topology.
+        const answer = await request.post(`${CP_URL}/api/v1/user-questions/${questionId}/answer`, {
+            headers: fx.headers,
+            data: { answer: answerText },
+            timeout: LONG_TIMEOUT_MS,
+        });
+        record(
+            "answer delivered without the failpoint",
+            "HTTP 200",
+            `HTTP ${answer.status()} ${(await answer.text()).slice(0, 200)}`,
+            answer.status() === 200 ? "PASS" : "FAIL",
+        );
+        const answeredRow =
+            psql(
+                `SELECT state, coalesce(answer,'') FROM user_questions WHERE id = '${questionId}'`,
+            )[0] ?? [];
+        record(
+            "answer durable",
+            "state=answered with the stored answer",
+            JSON.stringify(answeredRow),
+            answeredRow[0] === "answered" && answeredRow[1] === answerText ? "PASS" : "FAIL",
+        );
+
+        const parkScan = scanCpLogs(
+            new RegExp(`chat_run_respond_failed_park_for_replay[^\\n]*runId=${runId}`),
+        );
+        record(
+            "failpoint off ⇒ no park signature",
+            "0 chat_run_respond_failed_park_for_replay lines for this runId",
+            `hits=${parkScan.hits} ${JSON.stringify(parkScan.lines).slice(0, 300)}`,
+            parkScan.hits === 0 ? "PASS" : "FAIL",
+        );
+        const status = runStatus(runId);
+        record(
+            "failpoint off ⇒ run not parked as queued",
+            "chat_runs.status is not queued",
+            status,
+            status.split("|", 1)[0] !== "queued" ? "PASS" : "FAIL",
+        );
+
+        sse.close();
+        const failed = checks.filter((check) => check.status === "FAIL").length;
+        writeRunFile("C3-negative-control", { status: failed ? "FAIL" : "PASS", runId, checks });
         expect(
             checks.filter((check) => check.status === "FAIL"),
             JSON.stringify(checks, null, 2),

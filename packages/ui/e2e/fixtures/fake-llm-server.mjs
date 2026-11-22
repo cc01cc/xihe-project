@@ -194,6 +194,16 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    // task-724 C1 negative control: a tool call whose name is not in the tool
+    // registry. The Agent graph answers it with an error ToolMessage
+    // (`<name> is not a valid tool`), and the checkpoint saver must latch
+    // instead of persisting the unknown schema. The follow-up turn returns
+    // prose so the spec can tell "checkpoint latch" apart from "run crashed".
+    if (effectiveMode === "unregistered_schema") {
+        sendUnregisteredSchemaCompletion(response, requestBody);
+        return;
+    }
+
     if (effectiveMode === "history-marker") {
         sendHistoryMarkerCompletion(response, requestBody);
         return;
@@ -1065,6 +1075,52 @@ function sendAskUserCompletion(response, requestBody) {
     for (const content of chunks) {
         response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
     }
+    response.end("data: [DONE]\n\n");
+}
+
+/**
+ * task-724 C1 negative control: one deterministic tool call whose name is not
+ * registered with the graph. The tool name is a stable marker the spec greps
+ * for in `messages.tool_calls` and in checkpoint payloads.
+ */
+function sendUnregisteredSchemaCompletion(response, requestBody) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
+
+    if (last.role === "tool") {
+        // The invalid tool call has been answered with an error ToolMessage.
+        // A well-behaved checkpoint saver latches here, so this marker only
+        // proves the graph did not abort the in-memory run.
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "UNREGISTERED_SCHEMA_TOOL_RESULT_SEEN" } }] })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+
+    const toolCallDelta = {
+        choices: [
+            {
+                delta: {
+                    tool_calls: [
+                        {
+                            index: 0,
+                            id: "call-unregistered-schema-e2e-1",
+                            type: "function",
+                            function: {
+                                name: "xihe_e2e_unregistered_schema_probe",
+                                arguments: JSON.stringify({ probe: "unregistered_schema" }),
+                            },
+                        },
+                    ],
+                },
+                finish_reason: null,
+            },
+        ],
+    };
+    const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+    response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+    response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
     response.end("data: [DONE]\n\n");
 }
 

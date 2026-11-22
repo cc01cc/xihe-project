@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'nod
 import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { connect as connectTcp } from 'node:net'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
@@ -333,6 +333,23 @@ const checkpointResumeRequested = process.argv.some((arg) => {
     || normalized.endsWith('/e2e/real/checkpoint-resume.spec.ts')
 })
 const exactCheckpointHostProbeRequested = checkpointSaverProbeRequested || checkpointResumeRequested
+// task-724: the C-group spec needs the same runner-owned control surface as the
+// exact checkpoint probes (arm/disarm a fault, never a second stack orchestration).
+// Gate it to the one spec so every other lane keeps the historical surface.
+const teamCGroupSpecRequested =
+  process.argv.some((arg) => {
+    const normalized = arg.replaceAll('\\', '/')
+    return normalized === 'team-c-group.spec.ts'
+      || normalized === 'e2e/real/team-c-group.spec.ts'
+      || normalized.endsWith('/e2e/real/team-c-group.spec.ts')
+  })
+  || batchSpecs.some((spec) => {
+    const normalized = spec.replaceAll('\\', '/')
+    return normalized === 'e2e/real/team-c-group.spec.ts'
+      || normalized.endsWith('/e2e/real/team-c-group.spec.ts')
+  })
+const teamCGroupRequested = teamCGroupSpecRequested && process.env.XIHE_E2E_TEAM_C === '1'
+const hostControlRequested = exactCheckpointHostProbeRequested || teamCGroupRequested
 const llmMode = checkpointResumeRequested && requestedLlmMode === undefined
   ? 'checkpoint_resume'
   : requestedLlmMode ?? 'mock'
@@ -436,6 +453,13 @@ const nativeServiceChildren = new Map()
 let checkpointProbeControlServer = null
 let checkpointProbeControlToken = null
 let checkpointProbeControlUrl = null
+// task-724 C3: a transparent loopback proxy in front of the Agent. CP keeps its
+// historical env shape; only the base URL points here. The control surface below
+// arms one path-scoped fault, so "CP→Agent respond fails" is deterministic
+// without killing the Agent or cloning the stack orchestration.
+let agentFaultProxyServer = null
+let agentFaultProxyUrl = null
+const agentFault = { armed: false, target: '', status: 502 }
 // BL-538: per-run directory a spec writes its declared service-stop window into, e.g.
 // `runtime.json` = { service, spec, startedAt, expiresAt }. Kept under the run dir (never the
 // repo) and consumed single-use below, so a crash-restart loop cannot be forgiven twice.
@@ -949,8 +973,28 @@ function run(program, args, options = {}) {
       stdio: options.stdio ?? 'inherit',
       windowsHide: true,
     })
-    child.once('error', reject)
-    child.once('close', (code, signal) => resolve({ code: code ?? 1, signal, child }))
+    let timer
+    let settled = false
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      fn(value)
+    }
+    if (options.timeoutMs) {
+      timer = setTimeout(() => {
+        const error = teardownTimeout(`command ${program}`, options.timeoutMs)
+        try { child.kill('SIGKILL') } catch { /* best-effort */ }
+        if (process.platform === 'win32' && child.pid) {
+          try {
+            spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+          } catch { /* best-effort */ }
+        }
+        finish(reject, error)
+      }, options.timeoutMs)
+    }
+    child.once('error', (error) => finish(reject, error))
+    child.once('close', (code, signal) => finish(resolve, { code: code ?? 1, signal, child }))
   })
 }
 
@@ -1095,6 +1139,24 @@ async function stopProcess(child) {
 // ② `cleanup()` 带 deadline，超时则强制杀树并 exit，绝不等待。
 const CLEANUP_TIMEOUT_MS = Number(process.env.XIHE_E2E_CLEANUP_TIMEOUT_MS ?? 30_000)
 const BOOT_TIMEOUT_MS = Number(process.env.XIHE_E2E_BOOT_TIMEOUT_MS ?? 120_000)
+const TEARDOWN_PROBE_TIMEOUT_MS = Number(process.env.XIHE_E2E_TEARDOWN_PROBE_TIMEOUT_MS ?? 3_000)
+const TEARDOWN_PROBE_TOTAL_TIMEOUT_MS = Number(process.env.XIHE_E2E_TEARDOWN_PROBE_TOTAL_TIMEOUT_MS ?? 5_000)
+const TEARDOWN_CLOSE_TIMEOUT_MS = Number(process.env.XIHE_E2E_TEARDOWN_CLOSE_TIMEOUT_MS ?? 3_000)
+const TEARDOWN_RECYCLE_TIMEOUT_MS = Number(process.env.XIHE_E2E_TEARDOWN_RECYCLE_TIMEOUT_MS ?? 30_000)
+
+function teardownTimeout(label, timeoutMs) {
+  const error = new Error(`E2E_TEARDOWN_TIMEOUT ${label} exceeded ${timeoutMs}ms`)
+  error.code = 'E2E_TEARDOWN_TIMEOUT'
+  return error
+}
+
+function withTeardownTimeout(promise, label, timeoutMs) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(teardownTimeout(label, timeoutMs)), timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
 
 /** 主动收尾期间不触发 fail-fast（teardown 杀进程会产生非零退出码，那是预期）。 */
 let shuttingDown = false
@@ -1217,7 +1279,10 @@ async function killPortListeners(ports) {
 async function dockerCompose(args, options = {}) {
   // Windows Docker Desktop may ship compose v1 as docker-compose.exe without
   // the `docker compose` plugin — prefer the standalone binary then.
-  const probe = await run('docker', ['compose', 'version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const probe = await run('docker', ['compose', 'version'], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeoutMs: 10_000,
+  })
   const usePlugin = probe.code === 0
   const cmd = usePlugin ? dockerCommand : 'docker-compose.exe'
   // task-237: compose **v1**（docker-compose.exe）不支持 `up --wait`。以前把 `--wait` 照传给 v1，
@@ -1783,9 +1848,120 @@ function takeDeclaredServiceExit(service) {
     return { spec, startedAt, expiresAt, matches: Date.now() <= expiresAt }
 }
 
+/**
+ * task-724 C3: transparent loopback reverse proxy for CP→Agent traffic.
+ *
+ * The proxy is byte-transparent unless a fault is armed. A fault matches on a
+ * path substring (e.g. `/internal/v1/agent/user-question/respond`) and answers
+ * with the configured HTTP status, so `UserQuestionAgentClient` observes a real
+ * 502 without any product code knowing about E2E.
+ */
+async function startAgentFaultProxy() {
+  if (agentFaultProxyServer) return
+  agentFaultProxyServer = createHttpServer((clientRequest, clientResponse) => {
+    const url = typeof clientRequest.url === 'string' ? clientRequest.url : ''
+    if (agentFault.armed && url.includes(agentFault.target)) {
+      clientResponse.writeHead(agentFault.status, { 'Content-Type': 'application/json' })
+      clientResponse.end(JSON.stringify({
+        error: 'injected agent fault',
+        target: agentFault.target,
+        status: agentFault.status,
+      }))
+      return
+    }
+    const upstream = httpRequest({
+      host: '127.0.0.1',
+      port: agentPort,
+      method: clientRequest.method,
+      path: url || '/',
+      headers: { ...clientRequest.headers, host: `127.0.0.1:${agentPort}` },
+    }, (upstreamResponse) => {
+      clientResponse.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
+      upstreamResponse.pipe(clientResponse)
+    })
+    upstream.on('error', () => {
+      if (!clientResponse.headersSent) {
+        clientResponse.writeHead(502, { 'Content-Type': 'application/json' })
+      }
+      if (!clientResponse.writableEnded) {
+        clientResponse.end(JSON.stringify({ error: 'agent fault proxy upstream unavailable' }))
+      }
+    })
+    clientRequest.on('aborted', () => upstream.destroy())
+    clientRequest.pipe(upstream)
+  })
+  await new Promise((resolve, reject) => {
+    agentFaultProxyServer.once('error', reject)
+    agentFaultProxyServer.listen(0, '127.0.0.1', resolve)
+  })
+  const address = agentFaultProxyServer.address()
+  if (!address || typeof address === 'string') throw new Error('agent fault proxy did not bind a TCP port')
+  agentFaultProxyUrl = `http://127.0.0.1:${address.port}`
+  console.log(`[e2e-host] agent fault proxy bound to loopback (agent=${agentPort})`)
+}
+
+async function closeHttpServerBounded(server, label) {
+  const closed = new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  })
+  try {
+    await withTeardownTimeout(closed, label, TEARDOWN_CLOSE_TIMEOUT_MS)
+  } catch (error) {
+    if (error?.code !== 'E2E_TEARDOWN_TIMEOUT') throw error
+    console.error(`E2E_TEARDOWN_TIMEOUT ${label} server.close() did not finish in ${TEARDOWN_CLOSE_TIMEOUT_MS}ms; forcing closeAllConnections()`)
+    server.closeAllConnections?.()
+    await withTeardownTimeout(closed.catch(() => {}), `${label} forced drain`, 1_000).catch(() => {})
+    throw error
+  }
+}
+
+async function closeAgentFaultProxy() {
+  if (!agentFaultProxyServer) return
+  const server = agentFaultProxyServer
+  agentFaultProxyServer = null
+  agentFaultProxyUrl = null
+  agentFault.armed = false
+  agentFault.target = ''
+  await closeHttpServerBounded(server, 'close agent fault proxy')
+}
+
+/** Validate + apply one `/agent-fault` control body. Pure input checks; no side effects on reject. */
+function applyAgentFault(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('invalid agent fault request')
+  }
+  const allowed = new Set(['action', 'target', 'status'])
+  if (Object.keys(body).some((key) => !allowed.has(key))) {
+    throw new Error('invalid agent fault request')
+  }
+  if (body.action === 'disarm') {
+    agentFault.armed = false
+    agentFault.target = ''
+    return { ...agentFault }
+  }
+  if (body.action !== 'arm') throw new Error('invalid agent fault action')
+  const target = typeof body.target === 'string' ? body.target : ''
+  if (
+    target.length < 2
+    || target.length > 200
+    || !target.startsWith('/')
+    || !/^[A-Za-z0-9_./:-]+$/.test(target)
+  ) {
+    throw new Error('agent fault target must be a path prefix')
+  }
+  const status = body.status === undefined ? 502 : body.status
+  if (!Number.isInteger(status) || status < 400 || status > 599) {
+    throw new Error('agent fault status must be 400..599')
+  }
+  agentFault.armed = true
+  agentFault.target = target
+  agentFault.status = status
+  return { ...agentFault }
+}
+
 async function startCheckpointProbeControl() {
-  if (!exactCheckpointHostProbeRequested || externalServer || isPersistent) {
-    throw new Error('checkpoint probe control is limited to an owned exact-spec host run')
+  if (!hostControlRequested || externalServer || isPersistent) {
+    throw new Error('host control is limited to an owned exact-spec host run')
   }
   checkpointProbeControlToken = randomBytes(32).toString('base64url')
   const expected = Buffer.from(`Bearer ${checkpointProbeControlToken}`, 'utf8')
@@ -1799,6 +1975,7 @@ async function startCheckpointProbeControl() {
     }
     const allowedPaths = ['/restart-service', '/migration-recovery']
     if (checkpointResumeRequested) allowedPaths.push('/resume-fixture')
+    if (agentFaultProxyServer) allowedPaths.push('/agent-fault')
     if (request.method !== 'POST' || !allowedPaths.includes(request.url ?? '')) {
       request.resume()
       sendControlJson(response, 404, { error: 'not found' })
@@ -1840,6 +2017,10 @@ async function startCheckpointProbeControl() {
         sendControlJson(response, 200, restarted)
         return
       }
+      if (request.url === '/agent-fault') {
+        sendControlJson(response, 200, applyAgentFault(body))
+        return
+      }
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0) {
         sendControlJson(response, 400, { error: 'invalid migration recovery request' })
         return
@@ -1867,7 +2048,7 @@ async function closeCheckpointProbeControl() {
   if (checkpointProbeControlServer) {
     const server = checkpointProbeControlServer
     checkpointProbeControlServer = null
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    await closeHttpServerBounded(server, 'close checkpoint probe control')
   }
   checkpointProbeControlToken = null
   checkpointProbeControlUrl = null
@@ -2013,6 +2194,18 @@ async function ensureDefaultFakeConnection({ cpBaseUrl, accessToken, apiKey, mod
 }
 
 async function configureFakeLlm() {
+  // task-733: the first-install lane is the one stack with NO seeded admin
+  // (XIHE_SEED_ADMIN=false), so the admin-login-based import cannot run. The
+  // spec only reads onboarding/DB state and needs no LLM profile; require the
+  // explicit `missing` mode rather than silently booting a half-configured
+  // stack that later chat lanes would misread as ready.
+  if (process.env.XIHE_SEED_ADMIN === 'false') {
+    if (llmMode !== 'missing') {
+      throw new Error('XIHE_SEED_ADMIN=false (first-install lane) requires --llm-mode=missing')
+    }
+    console.log('[e2e-host] skipped fake LLM config: XIHE_SEED_ADMIN=false (no seeded admin to import with)')
+    return
+  }
   const cpBaseUrl = `http://127.0.0.1:${cpPort}`
   const login = await fetch(`${cpBaseUrl}/api/v1/auth/login`, {
     method: 'POST',
@@ -2140,6 +2333,7 @@ async function recycleHostRoot() {
     ], {
       env: { XIHE_E2E_HOST_ROOT: hostRoot },
       stdio: 'ignore',
+      timeoutMs: TEARDOWN_RECYCLE_TIMEOUT_MS,
     })
     if (result.code !== 0) {
       throw new Error(`recycle e2e host root failed with exit=${result.code}`)
@@ -2334,7 +2528,7 @@ async function runPlaywright() {
       XIHE_E2E_AGENT_DB_CONFIG_PRESENT: agentDatabaseConfigPresent === false ? 'false' : 'unknown',
       XIHE_E2E_CHECKPOINT_PROBE_ACTIVE: checkpointSaverProbeRequested ? 'true' : 'false',
       XIHE_E2E_CHECKPOINT_RESUME_ACTIVE: checkpointResumeRequested ? 'true' : 'false',
-      ...(exactCheckpointHostProbeRequested
+      ...(hostControlRequested
         ? {
             XIHE_E2E_HOST_CONTROL_URL: checkpointProbeControlUrl,
             XIHE_E2E_HOST_CONTROL_TOKEN: checkpointProbeControlToken,
@@ -2422,6 +2616,42 @@ async function assertExecutedTestCounts(result, statsPath) {
   return { ...result, code: result.code === 0 ? 1 : result.code }
 }
 
+/**
+ * Tear-down liveness probe. Node's fetch has no default timeout, so a TCP peer
+ * that accepts and never answers used to freeze cleanup forever when one of the
+ * five loopback endpoints half-opened (task-740). Each probe is bounded; the
+ * whole fan-out has its own ceiling so a wedged DNS/TCP layer cannot extend it.
+ */
+export async function probeTeardownUrls(urls, options = {}) {
+  const timeoutMs = options.timeoutMs ?? TEARDOWN_PROBE_TIMEOUT_MS
+  const totalTimeoutMs = options.totalTimeoutMs ?? TEARDOWN_PROBE_TOTAL_TIMEOUT_MS
+  const pending = Promise.all(urls.map(async (url) => {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+      return { url, responded: true, status: response.status, timedOut: false }
+    } catch (error) {
+      const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError'
+      if (timedOut) {
+        console.error(`E2E_TEARDOWN_PROBE_TIMEOUT ${url} did not answer within ${timeoutMs}ms; treating as no response`)
+      }
+      return { url, responded: false, status: null, timedOut }
+    }
+  }))
+  let timer
+  const overall = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      console.error(`E2E_TEARDOWN_PROBE_TIMEOUT overall probe budget ${totalTimeoutMs}ms exceeded; treating remaining probes as no response`)
+      resolve(null)
+    }, totalTimeoutMs)
+  })
+  try {
+    const results = await Promise.race([pending, overall])
+    return results ?? urls.map((url) => ({ url, responded: false, status: null, timedOut: true }))
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function collectIsolatedResources(preserveRunDir = false) {
   const failures = []
 
@@ -2460,7 +2690,10 @@ async function collectIsolatedResources(preserveRunDir = false) {
     //    removes the volume that holds the template DB and destroys the container that holds the
     //    dump, so there is nothing extra to clean up on the host and no .gitignore entry to add.
     try {
-      const down = await dockerCompose(['down', '--volumes', '--remove-orphans'], { stdio: 'inherit' })
+      const down = await dockerCompose(['down', '--volumes', '--remove-orphans'], {
+        stdio: 'inherit',
+        timeoutMs: 30_000,
+      })
       if (down.code !== 0) failures.push(`compose down exit=${down.code}`)
     } catch (error) {
       failures.push(`compose down failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -2503,14 +2736,7 @@ async function collectIsolatedResources(preserveRunDir = false) {
       `http://127.0.0.1:${runtimePort}/health`,
       `http://127.0.0.1:${uiPort}/`,
     ]
-    const probe = await Promise.all(probeUrls.map(async (url) => {
-      try {
-        const response = await fetch(url)
-        return { url, responded: true, status: response.status }
-      } catch {
-        return { url, responded: false, status: null }
-      }
-    }))
+    const probe = await probeTeardownUrls(probeUrls)
     for (const result of probe) {
       if (result.responded) failures.push(`service still responding after teardown: ${result.url} HTTP ${result.status}`)
     }
@@ -2549,6 +2775,11 @@ async function cleanup() {
     await closeCheckpointProbeControl()
   } catch {
     controlFailures.push('checkpoint probe control server shutdown failed')
+  }
+  try {
+    await closeAgentFaultProxy()
+  } catch {
+    controlFailures.push('agent fault proxy shutdown failed')
   }
   try {
     const failures = await collectIsolatedResources(preserveRunDir)
@@ -3172,6 +3403,9 @@ async function main() {
 
   if (externalServer) {
     // reuse path: the persistent stack is already up, skip all boot phases.
+    if (teamCGroupRequested) {
+      throw new Error('C-group fault injection requires a runner-owned one-shot stack, not a reused/persistent one')
+    }
     // PLAN-0365 (root cause E): the LLM provider config is imported at boot
     // time from --llm-mode; restore it here so external spec runs can use a
     // different mode than the boot run. PLAN-0504: every lane (mock included)
@@ -3202,6 +3436,10 @@ async function main() {
   // path's LLM readiness gate covers the remaining window). CP prefers the
   // pre-built fat jar (skips ~20s of Maven lifecycle per boot).
     const cpDatasource = `jdbc:postgresql://localhost:${pgPort}/${pgDatabase}`
+    // task-724 C3: CP's whole Agent surface goes through the transparent proxy
+    // in the C-group lane. Other lanes keep the direct loopback URLs.
+    if (teamCGroupRequested) await startAgentFaultProxy()
+    const agentBaseUrlForCp = agentFaultProxyUrl ?? `http://127.0.0.1:${agentPort}`
     const useCpNative = cpBootPlan?.mode === 'native'
     const useCpJar = cpBootPlan?.mode === 'jar'
     const cpJar = useCpJar ? cpBootPlan.jar.path : null
@@ -3213,8 +3451,8 @@ async function main() {
       XIHE_CP_DATASOURCE_USERNAME: pgUser,
       XIHE_CP_DATASOURCE_PASSWORD: pgPassword,
       XIHE_CP_JWT_SECRET: `e2e-${e2eRunId}-jwt-secret`,
-      XIHE_AGENT_URL: `http://127.0.0.1:${agentPort}/internal/v1/agent/chat`,
-      XIHE_AGENT_BASE_URL: `http://127.0.0.1:${agentPort}`,
+      XIHE_AGENT_URL: `${agentBaseUrlForCp}/internal/v1/agent/chat`,
+      XIHE_AGENT_BASE_URL: agentBaseUrlForCp,
       XIHE_RUNTIME_URL: `http://127.0.0.1:${runtimePort}`,
       XIHE_DEV_ADMIN_PASSWORD: e2eAdminPassword,
       XIHE_AUTH_REGISTRATION_POLICY: registrationPolicy,
@@ -3421,7 +3659,7 @@ async function main() {
     return
   }
   await writeArtifactsManifest(cpBootPlan)
-  if (exactCheckpointHostProbeRequested) await startCheckpointProbeControl()
+  if (hostControlRequested) await startCheckpointProbeControl()
   // PLAN-0650 M5: retries are in-process by default. A failed round resets the data plane and
   // replays, instead of tearing the stack down and paying the whole boot again (BL-205 ③).
   const retryPolicy = decideRetryRounds({
