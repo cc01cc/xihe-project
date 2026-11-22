@@ -1,0 +1,15 @@
+# task-869 L3 known authorization-code gaps — ONLY-SHRINK.
+#
+# One line per (route, principal) where the product's observed status/code differs from the
+# matrix expectation (403 = exists but not allowed, 404 = does not exist). An entry is removed
+# the moment the deviation stops reproducing — a stale entry fails the gate.
+#
+#   METHOD /path | principal | expected | observed | owner | reviewDate | reason
+#
+# Never add an entry for a newly discovered deviation: fix the route or route the gap to its
+# owning card (task-859 HTTP-face migration) and record it there.
+GET /api/v1/workspaces/{workspaceId} | nonMember | 403 WORKSPACE_FORBIDDEN | 404 WORKSPACE_NOT_FOUND | lead | 2026-12-15 | item route hides existence as 404 while sibling workspace routes answer 403 for the same caller
+PATCH /api/v1/workspaces/{workspaceId} | nonMember | 403 WORKSPACE_FORBIDDEN | 404 WORKSPACE_NOT_FOUND | lead | 2026-12-15 | same item route hides existence as 404 while the write gate answers 403 elsewhere
+POST /api/v1/workspaces/{workspaceId}/imports | nonMember | 403 WORKSPACE_FORBIDDEN | 404 WORKSPACE_NOT_FOUND | lead | 2026-12-15 | workspace existence is hidden as 404 for non-members on this sub-resource route
+PATCH /api/v1/workspaces/{id} | viewer | 404 WORKSPACE_NOT_FOUND | 403 WORKSPACE_FORBIDDEN | lead | 2026-12-15 | tenant write gate answers before the existence check, so a missing workspace is 403 for a read-only caller
+PATCH /api/v1/workspaces/{id} | editor | 404 WORKSPACE_NOT_FOUND | 403 WORKSPACE_FORBIDDEN | lead | 2026-12-15 | tenant write gate answers before the existence check, so a missing workspace is 403 for a content editor
