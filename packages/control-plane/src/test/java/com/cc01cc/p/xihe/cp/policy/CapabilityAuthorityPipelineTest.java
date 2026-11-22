@@ -260,7 +260,7 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
         return response.getStatusCode().value();
     }
 
-    /** {@code GET /api/v1/bindings?scope=instance} as the {@code {subjectId, roleId}} pairs the
+    /** {@code GET /api/v1/bindings?scope=instance} as the {@code {subjectId, presetId}} pairs the
      * replacement API round-trips. */
     private List<Map<String, String>> instanceBindingPairs(String token) {
         HttpHeaders headers = new HttpHeaders();
@@ -274,7 +274,7 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
         for (Object row : (List<?>) body.get("bindings")) {
             Map<?, ?> binding = (Map<?, ?>) row;
             pairs.add(Map.of("subjectId", String.valueOf(binding.get("subjectId")),
-                    "roleId", String.valueOf(binding.get("roleId"))));
+                    "presetId", String.valueOf(binding.get("presetId"))));
         }
         return pairs;
     }

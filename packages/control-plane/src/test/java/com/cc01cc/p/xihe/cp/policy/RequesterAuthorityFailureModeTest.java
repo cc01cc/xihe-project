@@ -159,7 +159,7 @@ class RequesterAuthorityFailureModeTest {
     void aHealthyStoreStillEvaluatesAndIsNotTurnedIntoA500() {
         // Build the fixture rows first: stubbing a mock (grant(...)) inside another when(...)
         // argument is an unfinished-stubbing error.
-        List<AuthorizationGrant> rows = List.of(grant("role", ToolFaceRegistry.ACTION_MANAGE_ROLES));
+        List<AuthorizationGrant> rows = List.of(grant("preset", ToolFaceRegistry.ACTION_MANAGE_ROLES));
         when(grants.findScopedGrants(any(), any(), any(), any())).thenReturn(rows);
         Set<GrantIntersectionEvaluator.PermissionAtom> atoms = Set.of(
                 new GrantIntersectionEvaluator.PermissionAtom(
@@ -171,8 +171,9 @@ class RequesterAuthorityFailureModeTest {
 
         assertFalse(permissions.isEmpty());
         assertTrue(authority.actionAtoms(SUBJECT, WORKSPACE)
-                .contains(ToolFaceRegistry.ACTION_MANAGE_ROLES));
-        assertEquals(Set.of("role"),
+                .contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_MANAGE_ROLES)));
+        assertEquals(Set.of("preset"),
                 authority.atomSources(SUBJECT, ToolFaceRegistry.ACTION_MANAGE_ROLES, WORKSPACE));
         assertEquals(RequesterAuthority.AtomSourceStatus.PRESENT,
                 authority.atomSourceLookup(SUBJECT, ToolFaceRegistry.ACTION_MANAGE_ROLES, WORKSPACE)
@@ -191,7 +192,8 @@ class RequesterAuthorityFailureModeTest {
         AuthorizationGrant grant = mock(AuthorizationGrant.class);
         when(grant.getSource()).thenReturn(source);
         when(grant.getPermissions()).thenReturn(new ObjectMapper().valueToTree(
-                List.of(Map.of("actionClass", actionClass))));
+                List.of(Map.of("actionClass",
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass)))));
         return grant;
     }
 

@@ -63,10 +63,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class GrantIntersectionThreeWayTest extends AbstractReusableIntegrationTest {
 
-    private static final String READ = ToolFaceRegistry.ACTION_READ;
-    private static final String WRITE = ToolFaceRegistry.ACTION_WRITE;
-    private static final String NETWORK = ToolFaceRegistry.ACTION_NETWORK;
-    private static final String SPAWN_AGENT = ToolFaceRegistry.ACTION_SPAWN_AGENT;
+    // task-835: persisted grant rows/snapshots carry canonical atoms; fixtures use the stored form.
+    private static final String READ = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_READ);
+    private static final String WRITE = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_WRITE);
+    private static final String NETWORK = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_NETWORK);
+    private static final String SPAWN_AGENT = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_SPAWN_AGENT);
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;

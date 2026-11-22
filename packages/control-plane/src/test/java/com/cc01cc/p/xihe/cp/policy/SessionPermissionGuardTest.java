@@ -57,14 +57,14 @@ class SessionPermissionGuardTest {
     static Stream<Arguments> whoMayChangeTheTier() {
         return Stream.of(
                 // 1. owner + atom, widening: the only path that relaxes a session.
-                Arguments.of(true, true, true, "workspace", "full", true, null, false, false, "role"),
+                Arguments.of(true, true, true, "workspace", "full", true, null, false, false, "preset"),
                 // 2. owner without the atom, widening: refused (ownership alone is not enough).
                 Arguments.of(true, true, false, "workspace", "full", false,
                         SessionPermissionGuard.REASON_NO_CAPABILITY, false, false, "-"),
                 // 3. non-owner WITH the atom, widening: refused (the atom is not enough), and the
                 //    refusal still records where the atom came from.
                 Arguments.of(false, true, true, "workspace", "full", false,
-                        SessionPermissionGuard.REASON_NOT_SESSION_OWNER, false, false, "role"),
+                        SessionPermissionGuard.REASON_NOT_SESSION_OWNER, false, false, "preset"),
                 // 4. non-owner without the atom, widening: refused on the capability first.
                 Arguments.of(false, true, false, "workspace", "full", false,
                         SessionPermissionGuard.REASON_NO_CAPABILITY, false, false, "-"),
@@ -80,7 +80,7 @@ class SessionPermissionGuardTest {
                 Arguments.of(false, false, false, "full", "full", false,
                         SessionPermissionGuard.REASON_NOT_SESSION_OWNER, false, true, "-"),
                 // 9. no stored tier = inherit: treated as widening, so owner + atom is required.
-                Arguments.of(true, true, true, null, "full", true, null, false, false, "role"));
+                Arguments.of(true, true, true, null, "full", true, null, false, false, "preset"));
     }
 
     @ParameterizedTest(name = "owner={0} participant={1} atom={2} {3}->{4} allowed={5}")
@@ -115,7 +115,7 @@ class SessionPermissionGuardTest {
             assertTrue(detail.contains("reason=" + reason), detail);
         }
         if ("preset".equals(sources)) {
-            assertTrue(detail.contains("atomSources=role"), detail);
+            assertTrue(detail.contains("atomSources=preset"), detail);
         } else {
             assertTrue(detail.contains("atomSources=-"), detail);
         }
@@ -249,7 +249,7 @@ class SessionPermissionGuardTest {
                 UUID.fromString(WORKSPACE))).thenReturn(held);
         if (held) {
             when(requesterAuthority.atomSources(UUID.fromString(ACTOR), ATOM,
-                    UUID.fromString(WORKSPACE))).thenReturn(Set.of("role"));
+                    UUID.fromString(WORKSPACE))).thenReturn(Set.of("preset"));
         }
     }
 

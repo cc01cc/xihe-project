@@ -45,7 +45,9 @@ class DefaultSetAtomMatrixTest {
             ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS).stream()
+            .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+            .toList();
 
     /**
      * The reviewed contract: role → the plan atoms it holds. Every role not listed here holds none.
@@ -83,6 +85,11 @@ class DefaultSetAtomMatrixTest {
         table.put(SystemGrantPresetCatalog.AGENT_WORKER, Set.of());
         table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+        // M2-3 (task-835/V162): the org-unit governance preset; none of N1–N10 is an org atom.
+        table.put(SystemGrantPresetCatalog.ORG_LEADER, Set.of());
+        table.replaceAll((role, atoms) -> atoms.stream()
+                .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet()));
         return table;
     }
 
@@ -136,12 +143,15 @@ class DefaultSetAtomMatrixTest {
         // D51-26: N10 is deliberately instance-only in the default sets — a workspace role that
         // silently gained it would widen member administration, so it is pinned separately.
         assertFalse(codeAtomsOf(SystemGrantPresetCatalog.WS_OWNER)
-                        .contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS),
+                        .contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)),
                 "WS_OWNER must not gain MANAGE_WORKSPACE_MEMBERS by default (D51-26)");
         assertFalse(codeAtomsOf(SystemGrantPresetCatalog.WS_EDITOR)
-                        .contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS));
+                .contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)));
         assertFalse(codeAtomsOf(SystemGrantPresetCatalog.WS_VIEWER)
-                        .contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS));
+                .contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)));
     }
 
     @Test

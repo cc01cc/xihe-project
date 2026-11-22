@@ -67,6 +67,10 @@ class AgentExecPresetAtomsTest {
         table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
                 ToolFaceRegistry.ACTION_EXEC,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+        // task-835: the code catalog emits canonical `action:` atoms; the reviewed table must match.
+        table.replaceAll((role, atoms) -> atoms.stream()
+                .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet()));
         return table;
     }
 
@@ -84,18 +88,21 @@ class AgentExecPresetAtomsTest {
         // re-adds exec to either role gets this red with the role named, not "some matrix mismatch".
         Set<String> instanceDefault = codeAtomsOf(SystemGrantPresetCatalog.AGENT_USER);
         Set<String> workspaceDefault = codeAtomsOf(SystemGrantPresetCatalog.WS_EDITOR);
-        assertFalse(instanceDefault.contains(ToolFaceRegistry.ACTION_EXEC),
+        assertFalse(instanceDefault.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_EXEC)),
                 "DSD-1500 R2: the agent default INSTANCE role (AGENT_USER) must not carry exec — "
                         + "exec there means default-stack host command execution (job_host_adapter.rs "
                         + "documents no sandbox/policy)");
-        assertFalse(workspaceDefault.contains(ToolFaceRegistry.ACTION_EXEC),
+        assertFalse(workspaceDefault.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_EXEC)),
                 "DSD-1500 R2: the agent default WORKSPACE role (WS_EDITOR) must not carry exec — "
                         + "GrantIntersectionEvaluator.allows intersects every level, so one level "
                         + "holding exec is enough to keep the default stack executable");
 
         Set<String> union = new LinkedHashSet<>(instanceDefault);
         union.addAll(workspaceDefault);
-        assertFalse(union.contains(ToolFaceRegistry.ACTION_EXEC),
+        assertFalse(union.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_EXEC)),
                 "the default agent path (AGENT_USER ∪ WS_EDITOR, the task-116 invariant) must not "
                         + "contain exec; adding exec back to either role makes this test fail: " + union);
     }
@@ -106,7 +113,8 @@ class AgentExecPresetAtomsTest {
         for (String humanRole : List.of(SystemGrantPresetCatalog.USER,
                 SystemGrantPresetCatalog.ADMIN,
                 SystemGrantPresetCatalog.SUPER_ADMIN)) {
-            assertTrue(codeAtomsOf(humanRole).contains(ToolFaceRegistry.ACTION_EXEC),
+        assertTrue(codeAtomsOf(humanRole).contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_EXEC)),
                     "R2 removes exec from the AGENT default only — the human role must keep it: "
                             + humanRole);
         }
@@ -117,7 +125,8 @@ class AgentExecPresetAtomsTest {
         Set<String> actual = new LinkedHashSet<>();
         for (SystemGrantPresetCatalog.PresetSeed seed : SystemGrantPresetCatalog.presetSeeds()) {
             for (SystemGrantPresetCatalog.AtomRef atom : seed.atoms()) {
-                if (ToolFaceRegistry.ACTION_EXEC.equals(atom.actionClass())) {
+            if (com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_EXEC)
+                    .equals(atom.actionClass())) {
                     actual.add(seed.name());
                 }
             }

@@ -87,7 +87,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
 
         List<Map<String, String>> desired = new java.util.ArrayList<>(
                 workspaceBindings(superToken, workspaceId));
-        desired.add(Map.of("subjectId", memberId, "roleId", roleId("WS_EDITOR")));
+        desired.add(Map.of("subjectId", memberId, "presetId", roleId("WS_EDITOR")));
         ResponseEntity<String> granted = call(HttpMethod.PUT,
                 "/api/v1/bindings?scope=workspace&scopeId=" + workspaceId,
                 Map.of("bindings", desired), superToken);
@@ -190,7 +190,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
         }
         // Closed vocabulary (B4): exactly event + the four fields, no resource strings.
         assertEquals(5, fields.size(), event.getFormattedMessage());
-        assertEquals("MANAGE_WORKSPACE_MEMBERS", fields.get("atom"));
+        assertEquals("action:MANAGE_WORKSPACE_MEMBERS", fields.get("atom"));
         assertEquals(outsiderId, fields.get("subject"));
         assertEquals(workspaceId, fields.get("workspaceId"));
         assertEquals("none", fields.get("source"));
@@ -237,7 +237,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
         // that must be remembered moves the table-wide count by exactly one row.
         ResponseEntity<String> denied = call(HttpMethod.PUT, "/api/v1/bindings?scope=instance",
                 Map.of("bindings", List.of(Map.of("subjectId", subjectId,
-                        "roleId", roleId("SUPER_ADMIN")))), adminToken);
+                        "presetId", roleId("SUPER_ADMIN")))), adminToken);
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), denied.getBody());
         String deniedBody = denied.getBody();
         assertNotNull(deniedBody, "a 403 must carry a problem body");
@@ -296,7 +296,10 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
                         + " 'preset', 'instance', 'read'"
                         + " FROM grant_preset_bindings b JOIN grant_preset_atoms rp ON rp.role_id = b.role_id"
                         + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
-                        + " AND b.scope_type = 'instance' AND rp.action_class NOT LIKE '%:%'",
+                // task-835: exclude capability atoms by their `cap:` prefix. The old `'%:%'`
+                // predicate now matches every canonical `action:` atom too, which materialized
+                // nothing and made ADMIN/SUPER_ADMIN look unprivileged.
+                + " AND b.scope_type = 'instance' AND rp.action_class NOT LIKE 'cap:%'",
                 userId, userId, userId);
         authzContext.invalidate(UUID.fromString(userId));
     }
@@ -318,7 +321,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
         List<Map<String, String>> pairs = new java.util.ArrayList<>();
         for (JsonNode binding : objectMapper.readTree(listed.getBody()).path("bindings")) {
             pairs.add(Map.of("subjectId", binding.path("subjectId").asText(),
-                    "roleId", binding.path("roleId").asText()));
+                    "presetId", binding.path("presetId").asText()));
         }
         return pairs;
     }

@@ -54,7 +54,10 @@ class AgentCredentialAtomForbiddenTest extends AbstractReusableIntegrationTest {
     private static final List<String> CREDENTIAL_ATOMS = List.of(
             ToolFaceRegistry.ACTION_CREDENTIAL_USE,
             ToolFaceRegistry.ACTION_CREDENTIAL_REVEAL,
-            ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE);
+            ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE).stream()
+            // task-835: the catalog's forbidden set is canonical (`action:…`); compare canonical.
+            .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+            .toList();
 
     @Autowired
     private AgentPrincipalService agentPrincipalService;
@@ -134,7 +137,7 @@ class AgentCredentialAtomForbiddenTest extends AbstractReusableIntegrationTest {
                 "the fixture must grant credential_use before the intersection runs");
 
         JsonNode cap = agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId());
-        assertEquals(Set.of("read@*"), atomSet(cap),
+        assertEquals(Set.of("action:read@*"), atomSet(cap),
                 "the cap must keep exactly the atom the principal's grants cover");
         assertFalse(CredentialUseCap.grants(cap, credentialId),
                 "the cap intersection must drop the injected credential_use atom");

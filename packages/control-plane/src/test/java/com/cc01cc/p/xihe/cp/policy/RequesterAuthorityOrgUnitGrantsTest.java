@@ -85,13 +85,16 @@ class RequesterAuthorityOrgUnitGrantsTest {
         assertTrue(authority.allowsForUser(
                         request(ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS, "*"), WORKSPACE),
                 "site 1 allowsForUser: an org-unit governance grant must authorize");
-        assertTrue(authority.actionAtoms(USER, WORKSPACE).contains(ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS),
+        assertTrue(authority.actionAtoms(USER, WORKSPACE).contains(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS)),
                 "site 2 actionAtoms: the atom must appear");
         assertEquals(Set.of(OrgUnitGrantExpander.SOURCE),
                 authority.atomSources(USER, ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS, WORKSPACE),
                 "site 3 atomSources: the source must be org_unit, not role");
         assertTrue(authority.actionPermissions(USER, WORKSPACE).stream()
-                        .anyMatch(atom -> ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS.equals(atom.actionClass())),
+                        .anyMatch(atom -> com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS).equals(atom.actionClass())),
                 "site 4 actionPermissions: the canonical atom row must appear");
         assertTrue(authority.holdsActionAtom(USER, ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS, null),
                 "holdsActionAtom delegates to site 2 — same answer");

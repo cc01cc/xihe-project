@@ -56,10 +56,11 @@ class GrantExplanationKernelTest {
         assertEquals(1, explanation.deepestMissingLevel(), "缺的是第 2 级（索引 1）的 write");
         assertNotNull(explanation.missingAtom());
         assertEquals(1, explanation.missingAtom().level());
-        assertEquals("write", explanation.missingAtom().actionClass());
+        assertEquals("action:write", explanation.missingAtom().actionClass());
         assertEquals(GrantIntersectionEvaluator.REASON_NO_MATCHING_ATOM, explanation.missingAtom().reason());
         assertEquals(2, explanation.missingLevels().size(), "两个层级都缺 write");
-        assertTrue(explanation.matchedGrantRefs().stream().allMatch(ref -> "read".equals(ref.actionClass())),
+        assertTrue(explanation.matchedGrantRefs().stream()
+                        .allMatch(ref -> "action:read".equals(ref.actionClass())),
                 "只有 read 有可引用的命中行: " + explanation.matchedGrantRefs());
     }
 
@@ -123,7 +124,7 @@ class GrantExplanationKernelTest {
                 request(List.of("MANAGE_ROLES"), List.of("*"), ToolShape.OPAQUE), instanceOnly);
         assertFalse(governed.allowed());
         assertEquals(0, governed.deepestMissingLevel());
-        assertEquals("MANAGE_ROLES", governed.missingAtom().actionClass());
+        assertEquals("action:MANAGE_ROLES", governed.missingAtom().actionClass());
         assertEquals(GrantIntersectionEvaluator.REASON_NO_MATCHING_ATOM, governed.missingAtom().reason());
         assertEquals(2, governed.evaluatedLevels().get(0).atomCount(), "该级确实有 2 个原子，只是不含目标原子");
     }
@@ -244,7 +245,10 @@ class GrantExplanationKernelTest {
 
     private static GrantIntersectionEvaluator.GrantAtom atom(String actionClass, String resource,
                                                              String grantId, String grantSource) {
-        return new GrantIntersectionEvaluator.GrantAtom(actionClass, resource, grantId, grantSource);
+        // task-835: grant rows carry canonical atoms; fixtures follow the stored form.
+        return new GrantIntersectionEvaluator.GrantAtom(
+                com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass),
+                resource, grantId, grantSource);
     }
 
     private static PolicyRequest request(List<String> actionClasses, List<String> resources, ToolShape shape) {

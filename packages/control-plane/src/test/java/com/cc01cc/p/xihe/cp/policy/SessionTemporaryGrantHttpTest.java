@@ -94,9 +94,9 @@ class SessionTemporaryGrantHttpTest {
                 .andExpect(jsonPath("$.id").value(GRANT_ID))
                 .andExpect(jsonPath("$.sessionId").value(SESSION_ID))
                 .andExpect(jsonPath("$.principalId").value(PRINCIPAL_ID))
-                .andExpect(jsonPath("$.atoms[0].actionClass").value("read"))
+                .andExpect(jsonPath("$.atoms[0].actionClass").value("action:read"))
                 .andExpect(jsonPath("$.atoms[0].resource").value("fs:ws-1/**"))
-                .andExpect(jsonPath("$.atoms[1].actionClass").value("write"))
+                .andExpect(jsonPath("$.atoms[1].actionClass").value("action:write"))
                 .andExpect(jsonPath("$.atoms[1].resource").value("*"))
                 .andExpect(jsonPath("$.grantedBy").value(USER_ID))
                 .andExpect(jsonPath("$.expiresAt").value("2026-11-21T10:15:00Z"));

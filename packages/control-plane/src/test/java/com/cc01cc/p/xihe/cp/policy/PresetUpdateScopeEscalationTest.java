@@ -92,7 +92,8 @@ class PresetUpdateScopeEscalationTest extends AbstractReusableIntegrationTest {
                 ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
 
         assertTrue(grantRows(holder.getId(), workspaceB.getId()).contains(
-                        ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)),
                 "the holder in workspace B must gain the atom once the author holds it in both scopes");
         assertTrue(workspaceA != null);
     }
@@ -172,7 +173,8 @@ class PresetUpdateScopeEscalationTest extends AbstractReusableIntegrationTest {
         roleAdmin.update(role.getId(), new GrantPresetAdminViews.PresetUpdate(null, null, null,
                 List.of(ToolFaceRegistry.ACTION_READ)));
 
-        assertEquals(List.of(ToolFaceRegistry.ACTION_READ), atomsOf(role.getId()),
+        assertEquals(List.of(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_READ)), atomsOf(role.getId()),
                 "a reduce-right edit applies even though the author holds none of the atoms");
     }
 
@@ -192,7 +194,8 @@ class PresetUpdateScopeEscalationTest extends AbstractReusableIntegrationTest {
                         (List<GrantPresetAdminViews.AtomInput>) null));
 
         assertEquals("Renamed", accessRoleRepository.findById(role.getId()).orElseThrow().getDisplayName());
-        assertEquals(List.of(ToolFaceRegistry.ACTION_READ), atomsOf(role.getId()),
+        assertEquals(List.of(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_READ)), atomsOf(role.getId()),
                 "a display-only edit leaves the atoms untouched");
     }
 

@@ -61,24 +61,24 @@ class ActionAtomDeniedLogTest {
                 UUID.randomUUID(), UUID.randomUUID());
 
         Map<String, String> fields = deniedFields();
-        assertEquals("MANAGE_WORKSPACE_MEMBERS", fields.get("atom"));
+        assertEquals("action:MANAGE_WORKSPACE_MEMBERS", fields.get("atom"));
         assertEquals("none", fields.get("source"));
     }
 
     @Test
     void roleSourcedGrantIsNamedAsTheSource() {
-        AuthorizationGrant roleGrant = grant("role", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+        AuthorizationGrant roleGrant = grant("preset", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         when(grants.findScopedGrants(any(), any(), any(), any())).thenReturn(List.of(roleGrant));
 
         authority.logActionAtomDenied(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 UUID.randomUUID(), UUID.randomUUID());
 
-        assertEquals("role", deniedFields().get("source"));
+        assertEquals("preset", deniedFields().get("source"));
     }
 
     @Test
     void sourcesFromDistinctRowsAreJoined() {
-        AuthorizationGrant roleGrant = grant("role", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+        AuthorizationGrant roleGrant = grant("preset", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         AuthorizationGrant spawnGrant = grant("spawn", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         when(grants.findScopedGrants(any(), any(), any(), any()))
                 .thenReturn(List.of(roleGrant, spawnGrant));
@@ -86,7 +86,7 @@ class ActionAtomDeniedLogTest {
         authority.logActionAtomDenied(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 UUID.randomUUID(), UUID.randomUUID());
 
-        assertEquals("role,spawn", deniedFields().get("source"));
+        assertEquals("preset,spawn", deniedFields().get("source"));
     }
 
     @Test
@@ -122,7 +122,7 @@ class ActionAtomDeniedLogTest {
         ILoggingEvent event = deniedEvent();
         assertEquals(ch.qos.logback.classic.Level.WARN, event.getLevel());
         // Exactly [POLICY] + event + the four B3 fields — no resource or content fields (B4).
-        assertEquals("[POLICY] event=action_atom_denied atom=MANAGE_WORKSPACE_MEMBERS subject="
+        assertEquals("[POLICY] event=action_atom_denied atom=action:MANAGE_WORKSPACE_MEMBERS subject="
                         + event.getFormattedMessage().split("subject=")[1].split(" ")[0]
                         + " workspaceId=- source=none",
                 event.getFormattedMessage());
@@ -136,7 +136,8 @@ class ActionAtomDeniedLogTest {
         AuthorizationGrant grant = mock(AuthorizationGrant.class);
         when(grant.getSource()).thenReturn(source);
         when(grant.getPermissions()).thenReturn(new ObjectMapper().valueToTree(
-                List.of(Map.of("actionClass", actionClass))));
+                List.of(Map.of("actionClass",
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass)))));
         return grant;
     }
 

@@ -167,7 +167,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
             String atom = row.getPermissions().get(0).get("actionClass").asText();
             assertFalse(PermissionAtomCatalog.isCapabilityAtom(atom),
                     "capability atom reached grants: " + atom);
-            assertTrue(ToolFaceRegistry.builtinActionClasses().contains(atom),
+            assertTrue(PermissionAtomCatalog.isActionAtom(atom),
                     "every materialized atom must be evaluable: " + atom);
         }
         assertTrue(authzContext.isInstanceSuper(fixture.userId()),
