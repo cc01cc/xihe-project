@@ -2597,6 +2597,16 @@ async fn create_workspace_handler(
             "storageRef and workspacePath are mutually exclusive",
         ));
     }
+    // task-791: the storageRef branch below registers a managed workspace and
+    // never materializes host roots, so accepting non-empty roots here would
+    // silently drop caller intent. Roots are a direct_attach-only concept and
+    // require workspacePath; reject instead of acknowledging with a no-op.
+    if req.storage_ref.is_some() && req.roots.as_deref().is_some_and(|roots| !roots.is_empty()) {
+        return Err(registration_invalid(
+            &req.ws_id,
+            "roots requires workspacePath",
+        ));
+    }
     if let Some(workspace_path) = workspace_path {
         let execution_mode = req
             .execution_mode
@@ -4950,6 +4960,37 @@ mod remote_handler_tests {
         }
     }
 
+    /// task-791: the storageRef create branch reads `XIHE_WORKSPACE_HOST_ROOT`.
+    /// Pin it for the regression that storageRef-only registration still returns 200.
+    struct HostRootPin {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl HostRootPin {
+        // test-global-state: allow — every caller holds PROCESS_LOCK; drop restores the old value.
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("XIHE_WORKSPACE_HOST_ROOT");
+            unsafe {
+                std::env::set_var("XIHE_WORKSPACE_HOST_ROOT", path);
+            }
+            Self { previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for HostRootPin {
+        // test-global-state: allow — restoration half of `set`, same PROCESS_LOCK contract.
+        fn drop(&mut self) {
+            unsafe {
+                match self.previous.take() {
+                    Some(previous) => std::env::set_var("XIHE_WORKSPACE_HOST_ROOT", previous),
+                    None => std::env::remove_var("XIHE_WORKSPACE_HOST_ROOT"),
+                }
+            }
+        }
+    }
+
     fn spec_json(ws_id: &str) -> serde_json::Value {
         serde_json::json!({
             "workspaceId": ws_id,
@@ -5322,6 +5363,49 @@ mod remote_handler_tests {
             detail.contains("mutually exclusive"),
             "detail must name the conflicting fields, got {detail:?}"
         );
+    }
+
+    /// task-791: storageRef + roots is a typed 400, not a 200 that silently
+    /// drops the roots. The managed storageRef branch has no host roots to apply.
+    #[tokio::test]
+    async fn registration_rejects_roots_without_workspace_path() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let request = registration_request(
+            "ws-roots-no-path",
+            None,
+            Some("ws-roots-no-path"),
+            None,
+            Some(vec![RegisterRoot {
+                root_id: "ws-roots-no-path".to_string(),
+                host_path: "/ignored/secondary".to_string(),
+            }]),
+        );
+        let error = create_workspace_handler(State(state), AxumJson(request))
+            .await
+            .expect_err("storageRef + roots must be rejected");
+        assert_eq!(error.0, StatusCode::BAD_REQUEST, "unexpected {error:?}");
+        assert_eq!(error.1.0["code"], "INVALID_REQUEST");
+        let detail = error.1.0["detail"].as_str().unwrap_or_default();
+        assert!(
+            detail.contains("roots requires workspacePath"),
+            "detail must name the missing field, got {detail:?}"
+        );
+    }
+
+    /// task-791 regression: storageRef alone still registers with 200 and never
+    /// touches roots (no materialization, no declared roots).
+    #[tokio::test]
+    async fn registration_accepts_storage_ref_without_roots() {
+        let _serial = PROCESS_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("host root");
+        let _pin = HostRootPin::set(dir.path());
+        let state = test_state("http://127.0.0.1:9").await;
+        let request = registration_request("ws-managed", None, Some("ws-managed"), None, None);
+        let response = create_workspace_handler(State(state), AxumJson(request))
+            .await
+            .expect("storageRef-only registration must be accepted");
+        assert_eq!(response.0.status, "ok");
+        assert_eq!(response.0.ws_id, "ws-managed");
     }
     pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
         test_state_with_backend(cp_url, None).await
