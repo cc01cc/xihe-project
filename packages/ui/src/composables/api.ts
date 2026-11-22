@@ -5860,6 +5860,7 @@ export const api = {
      * 服务端 **409 `ORG_UNIT_MOVE_CONFIRMATION_REQUIRED`** 而不是静默改归属（G1 实测）；调用方
      * 必须把 409 的 `detail` 原文摆到用户面前、取得确认后再带 `true` 重发一次。</p>
      */
+    // oxlint-disable-next-line max-params -- 第 4 个参数是可选设置袋；拆成对象只会无谓改动两处调用点，契约不变
     placeOrgUnitMember(
         unitId: string,
         memberId: string,

@@ -166,8 +166,8 @@ async function expandUnit(id: string): Promise<void> {
     await tree.ensureChildren(id);
 }
 
-function findItem(items: readonly OrgTreeItem[], id: string): OrgTreeItem | null {
-    for (const item of items) {
+function findItem(nodes: readonly OrgTreeItem[], id: string): OrgTreeItem | null {
+    for (const item of nodes) {
         if (item.key === id) return item;
         const hit = findItem(item.children, id);
         if (hit) return hit;

@@ -32,13 +32,14 @@ Session、ChatRun、Workspace Job 与 MCP invocation 生命周期的项目级 pr
 在本目录执行：
 
 ```bash
-mvn -o -q test-compile
 mvn -o test -Dtest=ApprovalServiceTest
+mvn -o -q test-compile
 mvn -o -q checkstyle:check
 mvn -o -q test "-Dtest=CpArchitectureRuleProbeTest"
 mvn -o -q test "-Dtest=CpArchitectureTest"
 ```
-
+以上 `mvn` 命令都在本目录执行，产物只落在本目录 `target/`。
+不要在多个 checkout 间共用 `target/`；并发写会互覆盖。
 `-Dtest=...` 替换为具体测试类（必要时加 `#method`）。完整 `mvn -o test` 只在测试波次或里程碑执行；不要把全量测试当作每次小改的默认门禁。
 
 **task-583 起 Checkstyle 已绑到 `validate` 相位**：上面每条命令（含 `mvn -o -q test-compile`、`mvn -o test -Dtest=X`）都会先过 checkstyle，违规在编译前就红 ⇒ 清单里的 `mvn -o -q checkstyle:check` 只剩「只想单独跑这一道门」的用途。代价实测 2.2 s（全量，基线 0 违规）；显式跳过用 `-Dcheckstyle.skip=true`（不默认关）。

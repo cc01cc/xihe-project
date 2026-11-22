@@ -36,7 +36,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
-import { LONG_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_CAP_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const MODEL_ID = process.env.XIHE_E2E_FAKE_MODEL ?? "fake-openai";
 const UNWIRED = process.env.XIHE_E2E_AGENT_UNWIRE_FACES === "1";
@@ -309,7 +309,8 @@ test.describe("@host task-732 conditional-face reachability", () => {
         process.env.XIHE_E2E_TOOL_FACE_PROBE !== "1",
         "opt-in probe: set XIHE_E2E_TOOL_FACE_PROBE=1",
     );
-    test.setTimeout(180_000);
+    // Whole-test budget = SSOT hard cap (60 s); check-e2e-timeouts rejects exempted literals >60 s.
+    test.setTimeout(LONG_TIMEOUT_CAP_MS);
 
     test("provider tool_count equals the graph table and the assembled all_tools", async ({
         request,

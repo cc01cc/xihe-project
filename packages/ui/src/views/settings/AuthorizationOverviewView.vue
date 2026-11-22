@@ -293,13 +293,12 @@ async function loadUserBindings(): Promise<void> {
  */
 const CAP_MODES = ["baseline", "explicit", "none"] as const;
 
-function capModeLabel(mode: string | null | undefined): string {
-    const value = mode ?? "none";
-    if ((CAP_MODES as readonly string[]).includes(value)) {
-        return t(`settings.authorizationOverview.subjects.capMode.${value}`);
+function capModeLabel(mode = "none"): string {
+    if ((CAP_MODES as readonly string[]).includes(mode)) {
+        return t(`settings.authorizationOverview.subjects.capMode.${mode}`);
     }
     // 未知取值原样显示：宁可露出 wire 真值，也不让页面上出现裸 i18n key。
-    return value;
+    return mode;
 }
 
 /** effective-cap 的命中来源（`capSource.binding`）翻成短标签，同样未知值原样显示。 */
@@ -639,7 +638,7 @@ onMounted(async () => {
                                     variant="outline"
                                     data-testid="authorization-subject-cap-mode"
                                 >
-                                    {{ capModeLabel(agent.capSource) }}
+                                    {{ capModeLabel(agent.capSource ?? "none") }}
                                 </Badge>
                                 <span class="text-xs text-muted-foreground">
                                     {{

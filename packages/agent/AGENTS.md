@@ -65,7 +65,7 @@ uv sync          # 安装依赖（见 pyproject.toml）
 - **Diagnostics security**：诊断内容是不可信输入；模型可见诊断必须在不可信信封内，结构化 artifact 不得进入 model wire。当前通道与边界见 [`DEV-013 §3.5`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 - **Streaming and logs**：流式 token 不得因 end-event fallback 重复；日志必须脱敏 `Authorization`，不得记录 token 内容。实现导航见 [`DEV-013`](../../docs/i18n/zh-Hans/DEV-013-agent-architecture.md)。
 - **Approval/grant**：CP gate 后仅可对同一 request id 等待并重试一次；grant 必须绑定同一工具及 canonical arguments SHA-256，错配、过期、复用、重复 gate 或传输失败均 fail-closed。不可用截断 preview 授权。
-- **Workspace binding**：`toolMode=none` 不初始化 MCP；workspace 模式须按请求 Workspace 加载，发现结果不得跨 Workspace 复用。
+- **Workspace binding**：`toolMode=none` 不初始化 MCP；workspace 模式必须按请求 Workspace 加载，发现结果不得跨 Workspace 复用。
 - **Tool visibility and tests**：`apply_patch` 是 Gateway-public mutation，必须走正常 approval；legacy snapshot 工具已移除。Agent 变更至少运行 `cd packages/agent && uv run pytest tests/unit/test_approval_tool.py tests/unit/test_mcp_client.py tests/unit/test_gate_owned_approval_contract.py tests/unit/test_tool_registry_contract.py tests/unit/test_mcp_timeout_override.py -q`，并按影响范围补跑 `uv run ruff check src/` 与 `uv run mypy src/`。
 
 ## Logging

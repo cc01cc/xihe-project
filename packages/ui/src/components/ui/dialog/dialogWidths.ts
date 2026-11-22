@@ -35,7 +35,7 @@ export const DEFAULT_DIALOG_WIDTH_TIER: DialogWidthTier = "confirm";
 
 /** 档位 ⇒ class。未知档位（运行期传入非法字符串）回落默认档，不静默产出半截 class。 */
 export function dialogWidthClass(tier?: DialogWidthTier | null): string {
-    if (tier && Object.prototype.hasOwnProperty.call(DIALOG_WIDTH_TIERS, tier)) {
+    if (tier && Object.keys(DIALOG_WIDTH_TIERS).includes(tier)) {
         return DIALOG_WIDTH_TIERS[tier];
     }
     return DIALOG_WIDTH_TIERS[DEFAULT_DIALOG_WIDTH_TIER];
@@ -68,7 +68,5 @@ export function sheetWidthClass(side: SheetSide, tier?: DialogWidthTier | null):
 
 /** 运行期校验：任意字符串是否为已登记档位（用于 report-only 报警与测试夹具）。 */
 export function isDialogWidthTier(value: unknown): value is DialogWidthTier {
-    return (
-        typeof value === "string" && Object.prototype.hasOwnProperty.call(DIALOG_WIDTH_TIERS, value)
-    );
+    return typeof value === "string" && Object.keys(DIALOG_WIDTH_TIERS).includes(value);
 }

@@ -820,9 +820,10 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
         main: memoryActive.main ?? fragmentActive.main,
         right: rightActive,
     };
+    const layoutKey = workspaceLayoutKey(workspaceId);
     try {
         store.setItem(
-            workspaceLayoutKey(workspaceId),
+            layoutKey,
             JSON.stringify({
                 treeCollapsed: state.treeCollapsed,
                 treeWidth: clampTreeWidth(state.treeWidth),
@@ -837,9 +838,7 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,
                 // task-126 / O3：整份写**不拥有** openTabs（页签栏是它唯一的 writer），否则过期快照
                 // 会把刚关掉的页签写回来。见 `storedOpenTabs`。
-                openTabs:
-                    storedOpenTabs(store, workspaceLayoutKey(workspaceId)) ??
-                    state.openTabs.filter(isWorkTabId),
+                openTabs: storedOpenTabs(store, layoutKey) ?? state.openTabs.filter(isWorkTabId),
                 activeColumn: isActiveColumn(state.activeColumn) ? state.activeColumn : "main",
                 // 与读侧镜像：写侧也过滤，避免把越界值落盘（读写两处必须同口径）。
                 openTarget: isOpenTarget(state.openTarget) ? state.openTarget : "main",
