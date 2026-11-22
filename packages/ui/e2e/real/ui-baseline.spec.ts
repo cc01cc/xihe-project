@@ -34,6 +34,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 // 本 spec 不用 helpers/chat 的 ensureWorkspaceChat：它在「栈里无会话且 agent-principals 为空」时
 // 会去点「新建会话」并等 composer，而该栈新建会话需要已绑定 principal（GET /api/v1/agent-principals = 0 条），
 // 只会 10s 超时。这里改为直接开已有会话（真机基线测的是布局，不是会话创建链路）。
@@ -2120,8 +2121,10 @@ async function openSettingsWithDraft(page: Page, draft: string | null): Promise<
         const inner = field.locator("input, textarea").first();
         const target = (await inner.count()) > 0 ? inner : field;
         // 面板取数晚于容器挂载：fill 自带 visible+enabled 等待，不能用单次 isVisible 判掉。
+        // 面板装载已在上面 waitReadyFor 里按 20s 预算收敛，这里只是等已挂载字段进入可写态，
+        // 故用 ACTION_TIMEOUT_MS（10s）默认动作预算，不单独放大到 15s。
         const filled = await target
-            .fill(draft, { timeout: 15_000 })
+            .fill(draft, { timeout: ACTION_TIMEOUT_MS })
             .then(() => true)
             .catch(() => false);
         if (!filled) continue;
