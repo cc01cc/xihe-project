@@ -25,12 +25,12 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * PLAN-0667 M1: agent-principal <b>role binding</b> API.
+ * PLAN-0667 M1: agent-principal <b>preset binding</b> API.
  *
  * <pre>
- * GET    /api/v1/agent-principals/{principalId}/roles
- * POST   /api/v1/agent-principals/{principalId}/roles
- * DELETE /api/v1/agent-principals/{principalId}/roles/{bindingId}
+ * GET    /api/v1/agent-principals/{principalId}/presets
+ * POST   /api/v1/agent-principals/{principalId}/presets
+ * DELETE /api/v1/agent-principals/{principalId}/presets/{bindingId}
  * </pre>
  *
  * <p>Deliberately a separate controller: the user binding surface ({@code BindingController},
@@ -44,7 +44,7 @@ import java.util.UUID;
  * atom count, so the UI can show "first three + 共 N 个" without exposing the whole atom set.</p>
  */
 @RestController
-@RequestMapping("/api/v1/agent-principals/{principalId}/roles")
+@RequestMapping("/api/v1/agent-principals/{principalId}/presets")
 public class AgentPrincipalPresetBindingController {
 
     private static final Set<String> BIND_KEYS = Set.of("presetId");

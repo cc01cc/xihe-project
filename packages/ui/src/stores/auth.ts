@@ -218,7 +218,7 @@ export const useAuthStore = defineStore("auth", () => {
      * `!== "VIEWER"`）判可见性与可写性 —— 自定义角色持原子却被判无权、角色名是 OWNER 但原子被撤却仍给入口，
      * 两个方向都会让 UI 与 CP 权威不一致（CP 仍 403，所以不是提权，是可用性/一致性缺陷）。
      *
-     * **防删注释（实测依据，别改成某个 MANAGE_* 原子）**：真栈 `/roles` 实测 WS_OWNER 15 项里
+     * **防删注释（实测依据，别改成某个 MANAGE_* 原子）**：真栈 `/presets` 实测 WS_OWNER 15 项里
      * **没有** `MANAGE_WORKSPACE_MEMBERS`（连 OWNER 也没有）⇒ 成员管理面的对端是 `workspaceAdmin`
      * **能力位**；把 `canManageWorkspace` 映射到动作原子会连 OWNER 一起判无权。
      * 证据：internal/A03-xihe/evidence/2026-11-14-instance-flow-audit/task414-role-atoms.json。

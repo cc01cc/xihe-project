@@ -39,7 +39,7 @@ import java.util.function.Function;
  *
  * <ul>
  *   <li><b>write side</b> — {@link #requireGovernanceRole(Collection)} on
- *       {@code PUT /api/v1/org-units/{unitId}/role-bindings} answers {@code 409}
+ *       {@code PUT /api/v1/org-units/{unitId}/preset-bindings} answers {@code 409}
  *       {@value #CODE_FORBIDDEN};</li>
  *   <li><b>evaluation side</b> — {@link #filterGovernanceRoles(Collection, Function)} drops the same
  *       rows while org-unit grants are expanded, so a row that reached the table some other way

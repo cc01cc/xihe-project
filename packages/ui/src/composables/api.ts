@@ -307,7 +307,7 @@ export interface ApiOrgUnitMemberMoveResult {
 }
 
 /**
- * task-136 J4：`PUT /org-units/{unitId}/role-bindings` 的 200 体（整集写完后的最终集合）。
+ * task-136 J4：`PUT /org-units/{unitId}/preset-bindings` 的 200 体（整集写完后的最终集合）。
  *
  * <p>CP **没有**该域的 GET 读面（`OrgUnitController` 只有 PUT），所以这个响应体是本会话唯一
  * 可信的基线：打开面板时集合未知，任何「新增/解绑」都必须先落一次基线才能做差集。
@@ -826,7 +826,7 @@ export interface WorkspaceAgentMemory {
 export type WorkspaceAgentMemoryOrigin = "manual" | "run";
 
 /**
- * PLAN-0667 M3：agent 主体的**角色绑定**（`GET /api/v1/agent-principals/{id}/roles`）。
+ * PLAN-0667 M3：agent 主体的**角色绑定**（`GET /api/v1/agent-principals/{id}/presets`）。
  *
  * 契约（Lead 2026-11-05 冻结，camelCase，信封 `{items:[…]}`）：
  * - `isSystem` 决定 🔒 与「无解绑按钮」（种子绑定由 CP 409 ROLE_BINDING_EXCEEDS_CAP | ROLE_BINDING_IMMUTABLE 兜底）；
@@ -4352,7 +4352,7 @@ export const api = {
             items?: Array<Record<string, unknown>>;
             bindings?: Array<Record<string, unknown>>;
         }>(
-            `/agent-principals/${encodeURIComponent(principalId)}/roles?${workspaceQuery}locale=${encodeURIComponent(catalogLocale())}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/presets?${workspaceQuery}locale=${encodeURIComponent(catalogLocale())}`,
         );
         // 实际 CP wire（2026-11-05 联调实测）用 `{bindings:[…]}`；冻结稿写的是 `{items:[…]}`。
         // 两种信封都接受，字段同时兼容 roleName/roleDisplayName 与 name/displayName。
@@ -4415,7 +4415,7 @@ export const api = {
     ): Promise<void> {
         const workspaceQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
         await request<void>(
-            `/agent-principals/${encodeURIComponent(principalId)}/roles${workspaceQuery}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/presets${workspaceQuery}`,
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -4430,7 +4430,7 @@ export const api = {
     ): Promise<void> {
         const workspaceQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
         await request<void>(
-            `/agent-principals/${encodeURIComponent(principalId)}/roles/${encodeURIComponent(bindingId)}${workspaceQuery}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/presets/${encodeURIComponent(bindingId)}${workspaceQuery}`,
             { method: "DELETE" },
         );
     },
@@ -5947,7 +5947,7 @@ export const api = {
     },
 
     /**
-     * task-136 J4（`PUT /org-units/{unitId}/role-bindings`，openapi :7039）：整集替换单元的治理角色绑定。
+     * task-136 J4（`PUT /org-units/{unitId}/preset-bindings`，openapi :7039）：整集替换单元的治理角色绑定。
      *
      * <p>三条实测口径，直接决定 UI 形态：</p>
      * <ul>
@@ -5963,7 +5963,7 @@ export const api = {
         roleIds: string[],
     ): Promise<ApiOrgUnitRoleBindingList> {
         const wire = await request<{ presetIds?: string[] }>(
-            `/org-units/${encodeURIComponent(unitId)}/role-bindings`,
+            `/org-units/${encodeURIComponent(unitId)}/preset-bindings`,
             { method: "PUT", body: JSON.stringify({ presetIds: roleIds }) },
         );
         return { roleIds: Array.isArray(wire?.presetIds) ? wire.presetIds : [] };

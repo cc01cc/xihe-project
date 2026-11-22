@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0773 M2-11 (task-246): `PUT …/role-bindings` — whole-set replace with the governance
+ * PLAN-0773 M2-11 (task-246): `PUT …/preset-bindings` — whole-set replace with the governance
  * whitelist enforced before the first write.
  *
  * <p>The negatives carry the card's two mandatory cases plus the 404/unknown-role path the card

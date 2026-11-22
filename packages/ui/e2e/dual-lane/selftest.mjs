@@ -34,8 +34,8 @@ function row(method, url, status, body) {
 console.log("normalize：路径与 query");
 check(
     "uuid -> {id}",
-    normalizePath("/api/v1/agent-principals/3f2b9a10-1111-2222-3333-444455556666/roles"),
-    "/api/v1/agent-principals/{id}/roles",
+    normalizePath("/api/v1/agent-principals/3f2b9a10-1111-2222-3333-444455556666/presets"),
+    "/api/v1/agent-principals/{id}/presets",
 );
 check(
     "夹具 slug-id -> {id}",

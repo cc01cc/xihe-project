@@ -214,7 +214,7 @@ public class PolicyController {
      * {@code ToolFaceAdminAtomScopeIntegrationTest}).</p>
      *
      * <p>Why not the role-administration atom (the original target): it is a shared atom that also gates
-     * {@code /api/v1/roles} and {@code /api/v1/bindings}; granting it to ADMIN would hand role
+     * {@code /api/v1/presets} and {@code /api/v1/bindings}; granting it to ADMIN would hand role
      * administration to ADMIN, which the user ruling (D-161) did not approve (D-165 supersedes).
      * Refusal shape (403 {@code FORBIDDEN} from the service) is unchanged.</p>
      */

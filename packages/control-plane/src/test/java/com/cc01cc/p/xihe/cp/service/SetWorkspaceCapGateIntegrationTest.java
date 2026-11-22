@@ -240,9 +240,9 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         headers.setBearerAuth(token);
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
         headers.set("X-Workspace-Id", ws.getId().toString());
-        var refused = restTemplate.exchange(url("/api/v1/agent-principals/" + explicit + "/roles"
+        var refused = restTemplate.exchange(url("/api/v1/agent-principals/" + explicit + "/presets"
                         + "?workspaceId=" + ws.getId()), org.springframework.http.HttpMethod.POST,
-                new org.springframework.http.HttpEntity<>(java.util.Map.of("roleId",
+                new org.springframework.http.HttpEntity<>(java.util.Map.of("presetId",
                         wsEditorRole.toString()), headers), String.class);
         assertEquals(org.springframework.http.HttpStatus.CONFLICT, refused.getStatusCode(),
                 String.valueOf(refused.getBody()));

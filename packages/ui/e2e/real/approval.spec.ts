@@ -12,6 +12,7 @@ import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
 import { chooseFirstRekaOption } from "./helpers/reka-select";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { agentName } from "./helpers/agent-name";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -137,7 +138,9 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
         userId,
         workspaceId: wsId,
         headers: authHeaders,
-        name: "Approval Agent",
+        // CP pins agent names to ^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$ (D-v23);
+        // "Approval Agent" was a 400 INVALID_NAME_FORMAT before it ever reached the approval flow.
+        name: agentName("Approval", userId),
         actionClass: "delete",
     });
 

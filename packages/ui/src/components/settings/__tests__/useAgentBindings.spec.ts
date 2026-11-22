@@ -280,7 +280,8 @@ describe("useAgentBindings（task-153 S2 角色读面 + 默认开关）", () => 
         { id: "w-3", name: "验收工作区", workspaceRole: "OWNER" },
     ];
 
-    function rolesReply(rows: Array<{ bindingId: string; roleId: string; name: string }>) {
+    // task-843: the wire key is `presetId`; the app projects it onto `AgentRoleBinding.roleId`.
+    function rolesReply(rows: Array<{ bindingId: string; presetId: string; name: string }>) {
         return { status: 200, body: { items: rows } };
     }
 
@@ -293,10 +294,10 @@ describe("useAgentBindings（task-153 S2 角色读面 + 默认开关）", () => 
                 };
             }
             if (seen.path === "/api/v1/workspaces") return { status: 200, body: WORKSPACES };
-            if (seen.path === "/api/v1/agent-principals/p-1/roles") {
+            if (seen.path === "/api/v1/agent-principals/p-1/presets") {
                 return rolesReply([
-                    { bindingId: "b-1", roleId: "r-1", name: "OrgAdmin" },
-                    { bindingId: "b-2", roleId: "r-2", name: "Auditor" },
+                    { bindingId: "b-1", presetId: "r-1", name: "OrgAdmin" },
+                    { bindingId: "b-2", presetId: "r-2", name: "Auditor" },
                 ]);
             }
             if (seen.path === "/api/v1/workspaces/w-1/agents") {
@@ -328,7 +329,7 @@ describe("useAgentBindings（task-153 S2 角色读面 + 默认开关）", () => 
         ]);
         // 未绑行：idle 且**没有**为它发角色请求（省掉注定 404 的 N 次读）。
         expect(bindings.rolesFor("w-2").state).toBe("idle");
-        const rolePaths = calls.filter((call) => call.path.endsWith("/roles"));
+        const rolePaths = calls.filter((call) => call.path.endsWith("/presets"));
         expect(rolePaths.length).toBe(1);
 
         const before = calls.length;
@@ -373,7 +374,7 @@ describe("useAgentBindings（task-153 S2 角色读面 + 默认开关）", () => 
                 };
             }
             if (seen.path === "/api/v1/workspaces") return { status: 200, body: THREE };
-            if (seen.path === "/api/v1/agent-principals/p-1/roles") {
+            if (seen.path === "/api/v1/agent-principals/p-1/presets") {
                 const workspaceId = seen.url.searchParams.get("workspaceId");
                 if (workspaceId === "w-1") return rolesReply([]);
                 if (workspaceId === "w-2") {

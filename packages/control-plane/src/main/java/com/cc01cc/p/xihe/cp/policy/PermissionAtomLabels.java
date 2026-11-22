@@ -8,7 +8,7 @@ import java.util.Map;
  * PLAN-0651 D51-37: display labels for the permission-atom vocabulary.
  *
  * <p>Why this lives in the CP and not in the UI: the role editor deliberately keeps <b>no
- * vocabulary of its own</b> (it renders whatever {@code GET /api/v1/roles/catalog} returns), and the
+ * vocabulary of its own</b> (it renders whatever {@code GET /api/v1/presets/catalog} returns), and the
  * same principle as D51-19 applies — a wire field is produced by the capability layer, never
  * inferred by the view layer. One label table here also means adding a language is a one-file
  * change.</p>

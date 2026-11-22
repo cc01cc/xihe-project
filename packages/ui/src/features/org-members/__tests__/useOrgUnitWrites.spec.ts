@@ -385,8 +385,8 @@ describe("改角色：只做逐条新增 / 单条解绑，服务端响应体就�
             roleIds: [],
         });
         expect(seen[0].method).toBe("PUT");
-        expect(seen[0].path).toBe("/api/v1/org-units/u-root/role-bindings");
-        expect(written).toEqual(["role-bindings"]);
+        expect(seen[0].path).toBe("/api/v1/org-units/u-root/preset-bindings");
+        expect(written).toEqual(["preset-bindings"]);
     });
 });
 

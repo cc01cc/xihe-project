@@ -8,7 +8,7 @@
 # Exit criterion: this file becomes empty when the annotation wave lands (task-863).
 #
 DELETE /api/v1/agent-principals/{principalId}/memories/{memoryId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
-DELETE /api/v1/agent-principals/{principalId}/roles/{bindingId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
+DELETE /api/v1/agent-principals/{principalId}/presets/{bindingId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 DELETE /api/v1/agent-principals/{principalId}/skills/{bindingId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 DELETE /api/v1/config-locks/{domain}/{key} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 DELETE /api/v1/config/instance/{domain}/{key} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
@@ -40,7 +40,7 @@ DELETE /internal/v1/agent/checkpoints/{threadId} | task-863 | 2026-12-15 | pendi
 GET /api/v1/agent-principals | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 GET /api/v1/agent-principals/{principalId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 GET /api/v1/agent-principals/{principalId}/memories | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
-GET /api/v1/agent-principals/{principalId}/roles | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
+GET /api/v1/agent-principals/{principalId}/presets | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 GET /api/v1/agent-principals/{principalId}/sessions | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 GET /api/v1/agent-principals/{principalId}/skills | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 GET /api/v1/agent-templates | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
@@ -178,7 +178,7 @@ PATCH /api/v1/workspaces/{workspaceId}/members/{userId} | task-863 | 2026-12-15 
 POST /api/v1/agent-principals | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 POST /api/v1/agent-principals/{principalId}/disable | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 POST /api/v1/agent-principals/{principalId}/memories | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
-POST /api/v1/agent-principals/{principalId}/roles | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
+POST /api/v1/agent-principals/{principalId}/presets | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 POST /api/v1/agent-principals/{principalId}/skills | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 POST /api/v1/api-input-types/{apiTypeId}/versions/{version}/validate | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 POST /api/v1/authorization/explain | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
@@ -276,7 +276,7 @@ PUT /api/v1/config/workspace/{domain} | task-863 | 2026-12-15 | pending @PolicyC
 PUT /api/v1/instance/owner | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 PUT /api/v1/org-units/{unitId}/members/{memberId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 PUT /api/v1/org-units/{unitId}/parent | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
-PUT /api/v1/org-units/{unitId}/role-bindings | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
+PUT /api/v1/org-units/{unitId}/preset-bindings | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 PUT /api/v1/workspaces/{workspaceId}/agents/{principalId} | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 PUT /api/v1/workspaces/{workspaceId}/agents/{principalId}/default | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed
 PUT /api/v1/workspaces/{workspaceId}/mcp-config | task-863 | 2026-12-15 | pending @PolicyChecked annotation wave; task-859 annotated only the 14 endpoints it changed

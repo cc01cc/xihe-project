@@ -488,13 +488,13 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     }
 
     private ResponseEntity<Map> bindRoleAs(UUID principalId, String callerToken) {
-        Map<String, Object> body = Map.of("roleId",
+        Map<String, Object> body = Map.of("presetId",
                 roleRepository.findByName("WS_EDITOR").orElseThrow().getId().toString());
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(callerToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
         return restTemplate.exchange(
-                baseUrl + "/api/v1/agent-principals/" + principalId + "/roles?workspaceId=" + workspaceId,
+                baseUrl + "/api/v1/agent-principals/" + principalId + "/presets?workspaceId=" + workspaceId,
                 org.springframework.http.HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
     }
     private AgentPrincipal createPlainPrincipal(String name) {

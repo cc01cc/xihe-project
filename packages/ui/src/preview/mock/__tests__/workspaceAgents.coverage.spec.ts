@@ -205,9 +205,9 @@ describe("mock 工作区智能体夹具被路由消费（task-449）", () => {
         ).toBe(true);
     });
 
-    it("角色绑定信封 {bindings} + /roles 裸数组；种子绑定解绑 ⇒ 409（CP 兜底语义）", async () => {
+    it("角色绑定信封 {bindings} + /presets 裸数组；种子绑定解绑 ⇒ 409（CP 兜底语义）", async () => {
         const pid = MOCK_AGENT_PRINCIPAL_IDS.explicit;
-        const url = `/agent-principals/${pid}/roles?workspaceId=${WS}&locale=zh-CN`;
+        const url = `/agent-principals/${pid}/presets?workspaceId=${WS}&locale=zh-CN`;
         const answer = await call(handler, url);
         expect(answer.status).toBe(200);
         expect((answer.body as { bindings: unknown[] }).bindings).toEqual(agentRoleBindingsOf(pid));
@@ -219,7 +219,7 @@ describe("mock 工作区智能体夹具被路由消费（task-449）", () => {
         ).bindings.find((row) => row.isSystem)!;
         const denied = await call(
             handler,
-            `/agent-principals/${pid}/roles/${system.bindingId}`,
+            `/agent-principals/${pid}/presets/${system.bindingId}`,
             "DELETE",
         );
         expect(denied.status).toBe(409);

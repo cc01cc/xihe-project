@@ -212,7 +212,7 @@ async function stubOrgApi(page: Page): Promise<void> {
         );
     });
 
-    await page.route(/\/api\/v1\/org-units\/[^/]+\/role-bindings$/, async (route) => {
+    await page.route(/\/api\/v1\/org-units\/[^/]+\/preset-bindings$/, async (route) => {
         const request = route.request();
         record(request.method(), request.url(), request.postData() ?? "");
         const body = request.postData() ?? "{}";
@@ -467,22 +467,26 @@ test.describe("task-136 组织写面（mock lane）", () => {
         await page.getByTestId("org-write-role-establish").click();
 
         await expect
-            .poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings").length)
+            .poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/preset-bindings").length)
             .toBe(1);
-        expect(JSON.parse(wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings")[0].body)).toEqual({
-            presetIds: [],
-        });
+        expect(JSON.parse(wrote("PUT", "/api/v1/org-units/ou-rd/preset-bindings")[0].body)).toEqual(
+            {
+                presetIds: [],
+            },
+        );
         await expect(page.getByTestId("org-write-role-baseline")).toBeVisible();
 
         await pickOption(page, "org-write-role-add", "组织治理员");
         await page.getByTestId("org-write-role-add-submit").click();
 
         await expect
-            .poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings").length)
+            .poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/preset-bindings").length)
             .toBe(2);
-        expect(JSON.parse(wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings")[1].body)).toEqual({
-            presetIds: ["role-org"],
-        });
+        expect(JSON.parse(wrote("PUT", "/api/v1/org-units/ou-rd/preset-bindings")[1].body)).toEqual(
+            {
+                presetIds: ["role-org"],
+            },
+        );
         await expect(page.getByTestId("org-write-role-bound-role-org")).toBeVisible();
     });
 

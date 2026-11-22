@@ -125,7 +125,7 @@ public class OrgUnitController {
     }
 
     @PreAuthorize("isAuthenticated()")
-    @PutMapping("/{unitId}/role-bindings")
+    @PutMapping("/{unitId}/preset-bindings")
     public OrgUnitWireView.PresetBindings replacePresetBindings(
             @PathVariable String unitId, @RequestBody JsonNode body) {
         // A record would let Jackson ignore an unknown `roleIds` key and land `presetIds=null`,

@@ -54,7 +54,7 @@ export interface WorkspaceBindingView {
 export type AgentRolesReadState = "idle" | "loading" | "ready" | "not-found" | "failed";
 
 /**
- * 一个工作区里该主体绑定的角色（`GET /agent-principals/{pid}/roles?workspaceId=`）。
+ * 一个工作区里该主体绑定的角色（`GET /agent-principals/{pid}/presets?workspaceId=`）。
  *
  * <p>只对已绑行读；读失败保留原始 `cause`，由调用方交给 `presentCauseError` 转成文案 ——
  * 404 `AGENT_PRINCIPAL_NOT_FOUND` 必须显示 code 原文，不能写成「没有角色」。</p>

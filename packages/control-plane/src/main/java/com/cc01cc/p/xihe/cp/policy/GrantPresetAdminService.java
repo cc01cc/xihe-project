@@ -30,7 +30,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * PLAN-0610 W3-2a: access-role definitions (design §3.5 {@code /api/v1/roles*}).
+ * PLAN-0610 W3-2a: access-role definitions (design §3.5 {@code /api/v1/presets*}).
  *
  * <p>Responsibilities and boundaries:</p>
  *
@@ -111,7 +111,7 @@ public class GrantPresetAdminService {
         return catalog(null);
     }
 
-    /** {@code GET /api/v1/roles/catalog}: every action atom + capability atom with scope class. */
+    /** {@code GET /api/v1/presets/catalog}: every action atom + capability atom with scope class. */
     @Transactional(readOnly = true)
     public GrantPresetAdminViews.CatalogView catalog(String locale) {
         List<GrantPresetAdminViews.AtomView> atoms = new ArrayList<>();
@@ -135,7 +135,7 @@ public class GrantPresetAdminService {
                 List.of(AccessScope.INSTANCE, AccessScope.WORKSPACE), defaultGrants);
     }
 
-    /** {@code GET /api/v1/roles}: every definition, system roles first, then by name. */
+    /** {@code GET /api/v1/presets}: every definition, system roles first, then by name. */
     @Transactional(readOnly = true)
     public List<GrantPresetAdminViews.RoleView> list() {
         Map<UUID, List<GrantPresetAtom>> permissionsByRole = permissionsByRole();
@@ -183,7 +183,7 @@ public class GrantPresetAdminService {
                 .toList();
     }
 
-    /** {@code POST /api/v1/roles}: a custom role with an explicit atom set. */
+    /** {@code POST /api/v1/presets}: a custom role with an explicit atom set. */
     @Transactional
     public GrantPresetAdminViews.RoleView create(GrantPresetAdminViews.RoleCreate request) {
         dbLockTimeout.apply();
@@ -214,7 +214,7 @@ public class GrantPresetAdminService {
     }
 
     /**
-     * {@code PATCH /api/v1/roles/{roleId}}: custom roles may change name/description/atoms; a system
+     * {@code PATCH /api/v1/presets/{presetId}}: custom roles may change name/description/atoms; a system
      * role accepts <b>only</b> a display-name change (design §3.5), everything else is
      * {@code 409 SYSTEM_ROLE_IMMUTABLE}.
      */
@@ -322,7 +322,7 @@ public class GrantPresetAdminService {
         return toView(saved, effectiveAtoms, bindings.countByRoleId(saved.getId()));
     }
 
-    /** {@code DELETE /api/v1/roles/{roleId}}: no system role, no role that is still bound. */
+    /** {@code DELETE /api/v1/presets/{presetId}}: no system role, no role that is still bound. */
     @Transactional
     public void delete(UUID roleId) {
         dbLockTimeout.apply();

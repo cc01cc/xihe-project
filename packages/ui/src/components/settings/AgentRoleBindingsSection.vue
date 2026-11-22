@@ -205,7 +205,7 @@ watch(selectedPrincipalId, (next, previous) => {
 </script>
 
 <template>
-    <section data-testid="agent-role-bindings-section" class="space-y-2 rounded border p-3">
+    <section data-testid="agent-preset-bindings-section" class="space-y-2 rounded border p-3">
         <div>
             <h3 class="text-sm font-medium">{{ t("settings.presetsBindingsAgentTitle") }}</h3>
             <p class="mt-1 text-xs text-muted-foreground">
@@ -215,7 +215,7 @@ watch(selectedPrincipalId, (next, previous) => {
 
         <p
             v-if="error"
-            data-testid="agent-role-bindings-error"
+            data-testid="agent-preset-bindings-error"
             class="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs text-rose-700"
         >
             {{ error }}
@@ -232,7 +232,7 @@ watch(selectedPrincipalId, (next, previous) => {
                 "
             >
                 <SelectTrigger
-                    data-testid="agent-role-bindings-agent"
+                    data-testid="agent-preset-bindings-agent"
                     class="min-w-64 rounded border bg-background px-2 py-1 text-sm text-foreground"
                 >
                     <SelectValue>{{
@@ -259,7 +259,7 @@ watch(selectedPrincipalId, (next, previous) => {
 
         <Empty
             v-if="!loading && agents.length === 0"
-            data-testid="agent-role-bindings-empty"
+            data-testid="agent-preset-bindings-empty"
             class="items-start gap-2 p-3 text-left"
         >
             <!-- 表单内提示，不是空页面：走精简形态（无 EmptyMedia 图标、无操作入口）。 -->
@@ -273,7 +273,7 @@ watch(selectedPrincipalId, (next, previous) => {
             {{ t("settings.presetsBindingsAgentLoading") }}
         </p>
 
-        <table v-else class="w-full text-left text-sm" data-testid="agent-role-bindings-table">
+        <table v-else class="w-full text-left text-sm" data-testid="agent-preset-bindings-table">
             <thead class="text-xs text-muted-foreground">
                 <tr>
                     <th class="py-1">{{ t("settings.presetsBindingsPresets") }}</th>
@@ -319,7 +319,7 @@ watch(selectedPrincipalId, (next, previous) => {
                     "
                 >
                     <SelectTrigger
-                        data-testid="agent-role-bindings-role"
+                        data-testid="agent-preset-bindings-role"
                         class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
                         <SelectValue>{{
@@ -348,14 +348,14 @@ watch(selectedPrincipalId, (next, previous) => {
             </label>
             <Button
                 variant="outline"
-                data-testid="agent-role-bindings-add"
+                data-testid="agent-preset-bindings-add"
                 :disabled="loading || !selectedAgent"
                 @click="addPreset"
             >
                 {{ t("settings.presetsBindingsAdd") }}
             </Button>
             <Button
-                data-testid="agent-role-bindings-save"
+                data-testid="agent-preset-bindings-save"
                 :disabled="saving || loading || !isDirty"
                 @click="save"
             >

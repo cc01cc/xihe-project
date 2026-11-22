@@ -31,7 +31,7 @@ import GlobalRailModule from "./GlobalRailModule.vue";
  *
  * <p>主区只留三个模块：工作台（D-924 命名修正：模块名是「工作台」，工作区只是工作台模块内
  * 的对象，不是模块名）、资源、设置。D-933：「管理」按钮直接移除、不设替代入口 ——
- * config-locks/roles 本就是设置区安全组的 ADMIN-only 条目；「设置」在 footer、登出上方。</p>
+ * config-locks/presets 本就是设置区安全组的 ADMIN-only 条目；「设置」在 footer、登出上方。</p>
  *
  * <p><b>双态（task-189 / BL-584 / D-896）</b>：56px 图标栏 ↔ 图标+文字宽栏。**必须有可见的
  * 切换控件**（`global-rail-toggle`：`aria-expanded` + `aria-label` + 键盘可达）—— 只靠

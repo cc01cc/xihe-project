@@ -168,7 +168,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
 </script>
 
 <template>
-    <Card data-testid="preview-agent-role-bindings" class="mt-6">
+    <Card data-testid="preview-agent-preset-bindings" class="mt-6">
         <CardHeader class="border-b border-border/70">
             <CardTitle class="flex items-center gap-2">
                 <Bot class="size-4 text-muted-foreground" />
@@ -185,14 +185,14 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
 
             <p
                 v-if="error"
-                data-testid="preview-agent-role-bindings-error"
+                data-testid="preview-agent-preset-bindings-error"
                 class="rounded border border-destructive/40 bg-background px-2 py-1 text-xs text-destructive"
             >
                 <span v-if="demo409" class="mr-1 font-medium">演示 409：</span>{{ error }}
             </p>
             <p
                 v-if="notice"
-                data-testid="preview-agent-role-bindings-notice"
+                data-testid="preview-agent-preset-bindings-notice"
                 class="rounded border border-primary/40 bg-primary/10 px-2 py-1 text-xs text-primary"
             >
                 {{ notice }}
@@ -209,7 +209,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                         "
                     >
                         <SelectTrigger
-                            data-testid="preview-agent-role-bindings-agent"
+                            data-testid="preview-agent-preset-bindings-agent"
                             class="rounded border bg-background px-2 py-1 text-sm text-foreground"
                         >
                             <SelectValue>{{
@@ -241,7 +241,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                         "
                     >
                         <SelectTrigger
-                            data-testid="preview-agent-role-bindings-role"
+                            data-testid="preview-agent-preset-bindings-role"
                             class="rounded border bg-background px-2 py-1 text-sm text-foreground"
                         >
                             <SelectValue>{{
@@ -270,7 +270,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                     <Button
                         variant="outline"
                         size="sm"
-                        data-testid="preview-agent-role-bindings-add"
+                        data-testid="preview-agent-preset-bindings-add"
                         :disabled="saving || !selectedAgentId"
                         @click="addRole"
                     >
@@ -278,7 +278,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                     </Button>
                     <Button
                         size="sm"
-                        data-testid="preview-agent-role-bindings-save"
+                        data-testid="preview-agent-preset-bindings-save"
                         :disabled="saving || !isDirty"
                         @click="save"
                     >
@@ -290,7 +290,10 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                 </div>
             </div>
 
-            <table class="w-full text-left text-sm" data-testid="preview-agent-role-bindings-table">
+            <table
+                class="w-full text-left text-sm"
+                data-testid="preview-agent-preset-bindings-table"
+            >
                 <thead class="text-xs text-muted-foreground">
                     <tr>
                         <th class="py-1">角色</th>

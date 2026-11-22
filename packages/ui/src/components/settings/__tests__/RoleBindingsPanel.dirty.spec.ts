@@ -101,7 +101,7 @@ describe("RoleBindingsPanel · dirty 派生（task-92）", () => {
         await flushPromises();
         expect(lastDirty(wrapper)).toBe(true);
 
-        await wrapper.get('[data-testid="role-bindings-save"]').trigger("click");
+        await wrapper.get('[data-testid="preset-bindings-save"]').trigger("click");
         await flushPromises();
         expect(mockedApi.replaceBindings).toHaveBeenCalledTimes(1);
         expect(lastDirty(wrapper), "save 之后 bindingSet 已重载，不许还挂着 true").toBe(false);
@@ -113,7 +113,7 @@ describe("RoleBindingsPanel · dirty 派生（task-92）", () => {
         await flushPromises();
         await setSelectValue(
             wrapper,
-            '[data-testid="role-bindings-subject-type"]',
+            '[data-testid="preset-bindings-subject-type"]',
             "agent_principal",
         );
         await flushPromises();
@@ -124,7 +124,7 @@ describe("RoleBindingsPanel · dirty 派生（task-92）", () => {
         await flushPromises();
         expect(lastDirty(wrapper), "当前段是 agent ⇒ 它的草稿要算").toBe(true);
 
-        await setSelectValue(wrapper, '[data-testid="role-bindings-subject-type"]', "user");
+        await setSelectValue(wrapper, '[data-testid="preset-bindings-subject-type"]', "user");
         await flushPromises();
         expect(lastDirty(wrapper), "切回 user 段：user 行没改，必须回到 false").toBe(false);
         wrapper.unmount();

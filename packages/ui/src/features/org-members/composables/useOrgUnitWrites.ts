@@ -104,7 +104,7 @@ export type OrgWriteKind =
     | "move-unit"
     | "place-member"
     | "remove-member"
-    | "role-bindings";
+    | "preset-bindings";
 
 /** 撞开确认门后暂存的移动请求；用户确认即原样带 `confirmAffected:true` 重发。 */
 export interface PendingMemberMove {
@@ -297,7 +297,7 @@ export function useOrgUnitWrites(options: UseOrgUnitWritesOptions) {
          * 拿不到它就必须退回「基线未知」，不许沿用本地猜测继续叠加。
          */
         replaceRoleBindings: async (unitId: string, roleIds: string[]) => {
-            const r = await run("role-bindings", () =>
+            const r = await run("preset-bindings", () =>
                 api.replaceOrgUnitRoleBindings(unitId, roleIds),
             );
             return { ok: r.ok, roleIds: r.ok ? (r.value?.roleIds ?? []) : null };

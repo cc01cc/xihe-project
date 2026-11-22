@@ -12,7 +12,7 @@ import java.util.UUID;
  *
  * <p>Until this class existed the intersection kernel could already compare a declaration key
  * ({@code fs:<workspaceId>/<rel>}) against a request ({@link ResourceIdentity#matchesDeclaration}),
- * but <b>no API could produce such a value</b>: {@code POST/PATCH /api/v1/roles} always stored
+ * but <b>no API could produce such a value</b>: {@code POST/PATCH /api/v1/presets} always stored
  * {@link PermissionAtomCatalog.Atom#canonicalResource()} ({@code *} or {@code credential:*}), so the
  * only reachable branch in production was the wildcard. The gap was on the writer, not on the
  * evaluator — see the C1/C2 pair in

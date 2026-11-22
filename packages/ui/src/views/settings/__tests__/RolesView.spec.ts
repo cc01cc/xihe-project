@@ -710,7 +710,7 @@ describe("RoleBindingsPanel", () => {
         const wrapper = await mountView();
         await clickBody('[data-testid="roles-tab-bindings"]');
         const codes = wrapper
-            .get('[data-testid="role-bindings-effective"]')
+            .get('[data-testid="preset-bindings-effective"]')
             .findAll('[data-testid="binding-effective-atoms"] code');
         expect(codes.length).toBe(SYSTEM_ROLE.atoms.length);
         // 顺序不是契约（effectiveSummary 用 Set 去重）⇒ 比集合，不比排列
@@ -781,17 +781,17 @@ describe("RoleBindingsPanel", () => {
         expect(row.text()).toContain("Super admin");
 
         // Add a second binding through the account search + role select.
-        await clickBody('[data-testid="role-bindings-subject-search"]');
+        await clickBody('[data-testid="preset-bindings-subject-search"]');
         await vi.waitFor(() =>
             expect(
-                document.body.querySelector('[data-testid="role-bindings-subject"]'),
+                document.body.querySelector('[data-testid="preset-bindings-subject"]'),
             ).toBeTruthy(),
         );
-        await setComboboxValue(wrapper, '[data-testid="role-bindings-subject"]', "user-2");
-        await setSelectValue(wrapper, '[data-testid="role-bindings-role"]', "role-1");
-        await clickBody('[data-testid="role-bindings-add"]');
+        await setComboboxValue(wrapper, '[data-testid="preset-bindings-subject"]', "user-2");
+        await setSelectValue(wrapper, '[data-testid="preset-bindings-role"]', "role-1");
+        await clickBody('[data-testid="preset-bindings-add"]');
 
-        await clickBody('[data-testid="role-bindings-save"]');
+        await clickBody('[data-testid="preset-bindings-save"]');
 
         await vi.waitFor(() => expect(mockedApi.replaceBindings).toHaveBeenCalled());
         const [scope, scopeId, payload] = mockedApi.replaceBindings.mock.calls[0] ?? [];
@@ -803,7 +803,7 @@ describe("RoleBindingsPanel", () => {
             { subjectType: "user", subjectId: "user-2", roleId: "role-1" },
         ]);
         // The returned set drives the effective-capability summary.
-        const effective = wrapper.get('[data-testid="role-bindings-effective"]');
+        const effective = wrapper.get('[data-testid="preset-bindings-effective"]');
         expect(effective.text()).toContain("alice");
         expect(effective.text()).toContain("read");
         expect(effective.text()).toContain("MANAGE_ROLES");
@@ -818,14 +818,14 @@ describe("RoleBindingsPanel", () => {
         mockedApi.replaceBindings.mockRejectedValue(problemError(status, code));
         const wrapper = await openBindings();
 
-        await clickBody('[data-testid="role-bindings-save"]');
+        await clickBody('[data-testid="preset-bindings-save"]');
 
         await vi.waitFor(() =>
-            expect(wrapper.get('[data-testid="role-bindings-error"]').text()).toBe(
+            expect(wrapper.get('[data-testid="preset-bindings-error"]').text()).toBe(
                 `${i18n.global.t(`settings.presetsError.${key}`)}（${code}）`,
             ),
         );
-        expect(wrapper.get('[data-testid="role-bindings-error"]').text()).not.toContain(
+        expect(wrapper.get('[data-testid="preset-bindings-error"]').text()).not.toContain(
             "english detail",
         );
     });
@@ -841,21 +841,22 @@ describe("RoleBindingsPanel", () => {
         ]);
         const wrapper = await openBindings();
 
-        await setSelectValue(wrapper, '[data-testid="role-bindings-scope"]', "workspace");
+        await setSelectValue(wrapper, '[data-testid="preset-bindings-scope"]', "workspace");
         await flushPromises();
 
         await vi.waitFor(() =>
             expect(mockedApi.getBindings).toHaveBeenCalledWith("workspace", "ws-1"),
         );
-        await openSelect(wrapper, '[data-testid="role-bindings-role"]');
+        await openSelect(wrapper, '[data-testid="preset-bindings-role"]');
         const roleItems = selectItemComponents(wrapper);
         const instanceOnly = roleItems.find(
-            (item) => item.attributes("data-testid") === "role-bindings-role-option-INSTANCE_ONLY",
+            (item) =>
+                item.attributes("data-testid") === "preset-bindings-role-option-INSTANCE_ONLY",
         );
         expect(instanceOnly?.props("disabled")).toBe(true);
         // A role whose atoms are all `both` stays selectable.
         const auditor = roleItems.find(
-            (item) => item.attributes("data-testid") === "role-bindings-role-option-AUDITOR",
+            (item) => item.attributes("data-testid") === "preset-bindings-role-option-AUDITOR",
         );
         expect(auditor?.props("disabled")).toBeFalsy();
     });
@@ -872,12 +873,12 @@ describe("RoleBindingsPanel", () => {
 
         await setSelectValue(
             wrapper,
-            '[data-testid="role-bindings-subject-type"]',
+            '[data-testid="preset-bindings-subject-type"]',
             "agent_principal",
         );
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="agent-role-bindings-section"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-preset-bindings-section"]').exists()).toBe(true);
         await vi.waitFor(() =>
             expect(mockedApi.getAgentRoles).toHaveBeenCalledWith(null, "agent-1"),
         );

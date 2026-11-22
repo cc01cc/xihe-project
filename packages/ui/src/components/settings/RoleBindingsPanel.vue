@@ -262,7 +262,7 @@ defineExpose({ load });
 </script>
 
 <template>
-    <section data-testid="role-bindings-panel" class="space-y-3">
+    <section data-testid="preset-bindings-panel" class="space-y-3">
         <div class="flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.presetsBindingsScope") }}
@@ -271,7 +271,7 @@ defineExpose({ load });
                     @update:model-value="(value) => (scope = String(value) as ApiBindingScope)"
                 >
                     <SelectTrigger
-                        data-testid="role-bindings-scope"
+                        data-testid="preset-bindings-scope"
                         class="rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
                         <SelectValue />
@@ -296,7 +296,7 @@ defineExpose({ load });
                     @update:model-value="(value) => (scopeId = String(value))"
                 >
                     <SelectTrigger
-                        data-testid="role-bindings-workspace"
+                        data-testid="preset-bindings-workspace"
                         class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
                         <SelectValue>{{ workspaceLabel(scopeId) }}</SelectValue>
@@ -314,7 +314,7 @@ defineExpose({ load });
             </label>
             <Button
                 variant="outline"
-                data-testid="role-bindings-reload"
+                data-testid="preset-bindings-reload"
                 :disabled="loading"
                 @click="load"
             >
@@ -330,7 +330,7 @@ defineExpose({ load });
                     "
                 >
                     <SelectTrigger
-                        data-testid="role-bindings-subject-type"
+                        data-testid="preset-bindings-subject-type"
                         class="rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
                         <SelectValue />
@@ -349,7 +349,7 @@ defineExpose({ load });
 
         <p
             v-if="error"
-            data-testid="role-bindings-error"
+            data-testid="preset-bindings-error"
             class="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-700"
         >
             {{ error }}
@@ -358,7 +358,7 @@ defineExpose({ load });
         <table
             v-if="subjectType === 'user'"
             class="w-full text-left text-sm"
-            data-testid="role-bindings-table"
+            data-testid="preset-bindings-table"
         >
             <thead class="text-xs text-muted-foreground">
                 <tr>
@@ -414,7 +414,7 @@ defineExpose({ load });
                 {{ t("settings.presetsBindingsSubjectSearch") }}
                 <Input
                     v-model="subjectQuery"
-                    data-testid="role-bindings-subject-query"
+                    data-testid="preset-bindings-subject-query"
                     class="w-56"
                     :placeholder="t('settings.presetsBindingsSubjectSearchPlaceholder')"
                     @keyup.enter="searchSubjects"
@@ -422,7 +422,7 @@ defineExpose({ load });
             </label>
             <Button
                 variant="outline"
-                data-testid="role-bindings-subject-search"
+                data-testid="preset-bindings-subject-search"
                 @click="searchSubjects"
             >
                 {{ t("settings.presetsBindingsSearch") }}
@@ -435,7 +435,7 @@ defineExpose({ load });
                     :model-value="selectedSubject?.id ?? ''"
                     :options="subjectOptions"
                     :placeholder="t('settings.presetsBindingsSubjectPick')"
-                    testid="role-bindings-subject"
+                    testid="preset-bindings-subject"
                     trigger-class="min-w-56 h-auto rounded border bg-background px-2 py-1 text-foreground"
                     panel-class="min-w-[20rem]"
                     @update:model-value="
@@ -452,7 +452,7 @@ defineExpose({ load });
                     @update:model-value="(value) => (selectedRoleId = String(value))"
                 >
                     <SelectTrigger
-                        data-testid="role-bindings-role"
+                        data-testid="preset-bindings-role"
                         class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
                         <SelectValue>{{
@@ -467,7 +467,7 @@ defineExpose({ load });
                             :key="preset.id"
                             :value="preset.id"
                             :disabled="!roleFitsScope(preset)"
-                            :data-testid="`role-bindings-role-option-${preset.name}`"
+                            :data-testid="`preset-bindings-role-option-${preset.name}`"
                         >
                             {{ preset.displayName || preset.name }}
                             {{
@@ -479,14 +479,14 @@ defineExpose({ load });
                     </SelectContent>
                 </Select>
             </label>
-            <Button data-testid="role-bindings-add" @click="addRow">
+            <Button data-testid="preset-bindings-add" @click="addRow">
                 {{ t("settings.presetsBindingsAdd") }}
             </Button>
         </div>
 
         <Button
             v-if="subjectType === 'user'"
-            data-testid="role-bindings-save"
+            data-testid="preset-bindings-save"
             :disabled="saving"
             @click="save"
         >
@@ -496,7 +496,7 @@ defineExpose({ load });
 
         <div
             v-if="subjectType === 'user' && effectiveSummary.length > 0"
-            data-testid="role-bindings-effective"
+            data-testid="preset-bindings-effective"
             class="rounded border bg-muted/30 p-3 text-xs"
         >
             <p class="font-medium">{{ t("settings.presetsBindingsEffectiveTitle") }}</p>

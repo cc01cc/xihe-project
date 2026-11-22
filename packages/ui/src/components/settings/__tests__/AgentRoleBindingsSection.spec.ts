@@ -114,14 +114,14 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         const wrapper = mountSection();
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="agent-role-bindings-agent"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-preset-bindings-agent"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="agent-role-binding-remove-role-seed"]').exists()).toBe(
             false,
         );
 
-        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-b");
-        await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
-        await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await setSelectValue(wrapper, '[data-testid="agent-preset-bindings-role"]', "role-b");
+        await wrapper.find('[data-testid="agent-preset-bindings-add"]').trigger("click");
+        await wrapper.find('[data-testid="agent-preset-bindings-save"]').trigger("click");
         await flushPromises();
 
         expect(mockedApi.bindAgentRole).toHaveBeenCalledWith("ws-1", "agent-1", "role-b");
@@ -140,7 +140,7 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         await flushPromises();
 
         await wrapper.find('[data-testid="agent-role-binding-remove-role-a"]').trigger("click");
-        await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await wrapper.find('[data-testid="agent-preset-bindings-save"]').trigger("click");
         await flushPromises();
 
         expect(mockedApi.unbindAgentRole).toHaveBeenCalledWith("ws-1", "agent-1", "binding-a");
@@ -160,15 +160,15 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         const wrapper = mountSection();
         await flushPromises();
 
-        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-b");
-        await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
-        await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await setSelectValue(wrapper, '[data-testid="agent-preset-bindings-role"]', "role-b");
+        await wrapper.find('[data-testid="agent-preset-bindings-add"]').trigger("click");
+        await wrapper.find('[data-testid="agent-preset-bindings-save"]').trigger("click");
         await flushPromises();
 
         const zh = i18n.global.getLocaleMessage("zh-CN") as {
             settings: { presetsError: Record<string, string> };
         };
-        const text = wrapper.get('[data-testid="agent-role-bindings-error"]').text();
+        const text = wrapper.get('[data-testid="agent-preset-bindings-error"]').text();
         expect(text).toBe(`${zh.settings.presetsError.generic}（ROLE_BINDING_EXCEEDS_CAP）`);
         expect(text).not.toContain("cap exceeded: requires WRITE_SECRETS");
     });
@@ -185,12 +185,12 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         const wrapper = mountSection();
         await flushPromises();
 
-        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-b");
-        await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
-        await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await setSelectValue(wrapper, '[data-testid="agent-preset-bindings-role"]', "role-b");
+        await wrapper.find('[data-testid="agent-preset-bindings-add"]').trigger("click");
+        await wrapper.find('[data-testid="agent-preset-bindings-save"]').trigger("click");
         await flushPromises();
 
-        const text = wrapper.get('[data-testid="agent-role-bindings-error"]').text();
+        const text = wrapper.get('[data-testid="agent-preset-bindings-error"]').text();
         const zh = i18n.global.getLocaleMessage("zh-CN") as {
             settings: { presetsError: Record<string, string> };
         };
@@ -267,9 +267,9 @@ describe("AgentRoleBindingsSection · task-416 P0-1②③", () => {
         const wrapper = mountSection();
         await flushPromises();
         await wrapper.get('[data-testid="agent-role-binding-remove-role-b"]').trigger("click");
-        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-a");
-        await wrapper.get('[data-testid="agent-role-bindings-add"]').trigger("click");
-        await wrapper.get('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await setSelectValue(wrapper, '[data-testid="agent-preset-bindings-role"]', "role-a");
+        await wrapper.get('[data-testid="agent-preset-bindings-add"]').trigger("click");
+        await wrapper.get('[data-testid="agent-preset-bindings-save"]').trigger("click");
         await flushPromises();
         expect(mockedApi.bindAgentRole).toHaveBeenCalled();
         expect(mockedApi.unbindAgentRole).not.toHaveBeenCalled();

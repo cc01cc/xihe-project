@@ -367,7 +367,7 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         expect(pushSpy).toHaveBeenLastCalledWith("/login");
     });
 
-    it("marks the active module; config-locks/roles count as settings after D-933", async () => {
+    it("marks the active module; config-locks/presets count as settings after D-933", async () => {
         patchAuth(true);
         routeState.path = "/settings/instance/logging";
         const wrapper = await mountRail();

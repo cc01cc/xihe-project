@@ -803,7 +803,7 @@ paths:
     get: { tags: [workspace], operationId: getWorkspaceImport, summary: Get one workspace import by id, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}/cancel:
     post: { tags: [workspace], operationId: cancelWorkspaceImport, summary: Cancel a running workspace import, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
-  /api/v1/agent-principals/{principalId}/roles:
+  /api/v1/agent-principals/{principalId}/presets:
     get:
       tags: [agent]
       operationId: listAgentPrincipalRoles
@@ -871,7 +871,7 @@ paths:
         '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { description: 'AGENT_PRINCIPAL_FORBIDDEN_ATOMS / ROLE_BINDING_EXISTS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-  /api/v1/agent-principals/{principalId}/roles/{bindingId}:
+  /api/v1/agent-principals/{principalId}/presets/{bindingId}:
     delete:
       tags: [agent]
       operationId: unbindAgentPrincipalRole
@@ -7257,7 +7257,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'ORG_UNIT_NOT_FOUND or ORG_UNIT_MEMBER_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-  /api/v1/org-units/{unitId}/role-bindings:
+  /api/v1/org-units/{unitId}/preset-bindings:
     put:
       tags: [admin]
       operationId: replaceOrgUnitRoleBindings
@@ -7326,7 +7326,7 @@ components:
       description: >-
         409 ORG_SCOPE_PRESET_FORBIDDEN — the preset's action-atom set is not inside the org-unit
         governance whitelist, so the binding is refused (fail closed: an unknown preset is not an
-        empty one) — D-1118. Referenced by `PUT /api/v1/org-units/{unitId}/role-bindings` (PLAN-0773 M2-11 batch C).
+        empty one) — D-1118. Referenced by `PUT /api/v1/org-units/{unitId}/preset-bindings` (PLAN-0773 M2-11 batch C).
         The refusal is fail closed on the preset's atom set, never a role-name special case (D-1118).
         It is declared here so a client can branch on status + code (never on detail text) before
         that endpoint exists.

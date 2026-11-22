@@ -7,7 +7,7 @@
  *   ① `POST /api/v1/agent-principals`（带 `X-Workspace-Id`）⇒ 201（instance 面建主体）
  *   ② `PUT /api/v1/workspaces/{ws}/agents/{pid}`           ⇒ 200（**首绑**：写 `workspace_agents`
  *      + 结构化默认绑定；默认绑定不受 cap 门约束）
- *   ③ `POST /api/v1/agent-principals/{pid}/roles?workspaceId={ws}` ⇒ **看第 2 条**
+ *   ③ `POST /api/v1/agent-principals/{pid}/presets?workspaceId={ws}` ⇒ **看第 2 条**
  *   负例：在 ② 之前先打 ③ ⇒ **403 FORBIDDEN**（证明"roles 不能当首绑入口"是设计而非 bug）
  *
  * ── 两个已由 Lead 确认的结论（2026-11-06，读码 + 实测一致）─────────────────────────────
@@ -143,7 +143,7 @@ test("@host BL-352 首绑闭环：顺序错 ⇒ 403；首绑 ⇒ 200；再绑系
 
     // 负例：② 之前先打 ③ ⇒ 403 FORBIDDEN（cap 求值第一步是"绑定前置"，所以不是 409）
     const earlyBind = await request.post(
-        `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
+        `${CP_URL}/api/v1/agent-principals/${principalId}/presets?workspaceId=${workspaceId}`,
         { headers, data: { presetId: WS_VIEWER_ROLE_ID } },
     );
     const earlyBindText = await earlyBind.text();
@@ -170,7 +170,7 @@ test("@host BL-352 首绑闭环：顺序错 ⇒ 403；首绑 ⇒ 200；再绑系
 
     // ③ 首绑之后再绑系统工作区角色 ⇒ 409 ROLE_BINDING_EXCEEDS_CAP（= BL-355 的存在性证明）
     const secondRole = await request.post(
-        `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
+        `${CP_URL}/api/v1/agent-principals/${principalId}/presets?workspaceId=${workspaceId}`,
         { headers, data: { presetId: WS_VIEWER_ROLE_ID } },
     );
     const secondRoleText = await secondRole.text();
@@ -211,7 +211,7 @@ test("@host BL-352 可选正向面：cap 覆盖 AGENT_BASE_ATOMS 后能否授予
     ).toBe(200);
 
     const grant = await request.post(
-        `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
+        `${CP_URL}/api/v1/agent-principals/${principalId}/presets?workspaceId=${workspaceId}`,
         { headers, data: { presetId: AGENT_USER_ROLE_ID } },
     );
     const grantText = await grant.text();

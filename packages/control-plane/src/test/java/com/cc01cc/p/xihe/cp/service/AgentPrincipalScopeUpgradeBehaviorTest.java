@@ -129,7 +129,8 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         int auditsBefore = count("SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_created'");
         Response rejected = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
                 "POST", "/api/v1/agent-principals", Map.of("name", "v19badrole",
-                        "roleIds", List.of(SystemGrantPresetCatalog.ADMIN_ID.toString())));
+                        // task-843 / D-174: the create body accepts `presetIds` only (no `roleIds`).
+                        "presetIds", List.of(SystemGrantPresetCatalog.ADMIN_ID.toString())));
         assertEquals(403, rejected.status(), rejected.body().toString());
         assertEquals("ROLE_NOT_GRANTABLE", rejected.body().path("code").asText());
         assertFalse(rejected.body().has("scope"), rejected.body().toString());
@@ -188,8 +189,8 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                 + " 'agent_principal' AND subject_id = CAST(? AS UUID)", principalId);
 
         Response bound = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
-                "POST", "/api/v1/agent-principals/" + principalId + "/roles",
-                Map.of("roleId", SystemGrantPresetCatalog.WS_EDITOR_ID.toString()));
+                "POST", "/api/v1/agent-principals/" + principalId + "/presets",
+                Map.of("presetId", SystemGrantPresetCatalog.WS_EDITOR_ID.toString()));
         assertEquals(201, bound.status(), bound.body().toString());
         assertEquals("workspace", bound.body().path("scopeType").asText());
         assertEquals(AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
@@ -209,8 +210,8 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         int afterAllow = count("SELECT count(*) FROM grant_preset_bindings WHERE subject_type ="
                 + " 'agent_principal' AND subject_id = CAST(? AS UUID)", principalId);
         Response forbidden = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
-                "POST", "/api/v1/agent-principals/" + principalId + "/roles",
-                Map.of("roleId", SystemGrantPresetCatalog.ADMIN_ID.toString()));
+                "POST", "/api/v1/agent-principals/" + principalId + "/presets",
+                Map.of("presetId", SystemGrantPresetCatalog.ADMIN_ID.toString()));
         assertEquals(409, forbidden.status(), forbidden.body().toString());
         assertEquals("AGENT_PRINCIPAL_FORBIDDEN_ATOMS", forbidden.body().path("code").asText());
         assertEquals(afterAllow, count("SELECT count(*) FROM grant_preset_bindings WHERE subject_type ="

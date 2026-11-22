@@ -492,7 +492,7 @@ function problem(status: number, code: string, detail: string): MockAgentDispatc
  * 工作区智能体面的 dispatch（task-449）。路径与判定逐条照 CP：
  * - `WorkspaceAgentController`：list / PUT cap（空体=baseline）/ DELETE unbind / memories 子资源；
  * - `AgentPrincipalController`：create / disable / PATCH contextPolicy（整对象替换）；
- * - 授权预设绑定：`/agent-principals/{pid}/roles`（信封 `{bindings:[…]}`）+ `/presets` 目录（裸数组）。
+ * - 授权预设绑定：`/agent-principals/{pid}/presets`（信封 `{bindings:[…]}`）+ `/presets` 目录（裸数组）。
  * 未知 suffix 一律回 null ⇒ 上层 404 `MOCK_ENDPOINT_MISSING`，**不做通配 200 掩盖缺口**。
  * 诚实边界：mock 不复刻 CP 的主体名文法（UI 侧 `principalNameError` 已守）与角色 cap 上限求值。
  */
@@ -610,7 +610,7 @@ export async function handleWorkspaceAgentResource(
             return { status: 204, body: null };
         }
     }
-    const rolesMatch = path.match(/^\/agent-principals\/([^/]+)\/roles(?:\/([^/]+))?$/);
+    const rolesMatch = path.match(/^\/agent-principals\/([^/]+)\/presets(?:\/([^/]+))?$/);
     if (rolesMatch) {
         const [, principalId, bindingId] = rolesMatch;
         if (!bindingId && method === "GET") {

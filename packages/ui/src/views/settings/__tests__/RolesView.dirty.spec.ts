@@ -65,7 +65,7 @@ function mountView(options: { attach?: boolean } = {}) {
                     name: "RoleBindingsPanel",
                     props: ["presets", "workspaces"],
                     emits: ["notice", "dirty"],
-                    template: '<div data-testid="role-bindings-stub" />',
+                    template: '<div data-testid="preset-bindings-stub" />',
                 },
                 RoleEditorDialog: { template: '<div data-testid="role-editor-stub" />' },
                 // retry-key 是**给组件消费的键名**，不该落进 DOM：stub 不关继承会把

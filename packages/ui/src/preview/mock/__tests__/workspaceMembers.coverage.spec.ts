@@ -212,7 +212,7 @@ describe("反例：不许把 404 通配成 200", () => {
     });
 
     it("已实现端点之外的 suffix ⇒ 404 MOCK_ENDPOINT_MISSING（不做通配 200）", async () => {
-        const answer = await call(handler, `${listUrl}/u-alan/roles`);
+        const answer = await call(handler, `${listUrl}/u-alan/presets`);
         expect(answer.status).toBe(404);
         expect((answer.body as { code: string }).code).toBe("MOCK_ENDPOINT_MISSING");
     });

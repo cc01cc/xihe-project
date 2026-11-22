@@ -46,7 +46,7 @@
 | `PUT /api/v1/org-units/{unitId}/members/{memberId}` | `moveOrgUnitMember` | `bearerAuth` | Add or move one human/agent into an org unit (G1: affected workspaces + audit + confirmation) | 公开 |
 | `DELETE /api/v1/org-units/{unitId}/members/{memberId}` | `removeOrgUnitMember` | `bearerAuth` | Remove one human/agent from an org unit | 公开 |
 | `PUT /api/v1/org-units/{unitId}/parent` | `moveOrgUnit` | `bearerAuth` | Move an org unit under a new parent (rejects rings with 422) | 公开 |
-| `PUT /api/v1/org-units/{unitId}/role-bindings` | `replaceOrgUnitRoleBindings` | `bearerAuth` | Replace an org unit's role bindings as one set | 公开 |
+| `PUT /api/v1/org-units/{unitId}/preset-bindings` | `replaceOrgUnitRoleBindings` | `bearerAuth` | Replace an org unit's role bindings as one set | 公开 |
 | `GET /api/v1/presets` | `listRoles` | `bearerAuth` | List access-role definitions (PLAN-0610 W3-2a; PLAN-0667 gap-1 read path) | 公开 |
 | `POST /api/v1/presets` | `createRole` | `bearerAuth` | Create a custom access role (PLAN-0610 W3-2a) | 公开 |
 | `GET /api/v1/presets/catalog` | `getRoleCatalog` | `bearerAuth` | Access-role atom catalog (PLAN-0610 W3-2a; labels PLAN-0651 D51-37) | 公开 |
@@ -111,9 +111,9 @@
 | `POST /api/v1/agent-principals/{principalId}/memories` | `createAgentMemory` | `bearerAuth` | Write one agent memory assertion (subject-level, V107) | 公开 |
 | `PATCH /api/v1/agent-principals/{principalId}/memories/{memoryId}` | `updateAgentMemory` | `bearerAuth` | Edit one agent memory assertion (subject-level, V107) | 公开 |
 | `DELETE /api/v1/agent-principals/{principalId}/memories/{memoryId}` | `deleteAgentMemory` | `bearerAuth` | Archive (soft-delete) one agent memory assertion (subject-level, V107) | 公开 |
-| `GET /api/v1/agent-principals/{principalId}/roles` | `listAgentPrincipalRoles` | `bearerAuth` | List one agent principal's role bindings (PLAN-0667) | 公开 |
-| `POST /api/v1/agent-principals/{principalId}/roles` | `bindAgentPrincipalRole` | `bearerAuth` | Bind one role to an agent principal (PLAN-0667) | 公开 |
-| `DELETE /api/v1/agent-principals/{principalId}/roles/{bindingId}` | `unbindAgentPrincipalRole` | `bearerAuth` | Remove one role binding from an agent principal (PLAN-0667) | 公开 |
+| `GET /api/v1/agent-principals/{principalId}/presets` | `listAgentPrincipalRoles` | `bearerAuth` | List one agent principal's role bindings (PLAN-0667) | 公开 |
+| `POST /api/v1/agent-principals/{principalId}/presets` | `bindAgentPrincipalRole` | `bearerAuth` | Bind one role to an agent principal (PLAN-0667) | 公开 |
+| `DELETE /api/v1/agent-principals/{principalId}/presets/{bindingId}` | `unbindAgentPrincipalRole` | `bearerAuth` | Remove one role binding from an agent principal (PLAN-0667) | 公开 |
 | `GET /api/v1/agent-principals/{principalId}/sessions` | `listAgentPrincipalSessions` | `bearerAuth` | List every Session this Agent principal participates in (any participant role, honest counts) | 公开 |
 | `GET /api/v1/agent-principals/{principalId}/skills` | `listAgentPrincipalSkills` | `bearerAuth` | List one agent principal's skill bindings (PLAN-0667) | 公开 |
 | `POST /api/v1/agent-principals/{principalId}/skills` | `bindAgentPrincipalSkill` | `bearerAuth` | Bind one skill to an agent principal (PLAN-0667) | 公开 |

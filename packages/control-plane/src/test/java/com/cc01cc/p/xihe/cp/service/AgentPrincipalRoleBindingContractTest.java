@@ -122,7 +122,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         UUID roleId = createCustomRole("read");
         int before = totalBindingCount();
 
-        ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> created = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString()));
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
@@ -147,13 +147,13 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         fixture();
         UUID roleId = createCustomRole("read");
         int before = totalBindingCount();
-        ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> created = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString()));
         assertEquals(HttpStatus.CREATED, created.getStatusCode());
         String bindingId = String.valueOf(created.getBody().get("bindingId"));
         assertTrue(materializedAtoms().contains("action:read"));
 
-        ResponseEntity<String> deleted = delete("/roles/" + bindingId + "?workspaceId=" + workspace.getId());
+        ResponseEntity<String> deleted = delete("/presets/" + bindingId + "?workspaceId=" + workspace.getId());
 
         assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), String.valueOf(deleted.getBody()));
         assertEquals(before, totalBindingCount());
@@ -177,7 +177,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         UUID roleId = createCustomRole("CREATE_SCHEDULED_TASK");
         int before = totalBindingCount();
 
-        ResponseEntity<Map> refused = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> refused = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString()));
 
         assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(), String.valueOf(refused.getBody()));
@@ -198,7 +198,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         GrantPresetBinding saved = roleBindingRepository.saveAndFlush(seed);
         int before = totalBindingCount();
 
-        ResponseEntity<Map> refused = deleteProblem("/roles/" + saved.getId()
+        ResponseEntity<Map> refused = deleteProblem("/presets/" + saved.getId()
                 + "?workspaceId=" + workspace.getId());
 
         assertEquals(HttpStatus.CONFLICT, refused.getStatusCode());
@@ -212,7 +212,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         int before = totalBindingCount();
         GrantPreset admin = roleRepository.findByName("ADMIN").orElseThrow();
 
-        ResponseEntity<Map> refused = post("/roles",
+        ResponseEntity<Map> refused = post("/presets",
                 Map.of("presetId", admin.getId().toString()));
 
         assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(), String.valueOf(refused.getBody()));
@@ -229,20 +229,20 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     void duplicateBindingConflictsAndUnknownIdsAreNotFound() {
         fixture();
         UUID roleId = createCustomRole("read");
-        assertEquals(HttpStatus.CREATED, post("/roles?workspaceId=" + workspace.getId(),
+        assertEquals(HttpStatus.CREATED, post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString())).getStatusCode());
 
-        ResponseEntity<Map> duplicate = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> duplicate = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString()));
         assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode());
         assertEquals("ROLE_BINDING_EXISTS", duplicate.getBody().get("code"));
 
-        ResponseEntity<Map> unknownRole = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> unknownRole = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", UUID.randomUUID().toString()));
         assertEquals(HttpStatus.NOT_FOUND, unknownRole.getStatusCode());
         assertEquals("ROLE_NOT_FOUND", unknownRole.getBody().get("code"));
 
-        ResponseEntity<Map> unknownBinding = deleteProblem("/roles/" + UUID.randomUUID()
+        ResponseEntity<Map> unknownBinding = deleteProblem("/presets/" + UUID.randomUUID()
                 + "?workspaceId=" + workspace.getId());
         assertEquals(HttpStatus.NOT_FOUND, unknownBinding.getStatusCode());
         assertEquals("ROLE_BINDING_NOT_FOUND", unknownBinding.getBody().get("code"));
@@ -252,10 +252,10 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
     void listReportsScopeAndAtomSummary() {
         fixture();
         UUID roleId = createCustomRole("read");
-        assertEquals(HttpStatus.CREATED, post("/roles?workspaceId=" + workspace.getId(),
+        assertEquals(HttpStatus.CREATED, post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString())).getStatusCode());
 
-        ResponseEntity<Map> listed = get("/roles?workspaceId=" + workspace.getId());
+        ResponseEntity<Map> listed = get("/presets?workspaceId=" + workspace.getId());
 
         assertEquals(HttpStatus.OK, listed.getStatusCode(), String.valueOf(listed.getBody()));
         List<Map<String, Object>> bindings = (List<Map<String, Object>>) listed.getBody().get("items");
@@ -276,7 +276,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         HttpHeaders headers = authHeaders();
         headers.set(HttpHeaders.ACCEPT_LANGUAGE, "en-US");
         ResponseEntity<Map> created = restTemplate.exchange(
-                url(pathFor("/roles?workspaceId=" + workspace.getId())), HttpMethod.POST,
+                url(pathFor("/presets?workspaceId=" + workspace.getId())), HttpMethod.POST,
                 new HttpEntity<>(Map.of("presetId", roleId.toString()), headers), Map.class);
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
@@ -287,7 +287,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
 
     /**
      * PLAN-0667 gap 1 (real-stack): the binding picker needs candidates for a workspace OWNER.
-     * Before the fix this call was 403 because {@code GET /api/v1/roles} was hard-gated on
+     * Before the fix this call was 403 because {@code GET /api/v1/presets} was hard-gated on
      * {@code MANAGE_ROLES}; now a workspace agent manager gets the agent-bindable subset.
      */
     @Test
@@ -343,7 +343,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         fixture();
         UUID roleId = createCustomRole("read");
         int before = totalBindingCount();
-        ResponseEntity<Map> refused = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> refused = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("presetId", roleId.toString(), "scopeType", "workspace"));
 
         assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode());
@@ -357,7 +357,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         fixture();
         UUID roleId = createCustomRole("read");
         int before = totalBindingCount();
-        ResponseEntity<Map> refused = post("/roles?workspaceId=" + workspace.getId(),
+        ResponseEntity<Map> refused = post("/presets?workspaceId=" + workspace.getId(),
                 Map.of("roleId", roleId.toString()));
 
         assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(), String.valueOf(refused.getBody()));
@@ -377,7 +377,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(strangerToken);
         ResponseEntity<Map> forbidden = restTemplate.exchange(
-                url("/api/v1/agent-principals/" + principal.getId() + "/roles"),
+                url("/api/v1/agent-principals/" + principal.getId() + "/presets"),
                 HttpMethod.GET, new HttpEntity<>(headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
@@ -509,7 +509,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         headers.add("X-Workspace-Id", workspace.getId().toString());
 
         ResponseEntity<Map> created = restTemplate.exchange(
-                url(pathFor("/roles")), HttpMethod.POST,
+                url(pathFor("/presets")), HttpMethod.POST,
                 new HttpEntity<>(Map.of("presetId", roleId.toString()), headers), Map.class);
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
@@ -529,7 +529,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationT
         headers.add("X-Workspace-Id", workspace.getId().toString());
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                url(pathFor("/roles?workspaceId=" + UUID.randomUUID())), HttpMethod.POST,
+                url(pathFor("/presets?workspaceId=" + UUID.randomUUID())), HttpMethod.POST,
                 new HttpEntity<>(Map.of("presetId", roleId.toString()), headers), Map.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), String.valueOf(response.getBody()));

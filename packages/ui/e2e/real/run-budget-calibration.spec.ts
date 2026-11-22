@@ -14,6 +14,7 @@ import {
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { agentName } from "./helpers/agent-name";
 
 // PLAN-0492 T0.3 calibration lane: drive representative prompts over the real
 // provider (host lane with XIHE_E2E_REAL_ROUTE=openai-compat) in three shapes:
@@ -237,7 +238,8 @@ test.describe("@host PLAN-0492 T0.3 token calibration", () => {
         seedUserGrant(userId, wsId, [{ actionClass: "write", resource: "*" }]);
 
         const chatPrincipal = await createPrincipal(request, auth, {
-            name: "Calibration Agent",
+            // CP name rule (D-v23): spaces are rejected with INVALID_NAME_FORMAT.
+            name: agentName("Calibration", Date.now().toString(36)),
             toolMode: "none",
         });
         // The principal write leaves CP's cached agent readiness stale until its
@@ -308,7 +310,7 @@ test.describe("@host PLAN-0492 T0.3 token calibration", () => {
             // (fresh stack, single-workspace constraint satisfied by using our
             // workspace first).
             const toolPrincipal = await createPrincipal(request, auth, {
-                name: "Calibration Tool Agent",
+                name: agentName("CalibrationTool", Date.now().toString(36)),
                 toolMode: "workspace",
             });
             const tool = await newSession("Calibration p3 tools", toolPrincipal);
