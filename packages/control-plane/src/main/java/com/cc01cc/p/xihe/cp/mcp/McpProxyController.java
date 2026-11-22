@@ -2597,7 +2597,13 @@ public class McpProxyController {
                     ? MediaType.APPLICATION_JSON_VALUE
                     : response.headers().firstValue("content-type").orElse(MediaType.APPLICATION_JSON_VALUE);
             responseHeaders.set("Content-Type", contentType);
-            responseHeaders.set("MCP-Protocol-Version", STATELESS_PROTOCOL_VERSION);
+            // task-785: the response header must echo the version carried by THIS body.
+            // `initialize` negotiates `2025-11-25` (the 2026-07-28 generation has no
+            // handshake), while `server/discover` advertises `2026-07-28`; a fixed
+            // generation constant made the header contradict the body.
+            String negotiatedVersion = negotiatedProtocolVersion(responseBody);
+            responseHeaders.set("MCP-Protocol-Version",
+                    negotiatedVersion != null ? negotiatedVersion : STATELESS_PROTOCOL_VERSION);
             if (forwardWait != null) {
                 // 转发结果署名的“下游”侧：状态码由 Runtime 给出（spec S5.1 的 origin 仅标注到界方）。
                 logger.info(
@@ -3546,6 +3552,41 @@ public class McpProxyController {
             return null;
         } catch (Exception e) {
             logger.debug("Failed to extract protocol version: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * task-785: read the protocol version the response body actually carries, so the
+     * {@code MCP-Protocol-Version} response header and the JSON-RPC result cannot disagree.
+     *
+     * <p>{@code initialize} answers with {@code result.protocolVersion} (rmcp 3.7.0 negotiates
+     * {@code 2025-11-25}; the {@code 2026-07-28} generation has no handshake). {@code
+     * server/discover} has no single negotiated version — its {@code DiscoverResult} advertises
+     * {@code result.supportedVersions} newest-first, so the first entry is the generation the
+     * server serves. Every other method carries no version in the body; the caller falls back to
+     * {@link #STATELESS_PROTOCOL_VERSION}.</p>
+     */
+    private String negotiatedProtocolVersion(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode result = objectMapper.readTree(responseBody).path("result");
+            JsonNode explicit = result.path("protocolVersion");
+            if (explicit.isTextual() && !explicit.asText().isBlank()) {
+                return explicit.asText();
+            }
+            JsonNode supported = result.path("supportedVersions");
+            if (supported.isArray() && !supported.isEmpty()) {
+                JsonNode newest = supported.get(0);
+                if (newest.isTextual() && !newest.asText().isBlank()) {
+                    return newest.asText();
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            logger.debug("Failed to read negotiated protocol version: {}", e.getMessage());
             return null;
         }
     }

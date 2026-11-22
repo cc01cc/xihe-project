@@ -624,6 +624,66 @@ class McpProxyTest {
                 "unknown serverId must fall back to the stdio branch, got: " + resp.getBody());
     }
 
+    // task-785: `initialize` no longer exists in the 2026-07-28 generation, so the body
+    // negotiates 2025-11-25. The response header must echo that body version instead of
+    // the stateless surface constant.
+    @Test
+    @SuppressWarnings("unchecked")
+    void forwardToRuntime_initialize_echoesNegotiatedVersionInHeader() throws Exception {
+        String responseJson = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{"
+                + "\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},"
+                + "\"serverInfo\":{\"name\":\"fake-runtime\",\"version\":\"1.0\"}}}";
+        com.sun.net.httpserver.HttpServer stub = stubRuntime(responseJson);
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"initialize\","
+                    + "\"params\":{\"protocolVersion\":\"2025-11-25\"},\"id\":1}";
+            ResponseEntity<String> resp = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "forwardToRuntime", TEST_WS_UUID, null, body,
+                    new HttpHeaders(), "mcp-init", accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, resp.getStatusCode());
+            JsonNode result = objectMapper.readTree(resp.getBody()).path("result");
+            String bodyVersion = result.path("protocolVersion").asText();
+            assertEquals("2025-11-25", bodyVersion);
+            assertEquals(bodyVersion, resp.getHeaders().getFirst("MCP-Protocol-Version"),
+                    "initialize header must match the negotiated body version");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    // task-785: `server/discover` advertises the stateless generation in
+    // `result.supportedVersions` (newest first); the header must use that same value.
+    @Test
+    @SuppressWarnings("unchecked")
+    void forwardToRuntime_serverDiscover_echoesNewestSupportedVersionInHeader() throws Exception {
+        String responseJson = "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{"
+                + "\"resultType\":\"complete\","
+                + "\"supportedVersions\":[\"2026-07-28\",\"2025-11-25\"],"
+                + "\"capabilities\":{},\"ttlMs\":0,\"cacheScope\":\"private\"}}";
+        com.sun.net.httpserver.HttpServer stub = stubRuntime(responseJson);
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+            String body = "{\"jsonrpc\":\"2.0\",\"method\":\"server/discover\",\"id\":2,\"params\":{}}";
+            ResponseEntity<String> resp = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "forwardToRuntime", TEST_WS_UUID, null, body,
+                    new HttpHeaders(), "mcp-init", accessContext(TEST_WS_UUID, "u-1"));
+
+            assertEquals(HttpStatus.OK, resp.getStatusCode());
+            JsonNode versions = objectMapper.readTree(resp.getBody())
+                    .path("result").path("supportedVersions");
+            String newest = versions.get(0).asText();
+            assertEquals("2026-07-28", newest);
+            assertEquals(newest, resp.getHeaders().getFirst("MCP-Protocol-Version"),
+                    "discover header must match the first supported version");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
     private static Object accessContext(String wsId, String userId) throws Exception {
         Class<?> accessClass = Class.forName(
                 "com.cc01cc.p.xihe.cp.mcp.McpProxyController$AccessContext");
