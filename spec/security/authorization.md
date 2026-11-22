@@ -40,8 +40,17 @@
 
 条件是**授权之外的额外限制**，挂在 policy 层、与 grant 分开存，判定时读请求上下文里的字段。它**只能收窄，不能放宽**：条件永不授予权限，也不参与 `(actionClass, resource)` 匹配。
 
-- 算子集 **MUST** 封闭为五种：`eq` / `neq` / `in` / `exists` / 时间窗（`before`–`after`）。**MUST NOT** 支持自定义算子或表达式语言。
-- 请求上下文里**缺该字段** ⇒ 判为不满足（deny）；出现**未登记的条件 key** ⇒ 直接 deny。**MUST NOT** 忽略未知 key 或按通过处理。
+**MVP 底线（task-863 已实现）**：本阶段只实现两条 fail-closed 规则，五算子尚未实现。
+
+- **未登记的条件 key ⇒ deny**：条件 key 必须来自单一注册表（`policy/condition/ConditionKeys.java`）。不在表中的 key（含 null、空白、大小写或空格不符）使承载该条件的 grant 行**不成立**；**MUST NOT** 忽略未知 key 或按通过处理。
+- **缺字段 ⇒ 算不满足**：条件声明的上下文字段在请求上下文里不存在或为空时，该条件判为不满足 ⇒ 收窄失败 ⇒ deny。
+- 两条规则按上述先后判定：混合条件集里「未登记 key」优先——它是配置错误，而「缺字段」可能是合法运行态。
+- 条件按 grant 行（grant id）挂载，**MUST NOT** 写进 grant 的权限原子；同一原子的另一行无条件授予时，原子仍成立（并集语义）。条件载体当前为独立于 `grants` 表的结构；持久化表随算子一并落，**MUST NOT** 为此给 `grants` 增加条件列。
+- 拒绝原因 **MUST** 可解释：`condition-key-unregistered` / `condition-field-missing` 作为 reason 码进 explain 的 `missingLevels`，并带层级索引（§2.5 第 7 步）。
+
+**MVP 之后（未实现）**：值比较算子。
+
+- 算子集 **MUST** 封闭为五种：`eq` / `neq` / `in` / `exists` / 时间窗（`before`–`after`）。**MUST NOT** 支持自定义算子或表达式语言。算子落地之前，条件形状只有 key（无算子、无值），因此底线的「满足」只代表「key 已登记且字段存在」，**不代表值已比较**。
 - 改条件 **MUST NOT** 需要重发授权：条件与 grant 是两份数据，撤销条件不影响 grants 行。
 - 端点级可见性检查（如组织树的「非成员得到 404」）**MUST NOT** 称为 condition，归 visibility guard，与本节判据分开实现。`in_subtree` 因此不属于算子集：树形包含是可见性语义，不是授权语义。
 
@@ -70,7 +79,7 @@
 | 4 | 要做什么、对什么做 | 工具面映射成 actionClass，配资源串解析 | §2 第 4 步、§2.1 | 已实现 |
 | 5 | 硬闸 | built-in hard guard，先于一切授权，任何模式/规则不可覆盖 | §2 第 5 步 | 已实现 |
 | 6 | 动作与资源同时命中 | `(actionClass × resource)` **唯一匹配点**，链上每级都持有，任一级缺即拒 | §2 第 6 步 | 已实现（三源快照未去重，见 task-834） |
-| 7 | 条件 | §2.2 五算子，只收窄不放宽 | §2.2 | **未实现**（算子集与求值器均无） |
+| 7 | 条件 | §2.2 只收窄不放宽 | §2.2 | **部分**：fail-closed 两条底线已实现（task-863：未登记 key⇒deny、缺字段⇒不满足、拒绝带 reason 码 + 层级）；五算子未实现 |
 | 8 | 审批 | 批准权走 `(action:approve, resource)` | §2.3、`approval.md` §3.1 | **部分**：ASK 只按动作类；批准者仍硬编码 run 属主；`action:approve` 原子不存在 |
 | 9 | 执行 | 执行期不再判权限 | §2 第 8 步 | 已实现 |
 | 10 | 记录 | 拒绝原因可解释 | §2 第 8 步、DEV-037 §10 explain | 部分：explain 已落，求值失败仍只有 WARN |

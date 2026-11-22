@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
+import com.cc01cc.p.xihe.cp.policy.condition.ConditionBaseline;
+import com.cc01cc.p.xihe.cp.policy.condition.ConditionGate;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +29,16 @@ public class GrantIntersectionEvaluator {
     public static final String REASON_BLANK_RESOURCE = "blank-resource";
     public static final String REASON_LEVEL_WITHOUT_GRANTS = "level-without-grants";
     public static final String REASON_NO_MATCHING_ATOM = "no-matching-atom";
+
+    /**
+     * task-863: the carrying grant row has a condition key outside {@code ConditionKeys}. The row
+     * cannot hold the atom, so the pair is missing at that level. Spelled identically to
+     * {@link ConditionBaseline#CODE_KEY_UNREGISTERED} (one vocabulary, two readers).
+     */
+    public static final String REASON_CONDITION_KEY_UNREGISTERED = ConditionBaseline.CODE_KEY_UNREGISTERED;
+
+    /** task-863: a registered condition's field is absent from the request context ⇒ not satisfied. */
+    public static final String REASON_CONDITION_FIELD_MISSING = ConditionBaseline.CODE_FIELD_MISSING;
 
     /**
      * task-124 / DSD-1509: the label an explanation uses for a pair that a live session temporary
@@ -236,6 +248,18 @@ public class GrantIntersectionEvaluator {
      */
     public boolean allows(PolicyRequest request, List<Set<PermissionAtom>> principalPath,
                           List<GrantAtom> sessionTokens) {
+        return allows(request, principalPath, sessionTokens, ConditionGate.none());
+    }
+
+    /**
+     * task-863: the same intersection with per-grant conditions consulted as a narrowing gate.
+     *
+     * <p>A candidate atom is skipped when its row's condition set fails the MVP baseline
+     * (unregistered key, or missing context field); the row simply does not hold the pair. The
+     * gate can only remove a hit, never add one, so it cannot turn a deny into an allow.</p>
+     */
+    public boolean allows(PolicyRequest request, List<Set<PermissionAtom>> principalPath,
+                          List<GrantAtom> sessionTokens, ConditionGate conditions) {
         if (principalPath == null) {
             return false;
         }
@@ -243,7 +267,7 @@ public class GrantIntersectionEvaluator {
         for (int index = 0; index < principalPath.size(); index++) {
             levels.add(PrincipalLevel.of("level-" + index, principalPath.get(index)));
         }
-        return decide(request, levels, sessionTokens, false).allowed();
+        return decide(request, levels, sessionTokens, conditions, false).allowed();
     }
 
     /**
@@ -264,11 +288,19 @@ public class GrantIntersectionEvaluator {
      */
     public GrantExplanation explain(PolicyRequest request, List<PrincipalLevel> principalPath,
                                     List<GrantAtom> sessionTokens) {
-        return decide(request, principalPath, sessionTokens, true);
+        return explain(request, principalPath, sessionTokens, ConditionGate.none());
+    }
+
+    /** The same kernel with the task-863 per-grant condition gate applied. */
+    public GrantExplanation explain(PolicyRequest request, List<PrincipalLevel> principalPath,
+                                    List<GrantAtom> sessionTokens, ConditionGate conditions) {
+        return decide(request, principalPath, sessionTokens, conditions, true);
     }
 
     private GrantExplanation decide(PolicyRequest request, List<PrincipalLevel> levels,
-                                    List<GrantAtom> sessionTokens, boolean record) {
+                                    List<GrantAtom> sessionTokens, ConditionGate conditions,
+                                    boolean record) {
+        ConditionGate gate = conditions == null ? ConditionGate.none() : conditions;
         if (request == null || request.actionClasses().isEmpty() || request.resources().isEmpty()) {
             return record
                     ? GrantExplanation.deniedBeforeEvaluation(REASON_EMPTY_REQUEST)
@@ -336,12 +368,22 @@ public class GrantIntersectionEvaluator {
                     PrincipalLevel level = levels.get(index);
                     List<GrantAtom> atoms = level == null ? List.of() : level.atoms();
                     boolean hit = false;
+                    String conditionFailure = null;
                     for (GrantAtom atom : atoms) {
                         if (!canonicalAction.equals(AtomNames.action(AtomNames.bare(atom.actionClass())))) {
                             continue;
                         }
                         if (!coversResource(canonicalAction, atom.resource(), resource,
                                 request.shape())) {
+                            continue;
+                        }
+                        // task-863: conditions narrow a row, they never widen one. A failing row
+                        // does not hold this pair; another row holding the same atom still can.
+                        ConditionBaseline.Result gateResult = gate.check(atom.grantId());
+                        if (!gateResult.satisfied()) {
+                            if (conditionFailure == null && !gateResult.failures().isEmpty()) {
+                                conditionFailure = gateResult.failures().get(0).code();
+                            }
                             continue;
                         }
                         hit = true;
@@ -358,7 +400,11 @@ public class GrantIntersectionEvaluator {
                         levelMatched[index] = false;
                         if (record) {
                             missing.add(new MissingLevel(index, labels[index], canonicalAction, resource,
-                                    atoms.isEmpty() ? REASON_LEVEL_WITHOUT_GRANTS : REASON_NO_MATCHING_ATOM));
+                                    conditionFailure != null
+                                            ? conditionFailure
+                                            : (atoms.isEmpty()
+                                                    ? REASON_LEVEL_WITHOUT_GRANTS
+                                                    : REASON_NO_MATCHING_ATOM)));
                         }
                     }
                 }

@@ -128,6 +128,16 @@ This section is the **current** chain. The MVP target inserts "condition" betwee
 
 A condition is a second check stored in the policy layer, separate from grants. It reads fields from the request context and **can only narrow, never widen**: it never grants permission and never participates in `(actionClass, resource)` matching.
 
+**MVP baseline (implemented by task-863)** — this stage implements only the two fail-closed rules; the five operators are not implemented yet:
+
+- **Unregistered condition key ⇒ deny**: the key must come from the single registry (`policy/condition/ConditionKeys.java`). A key outside it (including null, blank, or a case/whitespace variant) makes the carrying grant row inapplicable; unknown keys **MUST NOT** be ignored or treated as passing.
+- **Missing field ⇒ not satisfied**: when the context field a condition reads is absent or blank, the condition is not satisfied ⇒ narrowing fails ⇒ deny.
+- The two rules have a precedence: in a mixed set, "unregistered key" wins, because that is a configuration error.
+- Conditions attach per grant row and **MUST NOT** be written into the permission atoms; another row granting the same atom unconditionally still holds it (union semantics). The carrier is currently separate from the `grants` table — **do not** add a conditions column to `grants` for this.
+- Refusals are explainable: `condition-key-unregistered` / `condition-field-missing` appear in explain results with the level index.
+
+**After the MVP (not implemented)** — value-comparing operators:
+
 | Operator | Example |
 |---|---|
 | equals `eq` | the request's project must be `p-42` |
@@ -138,12 +148,11 @@ A condition is a second check stored in the policy layer, separate from grants. 
 
 Hard rules:
 
-- The operator set **MUST** stay closed to these five; custom operators or expression languages are **MUST NOT**.
-- A **missing field** in the request context counts as unsatisfied; an **unregistered condition key** denies outright. **MUST NOT** ignore unknown keys or treat them as passing.
+- The operator set **MUST** stay closed to these five; custom operators or expression languages are **MUST NOT**. Until the operators land, a condition is only a key (no operator, no value): "satisfied" in the baseline means "registered key + field present", **not** "value compared".
 - Changing a condition **MUST NOT** require re-issuing grants: conditions and grants are two separate stores.
 - Endpoint-level visibility checks (the org tree's "non-members see 404") **MUST NOT** be called conditions; they are visibility guards. `in_subtree` is therefore not part of the operator set.
 
-Cross-reference: `spec/security/authorization.md` §2.2; the "conditions" card in the authorization figure.
+Cross-reference: `spec/security/authorization.md` §2.2; the implementation lives in `policy/condition/` (`ConditionKeys` / `ConditionBaseline` / `ConditionGate`); the "conditions" card in the authorization figure.
 
 ### 4.2 Approval: a risk modality, not a permission
 
@@ -175,7 +184,7 @@ Only two things differ from §3: step 7 adds "condition", and step 8 "approval" 
 | 4 | What is done, to what | tool-face mapping + resource string parsing (§3 step 4) | implemented |
 | 5 | Hard guard | L0 hard guard, ahead of all grants (§3 step 5) | implemented |
 | 6 | Both axes match | the only matching point; every level on the chain must hold (§3 step 6) | implemented |
-| 7 | Condition | §4.1, five operators, narrow only | **not implemented** |
+| 7 | Condition | §4.1, narrow only | **partial**: the two fail-closed baseline rules are implemented (task-863); the five operators are not |
 | 8 | Approval | §4.2, approver right via `(action:approve, resource)` | **partial**: action class only; approver hard-coded |
 | 9 | Execution | Runtime no longer judges permissions (§3 step 8) | implemented |
 | 10 | Record | denial reasons explainable (§3 step 9, §10) | partial: evaluation failures still only WARN |
