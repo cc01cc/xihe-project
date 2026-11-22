@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -186,7 +187,11 @@ class AuthServiceUsernameTest {
         UserRepository repository = mock(UserRepository.class);
         when(repository.existsByEmail(anyString())).thenReturn(false);
         when(repository.existsByUsername(anyString())).thenReturn(false);
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.save(any())).thenAnswer(inv -> {
+            User user = inv.getArgument(0);
+            user.setId(UUID.randomUUID());
+            return user;
+        });
         return repository;
     }
 
@@ -198,6 +203,8 @@ class AuthServiceUsernameTest {
 
     private static AuthService service(UserRepository repository, PasswordEncoder encoder) {
         return new AuthService(repository, encoder, mock(JwtTokenProvider.class),
-                mock(GrantDefaultService.class), mock(CapabilityProjectionService.class));
+                mock(GrantDefaultService.class),
+                mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
+                mock(CapabilityProjectionService.class));
     }
 }

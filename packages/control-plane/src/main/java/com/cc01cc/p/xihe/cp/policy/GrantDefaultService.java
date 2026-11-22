@@ -64,6 +64,17 @@ public class GrantDefaultService {
     /** Frozen Session/principal permission snapshot. Never reconciled by the materializer. */
     public static final String SOURCE_AGENT_DEFAULT = "agent_default";
 
+    /**
+     * D-1912: the audit action for the first account's bootstrap administrator grant. It is
+     * separate from {@code authorization_super_admin_binding_seeded} on purpose: the latter is
+     * the restart/seed-admin repair path, while this row says "the first registration created the
+     * instance administrator".
+     */
+    public static final String AUDIT_INSTANCE_ADMIN_BOOTSTRAPPED = "instance_admin_bootstrapped";
+
+    private static final String AUDIT_SUPER_ADMIN_BINDING_SEEDED =
+            "authorization_super_admin_binding_seeded";
+
     private static final String SUBJECT_USER = "user";
     private static final String SUBJECT_AGENT = "agent";
     private static final String READ_STATE_READ = "read";
@@ -175,6 +186,38 @@ public class GrantDefaultService {
      */
     @Transactional
     public void ensureInstanceSuperAdmin(User user) {
+        ensureInstanceSuperAdmin(user, AUDIT_SUPER_ADMIN_BINDING_SEEDED,
+                "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
+    }
+
+    /**
+     * D-1912: the first account created by {@code POST /api/v1/auth/register} on a fresh instance
+     * becomes the instance administrator. The grant core is the same one the seed-admin path uses
+     * ({@link #ensureInstanceSuperAdmin(User, String, String)}), so the two paths cannot drift into
+     * different capability sets; only the audit action/detail differ.
+     *
+     * <p>The caller has already claimed the {@code instance_owner} pointer in this transaction, so
+     * the frozen lock order stays {@code instance_owner -> users}. If a concurrent registration won
+     * the race, {@link #ensureInstanceSuperAdmin(User, String, String)} leaves the other account as
+     * the administrator and {@link #ensureInstanceTierBinding(User)} gives this account its normal
+     * USER tier — a loser never ends up without a tier binding.</p>
+     */
+    @Transactional
+    public void ensureFirstAccountAdmin(User user) {
+        requirePersistedUser(user);
+        ensureInstanceSuperAdmin(user, AUDIT_INSTANCE_ADMIN_BOOTSTRAPPED,
+                "source=first_registration role=" + SystemAccessRoleCatalog.SUPER_ADMIN
+                        + " scope=instance");
+        ensureInstanceTierBinding(user);
+        materializer.materializeSubject(SUBJECT_USER, user.getId(), user.getId(), null);
+    }
+
+    /**
+     * The shared administrator grant core. {@code auditAction}/{@code auditDetail} let the two
+     * entry points keep distinct provenance while sharing every guard and write below.
+     */
+    @Transactional
+    public void ensureInstanceSuperAdmin(User user, String auditAction, String auditDetail) {
         requirePersistedUser(user);
         dbLockTimeout.apply();
         User lockedUser = userLock.lockAndFind(user.getId())
@@ -215,8 +258,7 @@ public class GrantDefaultService {
         bindingRepository.save(new AccessRoleBinding(superAdmin.getId(), SUBJECT_USER,
                 lockedUser.getId(), AccessScope.INSTANCE, null, lockedUser.getId()));
         auditLogger.recordDurableChange(lockedUser.getId().toString(), null,
-                "authorization_super_admin_binding_seeded", "user", lockedUser.getId().toString(),
-                "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
+                auditAction, "user", lockedUser.getId().toString(), auditDetail);
         logger.info("[POLICY] event=super_admin_binding_seeded userId={}", lockedUser.getId());
         materializer.materializeSubject(SUBJECT_USER, lockedUser.getId(), lockedUser.getId(), null);
     }

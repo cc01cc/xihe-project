@@ -63,6 +63,8 @@ class AuthServiceCredentialTest {
 
     private static AuthService service(UserRepository repository, PasswordEncoder encoder) {
         return new AuthService(repository, encoder, mock(JwtTokenProvider.class),
-                mock(GrantDefaultService.class), mock(CapabilityProjectionService.class));
+                mock(GrantDefaultService.class),
+                mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
+                mock(CapabilityProjectionService.class));
     }
 }

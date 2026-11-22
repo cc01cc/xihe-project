@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.auth;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +12,7 @@ import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.service.InstanceOwnershipService;
 
 import java.util.UUID;
 
@@ -29,17 +31,25 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final GrantDefaultService grantDefaultService;
+    /**
+     * D-1912: the first registration claims the instance owner pointer before the administrator
+     * binding is written. {@link InstanceOwnershipService} depends on this service for credential
+     * step-up, so the edge is lazy to avoid a constructor cycle.
+     */
+    private final InstanceOwnershipService instanceOwnershipService;
     /** PLAN-0610 W3-2b: capability projection for the auth/user wire shapes. */
     private final CapabilityProjectionService capabilityProjection;
     private final String dummyPasswordHash;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider, GrantDefaultService grantDefaultService,
+                       @Lazy InstanceOwnershipService instanceOwnershipService,
                        CapabilityProjectionService capabilityProjection) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.grantDefaultService = grantDefaultService;
+        this.instanceOwnershipService = instanceOwnershipService;
         this.capabilityProjection = capabilityProjection;
         // PLAN-0558: unknown accounts must cost one BCrypt verification too, so
         // response timing cannot distinguish "no such user" from a wrong password.
@@ -48,6 +58,7 @@ public class AuthService {
 
     /**
      * Creates the user row and its default grants; returns the persisted user.
+     * D-1912: on a fresh instance the first row also becomes the instance owner and administrator.
      * PLAN-0758: the retired local-mode registration path (which used to also seed the
      * instance SUPER_ADMIN binding in {@code AuthController}) no longer runs here.
      * PLAN-0565 ruling #7: username is required and unique (letter-first);
@@ -66,6 +77,8 @@ public class AuthService {
         }
 
         String username = resolveUsername(request.getUsername(), request.getEmail());
+        // D-1912: decide before the insert — after the save this answer would always be true.
+        boolean firstAccount = !hasAnyUser();
         User user = new User(
                 request.getEmail(),
                 passwordEncoder.encode(request.getPassword()),
@@ -73,10 +86,19 @@ public class AuthService {
                 username
         );
         user = userRepository.save(user);
-        grantDefaultService.ensureUserDefault(user);
+        if (firstAccount) {
+            // D-1912: the first account on a fresh instance is the instance administrator. The
+            // owner pointer is claimed first so the frozen lock order (instance_owner -> users)
+            // holds; the grant core then reuses the same path as the seed-admin branch.
+            instanceOwnershipService.ensureAssigned(user, user.getId().toString());
+            grantDefaultService.ensureFirstAccountAdmin(user);
+        } else {
+            grantDefaultService.ensureUserDefault(user);
+        }
 
-        logger.info("User registered: id={} email={} username={} tier=USER", user.getId(),
-                AuthLog.maskEmail(user.getEmail()), user.getUsername());
+        logger.info("User registered: id={} email={} username={} tier={}", user.getId(),
+                AuthLog.maskEmail(user.getEmail()), user.getUsername(),
+                firstAccount ? "SUPER_ADMIN(source=first_registration)" : "USER");
         return user;
     }
 
