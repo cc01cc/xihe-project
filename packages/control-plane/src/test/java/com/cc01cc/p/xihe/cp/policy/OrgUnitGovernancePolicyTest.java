@@ -163,7 +163,8 @@ class OrgUnitGovernancePolicyTest {
         for (String atom : OrgUnitGovernancePolicy.governanceAtoms()) {
             assertTrue(PermissionAtomCatalog.allAtomNames().contains(atom), atom);
             assertTrue(PermissionAtomCatalog.isActionAtom(atom), atom + " must be an action atom");
-            assertTrue(ToolFaceRegistry.builtinActionClasses().contains(atom),
+            assertTrue(ToolFaceRegistry.builtinActionClasses().stream()
+                            .map(AtomNames::action).toList().contains(atom),
                     atom + " must be in the evaluator vocabulary (PresetGrantMaterializer throws otherwise)");
             assertFalse(orgUnitAtomLabel(atom).isBlank(), atom + " needs a display label");
             // tasks.md:57 判据「进」: an agent principal is a grantee, never an org-unit administrator.

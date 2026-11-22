@@ -34,7 +34,7 @@
 -- * Zero-gap assertion (run by P0ManagementAtomSeedMigrationTest, not only documented here):
 --     SELECT count(*) FROM role_bindings b
 --     JOIN role_permissions rp ON rp.role_id = b.role_id
---     WHERE rp.action_class IN ('MANAGE_AGENT_PRINCIPALS','MANAGE_WORKSPACE_MEMBERS')
+--     WHERE rp.action_class IN ('action:MANAGE_AGENT_PRINCIPALS','action:MANAGE_WORKSPACE_MEMBERS')
 --       AND NOT EXISTS (SELECT 1 FROM grants g
 --                       WHERE g.subject_type='user' AND g.subject_id=b.subject_id
 --                         AND g.source='role' AND g.scope_type=b.scope_type
@@ -50,9 +50,9 @@
 --     SELECT count(*) FROM role_bindings b
 --     JOIN roles r ON r.id = b.role_id AND r.is_system = FALSE
 --     WHERE EXISTS (SELECT 1 FROM role_permissions rp
---                   WHERE rp.role_id = r.id AND rp.action_class = 'instance:admin')
+--                   WHERE rp.role_id = r.id AND rp.action_class = 'cap:instance:admin')
 --       AND NOT EXISTS (SELECT 1 FROM role_permissions rp2
---                       WHERE rp2.role_id = r.id AND rp2.action_class = 'workspace:admin');
+--                       WHERE rp2.role_id = r.id AND rp2.action_class = 'cap:workspace:admin');
 --   expected 0 (XH not released); asserted by P0ManagementAtomSeedMigrationTest.
 --
 -- * No default policy rule is seeded for the new atoms: with rule adjudication retired
@@ -62,15 +62,15 @@
 
 -- 1a. SUPER_ADMIN: every action atom is seeded, so the two new atoms join its definition.
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'MANAGE_AGENT_PRINCIPALS', '*'),
-    ('00000000-0000-4000-8000-000000000001', 'MANAGE_WORKSPACE_MEMBERS', '*')
+    ('00000000-0000-4000-8000-000000000001', 'action:MANAGE_AGENT_PRINCIPALS', '*'),
+    ('00000000-0000-4000-8000-000000000001', 'action:MANAGE_WORKSPACE_MEMBERS', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 1b. ADMIN: the two management atoms + workspace:admin (A9 default-set semantics).
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000002', 'MANAGE_AGENT_PRINCIPALS', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'MANAGE_WORKSPACE_MEMBERS', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'workspace:admin', '*')
+    ('00000000-0000-4000-8000-000000000002', 'action:MANAGE_AGENT_PRINCIPALS', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:MANAGE_WORKSPACE_MEMBERS', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'cap:workspace:admin', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 2a. Backfill MANAGE_AGENT_PRINCIPALS for every instance-scope subject holding SUPER_ADMIN/ADMIN.
@@ -81,7 +81,7 @@ INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, perm
                     scope_type, scope_id, read_state)
 SELECT DISTINCT ON (b.subject_id)
        gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-       jsonb_build_array(jsonb_build_object('actionClass', 'MANAGE_AGENT_PRINCIPALS')),
+       jsonb_build_array(jsonb_build_object('actionClass', 'action:MANAGE_AGENT_PRINCIPALS')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
 WHERE b.subject_type = 'user'
@@ -95,7 +95,7 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions -> 0 ->> 'actionClass' = 'MANAGE_AGENT_PRINCIPALS')
+        AND g.permissions -> 0 ->> 'actionClass' = 'action:MANAGE_AGENT_PRINCIPALS')
 ORDER BY b.subject_id;
 
 -- 2b. Backfill MANAGE_WORKSPACE_MEMBERS, same scope and same guard.
@@ -103,7 +103,7 @@ INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, perm
                     scope_type, scope_id, read_state)
 SELECT DISTINCT ON (b.subject_id)
        gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-       jsonb_build_array(jsonb_build_object('actionClass', 'MANAGE_WORKSPACE_MEMBERS')),
+       jsonb_build_array(jsonb_build_object('actionClass', 'action:MANAGE_WORKSPACE_MEMBERS')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
 WHERE b.subject_type = 'user'
@@ -117,5 +117,5 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions -> 0 ->> 'actionClass' = 'MANAGE_WORKSPACE_MEMBERS')
+        AND g.permissions -> 0 ->> 'actionClass' = 'action:MANAGE_WORKSPACE_MEMBERS')
 ORDER BY b.subject_id;

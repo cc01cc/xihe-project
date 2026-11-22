@@ -118,9 +118,9 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         List<String> atoms = roleAtomNames(principal.getId());
         // DSD-1500 (Q-93) R2 / V179: exec left the editor default, so the expected set is the
         // workspace read/write/delete triangle — asserting exec here would pin the retired atom.
-        assertTrue(atoms.containsAll(List.of("read", "write", "delete")),
+        assertTrue(atoms.containsAll(List.of("action:read", "action:write", "action:delete")),
                 "WS_EDITOR atoms must be materialized right away: " + atoms);
-        assertFalse(atoms.contains("exec"),
+        assertFalse(atoms.contains("action:exec"),
                 "DSD-1500 (V179) retired exec from WS_EDITOR: " + atoms);
         assertTrue(roleBindingRepository
                         .findBySubjectTypeAndScopeTypeAndScopeId(
@@ -143,11 +143,12 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         List<String> atoms = roleAtomNames(principal.getId());
         // DSD-1500 (Q-93) R2 / V179: the retired exec atom is not part of the editor default any
         // more; the triangle it must still carry is read/write/delete.
-        assertTrue(atoms.containsAll(List.of("read", "write", "delete")),
+        assertTrue(atoms.containsAll(List.of("action:read", "action:write", "action:delete")),
                 "the editor binding must take effect: " + atoms);
-        assertFalse(atoms.contains("exec"),
+        assertFalse(atoms.contains("action:exec"),
                 "DSD-1500 (V179) retired exec from WS_EDITOR: " + atoms);
-        assertFalse(atoms.contains(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+        assertFalse(atoms.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF)),
                 "BL-349: a workspace role must not hand MEMORY_WRITE_SELF (agent-forbidden) to an agent");
         assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(atoms),
                 "every atom materialized from a workspace role must be agent-bindable");
@@ -178,7 +179,8 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         assertEquals(principal.getId().toString(), response.getBody().get("principalId"));
         assertEquals(workspaceId.toString(), response.getBody().get("workspaceId"));
         List<String> atoms = roleAtomNames(principal.getId());
-        assertFalse(atoms.contains(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+        assertFalse(atoms.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF)),
                 "BL-349: binding must not hand the agent the agent-forbidden SELF atom: " + atoms);
     }
 
@@ -247,7 +249,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus(), refused.getMessage());
         assertEquals("PRIVILEGE_ESCALATION", refused.getCode(),
                 "the default role is a grant: the creator must hold its atoms at the instance scope");
-        assertTrue(refused.getMessage().contains("read"),
+        assertTrue(refused.getMessage().contains("action:read"),
                 "the refusal names the default-role atoms it cannot grant: " + refused.getMessage());
         assertEquals(principalsBefore, agentPrincipalRepository.count(),
                 "a refused creation writes no principal row (zero partial write)");
@@ -281,7 +283,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
 
         var cap = agentPrincipalService.resolveCapFor(principal.getId(), workspaceId);
 
-        assertTrue(cap.toString().contains("read"),
+        assertTrue(cap.toString().contains("action:read"),
                 "a principal without role rows keeps the legacy ceiling (rollback path): " + cap);
     }
 
@@ -308,7 +310,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
                 UUID.fromString(userId), workspaceId.toString());
 
         var cap = agentPrincipalService.resolveCapFor(principalId, workspaceId);
-        assertTrue(cap.toString().contains("read"),
+        assertTrue(cap.toString().contains("action:read"),
                 "a workspace role binding alone must resolve the cap (second arm of the OR): " + cap);
         assertTrue(roleBindingRepository.existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId),

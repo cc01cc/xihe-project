@@ -405,7 +405,9 @@ class CredentialBindingServiceIntegrationTest extends AbstractReusableIntegratio
 
     private static boolean snapshotContains(JsonNode permissions, String resource) {
         for (JsonNode atom : permissions) {
-            if ("credential_use".equals(atom.get("actionClass").asText())
+            if (com.cc01cc.p.xihe.cp.policy.AtomNames.action("credential_use")
+                    .equals(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                            atom.get("actionClass").asText()))
                     && resource.equals(atom.get("resource").asText())) {
                 return true;
             }

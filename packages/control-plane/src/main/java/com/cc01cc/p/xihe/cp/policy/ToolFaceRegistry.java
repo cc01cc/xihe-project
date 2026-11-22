@@ -106,6 +106,14 @@ public class ToolFaceRegistry {
     // domain-qualified `session:permission:configure` spelling the decision uses; it is still a
     // plain action atom (validated against {@link #builtinActionClasses()}, never an authority).
     public static final String ACTION_SESSION_PERMISSION_CONFIGURE = "session:permission:configure";
+    /**
+     * task-835: the approval-gate atom. The authorization criterion is
+     * {@code (action:approve, the resource of THIS approval request)} — never a hard-coded
+     * "is the run owner" branch. Its canonical resource is the request-scoped sentinel
+     * ({@link ResourceNamespaces#REQUEST_RESOURCE}), not {@code *}: a wildcard approve grant
+     * would approve every resource at once.
+     */
+    public static final String ACTION_APPROVE = "approve";
     /** D-928 / PLAN-0766: write access to the shared workspace-default config layer. */
     public static final String ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
     /**
@@ -413,12 +421,22 @@ public class ToolFaceRegistry {
                 // the same batch as its catalog entry, label and seed rows — the same mechanical
                 // reason V157/V162/V172 document: GrantIntersectionEvaluator validates against this
                 // vocabulary, and MemoryWriteAtomTest asserts actionAtoms() == this set.
-                ACTION_SESSION_PERMISSION_CONFIGURE);
+                ACTION_SESSION_PERMISSION_CONFIGURE,
+                // task-835 (approval contract §2.3): approval authority is an atom, so the
+                // vocabulary must know it before any evaluator can ask (action:approve, resource).
+                ACTION_APPROVE);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */
     public static boolean isCredentialActionClass(String actionClass) {
-        return actionClass != null && actionClass.startsWith(CREDENTIAL_ACTION_PREFIX);
+        // task-835: grants/seeds carry the canonical `action:` prefix; the face mapping stays bare.
+        String bare = AtomNames.bare(actionClass);
+        return bare != null && bare.startsWith(CREDENTIAL_ACTION_PREFIX);
+    }
+
+    /** task-835: the approval atom, bare or canonical spelling. */
+    public static boolean isApproveActionClass(String actionClass) {
+        return ACTION_APPROVE.equals(AtomNames.bare(actionClass));
     }
 
     /**

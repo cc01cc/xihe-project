@@ -174,7 +174,8 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
                 String.class, bypassHolder.getId());
         // PLAN-0673: the audit names the exact ROW (action+resource), not just the action — the
         // whole point of the fix is that `write` and `write@*` are different grants.
-        assertTrue(detail != null && detail.contains("bypass=true") && detail.contains("skipped=[write@*]"),
+        assertTrue(detail != null && detail.contains("bypass=true")
+                        && detail.contains("skipped=[action:write@*]"),
                 "the bypass audit names exactly what was skipped: " + detail);
     }
 

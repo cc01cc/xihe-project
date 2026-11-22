@@ -56,6 +56,12 @@ public class SystemGrantPresetCatalog {
     public static final UUID AGENT_READER_ID = UUID.fromString("00000000-0000-4000-8000-000000000009");
     public static final UUID AGENT_WORKER_ID = UUID.fromString("00000000-0000-4000-8000-000000000010");
     public static final UUID WS_RUNNER_ID = UUID.fromString("00000000-0000-4000-8000-000000000011");
+    /**
+     * M2-3 (task-835): the org-unit governance preset. It is an ordinary built-in preset bound
+     * <b>inside an org unit</b>; its atom set is exactly the D-1118 whitelist
+     * ({@link OrgUnitGovernancePolicy#governanceAtoms()}), so {@code isGovernanceRole} accepts it.
+     */
+    public static final UUID ORG_LEADER_ID = UUID.fromString("00000000-0000-4000-8000-000000000012");
 
     public static final String SUPER_ADMIN = "SUPER_ADMIN";
     public static final String ADMIN = "ADMIN";
@@ -83,6 +89,8 @@ public class SystemGrantPresetCatalog {
      * (reach) and let the workspace side grant exec as well (cap or workspace-scope binding).
      */
     public static final String WS_RUNNER = "WS_RUNNER";
+    /** M2-3 (V162 comment): the org-unit governance preset. */
+    public static final String ORG_LEADER = "ORG_LEADER";
 
     /** The three instance-level system roles, used to keep one tier binding per user. */
     public static final List<String> INSTANCE_TIER_PRESETS = List.of(SUPER_ADMIN, ADMIN, USER);
@@ -90,10 +98,13 @@ public class SystemGrantPresetCatalog {
     public record AtomRef(String actionClass, String resourcePattern) {
 
         static AtomRef wildcard(String actionClass) {
-            return new AtomRef(actionClass,
-                    ToolFaceRegistry.isCredentialActionClass(actionClass)
-                            ? ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD
-                            : PermissionAtomCatalog.WILDCARD);
+            String canonical = PermissionAtomCatalog.isCapabilityAtom(actionClass)
+                    ? AtomNames.capability(actionClass)
+                    : AtomNames.action(actionClass);
+            // task-835: the canonical resource comes from the registry (credential:* for the
+            // credential family, `$request` for approve — never `*` for approve, or one approval
+            // would cover every resource).
+            return new AtomRef(canonical, ResourceNamespaces.canonicalResourceFor(actionClass));
         }
     }
 
@@ -259,7 +270,12 @@ public class SystemGrantPresetCatalog {
                                         // session's own creator (the endpoint checks sessions.user_id) —
                                         // the atom alone never widens someone else's session.
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
+                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE),
+                                        // task-835 (approval contract §2.3): ADMIN may decide pending
+                                        // approvals; the criterion is (action:approve, the request's
+                                        // resource), never "is the run owner". The seed row carries the
+                                        // request-scoped sentinel, not `*`.
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)))),
                 new PresetSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
@@ -318,7 +334,11 @@ public class SystemGrantPresetCatalog {
                                         // sessions in this workspace; the relaxation face still pins the
                                         // actor to the session's creator.
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
+                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE),
+                                        // task-835 (approval contract §2.3): a workspace owner decides
+                                        // approvals for this workspace. Same request-scoped resource rule
+                                        // as ADMIN; grant scope already limits the candidate set.
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)))),
                 new PresetSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         // DSD-1500 (Q-93) R2: exec left the editor default as well — the intersection
                         // requires every level to hold an atom, so leaving exec here would keep the
@@ -409,7 +429,18 @@ public class SystemGrantPresetCatalog {
                         "Instance/workspace scope: exec + workspace runtime — the explicit execution "
                                 + "preset (DSD-1500 R2/R3). Never granted by default.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))));
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))),
+                // M2-3 (task-835, V162 reserved this seed): org-unit governance. The atom set is the
+                // D-1118 whitelist itself, not a subset chosen here — OrgUnitGovernancePolicy is the
+                // owner of "what may be bound inside an org unit", and it rejects any preset holding
+                // an atom outside these three. Never bound by default; an org-unit administrator is
+                // the only writer.
+                new PresetSeed(ORG_LEADER_ID, ORG_LEADER, "Org Leader",
+                        "Org-unit scope: manage units, their members and read member lists — the "
+                                + "D-1118 governance whitelist. Bound explicitly inside one org unit.",
+                        List.of(AtomRef.wildcard(OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNITS),
+                                AtomRef.wildcard(OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNIT_MEMBERS),
+                                AtomRef.wildcard(OrgUnitGovernancePolicy.ATOM_READ_ORG_UNIT_MEMBERS))));
     }
 
     private static List<AtomRef> superAdminAtoms() {

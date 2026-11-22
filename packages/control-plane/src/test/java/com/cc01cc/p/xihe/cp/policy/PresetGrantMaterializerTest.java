@@ -126,7 +126,10 @@ class PresetGrantMaterializerTest {
         }
         // The negative case in the other direction: every written atom is a builtin action class,
         // so GrantIntersectionEvaluator.PermissionAtom can never throw on these rows.
-        assertTrue(ToolFaceRegistry.builtinActionClasses().containsAll(writtenAtoms));
+        assertTrue(ToolFaceRegistry.builtinActionClasses().stream()
+                        .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action).toList()
+                        .containsAll(writtenAtoms),
+                "written atoms are canonical action atoms of the built-in vocabulary");
     }
 
     @Test

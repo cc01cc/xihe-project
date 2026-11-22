@@ -133,7 +133,8 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
                         SystemGrantPresetCatalog.USER));
         expectedDefaultAtoms.addAll(com.cc01cc.p.xihe.cp.policy.PresetAtomExpectations.materializedAtoms(
                 SystemGrantPresetCatalog.WS_EDITOR));
-        expectedDefaultAtoms.add(com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
+        expectedDefaultAtoms.add(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS));
         assertEquals(expectedDefaultAtoms,
                 new java.util.HashSet<>(actionClasses(principal.getTemplateSnapshot().path("permissions"))),
                 "the default template snapshot is the caller's materialized atom set");
@@ -292,7 +293,8 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         UUID roleId = UUID.randomUUID();
         accessRoleRepository.save(new GrantPreset(roleId, "TEST_GRANT_" + roleId.toString().replace("-", "").toUpperCase(), "Test grant role",
                 "test-only role", false));
-        permissionRepository.save(new GrantPresetAtom(roleId, actionClass, resource));
+        permissionRepository.save(new GrantPresetAtom(roleId,
+                com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass), resource));
         roleBindingRepository.save(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);

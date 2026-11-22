@@ -25,11 +25,11 @@ VALUES ('00000000-0000-4000-8000-000000000008', 'AGENT_USER', 'Agent User (defau
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000008', 'read', '*'),
-    ('00000000-0000-4000-8000-000000000008', 'write', '*'),
-    ('00000000-0000-4000-8000-000000000008', 'delete', '*'),
-    ('00000000-0000-4000-8000-000000000008', 'exec', '*'),
-    ('00000000-0000-4000-8000-000000000008', 'network', '*')
+    ('00000000-0000-4000-8000-000000000008', 'action:read', '*'),
+    ('00000000-0000-4000-8000-000000000008', 'action:write', '*'),
+    ('00000000-0000-4000-8000-000000000008', 'action:delete', '*'),
+    ('00000000-0000-4000-8000-000000000008', 'action:exec', '*'),
+    ('00000000-0000-4000-8000-000000000008', 'action:network', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 2. Rebind the legacy agent seed rows in place (scope/granted_by/is_seed preserved; unique keys
@@ -57,7 +57,7 @@ WHERE g.subject_type = 'agent_principal'
   AND g.source = 'role'
   AND g.scope_type = 'instance'
   AND g.scope_id IS NULL
-  AND g.permissions @> '[{"actionClass": "CREATE_OWN_AGENT"}]'::jsonb
+  AND g.permissions @> '[{"actionClass": "action:CREATE_OWN_AGENT"}]'::jsonb
   AND NOT EXISTS (
       SELECT 1 FROM role_bindings rb
       JOIN roles r ON r.id = rb.role_id

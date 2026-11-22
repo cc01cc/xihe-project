@@ -146,7 +146,8 @@ class WorkspaceAgentCapSourceIntegrationTest extends AbstractReusableIntegration
                 () -> agentPrincipalService.setWorkspaceCap(owner.getId().toString(), ws.getId(),
                         principal, json(requested)));
         assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.getCode());
-        assertTrue(denied.getMessage().contains("principal-exceeding=[" + atom + "@*]"),
+        assertTrue(denied.getMessage().contains("principal-exceeding=["
+                        + com.cc01cc.p.xihe.cp.policy.AtomNames.action(atom) + "@*]"),
                 "the refused atom is named: " + denied.getMessage());
         assertFalse(workspaceAgentRepository.existsById(new WorkspaceAgentId(principal, ws.getId())),
                 "a refusal must not leave a baseline-truncated row behind (D-1096)");

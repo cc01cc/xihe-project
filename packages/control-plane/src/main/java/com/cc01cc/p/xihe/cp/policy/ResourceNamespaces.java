@@ -66,6 +66,13 @@ public final class ResourceNamespaces {
     public static final String ORG_TREE = "org";
 
     public static final String WILDCARD = "*";
+    /**
+     * task-835: the canonical resource of {@code action:approve}. Approving is always about
+     * <b>this</b> request's object, so the atom must never default to {@link #WILDCARD} (one
+     * approve grant would then approve every resource). The sentinel is the marker the evaluator
+     * reads as "match the request's own resource"; the write face refuses it from an API.
+     */
+    public static final String REQUEST_RESOURCE = "$request";
     public static final String FS_PREFIX = FS + ":";
     public static final String PHYS_PREFIX = PHYS + ":";
     public static final String CREDENTIAL_PREFIX = CREDENTIAL + ":";
@@ -163,9 +170,17 @@ public final class ResourceNamespaces {
      * it instead of spelling the prefixes themselves.
      */
     public static String canonicalResourceFor(String actionClass) {
+        if (ToolFaceRegistry.isApproveActionClass(actionClass)) {
+            return REQUEST_RESOURCE;
+        }
         return ToolFaceRegistry.isCredentialActionClass(actionClass)
                 ? CREDENTIAL_WILDCARD
                 : WILDCARD;
+    }
+
+    /** True when {@code resource} is the request-scoped approve sentinel. */
+    public static boolean isRequestResource(String resource) {
+        return REQUEST_RESOURCE.equals(resource);
     }
 
     /**

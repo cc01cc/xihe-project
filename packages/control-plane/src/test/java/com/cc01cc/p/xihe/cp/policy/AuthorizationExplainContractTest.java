@@ -107,7 +107,8 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
                 "the referenced row must be the caller's own grant: " + response.getBody());
         assertEquals(GrantSources.PRESET, matched.get(0).path("grantSource").asText(),
                 response.getBody());
-        assertEquals(ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
+        assertEquals(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK),
                 matched.get(0).path("actionClass").asText(), response.getBody());
     }
 
@@ -131,7 +132,8 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
         assertFalse(miss.isNull(), response.getBody());
         assertEquals(0, miss.path("level").asInt(), response.getBody());
         assertEquals("user-grants", miss.path("levelLabel").asText(), response.getBody());
-        assertEquals(ToolFaceRegistry.ACTION_MANAGE_ROLES, miss.path("actionClass").asText(),
+        assertEquals(com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_MANAGE_ROLES),
+                miss.path("actionClass").asText(),
                 response.getBody());
         assertEquals("no-matching-atom", miss.path("reason").asText(),
                 "the level has rows, none of them matches: " + response.getBody());
@@ -240,7 +242,7 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
     private UUID grantInstanceAtom(UUID subjectId, String actionClass) {
         ArrayNode permissions = objectMapper.createArrayNode();
         ObjectNode atom = objectMapper.createObjectNode();
-        atom.put("actionClass", actionClass);
+        atom.put("actionClass", com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass));
         permissions.add(atom);
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());

@@ -100,7 +100,8 @@ class PresetUpdateBindingRaceTest extends AbstractIntegrationTest {
         assertTrue(pool.awaitTermination(60, TimeUnit.SECONDS), "both writers must terminate");
 
         List<String> roleAtoms = atomsOf(role.getId());
-        assertTrue(roleAtoms.contains(ToolFaceRegistry.ACTION_READ),
+        assertTrue(roleAtoms.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_READ)),
                 "the READ atom is in both candidate definitions");
         // The binding is a duplicate-tolerant no-op if writer B lost the race after A committed
         // (the binding row already existed from the fixture); either way the three tables must be
@@ -109,10 +110,12 @@ class PresetUpdateBindingRaceTest extends AbstractIntegrationTest {
                 "SELECT permissions->0->>'actionClass' FROM grants WHERE subject_type = 'user'"
                         + " AND subject_id = ? AND scope_type = 'workspace' AND scope_id = ?",
                 String.class, holder.getId(), workspace.getId());
-        assertTrue(bindingAtomSets.contains(ToolFaceRegistry.ACTION_READ),
+        assertTrue(bindingAtomSets.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_READ)),
                 "the surviving grant must be consistent with the final role definition");
         if (roleAtoms.size() > 1) {
-            assertTrue(bindingAtomSets.contains(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)
+            assertTrue(bindingAtomSets.contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                            ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))
                             || failureB.get() != null || failureA.get() != null,
                     "when the update won, the materialised set must contain the added atom (or the"
                             + " other writer failed closed)");

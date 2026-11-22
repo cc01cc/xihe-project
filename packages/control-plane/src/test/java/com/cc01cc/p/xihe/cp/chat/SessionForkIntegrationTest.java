@@ -200,7 +200,8 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
                 "PLAN-0689 A7: the fork child's identity is its PRIMARY participant");
         assertEquals(1, child.getAgentPermissionsSnapshot().size(),
                 "fork takes the current Workspace cap, not the parent's old snapshot");
-        assertEquals("read", child.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
+        assertEquals("action:read",
+                child.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
         assertEquals(source.session().getId(), child.getSpawnedFromSessionId());
         assertEquals(UUID.fromString(source.runId()), child.getSpawnedFromRunId());
 
@@ -936,9 +937,11 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
         grant.setSubjectId(principal.getId());
         grant.setSource("template");
         grant.setReadState("read");
-        grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]"));
+        grant.setPermissions(objectMapper.readTree(
+                "[{\"actionClass\":\"action:read\"},{\"actionClass\":\"action:write\"}]"));
         authorizationGrantRepository.saveAndFlush(grant);
-        var cap = objectMapper.readTree("[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]");
+        var cap = objectMapper.readTree(
+                "[{\"actionClass\":\"action:read\"},{\"actionClass\":\"action:write\"}]");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(), workspaceId, cap));
         return principal.getId();
     }
@@ -1056,7 +1059,7 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void reduceWorkspaceCapToReadOnly() throws Exception {
-        var readOnly = objectMapper.readTree("[{\"actionClass\":\"read\"}]");
+        var readOnly = objectMapper.readTree("[{\"actionClass\":\"action:read\"}]");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId, readOnly));
     }
 

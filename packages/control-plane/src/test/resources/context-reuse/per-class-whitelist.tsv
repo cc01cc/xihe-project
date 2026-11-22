@@ -80,8 +80,8 @@ com.cc01cc.p.xihe.cp.plugin.PluginRecordsIndexWiringTest	test-property-source	�
 com.cc01cc.p.xihe.cp.plugin.PluginRunSnapshotAdmissionTest	test-property-source	0691 T1.6b：PG run 准入冻结用例需独立库 + @TestPropertySource 属性变体
 com.cc01cc.p.xihe.cp.plugin.PluginUninstallRetentionTest	dynamic-property-source,test-property-source	自带 @DynamicPropertySource（context key 唯一）；自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.plugin.records.AbstractPluginRecordsIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
-com.cc01cc.p.xihe.cp.policy.RoleUpdateBindingConcurrencyMatrixTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
-com.cc01cc.p.xihe.cp.policy.RoleUpdateBindingRaceTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.policy.PresetUpdateBindingConcurrencyMatrixTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.policy.PresetUpdateBindingRaceTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.provider.ApiRequestTemplateHttpIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.provider.ProviderConnectionHttpIntegrationTest	test-property-source,mockito-bean	自带 @TestPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean
 com.cc01cc.p.xihe.cp.service.AgentPrincipalOrgUnitGateTest	test-configuration	@Import/@TestConfiguration/@ContextConfiguration
@@ -91,7 +91,7 @@ com.cc01cc.p.xihe.cp.service.InstanceOwnershipIntegrationTest	async-sse	异步/S
 com.cc01cc.p.xihe.cp.service.InstanceOwnerTransferAtomicityTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
 com.cc01cc.p.xihe.cp.service.OrgUnitMemberServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.service.OrgUnitReadServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
-com.cc01cc.p.xihe.cp.service.OrgUnitRoleBindingServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
+com.cc01cc.p.xihe.cp.service.OrgUnitPresetBindingServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.service.OrgUnitWriteServiceIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解
 com.cc01cc.p.xihe.cp.service.UserAdminIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
 com.cc01cc.p.xihe.cp.service.WorkspaceMemberControllerContractTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）

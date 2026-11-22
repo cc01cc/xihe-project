@@ -25,7 +25,7 @@ WHERE role_id IN (
         '00000000-0000-4000-8000-000000000005', -- WS_EDITOR
         '00000000-0000-4000-8000-000000000006'  -- WS_VIEWER
     )
-  AND action_class = 'MEMORY_WRITE_SELF';
+  AND action_class = 'action:MEMORY_WRITE_SELF';
 
 -- Stale materialized grants from V129's workspace backfill: a workspace-scope role grant carrying
 -- SELF no longer has a declaring role, so keeping it would leave an atom on agent subjects that the
@@ -33,4 +33,4 @@ WHERE role_id IN (
 DELETE FROM grants g
 WHERE g.source = 'role'
   AND g.scope_type = 'workspace'
-  AND g.permissions @> '[{"actionClass": "MEMORY_WRITE_SELF"}]'::jsonb;
+  AND g.permissions @> '[{"actionClass": "action:MEMORY_WRITE_SELF"}]'::jsonb;

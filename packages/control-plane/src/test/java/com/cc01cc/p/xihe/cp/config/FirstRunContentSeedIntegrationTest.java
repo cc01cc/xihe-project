@@ -116,10 +116,16 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, count("agent_principals"), "no agent subject before the content seed");
         assertEquals(3, count("org_units"), "V181 leaves exactly the three-unit tree");
         assertEquals(1, count("org_unit_members"), "only the seeded admin is placed before the content seed");
-        assertEquals(181, appliedMigrationHead(), "V181 must already be applied in this lane");
+        // task-835: read the migrated head instead of pinning a version. The lane runs at the
+        // current schema head (V182 renamed the preset tables; V183 added the approve atom), so a
+        // literal would go stale on every later migration while the V181 org-tree fact stays true.
+        assertTrue(appliedMigrationHead() >= 181,
+                "the V181 org tree must already be applied in this lane (head="
+                        + appliedMigrationHead() + ")");
         int roleBindingsBefore = count("grant_preset_bindings");
         dumpReadings("baseline-before-content-seed");
 
+        int headBeforeContentSeed = appliedMigrationHead();
         FirstRunContentSeeder first = seeder(FirstRunContentSeeder.MODE_TRUE);
         first.seed(admin);
         assertEquals(List.of(), first.lastRunWarnings(), "a first start on a healthy instance warns about nothing");
@@ -129,7 +135,8 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(3, count("agent_principals"), "Lead + WorkerA + WorkerB");
         assertEquals(3, count("org_units"), "the content seed adds no org unit of its own");
         assertEquals(4, count("org_unit_members"), "the admin in the root plus the three subjects");
-        assertEquals(181, appliedMigrationHead(), "the content seed writes rows, never migrations");
+        assertEquals(headBeforeContentSeed, appliedMigrationHead(),
+                "the content seed writes rows, never migrations");
 
         Workspace workspace = workspaces
                 .findByCreateIdempotencyKeyAndDeletedAtIsNull(FirstRunContentSeeder.WORKSPACE_IDEMPOTENCY_KEY)
@@ -195,7 +202,8 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(3, count("org_units"), "second start inserts no org unit");
         assertEquals(4, count("org_unit_members"), "second start moves nobody");
         assertEquals(roleBindingsAfterFirst, count("grant_preset_bindings"), "second start inserts no role binding");
-        assertEquals(181, appliedMigrationHead(), "second start applies no migration");
+        assertEquals(headBeforeContentSeed, appliedMigrationHead(),
+                "second start applies no migration");
         dumpReadings("after-second-start");
 
         // And the product default (auto) is a no-op on an instance that already has content.

@@ -171,7 +171,7 @@
 @SpringBootTest	com/cc01cc/p/xihe/cp/oauth/OAuthBrokerIntegrationTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/oauth/OAuthRefreshRaceProbeTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/policy/GrantabilityGuardIntegrationTest.java	suite-context
-@SpringBootTest	com/cc01cc/p/xihe/cp/policy/RoleGrantMalformedReconcileTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/policy/PresetGrantMalformedReconcileTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/policy/ToolFaceAdminAtomScopeIntegrationTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/AgentPrincipalScopeUpgradeBehaviorTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/SetWorkspaceCapGateIntegrationTest.java	suite-context

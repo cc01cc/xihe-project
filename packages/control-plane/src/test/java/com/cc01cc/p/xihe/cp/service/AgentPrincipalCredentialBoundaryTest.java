@@ -173,7 +173,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
 
         // 原断言"被 creator grants 收窄成 read"过时：模板快照不再落库，主体拿到的就是默认角色的原子集。
         Set<String> atoms = actionClassNames(principalGrant(principal.getId()));
-        assertTrue(atoms.contains("read"), "the default role still grants read: " + atoms);
+        assertTrue(atoms.contains("action:read"), "the default role still grants read: " + atoms);
         assertFalse(atoms.contains("SPAWN_AGENT"),
                 "a template-only SPAWN_AGENT must not materialize: " + atoms);
     }

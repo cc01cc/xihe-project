@@ -23,4 +23,4 @@ DELETE FROM grants g
 WHERE g.subject_type = 'agent_principal'
   AND g.scope_type = 'instance'
   AND g.source = 'role'
-  AND g.permissions @> '[{"actionClass": "MANAGE_PERSONAL_SKILLS"}]'::jsonb;
+  AND g.permissions @> '[{"actionClass": "action:MANAGE_PERSONAL_SKILLS"}]'::jsonb;

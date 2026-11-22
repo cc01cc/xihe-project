@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
+import com.cc01cc.p.xihe.cp.policy.OrgUnitGovernancePolicy;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
@@ -62,7 +63,9 @@ class DefaultSetMigrationParityTest {
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
             ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
-            ToolFaceRegistry.ACTION_MANAGE_ROLES);
+            ToolFaceRegistry.ACTION_MANAGE_ROLES).stream()
+            .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+            .toList();
 
     /**
      * The reviewed default-grant contract for the governed atoms (2026-11-05, D-166/D-168 + D51-26):
@@ -76,21 +79,22 @@ class DefaultSetMigrationParityTest {
         Map<String, Set<String>> table = new LinkedHashMap<>();
         table.put(SystemGrantPresetCatalog.SUPER_ADMIN, all);
         table.put(SystemGrantPresetCatalog.ADMIN, Set.copyOf(GOVERNED_ATOMS.stream()
-                .filter(atom -> !ToolFaceRegistry.ACTION_GRANT_ANY_ATOM.equals(atom))
+                .filter(atom -> !com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                        ToolFaceRegistry.ACTION_GRANT_ANY_ATOM).equals(atom))
                 .toList()));
         table.put(SystemGrantPresetCatalog.USER, Set.of());
-        table.put(SystemGrantPresetCatalog.WS_OWNER, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_OWNER, canonical(Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
-                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
-        table.put(SystemGrantPresetCatalog.WS_EDITOR, Set.of(
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)));
+        table.put(SystemGrantPresetCatalog.WS_EDITOR, canonical(Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
-                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
-        table.put(SystemGrantPresetCatalog.WS_VIEWER, Set.of(
-                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)));
+        table.put(SystemGrantPresetCatalog.WS_VIEWER, canonical(Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
         table.put(SystemGrantPresetCatalog.AGENT_DELEGATOR, Set.of());
         // V127 / D-174: the agent default INSTANCE role (read/write/delete/exec/network, all `*`) —
         // none of the governed atoms, so every governance cell is false. (DSD-1500/V179 dropped exec
@@ -99,12 +103,21 @@ class DefaultSetMigrationParityTest {
         // DSD-1500 (Q-93) R3 / V179: AGENT_READER mirrors WS_VIEWER (N7 only), AGENT_WORKER is
         // read/write/delete only, WS_RUNNER is exec + N7. Reviewed here because the parity test's
         // EXPECTED table is the hand-checked side that a new migration must match by name.
-        table.put(SystemGrantPresetCatalog.AGENT_READER, Set.of(
-                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+        table.put(SystemGrantPresetCatalog.AGENT_READER, canonical(Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
         table.put(SystemGrantPresetCatalog.AGENT_WORKER, Set.of());
-        table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
-                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
+        table.put(SystemGrantPresetCatalog.WS_RUNNER, canonical(Set.of(
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
+        // M2-3 (task-835/V162): the org-unit governance preset. None of the twelve governed atoms
+        // is an org atom, so every governance cell is false; its own whitelist is asserted by
+        // orgLeaderSeedsTheGovernanceWhitelist below.
+        table.put(SystemGrantPresetCatalog.ORG_LEADER, Set.of());
         return table;
+    }
+
+    private static Set<String> canonical(Set<String> atoms) {
+        return atoms.stream().map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     @BeforeAll
@@ -217,16 +230,20 @@ class DefaultSetMigrationParityTest {
         Map<String, Set<String>> db = dbAtoms();
         Set<String> superAdmin = db.get(SystemGrantPresetCatalog.SUPER_ADMIN);
         Set<String> admin = db.get(SystemGrantPresetCatalog.ADMIN);
-        assertTrue(superAdmin.contains(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM + "|*"),
+        assertTrue(superAdmin.contains(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM) + "|*"),
                 "SUPER_ADMIN must hold GRANT_ANY_ATOM after V125");
-        assertFalse(admin.contains(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM + "|*"),
+        assertFalse(admin.contains(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM) + "|*"),
                 "ADMIN must never hold GRANT_ANY_ATOM (D-166)");
-        assertTrue(admin.contains(ToolFaceRegistry.ACTION_MANAGE_ROLES + "|*"),
+        assertTrue(admin.contains(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_MANAGE_ROLES) + "|*"),
                 "ADMIN must hold MANAGE_ROLES after V125 (D-168)");
 
         for (String workspaceRole : List.of(SystemGrantPresetCatalog.WS_OWNER,
                 SystemGrantPresetCatalog.WS_EDITOR, SystemGrantPresetCatalog.WS_VIEWER)) {
-            assertFalse(db.get(workspaceRole).contains(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM + "|*"),
+            assertFalse(db.get(workspaceRole).contains(
+                            com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM) + "|*"),
                     "workspace role must not hold the instance bypass: " + workspaceRole);
         }
 
@@ -248,5 +265,18 @@ class DefaultSetMigrationParityTest {
         Map<String, Set<String>> db = dbAtoms();
         assertEquals(catalogSize, db.get(SystemGrantPresetCatalog.SUPER_ADMIN).size(),
                 "SUPER_ADMIN must materialize every action atom plus every capability atom");
+    }
+
+    @Test
+    void orgLeaderSeedsTheGovernanceWhitelist() throws SQLException {
+        // M2-3 (task-835): the preset exists and its atom set is exactly the D-1118 whitelist, so
+        // OrgUnitGovernancePolicy accepts an org-unit binding of it. Derived on both sides, never a
+        // literal count.
+        Set<String> db = actionClasses(dbAtoms().get(SystemGrantPresetCatalog.ORG_LEADER));
+        assertEquals(OrgUnitGovernancePolicy.governanceAtoms(), db,
+                "ORG_LEADER must carry exactly the governance whitelist");
+        assertTrue(OrgUnitGovernancePolicy.isGovernanceRole(db));
+        assertTrue(codeAtoms().containsKey(SystemGrantPresetCatalog.ORG_LEADER),
+                "the code catalog must seed ORG_LEADER too");
     }
 }

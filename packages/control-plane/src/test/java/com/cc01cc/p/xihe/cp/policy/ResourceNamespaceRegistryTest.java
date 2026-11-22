@@ -63,8 +63,8 @@ class ResourceNamespaceRegistryTest {
 
         // Same spelling, different meaning: `workspace:admin` is a capability atom, never a resource
         // pattern. This is the collision the docs must call out.
-        assertTrue(PermissionAtomCatalog.atom("workspace:admin").capability(),
-                "workspace:admin is a capability atom");
+        assertTrue(PermissionAtomCatalog.atom("cap:workspace:admin").capability(),
+                "cap:workspace:admin is a capability atom");
         assertEquals(ResourceNamespaces.Grantability.CONTEXT_RESERVED,
                 ResourceNamespaces.grantabilityOf("workspace:admin"),
                 "the same spelling is context-reserved on the resource axis");

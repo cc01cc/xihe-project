@@ -28,10 +28,10 @@
 -- 1) Role seeds (4 rows). Form copied from V157:35-44.
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'session:permission:configure', '*'),  -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000002', 'session:permission:configure', '*'),  -- ADMIN
-    ('00000000-0000-4000-8000-000000000004', 'session:permission:configure', '*'),  -- WS_OWNER
-    ('00000000-0000-4000-8000-000000000005', 'session:permission:configure', '*')   -- WS_EDITOR
+    ('00000000-0000-4000-8000-000000000001', 'action:session:permission:configure', '*'),  -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000002', 'action:session:permission:configure', '*'),  -- ADMIN
+    ('00000000-0000-4000-8000-000000000004', 'action:session:permission:configure', '*'),  -- WS_OWNER
+    ('00000000-0000-4000-8000-000000000005', 'action:session:permission:configure', '*')   -- WS_EDITOR
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- ---------------------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ SELECT DISTINCT ON (b.subject_type, b.subject_id, b.scope_type, b.scope_id, rp.a
        'role', b.scope_type, b.scope_id, 'read'
 FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
-WHERE rp.action_class = 'session:permission:configure'
+WHERE rp.action_class = 'action:session:permission:configure'
   AND b.role_id IN ('00000000-0000-4000-8000-000000000001',  -- SUPER_ADMIN
                     '00000000-0000-4000-8000-000000000002',  -- ADMIN
                     '00000000-0000-4000-8000-000000000004',  -- WS_OWNER

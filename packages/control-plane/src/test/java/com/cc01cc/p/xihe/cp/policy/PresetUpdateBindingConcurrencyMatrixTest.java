@@ -67,8 +67,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class PresetUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
-    private static final String READ = ToolFaceRegistry.ACTION_READ;
-    private static final String UWR = ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME;
+    private static final String READ = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_READ);
+    private static final String UWR = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME);
     private static final String WS_ADMIN = PermissionAtomCatalog.CAP_WORKSPACE_ADMIN;
 
     @Autowired private UserRepository userRepository;

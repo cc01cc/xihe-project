@@ -120,12 +120,12 @@ class PresetGrantMalformedReconcileTest extends AbstractReusableIntegrationTest 
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                         + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                         + " AND source='preset' AND permissions @> "
-                        + "'[{\"actionClass\":\"network\"}]'::jsonb", Integer.class,
+                        + "'[{\"actionClass\":\"action:network\"}]'::jsonb", Integer.class,
                 subjectId.toString()),
                 "the desired atom is materialized exactly once (no duplicate key)");
         assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                         + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                        + " AND permissions @> '[{\"actionClass\":\"SPAWN_AGENT\"}]'::jsonb",
+                        + " AND permissions @> '[{\"actionClass\":\"action:SPAWN_AGENT\"}]'::jsonb",
                 Integer.class, subjectId.toString()),
                 "the extra atom of the malformed row is dropped, not preserved");
     }

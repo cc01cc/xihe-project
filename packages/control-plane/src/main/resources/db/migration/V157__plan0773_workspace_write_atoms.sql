@@ -33,14 +33,14 @@
 --    idempotent ON CONFLICT, so a re-run on an already-seeded database is a no-op.
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'WRITE_WORKSPACE_CONTENT', '*'),  -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000002', 'WRITE_WORKSPACE_CONTENT', '*'),  -- ADMIN
-    ('00000000-0000-4000-8000-000000000004', 'WRITE_WORKSPACE_CONTENT', '*'),  -- WS_OWNER
-    ('00000000-0000-4000-8000-000000000005', 'WRITE_WORKSPACE_CONTENT', '*'),  -- WS_EDITOR
-    ('00000000-0000-4000-8000-000000000001', 'MANAGE_WORKSPACE_MCP', '*'),    -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000002', 'MANAGE_WORKSPACE_MCP', '*'),    -- ADMIN
-    ('00000000-0000-4000-8000-000000000004', 'MANAGE_WORKSPACE_MCP', '*'),    -- WS_OWNER
-    ('00000000-0000-4000-8000-000000000005', 'MANAGE_WORKSPACE_MCP', '*')     -- WS_EDITOR
+    ('00000000-0000-4000-8000-000000000001', 'action:WRITE_WORKSPACE_CONTENT', '*'),  -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000002', 'action:WRITE_WORKSPACE_CONTENT', '*'),  -- ADMIN
+    ('00000000-0000-4000-8000-000000000004', 'action:WRITE_WORKSPACE_CONTENT', '*'),  -- WS_OWNER
+    ('00000000-0000-4000-8000-000000000005', 'action:WRITE_WORKSPACE_CONTENT', '*'),  -- WS_EDITOR
+    ('00000000-0000-4000-8000-000000000001', 'action:MANAGE_WORKSPACE_MCP', '*'),    -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000002', 'action:MANAGE_WORKSPACE_MCP', '*'),    -- ADMIN
+    ('00000000-0000-4000-8000-000000000004', 'action:MANAGE_WORKSPACE_MCP', '*'),    -- WS_OWNER
+    ('00000000-0000-4000-8000-000000000005', 'action:MANAGE_WORKSPACE_MCP', '*')     -- WS_EDITOR
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- ---------------------------------------------------------------------------------------------
@@ -73,7 +73,7 @@ SELECT DISTINCT ON (b.subject_type, b.subject_id, b.scope_type, b.scope_id, rp.a
        'role', b.scope_type, b.scope_id, 'read'
 FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
-WHERE rp.action_class IN ('WRITE_WORKSPACE_CONTENT', 'MANAGE_WORKSPACE_MCP')
+WHERE rp.action_class IN ('action:WRITE_WORKSPACE_CONTENT', 'action:MANAGE_WORKSPACE_MCP')
   AND b.role_id IN ('00000000-0000-4000-8000-000000000001',  -- SUPER_ADMIN
                     '00000000-0000-4000-8000-000000000002',  -- ADMIN
                     '00000000-0000-4000-8000-000000000004',  -- WS_OWNER

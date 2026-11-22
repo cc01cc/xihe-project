@@ -89,7 +89,8 @@ public class RequesterAuthority {
      */
     public boolean holdsCapabilityAtom(String atom) {
         UUID subjectId = currentSubjectId();
-        return subjectId != null && authzContext.capabilitiesFor(subjectId).holdsCapability(atom, null);
+        return subjectId != null && authzContext.capabilitiesFor(subjectId)
+                .holdsCapability(AtomNames.capability(atom), null);
     }
 
     /** True when the subject's effective atoms for {@code workspaceId} contain the atom. */
@@ -97,7 +98,7 @@ public class RequesterAuthority {
         if (subjectId == null || actionClass == null) {
             return false;
         }
-        return actionAtoms(subjectId, workspaceId).contains(actionClass);
+        return actionAtoms(subjectId, workspaceId).contains(AtomNames.action(actionClass));
     }
 
     /**
@@ -210,6 +211,10 @@ public class RequesterAuthority {
         }
         LinkedHashSet<String> sources = new LinkedHashSet<>();
         try {
+            // task-835: the lookup name may arrive bare (face/caller vocabulary) while a stored
+            // grant row carries the canonical `action:` spelling. Compare canonical on both sides,
+            // otherwise a healthy store answers "none" for a held atom.
+            String wanted = AtomNames.action(actionClass);
             for (AuthorizationGrant grant : withOrgUnitGrants(AuthzContext.SUBJECT_USER, subjectId,
                     grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
                             subjectId, GrantSources.EVALUATION_SOURCES, workspaceId))) {
@@ -217,7 +222,8 @@ public class RequesterAuthority {
                     continue;
                 }
                 for (com.fasterxml.jackson.databind.JsonNode permission : grant.getPermissions()) {
-                    if (actionClass.equals(permission.path("actionClass").asText())) {
+                    String stored = permission.path("actionClass").asText();
+                    if (wanted.equals(AtomNames.action(AtomNames.bare(stored)))) {
                         sources.add(grant.getSource());
                         break;
                     }
@@ -243,7 +249,11 @@ public class RequesterAuthority {
      * never goes to {@code audit_logs}.
      */
     public void logActionAtomDenied(String atom, UUID subjectId, UUID workspaceId) {
-        String catalogAtom = PermissionAtomCatalog.allAtomNames().contains(atom) ? atom : "-";
+        String catalogAtom = PermissionAtomCatalog.isActionAtom(atom)
+                || PermissionAtomCatalog.isCapabilityAtom(atom)
+                ? (PermissionAtomCatalog.isCapabilityAtom(atom)
+                        ? AtomNames.capability(atom) : AtomNames.action(atom))
+                : "-";
         AtomSourceLookup lookup = atomSourceLookup(subjectId, catalogAtom, workspaceId);
         // Deterministic log output: atomSourceLookup's set is an unordered Set.copyOf view, sort first.
         String joined = lookup.sources().stream().sorted()

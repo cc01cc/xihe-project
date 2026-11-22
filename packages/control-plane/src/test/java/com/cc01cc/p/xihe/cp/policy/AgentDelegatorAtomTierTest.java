@@ -31,7 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AgentDelegatorAtomTierTest {
 
-    private static final String SPAWN_AGENT = ToolFaceRegistry.ACTION_SPAWN_AGENT;
+    private static final String SPAWN_AGENT =
+            com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_SPAWN_AGENT);
     /** 角色名用字面量：实现前 {@code SystemGrantPresetCatalog} 还没有这个常量，红测必须先能编译。 */
     private static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
 

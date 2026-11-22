@@ -80,9 +80,9 @@ CREATE INDEX idx_skills_definition_scope_user
 --    Form copied from V153:35-38 (the newest minimal seed pattern): idempotent ON CONFLICT.
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'MANAGE_PERSONAL_SKILLS', '*'),  -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000002', 'MANAGE_PERSONAL_SKILLS', '*'),  -- ADMIN
-    ('00000000-0000-4000-8000-000000000003', 'MANAGE_PERSONAL_SKILLS', '*')   -- USER
+    ('00000000-0000-4000-8000-000000000001', 'action:MANAGE_PERSONAL_SKILLS', '*'),  -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000002', 'action:MANAGE_PERSONAL_SKILLS', '*'),  -- ADMIN
+    ('00000000-0000-4000-8000-000000000003', 'action:MANAGE_PERSONAL_SKILLS', '*')   -- USER
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 5b) Instance-scope backfill for accounts that already exist (the seed row above only shapes the
@@ -101,7 +101,7 @@ WHERE b.subject_type = 'user'
   AND b.role_id IN ('00000000-0000-4000-8000-000000000001',
                     '00000000-0000-4000-8000-000000000002',
                     '00000000-0000-4000-8000-000000000003')
-  AND rp.action_class = 'MANAGE_PERSONAL_SKILLS'
+  AND rp.action_class = 'action:MANAGE_PERSONAL_SKILLS'
   AND NOT EXISTS (
       SELECT 1 FROM grants g
       WHERE g.subject_type = 'user'

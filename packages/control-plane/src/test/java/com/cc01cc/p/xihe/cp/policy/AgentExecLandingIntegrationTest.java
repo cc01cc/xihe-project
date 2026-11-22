@@ -59,7 +59,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
 
-    private static final String EXEC = ToolFaceRegistry.ACTION_EXEC;
+    private static final String EXEC = com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+            ToolFaceRegistry.ACTION_EXEC);
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private GrantDefaultService grantDefaultService;
@@ -92,11 +93,13 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
                 "the inherited Workspace cap covers the whole WS_EDITOR seed: " + bindingAtoms);
         assertFalse(bindingAtoms.contains(EXEC),
                 "DSD-1500 R2 removed exec from the WS_EDITOR seed: " + bindingAtoms);
-        assertTrue(bindingAtoms.containsAll(List.of("read", "write", "delete")),
+        assertTrue(bindingAtoms.containsAll(List.of(
+                        "action:read", "action:write", "action:delete")),
                 "WS_EDITOR keeps the read/write/delete core: " + bindingAtoms);
         assertFalse(instanceAtoms.contains(EXEC),
                 "AGENT_USER must not confer exec any more: " + instanceAtoms);
-        assertTrue(instanceAtoms.containsAll(List.of("read", "write", "delete")),
+        assertTrue(instanceAtoms.containsAll(List.of(
+                        "action:read", "action:write", "action:delete")),
                 "AGENT_USER keeps the non-executing base set: " + instanceAtoms);
         assertEquals(List.of(SystemGrantPresetCatalog.AGENT_USER), fixture.instanceRoleNames,
                 "the default instance role is still AGENT_USER");

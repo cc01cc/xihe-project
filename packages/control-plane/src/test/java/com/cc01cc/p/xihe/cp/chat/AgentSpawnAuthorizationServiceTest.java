@@ -133,7 +133,7 @@ class AgentSpawnAuthorizationServiceTest {
                 .findFirst().orElse(null);
         assertNotNull(event, "the spawn-face denial must log action_atom_denied");
         String line = event.getFormattedMessage();
-        assertTrue(line.contains("atom=SPAWN_AGENT"), line);
+        assertTrue(line.contains("atom=action:SPAWN_AGENT"), line);
         assertTrue(line.contains("workspaceId=" + WORKSPACE_ID), line);
         // The test invocation carries a non-uuid subject id ("user-1") — masked to '-'.
         assertTrue(line.contains("subject=-"), line);

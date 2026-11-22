@@ -395,7 +395,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"narrow child\"}");
         com.fasterxml.jackson.databind.node.ArrayNode narrowed = objectMapper.createArrayNode();
         com.fasterxml.jackson.databind.node.ObjectNode spawn = objectMapper.createObjectNode();
-        spawn.put("actionClass", "SPAWN_AGENT");
+        spawn.put("actionClass", "action:SPAWN_AGENT");
         narrowed.add(spawn);
         WorkspaceAgent binding = workspaceAgentRepository.findById(
                 new WorkspaceAgentId(principalId, UUID.fromString(workspaceId))).orElseThrow();
@@ -485,7 +485,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                     "userId", UUID.randomUUID().toString(),
                     "workspaceId", UUID.randomUUID().toString(),
                     "sessionId", UUID.randomUUID().toString(),
-                    "grants", List.of(Map.of("actionClass", "read"))
+                    "grants", List.of(Map.of("actionClass", "action:read"))
             );
             ResponseEntity<Map> response = postSpawn(injected, SERVICE_TOKEN);
             assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
@@ -858,7 +858,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                 .filter(candidate -> {
                     com.fasterxml.jackson.databind.JsonNode permissions = candidate.getPermissions();
                     for (com.fasterxml.jackson.databind.JsonNode permission : permissions) {
-                        if ("read".equals(permission.path("actionClass").asText())) {
+                        if ("action:read".equals(permission.path("actionClass").asText())) {
                             return true;
                         }
                     }
@@ -868,7 +868,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
                 .orElseThrow();
         ArrayNode remaining = objectMapper.createArrayNode();
         for (com.fasterxml.jackson.databind.JsonNode permission : grant.getPermissions()) {
-            if (!"read".equals(permission.path("actionClass").asText())) {
+            if (!"action:read".equals(permission.path("actionClass").asText())) {
                 remaining.add(permission);
             }
         }
@@ -988,10 +988,10 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     private com.fasterxml.jackson.databind.node.ArrayNode expectedSessionCapNode() {
         com.fasterxml.jackson.databind.node.ArrayNode cap = objectMapper.createArrayNode();
         com.fasterxml.jackson.databind.node.ObjectNode spawn = objectMapper.createObjectNode();
-        spawn.put("actionClass", "SPAWN_AGENT");
+        spawn.put("actionClass", "action:SPAWN_AGENT");
         cap.add(spawn);
         com.fasterxml.jackson.databind.node.ObjectNode atom = objectMapper.createObjectNode();
-        atom.put("actionClass", "read");
+        atom.put("actionClass", "action:read");
         cap.add(atom);
         return cap;
     }

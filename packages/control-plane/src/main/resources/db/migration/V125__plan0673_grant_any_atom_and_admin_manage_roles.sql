@@ -18,8 +18,8 @@
 
 -- 1. Role definitions: SUPER_ADMIN gets the bypass atom; ADMIN gets role administration.
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'GRANT_ANY_ATOM', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'MANAGE_ROLES', '*')
+    ('00000000-0000-4000-8000-000000000001', 'action:GRANT_ANY_ATOM', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:MANAGE_ROLES', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 2. Backfill existing instance-scope bindings of those two roles so already-provisioned subjects
@@ -34,7 +34,7 @@ FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
 WHERE b.subject_type = 'user'
   AND b.scope_type = 'instance'
-  AND rp.action_class IN ('GRANT_ANY_ATOM', 'MANAGE_ROLES')
+  AND rp.action_class IN ('action:GRANT_ANY_ATOM', 'action:MANAGE_ROLES')
   AND NOT EXISTS (
       SELECT 1 FROM grants g
       WHERE g.subject_type = 'user'

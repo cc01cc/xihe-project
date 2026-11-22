@@ -100,7 +100,8 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
                         .count(),
                 "DSD-1500 R2: the agent default INSTANCE role must not carry exec");
         assertEquals(0, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).stream()
-                        .filter(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())).count(),
+                        .filter(row -> com.cc01cc.p.xihe.cp.policy.AtomNames.action("CREATE_OWN_AGENT")
+                                .equals(row.getId().getActionClass())).count(),
                 "the agent-forbidden atom is never part of AGENT_USER");
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default:
         // base + SELF. The base set is six atoms since PLAN-0691 T1.3 added PLUGIN_INVOKE (V137);
@@ -116,7 +117,8 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
                         + " own-agent atom + the V156 personal-library atom + the V172 team-task atom"
                         + " (7 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS)");
         assertTrue(permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.USER_ID).stream()
-                        .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
+                        .anyMatch(row -> com.cc01cc.p.xihe.cp.policy.AtomNames.action("CREATE_OWN_AGENT")
+                                .equals(row.getId().getActionClass())),
                 "PLAN-0750 M1: creating one's own user-level principal is a registration capability"
                         + " again (new semantics: owner = actor, no Workspace binding)");
 
@@ -262,7 +264,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
             total += jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                     + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                     + " AND source='preset' AND permissions @> "
-                    + "'[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb", Integer.class,
+                    + "'[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]'::jsonb", Integer.class,
                     agentId.toString());
         }
         return total;
@@ -278,7 +280,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         Integer existing = jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                         + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                         + " AND source='preset' AND permissions @> "
-                        + "'[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb",
+                        + "'[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]'::jsonb",
                 Integer.class, agentId.toString());
         if (existing != null && existing > 0) {
             return;
@@ -286,7 +288,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         jdbcTemplate.update("INSERT INTO grants (id, granter_type, granter_id, subject_type,"
                         + " subject_id, permissions, source, scope_type, scope_id, read_state)"
                         + " VALUES (gen_random_uuid(), 'user', CAST(? AS UUID), 'agent_principal',"
-                        + " CAST(? AS UUID), '[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb,"
+                        + " CAST(? AS UUID), '[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]'::jsonb,"
                         + " 'preset', 'instance', NULL, 'read')",
                 granterId.toString(), agentId.toString());
     }

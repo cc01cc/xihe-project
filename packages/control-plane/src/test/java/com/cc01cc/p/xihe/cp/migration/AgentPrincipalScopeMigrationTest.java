@@ -152,10 +152,10 @@ class AgentPrincipalScopeMigrationTest {
 
         assertEquals(3, roleBindingsBefore, "fixture: one role binding per tier principal");
         assertEquals(roleBindingsBefore, scalarInt(connection,
-                        "SELECT count(*) FROM grant_preset_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")"),
-                "grant_preset_bindings rows are not deleted by V126");
+                        "SELECT count(*) FROM role_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")"),
+                "role_bindings rows are not deleted by V126");
         assertEquals(roleBindingSnapshotBefore, tierRoleBindingSnapshot(),
-                "grant_preset_bindings rows (role/scope/granted_by/is_seed) are byte-for-byte unchanged by V126");
+                "role_bindings rows (role/scope/granted_by/is_seed) are byte-for-byte unchanged by V126");
         assertRoleBindingSurvives(PERSONAL_BINDING_ID, SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
                 "instance", null);
         assertRoleBindingSurvives(WORKSPACE_BINDING_ID, SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
@@ -352,32 +352,32 @@ class AgentPrincipalScopeMigrationTest {
         for (UUID roleId : new UUID[] {SystemGrantPresetCatalog.SUPER_ADMIN_ID,
                 SystemGrantPresetCatalog.ADMIN_ID, SystemGrantPresetCatalog.USER_ID}) {
             assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                            + roleId + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
+                            + roleId + "'::uuid AND action_class = 'action:CREATE_OWN_AGENT'"),
                     "PLAN-0750 M1 (V148): the user-level create atom is seeded on " + roleId
                             + " (BL-312's V147 removal is superseded by the G1 ruling)");
         }
         // AGENT_USER must stay clean: the atom is agent-principal-forbidden.
         assertEquals(0, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + SystemGrantPresetCatalog.AGENT_USER_ID + "'::uuid"
-                        + " AND action_class = 'CREATE_OWN_AGENT'"),
+                        + " AND action_class = 'action:CREATE_OWN_AGENT'"),
                 "an agent principal is a grantee, never an account creator");
         // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
         // V115 N9 default.
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid"
-                        + " AND action_class = 'MANAGE_WORKSPACE_POLICY'"),
+                        + " AND action_class = 'action:MANAGE_WORKSPACE_POLICY'"),
                 "ADMIN default set carries N9 (V115), the atom A13 now uses");
         // D-168 (user ruling 2026-11-05, migration V125): ADMIN gains MANAGE_ROLES — but only
         // together with the subset guard (PLAN-0673 M1), so it can never delegate beyond itself.
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'MANAGE_ROLES'"),
+                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'action:MANAGE_ROLES'"),
                 "ADMIN holds MANAGE_ROLES since V125 (D-168)");
         // D-166: the subset bypass is SUPER_ADMIN-only; ADMIN must never hold it.
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + SystemGrantPresetCatalog.SUPER_ADMIN_ID + "'::uuid"
-                        + " AND action_class = 'GRANT_ANY_ATOM'"), "SUPER_ADMIN holds the bypass atom (V125)");
+                        + " AND action_class = 'action:GRANT_ANY_ATOM'"), "SUPER_ADMIN holds the bypass atom (V125)");
         assertEquals(0, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'GRANT_ANY_ATOM'"),
+                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'action:GRANT_ANY_ATOM'"),
                 "ADMIN must not hold the subset bypass");
         // The migration itself is part of the fresh-database contract (V125 success).
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM flyway_schema_history"
@@ -397,7 +397,7 @@ class AgentPrincipalScopeMigrationTest {
         assertEquals(0, scalarInt(connection, "SELECT count(*) FROM grants WHERE subject_type = 'user'"
                         + " AND subject_id = '" + LEGACY_USER_ID + "' AND source = 'preset'"
                         + " AND scope_type = 'instance' AND scope_id IS NULL"
-                        + " AND permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT'"),
+                        + " AND permissions -> 0 ->> 'actionClass' = 'action:CREATE_OWN_AGENT'"),
                 "V147 deleted V91's backfilled row and V148 does not re-introduce the backfill"
                         + " (role seed only, per D-215)");
     }
@@ -414,7 +414,9 @@ class AgentPrincipalScopeMigrationTest {
         // A V89-era instance tier binding: V91 backfilled its materialized CREATE_OWN_AGENT row
         // (removed again at head by V147, asserted above); at V91-time the backfill was required so
         // existing accounts would not keep the five-atom set until their next materialization.
-        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        // task-835/task-832 note: this fixture runs at the V89 target, before V182 renames the table;
+        // the historical name is the only one that exists on this connection.
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '"
                 + SystemGrantPresetCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
                 + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
@@ -497,7 +499,7 @@ class AgentPrincipalScopeMigrationTest {
         workspaceAgentsBefore = scalarInt(connection,
                 "SELECT count(*) FROM workspace_agents WHERE principal_id IN (" + TIER_PRINCIPALS + ")");
         roleBindingsBefore = scalarInt(connection,
-                "SELECT count(*) FROM grant_preset_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
+                "SELECT count(*) FROM role_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
         grantsBefore = scalarInt(connection,
                 "SELECT count(*) FROM grants WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
         workspaceBindingsBefore = tierWorkspaceBindingSnapshot();
@@ -530,11 +532,11 @@ class AgentPrincipalScopeMigrationTest {
             throws SQLException {
         try (Statement statement = connection.createStatement();
              ResultSet rows = statement.executeQuery("SELECT role_id::text, scope_type, scope_id,"
-                     + " granted_by::text, is_seed FROM grant_preset_bindings WHERE id = '" + id + "'")) {
+                     + " granted_by::text, is_seed FROM role_bindings WHERE id = '" + id + "'")) {
             assertTrue(rows.next(), "the role binding survives V126: " + id);
             assertEquals(roleId.toString(), rows.getString("role_id"));
             assertEquals(scopeType, rows.getString("scope_type"),
-                    "grant_preset_bindings.scope_type is not part of the tier removal");
+                "role_bindings.scope_type is not part of the tier removal");
             assertEquals(scopeId == null ? null : scopeId.toString(), rows.getString("scope_id"));
             assertEquals(LEGACY_USER_ID.toString(), rows.getString("granted_by"));
             assertFalse(rows.getBoolean("is_seed"), "the fixture binding was never a seed");
@@ -579,7 +581,7 @@ class AgentPrincipalScopeMigrationTest {
     private static String tierRoleBindingSnapshot() throws SQLException {
         return snapshot(connection, "SELECT id::text || '|' || role_id::text || '|' || scope_type || '|'"
                 + " || COALESCE(scope_id::text, '-') || '|' || COALESCE(granted_by::text, '-') || '|'"
-                + " || is_seed::text FROM grant_preset_bindings WHERE subject_id IN (" + TIER_PRINCIPALS
+                + " || is_seed::text FROM role_bindings WHERE subject_id IN (" + TIER_PRINCIPALS
                 + ") ORDER BY id");
     }
 
@@ -623,7 +625,8 @@ class AgentPrincipalScopeMigrationTest {
 
     private static void insertRoleBinding(UUID id, UUID principalId, UUID roleId, String scopeType,
             UUID scopeId) throws SQLException {
-        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        // This helper only seeds the V125-era fixture, before V182 renames the table.
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by, is_seed) VALUES ('" + id + "', '" + roleId
                 + "', 'agent_principal', '" + principalId + "', " + literal(scopeType) + ", "
                 + literal(scopeId == null ? null : scopeId.toString()) + ", '" + LEGACY_USER_ID

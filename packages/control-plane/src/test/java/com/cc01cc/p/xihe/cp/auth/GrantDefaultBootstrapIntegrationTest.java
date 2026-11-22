@@ -78,14 +78,16 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     private static final List<String> USER_ALLOW_ATOMS = List.of(
             ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_WRITE,
             ToolFaceRegistry.ACTION_DELETE, ToolFaceRegistry.ACTION_EXEC,
-            ToolFaceRegistry.ACTION_NETWORK);
+            ToolFaceRegistry.ACTION_NETWORK).stream()
+            .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+            .toList();
 
     /**
      * PLAN-0750 M1 (G1 = (1a), user ruling 2026-11-10): the own-agent create atom is back with new
      * user-level semantics (owner = actor, no Workspace binding). BL-312's removal is superseded —
      * the atom is a catalog member again, so the probes below assert presence, not fail-closed.
      */
-    private static final String OWN_AGENT_ATOM = "CREATE_OWN_AGENT";
+    private static final String OWN_AGENT_ATOM = "action:CREATE_OWN_AGENT";
 
     private static final Set<String> USER_DEFAULT_ATOMS = userDefaultAtoms();
 
@@ -113,7 +115,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // default). It is in neither the forbidden nor the instance-only list, so the USER default
         // materialization — which mirrors the catalog seed — carries it (9 -> 10).
         atoms.add(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE);
-        return Set.copyOf(atoms);
+        // task-835: grants carry the canonical `action:` prefix; the expectation must too.
+        return atoms.stream().map(com.cc01cc.p.xihe.cp.policy.AtomNames::action)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     @Autowired
@@ -479,7 +483,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals((long) USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
                 "concurrent ensures keep exactly one instance-tier row per atom (uq_grants_role_atom); "
                         + "the count follows USER_DEFAULT_ATOMS so a new granted atom cannot slip past");
-        assertTrue(roleAtoms("user", user.getId()).contains("MEMORY_WRITE_SELF"),
+        assertTrue(roleAtoms("user", user.getId()).contains("action:MEMORY_WRITE_SELF"),
                 "the last appended atom is the BL-345 SELF atom, not a duplicated base atom");
         // The grants were wiped above, so the first ensure re-creates the instance set (one audit
         // row); the concurrent second ensure changes nothing (no further row).

@@ -158,7 +158,7 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
         assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
         JsonNode cap = objectMapper.valueToTree(response.getBody().get("effectiveCap"));
         assertEquals(1, cap.size(), "live cap must drop the uncovered write atom");
-        assertEquals("read", cap.get(0).get("actionClass").asText());
+        assertEquals("action:read", cap.get(0).get("actionClass").asText());
         // The stored snapshot is untouched — this is exactly why the UI could only annotate it.
         JsonNode snapshot = bindingRepository.findById(new WorkspaceAgentId(principalId, workspaceId))
                 .orElseThrow().getPermissionsSnapshot();

@@ -20,4 +20,4 @@ DELETE FROM grants g
 WHERE g.subject_type = 'agent_principal'
   AND g.scope_type = 'instance'
   AND g.source = 'role'
-  AND g.permissions @> '[{"actionClass": "MEMORY_WRITE_SELF"}]'::jsonb;
+  AND g.permissions @> '[{"actionClass": "action:MEMORY_WRITE_SELF"}]'::jsonb;

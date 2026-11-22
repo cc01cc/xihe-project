@@ -415,7 +415,7 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                 Map.of("permissions", List.of(Map.of("actionClass", "read", "resource", "*"))));
         assertEquals(200, allowed.status(), allowed.body().toString());
         assertFalse(allowed.body().has("scope"), allowed.body().toString());
-        assertEquals("read", string("SELECT permissions_snapshot->0->>'actionClass'"
+        assertEquals("action:read", string("SELECT permissions_snapshot->0->>'actionClass'"
                 + " FROM workspace_agents WHERE principal_id = CAST(? AS UUID)"
                 + " AND workspace_id = CAST(? AS UUID)", principalId.toString(), workspace.toString()));
 
@@ -428,7 +428,7 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                         "resource", "*"))));
         assertEquals(403, denied.status(), denied.body().toString());
         assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.body().path("code").asText());
-        assertEquals("read", string("SELECT permissions_snapshot->0->>'actionClass'"
+        assertEquals("action:read", string("SELECT permissions_snapshot->0->>'actionClass'"
                 + " FROM workspace_agents WHERE principal_id = CAST(? AS UUID)"
                 + " AND workspace_id = CAST(? AS UUID)", principalId.toString(), workspace.toString()),
                 "the denied cap must not overwrite the stored snapshot");

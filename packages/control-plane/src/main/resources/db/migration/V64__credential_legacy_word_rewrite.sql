@@ -11,9 +11,9 @@ UPDATE grants
 SET permissions = (
     SELECT COALESCE(jsonb_agg(atom) FILTER (WHERE atom->>'actionClass' <> 'credential'), '[]'::jsonb)
     FROM jsonb_array_elements(permissions) atom
-) || ('[{"actionClass":"credential_use","resource":"credential:*"},'
-   || '{"actionClass":"credential_reveal","resource":"credential:*"},'
-   || '{"actionClass":"credential_manage","resource":"credential:*"}]')::jsonb
+) || ('[{"actionClass":"action:credential_use","resource":"credential:*"},'
+   || '{"actionClass":"action:credential_reveal","resource":"credential:*"},'
+   || '{"actionClass":"action:credential_manage","resource":"credential:*"}]')::jsonb
 WHERE EXISTS (
     SELECT 1 FROM jsonb_array_elements(permissions) atom
     WHERE atom->>'actionClass' = 'credential'

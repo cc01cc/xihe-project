@@ -30,7 +30,7 @@ class CreateOwnAgentResidualCleanupMigrationTest {
     static TestDatabaseProvider.DatabaseRef postgres =
             TestDatabaseProvider.emptyDatabase("plan0720_cleanup");
 
-    private static final String OWN_AGENT_ATOM = "[{\"actionClass\": \"CREATE_OWN_AGENT\"}]";
+    private static final String OWN_AGENT_ATOM = "[{\"actionClass\": \"action:CREATE_OWN_AGENT\"}]";
 
     @Test
     void v146RemovesOnlyAgentDefaultCreateOwnAgentRows() throws SQLException {
@@ -43,7 +43,7 @@ class CreateOwnAgentResidualCleanupMigrationTest {
             seedGrant(connection, "agent_default", OWN_AGENT_ATOM);
             // Controls: same atom from a different source, and same source with another atom.
             seedGrant(connection, "role", OWN_AGENT_ATOM);
-            seedGrant(connection, "agent_default", "[{\"actionClass\": \"MEMORY_WRITE\"}]");
+            seedGrant(connection, "agent_default", "[{\"actionClass\": \"action:MEMORY_WRITE\"}]");
         }
 
         migrateToVersion(jdbcUrl, "146");
@@ -53,11 +53,11 @@ class CreateOwnAgentResidualCleanupMigrationTest {
             assertEquals(0, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = "
                     + "'agent_default' AND permissions @> '" + OWN_AGENT_ATOM + "'::jsonb"),
                     "all agent_default CREATE_OWN_AGENT rows must be deleted");
-            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = 'preset' "
+            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = 'role' "
                     + "AND permissions @> '" + OWN_AGENT_ATOM + "'::jsonb"),
-                    "source='preset' rows must not be touched by V146 (asserted at the V146 boundary)");
+                    "source='role' rows (the pre-V182 spelling) must not be touched by V146");
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = "
-                    + "'agent_default' AND permissions @> '[{\"actionClass\": \"MEMORY_WRITE\"}]'::jsonb"),
+                    + "'agent_default' AND permissions @> '[{\"actionClass\": \"action:MEMORY_WRITE\"}]'::jsonb"),
                     "agent_default rows for other atoms must not be touched");
         }
 
@@ -68,7 +68,7 @@ class CreateOwnAgentResidualCleanupMigrationTest {
                     + "AND permissions @> '" + OWN_AGENT_ATOM + "'::jsonb"),
                     "V147 (BL-312 B) removes the source='preset' row after the V146 boundary");
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = "
-                    + "'agent_default' AND permissions @> '[{\"actionClass\": \"MEMORY_WRITE\"}]'::jsonb"),
+                    + "'agent_default' AND permissions @> '[{\"actionClass\": \"action:MEMORY_WRITE\"}]'::jsonb"),
                     "agent_default rows for other atoms stay untouched throughout the chain");
         }
     }

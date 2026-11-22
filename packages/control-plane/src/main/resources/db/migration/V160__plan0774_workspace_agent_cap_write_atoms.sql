@@ -130,7 +130,7 @@ missing AS (
            e.before,
            e.role_atoms,
            ARRAY(SELECT x.atom
-                 FROM unnest(ARRAY['MANAGE_WORKSPACE_MCP', 'WRITE_WORKSPACE_CONTENT']) AS x(atom)
+                 FROM unnest(ARRAY['action:MANAGE_WORKSPACE_MCP', 'action:WRITE_WORKSPACE_CONTENT']) AS x(atom)
                  WHERE e.effective_atoms @> ARRAY[x.atom]
                    AND NOT (e.before @> jsonb_build_array(jsonb_build_object('actionClass', x.atom)))
                  ORDER BY x.atom) AS missing_atoms
@@ -147,7 +147,7 @@ assessed AS (
            END AS append_json,
            ARRAY(SELECT y.atom
                  FROM unnest(m.role_atoms) AS y(atom)
-                 WHERE y.atom NOT IN ('MANAGE_WORKSPACE_MCP', 'WRITE_WORKSPACE_CONTENT')) AS baseline
+                 WHERE y.atom NOT IN ('action:MANAGE_WORKSPACE_MCP', 'action:WRITE_WORKSPACE_CONTENT')) AS baseline
     FROM missing m
     WHERE cardinality(m.missing_atoms) > 0
 ),

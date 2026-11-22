@@ -21,14 +21,14 @@
 -- after re-adding the atom to the code-side catalog.
 
 DELETE FROM role_permissions
-WHERE action_class = 'CREATE_OWN_AGENT';
+WHERE action_class = 'action:CREATE_OWN_AGENT';
 
 DELETE FROM grants g
 WHERE g.source = 'role'
-  AND g.permissions @> '[{"actionClass": "CREATE_OWN_AGENT"}]'::jsonb
+  AND g.permissions @> '[{"actionClass": "action:CREATE_OWN_AGENT"}]'::jsonb
   AND NOT EXISTS (
       SELECT 1 FROM role_permissions rp
-      WHERE rp.action_class = 'CREATE_OWN_AGENT');
+      WHERE rp.action_class = 'action:CREATE_OWN_AGENT');
 
 -- Zero-omission verification (atom-contract §5.1): after this migration no role definition and no
 -- source='role' materialization may still carry the atom. Anything surviving means an unexpected
@@ -37,14 +37,14 @@ DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM role_permissions
-        WHERE action_class = 'CREATE_OWN_AGENT'
+        WHERE action_class = 'action:CREATE_OWN_AGENT'
     ) THEN
         RAISE EXCEPTION 'V147 aborted: role_permissions still carries CREATE_OWN_AGENT after the removal';
     END IF;
     IF EXISTS (
         SELECT 1 FROM grants
         WHERE source = 'role'
-          AND permissions @> '[{"actionClass": "CREATE_OWN_AGENT"}]'::jsonb
+          AND permissions @> '[{"actionClass": "action:CREATE_OWN_AGENT"}]'::jsonb
     ) THEN
         RAISE EXCEPTION 'V147 aborted: source=role grants still carry CREATE_OWN_AGENT after the removal';
     END IF;

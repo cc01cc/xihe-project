@@ -86,7 +86,8 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
         assertEquals(1, updated.getPermissionsSnapshot().size(),
                 "WS_OWNER really can set the workspace-A agent cap it is allowed to set");
         assertEquals(ToolFaceRegistry.ACTION_READ,
-                updated.getPermissionsSnapshot().get(0).get("actionClass").asText());
+                com.cc01cc.p.xihe.cp.policy.AtomNames.bare(
+                        updated.getPermissionsSnapshot().get(0).get("actionClass").asText()));
 
         // Negative: workspace B only granted WS_VIEWER → 403 at the authorization gate.
         CpApiException refusal = assertThrows(CpApiException.class,
@@ -147,10 +148,12 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
         List<AuthorizationGrant> inB = grantRepository.findScopedGrants("user", fixture.userId(),
                 GrantSources.EVALUATION_SOURCES, fixture.workspaceB());
         assertTrue(inA.stream().anyMatch(row -> ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS
-                        .equals(row.getPermissions().get(0).get("actionClass").asText())),
+                        .equals(com.cc01cc.p.xihe.cp.policy.AtomNames.bare(
+                                row.getPermissions().get(0).get("actionClass").asText()))),
                 "workspace A sees the materialized agent-management atom");
         assertFalse(inB.stream().anyMatch(row -> ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS
-                        .equals(row.getPermissions().get(0).get("actionClass").asText())),
+                        .equals(com.cc01cc.p.xihe.cp.policy.AtomNames.bare(
+                                row.getPermissions().get(0).get("actionClass").asText()))),
                 "workspace B sees no agent-management row (only its own WS_VIEWER read)");
         // PLAN-0651 M2 T2.1: WS_VIEWER also carries USE_WORKSPACE_RUNTIME, so "B only sees read"
         // became "B only sees WS_VIEWER atoms". Derive the set from the catalog: the assertion is
@@ -189,7 +192,8 @@ class CrossWorkspaceGrantGateTest extends AbstractIntegrationTest {
         assertFalse(grantRepository.findScopedGrants("user", user.getId(),
                 GrantSources.EVALUATION_SOURCES, workspaceB.getId()).stream()
                 .anyMatch(row -> ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS
-                        .equals(row.getPermissions().get(0).get("actionClass").asText())),
+                        .equals(com.cc01cc.p.xihe.cp.policy.AtomNames.bare(
+                                row.getPermissions().get(0).get("actionClass").asText()))),
                 "precondition: workspace B holds no agent-management atom");
         return new Fixture(user.getId(), workspaceA.getId(), workspaceB.getId());
     }
