@@ -81,15 +81,17 @@ function seedWorkspaceContext(page: Page, user: RegisteredUser, role: string): v
 test.describe("@host PLAN-0565 workspace members", () => {
     let owner: RegisteredUser;
     let editorTarget: RegisteredUser;
-    let outsider: RegisteredUser;
 
     test.beforeAll(async ({ request }) => {
         // All accounts derive usernames from the email local part (ruling #7
         // default path) — the register response's user view does not carry the
         // username field, so explicit usernames would not be assertable here.
+        // task-827: only the UI journey shares these two accounts. The matrix
+        // test below registers its own set so the cases cannot leak state into
+        // each other (a UI journey that failed before removing the editor used
+        // to turn the matrix add into a 409 MEMBER_ALREADY_EXISTS).
         owner = await registerUser(request, "member-owner");
         editorTarget = await registerUser(request, "member-editor");
-        outsider = await registerUser(request, "member-outsider");
     });
 
     test("owner manages members through the settings UI over the real chain", async ({ page }) => {
@@ -176,36 +178,68 @@ test.describe("@host PLAN-0565 workspace members", () => {
     });
 
     test("member matrix holds on the real API chain", async ({ request }) => {
-        // Owner adds editorTarget (EDITOR) and keeps outsider out.
-        const add = await request.post(`${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`, {
-            headers: {
-                Authorization: `Bearer ${owner.token}`,
-                "Content-Type": "application/json",
-                "X-Workspace-Id": owner.workspaceId,
-            },
-            data: { username: editorTarget.username, role: "EDITOR" },
-        });
-        expect(add.status(), `add failed: ${add.status()} ${await add.text()}`).toBe(201);
-        const added = (await add.json()) as { userId: string; username: string };
-        expect(added.username).toBe(editorTarget.username);
+        // task-827: fresh accounts per test (and per retry) — this case must not
+        // depend on the UI journey above having cleaned up after itself, or on a
+        // previous run leaving the editor behind. A leftover member is exactly
+        // what produced `409 MEMBER_ALREADY_EXISTS` at the add below.
+        const matrixOwner = await registerUser(request, "matrix-owner");
+        const matrixEditor = await registerUser(request, "matrix-editor");
+        const matrixOutsider = await registerUser(request, "matrix-outsider");
 
-        // EDITOR: list visible, write forbidden (ruling #2).
-        const list = await request.get(`${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`, {
-            headers: {
-                Authorization: `Bearer ${editorTarget.token}`,
-                "X-Workspace-Id": owner.workspaceId,
-            },
-        });
-        expect(list.status()).toBe(200);
-        const editorAdd = await request.post(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
+        // Owner adds matrixEditor (EDITOR) and keeps matrixOutsider out.
+        const add = await request.post(
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members`,
             {
                 headers: {
-                    Authorization: `Bearer ${editorTarget.token}`,
+                    Authorization: `Bearer ${matrixOwner.token}`,
                     "Content-Type": "application/json",
-                    "X-Workspace-Id": owner.workspaceId,
+                    "X-Workspace-Id": matrixOwner.workspaceId,
                 },
-                data: { username: outsider.username, role: "VIEWER" },
+                data: { username: matrixEditor.username, role: "EDITOR" },
+            },
+        );
+        expect(add.status(), `add failed: ${add.status()} ${await add.text()}`).toBe(201);
+        const added = (await add.json()) as { userId: string; username: string };
+        expect(added.username).toBe(matrixEditor.username);
+
+        // Explicit reverse case with a stated precondition: matrixEditor is a
+        // member right now (the 201 above), so a genuine duplicate must 409.
+        // This keeps "duplicate is rejected" covered instead of hiding it behind
+        // the isolation fix.
+        const duplicate = await request.post(
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members`,
+            {
+                headers: {
+                    Authorization: `Bearer ${matrixOwner.token}`,
+                    "Content-Type": "application/json",
+                    "X-Workspace-Id": matrixOwner.workspaceId,
+                },
+                data: { username: matrixEditor.username, role: "EDITOR" },
+            },
+        );
+        expect(duplicate.status()).toBe(409);
+        expect(((await duplicate.json()) as { code: string }).code).toBe("MEMBER_ALREADY_EXISTS");
+
+        // EDITOR: list visible, write forbidden (ruling #2).
+        const list = await request.get(
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members`,
+            {
+                headers: {
+                    Authorization: `Bearer ${matrixEditor.token}`,
+                    "X-Workspace-Id": matrixOwner.workspaceId,
+                },
+            },
+        );
+        expect(list.status()).toBe(200);
+        const editorAdd = await request.post(
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members`,
+            {
+                headers: {
+                    Authorization: `Bearer ${matrixEditor.token}`,
+                    "Content-Type": "application/json",
+                    "X-Workspace-Id": matrixOwner.workspaceId,
+                },
+                data: { username: matrixOutsider.username, role: "VIEWER" },
             },
         );
         expect(editorAdd.status()).toBe(403);
@@ -214,38 +248,38 @@ test.describe("@host PLAN-0565 workspace members", () => {
 
         // Outsider (non-member): hidden on both header and headerless paths.
         const outsiderHeader = await request.get(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members`,
             {
                 headers: {
-                    Authorization: `Bearer ${outsider.token}`,
-                    "X-Workspace-Id": owner.workspaceId,
+                    Authorization: `Bearer ${matrixOutsider.token}`,
+                    "X-Workspace-Id": matrixOwner.workspaceId,
                 },
             },
         );
         expect(outsiderHeader.status()).toBe(403);
         const outsiderHeaderless = await request.get(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
-            { headers: { Authorization: `Bearer ${outsider.token}` } },
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members`,
+            { headers: { Authorization: `Bearer ${matrixOutsider.token}` } },
         );
         expect(outsiderHeaderless.status()).toBe(403);
 
         // Owner removes the editor again; the unique owner stays protected.
         const remove = await request.delete(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members/${added.userId}`,
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members/${added.userId}`,
             {
                 headers: {
-                    Authorization: `Bearer ${owner.token}`,
-                    "X-Workspace-Id": owner.workspaceId,
+                    Authorization: `Bearer ${matrixOwner.token}`,
+                    "X-Workspace-Id": matrixOwner.workspaceId,
                 },
             },
         );
         expect(remove.status()).toBe(204);
         const selfRemove = await request.delete(
-            `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members/${owner.userId}`,
+            `${CP_URL}/api/v1/workspaces/${matrixOwner.workspaceId}/members/${matrixOwner.userId}`,
             {
                 headers: {
-                    Authorization: `Bearer ${owner.token}`,
-                    "X-Workspace-Id": owner.workspaceId,
+                    Authorization: `Bearer ${matrixOwner.token}`,
+                    "X-Workspace-Id": matrixOwner.workspaceId,
                 },
             },
         );
