@@ -1,6 +1,7 @@
 import { generateE2EPassword } from "./helpers/password";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { test, expect } from "@playwright/test";
+import { ensureWorkspace } from "./helpers/workspace";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
@@ -23,9 +24,23 @@ async function registerUser(name: string): Promise<RegisteredUser> {
 }
 
 test.describe("Cross-Module — Workspace", () => {
-    test("@host workspace page shows file panel and editor after login", async ({ page }) => {
-        const { token, workspaceId } = await registerUser("ws");
-        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
+    test("@host workspace page shows file panel and editor after login", async ({
+        page,
+        request,
+    }) => {
+        const { token } = await registerUser("ws");
+        // task-769 / PLAN-0614：注册不再创建默认工作区（workspace.ts:8-14），必须 ensureWorkspace。
+        const workspaceId = await ensureWorkspace(request, token);
+        await page.addInitScript(
+            ({ t, ws }) => {
+                localStorage.setItem("xihe-token", t);
+                localStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({ id: ws, name: "Default Workspace" }),
+                );
+            },
+            { t: token, ws: workspaceId },
+        );
 
         await page.goto(`/workspace/${workspaceId}`);
 
@@ -36,9 +51,22 @@ test.describe("Cross-Module — Workspace", () => {
         expect(page.url()).toContain("/workspace");
     });
 
-    test("@host workspace page shows empty state when no files exist", async ({ page }) => {
-        const { token, workspaceId } = await registerUser("ws-empty");
-        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), token);
+    test("@host workspace page shows empty state when no files exist", async ({
+        page,
+        request,
+    }) => {
+        const { token } = await registerUser("ws-empty");
+        const workspaceId = await ensureWorkspace(request, token);
+        await page.addInitScript(
+            ({ t, ws }) => {
+                localStorage.setItem("xihe-token", t);
+                localStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({ id: ws, name: "Default Workspace" }),
+                );
+            },
+            { t: token, ws: workspaceId },
+        );
 
         await page.goto(`/workspace/${workspaceId}`);
 

@@ -349,6 +349,8 @@ test("@host PLAN-0466 AuditView paginates and surfaces a list error", async ({ p
         }),
         chooseRekaOption(page, page.getByTestId("settings-audit-status"), /^失败$|^Failed$/),
     ]);
-    await expect(page.getByText("audit edge unavailable")).toBeVisible();
+    // task-769：错误面改为 SettingsErrorSurface（AuditView.vue:354-358 传 :cause；
+    // SettingsErrorSurface.vue:113 data-testid="settings-error-panel"），不再渲染旧英文句。
+    await expect(page.getByTestId("settings-error-panel")).toBeVisible();
     await expect(page.getByTestId("settings-audit-no-selection")).toBeVisible();
 });

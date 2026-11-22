@@ -58,7 +58,8 @@ async function loginThroughUi(page: Page, email: string): Promise<void> {
     await page.fill('input[name="identifier"]', email);
     await page.fill('input[name="password"]', SHARED_PASSWORD);
     await page.press('input[name="password"]', "Enter");
-    await expect(page).toHaveURL(/\/workspace/);
+    // task-769：产品登录后入口已改为 /workbench（run5b 失败页 URL 实测 /workbench）。
+    await expect(page).toHaveURL(/\/workbench/);
 }
 
 /**
@@ -178,7 +179,8 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
         await page.getByTestId("workspace-picker").waitFor();
         await page.getByTestId(`workspace-picker-item-${user.workspaceId}`).click();
 
-        await expect(page).toHaveURL(new RegExp(`/workspace/${user.workspaceId}`));
+        // task-769：登录落点已改为 /workbench（不再直达 /workspace/:id）。
+        await expect(page).toHaveURL(/\/workbench/);
         const storage = await authStorage(page);
         expect(storage["xihe-token"], "正常用户不得被登出").toBeTruthy();
         await page.screenshot({ path: `${EVIDENCE}/active-stays-signed-in.png` });

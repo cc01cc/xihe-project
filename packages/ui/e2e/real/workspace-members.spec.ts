@@ -144,9 +144,11 @@ test.describe("@host PLAN-0565 workspace members", () => {
             "该用户不存在，请对方先注册",
         );
 
-        // Role select is locked for the OWNER row (ruling #4 defers ownership transfer).
+        // task-769：OWNER 行按设计**不再渲染**角色 Select（WorkspaceMembersPanel.vue:330-338，
+        // 锁定行只保留角色 chip），旧断言「disabled select」对象已不存在。改为钉「OWNER 行保留且无角色选择器」。
         const ownerRow = page.getByTestId("ws-members-row").filter({ hasText: owner.username });
-        await expect(ownerRow.locator("select")).toBeDisabled();
+        await expect(ownerRow).toBeVisible();
+        await expect(ownerRow.locator('[data-testid^="ws-members-role-"]')).toHaveCount(0);
 
         await page.screenshot({
             scale: "css",

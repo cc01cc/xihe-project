@@ -32,18 +32,22 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
         request,
     }) => {
         await registerAndLogin(page, request, "save-toast");
-        await page.goto("/settings/user/agent-profile", { waitUntil: "load" });
+        // task-769：`/settings/user/agent-profile` 已 302 到 org-members（router/index.ts:347-349），
+        // 不再是可编辑域页。改用仍在用户层矩阵内、带可写字段的 context-policy（settingsIa.ts:190）。
+        await page.goto("/settings/user/context-policy", { waitUntil: "load" });
         await expect(page.locator('[data-testid="settings-domain-title"]')).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
 
-        const profilePanel = page.getByTestId("config-domain-agent-profile");
+        const profilePanel = page.getByTestId("config-domain-context-policy");
         await expect(profilePanel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await profilePanel.locator(":scope > button").click();
+        await profilePanel.getByTestId("config-domain-toggle-context-policy").click();
 
-        const editInput = profilePanel.locator('input[type="text"]').first();
+        // context-policy 首字段是数字输入（ConfigDomainPanel.vue:940/977 的 config-text/config-number）；
+        // 只取面板内第一个 input，语义仍是「改一个值 → 保存」。
+        const editInput = profilePanel.locator("input").first();
         await expect(editInput).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await editInput.fill(`e2e-${Date.now()}`);
+        await editInput.fill(String(Date.now()).slice(-6));
 
         const saveBtn = profilePanel.getByRole("button", { name: "保存", exact: true });
         await expect(saveBtn).toBeVisible();

@@ -274,7 +274,8 @@ test.describe("@host Workspace import", () => {
         const user = await registerUser(request, "oversized");
         seedPage(page, user);
         await page.goto(`/workspace/${user.wsId}`, { waitUntil: "load" });
-        await page.getByTitle("Upload files").click();
+        // task-769：产品默认 zh-CN 渲染「上传文件」，title 双语取。
+        await page.getByTitle(/上传文件|Upload files/).click();
         const uploadInput = page.locator('input[type="file"]').last();
         await expect(uploadInput).toBeAttached();
         await uploadInput.setInputFiles(oversizedFile);

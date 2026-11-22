@@ -7,6 +7,13 @@ import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { ensureWorkspace } from "./helpers/workspace";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 import { chooseRekaOption, expectRekaValue } from "./helpers/reka-select";
+import { formatApiType } from "../../src/lib/apiTypeLabels";
+import { i18n } from "../../src/i18n";
+
+// task-769：`api-request-type` 选项经 formatApiType() 渲染成本地名（apiTypeLabels.ts:25-34），
+// 不再按裸 `apiTypeId@version` 取（run5b L35581 实测 `OpenAI 对话补全@1`）。
+const apiTypeLabel = (apiTypeId: string): string =>
+    formatApiType(apiTypeId, 1, (key) => i18n.global.t(key));
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 let auth: { accessToken: string; workspaceId: string };
@@ -177,11 +184,11 @@ for (const wire of cases) {
                 const panel = page.getByTestId("api-request-templates-panel");
                 await expect(panel).toBeVisible();
                 // BL-547（task-175）：api-request-type 是 reka Select（触发器为 button）；
-                // 选项文本 = typeKey = `apiTypeId@version`，与旧 selectOption 的值同形。
+                // task-769：选项文本 = formatApiType() 的本地化名 + `@version`。
                 await chooseRekaOption(
                     page,
                     panel.getByTestId("api-request-type"),
-                    wire.apiTypeId + "@1",
+                    apiTypeLabel(wire.apiTypeId),
                 );
                 await panel.getByTestId("api-request-new").click();
                 const templateName = `Wire authored ${wire.apiTypeId}`;
@@ -375,7 +382,7 @@ test("@host PLAN-0642 saving a draft is confirmed only after the real write and 
     await chooseRekaOption(
         page,
         panel.getByTestId("api-request-type"),
-        "openai-chat-completions@1",
+        apiTypeLabel("openai-chat-completions"),
     );
     await panel.getByTestId("api-request-new").click();
     const name = `Draft survives reload ${randomUUID().slice(0, 8)}`;

@@ -29,7 +29,8 @@ const EVIDENCE = evidenceDir("plan-0651-t42-permissions-tab");
 // `settings-nav-domain-<layer>-<domain>`（同名域跨层必须带层）⇒ 三个入口断言绑语义，不再按 URL 定位。
 const ROLES_TAB = '[data-testid="settings-nav-ops-roles"]';
 const LOCKS_TAB = '[data-testid="settings-nav-ops-config-locks"]';
-const CONFIG_TAB = '[data-testid="settings-nav-domain-user-llm-provider"]';
+// task-769：用户层模型配置组 id = `model-config`（settingsIa.ts:186；SettingsSidebar.vue:530）。
+const CONFIG_TAB = '[data-testid="settings-nav-domain-user-model-config"]';
 const SETTINGS_PATH = "/settings/user/llm-provider";
 // task-242：实例层组的**可点标题**（`CollapsibleTrigger` 自带 id，属既有属性，不新造 testid）。
 // `data-testid="settings-nav-group-primary"` 在实例层与个人层各出现一次（不唯一）⇒ 取 id。

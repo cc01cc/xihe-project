@@ -49,6 +49,15 @@ async function switchLanguageViaSettings(page: Page, optionIndex: number): Promi
     await page.goto(USER_PREFERENCE_PAGE, { waitUntil: "load" });
     await page.getByTestId("config-select-user-preference-language").click();
     await page.getByRole("option").nth(optionIndex).click();
+    // task-769：语言是草稿 + 保存（run5b 快照：combobox 已显示 English，但 <html lang> 仍 zh-CN）。
+    // 点保存后等 PUT /api/v1/config/** 落库，再让调用方断言。
+    const saved = page.waitForResponse(
+        (response) =>
+            response.request().method() === "PUT" && response.url().includes("/api/v1/config/"),
+        { timeout: 10_000 },
+    );
+    await page.getByTestId("config-save-user-preference").click();
+    await saved;
 }
 
 function resolveCpOrigin(): string {
@@ -198,9 +207,10 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
             timeout: ACTION_TIMEOUT_MS,
         });
-        // task-172：左栏域链接有层限定 per-domain testid，直接按语义取用户层 llm-provider。
-        await expect(page.getByTestId("settings-nav-domain-user-llm-provider")).toHaveText(
-            "LLM Provider",
+        // task-769：用户层模型配置**组** id = `model-config`（settingsIa.ts:186 / SettingsSidebar.vue:530），
+        // en 文案 = `settings.groupModelConfig` = "Model configuration"（i18n/index.ts:7535）。
+        await expect(page.getByTestId("settings-nav-domain-user-model-config")).toHaveText(
+            "Model configuration",
         );
         await page.screenshot({
             path: "test-results/plan-0602/03-switched-en.png",

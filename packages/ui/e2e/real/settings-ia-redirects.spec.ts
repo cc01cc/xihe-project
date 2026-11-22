@@ -203,7 +203,10 @@ test("@host PLAN-0752 V3 用户层矩阵外组合 404 且不发工作区层配�
 
     // 仍是设置区壳（左栏在），只是内容区是 404 —— 区别于白屏/静默空页。
     await expect(page.getByTestId("settings-sidebar")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-    await expect(page.getByTestId("settings-nav-domain-user-llm-provider")).toBeVisible();
+    // task-769：用户层左栏的模型配置组 id 已从 `llm-provider` 改为 `model-config`
+    // （SettingsSidebar.vue:530 生成 `settings-nav-domain-user-${item.id}`；组 id 见
+    // src/lib/settingsIa.ts:186；单测 SettingsSidebar.spec.ts:164 亦断言 `…-user-model-config`）。
+    await expect(page.getByTestId("settings-nav-domain-user-model-config")).toBeVisible();
     // 矩阵外的条目不得出现在左栏（V3 附带判据；V25 的左栏快照是另一条）。
     await expect(page.getByTestId("settings-nav-domain-user-logging")).toHaveCount(0);
     // (a) 删 —— 原文此处断 `ws-settings-domain-page` count 0：该容器已随 task-253 退役，全树不存在，

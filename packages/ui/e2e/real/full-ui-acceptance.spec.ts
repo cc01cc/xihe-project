@@ -178,7 +178,8 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         const auth = await register(request, "workspace-upload");
         await installAuth(page, auth);
         await page.goto(`/workspace/${auth.workspaceId}`);
-        await page.getByRole("button", { name: "Upload files" }).click();
+        // task-769：产品默认 zh-CN 渲染「上传文件」，按钮中文/英文双语取（保留唯一性）。
+        await page.getByRole("button", { name: /上传文件|Upload files/ }).click();
         const dialog = page.getByTestId("workspace-import-dialog");
         await dialog.locator('input[type="file"]').setInputFiles({
             name: "uploaded.md",
