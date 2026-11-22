@@ -42,6 +42,25 @@ fn resolve_mxc_probe_timeout(raw: Option<&str>) -> Duration {
         .clamp(MIN_MXC_PROBE_TIMEOUT, MAX_MXC_PROBE_TIMEOUT)
 }
 
+/// `CREATE_NO_WINDOW` (`0x0800_0000`): create the child without a console
+/// window. Every process this module spawns is captured through pipes and never
+/// needs a console; without the flag each one flashes a terminal and steals
+/// focus on Windows (task-839, the same flag `job_engine` task-828 and
+/// `plugin::runner` already use).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Apply the window-less creation flag to a Windows command.
+///
+/// Centralised so the four Windows spawn sites (`execute_host`,
+/// `execute_mxc`, the `taskkill` in `terminate_process_tree`, and
+/// `run_mxc_probe_command`) cannot drift; the tripwire test in this module
+/// counts the call sites.
+#[cfg(windows)]
+fn hide_console_window(command: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    command.creation_flags(CREATE_NO_WINDOW)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformDiagnostics {
@@ -461,6 +480,7 @@ async fn execute_host(request: ProcessRequest) -> Result<ProcessResult> {
             .envs(&request.env)
             .kill_on_drop(true);
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        hide_console_window(&mut command);
         let mut child = command.spawn().map_err(RuntimeError::Io)?;
         let pid = child.id();
         let captured = match capture_capped(
@@ -537,13 +557,14 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
         let config_bytes = serde_json::to_vec(&config)
             .map_err(|error| RuntimeError::Command(format!("serialize MXC policy: {error}")))?;
         tokio::fs::write(&config_path, config_bytes).await?;
-        let mut child = tokio::process::Command::new(&executable)
+        let mut command = tokio::process::Command::new(&executable);
+        command
             .arg(&config_path)
             .kill_on_drop(true)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(RuntimeError::Io)?;
+            .stderr(Stdio::piped());
+        hide_console_window(&mut command);
+        let mut child = command.spawn().map_err(RuntimeError::Io)?;
         let pid = child.id();
         let captured = match capture_capped(
             &mut child,
@@ -873,11 +894,11 @@ pub(crate) async fn terminate_process_tree(pid: u32) -> Result<()> {
     if let Some(injected) = test_seam::take() {
         return Err(injected);
     }
-    let output = tokio::process::Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .output()
-        .await
-        .map_err(RuntimeError::Io)?;
+    let pid_arg = pid.to_string();
+    let mut command = tokio::process::Command::new("taskkill");
+    command.args(["/PID", pid_arg.as_str(), "/T", "/F"]);
+    hide_console_window(&mut command);
+    let output = command.output().await.map_err(RuntimeError::Io)?;
     if !output.status.success()
         && !String::from_utf8_lossy(&output.stderr)
             .to_ascii_lowercase()
@@ -923,15 +944,10 @@ async fn run_mxc_probe_command(
     args: &[&str],
     timeout: Duration,
 ) -> std::result::Result<std::process::Output, MxcProbeCommandFailure> {
-    match tokio::time::timeout(
-        timeout,
-        tokio::process::Command::new(executable)
-            .args(args)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    {
+    let mut command = tokio::process::Command::new(executable);
+    command.args(args).kill_on_drop(true);
+    hide_console_window(&mut command);
+    match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(error)) => Err(MxcProbeCommandFailure::Spawn(error.to_string())),
         Err(_) => Err(MxcProbeCommandFailure::TimedOut),
@@ -1092,6 +1108,33 @@ mod tests {
         .expect("probe request");
         assert_eq!(request.storage_mode, "direct_attach");
         assert_eq!(request.execution_mode, "windows-host");
+    }
+
+    /// task-839: pin the Win32 value, not a comment. If this changes, the four
+    /// spawn sites would silently start attaching consoles again.
+    #[cfg(windows)]
+    #[test]
+    fn create_no_window_flag_is_the_win32_value() {
+        assert_eq!(super::CREATE_NO_WINDOW, 0x0800_0000);
+    }
+
+    /// task-839 tripwire: a constant test cannot tell whether a spawn site used
+    /// it, so scan this module's source and require exactly four window-less
+    /// call sites -- `execute_host`, `execute_mxc`, the `taskkill` in
+    /// `terminate_process_tree`, and `run_mxc_probe_command`. A fifth spawn
+    /// site without the flag should make a reviewer ask why before bumping the
+    /// count. The needle is concatenated so this test's own source cannot match.
+    #[cfg(windows)]
+    #[test]
+    fn every_windows_spawn_site_applies_create_no_window() {
+        let source = include_str!("process_guard.rs");
+        let needle = ["hide_console", "_window(&mut "].concat();
+        let call_sites = source.matches(&needle).count();
+        assert_eq!(
+            call_sites, 4,
+            "expected four window-less spawn sites (execute_host, execute_mxc, taskkill, \
+             run_mxc_probe_command), found {call_sites}"
+        );
     }
 
     /// task-820: lock the probe budget to the measured cold-start distribution,
