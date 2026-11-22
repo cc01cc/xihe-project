@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-21
+updated: 2026-11-22
 status: active
 ---
 
@@ -15,12 +15,12 @@ status: active
 
 ## 0.1 Checklist map (two columns)
 
-<svg viewBox="0 0 660 300" width="100%" role="img" aria-labelledby="dev011-overview-en">
-  <title id="dev011-overview-en">DEV-011 checklist map: §1–§9 item by item, §10–§17 criteria families</title>
-  <rect x="16" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
-  <rect x="332" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
+<svg viewBox="0 0 660 308" width="100%" role="img" aria-labelledby="dev011-overview-en">
+  <title id="dev011-overview-en">DEV-011 checklist map: §1–§9 item by item, §10–§18 criteria families</title>
+  <rect x="16" y="16" width="312" height="276" fill="#f9fafb" stroke="#d1d5db"/>
+  <rect x="332" y="16" width="312" height="276" fill="#f9fafb" stroke="#d1d5db"/>
   <text x="32" y="42" font-size="12" fill="#374151">Checklist §1–§9</text>
-  <text x="348" y="42" font-size="12" fill="#374151">Criteria §10–§17</text>
+  <text x="348" y="42" font-size="12" fill="#374151">Criteria §10–§18</text>
   <rect x="336" y="50" width="304" height="22" fill="#eef2ff"/>
   <text x="32" y="68" font-size="12" fill="#374151">§1　Page render</text>
   <text x="32" y="90" font-size="12" fill="#374151">§2　Icon render</text>
@@ -40,9 +40,11 @@ status: active
   <text x="348" y="180" font-size="12" fill="#374151">§14　Copy wording</text>
   <text x="348" y="208" font-size="12" fill="#374151">§15　Landmark</text>
   <text x="348" y="236" font-size="12" fill="#374151">§16　Nesting</text>
+  <text x="348" y="264" font-size="12" fill="#374151">§17　Form design</text>
+  <text x="348" y="288" font-size="12" fill="#374151">§18　Four dimensions</text>
 </svg>
 
-> Caption: the left column is the item-by-item checklist (§1–§9, page rendering → E2E baselines); the right column is the criteria families readable by a gate (§10–§17). Two ladders live only in the right column: §10 uses L0–L4 (layer ladder), §12 uses M0–M3 (motion budget, read alongside §10, see §12.2). Anchors are the H2 titles of each section.
+> Caption: the left column is the item-by-item checklist (§1–§9, page rendering → E2E baselines); the right column is the criteria families readable by a gate (§10–§18). Two ladders live only in the right column: §10 uses L0–L4 (layer ladder), §12 uses M0–M3 (motion budget, read alongside §10, see §12.2). Anchors are the H2 titles of each section.
 
 ## 1. Page Rendering
 
@@ -1061,3 +1063,83 @@ P-9 in `task-59` was corrected exactly this way: the 404s first read as "there i
 > Rule bodies, positive and negative self-tests and false-positive boundaries are in `internal/A03-xihe/evidence/2026-11-21-form-contract-gate/README.md`; this section only records who owns which item and what runs it today. Until a rule is landed, the reviewer runs the unlanded items by hand and writes the rule number into the review record.
 
 > Reading convention for the executor column (measured 2026-11-21 04:1x): the gate is `internal/A03-xihe/scripts/check-form-contract.mjs`, report-only, wired as `check:form-contract` in `one/mise.toml`, not in the commit path; `--selftest` passes 42/42; the whole tree of 602 files reports 26 violations / 36 debt / 2 `NOT_STATIC`. The `F6` count moves with whatever files concurrent batches touch (rule-1 handed over at 27 violations and `F6` 24, this card re-measured 26 and `F6` 23; the difference sits in the length family, not in a changed criterion). **A zero from `F7` does not mean the repository is clean** — the shape never matched, which is how this table is worded.
+
+## 18. P-3 four-dimension criteria (information density / layout / discoverability / focus consistency; registered by `task-736`, 2026-11-22)
+
+> Background: MVP acceptance gap P-3 records that "information density / layout / discoverability / focus consistency were never registered". The product side has already fixed two spots (`e721fb469` replaced the domain-page blocking banner with the vendor Alert; `59b14f25b` moved the focus outline into the base layer and added missing rings), but the criteria side had only the four landmark items in §16, so a future round could not tell whether either fix regressed. This section writes each dimension in **three parts**: criterion (measurable) → counter-example (what must be judged red) → reading method (testid / command / viewport). Every threshold reuses an already-registered value; no new numbers are invented. Stored readings carry their measurement date and must not be quoted as readings of the current `HEAD` until they are re-run.
+
+### 18.1 Information density: both the top bands and the composer have viewport caps
+
+**Criterion**
+
+- **Top bands**: on a 1920×1080 chat face, the `getBoundingClientRect().y` of `[data-testid="message-scroller-viewport"]` is **≤ 104px**, and the bands above it number **≤ 3** (a band counts only when it is ≥50% of the viewport wide and ≥20px high). The threshold reuses F-1 from `2026-11-19-ui-density-recheck`; it is not re-defined here.
+- **Composer**: composer height / viewport height is **≤ 15%** (1920, 2560) or **≤ 22%** (1366), with **≤ 3 visible rows**. The threshold reuses F-2 from the same evidence.
+- Both must hold for green; any exceedance is red. "It does not feel cramped overall" is not a substitute.
+
+**Counter-example**
+
+- Measured 2026-11-19 on the same chat face: content start **y=157** (14.5%), **5 bands / 157px** above it ⇒ top-band criterion red; composer **174.4px**, i.e. **16.1%** at 1920 and **22.7%** at 1366 ⇒ composer criterion red (2560 at 12.1% was the only passing tier). Readings and per-band detail are in `internal/A03-xihe/evidence/2026-11-19-ui-density-recheck/README.md` §1.2–§1.3.
+- **Rejected wording**: "not enough whitespace" or "too crowded" — no threshold, no instrument, and a second person cannot recompute it; it must not be registered.
+
+**Reading method**
+
+- Fix the viewport at 1920×1080 / 1366×768 / 2560×1440 and run `node internal/A03-xihe/evidence/2026-11-19-ui-density-recheck/probe-density.mjs`; readings land in `readings.json` (`bandsAbove` plus the composer row detail) and screenshots in `shots/`.
+- The stored reading date is **2026-11-19**. This card (2026-11-22) did not start a stack to re-run it; any report must state that date and, per §16.4, check `lease` and `HEAD` before deciding whether to re-run.
+
+### 18.2 Layout: page-level horizontal overflow and unclipped out-of-viewport elements are both 0
+
+**Criterion**
+
+- **Page-level horizontal overflow = 0**: `document.documentElement.scrollWidth ≤ window.innerWidth` and `scrollWidth ≤ document.documentElement.clientWidth` (both must hold, so a classic vertical scrollbar eating `clientWidth` cannot produce a false green).
+- **Unclipped out-of-viewport elements = 0**: `position: fixed` elements do not grow `scrollWidth`, so the first test alone would miss them; the criterion is the count of out-of-viewport elements with no clipping ancestor.
+- **Settings content column**: `mx-auto w-full max-w-6xl px-6` (1152px + 24px padding), with no local literal width (such as `max-w-[920px]`) and no annotation line computed from 920/960/1010.
+
+**Counter-example**
+
+- `fixture-a-unclipped`: `docW=2000 > winW=1280` with 1 unclipped element ⇒ must be RED; `fixture-d-shiki-plus-unclipped` must stay RED even when a code block is present (the exception is not a blanket pass).
+- Judging the inner long lines of `PRE.shiki` as page overflow ⇒ false red; horizontal scrolling inside a code block is standard interaction, see the §11 F exception channel.
+- Using `max-w-[920px]` as the settings content width ⇒ red; the four settings containers in the current tree all use `max-w-6xl` (`SettingsLayout.vue:267`, `ConfigSettings.vue:131/134`, `SettingsLayerHeader.vue:81`, `WorkspaceSettingsView.vue:340/353`).
+
+**Reading method**
+
+- Fixture self-check: `node internal/A03-xihe/scripts/check-ui-overflow.mjs --fixtures`. Measured 2026-11-22: 4 fixtures, **RED 2 / GREEN 2** (a and d red; b and c green); the probe prints `docW`/`winW`/`clientW`, the nearest clipping-ancestor groups and the unclipped count per fixture.
+- Per-face real-stack counting: point the same probe at the real page and treat only "unclipped out-of-viewport elements" as defect candidates; keep `docW`/`winW` in the reading so page overflow cannot be confused with intentional clipping.
+
+### 18.3 Discoverability: the default layer needs an actionable exit, and migrated entries must fall back to a usable layer
+
+**Criterion**
+
+- **Default layer has ≥ 1 actionable exit**: for every resource face, the default layer renders at least one actionable control inside `main` (`button` / `a[href]` / `input` / `select` / `textarea`). A default layer that shows only explanatory text while the real panel sits behind a tab is red.
+- **A migrated or removed entry still falls back to a usable layer**: after a layer moves elsewhere, a deep link must fall back silently to a layer that **has actionable controls**, and the retired pointer nodes must reverse-look-up to 0 (`workspace-layer-moved` and its action both absent). "Entry gone + blank page" is red.
+- **The part that is not machine-checkable today**: there is no general probe for "the feature exists but the user cannot find it". Two things are missing: (1) a per-face `data-testid="<feature>-entry"` naming convention; (2) a map from conditionally hidden controls to their persistent entries. **This item is not measurable and needs testids from the product side.** Until then it is review-only, and every review record must name the persistent entry testid for each `v-if`-hidden action, or record "no entry".
+
+**Counter-example**
+
+- Measured 2026-11-19: `/resources/skills` rendered only the 66-character "moved to workspace settings" notice in its default state, with the real panel behind a tab (§14.3) ⇒ 0 actionable exits in the default layer, red. That shape was removed by `task-145`; it stays here as a counter-example, not as a current defect.
+- A deep-link fallback layer that is blank or is another notice card ⇒ red; a `workspace-layer-moved` node that reappears without a clickable action ⇒ red (the existing spec reverse-looks-up 0).
+- **Rejected wording**: "users should be able to find it" or "the entry is not obvious enough" — not judgeable, must not be registered.
+
+**Reading method**
+
+- Component level: `pnpm exec vitest run src/views/resources/__tests__/SkillsResourceView.spec.ts` (cwd `packages/ui`). Measured 2026-11-22: **6 passed**; `SkillsResourceView.spec.ts:55` pins "`?layer=WORKSPACE` ⇒ falls back to USER, retired nodes reverse-look-up 0", and `:63` pins that the default USER layer renders `PersonalSkillsPanel`.
+- Live: at 1920×1080, use the `data-testid` inventory in `2026-11-19-ui-density-recheck/discover-1920.json` to check each face's default-layer actionable-control count; that dump covers only one chat face and is **not a site-wide reading**, so full coverage still needs a probe.
+
+### 18.4 Focus consistency: exactly one indicator per focus target
+
+**Criterion**
+
+- **Only one base focus treatment globally**: the `*:focus-visible` rule with `outline: 2px solid var(--ring)` must stay inside `@layer base` (`main.css:253`); moving it out turns `focus:outline-none` into a dud and is red.
+- **A container that focuses on behalf of a child must not draw two edges**: any open tag whose class list contains `:focus-visible]:ring` must also carry `:focus-visible]:border-ring`, or an explicit `border-0` (with the resting edge drawn by `ring-1 ring-border`). Missing both ⇒ the permanent border and the focus ring are both drawn, red.
+- **Vendor input family and separators keep their own rings**: vendor `Input`/`Textarea` must contain `focus-visible:ring-3` and `focus-visible:ring-ring/50`; both separators must contain `focus-visible:ring-2 focus-visible:ring-ring/50`, otherwise they lose their only indicator after the layer move.
+
+**Counter-example**
+
+- The pre-fix shape from 2026-11-19 (before `59b14f25b`): the base rule sat outside the layer, so vendor inputs relied on an outline that utility classes could override; after the move, failing to add their own ring is red. Evidence: `internal/A03-xihe/evidence/2026-11-19-ui-focus-token-specs/README.md` §4.
+- One container with a permanent `border` and `:focus-visible]:ring` but no `border-ring`/`border-0` ⇒ double edge, red.
+- Using `:focus` instead of `:focus-visible`, or replacing the focus ring with a colour change ⇒ red (§13.3 already registers "exactly one focus indicator").
+
+**Reading method**
+
+- Static structural gate: `pnpm exec vitest run src/styles/__tests__/focusRingLayer.spec.ts` (cwd `packages/ui`). Measured 2026-11-22: **6 passed**, covering base-layer membership, vendor-input rings, separator rings and B1 "focus ring and permanent border must not both be drawn".
+- The allowed exception is explicit in the spec: the composer container `InputArea.vue:2176` uses `border-0` plus `ring-1 ring-border`, and focusing only deepens `ring-2` without adding a second border; `RecipientField.vue:217` and vendor `InputGroup.vue:16` use the compliant `border-ring` shape.
+- Live counterpart: item ④ in `packages/ui/e2e/real/ui-baseline.spec.ts` asserts `borderWidthPx === 0` for the focused element (`ui-baseline.spec.ts:1324`), so the static gate and the real-stack check constrain each other.

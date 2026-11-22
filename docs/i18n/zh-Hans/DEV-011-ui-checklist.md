@@ -5,7 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-11-21
+updated: 2026-11-22
 status: active
 ---
 
@@ -19,12 +19,12 @@ status: active
 
 ## 0.1 清单总览（两列分域）
 
-<svg viewBox="0 0 660 300" width="100%" role="img" aria-labelledby="dev011-overview">
-  <title id="dev011-overview">DEV-011 清单总览：§1–§9 逐项核对，§10–§17 判据族</title>
-  <rect x="16" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
-  <rect x="332" y="16" width="312" height="252" fill="#f9fafb" stroke="#d1d5db"/>
+<svg viewBox="0 0 660 308" width="100%" role="img" aria-labelledby="dev011-overview">
+  <title id="dev011-overview">DEV-011 清单总览：§1–§9 逐项核对，§10–§18 判据族</title>
+  <rect x="16" y="16" width="312" height="276" fill="#f9fafb" stroke="#d1d5db"/>
+  <rect x="332" y="16" width="312" height="276" fill="#f9fafb" stroke="#d1d5db"/>
   <text x="32" y="42" font-size="12" fill="#374151">逐项核对 §1–§9</text>
-  <text x="348" y="42" font-size="12" fill="#374151">判据族 §10–§17</text>
+  <text x="348" y="42" font-size="12" fill="#374151">判据族 §10–§18</text>
   <rect x="336" y="50" width="304" height="22" fill="#eef2ff"/>
   <text x="32" y="68" font-size="12" fill="#374151">§1　页面渲染</text>
   <text x="32" y="90" font-size="12" fill="#374151">§2　图标渲染</text>
@@ -44,9 +44,11 @@ status: active
   <text x="348" y="180" font-size="12" fill="#374151">§14　文案禁审查者形态</text>
   <text x="348" y="208" font-size="12" fill="#374151">§15　main 地标</text>
   <text x="348" y="236" font-size="12" fill="#374151">§16　地标嵌套与唯一</text>
+  <text x="348" y="264" font-size="12" fill="#374151">§17　表单设计</text>
+  <text x="348" y="288" font-size="12" fill="#374151">§18　四维判据</text>
 </svg>
 
-> 图注：左列 §1–§9 为逐项勾选清单（页面渲染 → E2E 截图基准），右列 §10–§17 为门可判的判据族。两条阶梯只在右列：§10 用 L0–L4（层级阶梯），§12 用 M0–M3（动效预算，与 §10 并排读，见 §12.2）。锚点即各节 H2 标题。
+> 图注：左列 §1–§9 为逐项勾选清单（页面渲染 → E2E 截图基准），右列 §10–§18 为门可判的判据族。两条阶梯只在右列：§10 用 L0–L4（层级阶梯），§12 用 M0–M3（动效预算，与 §10 并排读，见 §12.2）。锚点即各节 H2 标题。
 
 ## 1. 页面渲染
 
@@ -1008,3 +1010,83 @@ grep -ro 'ease-\[[^]]*\]'     --include=*.vue --include=*.css . | wc -l   # 基�
 > 门草案的判据正文、正反自测与误报边界见 `internal/A03-xihe/evidence/2026-11-21-form-contract-gate/README.md`；本节只登记「哪条归谁、今天谁在跑」。静态门落地前，未落地的条目按评审清单人工执行，评审记录里要写出命中的规则编号。
 
 > 执行者列的读数口径（2026-11-21 04:1x 实测）：门 = `internal/A03-xihe/scripts/check-form-contract.mjs`，report-only，执行者 `one/mise.toml` 的 `check:form-contract`，未进提交路径；`--selftest` 42/42 全过；整树 602 个文件 = 违规 26 / 债 36 / `NOT_STATIC` 2。`F6` 的条数会随并发批次改动的被扫文件浮动（rule-1 交卡 违规 27 / `F6` 24 → 本卡复跑 违规 26 / `F6` 23，差的 1 条在长度族，不是判据漂移）。**报 0 的 `F7` 不等于仓库干净**，它是判据形状没命中，本表已按此措辞。
+
+## 18. P-3 四维判据（信息密度 / 布局 / 可发现性 / 焦点一致性；`task-736` 入册，2026-11-22）
+
+> 背景：MVP 验收缺口 P-3 记录「信息密度 / 布局 / 可发现性 / 焦点一致性四个维度从未入册」；产品侧已修过两处（`e721fb469` 域页层阻断提示条换 vendor Alert、`59b14f25b` 焦点轮廓搬进 base 层并补环），但判据侧只有 §16 四条地标判据，修了也无法判定是否回归。本节把四维写成**每条三段**：判据（可度量）→ 反例（什么必须判红）→ 读数方式（testid / 命令 / 视口）。阈值一律沿用已入册的存量口径，不新造数字；存量读数标注测量日期，复跑前不得当成当前 `HEAD` 的读数。
+
+### 18.1 信息密度：顶带与 composer 占视口都有上限
+
+**判据**
+
+- **顶带**：1920×1080 的会话面，`[data-testid="message-scroller-viewport"]` 的 `getBoundingClientRect().y` **≤ 104px**，且其上带层 **≤ 3 条**（带宽 ≥50% 视口且高 ≥20px 才算一条）。阈值沿用 `2026-11-19-ui-density-recheck` 的 F-1，不在这里改数。
+- **composer**：composer 高 / 视口高 **≤ 15%**（1920、2560）或 **≤ 22%**（1366），可见行 **≤ 3 行**。阈值沿用同一证据的 F-2。
+- 两条同时成立才算绿；任一超限即判红，不许用「整体看起来不挤」替代。
+
+**反例**
+
+- 2026-11-19 实测同一会话面：内容区起点 **y=157**（14.5%）、其上 **5 条带 / 157px** ⇒ 顶带判红；composer **174.4px**，占 1920 的 **16.1%**、1366 的 **22.7%** ⇒ composer 判红（2560 的 12.1% 是唯一通过档）。读数与逐带明细见 `internal/A03-xihe/evidence/2026-11-19-ui-density-recheck/README.md` §1.2–§1.3。
+- **被否决的写法**：「留白不够」「信息太挤」——没有阈值、没有量具，第二人无法复算，不得入册。
+
+**读数方式**
+
+- 视口固定 1920×1080 / 1366×768 / 2560×1440，跑 `node internal/A03-xihe/evidence/2026-11-19-ui-density-recheck/probe-density.mjs`；读数落在同目录 `readings.json` 的 `bandsAbove` 与 composer 行明细，截图在 `shots/`。
+- 存量读数日期 = **2026-11-19**。本卡（2026-11-22）未起栈复跑；报告引用时必须写明该日期，并先按 §16.4 校验 `lease` 与 `HEAD` 再由读者决定是否重跑。
+
+### 18.2 布局：页面级横向溢出与无裁剪出界元素都为 0
+
+**判据**
+
+- **页面级横向溢出 = 0**：`document.documentElement.scrollWidth ≤ window.innerWidth`，且 `scrollWidth ≤ document.documentElement.clientWidth`（两式同时成立，避免纵向滚动条吃掉 `clientWidth` 的假绿）。
+- **无裁剪祖先的出视口元素 = 0**：`position: fixed` 一类不撑 `scrollWidth`，只用第一式会漏；判据是「最近裁剪祖先为空的出视口元素数」。
+- **设置区内容列**：`mx-auto w-full max-w-6xl px-6`（1152px + 24px 内边距），不得出现局部字面量宽度（如 `max-w-[920px]`）或按 920/960/1010 自算的注记线。
+
+**反例**
+
+- `fixture-a-unclipped`：`docW=2000 > winW=1280`、无裁剪祖先 1 个 ⇒ 必须 RED；`fixture-d-shiki-plus-unclipped` 在代码块在场时仍必须 RED（例外不是免死金牌）。
+- 把 `PRE.shiki` 内层长行判成页面溢出 ⇒ 假红；代码块横向滚动是标准交互，见 §11 F 维例外通道。
+- 设置区用 `max-w-[920px]` 当内容宽 ⇒ 判红；现树四处设置区容器均为 `max-w-6xl`（`SettingsLayout.vue:267`、`ConfigSettings.vue:131/134`、`SettingsLayerHeader.vue:81`、`WorkspaceSettingsView.vue:340/353`）。
+
+**读数方式**
+
+- 夹具自检：`node internal/A03-xihe/scripts/check-ui-overflow.mjs --fixtures`。2026-11-22 实测 4 份夹具 **RED 2 / GREEN 2**（a、d 红；b、c 绿），探针逐条打印 `docW`/`winW`/`clientW`、最近裁剪祖先分组与无裁剪元素数。
+- 真栈按面计数：同一探针指向真实页面，只把「无裁剪祖先的出视口元素数」当缺陷候选；读数必须同时保留 `docW`/`winW`，否则无法区分页面溢出与设计性裁剪。
+
+### 18.3 可发现性：默认层必须有可操作出口，迁移入口必须可回落
+
+**判据**
+
+- **默认层可操作出口 ≥ 1**：每个资源面的默认层，`main` 内至少渲染 1 个可操作控件（`button` / `a[href]` / `input` / `select` / `textarea`）。默认层只剩说明文字、真正面板藏在页签后，即判红。
+- **迁移/移除入口的回落目标仍可用**：某层被搬到别处后，深链必须静默回落到**带可操作控件**的层，且退役指路节点反查为 0（`workspace-layer-moved` 与其 action 都不存在）。「入口消失 + 空白页」判红。
+- **暂不可机判的部分**：「功能存在但用户找不到」的通用检测还没有探针 —— 缺两样东西：① 每面统一的 `data-testid="<feature>-entry"` 命名约定；② 条件隐藏控件与常驻入口的映射表。**此项不可度量，需产品侧补 testid**；补齐前只做评审，评审记录必须写出每个 `v-if` 隐藏动作的常驻入口 testid 或「无入口」结论。
+
+**反例**
+
+- 2026-11-19 实测 `/resources/skills` 默认态只渲染 66 字符的「已迁到工作区设置」提示、真正面板在页签之后（§14.3）⇒ 默认层可操作出口 0，判红。该形态已由 `task-145` 改掉，留作反例而非当前缺陷。
+- 深链回落层是空白或又一张提示卡 ⇒ 判红；`workspace-layer-moved` 节点重新出现却没有可点 action ⇒ 判红（现有 spec 会反查为 0）。
+- **被否决的写法**：「用户应该能找到」「入口不够明显」——不可判定，不得入册。
+
+**读数方式**
+
+- 组件级：`pnpm exec vitest run src/views/resources/__tests__/SkillsResourceView.spec.ts`（cwd `packages/ui`）。2026-11-22 实测 **6 passed**，其中 `SkillsResourceView.spec.ts:55` 钉住「`?layer=WORKSPACE` ⇒ 回落 USER、退役节点反查 0」，`:63` 钉住默认层 USER 渲染 `PersonalSkillsPanel`。
+- 真机：1920×1080 用 `2026-11-19-ui-density-recheck/discover-1920.json` 的 `data-testid` 清单核对每面默认层的可操作控件数；该 dump 只覆盖一个会话面，**不是全站读数**，全站覆盖需补探针。
+
+### 18.4 焦点一致性：每个焦点目标恰好一条指示
+
+**判据**
+
+- **全局只有一套 base 焦点**：`*:focus-visible` 的 `outline: 2px solid var(--ring)` 必须在 `@layer base` 内（`main.css:253`）；移出层会让 `focus:outline-none` 变哑弹，判红。
+- **容器代聚焦不叠两条边**：凡类名出现 `:focus-visible]:ring` 的同一开标签，必须有 `:focus-visible]:border-ring`，或显式 `border-0`（静止边由 `ring-1 ring-border` 画）。两者都没有 ⇒ 常驻 border 与焦点环同时画，判红。
+- **vendor 输入族与分隔条保留自有环**：vendor `Input`/`Textarea` 必须有 `focus-visible:ring-3` 与 `focus-visible:ring-ring/50`；两个分隔条必须有 `focus-visible:ring-2 focus-visible:ring-ring/50`，否则搬层后它们失去唯一指示。
+
+**反例**
+
+- 2026-11-19 修前形态（`59b14f25b` 之前）：base 规则在层外，vendor 输入族靠一条会被 utility 压掉的 outline 撑焦点；搬层后不补环即判红。证据见 `internal/A03-xihe/evidence/2026-11-19-ui-focus-token-specs/README.md` §4。
+- 同一容器同时有常驻 `border` 与 `:focus-visible]:ring` 而没有 `border-ring`/`border-0` ⇒ 双层边，判红。
+- 用 `:focus` 代替 `:focus-visible`、或用颜色变化代替焦点环 ⇒ 判红（§13.3 已登记「焦点指示只许一套」）。
+
+**读数方式**
+
+- 静态结构门：`pnpm exec vitest run src/styles/__tests__/focusRingLayer.spec.ts`（cwd `packages/ui`）。2026-11-22 实测 **6 passed**，覆盖 base 层归属、vendor 输入族补环、分隔条补环与 B1「环与常驻 border 不得同画」。
+- 允许的例外由 spec 明确放行：composer 容器 `InputArea.vue:2176` 用 `border-0` + `ring-1 ring-border`，聚焦时只把 `ring-2` 加深，不叠第二条 border；`RecipientField.vue:217` 与 vendor `InputGroup.vue:16` 走 `border-ring` 合规形态。
+- 真机对照：`packages/ui/e2e/real/ui-baseline.spec.ts` 的 ④ 断言聚焦后的 `borderWidthPx === 0`（`ui-baseline.spec.ts:1324`），与静态门互相约束。
