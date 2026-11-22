@@ -19,6 +19,7 @@ import EmbeddingSettingsPanel from "./EmbeddingSettingsPanel.vue";
 import { isEmbeddingWriteLayer } from "../../services/embeddingProfile";
 import ProviderHub from "./ProviderHub.vue";
 import { logger } from "../../lib/logger";
+import { causeErrorToastText } from "../../lib/errorMessages";
 import { getProviderInfo } from "../../types/provider";
 import type { ProviderDefinition } from "../../types/providerConnection";
 import { listProviderCatalog } from "../../services/providerConnectionService";
@@ -882,8 +883,10 @@ async function handleSave(domain: string, body: Record<string, string>) {
             toast.success(`${domainLabel(domain)} ${t("common.saved")}`);
         }
     } catch (e) {
+        // task-755：英文 detail 只进诊断日志，用户面走本地化文案 + 错误码。
+        logger.warn("Failed to save config layer", e);
         if (!panelOwnsFeedback) {
-            toast.error(e instanceof Error ? e.message : `${t("settings.saveFailed")} ${domain}`);
+            toast.error(causeErrorToastText(t, e, `${t("settings.saveFailed")} ${domain}`));
         }
         if (panelOwnsFeedback) throw e;
     } finally {
@@ -932,7 +935,8 @@ async function handleReset(domain: string, key: string) {
         await reloadLayer();
         toast.success(`${key} ${t("common.reset")}`);
     } catch (e) {
-        toast.error(e instanceof Error ? e.message : t("settings.saveFailed"));
+        logger.warn("Failed to reset config key", e);
+        toast.error(causeErrorToastText(t, e, t("settings.saveFailed")));
     }
 }
 </script>

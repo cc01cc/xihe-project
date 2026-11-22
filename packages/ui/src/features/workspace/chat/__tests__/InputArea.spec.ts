@@ -327,8 +327,8 @@ describe("InputArea", () => {
         }
     });
 });
-describe("BL-288 Problem detail for /export", () => {
-    it("shows the 413 EXPORT_TOO_LARGE detail instead of the generic command copy", async () => {
+describe("错误面本地化 for /export（task-755，替代 BL-288 detail 直显）", () => {
+    it("413 EXPORT_TOO_LARGE：中文主文案 + 错误码，英文 detail 不原样出现", async () => {
         vi.mocked(toast.error).mockClear();
         const store = useChatStore();
         vi.spyOn(store, "getSelectedBranchId").mockReturnValue("branch-1");
@@ -345,7 +345,9 @@ describe("BL-288 Problem detail for /export", () => {
         await textarea.setValue("/export");
         await textarea.trigger("keydown", { key: "Enter", shiftKey: false, isComposing: false });
         await flushPromises();
-        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("20001"));
+        const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
+        expect(calls.some((message) => message.includes("（EXPORT_TOO_LARGE）"))).toBe(true);
+        expect(calls.join("\n")).not.toContain("20001");
         vi.restoreAllMocks();
     });
 });

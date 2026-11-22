@@ -1377,8 +1377,8 @@ describe("ChatPanel first-screen message history (task-158)", () => {
     });
 });
 
-describe("Problem detail surfacing (BL-288)", () => {
-    it("shows the 413 PAGINATION_REQUIRED detail instead of the generic load copy", async () => {
+describe("错误面本地化（task-755，替代 BL-288 的 detail 直显）", () => {
+    it("413 PAGINATION_REQUIRED：本地化文案 + 错误码，英文 detail 不原样出现", async () => {
         vi.mocked(toast.error).mockClear();
         vi.mocked(api.getMessages).mockRejectedValueOnce(
             new ApiError({
@@ -1391,10 +1391,13 @@ describe("Problem detail surfacing (BL-288)", () => {
         mountPanel();
         await flushPromises();
         await nextTick();
-        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("20001"));
+        const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
+        expect(calls.some((message) => message.includes("（PAGINATION_REQUIRED）"))).toBe(true);
+        expect(calls.some((message) => message.includes("加载消息失败"))).toBe(true);
+        expect(calls.join("\n")).not.toContain("20001");
     });
 
-    it("falls back to the localized generic copy when the Problem has no detail", async () => {
+    it("无 detail 时仍给中文主文案与错误码，不走英文兜底", async () => {
         vi.mocked(toast.error).mockClear();
         vi.mocked(api.getMessages).mockRejectedValueOnce(
             new ApiError({
@@ -1407,9 +1410,9 @@ describe("Problem detail surfacing (BL-288)", () => {
         await flushPromises();
         await nextTick();
         const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
-        expect(calls.some((message) => /加载消息失败|Failed to load messages/.test(message))).toBe(
-            true,
-        );
+        expect(calls.some((message) => message.includes("加载消息失败"))).toBe(true);
+        expect(calls.some((message) => message.includes("（PAGINATION_REQUIRED）"))).toBe(true);
+        expect(calls.join("\n")).not.toContain("Failed to load messages");
     });
 });
 

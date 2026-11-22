@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../i18n";
 import {
+    causeErrorToastText,
     chatErrorToastText,
     errorCopyKey,
     humanizeErrorCode,
@@ -14,6 +15,51 @@ import {
     toolRefusalCopyKey,
     toolRefusalHintKey,
 } from "../errorMessages";
+
+/**
+ * task-755：toast 面统一入口。三条判据必须同时成立：
+ * ① copy 是本地化文案（不是 CP 英文 detail）；② 稳定码以 `（CODE）` 附在尾部；
+ * ③ 未知码不能把用户指去一个 toast 里不存在的「技术详情」，改用本面 fallback。
+ */
+describe("causeErrorToastText（task-755 错误面本地化）", () => {
+    const t = (key: string) => i18n.global.t(key);
+    const problem = (code: string, detail?: string) => ({
+        problem: { code, detail, status: 500, requestId: "req-755" },
+    });
+
+    it("已知码：本地化映射 + 稳定码，英文 detail 不出现", () => {
+        const text = causeErrorToastText(
+            t,
+            problem("FORBIDDEN", "Access denied by policy engine"),
+            t("chat.loadMessagesFailed"),
+        );
+        expect(text).toContain("没有权限执行该操作");
+        expect(text).toContain("（FORBIDDEN）");
+        expect(text).not.toContain("Access denied by policy engine");
+    });
+
+    it("未知码：用本面 fallback + 码，不让用户去展开不存在的技术详情", () => {
+        const text = causeErrorToastText(
+            t,
+            problem("SOMETHING_NEW", "backend exploded at line 42"),
+            t("chat.loadOlderFailed"),
+        );
+        expect(text).toContain(t("chat.loadOlderFailed"));
+        expect(text).toContain("（SOMETHING_NEW）");
+        expect(text).not.toContain(t("errors.unknownCode"));
+        expect(text).not.toContain("backend exploded at line 42");
+    });
+
+    it("普通 Error：只给本面 fallback，不附码、不透传英文 message", () => {
+        const text = causeErrorToastText(
+            t,
+            new Error("Backend exploded: permission denied"),
+            t("chat.commands.failed"),
+        );
+        expect(text).toBe(t("chat.commands.failed"));
+        expect(text).not.toContain("Backend exploded");
+    });
+});
 
 /**
  * PLAN-0750 V10 (A1-lite)：toast 通道只给少数码开 i18n key，其余一律 null 走旧路径。

@@ -12,7 +12,7 @@ import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
 import { toast } from "vue-sonner";
-import { problemDetailText } from "../../../../lib/errorMessages";
+import { causeErrorToastText } from "../../../../lib/errorMessages";
 import { Send, Square, LoaderCircle, CornerUpRight, Plus, Info } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
 import FileUpload from "../../../../components/multimodal/FileUpload.vue";
@@ -1332,8 +1332,8 @@ async function downloadSessionExport(): Promise<void> {
         anchor.remove();
     } catch (error) {
         logCommandFailure({ command: "/export", sessionId: props.sessionId }, error);
-        // BL-288：413 EXPORT_TOO_LARGE 的 detail 带实际条数/上限/建议，优先展示它。
-        toast.error(problemDetailText(error, t("chat.commands.failed")));
+        // task-755：本地化文案 + 稳定错误码；英文 detail 只留在 logCommandFailure 的诊断记录里。
+        toast.error(causeErrorToastText(t, error, t("chat.commands.failed")));
     } finally {
         // The click has already handed the blob to the browser; a leaked object URL would pin the
         // whole session export in memory.

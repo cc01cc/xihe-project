@@ -251,6 +251,25 @@ export function presentCauseError(
     return presentError(t, { code: problem?.code, detail: problem?.detail, fallback });
 }
 
+/**
+ * task-755：toast 面**唯一**取文案方式。
+ *
+ * toast 是瞬时面、没有折叠区，所以：
+ * - `copy` 必须是本地化文案；未知码改用调用方的本面文案（不是 `errors.unknownCode` ——
+ *   那句会让用户去展开一个 toast 里不存在的「技术详情」）；
+ * - 稳定错误码以 `（CODE）` 形式附在文案尾部，供用户报给管理员；
+ * - 后端英文 `detail` **不进入 toast**，只留给调用方的 `logger` 诊断记录。
+ */
+export function causeErrorToastText(
+    t: (key: string) => string,
+    cause: unknown,
+    fallback: string,
+): string {
+    const presentation = presentCauseError(t, cause, fallback);
+    const copy = presentation.copy === t("errors.unknownCode") ? fallback : presentation.copy;
+    return presentation.code ? `${copy}（${presentation.code}）` : copy;
+}
+
 export function chatErrorToastText(code: string | undefined, detail?: string | null): string {
     const mapped = humanizeErrorCode(code, detail);
     // When we have a dedicated mapping without embedding raw detail, still show code for support.

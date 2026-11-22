@@ -55,8 +55,8 @@ import ProviderBindingGuideDialog from "./ProviderBindingGuideDialog.vue";
 import {
     chatErrorToastText,
     errorCopyKey,
+    causeErrorToastText,
     presentCauseError,
-    problemDetailText,
     type ErrorPresentation,
 } from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
@@ -658,8 +658,8 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
         logger.error("Failed to load session messages", cause);
-        // BL-288：413 PAGINATION_REQUIRED 的 detail 带条数/上限/建议，不能再静默吞掉。
-        toast.error(problemDetailText(cause, t("chat.loadMessagesFailed")));
+        // task-755：本地化文案 + 稳定错误码；英文 detail 只留在上面的 logger.error。
+        toast.error(causeErrorToastText(t, cause, t("chat.loadMessagesFailed")));
     } finally {
         // 只清自己那一次的键：更晚的加载已经改写键时不能误清，否则又放行一次重复请求。
         if (loadKey !== null && inFlightMessageLoadKey === loadKey) inFlightMessageLoadKey = null;
@@ -709,7 +709,7 @@ async function loadOlderMessages(): Promise<void> {
         if (!hasOlderMessages.value) olderExhausted.value = true;
     } catch (cause) {
         logger.error("Failed to load older messages", cause);
-        toast.error(problemDetailText(cause, t("chat.loadOlderFailed")));
+        toast.error(causeErrorToastText(t, cause, t("chat.loadOlderFailed")));
     } finally {
         loadingOlder.value = false;
     }
