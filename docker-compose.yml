@@ -31,7 +31,10 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U xihe -d xihe"]
+      # 库名/用户必须跟随本 compose 的 environment（默认 POSTGRES_DB=xihe_1），
+      # 否则 e2e 覆盖 POSTGRES_DB 后 healthcheck 会每 5s 连一个不存在的 "xihe"，
+      # 刷 FATAL 日志（pg_isready 仍判 healthy，掩盖真实噪声）。
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xihe} -d ${POSTGRES_DB:-xihe_1}"]
       interval: 5s
       timeout: 3s
       retries: 5
