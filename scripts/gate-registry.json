@@ -249,8 +249,8 @@
    "kind": "gate-scripts",
    "gates": [],
    "owner": "A03-xihe",
-   "discoveredCount": 45,
-   "note": "A03 主门集合（45 个门型脚本，含聚合器 lint-run/validate-run）"
+   "discoveredCount": 47,
+   "note": "A03 主门集合（47 个门型脚本，含聚合器 lint-run/validate-run 与 task-710 新增 check-swallowed-error.mjs）。Lead 2026-11-22 用本仓 check-gate-registry.mjs 的 discoverGateScriptDirs 实数复核为 47；此前写的 45 比当时实数少 1（02:17 check-e2e-timeouts.mjs / 02:58 check-i18n-fixture-copies.mjs 之一未被计入）⇒ 本字段是手写数、无人校验，已另立卡把「discoveredCount 漂移」做成门（与 write_scopes/blocked_by 同族）。"
   },
   {
    "root": "A05-LingYiJu/packages/blog/scripts",

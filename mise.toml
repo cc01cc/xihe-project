@@ -1214,3 +1214,13 @@ description = "Locale-switch single-entry gate (task-158; wired by task-706): pa
 run = "node ../internal/A03-xihe/scripts/check-agent-import-boundary.mjs"
 description = "Agent import-boundary gate (task-700; wired by task-706): (1) api/** and interfaces/** must not import langchain*/langgraph* (including importlib strings and TYPE_CHECKING) — blocking; (2) registry/** and agent/supervisor.py must not reach other modules' underscore-private symbols — blocking; (3) LLM code literals live only in llm/error_classification.py, ratchet against config/agent-llm-code-literals-baseline.json (decrease only) — blocking above baseline. Uses Python ast only (no text matching). Exit 0 clean / 1 violation or ratchet breach / 2 structural failure (no interpreter, missing package dir, ast parse failure, bad baseline) — unknown is not safe. Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 task-706): files=112 c1=0 c2=0 c3=62/baseline=62 findings=0 => exit 0."
 
+# ── task-710 吞 Error 门：CP 刚从 OOM 事故迁出，catch(Throwable) 会吞 Error 让 JVM 带病运行 ──
+# 门本体在 A03 本仓 `scripts/`（不是 one 侧 internal），所以 run 行不用 ../。
+# 姿态 = report-only（与上三张同批同族）；是否进 lint 聚合由 Lead 另批。
+# 接线时点 = task-710 已入库 ee4393dea；基线 config/swallowed-error-baseline.json 必须与门同仓同批，
+# 否则 E_NO_BASELINE 会 exit 2（unknown 不当安全，这正是设计意图）。
+
+[tasks."check:swallowed-error"]
+run = "node scripts/check-swallowed-error.mjs"
+description = "Swallowed-Error gate (task-710; wired by Lead 2026-11-22): production sources only (Java/Python/TS-JS-Vue + Rust listed as blind spot) must not swallow Throwable/Error — Java catch(Throwable|Error|java.lang.Throwable) incl. multi-catch, Python bare except / except BaseException, TS/JS/Vue empty catch {}. Background: catch(Throwable) swallows OutOfMemoryError and lets the JVM keep serving; this project just migrated off a DSH OOM crash, so the rule is gated rather than remembered. Exemptions: grandfather baseline by (file, rule, count) in A03-xihe/config/swallowed-error-baseline.json — decrease only — plus same-line '// OK: <reason>' (Python '# OK:'). Exit 0 clean / 1 violation or above baseline / 2 structural (no git tree, missing/bad baseline, unknown rule, missing scan root) — unknown is not safe. Report-only: standalone executor, not in the lint aggregate and not part of validate. Current reading (2026-11-22 Lead): files=1655 hits=34 baseline=34 over=0 => exit 0."
+
