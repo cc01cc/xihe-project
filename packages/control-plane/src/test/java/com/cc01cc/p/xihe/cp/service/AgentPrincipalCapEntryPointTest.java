@@ -143,7 +143,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
         binding.setPermissionsSnapshot(objectMapper.readTree("[{\"actionClass\":\"exec\"}]"));
         bindingRepository.saveAndFlush(binding);
 
-        assertEquals("exec", agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId())
+        assertEquals("action:exec", agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId())
                 .path(0).path("actionClass").asText(), "a cached cap would still read 'read'");
     }
 
