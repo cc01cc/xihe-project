@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle } from "@lucide/vue";
@@ -64,6 +64,10 @@ const addUsername = ref(""),
     addRole = ref<MemberAssignableRole>("EDITOR"),
     adding = ref(false),
     addError = ref("");
+
+// task-793：角色 combobox 的稳定名称来自**可见的表单标题**，不是当前选中值
+//（否则 VIEWER→EDITOR 改写就会让 a11y 名称快照漂移）。useId 避免同页多实例撞 id。
+const addRoleLabelId = `ws-members-add-role-label-${useId()}`;
 
 /**
  * 2026-11-04 用户裁定（v23 + v29）：工作区成员邀请按 username 寻址，字符规则与注册/主体名同一条
@@ -402,7 +406,9 @@ onMounted(() => {
             :class="{ hidden: props.readonly === true }"
             data-testid="ws-members-add"
         >
-            <div class="text-sm font-medium">{{ t("workspace.membersAddTitle") }}</div>
+            <div :id="addRoleLabelId" class="text-sm font-medium">
+                {{ t("workspace.membersAddTitle") }}
+            </div>
             <div class="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <Input
                     v-model="addUsername"
@@ -416,6 +422,7 @@ onMounted(() => {
                     <SelectTrigger
                         class="text-sm border rounded px-2 py-1 bg-background disabled:opacity-50"
                         data-testid="ws-members-add-role"
+                        :aria-labelledby="addRoleLabelId"
                     >
                         <SelectValue />
                     </SelectTrigger>

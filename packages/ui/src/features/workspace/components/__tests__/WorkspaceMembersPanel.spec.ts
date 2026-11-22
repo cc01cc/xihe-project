@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
-import { setSelectValueAt } from "../../../../test-utils/select";
+import { setSelectValue, setSelectValueAt } from "../../../../test-utils/select";
 import { i18n } from "../../../../i18n";
 import { expectModalDialog } from "../../../../test-utils/modalDialog";
 
@@ -175,6 +175,25 @@ describe("WorkspaceMembersPanel", () => {
             role: "EDITOR",
         });
         expect(apiMock.listWorkspaceMembers).toHaveBeenCalledTimes(2);
+    });
+
+    it("add-role combobox 有稳定可访问名称，且不随选中值漂移", async () => {
+        // task-793：AX 首行曾为 `- combobox: 可编辑`（值当名字）；名字必须来自可见标题。
+        // jsdom 没有 testing-library，这里按 aria-labelledby 解析出等价的可访问名称。
+        const wrapper = await mountPanel();
+        const trigger = wrapper.get('[data-testid="ws-members-add-role"]');
+        expect(trigger.attributes("role")).toBe("combobox");
+
+        const labelId = trigger.attributes("aria-labelledby");
+        expect(labelId, "combobox 必须有 aria-labelledby").toBeTruthy();
+        const label = wrapper.get(`#${labelId}`);
+        expect(label.text()).toBe(i18n.global.t("workspace.membersAddTitle"));
+        expect(label.text()).not.toBe("可编辑");
+        expect(label.text()).not.toBe("只读");
+
+        const before = label.text();
+        await setSelectValue(wrapper, '[data-testid="ws-members-add-role"]', "VIEWER");
+        expect(wrapper.get(`#${labelId}`).text()).toBe(before);
     });
 
     it("blocks a username outside the shared name rule before any request (v29)", async () => {
