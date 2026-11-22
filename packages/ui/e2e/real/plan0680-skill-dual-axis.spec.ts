@@ -37,7 +37,7 @@ import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { CP_URL } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
-import { ensureWorkspace } from "./helpers/workspace";
+import { createDirectAttachWorkspace, ensureWorkspace } from "./helpers/workspace";
 import { TEST_TIMEOUT_MS } from "../timeouts";
 import { openAgentsPanel } from "../helpers/agents-panel";
 
@@ -48,6 +48,19 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 /** 技能绑定写入面（agent-principal 侧）。窗口期如与真实路由不符，只改这一处。 */
 const SKILL_BINDING_PATH = (principalId: string, workspaceId: string): string =>
     `${CP_URL}/api/v1/agent-principals/${principalId}/skills?workspaceId=${workspaceId}`;
+
+/**
+ * 条目路由：binding id 必须在 path 里、workspaceId 在 query 里。
+ * task-771 裁决（A03 `d268d1c4`）：把 id 拼到集合路由的 query 后面会被 Express/fastify
+ * 当成 `workspaceId=ws/<uuid>`，集合路由无 DELETE ⇒ 405。正确形状是
+ * `DELETE /agent-principals/{id}/skills/{bindingId}?workspaceId=<ws>` ⇒ 404 SKILL_BINDING_NOT_FOUND。
+ */
+const SKILL_BINDING_ITEM_PATH = (
+    principalId: string,
+    bindingId: string,
+    workspaceId: string,
+): string =>
+    `${CP_URL}/api/v1/agent-principals/${principalId}/skills/${bindingId}?workspaceId=${workspaceId}`;
 
 /** 技能清单（`bl355:143` 矩阵 B 已验证该端点与 `definitionScope` 参数）。 */
 const SKILLS_PATH = (workspaceId: string, definitionScope: "instance" | "workspace"): string =>
@@ -174,8 +187,10 @@ test("@host 0680-J1 跨工作区不生效：绑他工作区私有技能定义 �
 }) => {
     const owner = await newIdentity(request, "p0680-j1");
 
-    // 同一用户在另一个工作区里，作为「他工作区」
-    const otherWorkspaceId = await ensureWorkspace(request, owner.accessToken);
+    // 同一用户在另一个工作区里，作为「他工作区」。
+    // task-770：`ensureWorkspace()` 返回第一个既有工作区，第二次调用仍是同一个 id；
+    // 这里要的是“额外工作区”，必须显式创建，否则 not.toBe 必红。
+    const otherWorkspaceId = await createDirectAttachWorkspace(request, owner.accessToken);
     expect(otherWorkspaceId).not.toBe(owner.workspaceId);
 
     const principalId = await provisionWorkspaceAgentPrincipal(
@@ -260,7 +275,7 @@ test("@host 0680-J2 解绑语义：按行自身档位授权，删他工作区行
 
     // 解绑一个不存在的绑定行：workspace tier 下应与「行不存在」不可区分（:93 防跨工作区探测）
     const missing = await request.delete(
-        `${SKILL_BINDING_PATH(principalId, identity.workspaceId)}/${crypto.randomUUID()}`,
+        SKILL_BINDING_ITEM_PATH(principalId, crypto.randomUUID(), identity.workspaceId),
         { headers },
     );
     const missingText = await missing.text();

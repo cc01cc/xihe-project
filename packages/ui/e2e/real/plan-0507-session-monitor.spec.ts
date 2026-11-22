@@ -76,6 +76,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,
             title: "Monitor session",
+            workspaceId: ctx.workspaceId,
         });
         await ensureAgentWorkspaceBinding(ctx.workspaceId);
     });

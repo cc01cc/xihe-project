@@ -147,6 +147,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
     const sessionA = await createSessionWithPrincipal(request, authA, {
         principalId: principalA,
         title: "PLAN-0588 Workspace A",
+        workspaceId: a.workspaceId,
     });
     seedPage(page, a);
     await page.goto(`/workspace/${a.workspaceId}/session/${sessionA}`);
@@ -181,6 +182,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
     const sessionB = await createSessionWithPrincipal(request, authB, {
         principalId: principalB,
         title: "PLAN-0588 Workspace B",
+        workspaceId: b.workspaceId,
     });
 
     // Cross-workspace Session API access stays denied (this did not change).

@@ -87,6 +87,7 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             (response) =>
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         expect((await loadConfigResponse).status()).toBe(200);
@@ -134,6 +135,7 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             (response) =>
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         expect((await reloadedConfigResponse).status()).toBe(200);

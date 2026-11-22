@@ -51,6 +51,24 @@ type ProviderConnectionRow = {
     status?: string;
     enabled?: boolean;
 };
+
+function isUsableConnection(row: ProviderConnectionRow): boolean {
+    return row.status === "READY" && row.enabled !== false;
+}
+
+async function listUserConnections(
+    request: APIRequestContext,
+    auth: AgentAuth,
+): Promise<ProviderConnectionRow[]> {
+    const headers: Record<string, string> = {
+        Authorization: `Bearer ${auth.accessToken}`,
+        "Content-Type": "application/json",
+    };
+    if (auth.workspaceId) headers["X-Workspace-Id"] = auth.workspaceId;
+    const list = await request.get(`${CP_URL}/api/v1/provider-connections`, { headers });
+    expect(list.ok(), await list.text()).toBe(true);
+    return ((await list.json()) as { connections?: ProviderConnectionRow[] }).connections ?? [];
+}
 type ToolAction = "read" | "write";
 type PrincipalOptions = {
     name: string;
@@ -136,20 +154,22 @@ export function isSessionCreateRequest(url: string, method: string): boolean {
 export async function ensureUserDefaultFakeConnection(
     request: APIRequestContext,
     auth: AgentAuth,
-): Promise<void> {
+): Promise<string> {
     const headers: Record<string, string> = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
     };
     if (auth.workspaceId) headers["X-Workspace-Id"] = auth.workspaceId;
-    const list = await request.get(`${CP_URL}/api/v1/provider-connections`, { headers });
-    expect(list.ok(), await list.text()).toBe(true);
-    const rows =
-        ((await list.json()) as { connections?: ProviderConnectionRow[] }).connections ?? [];
+    const rows = await listUserConnections(request, auth);
+    // task-770：已有任意 READY USER 连接时不再补 default。否则 spec 自建
+    // `connectionKey=r6-…` 后本 helper 再补一条，会把用户变成 2 条候选，
+    // createSession 被 CP 以 PROVIDER_CONNECTION_AMBIGUOUS 拒绝（报告 §2.1 G）。
+    const ready = rows.filter(isUsableConnection);
+    if (ready.length > 0) return ready[0]!.id;
     const found = rows.find(
         (row) => row.providerId === "openai" && row.connectionKey === "default",
     );
-    if (found?.status === "READY" && found.enabled !== false) return;
+    if (found?.status === "READY" && found.enabled !== false) return found.id;
     let connection = found;
     if (!connection) {
         const fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT;
@@ -183,6 +203,7 @@ export async function ensureUserDefaultFakeConnection(
         { headers },
     );
     expect(verified.ok(), await verified.text()).toBe(true);
+    return connection.id;
 }
 
 export async function provisionWorkspaceAgentPrincipal(
@@ -300,13 +321,26 @@ export async function createSessionWithPrincipal(
         modelName,
     }: SessionOptions & { workspaceId?: string },
 ): Promise<string> {
-    const url = workspaceId
-        ? `${CP_URL}/api/v1/workspaces/${workspaceId}/sessions`
+    // task-770 / 报告 §2.1 A：调用方普遍已经把 workspaceId 放在 auth 上，但 options
+    // 里漏传。默认取 auth.workspaceId，保证会话走 path 形式并归属 workspace，而不是
+    // legacy `/sessions` 落进「独立会话」。
+    const resolvedWorkspaceId = workspaceId ?? auth.workspaceId;
+    const url = resolvedWorkspaceId
+        ? `${CP_URL}/api/v1/workspaces/${resolvedWorkspaceId}/sessions`
         : `${CP_URL}/api/v1/sessions`;
     const headers: Record<string, string> = { Authorization: `Bearer ${auth.accessToken}` };
-    if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
-    // task-158：兜底保证「用它自己的 token 建会话的这个用户」有一条 key=default 的 USER 连接。
-    await ensureUserDefaultFakeConnection(request, auth);
+    if (resolvedWorkspaceId) headers["X-Workspace-Id"] = resolvedWorkspaceId;
+    // task-174 / task-770：显式连接优先；未显式给时只在 0 条 READY 时补一条 default。
+    // 恰好 1 条 READY 时**不**把它转成显式 providerConnectionId —— 显式连接会让 CP 跳过
+    // 三件套默认解析，随后 bindApiTemplate 因 modelName 为空拒绝（`modelName is required`）。
+    // 留空则 CP 走默认解析，单候选不会歧义；多条保持 CP 的显式 400。
+    let resolvedProviderConnectionId = providerConnectionId;
+    if (!resolvedProviderConnectionId) {
+        const ready = (await listUserConnections(request, auth)).filter(isUsableConnection);
+        if (ready.length === 0) {
+            await ensureUserDefaultFakeConnection(request, auth);
+        }
+    }
     const response = await request.post(url, {
         headers,
         data: {
@@ -315,7 +349,9 @@ export async function createSessionWithPrincipal(
             // 有绑定才带（不传 ⇒ 与旧行为逐字节一致）。
             ...(binding ? binding : {}),
             // task-174：有显式模型身份才带（同上，缺席 = 隐式解析旧行为）。
-            ...(providerConnectionId ? { providerConnectionId } : {}),
+            ...(resolvedProviderConnectionId
+                ? { providerConnectionId: resolvedProviderConnectionId }
+                : {}),
             ...(modelProvider ? { modelProvider } : {}),
             ...(modelName ? { modelName } : {}),
         },
@@ -362,13 +398,27 @@ export async function openAgentSessionSelector(page: Page): Promise<void> {
     if (!(await isVisible(principalSelect))) {
         const desktopEntry = page.getByTestId("sidebar-new-chat");
         const mobileEntry = page.getByTestId("workspace-toolbar-new-chat-mobile");
-        if (await isVisible(desktopEntry)) {
+        // task-770 / 报告 §2.1 B：首帧未渲染时单次 isVisible() 会直接判无入口。
+        // 两个入口都 waitFor（同一 LONG_TIMEOUT_MS），谁先可见点谁。
+        const firstVisible = await Promise.race([
+            desktopEntry
+                .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS })
+                .then(() => "desktop")
+                .catch(() => null),
+            mobileEntry
+                .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS })
+                .then(() => "mobile")
+                .catch(() => null),
+        ]);
+        if (firstVisible === "desktop") {
             await desktopEntry.click();
             // task-373 / `D-1236`：搜索行 icon 现在是两项菜单（工作区新建 / 独立会话新建），
             // 触发器 testid 不变 ⇒ 这里补一次菜单项点击，语义仍是「在此工作区新建会话」。
-            await page.getByTestId("sidebar-new-chat-workspace").click();
-        } else if (await isVisible(mobileEntry)) {
-            await mobileEntry.click();
+            await page
+                .getByTestId("sidebar-new-chat-workspace")
+                .click({ timeout: LONG_TIMEOUT_MS });
+        } else if (firstVisible === "mobile") {
+            await mobileEntry.click({ timeout: LONG_TIMEOUT_MS });
         } else {
             throw new Error(
                 `no new-chat entry point is visible: ${await describeSessionCreationState(page)}`,

@@ -117,7 +117,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
-            { principalId, title: `dsh-wf1-${NONCE}` },
+            { principalId, title: `dsh-wf1-${NONCE}`, workspaceId: ctx.workspaceId },
         );
     });
 
@@ -311,7 +311,10 @@ async function startRun(
                         message: `run ${id} must reach a terminal state`,
                     },
                 )
-                .toMatch(/^(succeeded|failed|partial|ambiguous|cancelled)$/);
+                // task-770：write_file 轮停在审批门是链的正常暂停点（下一步 approveCard
+                // 才会推进），不能把它当"永远等不到终态"。这里把 awaiting_approval
+                // 视为已 settled；真正卡死仍会被 30s 轮询判红。
+                .toMatch(/^(succeeded|failed|partial|ambiguous|cancelled|awaiting_approval)$/);
             console.log(`[t1.1] run ${id} terminal`);
         };
         if (runId) {
@@ -325,16 +328,10 @@ async function startRun(
         const input = page.locator('[data-testid="chat-input"]');
         const send = page.locator('[data-testid="chat-send-button"]');
         await expect(input, "chat input").toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        // 窗口 6 定性：turn2 的发送按钮 32s 始终不亮、全程无 chat POST ⇒ 上一轮 run 尚未
-        // 真正 terminal 时，产品自身的 run 守卫锁着 composer。先带 label 等真终态（30s，
-        // 失败信息直接指名这一段）；循环里的 8s 只兜"点完又锁回去"的抖动。
-        try {
-            await logged("send-enabled-after-turn1", async () => {
-                await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
-            });
-        } catch {
-            /* 进循环继续尝试；循环内每轮失败会打 attempt 日志 */
-        }
+        // task-770：原实现在**填字之前**等 `send` enabled，空 composer 上按钮恒 disabled，
+        // 这一等就吃掉整个 30s 测试超时 ⇒ 循环里的 fill 根本没机会跑（报错伪装成
+        // "chat send never returned a runId"）。等待必须放在 fill 之后；循环里已经是这个顺序，
+        // 因此这里不再做预等待。turn2 的 run 守卫锁仍由循环内每轮的 enabled 等待覆盖。
         for (let attempt = 0; attempt < 4; attempt += 1) {
             await input.click().catch(() => {});
             await input.fill(text).catch(() => {});

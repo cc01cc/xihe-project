@@ -91,6 +91,19 @@ export async function bindToolCapableChat(
         );
         expect(patched.ok(), `models ${patched.status()}: ${await patched.text()}`).toBe(true);
         connection = (await patched.json()) as ConnectionView;
+        // task-770：PATCH 任何有变更的字段都会把连接重置成 VERIFYING
+        // （ProviderConnectionService.java:322）；不重新 verify 就直接绑会话会收到
+        // 400 PROVIDER_CONNECTION_UNAVAILABLE "not ready or not accessible"。
+        const reverified = await request.post(
+            `${CP_URL}/api/v1/provider-connections/${connection.id}/verify`,
+            { headers },
+        );
+        expect(
+            reverified.ok(),
+            `re-verify ${reverified.status()}: ${await reverified.text()}`,
+        ).toBe(true);
+        connection = ((await reverified.json()) as { connection: ConnectionView }).connection;
+        expect(connection.status, "re-verified connection must be READY").toBe("READY");
     }
     const bound = await request.patch(`${CP_URL}/api/v1/sessions/${sessionId}`, {
         headers,

@@ -2,6 +2,7 @@
 import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { replaceWorkspaceRole } from "./helpers/user-grants";
+import { createDirectAttachWorkspace, ensureWorkspace } from "./helpers/workspace";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -63,18 +64,12 @@ test.describe("@host PLAN-0559 workspace tabs", () => {
     }) => {
         const owner = await register(request, "owner");
         const other = await register(request, "other");
-        const workspaceA = owner.body.workspaceId as string;
+        const workspaceA = await ensureWorkspace(request, owner.body.accessToken);
 
-        const created = await request.post(`${CP_URL}/api/v1/workspaces`, {
-            headers: {
-                Authorization: `Bearer ${owner.body.accessToken}`,
-                "X-Workspace-Id": workspaceA,
-                "Content-Type": "application/json",
-            },
-            data: { name: "PLAN-0559 B" },
-        });
-        expect(created.ok()).toBeTruthy();
-        const workspaceB = (await created.json()).id as string;
+        // PLAN-0618：`POST /workspaces` 的 storageMode 是必填无默认值，裸 `{ name }`
+        // 会被 CP 以 400 INVALID_REQUEST 拒绝。这里要的是同用户第二个工作区，
+        // 直接用 helper 的 direct_attach 三件套（storageMode + hostPath + executionMode）。
+        const workspaceB = await createDirectAttachWorkspace(request, owner.body.accessToken);
         expect(workspaceB).not.toBe(workspaceA);
 
         // Non-member cannot enter A through the header.
@@ -177,7 +172,7 @@ test.describe("@host PLAN-0559 workspace tabs", () => {
         const owner = await register(request, "owner-role");
         const viewer = await register(request, "viewer");
         const editor = await register(request, "editor");
-        const workspaceId = owner.body.workspaceId as string;
+        const workspaceId = await ensureWorkspace(request, owner.body.accessToken);
 
         const grant = (userId: string, role: "VIEWER" | "EDITOR") => {
             // PLAN-0610 W4b: `workspace_users` is gone (V89); memberships are role bindings,

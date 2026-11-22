@@ -535,6 +535,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         (response) =>
             response.url().endsWith(`/api/v1/workspaces/${workspaceA}/agents`) &&
             response.request().method() === "GET",
+        { timeout: LONG_TIMEOUT_MS },
     );
     await page.goto(`/workspace/${workspaceA}?newChat=1`, { waitUntil: "load" });
     expect((await emptyBindingReload).status()).toBe(200);

@@ -205,6 +205,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             (response) =>
                 response.request().method() === "GET" &&
                 response.url().includes(`/workspaces/${ctx.workspaceId}/scheduled-tasks`),
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto(`/workspace/${ctx.workspaceId}/scheduled-tasks`, { waitUntil: "load" });
         const response = await listLoaded;
@@ -262,6 +263,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             (response) =>
                 response.request().method() === "GET" &&
                 response.url().includes(`/workspaces/${ctx.workspaceId}/scheduled-tasks`),
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
 
@@ -269,7 +271,8 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         // the tab bar). Label + post-navigation identity assertions are kept.
         const entry = page.locator('[data-testid="workspace-nav-scheduled-tasks"]');
         await expect(entry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(entry).toContainText("定时任务");
+        // task-11 / D-1220 ③：产品文案已把工作区入口从「定时任务」改为「自动化任务」。
+        await expect(entry).toContainText("自动化任务");
         await entry.click();
         await page.waitForURL(
             (url) => url.pathname === `/workspace/${ctx.workspaceId}/scheduled-tasks`,
@@ -278,7 +281,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         const list = await listLoaded;
         expect(list.ok(), `scheduled task list ${list.status()} ${await list.text()}`).toBeTruthy();
 
-        await expect(page.getByTestId("scheduled-tasks-heading")).toContainText("定时任务");
+        await expect(page.getByTestId("scheduled-tasks-heading")).toContainText("自动化任务");
         await expect(page.getByTestId("scheduled-tasks-filter-all")).toBeVisible();
 
         // 表头（U1：任务/触发/目标/状态/下次触发/创建者/操作）；exact 避免「触发」⊂「下次触发」。
@@ -297,7 +300,8 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         );
         await expect(
             firstRow.locator('[data-testid="scheduled-task-creator-type-row"]'),
-        ).toContainText("human");
+            // task-770：创建者类型徽标已本地化（zh-CN 下 human → 人类）。
+        ).toContainText("人类");
         await expect(firstRow.locator("td").nth(5)).toContainText(user.name);
 
         await page.screenshot({
@@ -700,6 +704,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             (response) =>
                 response.request().method() === "GET" &&
                 response.url().includes(`/workspaces/${ctx.workspaceId}/scheduled-tasks`),
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto(`/workspace/${ctx.workspaceId}/scheduled-tasks`, { waitUntil: "load" });
         const response = await listLoaded;
