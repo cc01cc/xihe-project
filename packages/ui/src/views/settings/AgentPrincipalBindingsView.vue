@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import AgentDelegatedSessionsTable from "../../components/settings/AgentDelegatedSessionsTable.vue";
+import AgentPrincipalSessionsTable from "../../components/settings/AgentPrincipalSessionsTable.vue";
 import AgentWorkspaceBindingsPanel from "../../components/settings/AgentWorkspaceBindingsPanel.vue";
 import { useSettingsTrail } from "../../components/settings/settingsTrail";
 import { api } from "../../composables/api";
@@ -18,6 +19,13 @@ import {
     AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../components/ui/select";
 
 /**
  * task-153 S1：一个 agent 主体的**工作区绑定**整页（Lead C1=B）。
@@ -43,8 +51,25 @@ const principalId = computed(() => props.id || String(route.params.id ?? ""));
 /** 已绑工作区（绑定面板上报）——委派子会话表只查这些工作区。 */
 const boundWorkspaces = ref<Array<{ workspaceId: string; workspaceName: string }>>([]);
 
+/** 参与会话表的当前工作区：从已绑工作区里选，默认第一个。 */
+const sessionsWorkspaceId = ref("");
+
 function onBoundWorkspaces(rows: Array<{ workspaceId: string; workspaceName: string }>): void {
     boundWorkspaces.value = rows;
+}
+
+watch(
+    () => boundWorkspaces.value.map((row) => row.workspaceId).join(","),
+    () => {
+        if (!boundWorkspaces.value.some((row) => row.workspaceId === sessionsWorkspaceId.value)) {
+            sessionsWorkspaceId.value = boundWorkspaces.value[0]?.workspaceId ?? "";
+        }
+    },
+    { immediate: true },
+);
+
+function onSessionsWorkspaceChange(value: unknown): void {
+    sessionsWorkspaceId.value = typeof value === "string" ? value : "";
 }
 
 /**
@@ -128,6 +153,47 @@ onMounted(async () => {
                 :principal-id="principalId"
                 :workspaces="boundWorkspaces"
             />
+            <section
+                class="flex min-h-0 flex-col gap-3"
+                data-testid="agent-bindings-principal-sessions"
+            >
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-semibold">
+                            {{ t("agentBindings.principalSessionsTitle") }}
+                        </h2>
+                        <p class="mt-1 text-sm text-muted-foreground">
+                            {{ t("agentBindings.principalSessionsDesc") }}
+                        </p>
+                    </div>
+                    <Select
+                        v-if="boundWorkspaces.length"
+                        :model-value="sessionsWorkspaceId"
+                        @update:model-value="onSessionsWorkspaceChange"
+                    >
+                        <SelectTrigger
+                            class="w-56"
+                            :aria-label="t('agentBindings.sessionsWorkspace')"
+                            data-testid="agent-bindings-principal-sessions-workspace-trigger"
+                        >
+                            <SelectValue :placeholder="t('agentBindings.sessionsWorkspace')" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem
+                                v-for="row in boundWorkspaces"
+                                :key="row.workspaceId"
+                                :value="row.workspaceId"
+                            >
+                                {{ row.workspaceName }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+                <AgentPrincipalSessionsTable
+                    :principal-id="principalId"
+                    :workspace-id="sessionsWorkspaceId"
+                />
+            </section>
         </div>
 
         <!-- task-92：整页勾选草稿的离开确认（与域页/组页/角色页同 testid 同一动作）。 -->

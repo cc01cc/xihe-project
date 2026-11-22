@@ -1196,6 +1196,54 @@ export interface DelegateSpawnSessions {
     limit: number;
 }
 
+export type AgentPrincipalSessionRole = "PRIMARY" | "MEMBER" | "GUARD";
+export type AgentPrincipalSessionKind = "spawn" | "fork" | null;
+
+/**
+ * task-19 / task-721：`GET /agent-principals/{id}/sessions` 的一行（openapi `PrincipalSessionRow`）。
+ *
+ * <p>`readable` 与 `title` 是两个字段：`title=null` 既可能表示「调用者不可读」，也可能是
+ * 「可读但没有标题」——后者是 `readable=true`。UI 必须按 `readable` 选占位文案，不能只看
+ * `title === null`。</p>
+ */
+export interface AgentPrincipalSessionRow {
+    id: string;
+    title: string | null;
+    /** 调用者能否读这个会话（owner 或启用的 HUMAN 参与者）；不可读的行仍计入 `counts`。 */
+    readable: boolean;
+    archived: boolean;
+    /** 主体在该会话里的角色（`session_participants.role`）。 */
+    role: AgentPrincipalSessionRole;
+    kind: AgentPrincipalSessionKind;
+    spawnedFromSessionId: string | null;
+    spawnedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/**
+ * task-19：计数覆盖**完整 cohort**，不受 `limit` 截断，也不按可读性过滤。
+ * 渲染数字时一律取这里，不用 `sessions.length`。
+ */
+export interface AgentPrincipalSessionsCounts {
+    all: number;
+    primary: number;
+    member: number;
+    guard: number;
+}
+
+/** task-19：`PrincipalSessionListResponse` 的冻结信封。 */
+export interface AgentPrincipalSessionsResponse {
+    workspaceId: string;
+    principalId: string;
+    includeArchived: boolean;
+    counts: AgentPrincipalSessionsCounts;
+    sessions: AgentPrincipalSessionRow[];
+    /** true = 行被 `limit` 截断；`counts` 仍是全量。 */
+    truncated: boolean;
+    limit: number;
+}
+
 /**
  * task-8：一条 atom 的授权**来源**行（CP `CapabilityProjectionService.AtomSource`）。
  *
@@ -4961,6 +5009,107 @@ export const api = {
             depth: record.depth,
             includeArchived: record.includeArchived,
             counts: { all, direct },
+            sessions,
+            truncated: record.truncated,
+            limit: record.limit,
+        };
+    },
+
+    /**
+     * task-19 / task-721：一个 Agent 主体**参与过的会话**读面
+     * （`GET /agent-principals/{principalId}/sessions?workspaceId=…`）。
+     *
+     * <p>`workspaceId` 是**授权上下文**也是 cohort 过滤条件：CP 用成员名册门禁判定
+     * （OWNER/EDITOR 或实例级 `MANAGE_WORKSPACE_MEMBERS`），VIEWER 得到 403。</p>
+     *
+     * <p><b>fail-closed 解析</b>：信封或行形状不对就抛错，**不补 0、不丢行**。数字一律取
+     * `counts`（全量 cohort），`sessions` 可能被 `limit` 截断。</p>
+     */
+    async listAgentPrincipalSessions(
+        principalId: string,
+        workspaceId: string,
+        options: { includeArchived?: boolean; limit?: number } = {},
+    ): Promise<AgentPrincipalSessionsResponse> {
+        const query = new URLSearchParams({ workspaceId });
+        if (options.includeArchived === true) query.set("includeArchived", "true");
+        if (options.limit !== undefined) query.set("limit", String(options.limit));
+        const raw = await request<unknown>(
+            `/agent-principals/${encodeURIComponent(principalId)}/sessions?${query.toString()}`,
+        );
+        const record = asRecord(raw);
+        const counts = asRecord(record?.counts);
+        const countOf = (value: unknown): number | null =>
+            typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+        const all = countOf(counts?.all);
+        const primary = countOf(counts?.primary);
+        const member = countOf(counts?.member);
+        const guard = countOf(counts?.guard);
+        const rawSessions = record?.sessions;
+        if (
+            !record ||
+            typeof record.workspaceId !== "string" ||
+            typeof record.principalId !== "string" ||
+            typeof record.includeArchived !== "boolean" ||
+            all === null ||
+            primary === null ||
+            member === null ||
+            guard === null ||
+            !Array.isArray(rawSessions) ||
+            typeof record.truncated !== "boolean" ||
+            typeof record.limit !== "number"
+        ) {
+            throw new Error(
+                "agent-principal sessions response is malformed (PrincipalSessionListResponse)",
+            );
+        }
+        const roleOf = (value: unknown): AgentPrincipalSessionRole | null =>
+            isEnumValue(value, ["PRIMARY", "MEMBER", "GUARD"] as const) ? value : null;
+        const kindOf = (value: unknown): AgentPrincipalSessionKind | undefined =>
+            value === null
+                ? null
+                : isEnumValue(value, ["spawn", "fork"] as const)
+                  ? value
+                  : undefined;
+        const sessions: AgentPrincipalSessionRow[] = rawSessions.map((item) => {
+            const row = asRecord(item);
+            const role = roleOf(row?.role);
+            const kind = kindOf(row?.kind);
+            if (
+                !row ||
+                typeof row.id !== "string" ||
+                !(row.title === null || typeof row.title === "string") ||
+                typeof row.readable !== "boolean" ||
+                typeof row.archived !== "boolean" ||
+                role === null ||
+                kind === undefined ||
+                !(
+                    row.spawnedFromSessionId === null ||
+                    typeof row.spawnedFromSessionId === "string"
+                ) ||
+                !(row.spawnedAt === null || typeof row.spawnedAt === "string") ||
+                typeof row.createdAt !== "string" ||
+                typeof row.updatedAt !== "string"
+            ) {
+                throw new Error("agent-principal sessions row is malformed (PrincipalSessionRow)");
+            }
+            return {
+                id: row.id,
+                title: row.title,
+                readable: row.readable,
+                archived: row.archived,
+                role,
+                kind,
+                spawnedFromSessionId: row.spawnedFromSessionId,
+                spawnedAt: row.spawnedAt,
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt,
+            };
+        });
+        return {
+            workspaceId: record.workspaceId,
+            principalId: record.principalId,
+            includeArchived: record.includeArchived,
+            counts: { all, primary, member, guard },
             sessions,
             truncated: record.truncated,
             limit: record.limit,
