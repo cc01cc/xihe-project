@@ -22,11 +22,16 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const PROVIDER_ID = "custom-openai-compatible";
 const PAGE = "/settings/user/llm-provider";
+/** e2e-host 每跑随机会话注入（见 e2e-host.mjs 的 XIHE_E2E_ADMIN_PASSWORD）。 */
+const ADMIN_IDENTIFIER = process.env.XIHE_E2E_ADMIN_IDENTIFIER ?? "admin@xihe.local";
+const ADMIN_PASSWORD = (process.env.XIHE_E2E_ADMIN_PASSWORD ?? "").trim();
 
 type Auth = {
     accessToken: string;
     workspaceId: string;
 };
+
+type ConnectionOptions = { key: string; label: string; models: string[] };
 
 type ConnectionRow = {
     id: string;
@@ -107,15 +112,28 @@ async function readUserConfig(request: APIRequestContext, auth: Auth, domain: st
 async function createUserConnection(
     request: APIRequestContext,
     auth: Auth,
-    options: { key: string; label: string; models: string[] },
+    options: ConnectionOptions,
+): Promise<ConnectionRow> {
+    const created = await createConnectionWithHeaders(request, workspaceHeaders(auth), {
+        ...options,
+        scope: "USER",
+    });
+    expect(created.scope).toBe("USER");
+    return created;
+}
+
+async function createConnectionWithHeaders(
+    request: APIRequestContext,
+    headers: Record<string, string>,
+    options: ConnectionOptions & { scope: "USER" | "INSTANCE" },
 ): Promise<ConnectionRow> {
     const response = await request.post(`${CP_URL}/api/v1/provider-connections`, {
-        headers: workspaceHeaders(auth),
+        headers,
         data: {
             providerId: PROVIDER_ID,
             label: options.label,
             connectionKey: options.key,
-            scope: "USER",
+            scope: options.scope,
             baseUrl: "http://localhost:1/v1",
             modelDiscovery: "manual",
             manualModels: options.models,
@@ -124,7 +142,6 @@ async function createUserConnection(
     expect(response.status(), await response.text()).toBe(201);
     const created = (await response.json()) as ConnectionRow;
     expect(created.connectionKey).toBe(options.key);
-    expect(created.scope).toBe("USER");
     return created;
 }
 
@@ -143,8 +160,16 @@ async function listConnections(request: APIRequestContext, auth: Auth): Promise<
  * （`ConfigService.validateProviderProfile:1193-1230`），所以必须先 verify 再写 profile。
  */
 async function verifyConnection(request: APIRequestContext, auth: Auth, id: string) {
+    await verifyConnectionWithHeaders(request, workspaceHeaders(auth), id);
+}
+
+async function verifyConnectionWithHeaders(
+    request: APIRequestContext,
+    headers: Record<string, string>,
+    id: string,
+) {
     const response = await request.post(`${CP_URL}/api/v1/provider-connections/${id}/verify`, {
-        headers: workspaceHeaders(auth),
+        headers,
     });
     expect(response.ok(), await response.text()).toBeTruthy();
     // 契约（`ProviderConnectionController.verify:136-140` / helpers/fake-provider.ts:47）：
@@ -156,13 +181,42 @@ async function verifyConnection(request: APIRequestContext, auth: Auth, id: stri
     ).toBe("READY");
 }
 
-async function deleteConnection(request: APIRequestContext, auth: Auth, key: string) {
-    const row = (await listConnections(request, auth)).find((item) => item.connectionKey === key);
-    expect(row, `connection ${key} must exist before delete`).toBeTruthy();
-    const response = await request.delete(`${CP_URL}/api/v1/provider-connections/${row!.id}`, {
-        headers: workspaceHeaders(auth),
+async function adminLogin(request: APIRequestContext): Promise<string> {
+    expect(
+        ADMIN_PASSWORD,
+        "XIHE_E2E_ADMIN_PASSWORD is required (e2e-host injects the seeded admin password)",
+    ).toBeTruthy();
+    const response = await request.post(`${CP_URL}/api/v1/auth/login`, {
+        data: { identifier: ADMIN_IDENTIFIER, password: ADMIN_PASSWORD },
     });
-    expect(response.status(), await response.text()).toBe(204);
+    expect(response.status(), await response.text()).toBe(200);
+    const body = (await response.json()) as { accessToken?: string };
+    expect(body.accessToken, "admin login must return an access token").toBeTruthy();
+    return body.accessToken!;
+}
+
+function adminHeaders(token: string): Record<string, string> {
+    return { Authorization: `Bearer ${token}` };
+}
+
+async function deleteInstanceConnection(
+    request: APIRequestContext,
+    adminToken: string,
+    id: string,
+) {
+    const response = await request.delete(`${CP_URL}/api/v1/provider-connections/${id}`, {
+        headers: adminHeaders(adminToken),
+    });
+    expect([204, 404]).toContain(response.status());
+}
+
+/** `profile: ""` 是 llm-provider 域的整单元清除语义（ConfigService.putLayerInternal）。 */
+async function clearUserProfile(request: APIRequestContext, auth: Auth) {
+    const response = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+        data: { profile: "" },
+    });
+    expect(response.status(), await response.text()).toBe(200);
 }
 
 async function openConnectionForm(page: Page) {
@@ -232,10 +286,12 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
      * 等用户「设为默认」替换（`PLAN-0523 T3.2` / `ProviderHub.vue:555-558` 的 never auto-rewritten）。
      * 能力活着的反证：把该 connectionKey 的行造出来 ⇒ 条目消失、默认连接卡片出现。
      *
-     * task-771 裁决（A03 `d268d1c4`）：user/workspace 层写 profile 必须指向 ready 连接
-     * （`ConfigService.validateProviderProfile:1193-1230`，PLAN-0504 decision #11 / PLAN-0307 P1-5）。
-     * 因此漂移必须**先写后删**制造：建好 ghost-default + verify 到 READY → 写 profile（200）→
-     * 删除连接。直接把 400 当预期是错误测试，不得改产品校验。
+     * 漂移构造（PLAN-0505 T2.2 之后）：「先写后删」不再可行 —— 删除连接会级联清掉指向它的
+     * 同一 owner 的 profile（`ProviderConnectionService.delete` → `cleanupProfiles`），所以旧写法
+     * 只会得到空 profile，漂移条目永远不出现。可用的真实路径是**跨 scope 不可见**：admin 建
+     * INSTANCE 连接；普通用户的连接列表不含实例层连接，而 user 层 profile 解析允许回落到
+     * INSTANCE（`ProviderConnectionService.findReadyForProfileScope`）⇒ profile 写入成功（200），
+     * 但 UI 列表里没有这条连接，正是漂移态。不得改产品校验，也不得把 400 当预期。
      */
     test("V4 漂移默认连接保留为失效条目且不被自动改写", async ({ page, request }) => {
         const auth = await register(request, "task86-v4-drift");
@@ -245,6 +301,8 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
             connectionKey: "ghost-default",
             model: "ghost-model",
         };
+        const adminToken = await adminLogin(request);
+        let instanceConnectionId = "";
         try {
             // 漂移条目只在「已有连接」分支里渲染（`ProviderHub.vue:1340/1345`）⇒ 先造一条无关连接，
             // 否则这条用例会因空态而被误判为「漂移根本不渲染」。
@@ -253,17 +311,18 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
                 label: "Kept Line",
                 models: ["kept-model"],
             });
-            const ghost = await createUserConnection(request, auth, {
+            // INSTANCE 连接对普通用户不可见 ⇒ 用户列表里没有 ghost-default（漂移来源）。
+            const ghost = await createConnectionWithHeaders(request, adminHeaders(adminToken), {
                 key: "ghost-default",
                 label: "Ghost Default",
                 models: ["ghost-model"],
+                scope: "INSTANCE",
             });
-            await verifyConnection(request, auth, ghost.id);
+            instanceConnectionId = ghost.id;
+            await verifyConnectionWithHeaders(request, adminHeaders(adminToken), ghost.id);
             await putUserConfig(request, auth, "llm-provider", {
                 profile: JSON.stringify(ghostProfile),
             });
-            // 写面成功之后才删连接：删连接不改写已存 profile ⇒ 漂移态。
-            await deleteConnection(request, auth, "ghost-default");
 
             await page.goto(PAGE);
             const drift = page.getByTestId("provider-default-drift");
@@ -295,6 +354,10 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
             );
         } finally {
             await cleanup(request, auth);
+            await clearUserProfile(request, auth);
+            if (instanceConnectionId) {
+                await deleteInstanceConnection(request, adminToken, instanceConnectionId);
+            }
         }
     });
 
