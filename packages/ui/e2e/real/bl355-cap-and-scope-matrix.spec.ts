@@ -274,8 +274,8 @@ test("@host BL-354 矩阵 C：HUMAN responder + 显式空 TO ⇒ suppressed_no_r
     const response = await chat;
     const body = await response.text();
     expect(
-        response.status(),
-        `HUMAN + 显式空 TO 应 202 accepted，实际 ${response.status()}：${body}`,
+        response.status,
+        `HUMAN + 显式空 TO 应 202 accepted，实际 ${response.status}：${body}`,
     ).toBe(202);
     const accepted = JSON.parse(body) as { terminalOutcome?: string };
     expect(
