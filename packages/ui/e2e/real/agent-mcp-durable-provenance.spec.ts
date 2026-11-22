@@ -77,7 +77,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 {
                     id: roleId,
                     name: "ProvenanceWriter",
@@ -97,7 +97,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
                     toolMode: "workspace",
                     provider: "openai",
                     model: "fake-openai",
-                    roleId,
+                    presetId,
                 },
             ]),
         },

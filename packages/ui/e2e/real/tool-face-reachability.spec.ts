@@ -133,7 +133,7 @@ async function createWorkspacePrincipal(request: APIRequestContext, auth: Auth):
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers: auth.headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 {
                     id: roleId,
                     name: "ToolFaceProbe Role",
@@ -149,7 +149,7 @@ async function createWorkspacePrincipal(request: APIRequestContext, auth: Auth):
                     toolMode: "workspace",
                     provider: "openai",
                     model: MODEL_ID,
-                    roleId,
+                    presetId,
                 },
             ]),
         },

@@ -178,7 +178,7 @@ async function createPrincipal(
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers: auth.headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 {
                     id: roleId,
                     name: `${options.name} Role`,
@@ -194,7 +194,7 @@ async function createPrincipal(
                     toolMode: options.toolMode,
                     provider: "openai",
                     model: MODEL_ID,
-                    roleId,
+                    presetId,
                 },
             ]),
         },

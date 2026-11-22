@@ -97,7 +97,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: bootHeaders,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     { id: roleId, name: "JobResume Role", permissions: rolePermissions },
                 ]),
                 templates: JSON.stringify([
@@ -109,7 +109,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: "fake-openai",
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

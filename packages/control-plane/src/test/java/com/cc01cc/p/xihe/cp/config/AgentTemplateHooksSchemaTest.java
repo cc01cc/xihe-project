@@ -43,14 +43,14 @@ class AgentTemplateHooksSchemaTest {
     void seededGuardTemplateWithHooksPassesSchemaValidation() throws Exception {
         String document = """
                 {
-                  "roles": [
+                  "presets": [
                     { "id": "%s", "name": "guard",
                       "permissions": [ { "actionClass": "read", "resource": "*" } ] }
                   ],
                   "templates": [
                     { "id": "%s", "name": "守卫 Guard", "description": "Built-in guard preset",
                       "systemPrompt": "You are the built-in guard of this Xihe conversation.",
-                      "toolMode": "none", "roleId": "%s",
+                      "toolMode": "none", "presetId": "%s",
                       "hooks": { "advisors": [ { "kind": "guard", "on": ["approval.ask"] } ] } }
                   ]
                 }
@@ -65,11 +65,11 @@ class AgentTemplateHooksSchemaTest {
     void templateWithNullHooksPassesSchemaValidation() throws Exception {
         JsonNode document = MAPPER.readTree("""
                 {
-                  "roles": [ { "id": "%s", "name": "guard",
+                  "presets": [ { "id": "%s", "name": "guard",
                                "permissions": [ { "actionClass": "read", "resource": "*" } ] } ],
                   "templates": [ { "id": "%s", "name": "守卫 Guard", "description": "Built-in guard preset",
                                    "systemPrompt": "guard prompt", "toolMode": "none",
-                                   "roleId": "%s", "hooks": null } ]
+                                   "presetId": "%s", "hooks": null } ]
                 }
                 """.formatted(GUARD_ROLE_ID, GUARD_TEMPLATE_ID, GUARD_ROLE_ID));
 
@@ -153,11 +153,11 @@ class AgentTemplateHooksSchemaTest {
         String hooks = hooksJson == null ? "" : ", \"hooks\": " + hooksJson;
         String document = """
                 {
-                  "roles": [ { "id": "%s", "name": "guard",
+                  "presets": [ { "id": "%s", "name": "guard",
                                "permissions": [ { "actionClass": "read", "resource": "*" } ] } ],
                   "templates": [ { "id": "%s", "name": "守卫 Guard", "description": "Built-in guard preset",
                                    "systemPrompt": "guard prompt", "toolMode": "none",
-                                   "roleId": "%s"%s } ]
+                                   "presetId": "%s"%s } ]
                 }
                 """.formatted(GUARD_ROLE_ID, GUARD_TEMPLATE_ID, GUARD_ROLE_ID, hooks);
         JsonNode node = MAPPER.readTree(document);

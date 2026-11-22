@@ -115,7 +115,7 @@ async function bootstrapUnboundPrincipalSession(
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 {
                     id: roleId,
                     name: "V10E2ERole",
@@ -131,7 +131,7 @@ async function bootstrapUnboundPrincipalSession(
                     toolMode: "workspace",
                     provider: "openai",
                     model: FAKE_MODEL,
-                    roleId,
+                    presetId,
                 },
             ]),
         },

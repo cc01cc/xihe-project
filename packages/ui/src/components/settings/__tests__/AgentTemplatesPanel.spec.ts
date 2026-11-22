@@ -23,7 +23,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
         await wrapper.get('[data-testid="agent-role-resource-0"]').setValue("src/*");
         await wrapper.get('[data-testid="agent-role-form"]').trigger("submit");
         const roleSave = wrapper.emitted("save")?.at(-1)?.[0] as Record<string, string>;
-        const [role] = JSON.parse(roleSave.roles) as Array<{
+        const [role] = JSON.parse(roleSave.presets) as Array<{
             id: string;
             name: string;
             permissions: unknown[];
@@ -40,7 +40,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
         await wrapper.get('[data-testid="agent-role-form"]').trigger("submit");
         const roleUpdate = wrapper.emitted("save")?.at(-1)?.[0] as Record<string, string>;
 
-        expect(JSON.parse(roleUpdate.roles)).toMatchObject([
+        expect(JSON.parse(roleUpdate.presets)).toMatchObject([
             {
                 id: role.id,
                 name: "Reader v2",
@@ -73,15 +73,15 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
             toolMode: "workspace",
             provider: "openai",
             model: "gpt-example",
-            roleId: role.id,
+            presetId: role.id,
         });
         expect(Object.keys(template).sort()).toEqual([
             "description",
             "id",
             "model",
             "name",
+            "presetId",
             "provider",
-            "roleId",
             "systemPrompt",
             "toolMode",
         ]);
@@ -102,7 +102,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
             toolMode: "none",
         };
         const wrapper = mount(AgentTemplatesPanel, {
-            props: { entries: { roles: "[]", templates: JSON.stringify([template]) } },
+            props: { entries: { presets: "[]", templates: JSON.stringify([template]) } },
             global: { plugins: [i18n] },
         });
         const remove = wrapper.get('[data-testid="agent-template-delete-template-1"]');
@@ -117,7 +117,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
 
     it("fails closed when the stored layer contains malformed JSON", async () => {
         const wrapper = mount(AgentTemplatesPanel, {
-            props: { entries: { roles: "{broken", templates: "[]" } },
+            props: { entries: { presets: "{broken", templates: "[]" } },
             global: { plugins: [i18n] },
         });
 
@@ -155,7 +155,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
 
     it("fails closed when array values do not match the stored contract", async () => {
         const wrapper = mount(AgentTemplatesPanel, {
-            props: { entries: { roles: "[null]", templates: "[]" } },
+            props: { entries: { presets: "[null]", templates: "[]" } },
             global: { plugins: [i18n] },
         });
 
@@ -189,7 +189,7 @@ describe("AgentTemplatesPanel dirty 上报（task-26）", () => {
         const wrapper = mount(AgentTemplatesPanel, {
             props: {
                 entries: {
-                    roles: JSON.stringify([
+                    presets: JSON.stringify([
                         {
                             id: "role-1",
                             name: "Reader",

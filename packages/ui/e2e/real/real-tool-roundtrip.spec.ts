@@ -89,7 +89,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: setupHeaders,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "Real Compat Role",
@@ -105,7 +105,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                         toolMode: "workspace",
                         provider: "openai",
                         model: MODEL_ID,
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

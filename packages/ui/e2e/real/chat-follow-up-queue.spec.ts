@@ -29,7 +29,7 @@ async function createBoundAgent(
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 {
                     id: roleId,
                     name: "Follow-up Approval Role",
@@ -45,7 +45,7 @@ async function createBoundAgent(
                     toolMode: "workspace",
                     provider: "openai",
                     model: "fake-openai",
-                    roleId,
+                    presetId,
                 },
             ]),
         },

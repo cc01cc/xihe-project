@@ -156,7 +156,7 @@ async function provisionPlainChatPrincipal(
     const template = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            roles: JSON.stringify([{ id: roleId, name: `${name} Role`, permissions: [] }]),
+            presets: JSON.stringify([{ id: roleId, name: `${name} Role`, permissions: [] }]),
             templates: JSON.stringify([
                 {
                     id: templateId,
@@ -166,7 +166,7 @@ async function provisionPlainChatPrincipal(
                     toolMode: "none",
                     provider: "openai",
                     model: "fake-openai",
-                    roleId,
+                    presetId,
                 },
             ]),
         },

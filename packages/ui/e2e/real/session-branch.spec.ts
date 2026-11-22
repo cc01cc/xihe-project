@@ -111,7 +111,7 @@ test.describe("@host Session branch path", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: workspaceHeaders,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "Session Branch Role",
@@ -127,7 +127,7 @@ test.describe("@host Session branch path", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: "fake-openai",
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

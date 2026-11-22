@@ -43,8 +43,15 @@ public class AgentTemplateService {
 
     private static final Logger logger = LoggerFactory.getLogger(AgentTemplateService.class);
     private static final String DOMAIN = "agent-templates";
-    /** PLAN-0496 T3.2: per-role credential atom cap (beyond this, use credential:*). */
-    private static final int MAX_CREDENTIAL_ATOMS_PER_ROLE = 64;
+    /**
+     * task-873: the pre-MVP config vocabulary. Every one of these names is retired; a submission
+     * that still carries one is refused with 400 instead of being silently accepted or rejected by
+     * the schema as an unknown key.
+     */
+    private static final String RETIRED_ROLES_KEY = "roles";
+    private static final String RETIRED_TEMPLATE_PRESET_KEY = "roleId";
+    /** PLAN-0496 T3.2: per-preset credential atom cap (beyond this, use credential:*). */
+    private static final int MAX_CREDENTIAL_ATOMS_PER_PRESET = 64;
 
     /**
      * PLAN-0416 T3.1/D1: the CP-owned default baseline for a principal created
@@ -206,7 +213,7 @@ public class AgentTemplateService {
     /**
      * task-207 / D-1587: the same write, plus a receipt for whole-list replacement.
      *
-     * <p>{@code roles} and {@code templates} are whole-list keys: a write replaces the list it
+     * <p>{@code presets} and {@code templates} are whole-list keys: a write replaces the list it
      * names, so every id the caller left out disappears from that layer with no other trace (the
      * {@code config_audit} row for this domain stores only {@code present:<sha256>}). The receipt
      * exists so a caller can say "this removes N" instead of quoting prose nobody sees — the same
@@ -222,15 +229,16 @@ public class AgentTemplateService {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         User actor = loadActor(actorId);
         requireLayerWrite(actor, layer, userId, workspaceId);
+        rejectRetiredKeys(entries);
 
         Map<String, String> before = configService.layerEntries(layer, DOMAIN, userId, workspaceId);
         Map<String, String> merged = new LinkedHashMap<>(before);
         merged.putAll(entries);
         ConfigScope scope = new ConfigScope(layer, userId, workspaceId);
         ObjectNode parsed = parseLayer(scope, merged);
-        validateRoleIds(parsed, layer);
+        validatePresetIds(parsed, layer);
         listTemplates(parsed, layer);
-        requireRolePermissionsWithinUserGrants(actorId, workspaceId, parsed);
+        requirePresetPermissionsWithinUserGrants(actorId, workspaceId, parsed);
 
         Map<String, String> changed = changedEntries(before, entries);
         if (!changed.isEmpty()) {
@@ -252,6 +260,7 @@ public class AgentTemplateService {
         if (importedEntries == null) {
             return configService.importJsonc(jsoncContent, "instance", null, null);
         }
+        rejectRetiredKeys(importedEntries);
 
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         User actor = loadActor(actorId);
@@ -261,9 +270,9 @@ public class AgentTemplateService {
         merged.putAll(importedEntries);
         ConfigScope scope = new ConfigScope("instance", null, null);
         ObjectNode parsed = parseLayer(scope, merged);
-        validateRoleIds(parsed, "instance");
+        validatePresetIds(parsed, "instance");
         listTemplates(parsed, "instance");
-        requireRolePermissionsWithinUserGrants(actorId, null, parsed);
+        requirePresetPermissionsWithinUserGrants(actorId, null, parsed);
 
         Map<String, String> changed = changedEntries(before, importedEntries);
         ConfigService.ImportReport report = configService.importJsonc(
@@ -353,7 +362,38 @@ public class AgentTemplateService {
         }
     }
 
-    private void requireRolePermissionsWithinUserGrants(UUID actorId, UUID workspaceId, ObjectNode config) {
+    /**
+     * task-873: refuse the retired config vocabulary before the schema sees it. {@code roles} and
+     * {@code roleId} are the old spelling of the same concept; accepting them would keep a second
+     * wire vocabulary alive after the MVP rename.
+     */
+    private void rejectRetiredKeys(Map<String, String> entries) {
+        if (entries.containsKey(RETIRED_ROLES_KEY)) {
+            throw new IllegalArgumentException(
+                    "Agent template config uses the retired key 'roles'; use 'presets'");
+        }
+        String templates = entries.get("templates");
+        if (templates == null || templates.isBlank()) {
+            return;
+        }
+        JsonNode parsed;
+        try {
+            parsed = objectMapper.readTree(templates);
+        } catch (JsonProcessingException e) {
+            return;
+        }
+        if (parsed == null || !parsed.isArray()) {
+            return;
+        }
+        for (JsonNode template : parsed) {
+            if (template.has(RETIRED_TEMPLATE_PRESET_KEY)) {
+                throw new IllegalArgumentException(
+                        "Agent template entry uses the retired key 'roleId'; use 'presetId'");
+            }
+        }
+    }
+
+    private void requirePresetPermissionsWithinUserGrants(UUID actorId, UUID workspaceId, ObjectNode config) {
         Set<GrantIntersectionEvaluator.PermissionAtom> actorPermissions;
         try {
             actorPermissions = evaluator.union(
@@ -363,40 +403,40 @@ public class AgentTemplateService {
                     actorId, e.getClass().getSimpleName());
             throw new ConfigService.ConfigAccessException("Template writer permissions could not be verified");
         }
-        ArrayNode roles = (ArrayNode) config.get("roles");
-        for (JsonNode role : roles) {
-            JsonNode rolePermissions = role.get("permissions");
-            if (rolePermissions == null || !rolePermissions.isArray()) {
-                throw new IllegalArgumentException("Role permissions must be an atom array");
+        ArrayNode presets = (ArrayNode) config.get("presets");
+        for (JsonNode preset : presets) {
+            JsonNode presetPermissions = preset.get("permissions");
+            if (presetPermissions == null || !presetPermissions.isArray()) {
+                throw new IllegalArgumentException("Preset permissions must be an atom array");
             }
-            for (JsonNode atom : rolePermissions) {
+            for (JsonNode atom : presetPermissions) {
                 JsonNode resourceNode = atom.get("resource");
                 if (resourceNode != null && resourceNode.isTextual() && resourceNode.asText().isBlank()) {
                     throw new IllegalArgumentException("Permission resource must not be blank");
                 }
             }
-            Set<GrantIntersectionEvaluator.PermissionAtom> requested = evaluator.parse(rolePermissions);
+            Set<GrantIntersectionEvaluator.PermissionAtom> requested = evaluator.parse(presetPermissions);
             requireCredentialAtomsValid(actorId, workspaceId, requested);
             for (GrantIntersectionEvaluator.PermissionAtom permission : requested) {
                 if (ToolFaceRegistry.isCredentialActionClass(permission.actionClass())) {
                     // PLAN-0496 T3.2: credential atoms use the naming-rule ceiling (the
                     // evaluation-request path requires a concrete id and cannot carry '*').
                     if (!coveredBy(permission, actorPermissions)) {
-                        logger.warn("Denied Agent role credential atom beyond writer grants: actor={}, roleId={}",
-                                actorId, text(role, "id"));
+                        logger.warn("Denied Agent preset credential atom beyond writer grants: actor={}, presetId={}",
+                                actorId, text(preset, "id"));
                         throw new ConfigService.ConfigAccessException(
-                                "Role permissions must be within the template writer's current grants");
+                                "Preset permissions must be within the template writer's current grants");
                     }
                     continue;
                 }
-                PolicyRequest request = new PolicyRequest("config.agent-templates.role", List.of(permission.actionClass()),
+                PolicyRequest request = new PolicyRequest("config.agent-templates.preset", List.of(permission.actionClass()),
                         List.of(permission.resource()), ToolShape.STRUCTURED, actorId.toString(),
                         workspaceId == null ? null : workspaceId.toString(), null);
                 if (!evaluator.allows(request, List.of(actorPermissions))) {
-                    logger.warn("Denied Agent role permission beyond writer grants: actor={}, roleId={}",
-                            actorId, text(role, "id"));
+                    logger.warn("Denied Agent preset permission beyond writer grants: actor={}, presetId={}",
+                            actorId, text(preset, "id"));
                     throw new ConfigService.ConfigAccessException(
-                            "Role permissions must be within the template writer's current grants");
+                            "Preset permissions must be within the template writer's current grants");
                 }
             }
         }
@@ -404,15 +444,15 @@ public class AgentTemplateService {
 
     /**
      * PLAN-0496 T3.2: credential atoms — canonical resource format, reference existence
-     * (0495 {@code existsForOwner}, dangling rejected) and the per-role atom cap.
+     * (0495 {@code existsForOwner}, dangling rejected) and the per-preset atom cap.
      */
     private void requireCredentialAtomsValid(UUID actorId, UUID workspaceId,
             Set<GrantIntersectionEvaluator.PermissionAtom> requested) {
         List<GrantIntersectionEvaluator.PermissionAtom> credentialAtoms = requested.stream()
                 .filter(permission -> ToolFaceRegistry.isCredentialActionClass(permission.actionClass()))
                 .toList();
-        if (credentialAtoms.size() > MAX_CREDENTIAL_ATOMS_PER_ROLE) {
-            throw new IllegalArgumentException("A role may carry at most " + MAX_CREDENTIAL_ATOMS_PER_ROLE
+        if (credentialAtoms.size() > MAX_CREDENTIAL_ATOMS_PER_PRESET) {
+            throw new IllegalArgumentException("A preset may carry at most " + MAX_CREDENTIAL_ATOMS_PER_PRESET
                     + " credential atoms; use credential:* for wide access");
         }
         for (GrantIntersectionEvaluator.PermissionAtom permission : credentialAtoms) {
@@ -441,14 +481,14 @@ public class AgentTemplateService {
                         candidate.resource()));
     }
 
-    private void validateRoleIds(ObjectNode config, String layer) {
-        Set<String> roleIds = new HashSet<>();
-        for (JsonNode role : (ArrayNode) config.get("roles")) {
-            String roleId = text(role, "id");
-            if (roleId == null || !roleIds.add(roleId)) {
-                logger.error("Duplicate or missing Agent template role ID: layer={}", layer);
+    private void validatePresetIds(ObjectNode config, String layer) {
+        Set<String> presetIds = new HashSet<>();
+        for (JsonNode preset : (ArrayNode) config.get("presets")) {
+            String presetId = text(preset, "id");
+            if (presetId == null || !presetIds.add(presetId)) {
+                logger.error("Duplicate or missing Agent template preset ID: layer={}", layer);
                 throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
-                        "Stored Agent template role IDs are not unique");
+                        "Stored Agent template preset IDs are not unique");
             }
         }
     }
@@ -464,7 +504,7 @@ public class AgentTemplateService {
     }
 
     /** task-207: the whole-list keys of this domain — a write replaces the list it names. */
-    private static final List<String> TEMPLATE_LIST_KEYS = List.of("roles", "templates");
+    private static final List<String> TEMPLATE_LIST_KEYS = List.of("presets", "templates");
 
     /**
      * task-207: the ids this write is about to erase — {@code before(key) − proposed(key)} for each
@@ -526,7 +566,7 @@ public class AgentTemplateService {
         details.put("authorizationAction", ToolFaceRegistry.ACTION_CREATE_TEMPLATE);
         details.put("layer", layer);
         details.set("changedKeys", keys);
-        details.set("permissionDiff", rolePermissionDiff(before, after, layer, userId, workspaceId));
+        details.set("permissionDiff", presetPermissionDiff(before, after, layer, userId, workspaceId));
         String scopeId = switch (layer) {
             case "instance" -> "instance";
             case "workspace-default" -> "workspace-default";
@@ -546,15 +586,15 @@ public class AgentTemplateService {
                 continue;
             }
             String action = oldTemplate == null ? "agent_template_created" : "agent_template_updated";
-            JsonNode role = findRole(after, layer, userId, workspaceId, text(entry.getValue(), "roleId"));
+            JsonNode preset = findPreset(after, layer, userId, workspaceId, text(entry.getValue(), "presetId"));
             ObjectNode templateDetails = objectMapper.createObjectNode();
             templateDetails.put("authorizationAction", ToolFaceRegistry.ACTION_CREATE_TEMPLATE);
             templateDetails.put("layer", layer);
             templateDetails.set("changedKeys", keys.deepCopy());
             templateDetails.put("templateId", entry.getKey());
-            templateDetails.put("roleId", text(entry.getValue(), "roleId"));
-            if (role != null) {
-                templateDetails.set("permissionDiff", role.path("permissions").deepCopy());
+            templateDetails.put("presetId", text(entry.getValue(), "presetId"));
+            if (preset != null) {
+                templateDetails.set("permissionDiff", preset.path("permissions").deepCopy());
             }
             auditLogger.recordDurableChange(actorId.toString(),
                     workspaceId == null ? null : workspaceId.toString(),
@@ -574,21 +614,21 @@ public class AgentTemplateService {
         }
     }
 
-    private ArrayNode rolePermissionDiff(Map<String, String> before, Map<String, String> after,
-                                         String layer, UUID userId, UUID workspaceId) {
-        Map<String, JsonNode> oldRoles = roleIndex(before, layer, userId, workspaceId);
-        Map<String, JsonNode> newRoles = roleIndex(after, layer, userId, workspaceId);
-        Set<String> roleIds = new HashSet<>(oldRoles.keySet());
-        roleIds.addAll(newRoles.keySet());
+    private ArrayNode presetPermissionDiff(Map<String, String> before, Map<String, String> after,
+                                           String layer, UUID userId, UUID workspaceId) {
+        Map<String, JsonNode> oldPresets = presetIndex(before, layer, userId, workspaceId);
+        Map<String, JsonNode> newPresets = presetIndex(after, layer, userId, workspaceId);
+        Set<String> presetIds = new HashSet<>(oldPresets.keySet());
+        presetIds.addAll(newPresets.keySet());
         ArrayNode differences = objectMapper.createArrayNode();
-        roleIds.stream().sorted().forEach(roleId -> {
-            JsonNode oldRole = oldRoles.get(roleId);
-            JsonNode newRole = newRoles.get(roleId);
-            JsonNode oldPermissions = oldRole == null ? null : oldRole.get("permissions");
-            JsonNode newPermissions = newRole == null ? null : newRole.get("permissions");
+        presetIds.stream().sorted().forEach(presetId -> {
+            JsonNode oldPreset = oldPresets.get(presetId);
+            JsonNode newPreset = newPresets.get(presetId);
+            JsonNode oldPermissions = oldPreset == null ? null : oldPreset.get("permissions");
+            JsonNode newPermissions = newPreset == null ? null : newPreset.get("permissions");
             if (!Objects.equals(oldPermissions, newPermissions)) {
                 ObjectNode diff = differences.addObject();
-                diff.put("roleId", roleId);
+                diff.put("presetId", presetId);
                 if (oldPermissions == null) {
                     diff.putNull("before");
                 } else {
@@ -604,13 +644,13 @@ public class AgentTemplateService {
         return differences;
     }
 
-    private Map<String, JsonNode> roleIndex(Map<String, String> entries, String layer,
-                                           UUID userId, UUID workspaceId) {
+    private Map<String, JsonNode> presetIndex(Map<String, String> entries, String layer,
+                                              UUID userId, UUID workspaceId) {
         try {
             ObjectNode config = parseLayer(new ConfigScope(layer, userId, workspaceId), entries);
             Map<String, JsonNode> result = new LinkedHashMap<>();
-            for (JsonNode role : (ArrayNode) config.get("roles")) {
-                result.put(text(role, "id"), role);
+            for (JsonNode preset : (ArrayNode) config.get("presets")) {
+                result.put(text(preset, "id"), preset);
             }
             return result;
         } catch (RuntimeException e) {
@@ -633,21 +673,21 @@ public class AgentTemplateService {
         }
     }
 
-    private JsonNode findRole(Map<String, String> entries, String layer,
-                              UUID userId, UUID workspaceId, String roleId) {
-        if (roleId == null) {
+    private JsonNode findPreset(Map<String, String> entries, String layer,
+                                UUID userId, UUID workspaceId, String presetId) {
+        if (presetId == null) {
             return null;
         }
         try {
             ObjectNode config = parseLayer(new ConfigScope(layer, userId, workspaceId), entries);
-            for (JsonNode role : (ArrayNode) config.get("roles")) {
-                if (roleId.equals(text(role, "id"))) {
-                    return role;
+            for (JsonNode preset : (ArrayNode) config.get("presets")) {
+                if (presetId.equals(text(preset, "id"))) {
+                    return preset;
                 }
             }
         } catch (RuntimeException e) {
-            logger.error("Unable to resolve Agent template role for audit: layer={}, roleId={}, errorType={}",
-                    layer, roleId, e.getClass().getSimpleName());
+            logger.error("Unable to resolve Agent template preset for audit: layer={}, presetId={}, errorType={}",
+                    layer, presetId, e.getClass().getSimpleName());
         }
         return null;
     }
@@ -678,7 +718,7 @@ public class AgentTemplateService {
     /** Validates the layer's templates[] entries without merging or picking another layer. */
     private ArrayNode listTemplates(ObjectNode config, String layer) {
         ArrayNode templates = (ArrayNode) config.get("templates");
-        ArrayNode roles = (ArrayNode) config.get("roles");
+        ArrayNode presets = (ArrayNode) config.get("presets");
         Set<String> seenTemplateIds = new HashSet<>();
         for (JsonNode template : templates) {
             String templateId = text(template, "id");
@@ -687,24 +727,24 @@ public class AgentTemplateService {
                 throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
                         "Stored Agent template IDs are not unique");
             }
-            String roleId = text(template, "roleId");
-            parseUuid(roleId, "INVALID_TEMPLATE_ROLE_ID");
-            int roleMatches = 0;
-            for (JsonNode role : roles) {
-                if (roleId.equals(text(role, "id"))) {
-                    roleMatches++;
+            String presetId = text(template, "presetId");
+            parseUuid(presetId, "INVALID_TEMPLATE_PRESET_ID");
+            int presetMatches = 0;
+            for (JsonNode preset : presets) {
+                if (presetId.equals(text(preset, "id"))) {
+                    presetMatches++;
                 }
             }
-            if (roleMatches == 0) {
-                logger.error("Missing Agent template role reference: layer={}, roleId={}", layer, roleId);
+            if (presetMatches == 0) {
+                logger.error("Missing Agent template preset reference: layer={}, presetId={}", layer, presetId);
                 throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
-                        "Template role reference is missing from its config layer");
+                        "Template preset reference is missing from its config layer");
             }
-            if (roleMatches > 1) {
-                logger.error("Duplicate Agent template role ID in config scope: layer={}, roleId={}",
-                        layer, roleId);
+            if (presetMatches > 1) {
+                logger.error("Duplicate Agent template preset ID in config scope: layer={}, presetId={}",
+                        layer, presetId);
                 throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
-                        "Template role ID is not unique in its config layer");
+                        "Template preset ID is not unique in its config layer");
             }
         }
         return templates.deepCopy();
@@ -716,8 +756,8 @@ public class AgentTemplateService {
         ObjectNode snapshot = objectMapper.createObjectNode();
         snapshot.putNull("templateId");
         snapshot.putNull("templateName");
-        snapshot.putNull("roleId");
-        snapshot.putNull("roleName");
+        snapshot.putNull("presetId");
+        snapshot.putNull("presetName");
         snapshot.put("systemPrompt", DEFAULT_SYSTEM_PROMPT);
         snapshot.set("permissions", toJson(userPermissions));
         return snapshot;
@@ -739,8 +779,8 @@ public class AgentTemplateService {
                         "Stored Agent template configuration is invalid", e);
             }
         }
-        if (!config.has("roles")) {
-            config.putArray("roles");
+        if (!config.has("presets")) {
+            config.putArray("presets");
         }
         if (!config.has("templates")) {
             config.putArray("templates");
@@ -787,35 +827,35 @@ public class AgentTemplateService {
             throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_TEMPLATE_NOT_FOUND", "Agent template not found");
         }
 
-        String roleId = text(template, "roleId");
-        parseUuid(roleId, "INVALID_TEMPLATE_ROLE_ID");
-        ArrayNode roles = (ArrayNode) config.get("roles");
-        JsonNode role = null;
-        for (JsonNode candidate : roles) {
-            if (roleId.equals(text(candidate, "id"))) {
-                if (role != null) {
+        String presetId = text(template, "presetId");
+        parseUuid(presetId, "INVALID_TEMPLATE_PRESET_ID");
+        ArrayNode presets = (ArrayNode) config.get("presets");
+        JsonNode preset = null;
+        for (JsonNode candidate : presets) {
+            if (presetId.equals(text(candidate, "id"))) {
+                if (preset != null) {
                     throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
-                            "Template role ID is not unique in its config layer");
+                            "Template preset ID is not unique in its config layer");
                 }
-                role = candidate;
+                preset = candidate;
             }
         }
-        if (role == null) {
+        if (preset == null) {
             throw new CpApiException(HttpStatus.CONFLICT, "AGENT_TEMPLATE_CONFIG_INVALID",
-                    "Template role reference is missing from its config layer");
+                    "Template preset reference is missing from its config layer");
         }
 
         ObjectNode snapshot = objectMapper.createObjectNode();
         snapshot.put("templateId", templateId);
         snapshot.put("templateName", text(template, "name"));
-        snapshot.put("roleId", roleId);
-        snapshot.put("roleName", text(role, "name"));
+        snapshot.put("presetId", presetId);
+        snapshot.put("presetName", text(preset, "name"));
         snapshot.put("description", text(template, "description"));
         snapshot.put("systemPrompt", text(template, "systemPrompt"));
         snapshot.put("toolMode", text(template, "toolMode"));
         copyTextIfPresent(template, snapshot, "provider");
         copyTextIfPresent(template, snapshot, "model");
-        snapshot.set("permissions", role.get("permissions").deepCopy());
+        snapshot.set("permissions", preset.get("permissions").deepCopy());
         // PLAN-0625 D25-09 (Gap H): hooks are part of the capability face, and the template is the
         // declaration source of the preset guard's subscriptions. Without this copy the snapshot
         // dropped them and `AgentPrincipalService.createPrincipalFromTemplate` read a missing node

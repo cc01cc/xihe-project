@@ -64,10 +64,10 @@
   //   "askActionClasses": ["write", "exec", "delete", "credential", "CREATE_ACCOUNT", "CREATE_TEMPLATE", "MANAGE_WORKSPACE_AGENTS", "SPAWN_AGENT"]
   // },
 
-  // agent-templates — 按 instance/user/workspace 层分别维护；role 仅定义权限 atom，template.roleId 只引用本层 role。
+  // agent-templates — 按 instance/user/workspace 层分别维护；preset 仅定义权限 atom，template.presetId 只引用本层 preset。
   // 写入任一层均需独立 CREATE_TEMPLATE；模板不包含 provider secret。
   // "agent-templates": {
-  //   "roles": [],
+  //   "presets": [],
   //   "templates": []
   // },
 

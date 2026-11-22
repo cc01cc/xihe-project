@@ -78,7 +78,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: bootHeaders,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "Plan0366 Role",
@@ -94,7 +94,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: "fake-openai",
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

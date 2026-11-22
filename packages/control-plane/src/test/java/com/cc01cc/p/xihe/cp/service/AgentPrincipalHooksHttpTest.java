@@ -242,7 +242,7 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         fixture();
         UUID roleId = UUID.randomUUID();
         UUID templateId = UUID.randomUUID();
-        saveConfigLayer("roles", rolesArray(roleId, "guard", "read"));
+        saveConfigLayer("presets", rolesArray(roleId, "guard", "read"));
         saveConfigLayer("templates", templatesArray(templateId, "Frozen guard", roleId, HOOKS_JSON));
 
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
@@ -264,7 +264,7 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         fixture();
         UUID roleId = UUID.randomUUID();
         UUID templateId = UUID.randomUUID();
-        saveConfigLayer("roles", rolesArray(roleId, "plain", "read"));
+        saveConfigLayer("presets", rolesArray(roleId, "plain", "read"));
         saveConfigLayer("templates", templatesArray(templateId, "Plain template", roleId, null));
 
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
@@ -495,7 +495,7 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         template.put("description", name + " description");
         template.put("systemPrompt", "You are a fixture agent.");
         template.put("toolMode", "none");
-        template.put("roleId", roleId.toString());
+        template.put("presetId", roleId.toString());
         if (hooksJson != null) {
             template.set("hooks", readJson(hooksJson));
         }

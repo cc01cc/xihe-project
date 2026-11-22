@@ -131,7 +131,7 @@ async function ensureAgentPrincipal(
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 {
                     id: roleId,
                     name: "PLAN-0688 Role",
@@ -147,7 +147,7 @@ async function ensureAgentPrincipal(
                     toolMode: "workspace",
                     provider: "openai",
                     model: MODEL_ID,
-                    roleId,
+                    presetId,
                 },
             ]),
         },

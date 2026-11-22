@@ -245,7 +245,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "PLAN0630 Delegation Role",
@@ -267,7 +267,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: MODEL_ID,
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

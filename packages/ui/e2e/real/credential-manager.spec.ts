@@ -339,7 +339,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     const templateEntries = (await templatesResponse.json()) as {
         entries?: Record<string, string>;
     };
-    const roles = JSON.parse(templateEntries.entries?.roles ?? "[]") as Array<{
+    const roles = JSON.parse(templateEntries.entries?.presets ?? "[]") as Array<{
         id: string;
         name: string;
     }>;
@@ -350,7 +350,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers: authHeaders,
         data: {
-            roles: templateEntries.entries?.roles ?? "[]",
+            presets: templateEntries.entries?.presets ?? "[]",
             templates: JSON.stringify([
                 {
                     id: templateId,
@@ -360,7 +360,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
                     toolMode: "workspace",
                     provider: "openai",
                     model: "fake-openai",
-                    roleId,
+                    presetId,
                 },
             ]),
         },

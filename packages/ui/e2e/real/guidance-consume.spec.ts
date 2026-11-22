@@ -43,7 +43,7 @@ async function createApprovalAgent(
         templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "Guidance E2E Role",
@@ -62,7 +62,7 @@ async function createApprovalAgent(
                         toolMode: "workspace",
                         provider: "openai",
                         model: "fake-openai",
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

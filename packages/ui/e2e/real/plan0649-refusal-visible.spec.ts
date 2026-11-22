@@ -244,7 +244,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "PLAN0649 Refusal Role",
@@ -266,7 +266,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: MODEL_ID,
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

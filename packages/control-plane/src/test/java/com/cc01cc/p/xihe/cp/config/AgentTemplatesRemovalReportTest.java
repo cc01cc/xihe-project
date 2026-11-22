@@ -29,9 +29,10 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * task-207 / D-1587: a whole-list write of {@code roles}/{@code templates} replaces that key's list,
+ * task-207 / D-1587: a whole-list write of {@code presets}/{@code templates} replaces that key's list,
  * so ids the caller omitted disappear — silently, because the pre-change response was only
  * {@code {status, keys}}. This pins the additive report: {@code removedCount} + {@code removedIds}
  * for the {@code agent-templates} domain, ids only (never prompt text), and nothing else changed.
@@ -74,7 +75,7 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
         UUID templateDropped = UUID.randomUUID();
 
         Map<String, Object> first = putTemplates(token, Map.of(
-                "roles", roles(roleKeep, roleSecond, roleThird).toString(),
+                "presets", roles(roleKeep, roleSecond, roleThird).toString(),
                 "templates", templates(roleKeep, templateKeep, templateSecond, templateDropped).toString()));
         assertEquals("ok", first.get("status"));
         assertEquals(2, first.get("keys"), "the documented keys field must stay as it was");
@@ -84,7 +85,7 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
 
         // 3 templates -> 2 templates: exactly templateDropped is gone.
         Map<String, Object> replaced = putTemplates(token, Map.of(
-                "roles", roles(roleKeep, roleSecond, roleThird).toString(),
+                "presets", roles(roleKeep, roleSecond, roleThird).toString(),
                 "templates", templates(roleKeep, templateKeep, templateSecond).toString()));
         assertEquals("ok", replaced.get("status"));
         assertEquals(1, replaced.get("removedCount"),
@@ -94,7 +95,7 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
         // Merge semantics: keep both existing ids and append a new one.
         UUID templateAdded = UUID.randomUUID();
         Map<String, Object> merged = putTemplates(token, Map.of(
-                "roles", roles(roleKeep, roleSecond, roleThird).toString(),
+                "presets", roles(roleKeep, roleSecond, roleThird).toString(),
                 "templates", templates(roleKeep, templateKeep, templateSecond, templateAdded).toString()));
         assertEquals("ok", merged.get("status"));
         assertEquals(0, merged.get("removedCount"), "a merge removes nothing");
@@ -102,14 +103,14 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
 
         // A single-key write leaves the sibling key alone: no removal is reported for it.
         Map<String, Object> rolesOnly = putTemplates(token, Map.of(
-                "roles", roles(roleKeep, roleSecond, roleThird).toString()));
+                "presets", roles(roleKeep, roleSecond, roleThird).toString()));
         assertEquals("ok", rolesOnly.get("status"));
         assertEquals(0, rolesOnly.get("removedCount"),
                 "templates were not part of this body, so nothing was removed from them");
 
         // The same receipt covers the other whole-list key, and only that key.
         Map<String, Object> rolesDropped = putTemplates(token, Map.of(
-                "roles", roles(roleKeep, roleSecond).toString()));
+                "presets", roles(roleKeep, roleSecond).toString()));
         assertEquals(1, rolesDropped.get("removedCount"),
                 "dropping a role is the same kind of loss and must be reported too");
         assertEquals(List.of(roleThird.toString()), rolesDropped.get("removedIds"));
@@ -128,6 +129,34 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
                 "non-template domains keep their exact previous response shape");
         assertFalse(other.getBody().containsKey("removedIds"));
         assertEquals(0, other.getBody().get("keys"));
+    }
+
+    @Test
+    void retiredRolesVocabularyIsRejectedWith400() {
+        String token = writerToken();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+
+        ResponseEntity<Map> rolesKey = restTemplate.exchange(
+                url("/api/v1/config/user/agent-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("roles", "[]", "templates", "[]"), headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, rolesKey.getStatusCode(),
+                "the retired `roles` config key must fail explicitly instead of being stored");
+        assertTrue(String.valueOf(rolesKey.getBody()).contains("presets"),
+                "the 400 must name the replacement key");
+
+        UUID presetId = UUID.randomUUID();
+        UUID templateId = UUID.randomUUID();
+        String retiredTemplate = "[{\"id\":\"" + templateId
+                + "\",\"name\":\"legacy\",\"description\":\"\",\"systemPrompt\":\"legacy\","
+                + "\"toolMode\":\"none\",\"roleId\":\"" + presetId + "\"}]";
+        ResponseEntity<Map> roleIdKey = restTemplate.exchange(
+                url("/api/v1/config/user/agent-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("presets", "[]", "templates", retiredTemplate), headers), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, roleIdKey.getStatusCode(),
+                "the retired `roleId` template field must fail explicitly instead of reaching the schema");
+        assertTrue(String.valueOf(roleIdKey.getBody()).contains("presetId"),
+                "the 400 must name the replacement field");
     }
 
     private String writerToken() {
@@ -197,7 +226,7 @@ class AgentTemplatesRemovalReportTest extends AbstractReusableIntegrationTest {
             template.put("toolMode", "workspace");
             template.put("provider", "openai");
             template.put("model", "test-model");
-            template.put("roleId", roleId.toString());
+            template.put("presetId", roleId.toString());
             templates.add(template);
         }
         return templates;

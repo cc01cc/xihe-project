@@ -19,7 +19,7 @@ tags:
   - name: auth
     description: "Authentication, the caller's own identity (/me) and the OAuth device/callback flow"
   - name: admin
-    description: "Instance administration: users, roles, permission grants, bindings and the audit log"
+    description: "Instance administration: users, presets, permission grants, bindings and the audit log"
   - name: workspace
     description: "Workspace lifecycle, members, roots, checkpoints, git state and runtime materialization"
   - name: agent
@@ -758,7 +758,7 @@ paths:
       summary: Change one member's role (PLAN-0565)
       description: |
         PLAN-0565 (spec §3/§4): workspace OWNER only; instance ADMIN cannot change
-        roles (ruling #3). New role is limited to EDITOR|VIEWER. Removing/downgrading
+        membership tiers (ruling #3). The new tier is limited to EDITOR|VIEWER. Removing/downgrading
         the unique OWNER is rejected with 409 LAST_OWNER (server-authoritative, no
         role exception). Audited (`workspace_member_role_changed`).
       security: [{ bearerAuth: [] }]
@@ -881,8 +881,8 @@ paths:
         transaction (the capability disappears for the agent's next session). Only a **seed
         binding** (`is_seed=true`, written by the seeding/creation defaults) is immutable ⇒
         **409 `ROLE_BINDING_IMMUTABLE`**; a user-created binding of a system role is deletable.
-        Before the Lead ruling of 2026-11-05 the check read `roles.is_system`, so binding the most
-        useful roles (WS_EDITOR etc.) to an agent principal could never be undone.
+        Before the Lead ruling of 2026-11-05 the check read the legacy `is_system` column, so binding
+        the most useful presets (WS_EDITOR etc.) to an agent principal could never be undone.
         An id that does not exist, or belongs to another subject, answers 404 `ROLE_BINDING_NOT_FOUND`
         (no cross-subject probe).
       security: [{ bearerAuth: [] }]
@@ -904,13 +904,13 @@ paths:
       summary: List one agent principal's skill bindings (PLAN-0667)
       description: |
         PLAN-0667: reads `skill_bindings` rows with `subject_type='agent_principal'` and
-        `subject_id={principalId}`. Same authorization shape as the roles listing
+        `subject_id={principalId}`. Same authorization shape as the preset-binding listing
         (`MANAGE_AGENT_PRINCIPALS` or `MANAGE_WORKSPACE_AGENTS` in `workspaceId`), same
         404-for-invisible-principal rule.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see the GET binding surface).' }
       responses:
         '200': { description: 'Skill bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingListResponse' } } } }
         '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -950,7 +950,7 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see the GET binding surface).' }
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindRequest' } } }
@@ -973,7 +973,7 @@ paths:
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
         - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see the GET binding surface).' }
       responses:
         '204': { description: 'Binding removed' }
         '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -1004,7 +1004,7 @@ paths:
 
         PLAN-0629 (user ruling 2026-11-04, B-class change): an agent principal's permission is a
         **role binding**, exactly like a human account's — permissions live in the config surface
-        (`roles` / `role_permissions`) and subjects only get bound to roles; workspace visibility
+        (`grant_presets` / `grant_preset_atoms`) and subjects only get bound to presets; workspace visibility
         (`GET /api/v1/workspaces/{workspaceId}/agents`) is computed from workspace-scoped role
         bindings (`role_bindings.subject_type = 'agent_principal'`).
 
@@ -1292,7 +1292,7 @@ paths:
       tags: [agent]
       operationId: listAgentTemplates
       summary: Read one caller-readable Agent template config layer
-      description: layer selects a single raw config layer (instance=ADMIN only, user=caller only, workspace=Workspace member only, workspace-default=any authenticated caller - the shared workspace default layer of PLAN-0766) with the fail-closed rules of AgentTemplateService; workspaceId is optional for the workspace layer and falls back to the tenant workspace context. Never returns a merged-effective or cross-layer view, roles[], or secret fields; denied responses carry no template content.
+      description: layer selects a single raw config layer (instance=ADMIN only, user=caller only, workspace=Workspace member only, workspace-default=any authenticated caller - the shared workspace default layer of PLAN-0766) with the fail-closed rules of AgentTemplateService; workspaceId is optional for the workspace layer and falls back to the tenant workspace context. Never returns a merged-effective or cross-layer view, presets[], or secret fields; denied responses carry no template content.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace, workspace-default] } }
@@ -6376,12 +6376,12 @@ paths:
         Two views share this endpoint. A caller holding `MANAGE_ROLES` gets every role definition
         (PLAN-0610 admin view, unchanged). A caller who may manage an agent's bindings
         (`MANAGE_WORKSPACE_AGENTS` in the `workspaceId` context, or the instance-tier
-        `MANAGE_AGENT_PRINCIPALS`) gets the **agent-bindable subset**: roles carrying any
+        `MANAGE_AGENT_PRINCIPALS`) gets the **agent-bindable subset**: presets carrying any
         `agentPrincipalForbidden` atom are omitted, because binding them would always answer 409
         (Lead ruling 2026-11-05, real-stack gap 1: the OWNER previously received 403 and the
         binding picker had no candidates). Role definitions are instance-wide — scope lives on the
         binding — so no workspace-owned role can leak through this filter. Rows keep the same
-        RoleView shape (system roles first, then by name, atoms + bindingCount included).
+        RoleView shape (built-in presets first, then by name, atoms + bindingCount included).
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context for the agent-binding view: MANAGE_WORKSPACE_AGENTS is evaluated in this workspace. Ignored by the MANAGE_ROLES admin view. A workspace-tier caller cannot read candidates without it (403).' }
@@ -7872,7 +7872,7 @@ components:
         removedCount:
           type: integer
           minimum: 0
-          description: 'agent-templates only (task-207 / D-1587): how many whole-list items (`roles`/`templates` ids) this write erased. A write replaces the list it names, so omitted ids disappear silently; this is the receipt. Absent for other domains.'
+          description: 'agent-templates only (task-207 / D-1587): how many whole-list items (`presets`/`templates` ids) this write erased. A write replaces the list it names, so omitted ids disappear silently; this is the receipt. Absent for other domains.'
         removedIds:
           type: array
           items: { type: string }
@@ -7976,7 +7976,7 @@ components:
       properties:
         atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
         scopes: { type: array, items: { type: string, enum: [instance, workspace] } }
-        defaultGrants: { type: array, items: { $ref: '#/components/schemas/RoleDefaultGrantView' }, description: 'The seeded default grant set per built-in role, in catalog order (instance tier first). These are the code-level seeds, not the live DB rows: /roles lists the rows, this lists what a fresh install grants.' }
+        defaultGrants: { type: array, items: { $ref: '#/components/schemas/RoleDefaultGrantView' }, description: 'The seeded default grant set per built-in preset, in catalog order (instance tier first). These are the code-level seeds, not the live DB rows: /api/v1/presets lists the rows, this lists what a fresh install grants.' }
     RoleDefaultGrantView:
       type: object
       required: [roleName, displayName, atoms]
@@ -8147,7 +8147,7 @@ components:
     ResourceExhaustedProblem: { type: object, allOf: [{ $ref: '#/components/schemas/ProblemDetails' }, { type: object, required: [code, retryAfterSeconds], properties: { code: { type: string, enum: [RESOURCE_EXHAUSTED] }, retryAfterSeconds: { type: integer, minimum: 1, description: 'Mirrors the Retry-After header.' }, resourceKind: { type: string, enum: [CONNECTION, MODEL, FILE_WRITE, PROCESS, JOB, MCP], description: 'PLAN-0622: which resource class refused admission.' }, scope: { type: string, description: 'Resource key scope (for example connection:<uuid> or workspace:<uuid>/server:<id>).' } } }] }
     WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions, capSource], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } }, capSource: { type: string, enum: [baseline, explicit], description: 'D-1109 guard 1: how the stored cap came to be. explicit = the caller sent the permissions array (an empty array means a zero cap); baseline = the caller omitted it and the cap was derived from the principal''s role baseline in this Workspace. Persisted on workspace_agents.cap_source so "the field was forgotten" stays distinguishable from "inherit on purpose".' } } }
     WorkspaceAgentDefaultView: { type: object, required: [workspaceId, principalId, isDefault], properties: { workspaceId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'task-106: the Agent that is the Workspace default after this call.' }, isDefault: { type: boolean, enum: [true], description: 'Always true on success — the endpoint exists to set the flag; clearing it is the DELETE method on the same path.' }, previousPrincipalId: { type: [string, 'null'], format: uuid, description: 'task-106: the Agent that was the default before this call; null when the Workspace had no default.' } } }
-    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace, workspace-default] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user/workspace-default layers. }, templates: { type: array, description: 'Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response.', items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
+    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace, workspace-default] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user/workspace-default layers. }, templates: { type: array, description: 'Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Presets and secret-like fields are never part of this response.', items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, presetId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, presetId: { type: string, format: uuid } } } } } }
     CheckpointChangedFile:
        type: object
        additionalProperties: false
@@ -8557,7 +8557,7 @@ components:
         wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION, SCHEDULE] }
         wakeConfig: { type: [object, 'null'], description: 'PLAN-0624 Q4: per-participant schedule parameters, required when wakePolicy=SCHEDULE; jitterSeconds defaults to [0, interval*0.1), maxConcurrent defaults to the governor JOB ceiling', properties: { intervalSeconds: { type: integer }, jitterSeconds: { type: integer }, maxConcurrent: { type: integer } } }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
-        deliveryDefaults: { type: [array, 'null'], description: 'PLAN-0690 T2.1 (V134): roster-level default delivery roles consumed by the composer prefill; null = not configured, [] = explicitly none. Values are lower-case wire tokens, distinct, subset of {to,cc,mention_only}.', items: { type: string, enum: [to, cc, mention_only] }, maxItems: 3, uniqueItems: true }
+        deliveryDefaults: { type: [array, 'null'], description: 'PLAN-0690 T2.1 (V134): roster-level default delivery targets consumed by the composer prefill; null = not configured, [] = explicitly none. Values are lower-case wire tokens, distinct, subset of {to,cc,mention_only}.', items: { type: string, enum: [to, cc, mention_only] }, maxItems: 3, uniqueItems: true }
         source: { type: string, enum: [workspace, personal, instance] }
         disabledAt: { type: [string, 'null'], format: date-time }
         displayName: { type: string, description: 'PLAN-0684 (D-183): AGENT → agent_principals.name; HUMAN → the account username (NOT NULL since V82; the legacy user name and the email are never projected); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
@@ -8598,7 +8598,7 @@ components:
         role: { type: string, enum: [MEMBER, GUARD], default: MEMBER, description: PRIMARY is created with the session (D23-13) }
         wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION, SCHEDULE], default: MENTION, description: 'SCHEDULE requires wakeConfig' }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED], default: WHEN_MENTIONED }
-        deliveryDefaults: { type: [array, 'null'], description: 'PLAN-0690 T2.1: default delivery roles; duplicates are collapsed, values outside {to,cc,mention_only} are 400 PARTICIPANT_DELIVERY_DEFAULTS_INVALID', items: { type: string, enum: [to, cc, mention_only] } }
+        deliveryDefaults: { type: [array, 'null'], description: 'PLAN-0690 T2.1: default delivery targets; duplicates are collapsed, values outside {to,cc,mention_only} are 400 PARTICIPANT_DELIVERY_DEFAULTS_INVALID', items: { type: string, enum: [to, cc, mention_only] } }
     SessionParticipantUpdateRequest:
       type: object
       minProperties: 1

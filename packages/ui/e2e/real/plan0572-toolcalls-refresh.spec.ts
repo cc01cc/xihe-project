@@ -49,7 +49,7 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "PLAN-0572 Role",
@@ -65,7 +65,7 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: MODEL_ID,
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

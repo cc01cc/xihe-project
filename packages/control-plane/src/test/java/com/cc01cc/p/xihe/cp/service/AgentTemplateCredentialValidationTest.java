@@ -180,7 +180,7 @@ class AgentTemplateCredentialValidationTest extends AbstractReusableIntegrationT
 
     private int putRoles(String rolesJson) {
         return agentTemplateService.putConfigLayer(writerId.toString(), "user", writerId, null,
-                Map.of("roles", rolesJson));
+                Map.of("presets", rolesJson));
     }
 
     private static String atom(String actionClass, String resource) {

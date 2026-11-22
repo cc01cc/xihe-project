@@ -15,7 +15,7 @@ import { LayoutTemplate } from "@lucide/vue";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
 
 type Permission = { actionClass: string; resource?: string };
-type Role = { id: string; name: string; permissions: Permission[] };
+type Preset = { id: string; name: string; permissions: Permission[] };
 type Template = {
     id: string;
     name: string;
@@ -24,7 +24,7 @@ type Template = {
     toolMode: "none" | "workspace";
     provider?: string;
     model?: string;
-    roleId?: string;
+    presetId?: string;
 };
 
 const props = defineProps<{
@@ -41,51 +41,51 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const actions = ["read", "write", "delete", "exec", "network", "credential", "credential_use"],
-    roles = ref<Role[]>([]);
+    presets = ref<Preset[]>([]);
 const templates = ref<Template[]>([]),
     selectedTemplateId = ref(""),
-    roleName = ref("");
-const rolePermissions = ref<Permission[]>([]),
-    editingRoleId = ref(""),
+    presetName = ref("");
+const presetPermissions = ref<Permission[]>([]),
+    editingPresetId = ref(""),
     name = ref(""),
     description = ref("");
 const systemPrompt = ref(""),
     toolMode = ref<"none" | "workspace">("none"),
     provider = ref(""),
     model = ref("");
-const roleId = ref(""),
+const presetId = ref(""),
     error = ref(""),
     malformedConfig = ref(false),
     success = ref(""),
     pendingDeleteId = ref(""),
-    pendingRoleDeleteId = ref("");
+    pendingPresetDeleteId = ref("");
 const ceilingUncovered = ref<string[]>([]),
     ceilingChecking = ref(false);
 const pendingPayload = ref<Record<string, string> | null>(null),
     pendingSuccess = ref("");
-const pendingKind = ref<"template-save" | "template-delete" | "role-save" | "role-delete" | null>(
-    null,
-);
+const pendingKind = ref<
+    "template-save" | "template-delete" | "preset-save" | "preset-delete" | null
+>(null);
 
 watch(
     () => props.entries,
     (entries) => {
         malformedConfig.value = false;
-        roles.value = parseArray<Role>(entries.roles, isRole);
+        presets.value = parseArray<Preset>(entries.presets, isPreset);
         templates.value = parseArray<Template>(entries.templates, isTemplate);
         if (
             pendingPayload.value &&
-            entries.roles === pendingPayload.value.roles &&
+            entries.presets === pendingPayload.value.presets &&
             entries.templates === pendingPayload.value.templates
         ) {
             success.value = pendingSuccess.value;
             pendingPayload.value = null;
             if (pendingKind.value === "template-save") resetTemplateForm();
             if (pendingKind.value === "template-delete") pendingDeleteId.value = "";
-            if (pendingKind.value === "role-save") {
-                editingRoleId.value = "";
-                roleName.value = "";
-                rolePermissions.value = [];
+            if (pendingKind.value === "preset-save") {
+                editingPresetId.value = "";
+                presetName.value = "";
+                presetPermissions.value = [];
                 ceilingUncovered.value = [];
             }
             pendingKind.value = null;
@@ -111,7 +111,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isRole(value: unknown): value is Role {
+function isPreset(value: unknown): value is Preset {
     return (
         isRecord(value) &&
         typeof value.id === "string" &&
@@ -136,7 +136,7 @@ function isTemplate(value: unknown): value is Template {
         (value.toolMode === "none" || value.toolMode === "workspace") &&
         (value.provider === undefined || typeof value.provider === "string") &&
         (value.model === undefined || typeof value.model === "string") &&
-        (value.roleId === undefined || typeof value.roleId === "string")
+        (value.presetId === undefined || typeof value.presetId === "string")
     );
 }
 
@@ -171,35 +171,35 @@ function templateFormDirty(): boolean {
         toolMode.value !== (base?.toolMode ?? "none") ||
         provider.value !== (base?.provider ?? "") ||
         model.value !== (base?.model ?? "") ||
-        roleId.value !== (base?.roleId ?? "")
+        presetId.value !== (base?.presetId ?? "")
     );
 }
-/** 角色表单相对**已存角色**的差异；新建角色态基准 = 空名 + 空权限。 */
-function roleFormDirty(): boolean {
-    const base = roles.value.find((item) => item.id === editingRoleId.value);
+/** 预设表单相对**已存预设**的差异；新建预设态基准 = 空名 + 空权限。 */
+function presetFormDirty(): boolean {
+    const base = presets.value.find((item) => item.id === editingPresetId.value);
     return (
-        roleName.value.trim() !== (base?.name ?? "").trim() ||
-        permissionsText(rolePermissions.value) !== permissionsText(base?.permissions ?? [])
+        presetName.value.trim() !== (base?.name ?? "").trim() ||
+        permissionsText(presetPermissions.value) !== permissionsText(base?.permissions ?? [])
     );
 }
 /**
- * task-26：本域草稿是否有未保存编辑（模板表单 **或** 角色表单）。
+ * task-26：本域草稿是否有未保存编辑（模板表单 **或** 预设表单）。
  *
- * <p>基准取自 `props.entries` 解析出来的 `templates`/`roles`（:68-93 的 watch 同步），
+ * <p>基准取自 `props.entries` 解析出来的 `templates`/`presets`（:68-93 的 watch 同步），
  * 而保存成功后父层回填 entries 会让两侧自然相等 ⇒ 不需要在保存回调里手动清标志
  * （手动清会在保存失败时把未保存改动误报成已保存）。</p>
  */
-const draftDirty = computed(() => templateFormDirty() || roleFormDirty());
+const draftDirty = computed(() => templateFormDirty() || presetFormDirty());
 watch(draftDirty, (dirty) => emit("dirty", dirty), { immediate: true });
 // 卸载归零，理由同 ConfigDomainPanel.vue:188-192。
 onBeforeUnmount(() => emit("dirty", false));
 
-function persist(nextRoles: Role[], nextTemplates: Template[], message: string) {
+function persist(nextPresets: Preset[], nextTemplates: Template[], message: string) {
     if (malformedConfig.value || pendingPayload.value) return;
     error.value = "";
     success.value = "";
     pendingPayload.value = {
-        roles: JSON.stringify(nextRoles),
+        presets: JSON.stringify(nextPresets),
         templates: JSON.stringify(nextTemplates),
     };
     pendingSuccess.value = message;
@@ -214,7 +214,7 @@ function resetTemplateForm() {
     toolMode.value = "none";
     provider.value = "";
     model.value = "";
-    roleId.value = "";
+    presetId.value = "";
     pendingDeleteId.value = "";
 }
 
@@ -226,7 +226,7 @@ function editTemplate(template: Template) {
     toolMode.value = template.toolMode;
     provider.value = template.provider ?? "";
     model.value = template.model ?? "";
-    roleId.value = template.roleId ?? "";
+    presetId.value = template.presetId ?? "";
 }
 
 function saveTemplate() {
@@ -244,36 +244,36 @@ function saveTemplate() {
         toolMode: toolMode.value,
         ...(provider.value.trim() ? { provider: provider.value.trim() } : {}),
         ...(model.value.trim() ? { model: model.value.trim() } : {}),
-        ...(roleId.value ? { roleId: roleId.value } : {}),
+        ...(presetId.value ? { presetId: presetId.value } : {}),
     };
     const next = templates.value.some((item) => item.id === id)
         ? templates.value.map((item) => (item.id === id ? template : item))
         : [...templates.value, template];
     pendingKind.value = "template-save";
-    persist(roles.value, next, t("settings.agentTemplateSaved"));
+    persist(presets.value, next, t("settings.agentTemplateSaved"));
 }
 
 function deleteTemplate(template: Template) {
     if (props.saving || pendingPayload.value) return;
     if (pendingDeleteId.value !== template.id) {
         pendingDeleteId.value = template.id;
-        pendingRoleDeleteId.value = "";
+        pendingPresetDeleteId.value = "";
         return;
     }
     const next = templates.value.filter((item) => item.id !== template.id);
     pendingKind.value = "template-delete";
-    persist(roles.value, next, t("settings.agentTemplateDeleted"));
+    persist(presets.value, next, t("settings.agentTemplateDeleted"));
 }
 
-async function saveRole() {
+async function savePreset() {
     if (props.saving || pendingPayload.value || ceilingChecking.value) return;
-    if (!roleName.value.trim()) {
+    if (!presetName.value.trim()) {
         error.value = t("settings.agentRoleRequired");
         return;
     }
     error.value = "";
     ceilingUncovered.value = [];
-    const permissions = rolePermissions.value.map((permission) => ({
+    const permissions = presetPermissions.value.map((permission) => ({
         actionClass: permission.actionClass,
         resource: permission.resource?.trim() || "*",
     }));
@@ -301,71 +301,71 @@ async function saveRole() {
             ceilingChecking.value = false;
         }
     }
-    const id = editingRoleId.value || crypto.randomUUID();
-    const role: Role = {
+    const id = editingPresetId.value || crypto.randomUUID();
+    const preset: Preset = {
         id,
-        name: roleName.value.trim(),
+        name: presetName.value.trim(),
         permissions,
     };
-    const next = roles.value.some((item) => item.id === id)
-        ? roles.value.map((item) => (item.id === id ? role : item))
-        : [...roles.value, role];
-    pendingKind.value = "role-save";
+    const next = presets.value.some((item) => item.id === id)
+        ? presets.value.map((item) => (item.id === id ? preset : item))
+        : [...presets.value, preset];
+    pendingKind.value = "preset-save";
     persist(next, templates.value, t("settings.agentRoleSaved"));
 }
 
 function addCredentialAtoms(atoms: Array<{ actionClass: string; resource: string }>) {
     for (const atom of atoms) {
         if (
-            !rolePermissions.value.some(
+            !presetPermissions.value.some(
                 (permission) =>
                     permission.actionClass === atom.actionClass &&
                     permission.resource === atom.resource,
             )
         ) {
-            rolePermissions.value.push({ ...atom });
+            presetPermissions.value.push({ ...atom });
         }
     }
 }
 
 function removeCredentialAtom(resource: string) {
-    rolePermissions.value = rolePermissions.value.filter(
+    presetPermissions.value = presetPermissions.value.filter(
         (permission) =>
             !(permission.actionClass === "credential_use" && permission.resource === resource),
     );
 }
 
-function editRole(role: Role) {
-    editingRoleId.value = role.id;
-    roleName.value = role.name;
-    rolePermissions.value = role.permissions.map((permission) => ({ ...permission }));
+function editPreset(preset: Preset) {
+    editingPresetId.value = preset.id;
+    presetName.value = preset.name;
+    presetPermissions.value = preset.permissions.map((permission) => ({ ...permission }));
     ceilingUncovered.value = [];
 }
 
 /**
- * task-109 站点 2：角色删除原先**首击即持久化**（无任何确认），而红色已经画在入口上。
- * 按 DEV-011:155「这个元素如果消失，用户会误操作吗？」—— 会（角色连同其权限配置一起消失），
+ * task-109 站点 2：预设删除原先**首击即持久化**（无任何确认），而红色已经画在入口上。
+ * 按 DEV-011:155「这个元素如果消失，用户会误操作吗？」—— 会（预设连同其权限配置一起消失），
  * 属 L4；:153 又要求红只在确认时出现。故补成两段式（与模板删除同形态），红改由
- * pendingRoleDeleteId 条件驱动 —— **先有确认面，颜色才有落点**。
+ * pendingPresetDeleteId 条件驱动 —— **先有确认面，颜色才有落点**。
  */
-function deleteRole(role: Role) {
+function deletePreset(preset: Preset) {
     if (props.saving || pendingPayload.value) return;
-    if (templates.value.some((template) => template.roleId === role.id)) return;
-    if (pendingRoleDeleteId.value !== role.id) {
-        pendingRoleDeleteId.value = role.id;
+    if (templates.value.some((template) => template.presetId === preset.id)) return;
+    if (pendingPresetDeleteId.value !== preset.id) {
+        pendingPresetDeleteId.value = preset.id;
         pendingDeleteId.value = "";
         return;
     }
-    const next = roles.value.filter((item) => item.id !== role.id);
-    pendingKind.value = "role-delete";
-    pendingRoleDeleteId.value = "";
+    const next = presets.value.filter((item) => item.id !== preset.id);
+    pendingKind.value = "preset-delete";
+    pendingPresetDeleteId.value = "";
     persist(next, templates.value, t("settings.agentRoleDeleted"));
 }
 
-function cancelRoleEdit() {
-    editingRoleId.value = "";
-    roleName.value = "";
-    rolePermissions.value = [];
+function cancelPresetEdit() {
+    editingPresetId.value = "";
+    presetName.value = "";
+    presetPermissions.value = [];
     ceilingUncovered.value = [];
 }
 </script>
@@ -444,9 +444,9 @@ function cancelRoleEdit() {
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("settings.agentTemplateRole") }}</span>
                     <Select
-                        :model-value="roleId || '__none__'"
+                        :model-value="presetId || '__none__'"
                         @update:model-value="
-                            (value) => (roleId = value === '__none__' ? '' : String(value ?? ''))
+                            (value) => (presetId = value === '__none__' ? '' : String(value ?? ''))
                         "
                     >
                         <SelectTrigger
@@ -454,8 +454,9 @@ function cancelRoleEdit() {
                             class="w-full rounded-md border bg-background px-3 py-2"
                         >
                             <SelectValue>{{
-                                roleId
-                                    ? (roles.find((role) => role.id === roleId)?.name ?? roleId)
+                                presetId
+                                    ? (presets.find((preset) => preset.id === presetId)?.name ??
+                                      presetId)
                                     : t("settings.agentTemplateNoRole")
                             }}</SelectValue>
                         </SelectTrigger>
@@ -463,8 +464,12 @@ function cancelRoleEdit() {
                             <SelectItem value="__none__">{{
                                 t("settings.agentTemplateNoRole")
                             }}</SelectItem>
-                            <SelectItem v-for="role in roles" :key="role.id" :value="role.id">
-                                {{ role.name }}
+                            <SelectItem
+                                v-for="preset in presets"
+                                :key="preset.id"
+                                :value="preset.id"
+                            >
+                                {{ preset.name }}
                             </SelectItem>
                         </SelectContent>
                     </Select>
@@ -521,8 +526,8 @@ function cancelRoleEdit() {
                     </p>
                     <p class="mt-1 text-xs text-muted-foreground">
                         {{
-                            template.roleId
-                                ? roles.find((role) => role.id === template.roleId)?.name
+                            template.presetId
+                                ? presets.find((preset) => preset.id === template.presetId)?.name
                                 : t("settings.agentTemplateNoRole")
                         }}
                         · {{ template.toolMode }} ·
@@ -578,13 +583,13 @@ function cancelRoleEdit() {
             v-if="!readonly"
             class="space-y-2 rounded-md border p-3"
             data-testid="agent-role-form"
-            @submit.prevent="saveRole"
+            @submit.prevent="savePreset"
         >
             <h4 class="text-sm font-medium">
-                {{ editingRoleId ? t("settings.agentRoleEdit") : t("settings.agentRoleCreate") }}
+                {{ editingPresetId ? t("settings.agentRoleEdit") : t("settings.agentRoleCreate") }}
             </h4>
             <input
-                v-model="roleName"
+                v-model="presetName"
                 required
                 maxlength="120"
                 :aria-label="t('settings.agentRoleName')"
@@ -593,7 +598,7 @@ function cancelRoleEdit() {
             />
             <div class="space-y-2">
                 <div
-                    v-for="(permission, index) in rolePermissions"
+                    v-for="(permission, index) in presetPermissions"
                     :key="index"
                     class="grid grid-cols-[1fr_1fr_auto] gap-2"
                 >
@@ -620,7 +625,7 @@ function cancelRoleEdit() {
                         type="button"
                         :aria-label="t('common.delete')"
                         class="text-xs text-muted-foreground underline hover:text-foreground"
-                        @click="rolePermissions.splice(index, 1)"
+                        @click="presetPermissions.splice(index, 1)"
                     >
                         {{ t("common.delete") }}
                     </button>
@@ -629,13 +634,13 @@ function cancelRoleEdit() {
                     type="button"
                     data-testid="agent-role-add-permission"
                     class="rounded-md border px-2 py-1 text-xs"
-                    @click="rolePermissions.push({ actionClass: 'read', resource: '*' })"
+                    @click="presetPermissions.push({ actionClass: 'read', resource: '*' })"
                 >
                     {{ t("settings.agentRoleAddPermission") }}
                 </button>
             </div>
             <CredentialRoleBlock
-                :permissions="rolePermissions"
+                :permissions="presetPermissions"
                 @add="addCredentialAtoms"
                 @remove="removeCredentialAtom"
             />
@@ -658,11 +663,11 @@ function cancelRoleEdit() {
                 {{ ceilingChecking ? t("credentials.roleCeilingChecking") : t("common.save") }}
             </button>
             <button
-                v-if="editingRoleId"
+                v-if="editingPresetId"
                 type="button"
                 data-testid="agent-role-cancel-edit"
                 class="ml-2 text-sm underline"
-                @click="cancelRoleEdit"
+                @click="cancelPresetEdit"
             >
                 {{ t("common.cancel") }}
             </button>
@@ -670,15 +675,15 @@ function cancelRoleEdit() {
 
         <ul class="space-y-1 text-xs">
             <li
-                v-for="role in roles"
-                :key="role.id"
+                v-for="preset in presets"
+                :key="preset.id"
                 class="flex items-center justify-between gap-2"
-                :data-testid="`agent-role-${role.id}`"
+                :data-testid="`agent-role-${preset.id}`"
             >
                 <span
-                    >{{ role.name }} ·
+                    >{{ preset.name }} ·
                     {{
-                        role.permissions
+                        preset.permissions
                             .map((item) => `${item.actionClass}:${item.resource ?? "*"}`)
                             .join(", ") || t("settings.agentRoleNoPermissions")
                     }}</span
@@ -688,30 +693,30 @@ function cancelRoleEdit() {
                         type="button"
                         class="underline disabled:opacity-40"
                         :disabled="saving || !!pendingPayload"
-                        :data-testid="`agent-role-edit-${role.id}`"
-                        @click="editRole(role)"
+                        :data-testid="`agent-role-edit-${preset.id}`"
+                        @click="editPreset(preset)"
                     >
                         {{ t("settings.agentTemplateEdit") }}
                     </button>
-                    <!-- 站点 2：入口中性；pendingRoleDeleteId 那一态才是红的确认步。 -->
+                    <!-- 站点 2：入口中性；pendingPresetDeleteId 那一态才是红的确认步。 -->
                     <button
                         type="button"
                         class="underline disabled:opacity-40"
                         :class="
-                            pendingRoleDeleteId === role.id
+                            pendingPresetDeleteId === preset.id
                                 ? 'text-destructive'
                                 : 'text-muted-foreground hover:text-foreground'
                         "
                         :disabled="
                             malformedConfig ||
                             saving ||
-                            templates.some((template) => template.roleId === role.id)
+                            templates.some((template) => template.presetId === preset.id)
                         "
-                        :data-testid="`agent-role-delete-${role.id}`"
-                        @click="deleteRole(role)"
+                        :data-testid="`agent-role-delete-${preset.id}`"
+                        @click="deletePreset(preset)"
                     >
                         {{
-                            pendingRoleDeleteId === role.id
+                            pendingPresetDeleteId === preset.id
                                 ? t("settings.agentTemplateConfirmDelete")
                                 : t("common.delete")
                         }}

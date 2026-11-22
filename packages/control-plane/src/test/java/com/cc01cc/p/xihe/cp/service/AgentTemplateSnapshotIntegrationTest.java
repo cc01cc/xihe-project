@@ -64,7 +64,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
     private static final String SNAPSHOT_PROMPT_V2 = "user-layer-prompt-0374-v2";
     private static final Pattern SECRET_KEY = Pattern.compile("(?i)(secret|token|api[-_]?key|password)");
     private static final List<String> SNAPSHOT_FIELDS = List.of(
-            "templateId", "templateName", "roleId", "roleName", "systemPrompt",
+            "templateId", "templateName", "presetId", "presetName", "systemPrompt",
             "toolMode", "provider", "model", "permissions");
 
     @Autowired private AgentTemplateService agentTemplateService;
@@ -178,7 +178,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         assertEquals(memberTemplateId.toString(),
                 userBody.path("templates").get(0).path("id").asText());
         for (String field : List.of("id", "name", "description", "systemPrompt", "toolMode",
-                "provider", "model", "roleId")) {
+                "provider", "model", "presetId")) {
             assertTrue(userBody.path("templates").get(0).has(field),
                     "raw template entry must keep field " + field);
         }
@@ -397,7 +397,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         UUID instanceRoleId = UUID.randomUUID();
         UUID instanceWriteTemplateId = UUID.randomUUID();
         ResponseEntity<Map> instanceWrite = putConfig("instance", null, null, Map.of(
-                "roles", roleConfig(instanceRoleId, "New instance role", atoms("read")).toString(),
+                "presets", roleConfig(instanceRoleId, "New instance role", atoms("read")).toString(),
                 "templates", templateConfig(instanceWriteTemplateId, "New instance template",
                         instanceRoleId, "instance-write-prompt").toString()), adminToken);
         assertEquals(HttpStatus.OK, instanceWrite.getStatusCode());
@@ -405,7 +405,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         UUID userRoleId = UUID.randomUUID();
         UUID userWriteTemplateId = UUID.randomUUID();
         ResponseEntity<Map> userWrite = putConfig("user", null, null, Map.of(
-                "roles", roleConfig(userRoleId, "New user role", atoms("read")).toString(),
+                "presets", roleConfig(userRoleId, "New user role", atoms("read")).toString(),
                 "templates", templateConfig(userWriteTemplateId, "New user template",
                         userRoleId, "user-write-prompt").toString()), memberToken);
         assertEquals(HttpStatus.OK, userWrite.getStatusCode());
@@ -414,7 +414,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         UUID workspaceTemplateId = UUID.randomUUID();
         int workspaceRowsBefore = configJpaRepository.findByWorkspaceIdAndDomain(workspaceId, "agent-templates").size();
         ResponseEntity<Map> workspaceDenied = putConfig("workspace", null, workspaceId, Map.of(
-                "roles", roleConfig(workspaceRoleId, "New workspace role", atoms("read")).toString(),
+                "presets", roleConfig(workspaceRoleId, "New workspace role", atoms("read")).toString(),
                 "templates", templateConfig(workspaceTemplateId, "New workspace template",
                         workspaceRoleId, "workspace-write-prompt").toString()), memberToken);
         assertEquals(HttpStatus.FORBIDDEN, workspaceDenied.getStatusCode(),
@@ -424,7 +424,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
 
         addUserGrant(memberUserId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspaceId.toString());
         ResponseEntity<Map> workspaceWrite = putConfig("workspace", null, workspaceId, Map.of(
-                "roles", roleConfig(workspaceRoleId, "New workspace role", atoms("read")).toString(),
+                "presets", roleConfig(workspaceRoleId, "New workspace role", atoms("read")).toString(),
                 "templates", templateConfig(workspaceTemplateId, "New workspace template",
                         workspaceRoleId, "workspace-write-prompt").toString()), memberToken);
         assertEquals(HttpStatus.OK, workspaceWrite.getStatusCode());
@@ -433,7 +433,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         UUID importedTemplateId = UUID.randomUUID();
         String importJsonc = objectMapper.writeValueAsString(Map.of(
                 "agent-templates", Map.of(
-                        "roles", roleConfig(importedRoleId, "Imported role", atoms("read")),
+                        "presets", roleConfig(importedRoleId, "Imported role", atoms("read")),
                         "templates", templateConfig(importedTemplateId, "Imported template",
                                 importedRoleId, "imported-prompt"))));
         ResponseEntity<Map> imported = restTemplate.exchange(
@@ -474,7 +474,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         UUID roleId = UUID.randomUUID();
         UUID templateId = UUID.randomUUID();
         ResponseEntity<Map> overGrant = putConfig("user", null, null, Map.of(
-                "roles", roleConfig(roleId, "Too powerful role", atoms("read", "write")).toString(),
+                "presets", roleConfig(roleId, "Too powerful role", atoms("read", "write")).toString(),
                 "templates", templateConfig(templateId, "Over-granted template", roleId,
                         "must-not-persist-prompt").toString()), outsiderToken);
         assertEquals(HttpStatus.FORBIDDEN, overGrant.getStatusCode(),
@@ -487,7 +487,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN", 0);
         Map<String, Object> importBody = Map.of(
                 "logging", Map.of("levelCp", "WARN"),
-                "agent-templates", Map.of("roles", List.of(), "templates", List.of()));
+                "agent-templates", Map.of("presets", List.of(), "templates", List.of()));
         String jsonc = objectMapper.writeValueAsString(importBody);
         ResponseEntity<Map> importDenied = restTemplate.exchange(
                 url("/api/v1/config/import"), HttpMethod.POST,
@@ -549,7 +549,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
 
         UUID instanceRoleId = UUID.randomUUID();
         instanceTemplateId = UUID.randomUUID();
-        saveTemplateConfig("instance", null, null, "roles",
+        saveTemplateConfig("instance", null, null, "presets",
                 roleConfig(instanceRoleId, "Instance role", atoms("read")).toString());
         saveTemplateConfig("instance", null, null, "templates",
                 templateConfig(instanceTemplateId, "Instance template",
@@ -557,7 +557,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
 
         memberRoleId = UUID.randomUUID();
         memberTemplateId = UUID.randomUUID();
-        memberRoleRowId = saveTemplateConfig("user", memberUserId, null, "roles",
+        memberRoleRowId = saveTemplateConfig("user", memberUserId, null, "presets",
                 roleConfig(memberRoleId, "Template read role", atoms("read", "write")).toString());
         memberTemplateRowId = saveTemplateConfig("user", memberUserId, null, "templates",
                 templateConfig(memberTemplateId, "Template read user",
@@ -565,7 +565,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
 
         UUID outsiderRoleId = UUID.randomUUID();
         outsiderTemplateId = UUID.randomUUID();
-        saveTemplateConfig("user", outsiderUserId, null, "roles",
+        saveTemplateConfig("user", outsiderUserId, null, "presets",
                 roleConfig(outsiderRoleId, "Outsider role", atoms("read")).toString());
         saveTemplateConfig("user", outsiderUserId, null, "templates",
                 templateConfig(outsiderTemplateId, "Outsider template",
@@ -573,7 +573,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
 
         UUID workspaceRoleId = UUID.randomUUID();
         workspaceTemplateId = UUID.randomUUID();
-        saveTemplateConfig("workspace", null, workspaceId, "roles",
+        saveTemplateConfig("workspace", null, workspaceId, "presets",
                 roleConfig(workspaceRoleId, "Workspace role", atoms("read")).toString());
         saveTemplateConfig("workspace", null, workspaceId, "templates",
                 templateConfig(workspaceTemplateId, "Workspace template",
@@ -662,8 +662,8 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
     private void assertSnapshotFields(JsonNode snapshot, String systemPrompt) {
         assertEquals(memberTemplateId.toString(), snapshot.path("templateId").asText());
         assertEquals("Template read user", snapshot.path("templateName").asText());
-        assertEquals(memberRoleId.toString(), snapshot.path("roleId").asText());
-        assertEquals("Template read role", snapshot.path("roleName").asText());
+        assertEquals(memberRoleId.toString(), snapshot.path("presetId").asText());
+        assertEquals("Template read role", snapshot.path("presetName").asText());
         assertEquals(systemPrompt, snapshot.path("systemPrompt").asText());
         assertEquals("workspace", snapshot.path("toolMode").asText());
         assertEquals("openai", snapshot.path("provider").asText());
@@ -781,7 +781,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         template.put("toolMode", "workspace");
         template.put("provider", "openai");
         template.put("model", "test-model");
-        template.put("roleId", roleId.toString());
+        template.put("presetId", roleId.toString());
         ArrayNode result = objectMapper.createArrayNode();
         result.add(template);
         return result;

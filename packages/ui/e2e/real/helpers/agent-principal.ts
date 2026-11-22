@@ -289,7 +289,7 @@ export async function provisionWorkspaceAgentPrincipal(
     const template = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            roles: JSON.stringify([
+            presets: JSON.stringify([
                 { id: roleId, name: `${name} Role`, permissions: toolPermissions },
             ]),
             templates: JSON.stringify([
@@ -301,7 +301,7 @@ export async function provisionWorkspaceAgentPrincipal(
                     toolMode: "workspace",
                     provider: "openai",
                     model: "fake-openai",
-                    roleId,
+                    presetId,
                 },
             ]),
         },

@@ -553,15 +553,15 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         String userTemplateId = UUID.randomUUID().toString();
         String workspaceTemplateId = UUID.randomUUID().toString();
         String instanceTemplateId = UUID.randomUUID().toString();
-        ConfigEntity userRoles = saveTemplateConfig("user", UUID.fromString(userId), null, "roles",
+        ConfigEntity userRoles = saveTemplateConfig("user", UUID.fromString(userId), null, "presets",
                 roleConfig(userRoleId, "User role", atoms("read", "write")).toString());
         ConfigEntity userTemplates = saveTemplateConfig("user", UUID.fromString(userId), null, "templates",
                 templateConfig(userTemplateId, "User template", userRoleId, "user prompt v1").toString());
-        saveTemplateConfig("workspace", null, workspaceId, "roles",
+        saveTemplateConfig("workspace", null, workspaceId, "presets",
                 roleConfig(workspaceRoleId, "Workspace role", atoms("read")).toString());
         saveTemplateConfig("workspace", null, workspaceId, "templates",
                 templateConfig(workspaceTemplateId, "Workspace template", workspaceRoleId, "workspace prompt").toString());
-        saveTemplateConfig("instance", null, null, "roles",
+        saveTemplateConfig("instance", null, null, "presets",
                 roleConfig(instanceRoleId, "Instance role", atoms("read")).toString());
         saveTemplateConfig("instance", null, null, "templates",
                 templateConfig(instanceTemplateId, "Instance template", instanceRoleId, "instance prompt").toString());
@@ -801,7 +801,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         template.put("toolMode", "workspace");
         template.put("provider", "openai");
         template.put("model", "test-model");
-        template.put("roleId", roleId);
+        template.put("presetId", roleId);
         ArrayNode result = objectMapper.createArrayNode();
         result.add(template);
         return result;

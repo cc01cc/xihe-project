@@ -3,9 +3,9 @@
   "$id": "https://xihe.dev/config-schemas/agent-templates.json",
   "type": "object",
   "properties": {
-    "roles": {
+    "presets": {
       "type": "array",
-      "items": { "$ref": "#/$defs/role" }
+      "items": { "$ref": "#/$defs/preset" }
     },
     "templates": {
       "type": "array",
@@ -43,7 +43,7 @@
         }
       ]
     },
-    "role": {
+    "preset": {
       "type": "object",
       "required": ["id", "name", "permissions"],
       "properties": {
@@ -58,7 +58,7 @@
     },
     "template": {
       "type": "object",
-      "required": ["id", "name", "description", "systemPrompt", "toolMode", "roleId"],
+      "required": ["id", "name", "description", "systemPrompt", "toolMode", "presetId"],
       "properties": {
         "id": { "$ref": "#/$defs/uuid" },
         "name": { "type": "string", "minLength": 1 },
@@ -67,7 +67,7 @@
         "toolMode": { "enum": ["none", "workspace"] },
         "provider": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
-        "roleId": { "$ref": "#/$defs/uuid" },
+        "presetId": { "$ref": "#/$defs/uuid" },
         "hooks": { "$ref": "#/$defs/hookSubscriptions" }
       },
       "additionalProperties": false

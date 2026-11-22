@@ -225,7 +225,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "PLAN0630 ToCc Role",
@@ -242,7 +242,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
                         toolMode: "none",
                         provider: "openai",
                         model: MODEL_ID,
-                        roleId,
+                        presetId,
                     },
                 ]),
             },

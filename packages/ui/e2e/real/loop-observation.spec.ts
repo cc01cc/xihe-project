@@ -375,7 +375,7 @@ test.describe("@host PLAN-0493 T0.2 loop observation", () => {
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
-                roles: JSON.stringify([
+                presets: JSON.stringify([
                     {
                         id: roleId,
                         name: "Loop Obs Role",
@@ -397,7 +397,7 @@ test.describe("@host PLAN-0493 T0.2 loop observation", () => {
                         toolMode: "workspace",
                         provider: "openai",
                         model: MODEL_ID,
-                        roleId,
+                        presetId,
                     },
                 ]),
             },
