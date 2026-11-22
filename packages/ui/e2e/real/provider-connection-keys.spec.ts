@@ -8,11 +8,37 @@ import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const PROVIDER_ID = "custom-openai-compatible";
+// task-808：API/持久化层与 UI 展示层是两层判据，不能混用。
+// 原始 id 由 CP 目录给出（docs/api/openapi.yaml:7629 `apiTypeId`）；UI 显示名由
+// formatApiType() 渲染（lib/apiTypeLabels.ts:25），词表在 src/i18n/index.ts
+// （zh `apiTypeOpenaiChatCompletions`:3153 / en:7620，`operationChat`:2891 / :7344）。
+const API_TYPE_ID = "openai-chat-completions";
+const API_TYPE_VERSION = 1;
+const API_TYPE_UI_LABELS = {
+    "zh-CN": { apiType: "OpenAI 对话补全@1", operation: "对话" },
+    "en-US": { apiType: "OpenAI Chat Completions@1", operation: "Chat" },
+} as const;
 
 type Auth = {
     accessToken: string;
     workspaceId: string;
 };
+
+type ProviderConnectionRow = {
+    connectionKey: string;
+    scope: string;
+    apiTypeId: string;
+    apiTypeVersion: number | null;
+};
+
+/** 当前 locale 下的唯一期望显示名；未登记 locale 直接失败，避免断言退化成「包含任意文本」。 */
+function apiTypeUiLabels(locale: string) {
+    const labels = API_TYPE_UI_LABELS[locale as keyof typeof API_TYPE_UI_LABELS];
+    if (!labels) {
+        throw new Error(`unregistered UI locale for provider type assertion: ${locale}`);
+    }
+    return labels;
+}
 
 async function register(request: APIRequestContext, name: string): Promise<Auth> {
     const email = `${name}-${Date.now()}@test.local`;
@@ -186,8 +212,32 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
                 await article.locator("button[aria-pressed]").click();
                 const detail = page.getByTestId("provider-connection-detail");
                 await expect(detail).toHaveAttribute("data-connection-key", key);
-                await expect(detail).toContainText("openai-chat-completions@1");
-                await expect(detail).toContainText("chat");
+
+                // API / 持久化层：必须是 CP 原始 apiTypeId + 版本，不得被 UI 本地化名污染。
+                const listed = await request.get(`${CP_URL}/api/v1/provider-connections`, {
+                    headers: {
+                        Authorization: `Bearer ${auth.accessToken}`,
+                        "X-Workspace-Id": auth.workspaceId,
+                    },
+                });
+                expect(listed.ok()).toBeTruthy();
+                const listedBody = await listed.json();
+                const apiRow = (listedBody.connections as ProviderConnectionRow[]).find(
+                    (entry) => entry.connectionKey === key && entry.scope === "USER",
+                );
+                expect(apiRow, `API 列表必须含 USER 档 ${key}`).toBeTruthy();
+                expect(apiRow?.apiTypeId, "API 层必须是 CP 原始 apiTypeId").toBe(API_TYPE_ID);
+                expect(apiRow?.apiTypeVersion, "API 层必须是 CP 原始 apiTypeVersion").toBe(
+                    API_TYPE_VERSION,
+                );
+
+                // UI 层：formatApiType() 把原始 id + 版本渲染成本地化短名，按当前 locale 取唯一期望值。
+                const locale = await page.evaluate(() => document.documentElement.lang);
+                const labels = apiTypeUiLabels(locale);
+                const readonlyType = page.getByTestId("provider-connection-readonly-type");
+                await expect(readonlyType).toContainText(labels.apiType);
+                await expect(readonlyType).toContainText(labels.operation);
+
                 await expect(page.getByTestId("provider-connection-models")).toContainText(
                     "test-model",
                 );
