@@ -318,7 +318,8 @@ export interface ApiOrgUnitRoleBindingList {
 }
 
 /**
- * PLAN-0610 W3-2a: the role/binding administration surface (`/api/v1/roles`, `/api/v1/bindings`).
+ * PLAN-0610 W3-2a: the grant-preset/binding administration surface
+ * (`/api/v1/presets`, `/api/v1/bindings`).
  *
  * <p>`scopeClass` is the atom's SSOT classification: `instance` atoms are only meaningful on an
  * instance binding, `both` atoms work on either scope. The UI groups the catalog by it and never
@@ -326,7 +327,7 @@ export interface ApiOrgUnitRoleBindingList {
  */
 export type ApiAtomScopeClass = "instance" | "both";
 
-export interface ApiRoleAtom {
+export interface ApiPresetAtom {
     name: string;
     scopeClass: ApiAtomScopeClass;
     capability: boolean;
@@ -340,14 +341,14 @@ export interface ApiRoleAtom {
      * task-415（RBAC P0-1）投影：该原子**永不可授予智能体主体**（CP
      * `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` 为 SSOT，openapi RoleAtom 已登记）。
      * UI 只消费这个标记，不本地重算词表。缺省视为 false —— 服务端对只持
-     * `MANAGE_WORKSPACE_AGENTS` 的调用方本就会**整行剔除**含禁用原子的角色（listRoles 契约），
+     * `MANAGE_WORKSPACE_AGENTS` 的调用方本就会**整行剔除**含禁用原子的预设（listPresets 契约），
      * 只有持 `MANAGE_ROLES` 的全量视图才会把它们送过来。
      */
     agentPrincipalForbidden?: boolean;
 }
 
-export interface ApiRoleCatalog {
-    atoms: ApiRoleAtom[];
+export interface ApiPresetCatalog {
+    atoms: ApiPresetAtom[];
     scopes: string[];
 }
 
@@ -357,13 +358,13 @@ function catalogLocale(): string {
     return (lang ?? "").toLowerCase().startsWith("en") ? "en-US" : "zh-CN";
 }
 
-export interface ApiRole {
+export interface ApiPreset {
     id: string;
     name: string;
     displayName: string;
     description: string | null;
     system: boolean;
-    atoms: ApiRoleAtom[];
+    atoms: ApiPresetAtom[];
     bindingCount: number;
 }
 
@@ -377,14 +378,14 @@ export interface ApiRole {
  *   工作区持 `MANAGE_WORKSPACE_AGENTS`、capability 与 instance-only 原子**永不接受**前缀）。
  *   UI 不做本地预校验：本地猜一套规则就等于替 CP 改写口径，400/404/403 的原文就再也到不了用户。
  */
-export interface ApiRoleAtomInput {
+export interface ApiPresetAtomInput {
     actionClass: string;
     /** 留空/null 与不传等价 —— CP 按 canonical 落值。 */
     resource?: string | null;
 }
 
-/** `POST /roles` and `PATCH /roles/{id}` body (PATCH: null = unchanged, system roles: display only). */
-export interface ApiRoleWrite {
+/** `POST /presets` and `PATCH /presets/{presetId}` body (PATCH: null = unchanged, system presets: display only). */
+export interface ApiPresetWrite {
     name?: string | null;
     displayName?: string | null;
     description?: string | null;
@@ -392,7 +393,7 @@ export interface ApiRoleWrite {
      * 混发合法：未收窄的原子仍送裸串（老客户端的字节不变），收窄的送对象。
      * 同一原子出现两次且 pattern 不同，CP 会 400 `INVALID_GRANT_RESOURCE`。
      */
-    atoms?: Array<string | ApiRoleAtomInput> | null;
+    atoms?: Array<string | ApiPresetAtomInput> | null;
 }
 
 export type ApiBindingScope = "instance" | "workspace";
@@ -4663,32 +4664,32 @@ export const api = {
         });
     },
     /**
-     * PLAN-0610 W3-2a: the access-role definition surface. The atom vocabulary is **not** in the UI —
-     * `rolesCatalog()` is the only source, so a new atom appears without a front-end change.
+     * PLAN-0610 W3-2a: the grant-preset definition surface. The atom vocabulary is **not** in the UI —
+     * `presetsCatalog()` is the only source, so a new atom appears without a front-end change.
      */
-    rolesCatalog(): Promise<ApiRoleCatalog> {
+    presetsCatalog(): Promise<ApiPresetCatalog> {
         // D51-37: the CP resolves the label server-side from an explicit locale; the UI keeps no
         // atom vocabulary. `<html lang>` is the locale SSOT written by applyLocale().
-        return request<ApiRoleCatalog>(
-            `/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`,
+        return request<ApiPresetCatalog>(
+            `/presets/catalog?locale=${encodeURIComponent(catalogLocale())}`,
         );
     },
-    listRoles(workspaceId?: string): Promise<ApiRole[]> {
-        // PLAN-0667 M3：候选角色按 workspace 授权上下文过滤（Lead 2026-11-05 冻结：不新增候选端点）。
+    listPresets(workspaceId?: string): Promise<ApiPreset[]> {
+        // PLAN-0667 M3：候选预设按 workspace 授权上下文过滤（Lead 2026-11-05 冻结：不新增候选端点）。
         const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
-        return request<ApiRole[]>(`/roles${query}`);
+        return request<ApiPreset[]>(`/presets${query}`);
     },
-    createRole(input: ApiRoleWrite): Promise<ApiRole> {
-        return request<ApiRole>("/roles", { method: "POST", body: JSON.stringify(input) });
+    createPreset(input: ApiPresetWrite): Promise<ApiPreset> {
+        return request<ApiPreset>("/presets", { method: "POST", body: JSON.stringify(input) });
     },
-    updateRole(roleId: string, input: ApiRoleWrite): Promise<ApiRole> {
-        return request<ApiRole>(`/roles/${encodeURIComponent(roleId)}`, {
+    updatePreset(presetId: string, input: ApiPresetWrite): Promise<ApiPreset> {
+        return request<ApiPreset>(`/presets/${encodeURIComponent(presetId)}`, {
             method: "PATCH",
             body: JSON.stringify(input),
         });
     },
-    async deleteRole(roleId: string): Promise<void> {
-        await request<void>(`/roles/${encodeURIComponent(roleId)}`, { method: "DELETE" });
+    async deletePreset(presetId: string): Promise<void> {
+        await request<void>(`/presets/${encodeURIComponent(presetId)}`, { method: "DELETE" });
     },
     /** `GET /bindings`: one scope's complete user binding set (no capability echo on the wire). */
     getBindings(scope: ApiBindingScope, scopeId?: string | null): Promise<ApiBindingSet> {

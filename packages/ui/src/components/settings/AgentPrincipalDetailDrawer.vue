@@ -274,7 +274,7 @@ watch(
 
 // 主体还没绑定工作区 = 空态，不是错误（task-151 ④）；去绑定的入口在设置 › 角色
 // （src/router/index.ts:417-419 settings 子路由）。
-const ROLES_BIND_HREF = "/settings/roles";
+const ROLES_BIND_HREF = "/settings/presets";
 const rolesPrincipalMissing = computed(
     () => (rolesError.value?.code ?? "") === "AGENT_PRINCIPAL_NOT_FOUND",
 );

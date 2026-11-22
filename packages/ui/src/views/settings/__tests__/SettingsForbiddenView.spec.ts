@@ -38,7 +38,7 @@ describe("SettingsForbiddenView（task-227 ⑨ 类 H-11）", () => {
         expect(card.text()).toContain("不加载配置");
         // task-18（C-4）：① 不把内部能力位标识印给用户 ② 必须给出"下一步去哪授予"。
         expect(card.text()).not.toContain("cap:");
-        expect(card.text()).toContain("角色与绑定");
+        expect(card.text()).toContain("授权预设与绑定");
         // task-69：判据是**动作原子**，文案就必须点名缺的是哪个原子 —— 中文名 + 机器码同时在屏
         // （与 SettingsPermissionGate 的 atom-denied 同一口径，不另造第二套）。
         expect(card.text()).toContain("READ_INSTANCE_CONTENT");

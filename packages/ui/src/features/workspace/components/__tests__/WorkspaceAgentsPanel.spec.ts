@@ -39,7 +39,7 @@ const apiMock = vi.hoisted(() => ({
     unbindAgentRole: vi.fn<() => Promise<void>>(),
     bindAgentSkill: vi.fn<() => Promise<void>>(),
     unbindAgentSkill: vi.fn<() => Promise<void>>(),
-    listRoles: vi.fn<() => Promise<unknown[]>>(),
+    listPresets: vi.fn<() => Promise<unknown[]>>(),
     getSkills: vi.fn<() => Promise<unknown[]>>(),
     getWorkspaceSkills: vi.fn<(workspaceId: string) => Promise<unknown[]>>(),
     // task-134（D-1785）：workspace 级「委派的子会话」权威读面（只读、按主体展开时拉取）。
@@ -220,9 +220,9 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
         const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
         expect(link.exists()).toBe(true);
         // W5c: the retired principal-grant page is replaced by roles & bindings.
-        expect(link.attributes("href")).toBe("/settings/roles");
+        expect(link.attributes("href")).toBe("/settings/presets");
         // The static note names the admin surface instead of only stating the requirement.
-        expect(wrapper.text()).toContain("角色与绑定");
+        expect(wrapper.text()).toContain("授权预设与绑定");
     });
 
     it("replaces a 403 create failure with the localized hint, never the CP English detail", async () => {
@@ -236,7 +236,7 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
 
         const text = document.body.textContent ?? "";
         expect(text).toContain("缺少 MANAGE_WORKSPACE_AGENTS 权限");
-        expect(text).toContain("角色与绑定");
+        expect(text).toContain("授权预设与绑定");
         expect(text).not.toContain("CREATE_ACCOUNT permission is required");
     });
 
@@ -246,7 +246,7 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
         await flushPromises();
 
         expect(wrapper.find('[data-testid="agent-grant-panel-link"]').exists()).toBe(false);
-        expect(wrapper.text()).toContain("角色与绑定");
+        expect(wrapper.text()).toContain("授权预设与绑定");
     });
 });
 
@@ -266,7 +266,7 @@ describe("WorkspaceAgentsPanel create gating (T5.1 default WORKSPACE)", () => {
         expect(wrapper.text()).toContain("MANAGE_WORKSPACE_AGENTS");
         const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
         expect(link.exists()).toBe(true);
-        expect(link.attributes("href")).toBe("/settings/roles");
+        expect(link.attributes("href")).toBe("/settings/presets");
         expect(wrapper.html()).not.toContain("/settings/principal-grants");
     });
 
@@ -1562,7 +1562,7 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         // task-471: 两个角色是**判别力的前提** —— 只给一个干净角色时，
         // 「选项列表等于 [role-editor]」在过滤被删掉后依然成立（空断言）。第二个角色带
         // agentPrincipalForbidden 原子，过滤失效即会出现在选项里。
-        apiMock.listRoles.mockResolvedValue([
+        apiMock.listPresets.mockResolvedValue([
             {
                 id: "role-editor",
                 name: "WS_EDITOR",
@@ -1640,7 +1640,7 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
 
     it("offers only roles whose atoms are bindable to an agent principal", async () => {
         // task-471（436 切片 A）：服务端只对**工作区层**调用方剔除含禁用原子的角色，
-        // 持 MANAGE_ROLES 的**管理员视图**会返回全量（openapi listRoles 契约原文
+        // 持 MANAGE_ROLES 的**管理员视图**会返回全量（openapi listPresets 契约原文
         // "Ignored by the MANAGE_ROLES admin view"）⇒ 过滤必须在消费侧做，
         // 与 AgentRoleBindingsSection 的 task-416 判据同源（api.ts:293-300 注释）。
         const wrapper = await mountOpenedPanel();
@@ -2248,7 +2248,7 @@ describe("WorkspaceAgentsPanel task-44 deep-link expansion", () => {
         apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
         apiMock.getAgentRoles.mockResolvedValue([]);
         apiMock.getAgentSkills.mockResolvedValue([]);
-        apiMock.listRoles.mockResolvedValue([]);
+        apiMock.listPresets.mockResolvedValue([]);
         apiMock.getSkills.mockResolvedValue([]);
         apiMock.getWorkspaceSkills.mockResolvedValue([]);
     });

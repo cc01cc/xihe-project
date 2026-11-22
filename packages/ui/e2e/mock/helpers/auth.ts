@@ -146,7 +146,7 @@ export interface MockAuthOptions {
     permissionAtoms?: ReadonlyArray<{ actionClass: string; resource: string }>;
     /**
      * task-163：工作区角色与 `workspaceAdmin`（默认 `WS_OWNER` / `true`，即既有的所有权限主体）。
-     * 角色名用 CP 的 canonical 值（`SystemAccessRoleCatalog.WS_OWNER|WS_EDITOR|WS_VIEWER`），不自造别名。
+     * 角色名用 CP 的 canonical 值（`SystemGrantPresetCatalog.WS_OWNER|WS_EDITOR|WS_VIEWER`），不自造别名。
      */
     workspaceRole?: "WS_OWNER" | "WS_EDITOR" | "WS_VIEWER";
     /**
@@ -385,7 +385,7 @@ export const INSTANCE_CONFIG_FIXTURES: Record<string, Record<string, unknown>> =
  * <p>形状照 `src/preview/mock/data/previewPermissions.ts` 的 `mockPermissionProjection()`：
  * `userId` / `instanceCapabilities` / `instancePermissions` / `workspaces` 四字段。原子取
  * `PREVIEW_PERMISSION_ATOMS` 里**产品真的会判**的那几条；角色名用 CP 的 canonical `WS_OWNER`
- * （`SystemAccessRoleCatalog.WS_OWNER`），不自造别名。</p>
+ * （`SystemGrantPresetCatalog.WS_OWNER`），不自造别名。</p>
  */
 export const PERMISSION_ATOMS = [
     { actionClass: "MANAGE_ROLES", resource: "*" },
@@ -1357,12 +1357,12 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
-    // task-163：`GET /api/v1/roles/catalog?locale=` **补桩**（Lead 2026-11-15 裁定翻转 task-149 的「刻意不桩」）。
+    // task-163：`GET /api/v1/presets/catalog?locale=` **补桩**（Lead 2026-11-15 裁定翻转 task-149 的「刻意不桩」）。
     // 依据：该路由真实存在（`docs/api/openapi.yaml:5438-5454`，operationId `getRoleCatalog`），页面请求它是对的，
     // 之前的 404 是**夹具缺桩**；把 404 放进 spec 的 `mockAllow` 等于把错误行为固化成契约。
     // 词表「不私抄」的原判据仍然成立 ⇒ 夹具只列本 helper 身份投影里真的会判的原子（子集不是全集），
     // 来源与边界写在 `helpers/stub-families.ts` 的 `ROLE_CATALOG_FIXTURE` 头注释里。
-    await page.route("**/api/v1/roles/catalog*", async (route) => {
+    await page.route("**/api/v1/presets/catalog*", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         await route.fulfill({
             status: 200,

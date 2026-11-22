@@ -44,7 +44,7 @@ import { useAuthStore } from "../../stores/auth";
  * 运维/安全页同样来自 `instanceOpsGroups()` 一处定义（`path` 与 `labelKey` 都取自那里），
  * 本组件不再另写第二个页清单。</p>
  *
- * <p>**无权限的页绝不出现**（task-63 判据）：`config-locks` 需实例管理员能力、`roles` 需
+ * <p>**无权限的页绝不出现**（task-63 判据）：`config-locks` 需实例管理员能力、`presets` 需
  * `MANAGE_ROLES` 原子，其余恒显 —— 与 `SettingsSidebar.vue` 的过滤判据同一份。⌘K 的语义是
  * 「跳到我能打开的页」，把 403 页搜出来等于造死项。</p>
  *
@@ -116,7 +116,7 @@ interface PaletteEntry {
  * 实例层运维/安全页里**当前用户能打开**的那些（task-63）。
  *
  * <p>判据与 `SettingsSidebar.vue` 的可见性过滤同一份：`config-locks` 要实例管理员能力、
- * `roles` 要 `MANAGE_ROLES` 原子，其余恒显（授权总览按 task-8 裁定对已登录者人人可见）。
+ * `presets` 要 `MANAGE_ROLES` 原子，其余恒显（授权总览按 task-8 裁定对已登录者人人可见）。
  * 本函数只做过滤，不新增页清单。</p>
  */
 function visibleOpsItems(): SettingsNavItem[] {
@@ -124,7 +124,7 @@ function visibleOpsItems(): SettingsNavItem[] {
         .flatMap((group) => group.items)
         .filter((item) => {
             if (item.id === "config-locks") return auth.hasInstanceAdminCapability;
-            if (item.id === "roles") return auth.canManageRoles;
+            if (item.id === "presets") return auth.canManageRoles;
             return true;
         });
 }

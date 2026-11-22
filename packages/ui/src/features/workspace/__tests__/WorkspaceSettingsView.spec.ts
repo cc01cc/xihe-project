@@ -520,7 +520,7 @@ describe("WorkspaceSettingsView 错误回退 (PLAN-0560 T4.1)", () => {
  * task-472（D-1367 健壮性/潜在缺陷）：页面必须**自己确保** `/me/permissions` 投影被加载。
  *
  * <p><b>受影响的不是「非实例管理员的工作区 OWNER」</b> —— WS_OWNER 种子含 `workspace:admin`
- * （`SystemAccessRoleCatalog.java:211`）⇒ CP 的 `workspaceAdminOf` 会把任何真 OWNER 列进去
+ * （`SystemGrantPresetCatalog.java:211`）⇒ CP 的 `workspaceAdminOf` 会把任何真 OWNER 列进去
  * ⇒ `canWorkspaceAdmin` 为真 ⇒ 无投影也能管理（真账号实测复现不出）。**真正的判别条件是
  * `user.capabilities` 缺失或过期**；本 spec 的 `xihe-user` 夹具故意不带 capabilities，正是那一类。</p>
  */

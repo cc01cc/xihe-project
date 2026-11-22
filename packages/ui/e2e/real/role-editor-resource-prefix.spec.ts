@@ -1,4 +1,4 @@
-// lane: @real —— 只能在真栈跑（写面 POST/PATCH/DELETE /api/v1/roles 在 mock 里按 task-72 有意留 404，
+// lane: @real —— 只能在真栈跑（写面 POST/PATCH/DELETE /api/v1/presets 在 mock 里按 task-72 有意留 404，
 // 不补假写面），三条拒绝报文必须来自真实 CP。
 // timeout-exempt: real-stack identity setup for task-126 (LONG_TIMEOUT_MS waits on CP + UI login)
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
@@ -13,9 +13,9 @@ import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
  * 就被拦住，卡面第 3 条要求的「原文可见」根本达不到。于是本 spec 走真栈验证两件事：</p>
  *
  * <ol>
- *   <li><b>送得到、存得下</b>：UI 建 role 时选 `read` + 填 `fs:<ws>/src` ⇒ 抓 `POST /api/v1/roles`
+ *   <li><b>送得到、存得下</b>：UI 建授权预设时选 `read` + 填 `fs:<ws>/src` ⇒ 抓 `POST /api/v1/presets`
  *       的真实请求体，断言 `atoms` 里是该对象形态（不是裸串），响应 201 且回显 pattern；再用
- *       `GET /api/v1/roles` 复读确认落库（卡面要求「请求体实测含该字段且后端 200 落库」）。</li>
+ *       `GET /api/v1/presets` 复读确认落库（卡面要求「请求体实测含该字段且后端 200 落库」）。</li>
  *   <li><b>三条拒绝的原文</b>：`400 INVALID_GRANT_RESOURCE`（`src` 不是合法形态）、
  *       `404 WORKSPACE_NOT_FOUND`（uuid 不存在）、`403 FORBIDDEN`（有 MANAGE_ROLES 原子但缺
  *       工作区管理权，PLAN-0651 的自定义角色身份）——每条都当场抓 CP 的真实响应体，并断言
@@ -138,7 +138,7 @@ async function submitAndCapture(
     const [response] = await Promise.all([
         page.waitForResponse(
             (candidate) =>
-                new URL(candidate.url()).pathname === "/api/v1/roles" &&
+                new URL(candidate.url()).pathname === "/api/v1/presets" &&
                 candidate.request().method() === "POST",
             { timeout: LONG_TIMEOUT_MS },
         ),
@@ -167,8 +167,8 @@ test.describe("task-126 role editor resource prefix (real stack)", () => {
         await openEditorWithRead(page, roleName, expected);
 
         const result = await submitAndCapture(page);
-        console.log(`[task-126] POST /api/v1/roles ${result.status} sent=${result.sent}`);
-        console.log(`[task-126] POST /api/v1/roles body=${result.body.slice(0, 800)}`);
+        console.log(`[task-126] POST /api/v1/presets ${result.status} sent=${result.sent}`);
+        console.log(`[task-126] POST /api/v1/presets body=${result.body.slice(0, 800)}`);
 
         expect(result.status, result.body).toBe(201);
         const sent = JSON.parse(result.sent) as { atoms?: Array<string | WireAtom> };
@@ -185,18 +185,20 @@ test.describe("task-126 role editor resource prefix (real stack)", () => {
         const createdRead = (created.atoms ?? []).find((atom) => atom.name === "read");
         expect(createdRead?.resource, "response must echo the stored pattern").toBe(expected);
 
-        const listed = await request.get(`${CP_URL}/api/v1/roles`, { headers });
+        const listed = await request.get(`${CP_URL}/api/v1/presets`, { headers });
         expect(listed.ok(), await listed.text()).toBe(true);
         const rolesBody = (await listed.json()) as { roles?: RoleView[] } | RoleView[];
         const roles = Array.isArray(rolesBody) ? rolesBody : (rolesBody.roles ?? []);
         const stored = roles.find((role) => role.name === roleName);
-        expect(stored, "GET /api/v1/roles must return the new role").toBeTruthy();
+        expect(stored, "GET /api/v1/presets must return the new preset").toBeTruthy();
         const storedRead = (stored?.atoms ?? []).find((atom) => atom.name === "read");
         expect(storedRead?.resource, "the stored role must keep the narrowed pattern").toBe(
             expected,
         );
 
-        const cleanup = await request.delete(`${CP_URL}/api/v1/roles/${created.id}`, { headers });
+        const cleanup = await request.delete(`${CP_URL}/api/v1/presets/${created.id}`, {
+            headers,
+        });
         expect(cleanup.status(), await cleanup.text()).toBe(204);
     });
 
@@ -242,7 +244,7 @@ test.describe("task-126 role editor resource prefix (real stack)", () => {
         // ③ 403 FORBIDDEN — an identity that holds MANAGE_ROLES but cannot administer the
         // workspace's bindings (PLAN-0651's custom-role pattern, reused as the negative control).
         const granterName = `XH_T126_GRANTER_${stampValue}`;
-        const granter = await request.post(`${CP_URL}/api/v1/roles`, {
+        const granter = await request.post(`${CP_URL}/api/v1/presets`, {
             headers,
             data: {
                 name: granterName,
@@ -311,14 +313,14 @@ test.describe("task-126 role editor resource prefix (real stack)", () => {
                 data: { bindings: original },
             });
             expect(restore.ok(), await restore.text()).toBe(true);
-            const dropGranter = await request.delete(`${CP_URL}/api/v1/roles/${granterRole.id}`, {
+            const dropGranter = await request.delete(`${CP_URL}/api/v1/presets/${granterRole.id}`, {
                 headers,
             });
             expect(dropGranter.status(), await dropGranter.text()).toBe(204);
         }
 
         // Nothing was created by the three refused submissions.
-        const after = await request.get(`${CP_URL}/api/v1/roles`, { headers });
+        const after = await request.get(`${CP_URL}/api/v1/presets`, { headers });
         const afterBody = (await after.json()) as { roles?: RoleView[] } | RoleView[];
         const afterRoles = Array.isArray(afterBody) ? afterBody : (afterBody.roles ?? []);
         expect(afterRoles.some((role) => role.name === roleName)).toBe(false);

@@ -3,14 +3,14 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
     api,
-    type ApiRole,
-    type ApiRoleCatalog,
-    type ApiRoleWrite,
+    type ApiPreset,
+    type ApiPresetCatalog,
+    type ApiPresetWrite,
     type ApiWorkspace,
 } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { logger } from "../../lib/logger";
-import { roleErrorMessage } from "../../components/settings/roleErrorMessages";
+import { presetErrorMessage } from "../../components/settings/roleErrorMessages";
 import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import RoleEditorDialog from "../../components/settings/RoleEditorDialog.vue";
 import RoleBindingsPanel from "../../components/settings/RoleBindingsPanel.vue";
@@ -38,14 +38,14 @@ import {
 } from "../../components/ui/empty";
 
 /**
- * PLAN-0610 W5b: `/settings/roles` — the access-role definition surface plus the binding panel.
+ * PLAN-0610 W5b: `/settings/presets` — the grant-preset definition surface plus the binding panel.
  *
  * <p>Two rules drive the whole page:</p>
  *
  * <ol>
- *   <li><b>The atom vocabulary is never hardcoded.</b> `GET /roles/catalog` is the only source; the
+ *   <li><b>The atom vocabulary is never hardcoded.</b> `GET /presets/catalog` is the only source; the
  *       editor renders whatever it returns and groups it by `scopeClass`.</li>
- *   <li><b>CP decides, the UI only mirrors.</b> A system role is not deletable and only its display
+ *   <li><b>CP decides, the UI only mirrors.</b> A system preset is not deletable and only its display
  *       name is editable; the page hides those affordances *and* localizes the refusal code if the
  *       server still says no (`SYSTEM_ROLE_IMMUTABLE` / `ROLE_IN_USE`).</li>
  * </ol>
@@ -56,7 +56,7 @@ const auth = useAuthStore();
  * BL-393: CP gates this face on the `MANAGE_ROLES` action atom
  * (`RoleController:52-53`, `BindingController:35-36`), not on the `instance:admin` capability.
  * The guard therefore reads the same atom the settings nav uses (`auth.canManageRoles`) — a
- * custom role that holds the atom without the capability may open the page, while an
+ * custom preset that holds the atom without the capability may open the page, while an
  * atom-less principal still gets the forbidden view instead of a page that would 403.
  */
 const canManageRoles = computed(() => auth.canManageRoles);
@@ -74,14 +74,14 @@ const {
 } = useDraftLeaveGuard();
 
 function onBindingsDirty(dirty: boolean): void {
-    setDrafts(dirty ? [t("settings.rolesTitle")] : []);
+    setDrafts(dirty ? [t("settings.presetsTitle")] : []);
 }
 
-type Tab = "roles" | "bindings";
+type Tab = "presets" | "bindings";
 
-const tab = ref<Tab>("roles"),
-    roles = ref<ApiRole[]>([]),
-    catalog = ref<ApiRoleCatalog | null>(null),
+const tab = ref<Tab>("presets"),
+    presets = ref<ApiPreset[]>([]),
+    catalog = ref<ApiPresetCatalog | null>(null),
     workspaces = ref<ApiWorkspace[]>([]),
     loading = ref(false),
     error = ref(""),
@@ -89,9 +89,9 @@ const tab = ref<Tab>("roles"),
     notice = ref("");
 
 const editorOpen = ref(false),
-    editorRole = ref<ApiRole | null>(null),
+    editorPreset = ref<ApiPreset | null>(null),
     saving = ref(false);
-const deleteTarget = ref<ApiRole | null>(null),
+const deleteTarget = ref<ApiPreset | null>(null),
     deleting = ref(false);
 
 function resetFeedback() {
@@ -104,12 +104,12 @@ async function loadAll() {
     loadCause.value = null;
     resetFeedback();
     try {
-        const [loadedCatalog, loadedRoles] = await Promise.all([
-            api.rolesCatalog(),
-            api.listRoles(),
+        const [loadedCatalog, loadedPresets] = await Promise.all([
+            api.presetsCatalog(),
+            api.listPresets(),
         ]);
         catalog.value = loadedCatalog;
-        roles.value = loadedRoles;
+        presets.value = loadedPresets;
     } catch (cause) {
         // task-168（F-18）：加载错误走统一错误面（缺口态给解释弹窗），不直渲 detail。
         loadCause.value = cause;
@@ -132,31 +132,31 @@ function openCreate() {
     // task-189：目录未加载时打开编辑器只会得到一个无法完成的表单 —— 直接拦在入口。
     if (!catalog.value) return;
     resetFeedback();
-    editorRole.value = null;
+    editorPreset.value = null;
     editorOpen.value = true;
 }
 
-function openEdit(role: ApiRole) {
+function openEdit(preset: ApiPreset) {
     resetFeedback();
-    editorRole.value = role;
+    editorPreset.value = preset;
     editorOpen.value = true;
 }
 
-async function submitEditor(payload: ApiRoleWrite) {
+async function submitEditor(payload: ApiPresetWrite) {
     saving.value = true;
     resetFeedback();
     try {
-        if (editorRole.value) {
-            await api.updateRole(editorRole.value.id, payload);
-            notice.value = t("settings.rolesSavedUpdated");
+        if (editorPreset.value) {
+            await api.updatePreset(editorPreset.value.id, payload);
+            notice.value = t("settings.presetsSavedUpdated");
         } else {
-            await api.createRole(payload);
-            notice.value = t("settings.rolesSavedCreated");
+            await api.createPreset(payload);
+            notice.value = t("settings.presetsSavedCreated");
         }
         editorOpen.value = false;
         await loadAll();
     } catch (cause) {
-        error.value = roleErrorMessage(cause, t);
+        error.value = presetErrorMessage(cause, t);
     } finally {
         saving.value = false;
     }
@@ -168,47 +168,47 @@ async function confirmDelete() {
     deleting.value = true;
     resetFeedback();
     try {
-        await api.deleteRole(target.id);
-        notice.value = t("settings.rolesDeleted", { name: target.displayName || target.name });
+        await api.deletePreset(target.id);
+        notice.value = t("settings.presetsDeleted", { name: target.displayName || target.name });
         deleteTarget.value = null;
         await loadAll();
     } catch (cause) {
         // ROLE_IN_USE / SYSTEM_ROLE_IMMUTABLE stay on the page as localized copy — never the detail.
-        error.value = roleErrorMessage(cause, t);
+        error.value = presetErrorMessage(cause, t);
         deleteTarget.value = null;
     } finally {
         deleting.value = false;
     }
 }
 
-function atomSummary(role: ApiRole): string {
-    return t("settings.rolesAtomCount", { count: role.atoms.length });
+function atomSummary(preset: ApiPreset): string {
+    return t("settings.presetsAtomCount", { count: preset.atoms.length });
 }
 
 /**
- * task-416 P1-4（D-1314）：列表原来只有「N 个原子」，看不出这角色到底给了什么。
+ * task-416 P1-4（D-1314）：列表原来只有「N 个原子」，看不出这个授权预设到底给了什么。
  * 补前 3 条**服务端已解析的** displayName（缺省回退 name），余量按服务端给的数组长度算，
- * **不本地重算原子词表**；含禁用原子的角色额外标一笔，避免用户拿去绑智能体才吃 409。
+ * **不本地重算原子词表**；含禁用原子的预设额外标一笔，避免用户拿去绑智能体才吃 409。
  */
-const ROLE_ATOM_PREVIEW = 3;
+const PRESET_ATOM_PREVIEW = 3;
 
-function atomPreview(role: ApiRole): string {
-    return role.atoms
-        .slice(0, ROLE_ATOM_PREVIEW)
+function atomPreview(preset: ApiPreset): string {
+    return preset.atoms
+        .slice(0, PRESET_ATOM_PREVIEW)
         .map((atom) => atom.displayName || atom.name)
         .join("、");
 }
 
-function atomRemainder(role: ApiRole): number {
-    return Math.max(0, role.atoms.length - ROLE_ATOM_PREVIEW);
+function atomRemainder(preset: ApiPreset): number {
+    return Math.max(0, preset.atoms.length - PRESET_ATOM_PREVIEW);
 }
 
-function hasForbiddenAtom(role: ApiRole): boolean {
-    return role.atoms.some((atom) => atom.agentPrincipalForbidden);
+function hasForbiddenAtom(preset: ApiPreset): boolean {
+    return preset.atoms.some((atom) => atom.agentPrincipalForbidden);
 }
 
 onMounted(() => {
-    // D-713/B7: the page is direct-linkable (/settings/roles), so it cannot rely on SettingsNav
+    // D-713/B7: the page is direct-linkable (/settings/presets), so it cannot rely on SettingsNav
     // having loaded the projection first. ensureSelfPermissions is idempotent (cached promise),
     // hence calling it here is cheap when the nav already did; the watch below loads the page
     // once the atom turns allowed (initial frame may be "unknown" = false).
@@ -234,9 +234,11 @@ watch(
                     data-testid="roles-forbidden"
                     class="mx-auto mt-16 max-w-md rounded-xl border bg-card p-6 text-center"
                 >
-                    <h2 class="text-base font-semibold">{{ t("settings.rolesForbiddenTitle") }}</h2>
+                    <h2 class="text-base font-semibold">
+                        {{ t("settings.presetsForbiddenTitle") }}
+                    </h2>
                     <p class="mt-1 text-sm text-muted-foreground">
-                        {{ t("settings.rolesForbiddenBody") }}
+                        {{ t("settings.presetsForbiddenBody") }}
                     </p>
                 </div>
             </template>
@@ -245,10 +247,10 @@ watch(
                 <header class="mb-4">
                     <!-- task-189：页面标题降为 h2（层标题 settings-layer-title 是唯一 h1）。 -->
                     <h2 data-testid="settings-page-title" class="text-lg font-semibold">
-                        {{ t("settings.rolesTitle") }}
+                        {{ t("settings.presetsTitle") }}
                     </h2>
                     <p class="mt-1 text-sm text-muted-foreground">
-                        {{ t("settings.rolesSubtitle") }}
+                        {{ t("settings.presetsSubtitle") }}
                     </p>
                 </header>
 
@@ -258,13 +260,13 @@ watch(
                         data-testid="roles-tab-roles"
                         class="px-3 py-2 text-sm"
                         :class="
-                            tab === 'roles'
+                            tab === 'presets'
                                 ? 'border-b-2 border-primary font-medium'
                                 : 'text-muted-foreground'
                         "
-                        @click="tab = 'roles'"
+                        @click="tab = 'presets'"
                     >
-                        {{ t("settings.rolesTabRoles") }}
+                        {{ t("settings.presetsTabPresets") }}
                     </button>
                     <button
                         type="button"
@@ -277,7 +279,7 @@ watch(
                         "
                         @click="tab = 'bindings'"
                     >
-                        {{ t("settings.rolesTabBindings") }}
+                        {{ t("settings.presetsTabBindings") }}
                     </button>
                 </div>
 
@@ -303,40 +305,40 @@ watch(
 
                 <!-- task-189：gap/error 与 empty 互斥 —— 加载失败时只留错误面，不渲染空态与新建入口。 -->
                 <section
-                    v-if="tab === 'roles' && !loadCause"
+                    v-if="tab === 'presets' && !loadCause"
                     data-testid="roles-list-section"
                     class="space-y-3"
                 >
                     <div class="flex items-center justify-between">
                         <p class="text-xs text-muted-foreground">
-                            {{ t("settings.rolesListHint") }}
+                            {{ t("settings.presetsListHint") }}
                         </p>
                         <Button
                             data-testid="roles-create"
                             :disabled="!catalog"
                             :title="
-                                !catalog ? t('settings.rolesCreateDisabledNoCatalog') : undefined
+                                !catalog ? t('settings.presetsCreateDisabledNoCatalog') : undefined
                             "
                             @click="openCreate"
                         >
                             <Plus class="size-4" aria-hidden="true" />
-                            {{ t("settings.rolesCreate") }}
+                            {{ t("settings.presetsCreate") }}
                         </Button>
                     </div>
 
                     <div v-if="loading" class="text-xs text-muted-foreground">
-                        {{ t("settings.rolesLoading") }}
+                        {{ t("settings.presetsLoading") }}
                     </div>
 
                     <!-- task-169 / F-19：表格原先在 0 行时只剩表头 + 一片空白。空态给文案 + 出口。 -->
-                    <Empty v-else-if="roles.length === 0" data-testid="roles-empty" class="mt-1">
+                    <Empty v-else-if="presets.length === 0" data-testid="roles-empty" class="mt-1">
                         <EmptyHeader>
                             <EmptyMedia variant="icon">
                                 <ShieldCheck class="size-4" aria-hidden="true" />
                             </EmptyMedia>
-                            <EmptyTitle>{{ t("settings.rolesEmptyTitle") }}</EmptyTitle>
+                            <EmptyTitle>{{ t("settings.presetsEmptyTitle") }}</EmptyTitle>
                             <EmptyDescription>
-                                {{ t("settings.rolesEmptyBody") }}
+                                {{ t("settings.presetsEmptyBody") }}
                             </EmptyDescription>
                         </EmptyHeader>
                         <EmptyContent>
@@ -345,13 +347,13 @@ watch(
                                 :disabled="!catalog"
                                 :title="
                                     !catalog
-                                        ? t('settings.rolesCreateDisabledNoCatalog')
+                                        ? t('settings.presetsCreateDisabledNoCatalog')
                                         : undefined
                                 "
                                 @click="openCreate"
                             >
                                 <Plus class="size-4" aria-hidden="true" />
-                                {{ t("settings.rolesCreate") }}
+                                {{ t("settings.presetsCreate") }}
                             </Button>
                         </EmptyContent>
                     </Empty>
@@ -359,87 +361,87 @@ watch(
                     <table v-else class="w-full text-left text-sm" data-testid="roles-table">
                         <thead class="text-xs text-muted-foreground">
                             <tr>
-                                <th class="py-1">{{ t("settings.rolesColumnName") }}</th>
-                                <th class="py-1">{{ t("settings.rolesColumnAtoms") }}</th>
-                                <th class="py-1">{{ t("settings.rolesColumnBindings") }}</th>
+                                <th class="py-1">{{ t("settings.presetsColumnName") }}</th>
+                                <th class="py-1">{{ t("settings.presetsColumnAtoms") }}</th>
+                                <th class="py-1">{{ t("settings.presetsColumnBindings") }}</th>
                                 <th class="py-1 text-right">
-                                    {{ t("settings.rolesColumnActions") }}
+                                    {{ t("settings.presetsColumnActions") }}
                                 </th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr
-                                v-for="role in roles"
-                                :key="role.id"
-                                :data-testid="`role-row-${role.name}`"
+                                v-for="preset in presets"
+                                :key="preset.id"
+                                :data-testid="`role-row-${preset.name}`"
                                 class="border-t"
                             >
                                 <td class="py-1">
                                     <span class="font-medium">{{
-                                        role.displayName || role.name
+                                        preset.displayName || preset.name
                                     }}</span>
                                     <span class="ml-2 font-mono text-xs text-muted-foreground">
-                                        {{ role.name }}
+                                        {{ preset.name }}
                                     </span>
                                     <Badge
-                                        v-if="role.system"
+                                        v-if="preset.system"
                                         variant="secondary"
                                         data-testid="role-system-badge"
                                         class="ml-2"
                                     >
-                                        {{ t("settings.rolesSystemBadge") }}
+                                        {{ t("settings.presetsSystemBadge") }}
                                     </Badge>
                                 </td>
                                 <td class="py-1 text-xs">
                                     <span data-testid="role-atom-summary">{{
-                                        atomPreview(role)
+                                        atomPreview(preset)
                                     }}</span>
                                     <span
-                                        v-if="atomRemainder(role) > 0"
+                                        v-if="atomRemainder(preset) > 0"
                                         class="ml-1 text-muted-foreground"
                                         data-testid="role-atom-more"
                                     >
                                         {{
-                                            t("settings.rolesAtomMore", {
-                                                count: atomRemainder(role),
+                                            t("settings.presetsAtomMore", {
+                                                count: atomRemainder(preset),
                                             })
                                         }}
                                     </span>
                                     <span
-                                        v-if="hasForbiddenAtom(role)"
+                                        v-if="hasForbiddenAtom(preset)"
                                         class="ml-1 text-muted-foreground"
                                         data-testid="role-atom-forbidden"
-                                        :title="t('settings.rolesAtomForbiddenHint')"
+                                        :title="t('settings.presetsAtomForbiddenHint')"
                                     >
-                                        {{ t("settings.rolesAtomForbidden") }}
+                                        {{ t("settings.presetsAtomForbidden") }}
                                     </span>
                                     <span class="ml-1 text-muted-foreground">{{
-                                        atomSummary(role)
+                                        atomSummary(preset)
                                     }}</span>
                                 </td>
                                 <td class="py-1 text-xs" data-testid="role-binding-count">
-                                    {{ role.bindingCount }}
+                                    {{ preset.bindingCount }}
                                 </td>
                                 <td class="space-x-1 py-1 text-right">
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        :data-testid="`role-edit-${role.name}`"
-                                        @click="openEdit(role)"
+                                        :data-testid="`role-edit-${preset.name}`"
+                                        @click="openEdit(preset)"
                                     >
                                         <Pencil class="size-3.5" aria-hidden="true" />
                                     </Button>
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        :disabled="role.system"
+                                        :disabled="preset.system"
                                         :title="
-                                            role.system
-                                                ? t('settings.rolesSystemNotDeletable')
-                                                : t('settings.rolesDelete')
+                                            preset.system
+                                                ? t('settings.presetsSystemNotDeletable')
+                                                : t('settings.presetsDelete')
                                         "
-                                        :data-testid="`role-delete-${role.name}`"
-                                        @click="deleteTarget = role"
+                                        :data-testid="`role-delete-${preset.name}`"
+                                        @click="deleteTarget = preset"
                                     >
                                         <Trash2 class="size-3.5" aria-hidden="true" />
                                     </Button>
@@ -451,7 +453,7 @@ watch(
 
                 <RoleBindingsPanel
                     v-else-if="!loadCause"
-                    :roles="roles"
+                    :presets="presets"
                     :workspaces="workspaces"
                     @notice="notice = $event"
                     @dirty="onBindingsDirty"
@@ -459,7 +461,7 @@ watch(
 
                 <RoleEditorDialog
                     :open="editorOpen"
-                    :role="editorRole"
+                    :preset="editorPreset"
                     :catalog="catalog"
                     :saving="saving"
                     :current-workspace-id="auth.currentWorkspaceId"
@@ -474,11 +476,11 @@ watch(
                     <AlertDialogContent data-testid="role-delete-dialog" aria-modal="true">
                         <AlertDialogHeader>
                             <AlertDialogTitle>{{
-                                t("settings.rolesDeleteTitle")
+                                t("settings.presetsDeleteTitle")
                             }}</AlertDialogTitle>
                             <AlertDialogDescription>
                                 {{
-                                    t("settings.rolesDeleteBody", {
+                                    t("settings.presetsDeleteBody", {
                                         name: deleteTarget?.displayName || deleteTarget?.name || "",
                                     })
                                 }}
@@ -486,7 +488,7 @@ watch(
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <Button variant="ghost" @click="deleteTarget = null">
-                                {{ t("settings.rolesCancel") }}
+                                {{ t("settings.presetsCancel") }}
                             </Button>
                             <Button
                                 variant="destructive"
@@ -499,7 +501,7 @@ watch(
                                     class="animate-spin"
                                     aria-hidden="true"
                                 />
-                                {{ t("settings.rolesDelete") }}
+                                {{ t("settings.presetsDelete") }}
                             </Button>
                         </AlertDialogFooter>
                     </AlertDialogContent>

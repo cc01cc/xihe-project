@@ -716,10 +716,10 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                     path: "/settings/config-locks",
                 },
                 {
-                    id: "roles",
-                    labelKey: "settings.ia.navRoles",
-                    pageTitleKey: "settings.rolesTitle",
-                    path: "/settings/roles",
+                    id: "presets",
+                    labelKey: "settings.ia.navPresets",
+                    pageTitleKey: "settings.presetsTitle",
+                    path: "/settings/presets",
                 },
                 /**
                  * task-91（用户裁定「智能体是组织成员，不是资源」）：平台智能体的落点。

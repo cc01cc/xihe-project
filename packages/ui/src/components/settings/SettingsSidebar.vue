@@ -85,7 +85,7 @@ import {
  *   `overflow-y-auto` 原生滚动条）；层组标题与条目标签 `truncate` 处一律补 `:title`，截断后信息可恢复。
  * 权限面（V15）：实例块（域 + 实例资源）可见性来自 CP 投影的 cap:instance:admin 能力位
  * （auth.hasInstanceAdminCapability），不是角色名判断；ops/安全组另按 canSeeInstanceOps
- * 渲染（BL-552）——roles 项要求 MANAGE_ROLES 原子，atom-only 用户无能力位也须看到该入口。
+ * 渲染（BL-552）——presets 项要求 MANAGE_ROLES 原子，atom-only 用户无能力位也须看到该入口。
  * 两者都 fail-closed：投影没回来就不显示。
  */
 const { t } = useI18n();
@@ -139,7 +139,7 @@ onMounted(() => {
 const canSeeInstanceLayer = computed(() => auth.hasInstanceAdminCapability);
 
 /**
- * BL-552：ops/安全组不能整体挂在能力位下 —— roles 项的唯一门是 MANAGE_ROLES 原子
+ * BL-552：ops/安全组不能整体挂在能力位下 —— presets 项的唯一门是 MANAGE_ROLES 原子
  * （PLAN-0651 T4.2 / Lead ruling ①）。atom-only 用户（有原子、无 cap:instance:admin）
  * 必须仍能看到该入口；域与实例资源保持能力位门不变。
  */
@@ -199,7 +199,7 @@ const opsGroups = computed(() =>
             ...group,
             items: group.items.filter((item) => {
                 if (item.id === "config-locks") return auth.hasInstanceAdminCapability;
-                if (item.id === "roles") return auth.canManageRoles;
+                if (item.id === "presets") return auth.canManageRoles;
                 return true;
             }),
         }))
@@ -239,7 +239,7 @@ const OPS_ICONS: Record<string, Component> = {
     monitoring: Activity,
     data: Database,
     "config-locks": Lock,
-    roles: KeyRound,
+    presets: KeyRound,
     audit: FileSearch,
     // task-8：授权总览（已登录者视角的读面补充）——盾牌表示「授权」而非「审计记录」。
     "authorization-overview": ShieldCheck,

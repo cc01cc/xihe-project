@@ -95,7 +95,7 @@ import SectionShell from "../SectionShell.vue";
                 <CardContent class="flex flex-1 flex-col gap-3 py-4">
                     <p class="text-sm font-medium">缺少 workspace.file.write</p>
                     <p class="text-xs leading-relaxed text-muted-foreground">
-                        需要的能力原子未授予。管理员可在「角色与绑定」页追加，或用只读方式继续。
+                        需要的能力原子未授予。管理员可在「授权预设与绑定」页追加，或用只读方式继续。
                     </p>
                     <div class="mt-auto space-y-2">
                         <Button size="sm" class="w-full" disabled>写入并保存</Button>

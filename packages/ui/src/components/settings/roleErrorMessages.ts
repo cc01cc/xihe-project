@@ -2,7 +2,8 @@ import { ApiError } from "../../composables/api";
 import { problemDetailText } from "../../lib/errorMessages";
 
 /**
- * Role/binding error copy. PLAN-0610 W5b originally **never** echoed the CP's English `detail`;
+ * Grant-preset/binding error copy. PLAN-0610 W5b originally **never** echoed the CP's English
+ * `detail`;
  * BL-288 (2026-11-05) overrides that for actionable problems: when the Problem carries a `detail`
  * (e.g. `ROLE_BINDING_EXCEEDS_CAP` names the offending cap), the user must see it — the localized
  * mapped copy is only the fallback when there is no detail. The code is still logged by callers.
@@ -11,20 +12,20 @@ import { problemDetailText } from "../../lib/errorMessages";
  * can answer them on the same endpoints and a generic fallback would hide the reason.</p>
  *
  * <p>PLAN-0651 V17 B4: `AGENT_PRINCIPAL_FORBIDDEN_ATOMS` is the one exception to detail-first —
- * its `detail` is an untranslated list of atom identifiers, and the agent role binding page must
+ * its `detail` is an untranslated list of atom identifiers, and the agent preset binding page must
  * show the localized copy instead (the code is still logged by callers).</p>
  */
-export type RoleErrorKey =
-    | "roleScopeMismatch"
+export type PresetErrorKey =
+    | "presetScopeMismatch"
     | "privilegeEscalation"
     | "lastSuperAdmin"
     | "concurrentModification"
-    | "roleInUse"
-    | "systemRoleImmutable"
-    | "roleNameExists"
-    | "roleNotFound"
-    | "invalidRoleName"
-    | "invalidRoleAtoms"
+    | "presetInUse"
+    | "systemPresetImmutable"
+    | "presetNameExists"
+    | "presetNotFound"
+    | "invalidPresetName"
+    | "invalidPresetAtoms"
     /**
      * task-81 / task-126：`resource` 前缀不合法（400 INVALID_GRANT_RESOURCE）。CP 的 detail 会点名
      * 具体原子与原因，按 BL-288 走 detail-first；这条只是 detail 缺失时的兜底。
@@ -36,21 +37,21 @@ export type RoleErrorKey =
     | "userDeleted"
     | "userNotFound"
     | "forbidden"
-    | "agentRoleForbiddenAtoms"
+    | "agentPresetForbiddenAtoms"
     | "lockTimeout"
     | "generic";
 
-const CODE_TO_KEY: Record<string, RoleErrorKey> = {
-    ROLE_SCOPE_MISMATCH: "roleScopeMismatch",
+const CODE_TO_KEY: Record<string, PresetErrorKey> = {
+    ROLE_SCOPE_MISMATCH: "presetScopeMismatch",
     PRIVILEGE_ESCALATION: "privilegeEscalation",
     LAST_SUPER_ADMIN: "lastSuperAdmin",
     CONCURRENT_MODIFICATION: "concurrentModification",
-    ROLE_IN_USE: "roleInUse",
-    SYSTEM_ROLE_IMMUTABLE: "systemRoleImmutable",
-    ROLE_NAME_EXISTS: "roleNameExists",
-    ROLE_NOT_FOUND: "roleNotFound",
-    INVALID_ROLE_NAME: "invalidRoleName",
-    INVALID_ROLE_ATOMS: "invalidRoleAtoms",
+    ROLE_IN_USE: "presetInUse",
+    SYSTEM_ROLE_IMMUTABLE: "systemPresetImmutable",
+    ROLE_NAME_EXISTS: "presetNameExists",
+    ROLE_NOT_FOUND: "presetNotFound",
+    INVALID_ROLE_NAME: "invalidPresetName",
+    INVALID_ROLE_ATOMS: "invalidPresetAtoms",
     INVALID_GRANT_RESOURCE: "invalidGrantResource",
     INVALID_SCOPE: "invalidScope",
     WORKSPACE_NOT_FOUND: "workspaceNotFound",
@@ -59,11 +60,11 @@ const CODE_TO_KEY: Record<string, RoleErrorKey> = {
     USER_NOT_FOUND: "userNotFound",
     FORBIDDEN: "forbidden",
     AUTHORIZATION_REQUIRED: "forbidden",
-    AGENT_PRINCIPAL_FORBIDDEN_ATOMS: "agentRoleForbiddenAtoms",
+    AGENT_PRINCIPAL_FORBIDDEN_ATOMS: "agentPresetForbiddenAtoms",
     OPERATION_LOCK_TIMEOUT: "lockTimeout",
 };
 
-export function roleErrorKey(cause: unknown): RoleErrorKey {
+export function presetErrorKey(cause: unknown): PresetErrorKey {
     if (cause instanceof ApiError && cause.problem?.code) {
         return CODE_TO_KEY[cause.problem.code] ?? "generic";
     }
@@ -71,13 +72,13 @@ export function roleErrorKey(cause: unknown): RoleErrorKey {
 }
 
 /** `t` is passed in so this stays a pure function (no composable coupling, trivially testable). */
-export function roleErrorMessage(cause: unknown, t: (key: string) => string): string {
+export function presetErrorMessage(cause: unknown, t: (key: string) => string): string {
     // PLAN-0651 V17 B4：该码的 detail 是未本地化的原子清单，绑定页必须显示本地化文案。
-    if (roleErrorKey(cause) === "agentRoleForbiddenAtoms") {
-        return t("settings.rolesError.agentRoleForbiddenAtoms");
+    if (presetErrorKey(cause) === "agentPresetForbiddenAtoms") {
+        return t("settings.presetsError.agentPresetForbiddenAtoms");
     }
     // BL-288：可行动 detail（超限原子名/条数/上限）优先；无 detail 才回退本地化通用文案。
     const detail = problemDetailText(cause, "");
     if (detail) return detail;
-    return t(`settings.rolesError.${roleErrorKey(cause)}`);
+    return t(`settings.presetsError.${presetErrorKey(cause)}`);
 }

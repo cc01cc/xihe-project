@@ -37,7 +37,7 @@ vi.mock("../../../stores/auth", () => ({
  * 本 spec 钉四件最容易退化的东西：
  * ① **条目清单来自单一来源**：本层条目 = `domainsForLayer(layer)` + 实例层`instanceOpsGroups()`
  *    的**可见**页（task-63），每个条目都在结果里 —— 任何人想「顺手加一条硬编码入口」都会让这条红；
- * ①b **无权限页不出现**：`roles` 要 `MANAGE_ROLES`、`config-locks` 要实例管理员能力；
+ * ①b **无权限页不出现**：`presets` 要 `MANAGE_ROLES`、`config-locks` 要实例管理员能力；
  * ② **跨层显式**：其他层条目必须带目标层徽标（不静默换层）；
  * ③ **空态有出口**：无匹配时给「清除搜索 / 打开本层默认页」两个按钮，不是只显示空列表。
  *
@@ -138,14 +138,14 @@ function otherLocaleOf(uiLocale: UiLocale): string {
 
 /**
  * 面板的可见运维/安全页：与 `SettingsCommandPalette.vue` 的 `visibleOpsItems()` 同一判据
- * （`config-locks` 要实例管理员能力、`roles` 要 `MANAGE_ROLES`，其余恒显）。
+ * （`config-locks` 要实例管理员能力、`presets` 要 `MANAGE_ROLES`，其余恒显）。
  */
 function visibleOps(): SettingsNavItem[] {
     return instanceOpsGroups()
         .flatMap((group) => group.items)
         .filter((item) => {
             if (item.id === "config-locks") return authState.capability;
-            if (item.id === "roles") return authState.canManageRoles;
+            if (item.id === "presets") return authState.canManageRoles;
             return true;
         });
 }
@@ -328,7 +328,7 @@ describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {
             "monitoring",
             "data",
             "config-locks",
-            "roles",
+            "presets",
             "agent-principals",
             "audit",
             "authorization-overview",
@@ -343,12 +343,12 @@ describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {
         ).toBe("domain");
     });
 
-    it("无权限的页不出现：缺 MANAGE_ROLES 少 roles（17），再非实例管理员少 config-locks（16）", async () => {
+    it("无权限的页不出现：缺 MANAGE_ROLES 少 presets（17），再非实例管理员少 config-locks（16）", async () => {
         authState.canManageRoles = false;
         mountPalette("instance");
         await flushPromises();
 
-        expect(q('[data-testid="commandk-item-instance:roles"]')).toBeNull();
+        expect(q('[data-testid="commandk-item-instance:presets"]')).toBeNull();
         expect(q('[data-testid="commandk-item-instance:config-locks"]')).toBeTruthy();
         expect(qa('[data-testid^="commandk-item-instance:"]')).toHaveLength(17);
 
@@ -361,7 +361,7 @@ describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {
         await flushPromises();
 
         expect(q('[data-testid="commandk-item-instance:config-locks"]')).toBeNull();
-        expect(q('[data-testid="commandk-item-instance:roles"]')).toBeNull();
+        expect(q('[data-testid="commandk-item-instance:presets"]')).toBeNull();
         // 恒显的三页仍在（授权总览对已登录者人人可见，task-8 裁定）
         for (const id of [
             "monitoring",

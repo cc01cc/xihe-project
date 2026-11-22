@@ -211,7 +211,7 @@ describe("mock 工作区智能体夹具被路由消费（task-449）", () => {
         const answer = await call(handler, url);
         expect(answer.status).toBe(200);
         expect((answer.body as { bindings: unknown[] }).bindings).toEqual(agentRoleBindingsOf(pid));
-        const catalog = await call(handler, "/roles");
+        const catalog = await call(handler, "/presets");
         expect(catalog.status).toBe(200);
         expect(Array.isArray(catalog.body)).toBe(true);
         const system = (

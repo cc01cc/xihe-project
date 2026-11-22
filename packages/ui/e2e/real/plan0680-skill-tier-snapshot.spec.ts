@@ -33,7 +33,7 @@
  *      `source=role`, instance）** —— 后者才是真正生效的物化授权（`RequesterAuthority`
  *      读 `grants`，只写前者仍 403，`host-e2e` 坑表 §19），随后重新 `POST /auth/login` 取新 token。
  *      **为什么不是"绕过被测面"**：CP 无 role-binding/grant 的 HTTP 写面（openapi 仅
- *      `/api/v1/roles*` 只读目录）；`DataSeeder` 的 admin 依赖 `XIHE_DEV_ADMIN_PASSWORD`
+ *      `/api/v1/presets*` 只读目录）；`DataSeeder` 的 admin 依赖 `XIHE_DEV_ADMIN_PASSWORD`
  *      而隔离栈未注入 ⇒ 无正常路径可授。
  *      **本 spec 的授权种子仅属夹具前置，不改被测断言**；**不改断言凑绿**（此句仍然有效）。
  *      种子只对 `XIHE_E2E_PG_*` 指向的隔离库执行，库名以 `xihe-e2e` 前缀 **断言防呆**
@@ -121,7 +121,7 @@ const SUPER_ADMIN_ROLE_ID = "00000000-0000-4000-8000-000000000001";
  * **【D-67 夹具前置】** 在隔离库把受测身份提到 instance admin，并重新登录取新 token。
  *
  * - **为什么要直写 DB**：CP 无 role-binding / grant 的 HTTP 写面（`openapi.yaml` 只有
- *   `/api/v1/roles*` 只读目录）；`DataSeeder` 的 `admin@xihe.local` 依赖隔离栈未注入的
+ *   `/api/v1/presets*` 只读目录）；`DataSeeder` 的 `admin@xihe.local` 依赖隔离栈未注入的
  *   `XIHE_DEV_ADMIN_PASSWORD` ⇒ 没有正常路径可授。**403 本身是正确产品行为**
  *   （`SkillImportService:80-92`：`instance ⇒ instance admin`），0680 的被测面是
  *   **绑定 / 快照 / 层级**，不是导入授权。

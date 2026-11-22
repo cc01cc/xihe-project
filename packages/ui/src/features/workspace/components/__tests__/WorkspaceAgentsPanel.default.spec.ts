@@ -57,7 +57,7 @@ const apiMock = vi.hoisted(() => ({
     unbindAgentRole: vi.fn<() => Promise<void>>(),
     bindAgentSkill: vi.fn<() => Promise<void>>(),
     unbindAgentSkill: vi.fn<() => Promise<void>>(),
-    listRoles: vi.fn<() => Promise<unknown[]>>(),
+    listPresets: vi.fn<() => Promise<unknown[]>>(),
     getSkills: vi.fn<() => Promise<unknown[]>>(),
     getWorkspaceSkills: vi.fn<(workspaceId: string) => Promise<unknown[]>>(),
     listWorkspaceAgentSpawnSessions: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -166,7 +166,7 @@ beforeEach(() => {
     apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_MANAGE);
     apiMock.getAgentRoles.mockResolvedValue([]);
     apiMock.getAgentSkills.mockResolvedValue([]);
-    apiMock.listRoles.mockResolvedValue([]);
+    apiMock.listPresets.mockResolvedValue([]);
     apiMock.getSkills.mockResolvedValue([]);
     apiMock.getWorkspaceSkills.mockResolvedValue([]);
     apiMock.setWorkspaceAgentDefault.mockResolvedValue(undefined);

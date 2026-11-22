@@ -23,7 +23,7 @@ import type {
     AgentRoleBinding,
     ApiBindingSet,
     api,
-    ApiRole,
+    ApiPreset,
     WorkspaceAgentBinding,
     WorkspaceAgentMemory,
 } from "../composables/api";
@@ -507,7 +507,7 @@ export const mockCredentials: CredentialSummary[] = [
     },
 ];
 
-export const mockRoles: ApiRole[] = [
+export const mockRoles: ApiPreset[] = [
     {
         id: "role-instance-admin",
         name: "instance-admin",

@@ -189,7 +189,7 @@ function tierVariant(tier: ReadfaceTier): "secondary" | "outline" | "destructive
 function readfaceLink(source: ReadfaceSource): string | null {
     switch (source) {
         case "role":
-            return "/settings/roles";
+            return "/settings/presets";
         case "credential_binding":
             return "/resources/credentials";
         default:

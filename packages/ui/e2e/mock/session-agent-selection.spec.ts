@@ -435,7 +435,7 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
     await page.getByTestId("agent-principal-name").fill("CreatedWithoutManageGrant");
     const create = page.getByTestId("agent-principal-create");
     await expect(create).toBeDisabled();
-    await expect(page.getByTestId("agent-create-forbidden-hint")).toContainText("角色与绑定");
+    await expect(page.getByTestId("agent-create-forbidden-hint")).toContainText("授权预设与绑定");
     expect(createCalls).toBe(0);
 
     const bind = page.getByTestId("agent-principal-bind");

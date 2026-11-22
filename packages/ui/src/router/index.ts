@@ -414,8 +414,8 @@ const router = createRouter({
                     meta: { settingsLayer: "instance" },
                 },
                 {
-                    path: "roles",
-                    name: "settings-roles",
+                    path: "presets",
+                    name: "settings-presets",
                     component: () => import("../views/settings/RolesView.vue"),
                     meta: { settingsLayer: "instance" },
                 },
@@ -441,7 +441,7 @@ const router = createRouter({
                 {
                     // PLAN-0610 W5c：principal-grants 已退役，旧书签落到替代页
                     path: "principal-grants",
-                    redirect: { name: "settings-roles" },
+                    redirect: { name: "settings-presets" },
                 },
                 /**
                  * task-153（Lead C1=B）：主体绑定**整页**——绑定面 = 工作区多选 × 每项 cap

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * task-84：GET /api/v1/roles/catalog?locale= 的 mock 夹具 —— **从 CP 源码派生，不抄第二份清单**。
+ * task-84：GET /api/v1/presets/catalog?locale= 的 mock 夹具 —— **从 CP 源码派生，不抄第二份清单**。
  *
  * <p><b>选档理由（(b) 全量派生，卡面要求写死）</b>：本仓此前在 e2e 夹具
  * （e2e/mock/helpers/stub-families.ts 的 ROLE_CATALOG_FIXTURE）里手抄了 **9 个原子子集**，
@@ -23,17 +23,17 @@ import { resolve } from "node:path";
  *       （actionResource :319-323：credential 族用 credential:*，其余 *）。</li>
  *   <li>policy/PermissionAtomLabels.java —— displayName（put(labels, REF, 中文, 英文)，:49-134）。
  *       **两语都可派生** ⇒ 这里没有 e2e 夹具那条「en-US 也回 zh-CN」的妥协（e2e 夹具承认自己在猜）。</li>
- *   <li>policy/SystemAccessRoleCatalog.java —— defaultGrants（roleSeeds() :129-299，含
- *       BASE_ATOMS :80-93 / USER_DEFAULT_ATOMS :107-117 / CREDENTIAL_ATOMS :75-78 /
- *       superAdminAtoms() :301-306 的展开规则）。</li>
+ *   <li>policy/SystemGrantPresetCatalog.java —— defaultGrants（presetSeeds()，含
+ *       BASE_ATOMS / AGENT_BASE_ATOMS / USER_DEFAULT_ATOMS / CREDENTIAL_ATOMS /
+ *       superAdminAtoms() 的展开规则）。</li>
  * </ul>
  *
  * <p><b>边界（必须知道）</b>：① 这是**源码文本解析**，不是编译期契约 —— CP 改了声明形态
  * （换 record、改成 Map.of、把 list 拆成方法调用）会让 deriveRoleCatalog() **抛错**而不是静默少几项；
- * 抛错时 /roles/catalog 明确失败（**不是**回一个短清单冒充全量），单测同批红。
+ * 抛错时 /presets/catalog 明确失败（**不是**回一个短清单冒充全量），单测同批红。
  * ② 派生只在 Node 侧发生（预览 mock 是 vite 中间件、单测是 forks 池）⇒ **本模块不得被浏览器入口 import**
  * （node:fs 在浏览器里不存在；目前唯一消费方是 api-server.ts，它只被 vite.config.ts 与单测 import）。
- * ③ defaultGrants 的 description 是源码字符串字面量的拼接结果，**不本地化** —— CP 的 RoleSeed
+ * ③ defaultGrants 的 description 是源码字符串字面量的拼接结果，**不本地化** —— CP 的 PresetSeed
  * 描述本来就只有英文一份，UI 也不渲染它（RolesView 只消费 atoms / roles）。
  * ④ 本模块**不提供写面**：角色/绑定的 POST/PATCH/DELETE 仍走 404 兜底（CP 侧有配额、授权、
  * 409 状态机，只复刻一半就是「mock 里点得通、真栈 409」的假通过 —— 同 task-72 的裁定）。</p>
@@ -46,7 +46,7 @@ const CP_POLICY_FILE = {
     toolFace: "ToolFaceRegistry.java",
     atomCatalog: "PermissionAtomCatalog.java",
     atomLabels: "PermissionAtomLabels.java",
-    systemRoles: "SystemAccessRoleCatalog.java",
+    systemPresets: "SystemGrantPresetCatalog.java",
     accessScope: "AccessScope.java",
 } as const;
 
@@ -157,7 +157,7 @@ function parenBodyAfter(source: string, marker: string): string {
 function constantValues(body: string, table: Map<string, string>): string[] {
     const values: string[] = [];
     const pattern =
-        /(?:ToolFaceRegistry\.|PermissionAtomCatalog\.|SystemAccessRoleCatalog\.)?([A-Z][A-Z0-9_]*)/g;
+        /(?:ToolFaceRegistry\.|PermissionAtomCatalog\.|SystemGrantPresetCatalog\.)?([A-Z][A-Z0-9_]*)/g;
     for (const hit of body.matchAll(pattern)) {
         const value = table.get(hit[1]);
         if (value !== undefined) values.push(value);
@@ -192,8 +192,8 @@ interface CpSources {
     toolFace: string;
     /** 去注释后的 PermissionAtomCatalog 源码（原子顺序 / scope_class / 禁用集）。 */
     atomCatalog: string;
-    /** 去注释后的 SystemAccessRoleCatalog 源码（defaultGrants 的来源）。 */
-    systemRoles: string;
+    /** 去注释后的 SystemGrantPresetCatalog 源码（defaultGrants 的来源）。 */
+    systemPresets: string;
     labels: Map<string, { zh: string; en: string }>;
     /** AccessScope 的两个 scope 类型（instance / workspace）。 */
     scopes: string[];
@@ -208,8 +208,8 @@ function loadCpSources(dir = cpPolicyDir()): CpSources {
     const labelsSource = withoutBlockComments(
         withoutLineComments(readCpFile(dir, CP_POLICY_FILE.atomLabels)),
     );
-    const systemRoles = withoutBlockComments(
-        withoutLineComments(readCpFile(dir, CP_POLICY_FILE.systemRoles)),
+    const systemPresets = withoutBlockComments(
+        withoutLineComments(readCpFile(dir, CP_POLICY_FILE.systemPresets)),
     );
     const scopesSource = withoutBlockComments(
         withoutLineComments(readCpFile(dir, CP_POLICY_FILE.accessScope)),
@@ -217,7 +217,7 @@ function loadCpSources(dir = cpPolicyDir()): CpSources {
     const constants = new Map<string, string>([
         ...declaredConstants(toolFace),
         ...declaredConstants(atomCatalog),
-        ...declaredConstants(systemRoles),
+        ...declaredConstants(systemPresets),
         // AccessScope:15-16 的 INSTANCE / WORKSPACE 是 scopes 的来源（值是小写枚举原值）。
         ...declaredConstants(scopesSource),
     ]);
@@ -235,7 +235,7 @@ function loadCpSources(dir = cpPolicyDir()): CpSources {
     return {
         toolFace,
         atomCatalog,
-        systemRoles,
+        systemPresets,
         labels: atomLabels(labelsSource),
         scopes,
         constants,
@@ -295,7 +295,7 @@ function canonicalResource(sources: CpSources, atomName: string): string {
     return atomName.startsWith(credentialPrefix) ? credentialWildcard : wildcard;
 }
 
-/** 一条 RoleSeed 的原子表达式 ⇒ 原子名（展开 BASE_ATOMS / USER_DEFAULT_ATOMS / CREDENTIAL_ATOMS / superAdminAtoms()）。 */
+/** 一条 PresetSeed 的原子表达式 ⇒ 原子名（展开 BASE_ATOMS / USER_DEFAULT_ATOMS / CREDENTIAL_ATOMS / superAdminAtoms()）。 */
 function expandSeedAtoms(opts: {
     expression: string;
     sources: CpSources;
@@ -331,7 +331,7 @@ function expandSeedAtoms(opts: {
     return [...new Set(names)];
 }
 
-/** new RoleSeed(...) 的实参切分：只在顶层逗号处切，括号与字符串里的逗号不算。 */
+/** new PresetSeed(...) 的实参切分：只在顶层逗号处切，括号与字符串里的逗号不算。 */
 function splitTopLevelArguments(text: string): string[] {
     const parts: string[] = [];
     let depth = 0;
@@ -376,16 +376,21 @@ function stringLiteralValue(expression: string): string {
         .join("");
 }
 
-/** SystemAccessRoleCatalog:75-117 的三个种子常量（defaultGrants 的展开表）。 */
+/** SystemGrantPresetCatalog 的三个种子常量（defaultGrants 的展开表）。 */
 function seedBodies(sources: CpSources): Map<string, string> {
     const table = new Map<string, string>();
-    for (const marker of ["CREDENTIAL_ATOMS = ", "BASE_ATOMS = ", "USER_DEFAULT_ATOMS = "]) {
-        table.set(marker.split(" = ")[0], parenBodyAfter(sources.systemRoles, marker));
+    for (const marker of [
+        "CREDENTIAL_ATOMS = ",
+        "BASE_ATOMS = ",
+        "AGENT_BASE_ATOMS = ",
+        "USER_DEFAULT_ATOMS = ",
+    ]) {
+        table.set(marker.split(" = ")[0], parenBodyAfter(sources.systemPresets, marker));
     }
     return table;
 }
 
-/** 配平某个方法的方法体（roleSeeds 里逐条 new RoleSeed(...)）。 */
+/** 配平某个方法的方法体（presetSeeds 里逐条 new PresetSeed(...)）。 */
 function methodBody(source: string, signature: string): string {
     const at = source.indexOf(signature);
     if (at < 0) {
@@ -422,15 +427,15 @@ function parenBodyAt(source: string, from: number): { text: string; end: number 
 }
 
 function defaultGrants(sources: CpSources, vocabulary: CpVocabulary): MockRoleDefaultGrantView[] {
-    const body = methodBody(sources.systemRoles, "public static List<RoleSeed> roleSeeds()");
+    const body = methodBody(sources.systemPresets, "public static List<PresetSeed> presetSeeds()");
     const bodies = seedBodies(sources);
     const grants: MockRoleDefaultGrantView[] = [];
-    for (const hit of body.matchAll(/new RoleSeed\(/g)) {
+    for (const hit of body.matchAll(/new PresetSeed\(/g)) {
         const args = splitTopLevelArguments(parenBodyAt(body, (hit.index ?? 0) + 1).text);
         const roleName = sources.constants.get(args[1] ?? "");
         if (roleName === undefined) {
             throw new Error(
-                "task-84 派生失败：RoleSeed 的 name 实参 [" +
+                "task-84 派生失败：PresetSeed 的 name 实参 [" +
                     (args[1] ?? "") +
                     "] 解析不到声明值。",
             );
@@ -444,7 +449,7 @@ function defaultGrants(sources: CpSources, vocabulary: CpVocabulary): MockRoleDe
         });
     }
     if (grants.length === 0) {
-        throw new Error("task-84 派生失败：roleSeeds() 里一条 RoleSeed 都没解析出来。");
+        throw new Error("task-84 派生失败：presetSeeds() 里一条 PresetSeed 都没解析出来。");
     }
     return grants;
 }
@@ -479,7 +484,7 @@ export const ROLE_CATALOG_SOURCES = [
     "PermissionAtomCatalog.java:148-224 ACTION_ATOM_NAMES / :226-227 CAPABILITY_ATOM_NAMES",
     "PermissionAtomCatalog.java:230-264 INSTANCE_ONLY_ATOMS / :96-146 AGENT_FORBIDDEN_ATOMS",
     "PermissionAtomLabels.java:49-134 displayName（zh-CN / en-US 双语）",
-    "SystemAccessRoleCatalog.java:129-299 roleSeeds()（defaultGrants），展开 :75-117 三个种子常量",
+    "SystemGrantPresetCatalog.java:presetSeeds()（defaultGrants），展开 CREDENTIAL_ATOMS / BASE_ATOMS / AGENT_BASE_ATOMS / USER_DEFAULT_ATOMS 四个种子常量",
     "AccessScope.java:15-16 scopes = instance / workspace",
 ] as const;
 
@@ -488,7 +493,7 @@ export const ROLE_CATALOG_SOURCES = [
  *
  * <p>为什么不在模块顶层就派生：CP 源码缺失时（例如只检出 ui 包）顶层派生会让 **import 即抛**，
  * 也就是 api-server.ts / vite.config.ts 整个挂掉 —— 一条面的缺口会连坐整条 mock 车道。
- * 懒派生把失败面收窄到 `GET /roles/catalog` 本身（dispatch 里转 500 并带原因），
+ * 懒派生把失败面收窄到 `GET /presets/catalog` 本身（dispatch 里转 500 并带原因），
  * 其余端点照常。**仍然不静默**：失败不会回退成手抄表或空清单。</p>
  *
  * <p>locale 归一与服务端一致：`en*` ⇒ en-US，其余 ⇒ zh-CN（未知 locale 回退是 CP 既有语义）。</p>

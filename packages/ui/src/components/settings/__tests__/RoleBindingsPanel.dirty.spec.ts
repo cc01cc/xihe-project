@@ -30,7 +30,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
 });
 const mockedApi = vi.mocked(api, true);
 
-const ROLE_A: apiModule.ApiRole = {
+const ROLE_A: apiModule.ApiPreset = {
     id: "role-a",
     name: "AUDITOR",
     displayName: "Auditor",
@@ -46,13 +46,13 @@ function bindingsOf(rows: apiModule.ApiBindingInput[]): apiModule.ApiBindingSet 
 
 function mountPanel() {
     return mount(RoleBindingsPanel, {
-        props: { roles: [ROLE_A], workspaces: [] },
+        props: { presets: [ROLE_A], workspaces: [] },
         global: {
             plugins: [i18n],
             stubs: {
                 AgentRoleBindingsSection: {
                     name: "AgentRoleBindingsSection",
-                    props: ["scope", "scopeId", "workspaceId", "roles"],
+                    props: ["scope", "scopeId", "workspaceId", "presets"],
                     emits: ["notice", "dirty"],
                     template: '<div data-testid="agent-role-section-stub" />',
                 },

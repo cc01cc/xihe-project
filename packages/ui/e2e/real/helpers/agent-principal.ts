@@ -131,7 +131,9 @@ async function instanceRoleIdsForCreate(
     headers: Record<string, string>,
     workspaceId: string,
 ): Promise<string[]> {
-    const res = await request.get(`${CP_URL}/api/v1/roles?workspaceId=${workspaceId}`, { headers });
+    const res = await request.get(`${CP_URL}/api/v1/presets?workspaceId=${workspaceId}`, {
+        headers,
+    });
     expect(res.ok(), await res.text()).toBe(true);
     const roles = (await res.json()) as Array<{ id?: string; name?: string }>;
     return [AGENT_USER_ROLE_NAME, WS_RUNNER_ROLE_NAME].map((name) => {

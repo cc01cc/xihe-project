@@ -370,7 +370,7 @@ async function installPolicyModeRoute(page: Page): Promise<void> {
 /** 设置页：角色定义（含系统徽标 = secondary Badge、选中 tab、主按钮）。 */
 async function mockRolesApis(page: Page): Promise<void> {
     const atom = { name: "read", scopeClass: "both", capability: false, resource: "*" };
-    // D-713/B7：/settings/roles 直链会自己拉 /me/permissions（ensureSelfPermissions）；
+    // D-713/B7：/settings/presets 直链会自己拉 /me/permissions（ensureSelfPermissions）；
     // setupMockAuth 的 catch-all 对未桩端点回 200 {}，MANAGE_ROLES 原子缺失会 fail-closed。
     await page.route("**/api/v1/me/permissions", async (route) => {
         await route.fulfill({
@@ -384,14 +384,14 @@ async function mockRolesApis(page: Page): Promise<void> {
             }),
         });
     });
-    await page.route("**/api/v1/roles/catalog", async (route) => {
+    await page.route("**/api/v1/presets/catalog", async (route) => {
         await route.fulfill({
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({ atoms: [atom], scopes: ["instance", "workspace"] }),
         });
     });
-    await page.route("**/api/v1/roles", async (route) => {
+    await page.route("**/api/v1/presets", async (route) => {
         if (route.request().method() !== "GET") {
             await route.fulfill({ status: 204, body: "" });
             return;
@@ -682,7 +682,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             await prepareAuth(page);
             await mockRolesApis(page);
 
-            await page.goto(`/settings/roles?color=${item.param}`, { waitUntil: "load" });
+            await page.goto(`/settings/presets?color=${item.param}`, { waitUntil: "load" });
             await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expect(page.getByTestId("role-system-badge").first()).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
@@ -982,7 +982,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         await prepareAuth(page);
         await mockRolesApis(page);
 
-        await page.goto("/settings/roles", { waitUntil: "load" });
+        await page.goto("/settings/presets", { waitUntil: "load" });
         await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("role-system-badge").first()).toBeVisible({
             timeout: LONG_TIMEOUT_MS,

@@ -26,7 +26,7 @@ import {
     ApiError,
     type ApiOrgUnitMember,
     type ApiOrgUnitNode,
-    type ApiRole,
+    type ApiPreset,
 } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
 import { orgUnitNames } from "../composables/useOrgUnitTree";
@@ -70,7 +70,7 @@ const mode = ref<WriteMode | null>(null),
     subjectLoading = ref(false),
     subjectError = ref(""),
     subjectId = ref(""),
-    roleCatalog = ref<ApiRole[]>([]),
+    roleCatalog = ref<ApiPreset[]>([]),
     roleLoading = ref(false),
     roleError = ref(""),
     /** 本地基线：null = 未知（契约无读面）。非 null 时只由服务端响应体更新。 */
@@ -173,7 +173,7 @@ async function loadRoles(): Promise<void> {
     roleLoading.value = true;
     roleError.value = "";
     try {
-        roleCatalog.value = await api.listRoles();
+        roleCatalog.value = await api.listPresets();
     } catch (cause) {
         roleError.value =
             cause instanceof ApiError

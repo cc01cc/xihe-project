@@ -24,7 +24,7 @@ export interface PreviewPermissionAtom {
 }
 
 /**
- * 默认（授权）投影 = **CP 固定实例管理员集**（`SystemAccessRoleCatalog.java:141-183` 的
+ * 默认（授权）投影 = **CP 固定实例管理员集**（`SystemGrantPresetCatalog.java:141-183` 的
  * `AtomRef.wildcard(...)` 清单）里 UI 真的会判的那几条。原子名全部取自 CP 真实目录，**不许编造**。
  *
  * <p><b>「不许编造」这条自 task-70 起不再是注释自律，而是机器判据</b>：
@@ -36,7 +36,7 @@ export interface PreviewPermissionAtom {
  * 同族 D-1760（观测采了没判定）。</p>
  */
 export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
-    // `ToolFaceRegistry.java:41` `ACTION_MANAGE_ROLES`（设置区「角色与绑定」面的判据）。
+    // `ToolFaceRegistry.java:41` `ACTION_MANAGE_ROLES`（设置区「授权预设与绑定」面的判据）。
     { actionClass: "MANAGE_ROLES", resource: "*" },
     // PLAN-0772 M2 / 裁定三：实例智能体写面的真原子（不是 `cap:instance:admin` 特判）。
     // `ToolFaceRegistry.java:71`。
@@ -48,7 +48,7 @@ export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
      * 自审一直做不了，是审计盲区。
      *
      * <p>依据（三处一致）：`ToolFaceRegistry.java:75` `ACTION_READ_INSTANCE_CONTENT`；
-     * `SystemAccessRoleCatalog.java:165-166` 把它放进**固定实例管理员集**
+     * `SystemGrantPresetCatalog.java:165-166` 把它放进**固定实例管理员集**
      * （`AtomRef.wildcard(ACTION_READ_INSTANCE_CONTENT)`）；`ConfigController.java:89-90`
      * 的 `canReadInstanceContent()` 就是它。**动作原子，不是能力位** —— 两者互不蕴含
      * （`stores/auth.ts:90-95`）。</p>
@@ -58,7 +58,7 @@ export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
      * task-70：**实例层写面**的真原子（`ToolFaceRegistry.java:76`）。它顶替了原先被删掉的编造名
      * `MANAGE_INSTANCE_CONFIG`（删除理由见下方「task-70 删掉的两条」）—— 那条想表达的语义「能写实例配置」
      * 在 CP 侧的真名就是它：`ConfigController.java:384/:392`（PUT/DELETE `/config/instance/{domain}`）、
-     * `:592`（`POST /config/import`）。`SystemAccessRoleCatalog.java:167-168` 同样把它放进了
+     * `:592`（`POST /config/import`）。`SystemGrantPresetCatalog.java:167-168` 同样把它放进了
      * 固定实例管理员集 ⇒ **实例管理员形态必须可写**，否则预览演的是「持 READ 不持 WRITE」这种
      * 管理员身上不存在的组合态（同 `?denied=1` 的取证纪律：不造 CP 里没有的形态）。
      */
@@ -177,7 +177,7 @@ export function mockPermissionProjection(input: { capabilities: string[]; denied
     /**
      * CP `CapabilityProjectionService.WorkspacePermissions`（`:77-78`）四字段原样：
      * workspaceId / workspaceRole（canonicalName）/ workspaceAdmin / permissions。
-     * 角色名取自 `SystemAccessRoleCatalog.WS_OWNER`（`:52`），不自造别名。
+     * 角色名取自 `SystemGrantPresetCatalog.WS_OWNER`（`:52`），不自造别名。
      */
     workspaces: Array<{
         workspaceId: string;

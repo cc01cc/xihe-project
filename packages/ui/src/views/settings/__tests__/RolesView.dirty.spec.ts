@@ -47,8 +47,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            rolesCatalog: vi.fn<typeof apiModule.api.rolesCatalog>(),
-            listRoles: vi.fn<typeof apiModule.api.listRoles>(),
+            presetsCatalog: vi.fn<typeof apiModule.api.presetsCatalog>(),
+            listPresets: vi.fn<typeof apiModule.api.listPresets>(),
             listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
         },
     };
@@ -63,7 +63,7 @@ function mountView(options: { attach?: boolean } = {}) {
             stubs: {
                 RoleBindingsPanel: {
                     name: "RoleBindingsPanel",
-                    props: ["roles", "workspaces"],
+                    props: ["presets", "workspaces"],
                     emits: ["notice", "dirty"],
                     template: '<div data-testid="role-bindings-stub" />',
                 },
@@ -95,15 +95,15 @@ describe("RolesView · 整页草稿离开确认（task-92）", () => {
         guardHooks.leave.length = 0;
         authState.canManageRoles = true;
         document.body.innerHTML = "";
-        mockedApi.rolesCatalog.mockResolvedValue({ atoms: [] } as never);
-        mockedApi.listRoles.mockResolvedValue([]);
+        mockedApi.presetsCatalog.mockResolvedValue({ atoms: [] } as never);
+        mockedApi.listPresets.mockResolvedValue([]);
         mockedApi.listWorkspaces.mockResolvedValue([]);
     });
 
     it("无草稿：leave 与 update 两条守卫都注册，导航立即放行", async () => {
         const wrapper = mountView();
         await flushPromises();
-        expect(guardHooks.leave.length, "角色与绑定页也要注册 leave + update 两条守卫").toBe(2);
+        expect(guardHooks.leave.length, "授权预设与绑定页也要注册 leave + update 两条守卫").toBe(2);
         await expect(guardHooks.leave[0]() as Promise<boolean>).resolves.toBe(true);
         expect(document.body.querySelector('[data-testid="settings-leave-confirm"]')).toBeNull();
         wrapper.unmount();
@@ -121,7 +121,9 @@ describe("RolesView · 整页草稿离开确认（task-92）", () => {
         const dialog = document.body.querySelector('[data-testid="settings-leave-confirm"]');
         expect(dialog, "绑定面板有草稿时必须拦导航").not.toBeNull();
         expect(dialog?.textContent).toContain("有未保存的改动");
-        expect(dialog?.textContent, "确认框要能说出是哪个面").toContain("角色与绑定");
+        expect(dialog?.textContent, "确认框要能说出是哪个面").toContain(
+            i18n.global.t("settings.presetsTitle"),
+        );
 
         document.body.querySelector<HTMLElement>('[data-testid="settings-leave-discard"]')?.click();
         await flushPromises();

@@ -10,7 +10,7 @@ import SettingsSidebar from "../SettingsSidebar.vue";
  * PLAN-0752 T1.6 / V15：左栏 = 层内二级。
  *
  * 这三条用例锁的是**权限面**与**矩阵**：实例块是否出现只看 cap:instance:admin 能力位，
- * roles 项只看 MANAGE_ROLES 原子；矩阵必须是 12 / 9 个域。这些数一旦被"顺手改一下"，
+ * presets 项只看 MANAGE_ROLES 原子；矩阵必须是 12 / 9 个域。这些数一旦被"顺手改一下"，
  * 用户报过的「域比层高 / 两层不对称」就会复发。
  *
  * task-227（合页不合域）之后，**条目数 ≠ 域数**：三个模型域在左栏折成一个组条目
@@ -95,7 +95,7 @@ const messages = {
                 navData: "数据",
                 navToolFaces: "工具分类",
                 navConfigLocks: "配置锁定",
-                navRoles: "角色与授权",
+                navPresets: "授权预设与授权",
                 navAudit: "审计日志",
                 groupInstanceResources: "实例资源",
                 groupMyResources: "我的资源",
@@ -176,7 +176,7 @@ describe("SettingsSidebar", () => {
         expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(13);
 
         // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
-        // security(config-locks,roles,agent-principals,audit,**authorization-overview**)。
+        // security(config-locks,presets,agent-principals,audit,**authorization-overview**)。
         // task-91：`agent-principals` = 平台智能体的新家（资源区摘除后它的唯一入口）。
         // task-8：`authorization-overview`（授权总览）加在安全组**末尾** —— 恒显、不受
         // MANAGE_ROLES 门控（它只读登录者自己的 `/me/permissions` 与自我 explain），
@@ -186,7 +186,7 @@ describe("SettingsSidebar", () => {
             "settings-nav-ops-monitoring",
             "settings-nav-ops-data",
             "settings-nav-ops-config-locks",
-            "settings-nav-ops-roles",
+            "settings-nav-ops-presets",
             "settings-nav-ops-agent-principals",
             "settings-nav-ops-audit",
             "settings-nav-ops-authorization-overview",
@@ -195,7 +195,7 @@ describe("SettingsSidebar", () => {
             "/settings/monitoring",
             "/settings/data",
             "/settings/config-locks",
-            "/settings/roles",
+            "/settings/presets",
             "/settings/instance/agent-principals",
             "/settings/audit",
             "/settings/authorization-overview",
@@ -278,8 +278,8 @@ describe("SettingsSidebar", () => {
     });
 
     // BL-552 / PLAN-0651 T4.2 case 3：atom-only（有 MANAGE_ROLES、无 cap:instance:admin）
-    // 必须仍看到 roles 入口 —— 修复前实例层整段被能力位遮住，该用例即当时真栈失败面。
-    it("BL-552: keeps the roles entry visible for an atom-only user (no capability)", async () => {
+    // 必须仍看到 presets 入口 —— 修复前实例层整段被能力位遮住，该用例即当时真栈失败面。
+    it("BL-552: keeps the presets entry visible for an atom-only user (no capability)", async () => {
         state.capability = false;
         state.canManageRoles = true;
         const wrapper = mountSidebar("user", "rag");
@@ -291,11 +291,11 @@ describe("SettingsSidebar", () => {
         // PLAN-0772 M2：设置区**不再有资源组** —— 资源整段搬到 `/resources`（第三个顶层入口），
         // 所以「atom-only 用户看不到实例资源」这条现在退化成「谁都看不到」。
         expect(wrapper.findAll('[data-testid="settings-nav-resource-group"]')).toHaveLength(0);
-        // 但 ops/安全组里的 roles 项必须渲染（PLAN-0651 ruling ①）。
-        expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
+        // 但 ops/安全组里的 presets 项必须渲染（PLAN-0651 ruling ①）。
+        expect(wrapper.find('[data-testid="settings-nav-ops-presets"]').exists()).toBe(true);
         // config-locks 走能力位（BL-392），atom-only 下必须隐藏 —— 证明两组门没有互相污染。
         expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(false);
-        // task-70（audit-1 实测）：这一档**可见条目 = 6**（5 条恒显安全/运维 + roles；
+        // task-70（audit-1 实测）：这一档**可见条目 = 6**（5 条恒显安全/运维 + presets；
         // 2 个 ops + 4 个安全里 config-locks 被能力位挡住，domains 8 条被能力位挡住）；
         // 徽标仍报 **14**（= 8 域条目 + 6 个可见 ops/安全项，其余条目被权限门挡掉）。
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(6);
@@ -325,10 +325,10 @@ describe("SettingsSidebar", () => {
         // **三档口径一起看，别与 `e2e/mock/resources-ia.spec.ts` 的 14 混**（那边只给
         // `isInstanceAdmin` 能力位、没有 `MANAGE_ROLES` 原子）：
         //   · 能力位 + MANAGE_ROLES 都在 ⇒ **15**（本用例）
-        //   · 有 `isInstanceAdmin`、无 MANAGE_ROLES ⇒ **14**（roles 被权限门隐藏）
+        //   · 有 `isInstanceAdmin`、无 MANAGE_ROLES ⇒ **14**（presets 被权限门隐藏）
         //   · atom-only（**有** MANAGE_ROLES、无 `isInstanceAdmin`）⇒ 徽标仍 **14**、可见条目 **6**
         //     （8 域条目被能力位挡住；ops/安全 6 条可见，config-locks 仍被能力位挡）—— 实测钉在
-        //     "BL-552: keeps the roles entry visible for an atom-only user" 用例里（task-70）。
+        //     "BL-552: keeps the presets entry visible for an atom-only user" 用例里（task-70）。
         //   · 两者皆无 ⇒ 实例段**整段不渲染**（能力位与 MANAGE_ROLES 都不在），此时"13"只是
         //     `instanceEntryCount` 的未渲染计算值，**不是任何用户看得到的口径**，别拿它当断言。
         // 与 `src/preview/mock/data.ts:201-205` 的 `NAV_COUNTS.instance = 18` **互证**：那边钉的是
@@ -346,20 +346,20 @@ describe("SettingsSidebar", () => {
         );
     });
 
-    it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {
+    it("gates presets on the MANAGE_ROLES atom while keeping audit visible", () => {
         state.capability = true;
         state.canManageRoles = false;
         const wrapper = mountSidebar("instance", "");
         expect(wrapper.text()).toContain("审计日志");
         expect(wrapper.text()).not.toContain("角色与授权");
         // 语义 testid：权限门断言「这一项有没有渲染」，不靠文案/URL 消歧。
-        expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-nav-ops-presets"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="settings-nav-ops-audit"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(true);
         state.canManageRoles = true;
         const withRoles = mountSidebar("instance", "");
-        expect(withRoles.text()).toContain("角色与授权");
-        expect(withRoles.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
+        expect(withRoles.text()).toContain("授权预设与授权");
+        expect(withRoles.find('[data-testid="settings-nav-ops-presets"]').exists()).toBe(true);
     });
 
     /**

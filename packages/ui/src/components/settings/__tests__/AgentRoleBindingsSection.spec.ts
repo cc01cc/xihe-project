@@ -22,7 +22,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
 });
 
 const mockedApi = vi.mocked(api, true);
-const ROLES: apiModule.ApiRole[] = [
+const PRESETS: apiModule.ApiPreset[] = [
     {
         id: "role-a",
         name: "AUDITOR",
@@ -75,7 +75,7 @@ function mountSection(scope: apiModule.ApiBindingScope = "workspace") {
             scope,
             scopeId: "ws-1",
             workspaceId: "ws-1",
-            roles: ROLES,
+            presets: PRESETS,
         },
         global: { plugins: [i18n] },
     });
@@ -189,14 +189,14 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
 
         const text = wrapper.get('[data-testid="agent-role-bindings-error"]').text();
         const zh = i18n.global.getLocaleMessage("zh-CN") as {
-            settings: { rolesError: Record<string, string> };
+            settings: { presetsError: Record<string, string> };
         };
         const en = i18n.global.getLocaleMessage("en-US") as {
-            settings: { rolesError: Record<string, string> };
+            settings: { presetsError: Record<string, string> };
         };
-        expect(text).toBe(zh.settings.rolesError.agentRoleForbiddenAtoms);
+        expect(text).toBe(zh.settings.presetsError.agentPresetForbiddenAtoms);
         expect(text).not.toContain("credential.use");
-        expect(en.settings.rolesError.agentRoleForbiddenAtoms).toBeTruthy();
+        expect(en.settings.presetsError.agentPresetForbiddenAtoms).toBeTruthy();
     });
 
     it("uses the instance authorization context (no workspace query) for instance scope", async () => {
@@ -212,12 +212,12 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
 /**
  * task-416（RBAC-3 P0-1②③，cp-1 408 盘点第 3 张）。
  * ② 角色可选性必须消费服务端 `agentPrincipalForbidden`（task-415 投影），不能只看 scopeClass：
- *    持 MANAGE_ROLES 的调用方拿的是**全量**角色（openapi listRoles 描述），禁用原子角色会混进选择器，
+ *    持 MANAGE_ROLES 的调用方拿的是**全量**预设（openapi listPresets 描述），禁用原子预设会混进选择器，
  *    选中后必然 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS。
  * ③ 保存必须**先绑后解**：旧写法先解绑，绑定失败就把主体留在**零角色**态（权限被抹）。
  */
 describe("AgentRoleBindingsSection · task-416 P0-1②③", () => {
-    const FORBIDDEN_ROLE: apiModule.ApiRole = {
+    const FORBIDDEN_ROLE: apiModule.ApiPreset = {
         id: "role-forbidden",
         name: "HUMAN_ONLY",
         displayName: "Human only",
@@ -242,7 +242,7 @@ describe("AgentRoleBindingsSection · task-416 P0-1②③", () => {
                 scope: "workspace",
                 scopeId: "ws-1",
                 workspaceId: "ws-1",
-                roles: [...ROLES, FORBIDDEN_ROLE],
+                presets: [...PRESETS, FORBIDDEN_ROLE],
             },
             global: { plugins: [i18n] },
         });

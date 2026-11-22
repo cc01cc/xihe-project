@@ -20,7 +20,7 @@ const messages = {
                 closeMenu: "关闭",
                 navMonitoring: "监控",
                 navData: "数据",
-                navRoles: "角色与授权",
+                navPresets: "授权预设与授权",
                 navAudit: "审计日志",
                 navConfigLocks: "配置锁定",
                 navToolFaces: "工具分类",

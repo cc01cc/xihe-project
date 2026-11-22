@@ -202,7 +202,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         await shoot(page, "plain-user-settings-nav");
         // PLAN-0651 T4.2 does not touch the RolesView guard (Lead ruling ①): the retired-flag
         // guard still answers the forbidden view for a direct navigation.
-        await page.goto("/settings/roles");
+        await page.goto("/settings/presets");
         await expect(page.locator('[data-testid="roles-forbidden"]')).toBeVisible();
     });
 
@@ -213,7 +213,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         test.setTimeout(TEST_TIMEOUT_MS);
         const headers = await adminHeaders(request);
         // Role names are constrained by V87 `ck_roles_name_format` (^[A-Z][A-Z0-9_]{1,63}$).
-        const created = await request.post(`${CP_URL}/api/v1/roles`, {
+        const created = await request.post(`${CP_URL}/api/v1/presets`, {
             headers,
             data: {
                 name: `PLAN0651_ATOM_ONLY_${Date.now().toString(36).slice(-5).toUpperCase()}`,

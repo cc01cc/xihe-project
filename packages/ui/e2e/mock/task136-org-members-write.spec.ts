@@ -230,7 +230,7 @@ async function stubOrgApi(page: Page): Promise<void> {
         await route.fulfill(reply(plan.rename));
     });
 
-    await page.route(/\/api\/v1\/roles(\?.*)?$/, async (route) => {
+    await page.route(/\/api\/v1\/presets(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: "application/json",

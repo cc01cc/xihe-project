@@ -15,7 +15,7 @@ import RolesView from "../RolesView.vue";
  *
  * CP retired `/api/v1/principal-grants/*` with `410 PRINCIPAL_GRANTS_RETIRED` (W2 / decision #28) and
  * the admin page is gone as well: component deleted, nav entry deleted, i18n copy deleted, and the
- * old path became a redirect to `/settings/roles` so an existing bookmark does not hit a blank route.
+ * old path became a redirect to `/settings/presets` so an existing bookmark does not hit a blank route.
  *
  * The file is **kept and rewritten** rather than deleted (removing a tracked spec needs wave
  * approval), and it is now the executable statement that the surface stays retired: every assertion
@@ -27,8 +27,8 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            rolesCatalog: vi.fn<typeof apiModule.api.rolesCatalog>(),
-            listRoles: vi.fn<typeof apiModule.api.listRoles>(),
+            presetsCatalog: vi.fn<typeof apiModule.api.presetsCatalog>(),
+            listPresets: vi.fn<typeof apiModule.api.listPresets>(),
             listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
             getBindings: vi.fn<typeof apiModule.api.getBindings>(),
             listAdminUsers: vi.fn<typeof apiModule.api.listAdminUsers>(),
@@ -58,7 +58,7 @@ function makeMountRouter(): Router {
         history: createMemoryHistory(),
         routes: [
             { path: "/settings/config", component: { template: "<div />" } },
-            { path: "/settings/roles", component: { template: "<div />" } },
+            { path: "/settings/presets", component: { template: "<div />" } },
             { path: "/workspace", component: { template: "<div />" } },
             {
                 path: "/workspace/:workspaceId/session/:sessionId",
@@ -79,8 +79,8 @@ beforeEach(() => {
     localStorage.clear();
     authState.isAdmin = true;
     vi.clearAllMocks();
-    mockedApi.rolesCatalog.mockResolvedValue({ atoms: [], scopes: ["instance", "workspace"] });
-    mockedApi.listRoles.mockResolvedValue([]);
+    mockedApi.presetsCatalog.mockResolvedValue({ atoms: [], scopes: ["instance", "workspace"] });
+    mockedApi.listPresets.mockResolvedValue([]);
     mockedApi.listWorkspaces.mockResolvedValue([]);
     mockedApi.getBindings.mockResolvedValue({ scopeType: "instance", scopeId: null, bindings: [] });
 });
@@ -116,7 +116,7 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
             expect(translate(key)).toBe(key);
         }
         // The replacement surface's copy resolves (sanity check that the locale file did load).
-        expect(translate("settings.rolesTitle")).not.toBe("settings.rolesTitle");
+        expect(translate("settings.presetsTitle")).not.toBe("settings.presetsTitle");
     });
 
     it("keeps no nav entry, only the role surface", () => {
@@ -129,7 +129,7 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
         expect(sidebarSource).not.toContain("principal-grants");
         const iaSource = readFileSync(resolve(UI_SRC, "lib/settingsIa.ts"), "utf8");
         expect(iaSource).not.toContain("principal-grants");
-        expect(iaSource).toContain("/settings/roles");
+        expect(iaSource).toContain("/settings/presets");
     });
 
     it("redirects the old path to the role surface instead of rendering a page", async () => {
@@ -144,7 +144,7 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
         expect(oldPathRoutes[0]?.redirect).toBeDefined();
         // …and the route name of the retired page is gone entirely.
         expect(router.hasRoute("settings-principal-grants")).toBe(false);
-        expect(router.resolve("/settings/roles").name).toBe("settings-roles");
+        expect(router.resolve("/settings/presets").name).toBe("settings-presets");
     });
 
     it("renders the role surface in place of the retired page", async () => {
@@ -176,6 +176,6 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
             "utf8",
         );
         expect(panelSource).not.toContain("/settings/principal-grants");
-        expect(panelSource).toContain('to="/settings/roles"');
+        expect(panelSource).toContain('to="/settings/presets"');
     });
 });

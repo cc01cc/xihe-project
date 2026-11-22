@@ -139,7 +139,7 @@ async function mountView(): Promise<VueWrapper> {
         history: createMemoryHistory(),
         routes: [
             { path: "/", component: { template: "<div/>" } },
-            { path: "/settings/roles", component: { template: "<div/>" } },
+            { path: "/settings/presets", component: { template: "<div/>" } },
             { path: "/resources/credentials", component: { template: "<div/>" } },
         ],
     });
@@ -264,7 +264,7 @@ describe("六来源读面表三档", () => {
         const links = w.findAll('[data-testid="authorization-readface-link"]');
         expect(links).toHaveLength(2);
         expect(links.map((link) => link.attributes("href"))).toEqual([
-            "/settings/roles",
+            "/settings/presets",
             "/resources/credentials",
         ]);
     });

@@ -7,11 +7,11 @@ import {
     type ApiBindingInput,
     type ApiBindingScope,
     type ApiBindingSet,
-    type ApiRole,
+    type ApiPreset,
     type ApiWorkspace,
 } from "../../composables/api";
 import { logger } from "../../lib/logger";
-import { roleErrorMessage } from "./roleErrorMessages";
+import { presetErrorMessage } from "./roleErrorMessages";
 import AgentRoleBindingsSection from "./AgentRoleBindingsSection.vue";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -28,14 +28,14 @@ import { LoaderCircle, X } from "@lucide/vue";
  * promise: replaying the same body is a no-op (no epoch bump, no audit row).</p>
  *
  * <p>The response is the resolved binding set; it does **not** carry an effective-capability echo,
- * so the summary under the table is derived locally from the bound roles' catalog atoms and is
+ * so the summary under the table is derived locally from the bound presets' catalog atoms and is
  * labelled as such. When CP starts returning the projection (W3-3+/W5d) this derivation is the only
  * thing that has to change.</p>
  */
 const props = defineProps<{
-    roles: ApiRole[];
+    presets: ApiPreset[];
     workspaces: ApiWorkspace[];
-    /** Role atoms are needed for the local "scope compatibility" hint. */
+    /** Preset atoms are needed for the local "scope compatibility" hint. */
 }>();
 const emit = defineEmits<{ notice: [message: string]; dirty: [boolean] }>();
 
@@ -91,23 +91,23 @@ const subjectOptions = computed<SearchableComboboxOption[]>(() =>
 const workspaceId = computed(() => (scope.value === "workspace" ? scopeId.value : ""));
 
 /**
- * Roles that can never be bound in the selected scope: a workspace binding cannot hold an
+ * Presets that can never be bound in the selected scope: a workspace binding cannot hold an
  * instance-only atom (CP answers `400 ROLE_SCOPE_MISMATCH`). The catalog is the SSOT, so this is a
  * hint derived from the role's atoms, not a second vocabulary.
  */
-function roleFitsScope(role: ApiRole): boolean {
+function roleFitsScope(preset: ApiPreset): boolean {
     if (scope.value === "instance") return true;
-    return role.atoms.every((atom) => atom.scopeClass === "both");
+    return preset.atoms.every((atom) => atom.scopeClass === "both");
 }
 
-/** `subjectId → bound roles (id + label)`, preserving the server's order. */
+/** `subjectId → bound presets (id + label)`, preserving the server's order. */
 const grouped = computed(() => {
     const bySubject = new Map<
         string,
         { subjectId: string; roles: { id: string; label: string }[] }
     >();
     for (const row of rows.value) {
-        const role = props.roles.find((candidate) => candidate.id === row.roleId);
+        const role = props.presets.find((candidate) => candidate.id === row.roleId);
         const entry = bySubject.get(row.subjectId) ?? { subjectId: row.subjectId, roles: [] };
         entry.roles.push({ id: row.roleId, label: role?.displayName || role?.name || row.roleId });
         bySubject.set(row.subjectId, entry);
@@ -120,7 +120,7 @@ const effectiveSummary = computed(() =>
     grouped.value.map((entry) => {
         const atoms = new Set<string>();
         for (const bound of entry.roles) {
-            const role = props.roles.find((candidate) => candidate.id === bound.id);
+            const role = props.presets.find((candidate) => candidate.id === bound.id);
             role?.atoms.forEach((atom) => atoms.add(atom.name));
         }
         return { subjectId: entry.subjectId, atoms: [...atoms].sort() };
@@ -135,7 +135,7 @@ function workspaceLabel(id: string): string {
     return props.workspaces.find((workspace) => workspace.id === id)?.name ?? id;
 }
 function roleLabel(id: string): string {
-    const role = props.roles.find((candidate) => candidate.id === id);
+    const role = props.presets.find((candidate) => candidate.id === id);
     return role ? role.displayName || role.name : id;
 }
 
@@ -165,7 +165,7 @@ async function load() {
     } catch (cause) {
         bindingSet.value = null;
         rows.value = [];
-        error.value = roleErrorMessage(cause, t);
+        error.value = presetErrorMessage(cause, t);
     } finally {
         loading.value = false;
     }
@@ -180,7 +180,7 @@ async function searchSubjects() {
         // The list is a convenience; a UUID can still be pasted by hand.
         logger.warn("Failed to search users for bindings", cause);
         subjectResults.value = [];
-        error.value = roleErrorMessage(cause, t);
+        error.value = presetErrorMessage(cause, t);
     } finally {
         subjectSearching.value = false;
     }
@@ -190,17 +190,17 @@ function addRow() {
     error.value = "";
     const subjectId = selectedSubject.value?.id;
     if (!subjectId) {
-        error.value = t("settings.rolesBindingsSubjectRequired");
+        error.value = t("settings.presetsBindingsSubjectRequired");
         return;
     }
     if (!selectedRoleId.value) {
-        error.value = t("settings.rolesBindingsRoleRequired");
+        error.value = t("settings.presetsBindingsPresetRequired");
         return;
     }
     if (
         rows.value.some((row) => row.subjectId === subjectId && row.roleId === selectedRoleId.value)
     ) {
-        error.value = t("settings.rolesBindingsDuplicate");
+        error.value = t("settings.presetsBindingsDuplicate");
         return;
     }
     rows.value = [...rows.value, { subjectType: "user", subjectId, roleId: selectedRoleId.value }];
@@ -228,9 +228,9 @@ async function save() {
             })),
         );
         syncRows(next);
-        emit("notice", t("settings.rolesBindingsSaved", { count: next.bindings.length }));
+        emit("notice", t("settings.presetsBindingsSaved", { count: next.bindings.length }));
     } catch (cause) {
-        error.value = roleErrorMessage(cause, t);
+        error.value = presetErrorMessage(cause, t);
     } finally {
         saving.value = false;
     }
@@ -246,7 +246,7 @@ onMounted(() => {
     void load();
 });
 
-// The parent loads roles/workspaces asynchronously; the first usable scope can only be read once a
+// The parent loads presets/workspaces asynchronously; the first usable scope can only be read once a
 // workspace id exists, so keep the current selection honest rather than issuing an invalid request.
 watch(
     () => props.workspaces,
@@ -265,7 +265,7 @@ defineExpose({ load });
     <section data-testid="role-bindings-panel" class="space-y-3">
         <div class="flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsScope") }}
+                {{ t("settings.presetsBindingsScope") }}
                 <Select
                     :model-value="scope"
                     @update:model-value="(value) => (scope = String(value) as ApiBindingScope)"
@@ -278,10 +278,10 @@ defineExpose({ load });
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="instance">{{
-                            t("settings.rolesBindingsScopeInstance")
+                            t("settings.presetsBindingsScopeInstance")
                         }}</SelectItem>
                         <SelectItem value="workspace">{{
-                            t("settings.rolesBindingsScopeWorkspace")
+                            t("settings.presetsBindingsScopeWorkspace")
                         }}</SelectItem>
                     </SelectContent>
                 </Select>
@@ -290,7 +290,7 @@ defineExpose({ load });
                 v-if="scope === 'workspace'"
                 class="flex flex-col gap-1 text-xs text-muted-foreground"
             >
-                {{ t("settings.rolesBindingsWorkspace") }}
+                {{ t("settings.presetsBindingsWorkspace") }}
                 <Select
                     :model-value="scopeId"
                     @update:model-value="(value) => (scopeId = String(value))"
@@ -319,10 +319,10 @@ defineExpose({ load });
                 @click="load"
             >
                 <LoaderCircle v-if="loading" class="animate-spin" aria-hidden="true" />
-                {{ t("settings.rolesBindingsReload") }}
+                {{ t("settings.presetsBindingsReload") }}
             </Button>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsSubjectType") }}
+                {{ t("settings.presetsBindingsSubjectType") }}
                 <Select
                     :model-value="subjectType"
                     @update:model-value="
@@ -337,10 +337,10 @@ defineExpose({ load });
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="user">{{
-                            t("settings.rolesBindingsSubjectTypeUser")
+                            t("settings.presetsBindingsSubjectTypeUser")
                         }}</SelectItem>
                         <SelectItem value="agent_principal">{{
-                            t("settings.rolesBindingsSubjectTypeAgent")
+                            t("settings.presetsBindingsSubjectTypeAgent")
                         }}</SelectItem>
                     </SelectContent>
                 </Select>
@@ -362,9 +362,9 @@ defineExpose({ load });
         >
             <thead class="text-xs text-muted-foreground">
                 <tr>
-                    <th class="py-1">{{ t("settings.rolesBindingsSubject") }}</th>
-                    <th class="py-1">{{ t("settings.rolesBindingsRoles") }}</th>
-                    <th class="py-1 text-right">{{ t("settings.rolesBindingsRemove") }}</th>
+                    <th class="py-1">{{ t("settings.presetsBindingsSubject") }}</th>
+                    <th class="py-1">{{ t("settings.presetsBindingsPresets") }}</th>
+                    <th class="py-1 text-right">{{ t("settings.presetsBindingsRemove") }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -400,7 +400,7 @@ defineExpose({ load });
                 </tr>
                 <tr v-if="grouped.length === 0">
                     <td colspan="3" class="py-2 text-xs text-muted-foreground">
-                        {{ t("settings.rolesBindingsEmpty") }}
+                        {{ t("settings.presetsBindingsEmpty") }}
                     </td>
                 </tr>
             </tbody>
@@ -411,12 +411,12 @@ defineExpose({ load });
             class="flex flex-wrap items-end gap-2 rounded border p-3"
         >
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsSubjectSearch") }}
+                {{ t("settings.presetsBindingsSubjectSearch") }}
                 <Input
                     v-model="subjectQuery"
                     data-testid="role-bindings-subject-query"
                     class="w-56"
-                    :placeholder="t('settings.rolesBindingsSubjectSearchPlaceholder')"
+                    :placeholder="t('settings.presetsBindingsSubjectSearchPlaceholder')"
                     @keyup.enter="searchSubjects"
                 />
             </label>
@@ -425,16 +425,16 @@ defineExpose({ load });
                 data-testid="role-bindings-subject-search"
                 @click="searchSubjects"
             >
-                {{ t("settings.rolesBindingsSearch") }}
+                {{ t("settings.presetsBindingsSearch") }}
             </Button>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsSubject") }}
+                {{ t("settings.presetsBindingsSubject") }}
                 <!-- task-152 已登记例外：面板宽度覆写。实测 50 个账号、最长文本 229px（approvalpolicyreal…），
                      面板 224px 时裁 15 项 ⇒ 提到 320px 后裁 0。第三次出现同类覆写应停手报 lead，改为升成组件 tier prop。 -->
                 <SearchableCombobox
                     :model-value="selectedSubject?.id ?? ''"
                     :options="subjectOptions"
-                    :placeholder="t('settings.rolesBindingsSubjectPick')"
+                    :placeholder="t('settings.presetsBindingsSubjectPick')"
                     testid="role-bindings-subject"
                     trigger-class="min-w-56 h-auto rounded border bg-background px-2 py-1 text-foreground"
                     panel-class="min-w-[20rem]"
@@ -446,7 +446,7 @@ defineExpose({ load });
                 />
             </label>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsRole") }}
+                {{ t("settings.presetsBindingsPreset") }}
                 <Select
                     :model-value="selectedRoleId"
                     @update:model-value="(value) => (selectedRoleId = String(value))"
@@ -458,29 +458,29 @@ defineExpose({ load });
                         <SelectValue>{{
                             selectedRoleId
                                 ? roleLabel(selectedRoleId)
-                                : t("settings.rolesBindingsRolePick")
+                                : t("settings.presetsBindingsPresetPick")
                         }}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem
-                            v-for="role in roles"
-                            :key="role.id"
-                            :value="role.id"
-                            :disabled="!roleFitsScope(role)"
-                            :data-testid="`role-bindings-role-option-${role.name}`"
+                            v-for="preset in presets"
+                            :key="preset.id"
+                            :value="preset.id"
+                            :disabled="!roleFitsScope(preset)"
+                            :data-testid="`role-bindings-role-option-${preset.name}`"
                         >
-                            {{ role.displayName || role.name }}
+                            {{ preset.displayName || preset.name }}
                             {{
-                                roleFitsScope(role)
+                                roleFitsScope(preset)
                                     ? ""
-                                    : t("settings.rolesBindingsRoleScopeMismatch")
+                                    : t("settings.presetsBindingsPresetScopeMismatch")
                             }}
                         </SelectItem>
                     </SelectContent>
                 </Select>
             </label>
             <Button data-testid="role-bindings-add" @click="addRow">
-                {{ t("settings.rolesBindingsAdd") }}
+                {{ t("settings.presetsBindingsAdd") }}
             </Button>
         </div>
 
@@ -491,7 +491,7 @@ defineExpose({ load });
             @click="save"
         >
             <LoaderCircle v-if="saving" class="animate-spin" aria-hidden="true" />
-            {{ t("settings.rolesBindingsSave") }}
+            {{ t("settings.presetsBindingsSave") }}
         </Button>
 
         <div
@@ -499,8 +499,10 @@ defineExpose({ load });
             data-testid="role-bindings-effective"
             class="rounded border bg-muted/30 p-3 text-xs"
         >
-            <p class="font-medium">{{ t("settings.rolesBindingsEffectiveTitle") }}</p>
-            <p class="mt-1 text-muted-foreground">{{ t("settings.rolesBindingsEffectiveHint") }}</p>
+            <p class="font-medium">{{ t("settings.presetsBindingsEffectiveTitle") }}</p>
+            <p class="mt-1 text-muted-foreground">
+                {{ t("settings.presetsBindingsEffectiveHint") }}
+            </p>
             <ul class="mt-2 space-y-1">
                 <li v-for="entry in effectiveSummary" :key="`eff-${entry.subjectId}`">
                     <span class="font-mono">{{ subjectLabel(entry.subjectId) }}</span
@@ -527,7 +529,7 @@ defineExpose({ load });
             :scope="scope"
             :scope-id="scopeId"
             :workspace-id="workspaceId"
-            :roles="roles"
+            :presets="presets"
             @notice="emit('notice', $event)"
             @dirty="(value) => (agentDirty = value)"
         />

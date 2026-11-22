@@ -10,7 +10,7 @@ import { openAgentsPanel } from "../helpers/agents-panel";
  * The `/api/v1/principal-grants/*` write surface was retired in W2 (decision #28: `410
  * PRINCIPAL_GRANTS_RETIRED`, `source='direct'` rows went inert with V88) and the admin page itself
  * is retired in W5c: the component is gone, the nav entry is gone, and `/settings/principal-grants`
- * is a **redirect** to `/settings/roles` so an old bookmark does not land on a blank route.
+ * is a **redirect** to `/settings/presets` so an old bookmark does not land on a blank route.
  *
  * This file is kept (not deleted — removing a tracked spec needs wave approval) and rewritten to
  * assert exactly that, so the day someone reintroduces the surface, or drops the redirect, this goes
@@ -281,7 +281,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
 
         const link = page.getByTestId("agent-grant-panel-link");
         await expect(link).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(link).toHaveAttribute("href", "/settings/roles");
+        await expect(link).toHaveAttribute("href", "/settings/presets");
         await page.screenshot({
             path: "test-results/plan-0610-w5c/03-f02-link.png",
             fullPage: true,

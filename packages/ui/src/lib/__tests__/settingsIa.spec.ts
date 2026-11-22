@@ -208,7 +208,7 @@ describe("instance ops groups", () => {
             "monitoring",
             "data",
             "config-locks",
-            "roles",
+            "presets",
             // task-91：平台智能体的落点（资源区摘除后它的新家）。
             "agent-principals",
             "audit",
@@ -329,7 +329,7 @@ describe("面包屑末段标题来源守卫（task-74）", () => {
             "monitoring",
             "data",
             "config-locks",
-            "roles",
+            "presets",
             "agent-principals",
             "audit",
             "authorization-overview",

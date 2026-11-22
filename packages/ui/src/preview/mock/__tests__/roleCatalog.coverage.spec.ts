@@ -7,7 +7,7 @@ import { mockApiPlugin } from "../api-server";
 import { deriveRoleCatalog, mockRoleCatalog, ROLE_CATALOG_SOURCES } from "../data/roleCatalog";
 
 /**
- * task-84：\`GET /api/v1/roles/catalog\` mock 夹具的**机器判据**。
+ * task-84：\`GET /api/v1/presets/catalog\` mock 夹具的**机器判据**。
  *
  * <p><b>为什么要这道门</b>：这条面此前在 mock 车道是 404，角色页整页渲染成「该页面需要的服务端能力
  * 还没提供」；补夹具最容易踩的坑是**手抄一份原子表** —— 那既不会红也不会绿，只会让页面看起来正常而
@@ -26,12 +26,12 @@ import { deriveRoleCatalog, mockRoleCatalog, ROLE_CATALOG_SOURCES } from "../dat
  *       因此单独判：必须出现在 \`PermissionAtomCatalog\` 的 \`CAP_*\` 声明值里，
  *       且 mock 只标 3 个 \`capability: true\`。</li>
  *   <li><b>派生 vs 独立读</b>：spec 自己**再读一遍** \`INSTANCE_ONLY_ATOMS\` / \`AGENT_FORBIDDEN_ATOMS\`
- *       与 \`roleSeeds()\` 的角色名，和 mock 的 \`scopeClass\` / \`agentPrincipalForbidden\` /
+ *       与 \`presetSeeds()\` 的预设名，和 mock 的 \`scopeClass\` / \`agentPrincipalForbidden\` /
  *       \`defaultGrants\` 比**集合相等**。派生代码与判据各算一次、走不同路径 ⇒ 派生错位会露出来
  *       （同源同法只能证明自己和自己一致）。</li>
- *   <li><b>接线</b>：走真实中间件打 \`GET /roles/catalog\` 拿 200 + 45 原子；\`locale=en-US\` 拿英文
+ *   <li><b>接线</b>：走真实中间件打 \`GET /presets/catalog\` 拿 200 + 45 原子；\`locale=en-US\` 拿英文
  *       文案（CP 两侧都有，不需要猜）；**写面仍然是 404** \`MOCK_ENDPOINT_MISSING\`
- *       （\`POST /roles\` / \`PATCH /roles/{id}\`）—— 这是有意留的边界，不是缺口。</li>
+ *       （\`POST /presets\` / \`PATCH /presets/{id}\`）—— 这是有意留的边界，不是缺口。</li>
  * </ol>
  *
  * <p><b>反空集前提</b>：读不到 CP 源码时**抛**（不是 skip）；词汇表大小 &gt; 20 且
@@ -44,13 +44,13 @@ const CP_POLICY_DIR = resolve(
 );
 const TOOL_FACE_REGISTRY = resolve(CP_POLICY_DIR, "ToolFaceRegistry.java");
 const ATOM_CATALOG = resolve(CP_POLICY_DIR, "PermissionAtomCatalog.java");
-const SYSTEM_ROLES = resolve(CP_POLICY_DIR, "SystemAccessRoleCatalog.java");
+const SYSTEM_PRESETS = resolve(CP_POLICY_DIR, "SystemGrantPresetCatalog.java");
 const SIGNATURE = "public static Set<String> builtinActionClasses()";
 
-if (!existsSync(TOOL_FACE_REGISTRY) || !existsSync(ATOM_CATALOG) || !existsSync(SYSTEM_ROLES)) {
+if (!existsSync(TOOL_FACE_REGISTRY) || !existsSync(ATOM_CATALOG) || !existsSync(SYSTEM_PRESETS)) {
     throw new Error(
         "task-84 判据需要 CP 源码：" +
-            [TOOL_FACE_REGISTRY, ATOM_CATALOG, SYSTEM_ROLES].join(", ") +
+            [TOOL_FACE_REGISTRY, ATOM_CATALOG, SYSTEM_PRESETS].join(", ") +
             " 有文件不存在。本包单测假定 UI 与 control-plane 在同一检出（同 packages/）；" +
             "只用 ui 单体检出时这道门无法判定，请按仓库拓扑跑（不要改成 skip）。",
     );
@@ -63,7 +63,7 @@ function code(source: string): string {
 
 const TFR = code(readFileSync(TOOL_FACE_REGISTRY, "utf8"));
 const PAC = code(readFileSync(ATOM_CATALOG, "utf8"));
-const SARC = code(readFileSync(SYSTEM_ROLES, "utf8"));
+const SARC = code(readFileSync(SYSTEM_PRESETS, "utf8"));
 
 /** \`public static final String X = "V";\` ⇒ X → V（只认这一种声明形态）。 */
 function declarations(source: string): Map<string, string> {
@@ -130,11 +130,11 @@ const AGENT_FORBIDDEN = new Set(values(parenBody(PAC, "AGENT_FORBIDDEN_ATOMS = S
 const CAPABILITY_CONSTANTS = values(parenBody(PAC, "CAPABILITY_ATOM_NAMES = List.of"));
 
 /**
- * 独立读的系统角色名（数量随 CP `roleSeeds()` 变，不在这里写死）：
- * `new RoleSeed(UUID, NAME, displayName, description, atoms)` 的**第二个**实参。
+ * 独立读的系统预设名（数量随 CP `presetSeeds()` 变，不在这里写死）：
+ * `new PresetSeed(UUID, NAME, displayName, description, atoms)` 的**第二个**实参。
  *
  * <p>第一个实参是 `SUPER_ADMIN_ID` 这类 `public static final UUID`（不是 String 常量），所以按
- * 「`new RoleSeed(` 之后走一遍顶层逗号切分」取第 2 段 —— 与派生侧**各算一遍**（同源同法只能证明
+ * 「`new PresetSeed(` 之后走一遍顶层逗号切分」取第 2 段 —— 与派生侧**各算一遍**（同源同法只能证明
  * 自己和自己一致）。</p>
  */
 function topLevelArguments(text: string): string[] {
@@ -172,9 +172,9 @@ function topLevelArguments(text: string): string[] {
     return parts;
 }
 
-const SYSTEM_ROLE_NAMES = (() => {
-    const at = SARC.indexOf("public static List<RoleSeed> roleSeeds()");
-    if (at < 0) throw new Error("task-84 判据：roleSeeds() 不在了");
+const SYSTEM_PRESET_NAMES = (() => {
+    const at = SARC.indexOf("public static List<PresetSeed> presetSeeds()");
+    if (at < 0) throw new Error("task-84 判据：presetSeeds() 不在了");
     const open = SARC.indexOf("{", at);
     let depth = 0;
     let close = open;
@@ -190,8 +190,8 @@ const SYSTEM_ROLE_NAMES = (() => {
     }
     const body = SARC.slice(open, close);
     const names: string[] = [];
-    for (const hit of body.matchAll(/new RoleSeed\(/g)) {
-        const from = (hit.index ?? 0) + "new RoleSeed".length;
+    for (const hit of body.matchAll(/new PresetSeed\(/g)) {
+        const from = (hit.index ?? 0) + "new PresetSeed".length;
         const openParen = body.indexOf("(", from);
         let parenDepth = 0;
         let endParen = openParen;
@@ -206,11 +206,11 @@ const SYSTEM_ROLE_NAMES = (() => {
             }
         }
         const name = CONSTANTS.get(topLevelArguments(body.slice(openParen + 1, endParen))[1] ?? "");
-        if (name === undefined) throw new Error("roleSeeds 的角色常量解析不到");
+        if (name === undefined) throw new Error("presetSeeds 的预设常量解析不到");
         names.push(name);
     }
     if (names.length === 0)
-        throw new Error("task-84 判据：roleSeeds() 里没解析出角色名（空集不是通过）");
+        throw new Error("task-84 判据：presetSeeds() 里没解析出预设名（空集不是通过）");
     return names;
 })();
 
@@ -272,7 +272,7 @@ function call(handler: ApiHandler, url: string, method = "GET", body?: unknown):
     });
 }
 
-describe("task-84 · /roles/catalog mock 夹具（形状与派生）", () => {
+describe("task-84 · /presets/catalog mock 夹具（形状与派生）", () => {
     it("判据前提：CP 词汇表读到了（否则下面几条是全绿的空门）", () => {
         // ≠ 造绿：词汇表为空时「每个 mock 原子都在词汇表里」是空集上的全称断言，恒真。
         expect(
@@ -367,16 +367,16 @@ describe("task-84 · /roles/catalog mock 夹具（形状与派生）", () => {
         expect(zh.some((name) => /[\u4e00-\u9fa5]/.test(name))).toBe(true);
     });
 
-    it("defaultGrants：角色集合与 CP roleSeeds() 派生一致 + atoms 是字符串数组（openapi RoleDefaultGrantView）", () => {
-        // task-186：原来写死 toHaveLength(8)，而 CP 已 11 个 RoleSeed（task-116 加了 AGENT_READER /
+    it("defaultGrants：预设集合与 CP presetSeeds() 派生一致 + atoms 是字符串数组（openapi RoleDefaultGrantView）", () => {
+        // task-186：原来写死 toHaveLength(8)，而 CP 已 11 个 PresetSeed（task-116 加了 AGENT_READER /
         // AGENT_WORKER / WS_RUNNER）⇒ 每加一个角色这道门就红一次，且红在数字上读不出「谁变了」。
-        // 改为与 SYSTEM_ROLE_NAMES 比数量：它就是从 SystemAccessRoleCatalog.roleSeeds() 源码派生的
+        // 改为与 SYSTEM_PRESET_NAMES 比数量：它就是从 SystemGrantPresetCatalog.presetSeeds() 源码派生的
         // 名单（本文件 :174 起），CP 再加角色这条自动跟；下面的 arrayContaining 是给派生器本身的锚。
-        expect(SYSTEM_ROLE_NAMES, "roleSeeds() 派生失败 ⇒ 数量比较会退化成 0=0").toEqual(
+        expect(SYSTEM_PRESET_NAMES, "presetSeeds() 派生失败 ⇒ 数量比较会退化成 0=0").toEqual(
             expect.arrayContaining(["AGENT_READER", "AGENT_WORKER", "WS_RUNNER"]),
         );
-        expect(CATALOG.defaultGrants).toHaveLength(SYSTEM_ROLE_NAMES.length);
-        expect(CATALOG.defaultGrants.map((grant) => grant.roleName)).toEqual(SYSTEM_ROLE_NAMES);
+        expect(CATALOG.defaultGrants).toHaveLength(SYSTEM_PRESET_NAMES.length);
+        expect(CATALOG.defaultGrants.map((grant) => grant.roleName)).toEqual(SYSTEM_PRESET_NAMES);
         const known = new Set(CATALOG.atoms.map((atom) => atom.name));
         for (const grant of CATALOG.defaultGrants) {
             // atoms 是 **string[]**（不是 RoleAtomView 对象）—— 这是最容易抄错的一处。
@@ -424,11 +424,11 @@ describe("task-84 · /roles/catalog mock 夹具（形状与派生）", () => {
     });
 });
 
-describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", () => {
+describe("task-84 · /presets/catalog 走真实中间件（接线 + 边界）", () => {
     const handler = mountApiHandler();
 
-    it("GET /roles/catalog?locale=zh-CN ⇒ 200 且 45 原子（此前是 404 MOCK_ENDPOINT_MISSING）", async () => {
-        const answer = await call(handler, "/roles/catalog?locale=zh-CN");
+    it("GET /presets/catalog?locale=zh-CN ⇒ 200 且 45 原子（此前是 404 MOCK_ENDPOINT_MISSING）", async () => {
+        const answer = await call(handler, "/presets/catalog?locale=zh-CN");
         expect(answer.status).toBe(200);
         const body = answer.body as {
             atoms: unknown[];
@@ -439,7 +439,7 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
         expect(body.atoms).toHaveLength(45);
         expect(body.scopes).toEqual(["instance", "workspace"]);
         // task-186：同 defaultGrants 那条 —— 数量取 CP 派生的名单长度，不写死。
-        expect(body.defaultGrants).toHaveLength(SYSTEM_ROLE_NAMES.length);
+        expect(body.defaultGrants).toHaveLength(SYSTEM_PRESET_NAMES.length);
         // 形状对齐 openapi RoleAtomView（字段齐、类型对）。
         for (const atom of body.atoms as Record<string, unknown>[]) {
             for (const key of [
@@ -456,10 +456,10 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
     });
 
     it("locale 参数真的被消费：en-US 拿英文、zh-CN 拿中文，同一原子两侧不同", async () => {
-        const zh = (await call(handler, "/roles/catalog?locale=zh-CN")).body as {
+        const zh = (await call(handler, "/presets/catalog?locale=zh-CN")).body as {
             atoms: { name: string; displayName: string }[];
         };
-        const en = (await call(handler, "/roles/catalog?locale=en-US")).body as {
+        const en = (await call(handler, "/presets/catalog?locale=en-US")).body as {
             atoms: { name: string; displayName: string }[];
         };
         const zhRead = zh.atoms.find((atom) => atom.name === "read")?.displayName;
@@ -468,12 +468,12 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
         expect(enRead).toBe("Read");
         expect(zhRead).not.toBe(enRead);
         // 缺省 locale（不传）按 zh-CN。
-        const fallback = (await call(handler, "/roles/catalog")).body as { atoms: unknown[] };
+        const fallback = (await call(handler, "/presets/catalog")).body as { atoms: unknown[] };
         expect(fallback.atoms).toHaveLength(45);
     });
 
-    it("GET /roles 仍是裸数组（角色列表读面不受本次改动影响）", async () => {
-        const answer = await call(handler, "/roles");
+    it("GET /presets 仍是裸数组（预设列表读面不受本次改动影响）", async () => {
+        const answer = await call(handler, "/presets");
         expect(answer.status).toBe(200);
         expect(Array.isArray(answer.body)).toBe(true);
         expect((answer.body as unknown[]).length).toBeGreaterThan(0);
@@ -481,17 +481,17 @@ describe("task-84 · /roles/catalog 走真实中间件（接线 + 边界）", ()
 
     it("写面**有意**仍是 404 MOCK_ENDPOINT_MISSING（不复刻半套 CP 状态机）", async () => {
         // task-72 的裁定：只复刻一半的写面 ⇒ 「mock 里点得通、真栈 409」的假通过。
-        const created = await call(handler, "/roles", "POST", {
+        const created = await call(handler, "/presets", "POST", {
             name: "MOCK_ROLE",
             displayName: "x",
             atoms: [],
         });
         expect(created.status).toBe(404);
         expect((created.body as { code: string }).code).toBe("MOCK_ENDPOINT_MISSING");
-        const patched = await call(handler, "/roles/whatever", "PATCH", { displayName: "y" });
+        const patched = await call(handler, "/presets/whatever", "PATCH", { displayName: "y" });
         expect(patched.status).toBe(404);
-        // 定向：只补了 catalog 一条面，/roles/<id> 的 GET 仍 404（不通配 200）。
-        const detail = await call(handler, "/roles/whatever");
+        // 定向：只补了 catalog 一条面，/presets/<id> 的 GET 仍 404（不通配 200）。
+        const detail = await call(handler, "/presets/whatever");
         expect(detail.status).toBe(404);
     });
 });

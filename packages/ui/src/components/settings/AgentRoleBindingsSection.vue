@@ -6,21 +6,21 @@ import {
     type AgentPrincipalOption,
     type AgentRoleBinding,
     type ApiBindingScope,
-    type ApiRole,
+    type ApiPreset,
 } from "../../composables/api";
-import { roleErrorMessage } from "./roleErrorMessages";
+import { presetErrorMessage } from "./roleErrorMessages";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Empty, EmptyDescription, EmptyHeader } from "../ui/empty";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { LoaderCircle, X } from "@lucide/vue";
-/** T5.2: agent role bindings live here so RoleBindingsPanel stays small. CP owns the gate;
- * ROLE_BINDING_EXCEEDS_CAP's detail is surfaced by roleErrorMessage (BL-288). */
+/** T5.2: agent preset bindings live here so RoleBindingsPanel stays small. CP owns the gate;
+ * ROLE_BINDING_EXCEEDS_CAP's detail is surfaced by presetErrorMessage (BL-288). */
 const props = defineProps<{
     scope: ApiBindingScope;
     scopeId: string;
     workspaceId: string;
-    roles: ApiRole[];
+    presets: ApiPreset[];
 }>();
 const emit = defineEmits<{ notice: [message: string]; dirty: [boolean] }>();
 const { t } = useI18n();
@@ -28,8 +28,8 @@ const { t } = useI18n();
 const agents = ref<AgentPrincipalOption[]>([]);
 const selectedPrincipalId = ref("");
 const bindings = ref<AgentRoleBinding[]>([]);
-const desiredRoleIds = ref<string[]>([]);
-const selectedRoleId = ref("");
+const desiredPresetIds = ref<string[]>([]);
+const selectedPresetId = ref("");
 const loading = ref(false);
 const saving = ref(false);
 const error = ref("");
@@ -43,7 +43,7 @@ const isDirty = computed(() => {
         .map((binding) => binding.roleId)
         .sort()
         .join("\n");
-    return current !== [...desiredRoleIds.value].sort().join("\n");
+    return current !== [...desiredPresetIds.value].sort().join("\n");
 });
 /**
  * task-92（缺口二）：本段草稿（已绑定集合 vs 期望集合）**外报**给宿主 —— 段自己知道脏，
@@ -52,22 +52,24 @@ const isDirty = computed(() => {
 watch(isDirty, (dirty) => emit("dirty", dirty), { immediate: true });
 onBeforeUnmount(() => emit("dirty", false));
 
-const availableRoles = computed(() =>
-    props.roles.filter((role) => roleFitsScope(role) && !desiredRoleIds.value.includes(role.id)),
+const availablePresets = computed(() =>
+    props.presets.filter(
+        (preset) => presetFitsScope(preset) && !desiredPresetIds.value.includes(preset.id),
+    ),
 );
 
-function roleFitsScope(role: ApiRole): boolean {
-    // task-416（P0-1②）：含**禁用原子**的角色对智能体主体永远不可绑（选了必然 409）。
+function presetFitsScope(preset: ApiPreset): boolean {
+    // task-416（P0-1②）：含**禁用原子**的预设对智能体主体永远不可绑（选了必然 409）。
     // 判据消费服务端 agentPrincipalForbidden，不在 UI 重算原子词表；持 MANAGE_ROLES 的
-    // 全量视图会把这些角色送过来，所以过滤必须在消费侧做。
-    if (role.atoms.some((atom) => atom.agentPrincipalForbidden)) return false;
+    // 全量视图会把这些预设送过来，所以过滤必须在消费侧做。
+    if (preset.atoms.some((atom) => atom.agentPrincipalForbidden)) return false;
     if (props.scope === "instance") return true;
-    return role.atoms.every((atom) => atom.scopeClass === "both");
+    return preset.atoms.every((atom) => atom.scopeClass === "both");
 }
 
-function roleLabel(roleId: string): string {
-    const role = props.roles.find((candidate) => candidate.id === roleId);
-    return role?.displayName || role?.name || roleId;
+function presetLabel(presetId: string): string {
+    const preset = props.presets.find((candidate) => candidate.id === presetId);
+    return preset?.displayName || preset?.name || presetId;
 }
 
 function bindingFor(roleId: string): AgentRoleBinding | undefined {
@@ -99,7 +101,7 @@ async function loadAgents() {
         }
         if (!selectedPrincipalId.value) {
             bindings.value = [];
-            desiredRoleIds.value = [];
+            desiredPresetIds.value = [];
         } else if (selectedPrincipalId.value === previousSelection) {
             // A scope reload kept the same principal: the selection watcher will not fire.
             await loadBindings();
@@ -107,8 +109,8 @@ async function loadAgents() {
     } catch (cause) {
         agents.value = [];
         bindings.value = [];
-        desiredRoleIds.value = [];
-        error.value = roleErrorMessage(cause, t);
+        desiredPresetIds.value = [];
+        error.value = presetErrorMessage(cause, t);
     } finally {
         loading.value = false;
     }
@@ -121,32 +123,32 @@ async function loadBindings() {
     error.value = "";
     try {
         bindings.value = await api.getAgentRoles(authWorkspaceId.value, principalId);
-        desiredRoleIds.value = bindings.value.map((binding) => binding.roleId);
+        desiredPresetIds.value = bindings.value.map((binding) => binding.roleId);
     } catch (cause) {
         bindings.value = [];
-        desiredRoleIds.value = [];
-        error.value = roleErrorMessage(cause, t);
+        desiredPresetIds.value = [];
+        error.value = presetErrorMessage(cause, t);
     } finally {
         loading.value = false;
     }
 }
 
-function addRole() {
+function addPreset() {
     error.value = "";
     if (!selectedAgent.value) {
-        error.value = t("settings.rolesBindingsAgentPick");
+        error.value = t("settings.presetsBindingsAgentPick");
         return;
     }
-    if (!selectedRoleId.value) return;
-    if (desiredRoleIds.value.includes(selectedRoleId.value)) return;
-    desiredRoleIds.value = [...desiredRoleIds.value, selectedRoleId.value];
-    selectedRoleId.value = "";
+    if (!selectedPresetId.value) return;
+    if (desiredPresetIds.value.includes(selectedPresetId.value)) return;
+    desiredPresetIds.value = [...desiredPresetIds.value, selectedPresetId.value];
+    selectedPresetId.value = "";
 }
 
-function removeRole(roleId: string) {
+function removePreset(roleId: string) {
     const binding = bindingFor(roleId);
     if (binding?.isSystem) return;
-    desiredRoleIds.value = desiredRoleIds.value.filter((id) => id !== roleId);
+    desiredPresetIds.value = desiredPresetIds.value.filter((id) => id !== roleId);
 }
 
 async function save() {
@@ -154,7 +156,7 @@ async function save() {
     if (!principalId || saving.value || !isDirty.value) return;
     saving.value = true;
     error.value = "";
-    const desired = new Set(desiredRoleIds.value);
+    const desired = new Set(desiredPresetIds.value);
     const toUnbind = bindings.value.filter(
         (binding) => !binding.isSystem && !desired.has(binding.roleId),
     );
@@ -174,10 +176,10 @@ async function save() {
         await loadBindings();
         emit(
             "notice",
-            t("settings.rolesBindingsAgentSaved", { count: desiredRoleIds.value.length }),
+            t("settings.presetsBindingsAgentSaved", { count: desiredPresetIds.value.length }),
         );
     } catch (cause) {
-        const failure = roleErrorMessage(cause, t);
+        const failure = presetErrorMessage(cause, t);
         // A partial save may have changed the server set; re-read so the next click is truthful.
         await loadBindings().catch(() => undefined);
         // loadBindings clears the surface on success; the user still needs the refusal detail.
@@ -205,9 +207,9 @@ watch(selectedPrincipalId, (next, previous) => {
 <template>
     <section data-testid="agent-role-bindings-section" class="space-y-2 rounded border p-3">
         <div>
-            <h3 class="text-sm font-medium">{{ t("settings.rolesBindingsAgentTitle") }}</h3>
+            <h3 class="text-sm font-medium">{{ t("settings.presetsBindingsAgentTitle") }}</h3>
             <p class="mt-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsAgentHint") }}
+                {{ t("settings.presetsBindingsAgentHint") }}
             </p>
         </div>
 
@@ -220,7 +222,7 @@ watch(selectedPrincipalId, (next, previous) => {
         </p>
 
         <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-            {{ t("settings.rolesBindingsAgentPick") }}
+            {{ t("settings.presetsBindingsAgentPick") }}
             <Select
                 :model-value="selectedPrincipalId || '__none__'"
                 :disabled="loading || agents.length === 0"
@@ -237,12 +239,12 @@ watch(selectedPrincipalId, (next, previous) => {
                         selectedPrincipalId
                             ? (agents.find((agent) => agent.principalId === selectedPrincipalId)
                                   ?.name ?? selectedPrincipalId)
-                            : t("settings.rolesBindingsAgentPick")
+                            : t("settings.presetsBindingsAgentPick")
                     }}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                     <SelectItem value="__none__">{{
-                        t("settings.rolesBindingsAgentPick")
+                        t("settings.presetsBindingsAgentPick")
                     }}</SelectItem>
                     <SelectItem
                         v-for="agent in agents"
@@ -263,27 +265,27 @@ watch(selectedPrincipalId, (next, previous) => {
             <!-- 表单内提示，不是空页面：走精简形态（无 EmptyMedia 图标、无操作入口）。 -->
             <EmptyHeader class="items-start gap-1">
                 <EmptyDescription class="text-xs">{{
-                    t("settings.rolesBindingsAgentNoAgents")
+                    t("settings.presetsBindingsAgentNoAgents")
                 }}</EmptyDescription>
             </EmptyHeader>
         </Empty>
         <p v-else-if="loading" class="text-xs text-muted-foreground">
-            {{ t("settings.rolesBindingsAgentLoading") }}
+            {{ t("settings.presetsBindingsAgentLoading") }}
         </p>
 
         <table v-else class="w-full text-left text-sm" data-testid="agent-role-bindings-table">
             <thead class="text-xs text-muted-foreground">
                 <tr>
-                    <th class="py-1">{{ t("settings.rolesBindingsRoles") }}</th>
-                    <th class="py-1 text-right">{{ t("settings.rolesBindingsRemove") }}</th>
+                    <th class="py-1">{{ t("settings.presetsBindingsPresets") }}</th>
+                    <th class="py-1 text-right">{{ t("settings.presetsBindingsRemove") }}</th>
                 </tr>
             </thead>
             <tbody>
-                <tr v-for="roleId in desiredRoleIds" :key="roleId" class="border-t">
+                <tr v-for="roleId in desiredPresetIds" :key="roleId" class="border-t">
                     <td class="py-1">
-                        <span>{{ roleLabel(roleId) }}</span>
+                        <span>{{ presetLabel(roleId) }}</span>
                         <Badge v-if="bindingFor(roleId)?.isSystem" variant="secondary" class="ml-2">
-                            {{ t("settings.rolesBindingsAgentSeed") }}
+                            {{ t("settings.presetsBindingsAgentSeed") }}
                         </Badge>
                     </td>
                     <td class="py-1 text-right">
@@ -292,15 +294,15 @@ watch(selectedPrincipalId, (next, previous) => {
                             variant="ghost"
                             size="icon"
                             :data-testid="`agent-role-binding-remove-${roleId}`"
-                            @click="removeRole(roleId)"
+                            @click="removePreset(roleId)"
                         >
                             <X class="size-3.5" aria-hidden="true" />
                         </Button>
                     </td>
                 </tr>
-                <tr v-if="desiredRoleIds.length === 0">
+                <tr v-if="desiredPresetIds.length === 0">
                     <td colspan="2" class="py-2 text-xs text-muted-foreground">
-                        {{ t("settings.rolesBindingsEmpty") }}
+                        {{ t("settings.presetsBindingsEmpty") }}
                     </td>
                 </tr>
             </tbody>
@@ -308,12 +310,12 @@ watch(selectedPrincipalId, (next, previous) => {
 
         <div class="flex flex-wrap items-end gap-2">
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
-                {{ t("settings.rolesBindingsRole") }}
+                {{ t("settings.presetsBindingsPreset") }}
                 <Select
-                    :model-value="selectedRoleId || '__none__'"
+                    :model-value="selectedPresetId || '__none__'"
                     @update:model-value="
                         (value) =>
-                            (selectedRoleId = value === '__none__' ? '' : String(value ?? ''))
+                            (selectedPresetId = value === '__none__' ? '' : String(value ?? ''))
                     "
                 >
                     <SelectTrigger
@@ -321,20 +323,25 @@ watch(selectedPrincipalId, (next, previous) => {
                         class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
                         <SelectValue>{{
-                            selectedRoleId
-                                ? (availableRoles.find((role) => role.id === selectedRoleId)
+                            selectedPresetId
+                                ? (availablePresets.find((preset) => preset.id === selectedPresetId)
                                       ?.displayName ??
-                                  availableRoles.find((role) => role.id === selectedRoleId)?.name ??
-                                  selectedRoleId)
-                                : t("settings.rolesBindingsRolePick")
+                                  availablePresets.find((preset) => preset.id === selectedPresetId)
+                                      ?.name ??
+                                  selectedPresetId)
+                                : t("settings.presetsBindingsPresetPick")
                         }}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="__none__">{{
-                            t("settings.rolesBindingsRolePick")
+                            t("settings.presetsBindingsPresetPick")
                         }}</SelectItem>
-                        <SelectItem v-for="role in availableRoles" :key="role.id" :value="role.id">
-                            {{ role.displayName || role.name }}
+                        <SelectItem
+                            v-for="preset in availablePresets"
+                            :key="preset.id"
+                            :value="preset.id"
+                        >
+                            {{ preset.displayName || preset.name }}
                         </SelectItem>
                     </SelectContent>
                 </Select>
@@ -343,9 +350,9 @@ watch(selectedPrincipalId, (next, previous) => {
                 variant="outline"
                 data-testid="agent-role-bindings-add"
                 :disabled="loading || !selectedAgent"
-                @click="addRole"
+                @click="addPreset"
             >
-                {{ t("settings.rolesBindingsAdd") }}
+                {{ t("settings.presetsBindingsAdd") }}
             </Button>
             <Button
                 data-testid="agent-role-bindings-save"
@@ -353,7 +360,7 @@ watch(selectedPrincipalId, (next, previous) => {
                 @click="save"
             >
                 <LoaderCircle v-if="saving" class="animate-spin" aria-hidden="true" />
-                {{ t("settings.rolesBindingsAgentSave") }}
+                {{ t("settings.presetsBindingsAgentSave") }}
             </Button>
         </div>
     </section>

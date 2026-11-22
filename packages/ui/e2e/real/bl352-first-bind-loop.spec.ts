@@ -25,7 +25,7 @@
  * 2. **首绑之后加"系统工作区角色"恒 409 `ROLE_BINDING_EXCEEDS_CAP`（产品现状 = BL-355，待裁定）**。
  *    cap = `retainCovered(bindingPermissions, principalEffectiveAtoms)`（`AgentPrincipalService:602-614`），
  *    即角色原子必须**同时**出现在「② 授的权限」与「主体自身原子集」里；
- *    而 `WS_VIEWER` = `read` + `USE_WORKSPACE_RUNTIME`（`SystemAccessRoleCatalog:196-204`）、
+ *    而 `WS_VIEWER` = `read` + `USE_WORKSPACE_RUNTIME`（`SystemGrantPresetCatalog:196-204`）、
  *    `WS_EDITOR`/`WS_OWNER` 更多，主体默认 instance 角色 `AGENT_USER` 的 `BASE_ATOMS`
  *    （`:78-83`）= `read/write/delete/exec/network` **不含** `USE_WORKSPACE_RUNTIME`
  *    ⇒ 任何系统工作区角色都超 cap。
@@ -63,7 +63,7 @@ const CP_POLICY_JAVA = resolve(
  * ② 用：`AGENT_USER` 的原子集，**从产品目录派生**，禁止手抄（手抄已腐烂一次：774 写了四原子，
  * 产品已扩到六原子 ⇒ 409 `ROLE_BINDING_EXCEEDS_CAP`）。
  *
- * 来源：`SystemAccessRoleCatalog.java` 的 `AGENT_BASE_ATOMS` 列表声明（148-155 行的六个
+ * 来源：`SystemGrantPresetCatalog.java` 的 `AGENT_BASE_ATOMS` 列表声明（148-155 行的六个
  * `AtomRef.wildcard(ToolFaceRegistry.ACTION_*)`）；每个 `ACTION_*` 的字符串值再从
  * `ToolFaceRegistry.java` 的常量声明解析。产品以后再加原子，本 spec 自动跟随，不需要改常量。
  *
@@ -72,14 +72,14 @@ const CP_POLICY_JAVA = resolve(
  * exec 的超范围行为由下方独立负向断言覆盖。
  */
 function agentBaseAtomPermissions(): Array<{ actionClass: string; resource: string }> {
-    const catalog = readFileSync(resolve(CP_POLICY_JAVA, "SystemAccessRoleCatalog.java"), "utf8");
+    const catalog = readFileSync(resolve(CP_POLICY_JAVA, "SystemGrantPresetCatalog.java"), "utf8");
     const declaration =
         /private\s+static\s+final\s+List<AtomRef>\s+AGENT_BASE_ATOMS\s*=\s*List\.of\(([\s\S]*?)\);/u.exec(
             catalog,
         );
     if (!declaration) {
         throw new Error(
-            "SystemAccessRoleCatalog.AGENT_BASE_ATOMS declaration not found; " +
+            "SystemGrantPresetCatalog.AGENT_BASE_ATOMS declaration not found; " +
                 "the bl352 cap constant must be derived from the product catalog",
         );
     }

@@ -36,7 +36,7 @@ test.describe.configure({ retries: 0 });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const TERMINAL = /^(succeeded|failed|cancelled|ambiguous)$/u;
-/** `SystemAccessRoleCatalog`：三个系统工作区角色。VIEWER 已在 BL-355 实测，串行补 EDITOR/OWNER。 */
+/** `SystemGrantPresetCatalog`：三个系统工作区角色。VIEWER 已在 BL-355 实测，串行补 EDITOR/OWNER。 */
 const WORKSPACE_ROLES = [
     // VIEWER/EDITOR：原子都在 cap 之外 ⇒ 撞 cap 门（ROLE_BINDING_EXCEEDS_CAP）
     {

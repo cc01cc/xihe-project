@@ -9,7 +9,7 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
 
 /**
  * Credentials + roles/bindings. Rows mirror `Credential` (sanitized metadata only — never
- * a value) and `ApiRole` / `ApiBindingRow`; the empty and no-permission states are the
+ * a value) and `ApiPreset` / `ApiBindingRow`; the empty and no-permission states are the
  * same components in their terminal shapes.
  */
 </script>
@@ -18,8 +18,8 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
     <SectionShell
         id="access"
         index="06"
-        title="凭据页 / 角色与绑定页"
-        description="凭据列表与「无凭据」空态、角色与绑定列表、以及 403 无权限态。凭据只显示脱敏元数据（指纹/revision/引用数），与真实 DTO 一致；无权限态置灰操作并给出可执行的下一步。"
+        title="凭据页 / 授权预设与绑定页"
+        description="凭据列表与「无凭据」空态、授权预设与绑定列表、以及 403 无权限态。凭据只显示脱敏元数据（指纹/revision/引用数），与真实 DTO 一致；无权限态置灰操作并给出可执行的下一步。"
     >
         <div class="grid grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-5">
             <div class="space-y-5">
@@ -125,7 +125,7 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                             <p class="text-sm font-medium">没有查看凭据的权限</p>
                             <p class="text-xs leading-relaxed text-muted-foreground">
                                 需要能力原子 <span class="font-mono">credentials.manage</span>；
-                                可请管理员在「角色与绑定」页授权，或联系工作区所有者。
+                                可请管理员在「授权预设与绑定」页授权，或联系工作区所有者。
                             </p>
                             <div class="flex gap-2">
                                 <Button size="sm" disabled>新建凭据</Button>
@@ -141,7 +141,7 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                 <CardHeader class="border-b border-border/70">
                     <CardTitle class="flex items-center gap-2">
                         <UserCog class="size-4 text-muted-foreground" />
-                        角色与绑定
+                        授权预设与绑定
                         <Badge variant="outline">{{ mockBindings.scopeType }}</Badge>
                     </CardTitle>
                     <CardAction>

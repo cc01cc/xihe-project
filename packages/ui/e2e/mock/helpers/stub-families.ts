@@ -110,7 +110,7 @@ export function buildConfigMetaKeys(entries: Record<string, string>): ConfigKeyM
  * 仍会让对应组合在新建连接弹窗里**选不到**。</p>
  */
 /**
- * task-163：`GET /api/v1/roles/catalog?locale=` 的桩（PLAN-0610 W3-2a）。
+ * task-163：`GET /api/v1/presets/catalog?locale=` 的桩（PLAN-0610 W3-2a）。
  *
  * <p>**为什么它不再是「刻意不桩」**：Lead 2026-11-15 裁定翻转 —— 该路由**真实存在**
  * （`docs/api/openapi.yaml:5438-5454`，operationId `getRoleCatalog`，`MANAGE_ROLES` 门），

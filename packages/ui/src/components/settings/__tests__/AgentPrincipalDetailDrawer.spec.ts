@@ -449,7 +449,7 @@ describe("AgentPrincipalDetailDrawer", () => {
             "404 不是「成功但空」，两者不得同时出现",
         ).toBeNull();
         expect(maybe('[data-testid="apd-roles-error"]')).toBeNull();
-        expect(q('[data-testid="apd-roles-bind"]').getAttribute("href")).toBe("/settings/roles");
+        expect(q('[data-testid="apd-roles-bind"]').getAttribute("href")).toBe("/settings/presets");
         await click("apd-roles-retry");
         expect(roles).toHaveBeenCalledTimes(2);
     });

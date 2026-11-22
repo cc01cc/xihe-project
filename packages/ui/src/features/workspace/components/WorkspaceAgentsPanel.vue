@@ -14,7 +14,7 @@ import {
     type AgentRoleBinding,
     type AgentSkillBinding,
     type AgentTemplateSummary,
-    type ApiRole,
+    type ApiPreset,
     type DelegateSpawnSessions,
     type SelfPermissionsView,
     type WorkspaceAgentBinding,
@@ -172,7 +172,7 @@ const agentRoles = ref<AgentRoleBinding[]>([]);
 const agentSkills = ref<AgentSkillBinding[]>([]);
 const rbacState = ref<"idle" | "loading" | "ready" | "failed">("idle");
 const rbacError = ref("");
-const roleCandidates = ref<ApiRole[]>([]);
+const roleCandidates = ref<ApiPreset[]>([]);
 const skillCandidates = ref<AgentSkillCandidate[]>([]);
 
 function roleChoiceLabel(): string {
@@ -562,23 +562,23 @@ async function loadRbac(principalId: string) {
         agentRoles.value = roles;
         agentSkills.value = skills;
         rbacState.value = "ready";
-        // 候选清单（roles 复用既有 /roles；skills 复用 instance + 本工作区两条既有列表）——
+        // 候选清单（预设复用既有 /presets；skills 复用 instance + 本工作区两条既有列表）——
         // 任一条失败只影响对应来源的"可绑定项"，不影响已绑定列表。
-        const [rolesCatalog, instanceSkillsCatalog, workspaceSkillsCatalog] =
+        const [presetsCatalog, instanceSkillsCatalog, workspaceSkillsCatalog] =
             await Promise.allSettled([
-                api.listRoles(props.workspaceId),
+                api.listPresets(props.workspaceId),
                 api.getSkills(),
                 api.getWorkspaceSkills(props.workspaceId),
             ]);
         if (generation !== rbacGeneration) return;
-        // task-471（436 切片 A）：只留原子可授予智能体主体的角色。服务端 listRoles 只对
-        // **工作区层**调用方剔除含禁用原子的角色，持 MANAGE_ROLES 的**管理员视图**返回全量
+        // task-471（436 切片 A）：只留原子可授予智能体主体的授权预设。服务端 listPresets 只对
+        // **工作区层**调用方剔除含禁用原子的预设，持 MANAGE_ROLES 的**管理员视图**返回全量
         // （契约原文 "Ignored by the MANAGE_ROLES admin view"）⇒ 过滤在消费侧做。
         // 放在赋值处而不是模板：roleChoiceLabel 也消费 roleCandidates，且 selectedRoleId 只能
         // 来自过滤后的选项，两处同源才不会出现「选中项不在候选里」的标签丢失。
         roleCandidates.value =
-            rolesCatalog.status === "fulfilled"
-                ? rolesCatalog.value.filter(
+            presetsCatalog.status === "fulfilled"
+                ? presetsCatalog.value.filter(
                       (role) => !role.atoms.some((atom) => atom.agentPrincipalForbidden),
                   )
                 : [];
@@ -1421,7 +1421,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                          admin 能看到链接），并且创建按钮在**点击之前**就禁用——不要让人点完才吃 403。 -->
                 <router-link
                     v-if="authStore.isAdmin || canCreatePrincipal === false"
-                    to="/settings/roles"
+                    to="/settings/presets"
                     data-testid="agent-grant-panel-link"
                     class="mt-1 inline-block text-xs text-primary underline"
                 >

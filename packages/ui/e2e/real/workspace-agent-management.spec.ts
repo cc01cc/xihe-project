@@ -623,7 +623,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     //   ①④ 实例 CREATE_ACCOUNT + 工作区仅 WS_EDITOR ⇒ 建 = **403**，且错误指向 MANAGE_WORKSPACE_AGENTS；
     //   ②  工作区恢复 WS_OWNER（携带 MANAGE_WORKSPACE_AGENTS@该 ws）⇒ 建 = **201**；
     //   ③  保留「能建 ≠ 能绑」整组断言：用 ② 建出的主体，降级回 WS_EDITOR 后再绑 ⇒ 403 + 未绑定行仍在。
-    // 注意：工作区角色只有 WS_OWNER / WS_EDITOR / WS_VIEWER，没有 WS_ADMIN（SystemAccessRoleCatalog）。
+    // 注意：工作区角色只有 WS_OWNER / WS_EDITOR / WS_VIEWER，没有 WS_ADMIN（SystemGrantPresetCatalog）。
     replaceUserGrantPermissions(ownerUserId, [{ actionClass: "CREATE_ACCOUNT", resource: "*" }]);
 
     // ①/④ 实例级 CREATE_ACCOUNT 不足以建工作区 agent：WS_EDITOR 无 MANAGE_WORKSPACE_AGENTS ⇒ 403

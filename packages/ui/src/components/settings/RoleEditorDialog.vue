@@ -2,11 +2,11 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-    type ApiRole,
-    type ApiRoleAtom,
-    type ApiRoleAtomInput,
-    type ApiRoleCatalog,
-    type ApiRoleWrite,
+    type ApiPreset,
+    type ApiPresetAtom,
+    type ApiPresetAtomInput,
+    type ApiPresetCatalog,
+    type ApiPresetWrite,
 } from "../../composables/api";
 import Dialog from "../ui/dialog/Dialog.vue";
 import DialogContent from "../ui/dialog/DialogContent.vue";
@@ -21,9 +21,9 @@ import { Checkbox } from "../ui/checkbox";
 import { LoaderCircle } from "@lucide/vue";
 
 /**
- * PLAN-0610 W5b: create / edit one access role.
+ * PLAN-0610 W5b: create / edit one grant preset.
  *
- * The atom list is **entirely** driven by `GET /roles/catalog` — the UI keeps no vocabulary of its
+ * The atom list is **entirely** driven by `GET /presets/catalog` — the UI keeps no vocabulary of its
  * own, so adding an atom on the CP side shows up here without a front-end change. Atoms are grouped
  * by the catalog's `scopeClass`:
  *
@@ -31,14 +31,14 @@ import { LoaderCircle } from "@lucide/vue";
  *   action atoms); the group says so;
  * - `both` — work on instance *and* workspace bindings.
  *
- * System roles are display-name-only: CP answers `409 SYSTEM_ROLE_IMMUTABLE` for anything else, so
+ * System presets are display-name-only: CP answers `409 SYSTEM_ROLE_IMMUTABLE` for anything else, so
  * the dialog disables the name and the atoms instead of letting the user walk into that refusal.
  */
 const props = defineProps<{
     open: boolean;
     /** null = create */
-    role: ApiRole | null;
-    catalog: ApiRoleCatalog | null;
+    preset: ApiPreset | null;
+    catalog: ApiPresetCatalog | null;
     saving: boolean;
     /**
      * task-126：「用当前工作区」按钮预填的 uuid（`auth.currentWorkspaceId`，取不到就不显示按钮）。
@@ -49,7 +49,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
     close: [];
-    submit: [payload: ApiRoleWrite];
+    submit: [payload: ApiPresetWrite];
 }>();
 
 const { t } = useI18n();
@@ -65,13 +65,13 @@ const name = ref(""),
     atomResources = reactive<Record<string, string>>({}),
     error = ref("");
 
-const isSystem = computed(() => props.role?.system === true);
+const isSystem = computed(() => props.preset?.system === true);
 const title = computed(() =>
-    props.role ? t("settings.rolesEditorEditTitle") : t("settings.rolesEditorCreateTitle"),
+    props.preset ? t("settings.presetsEditorEditTitle") : t("settings.presetsEditorCreateTitle"),
 );
 
 /**
- * task-416 P1-3（D-1312）：原子目录条目多，平铺找不到东西。条目数以 GET /roles/catalog 返回为准，
+ * task-416 P1-3（D-1312）：原子目录条目多，平铺找不到东西。条目数以 GET /presets/catalog 返回为准，
  * 本文件不复制该数（D-1767；旧写「79 条」从未属实——词表规模演进见 PermissionAtomCatalog.java）。
  * **只过滤可见集，不动 selectedAtoms** —— 搜索是视图操作，不是选择操作。
  * 被否决候选：换成 vendor `Command`（CommandItem 是**单选菜单项**语义，会把「多选原子」
@@ -80,7 +80,7 @@ const title = computed(() =>
  */
 const atomQuery = ref("");
 
-function matchesAtomQuery(atom: ApiRoleAtom): boolean {
+function matchesAtomQuery(atom: ApiPresetAtom): boolean {
     const query = atomQuery.value.trim().toLowerCase();
     if (!query) return true;
     return (
@@ -89,12 +89,12 @@ function matchesAtomQuery(atom: ApiRoleAtom): boolean {
     );
 }
 
-const instanceAtoms = computed<ApiRoleAtom[]>(() =>
+const instanceAtoms = computed<ApiPresetAtom[]>(() =>
     (props.catalog?.atoms ?? []).filter(
         (atom) => atom.scopeClass === "instance" && matchesAtomQuery(atom),
     ),
 );
-const bothAtoms = computed<ApiRoleAtom[]>(() =>
+const bothAtoms = computed<ApiPresetAtom[]>(() =>
     (props.catalog?.atoms ?? []).filter(
         (atom) => atom.scopeClass === "both" && matchesAtomQuery(atom),
     ),
@@ -108,23 +108,23 @@ const noAtomMatches = computed(
 );
 
 /**
- * 服务端对该角色**实际存的**资源前缀，只收窄过的（canonical `*` 不是收窄）。
+ * 服务端对该授权预设**实际存的**资源前缀，只收窄过的（canonical `*` 不是收窄）。
  * 用途有二：编辑时回填输入框；行内标一句「这是当前生效的前缀」，让用户在改之前看清基线。
  */
 const storedResources = computed<Record<string, string>>(() => {
     const map: Record<string, string> = {};
-    for (const atom of props.role?.atoms ?? []) {
+    for (const atom of props.preset?.atoms ?? []) {
         if (atom.resource && atom.resource !== "*") map[atom.name] = atom.resource;
     }
     return map;
 });
 
 function reset() {
-    const role = props.role;
-    name.value = role?.name ?? "";
-    displayName.value = role?.displayName ?? "";
-    description.value = role?.description ?? "";
-    selectedAtoms.value = role ? role.atoms.map((atom) => atom.name) : [];
+    const preset = props.preset;
+    name.value = preset?.name ?? "";
+    displayName.value = preset?.displayName ?? "";
+    description.value = preset?.description ?? "";
+    selectedAtoms.value = preset ? preset.atoms.map((atom) => atom.name) : [];
     for (const atomName of Object.keys(atomResources)) delete atomResources[atomName];
     for (const [atomName, resource] of Object.entries(storedResources.value)) {
         atomResources[atomName] = resource;
@@ -134,7 +134,7 @@ function reset() {
 }
 
 watch(
-    () => [props.open, props.role?.id] as const,
+    () => [props.open, props.preset?.id] as const,
     () => {
         if (props.open) reset();
     },
@@ -153,7 +153,7 @@ function toggleAtom(atomName: string) {
  * 请求字节完全一致（CP 的 `GrantResourcePattern.resolve` 对 null/blank 返回 canonical `*`），
  * 所以老行为不受影响；只有用户真填了前缀才切成对象形态。
  */
-function atomWire(atomName: string): string | ApiRoleAtomInput {
+function atomWire(atomName: string): string | ApiPresetAtomInput {
     const resource = (atomResources[atomName] ?? "").trim();
     return resource ? { actionClass: atomName, resource } : atomName;
 }
@@ -173,21 +173,21 @@ function storedResource(atomName: string): string {
 function submit() {
     error.value = "";
     const trimmedName = name.value.trim();
-    if (!props.role && !trimmedName) {
-        error.value = t("settings.rolesEditorNameRequired");
+    if (!props.preset && !trimmedName) {
+        error.value = t("settings.presetsEditorNameRequired");
         return;
     }
     if (!displayName.value.trim()) {
-        error.value = t("settings.rolesEditorDisplayNameRequired");
+        error.value = t("settings.presetsEditorDisplayNameRequired");
         return;
     }
-    if (!props.role && selectedAtoms.value.length === 0) {
-        error.value = t("settings.rolesEditorAtomsRequired");
+    if (!props.preset && selectedAtoms.value.length === 0) {
+        error.value = t("settings.presetsEditorAtomsRequired");
         return;
     }
-    // PATCH is partial: null means "unchanged". A system role only ever sends the display name, so
+    // PATCH is partial: null means "unchanged". A system preset only ever sends the display name, so
     // the request cannot carry a forbidden field even if the template was tampered with.
-    const payload: ApiRoleWrite = props.role
+    const payload: ApiPresetWrite = props.preset
         ? isSystem.value
             ? { displayName: displayName.value.trim(), description: description.value.trim() }
             : {
@@ -217,22 +217,22 @@ defineExpose({ error });
         >
             <DialogHeader>
                 <DialogTitle>{{ title }}</DialogTitle>
-                <DialogDescription>{{ t("settings.rolesEditorSubtitle") }}</DialogDescription>
+                <DialogDescription>{{ t("settings.presetsEditorSubtitle") }}</DialogDescription>
             </DialogHeader>
 
             <div class="space-y-3">
                 <label class="block text-xs text-muted-foreground">
-                    {{ t("settings.rolesEditorName") }}
+                    {{ t("settings.presetsEditorName") }}
                     <Input
                         v-model="name"
                         data-testid="role-editor-name"
                         class="mt-1"
                         :disabled="isSystem"
-                        :placeholder="t('settings.rolesEditorNamePlaceholder')"
+                        :placeholder="t('settings.presetsEditorNamePlaceholder')"
                     />
                 </label>
                 <label class="block text-xs text-muted-foreground">
-                    {{ t("settings.rolesEditorDisplayName") }}
+                    {{ t("settings.presetsEditorDisplayName") }}
                     <Input
                         v-model="displayName"
                         data-testid="role-editor-display-name"
@@ -240,7 +240,7 @@ defineExpose({ error });
                     />
                 </label>
                 <label class="block text-xs text-muted-foreground">
-                    {{ t("settings.rolesEditorDescription") }}
+                    {{ t("settings.presetsEditorDescription") }}
                     <Textarea
                         v-model="description"
                         data-testid="role-editor-description"
@@ -254,7 +254,7 @@ defineExpose({ error });
                     data-testid="role-editor-system-hint"
                     class="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs"
                 >
-                    {{ t("settings.rolesEditorSystemHint") }}
+                    {{ t("settings.presetsEditorSystemHint") }}
                 </p>
 
                 <fieldset
@@ -264,7 +264,7 @@ defineExpose({ error });
                     :disabled="isSystem"
                 >
                     <legend class="px-1 text-xs text-muted-foreground">
-                        {{ t("settings.rolesEditorAtoms") }}
+                        {{ t("settings.presetsEditorAtoms") }}
                     </legend>
 
                     <!-- task-416 P1-3：只过滤可见集，多选语义与 toggle 路径保持不变。 -->
@@ -273,22 +273,22 @@ defineExpose({ error });
                         type="search"
                         class="mb-2 h-8 text-sm"
                         data-testid="role-editor-atom-search"
-                        :placeholder="t('settings.rolesEditorAtomSearch')"
-                        :aria-label="t('settings.rolesEditorAtomSearch')"
+                        :placeholder="t('settings.presetsEditorAtomSearch')"
+                        :aria-label="t('settings.presetsEditorAtomSearch')"
                     />
                     <p
                         v-if="noAtomMatches"
                         class="mb-2 text-xs text-muted-foreground"
                         data-testid="role-editor-atoms-no-match"
                     >
-                        {{ t("settings.rolesEditorAtomNoMatch") }}
+                        {{ t("settings.presetsEditorAtomNoMatch") }}
                     </p>
                     <div data-testid="role-editor-atoms-instance">
                         <p class="mb-1 text-xs font-medium">
-                            {{ t("settings.rolesEditorGroupInstance") }}
+                            {{ t("settings.presetsEditorGroupInstance") }}
                         </p>
                         <p class="mb-2 text-xs text-muted-foreground">
-                            {{ t("settings.rolesEditorGroupInstanceHint") }}
+                            {{ t("settings.presetsEditorGroupInstanceHint") }}
                         </p>
                         <div class="grid gap-1 sm:grid-cols-2">
                             <div v-for="atom in instanceAtoms" :key="atom.name" class="space-y-0.5">
@@ -310,7 +310,7 @@ defineExpose({ error });
                                         v-if="atom.capability"
                                         class="text-xs text-muted-foreground"
                                     >
-                                        {{ t("settings.rolesEditorCapabilityBadge") }}
+                                        {{ t("settings.presetsEditorCapabilityBadge") }}
                                     </span>
                                 </label>
                                 <!-- task-126: 只有 both 作用域的原子能收窄；这两组不显示输入框，但要说明理由，不做静默丢弃 -->
@@ -320,8 +320,8 @@ defineExpose({ error });
                                 >
                                     {{
                                         atom.capability
-                                            ? t("settings.rolesEditorCapabilityNoResource")
-                                            : t("settings.rolesEditorInstanceNoResource")
+                                            ? t("settings.presetsEditorCapabilityNoResource")
+                                            : t("settings.presetsEditorInstanceNoResource")
                                     }}
                                 </p>
                             </div>
@@ -330,10 +330,10 @@ defineExpose({ error });
 
                     <div data-testid="role-editor-atoms-both">
                         <p class="mb-1 text-xs font-medium">
-                            {{ t("settings.rolesEditorGroupBoth") }}
+                            {{ t("settings.presetsEditorGroupBoth") }}
                         </p>
                         <p class="mb-2 text-xs text-muted-foreground">
-                            {{ t("settings.rolesEditorGroupBothHint") }}
+                            {{ t("settings.presetsEditorGroupBothHint") }}
                         </p>
                         <div class="grid gap-2 sm:grid-cols-2">
                             <div v-for="atom in bothAtoms" :key="atom.name" class="space-y-1">
@@ -365,9 +365,9 @@ defineExpose({ error });
                                             class="h-8 font-mono text-xs"
                                             :data-testid="`role-editor-atom-resource-${atom.name}`"
                                             :placeholder="
-                                                t('settings.rolesEditorResourcePlaceholder')
+                                                t('settings.presetsEditorResourcePlaceholder')
                                             "
-                                            :aria-label="t('settings.rolesEditorResourceLabel')"
+                                            :aria-label="t('settings.presetsEditorResourceLabel')"
                                         />
                                         <Button
                                             v-if="currentWorkspaceId"
@@ -378,17 +378,17 @@ defineExpose({ error });
                                             :data-testid="`role-editor-atom-use-workspace-${atom.name}`"
                                             @click.prevent="useCurrentWorkspace(atom.name)"
                                         >
-                                            {{ t("settings.rolesEditorResourceUseWorkspace") }}
+                                            {{ t("settings.presetsEditorResourceUseWorkspace") }}
                                         </Button>
                                     </div>
                                     <p class="text-xs text-muted-foreground">
-                                        {{ t("settings.rolesEditorResourceHint") }}
+                                        {{ t("settings.presetsEditorResourceHint") }}
                                     </p>
                                     <p
                                         v-if="storedResource(atom.name)"
                                         class="text-xs text-muted-foreground"
                                     >
-                                        {{ t("settings.rolesEditorResourceEffective") }}:
+                                        {{ t("settings.presetsEditorResourceEffective") }}:
                                         <span class="font-mono">{{
                                             storedResource(atom.name)
                                         }}</span>
@@ -404,7 +404,7 @@ defineExpose({ error });
                     data-testid="role-editor-catalog-missing"
                     class="text-xs text-destructive"
                 >
-                    {{ t("settings.rolesEditorCatalogUnavailable") }}
+                    {{ t("settings.presetsEditorCatalogUnavailable") }}
                 </p>
 
                 <p v-if="error" data-testid="role-editor-error" class="text-xs text-destructive">
@@ -414,16 +414,16 @@ defineExpose({ error });
 
             <DialogFooter>
                 <Button variant="ghost" @click="emit('close')">{{
-                    t("settings.rolesCancel")
+                    t("settings.presetsCancel")
                 }}</Button>
                 <Button
                     data-testid="role-editor-submit"
                     :disabled="saving || !catalog"
-                    :title="!catalog ? t('settings.rolesCreateDisabledNoCatalog') : undefined"
+                    :title="!catalog ? t('settings.presetsCreateDisabledNoCatalog') : undefined"
                     @click="submit"
                 >
                     <LoaderCircle v-if="saving" class="animate-spin" aria-hidden="true" />
-                    {{ t("settings.rolesSave") }}
+                    {{ t("settings.presetsSave") }}
                 </Button>
             </DialogFooter>
         </DialogContent>

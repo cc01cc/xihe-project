@@ -7,7 +7,7 @@ import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import RolesView from "../RolesView.vue";
 import { expectModalDialog } from "../../../test-utils/modalDialog";
-import { roleErrorKey, roleErrorMessage } from "../../../components/settings/roleErrorMessages";
+import { presetErrorKey, presetErrorMessage } from "../../../components/settings/roleErrorMessages";
 import {
     openSelect,
     selectItemComponents,
@@ -21,11 +21,11 @@ vi.mock("../../../composables/api", async (importOriginal) => {
         ...actual,
         api: {
             ...actual.api,
-            rolesCatalog: vi.fn<typeof apiModule.api.rolesCatalog>(),
-            listRoles: vi.fn<typeof apiModule.api.listRoles>(),
-            createRole: vi.fn<typeof apiModule.api.createRole>(),
-            updateRole: vi.fn<typeof apiModule.api.updateRole>(),
-            deleteRole: vi.fn<typeof apiModule.api.deleteRole>(),
+            presetsCatalog: vi.fn<typeof apiModule.api.presetsCatalog>(),
+            listPresets: vi.fn<typeof apiModule.api.listPresets>(),
+            createPreset: vi.fn<typeof apiModule.api.createPreset>(),
+            updatePreset: vi.fn<typeof apiModule.api.updatePreset>(),
+            deletePreset: vi.fn<typeof apiModule.api.deletePreset>(),
             getBindings: vi.fn<typeof apiModule.api.getBindings>(),
             replaceBindings: vi.fn<typeof apiModule.api.replaceBindings>(),
             listAdminUsers: vi.fn<typeof apiModule.api.listAdminUsers>(),
@@ -70,38 +70,38 @@ vi.mock("../../../stores/auth", () => ({
 
 const mockedApi = vi.mocked(api, true);
 
-const INSTANCE_ATOM: apiModule.ApiRoleAtom = {
+const INSTANCE_ATOM: apiModule.ApiPresetAtom = {
     name: "MANAGE_ROLES",
     scopeClass: "instance",
     capability: false,
     resource: "*",
 };
-const BOTH_ATOM: apiModule.ApiRoleAtom = {
+const BOTH_ATOM: apiModule.ApiPresetAtom = {
     name: "read",
     scopeClass: "both",
     capability: false,
     resource: "*",
 };
-const CAPABILITY_ATOM: apiModule.ApiRoleAtom = {
+const CAPABILITY_ATOM: apiModule.ApiPresetAtom = {
     name: "instance:admin",
     scopeClass: "instance",
     capability: true,
     resource: "*",
 };
 /** Deliberately invented: proves the editor renders the catalog instead of a hardcoded list. */
-const FUTURE_ATOM: apiModule.ApiRoleAtom = {
+const FUTURE_ATOM: apiModule.ApiPresetAtom = {
     name: "FUTURE_ATOM_FROM_CATALOG",
     scopeClass: "both",
     capability: false,
     resource: "*",
 };
 
-const CATALOG: apiModule.ApiRoleCatalog = {
+const CATALOG: apiModule.ApiPresetCatalog = {
     atoms: [INSTANCE_ATOM, CAPABILITY_ATOM, BOTH_ATOM, FUTURE_ATOM],
     scopes: ["instance", "workspace"],
 };
 
-function role(overrides: Partial<apiModule.ApiRole> = {}): apiModule.ApiRole {
+function role(overrides: Partial<apiModule.ApiPreset> = {}): apiModule.ApiPreset {
     return {
         id: "role-1",
         name: "AUDITOR",
@@ -144,7 +144,7 @@ const SETTINGS_ROUTE_PATHS = [
     "/settings/monitoring",
     "/settings/audit",
     "/settings/config-locks",
-    "/settings/roles",
+    "/settings/presets",
 ];
 
 function makeRouter(): Router {
@@ -195,8 +195,8 @@ beforeEach(() => {
     authState.currentWorkspaceId = null;
     vi.clearAllMocks();
     authEnsureSelfPermissions.mockClear();
-    mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
-    mockedApi.listRoles.mockResolvedValue([SYSTEM_ROLE, role()]);
+    mockedApi.presetsCatalog.mockResolvedValue(CATALOG);
+    mockedApi.listPresets.mockResolvedValue([SYSTEM_ROLE, role()]);
     mockedApi.listWorkspaces.mockResolvedValue([]);
     mockedApi.listAdminUsers.mockResolvedValue([]);
     mockedApi.getBindings.mockResolvedValue({ scopeType: "instance", scopeId: null, bindings: [] });
@@ -230,8 +230,8 @@ describe("RolesView access control", () => {
 
         expect(wrapper.find('[data-testid="roles-forbidden"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(false);
-        expect(mockedApi.listRoles).not.toHaveBeenCalled();
-        expect(mockedApi.rolesCatalog).not.toHaveBeenCalled();
+        expect(mockedApi.listPresets).not.toHaveBeenCalled();
+        expect(mockedApi.presetsCatalog).not.toHaveBeenCalled();
     });
 
     it("BL-393: opens the page for a principal holding only the MANAGE_ROLES atom", async () => {
@@ -243,7 +243,7 @@ describe("RolesView access control", () => {
 
         expect(wrapper.find('[data-testid="roles-forbidden"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(true);
-        await vi.waitFor(() => expect(mockedApi.listRoles).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mockedApi.listPresets).toHaveBeenCalledTimes(1));
     });
 
     it("BL-393: the instance-admin capability alone no longer opens the page", async () => {
@@ -254,7 +254,7 @@ describe("RolesView access control", () => {
 
         expect(wrapper.find('[data-testid="roles-forbidden"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(false);
-        expect(mockedApi.listRoles).not.toHaveBeenCalled();
+        expect(mockedApi.listPresets).not.toHaveBeenCalled();
     });
 });
 
@@ -278,14 +278,14 @@ describe("RolesView role list", () => {
     });
 
     it("F-19: renders an empty state with a create path when there are no roles", async () => {
-        mockedApi.listRoles.mockResolvedValue([]);
+        mockedApi.listPresets.mockResolvedValue([]);
         const wrapper = await mountView();
 
         // 0 行时不再渲染只有表头 + 一片空白的 table。
         expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(false);
         const empty = wrapper.get('[data-testid="roles-empty"]');
-        expect(empty.text()).toContain(i18n.global.t("settings.rolesEmptyTitle"));
-        expect(empty.text()).toContain(i18n.global.t("settings.rolesEmptyBody"));
+        expect(empty.text()).toContain(i18n.global.t("settings.presetsEmptyTitle"));
+        expect(empty.text()).toContain(i18n.global.t("settings.presetsEmptyBody"));
 
         // 出口：空态里的新建按钮打开同一个编辑器。
         await clickBody('[data-testid="roles-empty-create"]');
@@ -293,7 +293,7 @@ describe("RolesView role list", () => {
     });
 
     it("shows the unified error surface when the role list cannot be loaded (F-18)", async () => {
-        mockedApi.listRoles.mockRejectedValue(problemError(403, "FORBIDDEN"));
+        mockedApi.listPresets.mockRejectedValue(problemError(403, "FORBIDDEN"));
         const wrapper = await mountView();
 
         // 加载错误不再进 roles-error（那是保存/删除错误的本地化面），走统一错误面。
@@ -305,7 +305,7 @@ describe("RolesView role list", () => {
     });
 
     it("treats a 404 on the roles endpoints as a backend gap, not a raw error (F-18)", async () => {
-        mockedApi.listRoles.mockRejectedValue(problemError(404, "MOCK_ENDPOINT_MISSING"));
+        mockedApi.listPresets.mockRejectedValue(problemError(404, "MOCK_ENDPOINT_MISSING"));
         const wrapper = await mountView();
 
         const gap = wrapper.get('[data-testid="settings-error-gap"]');
@@ -321,8 +321,8 @@ describe("RolesView role list", () => {
     });
 
     it("renders the page title as h2 with the shared testid (task-189 P1-2)", async () => {
-        mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
-        mockedApi.listRoles.mockResolvedValue([role({ system: true })]);
+        mockedApi.presetsCatalog.mockResolvedValue(CATALOG);
+        mockedApi.listPresets.mockResolvedValue([role({ system: true })]);
         const wrapper = await mountView();
         const title = wrapper.get('[data-testid="settings-page-title"]');
         expect(title.element.tagName).toBe("H2");
@@ -331,7 +331,7 @@ describe("RolesView role list", () => {
 });
 
 describe("RoleEditorDialog catalog wiring", () => {
-    it("renders atoms from GET /roles/catalog, grouped by scope class", async () => {
+    it("renders atoms from GET /presets/catalog, grouped by scope class", async () => {
         await mountView();
         await clickBody('[data-testid="roles-create"]');
 
@@ -345,13 +345,15 @@ describe("RoleEditorDialog catalog wiring", () => {
         expect(bothGroup.textContent).toContain("read");
         // Scope-class copy is rendered next to each group.
         expect(instanceGroup.textContent).toContain(
-            i18n.global.t("settings.rolesEditorGroupInstanceHint"),
+            i18n.global.t("settings.presetsEditorGroupInstanceHint"),
         );
-        expect(bothGroup.textContent).toContain(i18n.global.t("settings.rolesEditorGroupBothHint"));
+        expect(bothGroup.textContent).toContain(
+            i18n.global.t("settings.presetsEditorGroupBothHint"),
+        );
     });
 
     it("creates a role with the selected catalog atoms", async () => {
-        mockedApi.createRole.mockResolvedValue(role({ id: "role-new", name: "FUTURE_ROLE" }));
+        mockedApi.createPreset.mockResolvedValue(role({ id: "role-new", name: "FUTURE_ROLE" }));
         await mountView();
         await clickBody('[data-testid="roles-create"]');
 
@@ -366,8 +368,8 @@ describe("RoleEditorDialog catalog wiring", () => {
         await clickBody('[data-testid="role-editor-atom-FUTURE_ATOM_FROM_CATALOG"]');
         await clickBody('[data-testid="role-editor-submit"]');
 
-        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
-        expect(mockedApi.createRole.mock.calls[0]?.[0]).toEqual({
+        await vi.waitFor(() => expect(mockedApi.createPreset).toHaveBeenCalled());
+        expect(mockedApi.createPreset.mock.calls[0]?.[0]).toEqual({
             name: "FUTURE_ROLE",
             displayName: "Future role",
             description: "",
@@ -376,7 +378,7 @@ describe("RoleEditorDialog catalog wiring", () => {
     });
 
     it("sends only the display name for a system role", async () => {
-        mockedApi.updateRole.mockResolvedValue(SYSTEM_ROLE);
+        mockedApi.updatePreset.mockResolvedValue(SYSTEM_ROLE);
         await mountView();
         await clickBody('[data-testid="role-edit-SUPER_ADMIN"]');
 
@@ -390,9 +392,9 @@ describe("RoleEditorDialog catalog wiring", () => {
         displayInput.dispatchEvent(new Event("input", { bubbles: true }));
         await clickBody('[data-testid="role-editor-submit"]');
 
-        await vi.waitFor(() => expect(mockedApi.updateRole).toHaveBeenCalled());
-        const [roleId, payload] = mockedApi.updateRole.mock.calls[0] ?? [];
-        expect(roleId).toBe("role-sys");
+        await vi.waitFor(() => expect(mockedApi.updatePreset).toHaveBeenCalled());
+        const [presetId, payload] = mockedApi.updatePreset.mock.calls[0] ?? [];
+        expect(presetId).toBe("role-sys");
         expect(payload).toEqual({ displayName: "Renamed super admin", description: "" });
         expect(payload).not.toHaveProperty("atoms");
         expect(payload).not.toHaveProperty("name");
@@ -427,12 +429,12 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
 
     async function submitAndReadPayload() {
         await clickBody('[data-testid="role-editor-submit"]');
-        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
-        return mockedApi.createRole.mock.calls[0]?.[0];
+        await vi.waitFor(() => expect(mockedApi.createPreset).toHaveBeenCalled());
+        return mockedApi.createPreset.mock.calls[0]?.[0];
     }
 
     it("留空资源前缀仍送裸原子名（老客户端字节不变）", async () => {
-        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        mockedApi.createPreset.mockResolvedValue(role({ id: "role-new" }));
         await openCreate();
         await fillRoleBasics();
         await clickBody('[data-testid="role-editor-atom-read"]');
@@ -442,7 +444,7 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
     });
 
     it("填了前缀就改送 {actionClass, resource} 对象", async () => {
-        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        mockedApi.createPreset.mockResolvedValue(role({ id: "role-new" }));
         await openCreate();
         await fillRoleBasics();
         await clickBody('[data-testid="role-editor-atom-read"]');
@@ -453,7 +455,7 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
     });
 
     it("混发：只有填了前缀的原子变对象，其余仍是裸串", async () => {
-        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        mockedApi.createPreset.mockResolvedValue(role({ id: "role-new" }));
         await openCreate();
         await fillRoleBasics();
         await clickBody('[data-testid="role-editor-atom-FUTURE_ATOM_FROM_CATALOG"]');
@@ -468,7 +470,7 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
     });
 
     it("纯空白前缀按留空处理（trim 后为空 ⇒ 裸串）", async () => {
-        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        mockedApi.createPreset.mockResolvedValue(role({ id: "role-new" }));
         await openCreate();
         await fillRoleBasics();
         await clickBody('[data-testid="role-editor-atom-read"]');
@@ -480,7 +482,7 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
 
     it("「用当前工作区」把 auth.currentWorkspaceId 填成 fs:<uuid>", async () => {
         authState.currentWorkspaceId = WS;
-        mockedApi.createRole.mockResolvedValue(role({ id: "role-new" }));
+        mockedApi.createPreset.mockResolvedValue(role({ id: "role-new" }));
         await openCreate();
         await fillRoleBasics();
         await clickBody('[data-testid="role-editor-atom-read"]');
@@ -510,11 +512,11 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
 
     it("编辑既有角色时把已生效前缀回填，并标注这是当前生效值", async () => {
         const stored = "fs:" + WS + "/src";
-        mockedApi.listRoles.mockResolvedValue([
+        mockedApi.listPresets.mockResolvedValue([
             SYSTEM_ROLE,
             role({ atoms: [{ ...BOTH_ATOM, resource: stored }] }),
         ]);
-        mockedApi.updateRole.mockResolvedValue(role({ id: "role-1" }));
+        mockedApi.updatePreset.mockResolvedValue(role({ id: "role-1" }));
         await mountView();
         await clickBody('[data-testid="role-edit-AUDITOR"]');
 
@@ -529,13 +531,13 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
         ).map((node) => node.textContent ?? "");
         expect(effective.join(" ")).toContain(stored);
         expect(effective.join(" ")).toContain(
-            i18n.global.t("settings.rolesEditorResourceEffective"),
+            i18n.global.t("settings.presetsEditorResourceEffective"),
         );
 
         await clickBody('[data-testid="role-editor-submit"]');
-        await vi.waitFor(() => expect(mockedApi.updateRole).toHaveBeenCalled());
+        await vi.waitFor(() => expect(mockedApi.updatePreset).toHaveBeenCalled());
         // 未改动时原样回送，不把既有收窄悄悄放宽成 *。
-        expect(mockedApi.updateRole.mock.calls[0]?.[1]).toEqual({
+        expect(mockedApi.updatePreset.mock.calls[0]?.[1]).toEqual({
             name: "AUDITOR",
             displayName: "Auditor",
             description: "",
@@ -559,10 +561,10 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
             '[data-testid="role-editor-atoms-instance"]',
         )) as HTMLElement;
         expect(instanceGroup.textContent).toContain(
-            i18n.global.t("settings.rolesEditorInstanceNoResource"),
+            i18n.global.t("settings.presetsEditorInstanceNoResource"),
         );
         expect(instanceGroup.textContent).toContain(
-            i18n.global.t("settings.rolesEditorCapabilityNoResource"),
+            i18n.global.t("settings.presetsEditorCapabilityNoResource"),
         );
     });
 
@@ -575,7 +577,7 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
             "resource pattern 'src' is not valid for atom read: path patterns must be " +
             "fs:<workspaceId>[/<relative path>] without dot segments, wildcards, " +
             "backslashes or a leading slash";
-        mockedApi.createRole.mockRejectedValue(
+        mockedApi.createPreset.mockRejectedValue(
             new ApiError({ status: 400, code: "INVALID_GRANT_RESOURCE", detail, requestId: "t" }),
         );
         const wrapper = await mountView();
@@ -589,14 +591,14 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
             expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(detail),
         );
         expect(wrapper.get('[data-testid="roles-error"]').text()).not.toBe(
-            i18n.global.t("settings.rolesError.generic"),
+            i18n.global.t("settings.presetsError.generic"),
         );
     });
 
     it("403 FORBIDDEN 原样显示 CP 报文", async () => {
         const detail =
             "MANAGE_WORKSPACE_AGENTS is required to administer this workspace's bindings";
-        mockedApi.createRole.mockRejectedValue(
+        mockedApi.createPreset.mockRejectedValue(
             new ApiError({ status: 403, code: "FORBIDDEN", detail, requestId: "t" }),
         );
         const wrapper = await mountView();
@@ -613,7 +615,7 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
 
     it("404 WORKSPACE_NOT_FOUND 原样显示 CP 报文", async () => {
         const detail = "Workspace not found: 00000000-0000-4000-8000-000000000000";
-        mockedApi.createRole.mockRejectedValue(
+        mockedApi.createPreset.mockRejectedValue(
             new ApiError({ status: 404, code: "WORKSPACE_NOT_FOUND", detail, requestId: "t" }),
         );
         const wrapper = await mountView();
@@ -634,32 +636,32 @@ describe("RoleEditorDialog · task-126 资源前缀", () => {
 
 describe("RolesView delete flow", () => {
     it("deletes a custom role after confirmation", async () => {
-        mockedApi.deleteRole.mockResolvedValue(undefined);
+        mockedApi.deletePreset.mockResolvedValue(undefined);
         await mountView();
 
         await clickBody('[data-testid="role-delete-AUDITOR"]');
         // task-49：删除角色的 AlertDialog 也要能读出「这是模态弹层 + 名字来自标题」。
-        expectModalDialog("role-delete-dialog", "alertdialog", "删除角色？");
+        expectModalDialog("role-delete-dialog", "alertdialog", "删除授权预设？");
         await clickBody('[data-testid="role-delete-confirm"]');
 
-        await vi.waitFor(() => expect(mockedApi.deleteRole).toHaveBeenCalledWith("role-1"));
-        expect(mockedApi.listRoles).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(mockedApi.deletePreset).toHaveBeenCalledWith("role-1"));
+        expect(mockedApi.listPresets).toHaveBeenCalledTimes(2);
     });
 
     it("localizes ROLE_IN_USE instead of echoing the server detail", async () => {
-        mockedApi.deleteRole.mockRejectedValue(problemError(409, "ROLE_IN_USE"));
+        mockedApi.deletePreset.mockRejectedValue(problemError(409, "ROLE_IN_USE"));
         const wrapper = await mountView();
 
         await clickBody('[data-testid="role-delete-AUDITOR"]');
         await clickBody('[data-testid="role-delete-confirm"]');
 
         const error = wrapper.get('[data-testid="roles-error"]');
-        expect(error.text()).toBe(i18n.global.t("settings.rolesError.roleInUse"));
+        expect(error.text()).toBe(i18n.global.t("settings.presetsError.presetInUse"));
         expect(error.text()).not.toContain("english detail");
     });
 
     it("localizes SYSTEM_ROLE_IMMUTABLE when the server refuses", async () => {
-        mockedApi.updateRole.mockRejectedValue(problemError(409, "SYSTEM_ROLE_IMMUTABLE"));
+        mockedApi.updatePreset.mockRejectedValue(problemError(409, "SYSTEM_ROLE_IMMUTABLE"));
         const wrapper = await mountView();
 
         await clickBody('[data-testid="role-edit-SUPER_ADMIN"]');
@@ -667,7 +669,7 @@ describe("RolesView delete flow", () => {
 
         await vi.waitFor(() =>
             expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(
-                i18n.global.t("settings.rolesError.systemRoleImmutable"),
+                i18n.global.t("settings.presetsError.systemPresetImmutable"),
             ),
         );
     });
@@ -800,7 +802,7 @@ describe("RoleBindingsPanel", () => {
     });
 
     it.each([
-        ["ROLE_SCOPE_MISMATCH", 400, "roleScopeMismatch"],
+        ["ROLE_SCOPE_MISMATCH", 400, "presetScopeMismatch"],
         ["PRIVILEGE_ESCALATION", 403, "privilegeEscalation"],
         ["LAST_SUPER_ADMIN", 409, "lastSuperAdmin"],
         ["CONCURRENT_MODIFICATION", 409, "concurrentModification"],
@@ -812,7 +814,7 @@ describe("RoleBindingsPanel", () => {
 
         await vi.waitFor(() =>
             expect(wrapper.get('[data-testid="role-bindings-error"]').text()).toBe(
-                i18n.global.t(`settings.rolesError.${key}`),
+                i18n.global.t(`settings.presetsError.${key}`),
             ),
         );
         expect(wrapper.get('[data-testid="role-bindings-error"]').text()).not.toContain(
@@ -824,7 +826,7 @@ describe("RoleBindingsPanel", () => {
         mockedApi.listWorkspaces.mockResolvedValue([
             { id: "ws-1", name: "Workspace One" },
         ] as never);
-        mockedApi.listRoles.mockResolvedValue([
+        mockedApi.listPresets.mockResolvedValue([
             SYSTEM_ROLE,
             role({ id: "role-both", name: "AUDITOR", atoms: [BOTH_ATOM] }),
             role({ id: "role-instance", name: "INSTANCE_ONLY", atoms: [INSTANCE_ATOM] }),
@@ -874,27 +876,31 @@ describe("RoleBindingsPanel", () => {
     });
 });
 
-describe("roleErrorMessages", () => {
+describe("presetErrorMessages", () => {
     it("maps every required code and falls back without leaking the detail", () => {
-        expect(roleErrorKey(problemError(400, "ROLE_SCOPE_MISMATCH"))).toBe("roleScopeMismatch");
-        expect(roleErrorKey(problemError(403, "PRIVILEGE_ESCALATION"))).toBe("privilegeEscalation");
-        expect(roleErrorKey(problemError(409, "LAST_SUPER_ADMIN"))).toBe("lastSuperAdmin");
-        expect(roleErrorKey(problemError(409, "CONCURRENT_MODIFICATION"))).toBe(
+        expect(presetErrorKey(problemError(400, "ROLE_SCOPE_MISMATCH"))).toBe(
+            "presetScopeMismatch",
+        );
+        expect(presetErrorKey(problemError(403, "PRIVILEGE_ESCALATION"))).toBe(
+            "privilegeEscalation",
+        );
+        expect(presetErrorKey(problemError(409, "LAST_SUPER_ADMIN"))).toBe("lastSuperAdmin");
+        expect(presetErrorKey(problemError(409, "CONCURRENT_MODIFICATION"))).toBe(
             "concurrentModification",
         );
-        expect(roleErrorKey(problemError(400, "INVALID_GRANT_RESOURCE"))).toBe(
+        expect(presetErrorKey(problemError(400, "INVALID_GRANT_RESOURCE"))).toBe(
             "invalidGrantResource",
         );
-        expect(roleErrorKey(new Error("boom"))).toBe("generic");
+        expect(presetErrorKey(new Error("boom"))).toBe("generic");
 
-        const message = roleErrorMessage(problemError(409, "ROLE_IN_USE"), (key) => key);
-        expect(message).toBe("settings.rolesError.roleInUse");
+        const message = presetErrorMessage(problemError(409, "ROLE_IN_USE"), (key) => key);
+        expect(message).toBe("settings.presetsError.presetInUse");
     });
 });
 
 /**
  * task-416 P1-3 / P1-4（Lead D-1312 修订裁）。
- * P1-3：原子目录条目多、平铺无搜索 ⇒ 加 **vendor 搜索输入**过滤可见集（条目数以 GET /roles/catalog
+ * P1-3：原子目录条目多、平铺无搜索 ⇒ 加 **vendor 搜索输入**过滤可见集（条目数以 GET /presets/catalog
  * 返回为准，不复制该数——D-1767；旧写「79 条」从未属实，演进见 PermissionAtomCatalog.java）；
  * **不换 Command** —— CommandItem 是单选菜单语义，会把「多选原子」变成「单选触发」，
  * a11y 与既有交互都要重做（被否决候选，写进 commit body）。
@@ -950,8 +956,8 @@ describe("RolesView · task-416 P1-3 原子搜索", () => {
         displayInput.value = "SEARCHED 角色";
         displayInput.dispatchEvent(new Event("input", { bubbles: true }));
         await clickBody('[data-testid="role-editor-submit"]');
-        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
-        expect(mockedApi.createRole.mock.calls[0]?.[0]?.atoms).toEqual([
+        await vi.waitFor(() => expect(mockedApi.createPreset).toHaveBeenCalled());
+        expect(mockedApi.createPreset.mock.calls[0]?.[0]?.atoms).toEqual([
             "FUTURE_ATOM_FROM_CATALOG",
         ]);
     });
@@ -971,15 +977,15 @@ describe("RolesView · task-416 P1-3 原子搜索", () => {
         displayInput.value = "KEPT 角色";
         displayInput.dispatchEvent(new Event("input", { bubbles: true }));
         await clickBody('[data-testid="role-editor-submit"]');
-        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
-        expect(mockedApi.createRole.mock.calls[0]?.[0]?.atoms).toEqual([
+        await vi.waitFor(() => expect(mockedApi.createPreset).toHaveBeenCalled());
+        expect(mockedApi.createPreset.mock.calls[0]?.[0]?.atoms).toEqual([
             "FUTURE_ATOM_FROM_CATALOG",
         ]);
     });
 });
 
 describe("RolesView · task-416 P1-4 角色列表关键信息", () => {
-    const manyAtoms: apiModule.ApiRoleAtom[] = [1, 2, 3, 4, 5].map((n) => ({
+    const manyAtoms: apiModule.ApiPresetAtom[] = [1, 2, 3, 4, 5].map((n) => ({
         name: `atom_${n}`,
         scopeClass: "both",
         capability: false,
@@ -988,7 +994,7 @@ describe("RolesView · task-416 P1-4 角色列表关键信息", () => {
     }));
 
     it("展示前 3 条原子标签与余量，而不是只有计数", async () => {
-        mockedApi.listRoles.mockResolvedValue([role({ name: "MANY", atoms: manyAtoms })]);
+        mockedApi.listPresets.mockResolvedValue([role({ name: "MANY", atoms: manyAtoms })]);
         const wrapper = await mountView();
         const row = wrapper.get('[data-testid="role-row-MANY"]');
         const summary = row.get('[data-testid="role-atom-summary"]').text();
@@ -999,7 +1005,7 @@ describe("RolesView · task-416 P1-4 角色列表关键信息", () => {
     });
 
     it("原子数 ≤3 时不渲染余量", async () => {
-        mockedApi.listRoles.mockResolvedValue([
+        mockedApi.listPresets.mockResolvedValue([
             role({ name: "FEW", atoms: manyAtoms.slice(0, 2) }),
         ]);
         const wrapper = await mountView();
@@ -1008,7 +1014,7 @@ describe("RolesView · task-416 P1-4 角色列表关键信息", () => {
     });
 
     it("含禁用原子的角色给出提示（消费服务端标记）", async () => {
-        mockedApi.listRoles.mockResolvedValue([
+        mockedApi.listPresets.mockResolvedValue([
             role({
                 name: "FORBIDDEN",
                 atoms: [{ ...manyAtoms[0]!, agentPrincipalForbidden: true }],
