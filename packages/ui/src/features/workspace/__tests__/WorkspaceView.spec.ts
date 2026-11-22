@@ -63,15 +63,34 @@ const mockedApi = vi.mocked(api, true);
 const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     SESSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
+const globalCopy = (key: string): string => globalI18n.global.t(key, {}, { locale: "en-US" });
+
 const i18n = createI18n({
     legacy: false,
     locale: "en",
     messages: {
         en: {
+            common: {
+                files: globalCopy("common.files"),
+            },
+            files: {
+                titleFiles: globalCopy("files.titleFiles"),
+            },
+            sidebar: {
+                newChat: globalCopy("sidebar.newChat"),
+            },
+            validation: {
+                principalNameRequired: globalCopy("validation.principalNameRequired"),
+            },
+            workspaceAgents: {
+                noDefaultHint: globalCopy("workspaceAgents.noDefaultHint"),
+            },
             workspace: {
                 panelCode: "Code",
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
+                panelFiles: globalCopy("workspace.panelFiles"),
+                panelAgents: globalCopy("workspace.panelAgents"),
                 chatHeader: "Workspace chat",
                 noSession: "No active session",
                 createSession: "New chat",
@@ -137,11 +156,34 @@ const i18n = createI18n({
                 dockTabOpen: "Open",
                 dockEmptyHint: "No panels are open yet. Use + above to pick one.",
                 containerEmpty: "No tabs in this container",
+                containerTabsLabelMain: globalCopy("workspace.containerTabsLabelMain"),
+                containerMain: globalCopy("workspace.containerMain"),
+                containerTabsLabelRight: globalCopy("workspace.containerTabsLabelRight"),
+                containerRight: globalCopy("workspace.containerRight"),
+                dockTabs: globalCopy("workspace.dockTabs"),
+                dockResize: globalCopy("workspace.dockResize"),
+                dockFocusExpand: globalCopy("workspace.dockFocusExpand"),
+                dockFocusHint: globalCopy("workspace.dockFocusHint"),
                 expandFiles: "Expand the file tree",
                 collapseFiles: "Collapse the file tree",
                 toggleCode: "Toggle the code panel",
                 toggleDiff: "Toggle the changes panel",
                 toggleMonitor: "Toggle the monitor panel",
+                toolbarMore: globalCopy("workspace.toolbarMore"),
+                sseReconnectingTitle: globalCopy("workspace.sseReconnectingTitle"),
+                sseReconnectingHint: globalCopy("workspace.sseReconnectingHint"),
+                agentPermissionLoading: globalCopy("workspace.agentPermissionLoading"),
+                agentTemplateChoice: globalCopy("workspace.agentTemplateChoice"),
+                agentDefaultModelProvider: globalCopy("workspace.agentDefaultModelProvider"),
+                agentModelProviderPlaceholder: globalCopy(
+                    "workspace.agentModelProviderPlaceholder",
+                ),
+                agentDefaultModelName: globalCopy("workspace.agentDefaultModelName"),
+                agentModelNamePlaceholder: globalCopy("workspace.agentModelNamePlaceholder"),
+                agentAllowedModels: globalCopy("workspace.agentAllowedModels"),
+                agentAllowedModelAdd: globalCopy("workspace.agentAllowedModelAdd"),
+                agentAllowedModelsHint: globalCopy("workspace.agentAllowedModelsHint"),
+                agentCapSnapshotHint: globalCopy("workspace.agentCapSnapshotHint"),
             },
         },
     },
