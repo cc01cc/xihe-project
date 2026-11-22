@@ -133,23 +133,26 @@ Three principles: (1) **inverted pyramid** — an H1 lead-in (audience + what is
 
 > Project exception: the workspace DOC-002 rule asks for pure ASCII without emoji. This series keeps the four markers ✅/⚠️/❌/→ for scanability and consistency with existing documents; everything else still follows DOC-002 (no other emoji or decorative characters).
 
-### 6.1 Diagram selection (2026-11-20)
+### 6.1 Diagram selection (revised 2026-11-22)
 
-The "Diagrams" line in §6 becomes executable here: **structure / layering / comparison** use **inline SVG**; **flows / sequences / states** stay on mermaid.
+The "Diagrams" line in §6 becomes executable here: **Mermaid by default** — structure, layering, region naming and comparison matrices use Mermaid whenever they map to "nodes + edges"; **only spatial arrangements Mermaid cannot express** (free-form geometry, non-graph layouts) fall back to inline SVG.
 
 | Content shape | First choice | Note |
 | --- | --- | --- |
-| Structure, layering, region naming, comparison matrices | inline SVG (raw HTML) | one picture says what sits where; no renderer plugin needed |
-| Flows, sequences, state machines | mermaid | the existing 28 blocks across 15 documents stay as they are; natively supported |
-| Directory trees, level overviews | ASCII | mermaid has no better type (§6 original rule) |
+| Structure, layering, region naming, comparison matrices | Mermaid (`flowchart` / `subgraph`) | use it whenever the content maps to nodes and edges; subgraphs carry detail, the pipeline renders it natively |
+| Flows, sequences, state machines | Mermaid | the existing 28 blocks across 15 documents stay as they are |
+| Spatial arrangements Mermaid cannot express | inline SVG (raw HTML, script-generated) | free-form geometry / non-graph layouts only, and must pass the three hard rules below |
+| Directory trees, level overviews | ASCII | Mermaid has no better type (§6 original rule) |
 
-**Three hard rules**:
+**Three hard rules for the SVG exception** (apply only to the "spatial arrangement" row above):
 
-1. **Inline SVG only, never a linked bitmap**: the doc site ingests documents through FB02's `walkMd` (`packages/apps/api/src/lib/project-doc-importer.ts:143`), which only takes `.md` ⇒ `![](assets/x.png)` never ships with the docs and 404s in production.
-2. **Sanctioned names only**: every label inside a diagram comes from the owning document's name table (for example DEV-010 §10.1.1); diagrams never coin vocabulary.
-3. **Both languages in the same batch**: zh and en receive the same diagram in one change (labels localised too), otherwise the heading pairing in `check:dev-i18n-drift` gains hits.
+1. **Script-generated**: coordinates come from a script; never hand-write `path` / `rect` coordinates — hand-written ones drift into dangling segments, off-centre layouts and line ends poking into boxes (the old DEV-001 diagram is the example).
+2. **Geometry-checked**: before committing, validate line endpoints and node bounding boxes — no dangling start/end points, no clipping, no overlaps; keep the checker script and its readings as evidence.
+3. **Both languages in the same batch**: zh and en in one change (labels localised too), otherwise the heading pairing in `check:dev-i18n-drift` gains hits.
 
-**Copyable skeleton** (`viewBox` for the ratio, `width="100%"` to stay inside the body column, `role="img"` + `<title>` for accessibility):
+**Image sources**: Mermaid stays the default; when a bitmap is needed, use a relative path (`![](./assets/x.png)`), which the EW doc-site importer publishes at import time — "local relative path + publish on import" is the user's 2026-11-22 decision, so embedding every image inside the `.md` is no longer required. Labels still come only from the owning document's name table (for example DEV-010 §10.1.1), and both languages ship together.
+
+**Final artifact shape** (produced by a script — do not hand-edit coordinates; `viewBox` for the ratio, `width="100%"` to stay inside the body column, `role="img"` + `<title>` for accessibility):
 
 ```html
 <svg viewBox="0 0 660 300" width="100%" role="img">

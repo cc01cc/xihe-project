@@ -27,32 +27,7 @@ flowchart LR
     AG -.-> LLM["LLM Providers<br/>(经 CP 调度)"]
 ```
 
-四模块的分层与调用主线（结构图用内联 SVG，口径见 DEV-030 §6.1）：
-
-<svg viewBox="0 0 660 300" width="100%" role="img">
-  <title>四模块分层与调用主线</title>
-  <rect x="160" y="18" width="340" height="34" rx="5" fill="#f3f4f6" stroke="#9ca3af"/>
-  <text x="330" y="40" font-size="13" fill="#374151" text-anchor="middle">操作入口</text>
-  <rect x="40" y="84" width="180" height="52" rx="5" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="130" y="106" font-size="13" fill="#374151" text-anchor="middle">UI 模块</text>
-  <text x="130" y="124" font-size="11" fill="#6b7280" text-anchor="middle">人类交互</text>
-  <rect x="440" y="84" width="180" height="52" rx="5" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="530" y="106" font-size="13" fill="#374151" text-anchor="middle">Agent 模块</text>
-  <text x="530" y="124" font-size="11" fill="#6b7280" text-anchor="middle">编排与思考</text>
-  <rect x="160" y="168" width="340" height="52" rx="5" fill="#eef2ff" stroke="#4f46e5"/>
-  <text x="330" y="190" font-size="13" fill="#312e81" text-anchor="middle">CP 模块</text>
-  <text x="330" y="208" font-size="11" fill="#4338ca" text-anchor="middle">路由 · 权限</text>
-  <rect x="160" y="250" width="180" height="40" rx="5" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="250" y="275" font-size="13" fill="#374151" text-anchor="middle">Runtime 模块</text>
-  <rect x="380" y="250" width="120" height="40" rx="5" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="440" y="275" font-size="12" fill="#374151" text-anchor="middle">PostgreSQL</text>
-  <path d="M130 136 L130 158 L165 158 L165 168" stroke="#9ca3af" fill="none"/>
-  <path d="M530 136 L530 158 L495 158 L495 168" stroke="#9ca3af" fill="none"/>
-  <path d="M300 220 L300 250" stroke="#9ca3af" fill="none"/>
-  <path d="M380 270 L330 270" stroke="#9ca3af" fill="none"/>
-  <path d="M330 52 L330 64" stroke="#9ca3af" fill="none"/>
-  <text x="330" y="78" font-size="11" fill="#6b7280" text-anchor="middle">两条入口汇入 CP</text>
-</svg>
+分层与调用主线见上方流程图；结构图与 Mermaid 的选型口径见 DEV-030 §6.1。
 
 ### 1.1. UI 模块 — Vue/TypeScript
 
