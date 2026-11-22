@@ -34,6 +34,7 @@ const i18n = createI18n({
         zh: {
             workspace: { participantUnknownName: "未知用户" },
             chat: {
+                searchMessages: "Search messages",
                 contextTruncationNotice:
                     "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
                 contextTruncationDismiss: "关闭截断提示",

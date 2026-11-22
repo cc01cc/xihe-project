@@ -19,11 +19,25 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { computed, defineComponent, h, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
+import { createI18n } from "vue-i18n";
 import { provideSidebarContext } from "@/components/ui/sidebar/utils";
 import Sidebar from "@/components/ui/sidebar/Sidebar.vue";
 import SidebarMenuButton from "@/components/ui/sidebar/SidebarMenuButton.vue";
 import SidebarProvider from "@/components/ui/sidebar/SidebarProvider.vue";
 import { TooltipProvider } from "@/components/ui/tooltip";
+
+const i18n = createI18n({
+    legacy: false,
+    locale: "zh-CN",
+    messages: {
+        "zh-CN": {
+            sidebar: {
+                mobileTitle: "侧边栏",
+                mobileDescription: "移动端侧边栏。",
+            },
+        },
+    },
+});
 
 const KEYDOWN = () =>
     new KeyboardEvent("keydown", { key: "b", ctrlKey: true, bubbles: true, cancelable: true });
@@ -118,7 +132,7 @@ describe("(A) Sidebar 组件族 + 手工 provideSidebarContext（不挂 provider
 
     it("Q1 手工 provide 后 Sidebar 挂载，data-state 随调用方 open 切换", async () => {
         const { Host, open } = manualHarness({ tooltip: false });
-        const wrapper = mount(Host);
+        const wrapper = mount(Host, { global: { plugins: [i18n] } });
 
         expect(wrapper.find('[data-slot="sidebar"]').exists()).toBe(true);
         expect(sidebarOf(wrapper).dataset.state).toBe("expanded");
@@ -144,7 +158,7 @@ describe("(A) Sidebar 组件族 + 手工 provideSidebarContext（不挂 provider
 
     it("Q2 不带 provider ⇒ ⌘B 对本子树无效（无监听）；同级 provider 子树仍响应", async () => {
         const manual = manualHarness({ tooltip: false });
-        const manualWrapper = mount(manual.Host);
+        const manualWrapper = mount(manual.Host, { global: { plugins: [i18n] } });
         expect(sidebarOf(manualWrapper).dataset.state).toBe("expanded");
 
         document.dispatchEvent(KEYDOWN());
@@ -154,7 +168,7 @@ describe("(A) Sidebar 组件族 + 手工 provideSidebarContext（不挂 provider
 
         // 同一 document 上再挂一个 provider 子树（GlobalRail 形态）
         const provider = providerHarness();
-        const providerWrapper = mount(provider.Host);
+        const providerWrapper = mount(provider.Host, { global: { plugins: [i18n] } });
         expect(sidebarOf(providerWrapper).dataset.state).toBe("expanded");
 
         document.dispatchEvent(KEYDOWN());
@@ -170,14 +184,14 @@ describe("(A) Sidebar 组件族 + 手工 provideSidebarContext（不挂 provider
         expect(before).not.toContain("sidebar_state");
 
         const manual = manualHarness({ tooltip: false });
-        const manualWrapper = mount(manual.Host);
+        const manualWrapper = mount(manual.Host, { global: { plugins: [i18n] } });
         manual.open.value = false;
         await nextTick();
         expect(document.cookie).toBe(before);
         expect(document.cookie).not.toContain("sidebar_state");
 
         const provider = providerHarness();
-        mount(provider.Host);
+        mount(provider.Host, { global: { plugins: [i18n] } });
         document.dispatchEvent(KEYDOWN());
         await nextTick();
         expect(document.cookie).toContain("sidebar_state=false");
@@ -186,7 +200,7 @@ describe("(A) Sidebar 组件族 + 手工 provideSidebarContext（不挂 provider
 
     it("Q3b 宽度来自调用方注入的 --sidebar-width，不是 16rem 常量", () => {
         const { Host } = manualHarness({ tooltip: false });
-        const wrapper = mount(Host);
+        const wrapper = mount(Host, { global: { plugins: [i18n] } });
         const root = wrapper.element as HTMLElement;
 
         expect(root.style.getPropertyValue("--sidebar-width")).toBe("280px");
@@ -195,17 +209,21 @@ describe("(A) Sidebar 组件族 + 手工 provideSidebarContext（不挂 provider
         expect(wrapper.html()).toContain("w-(--sidebar-width)");
 
         // 对照：真 provider 会把 --sidebar-width 写死 16rem（我们不想要的那层）
-        expect(mount(providerHarness().Host).html()).toContain("--sidebar-width: 16rem");
+        expect(mount(providerHarness().Host, { global: { plugins: [i18n] } }).html()).toContain(
+            "--sidebar-width: 16rem",
+        );
     });
 
     it("Q3c tooltip 需要自己包 TooltipProvider（provider 原本替我们包）", () => {
         // 无 TooltipProvider ⇒ reka TooltipRoot 注入失败，挂载抛错
-        expect(() => mount(manualHarness({ tooltip: true }).Host)).toThrow(
-            /Injection .*TooltipProvider.*not found/,
-        );
+        expect(() =>
+            mount(manualHarness({ tooltip: true }).Host, { global: { plugins: [i18n] } }),
+        ).toThrow(/Injection .*TooltipProvider.*not found/);
 
         // 自己包一层即可正常挂载
-        const wrapper = mount(manualHarness({ tooltip: true, tooltipProvider: true }).Host);
+        const wrapper = mount(manualHarness({ tooltip: true, tooltipProvider: true }).Host, {
+            global: { plugins: [i18n] },
+        });
         expect(wrapper.find('[data-slot="sidebar"]').exists()).toBe(true);
         expect(wrapper.text()).toContain("NavItem");
     });

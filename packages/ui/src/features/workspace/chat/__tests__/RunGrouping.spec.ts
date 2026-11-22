@@ -18,6 +18,7 @@ const i18n = createI18n({
             // 本 spec 只钉分组结构，但保留该 key 以免 intlify 缺键告警淹没输出。
             workspace: { participantUnknownName: "未知用户" },
             chat: {
+                searchMessages: "Search messages",
                 runHeader: { toggle: "展开或折叠 run {run}" },
                 followUpStatusCompleted: "已完成",
                 followUpStatusFailed: "失败",

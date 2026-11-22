@@ -16,6 +16,9 @@ const i18n = createI18n({
                 closeSearch: "关闭搜索",
                 closeTab: "关闭标签页",
             },
+            chat: {
+                searchPlaceholder: "Search messages…",
+            },
         },
     },
 });

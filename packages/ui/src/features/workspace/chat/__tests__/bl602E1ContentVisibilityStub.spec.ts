@@ -78,6 +78,7 @@ const i18n = createI18n({
             },
             workspace: { participantUnknownName: "未知用户" },
             chat: {
+                searchMessages: "Search messages",
                 runHeader: { toggle: "展开或折叠 run {run}" },
                 followUpStatusCompleted: "已完成",
                 followUpStatusFailed: "失败",
