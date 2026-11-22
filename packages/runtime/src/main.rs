@@ -905,12 +905,7 @@ impl XiheRuntime {
 #[tool_handler]
 impl ServerHandler for XiheRuntime {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        Cow::Borrowed(&[
-            ProtocolVersion::V_2026_07_28,
-            ProtocolVersion::V_2025_11_25,
-            ProtocolVersion::V_2025_06_18,
-            ProtocolVersion::V_2025_03_26,
-        ])
+        xihe_runtime::mcp_protocol::server_supported_versions()
     }
 
     // PLAN-0308 M1（spec S1/S2）：读取 CP 随请求下发的等待值（含性质标记），
@@ -5280,6 +5275,53 @@ mod remote_handler_tests {
                 assert_eq!(error.1.0["code"], "EXECUTION_SPEC_INVALID");
             }
         }
+    }
+
+    /// CP's direct_attach wire is `workspaceId + workspacePath + executionMode + roots`.
+    /// The response must keep the serialized field names (`status` / `workspaceId`),
+    /// not only the Rust struct fields.
+    #[tokio::test]
+    async fn direct_attach_registration_serializes_the_cp_wire_response() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let dir = tempfile::tempdir().expect("workspace dir");
+        let primary = dir.path().to_string_lossy().to_string();
+        let request = registration_request(
+            "ws-wire",
+            Some(primary.clone()),
+            None,
+            Some("windows-host"),
+            Some(vec![RegisterRoot {
+                root_id: "ws-wire".to_string(),
+                host_path: primary,
+            }]),
+        );
+        let response = create_workspace_handler(State(state), AxumJson(request))
+            .await
+            .expect("CP direct_attach wire must be accepted");
+        let body = serde_json::to_value(response.0).expect("serialize create response");
+        assert_eq!(body["status"], serde_json::json!("ok"));
+        assert_eq!(body["workspaceId"], serde_json::json!("ws-wire"));
+    }
+
+    /// `storageRef` and `workspacePath` are two different registration modes and
+    /// stay mutually exclusive: CP never sends both. A client that does gets a
+    /// typed 400, not a silent pick-one.
+    #[tokio::test]
+    async fn registration_rejects_storage_ref_alongside_workspace_path() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let dir = tempfile::tempdir().expect("workspace dir");
+        let primary = dir.path().to_string_lossy().to_string();
+        let request = registration_request("ws-mixed", Some(primary), Some("ws-mixed"), None, None);
+        let error = create_workspace_handler(State(state), AxumJson(request))
+            .await
+            .expect_err("mixed registration must be rejected");
+        assert_eq!(error.0, StatusCode::BAD_REQUEST, "unexpected {error:?}");
+        assert_eq!(error.1.0["code"], "INVALID_REQUEST");
+        let detail = error.1.0["detail"].as_str().unwrap_or_default();
+        assert!(
+            detail.contains("mutually exclusive"),
+            "detail must name the conflicting fields, got {detail:?}"
+        );
     }
     pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
         test_state_with_backend(cp_url, None).await
