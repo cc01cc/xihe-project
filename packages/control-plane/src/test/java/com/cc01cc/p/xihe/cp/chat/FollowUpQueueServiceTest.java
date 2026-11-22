@@ -268,4 +268,175 @@ class FollowUpQueueServiceTest {
         assertEquals(SessionFollowUpItem.PAUSE_ATTACHMENT_UNAVAILABLE, item.getPauseReason());
         assertFalse(admissionCalled.get());
     }
+
+    @Test
+    void terminalAnchorAdmitsTheQueuedHead() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        SessionFollowUpItemRepository items = mock(SessionFollowUpItemRepository.class);
+        ChatRunRepository runs = mock(ChatRunRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        BranchPathService branches = mock(BranchPathService.class);
+        DbLockTimeout lockTimeout = mock(DbLockTimeout.class);
+        EntityManager entityManager = mock(EntityManager.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        TaskScheduler taskScheduler = mock(TaskScheduler.class);
+        ObjectMapper mapper = new ObjectMapper();
+        FollowUpQueueService service = new FollowUpQueueService(sessions, items, runs, files, branches,
+                lockTimeout, mapper, entityManager, events, taskScheduler);
+
+        UUID sessionUuid = UUID.randomUUID();
+        UUID anchorRunUuid = UUID.randomUUID();
+        UUID childRunUuid = UUID.randomUUID();
+        String sessionId = sessionUuid.toString();
+        String userId = UUID.randomUUID().toString();
+        String workspaceId = UUID.randomUUID().toString();
+        String branchId = UUID.randomUUID().toString();
+        Session session = new Session(workspaceId, userId, "terminal-anchor");
+        session.setId(sessionUuid);
+        SessionFollowUpItem item = SessionFollowUpItem.create();
+        item.setId(UUID.randomUUID());
+        item.setSessionId(sessionId);
+        item.setQueueSequence(1);
+        item.setStatus(SessionFollowUpItem.STATUS_QUEUED);
+        item.setAnchorRunId(anchorRunUuid);
+        item.setBranchId(UUID.fromString(branchId));
+        item.setContent("deliver after a normal turn");
+        item.setAttachmentRefs(mapper.createArrayNode());
+        ChatRun anchor = new ChatRun(anchorRunUuid.toString(), sessionId, userId, workspaceId,
+                "parent", "hash", null, null, "none", "succeeded");
+
+        when(sessions.findByIdForUpdate(sessionUuid)).thenReturn(Optional.of(session));
+        when(items.findBySessionIdAndStatusInOrderByQueueSequenceAsc(
+                eq(sessionId), anyCollection())).thenReturn(List.of(item));
+        when(runs.findById(anchorRunUuid)).thenReturn(Optional.of(anchor));
+        when(branches.resolveVisibility(sessionId, branchId))
+                .thenReturn(new BranchPathService.BranchVisibility(branchId, Map.of()));
+        when(items.saveAndFlush(item)).thenReturn(item);
+
+        FollowUpQueueService.AdmissionResult result = service.admitHead(sessionId,
+                ignored -> new FollowUpQueueService.ChildAdmission(childRunUuid, UUID.randomUUID()));
+
+        assertTrue(result.admitted());
+        assertEquals(SessionFollowUpItem.STATUS_ADMITTED, item.getStatus());
+        assertEquals(childRunUuid, item.getChildRunId());
+        assertNull(item.getPauseReason());
+    }
+
+    @Test
+    void ambiguousAnchorPausesTheHeadWithoutAdmission() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        SessionFollowUpItemRepository items = mock(SessionFollowUpItemRepository.class);
+        ChatRunRepository runs = mock(ChatRunRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        BranchPathService branches = mock(BranchPathService.class);
+        DbLockTimeout lockTimeout = mock(DbLockTimeout.class);
+        EntityManager entityManager = mock(EntityManager.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        TaskScheduler taskScheduler = mock(TaskScheduler.class);
+        ObjectMapper mapper = new ObjectMapper();
+        FollowUpQueueService service = new FollowUpQueueService(sessions, items, runs, files, branches,
+                lockTimeout, mapper, entityManager, events, taskScheduler);
+
+        UUID sessionUuid = UUID.randomUUID();
+        UUID anchorRunUuid = UUID.randomUUID();
+        String sessionId = sessionUuid.toString();
+        String userId = UUID.randomUUID().toString();
+        String workspaceId = UUID.randomUUID().toString();
+        String branchId = UUID.randomUUID().toString();
+        Session session = new Session(workspaceId, userId, "ambiguous-anchor");
+        session.setId(sessionUuid);
+        SessionFollowUpItem item = SessionFollowUpItem.create();
+        item.setId(UUID.randomUUID());
+        item.setSessionId(sessionId);
+        item.setQueueSequence(1);
+        item.setStatus(SessionFollowUpItem.STATUS_QUEUED);
+        item.setAnchorRunId(anchorRunUuid);
+        item.setBranchId(UUID.fromString(branchId));
+        item.setContent("must wait for explicit continue");
+        item.setAttachmentRefs(mapper.createArrayNode());
+        ChatRun anchor = new ChatRun(anchorRunUuid.toString(), sessionId, userId, workspaceId,
+                "parent", "hash", null, null, "none", "ambiguous");
+        AtomicBoolean admissionCalled = new AtomicBoolean(false);
+
+        when(sessions.findByIdForUpdate(sessionUuid)).thenReturn(Optional.of(session));
+        when(items.findBySessionIdAndStatusInOrderByQueueSequenceAsc(
+                eq(sessionId), anyCollection())).thenReturn(List.of(item));
+        when(runs.findById(anchorRunUuid)).thenReturn(Optional.of(anchor));
+
+        FollowUpQueueService.AdmissionResult result = service.admitHead(sessionId, ignored -> {
+            admissionCalled.set(true);
+            return new FollowUpQueueService.ChildAdmission(UUID.randomUUID(), UUID.randomUUID());
+        });
+
+        assertFalse(result.admitted());
+        assertEquals(SessionFollowUpItem.PAUSE_PARENT_AMBIGUOUS, result.blockedReason());
+        assertEquals(SessionFollowUpItem.STATUS_PAUSED, item.getStatus());
+        assertEquals(SessionFollowUpItem.PAUSE_PARENT_AMBIGUOUS, item.getPauseReason());
+        assertEquals(anchorRunUuid, item.getPauseRunId());
+        assertEquals(SessionFollowUpItem.PAUSE_PARENT_AMBIGUOUS, result.snapshot().pauseReason());
+        assertFalse(admissionCalled.get());
+    }
+
+    @Test
+    void explicitContinueReleasesAnAmbiguousAnchor() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        SessionFollowUpItemRepository items = mock(SessionFollowUpItemRepository.class);
+        ChatRunRepository runs = mock(ChatRunRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        BranchPathService branches = mock(BranchPathService.class);
+        DbLockTimeout lockTimeout = mock(DbLockTimeout.class);
+        EntityManager entityManager = mock(EntityManager.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        TaskScheduler taskScheduler = mock(TaskScheduler.class);
+        ObjectMapper mapper = new ObjectMapper();
+        FollowUpQueueService service = new FollowUpQueueService(sessions, items, runs, files, branches,
+                lockTimeout, mapper, entityManager, events, taskScheduler);
+
+        UUID sessionUuid = UUID.randomUUID();
+        UUID anchorRunUuid = UUID.randomUUID();
+        UUID childRunUuid = UUID.randomUUID();
+        String sessionId = sessionUuid.toString();
+        String userId = UUID.randomUUID().toString();
+        String workspaceId = UUID.randomUUID().toString();
+        String branchId = UUID.randomUUID().toString();
+        Session session = new Session(workspaceId, userId, "continue-ambiguous");
+        session.setId(sessionUuid);
+        SessionFollowUpItem item = SessionFollowUpItem.create();
+        item.setId(UUID.randomUUID());
+        item.setSessionId(sessionId);
+        item.setQueueSequence(1);
+        item.setStatus(SessionFollowUpItem.STATUS_PAUSED);
+        item.setPauseReason(SessionFollowUpItem.PAUSE_PARENT_AMBIGUOUS);
+        item.setPauseRunId(anchorRunUuid);
+        item.setAnchorRunId(anchorRunUuid);
+        item.setBranchId(UUID.fromString(branchId));
+        item.setContent("release after explicit continue");
+        item.setAttachmentRefs(mapper.createArrayNode());
+        ChatRun anchor = new ChatRun(anchorRunUuid.toString(), sessionId, userId, workspaceId,
+                "parent", "hash", null, null, "none", "ambiguous");
+
+        TenantContext.setUserId(userId);
+        TenantContext.setWorkspaceId(workspaceId);
+        when(sessions.findByIdForUpdate(sessionUuid)).thenReturn(Optional.of(session));
+        when(items.findBySessionIdAndStatusInOrderByQueueSequenceAsc(
+                eq(sessionId), anyCollection())).thenReturn(List.of(item));
+        when(runs.findById(anchorRunUuid)).thenReturn(Optional.of(anchor));
+        when(branches.resolveVisibility(sessionId, branchId))
+                .thenReturn(new BranchPathService.BranchVisibility(branchId, Map.of()));
+        when(items.saveAndFlush(item)).thenReturn(item);
+
+        FollowUpQueueService.ContinueResult continued = service.continueQueue(sessionId, userId, workspaceId);
+
+        assertTrue(continued.changed());
+        assertEquals(SessionFollowUpItem.STATUS_QUEUED, item.getStatus());
+        assertEquals("continued_after_terminal", item.getPauseReason());
+
+        FollowUpQueueService.AdmissionResult result = service.admitHead(sessionId,
+                ignored -> new FollowUpQueueService.ChildAdmission(childRunUuid, UUID.randomUUID()));
+
+        assertTrue(result.admitted());
+        assertEquals(SessionFollowUpItem.STATUS_ADMITTED, item.getStatus());
+        assertEquals(childRunUuid, item.getChildRunId());
+        assertNull(item.getPauseReason());
+    }
 }
