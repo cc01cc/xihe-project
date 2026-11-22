@@ -112,8 +112,12 @@ public final class PluginBindingAuthorization {
             // A programming error, not a user error: the caller must ask for a plugin atom.
             throw new IllegalArgumentException("Unknown plugin atom: " + requiredAtom);
         }
+        // task-835: grant rows carry the canonical `action:` spelling while this class's constants
+        // stay bare (they are the face-side verb). Compare canonically, never by string equality of
+        // two different layers — a mismatch here would deny every plugin verb.
+        String canonicalRequired = AtomNames.action(requiredAtom);
         for (GrantRow row : held) {
-            if (requiredAtom.equals(row.actionClass())
+            if (canonicalRequired.equals(AtomNames.action(row.actionClass()))
                     && GrantSources.EVALUATION_SOURCES.contains(row.source())) {
                 return new Decision(true, requiredAtom, row.source());
             }

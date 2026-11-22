@@ -89,7 +89,8 @@ public class RequesterAuthority {
      */
     public boolean holdsCapabilityAtom(String atom) {
         UUID subjectId = currentSubjectId();
-        return subjectId != null && authzContext.capabilitiesFor(subjectId).holdsCapability(atom, null);
+        return subjectId != null && authzContext.capabilitiesFor(subjectId)
+                .holdsCapability(AtomNames.capability(atom), null);
     }
 
     /** True when the subject's effective atoms for {@code workspaceId} contain the atom. */
@@ -97,7 +98,7 @@ public class RequesterAuthority {
         if (subjectId == null || actionClass == null) {
             return false;
         }
-        return actionAtoms(subjectId, workspaceId).contains(actionClass);
+        return actionAtoms(subjectId, workspaceId).contains(AtomNames.action(actionClass));
     }
 
     /**
@@ -243,7 +244,11 @@ public class RequesterAuthority {
      * never goes to {@code audit_logs}.
      */
     public void logActionAtomDenied(String atom, UUID subjectId, UUID workspaceId) {
-        String catalogAtom = PermissionAtomCatalog.allAtomNames().contains(atom) ? atom : "-";
+        String catalogAtom = PermissionAtomCatalog.isActionAtom(atom)
+                || PermissionAtomCatalog.isCapabilityAtom(atom)
+                ? (PermissionAtomCatalog.isCapabilityAtom(atom)
+                        ? AtomNames.capability(atom) : AtomNames.action(atom))
+                : "-";
         AtomSourceLookup lookup = atomSourceLookup(subjectId, catalogAtom, workspaceId);
         // Deterministic log output: atomSourceLookup's set is an unordered Set.copyOf view, sort first.
         String joined = lookup.sources().stream().sorted()

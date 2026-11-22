@@ -418,7 +418,9 @@ public class ToolFaceRegistry {
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */
     public static boolean isCredentialActionClass(String actionClass) {
-        return actionClass != null && actionClass.startsWith(CREDENTIAL_ACTION_PREFIX);
+        // task-835: grants/seeds carry the canonical `action:` prefix; the face mapping stays bare.
+        String bare = AtomNames.bare(actionClass);
+        return bare != null && bare.startsWith(CREDENTIAL_ACTION_PREFIX);
     }
 
     /**

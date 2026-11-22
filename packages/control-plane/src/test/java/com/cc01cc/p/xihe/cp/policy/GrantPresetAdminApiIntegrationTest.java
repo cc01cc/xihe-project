@@ -111,20 +111,20 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         atoms.forEach(atom -> byName.put(atom.path("name").asText(), atom));
         assertEquals(PermissionAtomCatalog.actionAtoms().subList(0, 5),
                 texts(atoms).subList(0, 5), "action atoms keep the canonical order");
-        assertEquals("instance", byName.get("MANAGE_ROLES").path("scopeClass").asText());
-        assertFalse(byName.get("MANAGE_ROLES").path("capability").asBoolean());
-        assertEquals("both", byName.get("MANAGE_WORKSPACE_AGENTS").path("scopeClass").asText());
-        assertTrue(byName.get("instance:admin").path("capability").asBoolean());
-        assertEquals("instance", byName.get("instance:admin").path("scopeClass").asText());
-        assertEquals("both", byName.get("workspace:admin").path("scopeClass").asText());
+        assertEquals("instance", byName.get(AtomNames.action("MANAGE_ROLES")).path("scopeClass").asText());
+        assertFalse(byName.get(AtomNames.action("MANAGE_ROLES")).path("capability").asBoolean());
+        assertEquals("both", byName.get(AtomNames.action("MANAGE_WORKSPACE_AGENTS")).path("scopeClass").asText());
+        assertTrue(byName.get("cap:instance:admin").path("capability").asBoolean());
+        assertEquals("instance", byName.get("cap:instance:admin").path("scopeClass").asText());
+        assertEquals("both", byName.get("cap:workspace:admin").path("scopeClass").asText());
         // PLAN-0750 M1 (G1, user ruling 2026-11-10): the atom is back with user-level semantics —
         // the roles/catalog face must list it again, as an instance-bindable action atom that is
         // also agent-principal-forbidden (not a capability).
-        assertTrue(byName.containsKey("CREATE_OWN_AGENT"),
+        assertTrue(byName.containsKey(AtomNames.action("CREATE_OWN_AGENT")),
                 "PLAN-0750 M1: the user-level create atom is part of the catalog vocabulary");
-        assertEquals("instance", byName.get("CREATE_OWN_AGENT").path("scopeClass").asText(),
+        assertEquals("instance", byName.get(AtomNames.action("CREATE_OWN_AGENT")).path("scopeClass").asText(),
                 "creating one's own principal produced no binding, so the atom is instance-bindable only");
-        assertFalse(byName.get("CREATE_OWN_AGENT").path("capability").asBoolean(),
+        assertFalse(byName.get(AtomNames.action("CREATE_OWN_AGENT")).path("capability").asBoolean(),
                 "it is an action atom, not a capability atom");
         assertEquals(PermissionAtomCatalog.capabilityAtoms().size(), atoms.findValues("capability").stream()
                 .filter(JsonNode::asBoolean).count(), "exactly the catalog's capability atoms");
@@ -197,20 +197,24 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
             byRole.put(defaults.get(i).path("roleName").asText(), defaults.get(i));
         }
         // The fixed administrator set is visible: instance:admin is a default grant of ADMIN.
-        assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains("instance:admin"),
+        assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains("cap:instance:admin"),
                 "instance:admin belongs to the fixed instance-administrator default set");
-        assertFalse(texts(byRole.get("USER").path("atoms")).contains("instance:admin"),
+        assertFalse(texts(byRole.get("USER").path("atoms")).contains("cap:instance:admin"),
                 "a plain user is not an instance administrator by default");
         // Lead's flow-P0 question (ui-1 step 0): the instance-agent write gate needs BOTH halves, and
         // the administrator default set carries both — so a disabled button on a plain account is the
         // gate working, not a missing default grant.
-        assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
+        assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains(
+                        AtomNames.action("MANAGE_AGENT_PRINCIPALS")),
                 "ADMIN's default set carries the instance-agent write atom (SystemGrantPresetCatalog:159)");
-        assertTrue(texts(byRole.get("SUPER_ADMIN").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
+        assertTrue(texts(byRole.get("SUPER_ADMIN").path("atoms")).contains(
+                        AtomNames.action("MANAGE_AGENT_PRINCIPALS")),
                 "SUPER_ADMIN holds every action atom by construction");
-        assertFalse(texts(byRole.get("USER").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
+        assertFalse(texts(byRole.get("USER").path("atoms")).contains(
+                        AtomNames.action("MANAGE_AGENT_PRINCIPALS")),
                 "a plain account creates its OWN principal (CREATE_OWN_AGENT), not an instance one");
-        assertTrue(texts(byRole.get("USER").path("atoms")).contains("CREATE_OWN_AGENT"),
+        assertTrue(texts(byRole.get("USER").path("atoms")).contains(
+                        AtomNames.action("CREATE_OWN_AGENT")),
                 "PLAN-0750 M1: the user-level create atom is in the registration default set");
         // Every seeded atom name is part of the exposed vocabulary (no phantom default grant).
         Set<String> vocabulary = new LinkedHashSet<>(texts(body.path("atoms")));
@@ -250,8 +254,10 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     private static JsonNode findAtom(JsonNode atoms, String name) {
+        String canonical = name.startsWith(AtomNames.CAPABILITY_PREFIX)
+                ? name : AtomNames.action(name);
         for (JsonNode atom : atoms) {
-            if (name.equals(atom.path("name").asText())) {
+            if (canonical.equals(atom.path("name").asText())) {
                 return atom;
             }
         }
@@ -271,7 +277,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         JsonNode role = objectMapper.readTree(created.getBody());
         String roleId = role.path("id").asText();
         assertFalse(role.path("system").asBoolean());
-        assertEquals(List.of("read"), texts(role.path("atoms")));
+        assertEquals(List.of(AtomNames.action("read")), texts(role.path("atoms")));
 
         ResponseEntity<String> duplicate = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "AUDITOR", "atoms", List.of("read")), superToken);
@@ -294,7 +300,8 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         assertEquals(HttpStatus.OK, patched.getStatusCode(), patched.getBody());
         JsonNode patchedBody = objectMapper.readTree(patched.getBody());
         assertEquals("Auditor (read-only)", patchedBody.path("displayName").asText());
-        assertEquals(List.of("exec", "read"), texts(patchedBody.path("atoms")));
+        assertEquals(List.of(AtomNames.action("exec"), AtomNames.action("read")),
+                texts(patchedBody.path("atoms")));
 
         ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/presets/" + roleId, null,
                 superToken);
@@ -690,7 +697,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
         JsonNode role = objectMapper.readTree(created.getBody());
         String roleId = role.path("id").asText();
-        assertEquals(List.of("read"), texts(role.path("atoms")));
+        assertEquals(List.of(AtomNames.action("read")), texts(role.path("atoms")));
         assertEquals(pattern, role.path("atoms").get(0).path("resource").asText(),
                 "the response must show the stored pattern, not the catalog's canonical one");
         assertEquals(pattern, jdbc.queryForObject(
@@ -831,7 +838,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         String pattern = "fs:" + workspaceId + "/src";
 
         // instance-only 原子：路径收窄不了实例级权威。
-        assertTrue(PermissionAtomCatalog.instanceOnlyAtoms().contains("MANAGE_ROLES"),
+        assertTrue(PermissionAtomCatalog.instanceOnlyAtoms().contains(AtomNames.action("MANAGE_ROLES")),
                 "MANAGE_ROLES is the instance-only atom this case pins");
         ResponseEntity<String> instanceOnly = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "BAD_SCOPE", "atoms", List.of(Map.of("actionClass", "MANAGE_ROLES",
@@ -842,7 +849,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
 
         // capability 原子：能力不是资源，带路径一律拒。
         ResponseEntity<String> capability = call(HttpMethod.POST, "/api/v1/presets",
-                Map.of("name", "BAD_CAP", "atoms", List.of(Map.of("actionClass", "instance:admin",
+                Map.of("name", "BAD_CAP", "atoms", List.of(Map.of("actionClass", "cap:instance:admin",
                         "resource", pattern))), superToken);
         assertEquals(HttpStatus.BAD_REQUEST, capability.getStatusCode(), capability.getBody());
         assertTrue(capability.getBody().contains("INVALID_GRANT_RESOURCE"), capability.getBody());

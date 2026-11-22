@@ -30,7 +30,7 @@ public final class PermissionAtomLabels {
 
     /** Label for {@code atom}; never empty (unknown atom ⇒ its own name). */
     public static String label(String atom, String locale) {
-        Map<String, String> byLocale = LABELS.get(atom);
+        Map<String, String> byLocale = LABELS.get(canonical(atom));
         if (byLocale == null) {
             return atom;
         }
@@ -142,6 +142,21 @@ public final class PermissionAtomLabels {
 
     private static void put(Map<String, Map<String, String>> labels, String atom,
                             String zh, String en) {
-        labels.put(atom, Map.of(DEFAULT_LOCALE, zh, EN_LOCALE, en));
+        labels.put(canonical(atom), Map.of(DEFAULT_LOCALE, zh, EN_LOCALE, en));
+    }
+
+    /**
+     * task-835: labels are keyed by the canonical atom spelling ({@code action:…} / {@code cap:…}).
+     * The catalog is keyed canonically while most call sites still pass the tool-face constant
+     * ({@code read}); both resolve to one entry, and an unknown value falls through unchanged so
+     * {@code label()} keeps its "never empty" contract.
+     */
+    private static String canonical(String atom) {
+        if (atom == null || AtomNames.isPrefixed(atom)) {
+            return atom;
+        }
+        return PermissionAtomCatalog.isCapabilityAtom(atom)
+                ? AtomNames.capability(atom)
+                : AtomNames.action(atom);
     }
 }

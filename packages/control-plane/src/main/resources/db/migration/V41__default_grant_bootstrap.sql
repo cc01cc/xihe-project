@@ -19,8 +19,8 @@ inserted_grants AS (
     SELECT
         gen_random_uuid(), NULL, NULL, subject_type, subject_id,
         CASE WHEN user_role = 'ADMIN'
-            THEN '[{"actionClass":"read"},{"actionClass":"write"},{"actionClass":"delete"},{"actionClass":"exec"},{"actionClass":"network"},{"actionClass":"credential"}]'::JSONB
-            ELSE '[{"actionClass":"read"},{"actionClass":"write"},{"actionClass":"delete"},{"actionClass":"exec"},{"actionClass":"network"}]'::JSONB
+            THEN '[{"actionClass":"action:read"},{"actionClass":"action:write"},{"actionClass":"action:delete"},{"actionClass":"action:exec"},{"actionClass":"action:network"},{"actionClass":"credential"}]'::JSONB
+            ELSE '[{"actionClass":"action:read"},{"actionClass":"action:write"},{"actionClass":"action:delete"},{"actionClass":"action:exec"},{"actionClass":"action:network"}]'::JSONB
         END,
         'default', NOW(), 'read'
     FROM default_subjects

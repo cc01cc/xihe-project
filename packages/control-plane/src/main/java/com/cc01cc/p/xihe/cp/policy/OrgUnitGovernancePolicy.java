@@ -59,13 +59,13 @@ import java.util.function.Function;
 public final class OrgUnitGovernancePolicy {
 
     /** {@code MANAGE_ORG_UNITS}: create, rename, move and delete org units. */
-    public static final String ATOM_MANAGE_ORG_UNITS = "MANAGE_ORG_UNITS";
+    public static final String ATOM_MANAGE_ORG_UNITS = "action:MANAGE_ORG_UNITS";
 
     /** {@code MANAGE_ORG_UNIT_MEMBERS}: add, remove and re-role the members of one org unit. */
-    public static final String ATOM_MANAGE_ORG_UNIT_MEMBERS = "MANAGE_ORG_UNIT_MEMBERS";
+    public static final String ATOM_MANAGE_ORG_UNIT_MEMBERS = "action:MANAGE_ORG_UNIT_MEMBERS";
 
     /** {@code READ_ORG_UNIT_MEMBERS}: see the member list of one org unit. */
-    public static final String ATOM_READ_ORG_UNIT_MEMBERS = "READ_ORG_UNIT_MEMBERS";
+    public static final String ATOM_READ_ORG_UNIT_MEMBERS = "action:READ_ORG_UNIT_MEMBERS";
 
     /** The three atoms a governance role is made of — the whitelist, in canonical order. */
     private static final Set<String> GOVERNANCE_ATOMS = Set.of(
@@ -113,7 +113,7 @@ public final class OrgUnitGovernancePolicy {
             return true;
         }
         for (String atomName : roleAtomNames) {
-            if (!GOVERNANCE_ATOMS.contains(atomName)) {
+            if (!GOVERNANCE_ATOMS.contains(AtomNames.action(atomName))) {
                 return false;
             }
         }
@@ -131,7 +131,7 @@ public final class OrgUnitGovernancePolicy {
             return List.of();
         }
         return roleAtomNames.stream()
-                .filter(atom -> !GOVERNANCE_ATOMS.contains(atom))
+                .filter(atom -> !GOVERNANCE_ATOMS.contains(AtomNames.action(atom)))
                 .distinct()
                 .sorted()
                 .toList();

@@ -26,8 +26,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MemoryWriteAtomTest {
 
-    private static final String MEMORY_WRITE = ToolFaceRegistry.ACTION_MEMORY_WRITE;
-    private static final String MEMORY_WRITE_SELF = ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF;
+    private static final String MEMORY_WRITE = AtomNames.action(ToolFaceRegistry.ACTION_MEMORY_WRITE);
+    private static final String MEMORY_WRITE_SELF =
+            AtomNames.action(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF);
 
     private static Set<String> atomsOf(String roleName) {
         return SystemGrantPresetCatalog.presetSeeds().stream()
@@ -48,7 +49,8 @@ class MemoryWriteAtomTest {
             assertEquals(PermissionAtomCatalog.SCOPE_CLASS_BOTH, atom.scopeClass(),
                     "memory is isolated by (principal, workspace): workspace-scoped grants are meaningful");
             assertEquals(PermissionAtomCatalog.WILDCARD, atom.canonicalResource());
-            assertTrue(ToolFaceRegistry.builtinActionClasses().contains(atomName),
+            assertTrue(ToolFaceRegistry.builtinActionClasses().stream()
+                            .map(AtomNames::action).toList().contains(atomName),
                     "the built-in action vocabulary and the catalog must agree");
         }
         assertEquals(ToolFaceRegistry.builtinActionClasses().size(),

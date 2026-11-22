@@ -352,32 +352,32 @@ class AgentPrincipalScopeMigrationTest {
         for (UUID roleId : new UUID[] {SystemGrantPresetCatalog.SUPER_ADMIN_ID,
                 SystemGrantPresetCatalog.ADMIN_ID, SystemGrantPresetCatalog.USER_ID}) {
             assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                            + roleId + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
+                            + roleId + "'::uuid AND action_class = 'action:CREATE_OWN_AGENT'"),
                     "PLAN-0750 M1 (V148): the user-level create atom is seeded on " + roleId
                             + " (BL-312's V147 removal is superseded by the G1 ruling)");
         }
         // AGENT_USER must stay clean: the atom is agent-principal-forbidden.
         assertEquals(0, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + SystemGrantPresetCatalog.AGENT_USER_ID + "'::uuid"
-                        + " AND action_class = 'CREATE_OWN_AGENT'"),
+                        + " AND action_class = 'action:CREATE_OWN_AGENT'"),
                 "an agent principal is a grantee, never an account creator");
         // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
         // V115 N9 default.
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid"
-                        + " AND action_class = 'MANAGE_WORKSPACE_POLICY'"),
+                        + " AND action_class = 'action:MANAGE_WORKSPACE_POLICY'"),
                 "ADMIN default set carries N9 (V115), the atom A13 now uses");
         // D-168 (user ruling 2026-11-05, migration V125): ADMIN gains MANAGE_ROLES — but only
         // together with the subset guard (PLAN-0673 M1), so it can never delegate beyond itself.
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'MANAGE_ROLES'"),
+                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'action:MANAGE_ROLES'"),
                 "ADMIN holds MANAGE_ROLES since V125 (D-168)");
         // D-166: the subset bypass is SUPER_ADMIN-only; ADMIN must never hold it.
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
                         + SystemGrantPresetCatalog.SUPER_ADMIN_ID + "'::uuid"
-                        + " AND action_class = 'GRANT_ANY_ATOM'"), "SUPER_ADMIN holds the bypass atom (V125)");
+                        + " AND action_class = 'action:GRANT_ANY_ATOM'"), "SUPER_ADMIN holds the bypass atom (V125)");
         assertEquals(0, scalarInt(head, "SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'GRANT_ANY_ATOM'"),
+                        + SystemGrantPresetCatalog.ADMIN_ID + "'::uuid AND action_class = 'action:GRANT_ANY_ATOM'"),
                 "ADMIN must not hold the subset bypass");
         // The migration itself is part of the fresh-database contract (V125 success).
         assertEquals(1, scalarInt(head, "SELECT count(*) FROM flyway_schema_history"
@@ -397,7 +397,7 @@ class AgentPrincipalScopeMigrationTest {
         assertEquals(0, scalarInt(connection, "SELECT count(*) FROM grants WHERE subject_type = 'user'"
                         + " AND subject_id = '" + LEGACY_USER_ID + "' AND source = 'preset'"
                         + " AND scope_type = 'instance' AND scope_id IS NULL"
-                        + " AND permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT'"),
+                        + " AND permissions -> 0 ->> 'actionClass' = 'action:CREATE_OWN_AGENT'"),
                 "V147 deleted V91's backfilled row and V148 does not re-introduce the backfill"
                         + " (role seed only, per D-215)");
     }

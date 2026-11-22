@@ -57,7 +57,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
      * atom, the base PLUGIN_INVOKE and the PLAN-0750 M1 (G1) own-agent atom. credential atoms stay
      * denied.
      */
-    private static final Set<String> USER_MATRIX = Set.of(
+    private static final Set<String> USER_MATRIX = canonical(Set.of(
             "read", "write", "delete", "exec", "network",
             // BL-345 (user ruling 2026-11-06): every account may write memory of the principals
             // it owns; writing arbitrary subjects stays an owner/SUPER_ADMIN atom.
@@ -77,13 +77,13 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // task-188 MVP⑤ (V172, 2026-11-18): the shared base set gained TEAM_TASK_MANAGE (the
             // session human owner directs the board by default), and the USER derivation carries
             // every base atom — so the registration default set now holds it too (9 -> 10).
-            "TEAM_TASK_MANAGE");
+            "TEAM_TASK_MANAGE"));
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
      * PLAN-0496 three credential atoms (the legacy single `credential` word retired).
      */
-    private static final Set<String> ADMIN_MATRIX = Set.of(
+    private static final Set<String> ADMIN_MATRIX = canonical(Set.of(
             "read", "write", "delete", "exec", "network",
             "credential_use", "credential_reveal", "credential_manage",
             // PLAN-0651 M1 (D51-26): the two faces that used to be an isInstanceAdmin() bypass.
@@ -132,11 +132,17 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // instance-administrator set grows by one more literal — same reasoning as V157/V172
             // above: the seed is what the role holds, and dropping it here would assert a set the
             // code no longer builds (V178:44-55 also backfills it onto existing ADMIN bindings).
-            "session:permission:configure");
+            "session:permission:configure"));
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(
             "CREATE_ACCOUNT", "CREATE_TEMPLATE", "MANAGE_WORKSPACE_AGENTS", "SPAWN_AGENT");
+
+    /** task-835: the reviewed matrices are written with the short atom body; grants carry `action:`. */
+    private static Set<String> canonical(Set<String> atoms) {
+        return atoms.stream().map(AtomNames::action)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
 
     @Autowired
     private AuthService authService;
@@ -251,7 +257,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
                 "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 credential "
                         + "atoms and the PLAN-0651 management atoms (agent principals/members)");
         assertCanonicalAtoms("user", userUuid);
-        assertFalse(adminAtoms.contains("SPAWN_AGENT"),
+        assertFalse(adminAtoms.contains(AtomNames.action("SPAWN_AGENT")),
                 "spec §2.1: SPAWN_AGENT stays out of the ADMIN set");
         assertFalse(adminAtoms.contains(PermissionAtomCatalog.CAP_INSTANCE_ADMIN),
                 "PLAN-0610 #23: capability atoms are authorities, never grant rows");
@@ -392,7 +398,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
                 JsonNode resource = atom.get("resource");
                 String actionClass = atom.get("actionClass").asText();
                 boolean canonical;
-                if (actionClass.startsWith("credential_")) {
+                if (ToolFaceRegistry.isCredentialActionClass(actionClass)) {
                     canonical = resource != null
                             && ToolFaceRegistry.isCanonicalCredentialResource(resource.asText());
                 } else {

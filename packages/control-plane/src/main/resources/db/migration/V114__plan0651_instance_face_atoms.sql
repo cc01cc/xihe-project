@@ -19,7 +19,7 @@
 -- Validation queries (also asserted by the migration tests):
 --   -- rows present after this migration (expected 6 = 3 atoms x 2 roles)
 --   SELECT count(*) FROM role_permissions
---   WHERE action_class IN ('READ_INSTANCE_CONTENT','WRITE_INSTANCE_CONTENT','VIEW_SECRET_CONTENT')
+--   WHERE action_class IN ('action:READ_INSTANCE_CONTENT','action:WRITE_INSTANCE_CONTENT','action:VIEW_SECRET_CONTENT')
 --     AND role_id IN ('00000000-0000-4000-8000-000000000001',
 --                     '00000000-0000-4000-8000-000000000002');
 --   -- every instance-tier holder of an admin role got the three materialized rows (expected 0)
@@ -38,12 +38,12 @@
 
 -- 1. Role definitions: the three instance-face atoms join SUPER_ADMIN and ADMIN.
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'READ_INSTANCE_CONTENT', '*'),
-    ('00000000-0000-4000-8000-000000000001', 'WRITE_INSTANCE_CONTENT', '*'),
-    ('00000000-0000-4000-8000-000000000001', 'VIEW_SECRET_CONTENT', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'READ_INSTANCE_CONTENT', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'WRITE_INSTANCE_CONTENT', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'VIEW_SECRET_CONTENT', '*')
+    ('00000000-0000-4000-8000-000000000001', 'action:READ_INSTANCE_CONTENT', '*'),
+    ('00000000-0000-4000-8000-000000000001', 'action:WRITE_INSTANCE_CONTENT', '*'),
+    ('00000000-0000-4000-8000-000000000001', 'action:VIEW_SECRET_CONTENT', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:READ_INSTANCE_CONTENT', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:WRITE_INSTANCE_CONTENT', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:VIEW_SECRET_CONTENT', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 2. Instance-scope grant backfill, one statement per atom (mirrors V111's per-atom shape so a
@@ -52,7 +52,7 @@ INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, perm
                     scope_type, scope_id, read_state)
 SELECT DISTINCT ON (b.subject_id)
        gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-       jsonb_build_array(jsonb_build_object('actionClass', 'READ_INSTANCE_CONTENT')),
+       jsonb_build_array(jsonb_build_object('actionClass', 'action:READ_INSTANCE_CONTENT')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
 WHERE b.subject_type = 'user'
@@ -66,13 +66,13 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions->0->>'actionClass' = 'READ_INSTANCE_CONTENT');
+        AND g.permissions->0->>'actionClass' = 'action:READ_INSTANCE_CONTENT');
 
 INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source,
                     scope_type, scope_id, read_state)
 SELECT DISTINCT ON (b.subject_id)
        gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-       jsonb_build_array(jsonb_build_object('actionClass', 'WRITE_INSTANCE_CONTENT')),
+       jsonb_build_array(jsonb_build_object('actionClass', 'action:WRITE_INSTANCE_CONTENT')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
 WHERE b.subject_type = 'user'
@@ -86,13 +86,13 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions->0->>'actionClass' = 'WRITE_INSTANCE_CONTENT');
+        AND g.permissions->0->>'actionClass' = 'action:WRITE_INSTANCE_CONTENT');
 
 INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source,
                     scope_type, scope_id, read_state)
 SELECT DISTINCT ON (b.subject_id)
        gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-       jsonb_build_array(jsonb_build_object('actionClass', 'VIEW_SECRET_CONTENT')),
+       jsonb_build_array(jsonb_build_object('actionClass', 'action:VIEW_SECRET_CONTENT')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
 WHERE b.subject_type = 'user'
@@ -106,7 +106,7 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions->0->>'actionClass' = 'VIEW_SECRET_CONTENT');
+        AND g.permissions->0->>'actionClass' = 'action:VIEW_SECRET_CONTENT');
 
 -- No default policy rules: the retired PolicyVerdict lets unknown domains default to allow, so the
 -- absence of rules keeps administrators working (asserted by P0ManagementAtomSeedMigrationTest).

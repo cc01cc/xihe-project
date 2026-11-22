@@ -19,13 +19,13 @@
 
 -- 1. Role definitions: SELF for the human USER/ADMIN/WS_* roles; MEMORY_WRITE only for WS_OWNER.
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'MEMORY_WRITE_SELF', '*'),
-    ('00000000-0000-4000-8000-000000000003', 'MEMORY_WRITE_SELF', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'MEMORY_WRITE_SELF', '*'),
-    ('00000000-0000-4000-8000-000000000004', 'MEMORY_WRITE_SELF', '*'),
-    ('00000000-0000-4000-8000-000000000005', 'MEMORY_WRITE_SELF', '*'),
-    ('00000000-0000-4000-8000-000000000006', 'MEMORY_WRITE_SELF', '*'),
-    ('00000000-0000-4000-8000-000000000004', 'MEMORY_WRITE', '*')
+    ('00000000-0000-4000-8000-000000000001', 'action:MEMORY_WRITE_SELF', '*'),
+    ('00000000-0000-4000-8000-000000000003', 'action:MEMORY_WRITE_SELF', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:MEMORY_WRITE_SELF', '*'),
+    ('00000000-0000-4000-8000-000000000004', 'action:MEMORY_WRITE_SELF', '*'),
+    ('00000000-0000-4000-8000-000000000005', 'action:MEMORY_WRITE_SELF', '*'),
+    ('00000000-0000-4000-8000-000000000006', 'action:MEMORY_WRITE_SELF', '*'),
+    ('00000000-0000-4000-8000-000000000004', 'action:MEMORY_WRITE', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- 2. Backfill the materialized `source='role'` grants for existing bindings, so granted subjects get
@@ -49,7 +49,7 @@ SELECT gen_random_uuid(), 'user', b.subject_id, b.subject_type, b.subject_id,
        'role', b.scope_type, b.scope_id, 'read'
 FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
-WHERE rp.action_class IN ('MEMORY_WRITE_SELF', 'MEMORY_WRITE')
+WHERE rp.action_class IN ('action:MEMORY_WRITE_SELF', 'action:MEMORY_WRITE')
   AND NOT EXISTS (
       SELECT 1 FROM grants g
       WHERE g.subject_type = b.subject_type

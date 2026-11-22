@@ -33,9 +33,9 @@ class PermissionAtomCatalogAgentPrincipalForbiddenAtomsTest {
 
     /** Structural atoms: forgetting one of these is a security regression, not a vocabulary change. */
     private static final Set<String> STRUCTURAL = new TreeSet<>(Set.of(
-            "MANAGE_AGENT_PRINCIPALS",
-            "MANAGE_WORKSPACE_AGENTS",
-            "MANAGE_WORKSPACE_MEMBERS"));
+            "action:MANAGE_AGENT_PRINCIPALS",
+            "action:MANAGE_WORKSPACE_AGENTS",
+            "action:MANAGE_WORKSPACE_MEMBERS"));
 
     @Test
     void forbiddenSetMatchesTheDerivedDefinition() {
@@ -80,10 +80,33 @@ class PermissionAtomCatalogAgentPrincipalForbiddenAtomsTest {
         assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(Set.of("read", "write", "exec")));
         assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(new LinkedHashSet<>()));
         assertTrue(!PermissionAtomCatalog.canBindToAgentPrincipal(Set.of("read", "MANAGE_ROLES")));
-        assertTrue(!PermissionAtomCatalog.canBindToAgentPrincipal(Set.of("workspace:admin")));
+        assertTrue(!PermissionAtomCatalog.canBindToAgentPrincipal(Set.of("cap:workspace:admin")));
         assertEquals("MANAGE_WORKSPACE_AGENTS",
                 PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(
                         new LinkedHashSet<>(java.util.List.of("read", "MANAGE_WORKSPACE_AGENTS", "MANAGE_ROLES"))));
+    }
+
+    /**
+     * task-835 (Lead ruling): the bare capability spelling must resolve to the same atom as the
+     * canonical one, and both must be agent-forbidden. Without the resolution the forbidden lookup
+     * answers "bindable" for {@code workspace:admin} — a silent widening, not a 400.
+     */
+    @Test
+    void bareAndCanonicalCapabilityNamesResolveToTheSameForbiddenAtom() {
+        for (String bare : java.util.List.of("instance:super", "instance:admin", "workspace:admin")) {
+            String canonical = "cap:" + bare;
+            PermissionAtomCatalog.Atom byBare = PermissionAtomCatalog.atom(bare);
+            PermissionAtomCatalog.Atom byCanonical = PermissionAtomCatalog.atom(canonical);
+            assertEquals(byBare, byCanonical, bare + " and " + canonical + " are one atom");
+            assertTrue(byCanonical.capability(), canonical + " stays a capability atom");
+            assertEquals(canonical, byCanonical.name(), "the atom name is the canonical spelling");
+            assertTrue(PermissionAtomCatalog.agentPrincipalForbiddenAtoms().contains(canonical),
+                    canonical + " must be agent-forbidden");
+            assertTrue(!PermissionAtomCatalog.canBindToAgentPrincipal(Set.of(bare)),
+                    "a role holding the bare " + bare + " must not bind to an agent principal");
+            assertTrue(!PermissionAtomCatalog.canBindToAgentPrincipal(Set.of(canonical)),
+                    "a role holding the canonical " + canonical + " must not bind to an agent principal");
+        }
     }
 
     /**

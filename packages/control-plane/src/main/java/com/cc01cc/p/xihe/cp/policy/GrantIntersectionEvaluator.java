@@ -35,9 +35,13 @@ public class GrantIntersectionEvaluator {
 
     public record PermissionAtom(String actionClass, String resource) {
         public PermissionAtom {
-            if (!ACTION_CLASSES.contains(actionClass)) {
+            String bare = AtomNames.bare(actionClass);
+            if (!ACTION_CLASSES.contains(bare)) {
                 throw new IllegalArgumentException("Unknown actionClass: " + actionClass);
             }
+            // task-835: stores/return the canonical `action:` spelling; legacy callers that pass the
+            // bare action class keep working because both sides are normalized here.
+            actionClass = AtomNames.action(bare);
             if (resource == null || resource.isBlank()) {
                 resource = "*";
             }
@@ -287,11 +291,13 @@ public class GrantIntersectionEvaluator {
             levelMatched[index] = true;
         }
         for (String actionClass : request.actionClasses()) {
-            boolean known = ACTION_CLASSES.contains(actionClass);
+            String canonicalAction = AtomNames.action(AtomNames.bare(actionClass));
+            boolean known = ACTION_CLASSES.contains(AtomNames.bare(actionClass));
             for (String resource : request.resources()) {
                 if (!known) {
                     if (record) {
-                        missing.add(new MissingLevel(-1, null, actionClass, resource, REASON_UNKNOWN_ACTION_CLASS));
+                        missing.add(new MissingLevel(-1, null, canonicalAction, resource,
+                                REASON_UNKNOWN_ACTION_CLASS));
                     }
                     for (int index = 0; index < levelCount; index++) {
                         levelMatched[index] = false;
@@ -300,7 +306,7 @@ public class GrantIntersectionEvaluator {
                 }
                 if (resource == null || resource.isBlank()) {
                     if (record) {
-                        missing.add(new MissingLevel(-1, null, actionClass, resource, REASON_BLANK_RESOURCE));
+                        missing.add(new MissingLevel(-1, null, canonicalAction, resource, REASON_BLANK_RESOURCE));
                     }
                     for (int index = 0; index < levelCount; index++) {
                         levelMatched[index] = false;
@@ -310,13 +316,13 @@ public class GrantIntersectionEvaluator {
                 // DSD-1509 ②: a live session temporary grant covers this pair, so the levels do not
                 // have to hold it. Scoped to exactly this pair — nothing else is relaxed.
                 GrantAtom sessionToken = matchingSessionToken(
-                        sessionTokens, actionClass, resource, request.shape());
+                        sessionTokens, canonicalAction, resource, request.shape());
                 if (sessionToken != null) {
                     if (record) {
-                        String key = "-1|" + actionClass + "|" + resource + "|"
+                        String key = "-1|" + canonicalAction + "|" + resource + "|"
                                 + sessionToken.grantId() + "|" + sessionToken.grantSource();
                         if (matchedKeys.add(key)) {
-                            matched.add(new MatchedGrant(-1, SESSION_TOKEN_LABEL, actionClass, resource,
+                            matched.add(new MatchedGrant(-1, SESSION_TOKEN_LABEL, canonicalAction, resource,
                                     sessionToken.grantId(), sessionToken.grantSource()));
                         }
                     }
@@ -328,7 +334,7 @@ public class GrantIntersectionEvaluator {
                     List<GrantAtom> atoms = level == null ? List.of() : level.atoms();
                     boolean hit = false;
                     for (GrantAtom atom : atoms) {
-                        if (!actionClass.equals(atom.actionClass())) {
+                        if (!canonicalAction.equals(AtomNames.action(AtomNames.bare(atom.actionClass())))) {
                             continue;
                         }
                         if (!matchesResource(atom.resource(), resource, request.shape())) {
@@ -336,10 +342,10 @@ public class GrantIntersectionEvaluator {
                         }
                         hit = true;
                         if (record) {
-                            String key = index + "|" + actionClass + "|" + resource + "|"
+                            String key = index + "|" + canonicalAction + "|" + resource + "|"
                                     + atom.grantId() + "|" + atom.grantSource();
                             if (matchedKeys.add(key)) {
-                                matched.add(new MatchedGrant(index, labels[index], actionClass, resource,
+                                matched.add(new MatchedGrant(index, labels[index], canonicalAction, resource,
                                         atom.grantId(), atom.grantSource()));
                             }
                         }
@@ -347,7 +353,7 @@ public class GrantIntersectionEvaluator {
                     if (!hit) {
                         levelMatched[index] = false;
                         if (record) {
-                            missing.add(new MissingLevel(index, labels[index], actionClass, resource,
+                            missing.add(new MissingLevel(index, labels[index], canonicalAction, resource,
                                     atoms.isEmpty() ? REASON_LEVEL_WITHOUT_GRANTS : REASON_NO_MATCHING_ATOM));
                         }
                     }
@@ -397,7 +403,7 @@ public class GrantIntersectionEvaluator {
             return null;
         }
         for (GrantAtom token : sessionTokens) {
-            if (token == null || !actionClass.equals(token.actionClass())) {
+            if (token == null || !actionClass.equals(AtomNames.action(AtomNames.bare(token.actionClass())))) {
                 continue;
             }
             if (matchesResource(token.resource(), resource, shape)) {

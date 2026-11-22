@@ -149,7 +149,7 @@ SELECT DISTINCT ON (b.subject_type, b.subject_id, b.scope_type, b.scope_id,
        'role', b.scope_type, b.scope_id, 'read'
 FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
-WHERE rp.action_class NOT LIKE '%:%'
+WHERE rp.action_class NOT LIKE 'cap:%'
   AND NOT EXISTS (
       SELECT 1 FROM grants g
       WHERE g.source = 'role'
@@ -308,7 +308,7 @@ BEGIN
     SELECT count(*) INTO missing
     FROM role_bindings b
     JOIN role_permissions rp ON rp.role_id = b.role_id
-    WHERE b.subject_type = 'user' AND rp.action_class NOT LIKE '%:%'
+    WHERE b.subject_type = 'user' AND rp.action_class NOT LIKE 'cap:%'
       AND NOT EXISTS (
           SELECT 1 FROM grants g
           WHERE g.source = 'role'
@@ -338,7 +338,7 @@ BEGIN
     END IF;
 
     -- 6.6 capability atoms never reach grants (decision #23)
-    SELECT count(*) INTO missing FROM grants WHERE permissions -> 0 ->> 'actionClass' LIKE '%:%';
+    SELECT count(*) INTO missing FROM grants WHERE permissions -> 0 ->> 'actionClass' LIKE 'cap:%';
     IF missing <> 0 THEN
         RAISE EXCEPTION 'V88: % capability atom(s) materialized into grants', missing;
     END IF;

@@ -74,12 +74,12 @@ COMMENT ON COLUMN team_tasks.revision IS 'advisory CAS revision: monotonic +1 on
 --    rest of its family carries.
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'TEAM_TASK_MANAGE', '*'),  -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000002', 'TEAM_TASK_MANAGE', '*'),  -- ADMIN
-    ('00000000-0000-4000-8000-000000000003', 'TEAM_TASK_MANAGE', '*'),  -- USER
-    ('00000000-0000-4000-8000-000000000008', 'TEAM_TASK_MANAGE', '*'),  -- AGENT_USER
-    ('00000000-0000-4000-8000-000000000004', 'TEAM_TASK_MANAGE', '*'),  -- WS_OWNER
-    ('00000000-0000-4000-8000-000000000005', 'TEAM_TASK_MANAGE', '*')   -- WS_EDITOR
+    ('00000000-0000-4000-8000-000000000001', 'action:TEAM_TASK_MANAGE', '*'),  -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000002', 'action:TEAM_TASK_MANAGE', '*'),  -- ADMIN
+    ('00000000-0000-4000-8000-000000000003', 'action:TEAM_TASK_MANAGE', '*'),  -- USER
+    ('00000000-0000-4000-8000-000000000008', 'action:TEAM_TASK_MANAGE', '*'),  -- AGENT_USER
+    ('00000000-0000-4000-8000-000000000004', 'action:TEAM_TASK_MANAGE', '*'),  -- WS_OWNER
+    ('00000000-0000-4000-8000-000000000005', 'action:TEAM_TASK_MANAGE', '*')   -- WS_EDITOR
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- ---------------------------------------------------------------------------------------------
@@ -99,7 +99,7 @@ SELECT DISTINCT ON (b.subject_type, b.subject_id, b.scope_type, b.scope_id, rp.a
        'role', b.scope_type, b.scope_id, 'read'
 FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
-WHERE rp.action_class = 'TEAM_TASK_MANAGE'
+WHERE rp.action_class = 'action:TEAM_TASK_MANAGE'
   AND b.role_id IN ('00000000-0000-4000-8000-000000000001',  -- SUPER_ADMIN
                     '00000000-0000-4000-8000-000000000002',  -- ADMIN
                     '00000000-0000-4000-8000-000000000003',  -- USER

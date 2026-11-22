@@ -35,14 +35,14 @@ WHERE role_id IN (
         '00000000-0000-4000-8000-000000000008', -- AGENT_USER
         '00000000-0000-4000-8000-000000000005'  -- WS_EDITOR
     )
-  AND action_class = 'exec';
+  AND action_class = 'action:exec';
 
 -- Derived state from the pre-R2 catalog: drop exec grants whose subject/scope has no declaring role
 -- left. (Multi-atom grant rows do not exist for source='role' — the materializer writes one row per
 -- action class, V178:56-70 shape.)
 DELETE FROM grants g
 WHERE g.source = 'role'
-  AND g.permissions @> '[{"actionClass": "exec"}]'::jsonb
+  AND g.permissions @> '[{"actionClass": "action:exec"}]'::jsonb
   AND NOT EXISTS (
       SELECT 1
       FROM role_bindings b
@@ -51,7 +51,7 @@ WHERE g.source = 'role'
         AND b.subject_id = g.subject_id
         AND b.scope_type = g.scope_type
         AND b.scope_id IS NOT DISTINCT FROM g.scope_id
-        AND rp.action_class = 'exec');
+        AND rp.action_class = 'action:exec');
 
 -- ---------------------------------------------------------------------------------------------
 -- 2) R3: the three presets (form copied from V109:28-33 / V127:21-25).
@@ -67,16 +67,16 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
     -- AGENT_READER: WS_VIEWER's atom set, for agent principals.
-    ('00000000-0000-4000-8000-000000000009', 'read', '*'),
-    ('00000000-0000-4000-8000-000000000009', 'USE_WORKSPACE_RUNTIME', '*'),
+    ('00000000-0000-4000-8000-000000000009', 'action:read', '*'),
+    ('00000000-0000-4000-8000-000000000009', 'action:USE_WORKSPACE_RUNTIME', '*'),
     -- AGENT_WORKER: read/write/delete only. No network, no plugin invoke, no exec: a preset that
     -- decides to widen a particular principal can add those explicitly, never by accident.
-    ('00000000-0000-4000-8000-000000000010', 'read', '*'),
-    ('00000000-0000-4000-8000-000000000010', 'write', '*'),
-    ('00000000-0000-4000-8000-000000000010', 'delete', '*'),
+    ('00000000-0000-4000-8000-000000000010', 'action:read', '*'),
+    ('00000000-0000-4000-8000-000000000010', 'action:write', '*'),
+    ('00000000-0000-4000-8000-000000000010', 'action:delete', '*'),
     -- WS_RUNNER: exec + the runtime channel, nothing administrative.
-    ('00000000-0000-4000-8000-000000000011', 'exec', '*'),
-    ('00000000-0000-4000-8000-000000000011', 'USE_WORKSPACE_RUNTIME', '*')
+    ('00000000-0000-4000-8000-000000000011', 'action:exec', '*'),
+    ('00000000-0000-4000-8000-000000000011', 'action:USE_WORKSPACE_RUNTIME', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- No grant backfill on purpose: unlike V157/V172/V178 these roles are NOT defaults for anybody, so

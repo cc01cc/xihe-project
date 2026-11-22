@@ -41,19 +41,20 @@ class PluginBindingAuthorizationTest {
 
     @Test
     void pluginAtomsJoinTheCatalogWithTheSpecifiedScopes() {
-        List<String> atoms = PluginBindingAuthorization.pluginAtoms();
+        List<String> atoms = PluginBindingAuthorization.pluginAtoms().stream()
+                .map(AtomNames::action).toList();
         assertEquals(4, atoms.size());
         assertEquals(ACTION_ATOM_COUNT, PermissionAtomCatalog.actionAtoms().size());
         assertEquals(ACTION_ATOM_COUNT, ToolFaceRegistry.builtinActionClasses().size());
 
         for (String atom : atoms) {
             assertTrue(PermissionAtomCatalog.actionAtoms().contains(atom), atom);
-            assertTrue(ToolFaceRegistry.builtinActionClasses().contains(atom), atom);
+            assertTrue(ToolFaceRegistry.builtinActionClasses().stream()
+                    .map(AtomNames::action).toList().contains(atom), atom);
             assertTrue(PermissionAtomCatalog.isActionAtom(atom), atom);
-            // One catalog, one naming convention (UPPER_SNAKE); the spec's `plugin:*` spelling is
-            // the external wording, never the stored atom name.
-            assertEquals(atom.toUpperCase(Locale.ROOT), atom, atom);
-            assertFalse(atom.contains(":"), atom);
+            // task-835: the canonical name carries the `action:` prefix; the body stays UPPER_SNAKE.
+            assertEquals(AtomNames.action(AtomNames.bare(atom).toUpperCase(Locale.ROOT)), atom, atom);
+            assertTrue(atom.startsWith(AtomNames.ACTION_PREFIX), atom);
         }
 
         assertEquals(PermissionAtomCatalog.SCOPE_CLASS_INSTANCE,
@@ -66,12 +67,12 @@ class PluginBindingAuthorizationTest {
                 PermissionAtomCatalog.scopeClassOf(ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
 
         Set<String> forbidden = PermissionAtomCatalog.agentPrincipalForbiddenAtoms();
-        assertTrue(forbidden.contains(ToolFaceRegistry.ACTION_PLUGIN_MANAGE));
-        assertTrue(forbidden.contains(ToolFaceRegistry.ACTION_PLUGIN_BIND));
-        assertTrue(forbidden.contains(ToolFaceRegistry.ACTION_PLUGIN_DATA));
+        assertTrue(forbidden.contains(AtomNames.action(ToolFaceRegistry.ACTION_PLUGIN_MANAGE)));
+        assertTrue(forbidden.contains(AtomNames.action(ToolFaceRegistry.ACTION_PLUGIN_BIND)));
+        assertTrue(forbidden.contains(AtomNames.action(ToolFaceRegistry.ACTION_PLUGIN_DATA)));
         // Invocation is the one plugin verb an agent principal may hold: a builtin plugin is in the
         // default set, and an agent that could not hold it could never use one.
-        assertFalse(forbidden.contains(ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
+        assertFalse(forbidden.contains(AtomNames.action(ToolFaceRegistry.ACTION_PLUGIN_INVOKE)));
     }
 
     @Test

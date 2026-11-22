@@ -32,7 +32,7 @@ INSERT INTO roles (id, name, display_name, description, is_system) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO role_permissions (role_id, action_class, resource_pattern)
-SELECT id, 'SPAWN_AGENT', '*'
+SELECT id, 'action:SPAWN_AGENT', '*'
 FROM roles
 WHERE name = 'AGENT_DELEGATOR'
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;

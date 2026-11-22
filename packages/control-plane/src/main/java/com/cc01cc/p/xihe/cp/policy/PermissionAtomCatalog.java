@@ -57,12 +57,12 @@ public final class PermissionAtomCatalog {
     public static final String SCOPE_CLASS_INSTANCE = "instance";
     public static final String SCOPE_CLASS_BOTH = "both";
 
-    public static final String CAP_INSTANCE_SUPER = "instance:super";
-    public static final String CAP_INSTANCE_ADMIN = "instance:admin";
-    public static final String CAP_WORKSPACE_ADMIN = "workspace:admin";
+    public static final String CAP_INSTANCE_SUPER = "cap:instance:super";
+    public static final String CAP_INSTANCE_ADMIN = "cap:instance:admin";
+    public static final String CAP_WORKSPACE_ADMIN = "cap:workspace:admin";
 
     /** Authority prefix contract (round-2 P1-4): {@code hasAuthority("cap:instance:admin")}. */
-    public static final String AUTHORITY_PREFIX = "cap:";
+    public static final String AUTHORITY_PREFIX = AtomNames.CAPABILITY_PREFIX;
 
     /** Canonical resource pattern of a wildcard atom (mirrors the {@code permissions} shape). */
     public static final String WILDCARD = "*";
@@ -301,13 +301,16 @@ public final class PermissionAtomCatalog {
 
     /** True when holding {@code holder} also satisfies {@code target} in the grant-check sense. */
     public static boolean implies(String holder, String target) {
-        return IMPLIES.getOrDefault(holder, Set.of()).contains(target);
+        String canonicalHolder = AtomNames.capability(holder);
+        String canonicalTarget = AtomNames.capability(target);
+        return IMPLIES.getOrDefault(canonicalHolder, Set.of()).contains(canonicalTarget);
     }
 
     /** The capability atoms whose holding implies {@code target} (empty when none). */
     public static Set<String> impliedHolders(String target) {
+        String canonicalTarget = AtomNames.capability(target);
         return IMPLIES.entrySet().stream()
-                .filter(entry -> entry.getValue().contains(target))
+                .filter(entry -> entry.getValue().contains(canonicalTarget))
                 .map(Map.Entry::getKey)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
@@ -318,12 +321,14 @@ public final class PermissionAtomCatalog {
     private static Map<String, Atom> buildAtoms() {
         Map<String, Atom> atoms = new LinkedHashMap<>();
         for (String name : ACTION_ATOM_NAMES) {
-            atoms.put(name, new Atom(name, scopeClassOfName(name), false, actionResource(name),
-                    AGENT_FORBIDDEN_ATOMS.contains(name)));
+            String canonical = AtomNames.action(name);
+            atoms.put(canonical, new Atom(canonical, scopeClassOfName(name), false,
+                    actionResource(name), AGENT_FORBIDDEN_ATOMS.contains(name)));
         }
         for (String name : CAPABILITY_ATOM_NAMES) {
-            atoms.put(name, new Atom(name, scopeClassOfName(name), true, WILDCARD,
-                    AGENT_FORBIDDEN_ATOMS.contains(name)));
+            String canonical = AtomNames.capability(name);
+            atoms.put(canonical, new Atom(canonical, scopeClassOfName(canonical), true, WILDCARD,
+                    AGENT_FORBIDDEN_ATOMS.contains(canonical)));
         }
         return Map.copyOf(atoms);
     }
@@ -343,7 +348,7 @@ public final class PermissionAtomCatalog {
      * {@code P0ManagementAtomSeedMigrationTest} and {@code SkillReadFaceTest} pin the vocabulary itself.
      */
     public static List<String> actionAtoms() {
-        return ACTION_ATOM_NAMES;
+        return ACTION_ATOM_NAMES.stream().map(AtomNames::action).toList();
     }
 
     /** The 3 capability atoms, in canonical order. */
@@ -357,7 +362,10 @@ public final class PermissionAtomCatalog {
 
     /** The instance-only atom set of decision #27 (the write-time scope guard). */
     public static Set<String> instanceOnlyAtoms() {
-        return INSTANCE_ONLY_ATOMS;
+        return INSTANCE_ONLY_ATOMS.stream().map(name -> {
+            String canonical = AtomNames.action(name);
+            return ATOMS.containsKey(canonical) ? canonical : AtomNames.capability(name);
+        }).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     /**
@@ -389,7 +397,7 @@ public final class PermissionAtomCatalog {
         }
         Set<String> forbidden = agentPrincipalForbiddenAtoms();
         for (String atomName : roleAtomNames) {
-            if (forbidden.contains(atomName)) {
+            if (forbidden.contains(canonicalName(atomName))) {
                 return false;
             }
         }
@@ -403,30 +411,57 @@ public final class PermissionAtomCatalog {
         }
         Set<String> forbidden = agentPrincipalForbiddenAtoms();
         for (String atomName : roleAtomNames) {
-            if (forbidden.contains(atomName)) {
+            if (forbidden.contains(canonicalName(atomName))) {
                 return atomName;
             }
         }
         return null;
     }
 
+    /** The canonical spelling of an atom a caller supplied, or the input when it is not an atom. */
+    private static String canonicalName(String name) {
+        Atom atom = lookup(name);
+        return atom == null ? name : atom.name();
+    }
+
     public static boolean isActionAtom(String name) {
-        Atom atom = ATOMS.get(name);
+        Atom atom = lookup(name);
         return atom != null && !atom.capability();
     }
 
     public static boolean isCapabilityAtom(String name) {
-        Atom atom = ATOMS.get(name);
+        Atom atom = lookup(name);
         return atom != null && atom.capability();
     }
 
     public static Atom atom(String name) {
-        Atom atom = ATOMS.get(name);
+        Atom atom = lookup(name);
         if (atom == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "UNKNOWN_ACTION_CLASS",
                     "Unknown permission atom: " + name);
         }
         return atom;
+    }
+
+    /**
+     * Resolves an atom by its canonical spelling ({@code action:…} / {@code cap:…}) or by the bare
+     * spelling of a <b>tool-face</b> action class, or by the bare name of a capability atom. The two
+     * bare paths are the face/authority boundary (see {@link AtomNames}): the face layer and the
+     * {@code hasAuthority('cap:…')} contract speak bare names, while persisted/returned atoms are
+     * always canonical. A capability name must resolve here too, otherwise
+     * {@code canBindToAgentPrincipal} and {@code agentPrincipalForbiddenAtoms()} would answer
+     * "bindable" for {@code workspace:admin} — a silent widening, not a 400.
+     */
+    private static Atom lookup(String name) {
+        if (name == null) {
+            return null;
+        }
+        Atom exact = ATOMS.get(name);
+        if (exact != null) {
+            return exact;
+        }
+        Atom action = ATOMS.get(AtomNames.action(name));
+        return action != null ? action : ATOMS.get(AtomNames.capability(name));
     }
 
     public static String scopeClassOf(String name) {
@@ -445,6 +480,6 @@ public final class PermissionAtomCatalog {
 
     /** Authority string for an instance-level capability: {@code cap:instance:admin}. */
     public static String authorityOf(String capability) {
-        return AUTHORITY_PREFIX + capability;
+        return AtomNames.capability(capability);
     }
 }

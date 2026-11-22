@@ -78,11 +78,11 @@ class GrantResourcePatternTest {
 
     @Test
     void capabilityAtomsNeverCarryAResourceIncludingWorkspaceAdmin() {
-        assertTrue(refused(atom("workspace:admin"), "fs:" + WORKSPACE_ID + "/src").getMessage()
+        assertTrue(refused(atom("cap:workspace:admin"), "fs:" + WORKSPACE_ID + "/src").getMessage()
                 .contains("capability atom"));
-        assertTrue(refused(atom("instance:admin"), "workspace:" + WORKSPACE_ID).getMessage()
+        assertTrue(refused(atom("cap:instance:admin"), "workspace:" + WORKSPACE_ID).getMessage()
                 .contains("capability atom"));
-        assertEquals("*", patterns.resolve(atom("workspace:admin"), null),
+        assertEquals("*", patterns.resolve(atom("cap:workspace:admin"), null),
                 "an omitted resource still resolves to the canonical wildcard");
     }
 

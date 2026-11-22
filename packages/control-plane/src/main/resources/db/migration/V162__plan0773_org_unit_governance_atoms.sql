@@ -39,9 +39,26 @@
 -- 1) The role seed row (3 rows). Form copied from V157:35-44 — idempotent, so a re-run is a no-op.
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'MANAGE_ORG_UNITS', '*'),        -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000001', 'MANAGE_ORG_UNIT_MEMBERS', '*'), -- SUPER_ADMIN
-    ('00000000-0000-4000-8000-000000000001', 'READ_ORG_UNIT_MEMBERS', '*')    -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000001', 'action:MANAGE_ORG_UNITS', '*'),        -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000001', 'action:MANAGE_ORG_UNIT_MEMBERS', '*'), -- SUPER_ADMIN
+    ('00000000-0000-4000-8000-000000000001', 'action:READ_ORG_UNIT_MEMBERS', '*')    -- SUPER_ADMIN
+ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
+
+-- ---------------------------------------------------------------------------------------------
+-- 1b) M2-3 (task-835): the ORG_LEADER preset. Its atom set is exactly the D-1118 whitelist, so
+--     OrgUnitGovernancePolicy accepts it for an org-unit binding. No binding/backfill is seeded:
+--     an org unit administrator is the only writer of an org-unit binding.
+-- ---------------------------------------------------------------------------------------------
+INSERT INTO roles (id, name, display_name, description, is_system) VALUES
+    ('00000000-0000-4000-8000-000000000012', 'ORG_LEADER', 'Org Leader',
+     'Org-unit scope: manage units, their members and read member lists — the D-1118 governance '
+     'whitelist. Bound explicitly inside one org unit.', TRUE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
+    ('00000000-0000-4000-8000-000000000012', 'action:MANAGE_ORG_UNITS', '*'),
+    ('00000000-0000-4000-8000-000000000012', 'action:MANAGE_ORG_UNIT_MEMBERS', '*'),
+    ('00000000-0000-4000-8000-000000000012', 'action:READ_ORG_UNIT_MEMBERS', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- ---------------------------------------------------------------------------------------------
@@ -63,7 +80,7 @@ SELECT DISTINCT ON (b.subject_type, b.subject_id, b.scope_type, b.scope_id, rp.a
        'role', b.scope_type, b.scope_id, 'read'
 FROM role_bindings b
 JOIN role_permissions rp ON rp.role_id = b.role_id
-WHERE rp.action_class IN ('MANAGE_ORG_UNITS', 'MANAGE_ORG_UNIT_MEMBERS', 'READ_ORG_UNIT_MEMBERS')
+WHERE rp.action_class IN ('action:MANAGE_ORG_UNITS', 'action:MANAGE_ORG_UNIT_MEMBERS', 'action:READ_ORG_UNIT_MEMBERS')
   AND b.role_id = '00000000-0000-4000-8000-000000000001'  -- SUPER_ADMIN
   AND NOT EXISTS (
       SELECT 1 FROM grants g

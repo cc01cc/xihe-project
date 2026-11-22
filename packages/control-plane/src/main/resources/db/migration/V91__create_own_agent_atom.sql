@@ -27,9 +27,9 @@
 --   permissions[0].actionClass = 'CREATE_OWN_AGENT'.
 
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'CREATE_OWN_AGENT', '*'),
-    ('00000000-0000-4000-8000-000000000002', 'CREATE_OWN_AGENT', '*'),
-    ('00000000-0000-4000-8000-000000000003', 'CREATE_OWN_AGENT', '*')
+    ('00000000-0000-4000-8000-000000000001', 'action:CREATE_OWN_AGENT', '*'),
+    ('00000000-0000-4000-8000-000000000002', 'action:CREATE_OWN_AGENT', '*'),
+    ('00000000-0000-4000-8000-000000000003', 'action:CREATE_OWN_AGENT', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 
 -- Backfill the materialized atom for every user subject holding one of the three instance tier
@@ -41,7 +41,7 @@ INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, perm
                     scope_type, scope_id, read_state)
 SELECT DISTINCT ON (b.subject_id)
        gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-       jsonb_build_array(jsonb_build_object('actionClass', 'CREATE_OWN_AGENT')),
+       jsonb_build_array(jsonb_build_object('actionClass', 'action:CREATE_OWN_AGENT')),
        'role', 'instance', NULL, 'read'
 FROM role_bindings b
 WHERE b.subject_type = 'user'
@@ -56,5 +56,5 @@ WHERE b.subject_type = 'user'
         AND g.source = 'role'
         AND g.scope_type = 'instance'
         AND g.scope_id IS NULL
-        AND g.permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT')
+        AND g.permissions -> 0 ->> 'actionClass' = 'action:CREATE_OWN_AGENT')
 ORDER BY b.subject_id;

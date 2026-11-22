@@ -83,5 +83,5 @@ CREATE INDEX ix_agent_memories_active_injection
 -- Reversible: DELETE that one role_permissions row.
 -- ---------------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, action_class, resource_pattern) VALUES
-    ('00000000-0000-4000-8000-000000000001', 'MEMORY_WRITE', '*')
+    ('00000000-0000-4000-8000-000000000001', 'action:MEMORY_WRITE', '*')
 ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;

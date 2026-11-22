@@ -20,7 +20,7 @@ BEGIN
     SELECT count(*) INTO residual
     FROM grants
     WHERE source = 'agent_default'
-      AND permissions @> '[{"actionClass": "CREATE_OWN_AGENT"}]'::jsonb;
+      AND permissions @> '[{"actionClass": "action:CREATE_OWN_AGENT"}]'::jsonb;
 
     IF residual NOT IN (0, 2) THEN
         RAISE EXCEPTION 'V146 aborted: expected 0 (fresh DB) or 2 (BL-312 residue) agent_default CREATE_OWN_AGENT rows, found %', residual;
@@ -29,14 +29,14 @@ END $$;
 
 DELETE FROM grants
 WHERE source = 'agent_default'
-  AND permissions @> '[{"actionClass": "CREATE_OWN_AGENT"}]'::jsonb;
+  AND permissions @> '[{"actionClass": "action:CREATE_OWN_AGENT"}]'::jsonb;
 
 DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM grants
         WHERE source = 'agent_default'
-          AND permissions @> '[{"actionClass": "CREATE_OWN_AGENT"}]'::jsonb
+          AND permissions @> '[{"actionClass": "action:CREATE_OWN_AGENT"}]'::jsonb
     ) THEN
         RAISE EXCEPTION 'V146 aborted: agent_default CREATE_OWN_AGENT rows survived the cleanup';
     END IF;
