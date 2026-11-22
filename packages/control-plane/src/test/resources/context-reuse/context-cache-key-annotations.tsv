@@ -74,6 +74,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/chat/UserQuestionServiceIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedBackfillIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedIntegrationTest.java	property-variant
+@DynamicPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedOnboardingIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/context/ContextEventReadContractIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/context/ContextLockTimeoutIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/context/ContextToolHistoryLiveChainTest.java	property-variant
@@ -106,6 +107,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/service/WorkspaceRegistrationPushTest.java	property-variant
 @Import	com/cc01cc/p/xihe/cp/AbstractReusableIntegrationTest.java	fixture-config
 @MockitoBean	com/cc01cc/p/xihe/cp/audit/CheckpointRevertAuditIntegrationTest.java	bean-override
+@MockitoBean	com/cc01cc/p/xihe/cp/auth/FirstAccountAdminBootstrapIntegrationTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/chat/AgentSpawnPrincipalContractTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/chat/ChatRunLeaseIntegrationTest.java	bean-override
 @MockitoBean	com/cc01cc/p/xihe/cp/chat/ChatRunTerminalCollisionTest.java	bean-override
@@ -192,7 +194,9 @@
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/AuthLockoutIpIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/AuthLockoutSpoofIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/AuthRegisterLimitIntegrationTest.java	property-variant
+@TestPropertySource	com/cc01cc/p/xihe/cp/auth/FirstAccountAdminBootstrapIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/auth/RegistrationPolicyIntegrationTest.java	property-variant
+@TestPropertySource	com/cc01cc/p/xihe/cp/config/FirstRunContentSeedOnboardingIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/config/OnboardingFirstRunWithoutSeedTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/config/OnboardingSeededAdminLoginTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/crossmodule/AbstractWireMockTest.java	property-variant
