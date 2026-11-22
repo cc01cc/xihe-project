@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
@@ -90,44 +93,93 @@ test.describe("@host Runtime M1 — dev:host E2E via Playwright CLI", () => {
         expect(afterDel.status()).toBe(404);
     });
 
-    test("direct Runtime create acknowledges a strict logical Workspace without materializing it", async ({
+    test("direct Runtime create registers a direct_attach Workspace without materializing it", async ({
         request,
     }) => {
         const wsId = randomUUID();
-        const createRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces`, {
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${SERVICE_TOKEN}`,
-            },
-            data: {
-                workspaceId: wsId,
-                workspacePath: "C:\\tmp\\unused",
-                storageRef: wsId,
-                profile: "strict",
-            },
-        });
-        expect(createRes.ok()).toBeTruthy();
-        const body = await createRes.json();
-        expect(body.status).toBe("ok");
-
-        const statusRes = await request.get(
-            `${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/status`,
-            {
-                headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
-            },
-        );
-        expect(statusRes.status()).toBe(404);
-
-        const deleteRes = await request.post(
-            `${RUNTIME_URL}/internal/v1/runtime/workspaces/delete`,
-            {
+        const workspaceDir = await mkdtemp(join(tmpdir(), "xihe-runtime-m1-"));
+        try {
+            const createRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces`, {
                 headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${SERVICE_TOKEN}`,
                 },
-                data: { workspaceId: wsId },
-            },
-        );
-        expect(deleteRes.ok()).toBeTruthy();
+                data: {
+                    workspaceId: wsId,
+                    workspacePath: workspaceDir,
+                    executionMode: "windows-host",
+                    roots: [{ rootId: wsId, hostPath: workspaceDir }],
+                },
+            });
+            expect(createRes.status()).toBe(200);
+            expect(await createRes.json()).toEqual({ status: "ok", workspaceId: wsId });
+
+            const statusRes = await request.get(
+                `${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/status`,
+                {
+                    headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
+                },
+            );
+            expect(statusRes.status()).toBe(200);
+            const statusBody = await statusRes.json();
+            expect(statusBody.workspaceId).toBe(wsId);
+            expect(statusBody.state).toBe("ready");
+            // A direct_attach registration carries no ExecutionSpec generation,
+            // which proves it was registered without being materialized.
+            expect(statusBody.generation ?? null).toBeNull();
+
+            const deleteRes = await request.post(
+                `${RUNTIME_URL}/internal/v1/runtime/workspaces/delete`,
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${SERVICE_TOKEN}`,
+                    },
+                    data: { workspaceId: wsId },
+                },
+            );
+            expect(deleteRes.status()).toBe(200);
+            const deleteBody = await deleteRes.json();
+            expect(deleteBody.status).toBe("ok");
+            expect(deleteBody.workspaceId).toBe(wsId);
+        } finally {
+            await rm(workspaceDir, { recursive: true, force: true });
+        }
+    });
+
+    test("direct Runtime create rejects storageRef mixed into a direct_attach registration", async ({
+        request,
+    }) => {
+        const wsId = randomUUID();
+        const workspaceDir = await mkdtemp(join(tmpdir(), "xihe-runtime-m1-mixed-"));
+        try {
+            const createRes = await request.post(`${RUNTIME_URL}/internal/v1/runtime/workspaces`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${SERVICE_TOKEN}`,
+                },
+                data: {
+                    workspaceId: wsId,
+                    workspacePath: workspaceDir,
+                    storageRef: wsId,
+                    executionMode: "windows-host",
+                    roots: [{ rootId: wsId, hostPath: workspaceDir }],
+                },
+            });
+            expect(createRes.status()).toBe(400);
+            const body = await createRes.json();
+            expect(body.code).toBe("INVALID_REQUEST");
+            expect(body.detail).toContain("mutually exclusive");
+
+            const statusRes = await request.get(
+                `${RUNTIME_URL}/internal/v1/runtime/workspaces/${wsId}/status`,
+                {
+                    headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
+                },
+            );
+            expect(statusRes.status()).toBe(404);
+        } finally {
+            await rm(workspaceDir, { recursive: true, force: true });
+        }
     });
 });
