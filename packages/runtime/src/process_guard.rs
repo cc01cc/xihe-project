@@ -15,6 +15,33 @@ use crate::error::{Result, RuntimeError};
 
 pub const CONTRACT_VERSION: &str = "v1";
 
+/// task-820: the `--probe` invocation is the first thing a fresh install runs
+/// and it is expensive while the image is still cold (Defender first scan,
+/// OneDrive hydration, four workspace creates racing). Measured on this host:
+/// cold 4-way p95 1.05 s / max 1.12 s over 10 rounds
+/// (`internal/A03-xihe/evidence/2026-11-22-probe-budget`). The old 3 s budget
+/// left under 3x headroom and produced real `probe timed out` responses during
+/// first-run installs (task-795), so the default is 10 s and operators can
+/// tighten it per host with `XIHE_MXC_PROBE_TIMEOUT_MS`.
+#[cfg(windows)]
+const DEFAULT_MXC_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(windows)]
+const MIN_MXC_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+#[cfg(windows)]
+const MAX_MXC_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(windows)]
+const MXC_PROBE_TIMEOUT_ENV: &str = "XIHE_MXC_PROBE_TIMEOUT_MS";
+
+/// Parse the operator override. Missing/invalid values fall back to the
+/// default; valid values are clamped so a typo cannot disable the probe gate.
+#[cfg(windows)]
+fn resolve_mxc_probe_timeout(raw: Option<&str>) -> Duration {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_MXC_PROBE_TIMEOUT)
+        .clamp(MIN_MXC_PROBE_TIMEOUT, MAX_MXC_PROBE_TIMEOUT)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformDiagnostics {
@@ -880,6 +907,37 @@ fn quote_windows_argument(value: &str) -> String {
     }
 }
 
+#[cfg(windows)]
+#[derive(Debug)]
+enum MxcProbeCommandFailure {
+    Spawn(String),
+    TimedOut,
+}
+
+/// One `wxc-exec --probe` invocation under the resolved budget. `kill_on_drop`
+/// matters because dropping the timeout future must not leave a probe running
+/// after we already answered CP "unavailable".
+#[cfg(windows)]
+async fn run_mxc_probe_command(
+    executable: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> std::result::Result<std::process::Output, MxcProbeCommandFailure> {
+    match tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(executable)
+            .args(args)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => Err(MxcProbeCommandFailure::Spawn(error.to_string())),
+        Err(_) => Err(MxcProbeCommandFailure::TimedOut),
+    }
+}
+
 async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
     #[cfg(not(windows))]
     {
@@ -897,16 +955,11 @@ async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
     {
         let executable =
             std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_else(|_| "wxc-exec.exe".to_string());
-        let output = match tokio::time::timeout(
-            Duration::from_secs(3),
-            tokio::process::Command::new(&executable)
-                .arg("--probe")
-                .output(),
-        )
-        .await
-        {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
+        let probe_timeout =
+            resolve_mxc_probe_timeout(std::env::var(MXC_PROBE_TIMEOUT_ENV).ok().as_deref());
+        let output = match run_mxc_probe_command(&executable, &["--probe"], probe_timeout).await {
+            Ok(output) => output,
+            Err(MxcProbeCommandFailure::Spawn(error)) => {
                 return Ok(BackendCapabilitySnapshot::unavailable(
                     "windows-mxc",
                     "builtin",
@@ -916,7 +969,12 @@ async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
                     Some(diagnostics(None)),
                 ));
             }
-            Err(_) => {
+            Err(MxcProbeCommandFailure::TimedOut) => {
+                tracing::warn!(
+                    backend = "windows-mxc",
+                    timeout_ms = probe_timeout.as_millis() as u64,
+                    "mxc probe timed out"
+                );
                 return Ok(BackendCapabilitySnapshot::unavailable(
                     "windows-mxc",
                     "builtin",
@@ -988,6 +1046,7 @@ async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use super::{BackendCapabilitySnapshot, CONTRACT_VERSION, DirectAttachProbeRequest};
 
@@ -1033,6 +1092,77 @@ mod tests {
         .expect("probe request");
         assert_eq!(request.storage_mode, "direct_attach");
         assert_eq!(request.execution_mode, "windows-host");
+    }
+
+    /// task-820: lock the probe budget to the measured cold-start distribution,
+    /// not just to a comment. The evidence run measured cold 4-way p95 1051 ms
+    /// and max 1121 ms; the default must keep at least 8x that max.
+    #[cfg(windows)]
+    #[test]
+    fn mxc_probe_budget_defaults_to_ten_seconds_with_measured_headroom() {
+        use super::{
+            DEFAULT_MXC_PROBE_TIMEOUT, MAX_MXC_PROBE_TIMEOUT, MIN_MXC_PROBE_TIMEOUT,
+            resolve_mxc_probe_timeout,
+        };
+
+        assert_eq!(DEFAULT_MXC_PROBE_TIMEOUT, Duration::from_secs(10));
+        assert!(DEFAULT_MXC_PROBE_TIMEOUT >= Duration::from_millis(8_968));
+
+        assert_eq!(resolve_mxc_probe_timeout(None), DEFAULT_MXC_PROBE_TIMEOUT);
+        assert_eq!(
+            resolve_mxc_probe_timeout(Some("2500")),
+            Duration::from_millis(2_500)
+        );
+        assert_eq!(
+            resolve_mxc_probe_timeout(Some(" 1500 ")),
+            Duration::from_millis(1_500)
+        );
+        assert_eq!(resolve_mxc_probe_timeout(Some("0")), MIN_MXC_PROBE_TIMEOUT);
+        assert_eq!(
+            resolve_mxc_probe_timeout(Some("120000")),
+            MAX_MXC_PROBE_TIMEOUT
+        );
+        assert_eq!(
+            resolve_mxc_probe_timeout(Some("not-a-number")),
+            DEFAULT_MXC_PROBE_TIMEOUT
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn mxc_probe_budget_is_enforced_against_a_slow_probe() {
+        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        let started = std::time::Instant::now();
+        let result = super::run_mxc_probe_command(
+            &comspec,
+            &["/C", "ping -n 6 127.0.0.1 > nul"],
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(super::MxcProbeCommandFailure::TimedOut)),
+            "slow probe must hit the budget: {result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "probe timeout must return promptly, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn mxc_probe_command_returns_captured_stdout() {
+        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        let output = super::run_mxc_probe_command(
+            &comspec,
+            &["/C", "echo xihe-probe-ok"],
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("probe command");
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("xihe-probe-ok"));
     }
 
     #[cfg(windows)]
