@@ -11,6 +11,10 @@ packages/ui/e2e/.mock-flaky-history.json
 # task-88: 同族的 build-*/dist-* 与字面 .cache 一并挡住 —— 此前只有 dist/ 与 build/ 两条精确规则，
 # 于是 build-old/、dist-cjs/、.cache/ 一旦出现就会污染 git status（巡查脚本 check-stale-build-dirs.mjs 同批）。
 **/target-*/
+# task-870 实测缺口：`-Dxihe.build.suffix=task870`（无前导 dash）产出 `targettask870/`，
+# 上面的 `**/target-*/` 盖不住，会污染 git status 并可能被误提交。
+# pom.xml D32-26 注释本就要求「.gitignore must keep ignoring `target*/`」，此处补齐该口径。
+**/target*/
 **/build-*/
 **/dist-*/
 **/.cache/
