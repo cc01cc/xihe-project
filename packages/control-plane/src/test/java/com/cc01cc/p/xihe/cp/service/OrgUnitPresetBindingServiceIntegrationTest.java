@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The negatives carry the card's two mandatory cases plus the 404/unknown-role path the card
  * asked to keep on one test:</p>
  * <ul>
- *   <li><b>non-governance role ⇒ 409 ORG_SCOPE_ROLE_FORBIDDEN, code asserted</b>, and both the
+ *   <li><b>non-governance preset ⇒ 409 ORG_SCOPE_PRESET_FORBIDDEN, code asserted</b>, and both the
  *       binding rows and the audit count are unchanged — a status-only assertion could not tell
  *       this 409 from any other conflict;</li>
  *   <li><b>unknown role rides the same path</b> — so a future change that answers unknown roles
@@ -156,7 +156,7 @@ class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.replace(unitA.toString(), List.of(wsOwner.getId().toString())));
         assertEquals(HttpStatus.CONFLICT, refused.getStatus());
-        assertEquals("ORG_SCOPE_ROLE_FORBIDDEN", refused.getCode(),
+        assertEquals("ORG_SCOPE_PRESET_FORBIDDEN", refused.getCode(),
                 "the code is the judgement: a bare 409 could be any conflict");
         assertEquals(0, bindingRows(unitA), "a refused replace writes no rows");
         assertEquals(auditBefore, auditCount(), "and no audit row");
@@ -164,7 +164,7 @@ class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest
         // SUPER_ADMIN fails the whitelist too: mixed atoms (governance + everything else) are the
         // leak, and "it is the admin role" is not an exception.
         GrantPreset superAdmin = roles.findByName(SystemGrantPresetCatalog.SUPER_ADMIN).orElseThrow();
-        assertEquals("ORG_SCOPE_ROLE_FORBIDDEN", assertThrows(CpApiException.class,
+        assertEquals("ORG_SCOPE_PRESET_FORBIDDEN", assertThrows(CpApiException.class,
                 () -> service.replace(unitA.toString(), List.of(superAdmin.getId().toString())))
                 .getCode());
     }
@@ -176,7 +176,7 @@ class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest
 
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.replace(unitA.toString(), List.of(UUID.randomUUID().toString())));
-        assertEquals("ORG_SCOPE_ROLE_FORBIDDEN", refused.getCode(),
+        assertEquals("ORG_SCOPE_PRESET_FORBIDDEN", refused.getCode(),
                 "unknown is not empty: refusing it here keeps one path for one judgement");
         assertEquals(0, bindingRows(unitA));
     }

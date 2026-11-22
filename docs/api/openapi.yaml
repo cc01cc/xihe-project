@@ -767,7 +767,7 @@ paths:
         - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/MemberRoleUpdateRequest' } } }
+        content: { application/json: { schema: { $ref: '#/components/schemas/MemberPresetUpdateRequest' } } }
       responses:
         '200': { description: Role updated, content: { application/json: { schema: { $ref: '#/components/schemas/MemberView' } } } }
         '400': { description: INVALID_REQUEST (role not in EDITOR|VIEWER), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -6325,7 +6325,7 @@ paths:
         **BL-320 批 2（2026-11-05 Lead 批准）：保留为 410 tombstone，不是可用接口。**
         PLAN-0610 W2（决策 #28）/ V88 已退役该面：V88 把 `ck_grants_source` 收窄为五值后 `source='direct'`
         不再合法，`PrincipalGrantAdminService` 两个入口统一返回 `410 PRINCIPAL_GRANTS_RETIRED`（先于目标解析与校验，
-        不写 grant/audit 行）；能力改由访问角色绑定授予 —— `/api/v1/roles/**` 与 `/api/v1/bindings`。
+        不写 grant/audit 行）；能力改由访问角色绑定授予 —— `/api/v1/presets/**` 与 `/api/v1/bindings`。
         控制器保留的唯一目的是**回归锁**：4 个套件断言"退役面不会复活"（`PrincipalGrantAdminControllerContractTest`、
         `PrincipalGrantAuthorizationIntegrationTest`、`PrincipalGrantLockTimeoutContractTest`、real E2E
         `plan-0585-principal-grants.spec.ts`）。因此显式 `deprecated` 而不是删除路由。
@@ -6333,7 +6333,7 @@ paths:
       parameters:
         - { in: path, name: username, required: true, schema: { type: string }, description: 'Path username 是唯一目标权威；退役后不解引用。' }
       responses:
-        '410': { description: 'PRINCIPAL_GRANTS_RETIRED — 该写面已退役（能力已迁 /api/v1/roles 与 /api/v1/bindings）', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '410': { description: 'PRINCIPAL_GRANTS_RETIRED — 该写面已退役（能力已迁 /api/v1/presets 与 /api/v1/bindings）', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
     patch:
@@ -6350,7 +6350,7 @@ paths:
         '410': { description: 'PRINCIPAL_GRANTS_RETIRED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-  /api/v1/roles/catalog:
+  /api/v1/presets/catalog:
     get:
       tags: [admin]
       operationId: getRoleCatalog
@@ -6367,7 +6367,7 @@ paths:
         '200': { description: 'Atom catalog', content: { application/json: { schema: { $ref: '#/components/schemas/RoleCatalogView' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-  /api/v1/roles:
+  /api/v1/presets:
     get:
       tags: [admin]
       operationId: listRoles
@@ -6404,7 +6404,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES) or PRIVILEGE_ESCALATION (an atom outside the caller''s own set — detail names it; bypassed only by GRANT_ANY_ATOM)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/Problem' }
-  /api/v1/roles/{roleId}:
+  /api/v1/presets/{presetId}:
     patch:
       tags: [admin]
       operationId: updateRole
@@ -6412,7 +6412,7 @@ paths:
       description: 'Gate: MANAGE_ROLES. A custom role may change name (same ^[A-Z][A-Z0-9_]{1,63}$ V87 format, 400 INVALID_ROLE_NAME / 409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). Atom changes obey the same grant-side subset rule as create: 403 PRIVILEGE_ESCALATION names any atom outside the caller''s own set (GRANT_ANY_ATOM bypasses, audited with the skipped atom list). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: presetId, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/RoleUpdateRequest' } } }
@@ -6430,7 +6430,7 @@ paths:
       description: 'Gate: MANAGE_ROLES. 204 on success; a system role answers 409 SYSTEM_ROLE_IMMUTABLE, a role that still has bindings answers 409 ROLE_IN_USE (unbind first through PUT /bindings). The atom rows are deleted with the role. Audited as access_role_deleted.'
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: presetId, required: true, schema: { type: string, format: uuid } }
       responses:
         '204': { description: 'Deleted' }
         '401': { $ref: '#/components/responses/Problem' }
@@ -7268,10 +7268,10 @@ paths:
         the body is the complete role set of that unit, not a delta — a delta cannot express
         "remove everything", and two clients sending deltas would each see the other's rows.
 
-        **Fail closed on non-governance roles**: org-unit grants are projected as *instance*-scope
-        grants (design §4.1.1), so a role carrying a workspace-content atom would spread to every
-        workspace the member can reach. Roles whose atom set is not inside the governance whitelist
-        are therefore refused with `409 ORG_SCOPE_ROLE_FORBIDDEN` — and an **unknown** role is
+        **Fail closed on non-governance presets**: org-unit grants are projected as *instance*-scope
+        grants (design §4.1.1), so a preset carrying a workspace-content atom would spread to every
+        workspace the member can reach. Presets whose atom set is not inside the governance whitelist
+        are therefore refused with `409 ORG_SCOPE_PRESET_FORBIDDEN` — and an **unknown** preset is
         refused too (unknown is not empty, and an empty set would silently grant nothing while
         looking like a stored binding).
       parameters:
@@ -7283,7 +7283,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'ORG_UNIT_NOT_FOUND — unit not visible to the caller', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '409': { $ref: '#/components/responses/OrgScopeRoleForbidden' }
+        '409': { $ref: '#/components/responses/OrgScopePresetForbidden' }
 
 components:
   securitySchemes:
@@ -7322,12 +7322,12 @@ components:
           description: Always no-store for a throttle response
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ResourceExhaustedProblem' } } }
-    OrgScopeRoleForbidden:
+    OrgScopePresetForbidden:
       description: >-
-        409 ORG_SCOPE_ROLE_FORBIDDEN — the role's action-atom set is not inside the org-unit
-        governance whitelist, so the binding is refused (fail closed: an unknown role is not an
+        409 ORG_SCOPE_PRESET_FORBIDDEN — the preset's action-atom set is not inside the org-unit
+        governance whitelist, so the binding is refused (fail closed: an unknown preset is not an
         empty one) — D-1118. Referenced by `PUT /api/v1/org-units/{unitId}/role-bindings` (PLAN-0773 M2-11 batch C).
-        The refusal is fail closed on the role's atom set, never a role-name special case (D-1118).
+        The refusal is fail closed on the preset's atom set, never a role-name special case (D-1118).
         It is declared here so a client can branch on status + code (never on detail text) before
         that endpoint exists.
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
@@ -7748,7 +7748,7 @@ components:
         sources: { type: array, items: { $ref: '#/components/schemas/MePermissionsAtomSource' }, description: 'Every materialized grant row that yields this atom, in evaluation order. Never empty for a listed atom.' }
     MePermissionsAtomSource:
       type: object
-      description: 'task-415: where one effective atom came from. source is the grant provenance (role / spawn / template / credential_binding / agent_default); roleName is the bound role for source=role; grantId addresses the durable row for audit.'
+      description: 'task-415: where one effective atom came from. source is the grant provenance (preset / spawn / template / credential_binding / agent_default); roleName is the bound preset for source=preset; grantId addresses the durable row for audit.'
       properties:
         source: { type: string }
         roleName: { type: [string, 'null'] }
@@ -8001,7 +8001,7 @@ components:
       description: 'task-81 (G-1, DSD-1485): one atom on the role write face. A bare string ("read") keeps the historical meaning and stores the atom canonical pattern, so existing clients are unchanged; the object form is the only way to narrow a workspace-domain atom to a path prefix.'
       required: [actionClass]
       properties:
-        actionClass: { type: string, description: 'Atom name from GET /api/v1/roles/catalog' }
+        actionClass: { type: string, description: 'Atom name from GET /api/v1/presets/catalog' }
         name: { type: string, description: 'Alias of actionClass (both are accepted; the deserializer keeps the last one seen)' }
         resource: { type: [string, 'null'], description: 'Optional pattern; absent/null/blank means the atom canonical pattern. Capability atoms and instance-scoped atoms refuse a pattern, credential atoms only accept credential:* or credential:<uuid>, every other atom accepts * or fs:<workspaceId>[/<relative path>]. Rejected values are 400 INVALID_GRANT_RESOURCE; a non-existent or deleted fs: root is 404 WORKSPACE_NOT_FOUND; a workspace the caller cannot administer bindings in is 403 (RequesterAuthority.requireWorkspaceBindingAuthority).' }
     RoleCreateRequest:
@@ -8112,7 +8112,7 @@ components:
     LoginRequest: { type: object, required: [identifier, password], properties: { identifier: { type: string, description: 'PLAN-0565 ruling #7: email (contains @) or username; renamed from the former email field.' }, password: { type: string } } }
     MemberView: { type: object, required: [userId, username, email, role, createdAt], properties: { userId: { type: string, format: uuid }, username: { type: string }, email: { type: string }, name: { type: [string, 'null'] }, role: { type: string, enum: [OWNER, EDITOR, VIEWER], description: 'Canonical role; legacy ADMIN/MEMBER rows project as EDITOR (PLAN-0559).' }, createdAt: { type: string, format: date-time, description: 'Membership creation time (the joined-at value).' } } }
     MemberAddRequest: { type: object, required: [username, role], properties: { username: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Unique account username (PLAN-0565 ruling #7). 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, role: { type: string, enum: [EDITOR, VIEWER] } } }
-    MemberRoleUpdateRequest: { type: object, required: [role], properties: { role: { type: string, enum: [EDITOR, VIEWER] } } }
+    MemberPresetUpdateRequest: { type: object, required: [role], properties: { role: { type: string, enum: [EDITOR, VIEWER] } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: [string, 'null'], description: 'The account first active workspace, or null when it has none yet (PLAN-0614 blank start: register/login/refresh never create a workspace; the user creates the first one explicitly).' } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string, description: 'PLAN-0610 W4b: derived from the workspace''s earliest-granted WS_OWNER role binding (workspaces.owner_id was dropped by V89). The contract field is unchanged; it is null only for a workspace without an owner binding.' }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, workspaceRole: { type: [string, 'null'], enum: [OWNER, EDITOR, VIEWER, null], description: 'PLAN-0559 canonical workspace role for the caller; ADMIN/MEMBER legacy rows project as EDITOR.' }, canWrite: { type: boolean, description: 'PLAN-0559 UI hint; CP remains authoritative.' }, generation: { type: integer }, roots: { type: array, description: 'PLAN-0639: ordered root projection [{id, alias, position}]. Root[0].id == workspace.id (primary root invariant).' }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     WorkspaceCreateRequest: { type: object, required: [name, storageMode], properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile (requires the frozen docker backend).' }, image: { type: string, description: 'Docker-only allowlisted image (requires the frozen docker backend).' }, storageMode: { type: string, enum: [managed_import, direct_attach], description: 'Required. The docker backend is frozen, so the only usable value is direct_attach (with hostPath + executionMode windows-mxc|windows-host); managed_import is rejected with 409 BACKEND_DISABLED while the backend stays frozen and is kept only for the future thaw.' }, hostPath: { type: string, description: 'Required for direct_attach (legacy single-root form); mutually exclusive with roots[]. Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, roots: { type: array, minItems: 1, description: 'PLAN-0639 multi-root: ordered root list. Mutually exclusive with hostPath. Each root.path is an absolute host directory (direct_attach). Root[0] is the primary root. Nested roots (fully-contained) are allowed; partial overlap is rejected 400 INVALID_ROOT_OVERLAP.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
@@ -8120,7 +8120,7 @@ components:
     WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
     WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, permissionsSnapshot, bound, disabled, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0629 (user ruling 2026-11-04): the workspace-scoped roles that authorize this row; empty = listed because of a legacy binding cap only.' }, principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, bound: { type: boolean, description: 'D26 + D-174: whether an explicit cap binding (`workspace_agents` row) exists for this Workspace. false = no cap binding yet (the caller''s own owned rows merge in as discoverable) — a seeded workspace role binding still provides reach, and effective rights are always role ∩ cap.' }, disabled: { type: boolean, description: 'D27: the principal is disabled (disabledAt set); the UI must block selection and show the disabled badge.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]}, copied from the template at creation and mutable through PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions (never an array — Gap I).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the subject memory policy {memory:{enabled,writeMode,types}} plus, since task-16, the derived-run tool surface derivedRunToolMode (values none or workspace); null = no policy (memory off, no derived grant). The workspace agent list carries it so the UI can show/manage memory and the derived tool surface.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding (D-174: always read from the binding row); empty = the structural default — reach comes from the seeded workspace role binding and the effective rights are role ∩ cap.' }, capSource: { type: [string, 'null'], description: 'D-1109: how the frozen cap came to be — `explicit` (the caller sent the permissions array; empty array = zero cap) or `baseline` (the caller omitted it and the cap was derived from the role baseline). null = this row has no cap binding (`bound=false`).' }, isDefault: { type: boolean, description: 'task-106 (user ruling 2026-11-20 00:28): this row is the Workspace default Agent for new sessions (workspace_agents.is_default, V177). At most one row per Workspace is true; always false for an unbound row (`bound=false`). The create form pre-selects it and POST /api/v1/sessions falls back to it when agentPrincipalId is omitted.' } } }
     WorkspaceAgentListResponse: { type: object, required: [agents], properties: { agents: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } }
-    EffectiveCapView: { type: object, additionalProperties: false, required: [principalId, workspaceId, effectiveCap, capSource, provenance, defaultGrants, bound], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, effectiveCap: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'task-448 (D-1286): the LIVE resolveCapFor evaluation (binding atoms retained to the principal effective ceiling), byte-identical to the internal cap and sorted — NOT the stored permissionsSnapshot.' }, capSource: { type: object, additionalProperties: false, required: [binding], properties: { binding: { type: string, enum: [binding-snapshot, role-binding], description: 'Hit source of the binding atoms at the capability-atom layer: binding-snapshot = a cap binding row; role-binding = workspace role grants (no binding row).' } } }, provenance: { type: object, additionalProperties: false, required: [principalGrantIds, bindingGrantIds, grantSources], properties: { principalGrantIds: { type: array, items: { type: string, format: uuid }, description: 'P1-1: grant-row ids behind the principal effective atoms.' }, bindingGrantIds: { type: array, items: { type: string, format: uuid }, description: 'P1-1: grant-row ids behind the binding atoms (role-binding case; empty for binding-snapshot).' }, grantSources: { type: object, additionalProperties: { type: string, enum: [role, spawn, template, credential_binding, agent_default, plugin_binding, org_unit, unknown] }, description: 'task-87: grant id -> source label, keyed by the grant UUID string (keys cannot be pattern-constrained here; the repository has no patternProperties precedent). Always present, {} when both id arrays are empty, and it covers EXACTLY the union of principalGrantIds and bindingGrantIds (missing key = unlabelled row, extra key = contract drift). Vocabulary: the six persisted ck_grants_source values (role/spawn/template/credential_binding/agent_default/plugin_binding) plus two labels. org_unit is UNREACHABLE today and that is deliberate: OrgUnitGrantExpander sets source=org_unit on a synthetic row whose id stays null (OrgUnitGrantExpander.java:65 with :252-262), and this map is keyed by id, so that grant class still has no structured outlet (recorded in DEV-018); the label is kept so a future persisted org-unit row is not mislabelled. unknown is DEFENSIVE ONLY: V38 source NOT NULL plus the V139 ck_grants_source CHECK keep every persisted row inside the six values, so unknown appears only if a mapping-layer/regression hands an out-of-vocabulary string to the read face, and it never falls back to a default such as role.' } } }, defaultGrants: { type: object, additionalProperties: false, required: [readFace], properties: { readFace: { type: array, items: { type: string }, description: 'P1-2: default grant set for the read-face authorization — workspace members (gate is membership at the atom layer, no role special-case). task-481: the item value is the membership marker token (`workspace-member`), NOT a role-name list.' } } }, bound: { type: boolean, description: 'Whether a cap binding row exists (false = role-binding reach).' } } }
+    EffectiveCapView: { type: object, additionalProperties: false, required: [principalId, workspaceId, effectiveCap, capSource, provenance, defaultGrants, bound], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, effectiveCap: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'task-448 (D-1286): the LIVE resolveCapFor evaluation (binding atoms retained to the principal effective ceiling), byte-identical to the internal cap and sorted — NOT the stored permissionsSnapshot.' }, capSource: { type: object, additionalProperties: false, required: [binding], properties: { binding: { type: string, enum: [binding-snapshot, role-binding], description: 'Hit source of the binding atoms at the capability-atom layer: binding-snapshot = a cap binding row; role-binding = workspace role grants (no binding row).' } } }, provenance: { type: object, additionalProperties: false, required: [principalGrantIds, bindingGrantIds, grantSources], properties: { principalGrantIds: { type: array, items: { type: string, format: uuid }, description: 'P1-1: grant-row ids behind the principal effective atoms.' }, bindingGrantIds: { type: array, items: { type: string, format: uuid }, description: 'P1-1: grant-row ids behind the binding atoms (role-binding case; empty for binding-snapshot).' }, grantSources: { type: object, additionalProperties: { type: string, enum: [preset, spawn, template, credential_binding, agent_default, plugin_binding, org_unit, unknown] }, description: 'task-87: grant id -> source label, keyed by the grant UUID string (keys cannot be pattern-constrained here; the repository has no patternProperties precedent). Always present, {} when both id arrays are empty, and it covers EXACTLY the union of principalGrantIds and bindingGrantIds (missing key = unlabelled row, extra key = contract drift). Vocabulary: the six persisted ck_grants_source values (preset/spawn/template/credential_binding/agent_default/plugin_binding) plus two labels. org_unit is UNREACHABLE today and that is deliberate: OrgUnitGrantExpander sets source=org_unit on a synthetic row whose id stays null (OrgUnitGrantExpander.java:65 with :252-262), and this map is keyed by id, so that grant class still has no structured outlet (recorded in DEV-018); the label is kept so a future persisted org-unit row is not mislabelled. unknown is DEFENSIVE ONLY: V38 source NOT NULL plus the V139 ck_grants_source CHECK keep every persisted row inside the six values, so unknown appears only if a mapping-layer/regression hands an out-of-vocabulary string to the read face, and it never falls back to a default such as preset.' } } }, defaultGrants: { type: object, additionalProperties: false, required: [readFace], properties: { readFace: { type: array, items: { type: string }, description: 'P1-2: default grant set for the read-face authorization — workspace members (gate is membership at the atom layer, no role special-case). task-481: the item value is the membership marker token (`workspace-member`), NOT a role-name list.' } } }, bound: { type: boolean, description: 'Whether a cap binding row exists (false = role-binding reach).' } } }
     AgentMemoryView: { type: object, additionalProperties: false, required: [id, pinned, createdAt, updatedAt, origin, archived, deletedAt, content], properties: { id: { type: string, format: uuid }, origin: { type: string, enum: [manual, run], description: 'PLAN-0629 M1-5 (Lead 2026-11-03): where the assertion came from, in UI vocabulary — manual = a person wrote it (stored origin ui/cli), run = an agent run produced it (stored origin tool/passive.*).' }, pinned: { type: boolean, description: 'Only the ui/cli channels can pin (V99 CHECK); pinned rows are injected first.' }, createdAt: { type: string, format: date-time, description: 'PLAN-0629 M1-5: when the assertion was first written; an edit keeps it.' }, updatedAt: { type: string, format: date-time }, archived: { type: boolean, description: 'PLAN-0629 M1-5 (Lead 2026-11-03): true for a soft-deleted row. "删除" is an archive, so the UI labels it 归档 and reads it back with status=retired|all.' }, deletedAt: { type: [string, 'null'], format: date-time, description: 'When it was archived; null while live.' }, content: { type: string, description: 'Stored (normalized) content; the UI truncates for display.' } } }
     AgentMemoryListResponse: { type: object, additionalProperties: false, required: [memories], properties: { memories: { type: array, items: { $ref: '#/components/schemas/AgentMemoryView' } } } }
     AgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }

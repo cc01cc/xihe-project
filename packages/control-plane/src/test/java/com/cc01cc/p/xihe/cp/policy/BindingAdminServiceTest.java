@@ -97,7 +97,7 @@ class BindingAdminServiceTest {
 
     /**
      * The card's named negative case: a role carrying a workspace-content atom is refused with
-     * {@code 409 ORG_SCOPE_ROLE_FORBIDDEN}, the message names the role <b>and</b> the atom, and no
+     * {@code 409 ORG_SCOPE_PRESET_FORBIDDEN}, the message names the preset <b>and</b> the atom, and no
      * writer in this service was reached.
      */
     @Test

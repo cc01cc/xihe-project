@@ -302,7 +302,7 @@ public class BindingAdminService {
      * latter would only say the table happens to be empty.</p>
      *
      * @param roleIds the roles the org-unit binding would grant (may be null/empty)
-     * @throws CpApiException {@code 409 ORG_SCOPE_ROLE_FORBIDDEN} naming the role and the
+     * @throws CpApiException {@code 409 ORG_SCOPE_PRESET_FORBIDDEN} naming the preset and the
      *                        offending atoms; {@code 404 ROLE_NOT_FOUND} for an unresolved
      *                        role (fail closed — an unknown role is not an empty one)
      */
