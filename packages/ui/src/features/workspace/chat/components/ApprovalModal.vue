@@ -819,7 +819,7 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="classifyConfirming">
-                    <section data-testid="approval-classify-confirm" class="space-y-4">
+                    <section data-testid="approval-classifying" class="space-y-4">
                         <div>
                             <h3 class="text-base font-semibold">
                                 {{ t("chat.approvalClassifyTitle") }}

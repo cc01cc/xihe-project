@@ -671,6 +671,24 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
         expect(wrapper.find('[data-testid="approval-unclassified-notice"]').exists()).toBe(true);
     });
 
+    it("marks the classification step and hides the main decision buttons", async () => {
+        const wrapper = mountModal({
+            approval: { ...baseApproval, tool: "mcp__third_party__do", policy: unclassifiedPolicy },
+            show: true,
+            canClassify: true,
+        });
+
+        await wrapper.find('[data-testid="approval-classify-entry"]').trigger("click");
+        await nextTick();
+
+        const content = wrapper.find('[data-testid="approval-modal-content"]');
+        expect(content.find('[data-testid="approval-classifying"]').exists()).toBe(true);
+        // 分类步骤打开时，主决策按钮整块不渲染（不是仅 disabled）。
+        expect(content.find('[data-testid="approval-approve"]').exists()).toBe(false);
+        expect(content.find('[data-testid="approval-reject"]').exists()).toBe(false);
+        expect(wrapper.emitted("approve")).toBeUndefined();
+    });
+
     it("classifies the tool first and only then emits a one-shot approve", async () => {
         vi.mocked(api.upsertPolicyToolFace).mockResolvedValue({
             id: "face-1",
@@ -687,7 +705,7 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
         });
 
         await wrapper.find('[data-testid="approval-classify-entry"]').trigger("click");
-        expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="approval-classifying"]').exists()).toBe(true);
         expect(api.upsertPolicyToolFace).not.toHaveBeenCalled();
         expect(wrapper.emitted("approve")).toBeUndefined();
 
@@ -729,7 +747,8 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
         await wrapper.find('[data-testid="approval-classify-submit"]').trigger("click");
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="approval-classifying"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="approval-classify-error"]').exists()).toBe(true);
         // task-45：分类失败提示只放可读文案；码与 CP 英文 detail 不再直出（改前 `toContain("FORBIDDEN")`
         // 把缺陷钉成了契约）。
         const classifyErrorText = wrapper.find('[data-testid="approval-classify-error"]').text();
@@ -793,7 +812,7 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
             shape: "opaque",
         });
 
-        expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="approval-classifying"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="approval-classify-error"]').exists()).toBe(false);
         await wrapper.find('[data-testid="approval-classify-entry"]').trigger("click");
         await wrapper.find('[data-testid="approval-classify-action-class"]').setValue("read");
@@ -870,7 +889,7 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
         ).toBeDefined();
 
         await wrapper.find(".approval-content").trigger("keydown", { key: "Escape" });
-        expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="approval-classifying"]').exists()).toBe(false);
 
         pendingWrite.resolve(classifiedFace());
         await flushPromises();
@@ -900,7 +919,7 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
             .find('[data-testid="approval-classify-action-class"]')
             .trigger("keydown", { key: "Escape" });
 
-        expect(wrapper.find('[data-testid="approval-classify-confirm"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="approval-classifying"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="approval-classify-entry"]').exists()).toBe(true);
         expect(wrapper.emitted("reject")).toBeUndefined();
         expect(wrapper.emitted("approve")).toBeUndefined();
