@@ -1,6 +1,6 @@
 # XH 审批契约
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：CP/Security；来源：PLAN-0386、DEV-014、PLAN-0407 spec §9（ask 清单补录）、PLAN-0464 T1.5；更新：2026-10-06。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：CP/Security；来源：PLAN-0386、DEV-014、PLAN-0407 spec §9（ask 清单补录）、PLAN-0464 T1.5；更新：2026-11-22（新增 §3.1 批准者判定：批准权改由 `(action:approve, resource)` 求值，禁硬编码发起人分支）。
 > 消费者：CP approval gate、Agent approval relay、UI approval modal、Audit
 
 ## 1. 请求身份
@@ -31,6 +31,14 @@ Pending/replayable 状态包括 `pending`、`dispatching` 和 `dispatch_unknown`
 - 终态 approval row **MUST NOT** 因迟到 decision/event 回退。
 - Raw arguments、credentials 和 file content **MUST NOT** 进入 approval payload 或 audit log；只能保留受限 details 和 hash。
 - Approval 与 authorization、capability policy 分离；正向决策不能覆盖其中任何一层。
+
+### 3.1 批准者判定（proposed）
+
+谁能批准 **MUST** 走授权求值，判据是 `(action:approve, 本次请求的 resource)` 同时命中；**MUST NOT** 用「是不是会话发起人」「是不是人类账户」这类不进 grants、不可配置、不留审计的硬编码分支。批准者可以是人类账户，也可以是持有该原子的 Agent。
+
+- 现状（未达本契约）：`chat/UserQuestionService.java:209-212` 把 addressee 写死成 run 属主，`:305` 再以「非属主 ⇒ 统一 404」拦截，全程不读 grants。这属于隐藏判据，与 §3「Approval 与 authorization 分离」并不冲突——分离指的是**判定顺序**，不是**批准者身份可以绕开权限**。
+- 四条硬不变式：① 批准者 **MUST NOT** 是请求方自己，也 **MUST NOT** 在其 spawn 链上（上游或下游都不行）；② 批准 **MUST** 绑定到具体请求，不可复用到别的 `(action, resource)`；③ 一次性，用过即失效，**MUST NOT** 被「永久记住」而跨会话生效——要长期放行只能显式加一条 grant；④ **MUST** 有过期时间，超时或拒绝都按拒绝处理（与 §3 fail-closed 一致）。
+- 不变式 ③ 与 §2 的复用等级不矛盾：`saved` / `reject_always` 物化的规则行自 PLAN-0407 T2.8 起**不再参与授权裁决**，因此「永久记住」本来就不产生跨会话放行；本节只是把这条行为事实写成规范判据。
 
 ## 4. 重启后的审批对齐（proposed，task-109 / F-28）
 

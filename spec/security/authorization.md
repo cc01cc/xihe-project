@@ -1,6 +1,6 @@
 # XH 授权模型
 
-> 契约状态：`proposed`；实现状态：`implemented`（PLAN-0610，2026-11-01）；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 / PLAN-0610 写回；更新：2026-11-22（拆分 grant scope / visibility scope 术语，补资源命名空间、fs/phys 双轨与 `credential:*` 契约，判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md`）。
+> 契约状态：`proposed`；实现状态：`implemented`（PLAN-0610，2026-11-01）；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 / PLAN-0610 写回；更新：2026-11-22（拆分 grant scope / visibility scope 术语，补资源命名空间、fs/phys 双轨与 `credential:*` 契约；同批新增 §2.2 条件、§2.3 审批、§2.4 上下文、§2.5 v3 十步链，判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md`）。
 > 消费者：CP 授权/policy、Workspace API、MCP 工具调用门、UI 授权结果
 >
 > **supersede**：本文取代 PLAN-0580 §4「实例角色只有两种、MUST NOT 引入第三角色」与 PLAN-0585「grant 写入只有唯一受审计管理面 `/api/v1/principal-grants`」。二者均随 PLAN-0610 退役。
@@ -23,6 +23,8 @@
 7. **approval-policy `askActionClasses[]`**：在册且 `mode=manual` → `ASK`；`mode=auto` → 放行并记 `allowed_by`；不在册 → 授权过后直过；
 8. audit：grant 决策与 `allowed_by` 记录。
 
+本节是**当前**评估链；v3 目标态的九步求值链（新增条件、审批权改判据）见 §2.5。
+
 ### 2.1 资源命名空间契约
 
 - 资源串 **MUST** 采用「命名空间 + 值」形态；命名空间来自单一注册表。**未登记前缀出现在 grant 资源里 MUST fail-closed**。
@@ -30,9 +32,51 @@
 - 命名空间 **MUST NOT** 使用 `workspace:` 或 `session:`：二者是 context（workspace 由 grant scope 表达，session 是会话容器），不是对象身份。注意能力原子 `workspace:admin` 与 action atom `session:permission:configure` 是原子名，不是资源命名空间。
 - **`fs:` / `phys:` 双轨**：授权 **MUST** 只书写 `fs:<声明键>`；`phys:` 只在求值期由声明键展开，**MUST NOT 落入 grants 表、MUST NOT 接受 API 提交**。提交 `phys:` grant **MUST** 返回 `400 INVALID_GRANT_RESOURCE`。理由是物理键是宿主绝对路径，换机器 / 容器 / 恢复备份都会变，写进长期授权会把权限绑死在某台机器上。求值期两侧都是 `fs:` 时 **MUST** 展开成 `phys:` 比物理身份，**MUST NOT** 回退成字符串比较。
 - **`credential:*` 语义**：`credential:*` 只用于凭证**管理面**（`credential_manage` 等原子的 canonical resource），**MUST NOT** 被解释成「可使用全部凭证」的授权。使用请求 **MUST** 携带具体 `credential:<uuid>`；**判定请求的 resource** 为 `credential:*` 且 actionClass 为 `credential_use` 时 **MUST** 拒绝（`policy/ToolFaceRegistry.java:423-445`、`policy/PolicyRequest.java:28-37`）；grant 侧的宽行只是 ceiling 写法，**MUST NOT** 让请求跳过具体 uuid。
-- **组织树**：`OrgUnitAccess.Scope`（ltree 路径）永久留在 conditions / visibility scope 面，**MUST NOT** 进入资源轴。资源注册表 **MAY** 预留 `tree` matcher 类型，但当前 **MUST NOT** 注册 `org:` 命名空间。
+- **组织树**：`OrgUnitAccess.Scope`（ltree 路径）永久留在 conditions / visibility scope 面，**MUST NOT** 进入资源轴。资源注册表 **MAY** 预留 `tree` matcher 类型，但当前 **MUST NOT** 注册 `org:` 命名空间。理由：组织树回答「能看见哪些数据」，不是「能对哪个对象做哪个动作」；进资源轴会同时破坏 404 语义与「读取面按 ltree `<@` 过滤」的查询范围语义。将来确实要把某个单元当授权对象时，只加一行注册（`org:` + `tree` matcher + canonicalizer），不改表、不改解析器、不改求值器。
 
 **新增资源类别 playbook**：注册表加一行（namespace + matcher + canonicalizer）→ 提取器加一个 key → 校验器接受该前缀 → 单测 / golden 加用例 → 文档登记一行。**MUST NOT** 因此改表、改求值器或做迁移；真正的成本在确定 canonical 形态（什么算同一个资源），不在代码。
+
+### 2.2 条件（condition）契约
+
+条件是**授权之外的额外限制**，挂在 policy 层、与 grant 分开存，判定时读请求上下文里的字段。它**只能收窄，不能放宽**：条件永不授予权限，也不参与 `(actionClass, resource)` 匹配。
+
+- 算子集 **MUST** 封闭为五种：`eq` / `neq` / `in` / `exists` / 时间窗（`before`–`after`）。**MUST NOT** 支持自定义算子或表达式语言。
+- 请求上下文里**缺该字段** ⇒ 判为不满足（deny）；出现**未登记的条件 key** ⇒ 直接 deny。**MUST NOT** 忽略未知 key 或按通过处理。
+- 改条件 **MUST NOT** 需要重发授权：条件与 grant 是两份数据，撤销条件不影响 grants 行。
+- 端点级可见性检查（如组织树的「非成员得到 404」）**MUST NOT** 称为 condition，归 visibility guard，与本节判据分开实现。`in_subtree` 因此不属于算子集：树形包含是可见性语义，不是授权语义。
+
+### 2.3 审批（approval）契约
+
+审批是**风险模态**，不是权限集合的一员：它不授予任何权限，只决定「这次要不要先点头」。审批的请求身份、状态机、复用等级与重启对齐由 `approval.md` 承接，本节只定授权侧判据。
+
+- 批准权 **MUST** 由权限判定，判据是 `(action:approve, 本次请求的 resource)` 同时命中；**MUST NOT** 用「是不是会话发起人」「是不是人类账户」这类硬编码分支决定。批准者可以是人类账户，也可以是持有该原子的 Agent。批准者资格的四条硬不变式见 `approval.md` §3.1。
+  - `action:approve` 目前**不在内置动作原子目录内**（`policy/PermissionAtomCatalog.java:18` 指向 `ToolFaceRegistry#builtinActionClasses()`），属本契约要求新增的原子；其默认授予集与种子随预设重设计一并落。
+- 当前 ASK 只按动作类命中（`policy/PolicyEngine.java:187-200` 的 `askActionClasses[]`），**MUST** 收窄为「动作类 + 资源」双条件，避免 `write` 一次入册就对所有路径要求审批。
+- `ASK` **MUST NOT** 出现在授权求值失败的路径上：制度拒（缺原子）不建 pending approval，见 §2 第 6 步。
+
+### 2.4 上下文（context）
+
+工作区、组织单元、会话是**上下文**，回答「这次请求发生在哪儿」，不参与 `(actionClass, resource)` 匹配。其中实例与工作区由 grant scope 表达（§1），组织单元由 visibility scope 表达（§2.1），会话是容器身份。上下文 **MAY** 被 §2.2 的条件读取，但 **MUST NOT** 被当作第三匹配轴。
+
+### 2.5 v3 目标态十步链（proposed）
+
+顺序与 DEV-037 §3 的求值链逐步对应，只多一步「条件」（第 7 步）。与 §2 的差异只有第 7–8 步（新增条件、审批权改判据），其余步骤是既有环节的重新表述。**MUST NOT** 把本节当作已实现事实引用——未实现项在最后一列点名。
+
+| # | 步骤 | 判据 | 对应小节 | 实现状态 |
+|---|---|---|---|---|
+| 1 | 登录还有效吗 | 签名 + epoch `tv`，过期即按未认证处理 | §6 | 已实现（§2 第 1 步） |
+| 2 | 这次请求发生在哪儿 | grant scope 派生：实例或工作区，由服务端解析、不信任请求参数 | §1、§2 第 2 步 | 已实现 |
+| 3 | 是不是管理面 | 能力原子只判当前主体的持有情况，**MUST NOT** 逐级求交 | §2 第 3 步 | 已实现 |
+| 4 | 要做什么、对什么做 | 工具面映射成 actionClass，配资源串解析 | §2 第 4 步、§2.1 | 已实现 |
+| 5 | 硬闸 | built-in hard guard，先于一切授权，任何模式/规则不可覆盖 | §2 第 5 步 | 已实现 |
+| 6 | 两项同时命中 | `(actionClass × resource)` **唯一匹配点**，链上每级都持有，任一级缺即拒 | §2 第 6 步 | 已实现（三源快照未去重，见 task-834） |
+| 7 | 条件 | §2.2 五算子，只收窄不放宽 | §2.2 | **未实现**（算子集与求值器均无） |
+| 8 | 审批 | 批准权走 `(action:approve, resource)` | §2.3、`approval.md` §3.1 | **部分**：ASK 只按动作类；批准者仍硬编码 run 属主；`action:approve` 原子不存在 |
+| 9 | 执行 | 执行期不再判权限 | §2 第 8 步 | 已实现 |
+| 10 | 记录 | 拒绝原因可解释 | §2 第 8 步、DEV-037 §10 explain | 部分：explain 已落，求值失败仍只有 WARN |
+
+- 第 6 步是唯一做匹配的地方；第 3、5、7、8 步只加闸、加条件或加确认，**MUST NOT** 把已拒绝的调用改回放行。
+- 三种结果的合成固定为拒绝优先、其次确认：任一处拒绝 → `DENY`；未拒绝但需审批 → `ASK`；全部通过 → `ALLOW`。
 
 ## 3. 模型
 

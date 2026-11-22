@@ -7,7 +7,7 @@ sidebar_group: "开发指南"
 status: active
 created: 2026-11-20
 updated: 2026-11-22
-description: XH 自研授权模型的判据、选择理由与换型阈值：正名「交集授权」，给出为什么它不是「基于角色的权限系统」、与九族成熟模型的逐维对比、自研代价、九步求值链与三件工程机制。
+description: XH 自研授权模型的判据、选择理由与换型阈值：正名「交集授权」，给出为什么它不是「基于角色的权限系统」、与九族成熟模型的逐维对比、自研代价、九步求值链与三件工程机制；并记录 v3 目标态的条件五算子、审批批准权与十步链。
 tags:
   - authz
   - policy
@@ -66,6 +66,16 @@ tags:
 
 **一句话验收口径**：`actionClass × resource` 两轴同时命中、主体链每一级都持有、且候选行落在当前 grant scope 允许的档位里，才 ALLOW；缺省拒。grant scope 的作用是**分区**与**写入期可绑定性**，不是第三轴。
 
+### 2.1 上下文（context）：第三样输入，但不是第三轴
+
+工作区、组织单元、会话是**上下文**，回答「这次请求发生在哪儿」。它们不参与 `(actionClass, resource)` 匹配，只决定三件事：
+
+- **实例 / 工作区**由 grant scope 表达（本节第 3 条），决定取哪一档 grant；
+- **组织单元**由 visibility scope 表达（`OrgUnitAccess.Scope`，见 §5.4），决定能看见哪些数据；
+- **会话**是容器身份，承载主体派生链与快照。
+
+上下文 **MAY** 被条件读取（§4.1），但 **MUST NOT** 被当作第三匹配轴。把组织单元塞进资源轴的代价见 §5.4。
+
 ## 3. 求值链九步
 
 <svg viewBox="0 0 660 400" width="100%" role="img">
@@ -99,6 +109,8 @@ tags:
 | 8 | 执行 | Runtime（`job_host_adapter.rs` 明确不做 sandbox、不做 policy） | `packages/runtime/src/job_host_adapter.rs:1-5` | 以为 Runtime 兜底，实际无兜底 |
 | 9 | 审计 | 审批链写 `audit_logs`；授权求值自身只打 WARN | `policy/GrantAuthorizationService.java:119-121` | 拒了说不出理由 |
 
+本节是**当前**实现链。v3 目标态在该链的第 6–7 步之间插入「条件」，并把审批门的批准者判据改为权限判定；完整十步见 §4.3。
+
 ## 4. 判据本体（源码锚点）
 
 | 判据 | 内容 | 锚点 |
@@ -111,6 +123,64 @@ tags:
 | 写入期上限 | 绑定 cap 必须 ⊆ 主体已持原子且 ⊆ 操作者已持原子，否则 403 并点名越界原子 | `service/AgentPrincipalService.java:539-563` |
 
 **一条必须说清的实现细节**：`GrantIntersectionEvaluator.allows` 的 javadoc（`:97`「Every requested atom must be granted by every principal in the operation path.」）与实现一致——`principalPath` 里**每一级**快照都必须持有该 `(actionClass × resource)` 原子，任一级 `noneMatch` 即整体 `return false`（`:103-120`），所以「逐级求交」在**求值期**就成立，不是只在写入期成立。评审读法：`path` 由 `policy/GrantPrincipalPathResolver` 按主体派生链解出（`:78-106` 对 agent 链逐级校验），链上任一环缺原子整条调用即拒，放宽单独一级不生效。写入期另有**前置上限**（cap ⊆ 主体已持原子且 ⊆ 操作者已持原子，`service/AgentPrincipalService.java:539-563`，越界 403 `AGENT_PERMISSION_SCOPE_EXCEEDED`）：它是落库前的边界校验，不能替代读期判定。
+
+### 4.1 条件（condition）：授权之外的额外限制
+
+条件是挂在 policy 层、与 grant 分开存的第二道判断。它读请求上下文里的字段，**只能收窄，不能放宽**：条件永不授予权限，也不参与 `(actionClass, resource)` 匹配。
+
+| 判断方式 | 例子 |
+|---|---|
+| 相等 `eq` | 请求里的 project 必须是 `p-42` |
+| 不等 `neq` | 来自 sandbox 的请求不允许 |
+| 属于 `in` | 请求里的环境必须在 `prod` / `staging` 名单内 |
+| 存在 `exists` | 请求必须带 `trace_id` |
+| 时间窗 `before`–`after` | 只在 09:00–18:00 允许调用 |
+
+硬规则：
+
+- 算子集 **MUST** 封闭为这五种，**MUST NOT** 支持自定义算子或表达式语言。
+- 请求上下文里**缺该字段** ⇒ 判为不满足；出现**未登记的条件 key** ⇒ 直接 deny。**MUST NOT** 忽略未知 key 或按通过处理。
+- 改条件 **MUST NOT** 需要重发授权：条件与 grant 是两份数据。
+- 端点级可见性检查（组织树的「非成员得到 404」）**MUST NOT** 称为 condition，归 visibility guard。`in_subtree` 因此不属于算子集。
+
+与图、spec 的对应：`spec/security/authorization.md` §2.2；配图「条件」卡。
+
+### 4.2 审批（approval）：风险模态，不是权限
+
+审批不授予任何权限，只决定「这次要不要先点头」。它和 ALLOW / DENY 不在同一个格上，合成规则固定为**拒绝优先、其次确认**：
+
+- 任一处拒绝 → `DENY`
+- 未拒绝但需审批 → `ASK`
+- 全部通过 → `ALLOW`
+
+批准权的判据（v3 目标，**未实现**）：
+
+- 谁能批：`(action:approve, 本次请求的 resource)` 同时命中；批准者可以是人类账户，也可以是持有该原子的 Agent。
+- 谁不能批：请求方自己，以及它的上游、下游。
+- 管多久：只对这一次请求有效；超时或拒绝都按拒绝处理。
+
+现状：ASK 只按动作类命中（`policy/PolicyEngine.java:187-200` 的 `askActionClasses[]`），不看资源；批准者写死成 run 属主（`chat/UserQuestionService.java:209-212`，非属主统一 404，见 `:305`），全程不读 grants。两条都属隐藏判据，**MUST** 收敛到权限判定。`action:approve` 目前**不在** 42 个内置动作原子内，属待新增。
+
+审批的请求身份、状态机、复用等级与重启对齐见 `spec/security/approval.md`，本节不重复。
+
+### 4.3 v3 目标态十步链（proposed）
+
+与 §3 的差异只有两处：第 7 步新增「条件」，第 8 步「审批」改判据。其余步骤是同一环节的重新表述。**MUST NOT** 当作已实现事实引用。
+
+| # | 步骤 | 判据 | 实现状态 |
+|---|---|---|---|
+| 1 | 登录还有效吗 | 签名 + epoch `tv`（§3 第 1 步） | 已实现 |
+| 2 | 这次请求发生在哪儿 | grant scope 派生，服务端解析（§3 第 2 步、§2 第 3 条） | 已实现 |
+| 3 | 是不是管理面 | 能力原子只判当前身份，不逐级求交（§3 第 3 步） | 已实现 |
+| 4 | 要做什么、对什么做 | 工具面映射 + 资源串解析（§3 第 4 步） | 已实现 |
+| 5 | 硬闸 | L0 hard guard，先于一切授权（§3 第 5 步） | 已实现 |
+| 6 | 两项同时命中 | 唯一匹配点，链上每级都持有（§3 第 6 步） | 已实现 |
+| 7 | 条件 | §4.1 五算子，只收窄 | **未实现** |
+| 8 | 审批 | §4.2，批准权走 `(action:approve, resource)` | **部分**：只按动作类；批准者硬编码 |
+| 9 | 执行 | Runtime 不再判权限（§3 第 8 步） | 已实现 |
+| 10 | 记录 | 拒绝原因可解释（§3 第 9 步、§10） | 部分：求值失败仍只有 WARN |
+
+- 第 6 步是唯一做匹配的地方；第 3、5、7、8 步只加闸、加条件或加确认，**MUST NOT** 把已拒绝的调用改回放行。
 
 ## 5. 资源与原子目录
 

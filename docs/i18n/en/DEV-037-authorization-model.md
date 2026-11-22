@@ -7,7 +7,7 @@ sidebar_group: "Developer Guide"
 status: active
 created: 2026-11-20
 updated: 2026-11-22
-description: Judgement, rationale and migration thresholds of XH's in-house authorization model. It names the model "Intersection-grant Authorization", explains why it is not a role-based permission system, compares it with nine mature families, and records the nine-step evaluation chain, the cost of building it in-house, and the three engineering mechanisms.
+description: Judgement, rationale and migration thresholds of XH's in-house authorization model. It names the model "Intersection-grant Authorization", explains why it is not a role-based permission system, compares it with nine mature families, and records the nine-step evaluation chain, the cost of building it in-house, and the three engineering mechanisms. It also records the v3 target: five condition operators, approver rights, and the ten-step chain.
 tags:
   - authz
   - policy
@@ -66,6 +66,16 @@ A decision has three parts, but **only two matching dimensions**:
 
 **One-sentence acceptance rule**: ALLOW only when the `actionClass × resource` axes both match, every level of the subject chain holds the atom, and the candidate rows fall inside the tier allowed by the current grant scope; default deny. grant scope provides **partitioning** and **write-time bindability**, not a third axis.
 
+### 2.1 Context: a third input, not a third axis
+
+Workspace, org unit, and session are **context**. They answer "where does this request happen" and never participate in `(actionClass, resource)` matching. They decide three things only:
+
+- **instance / workspace** is expressed by grant scope (item 3 above) and selects which grant tier to read;
+- **org unit** is expressed by visibility scope (`OrgUnitAccess.Scope`, see §5.4) and decides which data is visible;
+- **session** is a container identity that carries the subject chain and its snapshots.
+
+Context **MAY** be read by conditions (§4.1), but **MUST NOT** become a third matching axis. The cost of pushing the org unit onto the resource axis is in §5.4.
+
 ## 3. The nine-step evaluation chain
 
 <svg viewBox="0 0 660 400" width="100%" role="img">
@@ -99,6 +109,8 @@ A decision has three parts, but **only two matching dimensions**:
 | 8 | Execution | Runtime (`job_host_adapter.rs` explicitly does no sandbox and no policy) | `packages/runtime/src/job_host_adapter.rs:1-5` | Assuming Runtime is a backstop when there is none |
 | 9 | Audit | The approval chain writes `audit_logs`; authorization evaluation itself only logs WARN | `policy/GrantAuthorizationService.java:119-121` | A denial cannot be explained |
 
+This section is the **current** chain. The v3 target inserts "condition" between steps 6 and 7 and changes how the approval gate decides who may approve; the full ten-step chain is in §4.3.
+
 ## 4. The judgement itself (source anchors)
 
 | Judgement | Content | Anchor |
@@ -111,6 +123,64 @@ A decision has three parts, but **only two matching dimensions**:
 | Write-time ceiling | A bound cap must be ⊆ atoms held by the subject and ⊆ atoms held by the operator, otherwise 403 naming the exceeding atom | `service/AgentPrincipalService.java:539-563` |
 
 **One implementation detail that must be stated**: the javadoc of `GrantIntersectionEvaluator.allows` (`:97`, "Every requested atom must be granted by every principal in the operation path.") matches the implementation. **Every level** of `principalPath` must hold that `(actionClass × resource)` atom; any level whose `noneMatch` is true makes the whole call `return false` (`:103-120`). Intersection-on-the-path therefore holds **at evaluation time**, not only at write time. Review reading: `path` is resolved by `policy/GrantPrincipalPathResolver` along the subject derivation chain (`:78-106` validates each agent level), and a missing atom anywhere on the chain denies the whole call; loosening one level alone has no effect. There is also a write-time **pre-ceiling** (cap ⊆ subject-held atoms and ⊆ operator-held atoms, `service/AgentPrincipalService.java:539-563`, otherwise 403 `AGENT_PERMISSION_SCOPE_EXCEEDED`): it is a pre-persistence boundary check and cannot replace the read-time decision.
+
+### 4.1 Conditions: extra limits outside the grant
+
+A condition is a second check stored in the policy layer, separate from grants. It reads fields from the request context and **can only narrow, never widen**: it never grants permission and never participates in `(actionClass, resource)` matching.
+
+| Operator | Example |
+|---|---|
+| equals `eq` | the request's project must be `p-42` |
+| not equals `neq` | requests from sandbox are not allowed |
+| in `in` | the request's environment must be in the `prod` / `staging` set |
+| exists `exists` | the request must carry a `trace_id` |
+| time window `before`–`after` | only allowed between 09:00 and 18:00 |
+
+Hard rules:
+
+- The operator set **MUST** stay closed to these five; custom operators or expression languages are **MUST NOT**.
+- A **missing field** in the request context counts as unsatisfied; an **unregistered condition key** denies outright. **MUST NOT** ignore unknown keys or treat them as passing.
+- Changing a condition **MUST NOT** require re-issuing grants: conditions and grants are two separate stores.
+- Endpoint-level visibility checks (the org tree's "non-members see 404") **MUST NOT** be called conditions; they are visibility guards. `in_subtree` is therefore not part of the operator set.
+
+Cross-reference: `spec/security/authorization.md` §2.2; the "conditions" card in the authorization figure.
+
+### 4.2 Approval: a risk modality, not a permission
+
+Approval grants no permission; it only decides whether this call must wait for a nod. It does not sit on the same lattice as ALLOW / DENY, and the merge rule is fixed: **deny wins, then confirmation**:
+
+- any denial → `DENY`
+- no denial but approval needed → `ASK`
+- everything passes → `ALLOW`
+
+Who may approve (v3 target, **not implemented**):
+
+- Who can approve: `(action:approve, this request's resource)` both match; the approver may be a human account or an Agent holding that atom.
+- Who cannot: the requester itself, or anything upstream or downstream of it.
+- How long: valid for this one request only; timeout or rejection both count as deny.
+
+Status: ASK currently matches by action class only (`policy/PolicyEngine.java:187-200`, the `askActionClasses[]` list) and ignores the resource; the addressee is hard-coded to the run owner (`chat/UserQuestionService.java:209-212`, non-owners get a uniform 404 at `:305`), and grants are never read. Both are hidden predicates and **MUST** converge onto permission decisions. `action:approve` is currently **not** among the 42 built-in action atoms and must be added.
+
+Request identity, state machine, reuse levels, and restart reconciliation live in `spec/security/approval.md`; this section does not repeat them.
+
+### 4.3 The v3 target ten-step chain (proposed)
+
+Only two things differ from §3: step 7 adds "condition", and step 8 "approval" changes its predicate. Everything else restates the same stage. **MUST NOT** be cited as implemented fact.
+
+| # | Step | Predicate | Status |
+|---|---|---|---|
+| 1 | Is the login still valid | signature + epoch `tv` (§3 step 1) | implemented |
+| 2 | Where does this request happen | grant scope derived server-side (§3 step 2, §2 item 3) | implemented |
+| 3 | Is this a management surface | capability atoms judge the current identity only, no per-level intersection (§3 step 3) | implemented |
+| 4 | What is done, to what | tool-face mapping + resource string parsing (§3 step 4) | implemented |
+| 5 | Hard guard | L0 hard guard, ahead of all grants (§3 step 5) | implemented |
+| 6 | Both axes match | the only matching point; every level on the chain must hold (§3 step 6) | implemented |
+| 7 | Condition | §4.1, five operators, narrow only | **not implemented** |
+| 8 | Approval | §4.2, approver right via `(action:approve, resource)` | **partial**: action class only; approver hard-coded |
+| 9 | Execution | Runtime no longer judges permissions (§3 step 8) | implemented |
+| 10 | Record | denial reasons explainable (§3 step 9, §10) | partial: evaluation failures still only WARN |
+
+- Step 6 is the only matching point; steps 3, 5, 7, and 8 only add gates, conditions, or confirmations and **MUST NOT** turn a denied call back into an allowed one.
 
 ## 5. Resources and the atom catalog
 
