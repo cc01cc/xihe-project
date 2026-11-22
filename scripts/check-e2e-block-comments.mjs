@@ -22,17 +22,74 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEFAULT_DIR = path.join(ROOT, "packages/ui/e2e");
 
+// 出现在这些字符/关键字之后，`/` 只可能是正则字面量的开头（而不是除号）。
+// 只收保守子集：漏判的代价是回到「当除号」的旧行为，误判代价是可能吞掉真实代码。
+const REGEX_PREFIX_CHARS = new Set(["(", ",", "=", ":", "[", "{", "!", "&", "|", "?", ";", ">", "~", "^"]);
+const REGEX_PREFIX_WORDS = new Set([
+    "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+    "case", "do", "else", "yield", "await", "throw",
+]);
+
+function isRegexStart(prevChar, prevWord) {
+    return REGEX_PREFIX_CHARS.has(prevChar) || REGEX_PREFIX_WORDS.has(prevWord);
+}
+
+/**
+ * 从 `start`（斜杠所在下标）扫描正则字面量，返回闭合斜杠+flags 之后的下标；
+ * 同行内找不到闭合斜杠 ⇒ 返回 -1（按除号处理，避免把 `a / b` 当正则）。
+ */
+function scanRegexLiteral(text, start) {
+    let inClass = false;
+    let i = start + 1;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === "\n") return -1;
+        if (ch === "\\") {
+            i += 2;
+            continue;
+        }
+        if (inClass) {
+            if (ch === "]") inClass = false;
+            i += 1;
+            continue;
+        }
+        if (ch === "[") {
+            inClass = true;
+            i += 1;
+            continue;
+        }
+        if (ch === "/") {
+            i += 1;
+            while (i < text.length && /[dgimsuvy]/.test(text[i])) i += 1;
+            return i;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
 /** 词法状态机：返回块注释区间与「扫到末尾仍未闭合」的位置（无则 null）。 */
 export function lex(text) {
     const comments = [];
     let state = "code";
     let quote = "";
     let start = 0;
+    let prevChar = "";
+    let prevWord = "";
+    let word = "";
     let i = 0;
     while (i < text.length) {
         const ch = text[i];
         const next = text[i + 1];
         if (state === "code") {
+            if (/\s/.test(ch)) {
+                if (word) {
+                    prevWord = word;
+                    word = "";
+                }
+                i += 1;
+                continue;
+            }
             if (ch === "/" && next === "/") {
                 state = "line";
                 i += 2;
@@ -44,12 +101,36 @@ export function lex(text) {
                 i += 2;
                 continue;
             }
+            if (ch === "/" && isRegexStart(prevChar, word || prevWord)) {
+                const end = scanRegexLiteral(text, i);
+                if (end > 0) {
+                    // 正则字面量是表达式值 ⇒ 紧跟的 `/` 应判为除号。
+                    prevChar = ")";
+                    prevWord = "";
+                    word = "";
+                    i = end;
+                    continue;
+                }
+            }
             if (ch === '"' || ch === "'" || ch === "`") {
                 state = "string";
                 quote = ch;
+                start = i;
+                prevChar = "";
+                prevWord = "";
+                word = "";
                 i += 1;
                 continue;
             }
+            if (/[A-Za-z0-9_$]/.test(ch)) {
+                word += ch;
+                prevChar = ch;
+                i += 1;
+                continue;
+            }
+            prevWord = word || prevWord;
+            word = "";
+            prevChar = ch;
             i += 1;
             continue;
         }

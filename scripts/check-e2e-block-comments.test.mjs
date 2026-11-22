@@ -96,3 +96,32 @@ test("真实仓树：默认目录 exit 0（守住默认路径解析）", () => {
     assert.ok(match, result.stdout);
     assert.ok(Number(match[1]) > 100, `扫描文件数应 >100，实际 ${match?.[1]}`);
 });
+
+test("正则字面量里的引号不当字符串起点（task-814）", () => {
+    assert.deepEqual(scanText('const re = /"([^"]*)"/;\n'), []);
+});
+
+test("bl352 原始正则（裸双引号）可撤销 \\x22 规避并转绿（task-814）", () => {
+    const text = [
+        "for (const match of registry.matchAll(",
+        "    /public\\s+static\\s+final\\s+String\\s+(ACTION_[A-Z0-9_]+)\\s*=\\s*\"([^\"]*)\";/gu,",
+        ")) {}",
+        "",
+    ].join("\n");
+    assert.deepEqual(scanText(text), []);
+});
+
+test("真·未闭合模板串：UNTERMINATED 报真实起点行（task-814）", () => {
+    const problems = scanText("const A = 1;\nconst s = `没闭合\n");
+    assert.equal(problems.length, 1);
+    assert.equal(problems[0].kind, "UNTERMINATED");
+    assert.equal(problems[0].line, 2);
+});
+
+test("真·块注释早闭仍要报（task-814，放宽 regex 不漏）", () => {
+    const text = 'const A = 1;\n/**\n * page.route("**/api/v1/**")\n */\n';
+    const problems = scanText(text);
+    assert.equal(problems.length, 1);
+    assert.equal(problems[0].kind, "BLOCK_COMMENT_STAR_TAIL");
+    assert.equal(problems[0].line, 2);
+});
