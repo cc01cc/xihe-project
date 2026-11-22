@@ -1,0 +1,80 @@
+{
+  "_note": "task-710 ratchet 基线（grandfather）。登记「production 源码里吞 Throwable/Error/BaseException、裸 except、TS 空 catch」的存量，按「文件 → 规则 → 计数」。只许降不许升：任一计数升高 ⇒ check-swallowed-error.mjs exit 1。降低后跑 --write-baseline 收紧并 review 差异。本基线不代表这些命中都合规——逐条定性与盲区见 internal/A03-xihe/evidence/2026-11-22-swallowed-error-gate/README.md。",
+  "generatedAt": "2026-11-21T23:55:42.449Z",
+  "a03Commit": "8995425be",
+  "scanRoots": [
+    "packages/control-plane/src/main/java",
+    "packages/agent/src",
+    "packages/ui/src",
+    "packages/runtime"
+  ],
+  "total": 34,
+  "files": {
+    "packages/agent/src/xihe_agent/llm/api_sender.py": {
+      "python-except-baseexception": 1
+    },
+    "packages/ui/src/App.vue": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/components/sidebar/GlobalRail.vue": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/composables/api.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/org-members/composables/useOrgUnitTree.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/chat/__poc__/PocHarness.vue": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/chat/__poc__/run-poc.mjs": {
+      "ts-empty-catch": 3
+    },
+    "packages/ui/src/features/workspace/chat/components/MessageList.vue": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/chat/components/PdfPageCanvas.vue": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/chat/components/ToolCallCard.vue": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/chat/stores/chat.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/composables/fileService.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/features/workspace/stores/workspace.ts": {
+      "ts-empty-catch": 2
+    },
+    "packages/ui/src/i18n/locale.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/lib/colorScheme.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/lib/lastLocation.ts": {
+      "ts-empty-catch": 2
+    },
+    "packages/ui/src/lib/logger.ts": {
+      "ts-empty-catch": 4
+    },
+    "packages/ui/src/lib/visualVariant.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/main.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/preview/mock/api-server.ts": {
+      "ts-empty-catch": 2
+    },
+    "packages/ui/src/services/authChannel.ts": {
+      "ts-empty-catch": 1
+    },
+    "packages/ui/src/stores/auth.ts": {
+      "ts-empty-catch": 5
+    }
+  }
+}
