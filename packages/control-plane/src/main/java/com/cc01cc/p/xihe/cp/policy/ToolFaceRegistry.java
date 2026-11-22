@@ -162,18 +162,21 @@ public class ToolFaceRegistry {
     public static final String ACTION_MANAGE_ORG_UNIT_MEMBERS = "MANAGE_ORG_UNIT_MEMBERS";
     public static final String ACTION_READ_ORG_UNIT_MEMBERS = "READ_ORG_UNIT_MEMBERS";
 
-    /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}).
+    /**
+     * PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} /
+     * {@code credential:*}). task-830: the spelling lives in {@link ResourceNamespaces}.
      */
     public static final String CREDENTIAL_ACTION_PREFIX = "credential_";
-    public static final String CREDENTIAL_RESOURCE_PREFIX = "credential:";
-    public static final String CREDENTIAL_RESOURCE_WILDCARD = "credential:*";
+    public static final String CREDENTIAL_RESOURCE_PREFIX = ResourceNamespaces.CREDENTIAL_PREFIX;
+    public static final String CREDENTIAL_RESOURCE_WILDCARD = ResourceNamespaces.CREDENTIAL_WILDCARD;
 
     /**
      * PLAN-0628 M2b (D28-36): the skill resource namespace, spelled like the credential one —
      * {@code skill:<uuid>}. Only the spelling is new; {@code skill_read} keeps the existing {@code read}
      * atom and {@code STRUCTURED} shape, so no seeder/UI/CLI vocabulary has to move.
+     * task-830: the spelling lives in {@link ResourceNamespaces}.
      */
-    public static final String SKILL_RESOURCE_PREFIX = "skill:";
+    public static final String SKILL_RESOURCE_PREFIX = ResourceNamespaces.SKILL_PREFIX;
 
     private static final Set<String> READ_TOOLS = Set.of(
             "read_file", "read_file_range", "list_directory", "glob", "grep",
@@ -470,6 +473,14 @@ public class ToolFaceRegistry {
                 && candidateResource.startsWith(CREDENTIAL_RESOURCE_PREFIX)) {
             return CREDENTIAL_RESOURCE_WILDCARD.equals(ceilingResource)
                     || ceilingResource.equals(candidateResource);
+        }
+        // task-830: for a registered namespace the registry's declared matcher is the rule; other
+        // shapes (bare paths, unregistered `workspace:` context keys) keep the shared path matcher.
+        ResourceNamespaces.Matcher matcher = ResourceNamespaces.matcherOf(ceilingResource);
+        if (matcher != null
+                && ResourceNamespaces.namespaceOf(ceilingResource)
+                .equals(ResourceNamespaces.namespaceOf(candidateResource))) {
+            return ResourceNamespaces.matches(matcher, ceilingResource, candidateResource);
         }
         return LayeredPolicyResolver.matches(ceilingResource, candidateResource, ToolShape.STRUCTURED);
     }

@@ -116,6 +116,8 @@ public class GrantabilityGuard {
      */
     private static String canonicalResourceOf(String name) {
         try {
+            // task-830: canonical resources (including `credential:*`) come from the atom catalog,
+            // which derives them through ResourceNamespaces — one registry, not a second copy here.
             return PermissionAtomCatalog.atom(name).canonicalResource();
         } catch (RuntimeException unknownAtom) {
             return "*";

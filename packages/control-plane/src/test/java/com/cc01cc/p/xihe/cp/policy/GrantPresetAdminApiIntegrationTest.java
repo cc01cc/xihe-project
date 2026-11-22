@@ -739,6 +739,13 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         invalid.put("a colon segment", "fs:" + workspaceId + "/src/app:1");
         invalid.put("a backslash", "fs:" + workspaceId + "\\src");
         invalid.put("a drive letter inside the path", "fs:" + workspaceId + "/C:/Windows");
+        // task-830: the resource-namespace registry refuses these at the write face, each with its
+        // own reason. phys: is evaluation-only; workspace:/session: are visibility context (note
+        // workspace:admin is a capability atom, so it never reaches this path); unknown fails closed.
+        invalid.put("an evaluation-only physical key", "phys:/h/ws/src");
+        invalid.put("a workspace context key", "workspace:" + workspaceId);
+        invalid.put("a session context key", "session:" + UUID.randomUUID());
+        invalid.put("an unknown namespace", "mystery:" + workspaceId);
 
         int seq = 0;
         for (Map.Entry<String, String> entry : invalid.entrySet()) {

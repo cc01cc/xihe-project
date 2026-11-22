@@ -90,7 +90,39 @@ public class GrantResourcePattern {
             throw invalid(atom.name(), raw, "the atom is instance-scoped, so no workspace path can"
                     + " narrow it");
         }
+        rejectUnwritableNamespace(atom.name(), raw);
         return requireWorkspacePrefix(atom.name(), raw);
+    }
+
+    /**
+     * task-830: the registry decides which namespaces may appear in a stored grant. The three
+     * refusals are distinct on purpose — they are different mistakes, and the message says which:
+     *
+     * <ul>
+     *   <li>{@code phys:} is a host absolute path expanded from an {@code fs:} declaration at
+     *       evaluation time. Storing it would pin the grant to one machine's directory layout.</li>
+     *   <li>{@code workspace:}/{@code session:} are context keys. {@code workspace:admin} is a
+     *       capability atom with the same spelling but it is not a resource, so it never arrives
+     *       here as a pattern.</li>
+     *   <li>anything else is an unregistered namespace; unknown fails closed, it does not fall back
+     *       to a default.</li>
+     * </ul>
+     */
+    private void rejectUnwritableNamespace(String atomName, String raw) {
+        switch (ResourceNamespaces.grantabilityOf(raw)) {
+            case EVALUATION_ONLY -> throw invalid(atomName, raw,
+                    "phys: is an evaluation-time key expanded from a declared fs: key; it is never"
+                            + " stored in a grant");
+            case CONTEXT_RESERVED -> throw invalid(atomName, raw,
+                    "workspace:/session: are visibility context, not grant resources"
+                            + " (workspace:admin is a capability atom with the same spelling)");
+            case UNKNOWN -> throw invalid(atomName, raw,
+                    "unknown resource namespace; registered namespaces are "
+                            + ResourceNamespaces.registeredNames());
+            case GRANTABLE -> {
+                // The namespace is writable; the per-atom shape rules below still apply.
+            }
+        }
     }
 
     private String requireWorkspacePrefix(String atomName, String raw) {

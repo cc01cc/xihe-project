@@ -21,8 +21,9 @@ import java.util.regex.Pattern;
  */
 public final class ResourceIdentity {
 
-    public static final String DECLARATION_PREFIX = "fs:";
-    public static final String PHYSICAL_PREFIX = "phys:";
+    /** task-830: the prefixes come from {@link ResourceNamespaces} (the one namespace registry). */
+    public static final String DECLARATION_PREFIX = ResourceNamespaces.FS_PREFIX;
+    public static final String PHYSICAL_PREFIX = ResourceNamespaces.PHYS_PREFIX;
 
     /** 盘符段：{@code D:} 或 {@code D:/...}。 */
     private static final Pattern DRIVE_SEGMENT = Pattern.compile("^[A-Za-z]:(/.*)?$");
