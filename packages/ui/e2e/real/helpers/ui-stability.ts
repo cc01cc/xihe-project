@@ -28,8 +28,18 @@ import { expect, type Page, type Request } from "@playwright/test";
  * while running; see the probe header for the exact commands).
  */
 
-/** SSE / long-lived streams keep a connection open and must not block quiescence. */
-const LONG_LIVED_URL = /\/(events|sse)(\?|$)|heartbeat|stream|long-poll/i;
+/**
+ * SSE / long-lived streams keep a connection open and must not block quiescence.
+ *
+ * task-857: `\/(events|sse)(\?|$)` can never match `/api/v1/user-events` (the segment is
+ * `-events`, not `/events`), and the user channel is opened with `fetch` rather than
+ * `EventSource` (`src/features/workspace/chat/useUserChannelSSE.ts:110-111`), so Playwright
+ * reports `resourceType=fetch` and the `eventsource` branch does not catch it either. The
+ * long poll therefore stayed in the pending set and `waitForQuiescence` timed out on an idle
+ * page. Listed explicitly, per endpoint, so an ordinary request still has to drain.
+ * Regression guard: `e2e/real/helpers/probes/task857-quiescence-probe.spec.ts`.
+ */
+const LONG_LIVED_URL = /\/(events|sse)(\?|$)|\/user-events(\?|$)|heartbeat|stream|long-poll/i;
 
 export function isLongLivedRequest(resourceType: string, url: string): boolean {
     return resourceType === "eventsource" || LONG_LIVED_URL.test(url);
