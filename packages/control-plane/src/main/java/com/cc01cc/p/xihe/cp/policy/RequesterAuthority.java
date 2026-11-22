@@ -9,8 +9,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -91,6 +93,96 @@ public class RequesterAuthority {
         UUID subjectId = currentSubjectId();
         return subjectId != null && authzContext.capabilitiesFor(subjectId)
                 .holdsCapability(AtomNames.capability(atom), null);
+    }
+
+    /**
+     * task-869 L4: the <b>throwing</b> twin of {@link #holdsActionAtom(String)} for
+     * {@code @PreAuthorize} gates.
+     *
+     * <p>Why not keep the boolean expression: Spring's {@code AccessDeniedException} carries no
+     * atom, so the problem response could only say "FORBIDDEN" — the caller had no way to learn
+     * <i>which</i> atom was missing or at which level. This method refuses with
+     * {@code 403 code=FORBIDDEN} plus {@code missingAtom}/{@code missingLevel} taken from
+     * {@link GrantIntersectionEvaluator.GrantExplanation} — the same kernel {@code /explain} and
+     * real tool calls use, so the two cannot answer differently.</p>
+     *
+     * <p>The boolean method stays for call sites that make a <i>non-refusing</i> decision (e.g.
+     * "show the hostPath or not"); only gates that must terminate the request use this one.</p>
+     */
+    public boolean requireActionAtom(String actionClass) {
+        if (holdsActionAtom(actionClass)) {
+            return true;
+        }
+        throw actionAtomDenied(actionClass);
+    }
+
+    /**
+     * task-869 L4: throwing twin of {@link #holdsCapabilityAtom(String)}. A capability refusal has
+     * no grant levels, so the level is {@code -1} and the reason names the capability vocabulary.
+     */
+    public boolean requireCapabilityAtom(String atom) {
+        if (holdsCapabilityAtom(atom)) {
+            return true;
+        }
+        String canonical = AtomNames.capability(atom);
+        Map<String, Object> miss = missingAtom(-1, null, canonical, "*", "capability_not_held");
+        throw denial(canonical, miss, -1);
+    }
+
+    private CpApiException actionAtomDenied(String actionClass) {
+        String canonical = AtomNames.action(actionClass);
+        if (ToolFaceRegistry.isCredentialActionClass(canonical)) {
+            // A credential gate needs a concrete credential:<uuid> to be explained (PolicyRequest
+            // rejects credential:* / *), and the gate itself is evaluated per concrete object
+            // elsewhere. Say exactly that instead of inventing a resource.
+            return denial(canonical, missingAtom(-1, null, canonical, null,
+                    "credential_use_requires_concrete_resource"), -1);
+        }
+        String resource = ResourceNamespaces.canonicalResourceFor(canonical);
+        try {
+            UUID workspaceId = parse(TenantContext.getWorkspaceId());
+            PolicyRequest request = new PolicyRequest("authorization.deny", List.of(canonical),
+                    List.of(resource), ToolShape.OPAQUE, TenantContext.getUserId(),
+                    TenantContext.getWorkspaceId(), null);
+            GrantIntersectionEvaluator.GrantExplanation explanation =
+                    explainForUser(request, workspaceId);
+            if (explanation.allowed()) {
+                // The atom is held, so this refusal did not come from the grant table. Naming the
+                // held atom again would be a false explanation; name the split instead.
+                return denial(canonical, missingAtom(-1, null, canonical, resource,
+                        "denied_by_gate_outside_grant_atoms"), -1);
+            }
+            GrantIntersectionEvaluator.MissingLevel miss = explanation.missingAtom();
+            Map<String, Object> row = miss == null
+                    ? missingAtom(-1, null, canonical, resource, "not_evaluated")
+                    : missingAtom(miss.level(), miss.levelLabel(), miss.actionClass(),
+                            miss.resource(), miss.reason());
+            return denial(canonical, row, explanation.deepestMissingLevel());
+        } catch (RuntimeException unavailable) {
+            logger.warn("[AUTH] action_atom_deny_explanation_unavailable atom={} reason={}",
+                    canonical, unavailable.getClass().getSimpleName());
+            return denial(canonical, missingAtom(-1, null, canonical, resource,
+                    "explanation_unavailable"), -1);
+        }
+    }
+
+    private static CpApiException denial(String atom, Map<String, Object> missingAtom, int missingLevel) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("missingAtom", missingAtom);
+        extra.put("missingLevel", missingLevel);
+        return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                "Access denied: missing " + atom).withExtra(extra);
+    }
+
+    private static Map<String, Object> missingAtom(int level, String levelLabel, String actionClass,
+                                                   String resource, String reason) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("level", level);
+        row.put("levelLabel", levelLabel);
+        row.put("actionClass", actionClass);
+        row.put("resource", resource);
+        row.put("reason", reason);
+        return row;
     }
 
     /** True when the subject's effective atoms for {@code workspaceId} contain the atom. */
