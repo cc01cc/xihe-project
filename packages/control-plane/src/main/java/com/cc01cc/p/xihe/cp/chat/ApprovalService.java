@@ -19,6 +19,7 @@ import com.cc01cc.p.xihe.cp.policy.ReusePolicy;
 import com.cc01cc.p.xihe.cp.policy.SessionApprovalMode;
 import com.cc01cc.p.xihe.cp.policy.SessionPolicyState;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
+import com.cc01cc.p.xihe.cp.mcp.PreviewLimits;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -894,7 +895,9 @@ public class ApprovalService {
     private String safeHistoryPreview(Map<?, ?> payload) {
         try {
             String json = objectMapper.writeValueAsString(payload);
-            return json.length() <= 4096 ? json : json.substring(0, 4096);
+            return json.length() <= PreviewLimits.APPROVAL_HISTORY_PREVIEW_CHARS
+                    ? json
+                    : json.substring(0, PreviewLimits.APPROVAL_HISTORY_PREVIEW_CHARS);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=approval_ledger_preview_serialization_failed exceptionType={}",
                     e.getClass().getSimpleName());

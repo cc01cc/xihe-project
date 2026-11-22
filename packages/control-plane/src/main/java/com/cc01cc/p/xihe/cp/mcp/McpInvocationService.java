@@ -41,7 +41,7 @@ import java.util.UUID;
  * blocks the mutation).</p>
  *
  * <p>Nothing here persists a prompt, unbounded arguments or any secret; the
- * preview column keeps the existing 4096-byte bounded-prefix rule and history
+ * preview column keeps the bounded-prefix rule in {@link PreviewLimits} and history
  * payloads carry ids/flags only.</p>
  */
 @Service
@@ -574,6 +574,8 @@ public class McpInvocationService {
         if (raw == null) {
             return null;
         }
-        return raw.length() <= 4096 ? raw : raw.substring(0, 4096);
+        return raw.length() <= PreviewLimits.ARGUMENTS_PREVIEW_CHARS
+                ? raw
+                : raw.substring(0, PreviewLimits.ARGUMENTS_PREVIEW_CHARS);
     }
 }

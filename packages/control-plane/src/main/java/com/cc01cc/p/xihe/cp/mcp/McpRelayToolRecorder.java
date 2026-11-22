@@ -169,7 +169,9 @@ public class McpRelayToolRecorder {
     private String safeJsonPreview(Object value) {
         try {
             String json = objectMapper.writeValueAsString(value == null ? Map.of() : value);
-            return json.length() <= 4096 ? json : json.substring(0, 4096);
+            return json.length() <= PreviewLimits.ARGUMENTS_PREVIEW_CHARS
+                    ? json
+                    : json.substring(0, PreviewLimits.ARGUMENTS_PREVIEW_CHARS);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=mcp_arguments_serialization_failed exceptionType={}",
                     e.getClass().getSimpleName());

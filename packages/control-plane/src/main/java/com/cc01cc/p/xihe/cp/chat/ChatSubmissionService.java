@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
+import com.cc01cc.p.xihe.cp.mcp.PreviewLimits;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.InboxRepository;
@@ -71,7 +72,7 @@ public class ChatSubmissionService {
     private DerivedStateHintPublisher derivedStateHints;
     public static final String SPAWN_TOOL_NAME = "spawn_agent";
 
-    private static final int MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH = 4096;
+    private static final int MAX_SPAWN_ARGUMENTS_PREVIEW_LENGTH = PreviewLimits.ARGUMENTS_PREVIEW_CHARS;
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final Logger logger = LoggerFactory.getLogger(ChatSubmissionService.class);
 

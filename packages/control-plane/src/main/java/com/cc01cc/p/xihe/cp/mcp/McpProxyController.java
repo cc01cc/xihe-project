@@ -2926,7 +2926,9 @@ public class McpProxyController {
 
     private String safePreview(String body) {
         String preview = body == null ? "" : body;
-        return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
+        return preview.length() <= PreviewLimits.ARGUMENTS_PREVIEW_CHARS
+                ? preview
+                : preview.substring(0, PreviewLimits.ARGUMENTS_PREVIEW_CHARS);
     }
 
     /**
@@ -2940,10 +2942,14 @@ public class McpProxyController {
         JsonNode arguments = readToolArguments(body, mapper);
         if (arguments != null && arguments.isObject()) {
             String preview = arguments.toString();
-            return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
+            return preview.length() <= PreviewLimits.ARGUMENTS_PREVIEW_CHARS
+                    ? preview
+                    : preview.substring(0, PreviewLimits.ARGUMENTS_PREVIEW_CHARS);
         }
         String preview = body == null ? "" : body;
-        return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
+        return preview.length() <= PreviewLimits.ARGUMENTS_PREVIEW_CHARS
+                ? preview
+                : preview.substring(0, PreviewLimits.ARGUMENTS_PREVIEW_CHARS);
     }
 
     private static JsonNode readToolArguments(String body, ObjectMapper mapper) {
