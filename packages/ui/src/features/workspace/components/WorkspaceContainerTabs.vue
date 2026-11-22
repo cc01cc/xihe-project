@@ -92,8 +92,16 @@ function onRowKeydown(event: KeyboardEvent): void {
     });
 }
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const domId = useId();
+
+/**
+ * 关闭键的 aria-label：优先用带标题的模板；若当前 locale 缺该键（例如局部 i18n 夹具），
+ * 退回通用「关闭页签」+ 标题，避免把裸键渲染进 DOM。生产 zh/en 两份 messages 都带该键。
+ */
+function closeAriaLabel(label: string): string {
+    return te("tabs.close") ? t("tabs.close", { label }) : `${t("workspace.tabClose")} ${label}`;
+}
 
 // D-1777/D-1778：容器集合 = {main, right}。`tree` 不再是容器（树是右栏的面板），
 // 这里只认 main/right 两种值域。
@@ -243,7 +251,7 @@ const activeTab = computed<string>({
                         v-if="tab.closable && (!closeActiveOnly || tab.id === activeId)"
                         type="button"
                         :data-testid="closeTestid(tab.id)"
-                        :aria-label="'关闭 ' + tab.label"
+                        :aria-label="closeAriaLabel(tab.label)"
                         class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="emit('close', tab.id)"
                     >
@@ -293,7 +301,7 @@ const activeTab = computed<string>({
                         v-if="tab.closable && (!closeActiveOnly || tab.id === activeId)"
                         type="button"
                         :data-testid="overflowTestid('-close-' + tab.id)"
-                        :aria-label="'关闭 ' + tab.label"
+                        :aria-label="closeAriaLabel(tab.label)"
                         class="mr-1 inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="emit('close', tab.id)"
                     >

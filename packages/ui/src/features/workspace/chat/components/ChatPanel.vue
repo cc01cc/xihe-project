@@ -186,8 +186,18 @@ async function openProviderSettings(): Promise<void> {
 
 const suggestions = computed(() =>
     props.toolMode === "workspace"
-        ? ["列出文件", "打开 README", "解释选中的文件", "查看工作区环境"]
-        : ["今天天气怎么样？", "帮我写一封邮件", "解释一下这个概念", "总结一下这段代码"],
+        ? [
+              t("chat.suggest.listFiles"),
+              t("chat.suggest.openReadme"),
+              t("chat.suggest.explainSelection"),
+              t("chat.suggest.workspaceEnv"),
+          ]
+        : [
+              t("chat.suggest.weather"),
+              t("chat.suggest.writeEmail"),
+              t("chat.suggest.explainConcept"),
+              t("chat.suggest.summarizeCode"),
+          ],
 );
 
 const messages = computed(() => chatStore.getMessages(props.sessionId));

@@ -100,6 +100,10 @@ const messages = {
         nav: {
             open: "打开导航",
         },
+        // task-792：页签关闭按钮的 aria-label 模板（tab 标题来自用户内容，只做插值）。
+        tabs: {
+            close: "关闭 {label}",
+        },
         files: {
             newFile: "新建文件",
             rename: "重命名",
@@ -1655,6 +1659,17 @@ const messages = {
                 "更早的调用没有持久化到消息上，界面上无法还原；如需完整清单请查看该 run 的调用轨迹。",
             toolCallsTruncationTraceHint: "完整调用轨迹（run）：",
             send: "发送",
+            // task-792：空会话建议文案（两套 toolMode 都走 i18n，en 侧不得留 CJK）。
+            suggest: {
+                listFiles: "列出文件",
+                openReadme: "打开 README",
+                explainSelection: "解释选中的文件",
+                workspaceEnv: "查看工作区环境",
+                weather: "今天天气怎么样？",
+                writeEmail: "帮我写一封邮件",
+                explainConcept: "解释一下这个概念",
+                summarizeCode: "总结一下这段代码",
+            },
             // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
             runHeader: {
                 toggle: "展开或折叠 run {run}",
@@ -4511,6 +4526,10 @@ const messages = {
         nav: {
             open: "Open navigation",
         },
+        // task-792: aria-label template for tab close buttons (tab titles are user content).
+        tabs: {
+            close: "Close {label}",
+        },
         files: {
             newFile: "New file",
             rename: "Rename",
@@ -6084,6 +6103,17 @@ const messages = {
                 "Earlier calls were not persisted on the message and cannot be restored in the UI; see this run's trace for the full list.",
             toolCallsTruncationTraceHint: "Full call trace (run):",
             send: "Send",
+            // task-792: empty-session suggestion copy (both toolMode sets go through i18n; no CJK in en).
+            suggest: {
+                listFiles: "List files",
+                openReadme: "Open README",
+                explainSelection: "Explain selected file",
+                workspaceEnv: "View workspace environment",
+                weather: "What's the weather today?",
+                writeEmail: "Draft an email for me",
+                explainConcept: "Explain this concept",
+                summarizeCode: "Summarize this code",
+            },
             runHeader: {
                 toggle: "Expand or collapse run {run}",
             },
