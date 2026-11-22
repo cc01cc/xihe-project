@@ -8,8 +8,10 @@
  *     `workspace:admin` 能力原子，所以必须实测而非纯推断）。
  *  B. `GET /api/v1/skills?definitionScope=workspace&workspaceId=…` ⇒ **200 且列出**刚导入的 2 个
  *     workspace 私有技能（`SkillController:73-87`）。
- *  C. **HUMAN responder 提交** ⇒ 该 run 的 `chat_runs.agent_principal_id` **IS NULL**
- *     （`ChatSubmissionService:191-200`：human id 永不落库，且不能留 agent 戳）。
+ *  C. **HUMAN responder + 显式 `toParticipantIds: []`** ⇒ run 终态
+ *     `terminal_outcome = suppressed_no_responder` 且 `chat_runs.agent_principal_id` **IS NULL**
+ *     （`ChatSubmissionService:191-200`：human id 永不落库；task-110 的有意拒绝只覆盖
+ *     「as = 自己的 participant + TO 缺失」这条 dead letter，显式空 TO 仍走 D-1273 抑制路径）。
  *  D. continuation 的 principal 继承 —— **本文件不覆盖**：`POST /chat/runs/{sourceRunId}/continue`
  *     要求 source run 处于 `ambiguous`/`CP_RESTARTED`（`openapi.yaml:1633-1640`），真栈没有确定性
  *     构造手段（需故障注入）；保持"未实测"并在文档里写明卡点。
@@ -198,7 +200,7 @@ test("@host BL-356 矩阵 B：workspace 私有技能可导入且可列出（200 
     console.log(`[bl356-list] OK imported=${importedIds.join(",")} listed=${items.length} items`);
 });
 
-test("@host BL-354 矩阵 C：HUMAN responder 提交 ⇒ run 的 agent_principal_id IS NULL", async ({
+test("@host BL-354 矩阵 C：HUMAN responder + 显式空 TO ⇒ suppressed_no_responder 且 agent_principal_id IS NULL", async ({
     request,
 }) => {
     const identity = await newIdentity(request, "bl354-human");
@@ -259,6 +261,9 @@ test("@host BL-354 矩阵 C：HUMAN responder 提交 ⇒ run 的 agent_principal
             branchId,
             content: "BL-354 human responder submission",
             asParticipantId: humanParticipantId,
+            // task-110：as=自己的 participant 且 TO 缺失是 400 AS_SELF_WITHOUT_TARGET 的 dead letter；
+            // 显式空数组表示「我不请任何人回答」⇒ D-1273 的 suppressed_no_responder。
+            toParticipantIds: [],
             toolMode: "chat",
         }),
     });
@@ -268,19 +273,36 @@ test("@host BL-354 矩阵 C：HUMAN responder 提交 ⇒ run 的 agent_principal
     }
     const response = await chat;
     const body = await response.text();
-    expect(response.ok, `人类身份提交应 2xx，实际 ${response.status}：${body}`).toBe(true);
+    expect(
+        response.status(),
+        `HUMAN + 显式空 TO 应 202 accepted，实际 ${response.status()}：${body}`,
+    ).toBe(202);
+    const accepted = JSON.parse(body) as { terminalOutcome?: string };
+    expect(
+        accepted.terminalOutcome,
+        `显式空 TO 的 wire 终态应为 suppressed_no_responder；实际：${body}`,
+    ).toBe("suppressed_no_responder");
 
-    // 轮询到终态后读 agent_principal_id（期望 NULL）
-    let row: { status: string; agentPrincipalId: string | null } | null = null;
+    // 轮询到终态后读 agent_principal_id（期望 NULL）与 terminal_outcome
+    let row: {
+        status: string;
+        terminalOutcome: string | null;
+        agentPrincipalId: string | null;
+    } | null = null;
     await expect
         .poll(
             () => {
                 const raw = queryIsolatedPostgres(
-                    `SELECT json_build_object('status', status, 'agentPrincipalId', agent_principal_id)::text ` +
+                    `SELECT json_build_object('status', status, 'terminalOutcome', terminal_outcome, ` +
+                        `'agentPrincipalId', agent_principal_id)::text ` +
                         `FROM chat_runs WHERE session_id = '${sessionId}'::uuid ORDER BY created_at DESC LIMIT 1`,
                 );
                 row = raw
-                    ? (JSON.parse(raw) as { status: string; agentPrincipalId: string | null })
+                    ? (JSON.parse(raw) as {
+                          status: string;
+                          terminalOutcome: string | null;
+                          agentPrincipalId: string | null;
+                      })
                     : null;
                 return row && TERMINAL.test(row.status) ? row.status : "running";
             },
@@ -288,10 +310,15 @@ test("@host BL-354 矩阵 C：HUMAN responder 提交 ⇒ run 的 agent_principal
         )
         .toMatch(TERMINAL);
     expect(
+        row!.terminalOutcome,
+        `显式空 TO 的 durable 终态应为 suppressed_no_responder；实际：${row!.terminalOutcome}`,
+    ).toBe("suppressed_no_responder");
+    expect(
         row!.agentPrincipalId,
         `HUMAN responder 的 run 不应带 agent 戳（ChatSubmissionService:191-200）；实际：${row!.agentPrincipalId}`,
     ).toBeNull();
     console.log(
-        `[bl354-human] OK session=${sessionId} human=${humanParticipantId} status=${row!.status} agentPrincipalId=NULL`,
+        `[bl354-human] OK session=${sessionId} human=${humanParticipantId} status=${row!.status} ` +
+            `outcome=${row!.terminalOutcome} agentPrincipalId=NULL`,
     );
 });

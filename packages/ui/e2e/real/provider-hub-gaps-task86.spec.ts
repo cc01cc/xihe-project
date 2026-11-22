@@ -147,8 +147,13 @@ async function verifyConnection(request: APIRequestContext, auth: Auth, id: stri
         headers: workspaceHeaders(auth),
     });
     expect(response.ok(), await response.text()).toBeTruthy();
-    const body = (await response.json()) as ConnectionRow;
-    expect(body.status, "verify must leave the connection READY").toBe("READY");
+    // 契约（`ProviderConnectionController.verify:136-140` / helpers/fake-provider.ts:47）：
+    // verify 返回 `{connection, models}`，顶层没有 `status`；状态在 `body.connection.status`。
+    const body = (await response.json()) as { connection?: ConnectionRow };
+    expect(
+        body.connection?.status,
+        `verify must leave the connection READY; body=${JSON.stringify(body)}`,
+    ).toBe("READY");
 }
 
 async function deleteConnection(request: APIRequestContext, auth: Auth, key: string) {

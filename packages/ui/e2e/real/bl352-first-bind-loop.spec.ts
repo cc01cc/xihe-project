@@ -32,12 +32,16 @@
  *    **本 spec 明确断言这个 409**：它是"产品缺口的存在性证明"，不是"测试没写对"。
  *    **禁止**为了让它 201 去放宽 ② 的权限集或改断言——那等于把产品缺口塞进测试。
  *
- * 第 2 个用例（可选正向面）：② 一次性授满 `BASE_ATOMS`（cap 覆盖五原子）后，尝试绑
- * `AGENT_USER`（原子集恰为 `BASE_ATOMS`，`:217-220`）⇒ 期望 201。这是"能否找到**原子集 ⊆ cap**
+ * 第 2 个用例（可选正向面）：② 一次性授满 `AGENT_USER` 的原子集（cap 覆盖全部原子）后，尝试绑
+ * `AGENT_USER`（原子集 = `AGENT_BASE_ATOMS`）⇒ 期望 201。这是"能否找到**原子集 ⊆ cap**
  * 的系统角色"的探针：若它也失败，正好是 `BL-355` 的补强证据（**不自建自定义角色**，避免污染测试数据）。
  *
  * 必须经 `scripts/e2e-host.mjs` 运行（依赖 runner 注入的 `XIHE_*` 与隔离栈/库）。
  */
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { CP_URL, registerJourneyUser } from "./helpers/journey";
@@ -48,17 +52,63 @@ test.describe.configure({ retries: 0 });
 const WS_VIEWER_ROLE_ID = "00000000-0000-4000-8000-000000000006";
 /** agent 默认 instance 角色：原子集恰为 BASE_ATOMS，是唯一"可能 ⊆ cap"的系统角色。 */
 const AGENT_USER_ROLE_ID = "00000000-0000-4000-8000-000000000008";
+/** 本文件位于 `<repo>/packages/ui/e2e/real/` ⇒ 上跳四级即仓库根（`packages/control-plane` 所在层）。 */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const CP_POLICY_JAVA = resolve(
+    REPO_ROOT,
+    "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/policy",
+);
+
 /**
- * ② 用：agent 可授的 BASE_ATOMS 子集。
+ * ② 用：`AGENT_USER` 的原子集，**从产品目录派生**，禁止手抄（手抄已腐烂一次：774 写了四原子，
+ * 产品已扩到六原子 ⇒ 409 `ROLE_BINDING_EXCEEDS_CAP`）。
  *
- * DSD-1500 R2：`AGENT_USER` 的原子集是 `BASE_ATOMS` **minus exec**（exec 改为显式绑 `WS_RUNNER`），
- * 所以首绑 cap 不能含 `exec@*`——那会触发 `AGENT_PERMISSION_SCOPE_EXCEEDED`
- * （principal-exceeding=[exec@*]）。exec 的超范围行为由下方独立负向断言覆盖。
+ * 来源：`SystemAccessRoleCatalog.java` 的 `AGENT_BASE_ATOMS = List.of(...)`（148-155 行的六个
+ * `AtomRef.wildcard(ToolFaceRegistry.ACTION_*)`）；每个 `ACTION_*` 的字符串值再从
+ * `ToolFaceRegistry.java` 的常量声明解析。产品以后再加原子，本 spec 自动跟随，不需要改常量。
+ *
+ * 首绑 cap 不能含 `exec@*`：`AGENT_USER` 是 `BASE_ATOMS` **minus exec**（DSD-1500 R2，exec 改为显式
+ * 绑 `WS_RUNNER`），含 exec 会触发 `AGENT_PERMISSION_SCOPE_EXCEEDED`（principal-exceeding=[exec@*]）。
+ * exec 的超范围行为由下方独立负向断言覆盖。
  */
-const BASE_ATOM_PERMISSIONS = ["read", "write", "delete", "network"].map((actionClass) => ({
-    actionClass,
-    resource: "*",
-}));
+function agentBaseAtomPermissions(): Array<{ actionClass: string; resource: string }> {
+    const catalog = readFileSync(resolve(CP_POLICY_JAVA, "SystemAccessRoleCatalog.java"), "utf8");
+    const declaration =
+        /private\s+static\s+final\s+List<AtomRef>\s+AGENT_BASE_ATOMS\s*=\s*List\.of\(([\s\S]*?)\);/u.exec(
+            catalog,
+        );
+    if (!declaration) {
+        throw new Error(
+            "SystemAccessRoleCatalog.AGENT_BASE_ATOMS declaration not found; " +
+                "the bl352 cap constant must be derived from the product catalog",
+        );
+    }
+    const registry = readFileSync(resolve(CP_POLICY_JAVA, "ToolFaceRegistry.java"), "utf8");
+    const actionClasses = new Map<string, string>();
+    for (const match of registry.matchAll(
+        /public\s+static\s+final\s+String\s+(ACTION_[A-Z0-9_]+)\s*=\s*"([^"]*)";/gu,
+    )) {
+        actionClasses.set(match[1], match[2]);
+    }
+    const atomNames = [...declaration[1].matchAll(/ToolFaceRegistry\.(ACTION_[A-Z0-9_]+)/gu)].map(
+        (match) => match[1],
+    );
+    if (atomNames.length === 0) {
+        throw new Error(
+            "AGENT_BASE_ATOMS contains no ToolFaceRegistry.ACTION_* reference; " +
+                "the derivation would silently produce an empty cap",
+        );
+    }
+    return atomNames.map((name) => {
+        const actionClass = actionClasses.get(name);
+        if (!actionClass) {
+            throw new Error(`ToolFaceRegistry constant ${name} not found`);
+        }
+        return { actionClass, resource: "*" };
+    });
+}
+
+const BASE_ATOM_PERMISSIONS = agentBaseAtomPermissions();
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
@@ -137,12 +187,13 @@ test("@host BL-352 首绑闭环：顺序错 ⇒ 403；首绑 ⇒ 200；再绑系
     );
 });
 
-test("@host BL-352 可选正向面：cap 覆盖 BASE_ATOMS 后能否授予 AGENT_USER", async ({ request }) => {
+test("@host BL-352 可选正向面：cap 覆盖 AGENT_BASE_ATOMS 后能否授予 AGENT_USER", async ({
+    request,
+}) => {
     // 这条探"原子集 ⊆ cap 的系统角色是否存在"：
-    // ② 授满 agent 可授的 BASE_ATOMS 子集 ⇒ cap 覆盖 AGENT_USER 原子集 ⇒ 应 201。
+    // ② 授满 AGENT_USER 原子集（AGENT_BASE_ATOMS）⇒ cap 覆盖 AGENT_USER 原子集 ⇒ 应 201。
     // 若它失败，说明**连唯一的候选系统角色也授不了** ⇒ BL-355 的补强证据（不要自建角色绕过）。
-    // 实测 201（靶 d1f655f4）：AGENT_USER 原子集 == BASE_ATOMS minus exec ⇒ 可绑；
-    // 带 USE_WORKSPACE_RUNTIME 的角色恒 409（BL-355）
+    // AGENT_USER 原子集 == BASE_ATOMS minus exec；带 USE_WORKSPACE_RUNTIME 的角色恒 409（BL-355）
     const owner = await registerJourneyUser(request, "bl352-positive-owner");
     const workspaceId = owner.workspaceId;
     const headers = { ...owner.headers, "X-Workspace-Id": workspaceId };
@@ -154,7 +205,7 @@ test("@host BL-352 可选正向面：cap 覆盖 BASE_ATOMS 后能否授予 AGENT
     );
     expect(
         bound.status(),
-        `② 首绑（授满 BASE_ATOMS）应 200；实际 ${bound.status()}：${await bound.text()}`,
+        `② 首绑（授满 AGENT_BASE_ATOMS）应 200；实际 ${bound.status()}：${await bound.text()}`,
     ).toBe(200);
 
     const grant = await request.post(
