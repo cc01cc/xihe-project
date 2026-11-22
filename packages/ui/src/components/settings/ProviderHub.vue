@@ -1269,10 +1269,14 @@ onMounted(() => {
                     class="flex flex-1 items-center gap-2.5 rounded-lg border bg-background px-3.5 py-2.5"
                 >
                     <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <!-- task-794: a placeholder is not an accessible name. Keep a real label
+                         (sr-only) plus an explicit aria-label so AX cannot read an empty textbox. -->
+                    <span class="sr-only">{{ t("settings.providerHub.searchLabel") }}</span>
                     <input
                         v-model="search"
                         data-testid="provider-connection-search"
                         class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                        :aria-label="t('settings.providerHub.searchLabel')"
                         :placeholder="t('settings.providerHub.searchPlaceholder')"
                     />
                 </label>

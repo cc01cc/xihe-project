@@ -254,6 +254,23 @@ describe("ProviderHub master-detail", () => {
         wrapper.unmount();
     });
 
+    it("gives the provider search box a real accessible name, not just a placeholder", async () => {
+        const wrapper = await mountHub();
+        const search = wrapper.get('[data-testid="provider-connection-search"]');
+        const label = i18n.global.t("settings.providerHub.searchLabel");
+        const placeholder = i18n.global.t("settings.providerHub.searchPlaceholder");
+        // VTU 没有 role 查询：aria-label 就是该 textbox 的可访问名，
+        // 等价于 getByRole("textbox", { name: label })；单独断言它与 placeholder 不同，
+        // 防止以后把可访问名退回成 placeholder 兜底。
+        expect(search.attributes("aria-label")).toBe(label);
+        expect(search.attributes("placeholder")).toBe(placeholder);
+        expect(label, "the label must be a real name distinct from the placeholder").not.toBe(
+            placeholder,
+        );
+        expect(wrapper.get("label").text()).toContain(label);
+        wrapper.unmount();
+    });
+
     it("retains discovery/manualModels and never prefills or submits an unchanged secret", async () => {
         const wrapper = await mountHub();
         const row = wrapper.findAll('[data-testid="provider-connection-example"]')[0]!;
