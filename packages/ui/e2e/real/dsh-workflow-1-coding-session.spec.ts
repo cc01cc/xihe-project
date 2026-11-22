@@ -45,6 +45,14 @@ import { agentName } from "./helpers/agent-name";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const NONCE = Date.now().toString(36);
 const CHAIN = "wf1-coding";
+/**
+ * 每次 beforeAll 生成。mock LLM（`e2e/fixtures/fake-llm-server.mjs` 的 `resolveChainMode`）
+ * 按「首条 system + 首条 user 前 400 字符」给每个会话建链游标；本 spec 的首条 user 消息
+ * 是固定文案 ⇒ 同一 fake LLM 进程里重复执行（重试 / 重复 shard）会命中上一次已耗尽的游标，
+ * 第 2 步 `write_file` 被 `text` 兜底顶掉，审批卡永不出现（run7 实测
+ * `[fake-llm] chain "marker" exhausted after 4 steps`）。tag 进首条消息即隔离游标。
+ */
+let CHAIN_RUN_TAG = "";
 const READ_TARGET = "README.md";
 const WRITE_PATH = `notes/wf1-${NONCE}.md`;
 const WRITE_CONTENT = `wf1-chain-${NONCE}`;
@@ -66,6 +74,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
 
     test.beforeAll(async ({ request }) => {
         expect(FAKE_LLM_PORT, "needs XIHE_FAKE_LLM_PORT (runner-provided fake LLM)").not.toBe("");
+        CHAIN_RUN_TAG = `${NONCE}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
         ctx = await registerJourneyUser(request, "dsh-wf1");
         agentBindingWorkspaceId = ctx.workspaceId;
 
@@ -135,13 +144,16 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
             request,
             headers,
             [
-                `XIHE-E2E-CHAIN ${CHAIN}`,
+                `[${CHAIN_RUN_TAG}] XIHE-E2E-CHAIN ${CHAIN}`,
                 `请先读 ${READ_TARGET}，告诉我它讲了什么。`,
                 `XIHE-E2E-READ ${READ_TARGET}`,
             ].join(" "),
         );
         expect(run1, "turn 1 runId").toMatch(/^[0-9a-f-]{36}$/i);
         await expectAssistantMessage(page, `turn 1 (read_file) 必须有回复`);
+        // 链没激活时 mock LLM 会退化成纯文本：后续 write_file 轮根本不会来审批卡。
+        // 这里先按产品事实（mcp_invocation 审计行）判死，避免把「道具没驱动」误报成「产品漏渲染」。
+        await expectMcpInvocation(request, headers);
 
         // ── 第 2 轮：write_file（走审批面）────────────────────────────────
         const run2 = await startRun(
@@ -430,4 +442,33 @@ async function expectAssistantMessage(page: Page, label: string): Promise<void> 
             { message: label, timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
         )
         .toMatch(/\S/);
+}
+
+/**
+ * 第 1 轮必须真的打出一次 MCP 工具调用（产品权威审计行）。
+ * mock 链游标被复用时会静默退化成纯文本，只有这条断言能把它变成「道具失败」而不是
+ * 30 s 后那条误导性的「审批卡没出现」。
+ */
+async function expectMcpInvocation(
+    request: APIRequestContext,
+    headers: Record<string, string>,
+): Promise<void> {
+    await expect
+        .poll(
+            async () => {
+                const res = await request.get(
+                    `${CP_URL}/api/v1/audit/entries?type=mcp_invocation&size=20&workspaceId=${encodeURIComponent(ctx.workspaceId)}`,
+                    { headers },
+                );
+                if (!res.ok()) return -1;
+                const body = (await res.json()) as { entries?: unknown[] };
+                return body.entries?.length ?? 0;
+            },
+            {
+                message: "turn 1 must drive a real MCP tool call (mock chain fallback?)",
+                timeout: LONG_TIMEOUT_MS,
+                intervals: [500, 1_000],
+            },
+        )
+        .toBeGreaterThan(0);
 }
