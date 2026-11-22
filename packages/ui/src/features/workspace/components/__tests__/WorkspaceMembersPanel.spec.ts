@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { setSelectValueAt } from "../../../../test-utils/select";
 import { i18n } from "../../../../i18n";
 import { expectModalDialog } from "../../../../test-utils/modalDialog";
@@ -38,8 +39,8 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         // PLAN-0565: minimal ApiError stand-in carrying problem.code for mapping.
         ApiError: class MockApiError extends Error {
             problem: { code: string };
-            constructor(code: string) {
-                super(code);
+            constructor(code: string, message = code) {
+                super(message);
                 this.name = "MockApiError";
                 this.problem = { code };
             }
@@ -67,6 +68,17 @@ async function mountPanel(readonly = false) {
     return wrapper;
 }
 
+async function mountPanelWithoutSettling(readonly = false) {
+    const { default: WorkspaceMembersPanel } = await import("../WorkspaceMembersPanel.vue");
+    const wrapper = mount(WorkspaceMembersPanel, {
+        attachTo: document.body,
+        props: { workspaceId: WORKSPACE_ID, readonly },
+        global: { plugins: [i18n] },
+    });
+    await nextTick();
+    return wrapper;
+}
+
 beforeEach(() => {
     apiMock.listWorkspaceMembers.mockResolvedValue([
         structuredClone(OWNER),
@@ -89,6 +101,67 @@ describe("WorkspaceMembersPanel", () => {
         expect(wrapper.text()).toContain("owner");
         expect(wrapper.text()).toContain("editor@test.com");
         expect(apiMock.listWorkspaceMembers).toHaveBeenCalledWith(WORKSPACE_ID);
+    });
+
+    it("loading 态：只渲染 loading，列表/空态/错误态互斥", async () => {
+        apiMock.listWorkspaceMembers.mockReturnValue(new Promise(() => {}));
+        const wrapper = await mountPanelWithoutSettling();
+
+        expect(wrapper.find('[data-testid="ws-members-loading"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("加载成员中");
+        expect(wrapper.find('[data-testid="ws-members-list"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-members-empty"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-members-error"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("empty 态：给出空态说明与可聚焦添加表单的下一步动作，且不渲染列表", async () => {
+        apiMock.listWorkspaceMembers.mockResolvedValue([]);
+        const wrapper = await mountPanel();
+
+        const empty = wrapper.find('[data-testid="ws-members-empty"]');
+        expect(empty.exists()).toBe(true);
+        expect(empty.text()).toContain("还没有成员");
+        expect(empty.text()).toContain("除你之外还没有其他成员");
+        expect(wrapper.find('[data-testid="ws-members-list"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-members-loading"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-members-error"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid="ws-members-row"]')).toHaveLength(0);
+
+        await empty.get('[data-testid="ws-members-empty-action"]').trigger("click");
+        expect(document.activeElement).toBe(
+            wrapper.get('[data-testid="ws-members-add-input"]').element,
+        );
+    });
+
+    it("error 态：中文主文案 + 错误码，英文 backend detail 不原样出现，且不渲染列表", async () => {
+        const { ApiError } = await import("../../../../composables/api");
+        apiMock.listWorkspaceMembers.mockRejectedValue(
+            new ApiError("WORKSPACE_INTERNAL", "SQLSTATE 42P01 backend exploded"),
+        );
+        const wrapper = await mountPanel();
+
+        const error = wrapper.find('[data-testid="ws-members-error"]');
+        expect(error.exists()).toBe(true);
+        expect(error.text()).toContain("加载成员失败");
+        expect(wrapper.get('[data-testid="ws-members-error-code"]').text()).toContain(
+            "WORKSPACE_INTERNAL",
+        );
+        expect(wrapper.text()).not.toContain("SQLSTATE 42P01 backend exploded");
+        expect(wrapper.find('[data-testid="ws-members-list"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-members-empty"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-members-loading"]').exists()).toBe(false);
+    });
+
+    it("回归：普通 Error 的英文 message 不得成为主文案", async () => {
+        apiMock.listWorkspaceMembers.mockRejectedValue(
+            new Error("Backend exploded: permission denied for table members"),
+        );
+        const wrapper = await mountPanel();
+
+        expect(wrapper.text()).toContain("加载成员失败");
+        expect(wrapper.text()).not.toContain("Backend exploded");
+        expect(wrapper.find('[data-testid="ws-members-error-code"]').exists()).toBe(false);
     });
 
     it("adds a member by username with the selected role", async () => {

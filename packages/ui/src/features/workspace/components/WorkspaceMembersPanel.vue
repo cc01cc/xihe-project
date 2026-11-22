@@ -55,7 +55,10 @@ const { t } = useI18n();
 
 const members = ref<ApiWorkspaceMember[]>([]),
     loading = ref(false),
-    loadError = ref("");
+    loadError = ref(""),
+    loadErrorCode = ref("");
+
+const panelEl = ref<HTMLElement | null>(null);
 
 const addUsername = ref(""),
     addRole = ref<MemberAssignableRole>("EDITOR"),
@@ -126,21 +129,32 @@ function memberMessage(cause: unknown, fallbackKey: string): string {
     if (code === "WORKSPACE_FORBIDDEN" || code === "WORKSPACE_READ_ONLY") {
         return t("workspace.membersForbidden");
     }
-    return cause instanceof Error && cause.message ? cause.message : t(fallbackKey);
+    // task-754：英文后端 detail 只允许作为诊断信息进 logger，不能成为用户主文案。
+    return t(fallbackKey);
+}
+
+function errorCodeOf(cause: unknown): string {
+    return cause instanceof ApiError ? cause.problem.code : "";
 }
 
 async function load() {
     if (!props.workspaceId) return;
     loading.value = true;
     loadError.value = "";
+    loadErrorCode.value = "";
     try {
         members.value = await api.listWorkspaceMembers(props.workspaceId);
     } catch (cause) {
         logger.warn("Failed to load workspace members", cause);
         loadError.value = memberMessage(cause, "workspace.membersLoadFailed");
+        loadErrorCode.value = errorCodeOf(cause);
     } finally {
         loading.value = false;
     }
+}
+
+function focusAddInput() {
+    panelEl.value?.querySelector<HTMLInputElement>('[data-testid="ws-members-add-input"]')?.focus();
 }
 
 async function handleAdd() {
@@ -229,7 +243,7 @@ onMounted(() => {
 </script>
 
 <template>
-    <section data-testid="ws-members-panel">
+    <section ref="panelEl" data-testid="ws-members-panel">
         <div class="border rounded-lg mb-3 overflow-hidden">
             <div class="px-4 py-3 text-sm font-medium bg-muted/30">
                 {{ t("workspace.membersTitle") }}
@@ -239,13 +253,55 @@ onMounted(() => {
                 {{ t("workspace.membersReadOnlyHint") }}
             </p>
 
-            <div v-if="loadError" class="px-4 py-3 text-sm text-destructive">
-                {{ t("common.error") }}: {{ loadError }}
+            <div
+                v-if="loadError"
+                class="px-4 py-3 text-sm text-destructive"
+                data-testid="ws-members-error"
+            >
+                <p>{{ t("common.error") }}: {{ loadError }}</p>
+                <p v-if="loadErrorCode" class="mt-1 text-xs" data-testid="ws-members-error-code">
+                    {{ t("workspace.membersErrorCode") }}: {{ loadErrorCode }}
+                </p>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    class="mt-2"
+                    data-testid="ws-members-error-retry"
+                    @click="load()"
+                >
+                    {{ t("workspace.membersRetry") }}
+                </Button>
             </div>
 
-            <div v-else-if="loading" class="px-4 py-6 text-sm text-muted-foreground">
+            <div
+                v-else-if="loading"
+                class="px-4 py-6 text-sm text-muted-foreground"
+                data-testid="ws-members-loading"
+            >
                 <LoaderCircle class="mr-1 inline-block size-3 animate-spin" />
                 {{ t("workspace.membersLoading") }}
+            </div>
+
+            <div
+                v-else-if="members.length === 0"
+                class="px-4 py-6 text-sm"
+                data-testid="ws-members-empty"
+            >
+                <p class="font-medium">{{ t("workspace.membersEmptyTitle") }}</p>
+                <p class="mt-1 text-muted-foreground">{{ t("workspace.membersEmptyHint") }}</p>
+                <Button
+                    v-if="!props.readonly"
+                    variant="outline"
+                    size="sm"
+                    class="mt-3"
+                    data-testid="ws-members-empty-action"
+                    @click="focusAddInput()"
+                >
+                    {{ t("workspace.membersEmptyAction") }}
+                </Button>
+                <p v-else class="mt-2 text-muted-foreground" data-testid="ws-members-empty-action">
+                    {{ t("workspace.membersReadOnlyHint") }}
+                </p>
             </div>
 
             <div v-else class="px-4 py-3" data-testid="ws-members-list">
