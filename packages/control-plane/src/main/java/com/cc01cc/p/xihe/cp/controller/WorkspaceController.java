@@ -52,19 +52,6 @@ public class WorkspaceController {
         this.requesterAuthority = requesterAuthority;
     }
 
-    /**
-     * Test-seam overload retained only so the task-837 test tree keeps compiling while that card
-     * owns the assertions. Production always uses the four-argument constructor; with no requester
-     * authority the host-path decision fails closed (hidden), never falls back to ownership.
-     *
-     * @deprecated task-837 removes this once the tests construct the production shape.
-     */
-    @Deprecated(forRemoval = true)
-    WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy,
-                        WorkspaceNestedReposService nestedReposService) {
-        this(workspaceService, backendPolicy, nestedReposService, null);
-    }
-
     @GetMapping("/current")
     @PreAuthorize("isAuthenticated()")
     @PolicyChecked(atom = "action:read")

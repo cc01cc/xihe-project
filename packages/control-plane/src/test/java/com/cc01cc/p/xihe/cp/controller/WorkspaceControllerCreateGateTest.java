@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
@@ -37,7 +38,8 @@ class WorkspaceControllerCreateGateTest {
         WorkspaceNestedReposService nestedReposService = Mockito.mock(WorkspaceNestedReposService.class);
         WorkspaceBackendPolicy disabledPolicy = new WorkspaceBackendPolicy("");
         disabledPolicy.validate();
-        controller = new WorkspaceController(workspaceService, disabledPolicy, nestedReposService);
+        controller = new WorkspaceController(workspaceService, disabledPolicy, nestedReposService,
+                Mockito.mock(RequesterAuthority.class));
         TenantContext.setUserId("user-1");
     }
 
@@ -91,7 +93,8 @@ class WorkspaceControllerCreateGateTest {
         WorkspaceBackendPolicy enabled = new WorkspaceBackendPolicy("enabled");
         enabled.validate();
         WorkspaceNestedReposService nestedReposService = Mockito.mock(WorkspaceNestedReposService.class);
-        WorkspaceController relaxed = new WorkspaceController(workspaceService, enabled, nestedReposService);
+        WorkspaceController relaxed = new WorkspaceController(workspaceService, enabled, nestedReposService,
+                Mockito.mock(RequesterAuthority.class));
         when(workspaceService.createWorkspace(any(), any(), eq("user-1"), any(), any(),
                 any(), any(), any(), any(), any()))
                 .thenThrow(new CpApiException(HttpStatus.BAD_REQUEST, "SEEN_BY_SERVICE", "reached"));
