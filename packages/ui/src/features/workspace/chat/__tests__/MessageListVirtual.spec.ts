@@ -30,6 +30,7 @@ const i18n = createI18n({
             workspace: { participantUnknownName: "未知用户" },
             chat: {
                 runHeader: { toggle: "展开或折叠 run {run}" },
+                searchMessages: "搜索消息",
                 followUpStatusCompleted: "已完成",
                 followUpStatusFailed: "失败",
                 loadOlder: "加载更早的消息",
