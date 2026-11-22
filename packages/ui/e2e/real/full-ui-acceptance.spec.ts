@@ -163,15 +163,38 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         // this change). The functional assertions above carry the coverage.
     });
 
-    test("real workspace Prepare transitions from unbound to ready", async ({ page, request }) => {
+    test("real workspace Prepare is idempotent on direct_attach ready", async ({
+        page,
+        request,
+    }) => {
         const auth = await register(request, "workspace-environment");
         await installAuth(page, auth);
         await page.goto(`/workspace/${auth.workspaceId}/environment`);
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("unbound", {
+        // task-809 / task-771：host 车道的 register() 走 direct_attach，CP 创建后在事务提交后
+        // 即把 hostPath + roots 推给 Runtime，环境状态直接是 ready；`unbound → Prepare` 是
+        // managed_import 的生命周期，在该场景不可达（见 evidence/2026-11-22-cp-product-fixes §2）。
+        // 状态文案会随 locale 本地化（zh-CN 为「就绪」），所以断言走稳定的 data-value。
+        const status = page.getByTestId("workspace-environment-status");
+        await expect(status).toHaveAttribute("data-value", "ready", {
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByTestId("workspace-prepare-button").click();
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("ready", {
+        // UI 只在 unbound/pending/blocked 渲染 Prepare 卡片（WorkspaceEnvironmentView.vue:114-117），
+        // ready 态不提供 Prepare 入口；这里断言入口确实被收敛掉，而不是留一个可重复点击的按钮。
+        await expect(page.getByTestId("workspace-prepare-card")).toHaveCount(0);
+        // 幂等性走按钮背后的同一请求（POST /api/v1/workspaces/{id}/materialize）：
+        // Runtime 对已 Ready 的工作区走 fast path 返回 202，状态保持 ready。
+        const materialize = await request.post(
+            `${CP_URL}/api/v1/workspaces/${auth.workspaceId}/materialize`,
+            {
+                headers: {
+                    Authorization: `Bearer ${auth.accessToken}`,
+                    "X-Workspace-Id": auth.workspaceId,
+                },
+            },
+        );
+        expect(materialize.status(), await materialize.text()).toBe(202);
+        await page.reload();
+        await expect(status).toHaveAttribute("data-value", "ready", {
             timeout: LONG_TIMEOUT_MS,
         });
         await expectPlatformScreenshot(page, "plan-269-real-environment-ready-current.png");
