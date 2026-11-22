@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.provider;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.policy.CredentialUseCap;
 import com.cc01cc.p.xihe.cp.policy.LimitSpec;
@@ -12,6 +13,7 @@ import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -173,7 +175,23 @@ public class ProviderCredentialLeaseService {
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
-        if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
+        if (connection.getCredentialId() == null) {
+            // Credential-less providers (a local ollama endpoint, for example) create their
+            // connection without a credential: ProviderConnectionService.create enforces one only
+            // when the catalog declares `credential.required` (ProviderCatalogService
+            // .requiresCredential). The lease token is still minted below — it is what the runtime
+            // redeems — but there is no credential row to authorize; the connection gate above
+            // already covered ownership, visibility and READY state.
+            //
+            // A required-credential provider whose link is null is a broken data invariant, not a
+            // credential-less provider. Refuse it as an invalid connection instead of letting
+            // CredentialNotFoundException escape as an unhandled 500.
+            if (catalog.requiresCredential(connection.getProviderId())) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_INVALID",
+                        "Provider connection has no credential but provider '"
+                                + connection.getProviderId() + "' requires one");
+            }
+        } else if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
             // D-922: the admin-owned credential backing an INSTANCE connection is leasable by
             // any consumer bound to that connection; shape-only check, no ownership borrow.
             credentialAccess.requireUsableForSharedConnection(connection.getCredentialId());

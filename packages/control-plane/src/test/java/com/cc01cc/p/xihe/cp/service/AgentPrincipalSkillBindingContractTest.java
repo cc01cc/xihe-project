@@ -217,6 +217,27 @@ class AgentPrincipalSkillBindingContractTest extends AbstractReusableIntegration
     }
 
     @Test
+    void queryWorkspaceDeleteOfAMissingBindingIs404WhileCollectionDeleteIs405() {
+        fixture();
+        // The host E2E appends the binding id after the query string
+        // (`.../skills?workspaceId=X/<id>`), which addresses the collection route: DELETE there is
+        // 405 by HTTP, not a missing CP handler. The contract's 404 SKILL_BINDING_NOT_FOUND answer
+        // belongs to the item route below. task-771 pins both shapes so the adjudication stays
+        // verifiable without loosening the product.
+        String collectionWithQuery = url(pathFor("/skills") + "?workspaceId=" + workspace.getId());
+        ResponseEntity<String> malformed = restTemplate.exchange(
+                collectionWithQuery + "/" + UUID.randomUUID(), HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders()), String.class);
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, malformed.getStatusCode());
+
+        ResponseEntity<Map> missing = restTemplate.exchange(
+                url(pathFor("/skills/" + UUID.randomUUID()) + "?workspaceId=" + workspace.getId()),
+                HttpMethod.DELETE, new HttpEntity<>(authHeaders()), Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, missing.getStatusCode());
+        assertEquals("SKILL_BINDING_NOT_FOUND", missing.getBody().get("code"));
+    }
+
+    @Test
     void deleteRemovesBindingAndResolverEntry() {
         fixture();
         UUID skillId = createInstanceSkill("skill-d", 7);
