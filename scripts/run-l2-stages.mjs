@@ -17,6 +17,10 @@
 //
 // 缓存：<evidence-dir>/.cache/<head>.json，逐节点 record `{key, command, exit, seconds, log}`。
 // key = sha256(命令 argv JSON)，故改命令（如 host 的 --output 目录）即自然失效。
+//
+// 结果文件名（W3 契约）：只有**六步全跑**才写 `run<N>-results.json`；`--only` / `--from`
+// 的缺步跑写 `run<N>-partial-<slug>.json`。xh-mvp-verify 的 findLatestRun 只认
+// `^run(\d+)-results\.json$`，部分跑若占规范名会把 W3 判成 UNMEASURED（缺步骤记录）。
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -81,8 +85,8 @@ function usage(exitCode = 0) {
     "",
     "  --only a,b,c       只跑这些阶段（按给定顺序；默认六步全跑）",
     "  --from <stage>     从该阶段起跑后续（缓存命中的前序阶段自动跳过）",
-    "  --run <n>          结果文件名 run<n>-results.json（默认取下一个未占用编号）",
-    "  --out <file>       结果 JSON 路径（默认 <evidence-dir>/run<n>-results.json）",
+    "  --run <n>          结果编号（默认取下一个未占用的规范编号）",
+    "  --out <file>       结果 JSON 路径；部分跑不得占用 run<n>-results.json",
     "  --cache-dir <dir>  缓存目录（默认 <evidence-dir>/.cache）",
     "  --log-dir <dir>    每步日志目录（默认 <evidence-dir>）",
     "  --evidence-dir <d> 证据根（默认 internal/A03-xihe/evidence/2026-11-22-l2-full）",
@@ -263,10 +267,24 @@ function nextRunNumber(evidenceDir) {
   if (!existsSync(evidenceDir)) return 13;
   let max = 0;
   for (const name of readdirSync(evidenceDir)) {
-    const m = /^run(\d+)-results\.json$/.exec(name);
+    const m = CANONICAL_RUN_RE.exec(name);
     if (m) max = Math.max(max, Number.parseInt(m[1], 10));
   }
   return max + 1;
+}
+
+const CANONICAL_RUN_RE = /^run(\d+)-results\.json$/;
+
+export function isFullStageSet(stages) {
+  const set = new Set(stages);
+  return STAGE_ORDER.every((name) => set.has(name));
+}
+
+function partialSlug(opts, stages) {
+  const parts = [];
+  if (opts.from) parts.push(`from-${opts.from}`);
+  if (opts.only) parts.push(`only-${stages.join("-")}`);
+  return parts.length ? parts.join("_") : "partial";
 }
 
 function selectStages(opts) {
@@ -329,7 +347,24 @@ export function main(argv = process.argv.slice(2)) {
   const cacheDir = opts.cacheDir ?? path.join(evidenceDir, ".cache");
   const logDir = opts.logDir ?? evidenceDir;
   const runNo = opts.run ?? nextRunNumber(evidenceDir);
-  const outFile = opts.out ?? path.join(evidenceDir, `run${runNo}-results.json`);
+  const full = isFullStageSet(stages);
+  const canonicalName = `run${runNo}-results.json`;
+  let outFile;
+  if (opts.out) {
+    if (!full && CANONICAL_RUN_RE.test(path.basename(opts.out))) {
+      console.error(
+        `E_PARTIAL_CANONICAL: 六步不全的跑不得写 ${path.basename(opts.out)}` +
+          "（会污染 W3 证据选取）；请改用 run<N>-partial-<slug>.json",
+      );
+      process.exitCode = 2;
+      return;
+    }
+    outFile = opts.out;
+  } else {
+    outFile = full
+      ? path.join(evidenceDir, canonicalName)
+      : path.join(evidenceDir, `run${runNo}-partial-${partialSlug(opts, stages)}.json`);
+  }
 
   if (opts.requireClean) {
     const dirty = git(["status", "--porcelain"]);
@@ -369,6 +404,11 @@ export function main(argv = process.argv.slice(2)) {
 
   console.log(`HEAD=${head}${opts.head ? " (override)" : ""}`);
   console.log(`stages=${stages.join(",")}  cache=${toOneRelative(cacheFile)}`);
+  if (!full) {
+    console.log(
+      `partial run: 不写 ${canonicalName}（W3 只认六步全跑结果）→ ${path.basename(outFile)}`,
+    );
+  }
 
   for (const item of plan) {
     const { name, spec, key, cached, entry } = item;
@@ -471,6 +511,8 @@ export function main(argv = process.argv.slice(2)) {
     headSource: opts.head ? "override" : "git",
     command: ["node scripts/run-l2-stages.mjs", ...argv].join(" "),
     mode: { only: opts.only, from: opts.from },
+    partial: !full,
+    stageSet: stages,
     startedAt,
     finishedAt,
     worktreeAtStart: opts.requireClean ? "clean" : "not-checked",
