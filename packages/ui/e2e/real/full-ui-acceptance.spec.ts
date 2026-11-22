@@ -129,15 +129,18 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await installAuth(page, auth);
         await page.goto(`/workspace/${auth.workspaceId}`);
 
-        // W4 (PLAN-0328 T3.7) chat-first layout: the conversation is the main column now and the
-        // editor lives in the right dock's code panel; task-137 后入口 = 行尾开合图标 →
-        // 右栏「+」→ 选「代码」（与 mock 侧同形）。
-        await openDockPanel(page, "code");
+        // task-369：文件树与编辑器是**两个面板**——`files` 是树，`code` 是编辑器。
+        // 窄视口下中央树会自动收起，所以在右栏打开 `files` 面板再选文件（判据仍走产品路径），
+        // 选中文件后 Workbench 会按 WorkspaceWorkbench.vue:963-971 自动把 `code` 页签拉到前台。
+        await openDockPanel(page, "files");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 
-        const file = page.getByRole("button", { name: "acceptance.md", exact: true });
+        const file = page
+            .getByTestId("workspace-aux-panel")
+            .getByRole("button", { name: "acceptance.md", exact: true });
         await expect(file).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await file.click();
+        await openDockPanel(page, "code");
         await expect(page.getByText("Acceptance", { exact: false }).first()).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });

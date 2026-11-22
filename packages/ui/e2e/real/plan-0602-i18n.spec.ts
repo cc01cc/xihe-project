@@ -45,19 +45,22 @@ const CP_ORIGIN = resolveCpOrigin(),
  * 经设置页切换语言：打开 user-preference 面板的 language 下拉，按 SUPPORTED_LOCALES 顺序点选项。
  * 选项序由 SSOT 派生（zh-CN 第 0、en-US 第 1），断言不依赖文案（切换后文案本身会随 locale 变）。
  */
-async function switchLanguageViaSettings(page: Page, optionIndex: number): Promise<void> {
+async function switchLanguageViaSettings(
+    page: Page,
+    optionIndex: number,
+    targetLocale: string,
+): Promise<void> {
     await page.goto(USER_PREFERENCE_PAGE, { waitUntil: "load" });
     await page.getByTestId("config-select-user-preference-language").click();
     await page.getByRole("option").nth(optionIndex).click();
-    // task-769：语言是草稿 + 保存（run5b 快照：combobox 已显示 English，但 <html lang> 仍 zh-CN）。
-    // 点保存后等 PUT /api/v1/config/** 落库，再让调用方断言。
-    const saved = page.waitForResponse(
-        (response) =>
-            response.request().method() === "PUT" && response.url().includes("/api/v1/config/"),
-        { timeout: 10_000 },
-    );
+    // task-769（run7 更正）：语言是**客户端单写者**（task-125 / D-899）——保存时
+    // ConfigLayerPanels.vue:865-880 把 language 从 CP payload 剥离并走 setLanguage，
+    // 空 payload 不发 PUT。判据是 setLanguage 真正落地的两汇：<html lang> + localStorage。
     await page.getByTestId("config-save-user-preference").click();
-    await saved;
+    await expect.poll(() => htmlLang(page), { timeout: LONG_TIMEOUT_MS }).toBe(targetLocale);
+    await expect
+        .poll(() => persistedLanguage(page), { timeout: LONG_TIMEOUT_MS })
+        .toBe(targetLocale);
 }
 
 function resolveCpOrigin(): string {
@@ -169,15 +172,15 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             path: "test-results/plan-0602/01-fresh-boot-zh.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0602-fresh-boot-zh.png");
+        await expectPlatformScreenshot(page, "plan-0602-fresh-boot-zh.png");
 
         // Item 5: English → back to Chinese restores all three sinks.
-        await switchLanguageViaSettings(page, 1); // en-US
+        await switchLanguageViaSettings(page, 1, "en-US");
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
             timeout: ACTION_TIMEOUT_MS,
         });
-        await switchLanguageViaSettings(page, 0); // zh-CN
+        await switchLanguageViaSettings(page, 0, "zh-CN");
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(ZH_HEADING, {
             timeout: ACTION_TIMEOUT_MS,
@@ -188,14 +191,14 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             path: "test-results/plan-0602/02-back-to-zh.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0602-back-to-zh.png");
+        await expectPlatformScreenshot(page, "plan-0602-back-to-zh.png");
     });
 
     test("switching to English syncs i18n, <html lang> and the raw localStorage value", async ({
         page,
     }) => {
         await seedContext(page, user);
-        await switchLanguageViaSettings(page, 1); // en-US
+        await switchLanguageViaSettings(page, 1, "en-US");
         // 选中态断言：select 的选中标签随 locale 变文案，不适合硬断言；
         // html lang + localStorage + 域标题三汇已足够证明应用成功。
         expect(await htmlLang(page)).toBe("en-US");
@@ -216,12 +219,12 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             path: "test-results/plan-0602/03-switched-en.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0602-switched-en.png");
+        await expectPlatformScreenshot(page, "plan-0602-switched-en.png");
     });
 
     test("reload boots straight into English without a zh-CN flash", async ({ page }) => {
         await seedContext(page, user);
-        await switchLanguageViaSettings(page, 1); // en-US
+        await switchLanguageViaSettings(page, 1, "en-US");
         // 停在域页再 reload：反闪证明与具体页面无关，这里顺带断言域标题已是英文。
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
@@ -289,7 +292,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             path: "test-results/plan-0602/04-reload-en.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0602-reload-en.png");
+        await expectPlatformScreenshot(page, "plan-0602-reload-en.png");
     });
 
     test("a second tab in the same browser inherits the persisted English", async ({
@@ -297,7 +300,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         context,
     }) => {
         await seedContext(page, user);
-        await switchLanguageViaSettings(page, 1); // en-US
+        await switchLanguageViaSettings(page, 1, "en-US");
         expect(await htmlLang(page)).toBe("en-US");
 
         const secondTab = await context.newPage();
@@ -332,7 +335,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             path: "test-results/plan-0602/05-fallback-fr.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0602-fallback-fr.png");
+        await expectPlatformScreenshot(page, "plan-0602-fallback-fr.png");
     });
 
     // task-125 / D-899：紧凑变体（rail + 移动抽屉）已全撤 ⇒ 移动端语言入口同走设置页。
@@ -350,7 +353,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await expect(langSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(overflow, "no horizontal overflow at 390px").toBe(false);
 
-        await switchLanguageViaSettings(page, 1); // en-US
+        await switchLanguageViaSettings(page, 1, "en-US");
         expect(await htmlLang(page)).toBe("en-US");
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
@@ -360,6 +363,6 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             path: "test-results/plan-0602/06-mobile-en.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0602-mobile-en.png");
+        await expectPlatformScreenshot(page, "plan-0602-mobile-en.png");
     });
 });

@@ -79,10 +79,10 @@ test.describe("Mobile Viewport (390x844)", () => {
             },
             { token: authToken, workspaceId: authWorkspaceId },
         );
-        // task-209（D-1019）：工作区 MCP 面已从「工作区设置的 MCP 页签」搬到资源区工作区层
-        // （`/resources/mcp?layer=WORKSPACE`），本用例判的是**同一块面板在窄屏下不塌**，判据不变。
-        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
-        await expect(page.locator('[data-testid="resources-header"]')).toBeVisible({
+        // D-1432 / task-41（用户 2026-11-15 裁定）：工作区 MCP 面搬回每工作区设置页，
+        // `/resources/mcp?layer=WORKSPACE` 已静默回落实例层。本用例判的是**同一块面板在窄屏下不塌**。
+        await page.goto(`/workspace/${authWorkspaceId}/settings?tab=mcp`, { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
         await page
@@ -97,8 +97,19 @@ test.describe("Mobile Viewport (390x844)", () => {
     });
 
     test("@host mobile chat dialogs remain closable", async ({ page }) => {
-        await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
-        await page.goto("/workspace", { waitUntil: "load" });
+        // task-34：`/workspace` 是模块入口重定向到 `/workbench`；没有工作区上下文时会停在 picker。
+        // 这里显式种上下文并直达容器页，FAB 只在有 Session 的工作区页渲染。
+        await page.addInitScript(
+            ({ token, workspaceId }) => {
+                localStorage.setItem("xihe-token", token);
+                localStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({ id: workspaceId, name: "Default Workspace" }),
+                );
+            },
+            { token: authToken, workspaceId: authWorkspaceId },
+        );
+        await page.goto(`/workspace/${authWorkspaceId}`, { waitUntil: "load" });
         const fab = page.getByTestId("mobile-chat-open");
         await expect(fab).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         expect(await page.locator('[role="dialog"]').count()).toBe(0);

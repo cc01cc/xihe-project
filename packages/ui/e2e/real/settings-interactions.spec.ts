@@ -41,7 +41,11 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
 
         const profilePanel = page.getByTestId("config-domain-context-policy");
         await expect(profilePanel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await profilePanel.getByTestId("config-domain-toggle-context-policy").click();
+        // task-225 / ConfigDomainPanel.vue:103：域卡默认展开，toggle 是「收起」而不是「展开」。
+        // 先钉默认展开态，再直接操作字段；不得用强制点击把已展开的面板收起来。
+        await expect(
+            profilePanel.getByTestId("config-domain-toggle-context-policy"),
+        ).toHaveAttribute("aria-expanded", "true");
 
         // context-policy 首字段是数字输入（ConfigDomainPanel.vue:940/977 的 config-text/config-number）；
         // 只取面板内第一个 input，语义仍是「改一个值 → 保存」。

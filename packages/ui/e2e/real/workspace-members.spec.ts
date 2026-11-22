@@ -155,7 +155,7 @@ test.describe("@host PLAN-0565 workspace members", () => {
             path: "test-results/members-owner-list.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0565-members-owner.png");
+        await expectPlatformScreenshot(page, "plan-0565-members-owner.png");
 
         // Member removal through the confirm dialog (real DELETE + reload).
         const editorRow = page

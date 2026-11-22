@@ -232,7 +232,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
             path: "test-results/plan-0610-w5c/01-old-bookmark-redirect.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0610-w5c-old-bookmark-redirect.png");
+        await expectPlatformScreenshot(page, "plan-0610-w5c-old-bookmark-redirect.png");
     });
 
     test("the settings nav offers roles instead of the retired page and never calls the old API", async ({
@@ -271,7 +271,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
             path: "test-results/plan-0610-w5c/02-non-admin-bookmark.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0610-w5c-non-admin-bookmark.png");
+        await expectPlatformScreenshot(page, "plan-0610-w5c-non-admin-bookmark.png");
     });
 
     test("F-02 guidance points at the role surface, not the retired page", async ({ page }) => {
@@ -286,6 +286,6 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
             path: "test-results/plan-0610-w5c/03-f02-link.png",
             fullPage: true,
         });
-        expectPlatformScreenshot(page, "plan-0610-w5c-f02-link.png");
+        await expectPlatformScreenshot(page, "plan-0610-w5c-f02-link.png");
     });
 });
