@@ -66,6 +66,14 @@ const PG_CONTAINER = process.env.XIHE_E2E_PG_CONTAINER ?? "";
 const PG_DATABASE = process.env.XIHE_E2E_PG_DATABASE ?? "";
 const PG_USER = process.env.XIHE_E2E_PG_USER ?? "xihe";
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "";
+/**
+ * 环境缺失是唯一保留 `test.skip` 的一类（并在文件头一次性声明）：
+ * C4 需要 write_file fake-LLM lane、B5 需要 spawn_agent lane。
+ * 产品行为不满足（admission 非 202、缺 pending 行等）一律硬失败，不得 skip。
+ */
+const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "";
+const WRITE_FILE_LANE = LLM_MODE === "write_file";
+const SPAWN_AGENT_LANE = LLM_MODE === "spawn_agent";
 const HOST_ROOT =
     process.env.XIHE_WORKSPACE_HOST_ROOT ??
     path.resolve(process.cwd(), "../../.tmp/e2e-host", RUN_ID || "unknown-run");
@@ -740,8 +748,12 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         if (admission.status !== 202 || !admission.runId) {
             sse.close();
-            writeRunFile("C1", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, `ask_user run not admitted: HTTP ${admission.status}`);
+            writeRunFile("C1", { status: "FAIL", checks });
+            expect(
+                admission.status,
+                `ask_user run must be admitted (HTTP 202 + runId), got HTTP ${admission.status}: ${admission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(admission.runId, "ask_user admission must return a runId").toBeTruthy();
         }
         const runId = admission.runId;
 
@@ -940,15 +952,24 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
             "two runs admitted",
             "both HTTP 202",
             `pending=${pendingAdmission.status} answered=${answeredAdmission.status}`,
-            pendingAdmission.status === 202 && answeredAdmission.status === 202
-                ? "PASS"
-                : "PRECONDITION_UNMET",
+            pendingAdmission.status === 202 && answeredAdmission.status === 202 ? "PASS" : "FAIL",
         );
         if (pendingAdmission.status !== 202 || answeredAdmission.status !== 202) {
             ssePending.close();
             sseAnswered.close();
-            writeRunFile("C2", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, "ask_user runs were not admitted");
+            writeRunFile("C2", { status: "FAIL", checks });
+            expect(
+                pendingAdmission.status,
+                `pending ask_user run must be admitted, got HTTP ${pendingAdmission.status}: ${pendingAdmission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(
+                answeredAdmission.status,
+                `answered ask_user run must be admitted, got HTTP ${answeredAdmission.status}: ${answeredAdmission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(
+                pendingAdmission.runId && answeredAdmission.runId,
+                "both ask_user admissions must return a runId",
+            ).toBeTruthy();
         }
 
         const pendingRun = pendingAdmission.runId;
@@ -959,13 +980,16 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
             "pending/answered preconditions",
             "both runs have a pending question before the kill",
             `pending=${JSON.stringify(pendingRow.value)} answered=${JSON.stringify(answeredRow.value)}`,
-            pendingRow.ok && answeredRow.ok ? "PASS" : "PRECONDITION_UNMET",
+            pendingRow.ok && answeredRow.ok ? "PASS" : "FAIL",
         );
         if (!pendingRow.ok || !answeredRow.ok) {
             ssePending.close();
             sseAnswered.close();
-            writeRunFile("C2", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, "no pending question rows before the kill");
+            writeRunFile("C2", { status: "FAIL", checks });
+            expect(
+                pendingRow.ok && answeredRow.ok,
+                `both runs must have a pending question before the kill: pending=${JSON.stringify(pendingRow.value)} answered=${JSON.stringify(answeredRow.value)}`,
+            ).toBe(true);
         }
         const pendingQuestionId = pendingRow.value[0]?.[0] ?? "";
         const answeredQuestionId = answeredRow.value[0]?.[0] ?? "";
@@ -1084,19 +1108,23 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         if (admission.status !== 202 || !admission.runId) {
             sse.close();
             writeRunFile("C3", {
-                status: "PRECONDITION_UNMET",
+                status: "FAIL",
                 checks: [
                     {
                         criterion: "C3",
                         check: "chat admission",
                         expected: "HTTP 202",
                         observed: `HTTP ${admission.status}`,
-                        status: "PRECONDITION_UNMET" as Status,
+                        status: "FAIL" as Status,
                         at: new Date().toISOString(),
                     },
                 ],
             });
-            test.skip(true, `ask_user run not admitted: HTTP ${admission.status}`);
+            expect(
+                admission.status,
+                `ask_user run must be admitted (HTTP 202 + runId), got HTTP ${admission.status}: ${admission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(admission.runId, "ask_user admission must return a runId").toBeTruthy();
         }
         const runId = admission.runId;
         const pending = await waitPendingQuestion(runId);
@@ -1106,10 +1134,13 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
                 "pending question row",
                 "at least one pending user_questions row",
                 JSON.stringify(pending.value),
-                "PRECONDITION_UNMET",
+                "FAIL",
             );
             writeRunFile("C3", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, "no pending question row for the C3 run");
+            expect(
+                pending.ok,
+                `C3 run must have a pending user_questions row: ${JSON.stringify(pending.value)}`,
+            ).toBe(true);
         }
         const questionId = pending.value[0]?.[0] ?? "";
         const answerText = `T12C C3 durable ${Date.now()}`;
@@ -1281,8 +1312,12 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         if (admission.status !== 202 || !admission.runId) {
             sse.close();
-            writeRunFile("C3-negative-control", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, `ask_user run not admitted: HTTP ${admission.status}`);
+            writeRunFile("C3-negative-control", { status: "FAIL", checks });
+            expect(
+                admission.status,
+                `ask_user run must be admitted (HTTP 202 + runId), got HTTP ${admission.status}: ${admission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(admission.runId, "ask_user admission must return a runId").toBeTruthy();
         }
         const runId = admission.runId;
         const pending = await waitPendingQuestion(runId);
@@ -1294,8 +1329,11 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         if (!pending.ok) {
             sse.close();
-            writeRunFile("C3-negative-control", { status: "PRECONDITION_UNMET", runId, checks });
-            test.skip(true, "no pending question row for the negative control");
+            writeRunFile("C3-negative-control", { status: "FAIL", runId, checks });
+            expect(
+                pending.ok,
+                `negative control run must have a pending question row: ${JSON.stringify(pending.value)}`,
+            ).toBe(true);
         }
         const questionId = pending.value[0]?.[0] ?? "";
         const answerText = `T12C C3 negative ${Date.now()}`;
@@ -1353,6 +1391,10 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
     });
 
     test("C4 approval symmetric mouth reads facts without consuming", async ({ request }) => {
+        test.skip(
+            !WRITE_FILE_LANE,
+            "C4 needs the write_file fake-LLM lane to reach the approval face deterministically",
+        );
         const checks: Check[] = [];
         const record = (check: string, expected: string, observed: string, status: Status) =>
             checks.push({
@@ -1367,25 +1409,6 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         // approval gate is what writes approval_requests; without the atom CP answers
         // `authorization_grant_denied` before the approval face (2026-11-22 write_file lane log).
         const fx = await buildFixture(request, "c4", ["read", "write"]);
-        if ((process.env.XIHE_E2E_LLM_MODE ?? "") !== "write_file") {
-            writeRunFile("C4", {
-                status: "PRECONDITION_UNMET",
-                checks: [
-                    {
-                        criterion: "C4",
-                        check: "write_file lane",
-                        expected: "--llm-mode=write_file",
-                        observed: `XIHE_E2E_LLM_MODE=${process.env.XIHE_E2E_LLM_MODE ?? "<unset>"}`,
-                        status: "PRECONDITION_UNMET" as Status,
-                        at: new Date().toISOString(),
-                    },
-                ],
-            });
-            test.skip(
-                true,
-                "C4 needs the write_file fake-LLM lane to reach the approval face deterministically",
-            );
-        }
         const session = await newSession(request, fx, "task-12 C4 approval");
         const sse = await openSse(fx, session.sessionId);
         const path0 = `team-c-c4-${Date.now()}.md`;
@@ -1399,8 +1422,12 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         if (admission.status !== 202 || !admission.runId) {
             sse.close();
-            writeRunFile("C4", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, `write_file run not admitted: HTTP ${admission.status}`);
+            writeRunFile("C4", { status: "FAIL", checks });
+            expect(
+                admission.status,
+                `write_file run must be admitted (HTTP 202 + runId), got HTTP ${admission.status}: ${admission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(admission.runId, "write_file admission must return a runId").toBeTruthy();
         }
         const runId = admission.runId;
         const pending = await pollUntil(
@@ -1421,11 +1448,11 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         if (!pending.ok) {
             sse.close();
-            writeRunFile("C4", { status: "PRECONDITION_UNMET", checks });
-            test.skip(
-                true,
-                "no approval_requests row (wf1-coding chain did not reach the approval face)",
-            );
+            writeRunFile("C4", { status: "FAIL", checks });
+            expect(
+                pending.ok,
+                `the run must reach the approval face (approval_requests row): ${JSON.stringify(pending.value)}`,
+            ).toBe(true);
         }
         const requestId = pending.value[0][0];
         const immutableQuery = (id: string) =>
@@ -1534,6 +1561,10 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
     test("B5 steer attribution survives admission; parked steer recovers after restart", async ({
         request,
     }) => {
+        test.skip(
+            !SPAWN_AGENT_LANE,
+            "B5 needs the spawn_agent fake-LLM lane to produce a real child Session",
+        );
         const checks: Check[] = [];
         const record = (check: string, expected: string, observed: string, status: Status) =>
             checks.push({
@@ -1545,26 +1576,6 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
                 at: new Date().toISOString(),
             });
 
-        if ((process.env.XIHE_E2E_LLM_MODE ?? "") !== "spawn_agent") {
-            writeRunFile("B5", {
-                status: "PRECONDITION_UNMET",
-                checks: [
-                    {
-                        criterion: "B5",
-                        check: "spawn_agent lane",
-                        expected: "--llm-mode=spawn_agent",
-                        observed: `XIHE_E2E_LLM_MODE=${process.env.XIHE_E2E_LLM_MODE ?? "<unset>"}`,
-                        status: "PRECONDITION_UNMET" as Status,
-                        at: new Date().toISOString(),
-                    },
-                ],
-            });
-            test.skip(
-                true,
-                "B5 needs the spawn_agent fake-LLM lane to produce a real child Session",
-            );
-        }
-
         const fx = await buildSpawnFixture(request);
         const parent = await newSession(request, fx, "task-12 B5 parent");
         const sse = await openSse(fx, parent.sessionId);
@@ -1572,8 +1583,12 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         const admission = await submitChat(request, fx, parent, `XIHE-E2E-SPAWN ${token}`);
         if (admission.status !== 202 || !admission.runId) {
             sse.close();
-            writeRunFile("B5", { status: "PRECONDITION_UNMET", checks });
-            test.skip(true, `spawn run not admitted: HTTP ${admission.status}`);
+            writeRunFile("B5", { status: "FAIL", checks });
+            expect(
+                admission.status,
+                `spawn run must be admitted (HTTP 202 + runId), got HTTP ${admission.status}: ${admission.text.slice(0, 200)}`,
+            ).toBe(202);
+            expect(admission.runId, "spawn admission must return a runId").toBeTruthy();
         }
         const parentRun = admission.runId;
         // spawn_agent is approval-gated (audit action=approval_required in the B5 lane log);
@@ -1622,8 +1637,11 @@ test.describe("task-12 C group — real-stack kill/restart criteria @host", () =
         );
         if (!child.ok) {
             sse.close();
-            writeRunFile("B5", { status: "PRECONDITION_UNMET", parentRun, checks });
-            test.skip(true, "agent did not spawn a child Session");
+            writeRunFile("B5", { status: "FAIL", parentRun, checks });
+            expect(
+                child.ok,
+                `agent must spawn a real child Session: ${JSON.stringify(child.value)}`,
+            ).toBe(true);
         }
         const childSessionId = child.value[0][0];
 

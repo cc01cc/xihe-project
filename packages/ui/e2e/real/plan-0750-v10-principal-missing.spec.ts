@@ -233,12 +233,9 @@ test("@host V10 未绑定 principal 的提交 ⇒ 403 AGENT_PRINCIPAL_MISSING + 
     const status = response.status();
     const body = (await response.json().catch(() => ({}))) as { code?: string };
 
-    if (status === 202) {
-        // 不静默放过：真栈若真的降级成 202，本判据就不成立 —— 打印清楚并 skip，而不是判绿。
-        test.skip(true, `真栈回了 202（非 403）⇒ V10 判据不成立：${JSON.stringify(body)}`);
-    }
-
-    expect(status, `提交必须被 403 拒（真 CP），实际 ${status}`).toBe(403);
+    // V10 判据：未绑定 principal 的提交**必须**被 403 拒。真栈若返回 202（产品降级放行），
+    // 这里必须硬失败——旧实现用 test.skip 把产品降级报成 skipped，属于 §3.2 假绿形态。
+    expect(status, `提交必须被 403 拒（真 CP），实际 ${status}：${JSON.stringify(body)}`).toBe(403);
     expect(body.code, "必须是专用码 AGENT_PRINCIPAL_MISSING").toBe("AGENT_PRINCIPAL_MISSING");
 
     // 用户可见指引（zh 默认 locale）
