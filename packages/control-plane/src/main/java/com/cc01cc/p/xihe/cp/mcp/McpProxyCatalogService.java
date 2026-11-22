@@ -1,12 +1,14 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.McpServer;
 import com.cc01cc.p.xihe.cp.entity.McpStdioServer;
 import com.cc01cc.p.xihe.cp.entity.McpToolAlias;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpToolAliasRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -81,6 +83,7 @@ public class McpProxyCatalogService {
     }
 
     public void replaceStdioConfigs(String workspaceId, Map<String, JsonNode> next) {
+        next.keySet().forEach(McpProxyCatalogService::requireUserServerName);
         List<McpStdioServer> existing = stdioServers.findByWorkspaceIdOrderByNameAsc(workspaceId);
         for (McpStdioServer row : existing) {
             if (!next.containsKey(row.getName())) {
@@ -114,6 +117,7 @@ public class McpProxyCatalogService {
      * touches {@code endpoint}) never clears the OAuth block.
      */
     public void saveRemoteEndpoints(String workspaceId, Map<String, RemoteEndpointInput> endpoints) {
+        endpoints.keySet().forEach(McpProxyCatalogService::requireUserServerName);
         for (Map.Entry<String, RemoteEndpointInput> entry : endpoints.entrySet()) {
             String name = entry.getKey();
             RemoteEndpointInput input = entry.getValue();
@@ -155,6 +159,44 @@ public class McpProxyCatalogService {
         return remoteServers.findById(UUID.fromString(serverId))
                 .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled())
                 .map(McpProxyCatalogService::toRemoteServerView);
+    }
+
+    /**
+     * task-870 / D-1921: positive enumeration for the {@code mcp:} resource. A gateway id is
+     * appended only when it resolves to a real catalog row (an enabled remote UUID, or an enabled
+     * stdio server name). CP-owned ids ({@code __system__}/{@code __cp__}) have no row and are
+     * therefore excluded structurally, not by a growing exception list.
+     */
+    @Transactional(readOnly = true)
+    public boolean isCatalogServer(String workspaceId, String serverId) {
+        if (serverId == null || serverId.isBlank()) {
+            return false;
+        }
+        try {
+            return remoteServers.findById(UUID.fromString(serverId))
+                    .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled())
+                    .isPresent();
+        } catch (IllegalArgumentException notUuid) {
+            return stdioServers.findByWorkspaceIdAndName(workspaceId, serverId)
+                    .filter(McpStdioServer::isEnabled)
+                    .isPresent();
+        }
+    }
+
+    /**
+     * The write face refuses the CP-owned {@code __} prefix. Otherwise a caller holding
+     * {@code MANAGE_WORKSPACE_MCP} could register a server literally named {@code __system__} and
+     * inherit the built-in exclusion, bypassing the {@code mcp:} gate.
+     */
+    private static void requireUserServerName(String name) {
+        if (name == null || name.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "MCP server name is required");
+        }
+        if (name.startsWith("__")) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "MCP server name must not start with '__' (reserved for CP-owned tools): " + name);
+        }
     }
 
     public List<ToolAliasView> listAliases(String workspaceId) {

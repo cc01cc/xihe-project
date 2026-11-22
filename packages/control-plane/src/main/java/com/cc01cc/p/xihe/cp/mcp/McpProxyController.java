@@ -34,6 +34,7 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
+import com.cc01cc.p.xihe.cp.policy.ResourceNamespaces;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
@@ -408,6 +409,11 @@ public class McpProxyController {
             com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter.FilterResult pluginSelection =
                     pluginToolCatalogFilter.apply(headers.getFirst("X-Chat-Run-Id"), allTools);
             allTools = new ArrayList<>(pluginSelection.tools());
+            // task-870 / D-1921 §3.4: external server tools are visible only to a principal that
+            // holds `read × mcp:<serverId>`. Built-in (`__system__`/`__cp__`) tools have no catalog
+            // row and are untouched — this is the same face/criteria as tools/call, not a matrix.
+            allTools = new ArrayList<>(filterToolsByMcpGrants(wsId, allTools,
+                    toolTimeoutService.mappingFor(wsId), sessionId, access));
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("tools", allTools);
@@ -1209,8 +1215,24 @@ public class McpProxyController {
         // T1.15：同一次加载的 context 同时供 Verdict 与工具面解析使用（不二次加载）。
         PolicyContext policyContext = policy.loadContext(access.userId(), wsId, sessionId);
         boolean userPrincipalOnly = !access.internalService();
-        if (!policy.allowsByGrant(policyContext, toolName, rewritten, sessionId,
-                access.userId(), wsId, userPrincipalOnly)) {
+        // task-870 / D-1921: an external MCP server is a resource of its own. Append it to the
+        // object resources so the grant intersection requires BOTH; never replace them. The
+        // CP-owned ids (`__system__`/`__cp__`) are not servers and must stay out, or every agent
+        // preset would fail the built-in file tools (task-853 regression).
+        List<String> gatewayResources = mcpGatewayResources(wsId, serverId);
+        if (gatewayResources == null) {
+            audit.record(sessionId, toolName, "mcp_resource_unresolved",
+                    "catalog server id cannot be canonicalized");
+            return cpToolErrorResponse(body, ToolRefusalCodes.TOOL_GRANT_DENIED);
+        }
+        // The 7-arg call is the exact pre-task-870 shape; use it when there is no gateway pair so
+        // existing callers/wrappers see the same method they always did.
+        boolean grantAllowed = gatewayResources.isEmpty()
+                ? policy.allowsByGrant(policyContext, toolName, rewritten, sessionId,
+                        access.userId(), wsId, userPrincipalOnly)
+                : policy.allowsByGrant(policyContext, toolName, rewritten, sessionId,
+                        access.userId(), wsId, userPrincipalOnly, gatewayResources);
+        if (!grantAllowed) {
             sse.send(sessionId, "tool_exec_denied", Map.of("tool", toolName, "reason", "authorization grant denied"));
             audit.record(sessionId, toolName, "authorization_grant_denied", "no matching grant or workspace membership");
             // PLAN-0649 follow-up (2026-11-04): a pre-dispatch refusal must still answer with the
@@ -1219,8 +1241,11 @@ public class McpProxyController {
             // card carries no `refusalCode` — the opaque-failure shape 0649 exists to remove.
             return cpToolErrorResponse(body, ToolRefusalCodes.TOOL_GRANT_DENIED);
         }
-        PolicyVerdict verdict = policy.evaluateVerdict(policyContext, toolName, rewritten, sessionId, null,
-                access.userId(), wsId);
+        PolicyVerdict verdict = gatewayResources.isEmpty()
+                ? policy.evaluateVerdict(policyContext, toolName, rewritten, sessionId, null,
+                        access.userId(), wsId)
+                : policy.evaluateVerdict(policyContext, toolName, rewritten, sessionId, null,
+                        access.userId(), wsId, gatewayResources);
         audit.record(sessionId, toolName, "request", rewritten);
 
         if (verdict.effect() == PolicyEffect.DENY) {
@@ -3069,6 +3094,87 @@ public class McpProxyController {
             logger.warn("Remote server lookup failed, falling back to stdio: {}", e.getMessage());
             return Optional.empty();
         }
+    }
+
+    /**
+     * task-870 / D-1921: the {@code mcp:} resources a gateway call must also hold, or {@code null}
+     * when the id cannot be resolved and the call must fail closed.
+     *
+     * <p>Positive enumeration: only a server that resolves to a catalog row is appended. The
+     * CP-owned ids have no row, so they are excluded structurally; so is a stale mapping entry
+     * whose row no longer exists (it cannot be produced by a catalog refresh, and forwarding to it
+     * fails). A resolvable id whose canonical form is unusable fails closed.</p>
+     */
+    private List<String> mcpGatewayResources(String wsId, String serverId) {
+        if (serverId == null || serverId.isBlank()) {
+            return List.of();
+        }
+        if (ResourceNamespaces.isBuiltinMcpServerId(serverId)) {
+            return List.of();
+        }
+        if (!catalogService.isCatalogServer(wsId, serverId)) {
+            return List.of();
+        }
+        String resource = ResourceNamespaces.mcpServerResource(serverId);
+        return resource == null ? null : List.of(resource);
+    }
+
+    /**
+     * Filters {@code tools/list} by the same {@code read × mcp:<serverId>} criterion as the call
+     * gate. Each distinct server is evaluated once per request; built-in entries pass through.
+     */
+    private List<Map<String, Object>> filterToolsByMcpGrants(
+            String wsId, List<Map<String, Object>> tools, Map<String, String> mapping,
+            String sessionId, AccessContext access) {
+        Map<String, Boolean> visible = new LinkedHashMap<>();
+        PolicyContext context = null;
+        for (Map<String, Object> tool : tools) {
+            Object name = tool.get("name");
+            if (!(name instanceof String toolName)) {
+                continue;
+            }
+            String serverId = mapping.get(toolName);
+            if (serverId == null || visible.containsKey(serverId)) {
+                continue;
+            }
+            if (ResourceNamespaces.isBuiltinMcpServerId(serverId)) {
+                visible.put(serverId, true);
+                continue;
+            }
+            List<String> resources = mcpGatewayResources(wsId, serverId);
+            if (resources == null) {
+                visible.put(serverId, false);
+                continue;
+            }
+            if (resources.isEmpty()) {
+                // No catalog row: not an external server resource, same as the call path.
+                visible.put(serverId, true);
+                continue;
+            }
+            if (context == null) {
+                context = policy.loadContext(access.userId(), wsId, sessionId);
+            }
+            visible.put(serverId, policy.allowsResource(context, ToolFaceRegistry.ACTION_READ,
+                    resources.get(0), sessionId, access.userId(), wsId, !access.internalService()));
+        }
+        if (visible.isEmpty()) {
+            return tools;
+        }
+        List<Map<String, Object>> kept = new ArrayList<>(tools.size());
+        int hidden = 0;
+        for (Map<String, Object> tool : tools) {
+            Object name = tool.get("name");
+            String serverId = name instanceof String toolName ? mapping.get(toolName) : null;
+            if (serverId != null && Boolean.FALSE.equals(visible.get(serverId))) {
+                hidden++;
+                continue;
+            }
+            kept.add(tool);
+        }
+        if (hidden > 0) {
+            audit.record(sessionId, "tools/list", "visibility_filtered", "hidden=" + hidden);
+        }
+        return kept;
     }
 
     /** Sticky issue policy: bare name when free, else server-qualified. Pure, unit-tested. */

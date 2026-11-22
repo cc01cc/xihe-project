@@ -204,6 +204,8 @@ public class GrantabilityGuard {
             return held.contains(atom);
         }
         return held.stream().anyMatch(grant -> grant.actionClass().equals(atom.actionClass())
+                && !ResourceNamespaces.mcpChannelRequiresExplicitGrant(
+                        grant.resource(), atom.resource())
                 && (grant.resource().equals(atom.resource())
                 || LayeredPolicyResolver.matches(grant.resource(), atom.resource(), ToolShape.OPAQUE)));
     }

@@ -101,7 +101,39 @@ public class GrantResourcePattern {
                     + " narrow it");
         }
         rejectUnwritableNamespace(atom.name(), raw);
+        if (ResourceNamespaces.MCP.equals(ResourceNamespaces.namespaceOf(raw))) {
+            return canonicalMcpPattern(atom.name(), raw);
+        }
         return requireWorkspacePrefix(atom.name(), raw);
+    }
+
+    /**
+     * task-870 / D-1921: {@code mcp:*} and {@code mcp:<canonicalId>} are the only writable MCP
+     * shapes. A non-canonical id is refused with the canonical suggestion instead of being stored
+     * inert: a grant that never matches because of a casing/spacing difference is indistinguishable
+     * from a typo, and silently accepting it would hide the mistake.
+     */
+    private String canonicalMcpPattern(String atomName, String raw) {
+        if (raw.length() > MAX_LENGTH) {
+            throw invalid(atomName, raw, "the pattern must be at most " + MAX_LENGTH
+                    + " characters (V87 grant_preset_atoms.resource_pattern)");
+        }
+        String value = ResourceNamespaces.valueOf(raw);
+        if (ResourceNamespaces.WILDCARD.equals(value)) {
+            return ResourceNamespaces.MCP_WILDCARD;
+        }
+        String canonical = ResourceNamespaces.canonicalMcpServerId(value);
+        if (canonical == null) {
+            throw invalid(atomName, raw, "mcp: needs a server id or '*'");
+        }
+        if (!canonical.equals(value)) {
+            throw invalid(atomName, raw, "the server id is not canonical; write "
+                    + ResourceNamespaces.MCP_PREFIX + canonical);
+        }
+        if (ResourceNamespaces.isBuiltinMcpServerId(canonical)) {
+            throw invalid(atomName, raw, canonical + " is a built-in gateway id, not an MCP server");
+        }
+        return ResourceNamespaces.MCP_PREFIX + canonical;
     }
 
     /**

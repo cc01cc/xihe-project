@@ -196,7 +196,7 @@ tags:
 
 - 原子目录：**42 个动作原子 + 3 个能力原子**（`policy/PermissionAtomCatalog.java`；[实测] 枚举计数见 `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`）。
 - 有工具面入口的动作类 **7 个**：`read`、`write`、`exec`、`network`、`credential_use`、`spawn_agent`、`team_task_manage`（`policy/ToolFaceRegistry.java:280-296`）。`delete` 动作类存在，但当前没有任何工具映射到它，`WRITE_TOOLS` 也不含删除工具（`policy/ToolFaceRegistry.java:193-195`、`:254`）——即该原子在工具链上不可达。
-- 资源族（资源轴的取值形态）：`fs:` 声明键（**唯一可写入 grant 的路径形态**）、`phys:` 求值键（只在求值期展开）、`credential:`（`credential:*` 或 `credential:<uuid>`）、`skill:`（`skill:*` 或 `skill:<uuid>`），以及裸路径 / URL / `*`。`credential:` 与 `skill:` 的前缀常量分别在 `policy/ToolFaceRegistry.java:168-169` 与 `:176`；`fs:` / `phys:` 在 `policy/ResourceIdentity.java:24-25`。
+- 资源族（资源轴的取值形态）：`fs:` 声明键（**唯一可写入 grant 的路径形态**）、`phys:` 求值键（只在求值期展开）、`credential:`（`credential:*` 或 `credential:<uuid>`）、`skill:`（`skill:*` 或 `skill:<uuid>`）、`mcp:`（`mcp:*` 或 `mcp:<canonicalServerId>`，见 §5.5），以及裸路径 / URL / `*`。命名空间与 matcher 统一由 `policy/ResourceNamespaces.java` 注册；`fs:` / `phys:` 的解析仍在 `policy/ResourceIdentity.java`。
 
 8 个内置授权预设的默认动作原子数（[实测]，同一份证据）：
 
@@ -217,7 +217,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 
 ### 5.1 资源命名空间与名字撞车
 
-资源串的规范形态是「命名空间 + 值」：`fs:<workspaceId>[/<rel>]`、`credential:<uuid>`、`skill:<uuid>` 等。命名空间注册表（task-830 落地的单一注册点）是判据来源：**未登记的前缀出现在 grant 资源里必须 fail-closed**，不允许「看起来像前缀就当资源」。注册表同时声明 matcher 类型（`exact` / `prefix` / `tree`）；当前只启用 `exact` / `prefix`，`tree` 只是预留类型，不注册 `org:` 命名空间（见 §5.4）。
+资源串的规范形态是「命名空间 + 值」：`fs:<workspaceId>[/<rel>]`、`credential:<uuid>`、`skill:<uuid>`、`mcp:<serverId>` 等。命名空间注册表（task-830 落地、task-870 扩到 `mcp:` 的单一注册点）是判据来源：**未登记的前缀出现在 grant 资源里必须 fail-closed**，不允许「看起来像前缀就当资源」。注册表同时声明 matcher 类型（`exact` / `prefix` / `tree`）；当前只启用 `exact` / `prefix`，`tree` 只是预留类型，不注册 `org:` 命名空间（见 §5.4）。
 
 **两个撞名必须分清**：
 
@@ -249,7 +249,20 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 
 资源注册表**预留 `tree` matcher 类型**，但当前不注册 `org:` 命名空间。将来若确实需要把组织单元升级成资源，只加一行注册（namespace + `tree` matcher + canonicalizer），不改表、不改解析器、不改求值器。
 
-### 5.5 新增资源类别的 playbook
+### 5.5 `mcp:` 是通道闸，不是被作用对象
+
+外部 MCP server 作为一个**通道资源**进入判据：经网关的每次工具调用在 `PolicyRequest.resources` 里**追加** `mcp:<canonicalServerId>`，与工具参数派生的对象资源**同时**求值。两条硬约束：
+
+1. **只追加、不替换**。若用 `mcp:<sid>` 替换对象资源，`write × mcp:server` 就能覆盖该 server 上任意对象——那是放宽，不是收窄。验收反例：只持 `mcp:<sid>` + `mcp:*`、不持对象资源的 agent 调写工具，必须仍被拒。
+2. **`*` 不覆盖 `mcp:`**。通道闸必须显式授予；否则任何持有 `write@*` 的预设（包括所有 agent 预设）都会静默穿过它。只有 `mcp:*` / `mcp:<id>` 能覆盖 `mcp:<id>`。
+
+**正向枚举**：只有能解析到 catalog 一行（`mcp_remote_servers` 的 UUID 或 `mcp_stdio_servers` 的 name）的 serverId 才追加。CP 自有网关 id（`__system__` / `__cp__`）没有 catalog 行，结构上天然不追加——内置 `write_file` / `read_file` 不受通道闸影响（task-853 首装回归守卫）。写面拒绝 `__` 前缀的 server 名，防止持 `MANAGE_WORKSPACE_MCP` 者注册同名 server 继承内置排除。
+
+**canonical 形态**：UUID 原样小写；非 UUID（legacy `mcp-config` key / stdio name）取稳定小写 slug，损失性归一化（大小写、空格、标点、截断）追加 8 位 SHA-256 后缀。函数幂等；写面只接受 canonical 值，非 canonical 直接 400 并给出建议形态。代价：**改 stdio server 的配置 key 会改变 canonical id，旧 grant 随即失效**——fail-closed、可见，绝不静默放宽。
+
+**默认集**：`mcp:*` 只给 `SUPER_ADMIN` / `ADMIN` / `WS_OWNER`（WS_OWNER 不含它没有的 `network`）；agent 预设只按 server 显式授权。升级后未显式授权的 agent 对 MCP 全拒（fail-closed），发布说明必须写明。
+
+### 5.6 新增资源类别的 playbook
 
 以后要加 memory、plugin 等资源类别，按这个顺序做，缺一步都不算完成：
 

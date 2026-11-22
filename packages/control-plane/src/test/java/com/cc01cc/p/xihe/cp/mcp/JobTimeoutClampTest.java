@@ -139,6 +139,14 @@ class JobTimeoutClampTest {
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN,
                         "manual", "auto_allow"));
         when(policyEngine.hasCurrentAgentToolCall(any(), any(), any(), any(), any(), any())).thenReturn(true);
+        // task-870: a table-backed server adds `mcp:<sid>`; these routing tests hold that grant.
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyBoolean(),
+                org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), any(), any(), any(), org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN,
+                        "manual", "auto_allow"));
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("exec", ToolShape.STRUCTURED));
         when(requestRewriter.rewrite(anyString(), anyString(), anyString()))

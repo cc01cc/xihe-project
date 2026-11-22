@@ -299,6 +299,16 @@ class McpProxyTest {
                 .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "auto_allow"));
         when(policyEngine.faceOf(any(PolicyContext.class), anyString()))
                 .thenReturn(new ToolFaceRegistry.Face("read", ToolShape.STRUCTURED));
+        // task-870: a catalog-resolvable external server adds `mcp:<sid>` and asks the same engine
+        // for `read × mcp:<sid>` on tools/list. These routing tests hold the grant by construction.
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyBoolean(),
+                org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), any(), any(), any(), org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ALLOW, null, PolicyLayer.BUILTIN, "manual", "auto_allow"));
+        when(policyEngine.allowsResource(any(PolicyContext.class), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyBoolean())).thenReturn(true);
     }
 
     @Test

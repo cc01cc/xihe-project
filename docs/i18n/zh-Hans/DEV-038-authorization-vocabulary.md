@@ -89,7 +89,7 @@ tags:
 
 ## 5. 资源族
 
-**是什么**：资源是判据的第二轴，规范形态是「命名空间 + 值」的可前缀匹配串。当前有五类形态：
+**是什么**：资源是判据的第二轴，规范形态是「命名空间 + 值」的可前缀匹配串。当前有六类形态：
 
 | 资源族 | 形态 | 能进 grants | 求值期怎么用 |
 |---|---|---|---|
@@ -97,9 +97,10 @@ tags:
 | 文件物理键 | `phys:<归一化绝对路径>` | **永不**；API 提交即 400 | 只在求值期由 `fs:` 展开 |
 | 凭证 | `credential:<uuid>` / `credential:*` | 能 | 使用凭证必须具体 uuid |
 | 技能 | `skill:<uuid>` / `skill:*` | 能 | 技能面按前缀匹配 |
+| MCP server | `mcp:<canonicalServerId>` / `mcp:*` | 能 | 网关调用与对象资源同时求值；`*` 不覆盖 `mcp:` |
 | 裸形态 | 裸路径 / URL / `*` | `*` 能 | 交分层匹配器 |
 
-**从哪读**：`policy/ResourceIdentity.java` 的 `fs:` / `phys:` 前缀；`policy/ToolFaceRegistry.java` 的 `credential:` / `skill:` 前缀；`PermissionAtomCatalog.actionResource` 的默认 `*` 与凭证类 `credential:*`。命名空间收敛到单一注册表的工作由 task-830 承接，登记与 matcher 口径见 [DEV-037](DEV-037-authorization-model.md) §5.1。
+**从哪读**：`policy/ResourceNamespaces.java` 是命名空间、matcher 与 canonicalizer 的单一注册表（task-830 建、task-870 增 `mcp:`）；`policy/ResourceIdentity.java` 解析 `fs:` / `phys:`；`PermissionAtomCatalog.actionResource` 给默认 `*` 与凭证类 `credential:*`。登记与 matcher 口径见 [DEV-037](DEV-037-authorization-model.md) §5.1，`mcp:` 的通道闸语义见 §5.5。
 
 **求值期是否读**：读，且是唯一的第二轴。`fs:` 两侧都展开后比物理身份，绝不回退成字符串比较；`credential:*` 只表示管理面的宽口径，不能替代 `credential_use` 的具体 uuid。
 

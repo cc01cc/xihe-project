@@ -160,9 +160,10 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
 
         List<AuthorizationGrant> rows = grantRepository
                 .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(), GrantSources.PRESET);
-        assertEquals(PermissionAtomCatalog.actionAtoms().size(), rows.size(),
-                "SUPER_ADMIN materializes its full action atom set (design #27 makes the workspace "
-                        + "usage atoms instance-bindable)");
+        assertEquals(PermissionAtomCatalog.actionAtoms().size()
+                        + SystemGrantPresetCatalog.mcpCeilingAtoms().size(), rows.size(),
+                "SUPER_ADMIN materializes its full action atom set plus the task-870 mcp:* "
+                        + "ceiling (design #27 makes the workspace usage atoms instance-bindable)");
         for (AuthorizationGrant row : rows) {
             String atom = row.getPermissions().get(0).get("actionClass").asText();
             assertFalse(PermissionAtomCatalog.isCapabilityAtom(atom),

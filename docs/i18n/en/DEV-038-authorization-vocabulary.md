@@ -89,7 +89,7 @@ The first 8 are the base built-in presets; the last 3 were added by DSD-1500 to 
 
 ## 5. Resource families
 
-**What it is**: resources are the second axis of judgement, canonically a prefix-matchable "namespace + value" string. There are five shapes today:
+**What it is**: resources are the second axis of judgement, canonically a prefix-matchable "namespace + value" string. There are six shapes today:
 
 | Resource family | Shape | May enter grants | How evaluation uses it |
 |---|---|---|---|
@@ -97,9 +97,10 @@ The first 8 are the base built-in presets; the last 3 were added by DSD-1500 to 
 | File physical key | `phys:<normalized absolute path>` | **Never**; API submission is 400 | Only expanded from `fs:` during evaluation |
 | Credential | `credential:<uuid>` / `credential:*` | Yes | Credential use requires a concrete uuid |
 | Skill | `skill:<uuid>` / `skill:*` | Yes | Skill faces match by prefix |
+| MCP server | `mcp:<canonicalServerId>` / `mcp:*` | Yes | A gateway call is evaluated together with the object resource; `*` does not cover `mcp:` |
 | Bare shape | bare path / URL / `*` | `*` only | Handed to the layered matcher |
 
-**Where to read**: the `fs:` / `phys:` prefixes in `policy/ResourceIdentity.java`; the `credential:` / `skill:` prefixes in `policy/ToolFaceRegistry.java`; the default `*` and credential-class `credential:*` in `PermissionAtomCatalog.actionResource`. Consolidating namespaces into a single registry is task-830; registration and matcher rules are in [DEV-037](DEV-037-authorization-model.md) §5.1.
+**Where to read**: `policy/ResourceNamespaces.java` is the single registry of namespaces, matchers and canonicalizers (created by task-830, extended with `mcp:` by task-870); `policy/ResourceIdentity.java` parses `fs:` / `phys:`; `PermissionAtomCatalog.actionResource` supplies the default `*` and the credential-class `credential:*`. Registration and matcher rules are in [DEV-037](DEV-037-authorization-model.md) §5.1; the `mcp:` channel-gate semantics are in §5.5.
 
 **Does evaluation read it?** Yes, and it is the only second axis. Both `fs:` sides are expanded and compared as physical identity, never falling back to string comparison; `credential:*` is only the wide management-plane shape and cannot replace a concrete uuid for `credential_use`.
 

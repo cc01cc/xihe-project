@@ -257,6 +257,12 @@ public class ToolFaceRegistry {
             if (resource == null || resource.isBlank()) {
                 continue;
             }
+            // task-870 consumer audit: only filesystem-shaped resources can name AGENTS.md. An
+            // MCP server id (`mcp:foo/agents.md`) or another identity namespace is not a file path;
+            // matching it here would ask for approval on an unrelated tool call.
+            if (!ResourceNamespaces.isPathResource(resource)) {
+                continue;
+            }
             String normalized = resource.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
             // cp-2 (L1 预存清偿): redundant LEADING "./" segments must not let a protected-file
             // write slip past the ask tier -- PathKey.lexical rejects dot segments fail-closed and
@@ -487,6 +493,10 @@ public class ToolFaceRegistry {
      * offending row whenever the two disagree.</p>
      */
     public static boolean resourceCovers(String actionClass, String ceilingResource, String candidateResource) {
+        // task-870: `*` / path ceilings never imply MCP channel access.
+        if (ResourceNamespaces.mcpChannelRequiresExplicitGrant(ceilingResource, candidateResource)) {
+            return false;
+        }
         if (isCredentialActionClass(actionClass) && candidateResource != null
                 && candidateResource.startsWith(CREDENTIAL_RESOURCE_PREFIX)) {
             return CREDENTIAL_RESOURCE_WILDCARD.equals(ceilingResource)
