@@ -166,9 +166,12 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // cache explicitly instead of failing the send.
         await waitForControlPlaneAgentReady(request, ctx.headers);
 
-        // The Monitor is the default right-panel view on desktop.
+        // task-137 / S3b：桌面右栏默认只在 ≥1800 宽屏首开 monitor；Playwright 的
+        // 默认视口更窄，dock 首开是收起的。测试必须先走唯一入口展开右栏并选中 monitor，
+        // 不能再假设 `session-monitor-panel` 首帧就在 DOM 里。
+        await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
         const panel = page.locator(PANEL);
-        await expect(panel, "monitor panel is the default view").toBeVisible({
+        await expect(panel, "monitor panel is the active dock view").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
         await expect(panel.locator('[data-testid="monitor-activity-empty"]')).toBeVisible();
@@ -248,6 +251,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await ensureChatReady(page);
 
+        await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
         const panel = page.locator(PANEL);
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel.locator('[data-testid="monitor-history-item"]').first()).toBeVisible({
@@ -289,6 +293,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await ensureChatReady(page);
 
+        await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
         const panel = page.locator(PANEL),
             chip = page.locator('[data-testid="monitor-connection-chip"]');
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });

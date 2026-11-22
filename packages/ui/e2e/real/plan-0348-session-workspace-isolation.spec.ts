@@ -46,7 +46,12 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const AGENT_PORT = Number(process.env.XIHE_AGENT_PORT || "12632");
 const AGENT_URL = `http://127.0.0.1:${AGENT_PORT}`;
-const HOST_ROOT = path.resolve(process.cwd(), "../../.tmp/e2e-host", RUN_ID || "unknown-run");
+// BL-560 / task-770：`XIHE_E2E_RUN_ID` 按轮次轮转（round2 是 `…-r2`），而日志根是
+// runner 进程级固定的 `XIHE_WORKSPACE_HOST_ROOT`。继续用轮转 id 拼路径会在 round2
+// 读到不存在的 `…-r2/logs/agent.log`，把"shard 已创建"误报成空串。
+const HOST_ROOT =
+    process.env.XIHE_WORKSPACE_HOST_ROOT ??
+    path.resolve(process.cwd(), "../../.tmp/e2e-host", RUN_ID || "unknown-run");
 const AGENT_LOG = path.join(HOST_ROOT, "logs", "agent.log");
 const REBIND_REJECTION = "MCP workspace context cannot be reused across workspaces";
 
@@ -158,7 +163,10 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
         sessionA,
         "wire-model",
     );
-    await sendChat(page, "XIHE-E2E-WRITE plan0588-a.txt hello-from-workspace-a");
+    // task-770：run7 全程 `--llm-mode=real`，fake LLM 的默认分支只回纯文本，
+    // `XIHE-E2E-WRITE` 不会产生工具调用。用 fake LLM 的 per-session chain 标记
+    // 激活 `wf1-coding` 第 1 步 read_file，不依赖 runner 的全局 llm-mode。
+    await sendChat(page, "XIHE-E2E-CHAIN wf1-coding XIHE-E2E-READ README.md");
     await expect
         .poll(() => latestRunStatus(request, a.headers, a.workspaceId), {
             timeout: LONG_TIMEOUT_MS,
@@ -204,7 +212,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
             sessionB,
             "wire-model",
         );
-        await sendChat(pageB, "XIHE-E2E-WRITE plan0588-b.txt hello-from-workspace-b");
+        await sendChat(pageB, "XIHE-E2E-CHAIN wf1-coding XIHE-E2E-READ README.md");
         await expect
             .poll(() => latestRunStatus(request, b.headers, b.workspaceId), {
                 timeout: LONG_TIMEOUT_MS,

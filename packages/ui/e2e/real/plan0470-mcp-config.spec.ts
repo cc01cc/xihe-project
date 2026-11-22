@@ -58,6 +58,9 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
         });
         expect(created.status()).toBe(201);
         const workspace = (await created.json()) as { id: string };
+        // D-1432 / task-41：工作区 MCP 真页签已搬回工作区设置页；旧
+        // `/resources/mcp?layer=WORKSPACE` 现在只渲染资源区指路/回落，不再发 workspace 配置请求。
+        const mcpSettingsUrl = `/workspace/${workspace.id}/settings?tab=mcp`;
         const refreshed = await request.post(`${CP_URL}/api/v1/auth/refresh`, {
             data: { refreshToken: auth.refreshToken },
         });
@@ -81,15 +84,14 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             { token: refreshedAuth.accessToken, workspaceId: refreshedAuth.workspaceId },
         );
 
-        // task-209（D-1019）：MCP 配置面已从「工作区设置的 MCP 页签」搬到资源区工作区层。
-        // 判据不变（加载 200 / 可编辑 / 保存 200 / 重载后仍在），只是入口换了 URL。
+        // 判据不变（加载 200 / 可编辑 / 保存 200 / 重载后仍在），入口按 D-1432 走设置页真页签。
         const loadConfigResponse = page.waitForResponse(
             (response) =>
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
             { timeout: LONG_TIMEOUT_MS },
         );
-        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await page.goto(mcpSettingsUrl, { waitUntil: "load" });
         expect((await loadConfigResponse).status()).toBe(200);
         const editor = page.getByTestId("mcp-config-textarea");
         await expect(editor).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -111,7 +113,7 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
                     response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                     response.request().method() === "PUT",
             ),
-            mcpPanel.getByRole("button", { name: "保存", exact: true }).click(),
+            mcpPanel.getByTestId("mcp-config-save").click(),
         ]);
         expect(saveResponse.status()).toBe(200);
 
@@ -137,7 +139,7 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
                 response.request().method() === "GET",
             { timeout: LONG_TIMEOUT_MS },
         );
-        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await page.goto(mcpSettingsUrl, { waitUntil: "load" });
         expect((await reloadedConfigResponse).status()).toBe(200);
         const reloadedEditor = page.getByTestId("mcp-config-textarea");
         await expect(reloadedEditor).toBeVisible();

@@ -60,6 +60,10 @@ let agentBindingWorkspaceId = "";
 test.describe.configure({ mode: "serial", retries: 0 });
 
 test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
+    // 四个真实轮次（读 → 写+审批 → 执行 → 收尾）各带一次 run 终态轮询，
+    // 30s 整测预算只够跑到第 3 轮；按既有 long E2E 口径放大到 4×LONG_TIMEOUT。
+    test.setTimeout(LONG_TIMEOUT_MS * 4);
+
     test.beforeAll(async ({ request }) => {
         expect(FAKE_LLM_PORT, "needs XIHE_FAKE_LLM_PORT (runner-provided fake LLM)").not.toBe("");
         ctx = await registerJourneyUser(request, "dsh-wf1");
@@ -105,7 +109,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
             { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
             {
                 name: agentName("DshWf1", NONCE),
-                actions: ["read", "write"],
+                actions: ["read", "write", "exec"],
                 // 主体默认模型 ⇒ SessionProviderDefaults 按权威顺序「主体默认 → profile」
                 // 时取主体侧，**不碰 instance profile 的严格解析**（否则又回 409）。
                 // 连接不写在主体上（主体从不持有连接）：会话创建时由 bindProviderConnection
@@ -317,6 +321,19 @@ async function startRun(
                 .toMatch(/^(succeeded|failed|partial|ambiguous|cancelled|awaiting_approval)$/);
             console.log(`[t1.1] run ${id} terminal`);
         };
+        // 2026-11-22 run7：浏览器 response 监听偶尔晚于本轮 6s 窗口才解析出 body。
+        // runId 是产品权威事实，不能只靠一次 response 事件；从会话 runs 投影反查，
+        // 且必须排除开跑前已有的 run，避免把上一轮当成这一轮。
+        const latestRunId = async (): Promise<string> => {
+            if (!sessionId) return "";
+            const res = await request.get(
+                `${CP_URL}/api/v1/chat/sessions/${sessionId}/runs?size=1`,
+                { headers },
+            );
+            if (!res.ok()) return "";
+            const body = (await res.json()) as { runs?: Array<{ runId?: string }> };
+            return body.runs?.[0]?.runId ?? "";
+        };
         if (runId) {
             console.log(
                 `[t1.1] pre-loop chat POST reused runId=${runId} chatLog=${chatLog.join(" | ")}`,
@@ -333,6 +350,7 @@ async function startRun(
         // "chat send never returned a runId"）。等待必须放在 fill 之后；循环里已经是这个顺序，
         // 因此这里不再做预等待。turn2 的 run 守卫锁仍由循环内每轮的 enabled 等待覆盖。
         for (let attempt = 0; attempt < 4; attempt += 1) {
+            const previousRunId = runId || (await latestRunId());
             await input.click().catch(() => {});
             await input.fill(text).catch(() => {});
             try {
@@ -346,7 +364,16 @@ async function startRun(
             // 已被消费的 body 抢（窗口 4 "no response captured" 的根治）。
             try {
                 await expect
-                    .poll(() => runId, { timeout: LONG_TIMEOUT_MS, intervals: [250] })
+                    .poll(
+                        async () => {
+                            if (!runId) {
+                                const latest = await latestRunId();
+                                if (latest && latest !== previousRunId) runId = latest;
+                            }
+                            return runId;
+                        },
+                        { timeout: LONG_TIMEOUT_MS, intervals: [250, 500] },
+                    )
                     .not.toBe("");
             } catch {
                 /* 本轮没等到：下一次重试 */
@@ -354,6 +381,9 @@ async function startRun(
             console.log(
                 `[t1.1] attempt ${attempt + 1} settled runId=${runId ? "<set>" : "<empty>"} chatLog=[${chatLog.join(" | ") || "empty"}]`,
             );
+            // task-770 / run7：runId 为空时绝不能拿空串去轮询终态 —— 那会把
+            // "没抓到 runId" 伪装成 "run 不终态"。空值直接进入下一轮重试。
+            if (!runId) continue;
             await waitRunTerminal(runId);
             if (runId) return runId;
         }

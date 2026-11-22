@@ -69,7 +69,7 @@ async function listUserConnections(
     expect(list.ok(), await list.text()).toBe(true);
     return ((await list.json()) as { connections?: ProviderConnectionRow[] }).connections ?? [];
 }
-type ToolAction = "read" | "write";
+type ToolAction = "read" | "write" | "exec";
 type PrincipalOptions = {
     name: string;
     actions?: ToolAction[];

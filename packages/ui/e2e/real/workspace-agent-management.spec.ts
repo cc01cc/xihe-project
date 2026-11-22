@@ -630,13 +630,20 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     replaceWorkspaceRole(ownerUserId, workspaceA, "WS_EDITOR");
     await openAgentsPanel(page, { timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("agent-principal-name").fill("EditorWithCreateAccountCannotCreate");
-    const deniedCreatePromise = page.waitForResponse(
-        (response) =>
-            response.url().endsWith("/api/v1/agent-principals") &&
-            response.request().method() === "POST",
-    );
-    await page.getByTestId("agent-principal-create").click();
-    const deniedCreateResponse = await deniedCreatePromise;
+    // task-770 / run7：UI 按能力位 fail-closed（`createBlocked` 含 canCreatePrincipal !== true），
+    // WS_EDITOR 看不到可点的创建按钮。旧断言"点按钮再吃 403"与产品门自相矛盾；
+    // UI 侧断言禁用 + 原因提示，服务端 403 走同分支的显式 API 请求。
+    await expect(page.getByTestId("agent-create-forbidden-hint")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("agent-principal-create")).toBeDisabled();
+    const deniedCreateResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
+        headers: { ...owner.headers, "X-Workspace-Id": workspaceA },
+        data: {
+            name: "EditorWithCreateAccountCannotCreate",
+            templateId,
+        },
+    });
     expect(deniedCreateResponse.status()).toBe(403);
     expect(await deniedCreateResponse.text()).toContain("MANAGE_WORKSPACE_AGENTS");
     // 该主体确实没被建出来（错误不是"建了但没绑"）
