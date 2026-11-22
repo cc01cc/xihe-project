@@ -7,7 +7,7 @@ sidebar_group: "Developer Guide"
 status: active
 created: 2026-11-20
 updated: 2026-11-22
-description: Judgement, rationale and migration thresholds of XH's in-house authorization model. It names the model "Intersection-grant Authorization", explains why it is not a role-based permission system, compares it with nine mature families, and records the nine-step evaluation chain, the cost of building it in-house, and the three engineering mechanisms. It also records the v3 target: five condition operators, approver rights, and the ten-step chain.
+description: Judgement, rationale and migration thresholds of XH's in-house authorization model. It names the model "Intersection-grant Authorization", explains why it is not a role-based permission system, compares it with nine mature families, and records the nine-step evaluation chain, the cost of building it in-house, and the three engineering mechanisms. It also records the MVP target: five condition operators, approver rights, and the ten-step chain.
 tags:
   - authz
   - policy
@@ -109,7 +109,7 @@ Context **MAY** be read by conditions (§4.1), but **MUST NOT** become a third m
 | 8 | Execution | Runtime (`job_host_adapter.rs` explicitly does no sandbox and no policy) | `packages/runtime/src/job_host_adapter.rs:1-5` | Assuming Runtime is a backstop when there is none |
 | 9 | Audit | The approval chain writes `audit_logs`; authorization evaluation itself only logs WARN | `policy/GrantAuthorizationService.java:119-121` | A denial cannot be explained |
 
-This section is the **current** chain. The v3 target inserts "condition" between steps 6 and 7 and changes how the approval gate decides who may approve; the full ten-step chain is in §4.3.
+This section is the **current** chain. The MVP target inserts "condition" between steps 6 and 7 and changes how the approval gate decides who may approve; the full ten-step chain is in §4.3.
 
 ## 4. The judgement itself (source anchors)
 
@@ -153,7 +153,7 @@ Approval grants no permission; it only decides whether this call must wait for a
 - no denial but approval needed → `ASK`
 - everything passes → `ALLOW`
 
-Who may approve (v3 target, **not implemented**):
+Who may approve (MVP target, **not implemented**):
 
 - Who can approve: `(action:approve, this request's resource)` both match; the approver may be a human account or an Agent holding that atom.
 - Who cannot: the requester itself, or anything upstream or downstream of it.
@@ -163,7 +163,7 @@ Status: ASK currently matches by action class only (`policy/PolicyEngine.java:18
 
 Request identity, state machine, reuse levels, and restart reconciliation live in `spec/security/approval.md`; this section does not repeat them.
 
-### 4.3 The v3 target ten-step chain (proposed)
+### 4.3 The MVP target ten-step chain (proposed)
 
 Only two things differ from §3: step 7 adds "condition", and step 8 "approval" changes its predicate. Everything else restates the same stage. **MUST NOT** be cited as implemented fact.
 

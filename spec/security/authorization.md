@@ -1,6 +1,6 @@
 # XH 授权模型
 
-> 契约状态：`proposed`；实现状态：`implemented`（PLAN-0610，2026-11-01）；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 / PLAN-0610 写回；更新：2026-11-22（拆分 grant scope / visibility scope 术语，补资源命名空间、fs/phys 双轨与 `credential:*` 契约；同批新增 §2.2 条件、§2.3 审批、§2.4 上下文、§2.5 v3 十步链，判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md`）。
+> 契约状态：`proposed`；实现状态：`implemented`（PLAN-0610，2026-11-01）；Profile：`security`；Owner：Security/CP；来源：PLAN-0386；PLAN-0407 T2.8 / PLAN-0610 写回；更新：2026-11-22（拆分 grant scope / visibility scope 术语，补资源命名空间、fs/phys 双轨与 `credential:*` 契约；同批新增 §2.2 条件、§2.3 审批、§2.4 上下文、§2.5 MVP 目标态十步链，判据本体见 `../docs/i18n/zh-Hans/DEV-037-authorization-model.md`）。
 > 消费者：CP 授权/policy、Workspace API、MCP 工具调用门、UI 授权结果
 >
 > **supersede**：本文取代 PLAN-0580 §4「实例角色只有两种、MUST NOT 引入第三角色」与 PLAN-0585「grant 写入只有唯一受审计管理面 `/api/v1/principal-grants`」。二者均随 PLAN-0610 退役。
@@ -23,7 +23,7 @@
 7. **approval-policy `askActionClasses[]`**：在册且 `mode=manual` → `ASK`；`mode=auto` → 放行并记 `allowed_by`；不在册 → 授权过后直过；
 8. audit：grant 决策与 `allowed_by` 记录。
 
-本节是**当前**评估链；v3 目标态的九步求值链（新增条件、审批权改判据）见 §2.5。
+本节是**当前**评估链；MVP 目标态的十步求值链（新增条件、审批权改判据）见 §2.5。
 
 ### 2.1 资源命名空间契约
 
@@ -58,7 +58,7 @@
 
 工作区、组织单元、会话是**上下文**，回答「这次请求发生在哪儿」，不参与 `(actionClass, resource)` 匹配。其中实例与工作区由 grant scope 表达（§1），组织单元由 visibility scope 表达（§2.1），会话是容器身份。上下文 **MAY** 被 §2.2 的条件读取，但 **MUST NOT** 被当作第三匹配轴。
 
-### 2.5 v3 目标态十步链（proposed）
+### 2.5 MVP 目标态十步链（proposed）
 
 顺序与 DEV-037 §3 的求值链逐步对应，只多一步「条件」（第 7 步）。与 §2 的差异只有第 7–8 步（新增条件、审批权改判据），其余步骤是既有环节的重新表述。**MUST NOT** 把本节当作已实现事实引用——未实现项在最后一列点名。
 
@@ -69,7 +69,7 @@
 | 3 | 是不是管理面 | 能力原子只判当前主体的持有情况，**MUST NOT** 逐级求交 | §2 第 3 步 | 已实现 |
 | 4 | 要做什么、对什么做 | 工具面映射成 actionClass，配资源串解析 | §2 第 4 步、§2.1 | 已实现 |
 | 5 | 硬闸 | built-in hard guard，先于一切授权，任何模式/规则不可覆盖 | §2 第 5 步 | 已实现 |
-| 6 | 两项同时命中 | `(actionClass × resource)` **唯一匹配点**，链上每级都持有，任一级缺即拒 | §2 第 6 步 | 已实现（三源快照未去重，见 task-834） |
+| 6 | 动作与资源同时命中 | `(actionClass × resource)` **唯一匹配点**，链上每级都持有，任一级缺即拒 | §2 第 6 步 | 已实现（三源快照未去重，见 task-834） |
 | 7 | 条件 | §2.2 五算子，只收窄不放宽 | §2.2 | **未实现**（算子集与求值器均无） |
 | 8 | 审批 | 批准权走 `(action:approve, resource)` | §2.3、`approval.md` §3.1 | **部分**：ASK 只按动作类；批准者仍硬编码 run 属主；`action:approve` 原子不存在 |
 | 9 | 执行 | 执行期不再判权限 | §2 第 8 步 | 已实现 |
