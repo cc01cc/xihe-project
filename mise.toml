@@ -545,7 +545,7 @@ alias = "check:config-schema"
 #   check:a11y-refs    exit 0 ·  683 ms（report-only）
 # 三个合计 ≈1.24 s 串行 CPU，与 lint 其他成员并行，墙钟增量 ≈ 0。
 # **check:i18n = 等价已满足，不重复接**（2026-11-19 核实，Q-8）：它与 `lint:i18n` **是同一个脚本** ——
-#   两处只差 cwd/路径写法（`node A03-xihe/scripts/i18n-scan.mjs` vs `node scripts/i18n-scan.mjs`），现行 31 门已含 `lint:i18n`；同一判据接两遍只增墙钟。
+#   两处只差 cwd/路径写法（`node A03-xihe/scripts/i18n-scan.mjs` vs `node scripts/i18n-scan.mjs`），现行门清单（`node scripts/lint-run.mjs --list`）已含 `lint:i18n`；同一判据接两遍只增墙钟。
 # **不接 check:api-docs**：本轮已修 inventory 漂移（357→364 ops，`mise run gen:api-docs`），但该门依赖生成物，
 #   接进 lint 会与 `gen:api-docs` 形成「先写后查」的顺序依赖；且它本质是 docs 面派生件一致性，归 check:docs-index 邻域，另议。
 # D-1855 第四批接线（2026-11-18 19:2x）：`check:trace` 判定面收口后接入（29 → 30）。
@@ -561,7 +561,8 @@ alias = "check:config-schema"
 #   于是「跑了 30 个」与「跑完 30 个」在输出里分不清；聚合器逐门跑完、逐门报 exit 与计时，末尾给一张 30 行汇总表。
 # 验收判据两档（原 D-1881③，B 档计时已由 task-52 升回硬要求 2026-11-19 05:0x）：
 #   注（2026-11-21，task-69）：本段 30/30 是 **30 门时期的实测读数与当窗判据**，不改写；现行门数以
-#   `node scripts/lint-run.mjs --list` 为准 = **31**，此后判据写作「N/N，N = --list 行数」。
+#   `node scripts/lint-run.mjs --list` 为准 = **32**（2026-11-23 task-842 接进 `check:migration-immutability`，
+#   31 → 32；本行是「现行门数」指针，不是当窗读数，历史读数一律不改写），此后判据写作「N/N，N = --list 行数」。
 #   A 档 = `node scripts/lint-run.mjs`（exit 0 + 30/30 PASS + 逐门计时 30/30）；
 #   B 档 = `mise run lint`（exit 0 + 门集合逐名相同 30/30 + 墙钟与 A 档差 ≤10% + 慢门不被掐 + **逐门计时 30/30**）。
 # B 档为什么能升回来（根因，别当玄学）：外层 mise 给 task 子进程注入 MISE_TASK_TIMINGS=0，子 mise 按这个默认值**根本不产** Finished in 行。
@@ -1006,9 +1007,9 @@ alias = "check:ui-copy:enforce"
 # **在渲染文本上跑，不在 i18n 源上跑**（扫源假阳：源级 66 行命中里绝大多数是注释与已迁走/未挂载的面）；
 # **矩阵落盘** packages/ui/scripts/copy-leak-matrix.json（只扫路由默认态假阴：技能面板在 role=tab 后面）。
 # 需要真实栈（默认 UI 12640 / CP 12641）。没有实例时 **SKIP 并 exit 0** —— 否则一条只在有栈时有意义的
-# 判据会永久红掉 lint 的 31 门（D-1879 前序裁定：基线红则整扇窗作废）。SKIP 不是通过，报告里会落盘。
+# 判据会永久红掉 lint 的全部门（门数以 `node scripts/lint-run.mjs --list` 为准；D-1879 前序裁定：基线红则整扇窗作废）。SKIP 不是通过，报告里会落盘。
 # **不接 [tasks.lint] / validate 的任何聚合**（scripts/lint-run.mjs 的 LINT_GATES 是硬编码数组，本任务不在其中）
-# ⇒ **当时**的 30 门集合与 exit 不变（2026-11-21 现为 31 门，见上一行的口径注）。接线形态（独立任务 vs 进 lint vs CI）待裁。
+# ⇒ **当时**的 30 门集合与 exit 不变（2026-11-21 读数为 31 门；现行值见上一行的口径注，别抄旧数）。接线形态（独立任务 vs 进 lint vs CI）待裁。
 # 自测：node packages/ui/scripts/check-copy-leak.mjs --selftest（决策逻辑 10 例）。
 [tasks."check:copy-leak"]
 run = "node packages/ui/scripts/check-copy-leak.mjs"
@@ -1062,6 +1063,25 @@ alias = "check:api-docs"
 run = "node scripts/check-migration-numbers.mjs"
 description = "Gate: Flyway migration numbers must be unique and registered in workspace migration-numbers.md (1 = finding, 2 = cannot answer — 2 is NOT green; cross-repo registry via pass-through arg --registry <path>) Needs a workspace prerequisite (the registry lives in the one repo) and is DELIBERATELY NOT a validate dependency: a gate that routinely returns 2 trains people to ignore exit codes; if the registry ever moves into this repository, re-evaluate wiring."
 alias = "check:migrations"
+
+# task-134 立判据、task-842 接线（2026-11-23）：**已发布迁移逐字节只读**（判据本体在
+# scripts/check-migration-immutability.mjs，10 条单测 + 5 条夹具由 --selftest 跑）。
+# 已发布集合 = `git merge-base <base> HEAD` 那棵树里的 **/db/migration/V*.sql（权威判定，不看 mtime/作者）。
+# 命中即 exit 1 并逐条点名 `E_*` + `V<号>` + 文件：MODIFIED（含注释/格式）/ DELETED / RENAMED / BYTE_DRIFT
+#（最后一条是独立于 git diff 的原始字节比对，diff 选项或 filter 藏不住一个字节）。
+# 为什么要它：Flyway 对整文件（含注释）做校验和 ⇒ 改一个已合入 develop 的 V*.sql 不是「一条红测试」，
+#   是**每一个已迁移的库在启动时拒绝起来**（checksum mismatch）。task-835 重写约 30 个历史迁移时，
+#   本仓没有任何门会拦（规则此前只在 packages/control-plane/AGENTS.md 的散文里）。
+# 三态 exit 0/1/2：2 = 判不了（不是 git 仓 / 取不到 merge-base，即 `develop` 不存在）—— **2 不算通过**。
+#   实测：单分支 clone（`--single-branch --branch develop`）exit 0；真正没有 develop ref ⇒ exit 2。
+#   lane 在 worktree 时与主检出共享 refs，develop 在 ⇒ 正常可判；确需在别的基线上跑用 `-- --base <ref>`。
+# 默认阻断（去掉 --report-only 即 exit 1）；逃生口只有成对参数
+#   `--allow-published-edit <V号> --reason <text>`（打 WARN 放行，命令行与输出都留痕），
+#   **没有任何环境变量能关掉本门**（AGENTS.md §紧急绕过门禁：关门必须留痕）。
+[tasks."check:migration-immutability"]
+run = "node scripts/check-migration-immutability.mjs"
+description = "Gate: published Flyway migrations (the V*.sql set in the merge-base develop HEAD tree) are byte-for-byte read-only — content/deletion/rename each prints E_* + V<n> + file and exits 1; 2 = cannot answer (no git repo / no merge-base, i.e. no develop ref) which is NOT green. Escape hatch is the paired --allow-published-edit <V> --reason <text> only (WARN, no env switch). Wired into mise run lint (task-842); cost ~0.22-0.25 s."
+alias = "check:migration-immutability"
 
 [tasks."check:openapi"]
 run = "node scripts/validate-openapi.mjs"
@@ -1199,7 +1219,7 @@ description = "select/combobox popup contract (task-152 / DSD-1508 ③): the ven
 # check:ui-four-dimensions / check:ui-route-scroll / check:retired-surfaces / check:vite-warmup /
 # check:select-contract），故沿用同一挂点。
 # 姿态 = **report-only**：只提供可执行的独立入口，不进 `validate`、也不进 `mise run lint`
-# （后者的门清单 `scripts/lint-run.mjs` 的 `LINT_GATES` 不在 task-706 写域内；若要并入 31 门聚合，
+# （后者的门清单 `scripts/lint-run.mjs` 的 `LINT_GATES` 不在 task-706 写域内；若要并入 lint 聚合，
 # 由 Lead 另卡加 3 行）。接入时三张门在真实树上都是 exit 0，不是生而红。
 
 [tasks."check:env-file-hygiene"]

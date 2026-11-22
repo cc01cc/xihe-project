@@ -23,7 +23,7 @@
 //   task-30（W2 窗内）＝ 把 [tasks.lint] 的 depends 整行换成 run = "node scripts/lint-run.mjs"。
 // ⇒ 本文件此刻是**零行为变化**的：没有任何入口调用它，改动不影响现行 mise run lint。
 //
-// 跑法：node scripts/lint-run.mjs                # 跑全 31 门（keep-going）+ 逐门 PASS/FAIL 表（门数随 LINT_GATES 变，以 --list 为准）
+// 跑法：node scripts/lint-run.mjs                # 跑全部门（keep-going）+ 逐门 PASS/FAIL 表（门数随 LINT_GATES 变，以 --list 为准）
 //       node scripts/lint-run.mjs --selftest     # 纯函数自检（不碰真实门）
 //       node scripts/lint-run.mjs --list         # 只打印门清单（供与 mise.toml depends 对账）
 import { spawnSync } from "node:child_process";
@@ -36,7 +36,7 @@ import { aggregateExit, parseTaskExits } from "./validate-run.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * 门清单**数据**（31 个成员；顺序无执行语义）。task-124 起本清单是 lint 的**唯一**门集合来源
+ * 门清单**数据**（32 个成员；顺序无执行语义）。task-124 起本清单是 lint 的**唯一**门集合来源
  * （[tasks.lint] 已改为 run 本文件），不再与 mise.toml depends 对账。
  * 新增门只加一行 —— 与 validate-run.mjs 的 GATES 同惯例。
  * ⚠️ 有产物依赖的门**不得**加进来（方案档 §6 反例保护）：
@@ -59,6 +59,7 @@ export const LINT_GATES = [
     "check:md-tables",
     "check:ports",
     "check:migrations",
+    "check:migration-immutability",
     "check:bl-count",
     "check:bl-decision-ref",
     "check:docs-index",
