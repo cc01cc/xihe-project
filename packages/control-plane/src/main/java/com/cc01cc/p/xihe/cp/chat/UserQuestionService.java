@@ -4,6 +4,10 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.UserQuestion;
+import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -118,6 +122,12 @@ public class UserQuestionService {
     private final TransactionTemplate transactionTemplate;
     private final ChatRunDispatchQueueService dispatchQueueService;
     /**
+     * task-859: the approval authority is {@code (action:approve, this request's resource)}, not
+     * "is the caller the run owner". Null in the clock-seam constructor used by unit tests, where
+     * the addressee rule alone applies (fail closed, never widen).
+     */
+    private final RequesterAuthority requesterAuthority;
+    /**
      * BL-423: the deadline is a wall-clock boundary, so "which side of {@code expiresAt} are we on"
      * has to be answerable <b>once per request</b> and pin-able in tests. Same seam pattern as
      * {@code LoginAttemptService}/{@code ResourceGovernor}.
@@ -135,9 +145,10 @@ public class UserQuestionService {
             ChatApprovalRepository approvals, SessionRepository sessions,
             UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
             PlatformTransactionManager transactionManager,
-            ChatRunDispatchQueueService dispatchQueueService) {
+            ChatRunDispatchQueueService dispatchQueueService,
+            RequesterAuthority requesterAuthority) {
         this(questions, runs, approvals, sessions, agentClient, sessionReadAccess, audit,
-                transactionManager, Clock.systemUTC(), dispatchQueueService);
+                transactionManager, Clock.systemUTC(), dispatchQueueService, requesterAuthority);
     }
 
     UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
@@ -145,6 +156,33 @@ public class UserQuestionService {
             UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
             PlatformTransactionManager transactionManager, Clock clock,
             ChatRunDispatchQueueService dispatchQueueService) {
+        this(questions, runs, approvals, sessions, agentClient, sessionReadAccess, audit,
+                transactionManager, clock, dispatchQueueService, null);
+    }
+
+    /**
+     * Test-seam overload retained only so the task-837 test tree keeps compiling while that card
+     * owns the assertions. With no requester authority the addressee rule alone applies (fail
+     * closed, never widen).
+     *
+     * @deprecated task-837 removes this once the tests construct the production shape.
+     */
+    @Deprecated(forRemoval = true)
+    UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
+            ChatApprovalRepository approvals, SessionRepository sessions,
+            UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
+            PlatformTransactionManager transactionManager,
+            ChatRunDispatchQueueService dispatchQueueService) {
+        this(questions, runs, approvals, sessions, agentClient, sessionReadAccess, audit,
+                transactionManager, Clock.systemUTC(), dispatchQueueService, null);
+    }
+
+    UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
+            ChatApprovalRepository approvals, SessionRepository sessions,
+            UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
+            PlatformTransactionManager transactionManager, Clock clock,
+            ChatRunDispatchQueueService dispatchQueueService,
+            RequesterAuthority requesterAuthority) {
         this.questions = questions;
         this.runs = runs;
         this.approvals = approvals;
@@ -155,6 +193,7 @@ public class UserQuestionService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.clock = clock;
         this.dispatchQueueService = dispatchQueueService;
+        this.requesterAuthority = requesterAuthority;
     }
 
     /** Single source of "now" for this request; never call {@link Instant#now()} in this class. */
@@ -302,9 +341,13 @@ public class UserQuestionService {
     private UserQuestion deliverAnswer(UUID questionId, String userId, UUID addressee, String rawAnswer,
             Instant now) {
         UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
-        if (!addressee.equals(row.getAddresseeUserId())) {
-            // 404, never 403: "not yours" and "does not exist" must be indistinguishable here — and
-            // this check runs before any body validation, so a stranger never sees a 400.
+        // task-859: the addressee is the primary answerer, and approval authority is the atom
+        // (action:approve, this request's resource). Ownership alone is no longer the only gate —
+        // but it stays sufficient, because the default USER preset does not hold action:approve and
+        // the human a run asks must always be able to answer their own agent.
+        if (!addressee.equals(row.getAddresseeUserId()) && !holdsApproveAuthority(row, userId)) {
+            // 404, never 403: "not authorised" and "does not exist" must be indistinguishable here —
+            // and this check runs before any body validation, so a stranger never sees a 400.
             throw notFound();
         }
         // Only the addressee reaches this point, so a blank/absent body is now honestly a validation
@@ -327,6 +370,35 @@ public class UserQuestionService {
                         + " sessionId={} runId={} answerLength={} resumed={}",
                 questionId, row.getSessionId(), row.getRunId(), body.length(), resumed);
         return row;
+    }
+
+    /**
+     * task-859: true when {@code userId} holds {@code (action:approve, this request's resource)} in
+     * the run's workspace. The resource names the request itself (session + run); the approve grant
+     * carries the {@code $request} sentinel, so it covers exactly the resource being decided and
+     * never a wildcard. Failure to resolve the scope fails closed.
+     */
+    private boolean holdsApproveAuthority(UserQuestion row, String userId) {
+        if (requesterAuthority == null || userId == null || row.getRunId() == null) {
+            return false;
+        }
+        try {
+            ChatRun run = runs.findById(row.getRunId()).orElse(null);
+            if (run == null || run.getWorkspaceId() == null) {
+                return false;
+            }
+            String resource = "session:" + row.getSessionId() + "/run:" + row.getRunId();
+            return requesterAuthority.allowsForUser(new PolicyRequest(
+                    "approval.decide",
+                    List.of(ToolFaceRegistry.ACTION_APPROVE),
+                    List.of(resource),
+                    ToolShape.OPAQUE,
+                    userId,
+                    run.getWorkspaceId(),
+                    null), UUID.fromString(run.getWorkspaceId()));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     // ---------------------------------------------------------------------------------------

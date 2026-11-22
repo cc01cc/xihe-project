@@ -1,9 +1,11 @@
 package com.cc01cc.p.xihe.cp.controller;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.PolicyChecked;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -73,6 +75,7 @@ public class WorkspaceEnvironmentController {
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/environment")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:USE_WORKSPACE_RUNTIME")
     public ResponseEntity<?> getEnvironment(
             @PathVariable String workspaceId,
             Authentication authentication) {
@@ -110,12 +113,11 @@ public class WorkspaceEnvironmentController {
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
         response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "direct_attach"));
-        // A2 (hostPath visibility) is explicitly deferred by PLAN-0651 M3: keep today's
-        // admin-capability-or-owner rule, expressed through the capability vocabulary.
-        boolean canSeeHostPath = CapabilityAuthorities.hasCapability(authentication,
-                CapabilityAuthorities.CAP_INSTANCE_ADMIN);
-        response.put("hostPath", visibleHostPath(workspace,
-                workspaceService.ownerIdOf(workspace.getId()), userId, canSeeHostPath));
+        // task-859: host-path visibility is `action:MANAGE_WORKSPACE_RUNTIME` on the workspace's
+        // `fs:<id>` resource (default seeds: instance ADMIN + workspace WS_OWNER), never
+        // `userId.equals(ownerId)` and never a capability-atom-only shortcut.
+        boolean canSeeHostPath = canSeeHostPath(workspaceId, userId);
+        response.put("hostPath", visibleHostPath(workspace, canSeeHostPath));
         response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));
         response.put("capability", workspaceService.capabilitySnapshot(workspace));
         // PLAN-0396：Job 可用性来自 Runtime capabilities（单一事实源），
@@ -160,6 +162,7 @@ public class WorkspaceEnvironmentController {
 
     @PatchMapping("/api/v1/workspaces/{workspaceId}/execution-mode")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:MANAGE_WORKSPACE_RUNTIME")
     public ResponseEntity<?> changeExecutionMode(
             @PathVariable String workspaceId,
             @RequestBody(required = false) ExecutionModeRequest request,
@@ -194,6 +197,7 @@ public class WorkspaceEnvironmentController {
      */
     @PostMapping("/api/v1/workspaces/capabilities/preflight")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:USE_WORKSPACE_RUNTIME")
     public ResponseEntity<?> preflightWorkspaceCapability(
             @RequestBody(required = false) WorkspaceCapabilityPreflightRequest request) {
         String userId = TenantContext.getUserId();
@@ -287,9 +291,43 @@ public class WorkspaceEnvironmentController {
         return result;
     }
 
+    static String visibleHostPath(Workspace workspace, boolean canSeeHostPath) {
+        return canSeeHostPath ? workspace.getHostPath() : null;
+    }
+
+    /**
+     * Test-seam overload retained only so the task-837 test tree keeps compiling. Production calls
+     * {@link #visibleHostPath(Workspace, boolean)} with an atom-derived flag; this overload keeps its
+     * historical owner-or-admin semantics for direct callers and must not be used by new code.
+     *
+     * @deprecated task-837 removes this once the tests assert the atom-based flag.
+     */
+    @Deprecated(forRemoval = true)
     static String visibleHostPath(Workspace workspace, String ownerId, String userId, boolean admin) {
-        return admin || (userId != null && userId.equals(ownerId))
-                ? workspace.getHostPath() : null;
+        return visibleHostPath(workspace, admin || (userId != null && userId.equals(ownerId)));
+    }
+
+    /**
+     * task-859: the host-path read decision is an atom + resource check, not an owner comparison.
+     * See {@code WorkspaceController#canSeeHostPaths} for why MANAGE_WORKSPACE_RUNTIME is the atom
+     * whose default population equals the old "instance admin or workspace owner" rule.
+     */
+    private boolean canSeeHostPath(String workspaceId, String userId) {
+        if (workspaceId == null || userId == null) {
+            return false;
+        }
+        try {
+            return requesterAuthority.allowsForUser(new PolicyRequest(
+                    "workspace.hostpath.read",
+                    List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
+                    List.of("fs:" + workspaceId),
+                    ToolShape.OPAQUE,
+                    userId,
+                    workspaceId,
+                    null), java.util.UUID.fromString(workspaceId));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private Map<String, Object> readWorkspaceRuntimeStatus(String workspaceId) {
@@ -366,6 +404,7 @@ public class WorkspaceEnvironmentController {
      */
     @PostMapping("/api/v1/workspaces/{workspaceId}/materialize")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:MANAGE_WORKSPACE_RUNTIME")
     public ResponseEntity<?> materialize(
             @PathVariable String workspaceId,
             Authentication authentication) {

@@ -95,6 +95,14 @@ public class SystemGrantPresetCatalog {
     /** The three instance-level system roles, used to keep one tier binding per user. */
     public static final List<String> INSTANCE_TIER_PRESETS = List.of(SUPER_ADMIN, ADMIN, USER);
 
+    /**
+     * task-859: the workspace preset a newly created agent principal is bound to when the caller
+     * supplies no explicit preset set. It lives here, next to the seeds, because "what a fresh agent
+     * gets by default" is a default-grant fact — {@code AgentPrincipalService} reading a local
+     * literal would be a second source of truth that drifts the day the seed changes.
+     */
+    public static final String DEFAULT_AGENT_WORKSPACE_PRESET = WS_EDITOR;
+
     public record AtomRef(String actionClass, String resourcePattern) {
 
         static AtomRef wildcard(String actionClass) {

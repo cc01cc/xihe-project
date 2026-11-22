@@ -25,6 +25,7 @@ import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
 import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
@@ -64,11 +65,13 @@ import java.util.UUID;
 public class AgentPrincipalService {
 
     /**
-     * PLAN-0629 (user ruling 2026-11-04): the default role an agent principal is bound to when a
-     * workspace binding is created without an explicit role set. `WS_EDITOR` is the seeded workspace
-     * role that keeps a fresh agent usable (read/write/delete/exec) without handing out management.
+     * PLAN-0629 (user ruling 2026-11-04): the default preset an agent principal is bound to when a
+     * workspace binding is created without an explicit preset set. task-859 moved the value into
+     * {@link SystemGrantPresetCatalog} (the seed catalog is the truth for default grants); this is
+     * only the local name for that catalog constant.
      */
-    private static final String DEFAULT_AGENT_WORKSPACE_ROLE = "WS_EDITOR";
+    private static final String DEFAULT_AGENT_WORKSPACE_ROLE =
+            SystemGrantPresetCatalog.DEFAULT_AGENT_WORKSPACE_PRESET;
     /** D-174 (AGENT_USER seed): the instance role a fresh principal is bound to (no frozen ceiling). */
     private static final String DEFAULT_AGENT_INSTANCE_ROLE = "AGENT_USER";
 

@@ -1,9 +1,25 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.policy.AtomNames;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * PLAN-0559: single server-side classifier for workspace write/manage access.
+ *
+ * <p><b>task-859 (837a) — degraded to a preset/atom table.</b> The decision is no longer a
+ * {@code WorkspaceRole.canWrite/canManage} branch: each requirement names the <b>atom</b> it needs,
+ * and the matrix below is only the canonical workspace role → {@link SystemGrantPresetCatalog}
+ * preset (OWNER → WS_OWNER, EDITOR → WS_EDITOR, VIEWER → WS_VIEWER) projection. The atom sets come
+ * from the seed catalog — one truth, not a second hand-written copy. Behaviour is unchanged for the
+ * three canonical roles (each preset holds exactly the atoms the old enum branches admitted), but
+ * the authority is now expressible and testable: task-837 deletes this class once the HTTP face
+ * evaluates atoms directly.</p>
  *
  * <p>It deliberately does not implement file/directory locks. A later lock
  * plan can acquire leases at this choke point (and the file mutation entry)
@@ -13,8 +29,8 @@ public final class WorkspaceWriteGuard {
 
     public enum Requirement {
         READ,
-        WRITE,
-        MANAGE,
+        WRITE(ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+        MANAGE(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
         /**
          * BL-174: the endpoint authorizes on its own (capability-based) and the coarse role gate must
          * not veto it. Used by {@code DELETE /api/v1/workspaces/{id}}, where ownership is only one of
@@ -22,8 +38,39 @@ public final class WorkspaceWriteGuard {
          * administrator or a workspace-scoped {@code delete} atom holder that
          * {@code WorkspaceService#deleteWorkspace} deliberately admits.
          */
-        SERVICE_CHECKED
+        SERVICE_CHECKED;
+
+        private final String atom;
+
+        Requirement() {
+            this(null);
+        }
+
+        Requirement(String atom) {
+            this.atom = atom;
+        }
+
+        /**
+         * The atom this requirement needs, or {@code null} for the membership floor ({@link #READ})
+         * and the self-authorizing {@link #SERVICE_CHECKED} face.
+         */
+        public String atom() {
+            return atom;
+        }
     }
+
+    /** Canonical workspace role → the seed preset that defines its atom set. */
+    private static final Map<String, String> ROLE_TO_PRESET = Map.of(
+            "OWNER", SystemGrantPresetCatalog.WS_OWNER,
+            "EDITOR", SystemGrantPresetCatalog.WS_EDITOR,
+            // Legacy stored values canonicalize to EDITOR upstream; kept here so a raw value that
+            // reaches the guard still resolves instead of silently denying.
+            "ADMIN", SystemGrantPresetCatalog.WS_EDITOR,
+            "MEMBER", SystemGrantPresetCatalog.WS_EDITOR,
+            "VIEWER", SystemGrantPresetCatalog.WS_VIEWER);
+
+    /** Preset name → canonical atom set, projected once from {@link SystemGrantPresetCatalog}. */
+    private static final Map<String, Set<String>> PRESET_ATOMS = presetAtoms();
 
     private WorkspaceWriteGuard() {
     }
@@ -68,12 +115,35 @@ public final class WorkspaceWriteGuard {
             return true;
         }
         if (requirement == Requirement.READ) {
+            // The READ floor is membership itself ("a resolved workspace role"), not a role verdict:
+            // every canonical member may read, and a caller with no resolved role is not a member.
             return canonicalRole != null;
         }
-        if (requirement == Requirement.WRITE) {
-            return WorkspaceRole.canWrite(canonicalRole);
+        String atom = requirement.atom();
+        return atom != null && atomsFor(canonicalRole).contains(AtomNames.action(atom));
+    }
+
+    /**
+     * The canonical atom set a workspace role carries, projected from the seed catalog. An unknown
+     * or null role answers the empty set (fail closed), never a default.
+     */
+    public static Set<String> atomsFor(String canonicalRole) {
+        String preset = canonicalRole == null ? null : ROLE_TO_PRESET.get(canonicalRole);
+        return preset == null ? Set.of() : PRESET_ATOMS.getOrDefault(preset, Set.of());
+    }
+
+    private static Map<String, Set<String>> presetAtoms() {
+        Map<String, Set<String>> byPreset = new LinkedHashMap<>();
+        for (SystemGrantPresetCatalog.PresetSeed seed : SystemGrantPresetCatalog.presetSeeds()) {
+            Set<String> atoms = new LinkedHashSet<>();
+            for (SystemGrantPresetCatalog.AtomRef atom : seed.atoms()) {
+                // AtomRef.actionClass() is already canonical (action:/cap:), and the vocabulary is
+                // case-sensitive, so it is deliberately NOT normalised (normalize lowercases).
+                atoms.add(atom.actionClass());
+            }
+            byPreset.put(seed.name(), Set.copyOf(atoms));
         }
-        return WorkspaceRole.canManage(canonicalRole);
+        return Map.copyOf(byPreset);
     }
 
     /** BL-174: {@code DELETE /api/v1/workspaces/{id}} — authorized by {@code WorkspaceService}. */

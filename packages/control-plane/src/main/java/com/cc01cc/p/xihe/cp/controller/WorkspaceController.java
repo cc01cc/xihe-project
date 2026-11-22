@@ -1,12 +1,17 @@
 package com.cc01cc.p.xihe.cp.controller;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.AtomNames;
+import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.PathKey;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.PolicyChecked;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.config.WorkspaceWriteGuard;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
@@ -27,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/workspaces")
@@ -35,16 +41,33 @@ public class WorkspaceController {
     private final WorkspaceService workspaceService;
     private final WorkspaceBackendPolicy backendPolicy;
     private final WorkspaceNestedReposService nestedReposService;
+    private final RequesterAuthority requesterAuthority;
 
     public WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy,
-                               WorkspaceNestedReposService nestedReposService) {
+                               WorkspaceNestedReposService nestedReposService,
+                               RequesterAuthority requesterAuthority) {
         this.workspaceService = workspaceService;
         this.backendPolicy = backendPolicy;
         this.nestedReposService = nestedReposService;
+        this.requesterAuthority = requesterAuthority;
+    }
+
+    /**
+     * Test-seam overload retained only so the task-837 test tree keeps compiling while that card
+     * owns the assertions. Production always uses the four-argument constructor; with no requester
+     * authority the host-path decision fails closed (hidden), never falls back to ownership.
+     *
+     * @deprecated task-837 removes this once the tests construct the production shape.
+     */
+    @Deprecated(forRemoval = true)
+    WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy,
+                        WorkspaceNestedReposService nestedReposService) {
+        this(workspaceService, backendPolicy, nestedReposService, null);
     }
 
     @GetMapping("/current")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:read")
     public ResponseEntity<?> current() {
         String userId = TenantContext.getUserId();
         if (userId == null) {
@@ -54,7 +77,7 @@ public class WorkspaceController {
         return workspaceService.findCurrentWorkspace(userId)
                 .<ResponseEntity<?>>map(workspace -> ResponseEntity.ok(toMap(workspace,
                         workspaceService.ownerIdOf(workspace.getId()),
-                        userId, isAdmin(), roleFor(workspace, userId),
+                        userId, canSeeHostPaths(workspace), roleFor(workspace, userId),
                         workspaceService.listRoots(workspace.getId().toString()))))
                 .orElseGet(() -> ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
@@ -62,6 +85,7 @@ public class WorkspaceController {
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:read")
     public ResponseEntity<?> list() {
         String userId = TenantContext.getUserId();
         if (userId == null) {
@@ -70,16 +94,17 @@ public class WorkspaceController {
         }
         return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream()
                 .map(workspace -> toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
-                        userId, isAdmin(), roleFor(workspace, userId),
+                        userId, canSeeHostPaths(workspace), roleFor(workspace, userId),
                         workspaceService.listRoots(workspace.getId().toString()))).toList());
     }
 
     @GetMapping("/{workspaceId}")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:read")
     public ResponseEntity<?> get(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         try {
-            return toView(workspaceService.requireAccessibleWorkspace(workspaceId, userId), userId, isAdmin());
+            return toView(workspaceService.requireAccessibleWorkspace(workspaceId, userId), userId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -92,6 +117,7 @@ public class WorkspaceController {
      */
     @GetMapping("/{workspaceId}/nested-repos")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:read")
     public ResponseEntity<?> nestedRepos(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         try {
@@ -103,6 +129,7 @@ public class WorkspaceController {
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:WRITE_WORKSPACE_CONTENT")
     public ResponseEntity<?> create(
             @RequestBody(required = false) CreateWorkspaceRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
@@ -141,8 +168,8 @@ public class WorkspaceController {
             // from the UI response.
             // PLAN-0610 W4b: the creator is the owner through the WS_OWNER binding written by the service.
         return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace,
-                workspaceService.ownerIdOf(workspace.getId()), userId, isAdmin(),
-                WorkspaceRole.OWNER.name(),
+                workspaceService.ownerIdOf(workspace.getId()), userId, canSeeHostPaths(workspace),
+                "OWNER",
                 workspaceService.listRoots(workspace.getId().toString())));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -151,6 +178,7 @@ public class WorkspaceController {
 
     @PatchMapping("/{workspaceId}")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:WRITE_WORKSPACE_CONTENT")
     public ResponseEntity<?> update(
             @PathVariable String workspaceId,
             @RequestBody(required = false) UpdateWorkspaceRequest request) {
@@ -159,7 +187,7 @@ public class WorkspaceController {
             String name = request == null ? null : request.name();
             String description = request == null ? null : request.description();
             Workspace workspace = workspaceService.updateWorkspace(workspaceId, userId, name, description);
-            return toView(workspace, userId, isAdmin());
+            return toView(workspace, userId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -167,6 +195,7 @@ public class WorkspaceController {
 
     @DeleteMapping("/{workspaceId}")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:delete")
     public ResponseEntity<?> delete(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         try {
@@ -181,6 +210,7 @@ public class WorkspaceController {
 
     @PostMapping("/{workspaceId}/roots")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:WRITE_WORKSPACE_CONTENT")
     public ResponseEntity<?> addRoot(
             @PathVariable String workspaceId,
             @RequestBody(required = false) RootCreateRequest request) {
@@ -191,7 +221,7 @@ public class WorkspaceController {
             WorkspaceRoot root = workspaceService.addRoot(workspaceId, userId, path, alias);
             Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(rootToMap(workspace, root, canSeeHostPaths(workspace, userId)));
+                    .body(rootToMap(workspace, root, canSeeHostPaths(workspace)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -199,6 +229,7 @@ public class WorkspaceController {
 
     @PatchMapping("/{workspaceId}/roots/{rootId}")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:WRITE_WORKSPACE_CONTENT")
     public ResponseEntity<?> patchRoot(
             @PathVariable String workspaceId,
             @PathVariable String rootId,
@@ -209,7 +240,7 @@ public class WorkspaceController {
             Integer position = request == null ? null : request.position();
             WorkspaceRoot root = workspaceService.patchRoot(workspaceId, rootId, userId, alias, position);
             Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
-            return ResponseEntity.ok(rootToMap(workspace, root, canSeeHostPaths(workspace, userId)));
+            return ResponseEntity.ok(rootToMap(workspace, root, canSeeHostPaths(workspace)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -217,6 +248,7 @@ public class WorkspaceController {
 
     @DeleteMapping("/{workspaceId}/roots/{rootId}")
     @PreAuthorize("isAuthenticated()")
+    @PolicyChecked(atom = "action:WRITE_WORKSPACE_CONTENT")
     public ResponseEntity<?> deleteRoot(
             @PathVariable String workspaceId,
             @PathVariable String rootId) {
@@ -229,9 +261,34 @@ public class WorkspaceController {
         }
     }
 
-    /** Mirrors the Workspace.hostPath rule (owner/admin only) for the B12 root path. */
-    private boolean canSeeHostPaths(Workspace workspace, String userId) {
-        return isAdmin() || (userId != null && userId.equals(workspaceService.ownerIdOf(workspace.getId())));
+    /**
+     * task-859: host-path visibility is an <b>atom + resource</b> decision, never
+     * {@code userId.equals(ownerId)}. The atom is {@code action:MANAGE_WORKSPACE_RUNTIME}
+     * (the workspace's runtime root is what a host path describes) and the resource is that
+     * workspace's {@code fs:<id>} tree. Default seeds keep today's population exactly: instance
+     * ADMIN and workspace WS_OWNER hold it; WS_EDITOR/WS_VIEWER do not.
+     */
+    private boolean canSeeHostPaths(Workspace workspace) {
+        if (requesterAuthority == null) {
+            return false;
+        }
+        String workspaceId = workspace.getId() == null ? null : workspace.getId().toString();
+        if (workspaceId == null) {
+            return false;
+        }
+        try {
+            return requesterAuthority.allowsForUser(new PolicyRequest(
+                    "workspace.hostpath.read",
+                    List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
+                    List.of("fs:" + workspaceId),
+                    ToolShape.OPAQUE,
+                    TenantContext.getUserId(),
+                    workspaceId,
+                    null), UUID.fromString(workspaceId));
+        } catch (IllegalArgumentException e) {
+            // A non-UUID subject/workspace has no grant scope; fail closed instead of widening.
+            return false;
+        }
     }
 
     private static Map<String, Object> rootToMap(Workspace workspace, WorkspaceRoot root,
@@ -276,9 +333,9 @@ public class WorkspaceController {
     public record RootCreateRequest(String path, String alias) {}
     public record RootPatchRequest(String alias, Integer position) {}
 
-    private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId, boolean admin) {
+    private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId) {
         return ResponseEntity.ok(toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
-                userId, admin, roleFor(workspace, userId),
+                userId, canSeeHostPaths(workspace), roleFor(workspace, userId),
                 workspaceService.listRoots(workspace.getId().toString())));
     }
 
@@ -286,8 +343,13 @@ public class WorkspaceController {
         return workspaceService.resolveWorkspaceRole(workspace.getId().toString(), userId);
     }
 
+    /**
+     * task-859: {@code canSeeHostPaths} is supplied by the caller after an atom + resource decision
+     * ({@link #canSeeHostPaths(Workspace)}); {@code ownerId} stays in the signature for the view's
+     * {@code ownerId} field and is no longer a visibility input.
+     */
     static Map<String, Object> toMap(Workspace workspace, String ownerId, String userId,
-            boolean admin, String workspaceRole, java.util.List<WorkspaceRoot> roots) {
+            boolean canSeeHostPaths, String workspaceRole, java.util.List<WorkspaceRoot> roots) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", workspace.getId());
         view.put("name", workspace.getName());
@@ -297,39 +359,27 @@ public class WorkspaceController {
         view.put("storageBackend", workspace.getStorageBackend());
         view.put("storageRef", workspace.getStorageRef());
         view.put("storageMode", workspace.getStorageMode());
-        view.put("hostPath", admin || (userId != null && userId.equals(ownerId))
-                ? workspace.getHostPath() : null);
+        view.put("hostPath", canSeeHostPaths ? workspace.getHostPath() : null);
         // PLAN-0639 M1: ordered root projection; PLAN-0641 B12 adds the nullable
         // workspace-relative `path` for callers allowed to see host paths.
-        boolean canSeePaths = admin || (userId != null && userId.equals(ownerId));
+        boolean canSeePaths = canSeeHostPaths;
         view.put("roots", roots == null ? java.util.List.of() : roots.stream()
                 .map(root -> rootToMap(workspace, root, canSeePaths)).toList());
         view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());
         view.put("workspaceRole", workspaceRole);
-        view.put("canWrite", WorkspaceRole.canWrite(workspaceRole));
+        // task-859: the projection is the atom set of the canonical workspace role, not a
+        // WorkspaceRole.canWrite branch (identical for OWNER/EDITOR/VIEWER).
+        view.put("canWrite", WorkspaceWriteGuard.atomsFor(workspaceRole)
+                .contains(AtomNames.action(ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT)));
         view.put("createdAt", workspace.getCreatedAt() == null ? null : workspace.getCreatedAt().toString());
         view.put("updatedAt", workspace.getUpdatedAt() == null ? null : workspace.getUpdatedAt().toString());
         return view;
     }
 
-    /**
-     * PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
-     *
-     * <p>PLAN-0651 M3 T3.7 / A2 <b>defer</b> (D51-06, verify V1 whitelist row 13): {@code hostPath}
-     * (and the workspace-relative roots {@code path}) visibility keeps the today's
-     * admin-capability-or-owner rule and is <b>not</b> atomized in this plan. Official reason
-     * (D51-06): exposing host paths is a <b>product behaviour decision</b> ("should an administrator
-     * see the host filesystem path?"), not a permission-refactor step; the rejected alternative —
-     * owner-only — would silently remove an existing administrator capability. Atomizing it here
-     * would be worse: N7 ({@code USE_WORKSPACE_RUNTIME}, the runtime read face) is held by every
-     * workspace role, so reusing it would widen host paths to EDITOR/VIEWER, while a dedicated atom
-     * would be a new product concept outside M3. Deferred to M5/backlog with this row as the single
-     * authoritative residue in the V1 whitelist.
-     */
-    private boolean isAdmin() {
-        return CapabilityAuthorities.isInstanceAdmin();
-    }
+    // task-859 supersedes the D51-06 "keep admin-or-owner, do not atomize" residue: host-path
+    // visibility is now the MANAGE_WORKSPACE_RUNTIME atom on the workspace fs: resource, which the
+    // default seeds populate with exactly the old population (instance ADMIN + workspace WS_OWNER).
 
     public record CreateWorkspaceRequest(
             String name,

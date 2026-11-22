@@ -185,7 +185,8 @@ public class PolicyEngine {
      * and the hard guard own it.
      */
     private PolicyVerdict approvalVerdict(ToolFaceRegistry.Face face, PolicyContext context,
-                                          String effectiveMode, PolicyLayer modeLayer) {
+                                          String effectiveMode, PolicyLayer modeLayer,
+                                          List<String> resources) {
         PolicyLayer source = context.askLayer();
         if (!context.askActionClasses().contains(face.actionClass())) {
             return PolicyVerdict.of(PolicyEffect.ALLOW, null, source, effectiveMode,
@@ -193,12 +194,14 @@ public class PolicyEngine {
         }
         if (LayeredPolicyResolver.MODE_AUTO.equals(effectiveMode)) {
             PolicyLayer bypassLayer = modeLayer == null ? PolicyLayer.BUILTIN : modeLayer;
+            // task-859: the ask names the request's resource too, so the eventual decision is
+            // (action:approve, that resource) instead of the action class alone.
             return PolicyVerdict.of(PolicyEffect.ASK, null, source, effectiveMode,
-                    "action class on the approval ask list")
+                    "action class on the approval ask list", resources)
                     .allowedByMode(LayeredPolicyResolver.MODE_AUTO + "@" + bypassLayer);
         }
         return PolicyVerdict.of(PolicyEffect.ASK, null, source, effectiveMode,
-                "action class on the approval ask list");
+                "action class on the approval ask list", resources);
     }
 
     /**
@@ -295,7 +298,8 @@ public class PolicyEngine {
             return verdict;
         }
 
-        PolicyVerdict verdict = approvalVerdict(face, context, effectiveMode, modeLayer);
+        PolicyVerdict verdict = approvalVerdict(face, context, effectiveMode, modeLayer,
+                request.resources());
 
         // PLAN-0627 D27-20 (Q2 = C′): path-conditional tier for protected files, expressed
         // with the existing vocabulary instead of a new enum:
@@ -315,7 +319,8 @@ public class PolicyEngine {
                 && ToolFaceRegistry.isMutationActionClass(face.actionClass())
                 && ToolFaceRegistry.mutatesProtectedFile(request.resources())) {
             verdict = PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, effectiveMode,
-                    "protected file requires approval: " + ToolFaceRegistry.PROTECTED_WRITE_FILENAMES);
+                    "protected file requires approval: " + ToolFaceRegistry.PROTECTED_WRITE_FILENAMES,
+                    request.resources());
         }
 
         String legacyDetail = verdict.effect() == PolicyEffect.ALLOW ? "auto_allow" : "require_approval";
