@@ -20,8 +20,10 @@ import SettingsSidebar from "../SettingsSidebar.vue";
 const state = {
     capability: true,
     canManageRoles: true,
-    layer: "instance" as string,
+    layer: "instance" as string | undefined,
     domain: "" as string,
+    path: "/settings/instance/rag",
+    metaLayer: true,
 };
 
 vi.mock("vue-router", () => ({
@@ -37,13 +39,16 @@ vi.mock("vue-router", () => ({
     useRoute: () =>
         ({
             name: "settings-instance-domain-rag",
-            path: "/settings/instance/rag",
+            path: state.path,
             params: {},
             query: {},
             hash: "",
-            fullPath: "/settings/instance/rag",
+            fullPath: state.path,
             matched: [],
-            meta: { settingsLayer: state.layer, settingsDomain: state.domain },
+            meta: {
+                ...(state.metaLayer ? { settingsLayer: state.layer } : {}),
+                settingsDomain: state.domain,
+            },
         }) as unknown as RouteLocationNormalizedLoaded,
     RouterLink: {
         props: { to: { type: [String, Object], required: false, default: "" } },
@@ -110,9 +115,15 @@ const messages = {
     },
 };
 
-function mountSidebar(layer: string, domain = "") {
+function mountSidebar(
+    layer: string | undefined,
+    domain = "",
+    options: { path?: string; metaLayer?: boolean } = {},
+) {
     state.layer = layer;
     state.domain = domain;
+    state.path = options.path ?? "/settings/instance/rag";
+    state.metaLayer = options.metaLayer ?? true;
     const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });
     return mount(SettingsSidebar, { global: { plugins: [i18n] } });
 }
@@ -203,6 +214,35 @@ describe("SettingsSidebar", () => {
         expect(wrapper.text()).not.toContain("配置锁定");
         // 域 + 实例资源整段不渲染 ⇒ ops/安全项也一个都不在（不是靠文案判断）。
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);
+    });
+
+    /**
+     * task-798：404 兜底路由故意不写 `meta.settingsLayer`（`router/index.ts:470-478`），
+     * 此时层身份必须与 `SettingsLayout` 一样按 `settingsLayerForPath(route.path)` 推导。
+     *
+     * <p>修前 `activeLayer` 无 meta 就写死 `instance`：`/settings/user/logging` 的层标题在
+     * Layout 里写着「用户」，左栏却把 `userOpen` 置 false ⇒ reka `CollapsibleContent` 卸载
+     * 用户层，`settings-nav-domain-user-model-config` 不在 DOM（run7 `settings-ia-redirects:181` 失败）。</p>
+     */
+    it("task-798: derives the layer from path when 404 fallback route has no meta.settingsLayer", async () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar(undefined, "", {
+            path: "/settings/user/logging",
+            metaLayer: false,
+        });
+        await flushPromises();
+
+        // 用户层默认展开 ⇒ 用户层条目在 DOM；若仍回落 instance，这些条目会被 CollapsibleContent 卸载。
+        expect(wrapper.find("#settings-nav-user").exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-nav-domain-user-model-config"]').exists()).toBe(
+            true,
+        );
+        // 实例层同时收起（不是「两层都展开」的假绿）：实例域条目不在 DOM。
+        expect(wrapper.find('[data-testid="settings-nav-domain-instance-rag"]').exists()).toBe(
+            false,
+        );
+        wrapper.unmount();
     });
 
     /**

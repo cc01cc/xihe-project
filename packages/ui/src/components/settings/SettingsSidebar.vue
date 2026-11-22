@@ -40,7 +40,13 @@ import { provideSidebarContext } from "@/components/ui/sidebar/utils";
 import { useMediaQuery } from "@vueuse/core";
 import { useAuthStore } from "../../stores/auth";
 import { readGlobalLayout, writeGlobalLayout } from "../../composables/useWorkspaceLayout";
-import { instanceOpsGroups, navItemsForLayer, type SettingsNavItem } from "../../lib/settingsIa";
+import {
+    instanceOpsGroups,
+    isSettingsLayer,
+    navItemsForLayer,
+    settingsLayerForPath,
+    type SettingsNavItem,
+} from "../../lib/settingsIa";
 
 /**
  * 设置区左栏（**不**复用工作区 Sidebar）。task-253 起按用户 2026-11-10 裁定改为
@@ -141,9 +147,9 @@ const canSeeInstanceOps = computed(() => canSeeInstanceLayer.value || auth.canMa
 
 const activeLayer = computed(() => {
     const layer = route.meta.settingsLayer;
-    return layer === "instance" || layer === "user" || layer === "workspace-default"
-        ? layer
-        : "instance";
+    // task-798：404 兜底路由故意不写 meta.settingsLayer，层身份必须与 SettingsLayout 一样
+    // 按 path 推导，否则 /settings/user/logging 会被当成实例层并卸载用户层左栏。
+    return isSettingsLayer(layer) ? layer : settingsLayerForPath(route.path);
 });
 
 /**
