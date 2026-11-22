@@ -7,7 +7,8 @@
 //
 // task-775 / PLAN-0766 T2.4: the four model domains (llm-provider, context-policy,
 // embedding, rag) left the workspace layer. The spec no longer seeds a workspace
-// layer; it asserts the PUT is refused (400 DOMAIN_NOT_WORKSPACE_WRITABLE) and
+// layer; it asserts the PUT is refused (400 DOMAIN_NOT_WORKSPACE_WRITABLE), that a
+// workspace-layer GET of those domains is refused (403 FORBIDDEN, task-812), and
 // that both runs resolve the code defaults. The old baseline env is retired.
 //
 // The chat itself runs through the product composer (the UI owns the dispatch
@@ -218,6 +219,35 @@ async function expectWorkspaceModelDomainNotWritable(
     expect(text).toContain(domain);
 }
 
+/**
+ * task-812（PLAN-0590:425）：模型域已退出工作区层，所以按工作区层读该域时 CP
+ * 不是返回空对象，而是直接 403 `FORBIDDEN` / `Configuration layer is not readable`
+ * （`ConfigController.java:217-220`，经 `ConfigService.isLayerWritable`）。
+ * 旧断言把 403 读成失败，属断言过期，不是产品缺陷。
+ */
+async function expectWorkspaceLayerNotReadable(
+    request: APIRequestContext,
+    ctx: JourneyContext,
+    domain: string,
+): Promise<void> {
+    const response = await request.get(
+        `${CP_URL}/api/v1/config/${domain}?layer=workspace&workspaceId=${ctx.workspaceId}`,
+        { headers: ctx.headers },
+    );
+    const text = await response.text();
+    expect(
+        response.status(),
+        `工作区层读 ${domain} 应 403 FORBIDDEN；实际 ${response.status()}：${text}`,
+    ).toBe(403);
+    const body = JSON.parse(text) as { code?: string; detail?: string };
+    expect(body.code, text).toBe("FORBIDDEN");
+    expect(body.detail, text).toBe("Configuration layer is not readable");
+}
+
+/**
+ * 仍留在工作区层的域（如 agent-runtime）按工作区层读必须 200；新工作区没有写层，
+ * 因此内容为空对象。task-812：与 403 分支按域区分，不得放宽成「非 200 都算过」。
+ */
 async function expectEmptyWorkspaceLayer(
     request: APIRequestContext,
     ctx: JourneyContext,
@@ -227,7 +257,11 @@ async function expectEmptyWorkspaceLayer(
         `${CP_URL}/api/v1/config/${domain}?layer=workspace&workspaceId=${ctx.workspaceId}`,
         { headers: ctx.headers },
     );
-    expect(response.ok(), await response.text()).toBe(true);
+    const text = await response.text();
+    expect(
+        response.status(),
+        `工作区层读 ${domain} 应 200；实际 ${response.status()}：${text}`,
+    ).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(Object.keys(body)).toEqual([]);
 }
@@ -363,7 +397,7 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         for (const domain of WORKSPACE_LAYER_EXITED_MODEL_DOMAINS) {
             await expectWorkspaceModelDomainNotWritable(request, wsA, domain);
         }
-        await expectEmptyWorkspaceLayer(request, wsB, "context-policy");
+        await expectWorkspaceLayerNotReadable(request, wsB, "context-policy");
         await expectEmptyWorkspaceLayer(request, wsB, "agent-runtime");
 
         principalA = await provisionPlainChatPrincipal(
