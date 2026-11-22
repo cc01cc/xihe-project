@@ -1,0 +1,23 @@
+{
+  "note": "BL-421 known-defect registry. Each entry parks one skip that covers a known product defect or an unfrozen contract, matched exactly on (id, spec). The classifier requires the skip reason to start with '<id>:' and the reported spec path to equal (or end with '/') the registered path. Do not add prefix/glob entries; close the owning BL/D item instead.",
+  "defects": [
+    {
+      "id": "BL-144",
+      "spec": "e2e/real/approval-policy.spec.ts",
+      "card": "task-810",
+      "reason": "After reload the workspace-layer approval-policy select never populates (empty value at 20s) while the API read-back is 'auto'."
+    },
+    {
+      "id": "BL-354",
+      "spec": "e2e/real/plan0680-skill-dual-axis.spec.ts",
+      "card": "task-810",
+      "reason": "Continuation scenario skills_snapshot semantics are not frozen (PLAN-0680 V8 undecidable note); re-assert after SPEC 5 / BL-354 closes."
+    },
+    {
+      "id": "BL-354",
+      "spec": "e2e/real/plan0680-skill-dual-axis-neg.spec.ts",
+      "card": "task-810",
+      "reason": "Continuation scenario skills_snapshot semantics are not frozen (PLAN-0680 V8 undecidable note); re-assert after SPEC 5 / BL-354 closes."
+    }
+  ]
+}

@@ -2686,6 +2686,51 @@ function isLaneGateReason(reason) {
   return LANE_GATE_REASON_WHITELIST.some((entry) => reason.startsWith(entry.prefix))
 }
 
+/**
+ * BL-421 fifth class: known product defects / unfrozen contracts. These skips are not
+ * lane or environment gates — the code they cover is deliberately parked until the
+ * owning BL/D item closes. The registry is data (`scripts/e2e-known-defects.json`) and
+ * is matched **exactly** on `(id, spec)`: the reason must start with `<id>:` and the
+ * reported spec path must be that file. No prefix/glob batches, and an unregistered
+ * pair still falls through to `unclassified` and fails the run.
+ */
+export const KNOWN_DEFECTS_FILE = join(projectDir, 'scripts', 'e2e-known-defects.json')
+
+export function loadKnownDefects(file = KNOWN_DEFECTS_FILE) {
+  if (!existsSync(file)) throw new Error(`known-defect registry not found: ${file}`)
+  const parsed = JSON.parse(stripJsonComments(readFileSync(file, 'utf8')))
+  const defects = Array.isArray(parsed) ? parsed : parsed?.defects
+  if (!Array.isArray(defects)) {
+    throw new Error(`known-defect registry has no "defects" array: ${file}`)
+  }
+  const entries = defects.map((defect, index) => {
+    const id = typeof defect?.id === 'string' ? defect.id.trim() : ''
+    const spec = normalizeSkipPath(defect?.spec).trim()
+    if (id === '' || spec === '') {
+      throw new Error(`known-defect registry entry #${index} must declare non-empty "id" and "spec": ${file}`)
+    }
+    return Object.freeze({
+      id,
+      spec,
+      card: typeof defect.card === 'string' ? defect.card.trim() : '',
+      reason: typeof defect.reason === 'string' ? defect.reason.trim() : '',
+    })
+  })
+  return Object.freeze(entries)
+}
+
+function matchesKnownDefect(annotations, specFile, registry) {
+  const file = normalizeSkipPath(specFile)
+  return annotations.find((annotation) => {
+    const description = String(annotation.description ?? '').trim()
+    if (description === '') return false
+    return registry.some((entry) => {
+      const specMatches = file === entry.spec || file.endsWith('/' + entry.spec)
+      return specMatches && description.startsWith(entry.id + ':')
+    })
+  })
+}
+
 function normalizeSkipPath(file) {
   return String(file ?? '').replaceAll('\\', '/')
 }
@@ -2726,9 +2771,11 @@ function isSkippedTest(test) {
 export function classifyPlaywrightSkips(report, options = {}) {
   const platform = options.platform ?? process.platform
   const whitelist = options.whitelist ?? PLATFORM_SKIP_WHITELIST
+  const knownDefectRegistry = options.knownDefects ?? []
   const modeGates = []
   const platformGates = []
   const laneGates = []
+  const knownDefects = []
   const unclassified = []
 
   const walk = (suite, file) => {
@@ -2775,6 +2822,11 @@ export function classifyPlaywrightSkips(report, options = {}) {
           continue
         }
 
+        if (matchesKnownDefect(annotations, specFile, knownDefectRegistry)) {
+          knownDefects.push(row)
+          continue
+        }
+
         unclassified.push(row)
       }
     }
@@ -2784,15 +2836,17 @@ export function classifyPlaywrightSkips(report, options = {}) {
   for (const suite of report?.suites ?? []) walk(suite, suite.file)
 
   return {
-    total: modeGates.length + platformGates.length + laneGates.length + unclassified.length,
+    total: modeGates.length + platformGates.length + laneGates.length + knownDefects.length + unclassified.length,
     modeGates,
     platformGates,
     laneGates,
+    knownDefects,
     unclassified,
     counts: {
       modeGate: modeGates.length,
       platformGate: platformGates.length,
       laneGate: laneGates.length,
+      knownDefect: knownDefects.length,
       unclassified: unclassified.length,
     },
   }
@@ -2842,16 +2896,28 @@ async function assertExecutedTestCounts(result, statsPath) {
   }
   const summary = summarizePlaywrightReport(report)
   console.log(`[e2e-host] ${formatTestCounts(summary)}`)
-  const classification = classifyPlaywrightSkips(report)
+  let knownDefectRegistry
+  try {
+    knownDefectRegistry = loadKnownDefects()
+  } catch (error) {
+    const message = `[e2e-host] BL-421: cannot load the known-defect registry (${error instanceof Error ? error.message : String(error)}); refusing to treat exit=${result.code} as a pass`
+    console.error(message)
+    return { ...result, code: result.code === 0 ? 1 : result.code }
+  }
+  const classification = classifyPlaywrightSkips(report, { knownDefects: knownDefectRegistry })
   console.log(
     `[e2e-host] BL-421 skip classes: total=${classification.total}`
       + ` (mode-gate=${classification.counts.modeGate}`
       + ` platform-gate=${classification.counts.platformGate}`
       + ` lane-gate=${classification.counts.laneGate}`
+      + ` known-defect=${classification.counts.knownDefect}`
       + ` unclassified=${classification.counts.unclassified})`,
   )
   for (const row of classification.platformGates) {
     console.log(`[e2e-host] BL-421 skip[platform-gate] ${row.file}:${row.line} — ${row.reason}`)
+  }
+  for (const row of classification.knownDefects) {
+    console.warn(`[e2e-host] BL-421 skip[known-defect] ${row.file}:${row.line} — ${row.reason}`)
   }
   if (allowSkip) {
     if (classification.counts.unclassified > 0) {
