@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import type { Router } from "vue-router";
 import { i18n as appI18n } from "../../../../i18n";
@@ -103,6 +104,22 @@ function seedData(
     });
 }
 
+const EMPTY_TESTIDS = [
+    "sidebar-empty-no-workspace",
+    "sidebar-empty-no-session",
+    "sidebar-empty-no-match",
+] as const;
+
+/** loading / error / empty 三态互斥：同一时刻命中总数 ≤ 1。 */
+function stateCounts(wrapper: ReturnType<typeof mountGroups>) {
+    return {
+        loading: wrapper.find('[data-testid="sidebar-groups-loading"]').exists() ? 1 : 0,
+        error: wrapper.find('[data-testid="sidebar-groups-error"]').exists() ? 1 : 0,
+        empty: EMPTY_TESTIDS.filter((testid) => wrapper.find(`[data-testid="${testid}"]`).exists())
+            .length,
+    };
+}
+
 beforeEach(() => {
     pinia = createPinia();
     setActivePinia(pinia);
@@ -119,6 +136,39 @@ beforeEach(() => {
 });
 
 describe("左栏工作区分组（task-352）", () => {
+    it("loading 态：请求挂起时 loading 可见，empty/error 不可见且行数为 0", async () => {
+        seedWorkspace("ws-a");
+        getSessions.mockResolvedValue({ sessions: [], workspace: null });
+        listWorkspaces.mockReturnValue(new Promise<unknown[]>(() => {}));
+
+        const wrapper = mountGroups();
+        await nextTick();
+
+        const counts = stateCounts(wrapper);
+        expect(counts.loading).toBe(1);
+        expect(counts.error).toBe(0);
+        expect(counts.empty).toBe(0);
+        expect(counts.loading + counts.error + counts.empty).toBeLessThanOrEqual(1);
+        expect(wrapper.findAll('[data-testid="session-item"]')).toHaveLength(0);
+    });
+
+    it("error 态：请求失败时 error 可见、含重试按钮、empty/loading 不可见且行数为 0", async () => {
+        seedWorkspace("ws-a");
+        getSessions.mockResolvedValue({ sessions: [], workspace: null });
+        listWorkspaces.mockRejectedValueOnce(new Error("workspace list failed"));
+
+        const wrapper = mountGroups();
+        await flushPromises();
+
+        const counts = stateCounts(wrapper);
+        expect(counts.loading).toBe(0);
+        expect(counts.error).toBe(1);
+        expect(counts.empty).toBe(0);
+        expect(counts.loading + counts.error + counts.empty).toBeLessThanOrEqual(1);
+        expect(wrapper.find('[data-testid="sidebar-groups-retry"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid="session-item"]')).toHaveLength(0);
+    });
+
     it("两个工作区都渲染成分组；首屏只拉当前组，展开第二组才 +1", async () => {
         seedWorkspace("ws-a");
         seedData(["ws-a", "ws-b"], {

@@ -11,7 +11,7 @@
  * 别的 spec 看到的仍是单工作区那份老数据。</p>
  */
 import type { Page } from "@playwright/test";
-import { expect, test } from "./helpers/mock-test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubGroupedWorkspaceSessions, stubWorkspaceList } from "./helpers/grouped-sessions";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
@@ -181,5 +181,109 @@ test.describe("左栏工作区分组（task-352 / D-1206）", () => {
         await expect(page.getByTestId("sidebar-empty-no-session")).toHaveCount(0);
         await expect(page.getByTestId("sidebar-empty-no-workspace-action")).toBeVisible();
         await capture(page, "sidebar-empty-no-workspace");
+    });
+
+    test("loading 态：工作区列表延迟响应时 loading 可见，随后回到 empty", async ({ page }) => {
+        await setupMockAuth(page);
+        await setupMockSessions(page, { sessions: [] });
+
+        await page.route(
+            (url) => url.pathname === "/api/v1/workspaces",
+            async (route) => {
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify([
+                        {
+                            id: WS_A,
+                            name: "Alpha 工作区",
+                            ownerId: "user-1",
+                            workspaceRole: "OWNER",
+                        },
+                    ]),
+                });
+            },
+        );
+
+        await page.goto(`/workspace/${WS_A}`);
+        await expect(page.getByTestId("sidebar-groups-loading")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("sidebar-groups-error")).toHaveCount(0);
+        await expect(page.getByTestId("sidebar").getByTestId("session-item")).toHaveCount(0);
+
+        await expect(page.getByTestId("sidebar-empty-no-session")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("sidebar-groups-loading")).toHaveCount(0);
+    });
+
+    test.describe("error 态（预期 500 逐条放行）", () => {
+        test.use({
+            mockAllow: [
+                ...DEFAULT_MOCK_ALLOW,
+                String.raw`/api/v1/workspaces`,
+                String.raw`Load workspaces for the sidebar groups failed`,
+            ],
+        });
+
+        test("error 态：工作区列表 500 时 error + retry 可见，重试后恢复 empty", async ({
+            page,
+        }) => {
+            await setupMockAuth(page);
+            await setupMockSessions(page, { sessions: [] });
+
+            let shouldFail = true;
+            let workspaceCalls = 0;
+            await page.route(
+                (url) => url.pathname === "/api/v1/workspaces",
+                async (route) => {
+                    workspaceCalls += 1;
+                    if (shouldFail) {
+                        await route.fulfill({
+                            status: 500,
+                            contentType: "application/json",
+                            body: JSON.stringify({
+                                type: "about:blank",
+                                title: "Internal Server Error",
+                                status: 500,
+                                detail: "workspace list failed",
+                            }),
+                        });
+                        return;
+                    }
+                    await route.fulfill({
+                        status: 200,
+                        contentType: "application/json",
+                        body: JSON.stringify([
+                            {
+                                id: WS_A,
+                                name: "Alpha 工作区",
+                                ownerId: "user-1",
+                                workspaceRole: "OWNER",
+                            },
+                        ]),
+                    });
+                },
+            );
+
+            await page.goto(`/workspace/${WS_A}`);
+            await expect(page.getByTestId("sidebar-groups-error")).toBeVisible({
+                timeout: EXPECT_TIMEOUT_MS,
+            });
+            await expect(page.getByTestId("sidebar-groups-retry")).toBeVisible();
+            await expect(page.getByTestId("sidebar").getByTestId("session-item")).toHaveCount(0);
+
+            shouldFail = false;
+            await page.getByTestId("sidebar-groups-retry").click();
+            await expect(page.getByTestId("sidebar-groups-error")).toHaveCount(0, {
+                timeout: EXPECT_TIMEOUT_MS,
+            });
+            await expect(page.getByTestId("sidebar-empty-no-session")).toBeVisible({
+                timeout: EXPECT_TIMEOUT_MS,
+            });
+            expect(workspaceCalls).toBeGreaterThanOrEqual(2);
+        });
     });
 });
