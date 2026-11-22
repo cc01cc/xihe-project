@@ -11,9 +11,9 @@ import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
  * （`llm-provider-profile` 等，`src/**` 0 命中），整文件被 describe.skip 挂着；删文件是正确处置，
  * 但其中 V4 漂移注解、V5 手写模型、V7 orphan 三条对应的**能力仍然活着**，只是活在新入口上：
  *
- * - V4：`ProviderHub.vue:1354 provider-default-drift`（PLAN-0523 T3.2 漂移条目）
+ * - V4：`ProviderHub.vue:1352 provider-default-drift`（PLAN-0523 T3.2 漂移条目）
  * - V5：`ProviderHub.vue:2675-2684` 手写模型 textarea（`form.modelDiscovery === 'manual'`）
- * - V7：`ProviderHub.vue:1983-1999 provider-orphan-bindings / provider-orphan-model-<model>`
+ * - V7：`ProviderHub.vue:1992-2012 provider-orphan-bindings / provider-orphan-model-<model>`
  *
  * 每条都按「能力现在在哪 → 怎么驱动 → 断言什么」写，驱动面只用**存活**的选择器与公开 API；
  * 不许用 `test.skip` 顶替（task-78 同一口径）。V7 的原始场景要求真栈，本文件在起栈窗口内跑。
@@ -35,6 +35,7 @@ type ConnectionRow = {
     scope: string;
     modelDiscovery: string;
     manualModels: string[];
+    status?: string;
 };
 
 async function register(request: APIRequestContext, name: string): Promise<Auth> {
@@ -84,14 +85,23 @@ async function putUserConfig(
 }
 
 /** 读回该层 entries：漂移/绑定是否被自动改写，只能以数据面为准。 */
-async function readUserConfig(request: APIRequestContext, auth: Auth, domain: string) {
+async function readLayerConfig(
+    request: APIRequestContext,
+    auth: Auth,
+    layer: "instance" | "user" | "workspace",
+    domain: string,
+) {
     const response = await request.get(
-        `${CP_URL}/api/v1/config/${domain}?layer=user&includeMeta=true`,
+        `${CP_URL}/api/v1/config/${domain}?layer=${layer}&includeMeta=true`,
         { headers: { Authorization: `Bearer ${auth.accessToken}` } },
     );
     expect(response.ok(), await response.text()).toBeTruthy();
     const body = (await response.json()) as { entries?: Record<string, string> };
     return body.entries ?? {};
+}
+
+async function readUserConfig(request: APIRequestContext, auth: Auth, domain: string) {
+    return readLayerConfig(request, auth, "user", domain);
 }
 
 async function createUserConnection(
@@ -125,6 +135,29 @@ async function listConnections(request: APIRequestContext, auth: Auth): Promise<
     expect(response.ok(), await response.text()).toBeTruthy();
     const body = (await response.json()) as { connections?: ConnectionRow[] };
     return body.connections ?? [];
+}
+
+/**
+ * `modelDiscovery=manual` 的 verify 不走网络，只校验 `manualModels` 非空后直接 markReady
+ * （`ProviderConnectionService.verify:344-350`）。V4 的 profile 写入要求连接 READY
+ * （`ConfigService.validateProviderProfile:1193-1230`），所以必须先 verify 再写 profile。
+ */
+async function verifyConnection(request: APIRequestContext, auth: Auth, id: string) {
+    const response = await request.post(`${CP_URL}/api/v1/provider-connections/${id}/verify`, {
+        headers: workspaceHeaders(auth),
+    });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    const body = (await response.json()) as ConnectionRow;
+    expect(body.status, "verify must leave the connection READY").toBe("READY");
+}
+
+async function deleteConnection(request: APIRequestContext, auth: Auth, key: string) {
+    const row = (await listConnections(request, auth)).find((item) => item.connectionKey === key);
+    expect(row, `connection ${key} must exist before delete`).toBeTruthy();
+    const response = await request.delete(`${CP_URL}/api/v1/provider-connections/${row!.id}`, {
+        headers: workspaceHeaders(auth),
+    });
+    expect(response.status(), await response.text()).toBe(204);
 }
 
 async function openConnectionForm(page: Page) {
@@ -193,6 +226,11 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
      * V4：默认 profile 指向的连接在列表里不可见时，必须**保留**琥珀失效条目并原样保留配置，
      * 等用户「设为默认」替换（`PLAN-0523 T3.2` / `ProviderHub.vue:555-558` 的 never auto-rewritten）。
      * 能力活着的反证：把该 connectionKey 的行造出来 ⇒ 条目消失、默认连接卡片出现。
+     *
+     * task-771 裁决（A03 `d268d1c4`）：user/workspace 层写 profile 必须指向 ready 连接
+     * （`ConfigService.validateProviderProfile:1193-1230`，PLAN-0504 decision #11 / PLAN-0307 P1-5）。
+     * 因此漂移必须**先写后删**制造：建好 ghost-default + verify 到 READY → 写 profile（200）→
+     * 删除连接。直接把 400 当预期是错误测试，不得改产品校验。
      */
     test("V4 漂移默认连接保留为失效条目且不被自动改写", async ({ page, request }) => {
         const auth = await register(request, "task86-v4-drift");
@@ -210,9 +248,17 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
                 label: "Kept Line",
                 models: ["kept-model"],
             });
+            const ghost = await createUserConnection(request, auth, {
+                key: "ghost-default",
+                label: "Ghost Default",
+                models: ["ghost-model"],
+            });
+            await verifyConnection(request, auth, ghost.id);
             await putUserConfig(request, auth, "llm-provider", {
                 profile: JSON.stringify(ghostProfile),
             });
+            // 写面成功之后才删连接：删连接不改写已存 profile ⇒ 漂移态。
+            await deleteConnection(request, auth, "ghost-default");
 
             await page.goto(PAGE);
             const drift = page.getByTestId("provider-default-drift");
@@ -230,11 +276,12 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
             ).toBe(JSON.stringify(ghostProfile));
 
             // 能力活着的正证：connectionKey 对应行出现 ⇒ 同一份 profile 变成正常默认连接。
-            await createUserConnection(request, auth, {
+            const restored = await createUserConnection(request, auth, {
                 key: "ghost-default",
                 label: "Ghost Default",
                 models: ["ghost-model"],
             });
+            await verifyConnection(request, auth, restored.id);
             await page.reload();
             await expect(page.getByTestId("provider-default-drift")).toHaveCount(0);
             await expect(page.getByTestId("provider-default-connection")).toHaveAttribute(
@@ -306,7 +353,40 @@ test.describe("@host task-86 provider hub 三条覆盖缺口", () => {
                 label: "Orphan Line",
                 models: ["kept-model"],
             });
-            const ref = { layer: "user", templateId: "ghost-template", version: 1 };
+            // task-771/766：`ghost-template` 从未发布，写 providerModelBindings 会被
+            // `ApiRequestTemplateService.resolveRef:454-468` 以 409 API_TYPE_TEMPLATE_MISMATCH 拒绝
+            // （Published template is unavailable）。orphan 的语义是「模型不在连接目录里」，
+            // 不是「模板不存在」；所以这里取实例层已发布的 builtin（`builtins():1046-1058`，
+            // id 为 nameUUID("api-request-templates:<apiType>@<version>")），它与本连接的
+            // apiType `openai-chat-completions@1` 匹配，写入合法。
+            const instanceEntries = await readLayerConfig(
+                request,
+                auth,
+                "instance",
+                "api-request-templates",
+            );
+            const instanceTemplates = JSON.parse(instanceEntries.templates ?? "[]") as Array<{
+                id: string;
+                version: number;
+                status: string;
+                apiTypeId: string;
+                apiTypeVersion: number;
+            }>;
+            const published = instanceTemplates.find(
+                (item) =>
+                    item.status === "published" &&
+                    item.apiTypeId === "openai-chat-completions" &&
+                    item.apiTypeVersion === 1,
+            );
+            expect(
+                published,
+                "instance layer must expose a published openai-chat-completions@1 template",
+            ).toBeTruthy();
+            const ref = {
+                layer: "instance",
+                templateId: published!.id,
+                version: published!.version,
+            };
             await putUserConfig(request, auth, "api-request-templates", {
                 providerModelBindings: JSON.stringify({ [connection.id]: { "ghost-model": ref } }),
             });
