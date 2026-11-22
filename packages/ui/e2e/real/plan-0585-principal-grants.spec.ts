@@ -223,7 +223,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         seedContext(page, admin, true);
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
 
-        await expect(page).toHaveURL(/\/settings\/roles$/, { timeout: LONG_TIMEOUT_MS });
+        await expect(page).toHaveURL(/\/settings\/presets$/, { timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // The retired page's own test ids must not exist any more.
         await expect(page.getByTestId("principal-grant-view")).toHaveCount(0);
@@ -254,7 +254,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         await expect(page.locator('a[href="/settings/principal-grants"]')).toHaveCount(0);
 
         await rolesItem.click();
-        await expect(page).toHaveURL(/\/settings\/roles$/);
+        await expect(page).toHaveURL(/\/settings\/presets$/);
         await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(retiredCalls, "the UI must not call the retired grant surface").toEqual([]);
     });
@@ -265,7 +265,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         seedContext(page, admin, false);
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
 
-        await expect(page).toHaveURL(/\/settings\/roles$/, { timeout: LONG_TIMEOUT_MS });
+        await expect(page).toHaveURL(/\/settings\/presets$/, { timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("roles-forbidden")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             path: "test-results/plan-0610-w5c/02-non-admin-bookmark.png",
