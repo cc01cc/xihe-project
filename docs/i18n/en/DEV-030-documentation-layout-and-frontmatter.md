@@ -127,7 +127,7 @@ INDEX.md and other pure navigation files don't need special settings — LYJ sid
 Three principles: (1) **inverted pyramid** — an H1 lead-in (audience + what is covered + prerequisites), conclusion before detail; (2) **tables first** — comparisons, matrices and checklists go into tables, not paragraphs; (3) **progressive disclosure** — keep conclusions and common paths in the body, move provenance, history and exhaustive lists into an appendix.
 
 - Headings: exactly one H1, H2/H3 numbered, no H4+ (split into a table or an appendix instead).
-- Diagrams: pick by content, not "mermaid by default" — flows/sequences/states use mermaid (subgraphs carry detail), directory trees and level overviews stay ASCII (mermaid has no better type); a converted diagram must map one-to-one onto the original information (PLAN-241 Decision 7: compressing conversions lose information); every diagram notes the code anchor. No new ASCII flowcharts.
+- Diagrams: Mermaid by default — flows/sequences/states, structure/layering/region naming/comparison matrices all use Mermaid whenever they map to nodes and edges (subgraphs carry detail); only spatial arrangements Mermaid cannot express fall back to script-generated, geometry-checked inline SVG. Directory trees and level overviews stay ASCII (Mermaid has no better type); a converted diagram must map one-to-one onto the original information (PLAN-241 Decision 7: compressing conversions lose information); every diagram notes the code anchor. No new ASCII flowcharts.
 - Duplicated content: each document keeps a summary plus a pointer to the owning document (transport owner DEV-010, attachment domain owner DEV-017) so every page stays self-contained.
 - Symbols: keep the ✅/⚠️/❌/→ scanning markers (project exception, see below); Chinese/English terminology is paired on first use, Chinese afterwards.
 
@@ -151,6 +151,8 @@ The "Diagrams" line in §6 becomes executable here: **Mermaid by default** — s
 3. **Both languages in the same batch**: zh and en in one change (labels localised too), otherwise the heading pairing in `check:dev-i18n-drift` gains hits.
 
 **Image sources**: Mermaid stays the default; when a bitmap is needed, use a relative path (`![](./assets/x.png)`), which the EW doc-site importer publishes at import time — "local relative path + publish on import" is the user's 2026-11-22 decision, so embedding every image inside the `.md` is no longer required. Labels still come only from the owning document's name table (for example DEV-010 §10.1.1), and both languages ship together.
+
+**Asset boundary (2026-11-22)**: Project documents accept only relative images inside `docs/i18n/**`. A reference to a resource outside that tree (for example the repository-root `assets/`) must fail the EW import hard, with the **document path + reference line + migration hint** in the error; it must never degrade into a silent 404 on the published site. Migrate by moving the asset into a nearby directory under `docs/i18n/{lang}/` and referencing it relatively. The importer also enforces these SVG limits: at most 1 MiB; no `foreignObject` / `iframe` / `object` / `embed`; and no external links, `@import`, or remote `url()`.
 
 **Final artifact shape** (produced by a script — do not hand-edit coordinates; `viewBox` for the ratio, `width="100%"` to stay inside the body column, `role="img"` + `<title>` for accessibility):
 
