@@ -46,7 +46,11 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
         // （挂在本 spec 的 TC-A2 段下），同目录 ConfigDomainPanel.asyncEntries.spec.ts 另报 4 次
         // ⇒ 夹具确实缺、测试确实在查。正解是给这两个 spec 的局部 messages 补上 2 个键（i18n 回填卡），
         // 补完才能删本条目。**不要因为「读数 0」就删**。
-        note: "折叠态渲染的 2 个裸键（字段数徽标 + 展开提示）：夹具 messages 缺键。护栏只在挂载时刻扫一次、域卡默认展开 ⇒ 本条目的 [i18n] 读数恒为 0（假阴性，不是已修好）。补齐这 2 个键后删除。",
+        // task-715（2026-11-22 复测，本目录 35 个台账 spec 定向跑 + 全量）：读数仍是 **0 条 `[i18n]` / 2 条
+        // `[intlify] Not found`**（`settings.configCardFieldCount`、`settings.configCardExpandHint`），
+        // 与 task-149 的定性和判据一致 ⇒ **保留**。只有把折叠态那两处并进挂载时刻的 html，或给这两个
+        // spec 的局部 messages 补上 2 个键，才允许删本条。
+        note: "折叠态渲染的 2 个裸键（字段数徽标 + 展开提示）：夹具 messages 缺键。护栏只在挂载时刻扫一次、域卡默认展开 ⇒ 本条目的 [i18n] 读数恒为 0（假阴性，不是已修好）。补齐这 2 个键后删除。（task-715 复测：仍 0 [i18n] / 2 [intlify]，保留。）",
     },
     "components/settings/__tests__/SettingsSidebar.spec.ts": {
         keys: [
@@ -60,45 +64,6 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
         // 当引用查两侧 locale，写了就 `unresolved-key` 红（task-108 实测拦下过一次）。task-129 删聚合键时
         // 用的也是「描述而不写字面量」这个写法，照它。
         note: "渲染出 5 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。（原 7 键中的两个「知识库·MCP」聚合键已由 task-129 从两侧 locale 删除：无任何 IA 条目引用 ⇒ 死键、渲染不出来，故同批从台账移除；「实例级智能体缺口说明」那条由 task-108 同法移除。）【task-108 实测存疑项】本条 keys 与当前渲染**不一致**：2026-11-15 vitest 实测该 spec 只渲染出 `settings.groupModelConfig`、`settings.groupAgentConfig`（2 个，且都不在本列表内）⇒ 这 4 条是历史记录、不是当前事实。闸门按 spec 路径整体放行，故不影响绿，但**别把它当读数用**。",
-    },
-    "features/workspace/__tests__/WorkspaceView.spec.ts": {
-        keys: [
-            "common.files",
-            "files.titleFiles",
-            "sidebar.newChat",
-            "validation.principalNameRequired",
-            "workspace.agentAllowedModelAdd",
-            "workspace.agentAllowedModels",
-            "workspace.agentAllowedModelsHint",
-            "workspace.agentCapSnapshotHint",
-            "workspace.agentDefaultModelName",
-            "workspace.agentDefaultModelProvider",
-            "workspace.agentModelNamePlaceholder",
-            "workspace.agentModelProviderPlaceholder",
-            "workspace.agentPermissionLoading",
-            "workspace.agentTemplateChoice",
-            "workspace.containerMain",
-            "workspace.containerRight",
-            "workspace.containerTabsLabelMain",
-            "workspace.containerTabsLabelRight",
-            "workspace.dockFocusExpand",
-            "workspace.dockFocusHint",
-            "workspace.dockResize",
-            "workspace.dockTabs",
-            "workspace.panelAgents",
-            "workspace.panelFiles",
-            "workspace.sseReconnectingHint",
-            "workspace.sseReconnectingTitle",
-            "workspace.toolbarMore",
-            "workspaceAgents.noDefaultHint",
-        ],
-        // task-128（2026-11-22 实测）：旧 13 键清单已过期 —— 其中 7 个不再渲染、22 个新键未登记。
-        // **本条目不是「跨文件泄漏」的产物**：task-121 普查记的「单跑 0 条」是**读数假象**
-        // （无 flag 时 vitest 4 在 agent 环境下用 `agent` reporter ⇒ `silent: "passed-only"` ⇒
-        // 通过用例的 console.warn 被吞）。用 `--reporter=default` 单跑本 spec 实测**同样 18 条 /
-        // 28 键**，与全量逐条一致 ⇒ 裸键来自**本 spec 自己的局部夹具缺键**，与执行顺序无关。
-        // ⇒ 条目**必须保留**（删了全量与单跑都会红），补齐这 28 个键才能移除。
-        note: "渲染出 28 个裸键（18 次挂载告警，每次 8/15/27 个不等）：本 spec 的局部 messages 夹具只覆盖了 `workspace.*` 一部分，组件 t() 拿不到值原样回显。补齐这些键即可从台账移除。",
     },
     "features/workspace/chat/__tests__/InputArea.spec.ts": {
         keys: ["chat.delegation.button", "chat.delegation.reasonUnknown"],
