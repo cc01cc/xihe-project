@@ -149,6 +149,38 @@ describe("InstanceAgentSkillsDialog（task-402 实例档）", () => {
         wrapper.unmount();
     });
 
+    it("档位徽标双语（J9）：en 渲染 Workspace scope / Instance scope 且不残留中文", async () => {
+        getAgentSkills.mockResolvedValue([
+            binding(),
+            binding({
+                bindingId: "binding-ws",
+                skillId: "skill-ws-1",
+                name: "repo-conventions",
+                sourceType: "workspace",
+                scopeType: "workspace",
+                scopeId: "ws-1",
+                scopeName: "Ws 一号",
+            }),
+        ]);
+        const previous = i18n.global.locale.value;
+        i18n.global.locale.value = "en-US";
+        try {
+            const wrapper = mountDialog();
+            await flushPromises();
+            const instanceBadge = q("instance-agent-skill-scope-instance")!;
+            const workspaceBadge = q("instance-agent-skill-scope-workspace")!;
+            expect(instanceBadge.textContent).toContain("Instance scope");
+            expect(workspaceBadge.textContent).toContain("Workspace scope");
+            // 反向判据：en 下徽标不得回落到中文（J9 的「i18n 方向反了」形态）
+            expect(instanceBadge.textContent).not.toContain("实例级");
+            expect(workspaceBadge.textContent).not.toContain("工作区级");
+            wrapper.unmount();
+        } finally {
+            i18n.global.locale.value = previous;
+            await flushPromises();
+        }
+    });
+
     it("绑定：workspaceId 传 null + 只发 skillId，成功后重读列表并提示", async () => {
         const wrapper = mountDialog();
         await flushPromises();
