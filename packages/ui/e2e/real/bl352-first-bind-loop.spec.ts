@@ -48,8 +48,14 @@ test.describe.configure({ retries: 0 });
 const WS_VIEWER_ROLE_ID = "00000000-0000-4000-8000-000000000006";
 /** agent 默认 instance 角色：原子集恰为 BASE_ATOMS，是唯一"可能 ⊆ cap"的系统角色。 */
 const AGENT_USER_ROLE_ID = "00000000-0000-4000-8000-000000000008";
-/** ② 用：授满 BASE_ATOMS，使 cap 覆盖五原子。 */
-const BASE_ATOM_PERMISSIONS = ["read", "write", "delete", "exec", "network"].map((actionClass) => ({
+/**
+ * ② 用：agent 可授的 BASE_ATOMS 子集。
+ *
+ * DSD-1500 R2：`AGENT_USER` 的原子集是 `BASE_ATOMS` **minus exec**（exec 改为显式绑 `WS_RUNNER`），
+ * 所以首绑 cap 不能含 `exec@*`——那会触发 `AGENT_PERMISSION_SCOPE_EXCEEDED`
+ * （principal-exceeding=[exec@*]）。exec 的超范围行为由下方独立负向断言覆盖。
+ */
+const BASE_ATOM_PERMISSIONS = ["read", "write", "delete", "network"].map((actionClass) => ({
     actionClass,
     resource: "*",
 }));
@@ -133,9 +139,10 @@ test("@host BL-352 首绑闭环：顺序错 ⇒ 403；首绑 ⇒ 200；再绑系
 
 test("@host BL-352 可选正向面：cap 覆盖 BASE_ATOMS 后能否授予 AGENT_USER", async ({ request }) => {
     // 这条探"原子集 ⊆ cap 的系统角色是否存在"：
-    // ② 授满五原子 ⇒ cap = BASE_ATOMS；AGENT_USER 的原子集恰为 BASE_ATOMS ⇒ 若产品允许，应 201。
+    // ② 授满 agent 可授的 BASE_ATOMS 子集 ⇒ cap 覆盖 AGENT_USER 原子集 ⇒ 应 201。
     // 若它失败，说明**连唯一的候选系统角色也授不了** ⇒ BL-355 的补强证据（不要自建角色绕过）。
-    // 实测 201（靶 d1f655f4）：AGENT_USER 原子集 == BASE_ATOMS ⇒ 可绑；带 USE_WORKSPACE_RUNTIME 的角色恒 409（BL-355）
+    // 实测 201（靶 d1f655f4）：AGENT_USER 原子集 == BASE_ATOMS minus exec ⇒ 可绑；
+    // 带 USE_WORKSPACE_RUNTIME 的角色恒 409（BL-355）
     const owner = await registerJourneyUser(request, "bl352-positive-owner");
     const workspaceId = owner.workspaceId;
     const headers = { ...owner.headers, "X-Workspace-Id": workspaceId };
@@ -157,8 +164,27 @@ test("@host BL-352 可选正向面：cap 覆盖 BASE_ATOMS 后能否授予 AGENT
     const grantText = await grant.text();
     expect(
         grant.status(),
-        `cap 覆盖 BASE_ATOMS 后授予 AGENT_USER（原子集 = BASE_ATOMS）应 201；` +
+        `cap 覆盖 AGENT_USER 原子集后授予 AGENT_USER 应 201；` +
             `实际 ${grant.status()}：${grantText}。` +
             "若仍被拒 ⇒ 不存在「原子集 ⊆ cap 的系统角色」 ⇒ BL-355 补强证据（不得自建自定义角色绕过）",
     ).toBe(201);
+
+    // 负向：显式把 `exec@*` 抬进工作区 cap ⇒ 超出 agent 基线，产品必须拒绝（不放宽守卫）。
+    const execPrincipalId = await createPrincipal(request, headers);
+    const execBind = await request.put(
+        `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${execPrincipalId}`,
+        {
+            headers,
+            data: {
+                permissions: [{ actionClass: "exec", resource: "*" }],
+            },
+        },
+    );
+    const execBindText = await execBind.text();
+    expect(
+        execBind.status(),
+        `首绑显式授予 exec@* 应 403 AGENT_PERMISSION_SCOPE_EXCEEDED；` +
+            `实际 ${execBind.status()}：${execBindText}`,
+    ).toBe(403);
+    expect(execBindText).toContain("AGENT_PERMISSION_SCOPE_EXCEEDED");
 });

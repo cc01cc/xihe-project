@@ -334,7 +334,7 @@ export async function createSessionWithPrincipal(
     // 恰好 1 条 READY 时**不**把它转成显式 providerConnectionId —— 显式连接会让 CP 跳过
     // 三件套默认解析，随后 bindApiTemplate 因 modelName 为空拒绝（`modelName is required`）。
     // 留空则 CP 走默认解析，单候选不会歧义；多条保持 CP 的显式 400。
-    let resolvedProviderConnectionId = providerConnectionId;
+    const resolvedProviderConnectionId = providerConnectionId;
     if (!resolvedProviderConnectionId) {
         const ready = (await listUserConnections(request, auth)).filter(isUsableConnection);
         if (ready.length === 0) {

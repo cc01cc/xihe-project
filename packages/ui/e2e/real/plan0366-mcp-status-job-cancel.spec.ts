@@ -60,8 +60,9 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         // fresh workspace 无 agent binding → UI「新建对话」只能 toast、零会话
         // composer 不渲染；照 session-branch 既有模式 API bootstrap
         // grants → 模板 → principal → binding → 会话，S2 直接进 chat 路由。
-        // 模板 role 含 `exec`（start/cancel_background_process 的 actionClass，
-        // ToolFaceRegistry ACTION_EXEC）+ read/write。
+        // task-774（用户裁定 2026-11-22）：模板 role / 首绑 cap 只用 agent 可授的 BASE_ATOMS
+        // 子集（read/write）。`exec@*` 超出工作区可授范围（AGENT_USER = BASE_ATOMS minus exec，
+        // exec 改为显式绑 WS_RUNNER），由下方独立负向断言覆盖。
         const bootHeaders = { ...sharedHeaders, "X-Workspace-Id": sharedWs };
         const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers: bootHeaders });
         expect(me.ok(), await me.text()).toBeTruthy();
@@ -73,7 +74,6 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         const rolePermissions = JSON.stringify([
             { actionClass: "read", resource: "*" },
             { actionClass: "write", resource: "*" },
-            { actionClass: "exec", resource: "*" },
         ]);
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: bootHeaders,
@@ -115,6 +115,27 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             },
         );
         expect(binding.status(), await binding.text()).toBe(200);
+
+        // 负向：首绑显式授予 exec@* ⇒ 403 AGENT_PERMISSION_SCOPE_EXCEEDED（不放宽守卫）。
+        const execProbe = await request.post(`${CP_URL}/api/v1/agent-principals`, {
+            headers: bootHeaders,
+            data: { name: `Plan0366ExecScope${Date.now().toString(36)}`, templateId },
+        });
+        expect(execProbe.status(), await execProbe.text()).toBe(201);
+        const execProbeId = ((await execProbe.json()) as { principalId: string }).principalId;
+        const execBind = await request.put(
+            `${CP_URL}/api/v1/workspaces/${sharedWs}/agents/${execProbeId}`,
+            {
+                headers: bootHeaders,
+                data: { permissions: [{ actionClass: "exec", resource: "*" }] },
+            },
+        );
+        const execBindText = await execBind.text();
+        expect(
+            execBind.status(),
+            `首绑 exec@* 应 403 AGENT_PERMISSION_SCOPE_EXCEEDED；实际 ${execBind.status()}：${execBindText}`,
+        ).toBe(403);
+        expect(execBindText).toContain("AGENT_PERMISSION_SCOPE_EXCEEDED");
         // task-158：instance profile 的严格解析要消费用户自己的 USER 连接，见 helper 注释。
         await ensureUserDefaultFakeConnection(request, {
             accessToken: sharedAuth,

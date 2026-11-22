@@ -93,7 +93,6 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const rolePermissions = [
             { actionClass: "read", resource: "*" },
             { actionClass: "write", resource: "*" },
-            { actionClass: "exec", resource: "*" },
         ];
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: bootHeaders,
@@ -128,6 +127,29 @@ test.describe("@host PLAN-0344 durable job resume", () => {
             { headers: bootHeaders, data: { permissions: rolePermissions } },
         );
         expect(binding.status(), await binding.text()).toBe(200);
+
+        // task-774（用户裁定 2026-11-22）：`exec@*` 不在工作区可授范围（AGENT_USER =
+        // BASE_ATOMS minus exec）。首绑显式抬 exec ⇒ 必须 403 AGENT_PERMISSION_SCOPE_EXCEEDED，
+        // 不放宽产品守卫。用一次性 principal，避免污染主夹具。
+        const execProbe = await request.post(`${CP_URL}/api/v1/agent-principals`, {
+            headers: bootHeaders,
+            data: { name: `JobResumeExecScope${Date.now().toString(36)}`, templateId },
+        });
+        expect(execProbe.status(), await execProbe.text()).toBe(201);
+        const execProbeId = ((await execProbe.json()) as { principalId: string }).principalId;
+        const execBind = await request.put(
+            `${CP_URL}/api/v1/workspaces/${sharedWs}/agents/${execProbeId}`,
+            {
+                headers: bootHeaders,
+                data: { permissions: [{ actionClass: "exec", resource: "*" }] },
+            },
+        );
+        const execBindText = await execBind.text();
+        expect(
+            execBind.status(),
+            `首绑 exec@* 应 403 AGENT_PERMISSION_SCOPE_EXCEEDED；实际 ${execBind.status()}：${execBindText}`,
+        ).toBe(403);
+        expect(execBindText).toContain("AGENT_PERMISSION_SCOPE_EXCEEDED");
         // task-158：instance profile 的严格解析要消费用户自己的 USER 连接，见 helper 注释。
         await ensureUserDefaultFakeConnection(request, {
             accessToken: sharedAuth,
