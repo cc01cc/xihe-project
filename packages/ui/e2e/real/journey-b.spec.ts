@@ -43,11 +43,15 @@ function runtimeBinaryCandidates(): string[] {
         path.join(RUNTIME_DIR, "target", "release", RUNTIME_EXE_NAME),
     ];
 }
-const HOST_ROOT = path.resolve(
-    process.cwd(),
-    "../../.tmp/e2e-host",
-    process.env.XIHE_E2E_RUN_ID ?? "unknown-run",
-);
+// XIHE_WORKSPACE_HOST_ROOT is process-level fixed by e2e-host.mjs; the per-round
+// XIHE_E2E_RUN_ID rotates (`-r2`, ...) so deriving the root from it forks on round 2+.
+const HOST_ROOT =
+    process.env.XIHE_WORKSPACE_HOST_ROOT ??
+    path.resolve(
+        process.cwd(),
+        "../../.tmp/e2e-host",
+        process.env.XIHE_E2E_RUN_ID ?? "unknown-run",
+    );
 // 运行证据写 .local（已 gitignore）；需要入册时再把摘要/截图拷入对应 PLAN evidence。
 // 2026-09-19: PLAN-0369 归档后此前的 plans/PLAN-0369-.../evidence 落点会在旧路径重建目录。
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/journey-b"),
