@@ -114,7 +114,7 @@ function parseArgs(argv) {
 function readText(p) {
     try {
         return fs.readFileSync(p, 'utf8')
-    } catch (e) {
+    } catch {
         return null
     }
 }
@@ -133,12 +133,12 @@ function probeDsd() {
             get: (id) => {
                 try {
                     return db.prepare('SELECT id, revision, status FROM decisions WHERE id = ?').get(id) ?? null
-                } catch (e) {
+                } catch {
                     return null
                 }
             }
         }
-    } catch (e) {
+    } catch {
         dsdProbe = { open: false }
     }
     return dsdProbe
