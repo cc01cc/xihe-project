@@ -544,7 +544,13 @@ class LCToolAdapter(BaseTool):
             try:
                 kwargs = safe_schema.project_input(kwargs)
             except (TypeError, ValueError):
-                raise ValueError("Tool arguments do not match the checkpoint-safe input schema") from None
+                # task-113: the parse-time guard above validates the raw model
+                # arguments; this one catches a value injected between parse and
+                # dispatch (the pre-task-143 ask_user crash: the framework filled
+                # an omitted optional field with None). A model-argument problem
+                # must surface as a structured tool error, never as a stream-fatal
+                # exception that turns the Run into AGENT_STREAM_FAILED.
+                raise ToolException("INVALID_TOOL_ARGUMENTS") from None
         # Keep the LangChain execution id for event/MCP telemetry; it is not
         # the model's originating tool_call_id used by the volatile handoff.
         call_id = str(run_manager.run_id) if run_manager is not None else str(uuid4())
