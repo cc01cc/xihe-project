@@ -13,6 +13,8 @@ pub const WAIT_TIMEOUT: u32 = 258;
 pub const WAIT_FAILED: u32 = u32::MAX;
 pub const ERROR_NOT_FOUND: u32 = 1168;
 pub const CREATE_SUSPENDED_FLAG: u32 = 0;
+pub const CREATE_NO_WINDOW_FLAG: u32 = 0;
+pub const JOB_CREATION_FLAGS: u32 = CREATE_SUSPENDED_FLAG | CREATE_NO_WINDOW_FLAG;
 pub const UNSUPPORTED_PLATFORM: u32 = 1;
 
 pub struct JobObject;

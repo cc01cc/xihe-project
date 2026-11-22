@@ -44,6 +44,17 @@ const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 const CLEANUP_NOT_STARTED: &str = "not_started";
 
+/// Bounded retry schedule for transient process-creation failures: at most two
+/// retries, 100 ms then 300 ms. There is deliberately no unbounded loop.
+const SPAWN_RETRY_DELAYS_MS: [u64; 2] = [100, 300];
+
+/// Win32 codes that mean "the host is momentarily out of memory / resources"
+/// rather than "this launch is invalid":
+/// `8` = `ERROR_NOT_ENOUGH_MEMORY`, `14` = `ERROR_OUTOFMEMORY`,
+/// `232` = `ERROR_NO_DATA` (the `0x800700E8` code seen from CreateProcess under
+/// load, task-828) and `1450` = `ERROR_NO_SYSTEM_RESOURCES`.
+const TRANSIENT_SPAWN_ERROR_CODES: [i32; 4] = [8, 14, 232, 1450];
+
 /// Engine error surface. `code()` gives the PLAN-0390 error code that the HTTP
 /// layer projects upward; `ENGINE_*` names never leave the Runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -793,11 +804,9 @@ impl JobEngine {
             .stderr(Stdio::piped());
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(sys::CREATE_SUSPENDED_FLAG);
+            command.creation_flags(sys::JOB_CREATION_FLAGS);
         }
-        let mut child = command.spawn().map_err(|error| {
-            JobEngineError::Unavailable(format!("process creation failed: {error}"))
-        })?;
+        let mut child = spawn_with_bounded_retry(&mut command)?;
 
         let job_object = match sys::JobObject::create_kill_on_close() {
             Ok(job) => Arc::new(job),
@@ -1125,6 +1134,77 @@ fn build_command(plan: &LaunchPlan) -> Command {
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
+fn is_transient_spawn_error(error: &std::io::Error) -> bool {
+    error
+        .raw_os_error()
+        .map(|code| TRANSIENT_SPAWN_ERROR_CODES.contains(&code))
+        .unwrap_or(false)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn process_creation_message(error: &std::io::Error, attempts: usize) -> String {
+    let detail = match error.raw_os_error() {
+        Some(code) => {
+            let hint = match code {
+                8 => " ERROR_NOT_ENOUGH_MEMORY",
+                14 => " ERROR_OUTOFMEMORY",
+                1450 => " ERROR_NO_SYSTEM_RESOURCES",
+                232 => " (0x800700E8 reported by CreateProcess)",
+                _ => "",
+            };
+            let hresult = 0x8007_0000u32 | (code as u32);
+            format!(" (os error {code}, 0x{hresult:08X}{hint})")
+        }
+        None => String::new(),
+    };
+    format!(
+        "process creation failed after {attempts} attempt(s){detail}: {error}; \
+         when the host is under memory pressure retry after other jobs finish"
+    )
+}
+
+/// Spawns a job child, retrying only transient resource-exhaustion failures.
+///
+/// `ERROR_NOT_ENOUGH_MEMORY` and friends can hit when several MXC jobs start at
+/// the same moment; the scheduler is still making progress, so a short bounded
+/// backoff is enough. Everything else (bad path, access denied) fails at once.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn spawn_with_bounded_retry(command: &mut Command) -> Result<Child, JobEngineError> {
+    spawn_with_retry(|| command.spawn())
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn spawn_with_retry<F>(mut spawn: F) -> Result<Child, JobEngineError>
+where
+    F: FnMut() -> std::io::Result<Child>,
+{
+    let mut retries = 0usize;
+    loop {
+        match spawn() {
+            Ok(child) => return Ok(child),
+            Err(error) => {
+                if retries < SPAWN_RETRY_DELAYS_MS.len() && is_transient_spawn_error(&error) {
+                    let delay_ms = SPAWN_RETRY_DELAYS_MS[retries];
+                    retries += 1;
+                    tracing::warn!(
+                        os_error = error.raw_os_error().unwrap_or_default(),
+                        attempt = retries,
+                        delay_ms,
+                        "job engine: transient process creation failure; retrying"
+                    );
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    continue;
+                }
+                return Err(JobEngineError::Unavailable(process_creation_message(
+                    &error,
+                    retries + 1,
+                )));
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
 /// The `cwd` must resolve inside the authorized grants; anything else fails
 /// closed (spec invariant #2).
 fn validate_cwd(plan: &LaunchPlan) -> Result<PathBuf, JobEngineError> {
@@ -1386,6 +1466,66 @@ mod tests {
         assert!(path_is_within("h:\\ws", "h:\\ws"));
         assert!(!path_is_within("h:\\wss", "h:\\ws"));
         assert!(!path_is_within("h:\\other", "h:\\ws"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn job_creation_flags_include_suspended_and_no_window() {
+        // task-828: without CREATE_NO_WINDOW every MXC job flashes a console
+        // and steals focus; without CREATE_SUSPENDED the child can run before
+        // it is inside the kill-on-close Job Object.
+        assert_eq!(sys::CREATE_SUSPENDED_FLAG, 0x0000_0004);
+        assert_eq!(sys::CREATE_NO_WINDOW_FLAG, 0x0800_0000);
+        assert_eq!(
+            sys::JOB_CREATION_FLAGS & sys::CREATE_NO_WINDOW_FLAG,
+            sys::CREATE_NO_WINDOW_FLAG
+        );
+        assert_eq!(
+            sys::JOB_CREATION_FLAGS & sys::CREATE_SUSPENDED_FLAG,
+            sys::CREATE_SUSPENDED_FLAG
+        );
+    }
+
+    #[test]
+    fn job_transient_spawn_retry_is_bounded() {
+        assert_eq!(SPAWN_RETRY_DELAYS_MS, [100, 300]);
+        assert!(is_transient_spawn_error(
+            &std::io::Error::from_raw_os_error(8)
+        ));
+        assert!(is_transient_spawn_error(
+            &std::io::Error::from_raw_os_error(232)
+        ));
+        assert!(is_transient_spawn_error(
+            &std::io::Error::from_raw_os_error(1450)
+        ));
+        assert!(!is_transient_spawn_error(
+            &std::io::Error::from_raw_os_error(2)
+        ));
+
+        let mut calls = 0;
+        let result = spawn_with_retry(|| {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(8))
+        });
+        let error = result.expect_err("transient failures must eventually surface");
+        assert_eq!(calls, 3, "one initial attempt plus at most two retries");
+        assert!(
+            matches!(error, JobEngineError::Unavailable(ref message) if message.contains("after 3 attempt(s)")),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn job_process_creation_message_carries_readable_codes() {
+        let memory = process_creation_message(&std::io::Error::from_raw_os_error(8), 3);
+        assert!(memory.contains("after 3 attempt(s)"));
+        assert!(memory.contains("os error 8"));
+        assert!(memory.contains("0x80070008"));
+        assert!(memory.contains("ERROR_NOT_ENOUGH_MEMORY"));
+
+        let observed = process_creation_message(&std::io::Error::from_raw_os_error(232), 3);
+        assert!(observed.contains("os error 232"));
+        assert!(observed.contains("0x800700E8"));
     }
 
     #[test]

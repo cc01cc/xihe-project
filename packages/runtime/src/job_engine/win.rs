@@ -33,6 +33,17 @@ const MAX_TRACKED_PIDS: usize = 512;
 /// `true` when the process must not run until [`resume_main_thread`] is called.
 pub const CREATE_SUSPENDED_FLAG: u32 = CREATE_SUSPENDED;
 
+/// `CREATE_NO_WINDOW`: do not attach a console window to the child.
+///
+/// Job-engine children are captured through pipes and never need a console;
+/// without this flag every MXC/host job flashes a Windows Terminal window and
+/// steals focus (task-828). Mirrors `plugin::runner`'s constant.
+pub const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
+
+/// Creation flags for every job-engine child: suspended (so it can be assigned
+/// to its kill-on-close Job Object before it runs) and windowless.
+pub const JOB_CREATION_FLAGS: u32 = CREATE_SUSPENDED_FLAG | CREATE_NO_WINDOW_FLAG;
+
 #[repr(C)]
 struct PidListBuffer {
     number_of_assigned_processes: u32,
