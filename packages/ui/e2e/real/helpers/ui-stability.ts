@@ -63,12 +63,33 @@ export function startRequestTracker(page: Page): RequestTracker {
         async waitForQuiescence(timeoutMs = 5000): Promise<void> {
             // `expect.poll` is the project's standard event-driven wait (explicit timeout,
             // no fixed sleep); it returns as soon as the tracked set drains.
-            await expect
-                .poll(() => pending.size, {
-                    timeout: timeoutMs,
-                    intervals: [100, 100, 200, 300, 500],
-                })
-                .toBe(0);
+            try {
+                await expect
+                    .poll(() => pending.size, {
+                        timeout: timeoutMs,
+                        intervals: [100, 100, 200, 300, 500],
+                    })
+                    .toBe(0);
+            } catch (error) {
+                // task-801: a bare "pending=3" made the flaky ui-health failure
+                // unattributable. Name every still-open request (method + URL +
+                // resource type) so the next red run identifies the endpoint.
+                const pendingRequests = [...pending]
+                    .map(
+                        (request) =>
+                            `${request.method()} ${request.url()} (${request.resourceType()})`,
+                    )
+                    .sort();
+                const detail =
+                    pendingRequests.length > 0
+                        ? `\n  ${pendingRequests.join("\n  ")}`
+                        : "\n  (the pending set emptied while building this message)";
+                throw new Error(
+                    `waitForQuiescence timed out after ${timeoutMs}ms with ` +
+                        `${pendingRequests.length} pending request(s):${detail}`,
+                    { cause: error },
+                );
+            }
         },
         observedCount(): number {
             return observed;

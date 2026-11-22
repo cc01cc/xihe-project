@@ -19,7 +19,8 @@
     "mock-full": {
       "description": "host lane full suite in mock mode (0368/0369 baseline 41P/0F/30S)",
       "llmMode": "mock",
-      "specs": ["e2e/real"]
+      // task-801: see the lane-membership note above "real-full".
+      "specs": ["e2e[\\\\/]real[\\\\/](?!bl328-bl333-a11y-and-sse)"]
     },
     // NOTE (2026-11-03): there is NO batch for `e2e/mock/**` and there cannot be one —
     // the host runner appends `--grep @host` (playwright.config.ts:42) and **no mock spec
@@ -51,10 +52,17 @@
     // The remaining 49 failures are pre-existing and unrelated (config-settings, model-popover,
     // policy-management, sse-liveness, workspace-* …); `screenshots.spec.ts` order-dependent
     // "0 console errors" cases as well (settings-monitoring fails 3/3 in isolation on develop).
+    // task-801 lane-membership: Playwright treats each positional filter as a regex over
+    // **absolute file paths** (`playwright/lib/program.js:63`), so a directory batch can
+    // exclude a spec that belongs to another llm-mode. e2e-host.mjs has no `exclude` field
+    // yet; if it gains one, replace these patterns with an explicit exclusion list.
+    // `bl328-bl333-a11y-and-sse.spec.ts` declares `--llm-mode=approval` in its header and
+    // now runs in the `approval` batch. Sweeping it into mock/real makes the approval card
+    // provably absent => guaranteed red, so both directory batches subtract it here.
     "real-full": {
       "description": "host lane full suite on the real provider (key-gated; 0372 baseline 42P/0F/31S)",
       "llmMode": "real",
-      "specs": ["e2e/real"]
+      "specs": ["e2e[\\\\/]real[\\\\/](?!bl328-bl333-a11y-and-sse)"]
     },
     "write-file": {
       "description": "deterministic write_file tool-call gate (journey-a/c, checkpoints, approval reuse, usage)",
@@ -69,9 +77,12 @@
       ]
     },
     "approval": {
-      "description": "approval pass/reject/persist chain",
+      "description": "approval pass/reject/persist chain + BL-328/BL-333 approval-lane a11y/SSE cases",
       "llmMode": "approval",
-      "specs": ["e2e/real/approval.spec.ts"]
+      "specs": [
+        "e2e/real/approval.spec.ts",
+        "e2e/real/bl328-bl333-a11y-and-sse.spec.ts"
+      ]
     },
     "credential-acquire": {
       "description": "PLAN-0497 acquire_credential real chain: manual ask -> delivery -> memory-only value",
