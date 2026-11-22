@@ -414,6 +414,38 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
         expect(wrapper.find('[data-testid="workspace-execution-mode-fixed"]').exists()).toBe(false);
     });
 
+    // task-789: pin that `windows-host` is not filtered out of the direct-attach option list,
+    // and that it is rendered with the localized label (never the raw wire value).
+    it("renders windows-host with its localized label for a direct-attach workspace", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            storageMode: "direct_attach",
+        } as never);
+
+        const wrapper = await mountView();
+        await openSelectAt(wrapper, 0);
+        const host = selectItemComponents(wrapper).find(
+            (item) => item.attributes("data-value") === "windows-host",
+        );
+        expect(host, "windows-host option must exist for direct_attach").toBeTruthy();
+        expect(host?.text()).toContain("Windows 宿主直跑");
+    });
+
+    // task-789: the dropdown is absent only because the workspace is NOT direct_attach
+    // (managed_import is docker-only). The page must explain that instead of silently hiding it.
+    it("explains why the execution-mode dropdown is absent for a managed-import workspace", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            storageMode: "managed_import",
+        } as never);
+
+        const wrapper = await mountView();
+        expect(wrapper.find('[data-testid="workspace-execution-mode"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="workspace-execution-mode-hint"]').text()).toContain(
+            "受管工作区由 Runtime 托管存储，只能使用 Docker 执行后端",
+        );
+    });
+
     it("switches a direct-attach workspace between MXC and host", async () => {
         mockedApi.getWorkspaceEnvironment
             .mockResolvedValueOnce({
