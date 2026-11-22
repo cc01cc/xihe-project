@@ -44,7 +44,7 @@ interface MonitorBody {
 }
 
 // PLAN-0507 T4.1/T4.2：右栏 Monitor 的真实浏览器验收（0453 #13/#17 已确认形态）。
-// 覆盖：桌面默认打开 Monitor → 空态 → 一次真实 Run 后的数据对照（与 /runs、/monitor 双 API 互证）
+// 覆盖：从模块入口 /workbench 进工作台 → 从右栏入口打开 Monitor → 空态 → 一次真实 Run 后的数据对照（与 /runs、/monitor 双 API 互证）
 // → SSE 事件驱动刷新（第二次 Run 无需手动刷新）→ 视图切换 → 取数失败保留快照+重试恢复
 // → SSE 断开 stale 与重连恢复 → 移动端两视图 sheet。
 //   node scripts/e2e-host.mjs --batch=session-monitor --retries=0
@@ -145,14 +145,24 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         });
     }
 
-    test("desktop: default Monitor, API cross-check, SSE refresh, toggles", async ({
+    // 现行 IA（task-34 / D-1122）：`/workspace` 已退化为模块入口 redirect，模块入口是
+    // `/workbench`；有 tab 上下文（`seedPage` 写入的 `xihe-workspace`）时守卫把它接到
+    // 工作区容器 `/workspace/{id}`。spec 走这条真实入口，不再直接深链容器路由。
+    async function enterWorkbench(page: Page): Promise<void> {
+        await page.goto("/workbench", { waitUntil: "load" });
+        await page.waitForURL(new RegExp(`/workspace/${ctx.workspaceId}(?:$|[/?#])`), {
+            timeout: LONG_TIMEOUT_MS,
+        });
+    }
+
+    test("desktop: open Monitor from dock, API cross-check, SSE refresh, toggles", async ({
         page,
         request,
     }) => {
         // BL-148: the probe run needs a usable chat connection; `ensureChatBinding`
         // builds the real-lane one from the runner-provided identity (node side).
         seedPage(page, ctx);
-        await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
+        await enterWorkbench(page);
         await ensureChatReady(page);
         // Bind a chat connection through the same fixture path sendChat specs use,
         // so readiness.connection has a READY fact to show.
@@ -248,7 +258,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
     test("desktop: fetch failure keeps the snapshot and retry recovers", async ({ page }) => {
         seedPage(page, ctx);
-        await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
+        await enterWorkbench(page);
         await ensureChatReady(page);
 
         await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
@@ -290,7 +300,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         intentionalAbort = true;
         const route = "**/api/v1/events*";
         await page.route(route, (handler) => handler.abort());
-        await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
+        await enterWorkbench(page);
         await ensureChatReady(page);
 
         await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
@@ -312,7 +322,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
     test("mobile: monitor sheet with two tabs", async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         seedPage(page, ctx);
-        await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
+        await enterWorkbench(page);
 
         // PLAN-0560 M3 (cb5651a7) converged the workspace toolbar entries: on
         // mobile the monitor entry lives in the toolbar overflow menu
