@@ -7,6 +7,14 @@ import { expectModalDialog } from "../../../../test-utils/modalDialog";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 
+// task-845：数据三态断言绑定 i18n 文案键，而不是复制中文常量 ——
+// 否则改 key 值（含 en 侧）时用例仍然绿，等于没钉住「文案走 i18n」。
+const zhWorkspace = (
+    i18n.global.getLocaleMessage("zh-CN") as unknown as {
+        workspace: Record<string, unknown>;
+    }
+).workspace;
+
 const OWNER = {
     userId: "11111111-1111-4111-8111-111111111111",
     username: "owner",
@@ -108,7 +116,7 @@ describe("WorkspaceMembersPanel", () => {
         const wrapper = await mountPanelWithoutSettling();
 
         expect(wrapper.find('[data-testid="ws-members-loading"]').exists()).toBe(true);
-        expect(wrapper.text()).toContain("加载成员中");
+        expect(wrapper.text()).toContain(zhWorkspace.membersLoading as string);
         expect(wrapper.find('[data-testid="ws-members-list"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-members-empty"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-members-error"]').exists()).toBe(false);
@@ -121,8 +129,11 @@ describe("WorkspaceMembersPanel", () => {
 
         const empty = wrapper.find('[data-testid="ws-members-empty"]');
         expect(empty.exists()).toBe(true);
-        expect(empty.text()).toContain("还没有成员");
-        expect(empty.text()).toContain("除你之外还没有其他成员");
+        expect(empty.text()).toContain(zhWorkspace.membersEmptyTitle as string);
+        expect(empty.text()).toContain(zhWorkspace.membersEmptyHint as string);
+        expect(empty.get('[data-testid="ws-members-empty-action"]').text()).toContain(
+            zhWorkspace.membersEmptyAction as string,
+        );
         expect(wrapper.find('[data-testid="ws-members-list"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-members-loading"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-members-error"]').exists()).toBe(false);
@@ -143,9 +154,12 @@ describe("WorkspaceMembersPanel", () => {
 
         const error = wrapper.find('[data-testid="ws-members-error"]');
         expect(error.exists()).toBe(true);
-        expect(error.text()).toContain("加载成员失败");
+        expect(error.text()).toContain(zhWorkspace.membersLoadFailed as string);
         expect(wrapper.get('[data-testid="ws-members-error-code"]').text()).toContain(
             "WORKSPACE_INTERNAL",
+        );
+        expect(wrapper.get('[data-testid="ws-members-error-code"]').text()).toContain(
+            zhWorkspace.membersErrorCode as string,
         );
         expect(wrapper.text()).not.toContain("SQLSTATE 42P01 backend exploded");
         expect(wrapper.find('[data-testid="ws-members-list"]').exists()).toBe(false);
@@ -159,7 +173,7 @@ describe("WorkspaceMembersPanel", () => {
         );
         const wrapper = await mountPanel();
 
-        expect(wrapper.text()).toContain("加载成员失败");
+        expect(wrapper.text()).toContain(zhWorkspace.membersLoadFailed as string);
         expect(wrapper.text()).not.toContain("Backend exploded");
         expect(wrapper.find('[data-testid="ws-members-error-code"]').exists()).toBe(false);
     });

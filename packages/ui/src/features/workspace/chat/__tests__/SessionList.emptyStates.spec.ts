@@ -149,6 +149,10 @@ describe("左栏工作区分组（task-352）", () => {
         expect(counts.error).toBe(0);
         expect(counts.empty).toBe(0);
         expect(counts.loading + counts.error + counts.empty).toBeLessThanOrEqual(1);
+        // task-845：正向断言 loading 用的是 i18n 文案键，而不是只测 testid 存在。
+        expect(wrapper.get('[data-testid="sidebar-groups-loading"]').text()).toContain(
+            zhSidebar.groupsLoading as string,
+        );
         expect(wrapper.findAll('[data-testid="session-item"]')).toHaveLength(0);
     });
 
@@ -165,8 +169,20 @@ describe("左栏工作区分组（task-352）", () => {
         expect(counts.error).toBe(1);
         expect(counts.empty).toBe(0);
         expect(counts.loading + counts.error + counts.empty).toBeLessThanOrEqual(1);
+        // task-845：error 主文案走 i18n；重试入口是正向可用的（点完错误态消失、分组回来）。
+        expect(wrapper.get('[data-testid="sidebar-groups-error"]').text()).toContain(
+            zhSidebar.groupsFailed as string,
+        );
         expect(wrapper.find('[data-testid="sidebar-groups-retry"]').exists()).toBe(true);
         expect(wrapper.findAll('[data-testid="session-item"]')).toHaveLength(0);
+
+        listWorkspaces.mockResolvedValue([{ id: "ws-a", name: "Ws ws-a", workspaceRole: "OWNER" }]);
+        await wrapper.get('[data-testid="sidebar-groups-retry"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="sidebar-groups-error"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="sidebar-groups-loading"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="sidebar-workspace-group-ws-a"]').exists()).toBe(true);
     });
 
     it("两个工作区都渲染成分组；首屏只拉当前组，展开第二组才 +1", async () => {
