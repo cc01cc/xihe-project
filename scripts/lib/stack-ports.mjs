@@ -31,6 +31,13 @@ export const STACK_IDS = Object.freeze(Object.keys(STACK_PORTS));
 export const DEFAULT_STACK_ID = "stack-1";
 
 /**
+ * task-853：独立验收库的**唯一**覆盖旋钮。缺省不读、不设 ⇒ 派生值原样（`--stack 2` → `xihe_2`）。
+ * 只收小写 Postgres 标识符，避免把库名/URL 拼装变成注入面。
+ */
+export const PG_DATABASE_ENV = "XIHE_PG_DATABASE";
+const PG_DATABASE_RE = /^[a-z][a-z0-9_]{0,62}$/;
+
+/**
  * 纯函数：stack id → 全部端口与派生值。非法/未登记 id 抛错（显式失败，不猜）。
  * stack-1 的结果必须与 .env.dev 的默认值逐项相等（不变式 I1）。
  */
@@ -91,6 +98,41 @@ export function stackEnvDefaults(derived, env = process.env) {
     if (env[key] === undefined || env[key] === "") applied[key] = value;
   }
   return applied;
+}
+
+/**
+ * 纯函数：按 `XIHE_PG_DATABASE` 覆盖派生库名（**本文件仍不读 process.env**，env 由调用方传入）。
+ *
+ * - 未设置/空串 ⇒ 原对象返回，行为与引入前逐字节相同（回归判据）。
+ * - 设置时只改 `database` + 三个消费键（CP datasource / Agent DSN / compose POSTGRES_DB），
+ *   端口/compose 项目/宿主目录一律不动 —— 覆盖的是「同一个栈连哪个库」，不是新起一套栈。
+ * - `databaseSource` 标记来源，供 `stack-run.mjs` 在 env 已被上游写死时强制生效。
+ */
+export function applyDatabaseOverride(derived, env = process.env) {
+  const raw = env?.[PG_DATABASE_ENV];
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return derived;
+  }
+  const name = String(raw).trim();
+  if (!PG_DATABASE_RE.test(name)) {
+    throw new Error(
+      `invalid ${PG_DATABASE_ENV} ${JSON.stringify(raw)}; expected a lowercase Postgres identifier /^[a-z][a-z0-9_]{0,62}$/`,
+    );
+  }
+  if (name === derived.database) {
+    return { ...derived, databaseSource: "derived" };
+  }
+  return {
+    ...derived,
+    database: name,
+    databaseSource: "env",
+    env: {
+      ...derived.env,
+      XIHE_CP_DATASOURCE_URL: `jdbc:postgresql://localhost:${derived.ports.postgres}/${name}`,
+      XIHE_PG_DSN: `postgresql+psycopg://xihe:@localhost:${derived.ports.postgres}/${name}`,
+      POSTGRES_DB: name,
+    },
+  };
 }
 
 /** `--stack 2` / `--stack=stack-2` → `stack-2`。 */

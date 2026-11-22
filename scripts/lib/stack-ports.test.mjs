@@ -14,7 +14,9 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   DEFAULT_STACK_ID,
+  PG_DATABASE_ENV,
   STACK_IDS,
+  applyDatabaseOverride,
   deriveStack,
   normalizeStackArg,
   stackEnvDefaults,
@@ -106,6 +108,41 @@ test("stackEnvDefaults 只补缺省，不覆盖已有 env", () => {
   assert.equal(applied.XIHE_CP_PORT, undefined, "existing value must not be overwritten");
   assert.equal(applied.XIHE_PG_PORT, "12644", "empty value counts as missing");
   assert.equal(applied.XIHE_UI_PORT, "12640");
+});
+
+test("applyDatabaseOverride：未设置 / 空串 ⇒ 派生值不变（--stack 2 仍是 xihe_2）", () => {
+  const derived = deriveStack("stack-2");
+  assert.equal(applyDatabaseOverride(derived, {}), derived);
+  assert.equal(applyDatabaseOverride(derived, { [PG_DATABASE_ENV]: "" }).database, "xihe_2");
+  assert.equal(applyDatabaseOverride(derived, { [PG_DATABASE_ENV]: "   " }).database, "xihe_2");
+  assert.equal(derived.database, "xihe_2");
+  assert.equal(derived.env.POSTGRES_DB, "xihe_2");
+});
+
+test("applyDatabaseOverride：只改库名与三个消费键，端口/compose 不动", () => {
+  const derived = deriveStack("stack-2");
+  const overridden = applyDatabaseOverride(derived, { [PG_DATABASE_ENV]: "xihe_accept" });
+  assert.equal(overridden.database, "xihe_accept");
+  assert.equal(overridden.databaseSource, "env");
+  assert.deepEqual(overridden.ports, derived.ports);
+  assert.equal(overridden.composeProject, derived.composeProject);
+  assert.equal(overridden.hostRoot, derived.hostRoot);
+  assert.equal(overridden.env.XIHE_CP_DATASOURCE_URL, "jdbc:postgresql://localhost:12644/xihe_accept");
+  assert.equal(overridden.env.XIHE_PG_DSN, "postgresql+psycopg://xihe:@localhost:12644/xihe_accept");
+  assert.equal(overridden.env.POSTGRES_DB, "xihe_accept");
+  // 原对象不被就地修改：覆盖是纯函数。
+  assert.equal(derived.database, "xihe_2");
+  assert.equal(derived.env.POSTGRES_DB, "xihe_2");
+});
+
+test("applyDatabaseOverride：非法库名显式失败（不拼进 URL）", () => {
+  for (const bad of ["Xihe_Accept", "1abc", "bad-name", "a;drop", "x".repeat(64)]) {
+    assert.throws(
+      () => applyDatabaseOverride(deriveStack("stack-2"), { [PG_DATABASE_ENV]: bad }),
+      /invalid XIHE_PG_DATABASE/,
+      `must reject ${JSON.stringify(bad)}`,
+    );
+  }
 });
 
 test("`.env.dev` 的 stack-1 端口基线与内置表一致", () => {

@@ -43,7 +43,15 @@ import {
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
 // PLAN-0770 INV-3：dev 管理员凭据的来源可观测（只读、非密）。与 dev-stack 共用同一条解析链。
 import { describeDevAdminSource } from "./lib/dev-admin-password.mjs";
-import { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } from "./lib/stack-ports.mjs";
+import {
+  DEFAULT_STACK_ID,
+  PG_DATABASE_ENV,
+  STACK_IDS,
+  applyDatabaseOverride,
+  deriveStack,
+  normalizeStackArg,
+  stackEnvDefaults,
+} from "./lib/stack-ports.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..");
@@ -61,7 +69,20 @@ function readStackArg(args) {
 
 function resolveStack(args) {
   const raw = readStackArg(args) ?? process.env.XIHE_STACK_ID ?? DEFAULT_STACK_ID;
-  return deriveStack(normalizeStackArg(raw));
+  return applyDatabaseOverride(deriveStack(normalizeStackArg(raw)), process.env);
+}
+
+/**
+ * task-853：`XIHE_PG_DATABASE` 一旦生效，就必须压过 OS env 里可能残留的
+ * `XIHE_CP_DATASOURCE_URL` / `XIHE_PG_DSN` / `POSTGRES_DB`（`stackEnvDefaults` 只补缺省，
+ * 不覆盖已有值）。覆盖的是同一个栈连哪个库，端口与 compose 项目不动。
+ */
+function applyDatabaseOverrideEnv(env, derived) {
+  if (derived.databaseSource !== "env") return env;
+  env.XIHE_CP_DATASOURCE_URL = derived.env.XIHE_CP_DATASOURCE_URL;
+  env.XIHE_PG_DSN = derived.env.XIHE_PG_DSN;
+  env.POSTGRES_DB = derived.database;
+  return env;
 }
 
 function resolveStackHostRoot(derived, env = process.env) {
@@ -275,6 +296,10 @@ try {
 // unsupported key/value/target combination exits without starting a process,
 // and error messages never echo the provided value.
 const baseEnv = { ...process.env, ...stackEnvDefaults(derived, process.env) };
+applyDatabaseOverrideEnv(baseEnv, derived);
+if (derived.databaseSource === "env") {
+  console.error(`[stack] database override ${PG_DATABASE_ENV}=${derived.database} (stack ${derived.stackId})`);
+}
 // task-172 (D-1532 ④): the dev lanes keep the "an empty database already has an admin"
 // convention. scripts/dev-stack.mjs (§dev 管理员密码自动注入) injects only
 // XIHE_DEV_ADMIN_PASSWORD and expects DataSeeder to create the row, and reset-admin is
@@ -320,6 +345,7 @@ if (target === "env-json") {
     // (reset-admin.ps1, ops scripts) read the same picture the spawned CP will get.
     XIHE_SEED_ADMIN: process.env.XIHE_SEED_ADMIN === undefined ? "true" : process.env.XIHE_SEED_ADMIN,
   };
+  applyDatabaseOverrideEnv(env, derived);
   // PLAN-0770：附上 dev 管理员凭据的来源元数据（**非密**：身份 / 层级 / 相对路径 / 布尔），
   // 让 `env-json` 的消费者（reset-admin.ps1、运维脚本）能一并回答「这套栈的钥匙从哪来」。
   // 只读：不生成、不落盘、不含值/长度/hash。

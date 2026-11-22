@@ -86,7 +86,13 @@ import {
   resolveServiceIdentity,
 } from './lib/stack-identity.mjs';
 import { buildAdoptedRecord, deadRecordedServices } from './lib/stack-adopt.mjs';
-import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
+import {
+  PG_DATABASE_ENV,
+  STACK_IDS,
+  applyDatabaseOverride,
+  deriveStack,
+  normalizeStackArg,
+} from './lib/stack-ports.mjs';
 import {
   assertPasswordString,
   buildResetAdminCommand,
@@ -123,6 +129,7 @@ function usage(exitCode = 2) {
   console.log('  --stack N        stack id (stack-1..stack-8); default XIHE_STACK_ID or stack-1');
   console.log('  --cwd <repo>     checkout to run (default: this script\'s project root)');
   console.log('  --with-pg        start (start) / stop (stop) this stack\'s PostgreSQL container');
+  console.log(`  ${PG_DATABASE_ENV}  start/status/stop: use this database name instead of the derived xihe_<n>`);
   console.log('  --timeout <s>    readiness timeout for start (default 300)');
   console.log('  --json           machine-readable output');
   console.log('  --all            status: overview of EVERY stack that has a pid file or a listening port');
@@ -359,7 +366,10 @@ try {
 }
 const derived = (() => {
   try {
-    return deriveStack(normalizeStackArg(args.stack ?? process.env.XIHE_STACK_ID ?? undefined));
+    return applyDatabaseOverride(
+      deriveStack(normalizeStackArg(args.stack ?? process.env.XIHE_STACK_ID ?? undefined)),
+      process.env,
+    );
   } catch (error) {
     console.error(`[dev-stack] ERROR: ${error.message}`);
     process.exit(2);
@@ -1047,6 +1057,9 @@ async function start() {
   console.log(
     `[dev-stack] ${args.action} ${derived.stackId} cwd=${projectRoot} ports ui=${ports.ui} cp=${ports.cp} agent=${ports.agent} runtime=${ports.runtime} pg=${ports.postgres}`,
   );
+  if (derived.databaseSource === 'env') {
+    console.log(`[dev-stack] database override ${PG_DATABASE_ENV}=${derived.database} (stack ${derived.stackId} default would be xihe_${derived.index})`);
+  }
   console.log(`[dev-stack] logs: ${logDir}`);
 console.log(`[dev-stack] ${'XIHE_BUILD_COMMIT'}=${stackBuildCommit.value === '' ? '(空串)' : stackBuildCommit.value} — ${describeBuildCommit(stackBuildCommit)}（注入 cp/agent/runtime 三个子进程；env-first，项目侧只读 env；verdict=${stackCpBuildAtStart.verdict} ⇒ ${stackBuildCommit.status === 'ok' ? '不重建，注入的 sha 即将要运行的构建' : '本次可能重建，故不注入旧 sha（task-61 宁缺勿假）'}）`);
 if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNoRebuild)}`);
@@ -1408,7 +1421,10 @@ async function statusAll() {
   for (const stackId of STACK_IDS) {
     let d;
     try {
-      d = deriveStack(stackId);
+      d = applyDatabaseOverride(
+        deriveStack(stackId),
+        stackId === derived.stackId ? process.env : {},
+      );
     } catch {
       continue;
     }
