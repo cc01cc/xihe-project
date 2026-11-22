@@ -71,6 +71,7 @@ async function loginViaForm(page: Page): Promise<void> {
 async function discoverWorkspaceSession(
     page: Page,
 ): Promise<{ workspaceId: string; sessionId: string }> {
+    // read-only: 用 CP 只读 API 取工作区与会话，避免点侧栏改变 openTabs 破坏测量
     const picked = (await page.evaluate(async () => {
         const token = localStorage.getItem("xihe-token") ?? "";
         const headers: Record<string, string> = { authorization: "Bearer " + token };

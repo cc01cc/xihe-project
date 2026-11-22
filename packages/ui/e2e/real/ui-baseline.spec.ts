@@ -398,6 +398,7 @@ async function discoverSession(
     let lastError = "";
     for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
+            // read-only: 全部为 GET（workspaces/sessions/branches/messages），只用于挑选有消息的会话
             const picked = (await page.evaluate(async () => {
                 const token = localStorage.getItem("xihe-token") ?? "";
                 const H: Record<string, string> = { authorization: "Bearer " + token };

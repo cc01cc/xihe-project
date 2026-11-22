@@ -122,6 +122,7 @@ async function loginViaForm(page: Page): Promise<void> {
 
 /** 取一个工作区 id（只需要落到 AppLayout，不需要会话）。 */
 async function pickWorkspaceId(page: Page): Promise<string | null> {
+    // read-only: 只读取工作区列表用于落到 AppLayout，不写任何状态
     return page.evaluate(async () => {
         const token = localStorage.getItem("xihe-token") ?? "";
         const res = await fetch("/api/v1/workspaces", {

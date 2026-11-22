@@ -129,6 +129,7 @@ function copyOf(key: string): string {
  * 模式改由「横幅 + API 真值」钉住。直接问页面自己的 mock 路由，断言具体值而不是「非空」。
  */
 async function readModeFromApi(page: Page): Promise<string> {
+    // read-only: 读取页面自身 mock 路由的审批模式真值（DSD-1507 ③ 后摘要行不再渲染该字段）
     return page.evaluate(async (sessionId: string) => {
         const url = "/api/v1/policy/mode?sessionId=" + encodeURIComponent(sessionId);
         const response = await fetch(url);

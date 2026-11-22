@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**381** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 277 · 服务间 104
+- 规模：**382** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 278 · 服务间 104
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（381 / 381 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（382 / 382 个操作带 tag）。
 
-## public（277 operations · 公开 · 17 tags）
+## public（278 operations · 公开 · 17 tags）
 
 ### auth（14）
 
@@ -98,7 +98,7 @@
 | `DELETE /api/v1/workspaces/{workspaceId}/roots/{rootId}` | `deleteWorkspaceRoot` | `bearerAuth` | Soft-delete a root (PLAN-0639 D39-3) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/runtime/release` | `releaseWorkspaceRuntime` | `bearerAuth` | Release workspace execution resources (any accessible member) | 公开 |
 
-### agent（31）
+### agent（32）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -114,6 +114,7 @@
 | `GET /api/v1/agent-principals/{principalId}/roles` | `listAgentPrincipalRoles` | `bearerAuth` | List one agent principal's role bindings (PLAN-0667) | 公开 |
 | `POST /api/v1/agent-principals/{principalId}/roles` | `bindAgentPrincipalRole` | `bearerAuth` | Bind one role to an agent principal (PLAN-0667) | 公开 |
 | `DELETE /api/v1/agent-principals/{principalId}/roles/{bindingId}` | `unbindAgentPrincipalRole` | `bearerAuth` | Remove one role binding from an agent principal (PLAN-0667) | 公开 |
+| `GET /api/v1/agent-principals/{principalId}/sessions` | `listAgentPrincipalSessions` | `bearerAuth` | List every Session this Agent principal participates in (any participant role, honest counts) | 公开 |
 | `GET /api/v1/agent-principals/{principalId}/skills` | `listAgentPrincipalSkills` | `bearerAuth` | List one agent principal's skill bindings (PLAN-0667) | 公开 |
 | `POST /api/v1/agent-principals/{principalId}/skills` | `bindAgentPrincipalSkill` | `bearerAuth` | Bind one skill to an agent principal (PLAN-0667) | 公开 |
 | `DELETE /api/v1/agent-principals/{principalId}/skills/{bindingId}` | `unbindAgentPrincipalSkill` | `bearerAuth` | Remove one skill binding from an agent principal (PLAN-0667) | 公开 |

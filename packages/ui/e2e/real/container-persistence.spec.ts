@@ -94,6 +94,7 @@ async function loginViaForm(page: Page): Promise<void> {
 async function discoverWorkspaceSessions(
     page: Page,
 ): Promise<{ workspaceId: string; sessionIds: string[] }> {
+    // fixture-only: 真栈空工作区时用与 UI 相同的建会话接口补足两个对象（页签判据的前置数据，不验证建会话行为）
     const picked = (await page.evaluate(async (runId: string) => {
         const token = localStorage.getItem("xihe-token") ?? "";
         const auth: Record<string, string> = { authorization: "Bearer " + token };
