@@ -71,8 +71,8 @@ public final class OrgUnitGovernancePolicy {
     private static final Set<String> GOVERNANCE_ATOMS = Set.of(
             ATOM_MANAGE_ORG_UNITS, ATOM_MANAGE_ORG_UNIT_MEMBERS, ATOM_READ_ORG_UNIT_MEMBERS);
 
-    /** The problem code of a refused org-unit role binding (RFC 9457 {@code code}). */
-    public static final String CODE_FORBIDDEN = "ORG_SCOPE_ROLE_FORBIDDEN";
+    /** The problem code of a refused org-unit preset binding (RFC 9457 {@code code}). */
+    public static final String CODE_FORBIDDEN = "ORG_SCOPE_PRESET_FORBIDDEN";
 
     private OrgUnitGovernancePolicy() {
     }
@@ -161,9 +161,9 @@ public final class OrgUnitGovernancePolicy {
     public static void requireGovernanceRole(String roleName, Collection<String> roleAtomNames) {
         List<String> offending = offendingAtoms(roleAtomNames);
         if (!offending.isEmpty()) {
-            String subject = roleName == null || roleName.isBlank() ? "role" : "role '" + roleName + "'";
+            String subject = roleName == null || roleName.isBlank() ? "preset" : "preset '" + roleName + "'";
             throw new CpApiException(HttpStatus.CONFLICT, CODE_FORBIDDEN,
-                    subject + " is not an org-unit governance role; atom(s) outside the whitelist: "
+                    subject + " is not an org-unit governance preset; atom(s) outside the whitelist: "
                             + String.join(",", offending));
         }
     }
