@@ -128,6 +128,16 @@ tags:
 
 条件是挂在 policy 层、与 grant 分开存的第二道判断。它读请求上下文里的字段，**只能收窄，不能放宽**：条件永不授予权限，也不参与 `(actionClass, resource)` 匹配。
 
+**MVP 底线（task-863 已实现）**——本阶段只做两条 fail-closed 规则，五算子尚未实现：
+
+- **未登记的条件 key ⇒ deny**：key 必须来自单一注册表（`policy/condition/ConditionKeys.java`）。不在表中（含 null、空白、大小写或空格不符）⇒ 承载该条件的 grant 行不成立；**不得忽略未知 key、不得按通过处理**。
+- **缺字段 ⇒ 算不满足**：条件声明的上下文字段不存在或为空 ⇒ 该条件不满足 ⇒ 收窄失败 ⇒ deny。
+- 两条规则有先后：混合条件集里「未登记 key」优先，因为它是配置错误。
+- 条件按 grant 行挂载，不写进权限原子；同一原子的另一行无条件授予时仍然成立（并集语义）。条件载体当前独立于 `grants` 表，**不为此给 grants 加条件列**。
+- 拒绝原因可解释：`condition-key-unregistered` / `condition-field-missing` 进 explain，带层级索引。
+
+**MVP 之后（未实现）**——值比较算子：
+
 | 判断方式 | 例子 |
 |---|---|
 | 相等 `eq` | 请求里的 project 必须是 `p-42` |
@@ -138,12 +148,11 @@ tags:
 
 硬规则：
 
-- 算子集 **MUST** 封闭为这五种，**MUST NOT** 支持自定义算子或表达式语言。
-- 请求上下文里**缺该字段** ⇒ 判为不满足；出现**未登记的条件 key** ⇒ 直接 deny。**MUST NOT** 忽略未知 key 或按通过处理。
+- 算子集 **MUST** 封闭为这五种，**MUST NOT** 支持自定义算子或表达式语言。算子落地之前条件形状只有 key（无算子、无值），底线的「满足」只代表「key 已登记且字段存在」，**不代表值已比较**。
 - 改条件 **MUST NOT** 需要重发授权：条件与 grant 是两份数据。
 - 端点级可见性检查（组织树的「非成员得到 404」）**MUST NOT** 称为 condition，归 visibility guard。`in_subtree` 因此不属于算子集。
 
-与图、spec 的对应：`spec/security/authorization.md` §2.2；配图「条件」卡。
+与图、spec 的对应：`spec/security/authorization.md` §2.2；判据实现 `policy/condition/`（`ConditionKeys` / `ConditionBaseline` / `ConditionGate`）；配图「条件」卡。
 
 ### 4.2 审批（approval）：风险模态，不是权限
 
@@ -175,7 +184,7 @@ tags:
 | 4 | 要做什么、对什么做 | 工具面映射 + 资源串解析（§3 第 4 步） | 已实现 |
 | 5 | 硬闸 | L0 hard guard，先于一切授权（§3 第 5 步） | 已实现 |
 | 6 | 动作与资源同时命中 | 唯一匹配点，链上每级都持有（§3 第 6 步） | 已实现 |
-| 7 | 条件 | §4.1 五算子，只收窄 | **未实现** |
+| 7 | 条件 | §4.1 只收窄 | **部分**：fail-closed 两条底线已实现（task-863）；五算子未实现 |
 | 8 | 审批 | §4.2，批准权走 `(action:approve, resource)` | **部分**：只按动作类；批准者硬编码 |
 | 9 | 执行 | Runtime 不再判权限（§3 第 8 步） | 已实现 |
 | 10 | 记录 | 拒绝原因可解释（§3 第 9 步、§10） | 部分：求值失败仍只有 WARN |
