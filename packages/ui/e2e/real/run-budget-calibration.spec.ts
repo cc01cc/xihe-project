@@ -174,14 +174,14 @@ async function createPrincipal(
     auth: Auth,
     options: { name: string; toolMode: string },
 ): Promise<string> {
-    const roleId = randomUUID();
+    const presetId = randomUUID();
     const templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers: auth.headers,
         data: {
             presets: JSON.stringify([
                 {
-                    id: roleId,
+                    id: presetId,
                     name: `${options.name} Role`,
                     permissions: [{ actionClass: "write", resource: "*" }],
                 },

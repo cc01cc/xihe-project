@@ -328,7 +328,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
         fullPage: true,
     });
 
-    // 模板与 principal 走 API（引用 UI 保存出的 roleId），绑定在 UI 完成。
+    // 模板与 principal 走 API（引用 UI 保存出的 presetId），绑定在 UI 完成。
     const templatesResponse = await request.get(
         `${CP_URL}/api/v1/config/agent-templates?layer=user&includeMeta=true`,
         {
@@ -343,8 +343,8 @@ test("@host credential manager — UI registration, role block, binding, lease u
         id: string;
         name: string;
     }>;
-    const roleId = roles.find((role) => role.name === "E2E Credential Role")?.id;
-    expect(roleId, "UI 保存的 role 必须可读").toBeTruthy();
+    const presetId = roles.find((role) => role.name === "E2E Credential Role")?.id;
+    expect(presetId, "UI 保存的 role 必须可读").toBeTruthy();
 
     const templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {

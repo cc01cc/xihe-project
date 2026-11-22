@@ -370,14 +370,14 @@ test.describe("@host PLAN-0493 T0.2 loop observation", () => {
 
         // One workspace principal for the whole session (Agent binds the MCP
         // workspace context on the first workspace run).
-        const roleId = randomUUID();
+        const presetId = randomUUID();
         const templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "Loop Obs Role",
                         permissions: [
                             { actionClass: "read", resource: "*" },

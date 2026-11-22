@@ -84,7 +84,7 @@ async function provisionCredentialAgent(
     },
 ): Promise<string> {
     const { workspaceId, headers, name, credentialId } = options;
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const credentialAtom = {
         actionClass: "credential_use",
@@ -94,7 +94,7 @@ async function provisionCredentialAgent(
         headers,
         data: {
             presets: JSON.stringify([
-                { id: roleId, name: `${name} Role`, permissions: [credentialAtom] },
+                { id: presetId, name: `${name} Role`, permissions: [credentialAtom] },
             ]),
             templates: JSON.stringify([
                 {

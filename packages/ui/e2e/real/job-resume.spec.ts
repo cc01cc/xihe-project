@@ -88,7 +88,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         expect(me.ok(), await me.text()).toBeTruthy();
         const userId = ((await me.json()) as { id: string }).id;
         seedUserGrant(userId, sharedWs);
-        const roleId = randomUUID(),
+        const presetId = randomUUID(),
             templateId = randomUUID();
         const rolePermissions = [
             { actionClass: "read", resource: "*" },
@@ -98,7 +98,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
             headers: bootHeaders,
             data: {
                 presets: JSON.stringify([
-                    { id: roleId, name: "JobResume Role", permissions: rolePermissions },
+                    { id: presetId, name: "JobResume Role", permissions: rolePermissions },
                 ]),
                 templates: JSON.stringify([
                     {

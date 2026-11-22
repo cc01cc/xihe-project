@@ -106,14 +106,14 @@ test.describe("@host Session branch path", () => {
             workspaceId: journey.workspaceId,
         });
 
-        const roleId = randomUUID(),
+        const presetId = randomUUID(),
             templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: workspaceHeaders,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "Session Branch Role",
                         permissions: [{ actionClass: "read", resource: "*" }],
                     },

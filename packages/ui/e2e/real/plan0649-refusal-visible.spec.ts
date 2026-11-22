@@ -239,14 +239,14 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         ]);
         const connection = await ensureOpenAiCompatConnection(request, headers);
 
-        const roleId = randomUUID(),
+        const presetId = randomUUID(),
             templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "PLAN0649 Refusal Role",
                         permissions: [
                             { actionClass: "write", resource: "*" },

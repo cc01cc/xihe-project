@@ -72,14 +72,14 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
         { actionClass: "write", resource: "*" },
     ]);
 
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
             presets: JSON.stringify([
                 {
-                    id: roleId,
+                    id: presetId,
                     name: "ProvenanceWriter",
                     permissions: [
                         { actionClass: "read", resource: "*" },

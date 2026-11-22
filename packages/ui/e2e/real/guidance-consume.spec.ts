@@ -38,14 +38,14 @@ async function createApprovalAgent(
 ): Promise<string> {
     const { userId, workspaceId, headers } = options;
     seedApprovalGrant(userId, workspaceId);
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID(),
         templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "Guidance E2E Role",
                         permissions: [
                             { actionClass: "delete", resource: "*" },

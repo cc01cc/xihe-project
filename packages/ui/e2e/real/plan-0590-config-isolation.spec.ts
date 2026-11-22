@@ -151,12 +151,12 @@ async function provisionPlainChatPrincipal(
     const { id: userId } = (await me.json()) as { id: string };
     seedUserGrantPermissions(userId, standardWorkspaceUserPermissions(auth.workspaceId));
 
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const template = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
-            presets: JSON.stringify([{ id: roleId, name: `${name} Role`, permissions: [] }]),
+            presets: JSON.stringify([{ id: presetId, name: `${name} Role`, permissions: [] }]),
             templates: JSON.stringify([
                 {
                     id: templateId,

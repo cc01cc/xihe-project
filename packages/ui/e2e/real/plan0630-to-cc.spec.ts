@@ -220,14 +220,14 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         const connection = await ensureOpenAiCompatConnection(request, headers, MODEL_ID);
 
         // One template + two WORKSPACE principals: A (PRIMARY) and B (cc member).
-        const roleId = randomUUID(),
+        const presetId = randomUUID(),
             templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "PLAN0630 ToCc Role",
                         permissions: [{ actionClass: "write", resource: "*" }],
                     },

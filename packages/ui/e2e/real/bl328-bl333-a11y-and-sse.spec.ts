@@ -44,14 +44,14 @@ async function createBoundAgent(
     headers: Record<string, string>,
 ): Promise<string> {
     seedUserGrant(userId, workspaceId, [{ actionClass: "delete", resource: "*" }]);
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
             presets: JSON.stringify([
                 {
-                    id: roleId,
+                    id: presetId,
                     name: "Follow-up Approval Role",
                     permissions: [{ actionClass: "delete", resource: "*" }],
                 },

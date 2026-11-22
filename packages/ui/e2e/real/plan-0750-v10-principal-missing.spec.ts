@@ -110,14 +110,14 @@ async function bootstrapUnboundPrincipalSession(
     // ⚠️ 模板的 model 必须与上面 profile 里的 model **同一个串**（helpers/fake-provider.ts
     // 的 FAKE_MODEL），否则 profile 解析不到连接，仍是同一个 409。
     const FAKE_MODEL = "fake-m2d-probe";
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
             presets: JSON.stringify([
                 {
-                    id: roleId,
+                    id: presetId,
                     name: "V10E2ERole",
                     permissions: [{ actionClass: "delete", resource: "*" }],
                 },

@@ -280,7 +280,7 @@ export async function provisionWorkspaceAgentPrincipal(
     const { id: userId } = (await me.json()) as { id: string };
     seedPrincipalManagementGrant(userId, auth.workspaceId, actions);
 
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const toolPermissions = actions.map((actionClass) => ({ actionClass, resource: "*" }));
     const roleIds = actions.includes("exec")
@@ -290,7 +290,7 @@ export async function provisionWorkspaceAgentPrincipal(
         headers,
         data: {
             presets: JSON.stringify([
-                { id: roleId, name: `${name} Role`, permissions: toolPermissions },
+                { id: presetId, name: `${name} Role`, permissions: toolPermissions },
             ]),
             templates: JSON.stringify([
                 {

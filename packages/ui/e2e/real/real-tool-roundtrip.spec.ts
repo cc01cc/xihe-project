@@ -84,14 +84,14 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         const userId = ((await meRes.json()) as { id: string }).id;
         seedUserGrant(userId, wsId, [{ actionClass: "write", resource: "*" }]);
         const setupHeaders = { ...headers, "X-Workspace-Id": wsId },
-            roleId = randomUUID(),
+            presetId = randomUUID(),
             templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers: setupHeaders,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "Real Compat Role",
                         permissions: [{ actionClass: "write", resource: "*" }],
                     },

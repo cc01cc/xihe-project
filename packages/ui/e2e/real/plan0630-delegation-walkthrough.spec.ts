@@ -240,14 +240,14 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         ]);
         const connection = await ensureOpenAiCompatConnection(request, headers, MODEL_ID);
 
-        const roleId = randomUUID(),
+        const presetId = randomUUID(),
             templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
             headers,
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "PLAN0630 Delegation Role",
                         permissions: [
                             { actionClass: "write", resource: "*" },

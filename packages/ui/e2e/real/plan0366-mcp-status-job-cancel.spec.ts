@@ -69,7 +69,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         const userId = ((await me.json()) as { id: string }).id;
         seedUserGrant(userId, sharedWs);
 
-        const roleId = randomUUID(),
+        const presetId = randomUUID(),
             templateId = randomUUID();
         const rolePermissions = JSON.stringify([
             { actionClass: "read", resource: "*" },
@@ -80,7 +80,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             data: {
                 presets: JSON.stringify([
                     {
-                        id: roleId,
+                        id: presetId,
                         name: "Plan0366 Role",
                         permissions: JSON.parse(rolePermissions) as unknown[],
                     },

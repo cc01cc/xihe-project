@@ -126,14 +126,14 @@ async function ensureAgentPrincipal(
     const userId = ((await me.json()) as { id: string }).id;
     seedUserGrant(userId, workspaceId, [{ actionClass: "write", resource: "*" }]);
 
-    const roleId = randomUUID(),
+    const presetId = randomUUID(),
         templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
             presets: JSON.stringify([
                 {
-                    id: roleId,
+                    id: presetId,
                     name: "PLAN-0688 Role",
                     permissions: [{ actionClass: "write", resource: "*" }],
                 },
