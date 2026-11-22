@@ -30,7 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       两类测试的假设都不变；</li>
  *   <li>迁移重放类（自己跑 Flyway 到指定版本）用 {@link #emptyDatabase(String)} 拿**空库**，
  *       不会看到模板里的历史；</li>
- *   <li>库名带类/用途标签 + 序号（{@code xihe_t_it_007}），失败后可直接进容器看现场；
+ *   <li>库名带类/用途标签 + JVM pid + 序号（{@code xihe_t_it_p12345_007}），失败后可直接进容器看现场；
+ *       带 pid 是因为 surefire {@code forkCount=2} 的两个 JVM 各有独立序号计数器，只用序号会让
+ *       两个 fork 从 001 起生成同名库（task-750 实测同名 {@code xihe_t_it_037}）；
  *       库在容器生命周期内保留（容器是抛一次性的，JVM 退出由 Testcontainers 回收）。</li>
  * </ul>
  *
@@ -64,6 +66,8 @@ public final class TestDatabaseProvider {
 
     private static final Object LOCK = new Object();
     private static final AtomicInteger SEQUENCE = new AtomicInteger();
+    /** 当前测试 JVM 的唯一标识：surefire 两个 fork 的 pid 不同，库名据此跨 fork 去重。 */
+    private static final String JVM_ID = Long.toString(ProcessHandle.current().pid());
 
     private static PostgreSQLContainer<?> container;
     private static boolean templateReady;
@@ -353,16 +357,29 @@ public final class TestDatabaseProvider {
     }
 
     private static String databaseName(String label) {
+        return databaseNameFor(label, JVM_ID, SEQUENCE.incrementAndGet());
+    }
+
+    /**
+     * 纯函数（包内可见，便于日后单测）：库名 = {@code xihe_t_<label>_p<pid>_<seq>}。
+     * pid 让同一 PG 容器内跨 JVM 全局唯一；seq 保证同 JVM 连续分配不重复；裁剪后 <= 63。
+     */
+    static String databaseNameFor(String label, String jvmId, int sequence) {
         String slug = (label == null ? "db" : label).toLowerCase(java.util.Locale.ROOT)
                 .replaceAll("[^a-z0-9]+", "_")
                 .replaceAll("^_+|_+$", "");
         if (slug.isEmpty()) {
             slug = "db";
         }
-        if (slug.length() > 40) {
-            slug = slug.substring(0, 40);
+        String suffix = "_p" + jvmId + "_" + String.format("%03d", sequence);
+        int maxSlug = 63 - "xihe_t_".length() - suffix.length();
+        if (maxSlug < 1) {
+            throw new IllegalStateException("cannot fit a Postgres identifier for jvmId=" + jvmId);
         }
-        return "xihe_t_" + slug + "_" + String.format("%03d", SEQUENCE.incrementAndGet());
+        if (slug.length() > maxSlug) {
+            slug = slug.substring(0, maxSlug);
+        }
+        return "xihe_t_" + slug + suffix;
     }
 
     private static String jdbcUrl(String databaseName) {

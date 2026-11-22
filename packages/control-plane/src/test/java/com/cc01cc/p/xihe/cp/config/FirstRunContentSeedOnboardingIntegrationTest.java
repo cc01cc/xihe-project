@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.config;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
@@ -43,6 +44,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * absent, and the only thing that can have written the workspace/connection/subject rows is the
  * trigger bound to the real register request ({@link FirstRunContentSeedRequestFilter} ->
  * {@link FirstRunContentSeedTrigger}).</p>
+ *
+ * <p>D-1912 (task-725) supersedes the old "fresh onboarding account is USER tier only" premise:
+ * the first account now claims {@code instance_owner} and receives SUPER_ADMIN <b>before</b> the
+ * first-run content trigger runs. The seeder's owner gate therefore passes and exactly one
+ * instance-scoped, credential-less connection must be created; it stays {@code UNVERIFIED} and is
+ * never claimed as a verified provider.</p>
  *
  * <p>The three readings J5 asks for are in one method, in the card's order: the full first install,
  * the second login/registration inserting nothing, and the catalog-empty model intent staying
@@ -132,13 +139,23 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
                 Integer.class, first.getId().toString(), workspace.getId().toString()),
                 "the onboarding account owns the workspace it got by default");
 
-        // Domain fact this card must not hide: the instance-scoped connection needs an instance
-        // owner + cap:instance:admin, and a fresh onboarding account is USER tier only (the launcher's
-        // D-1818 "claim chicken-and-egg" note). The seeder warns and skips it; it does not crash.
-        assertEquals(0, count("provider_connections"),
-                "the instance connection is skipped while the instance has no owner/instance admin");
-        assertTrue(seeder.lastRunWarnings().stream().anyMatch(w -> w.contains("no owner yet")),
-                "the skip must be reported, not silent; got: " + seeder.lastRunWarnings());
+        // D-1912 (task-725): the first account claims instance_owner + SUPER_ADMIN on registration,
+        // so by the time the content trigger runs the owner gate passes. Exactly one instance-scoped
+        // connection is created, and it must remain credential-less / UNVERIFIED (no forged READY).
+        assertEquals(1, count("provider_connections"),
+                "the first account is the instance owner, so the seeded instance connection is created");
+        assertFalse(seeder.lastRunWarnings().stream().anyMatch(w -> w.contains("no owner yet")),
+                "the owner gate must not skip anymore under D-1912; got: " + seeder.lastRunWarnings());
+        Map<String, Object> seededConnection = jdbc.queryForMap(
+                "SELECT owner_type, provider_id, connection_key, status, credential_id"
+                        + " FROM provider_connections");
+        assertEquals(ProviderConnection.OWNER_INSTANCE, seededConnection.get("owner_type"));
+        assertEquals("ollama", seededConnection.get("provider_id"));
+        assertEquals("default", seededConnection.get("connection_key"));
+        assertEquals(ProviderConnection.STATUS_UNVERIFIED, seededConnection.get("status"),
+                "a credential-less seeded connection must stay UNVERIFIED, never READY");
+        assertNull(seededConnection.get("credential_id"),
+                "the seeded ollama connection carries no credential");
 
         List<AgentPrincipal> subjects = agentPrincipals.findByCreatedByUserId(first.getId().toString());
         assertEquals(Set.of(FirstRunContentSeeder.LEAD_NAME, "WorkerA", "WorkerB"),
@@ -171,7 +188,12 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
         assertEquals(2, count("users"), "the second account exists");
         assertEquals(1, count("workspaces"), "a second account/login seeds no second workspace");
         assertEquals(3, count("agent_principals"), "and no second set of subjects");
-        assertEquals(0, count("provider_connections"), "and no connection appears out of nowhere");
+        assertEquals(1, count("provider_connections"),
+                "a second account/login adds no second connection");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM provider_connections"
+                        + " WHERE owner_type = 'INSTANCE' AND connection_key = 'default'",
+                Integer.class),
+                "there must be exactly one default instance connection, never a duplicate");
         assertEquals(3, count("org_unit_members"), "nobody was moved by the repeat");
         assertFalse(trigger.retryPending(), "the first attempt succeeded, so no retry is owed");
         dumpReadings("after-second-account");
