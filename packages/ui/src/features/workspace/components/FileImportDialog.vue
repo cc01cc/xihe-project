@@ -61,7 +61,7 @@ function handleCancel() {
                 data-testid="workspace-import-dialog"
                 class="w-full max-w-lg rounded-xl border bg-card p-6 shadow-lg"
             >
-                <h2 class="text-lg font-semibold mb-4">导入文件</h2>
+                <h2 class="text-lg font-semibold mb-4">{{ t("files.importTitle") }}</h2>
 
                 <div
                     class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors"
@@ -76,7 +76,7 @@ function handleCancel() {
                     @click="fileInput?.click()"
                 >
                     <Upload class="mx-auto mb-2 size-8 text-muted-foreground" aria-hidden="true" />
-                    <p class="text-sm text-muted-foreground">将文件拖到这里，或点击选择</p>
+                    <p class="text-sm text-muted-foreground">{{ t("files.importDropHint") }}</p>
                 </div>
 
                 <input
@@ -125,11 +125,13 @@ function handleCancel() {
                 </div>
 
                 <div class="mt-2">
-                    <label class="text-xs text-muted-foreground">目标目录（可选）：</label>
+                    <label class="text-xs text-muted-foreground">{{
+                        t("files.importTargetDir")
+                    }}</label>
                     <input
                         v-model="targetDir"
                         class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background"
-                        placeholder="例如 src/docs"
+                        :placeholder="t('files.importTargetDirPlaceholder')"
                     />
                 </div>
 
@@ -141,7 +143,7 @@ function handleCancel() {
                         class="accent-primary"
                     />
                     <label for="split-pdf" class="text-muted-foreground">
-                        Auto-split PDFs larger than 10MB into smaller chunks
+                        {{ t("files.importAutoSplitPdf") }}
                     </label>
                 </div>
 
@@ -150,14 +152,14 @@ function handleCancel() {
                         class="px-3 py-1.5 text-sm rounded border hover:bg-accent"
                         @click="handleCancel"
                     >
-                        取消
+                        {{ t("common.cancel") }}
                     </button>
                     <button
                         class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                         :disabled="ws.uploadQueue.length === 0"
                         @click="handleImport"
                     >
-                        导入
+                        {{ t("files.importAction") }}
                     </button>
                 </div>
             </div>

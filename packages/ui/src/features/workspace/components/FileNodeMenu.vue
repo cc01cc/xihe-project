@@ -257,9 +257,7 @@ function copyPath() {
     </BaseModal>
 
     <BaseModal :title="t('files.move')" :show="showMoveModal" @close="showMoveModal = false">
-        <label class="text-sm text-muted-foreground"
-            >Target directory (empty = workspace root):</label
-        >
+        <label class="text-sm text-muted-foreground">{{ t("files.moveTargetLabel") }}</label>
         <input
             v-model="moveTarget"
             class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background font-mono"
@@ -352,7 +350,9 @@ function copyPath() {
         :show="showDeleteModal"
         @close="showDeleteModal = false"
     >
-        <p class="text-sm">Delete "{{ props.node.path }}"? This action cannot be undone.</p>
+        <p class="text-sm">
+            {{ t("files.deleteConfirmBody", { path: props.node.path }) }}
+        </p>
         <p v-if="opError" class="text-xs text-destructive mt-1">{{ opError }}</p>
         <div class="flex justify-end gap-2 mt-4">
             <button

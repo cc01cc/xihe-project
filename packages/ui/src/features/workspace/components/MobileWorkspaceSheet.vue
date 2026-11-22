@@ -33,8 +33,8 @@ function handleOpenChange(open: boolean) {
     <Sheet :open="open" @update:open="handleOpenChange">
         <SheetContent side="left" class="p-0 gap-0 md:hidden" data-testid="mobile-files-sheet">
             <SheetHeader class="px-4 pt-4 pb-2 text-left">
-                <SheetTitle>文件</SheetTitle>
-                <SheetDescription>浏览和管理当前 workspace 的文件。</SheetDescription>
+                <SheetTitle>{{ t("files.titleFiles") }}</SheetTitle>
+                <SheetDescription>{{ t("files.mobileSheetDescription") }}</SheetDescription>
             </SheetHeader>
             <div class="flex items-center justify-end px-4 pb-2">
                 <!-- PLAN-0384 T1.1: mobile creation entry (desktop toolbar can overflow on narrow viewports). -->

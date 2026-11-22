@@ -4,15 +4,21 @@
  * ② 外部 modelValue 变化同步进编辑器（不emit）；
  * ③ 编辑产出 emit（CM6 → 宿主 SSOT）。
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import MarkdownEditor from "../MarkdownEditor.vue";
+import { i18n } from "../../../../i18n";
+
+beforeEach(() => {
+    i18n.global.locale.value = "zh-CN";
+});
 
 describe("PLAN-0755 MarkdownEditor（CM6 宿主）", () => {
     it("挂载后 CM6 编辑器真实存在", async () => {
         const wrapper = mount(MarkdownEditor, {
             props: { modelValue: "# hello" },
+            global: { plugins: [i18n] },
         });
         await nextTick();
         await nextTick();
@@ -25,6 +31,7 @@ describe("PLAN-0755 MarkdownEditor（CM6 宿主）", () => {
     it("外部 modelValue 变化同步进编辑器", async () => {
         const wrapper = mount(MarkdownEditor, {
             props: { modelValue: "before" },
+            global: { plugins: [i18n] },
         });
         await nextTick();
         await wrapper.setProps({ modelValue: "after-change" });
@@ -36,6 +43,7 @@ describe("PLAN-0755 MarkdownEditor（CM6 宿主）", () => {
     it("预览切换后 CM6 容器仍常驻（v-show，不重建）", async () => {
         const wrapper = mount(MarkdownEditor, {
             props: { modelValue: "# doc" },
+            global: { plugins: [i18n] },
         });
         await nextTick();
         const toggle = wrapper.findAll("button");

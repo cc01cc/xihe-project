@@ -156,7 +156,7 @@ async function confirmNewFile() {
             v-if="newFileName.trim() === '' && newFileName !== ''"
             class="text-xs text-destructive mt-1"
         >
-            Name cannot be empty
+            {{ t("files.nameEmpty") }}
         </p>
         <div class="flex justify-end gap-2 mt-4">
             <button

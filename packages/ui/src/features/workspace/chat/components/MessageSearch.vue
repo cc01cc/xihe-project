@@ -16,7 +16,7 @@ void inputRef;
             ref="inputRef"
             v-model="model"
             type="text"
-            placeholder="搜索消息…"
+            :placeholder="t('chat.searchPlaceholder')"
             class="w-48 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
             autofocus
         />

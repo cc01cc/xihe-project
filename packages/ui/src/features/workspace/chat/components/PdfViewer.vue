@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { usePdfDocument } from "../../../../composables/usePdfDocument";
 import { api } from "../../../../composables/api";
 import { formatFileSize } from "../../../../lib/fileSize";
@@ -7,6 +8,8 @@ import { logger } from "../../../../lib/logger";
 import { useAuthStore } from "../../../../stores/auth";
 import PdfToolbar from "./PdfToolbar.vue";
 import PdfPageCanvas from "./PdfPageCanvas.vue";
+
+const { t } = useI18n();
 
 const props = defineProps<{
     src: string | ArrayBuffer | null;
@@ -129,15 +132,18 @@ function nextChunk() {
             class="w-full p-3 rounded border bg-amber-50 text-amber-900 text-sm flex items-center justify-between"
         >
             <span>
-                File is large ({{ fileSize ? formatFileSize(fileSize) : "unknown" }}). Split into
-                smaller chunks for preview?
+                {{
+                    t("files.pdfTooLarge", {
+                        size: fileSize ? formatFileSize(fileSize) : t("files.sizeUnknown"),
+                    })
+                }}
             </span>
             <div class="flex gap-2 shrink-0">
                 <button
                     class="px-3 py-1 text-xs rounded bg-amber-600 text-white hover:bg-amber-700"
                     @click="emit('split')"
                 >
-                    Split
+                    {{ t("files.split") }}
                 </button>
                 <a
                     v-if="fileName"
@@ -145,7 +151,7 @@ function nextChunk() {
                     class="px-3 py-1 text-xs rounded border border-amber-300 hover:bg-amber-100"
                     download
                 >
-                    Download
+                    {{ t("files.download") }}
                 </a>
             </div>
         </div>
@@ -178,11 +184,19 @@ function nextChunk() {
             </button>
         </div>
 
-        <div v-if="chunkLoading" class="text-sm text-muted-foreground">Loading chunk…</div>
+        <div v-if="chunkLoading" class="text-sm text-muted-foreground">
+            {{ t("files.pdfLoadingChunk") }}
+        </div>
         <div v-else-if="chunkError" class="text-sm text-destructive">{{ chunkError }}</div>
-        <div v-else-if="loading" class="text-sm text-muted-foreground">Loading PDF…</div>
-        <div v-else-if="pdfError" class="text-sm text-destructive">Failed to load PDF</div>
-        <div v-else-if="!pdfDoc" class="text-sm text-muted-foreground">No PDF loaded</div>
+        <div v-else-if="loading" class="text-sm text-muted-foreground">
+            {{ t("files.pdfLoading") }}
+        </div>
+        <div v-else-if="pdfError" class="text-sm text-destructive">
+            {{ t("files.pdfLoadFailed") }}
+        </div>
+        <div v-else-if="!pdfDoc" class="text-sm text-muted-foreground">
+            {{ t("files.pdfNotLoaded") }}
+        </div>
         <template v-else>
             <PdfToolbar
                 :page-num="pageNum"

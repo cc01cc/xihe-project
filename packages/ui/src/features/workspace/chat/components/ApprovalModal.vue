@@ -511,8 +511,7 @@ onBeforeUnmount(() => {
                     class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
                     role="alert"
                 >
-                    Recovery retry required: the previous approval dispatch did not report a result.
-                    Choose a decision to retry it; no decision is sent automatically.
+                    {{ t("chat.approvalDispatchUnknown") }}
                 </p>
 
                 <section

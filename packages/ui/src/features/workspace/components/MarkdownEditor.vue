@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
@@ -11,6 +12,8 @@ const props = defineProps<{
     modelValue: string;
     readonly?: boolean;
 }>();
+
+const { t } = useI18n();
 
 const emit = defineEmits<{
     "update:modelValue": [value: string];
@@ -51,7 +54,7 @@ function append(snippet: string) {
             <button
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
-                title="粗体"
+                :title="t('files.editorBold')"
                 @click="append('**bold**')"
             >
                 <Bold class="size-3.5" aria-hidden="true" />
@@ -59,7 +62,7 @@ function append(snippet: string) {
             <button
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
-                title="斜体"
+                :title="t('files.editorItalic')"
                 @click="append('*italic*')"
             >
                 <Italic class="size-3.5" aria-hidden="true" />
@@ -67,7 +70,7 @@ function append(snippet: string) {
             <button
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
-                title="标题"
+                :title="t('files.editorHeading')"
                 @click="append('\n## heading')"
             >
                 <Heading class="size-3.5" aria-hidden="true" />
@@ -75,7 +78,7 @@ function append(snippet: string) {
             <button
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
-                title="代码"
+                :title="t('files.editorCode')"
                 @click="append('\n```\ncode\n```')"
             >
                 <Code class="size-3.5" aria-hidden="true" />
@@ -83,7 +86,7 @@ function append(snippet: string) {
             <button
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
-                title="链接"
+                :title="t('files.editorLink')"
                 @click="append('[text](url)')"
             >
                 <Link class="size-3.5" aria-hidden="true" />
@@ -91,7 +94,7 @@ function append(snippet: string) {
             <button
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
-                title="列表"
+                :title="t('files.editorList')"
                 @click="append('\n- item')"
             >
                 <List class="size-3.5" aria-hidden="true" />
@@ -101,7 +104,7 @@ function append(snippet: string) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground text-xs"
                 @click="showSource = !showSource"
             >
-                {{ showSource ? "预览" : "源码" }}
+                {{ showSource ? t("files.editorPreview") : t("files.editorSource") }}
             </button>
         </div>
 

@@ -147,6 +147,6 @@ watch(() => [props.original, props.modified, props.hunks, props.files], buildDif
         <div v-else-if="diffFile" class="h-full overflow-auto">
             <DiffView :diffFile="diffFile" diffViewTheme="light" />
         </div>
-        <div v-else class="p-4 text-zinc-600 text-center">No diff data</div>
+        <div v-else class="p-4 text-zinc-600 text-center">{{ t("files.noDiffData") }}</div>
     </div>
 </template>

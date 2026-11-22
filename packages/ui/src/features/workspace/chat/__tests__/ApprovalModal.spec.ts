@@ -37,6 +37,8 @@ const i18n = createI18n({
             },
             common: { close: "Close", saving: "Saving..." },
             chat: {
+                approvalDispatchUnknown:
+                    "Recovery retry required: the previous approval dispatch did not report a result. Choose a decision to retry it; no decision is sent automatically.",
                 approvalRequired: "Approval Required",
                 approvalDescription: "Review this action",
                 approvalAction: "Action",

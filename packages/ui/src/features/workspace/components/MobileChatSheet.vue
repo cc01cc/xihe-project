@@ -216,7 +216,7 @@ defineExpose({ toggle });
             >
                 <SheetHeader class="px-4 pt-3 pb-2 text-left border-b">
                     <div class="flex min-w-0 items-center gap-2">
-                        <SheetTitle>对话</SheetTitle>
+                        <SheetTitle>{{ t("chat.titleChat") }}</SheetTitle>
                         <!--
                             BL-317b（IM 调研 §1）：移动端会话标题区就是这份 sheet 的头 —— 成员入口
                             放在这里（头像堆叠 + 人数 + 聚合 @N），而不是隐藏的桌面会话列。
@@ -266,10 +266,7 @@ defineExpose({ toggle });
                             }}
                         </span>
                     </div>
-                    <SheetDescription
-                        >在当前 workspace 中与 Agent 对话。工具绑定当前
-                        workspace。</SheetDescription
-                    >
+                    <SheetDescription>{{ t("chat.mobileSheetDescription") }}</SheetDescription>
                 </SheetHeader>
                 <!-- BL-317b：独立成员 sheet（覆盖式），正文复用 SessionParticipantsPanel。 -->
                 <MobileMembersSheet
