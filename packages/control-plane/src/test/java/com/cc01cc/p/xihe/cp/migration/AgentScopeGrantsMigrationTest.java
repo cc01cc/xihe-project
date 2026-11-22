@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.support.TestContainerLabels;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -40,6 +41,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>two states</b> — a principal with a binding is reachable through the read path's query, a
  *       principal without one is not.</li>
  * </ul>
+ *
+ * <p><b>task-849 / BL-633 — scope of this class.</b> The <i>mapping</i> and <i>materialization</i>
+ * bullets above describe the <b>old-database upgrade path</b>, which the user ruled out of the MVP
+ * (ruling 2026-11-22: no data migration; the acceptance gate is "a database built from scratch works").
+ * Those two cases are therefore {@code @Disabled} with the reason carried on the annotation; they are
+ * not deleted and their assertions are not loosened. The remaining three cases (uncovered-atom
+ * fall-through, re-runnability, reachability) still run and still gate.</p>
  */
 @Testcontainers
 class AgentScopeGrantsMigrationTest {
@@ -105,6 +113,13 @@ class AgentScopeGrantsMigrationTest {
         execute(migrationSql());
     }
 
+    @Disabled("task-849 / BL-633: V108 旧快照升级路径移出 MVP。用户裁定（2026-11-22）不做数据迁移，"
+            + "验收口径是「空库从零可用」而非「旧库升级」（D-215）。失效机理：task-835 把预设原子的 "
+            + "action_class 种子重写为 canonical 规范名（action:read / action:write / action:exec），"
+            + "而 V108 第三段用 lower(rp.action_class) = lower(snapshot.actionClass) 匹配旧快照里的 "
+            + "bare 值（read/write/exec），必然失配 ⇒ WS_EDITOR 覆盖判定不成立，绑定退化到 AGENT_DEFAULT。"
+            + "复活条件：①V108 增加 bare↔canonical 兼容匹配；②补「旧库升级」验收路径；③用户重新裁定"
+            + "升级路径属于 MVP 范围。三者齐备后删掉本注解。")
     @Test
     void mapsEachBindingToTheSmallestCoveringSeededRole() throws SQLException {
         assertEquals("WS_EDITOR", scalarString("SELECT r.name FROM role_bindings rb "
@@ -126,6 +141,11 @@ class AgentScopeGrantsMigrationTest {
                 + "AND lower(rp.action_class) = 'spawn_agent'"));
     }
 
+    @Disabled("task-849 / BL-633: 同 mapsEachBindingToTheSmallestCoveringSeededRole —— V108 旧快照"
+            + "升级路径移出 MVP（用户裁定 2026-11-22 不做数据迁移，口径=空库从零可用，D-215）。"
+            + "机理同上：bare 快照失配 canonical action_class，覆盖角色退化后按 WS_EDITOR 原子数展开的"
+            + "grants 行数对不上（实测 expected 10 / was 4）。复活条件同 BL-633：兼容匹配 + 升级验收 + "
+            + "用户重裁，三者齐备后删掉本注解。")
     @Test
     void materializesPresetGrantsWithTheBindingScope() throws SQLException {
         // V108 ran during the upgrade from V106; later migrations (0651 M2 T2.1) widened the seeded
