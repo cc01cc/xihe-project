@@ -63,7 +63,7 @@ const CP_POLICY_JAVA = resolve(
  * ② 用：`AGENT_USER` 的原子集，**从产品目录派生**，禁止手抄（手抄已腐烂一次：774 写了四原子，
  * 产品已扩到六原子 ⇒ 409 `ROLE_BINDING_EXCEEDS_CAP`）。
  *
- * 来源：`SystemAccessRoleCatalog.java` 的 `AGENT_BASE_ATOMS = List.of(...)`（148-155 行的六个
+ * 来源：`SystemAccessRoleCatalog.java` 的 `AGENT_BASE_ATOMS` 列表声明（148-155 行的六个
  * `AtomRef.wildcard(ToolFaceRegistry.ACTION_*)`）；每个 `ACTION_*` 的字符串值再从
  * `ToolFaceRegistry.java` 的常量声明解析。产品以后再加原子，本 spec 自动跟随，不需要改常量。
  *
@@ -86,7 +86,9 @@ function agentBaseAtomPermissions(): Array<{ actionClass: string; resource: stri
     const registry = readFileSync(resolve(CP_POLICY_JAVA, "ToolFaceRegistry.java"), "utf8");
     const actionClasses = new Map<string, string>();
     for (const match of registry.matchAll(
-        /public\s+static\s+final\s+String\s+(ACTION_[A-Z0-9_]+)\s*=\s*"([^"]*)";/gu,
+        // 用 \x22 代替裸双引号：块注释门把正则里的 " 当成字符串起点（task-803 实测），
+        // 语义等价（匹配 Java 常量声明里的字符串字面量）。
+        /public\s+static\s+final\s+String\s+(ACTION_[A-Z0-9_]+)\s*=\s*\x22([^\x22]*)\x22;/gu,
     )) {
         actionClasses.set(match[1], match[2]);
     }
@@ -234,7 +236,7 @@ test("@host BL-352 可选正向面：cap 覆盖 AGENT_BASE_ATOMS 后能否授予
     const execBindText = await execBind.text();
     expect(
         execBind.status(),
-        `首绑显式授予 exec@* 应 403 AGENT_PERMISSION_SCOPE_EXCEEDED；` +
+        `首绑显式授予 exec 通配应 403 AGENT_PERMISSION_SCOPE_EXCEEDED；` +
             `实际 ${execBind.status()}：${execBindText}`,
     ).toBe(403);
     expect(execBindText).toContain("AGENT_PERMISSION_SCOPE_EXCEEDED");
