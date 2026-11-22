@@ -420,6 +420,8 @@ function readTargetPromptFlags(runId: string): {
     hasAddresseeIdentity: boolean;
     toolCount: number;
     promptText: string;
+    deliveredMessageId: string;
+    allMessages: string[];
 } {
     // The provider-body column is audit-tier dependent (full = bytes, metadata/off = NULL),
     // and `context_events{prompt.admitted}` carries the Agent's admitted header rather than the
@@ -428,17 +430,38 @@ function readTargetPromptFlags(runId: string): {
     // The Agent addressee frame is a deterministic function of a non-empty parentRunId
     // (chat.py:model_input_content), covered by
     // packages/agent/tests/unit/test_wakee_addressee_frame.py.
-    const messageRaw = psql(
-        `SELECT count(*)::text, ` +
-            `coalesce(bool_or(content LIKE ` +
-            `'%addressed to you by another participant%'), false)::text, ` +
-            `coalesce(bool_or(content LIKE '%You are %'), false)::text, ` +
-            `coalesce(string_agg(replace(content, E'\\n', ' | '), E'\\n'), '') ` +
-            `FROM messages ` +
-            `WHERE run_id = ${sqlLiteral(runId)}::uuid ` +
-            `AND role = 'USER' AND visibility = 'internal';`,
+    // `chat_runs.user_message_id` is the exact row CP dispatches to the Agent; `messages.run_id`
+    // is not guaranteed to point at that same row on every path.
+    const deliveredRaw = psql(
+        `SELECT m.id::text, m.role, coalesce(m.visibility, ''), ` +
+            `coalesce(length(m.content)::text, '0'), ` +
+            `coalesce((m.content LIKE ` +
+            `'%addressed to you by another participant%')::text, 'false'), ` +
+            `coalesce((m.content LIKE '%You are %')::text, 'false'), ` +
+            `coalesce(regexp_replace(m.content, '[[:space:]]+', ' ', 'g'), '') ` +
+            `FROM chat_runs r JOIN messages m ON m.id = r.user_message_id ` +
+            `WHERE r.id = ${sqlLiteral(runId)}::uuid;`,
     );
-    const [messageCount, deliveredCp, deliveredIdentity, promptText] = rows(messageRaw)[0] ?? [];
+    const [
+        deliveredId,
+        deliveredRole,
+        deliveredVisibility,
+        deliveredLength,
+        deliveredCp,
+        deliveredIdentity,
+        promptText,
+    ] = rows(deliveredRaw)[0] ?? [];
+
+    const allRaw = psql(
+        `SELECT m.id::text, m.role, coalesce(m.visibility, ''), ` +
+            `coalesce(length(m.content)::text, '0'), ` +
+            `coalesce((m.content LIKE ` +
+            `'%addressed to you by another participant%')::text, 'false'), ` +
+            `coalesce((m.content LIKE '%You are %')::text, 'false') ` +
+            `FROM messages m WHERE m.run_id = ${sqlLiteral(runId)}::uuid ` +
+            `ORDER BY m.created_at;`,
+    );
+    const allMessages = rows(allRaw).map((row) => row.join(":"));
 
     // Diagnostic only: the Agent's admitted header is not the delivered message on this lane.
     const admittedRaw = psql(
@@ -463,15 +486,21 @@ function readTargetPromptFlags(runId: string): {
     );
     const [hasBody, cpAddressee, agentAddressee, toolCount] = rows(bodyRaw)[0] ?? [];
     return {
-        hasDeliveredMessage: Number(messageCount ?? "0") > 0,
-        deliveredHasCpAddressee: deliveredCp === "t",
-        deliveredHasAddresseeIdentity: deliveredIdentity === "t",
+        hasDeliveredMessage:
+            (deliveredId ?? "") !== "" &&
+            deliveredRole === "USER" &&
+            deliveredVisibility === "internal" &&
+            Number(deliveredLength ?? "0") > 0,
+        deliveredHasCpAddressee: deliveredCp === "true",
+        deliveredHasAddresseeIdentity: deliveredIdentity === "true",
         hasPromptAdmitted: Number(admittedCount ?? "0") > 0,
-        hasProviderBody: hasBody === "t",
-        hasCpAddressee: cpAddressee === "t",
-        hasAddresseeIdentity: agentAddressee === "t",
+        hasProviderBody: hasBody === "true",
+        hasCpAddressee: cpAddressee === "true",
+        hasAddresseeIdentity: agentAddressee === "true",
         toolCount: Number(toolCount ?? "0"),
         promptText: (promptText ?? "").slice(0, 1_200),
+        deliveredMessageId: deliveredId ?? "",
+        allMessages,
     };
 }
 
@@ -614,16 +643,29 @@ test.describe("@host task-735 K1 batch2 agent-initiated TO", () => {
                 targetPrompt.hasDeliveredMessage,
                 "durable USER message delivered to the target run",
             ).toBe(true);
-            expect(targetPrompt.hasProviderBody, "target provider request body captured").toBe(
-                true,
+            expect(
+                targetPrompt.deliveredHasCpAddressee,
+                "CP addressee provenance in the delivered USER row",
+            ).toBe(true);
+            expect(
+                targetPrompt.deliveredHasAddresseeIdentity,
+                "addressee identity in the delivered USER row",
+            ).toBe(true);
+
+            // task-741 (1): the internal wake row must never appear in the normal USER view.
+            const visibleMessages = await request.get(
+                `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
+                { headers: auth.headers },
             );
-            expect(targetPrompt.hasCpAddressee, "CP addressee provenance in target prompt").toBe(
-                true,
+            expect(visibleMessages.ok(), await visibleMessages.text()).toBe(true);
+            const visibleText = await visibleMessages.text();
+            expect(visibleText, "internal wake prompt leaked into visible messages").not.toContain(
+                "addressed to you by another participant",
             );
             expect(
-                targetPrompt.hasAddresseeIdentity,
-                "Agent addressee frame in the provider request body",
-            ).toBe(true);
+                visibleText,
+                "internal wake identity leaked into visible messages",
+            ).not.toContain("You are AgentK1Peer");
 
             await captureUi(page, ctx, sessionId);
             observed.criteria = {
@@ -636,9 +678,12 @@ test.describe("@host task-735 K1 batch2 agent-initiated TO", () => {
                     wakeRows[0].origin !== "user_submission" &&
                     toOrigins.every((row) => row.origin !== "user_submission"),
                 assigneePromptVisible:
-                    targetPrompt.hasProviderBody &&
-                    targetPrompt.hasCpAddressee &&
-                    targetPrompt.hasAddresseeIdentity,
+                    targetPrompt.hasDeliveredMessage &&
+                    targetPrompt.deliveredHasCpAddressee &&
+                    targetPrompt.deliveredHasAddresseeIdentity,
+                internalRowNotInVisibleMessages: !visibleText.includes(
+                    "addressed to you by another participant",
+                ),
             };
             persistObservation(observed);
         } catch (error) {
