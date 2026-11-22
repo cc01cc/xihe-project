@@ -1642,6 +1642,7 @@ const messages = {
         },
         chat: {
             titleChat: "对话",
+            searchMessages: "搜索消息",
             loadOlder: "加载更早的消息",
             loadingOlder: "正在加载更早的消息…",
             loadOlderFailed: "加载更早的消息失败",
@@ -4082,6 +4083,7 @@ const messages = {
         },
         agentBindings: {
             title: "工作区绑定",
+            workspacesAriaLabel: "工作区绑定",
             desc: "决定这个智能体在哪些工作区可以被委派。勾选即绑定，取消即解绑；每次保存都逐条写服务端并重新读取读面。",
             refresh: "重新读取",
             loading: "正在读取工作区与权限…",
@@ -6086,6 +6088,7 @@ const messages = {
         },
         chat: {
             titleChat: "Chat",
+            searchMessages: "Search messages",
             loadOlder: "Load earlier messages",
             loadingOlder: "Loading earlier messages…",
             loadOlderFailed: "Failed to load earlier messages",
@@ -8598,6 +8601,7 @@ const messages = {
         },
         agentBindings: {
             title: "Workspace bindings",
+            workspacesAriaLabel: "Workspace bindings",
             desc: "Decides which workspaces may delegate to this agent. Checking binds, unchecking unbinds; every save writes each entry to the server and re-reads the read model.",
             refresh: "Re-read",
             loading: "Reading workspaces and permissions…",

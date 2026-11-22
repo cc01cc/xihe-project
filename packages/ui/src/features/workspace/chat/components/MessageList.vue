@@ -686,7 +686,7 @@ watch(
                 v-else
                 type="button"
                 data-testid="message-search-toggle"
-                aria-label="搜索消息"
+                :aria-label="t('chat.searchMessages')"
                 class="absolute right-2 top-2 z-10 rounded-md border bg-background/90 p-1.5 text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
                 @click="showSearch = true"
             >

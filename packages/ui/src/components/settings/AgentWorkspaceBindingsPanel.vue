@@ -229,7 +229,7 @@ watch(
         <!-- 勾选区：勾选多个工作区后统一点下方「保存绑定」（攒批语义）。 -->
         <section
             class="flex min-h-0 flex-col gap-4"
-            aria-label="工作区绑定"
+            :aria-label="t('agentBindings.workspacesAriaLabel')"
             data-testid="agent-bindings-workspaces"
         >
             <p
