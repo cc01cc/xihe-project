@@ -1275,7 +1275,7 @@ const messages = {
                 overviewSubtitle: "实例内跨工作区的自动化任务清单。",
                 notWiredTitle: "数据面未接入：本页暂无任务清单，也不能开始操作",
                 notWiredBody:
-                    "清单数据来自控制面的 {endpoint}（来源 {sourceTask}）。该端点尚未并入当前构建，所以这里既不显示任务、也不显示条数 —— 缺口如实呈现，不用空列表冒充「本来就没有任务」。",
+                    "清单数据来自控制面的 {endpoint}（来源 {sourceTask}）。该端点尚未并入当前构建，所以这里既不显示任务、也不显示条数 —— 未接入的状态如实呈现，不用空列表冒充「本来就没有任务」。",
                 create: "新建自动化任务",
                 refresh: "刷新",
                 loading: "正在加载自动化任务…",
@@ -5711,7 +5711,7 @@ const messages = {
                 notWiredTitle:
                     "Data surface not connected: no task list is available here, and no action can start",
                 notWiredBody:
-                    "The list comes from the control plane at {endpoint} (source {sourceTask}). That endpoint is not part of the current build yet, so this page shows neither tasks nor counts — the gap is stated as-is instead of pretending an empty list means there are no tasks.",
+                    "The list comes from the control plane at {endpoint} (source {sourceTask}). That endpoint is not part of the current build yet, so this page shows neither tasks nor counts — that state is shown as-is instead of letting an empty list suggest there are no tasks.",
                 create: "New automation",
                 refresh: "Refresh",
                 loading: "Loading automations…",
