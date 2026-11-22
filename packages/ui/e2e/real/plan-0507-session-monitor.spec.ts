@@ -53,6 +53,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
     let ctx: JourneyContext,
         sessionId = "",
+        secondSessionId = "",
         pageErrors: string[] = [],
         intentionalAbort = false;
     const shots: Array<{ name: string; bytes: number; viewport: string }> = [];
@@ -76,6 +77,13 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,
             title: "Monitor session",
+            workspaceId: ctx.workspaceId,
+        });
+        // A second session lets the SSE-drop case switch away/back while Monitor is
+        // already subscribed (the connection signal is edge-triggered — see below).
+        secondSessionId = await createSessionWithPrincipal(request, agentAuth, {
+            principalId,
+            title: "Monitor session B",
             workspaceId: ctx.workspaceId,
         });
         await ensureAgentWorkspaceBinding(ctx.workspaceId);
@@ -155,6 +163,43 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         });
     }
 
+    /**
+     * `ensureChatReady` falls back to clicking 「新建会话」 when the composer is not yet
+     * visible. That button opens a two-item dropdown, and reka's modal dismissable layer
+     * sets `body { pointer-events: none }` while it is open — every later click then
+     * hit-tests to `<html>` and hangs until the test timeout (run12 task-825 trace).
+     * Dismiss that layer before touching the dock. Event-driven: poll the real signal.
+     */
+    async function enterReadyWorkbench(page: Page): Promise<void> {
+        await enterWorkbench(page);
+        await ensureChatReady(page);
+        const pointerBlocked = () =>
+            page.evaluate(() => getComputedStyle(document.body).pointerEvents === "none");
+        if (await pointerBlocked()) {
+            await page.keyboard.press("Escape");
+            await expect
+                .poll(pointerBlocked, {
+                    timeout: EXPECT_TIMEOUT_MS,
+                    message: "open menu layer dismissed before dock interaction",
+                })
+                .toBe(false);
+        }
+    }
+
+    /**
+     * Select a session from the sidebar by its accessible name. The current-workspace
+     * list renders rows without the `data-session-id` wrapper used by the sortable
+     * standalone list, so target the row button (`role=button`, `aria-label=title`).
+     */
+    async function selectSession(page: Page, id: string, title: string): Promise<void> {
+        await page.getByRole("button", { name: title, exact: true }).click({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect(page).toHaveURL(new RegExp(`/session/${id}(?:$|[?#])`), {
+            timeout: LONG_TIMEOUT_MS,
+        });
+    }
+
     test("desktop: open Monitor from dock, API cross-check, SSE refresh, toggles", async ({
         page,
         request,
@@ -162,8 +207,8 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // BL-148: the probe run needs a usable chat connection; `ensureChatBinding`
         // builds the real-lane one from the runner-provided identity (node side).
         seedPage(page, ctx);
-        await enterWorkbench(page);
-        await ensureChatReady(page);
+        await enterReadyWorkbench(page);
+        await selectSession(page, sessionId, "Monitor session");
         // Bind a chat connection through the same fixture path sendChat specs use,
         // so readiness.connection has a READY fact to show.
         await ensureChatBinding(page, sessionId);
@@ -258,8 +303,8 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
     test("desktop: fetch failure keeps the snapshot and retry recovers", async ({ page }) => {
         seedPage(page, ctx);
-        await enterWorkbench(page);
-        await ensureChatReady(page);
+        await enterReadyWorkbench(page);
+        await selectSession(page, sessionId, "Monitor session");
 
         await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
         const panel = page.locator(PANEL);
@@ -292,21 +337,36 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
     test("desktop: SSE drop marks stale and reconnect restores live", async ({ page }) => {
         seedPage(page, ctx);
-        // The chat events stream is blocked from its very first attempt:
+        // The chat events stream is blocked from the very first attempt:
         // Chromium's offline emulation does not reset the established fetch
-        // stream, so the deterministic variant is a failed initial connect —
-        // same stale/reconnect contract (transport latches one offline signal).
-        // Retry attempts log net::ERR_FAILED; intentionalAbort filters them.
+        // stream, so a failed connect is the deterministic variant. The monitor's
+        // connection chip is **edge-triggered** (one offline signal per transport
+        // generation), so it only sees the failure if it is already subscribed.
+        // Switching sessions therefore opens a fresh stream while Monitor is
+        // mounted: it resubscribes in the same flush, then the blocked connect
+        // reports offline. Retries log net::ERR_FAILED; intentionalAbort filters them.
         intentionalAbort = true;
-        const route = "**/api/v1/events*";
+        // Narrow to the chat stream (`?sessionId=`) only. The workspace context stream
+        // (`?workspaceId=`) powers the shell/dock layout; aborting it too leaves the dock
+        // tab row clipped, so `dock-tab-monitor` cannot receive the click (task-777 moved
+        // the entry through /workbench, which made that dependency visible).
+        const route = /\/api\/v1\/events\?sessionId=/;
         await page.route(route, (handler) => handler.abort());
-        await enterWorkbench(page);
-        await ensureChatReady(page);
+        await enterReadyWorkbench(page);
+        await selectSession(page, sessionId, "Monitor session");
 
         await openDockPanel(page, "monitor", { timeoutMs: LONG_TIMEOUT_MS });
         const panel = page.locator(PANEL),
             chip = page.locator('[data-testid="monitor-connection-chip"]');
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+
+        const activeId = new URL(page.url()).pathname.split("/").filter(Boolean).pop(),
+            next =
+                activeId === sessionId
+                    ? { id: secondSessionId, title: "Monitor session B" }
+                    : { id: sessionId, title: "Monitor session" };
+        await selectSession(page, next.id, next.title);
+
         await expect(chip, "failed SSE connect flips the monitor to stale").toHaveText(/已断开/, {
             timeout: LONG_TIMEOUT_MS,
         });
@@ -323,6 +383,11 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         await page.setViewportSize({ width: 390, height: 844 });
         seedPage(page, ctx);
         await enterWorkbench(page);
+        // The workspace now has two sessions; pin the one that ran the probes so the
+        // monitor history carries a terminal outcome ("success").
+        await page.goto(`/workspace/${ctx.workspaceId}/session/${sessionId}`, {
+            waitUntil: "load",
+        });
 
         // PLAN-0560 M3 (cb5651a7) converged the workspace toolbar entries: on
         // mobile the monitor entry lives in the toolbar overflow menu

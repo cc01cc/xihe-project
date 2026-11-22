@@ -9,6 +9,10 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+import {
+    createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
@@ -31,11 +35,20 @@ test.describe("Mobile Viewport (390x844)", () => {
         const body = await r.json();
         authToken = body.accessToken;
         authWorkspaceId = await ensureWorkspace(request, body.accessToken);
-        // On mobile the conversation column is unmounted (WorkspaceView v-if);
-        // the chat FAB only renders once a Session exists. Seed one via API.
-        await request.post(`${CP_URL}/api/v1/sessions`, {
-            headers: { Authorization: `Bearer ${authToken}`, "X-Workspace-Id": authWorkspaceId },
-            data: {},
+        // On mobile the conversation column is unmounted (WorkspaceView `v-if="sessionId"`),
+        // so the chat FAB only renders once a Session exists. Seed one through the same
+        // contract the product now enforces (task-106 / 0623): the session must belong to an
+        // explicit workspace and resolve a bound principal + provider defaults. The old
+        // bare `POST /api/v1/sessions {}` silently 400s (no principal / provider), leaving
+        // no session and therefore no FAB — a fixture drift, not a product defect.
+        const agentAuth = { accessToken: authToken, workspaceId: authWorkspaceId };
+        const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
+            name: "MobileAgent",
+        });
+        await createSessionWithPrincipal(request, agentAuth, {
+            principalId,
+            title: "Mobile session",
+            workspaceId: authWorkspaceId,
         });
     });
 
