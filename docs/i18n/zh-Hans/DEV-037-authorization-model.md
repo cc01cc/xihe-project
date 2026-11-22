@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-11-20
-updated: 2026-11-20
+updated: 2026-11-22
 description: XH 自研授权模型的判据、选择理由与换型阈值：正名「交集授权」，给出为什么它不是「基于角色的权限系统」、与九族成熟模型的逐维对比、自研代价、九步求值链与三件工程机制。
 tags:
   - authz
@@ -18,8 +18,14 @@ tags:
 
 > 名称状态：**已定名（DSD-1499，2026-11-20 用户拍定）**。「交集授权（Intersection-grant Authorization）」由用户选定，非待定；改名单点只有三处：本篇标题、§1 的结论句、`A03-xihe/docs/i18n/zh-Hans/DEV-032-terminology.md` 的词条。
 > 读者：要判断「这条路径能不能走」的开发者、要审「PEP（执行点）有没有漏」的审查者、要决定「要不要换现成件」的决策者。
-> 事实口径：判据以 `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/` 的源码为准（2026-11-20 工作树读数）；证据等级标注沿用 `fact-verification` 的 [实测] / [源码] / [文档]。
+> 事实口径：判据以 `packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/` 的源码为准（2026-11-22 工作树复核）；证据等级标注沿用 `fact-verification` 的 [实测] / [源码] / [文档]。
 > 决策记录：定名见 DSD-1492，换型阈值见 DSD-1497。
+
+**术语约定（本篇全文适用）**
+
+- **grant scope（授权作用域）**：授权绑定所在的那一档，代码类型是 `AccessScope`，取值只有 `instance` / `workspace`。它**不是**匹配维度，只做两件事：限定一次判定从哪些 grant 行里取候选，以及决定写入期某个原子能不能绑到这一档。
+- **visibility scope（可见范围）**：组织树上的 ltree 路径，代码类型是 `OrgUnitAccess.Scope`。它属于 conditions / context，回答「这个主体能看见哪些组织单元」，**不进**资源轴，也不进 `(actionClass, resource)` 二元组。
+- 本篇不裸用「scope」：凡出现都必须带限定词，写成 grant scope 或 visibility scope；代码标识符（`AccessScope`、`OrgUnitAccess.Scope` 等）按原名保留。
 
 ## 1. 一句话结论：它叫交集授权，别叫它「基于角色的权限系统」
 
@@ -41,16 +47,24 @@ tags:
 | 能力原子根本不进 grants | 平台/实例级能力原子不是可授予动作，物化时返回 null 被跳过 | `policy/RoleGrantMaterializer.java:381-383`；`policy/PermissionAtomCatalog.java:414`、`:419` |
 | 组合语义不是「多角色并集放大」 | 同主体多条 grants 确实并集（`union`，来源标签不产生优先级），但并集之后还要过资源前缀覆盖与**写入期**上限：绑定 cap 不得超出主体与操作者各自已持原子的集合，否则 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:152-165`；`service/AgentPrincipalService.java:539-563` |
 
-**禁用词**（写作与评审一律不用）：`RBAC`、`基于角色的权限系统`、`作用域交集`（「作用域」在本仓专指 `scope_type` 的 instance / workspace 两档，与「资源前缀」不是一回事）。这个词只允许出现在「与成熟模型对比」表与来源链接里（对比语境），不得用来描述本模型。
+**禁用词**（写作与评审一律不用）：`RBAC`、`基于角色的权限系统`、`作用域交集`。后者的错误在于把 grant scope 当成匹配轴：grant scope 只限定候选集与写入期可绑定性，真正求交的是 `actionClass × resource`。我仓的「作用域」一词本身也不足以自明，写作时必须写成 **grant scope** 或 **visibility scope**；裸用「scope / 作用域」视为术语缺陷。`RBAC` 只允许出现在「与成熟模型对比」表与来源链接里（对比语境），不得用来描述本模型。
 
-## 2. 决策输入：一次判定只看四样东西
+## 2. 决策输入：判据两轴 + 主体链逐级持有 + grant scope 限定候选集
+
+一次判定由三件事组成，但**匹配维度只有两轴**：
+
+1. **判据两轴**：`actionClass × resource`。这是唯一的匹配面，也是 grant 行与请求之间真正求交的东西。
+2. **主体链逐级持有**：principal 不是单点，而是会话叶子 + agent 绑定解出的整条派生链；链上**每一级**都必须持有该 `(actionClass, resource)` 原子，任一级缺失即拒。
+3. **grant scope 限定候选集**：`AccessScope` 的 `instance` / `workspace` 只决定「从哪一档 grant 里取候选」，并在写入期决定「这个原子能不能绑到这一档」。它**不是第三匹配维度**；请求体不得携带决定授权的 grant scope，也**不允许**把它塞进 `PermissionAtom`。
 
 | 输入 | 取值来源 | 不许做的事 | 锚点 |
 |---|---|---|---|
-| **principal** | 会话叶子的参与者 + agent 绑定；`resolveAgent` 返回叶子自身主体与整条会话链 | 不信任请求里自带的主体；链上任何一环 tenant 不符、缺 principal、成环都 fail-closed | `policy/GrantPrincipalPathResolver.java:78-106` |
-| **actionClass** | 工具到动作类的映射表（内置工具 + 第三方 MCP 工具的 extraFaces） | 不由调用方声明动作类；未分类工具落 `UNCLASSIFIED_ACTION` | `policy/ToolFaceRegistry.java:277-299`；`policy/PolicyRequest.java:24-27` |
-| **resource** | 工具参数解析出的目标串（`fs:` 声明键、`phys:` 物理键、`credential:<uuid>` 等） | 凭据类请求必须带具体 `credential:<uuid>`；`credential:*` 与裸 `*` 直接抛错（fail-closed） | `policy/PolicyRequest.java:28-37` |
-| **scope** | 由 `workspaceId` / `sessionId` 派生，**不是请求参数** | 请求体不得携带决定授权的 scope；跨工作区读写由 repository 的 scoped 查询裁决 | `spec/security/authorization.md` §2 第 2 步；`service/AgentPrincipalService.java:536-540` |
+| **actionClass（判据轴 1）** | 工具到动作类的映射表（内置工具 + 第三方 MCP 工具的 extraFaces） | 不由调用方声明动作类；未分类工具落 `UNCLASSIFIED_ACTION` | `policy/ToolFaceRegistry.java:277-299`；`policy/PolicyRequest.java:24-27` |
+| **resource（判据轴 2）** | 工具参数解析出的目标串（`fs:` 声明键、`phys:` 求值键、`credential:<uuid>`、`skill:<uuid>` 等） | 凭据使用请求必须带具体 `credential:<uuid>`；`credential:*` 与裸 `*` 在 `credential_use` 上直接抛错（fail-closed） | `policy/PolicyRequest.java:28-37`；`policy/ToolFaceRegistry.java:423-445` |
+| **principal chain（逐级持有）** | 会话叶子的参与者 + agent 绑定；`resolveAgent` 返回叶子自身主体与整条会话链 | 不信任请求里自带的主体；链上任何一环 tenant 不符、缺 principal、成环都 fail-closed | `policy/GrantPrincipalPathResolver.java:78-106` |
+| **grant scope（候选集分区）** | `AccessScope`，由 `workspaceId` / `sessionId` 派生，**不是请求参数** | 不参与 `(actionClass, resource)` 匹配；请求体不得携带；跨工作区读写由 repository 的 scoped 查询裁决 | `spec/security/authorization.md` §2 第 2 步；`service/AgentPrincipalService.java:536-540` |
+
+**一句话验收口径**：`actionClass × resource` 两轴同时命中、主体链每一级都持有、且候选行落在当前 grant scope 允许的档位里，才 ALLOW；缺省拒。grant scope 的作用是**分区**与**写入期可绑定性**，不是第三轴。
 
 ## 3. 求值链九步
 
@@ -60,7 +74,7 @@ tags:
   <rect x="16" y="26" width="336" height="360" rx="6" fill="#f9fafb" stroke="#d1d5db"/>
   <text x="32" y="46" font-size="12" fill="#374151">请求进入</text>
   <rect x="32" y="56" width="200" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/><text x="44" y="72" font-size="11" fill="#374151">1 认证与 tv</text><text x="248" y="72" font-size="11" fill="#6b7280">认证过滤链</text>
-  <rect x="32" y="92" width="200" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/><text x="44" y="108" font-size="11" fill="#374151">2 scope 派生</text><text x="248" y="108" font-size="11" fill="#6b7280">CP 解析</text>
+  <rect x="32" y="92" width="200" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/><text x="44" y="108" font-size="11" fill="#374151">2 grant scope 派生</text><text x="248" y="108" font-size="11" fill="#6b7280">CP 解析</text>
   <rect x="32" y="128" width="200" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/><text x="44" y="144" font-size="11" fill="#374151">3 能力原子</text><text x="248" y="144" font-size="11" fill="#6b7280">AuthzContext</text>
   <rect x="32" y="164" width="200" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/><text x="44" y="180" font-size="11" fill="#374151">4 工具面映射</text><text x="248" y="180" font-size="11" fill="#6b7280">ToolFace</text>
   <rect x="32" y="200" width="200" height="24" rx="4" fill="#ffffff" stroke="#9ca3af"/><text x="44" y="216" font-size="11" fill="#374151">5 L0 硬门</text><text x="248" y="216" font-size="11" fill="#6b7280">HardGuard</text>
@@ -76,7 +90,7 @@ tags:
 | # | 步骤 | 谁判 | 锚点 | 判错会怎样 |
 |---|---|---|---|---|
 | 1 | 认证 + access-token epoch | 认证过滤链（token 的 `tv` 与 `users.token_version` 不一致即 401） | `auth/AuthService.java:196-200`；`spec/security/authorization.md` §6 | 旧 token 继续可用，撤销失效 |
-| 2 | scope 派生（租户一致性） | CP 派生，非请求参数 | `policy/GrantAuthorizationService.java:83-102` | 跨租户读写 |
+| 2 | grant scope 派生（租户一致性 + 候选集分区） | CP 派生，非请求参数 | `policy/GrantAuthorizationService.java:83-102` | 跨租户读写；候选集选错档位 |
 | 3 | 能力原子闸 | 能力缓存 `AuthzContext`（`cp.capability-cache-ttl-ms` 默认 30000 ms） | `policy/AuthzContext.java:106` | 越权进管理面 |
 | 4 | 工具面到动作类 | `ToolFaceRegistry` 构造器 | `policy/ToolFaceRegistry.java:277-299` | 工具错分类，判据套错轴 |
 | 5 | L0 硬门 | `HardGuard`（builtin 层，先于一切 grant） | `policy/HardGuard.java:59`、`:98-112`；`policy/PolicyEngine.java:111-112` | 对关键路径的不可逆删除被放行 |
@@ -89,7 +103,7 @@ tags:
 
 | 判据 | 内容 | 锚点 |
 |---|---|---|
-| 原子两字段 | `PermissionAtom(actionClass, resource)`；未知字段即抛错，不允许夹带第三维 | `policy/GrantIntersectionEvaluator.java:36-52`、`:46-50` |
+| 原子两字段 | `PermissionAtom(actionClass, resource)`；未知字段即抛错，不允许夹带第三维（grant scope 不在原子内） | `policy/GrantIntersectionEvaluator.java:36-52`、`:46-50` |
 | 缺省拒 | 主体链为空、动作类为空、资源空白、动作类不在闭集内，一律 false | `policy/GrantIntersectionEvaluator.java:265-309` |
 | 两轴同时命中 | 逐个 (actionClass × resource) 组合判定，任一组合无命中即 false | `policy/GrantIntersectionEvaluator.java:326-362` |
 | 资源匹配 | 两侧都是 `fs:` 声明键时归一成 `phys:` 比物理身份（永不比字符串），其余交分层匹配器 | `policy/ResourceIdentity.java:104-130`；`policy/GrantIntersectionEvaluator.java:202-208` |
@@ -102,6 +116,7 @@ tags:
 
 - 原子目录：**42 个动作原子 + 3 个能力原子**（`policy/PermissionAtomCatalog.java`；[实测] 枚举计数见 `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`）。
 - 有工具面入口的动作类 **7 个**：`read`、`write`、`exec`、`network`、`credential_use`、`spawn_agent`、`team_task_manage`（`policy/ToolFaceRegistry.java:280-296`）。`delete` 动作类存在，但当前没有任何工具映射到它，`WRITE_TOOLS` 也不含删除工具（`policy/ToolFaceRegistry.java:193-195`、`:254`）——即该原子在工具链上不可达。
+- 资源族（资源轴的取值形态）：`fs:` 声明键（**唯一可写入 grant 的路径形态**）、`phys:` 求值键（只在求值期展开）、`credential:`（`credential:*` 或 `credential:<uuid>`）、`skill:`（`skill:*` 或 `skill:<uuid>`），以及裸路径 / URL / `*`。`credential:` 与 `skill:` 的前缀常量分别在 `policy/ToolFaceRegistry.java:168-169` 与 `:176`；`fs:` / `phys:` 在 `policy/ResourceIdentity.java:24-25`。
 
 8 个内置角色的默认动作原子数（[实测]，同一份证据）：
 
@@ -116,7 +131,55 @@ tags:
 | AGENT_DELEGATOR | 1 | 代理 | `policy/SystemAccessRoleCatalog.java:374` |
 | AGENT_USER | 7 | 代理 | `policy/SystemAccessRoleCatalog.java:385` |
 
+- `ORG_LEADER` 当前**只有代码注释与治理白名单说明，迁移未落种子（M2-3）**；不得把它写成已可用角色，也不要在 UI/文档里当成可绑定项。
+
 PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Windows host 通道既无 sandbox 也无 policy 门（`packages/runtime/src/job_host_adapter.rs:1-5`）。覆盖清单与缺口见 `internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`。
+
+### 5.1 资源命名空间与名字撞车
+
+资源串的规范形态是「命名空间 + 值」：`fs:<workspaceId>[/<rel>]`、`credential:<uuid>`、`skill:<uuid>` 等。命名空间注册表（task-830 落地的单一注册点）是判据来源：**未登记的前缀出现在 grant 资源里必须 fail-closed**，不允许「看起来像前缀就当资源」。注册表同时声明 matcher 类型（`exact` / `prefix` / `tree`）；当前只启用 `exact` / `prefix`，`tree` 只是预留类型，不注册 `org:` 命名空间（见 §5.4）。
+
+**两个撞名必须分清**：
+
+- 能力原子 `workspace:admin`（`policy/PermissionAtomCatalog.java:62`）是**原子名**，回答「这个主体是不是工作区管理员」，不是资源串。资源命名空间**禁止** `workspace:`：工作区是 context（由 grant scope 表达），不是对象身份，写进资源串会把同一个对象在不同工作区下拆成两个身份。
+- action atom `session:permission:configure` 同样是**原子名**，不是资源命名空间。`session:` 已被显式禁止做资源键：会话是上下文容器，不是可授权对象；把会话写进资源轴会让判据依赖「哪次会话」而不是「哪个对象」。
+
+注册表落地后，`workspace:` / `session:` 作为资源前缀应直接判无效；文档里看到它们时，先确认说的是原子名还是资源串。
+
+### 5.2 fs / phys 双轨：授权只写声明键，物理键只在求值期存在
+
+| 轨道 | 形态 | 能进 grants 吗 | 能由 API 提交吗 | 用途 |
+|---|---|---|---|---|
+| 声明键 | `fs:<workspaceId>[/<rel>]` | **能，且只能写这个** | 能 | 可审计、跨机器稳定；工作区搬家后仍指向同一逻辑路径 |
+| 物理键 | `phys:<归一化绝对路径>` | **永不** | **永不**，提交即 400 `INVALID_GRANT_RESOURCE` | 只在求值期由声明键展开，用于比较两个声明键是否指向同一物理身份 |
+
+理由：`phys:` 是宿主绝对路径，换机器、换容器、恢复备份都会变。把它写进 grant，等于把权限绑死在某一台机器上；而 grant 是长期授权，不能随部署漂移。写入面 `policy/GrantResourcePattern.java` 只接受 `*`、`credential:*` / `credential:<uuid>` 与 `fs:` 声明键，其他形态一律 400；求值面 `policy/ResourceIdentity.java:104-130` 在两侧都是 `fs:` 时展开成 `phys:` 再比，**绝不回退成字符串比较**。
+
+两条验收判据（由 task-830 的测试钉住，不在本篇重复实现）：① 提交 `phys:` grant 必须 400；② 同一个 `fs:` 声明键在两个不同 host root 下展开后，仍命中同一条授权。
+
+### 5.3 `credential:*` 只用于管理面
+
+`credential:*` 是凭证**管理面**的 canonical resource（`credential_manage` 等原子的默认宽授权），**不是**「可使用全部凭证」的授权解释。使用凭证的判定请求必须带具体 `credential:<uuid>`；**判定请求的 resource** 写成 `credential:*` 且 actionClass 为 `credential_use` 时必须拒绝。代码侧的边界在 `policy/ToolFaceRegistry.java:423-445`：`isCanonicalCredentialResource` 只接受 `credential:*` 与规范化小写 UUID，`isConcreteCredentialResource` 再排除通配；请求解析 `policy/PolicyRequest.java:28-37` 对凭证类请求要求具体 UUID，`credential:*` 与裸 `*` 直接抛错。grant 侧的宽行仍是 ceiling 写法，不能据此跳过具体 uuid。
+
+这条区分的是「能管理哪些凭证」与「能使用哪一个凭证」：前者可以是宽口径，后者必须落到单个对象，否则一次授权就等于拿到全部凭证的使用权。
+
+### 5.4 组织树留在 conditions，不进资源轴
+
+组织树是 **visibility scope**（`OrgUnitAccess.Scope`，ltree 路径），永久留在 conditions / context 面：它回答「能看见哪些组织单元」，不回答「能对哪个对象做哪个动作」。把它塞进资源轴会同时破坏两件事：404 语义（非成员必须得到「不存在」而不是「无权限」）与查询范围语义（读取面按 ltree `<@` 过滤，而不是逐行做资源前缀匹配）。
+
+资源注册表**预留 `tree` matcher 类型**，但当前不注册 `org:` 命名空间。将来若确实需要把组织单元升级成资源，只加一行注册（namespace + `tree` matcher + canonicalizer），不改表、不改解析器、不改求值器。
+
+### 5.5 新增资源类别的 playbook
+
+以后要加 memory、plugin 等资源类别，按这个顺序做，缺一步都不算完成：
+
+1. **注册表加一行**：namespace + matcher（`exact` / `prefix` / `tree`）+ canonicalizer。
+2. **提取器加一个 key**：工具参数到资源串的解析只在这一个地方发生。
+3. **校验器接受该前缀**：写入面只放行已登记命名空间，未知前缀 fail-closed。
+4. **单测 / golden 加用例**：至少覆盖「合法形态命中」「未知前缀拒绝」「跨机器/跨宿主稳定」。
+5. **文档加一行**：在 §5 的资源族清单里登记。
+
+**不改表、不改求值器、不做迁移**。真正的成本不在代码，而在定 canonical 形态：什么才算「同一个 memory / 同一个 plugin 资源」——这个决定错了，后面加多少测试都救不回来。
 
 ## 6. 与成熟模型对比
 
@@ -130,7 +193,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 | Cedar / AVP [文档] | `permit` / `forbid` 策略 + 实体属性 | forbid 覆盖 permit；无跨层交集原语 | 实体属性 | Deny | 有（forbid） | 有（属性 / 上下文） | 高（可形式化分析） | 引擎可嵌，AVP 托管 | 高 | 高 |
 | OPA / Rego [文档] | 任意 Rego 决策函数 | 由策略作者自定 | 任意 | 由策略定 | 由策略定 | 有（data 文档） | 中（`explain`） | 需 sidecar 或服务 | 高（双写一致性） | 中 |
 | Casbin [文档] | model 的 matcher + policy 行 | 多策略并集 | 由 model 定 | 由 model 定 | 只能由 matcher 间接表达 | 弱 | 低 | 库内嵌 | 中 | 低 |
-| **本模型（交集授权）** | `PermissionAtom(actionClass, resource)` + 资源前缀覆盖 | 同主体多源并集 + **写入期 ceiling 收窄** + 求值缺省拒 | `fs:` 声明键归一成 `phys:` 前缀；`credential:<uuid>` | Deny | **无显式 Deny** | 无（纯原子，不带属性） | 低（只有 WARN 日志，explain 在办） | 纯仓内，零外部件 | — | — |
+| **本模型（交集授权）** | `PermissionAtom(actionClass, resource)` + 资源前缀覆盖 | 同主体多源并集 + **写入期 ceiling 收窄** + 求值缺省拒 | `fs:` 声明键（求值期展开成 `phys:`）；`credential:<uuid>`；`skill:<uuid>` | Deny | **无显式 Deny** | 无（纯原子，不带属性） | 低（只有 WARN 日志，explain 在办） | 纯仓内，零外部件 | — | — |
 
 两句结论：
 
@@ -199,7 +262,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 | 4 三源快照不同步 | grants 行、binding 的 `permissionsSnapshot`、session 的 `agentPermissionsSnapshot` 三处副本；改了 grant 不追平快照，就会出现「改了没生效」或「撤了还在」 | 未动 |
 | 5 撤销有延迟 | 能力原子走 `cp.capability-cache-ttl-ms`（默认 30000 ms）短 TTL 缓存，撤权最坏晚 30 s 生效 | 设计如此（可配） |
 | 6 PEP 覆盖不全 | 42 个原子只有 7 个有工具面入口；`delete` 原子在工具链上不可达；Windows host 通道无 sandbox 也无 policy 门 | 已留证据（`internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`），修法未裁 |
-| 7 路径前缀边界语义 | `fs:` 声明键必须归一成物理身份再比（永不比字符串），`*` 通配仍交分层匹配器 —— 写错一处就是越界 | 设计如此 |
+| 7 路径前缀边界语义 | 授权只写 `fs:` 声明键；求值时归一成 `phys:` 物理身份再比（永不比字符串），`phys:` 永不入 grants、永不接受 API 提交；`*` 通配仍交分层匹配器 —— 写错一处就是越界 | 设计如此 |
 | 8 委派可能提权 | 会话档位放宽需「持有 `session:permission:configure` 原子 + 是会话创建者」；收紧任意参与者可做 | 已实现（`policy/SessionPermissionGuard.java:20-34`） |
 | 9 原子目录膨胀 | 原子名与动作类持续演进（本仓已从十余条长到 42 条），新增原子没有强制流程 | 未动 |
 | 10 缺模型分析工具链 | 没有 Cedar analyzer 一类的「证明无漏洞」手段，只能靠 golden 用例与人工审查 | golden 设计在办（task-110） |
@@ -261,7 +324,7 @@ explain 不是第二套判据。`GrantIntersectionEvaluator` 里只有一个 `de
 
 - **主体不可选**：subject 取 `TenantContext` 的当前用户，不是请求字段 ⇒ 结构上无法解释他人，响应里也只可能出现调用者自己路径上的 grant 行（id + 来源），不含他人 grants、成员名单或资源细节。
 - **不写任何东西**：不落行、不缓存（DSD-1497 M2-10a 禁求值侧缓存）、响应体不进审计明细（审计只留 requestId）。
-- **scope**：`sessionId` 可选，用于把请求放进该会话的 workspace 上下文，且必须对该调用者可读（否则 404 `SESSION_NOT_FOUND`，与其他会话读面同样是「不区分」式 404，不做存在性探针）；不带则用当前 workspace 上下文。
+- **grant scope**：`sessionId` 可选，用于把请求放进该会话的 workspace 上下文，且必须对该调用者可读（否则 404 `SESSION_NOT_FOUND`，与其他会话读面同样是「不区分」式 404，不做存在性探针）；不带则用当前 workspace 上下文。
 - **租户门**：面本身非 GET，但写门分类器不把 `/api/v1/authorization/**` 视为工作区写面 ⇒ 任何已解析出 workspace 成员身份的角色都过；没有 workspace 上下文的调用者会被租户门挡在 `403 WORKSPACE_FORBIDDEN`，与其它非豁免路由一致。
 
 ### 10.5 源码锚点
@@ -287,7 +350,7 @@ explain 不是第二套判据。`GrantIntersectionEvaluator` 里只有一个 `de
 
 ## 12. 读者地图
 
-| 你要做的事 | 读哪里 | 本篇的角色 |
+| 你要做的事 | 读哪里 | 本篇的定位 |
 |---|---|---|
 | 看授权契约本身（输入、步骤、错误码） | `spec/security/authorization.md` | 本篇给判据理由，不复述契约字段 |
 | 看认证与 token 路径 | `A03-xihe/docs/i18n/zh-Hans/DEV-024-authentication-and-security.md` | 本篇只讲第 1 步 |
