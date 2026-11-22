@@ -181,6 +181,7 @@ Only two things differ from §3: step 7 adds "condition", and step 8 "approval" 
 | 10 | Record | denial reasons explainable (§3 step 9, §10) | partial: evaluation failures still only WARN |
 
 - Step 6 is the only matching point; steps 3, 5, 7, and 8 only add gates, conditions, or confirmations and **MUST NOT** turn a denied call back into an allowed one.
+- Figure (visualisation of the judgement, the ten-step chain, and the three-layer intersection): `internal/A03-xihe/evidence/2026-11-22-authz-mvp-figure/xh-authz-mvp.png`; source and render script live in the same directory.
 
 ## 5. Resources and the atom catalog
 
