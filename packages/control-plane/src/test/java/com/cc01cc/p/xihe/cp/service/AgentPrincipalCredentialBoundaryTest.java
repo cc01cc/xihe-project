@@ -9,16 +9,16 @@ import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -62,10 +62,10 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
 
     private UUID creatorId;
@@ -150,7 +150,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatus());
         assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.getCode());
 
-        grantRoleAtom(principal.getId(), """
+        grantPresetAtom(principal.getId(), """
                 [{"actionClass":"credential_use","resource":"%s"}]
                 """.formatted(credentialId));
         assertDoesNotThrow(() -> agentPrincipalService.setWorkspaceCap(creatorId.toString(),
@@ -196,7 +196,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         principalIds.add(principal.getId());
         // 2026-11-04 裁定（role 行是唯一权威源）：cap 的 ceiling 读 role 行，而 template 派生行已降级为
         // legacy-only，所以这里把 credential 原子写进一条 role 行（与"先绑角色再设 cap"等价的最小形态）。
-        grantRoleAtom(principal.getId(), """
+        grantPresetAtom(principal.getId(), """
                 [{"actionClass":"credential_use","resource":"%s"}]
                 """.formatted(credentialId));
         UUID workspaceUuid = UUID.fromString(workspaceId);
@@ -258,7 +258,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
 
     /**
      * W1c: the creator's ceiling is seeded the post-W1 way — a test-only role bound at instance scope
-     * and materialized into {@code grants(source='role')}.
+     * and materialized into {@code grants(source='preset')}.
      *
      * <p>The helper used to merge into a single {@code source='direct'} row. The authorization gates
      * no longer read that source ({@code GrantSources.EVALUATION_SOURCES} excludes the retired rows),
@@ -268,16 +268,16 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
     private void grantCreator(String permissionsJson) {
         if (creatorRoleId == null) {
             creatorRoleId = UUID.randomUUID();
-            accessRoleRepository.save(new AccessRole(creatorRoleId, "TEST_CREATOR_" + creatorRoleId.toString().replace("-", "").toUpperCase(),
+            accessRoleRepository.save(new GrantPreset(creatorRoleId, "TEST_CREATOR_" + creatorRoleId.toString().replace("-", "").toUpperCase(),
                     "Boundary test creator", "test-only role", false));
-            roleBindingRepository.save(new AccessRoleBinding(creatorRoleId, "user", creatorId,
+            roleBindingRepository.save(new GrantPresetBinding(creatorRoleId, "user", creatorId,
                     AccessScope.INSTANCE, null, creatorId));
         }
         for (JsonNode atom : permissions(permissionsJson)) {
             String actionClass = atom.path("actionClass").asText();
             String resource = atom.has("resource") ? atom.path("resource").asText()
                     : com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog.WILDCARD;
-            permissionRepository.save(new AccessRolePermission(creatorRoleId, actionClass, resource));
+            permissionRepository.save(new GrantPresetAtom(creatorRoleId, actionClass, resource));
         }
         materializer.materializeSubject("user", creatorId, creatorId, null);
     }
@@ -291,7 +291,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         com.fasterxml.jackson.databind.node.ArrayNode merged = objectMapper.createArrayNode();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
                 .forEach(grant -> grant.getPermissions().forEach(merged::add));
         assertTrue(merged.size() > 0, "a created principal must carry its bound-role atoms");
         return merged;
@@ -304,15 +304,15 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         return snapshot;
     }
 
-    /** 直接写一条 source='role' 的授权行：这是求值唯一认的权威源（legacy-only 行不算）。 */
-    private void grantRoleAtom(UUID principalId, String permissionsJson) {
+    /** 直接写一条 source='preset' 的授权行：这是求值唯一认的权威源（legacy-only 行不算）。 */
+    private void grantPresetAtom(UUID principalId, String permissionsJson) {
         com.cc01cc.p.xihe.cp.entity.AuthorizationGrant grant =
                 new com.cc01cc.p.xihe.cp.entity.AuthorizationGrant();
         grant.setGranterType("user");
         grant.setGranterId(creatorId);
         grant.setSubjectType("agent_principal");
         grant.setSubjectId(principalId);
-        grant.setSource(com.cc01cc.p.xihe.cp.policy.GrantSources.ROLE);
+        grant.setSource(com.cc01cc.p.xihe.cp.policy.GrantSources.PRESET);
         grant.setReadState("read");
         grant.setPermissions(permissions(permissionsJson));
         grantRepository.saveAndFlush(grant);

@@ -315,7 +315,7 @@ class OrgUnitWriteServiceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(subjectId);
         grant.setSubjectType("user");
         grant.setSubjectId(subjectId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         ArrayNode permissions = objectMapper.createArrayNode();
         permissions.addObject().put("actionClass", atom).put("resource", "*");

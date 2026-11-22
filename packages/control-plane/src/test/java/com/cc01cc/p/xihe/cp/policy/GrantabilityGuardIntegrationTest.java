@@ -3,15 +3,15 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0673 M1 acceptance (V1.1–V1.4, V4.1, T1.5): the grant-side subset guard against real
- * materialized grants. The guard is called from the service layer ({@code RoleAdminService.create/
+ * materialized grants. The guard is called from the service layer ({@code GrantPresetAdminService.create/
  * update}, {@code BindingAdminService.replace}); these tests exercise the guard itself with the
  * same repositories/materializer the production write paths use, and pin the two-layer judgement:
  * role <b>definitions</b> are any-scope, <b>bindings</b> are target-scope (instance ⊇ workspace).
@@ -41,10 +41,10 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository accessRolePermissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository accessRolePermissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private GrantabilityGuard guard;
     @Autowired private RequesterAuthority requesterAuthority;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -102,7 +102,7 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
     void instanceHolderMayBindInAnyWorkspace() {
         User holder = newUser("guard-instance");
         Workspace workspaceB = workspaceFixture.createWorkspace("guard-instance-b");
-        bindInstanceRole(holder.getId(), SystemAccessRoleCatalog.USER);
+        bindInstanceRole(holder.getId(), SystemGrantPresetCatalog.USER);
         actAs(holder);
 
         guard.assertGrantable(Set.of("read", "write"),
@@ -127,12 +127,12 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
     void concreteResourceGrantCannotAuthorizeWildcardRoleResource() {
         User holder = newUser("guard-resource-bound");
         String credentialId = UUID.randomUUID().toString();
-        AccessRole narrow = accessRoleRepository.saveAndFlush(new AccessRole(UUID.randomUUID(),
+        GrantPreset narrow = accessRoleRepository.saveAndFlush(new GrantPreset(UUID.randomUUID(),
                 "NARROW_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
                 "Narrow credential", null, false));
-        accessRolePermissionRepository.saveAndFlush(new AccessRolePermission(narrow.getId(),
+        accessRolePermissionRepository.saveAndFlush(new GrantPresetAtom(narrow.getId(),
                 ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE, "credential:" + credentialId));
-        bindingRepository.saveAndFlush(new AccessRoleBinding(narrow.getId(), "user", holder.getId(),
+        bindingRepository.saveAndFlush(new GrantPresetBinding(narrow.getId(), "user", holder.getId(),
                 "instance", null, holder.getId()));
         materializer.materializeSubject("user", holder.getId(), holder.getId(), null);
         actAs(holder);
@@ -182,7 +182,7 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
     @Test
     void adminDelegatesWithinItsSubsetButCannotGrantTheBypassAtom() {
         User admin = newUser("guard-admin");
-        bindInstanceRole(admin.getId(), SystemAccessRoleCatalog.ADMIN);
+        bindInstanceRole(admin.getId(), SystemGrantPresetCatalog.ADMIN);
         actAs(admin);
 
         RequesterAuthority authority = requesterAuthority;
@@ -204,7 +204,7 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
     @Test
     void superAdminGoesThroughTheBypassBranchAndItIsAudited() {
         User superAdmin = newUser("guard-super");
-        bindInstanceRole(superAdmin.getId(), SystemAccessRoleCatalog.SUPER_ADMIN);
+        bindInstanceRole(superAdmin.getId(), SystemGrantPresetCatalog.SUPER_ADMIN);
         actAs(superAdmin);
 
         assertTrue(requesterAuthority.holdsActionAtom(superAdmin.getId(),
@@ -218,7 +218,7 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
 
     // PLAN-0673 (Lead review): the NAME path must request the catalog's canonical resource —
     // a literal "*" made every credential request wider than the rows materialised from
-    // role_permissions, so a legitimate holder of (credential_use, credential:*) was denied by the
+    // grant_preset_atoms, so a legitimate holder of (credential_use, credential:*) was denied by the
     // "concrete does not cover wildcard" rule. Positive + negative, no bypass atom involved.
     @Test
     void namePathAllowsAHolderOfTheCanonicalCredentialResource() {
@@ -253,16 +253,16 @@ class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
 
     private void bindInstanceRole(UUID userId, String roleName) {
         UUID roleId = accessRoleRepository.findByName(roleName).orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(roleId, "user", userId,
+        bindingRepository.save(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
     }
 
     private void createInstanceRole(String name, List<String> atoms) {
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, null, false));
         for (String atom : atoms) {
-            accessRolePermissionRepository.saveAndFlush(new AccessRolePermission(
+            accessRolePermissionRepository.saveAndFlush(new GrantPresetAtom(
                     role.getId(), atom, PermissionAtomCatalog.atom(atom).canonicalResource()));
         }
     }

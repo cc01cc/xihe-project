@@ -889,7 +889,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(user.getId());
         grant.setSubjectType("agent_principal");
         grant.setSubjectId(principal.getId());
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"" + actionClass + "\",\"resource\":\"*\"}]"));
         authorizationGrantRepository.saveAndFlush(grant);

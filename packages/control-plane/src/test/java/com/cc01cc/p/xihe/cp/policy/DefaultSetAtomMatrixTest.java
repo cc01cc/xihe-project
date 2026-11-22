@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PLAN-0651 T2.3: the default-grant matrix for the ten atoms this plan adds (N1–N10) across the
  * built-in roles, as a <b>hard-coded table</b>.
  *
- * <p>Why hard-coded: generating the expectation from {@code SystemAccessRoleCatalog} would compare
+ * <p>Why hard-coded: generating the expectation from {@code SystemGrantPresetCatalog} would compare
  * the catalog with itself (self-fulfilling). The table below is the reviewed contract (spec
  * {@code atom-contract.md} §3 "默认授予集"); the test asserts the code matches it cell by cell and
  * names the offending atom × role, so a wrong default points at the exact cell instead of
@@ -24,11 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p><b>No bare role counts</b> (BL-326, 2026-11-05): the earlier version pinned
  * {@code assertEquals(7, EXPECTED.size())}, which went stale the moment V127 added a default role.
- * The role set is now compared <b>by name</b> against {@code SystemAccessRoleCatalog.roleSeeds()}, so
+ * The role set is now compared <b>by name</b> against {@code SystemGrantPresetCatalog.presetSeeds()}, so
  * a new built-in role fails until it is reviewed into this table — the check bites, and it never
  * needs a magic number again.</p>
  *
- * <p>The migration side of the parity check (DB {@code role_permissions} == this table) belongs to
+ * <p>The migration side of the parity check (DB {@code grant_preset_atoms} == this table) belongs to
  * T2.2's verifier: it must run on a <b>Flyway-only</b> database, because a booted context seeds the
  * rows from this very code catalog and would prove nothing.</p>
  */
@@ -55,33 +55,33 @@ class DefaultSetAtomMatrixTest {
 
     private static Map<String, Set<String>> expected() {
         Map<String, Set<String>> table = new LinkedHashMap<>();
-        table.put(SystemAccessRoleCatalog.SUPER_ADMIN, Set.copyOf(PLAN_ATOMS));
-        table.put(SystemAccessRoleCatalog.ADMIN, Set.copyOf(PLAN_ATOMS));
-        table.put(SystemAccessRoleCatalog.USER, Set.of());
-        table.put(SystemAccessRoleCatalog.WS_OWNER, Set.of(
+        table.put(SystemGrantPresetCatalog.SUPER_ADMIN, Set.copyOf(PLAN_ATOMS));
+        table.put(SystemGrantPresetCatalog.ADMIN, Set.copyOf(PLAN_ATOMS));
+        table.put(SystemGrantPresetCatalog.USER, Set.of());
+        table.put(SystemGrantPresetCatalog.WS_OWNER, Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
-        table.put(SystemAccessRoleCatalog.WS_EDITOR, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_EDITOR, Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
-        table.put(SystemAccessRoleCatalog.WS_VIEWER, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_VIEWER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
-        table.put(SystemAccessRoleCatalog.AGENT_DELEGATOR, Set.of());
+        table.put(SystemGrantPresetCatalog.AGENT_DELEGATOR, Set.of());
         // V127 / D-174: the agent default INSTANCE role — the base set (BL-312 removed the former
         // CREATE_OWN_AGENT differentiator), so none of N1–N10 (all cells false).
-        table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
+        table.put(SystemGrantPresetCatalog.AGENT_USER, Set.of());
         // DSD-1500 (Q-93) R3: the three presets. AGENT_WORKER is read/write/delete only, so it holds
         // none of N1–N10; AGENT_READER mirrors WS_VIEWER and WS_RUNNER is exec + the runtime channel,
         // so both hold N7 (USE_WORKSPACE_RUNTIME) and nothing else. A cell flipping here means a preset
         // silently gained a governance atom.
-        table.put(SystemAccessRoleCatalog.AGENT_READER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_READER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
-        table.put(SystemAccessRoleCatalog.AGENT_WORKER, Set.of());
-        table.put(SystemAccessRoleCatalog.WS_RUNNER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_WORKER, Set.of());
+        table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         return table;
     }
@@ -89,14 +89,14 @@ class DefaultSetAtomMatrixTest {
     /** The built-in role names the code catalog declares — the single source the table must match. */
     private static Set<String> catalogRoleNames() {
         Set<String> names = new LinkedHashSet<>();
-        SystemAccessRoleCatalog.roleSeeds().forEach(seed -> names.add(seed.name()));
+        SystemGrantPresetCatalog.presetSeeds().forEach(seed -> names.add(seed.name()));
         return names;
     }
 
     /** The atoms a built-in role carries according to the code catalog. */
     private static Set<String> codeAtomsOf(String roleName) {
         Set<String> atoms = new LinkedHashSet<>();
-        SystemAccessRoleCatalog.roleSeeds().stream()
+        SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> seed.name().equals(roleName))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("role seed missing: " + roleName))
@@ -135,12 +135,12 @@ class DefaultSetAtomMatrixTest {
     void nobodyGrantsTheMemberAtomToAWorkspaceRole() {
         // D51-26: N10 is deliberately instance-only in the default sets — a workspace role that
         // silently gained it would widen member administration, so it is pinned separately.
-        assertFalse(codeAtomsOf(SystemAccessRoleCatalog.WS_OWNER)
+        assertFalse(codeAtomsOf(SystemGrantPresetCatalog.WS_OWNER)
                         .contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS),
                 "WS_OWNER must not gain MANAGE_WORKSPACE_MEMBERS by default (D51-26)");
-        assertFalse(codeAtomsOf(SystemAccessRoleCatalog.WS_EDITOR)
+        assertFalse(codeAtomsOf(SystemGrantPresetCatalog.WS_EDITOR)
                         .contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS));
-        assertFalse(codeAtomsOf(SystemAccessRoleCatalog.WS_VIEWER)
+        assertFalse(codeAtomsOf(SystemGrantPresetCatalog.WS_VIEWER)
                         .contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS));
     }
 

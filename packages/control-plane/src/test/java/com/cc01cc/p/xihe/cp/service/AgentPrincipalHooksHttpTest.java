@@ -1,8 +1,8 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -12,9 +12,9 @@ import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
@@ -73,9 +73,9 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
     @Autowired private WorkspaceAgentRepository bindingRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AgentPrincipalService agentPrincipalService;
@@ -393,9 +393,9 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         // A plain account (USER tier) that also holds instance,admin — exactly the
         // matrix the walkthrough used (admin can read the instance template layer and create).
         grantDefaultService.ensureUserDefault(admin);
-        AccessRole adminRole = accessRoleRepository.findByName("ADMIN")
+        GrantPreset adminRole = accessRoleRepository.findByName("ADMIN")
                 .orElseThrow(() -> new IllegalStateException("ADMIN role missing (V87)"));
-        AccessRoleBinding binding = roleBindingRepository.save(new AccessRoleBinding(adminRole.getId(),
+        GrantPresetBinding binding = roleBindingRepository.save(new GrantPresetBinding(adminRole.getId(),
                 "user", adminUserId, AccessScope.INSTANCE, null, adminUserId));
         seededRoleBindingIds.add(binding.getId());
         materializer.materializeSubject("user", adminUserId, adminUserId, null);

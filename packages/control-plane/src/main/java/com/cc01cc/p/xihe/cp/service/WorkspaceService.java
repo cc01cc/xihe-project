@@ -314,7 +314,7 @@ public class WorkspaceService {
 
     /**
      * PLAN-0610 W3-3: membership is one fact ({@link WorkspaceMembershipService} over
-     * {@code role_bindings}); the tenant gate, D9 and the member API all read it here instead of
+     * {@code grant_preset_bindings}); the tenant gate, D9 and the member API all read it here instead of
      * {@code workspace_users} (round-4 P2-5).
      */
     @Transactional(readOnly = true)

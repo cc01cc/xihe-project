@@ -92,9 +92,9 @@ class PrincipalGrantAdminControllerContractTest extends AbstractReusableIntegrat
      * the row is written behind {@code AuthzContext}'s back.
      */
     private void grantInstanceAdmin(UUID userId) {
-        jdbcTemplate.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbcTemplate.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID), 'instance',"
-                + " NOW() FROM roles r WHERE r.name = 'ADMIN'", userId);
+                + " NOW() FROM grant_presets r WHERE r.name = 'ADMIN'", userId);
         authzContext.invalidateAll();
     }
 

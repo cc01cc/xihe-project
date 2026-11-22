@@ -3,13 +3,13 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -48,16 +48,16 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     private WorkspaceFixture workspaceFixture;
 
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
 
     @Autowired
-    private AccessRoleBindingRepository bindingRepository;
+    private GrantPresetBindingRepository bindingRepository;
 
     @Autowired
     private AuthorizationGrantRepository grantRepository;
 
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     @Autowired
     private GrantAuthorizationService grantAuthorizationService;
@@ -68,9 +68,9 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     @Test
     void workspaceBindingInADoesNotAuthorizeB() {
         Fixture fixture = fixture("isolation");
-        UUID editorRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_EDITOR)
+        UUID editorRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.WS_EDITOR)
                 .orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(editorRoleId, "user", fixture.userId(),
+        bindingRepository.save(new GrantPresetBinding(editorRoleId, "user", fixture.userId(),
                 AccessScope.WORKSPACE, fixture.workspaceA(), fixture.userId()));
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
 
@@ -83,12 +83,12 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
 
         List<AuthorizationGrant> roleRows = grantRepository
                 .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
-                        GrantSources.ROLE);
+                        GrantSources.PRESET);
         // PLAN-0651 M2 T2.1 widened the default set (WS_EDITOR 4→7: +MANAGE_PROVIDER_CONNECTIONS,
         // +USE_WORKSPACE_RUNTIME, +MANAGE_WORKSPACE_POLICY). Derive from the code catalog instead of
         // a literal, so the next widening does not re-break an assertion that is about scope, not
         // about the exact count.
-        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_EDITOR),
+        assertEquals(PresetAtomExpectations.materializedAtomCount(SystemGrantPresetCatalog.WS_EDITOR),
                 roleRows.size(), "WS_EDITOR materializes one row per catalog action atom");
         roleRows.forEach(row -> {
             assertEquals("workspace", row.getScopeType());
@@ -98,7 +98,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         assertTrue(grantRepository.findScopedGrants("user", fixture.userId(),
                         GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).isEmpty(),
                 "B sees none of A's materialized rows");
-        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_EDITOR),
+        assertEquals(PresetAtomExpectations.materializedAtomCount(SystemGrantPresetCatalog.WS_EDITOR),
                 grantRepository.findScopedGrants("user", fixture.userId(),
                         GrantSources.EVALUATION_SOURCES, fixture.workspaceA()).size());
     }
@@ -112,9 +112,9 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
                 fixture.userId().toString(), WorkspaceRole.VIEWER);
         workspaceFixture.bindWorkspaceRole(fixture.workspaceB().toString(),
                 fixture.userId().toString(), WorkspaceRole.VIEWER);
-        UUID userRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.USER)
+        UUID userRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.USER)
                 .orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(userRoleId, "user", fixture.userId(),
+        bindingRepository.save(new GrantPresetBinding(userRoleId, "user", fixture.userId(),
                 AccessScope.INSTANCE, null, fixture.userId()));
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
 
@@ -131,7 +131,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         // The USER default set is the five registration atoms plus MEMORY_WRITE_SELF/PLUGIN_INVOKE
         // (BL-312 removed the former PLAN-0622 D8 atom). The count is derived from the code-side
         // role seed so the next atom change does not silently re-break it.
-        assertEquals(seedAtomCount(SystemAccessRoleCatalog.USER), grantRepository.findScopedGrants(
+        assertEquals(seedAtomCount(SystemGrantPresetCatalog.USER), grantRepository.findScopedGrants(
                         "user", fixture.userId(), GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).stream()
                         .filter(row -> AccessScope.INSTANCE.equals(row.getScopeType()))
                         .count(),
@@ -140,7 +140,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
 
     /** All atoms of one seeded system role (the code-side catalog is the single source of truth). */
     private static long seedAtomCount(String roleName) {
-        return SystemAccessRoleCatalog.roleSeeds().stream()
+        return SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> roleName.equals(seed.name()))
                 .findFirst()
                 .orElseThrow()
@@ -152,14 +152,14 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         Fixture fixture = fixture("capability");
         // Decision #27: SUPER_ADMIN is an instance role and all action atoms are bindable in
         // the instance scope (only the 3 capability atoms are filtered out of the materialization).
-        UUID superRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+        UUID superRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.SUPER_ADMIN)
                 .orElseThrow().getId();
-        AccessRoleBinding binding = bindingRepository.save(new AccessRoleBinding(superRoleId, "user",
+        GrantPresetBinding binding = bindingRepository.save(new GrantPresetBinding(superRoleId, "user",
                 fixture.userId(), AccessScope.INSTANCE, null, fixture.userId()));
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
 
         List<AuthorizationGrant> rows = grantRepository
-                .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(), GrantSources.ROLE);
+                .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(), GrantSources.PRESET);
         assertEquals(PermissionAtomCatalog.actionAtoms().size(), rows.size(),
                 "SUPER_ADMIN materializes its full action atom set (design #27 makes the workspace "
                         + "usage atoms instance-bindable)");
@@ -180,7 +180,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         bindingRepository.delete(binding);
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
         assertTrue(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
-                GrantSources.ROLE).isEmpty(), "losing the binding clears the materialized rows");
+                GrantSources.PRESET).isEmpty(), "losing the binding clears the materialized rows");
         assertFalse(authzContext.isInstanceSuper(fixture.userId()),
                 "the materializer invalidates the capability cache for user subjects");
     }
@@ -188,9 +188,9 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     @Test
     void instanceOnlyAtomsCannotBeBoundInAWorkspace() {
         Fixture fixture = fixture("mismatch");
-        UUID adminRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        UUID adminRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(adminRoleId, "user", fixture.userId(),
+        bindingRepository.save(new GrantPresetBinding(adminRoleId, "user", fixture.userId(),
                 AccessScope.WORKSPACE, fixture.workspaceA(), fixture.userId()));
 
         com.cc01cc.p.xihe.cp.config.CpApiException failure = org.junit.jupiter.api.Assertions
@@ -200,7 +200,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         assertEquals("ROLE_SCOPE_MISMATCH", failure.getCode(),
                 "V14 / decision #27: instance-only atoms (instance:admin) in a workspace binding");
         assertTrue(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
-                GrantSources.ROLE).isEmpty(), "nothing is materialized when validation fails");
+                GrantSources.PRESET).isEmpty(), "nothing is materialized when validation fails");
     }
 
     // ---------------------------------------------------------------- helpers

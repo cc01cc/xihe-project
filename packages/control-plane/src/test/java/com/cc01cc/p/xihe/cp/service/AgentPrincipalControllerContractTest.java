@@ -1,18 +1,18 @@
 package com.cc01cc.p.xihe.cp.service;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -45,10 +45,10 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private WorkspaceAgentRepository bindingRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository roleBindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository roleBindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
@@ -129,10 +129,10 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         // 集合全部从角色目录派生，不写字面量。注意：夹具把被测用户绑成 MEMBER，而 PLAN-0559 起
         // MEMBER/ADMIN 规范化为 **EDITOR**，所以工作区环是 WS_EDITOR 的原子集。
         java.util.Set<String> expectedDefaultAtoms = new java.util.HashSet<>(
-                com.cc01cc.p.xihe.cp.policy.RoleAtomExpectations.materializedAtoms(
-                        SystemAccessRoleCatalog.USER));
-        expectedDefaultAtoms.addAll(com.cc01cc.p.xihe.cp.policy.RoleAtomExpectations.materializedAtoms(
-                SystemAccessRoleCatalog.WS_EDITOR));
+                com.cc01cc.p.xihe.cp.policy.PresetAtomExpectations.materializedAtoms(
+                        SystemGrantPresetCatalog.USER));
+        expectedDefaultAtoms.addAll(com.cc01cc.p.xihe.cp.policy.PresetAtomExpectations.materializedAtoms(
+                SystemGrantPresetCatalog.WS_EDITOR));
         expectedDefaultAtoms.add(com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
         assertEquals(expectedDefaultAtoms,
                 new java.util.HashSet<>(actionClasses(principal.getTemplateSnapshot().path("permissions"))),
@@ -142,7 +142,7 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         // 一原子一行（uq_grants_role_atom）。B 类（BL-326）：V127/D-174 之后 agent 的默认 instance
         // 角色是 **AGENT_USER**（不是 USER），期望从角色目录单一来源派生，不写字面量。
         java.util.Set<String> expectedAtoms =
-                com.cc01cc.p.xihe.cp.policy.RoleAtomExpectations.declaredAtoms(SystemAccessRoleCatalog.AGENT_USER);
+                com.cc01cc.p.xihe.cp.policy.PresetAtomExpectations.declaredAtoms(SystemGrantPresetCatalog.AGENT_USER);
         java.util.Set<String> actualAtoms = new java.util.HashSet<>(jdbcTemplate.queryForList(
                 "SELECT jsonb_array_elements(permissions)->>'actionClass' FROM grants"
                         + " WHERE subject_type = 'agent_principal' AND subject_id = ?::uuid",
@@ -281,7 +281,7 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
 
     /**
      * W1c: the caller ceiling is seeded the post-W1 way — a test-only role bound at instance scope
-     * and materialized into {@code grants(source='role')}.
+     * and materialized into {@code grants(source='preset')}.
      *
      * <p>The previous helper wrote a {@code source='direct'} row, which the authorization gates no
      * longer read ({@code GrantSources.EVALUATION_SOURCES} excludes the retired sources). Keeping the
@@ -290,10 +290,10 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
      */
     private void addGrant(String actionClass, String resource) {
         UUID roleId = UUID.randomUUID();
-        accessRoleRepository.save(new AccessRole(roleId, "TEST_GRANT_" + roleId.toString().replace("-", "").toUpperCase(), "Test grant role",
+        accessRoleRepository.save(new GrantPreset(roleId, "TEST_GRANT_" + roleId.toString().replace("-", "").toUpperCase(), "Test grant role",
                 "test-only role", false));
-        permissionRepository.save(new AccessRolePermission(roleId, actionClass, resource));
-        roleBindingRepository.save(new AccessRoleBinding(roleId, "user", userId,
+        permissionRepository.save(new GrantPresetAtom(roleId, actionClass, resource));
+        roleBindingRepository.save(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
         testRoleIds.add(roleId);

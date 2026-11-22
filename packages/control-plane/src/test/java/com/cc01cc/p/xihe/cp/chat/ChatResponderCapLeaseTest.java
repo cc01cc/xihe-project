@@ -239,7 +239,7 @@ class ChatResponderCapLeaseTest extends AbstractReusableIntegrationTest {
         grant.setGranterId(UUID.fromString(ownerId));
         grant.setSubjectType("agent_principal");
         grant.setSubjectId(agentPrincipalId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         grant.setPermissions(json.createArrayNode()
                 .add(json.createObjectNode().put("actionClass", actionClass).put("resource", "*")));

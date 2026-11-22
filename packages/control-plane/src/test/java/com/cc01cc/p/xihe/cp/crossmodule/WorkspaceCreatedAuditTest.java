@@ -25,7 +25,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
  *
  * <p>Before the fix the row count is 0, so this test must fail on the unfixed tree — the assertion is
  * "exactly one new row keyed to this workspace", not "some row exists": the creation path already writes
- * {@code workspace_membership_bound} and {@code authorization_role_grant_materialized}, and "a row exists"
+ * {@code workspace_membership_bound} and {@code authorization_preset_grant_materialized}, and "a row exists"
  * would be satisfied by those two and stay green with the gap in place.</p>
  */
 class WorkspaceCreatedAuditTest extends AbstractWireMockTest {

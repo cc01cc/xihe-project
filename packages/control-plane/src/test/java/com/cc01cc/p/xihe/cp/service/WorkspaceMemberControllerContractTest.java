@@ -7,13 +7,13 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -53,11 +53,11 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private JdbcTemplate jdbcTemplate;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRoleBindingRepository accessRoleBindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetBindingRepository accessRoleBindingRepository;
     @Autowired private AuthzContext authzContext;
     /** PLAN-0651 T1.3 (A7): the bypass is an action atom now, so the fixture must materialize. */
-    @Autowired private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
+    @Autowired private com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer roleGrantMaterializer;
 
     private UUID ownerId;
     private UUID workspaceId;
@@ -69,7 +69,7 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'workspace'"
                     + " AND scope_id = ?::uuid", workspaceId.toString());
             jdbcTemplate.update("DELETE FROM audit_logs WHERE CAST(workspace_id AS VARCHAR) = ?",
                     workspaceId.toString());
@@ -317,9 +317,9 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     private User adminUser() {
         if (adminUser == null) {
             adminUser = newUser("instance-admin-holder");
-            AccessRole role = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+            GrantPreset role = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                     .orElseThrow();
-            accessRoleBindingRepository.save(new AccessRoleBinding(role.getId(), "user",
+            accessRoleBindingRepository.save(new GrantPresetBinding(role.getId(), "user",
                     adminUser.getId(), AccessScope.INSTANCE, null, null));
             // PLAN-0651 T1.3 (A7): the service now evaluates the materialized
             // MANAGE_WORKSPACE_MEMBERS atom instead of reading cap:instance:admin, so the fixture

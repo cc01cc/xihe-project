@@ -4,14 +4,14 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -49,10 +49,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       check with a different answer.</li>
  * </ul>
  */
-class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
+class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
-    private OrgUnitRoleBindingService service;
+    private OrgUnitPresetBindingService service;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -64,10 +64,10 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaces;
 
     @Autowired
-    private AccessRoleRepository roles;
+    private GrantPresetRepository roles;
 
     @Autowired
-    private AccessRoleBindingRepository bindings;
+    private GrantPresetBindingRepository bindings;
 
     @Autowired
     private AuthorizationGrantRepository grants;
@@ -83,7 +83,7 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("DELETE FROM org_unit_role_bindings");
+        jdbc.update("DELETE FROM org_unit_preset_bindings");
         jdbc.update("DELETE FROM org_unit_members");
         jdbc.update("DELETE FROM org_units");
         suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
@@ -150,7 +150,7 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
         TenantContext.setUserId(caller.toString());
         // WS_OWNER is a real, well-known role — and exactly what must not be bindable to an org
         // unit: WRITE_WORKSPACE_CONTENT would spread into every workspace a member can reach.
-        AccessRole wsOwner = roles.findByName(SystemAccessRoleCatalog.WS_OWNER).orElseThrow();
+        GrantPreset wsOwner = roles.findByName(SystemGrantPresetCatalog.WS_OWNER).orElseThrow();
         int auditBefore = auditCount();
 
         CpApiException refused = assertThrows(CpApiException.class,
@@ -163,7 +163,7 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
         // SUPER_ADMIN fails the whitelist too: mixed atoms (governance + everything else) are the
         // leak, and "it is the admin role" is not an exception.
-        AccessRole superAdmin = roles.findByName(SystemAccessRoleCatalog.SUPER_ADMIN).orElseThrow();
+        GrantPreset superAdmin = roles.findByName(SystemGrantPresetCatalog.SUPER_ADMIN).orElseThrow();
         assertEquals("ORG_SCOPE_ROLE_FORBIDDEN", assertThrows(CpApiException.class,
                 () -> service.replace(unitA.toString(), List.of(superAdmin.getId().toString())))
                 .getCode());
@@ -231,13 +231,13 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     private UUID insertRole(String name, String... atoms) {
-        AccessRole role = new AccessRole();
+        GrantPreset role = new GrantPreset();
         role.setName(name);
         role.setDisplayName(name);
         role.setSystem(false);
         role = roles.saveAndFlush(role);
         for (String atom : atoms) {
-            jdbc.update("INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+            jdbc.update("INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)"
                     + " VALUES (?, ?, '*')", role.getId(), atom);
         }
         return role.getId();
@@ -259,8 +259,8 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
         workspace.setStorageMode("direct_attach");
         workspace.setHostPath("/tmp/xihe-org-unit/" + UUID.randomUUID());
         workspace = workspaces.saveAndFlush(workspace);
-        AccessRole ownerRole = roles.findByName(SystemAccessRoleCatalog.WS_OWNER).orElseThrow();
-        AccessRoleBinding binding = new AccessRoleBinding();
+        GrantPreset ownerRole = roles.findByName(SystemGrantPresetCatalog.WS_OWNER).orElseThrow();
+        GrantPresetBinding binding = new GrantPresetBinding();
         binding.setRoleId(ownerRole.getId());
         binding.setSubjectType("user");
         binding.setSubjectId(owner);
@@ -274,21 +274,21 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
     private int bindingRows(UUID unitId) {
         Integer count = jdbc.queryForObject(
-                "SELECT count(*) FROM org_unit_role_bindings WHERE org_unit_id = ?",
+                "SELECT count(*) FROM org_unit_preset_bindings WHERE org_unit_id = ?",
                 Integer.class, unitId);
         return count == null ? 0 : count;
     }
 
     private int auditCount() {
         Integer count = jdbc.queryForObject("SELECT count(*) FROM audit_logs WHERE action = ?",
-                Integer.class, OrgUnitRoleBindingService.AUDIT_EVENT);
+                Integer.class, OrgUnitPresetBindingService.AUDIT_EVENT);
         return count == null ? 0 : count;
     }
 
     private String latestAuditDetail() {
         return jdbc.queryForObject("SELECT details FROM audit_logs WHERE action = ?"
                 + " ORDER BY created_at DESC, id DESC LIMIT 1", String.class,
-                OrgUnitRoleBindingService.AUDIT_EVENT);
+                OrgUnitPresetBindingService.AUDIT_EVENT);
     }
 
     private void grant(UUID subjectId, String atom) {
@@ -297,7 +297,7 @@ class OrgUnitRoleBindingServiceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(subjectId);
         grant.setSubjectType("user");
         grant.setSubjectId(subjectId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         ArrayNode permissions = objectMapper.createArrayNode();
         permissions.addObject().put("actionClass", atom).put("resource", "*");

@@ -3,15 +3,15 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -39,16 +39,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * PLAN-0673 V1.5 — the update ∥ bind concurrency matrix.
  *
- * <p>{@code RoleUpdateBindingRaceTest} pinned the <b>agent target in one workspace</b>; this class
+ * <p>{@code PresetUpdateBindingRaceTest} pinned the <b>agent target in one workspace</b>; this class
  * closes the rest of the matrix the verify line asks for:</p>
  *
  * <ol>
  *   <li>a <b>user</b> target bound in a workspace the author only partially reaches;</li>
  *   <li>an <b>instance-scope</b> binding;</li>
- *   <li>a <b>capability</b> atom (resolved from {@code role_permissions}, not from a materialized
+ *   <li>a <b>capability</b> atom (resolved from {@code grant_preset_atoms}, not from a materialized
  *       grant row — so an "checked against the old set, written with the new set" window would be
  *       invisible to any grant-row assertion);</li>
- *   <li>a denied writer leaves {@code role_permissions}, {@code role_bindings} and {@code grants}
+ *   <li>a denied writer leaves {@code grant_preset_atoms}, {@code grant_preset_bindings} and {@code grants}
  *       untouched in every one of those combinations.</li>
  * </ol>
  *
@@ -57,15 +57,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * write path uses: {@code instance_owner} → role row → subject/binding rows). Whichever writer gets
  * the mutex second therefore reads the first one's committed state — the assertions are written as
  * <b>invariants over both legal interleavings</b>, not as one fixed schedule. The honest limit is the
- * one {@code RoleUpdateBindingRaceTest} states: this is a deterministic-DB harness, not a proof; it
+ * one {@code PresetUpdateBindingRaceTest} states: this is a deterministic-DB harness, not a proof; it
  * cannot enumerate every scheduler interleaving.</p>
  *
  * <p><b>Counter-example contract</b> (recorded in the PLAN evidence): every method here turns red when
- * the subset gate is removed from {@code RoleAdminService.update} /
+ * the subset gate is removed from {@code GrantPresetAdminService.update} /
  * {@code BindingAdminService.replace} — either the expected 403 becomes a successful write
  * ({@link #assertThrows} fails) or the "atom never lands in the wrong scope" invariant breaks.</p>
  */
-class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
+class PresetUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
     private static final String READ = ToolFaceRegistry.ACTION_READ;
     private static final String UWR = ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME;
@@ -73,11 +73,11 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
-    @Autowired private RoleAdminService roleAdmin;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
+    @Autowired private GrantPresetAdminService roleAdmin;
     @Autowired private BindingAdminService bindingAdmin;
     @Autowired private AuthzContext authzContext;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -107,20 +107,20 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         User holderB = newUser("mtwhb");
         Workspace workspaceA = workspaceFixture.createOwnedWorkspace("mt-ws-a", author.getId().toString());
         Workspace workspaceB = workspaceFixture.createOwnedWorkspace("mt-ws-b", custodian.getId().toString());
-        AccessRole instanceAuthority = newRole("MTAUTHI", List.of(ToolFaceRegistry.ACTION_MANAGE_ROLES));
+        GrantPreset instanceAuthority = newRole("MTAUTHI", List.of(ToolFaceRegistry.ACTION_MANAGE_ROLES));
         bindRole(instanceAuthority.getId(), author.getId(), AccessScope.instance());
-        AccessRole workspaceAuthority = newRole("MTAUTHW",
+        GrantPreset workspaceAuthority = newRole("MTAUTHW",
                 List.of(READ, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS));
         bindRole(workspaceAuthority.getId(), author.getId(), AccessScope.workspace(workspaceB.getId()));
-        AccessRole role = newRole("MTW", List.of(READ));
+        GrantPreset role = newRole("MTW", List.of(READ));
         bindRole(role.getId(), holderA.getId(), AccessScope.workspace(workspaceA.getId()));
         // The PUT is a full replacement of workspace B's user binding set: restate what is already
         // there (the owner and the author's own helper role), otherwise the write would delete it.
-        List<RoleAdminViews.BindingInput> desiredInB = List.of(
-                new RoleAdminViews.BindingInput("user", custodian.getId(),
+        List<GrantPresetAdminViews.BindingInput> desiredInB = List.of(
+                new GrantPresetAdminViews.BindingInput("user", custodian.getId(),
                         workspaceOwnerRoleId()),
-                new RoleAdminViews.BindingInput("user", author.getId(), workspaceAuthority.getId()),
-                new RoleAdminViews.BindingInput("user", holderB.getId(), role.getId()));
+                new GrantPresetAdminViews.BindingInput("user", author.getId(), workspaceAuthority.getId()),
+                new GrantPresetAdminViews.BindingInput("user", holderB.getId(), role.getId()));
 
         int permissionsBefore = permissionsOf(role.getId());
 
@@ -128,7 +128,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
                 () -> {
                     actAs(author);
                     roleAdmin.update(role.getId(),
-                            new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, UWR)));
+                            new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, UWR)));
                 },
                 () -> {
                     actAs(author);
@@ -156,7 +156,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
                     "the existing A-scoped holder gains the atom (the update won legitimately)");
         } else {
             assertEquals(List.of(READ), roleAtoms,
-                    "the refused update writes nothing to role_permissions");
+                    "the refused update writes nothing to grant_preset_atoms");
             assertEquals(1L, bindingsOfRoleInScope(role.getId(), AccessScope.WORKSPACE, workspaceB.getId()),
                     "the winning bind wrote exactly one role_binding row");
             assertEquals(Set.of(READ), Set.copyOf(
@@ -179,27 +179,27 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         User holderB = newUser("mtihb");
         User root = newUser("mtiroot");
         Workspace workspaceA = workspaceFixture.createOwnedWorkspace("mt-inst-a", author.getId().toString());
-        UUID superAdminRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+        UUID superAdminRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.SUPER_ADMIN)
                 .orElseThrow().getId();
         bindRole(superAdminRoleId, root.getId(), AccessScope.instance());
-        AccessRole instanceAuthority = newRole("MTAUTHI",
+        GrantPreset instanceAuthority = newRole("MTAUTHI",
                 List.of(READ, ToolFaceRegistry.ACTION_MANAGE_ROLES));
         bindRole(instanceAuthority.getId(), author.getId(), AccessScope.instance());
-        AccessRole role = newRole("MTI", List.of(READ));
+        GrantPreset role = newRole("MTI", List.of(READ));
         bindRole(role.getId(), holderA.getId(), AccessScope.workspace(workspaceA.getId()));
         // A full replacement of the instance binding set must restate the existing rows (the last
         // SUPER_ADMIN is an invariant of this very write path).
-        List<RoleAdminViews.BindingInput> desiredAtInstance = List.of(
-                new RoleAdminViews.BindingInput("user", root.getId(), superAdminRoleId),
-                new RoleAdminViews.BindingInput("user", author.getId(), instanceAuthority.getId()),
-                new RoleAdminViews.BindingInput("user", holderB.getId(), role.getId()));
+        List<GrantPresetAdminViews.BindingInput> desiredAtInstance = List.of(
+                new GrantPresetAdminViews.BindingInput("user", root.getId(), superAdminRoleId),
+                new GrantPresetAdminViews.BindingInput("user", author.getId(), instanceAuthority.getId()),
+                new GrantPresetAdminViews.BindingInput("user", holderB.getId(), role.getId()));
         int permissionsBefore = permissionsOf(role.getId());
 
         RaceOutcome outcome = race(
                 () -> {
                     actAs(author);
                     roleAdmin.update(role.getId(),
-                            new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, UWR)));
+                            new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, UWR)));
                 },
                 () -> {
                     actAs(author);
@@ -221,7 +221,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
             assertEquals(Set.of(), Set.copyOf(grantAtoms(holderB.getId(), AccessScope.INSTANCE, null)));
         } else {
             assertEquals(List.of(READ), roleAtoms,
-                    "the refused update writes nothing to role_permissions");
+                    "the refused update writes nothing to grant_preset_atoms");
             assertEquals(1L, bindingsOfRoleInScope(role.getId(), AccessScope.INSTANCE, null),
                     "the winning instance bind wrote exactly one role_binding row");
             assertEquals(Set.of(READ), Set.copyOf(grantAtoms(holderB.getId(), AccessScope.INSTANCE, null)));
@@ -232,7 +232,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
     /**
      * The capability dimension. {@code AuthzContext} answers capability questions straight from
-     * {@code role_permissions} × bindings, so a capability atom is effective the instant the role
+     * {@code grant_preset_atoms} × bindings, so a capability atom is effective the instant the role
      * update commits — no materialized grant row stands in the way. The role is already bound in A and
      * B; the author owns A (hence holds {@code workspace:admin} there) but not B. The update therefore
      * has to be refused <b>deterministically</b>, whichever writer wins, and the concurrent bind of
@@ -250,20 +250,20 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         User holderC = newUser("mtchc");
         Workspace workspaceA = workspaceFixture.createOwnedWorkspace("mt-cap-a", author.getId().toString());
         Workspace workspaceB = workspaceFixture.createOwnedWorkspace("mt-cap-b", custodian.getId().toString());
-        AccessRole instanceAuthority = newRole("MTAUTHI", List.of(ToolFaceRegistry.ACTION_MANAGE_ROLES));
+        GrantPreset instanceAuthority = newRole("MTAUTHI", List.of(ToolFaceRegistry.ACTION_MANAGE_ROLES));
         bindRole(instanceAuthority.getId(), author.getId(), AccessScope.instance());
-        AccessRole workspaceAuthority = newRole("MTAUTHW",
+        GrantPreset workspaceAuthority = newRole("MTAUTHW",
                 List.of(READ, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS));
         bindRole(workspaceAuthority.getId(), author.getId(), AccessScope.workspace(workspaceB.getId()));
-        AccessRole role = newRole("MTC", List.of(READ));
+        GrantPreset role = newRole("MTC", List.of(READ));
         bindRole(role.getId(), holderA.getId(), AccessScope.workspace(workspaceA.getId()));
         bindRole(role.getId(), holderB.getId(), AccessScope.workspace(workspaceB.getId()));
-        List<RoleAdminViews.BindingInput> desiredInB = List.of(
-                new RoleAdminViews.BindingInput("user", custodian.getId(),
+        List<GrantPresetAdminViews.BindingInput> desiredInB = List.of(
+                new GrantPresetAdminViews.BindingInput("user", custodian.getId(),
                         workspaceOwnerRoleId()),
-                new RoleAdminViews.BindingInput("user", author.getId(), workspaceAuthority.getId()),
-                new RoleAdminViews.BindingInput("user", holderB.getId(), role.getId()),
-                new RoleAdminViews.BindingInput("user", holderC.getId(), role.getId()));
+                new GrantPresetAdminViews.BindingInput("user", author.getId(), workspaceAuthority.getId()),
+                new GrantPresetAdminViews.BindingInput("user", holderB.getId(), role.getId()),
+                new GrantPresetAdminViews.BindingInput("user", holderC.getId(), role.getId()));
         long permissionsBefore = permissionsOf(role.getId());
         long bindingsBefore = bindingsOfRole(role.getId());
 
@@ -271,7 +271,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
                 () -> {
                     actAs(author);
                     roleAdmin.update(role.getId(),
-                            new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, WS_ADMIN)));
+                            new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, WS_ADMIN)));
                 },
                 () -> {
                     actAs(author);
@@ -289,7 +289,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
                         + outcome.bindFailure());
 
         assertEquals(permissionsBefore, permissionsOf(role.getId()),
-                "the refused capability update writes nothing to role_permissions");
+                "the refused capability update writes nothing to grant_preset_atoms");
         assertEquals(List.of(READ), atomsOf(role.getId()));
         assertEquals(bindingsBefore + 1L, bindingsOfRole(role.getId()),
                 "the concurrent bind added exactly one row");
@@ -310,7 +310,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         authzContext.invalidate(author.getId());
         actAs(author);
         roleAdmin.update(role.getId(),
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, WS_ADMIN)));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, WS_ADMIN)));
 
         assertEquals(List.of(READ, WS_ADMIN), atomsOf(role.getId()),
                 "the same edit applies once the author holds the capability in every bound scope");
@@ -321,7 +321,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
     // ── ④ zero partial write per combination ────────────────────────────────
 
-    /** User target, workspace scope: the 403 leaves {@code role_permissions}/{@code role_bindings}/{@code grants} alone. */
+    /** User target, workspace scope: the 403 leaves {@code grant_preset_atoms}/{@code grant_preset_bindings}/{@code grants} alone. */
     @Test
     void deniedWorkspaceScopeUpdateWritesNothingToTheThreeTables() {
         User author = newUser("mzw");
@@ -329,7 +329,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         User holderB = newUser("mzwhb");
         Workspace workspaceA = workspaceFixture.createOwnedWorkspace("mz-ws-a", author.getId().toString());
         Workspace workspaceB = workspaceFixture.createOwnedWorkspace("mz-ws-b", newUser("mzwc").getId().toString());
-        AccessRole role = newRole("MZW", List.of(READ));
+        GrantPreset role = newRole("MZW", List.of(READ));
         bindRole(role.getId(), holderA.getId(), AccessScope.workspace(workspaceA.getId()));
         bindRole(role.getId(), holderB.getId(), AccessScope.workspace(workspaceB.getId()));
         long permissionsBefore = permissionsOf(role.getId());
@@ -338,11 +338,11 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
         actAs(author);
         CpApiException denied = assertThrows(CpApiException.class, () -> roleAdmin.update(role.getId(),
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, UWR))));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, UWR))));
 
         assertPrivilegeEscalation(denied);
-        assertEquals(permissionsBefore, permissionsOf(role.getId()), "role_permissions untouched");
-        assertEquals(bindingsBefore, bindingsOfRole(role.getId()), "role_bindings untouched");
+        assertEquals(permissionsBefore, permissionsOf(role.getId()), "grant_preset_atoms untouched");
+        assertEquals(bindingsBefore, bindingsOfRole(role.getId()), "grant_preset_bindings untouched");
         assertEquals(grantsBefore, totalGrants(), "grants untouched");
     }
 
@@ -352,7 +352,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         User author = newUser("mzi");
         User holder = newUser("mziha");
         Workspace workspaceA = workspaceFixture.createOwnedWorkspace("mz-inst-a", author.getId().toString());
-        AccessRole role = newRole("MZI", List.of(READ));
+        GrantPreset role = newRole("MZI", List.of(READ));
         bindRole(role.getId(), holder.getId(), AccessScope.instance());
         long permissionsBefore = permissionsOf(role.getId());
         long bindingsBefore = bindingsOfRole(role.getId());
@@ -360,11 +360,11 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
         actAs(author);
         CpApiException denied = assertThrows(CpApiException.class, () -> roleAdmin.update(role.getId(),
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, UWR))));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, UWR))));
 
         assertPrivilegeEscalation(denied);
-        assertEquals(permissionsBefore, permissionsOf(role.getId()), "role_permissions untouched");
-        assertEquals(bindingsBefore, bindingsOfRole(role.getId()), "role_bindings untouched");
+        assertEquals(permissionsBefore, permissionsOf(role.getId()), "grant_preset_atoms untouched");
+        assertEquals(bindingsBefore, bindingsOfRole(role.getId()), "grant_preset_bindings untouched");
         assertEquals(grantsBefore, totalGrants(), "grants untouched");
         assertTrue(grantAtoms(holder.getId(), AccessScope.INSTANCE, null).size() == 1,
                 "the instance holder keeps exactly the pre-update atom set");
@@ -380,7 +380,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         User holderB = newUser("mzchb");
         Workspace workspaceA = workspaceFixture.createOwnedWorkspace("mz-cap-a", author.getId().toString());
         Workspace workspaceB = workspaceFixture.createOwnedWorkspace("mz-cap-b", custodian.getId().toString());
-        AccessRole role = newRole("MZC", List.of(READ));
+        GrantPreset role = newRole("MZC", List.of(READ));
         bindRole(role.getId(), holderA.getId(), AccessScope.workspace(workspaceA.getId()));
         bindRole(role.getId(), holderB.getId(), AccessScope.workspace(workspaceB.getId()));
         long permissionsBefore = permissionsOf(role.getId());
@@ -389,12 +389,12 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
         actAs(author);
         CpApiException denied = assertThrows(CpApiException.class, () -> roleAdmin.update(role.getId(),
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, WS_ADMIN))));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, WS_ADMIN))));
 
         assertPrivilegeEscalation(denied);
         assertTrue(denied.getMessage().contains(WS_ADMIN), denied.getMessage());
-        assertEquals(permissionsBefore, permissionsOf(role.getId()), "role_permissions untouched");
-        assertEquals(bindingsBefore, bindingsOfRole(role.getId()), "role_bindings untouched");
+        assertEquals(permissionsBefore, permissionsOf(role.getId()), "grant_preset_atoms untouched");
+        assertEquals(bindingsBefore, bindingsOfRole(role.getId()), "grant_preset_bindings untouched");
         assertEquals(grantsBefore, totalGrants(), "grants untouched");
     }
 
@@ -471,46 +471,46 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
         TenantContext.setUserId(user.getId().toString());
     }
 
-    private AccessRole newRole(String prefix, List<String> atoms) {
+    private GrantPreset newRole(String prefix, List<String> atoms) {
         String name = prefix + "_" + UUID.randomUUID().toString().replace("-", "")
                 .substring(0, 8).toUpperCase();
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, null, false));
         for (String atom : atoms) {
             PermissionAtomCatalog.Atom ref = PermissionAtomCatalog.atom(atom);
             permissionRepository.saveAndFlush(
-                    new AccessRolePermission(role.getId(), ref.name(), ref.canonicalResource()));
+                    new GrantPresetAtom(role.getId(), ref.name(), ref.canonicalResource()));
         }
         return role;
     }
 
     /** The seeded workspace-owner role (kept in the restated binding set so the write is legal). */
     private UUID workspaceOwnerRoleId() {
-        return accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_OWNER).orElseThrow().getId();
+        return accessRoleRepository.findByName(SystemGrantPresetCatalog.WS_OWNER).orElseThrow().getId();
     }
 
     private void bindRole(UUID roleId, UUID subjectId, AccessScope scope) {
-        bindingRepository.saveAndFlush(new AccessRoleBinding(roleId, "user", subjectId,
+        bindingRepository.saveAndFlush(new GrantPresetBinding(roleId, "user", subjectId,
                 scope.type(), scope.id(), subjectId));
         materializer.materializeSubject("user", subjectId, subjectId, null);
     }
 
     private int permissionsOf(UUID roleId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM role_permissions WHERE role_id = ?", Integer.class, roleId);
+                "SELECT count(*) FROM grant_preset_atoms WHERE role_id = ?", Integer.class, roleId);
     }
 
     private long bindingsOfRole(UUID roleId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM role_bindings WHERE role_id = ?", Long.class, roleId);
+                "SELECT count(*) FROM grant_preset_bindings WHERE role_id = ?", Long.class, roleId);
     }
 
     private long bindingsOfRoleInScope(UUID roleId, String scopeType, UUID scopeId) {
         if (scopeId == null) {
-            return jdbcTemplate.queryForObject("SELECT count(*) FROM role_bindings WHERE role_id = ?"
+            return jdbcTemplate.queryForObject("SELECT count(*) FROM grant_preset_bindings WHERE role_id = ?"
                     + " AND scope_type = ? AND scope_id IS NULL", Long.class, roleId, scopeType);
         }
-        return jdbcTemplate.queryForObject("SELECT count(*) FROM role_bindings WHERE role_id = ?"
+        return jdbcTemplate.queryForObject("SELECT count(*) FROM grant_preset_bindings WHERE role_id = ?"
                 + " AND scope_type = ? AND scope_id = ?", Long.class, roleId, scopeType, scopeId);
     }
 
@@ -522,7 +522,7 @@ class RoleUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
 
     private List<String> atomsOf(UUID roleId) {
         return jdbcTemplate.queryForList(
-                "SELECT action_class FROM role_permissions WHERE role_id = ? ORDER BY action_class",
+                "SELECT action_class FROM grant_preset_atoms WHERE role_id = ? ORDER BY action_class",
                 String.class, roleId);
     }
 

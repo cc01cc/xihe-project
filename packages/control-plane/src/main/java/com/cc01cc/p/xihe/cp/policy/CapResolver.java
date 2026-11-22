@@ -7,7 +7,7 @@ import java.util.UUID;
 /**
  * Reads the workspace {@code cap} of one agent principal.
  *
- * <p>PLAN-0673 M1: the role-update path ({@code RoleAdminService}, package {@code policy}) must run
+ * <p>PLAN-0673 M1: the role-update path ({@code GrantPresetAdminService}, package {@code policy}) must run
  * the <b>same</b> cap gate the binding path runs, but it must not depend on
  * {@code AgentPrincipalService} (package {@code service}) — that would invert the package direction
  * and risk the ArchUnit boundary. The dependency is therefore inverted here: this interface lives in

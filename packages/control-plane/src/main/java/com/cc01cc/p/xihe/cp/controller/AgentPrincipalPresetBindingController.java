@@ -4,7 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomLabels;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalBindingAuthority;
-import com.cc01cc.p.xihe.cp.service.AgentPrincipalRoleBindingService;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalPresetBindingService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -45,14 +45,14 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/agent-principals/{principalId}/roles")
-public class AgentPrincipalRoleBindingController {
+public class AgentPrincipalPresetBindingController {
 
     private static final Set<String> BIND_KEYS = Set.of("roleId");
 
-    private final AgentPrincipalRoleBindingService bindingService;
+    private final AgentPrincipalPresetBindingService bindingService;
     private final AgentPrincipalBindingAuthority authority;
 
-    public AgentPrincipalRoleBindingController(AgentPrincipalRoleBindingService bindingService,
+    public AgentPrincipalPresetBindingController(AgentPrincipalPresetBindingService bindingService,
                                                AgentPrincipalBindingAuthority authority) {
         this.bindingService = bindingService;
         this.authority = authority;
@@ -68,7 +68,7 @@ public class AgentPrincipalRoleBindingController {
             AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
             String resolvedLocale = resolveLocale(locale, acceptLanguage);
             List<Map<String, Object>> rows = bindingService.list(caller.principalId(), resolvedLocale)
-                    .stream().map(AgentPrincipalRoleBindingController::toView).toList();
+                    .stream().map(AgentPrincipalPresetBindingController::toView).toList();
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("items", rows);
             return ResponseEntity.ok(response);
@@ -93,7 +93,7 @@ public class AgentPrincipalRoleBindingController {
             UUID roleId = AgentPrincipalBindingAuthority.parseUuid(body.get("roleId"),
                     "roleId must be a UUID");
             UUID actor = caller.actorUuid();
-            AgentPrincipalRoleBindingService.AgentRoleBindingView binding = bindingService.bind(
+            AgentPrincipalPresetBindingService.AgentRoleBindingView binding = bindingService.bind(
                     caller.principalId(), roleId, actor, caller.workspaceId(), caller.instanceTier(),
                     workspace -> authority.canManageWorkspace(actor, workspace),
                     resolveLocale(locale, acceptLanguage));
@@ -132,7 +132,7 @@ public class AgentPrincipalRoleBindingController {
     }
 
     private static Map<String, Object> toView(
-            AgentPrincipalRoleBindingService.AgentRoleBindingView view) {
+            AgentPrincipalPresetBindingService.AgentRoleBindingView view) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("bindingId", view.bindingId());
         result.put("principalId", view.principalId());

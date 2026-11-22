@@ -2,8 +2,8 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -48,13 +48,13 @@ public class GrantabilityGuard {
 
     private final RequesterAuthority requester;
     private final AuthzContext authzContext;
-    private final AccessRoleBindingRepository bindings;
+    private final GrantPresetBindingRepository bindings;
     private final AuditLogger audit;
     private final TransactionTemplate denialAuditTransaction;
 
     public GrantabilityGuard(RequesterAuthority requester,
                              AuthzContext authzContext,
-                             AccessRoleBindingRepository bindings,
+                             GrantPresetBindingRepository bindings,
                              AuditLogger audit,
                              PlatformTransactionManager transactionManager) {
         this.requester = requester;
@@ -108,7 +108,7 @@ public class GrantabilityGuard {
      * atom ({@code *} for ordinary actions, {@code credential:*} for the credential family).
      *
      * <p>PLAN-0673: the name path used a literal {@code "*"}, which made every credential atom
-     * request <b>wider</b> than the rows materialised from {@code role_permissions} — a legitimate
+     * request <b>wider</b> than the rows materialised from {@code grant_preset_atoms} — a legitimate
      * holder of {@code (credential_use, credential:*)} was then denied by the very
      * "concrete-does-not-cover-wildcard" rule this fix introduced (the {@code *} here was a
      * conversion artefact, not a real wildcard request). Unknown names keep the wildcard shape so
@@ -158,7 +158,7 @@ public class GrantabilityGuard {
             AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(subjectId);
             List<UUID> scopes = new ArrayList<>();
             scopes.add(null);
-            for (AccessRoleBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
+            for (GrantPresetBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
                     AuthzContext.SUBJECT_USER, subjectId, AccessScope.WORKSPACE)) {
                 scopes.add(binding.getScopeId());
             }
@@ -235,7 +235,7 @@ public class GrantabilityGuard {
     private List<String> exceedingInAnyScope(UUID subjectId, Set<String> requested) {
         Set<String> held = new LinkedHashSet<>(requester.actionAtoms(subjectId, null));
         List<UUID> workspaceIds = new ArrayList<>();
-        for (AccessRoleBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
+        for (GrantPresetBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
                 AuthzContext.SUBJECT_USER, subjectId, AccessScope.WORKSPACE)) {
             workspaceIds.add(binding.getScopeId());
             held.addAll(requester.actionAtoms(subjectId, binding.getScopeId()));

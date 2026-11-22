@@ -1,13 +1,13 @@
 package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
@@ -68,11 +68,11 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository bindingRepository;
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository accessRoleRepository;
+    private com.cc01cc.p.xihe.cp.repository.GrantPresetRepository accessRoleRepository;
     @Autowired
-    private com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository roleBindingRepository;
+    private com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository roleBindingRepository;
     @Autowired
-    private RoleGrantMaterializer roleMaterializer;
+    private PresetGrantMaterializer roleMaterializer;
     @Autowired
     private AuthzContext authzContext;
 
@@ -597,7 +597,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     private void makeInstanceAdmin(User user) {
         var adminRole = accessRoleRepository.findByName("ADMIN")
                 .orElseThrow(() -> new IllegalStateException("ADMIN role missing (V87)"));
-        var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.AccessRoleBinding(
+        var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.GrantPresetBinding(
                 adminRole.getId(), "user", user.getId(), AccessScope.INSTANCE, null, user.getId()));
         seededRoleBindingIds.add(binding.getId());
         // Without these two lines the fixture would assert a door it never opened: the management
@@ -714,9 +714,9 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
 
     /** INSTANCE 主体不能走 cap 绑定（只有实例管理员可以），用 workspace 作用域角色绑定表达 reach。 */
     private void bindViaWorkspaceRole(User actor, UUID workspaceId, UUID principalId) {
-        var role = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_VIEWER)
+        var role = accessRoleRepository.findByName(SystemGrantPresetCatalog.WS_VIEWER)
                 .orElseThrow(() -> new IllegalStateException("WS_VIEWER role missing (V87)"));
-        var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.AccessRoleBinding(
+        var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.GrantPresetBinding(
                 role.getId(), "agent_principal", principalId, AccessScope.WORKSPACE, workspaceId,
                 actor.getId()));
         seededRoleBindingIds.add(binding.getId());

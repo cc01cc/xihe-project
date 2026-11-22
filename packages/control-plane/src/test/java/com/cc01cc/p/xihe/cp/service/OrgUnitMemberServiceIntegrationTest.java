@@ -4,14 +4,14 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -67,10 +67,10 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
     private WorkspaceRepository workspaces;
 
     @Autowired
-    private AccessRoleRepository roles;
+    private GrantPresetRepository roles;
 
     @Autowired
-    private AccessRoleBindingRepository bindings;
+    private GrantPresetBindingRepository bindings;
 
     @Autowired
     private AuthorizationGrantRepository grants;
@@ -94,7 +94,7 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
     @AfterEach
     void clearTenant() {
         TenantContext.clear();
-        jdbc.update("DELETE FROM role_bindings WHERE subject_id IN (?, ?)", caller, member);
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_id IN (?, ?)", caller, member);
     }
 
     @Test
@@ -283,9 +283,9 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
         workspace.setHostPath("/tmp/xihe-org-unit/" + UUID.randomUUID());
         workspace = workspaces.saveAndFlush(workspace);
 
-        AccessRole ownerRole = roles.findByName(SystemAccessRoleCatalog.WS_OWNER)
+        GrantPreset ownerRole = roles.findByName(SystemGrantPresetCatalog.WS_OWNER)
                 .orElseThrow(() -> new IllegalStateException("WS_OWNER seed role is missing"));
-        AccessRoleBinding binding = new AccessRoleBinding();
+        GrantPresetBinding binding = new GrantPresetBinding();
         binding.setRoleId(ownerRole.getId());
         binding.setSubjectType("user");
         binding.setSubjectId(owner);
@@ -322,7 +322,7 @@ class OrgUnitMemberServiceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(subjectId);
         grant.setSubjectType("user");
         grant.setSubjectId(subjectId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         ArrayNode permissions = objectMapper.createArrayNode();
         permissions.addObject().put("actionClass", atom).put("resource", "*");

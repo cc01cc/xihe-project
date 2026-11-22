@@ -62,8 +62,8 @@ class WorkspaceAgentControllerContractTest extends AbstractReusableIntegrationTe
         if (workspaceRoleId != null) {
             // BL-326: the fixture binds a workspace-scoped role to the principal for the roleIds
             // assertion; drop the binding/role or the principal delete hits the FK.
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE role_id = ?", workspaceRoleId);
-            jdbcTemplate.update("DELETE FROM roles WHERE id = ?", workspaceRoleId);
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE role_id = ?", workspaceRoleId);
+            jdbcTemplate.update("DELETE FROM grant_presets WHERE id = ?", workspaceRoleId);
         }
         if (workspaceId != null && principalId != null) {
             bindingRepository.deleteById(new WorkspaceAgentId(principalId, workspaceId));
@@ -146,7 +146,7 @@ class WorkspaceAgentControllerContractTest extends AbstractReusableIntegrationTe
         Object wireRoleIds = view.get("roleIds");
         assertNotNull(wireRoleIds, "roleIds must be present as a list, not null");
         java.util.Set<String> expectedRoleIds = new java.util.HashSet<>(jdbcTemplate.queryForList(
-                "SELECT role_id::text FROM role_bindings WHERE subject_type = 'agent_principal'"
+                "SELECT role_id::text FROM grant_preset_bindings WHERE subject_type = 'agent_principal'"
                         + " AND subject_id = ?::uuid AND scope_type = 'workspace' AND scope_id = ?::uuid",
                 String.class, principalId, workspaceId));
         assertEquals(expectedRoleIds,
@@ -193,11 +193,11 @@ class WorkspaceAgentControllerContractTest extends AbstractReusableIntegrationTe
 
     private void bindWorkspaceScopedRoleToPrincipal() {
         workspaceRoleId = UUID.randomUUID();
-        jdbcTemplate.update("INSERT INTO roles (id, name, display_name, description, is_system)"
+        jdbcTemplate.update("INSERT INTO grant_presets (id, name, display_name, description, is_system)"
                         + " VALUES (?, ?, ?, ?, FALSE)",
                 workspaceRoleId, "TEST_WSA_" + workspaceRoleId.toString().substring(0, 8).toUpperCase(),
                 "Test workspace role", "test-only role for roleIds projection");
-        jdbcTemplate.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbcTemplate.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " scope_id, granted_at) VALUES (gen_random_uuid(), ?, 'agent_principal', ?,"
                         + " 'workspace', ?, NOW())",
                 workspaceRoleId, principalId, workspaceId);
@@ -236,7 +236,7 @@ class WorkspaceAgentControllerContractTest extends AbstractReusableIntegrationTe
         grant.setGranterId(userId);
         grant.setSubjectType("user");
         grant.setSubjectId(userId);
-        grant.setSource(GrantSources.ROLE);
+        grant.setSource(GrantSources.PRESET);
         grant.setReadState("read");
         grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"" + actionClass
                 + "\",\"resource\":\"" + resource + "\"}]"));

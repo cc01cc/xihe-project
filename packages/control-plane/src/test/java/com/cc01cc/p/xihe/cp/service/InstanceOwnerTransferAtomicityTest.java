@@ -71,7 +71,7 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
     void resetInstanceState() {
         // PLAN-0610 W4b: users.role is gone; the instance tier is a binding, so the reset clears
         // every instance-scope binding instead.
-        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'instance'");
         jdbc.update("UPDATE users SET token_version = 0");
         jdbc.update("UPDATE instance_owner SET owner_user_id = NULL, assigned_at = NULL,"
                 + " assigned_by = NULL");
@@ -154,12 +154,12 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
     }
 
     private void grantTier(User user, String roleName) {
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'",
                 user.getId().toString());
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
-                        + " 'instance', NOW() FROM roles r WHERE r.name = ?",
+                        + " 'instance', NOW() FROM grant_presets r WHERE r.name = ?",
                 UUID.randomUUID().toString(), user.getId().toString(), roleName);
         authzContext.invalidate(user.getId());
     }
@@ -171,7 +171,7 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
 
     private List<String> atomRows(User user) {
         return jdbc.queryForList("SELECT permissions::text FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID) AND source = 'role'"
+                + " AND subject_id = CAST(? AS UUID) AND source = 'preset'"
                 + " ORDER BY permissions::text", String.class, user.getId());
     }
 
@@ -184,8 +184,8 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
     private String stateSnapshot() {
         String pointer = String.valueOf(currentOwnerId());
         String bindings = String.join(";", jdbc.queryForList(
-                "SELECT subject_id || ':' || r.name FROM role_bindings b"
-                        + " JOIN roles r ON r.id = b.role_id"
+                "SELECT subject_id || ':' || r.name FROM grant_preset_bindings b"
+                        + " JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE b.scope_type = 'instance'"
                         + " AND r.name IN ('SUPER_ADMIN', 'ADMIN', 'USER')"
                         + " ORDER BY subject_id, r.name", String.class));

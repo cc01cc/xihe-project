@@ -160,7 +160,7 @@ public class SessionReadAccess {
             return true;
         }
         // D-1436 (task-48 phase-1 finding): a workspace-less session has no workspace tier. The
-        // manager tier is *workspace*-scoped by construction (role_bindings.scope_type is exactly
+        // manager tier is *workspace*-scoped by construction (grant_preset_bindings.scope_type is exactly
         // {instance, workspace}, V87:49-52 — there is no session-scoped binding), so "no workspace
         // context" can only mean "not a manager". Falling through parsed the null id in
         // WorkspaceService.isWorkspaceMember (WorkspaceService.java:317) and threw NPE, which the

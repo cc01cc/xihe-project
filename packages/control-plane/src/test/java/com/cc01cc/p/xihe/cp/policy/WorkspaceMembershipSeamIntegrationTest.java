@@ -111,7 +111,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
         assertTrue(objectMapper.readTree(workspaces.getBody()).findValuesAsText("id")
                         .contains(workspaceId),
                 "the workspace appears in the subject's workspace list");
-        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_EDITOR),
+        assertEquals(PresetAtomExpectations.materializedAtomCount(SystemGrantPresetCatalog.WS_EDITOR),
                 grantRows(memberId, workspaceId),
                 "WS_EDITOR materializes one row per catalog action atom (0651 M2 widened 4→7)");
     }
@@ -125,10 +125,10 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
         String memberToken = login("seam-removal-member@test.com");
 
         // A workspace-tier binding is the only way in (V89 dropped workspace_users).
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " scope_id, granted_at) SELECT gen_random_uuid(), r.id, 'user',"
                         + " CAST(? AS UUID), 'workspace', CAST(? AS UUID), NOW()"
-                        + " FROM roles r WHERE r.name = 'WS_EDITOR'", memberId, workspaceId);
+                        + " FROM grant_presets r WHERE r.name = 'WS_EDITOR'", memberId, workspaceId);
         assertEquals(HttpStatus.OK,
                 call(HttpMethod.GET, "/api/v1/workspaces/" + workspaceId, null, memberToken,
                         workspaceId).getStatusCode());
@@ -254,11 +254,11 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
     private String superAdmin(String email) throws Exception {
         register(email);
         String userId = userIdOf(login(email));
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
-                        + " 'instance', NOW() FROM roles r WHERE r.name = 'SUPER_ADMIN'",
+                        + " 'instance', NOW() FROM grant_presets r WHERE r.name = 'SUPER_ADMIN'",
                 UUID.randomUUID().toString(), userId);
         materializeInstance(userId);
         return login(email);
@@ -271,30 +271,30 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
     private String instanceAdmin(String email) throws Exception {
         register(email);
         String userId = userIdOf(login(email));
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
-                        + " 'instance', NOW() FROM roles r WHERE r.name = 'ADMIN'",
+                        + " 'instance', NOW() FROM grant_presets r WHERE r.name = 'ADMIN'",
                 UUID.randomUUID().toString(), userId);
         materializeInstance(userId);
         return login(email);
     }
 
     private void materializeInstance(String userId) {
-        // The mirror of RoleGrantMaterializer: instance-scope atoms only (capability atoms stay out).
+        // The mirror of PresetGrantMaterializer: instance-scope atoms only (capability atoms stay out).
         // The resource must be carried when it is not the wildcard — a credential atom with a bare
         // '*' fails the evaluator closed, which would make every atom lookup empty.
         jdbc.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)"
-                + " AND source = 'role' AND scope_type = 'instance'", userId);
+                + " AND source = 'preset' AND scope_type = 'instance'", userId);
         jdbc.update("INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id,"
                         + " permissions, source, scope_type, read_state)"
                         + " SELECT gen_random_uuid(), 'user', CAST(? AS UUID), 'user',"
                         + " CAST(? AS UUID), jsonb_build_array(jsonb_build_object('actionClass',"
                         + " rp.action_class) || CASE WHEN rp.resource_pattern = '*' THEN '{}'::jsonb"
                         + " ELSE jsonb_build_object('resource', rp.resource_pattern) END),"
-                        + " 'role', 'instance', 'read'"
-                        + " FROM role_bindings b JOIN role_permissions rp ON rp.role_id = b.role_id"
+                        + " 'preset', 'instance', 'read'"
+                        + " FROM grant_preset_bindings b JOIN grant_preset_atoms rp ON rp.role_id = b.role_id"
                         + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
                         + " AND b.scope_type = 'instance' AND rp.action_class NOT LIKE '%:%'",
                 userId, userId, userId);
@@ -357,12 +357,12 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
     }
 
     private String roleId(String name) {
-        return jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM roles WHERE name = ?",
+        return jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM grant_presets WHERE name = ?",
                 String.class, name);
     }
 
     private List<String> workspaceTierRoles(String userId, String workspaceId) {
-        return jdbc.queryForList("SELECT r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+        return jdbc.queryForList("SELECT r.name FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
                         + " AND b.scope_type = 'workspace' AND b.scope_id = CAST(? AS UUID)"
                         + " AND r.name LIKE 'WS_%' ORDER BY r.name",
@@ -371,7 +371,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
 
     private int grantRows(String userId, String workspaceId) {
         return countRows("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID) AND source = 'role'"
+                + " AND subject_id = CAST(? AS UUID) AND source = 'preset'"
                 + " AND scope_type = 'workspace' AND scope_id = CAST(? AS UUID)",
                 userId, workspaceId);
     }

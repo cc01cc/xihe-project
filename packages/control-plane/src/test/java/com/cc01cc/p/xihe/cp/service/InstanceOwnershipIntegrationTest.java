@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -89,7 +89,7 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         // Deterministic starting point: no ADMINs, no owner, epoch back to the
         // value V85 initializes. Each test promotes exactly the accounts it needs.
         // PLAN-0610 W4b: users.role is gone; each test grants the instance tier binding it needs.
-        jdbc.update("DELETE FROM role_bindings WHERE scope_type = 'instance'");
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'instance'");
         jdbc.update("UPDATE users SET token_version = 0");
         jdbc.update("UPDATE instance_owner SET owner_user_id = NULL, assigned_at = NULL, assigned_by = NULL");
     }
@@ -145,13 +145,13 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
      *
      * <p>The shipped V85 SQL reads {@code users.role}, which V89 dropped, so the statement cannot be
      * re-executed verbatim. The contract it froze — "claim the earliest ADMIN, ties broken by id,
-     * never overwrite an existing pointer" — is replayed here over {@code role_bindings}, which is
+     * never overwrite an existing pointer" — is replayed here over {@code grant_preset_bindings}, which is
      * the only place an instance tier lives since V88.</p>
      */
     private void runShippedBackfill() {
         jdbc.update("UPDATE instance_owner o SET owner_user_id = ("
-                + " SELECT b.subject_id FROM role_bindings b"
-                + " JOIN roles r ON r.id = b.role_id"
+                + " SELECT b.subject_id FROM grant_preset_bindings b"
+                + " JOIN grant_presets r ON r.id = b.role_id"
                 + " JOIN users u ON u.id = b.subject_id"
                 + " WHERE b.scope_type = 'instance' AND b.subject_type = 'user'"
                 + "   AND r.name = 'ADMIN' AND u.deleted_at IS NULL"
@@ -327,10 +327,10 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         // Derived from the code-side role seeds (BL-312 removed CREATE_OWN_AGENT; the counts follow
         // the catalog): a hard-coded 15/8 would rot on the next atom change, and the claim here is
         // about *which* role materialized what, not about a magic number.
-        assertEquals(materializableSeedAtoms(SystemAccessRoleCatalog.SUPER_ADMIN),
+        assertEquals(materializableSeedAtoms(SystemGrantPresetCatalog.SUPER_ADMIN),
                 atomRowCount("user", UUID.fromString(targetId)),
                 "SUPER_ADMIN materializes every action atom (capability atoms stay out of grants)");
-        assertEquals(materializableSeedAtoms(SystemAccessRoleCatalog.ADMIN),
+        assertEquals(materializableSeedAtoms(SystemGrantPresetCatalog.ADMIN),
                 atomRowCount("user", UUID.fromString(ownerId)),
                 "ADMIN materializes the user default set plus the three credential atoms");
         authzContext.invalidateAll();
@@ -346,13 +346,13 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         assertEquals(ownerAuditsBefore + 1,
                 auditCount("authorization_instance_super_admin_transferred"));
         assertEquals(1, jdbc.queryForObject(
-                "SELECT COUNT(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                "SELECT COUNT(*) FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE r.name = 'SUPER_ADMIN' AND b.scope_type = 'instance'"
                         + " AND b.subject_id = CAST(? AS UUID)", Integer.class, targetId));
         assertTrue(activeSuperAdminBindings() >= 1,
                 "I5: the instance still has at least one ACTIVE super administrator");
         assertEquals(0, jdbc.queryForObject(
-                "SELECT COUNT(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+                "SELECT COUNT(*) FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE r.name = 'SUPER_ADMIN' AND b.scope_type = 'instance'"
                         + " AND b.subject_id = CAST(? AS UUID)", Integer.class, ownerId),
                 "the outgoing owner must not keep a second SUPER_ADMIN binding");
@@ -721,7 +721,7 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String workspaceOfMember(String userId) {
-        return jdbc.queryForObject("SELECT scope_id FROM role_bindings WHERE subject_type = 'user'"
+        return jdbc.queryForObject("SELECT scope_id FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = ? AND scope_type = 'workspace' LIMIT 1",
                 String.class, UUID.fromString(userId));
     }
@@ -732,11 +732,11 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void grantInstanceRole(String userId, String roleName) {
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID), 'instance',"
-                + " NOW() FROM roles r WHERE r.name = ?",
+                + " NOW() FROM grant_presets r WHERE r.name = ?",
                 UUID.randomUUID().toString(), userId, roleName);
         authzContext.invalidate(UUID.fromString(userId));
     }
@@ -753,14 +753,14 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
     /** PLAN-0610 W4b: the instance tier is a binding; users.role no longer exists. */
     private String roleOf(String userId) {
-        return jdbc.queryForObject("SELECT r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+        return jdbc.queryForObject("SELECT r.name FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                 + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
                 + " AND b.scope_type = 'instance'", String.class, userId);
     }
 
     /** T4.3: the subject's instance-scope tier bindings, as role names in a stable order. */
     private List<String> instanceTierRoles(String userId) {
-        return jdbc.queryForList("SELECT r.name FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+        return jdbc.queryForList("SELECT r.name FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                 + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
                 + " AND b.scope_type = 'instance'"
                 + " AND r.name IN ('SUPER_ADMIN', 'ADMIN', 'USER') ORDER BY r.name",
@@ -774,8 +774,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
     /** I5: ACTIVE (and not soft-deleted) holders of the instance SUPER_ADMIN binding. */
     private int activeSuperAdminBindings() {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM role_bindings b"
-                + " JOIN roles r ON r.id = b.role_id"
+        return jdbc.queryForObject("SELECT COUNT(*) FROM grant_preset_bindings b"
+                + " JOIN grant_presets r ON r.id = b.role_id"
                 + " JOIN users u ON u.id = b.subject_id"
                 + " WHERE r.name = 'SUPER_ADMIN' AND b.scope_type = 'instance'"
                 + " AND u.status = 'ACTIVE' AND u.deleted_at IS NULL", Integer.class);
@@ -788,8 +788,8 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     private String transferState() {
         String pointer = String.valueOf(currentOwnerId());
         String bindings = String.join(";", jdbc.queryForList(
-                "SELECT subject_id || ':' || r.name FROM role_bindings b"
-                        + " JOIN roles r ON r.id = b.role_id"
+                "SELECT subject_id || ':' || r.name FROM grant_preset_bindings b"
+                        + " JOIN grant_presets r ON r.id = b.role_id"
                         + " WHERE b.scope_type = 'instance' AND r.name IN ('SUPER_ADMIN', 'ADMIN', 'USER')"
                         + " ORDER BY subject_id, r.name", String.class));
         String epochs = String.join(";", jdbc.queryForList(
@@ -807,12 +807,12 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
     /**
      * PLAN-0610 W1a: the materialized set moved from one {@code source='default'} row to one
-     * {@code source='role'} row per atom, and the Session snapshot lives under
+     * {@code source='preset'} row per atom, and the Session snapshot lives under
      * {@code source='agent_default'}. The helper therefore aggregates the rows of whichever source
      * the subject type owns, in a stable order, so equal atom sets compare equal.
      */
     private String permissionsOf(String subjectType, UUID subjectId) {
-        String source = "agent".equals(subjectType) ? "agent_default" : "role";
+        String source = "agent".equals(subjectType) ? "agent_default" : "preset";
         List<String> rows = jdbc.queryForList("SELECT permissions::text FROM grants WHERE subject_type = ?"
                 + " AND subject_id = ? AND source = ? ORDER BY permissions::text",
                 String.class, subjectType, subjectId, source);
@@ -823,7 +823,7 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0610 W3-3: instance-tier atoms only — a personal workspace now adds workspace-scope
         // rows for the same subject, which the workspace tests count separately.
         return jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = ?"
-                + " AND subject_id = ? AND source = 'role' AND scope_type = 'instance'",
+                + " AND subject_id = ? AND source = 'preset' AND scope_type = 'instance'",
                 Integer.class, subjectType, subjectId);
     }
 
@@ -833,7 +833,7 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
      * materializer does instead of a hard-coded 15/8.
      */
     private static long materializableSeedAtoms(String roleName) {
-        return SystemAccessRoleCatalog.roleSeeds().stream()
+        return SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> roleName.equals(seed.name()))
                 .findFirst()
                 .orElseThrow()

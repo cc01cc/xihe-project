@@ -17,7 +17,7 @@ import java.util.UUID;
 
 /**
  * PLAN-0773 M2-8b follow-up (task-33): the <b>real</b> {@link OrgUnitGrantSource} — reads
- * {@code org_units} + {@code org_unit_members} + {@code org_unit_role_bindings} instead of
+ * {@code org_units} + {@code org_unit_members} + {@code org_unit_preset_bindings} instead of
  * answering "nothing" on the placeholder's behalf.
  *
  * <p>The port and every caller stay unchanged: {@code OrgUnitGrants.forPrincipal} asks for one
@@ -27,7 +27,7 @@ import java.util.UUID;
  * {@link OrgUnitGovernancePolicy} and is applied by the expander, so a second copy cannot drift.</p>
  *
  * <p><b>Why the permission array is built here and not in the repository.</b> The array must be
- * byte-identical to what {@code RoleGrantMaterializer} would have written into {@code grants}:
+ * byte-identical to what {@code PresetGrantMaterializer} would have written into {@code grants}:
  * capability atoms skipped, unknown atoms refused, resource omitted for the wildcard. Keeping that
  * rule at the policy edge (next to the expander that consumes it) means the rule has one
  * implementation in code and one in the materializer, both visible; putting it in the repository
@@ -58,7 +58,7 @@ public class JdbcOrgUnitGrantSource implements OrgUnitGrantSource {
     public JdbcOrgUnitGrantSource(OrgUnitGrantRowsRepository rows, ObjectMapper objectMapper) {
         this.rows = rows;
         this.objectMapper = objectMapper;
-        logger.debug("[POLICY] event=org_unit_grant_source_wired table=org_unit_role_bindings");
+        logger.debug("[POLICY] event=org_unit_grant_source_wired table=org_unit_preset_bindings");
     }
 
     @Override
@@ -119,7 +119,7 @@ public class JdbcOrgUnitGrantSource implements OrgUnitGrantSource {
         ArrayNode permissions = objectMapper.createArrayNode();
         for (OrgUnitGrantRowsRepository.BindingRow row : sameBinding) {
             if (row.actionClass() == null) {
-                // LEFT JOIN: the role has no role_permissions rows at all. An empty array (not
+                // LEFT JOIN: the role has no grant_preset_atoms rows at all. An empty array (not
                 // "all atoms") is what the expander then drops as a non-governance role.
                 continue;
             }
@@ -137,8 +137,8 @@ public class JdbcOrgUnitGrantSource implements OrgUnitGrantSource {
     }
 
     /**
-     * The same projection {@code RoleGrantMaterializer.materializableAtom} applies to a
-     * {@code role_permissions} row, minus the credential special case (a credential atom can never
+     * The same projection {@code PresetGrantMaterializer.materializableAtom} applies to a
+     * {@code grant_preset_atoms} row, minus the credential special case (a credential atom can never
      * pass {@link OrgUnitGovernancePolicy}, so the branch would be unreachable here — and an
      * unreachable branch is a claim nobody tests).
      *
@@ -148,7 +148,7 @@ public class JdbcOrgUnitGrantSource implements OrgUnitGrantSource {
      */
     private static String materializedResource(String actionClass, String resourcePattern) {
         if (!PermissionAtomCatalog.isActionAtom(actionClass)) {
-            throw new IllegalStateException("Unknown permission atom in role_permissions: " + actionClass);
+            throw new IllegalStateException("Unknown permission atom in grant_preset_atoms: " + actionClass);
         }
         PermissionAtomCatalog.requireScopeCompatible(actionClass, OrgUnitGrantExpander.SCOPE_INSTANCE);
         return resourcePattern == null || PermissionAtomCatalog.WILDCARD.equals(resourcePattern)

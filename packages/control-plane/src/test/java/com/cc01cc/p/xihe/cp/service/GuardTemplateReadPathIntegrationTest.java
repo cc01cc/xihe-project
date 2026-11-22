@@ -1,15 +1,15 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
@@ -44,13 +44,13 @@ class GuardTemplateReadPathIntegrationTest extends AbstractReusableIntegrationTe
     @Autowired
     private UserRepository userRepository;
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
     @Autowired
-    private AccessRoleBindingRepository bindingRepository;
+    private GrantPresetBindingRepository bindingRepository;
     @Autowired
     private AuthorizationGrantRepository grantRepository;
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     private UUID adminUserId;
 
@@ -70,11 +70,11 @@ class GuardTemplateReadPathIntegrationTest extends AbstractReusableIntegrationTe
         User admin = userRepository.saveAndFlush(new User(
                 "guard-read-admin-" + UUID.randomUUID() + "@test.com", "hash", "Guard read admin"));
         adminUserId = admin.getId();
-        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        GrantPreset adminRole = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow();
         bindingRepository.deleteAll(bindingRepository.findBySubjectTypeAndSubjectIdAndScopeType(
                 "user", adminUserId, AccessScope.INSTANCE));
-        bindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", adminUserId,
+        bindingRepository.save(new GrantPresetBinding(adminRole.getId(), "user", adminUserId,
                 AccessScope.INSTANCE, null, adminUserId));
         materializer.materializeSubject("user", adminUserId, adminUserId, null);
 

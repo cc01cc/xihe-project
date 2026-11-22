@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -12,10 +12,10 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -75,16 +75,16 @@ class WorkspaceDeleteAuthorizationIntegrationTest extends AbstractH2Test {
     private AuditLogRepository auditLogRepository;
 
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
 
     @Autowired
-    private AccessRolePermissionRepository accessRolePermissionRepository;
+    private GrantPresetAtomRepository accessRolePermissionRepository;
 
     @Autowired
-    private AccessRoleBindingRepository accessRoleBindingRepository;
+    private GrantPresetBindingRepository accessRoleBindingRepository;
 
     @Autowired
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     @Autowired
     private AuthzContext authzContext;
@@ -170,12 +170,12 @@ class WorkspaceDeleteAuthorizationIntegrationTest extends AbstractH2Test {
 
         // A custom (non-system) role carrying the workspace administration CAPABILITY atom, bound at
         // this workspace's scope — the supported way to let a non-owner manage one workspace.
-        AccessRole customRole = accessRoleRepository.save(new AccessRole(UUID.randomUUID(),
+        GrantPreset customRole = accessRoleRepository.save(new GrantPreset(UUID.randomUUID(),
                 "bl174-ws-admin-" + UUID.randomUUID().toString().substring(0, 8),
                 "BL-174 workspace admin", "workspace:admin only", false));
-        accessRolePermissionRepository.save(new AccessRolePermission(customRole.getId(),
+        accessRolePermissionRepository.save(new GrantPresetAtom(customRole.getId(),
                 PermissionAtomCatalog.CAP_WORKSPACE_ADMIN, "*"));
-        accessRoleBindingRepository.save(new AccessRoleBinding(customRole.getId(),
+        accessRoleBindingRepository.save(new GrantPresetBinding(customRole.getId(),
                 AuthzContext.SUBJECT_USER, UUID.fromString(operatorId), "workspace", workspace.getId(),
                 UUID.fromString(operatorId)));
         accessRoleBindingRepository.flush();
@@ -227,11 +227,11 @@ class WorkspaceDeleteAuthorizationIntegrationTest extends AbstractH2Test {
         String operatorEmail = "bl174-cd-operator-" + UUID.randomUUID() + "@test.local";
         String operatorToken = register(operatorEmail);
         String operatorId = userIdOf(operatorEmail);
-        AccessRole contentRole = accessRoleRepository.save(new AccessRole(UUID.randomUUID(),
+        GrantPreset contentRole = accessRoleRepository.save(new GrantPreset(UUID.randomUUID(),
                 "bl174-content-deleter-" + UUID.randomUUID().toString().substring(0, 8),
                 "BL-174 content deleter", "content delete only", false));
-        accessRolePermissionRepository.save(new AccessRolePermission(contentRole.getId(), "delete", "*"));
-        accessRoleBindingRepository.save(new AccessRoleBinding(contentRole.getId(),
+        accessRolePermissionRepository.save(new GrantPresetAtom(contentRole.getId(), "delete", "*"));
+        accessRoleBindingRepository.save(new GrantPresetBinding(contentRole.getId(),
                 AuthzContext.SUBJECT_USER, UUID.fromString(operatorId), "workspace", workspace.getId(),
                 UUID.fromString(operatorId)));
         accessRoleBindingRepository.flush();
@@ -326,7 +326,7 @@ class WorkspaceDeleteAuthorizationIntegrationTest extends AbstractH2Test {
                 .findBySubjectTypeAndSubjectIdAndScopeType(AuthzContext.SUBJECT_USER,
                         UUID.fromString(userId), "instance"));
         accessRoleBindingRepository.flush();
-        accessRoleBindingRepository.save(new AccessRoleBinding(adminRoleId, AuthzContext.SUBJECT_USER,
+        accessRoleBindingRepository.save(new GrantPresetBinding(adminRoleId, AuthzContext.SUBJECT_USER,
                 UUID.fromString(userId), "instance", null, UUID.fromString(userId)));
         accessRoleBindingRepository.flush();
         materializer.materializeSubject(AuthzContext.SUBJECT_USER, UUID.fromString(userId),

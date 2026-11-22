@@ -8,7 +8,7 @@ import java.util.UUID;
  *
  * <p>Four combinations reach a client ({@code subjectType × scopeType}); {@code scopeId} is null
  * exactly for the instance tier — the "shared with everyone" fifth tier is not expressible in v1
- * because {@code subject_id} is NOT NULL (the {@code role_bindings} shape, V87:44).</p>
+ * because {@code subject_id} is NOT NULL (the {@code grant_preset_bindings} shape, V87:44).</p>
  */
 public record SkillBindingView(UUID bindingId, UUID skillId, String subjectType, UUID subjectId,
                                String scopeType, UUID scopeId, UUID createdByUserId,

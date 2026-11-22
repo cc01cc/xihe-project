@@ -100,12 +100,12 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Hook") || name.equals("GuardHookAdvisor")) {
             return "policy";
         }
-        // PLAN-0610: the dynamic RBAC slice (roles / role_permissions / role_bindings) is part of the
+        // PLAN-0610: the dynamic RBAC slice (roles / grant_preset_atoms / grant_preset_bindings) is part of the
         // authorization surface, so its entities, repositories and admin services belong to "policy"
         // rather than growing a new module for one capability family. MemberView is the public
         // projection of workspace membership (PLAN-0565), so it stays with the workspace slice.
-        if (name.startsWith("AccessRole") || name.startsWith("RoleAdmin") || name.startsWith("RoleController")
-                || name.startsWith("RoleGrantMaterializer") || name.startsWith("SystemAccessRole")
+        if (name.startsWith("GrantPreset") || name.startsWith("GrantPresetAdmin") || name.startsWith("GrantPresetController")
+                || name.startsWith("PresetGrantMaterializer") || name.startsWith("SystemGrantPreset")
                 || name.startsWith("MePermissions")) {
             return "policy";
         }
@@ -122,8 +122,8 @@ final class CpModuleAssignment implements SliceAssignment {
         //      to "policy" through the top-level package branch above. Assigning the mixed-package half
         //      anywhere else would split one capability family across two slices and manufacture an
         //      artificial policy<->X edge in the cycle diagnostics.
-        // Precedent in this file: PLAN-0610 sent the dynamic RBAC slice (roles / role_permissions /
-        // role_bindings + admin services) to "policy" instead of growing a module for one family.
+        // Precedent in this file: PLAN-0610 sent the dynamic RBAC slice (roles / grant_preset_atoms /
+        // grant_preset_bindings + admin services) to "policy" instead of growing a module for one family.
         if (name.startsWith("OrgUnit")) {
             return "policy";
         }

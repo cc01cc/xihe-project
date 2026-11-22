@@ -2,22 +2,22 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomLabels;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.GrantabilityGuard;
 import com.cc01cc.p.xihe.cp.policy.AgentBindingAtomPolicy;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -57,7 +57,7 @@ import java.util.UUID;
  *       baseline capability.</li>
  *   <li><b>No duplicate rows</b> — the same (role, principal, scope) answers
  *       {@code 409 ROLE_BINDING_EXISTS} before the unique key would surface as a 500.</li>
- *   <li><b>Immediate effect</b> — every write calls {@link RoleGrantMaterializer#materializeSubject}
+ *   <li><b>Immediate effect</b> — every write calls {@link PresetGrantMaterializer#materializeSubject}
  *       <b>in the same transaction</b>, so the agent's next session already evaluates the new
  *       grants. This is the property M4 checks on the real stack; it is asserted here first
  *       (integration test), because "materialization latency" is exactly the kind of bug that only
@@ -65,9 +65,9 @@ import java.util.UUID;
  * </ol>
  */
 @Service
-public class AgentPrincipalRoleBindingService {
+public class AgentPrincipalPresetBindingService {
 
-    private static final Logger logger = LoggerFactory.getLogger(AgentPrincipalRoleBindingService.class);
+    private static final Logger logger = LoggerFactory.getLogger(AgentPrincipalPresetBindingService.class);
 
     static final String RESOURCE_TYPE = "role_binding";
     static final String AUDIT_BIND = "agent_principal_role_bind";
@@ -79,24 +79,24 @@ public class AgentPrincipalRoleBindingService {
      */
     static final int ATOM_SUMMARY_LIMIT = 12;
 
-    private final AccessRoleBindingRepository bindings;
-    private final AccessRoleRepository roles;
-    private final AccessRolePermissionRepository permissions;
+    private final GrantPresetBindingRepository bindings;
+    private final GrantPresetRepository roles;
+    private final GrantPresetAtomRepository permissions;
     private final AgentPrincipalRepository principals;
     private final WorkspaceRepository workspaces;
-    private final RoleGrantMaterializer materializer;
+    private final PresetGrantMaterializer materializer;
     private final AuditLogger audit;
     private final AgentPrincipalService agentPrincipalService;
     private final GrantabilityGuard grantability;
     private final AgentBindingAtomPolicy atomPolicy;
     private final InstanceOwnerRepository owners;
 
-    public AgentPrincipalRoleBindingService(AccessRoleBindingRepository bindings,
-                                            AccessRoleRepository roles,
-                                            AccessRolePermissionRepository permissions,
+    public AgentPrincipalPresetBindingService(GrantPresetBindingRepository bindings,
+                                            GrantPresetRepository roles,
+                                            GrantPresetAtomRepository permissions,
                                             AgentPrincipalRepository principals,
                                             WorkspaceRepository workspaces,
-                                            RoleGrantMaterializer materializer,
+                                            PresetGrantMaterializer materializer,
                                             AuditLogger audit,
                                             AgentPrincipalService agentPrincipalService,
                                             GrantabilityGuard grantability,
@@ -144,7 +144,7 @@ public class AgentPrincipalRoleBindingService {
      * instance-tier atom). Letting the client send {@code scopeType}/{@code scopeId} would hand the
      * authorization semantics to the caller: the same role id could be bound at a scope the caller is
      * not allowed to write. Role definitions are instance-wide, so the role row itself carries no
-     * scope to copy (see {@link com.cc01cc.p.xihe.cp.entity.AccessRole}).</p>
+     * scope to copy (see {@link com.cc01cc.p.xihe.cp.entity.GrantPreset}).</p>
      *
      * @param authWorkspaceId the optional {@code ?workspaceId=} authorization context; when present it
      *                        is also the derived binding scope, when absent the binding is instance-scoped.
@@ -155,7 +155,7 @@ public class AgentPrincipalRoleBindingService {
                                      java.util.function.Predicate<UUID> canManageWorkspace,
                                      String locale) {
         owners.lockSingleton().orElseGet(() -> owners.save(new InstanceOwner()));
-        AccessRole role = roles.findByIdForUpdate(roleId).orElseThrow(() -> new CpApiException(
+        GrantPreset role = roles.findByIdForUpdate(roleId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
         // Forbidden atoms first: 409 must not depend on which scope the caller can authorize.
         requireBindableAtoms(roleId);
@@ -163,7 +163,7 @@ public class AgentPrincipalRoleBindingService {
         String auditWorkspaceId = scope.id() == null ? null : scope.id().toString();
         AgentPrincipal principal = principals.findByIdForUpdate(principalId)
                 .filter(found -> found.getDisabledAt() == null)
-                .orElseThrow(AgentPrincipalRoleBindingService::principalNotFound);
+                .orElseThrow(AgentPrincipalPresetBindingService::principalNotFound);
         atomPolicy.assertAgentBindable(roleId);
         atomPolicy.assertWithinCap(principal.getId(), roleId, scope.id());
         grantability.assertGrantableRows(permissions.findByIdRoleId(roleId).stream()
@@ -179,14 +179,14 @@ public class AgentPrincipalRoleBindingService {
             throw new CpApiException(HttpStatus.CONFLICT, "ROLE_BINDING_EXISTS",
                     "this agent principal already has that role binding in that scope");
         }
-        AccessRoleBinding row = new AccessRoleBinding(roleId,
+        GrantPresetBinding row = new GrantPresetBinding(roleId,
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, scope.type(), scope.id(), actorUserId);
         row.setId(UUID.randomUUID());
         row.setGrantedAt(Instant.now());
         // Lead ruling 2026-11-05: a binding created through this API is a user choice — deletable
         // even when the role itself is a system role. Immutability belongs to seed/default rows.
         row.setSeed(false);
-        AccessRoleBinding saved = bindings.saveAndFlush(row);
+        GrantPresetBinding saved = bindings.saveAndFlush(row);
 
         materializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 actorUserId, auditWorkspaceId);
@@ -205,21 +205,21 @@ public class AgentPrincipalRoleBindingService {
     @Transactional
     public void unbind(UUID principalId, UUID bindingId, UUID actorUserId, String auditWorkspaceId,
                        boolean instanceTier, java.util.function.Predicate<UUID> canManageWorkspace) {
-        AccessRoleBinding peek = bindings.findById(bindingId)
+        GrantPresetBinding peek = bindings.findById(bindingId)
                 .filter(candidate -> GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(
                         candidate.getSubjectType()))
                 .filter(candidate -> principalId.equals(candidate.getSubjectId()))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ROLE_BINDING_NOT_FOUND",
                         "Role binding not found"));
         // PLAN-0673 M1 lock protocol: unbind takes the SAME locks in the SAME order as bind and as
-        // RoleAdminService.update — instance mutex → role row — so a role definition change and a
+        // GrantPresetAdminService.update — instance mutex → role row — so a role definition change and a
         // binding write cannot interleave (TOCTOU on the atoms read for materialisation).
         owners.lockSingleton().orElseGet(() -> owners.save(new InstanceOwner()));
         roles.findByIdForUpdate(peek.getRoleId()).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
         // Re-read under the role lock: a concurrent unbind of the same row may have committed
         // between the peek and the lock, and deleting a stale entity would be a silent no-op.
-        AccessRoleBinding row = bindings.findById(bindingId)
+        GrantPresetBinding row = bindings.findById(bindingId)
                 .filter(candidate -> GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(
                         candidate.getSubjectType()))
                 .filter(candidate -> principalId.equals(candidate.getSubjectId()))
@@ -252,7 +252,7 @@ public class AgentPrincipalRoleBindingService {
     /** The principal must exist and be enabled; a disabled/missing one answers one stable 404. */
     public AgentPrincipal requirePrincipal(UUID principalId) {
         AgentPrincipal principal = principals.findById(principalId)
-                .orElseThrow(AgentPrincipalRoleBindingService::principalNotFound);
+                .orElseThrow(AgentPrincipalPresetBindingService::principalNotFound);
         if (principal.getDisabledAt() != null) {
             throw principalNotFound();
         }
@@ -291,7 +291,7 @@ public class AgentPrincipalRoleBindingService {
             }
         }
         Set<String> exceeding = new LinkedHashSet<>();
-        for (AccessRolePermission permission : permissions.findByIdRoleId(roleId)) {
+        for (GrantPresetAtom permission : permissions.findByIdRoleId(roleId)) {
             String atom = permission.actionClass();
             if (atom != null && !capAtoms.contains(atom)) {
                 exceeding.add(atom);
@@ -316,7 +316,7 @@ public class AgentPrincipalRoleBindingService {
     public List<String> forbiddenAtomsOf(UUID roleId) {
         java.util.Set<String> catalog = PermissionAtomCatalog.agentPrincipalForbiddenAtoms();
         List<String> forbidden = new ArrayList<>();
-        for (AccessRolePermission permission : permissions.findByIdRoleId(roleId)) {
+        for (GrantPresetAtom permission : permissions.findByIdRoleId(roleId)) {
             String atom = permission.actionClass();
             if (atom != null && catalog.contains(atom)) {
                 forbidden.add(atom);
@@ -352,17 +352,17 @@ public class AgentPrincipalRoleBindingService {
                 "Agent principal not found");
     }
 
-    private List<AgentRoleBindingView> viewOf(List<AccessRoleBinding> rows, String locale) {
+    private List<AgentRoleBindingView> viewOf(List<GrantPresetBinding> rows, String locale) {
         if (rows.isEmpty()) {
             return List.of();
         }
-        Map<UUID, AccessRole> byId = new LinkedHashMap<>();
-        for (AccessRole role : roles.findAllById(rows.stream().map(AccessRoleBinding::getRoleId).toList())) {
+        Map<UUID, GrantPreset> byId = new LinkedHashMap<>();
+        for (GrantPreset role : roles.findAllById(rows.stream().map(GrantPresetBinding::getRoleId).toList())) {
             byId.put(role.getId(), role);
         }
         List<AgentRoleBindingView> views = new ArrayList<>(rows.size());
-        for (AccessRoleBinding row : rows) {
-            AccessRole role = byId.get(row.getRoleId());
+        for (GrantPresetBinding row : rows) {
+            GrantPreset role = byId.get(row.getRoleId());
             if (role != null) {
                 views.add(viewOf(row, role, locale));
             }
@@ -370,9 +370,9 @@ public class AgentPrincipalRoleBindingService {
         return views;
     }
 
-    private AgentRoleBindingView viewOf(AccessRoleBinding row, AccessRole role, String locale) {
+    private AgentRoleBindingView viewOf(GrantPresetBinding row, GrantPreset role, String locale) {
         List<String> atomNames = new ArrayList<>();
-        for (AccessRolePermission permission : permissions.findByIdRoleId(role.getId())) {
+        for (GrantPresetAtom permission : permissions.findByIdRoleId(role.getId())) {
             if (permission.actionClass() != null && !atomNames.contains(permission.actionClass())) {
                 atomNames.add(permission.actionClass());
             }

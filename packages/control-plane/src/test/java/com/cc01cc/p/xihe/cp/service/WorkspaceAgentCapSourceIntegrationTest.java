@@ -2,9 +2,9 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -13,11 +13,11 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -63,11 +63,11 @@ class WorkspaceAgentCapSourceIntegrationTest extends AbstractReusableIntegration
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentPrincipalRepository principalRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private AgentTemplateService agentTemplateService;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private ObjectMapper objectMapper;
@@ -136,7 +136,7 @@ class WorkspaceAgentCapSourceIntegrationTest extends AbstractReusableIntegration
         // The ACTOR holds the atom instance-wide; the PRINCIPAL has no such grant, so the
         // principal-side ceiling is what refuses this cap.
         UUID actorRole = roleWith("TEST_CAPSRC_POLICY", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
-        bindingRepository.save(new AccessRoleBinding(actorRole, "user", owner.getId(),
+        bindingRepository.save(new GrantPresetBinding(actorRole, "user", owner.getId(),
                 AccessScope.INSTANCE, null, owner.getId()));
         materializer.materializeSubject("user", owner.getId(), owner.getId(), null);
 
@@ -192,14 +192,14 @@ class WorkspaceAgentCapSourceIntegrationTest extends AbstractReusableIntegration
         return headers;
     }
 
-    /** The materialized role grants of this subject in this workspace (source='role'). */
+    /** The materialized role grants of this subject in this workspace (source='preset'). */
     private Set<String> roleGrantAtoms(UUID principalId, UUID workspaceId) {
-        // grants.permissions is a jsonb atom array (RoleGrantMaterializer.atomArray), not columns.
+        // grants.permissions is a jsonb atom array (PresetGrantMaterializer.atomArray), not columns.
         return new HashSet<>(jdbcTemplate.queryForList(
                 "SELECT DISTINCT atom->>'actionClass' FROM grants g,"
                         + " jsonb_array_elements(g.permissions) AS atom"
                         + " WHERE g.subject_type='agent_principal'"
-                        + " AND g.subject_id=CAST(? AS UUID) AND g.source='role'"
+                        + " AND g.subject_id=CAST(? AS UUID) AND g.source='preset'"
                         + " AND (g.scope_type='instance' OR (g.scope_type='workspace'"
                         + " AND g.scope_id=CAST(? AS UUID)))",
                 String.class, principalId.toString(), workspaceId.toString()));
@@ -252,10 +252,10 @@ class WorkspaceAgentCapSourceIntegrationTest extends AbstractReusableIntegration
     }
 
     private UUID roleWith(String name, String... atoms) {
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, "test-only", false));
         for (String atom : atoms) {
-            permissionRepository.saveAndFlush(new AccessRolePermission(
+            permissionRepository.saveAndFlush(new GrantPresetAtom(
                     role.getId(), atom, com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog.atom(atom)
                             .canonicalResource()));
         }

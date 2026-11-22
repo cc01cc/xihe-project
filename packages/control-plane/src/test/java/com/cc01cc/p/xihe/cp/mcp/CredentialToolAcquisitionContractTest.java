@@ -377,7 +377,7 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
         grant.setSubjectId(principal.getId());
         grant.setGranterType("user");
         grant.setGranterId(UUID.fromString(userId));
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setPermissions(credentialUseSnapshot(credentials));
         grantRepository.saveAndFlush(grant);
 

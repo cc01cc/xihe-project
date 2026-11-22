@@ -35,7 +35,7 @@ import java.util.UUID;
  * <p>The {@code fs:} branch is where the write face gets its teeth: the root scope must be an
  * <b>existing</b> workspace, the relative part must be a plain path (no dot segments, no
  * backslashes, no wildcard, no drive letter, no empty segment — {@link ResourceIdentity#parseDeclaration}
- * plus the segment loop below), the whole key must fit {@code role_permissions.resource_pattern}
+ * plus the segment loop below), the whole key must fit {@code grant_preset_atoms.resource_pattern}
  * ({@code VARCHAR(255)}, V87), and the caller must be allowed to administer bindings <b>in that
  * workspace</b>. That last gate is deliberately separate from {@link GrantabilityGuard}: its
  * {@code heldCovers} asks "does the caller hold {@code read} at some resource", and a caller holding
@@ -48,7 +48,7 @@ public class GrantResourcePattern {
     /** RFC 9457 {@code code} for a rejected pattern (400). */
     public static final String CODE_INVALID = "INVALID_GRANT_RESOURCE";
 
-    /** V87: {@code role_permissions.resource_pattern VARCHAR(255) NOT NULL}. */
+    /** V87: {@code grant_preset_atoms.resource_pattern VARCHAR(255) NOT NULL}. */
     static final int MAX_LENGTH = 255;
 
     private final WorkspaceRepository workspaces;
@@ -96,7 +96,7 @@ public class GrantResourcePattern {
     private String requireWorkspacePrefix(String atomName, String raw) {
         if (raw.length() > MAX_LENGTH) {
             throw invalid(atomName, raw, "the pattern must be at most " + MAX_LENGTH
-                    + " characters (V87 role_permissions.resource_pattern)");
+                    + " characters (V87 grant_preset_atoms.resource_pattern)");
         }
         ResourceIdentity.FsKey key = ResourceIdentity.parseDeclaration(raw);
         if (key == null) {

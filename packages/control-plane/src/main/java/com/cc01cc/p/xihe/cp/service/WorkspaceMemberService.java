@@ -36,7 +36,7 @@ import java.util.UUID;
  *
  * <p>PLAN-0610 W3-3: the <b>membership fact</b> is no longer read or written here — it comes from
  * {@link WorkspaceMembershipService}, the single seam over
- * {@code role_bindings(scope=workspace)} (bindings are the truth; the legacy
+ * {@code grant_preset_bindings(scope=workspace)} (bindings are the truth; the legacy
  * {@code workspace_users} row is mirrored until V89). This class keeps only the 0565 policy matrix,
  * the API shape and the audit rows, so the member surface, the tenant interceptor, D9 and the grant
  * evaluation can no longer disagree about who a member is (round-4 P2-5).</p>

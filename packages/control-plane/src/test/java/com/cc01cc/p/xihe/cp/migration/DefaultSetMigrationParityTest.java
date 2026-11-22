@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>{@code DefaultSetAtomMatrixTest} pins the reviewed contract (hard-coded governed-atom matrix)
  * against the code catalog. This class covers the other half: a <b>fresh, Flyway-only</b> PostgreSQL
  * database (no booted Spring context, so nothing seeds from the code catalog) must materialize
- * exactly the same {@code role_permissions} rows as {@link SystemAccessRoleCatalog#roleSeeds()} —
+ * exactly the same {@code grant_preset_atoms} rows as {@link SystemGrantPresetCatalog#presetSeeds()} —
  * every atom of every built-in role, including the newest rows from V125
  * ({@code SUPER_ADMIN × GRANT_ANY_ATOM}, {@code ADMIN × MANAGE_ROLES}) and the V127 role
  * {@code AGENT_USER} (D-174 agent default instance role).</p>
@@ -74,35 +74,35 @@ class DefaultSetMigrationParityTest {
     private static Map<String, Set<String>> expected() {
         Set<String> all = Set.copyOf(GOVERNED_ATOMS);
         Map<String, Set<String>> table = new LinkedHashMap<>();
-        table.put(SystemAccessRoleCatalog.SUPER_ADMIN, all);
-        table.put(SystemAccessRoleCatalog.ADMIN, Set.copyOf(GOVERNED_ATOMS.stream()
+        table.put(SystemGrantPresetCatalog.SUPER_ADMIN, all);
+        table.put(SystemGrantPresetCatalog.ADMIN, Set.copyOf(GOVERNED_ATOMS.stream()
                 .filter(atom -> !ToolFaceRegistry.ACTION_GRANT_ANY_ATOM.equals(atom))
                 .toList()));
-        table.put(SystemAccessRoleCatalog.USER, Set.of());
-        table.put(SystemAccessRoleCatalog.WS_OWNER, Set.of(
+        table.put(SystemGrantPresetCatalog.USER, Set.of());
+        table.put(SystemGrantPresetCatalog.WS_OWNER, Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
-        table.put(SystemAccessRoleCatalog.WS_EDITOR, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_EDITOR, Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
-        table.put(SystemAccessRoleCatalog.WS_VIEWER, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_VIEWER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
-        table.put(SystemAccessRoleCatalog.AGENT_DELEGATOR, Set.of());
+        table.put(SystemGrantPresetCatalog.AGENT_DELEGATOR, Set.of());
         // V127 / D-174: the agent default INSTANCE role (read/write/delete/exec/network, all `*`) —
         // none of the governed atoms, so every governance cell is false. (DSD-1500/V179 dropped exec
         // from its atoms; the governance cells were and stay false.)
-        table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
+        table.put(SystemGrantPresetCatalog.AGENT_USER, Set.of());
         // DSD-1500 (Q-93) R3 / V179: AGENT_READER mirrors WS_VIEWER (N7 only), AGENT_WORKER is
         // read/write/delete only, WS_RUNNER is exec + N7. Reviewed here because the parity test's
         // EXPECTED table is the hand-checked side that a new migration must match by name.
-        table.put(SystemAccessRoleCatalog.AGENT_READER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_READER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
-        table.put(SystemAccessRoleCatalog.AGENT_WORKER, Set.of());
-        table.put(SystemAccessRoleCatalog.WS_RUNNER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_WORKER, Set.of());
+        table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         return table;
     }
@@ -118,12 +118,12 @@ class DefaultSetMigrationParityTest {
         connection = DriverManager.getConnection(url, postgres.username(), postgres.password());
     }
 
-    /** role name → "actionClass|resourcePattern" set, read from the migrated {@code role_permissions}. */
+    /** role name → "actionClass|resourcePattern" set, read from the migrated {@code grant_preset_atoms}. */
     private static Map<String, Set<String>> dbAtoms() throws SQLException {
         Map<String, Set<String>> rows = new LinkedHashMap<>();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT r.name, rp.action_class, rp.resource_pattern"
-                        + " FROM role_permissions rp JOIN roles r ON r.id = rp.role_id"
+                        + " FROM grant_preset_atoms rp JOIN grant_presets r ON r.id = rp.role_id"
                         + " WHERE r.is_system = true")) {
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
@@ -138,7 +138,7 @@ class DefaultSetMigrationParityTest {
     /** role name → "actionClass|resourcePattern" set, read from the code-side catalog. */
     private static Map<String, Set<String>> codeAtoms() {
         Map<String, Set<String>> rows = new LinkedHashMap<>();
-        for (SystemAccessRoleCatalog.RoleSeed seed : SystemAccessRoleCatalog.roleSeeds()) {
+        for (SystemGrantPresetCatalog.PresetSeed seed : SystemGrantPresetCatalog.presetSeeds()) {
             Set<String> atoms = new LinkedHashSet<>();
             seed.atoms().forEach(ref -> atoms.add(ref.actionClass() + "|" + ref.resourcePattern()));
             rows.put(seed.name(), atoms);
@@ -215,8 +215,8 @@ class DefaultSetMigrationParityTest {
     void v125RowsLandInTheFreshDatabase() throws SQLException {
         // D-166: the bypass is SUPER_ADMIN-only; D-168: ADMIN gains MANAGE_ROLES but not the bypass.
         Map<String, Set<String>> db = dbAtoms();
-        Set<String> superAdmin = db.get(SystemAccessRoleCatalog.SUPER_ADMIN);
-        Set<String> admin = db.get(SystemAccessRoleCatalog.ADMIN);
+        Set<String> superAdmin = db.get(SystemGrantPresetCatalog.SUPER_ADMIN);
+        Set<String> admin = db.get(SystemGrantPresetCatalog.ADMIN);
         assertTrue(superAdmin.contains(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM + "|*"),
                 "SUPER_ADMIN must hold GRANT_ANY_ATOM after V125");
         assertFalse(admin.contains(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM + "|*"),
@@ -224,8 +224,8 @@ class DefaultSetMigrationParityTest {
         assertTrue(admin.contains(ToolFaceRegistry.ACTION_MANAGE_ROLES + "|*"),
                 "ADMIN must hold MANAGE_ROLES after V125 (D-168)");
 
-        for (String workspaceRole : List.of(SystemAccessRoleCatalog.WS_OWNER,
-                SystemAccessRoleCatalog.WS_EDITOR, SystemAccessRoleCatalog.WS_VIEWER)) {
+        for (String workspaceRole : List.of(SystemGrantPresetCatalog.WS_OWNER,
+                SystemGrantPresetCatalog.WS_EDITOR, SystemGrantPresetCatalog.WS_VIEWER)) {
             assertFalse(db.get(workspaceRole).contains(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM + "|*"),
                     "workspace role must not hold the instance bypass: " + workspaceRole);
         }
@@ -246,7 +246,7 @@ class DefaultSetMigrationParityTest {
         int catalogSize = PermissionAtomCatalog.actionAtoms().size()
                 + PermissionAtomCatalog.capabilityAtoms().size();
         Map<String, Set<String>> db = dbAtoms();
-        assertEquals(catalogSize, db.get(SystemAccessRoleCatalog.SUPER_ADMIN).size(),
+        assertEquals(catalogSize, db.get(SystemGrantPresetCatalog.SUPER_ADMIN).size(),
                 "SUPER_ADMIN must materialize every action atom plus every capability atom");
     }
 }

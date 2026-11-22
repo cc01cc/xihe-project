@@ -70,7 +70,7 @@ class ApprovalHistoryIntegrationTest extends AbstractIntegrationTest {
     void cleanUp() {
         if (workspaceId != null) {
             TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE scope_type = 'workspace'"
                     + " AND CAST(scope_id AS VARCHAR) = ?", workspaceId);
             if (workspaceRepository.findById(UUID.fromString(workspaceId)).isPresent()) {
                 workspaceRepository.deleteById(UUID.fromString(workspaceId));

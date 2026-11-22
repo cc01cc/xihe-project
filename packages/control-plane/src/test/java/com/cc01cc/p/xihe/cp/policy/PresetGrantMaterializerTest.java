@@ -2,11 +2,11 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,11 +36,11 @@ import static org.mockito.Mockito.when;
 /**
  * PLAN-0610 W1a T1.5: the role materializer.
  *
- * <p>Pins the contract the evaluation query relies on: one {@code source='role'} row per atom,
+ * <p>Pins the contract the evaluation query relies on: one {@code source='preset'} row per atom,
  * the binding scope copied onto the row, capability atoms filtered out (negative case, design
  * #23) and scope incompatibility rejected instead of dropped (decision #12).</p>
  */
-class RoleGrantMaterializerTest {
+class PresetGrantMaterializerTest {
 
     private static final UUID USER_ROLE = UUID.randomUUID();
     private static final UUID WS_EDITOR_ROLE = UUID.randomUUID();
@@ -51,23 +51,23 @@ class RoleGrantMaterializerTest {
     private static final UUID ACTOR = UUID.randomUUID();
     private static final UUID WORKSPACE_A = UUID.randomUUID();
 
-    private AccessRoleBindingRepository bindingRepository;
-    private AccessRolePermissionRepository permissionRepository;
+    private GrantPresetBindingRepository bindingRepository;
+    private GrantPresetAtomRepository permissionRepository;
     private AuthorizationGrantRepository grantRepository;
     private com.cc01cc.p.xihe.cp.repository.UserRepository userRepository;
     private AuthzContext authzContext;
     private AuditLogger auditLogger;
-    private RoleGrantMaterializer materializer;
+    private PresetGrantMaterializer materializer;
 
     @BeforeEach
     void setUp() {
-        bindingRepository = mock(AccessRoleBindingRepository.class);
-        permissionRepository = mock(AccessRolePermissionRepository.class);
+        bindingRepository = mock(GrantPresetBindingRepository.class);
+        permissionRepository = mock(GrantPresetAtomRepository.class);
         grantRepository = mock(AuthorizationGrantRepository.class);
         userRepository = mock(com.cc01cc.p.xihe.cp.repository.UserRepository.class);
         authzContext = mock(AuthzContext.class);
         auditLogger = mock(AuditLogger.class);
-        materializer = new RoleGrantMaterializer(bindingRepository, permissionRepository,
+        materializer = new PresetGrantMaterializer(bindingRepository, permissionRepository,
                 grantRepository, userRepository, new GrantIntersectionEvaluator(), authzContext,
                 auditLogger, new ObjectMapper());
         when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(anyString(), any(), anyString()))
@@ -79,18 +79,18 @@ class RoleGrantMaterializerTest {
     @Test
     void materializesOneRowPerAtomPerScopeWithTheBindingScope() {
         stubRoles(USER_ROLE, WS_EDITOR_ROLE);
-        bindings(new AccessRoleBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR),
-                new AccessRoleBinding(WS_EDITOR_ROLE, "user", SUBJECT, AccessScope.WORKSPACE,
+        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR),
+                new GrantPresetBinding(WS_EDITOR_ROLE, "user", SUBJECT, AccessScope.WORKSPACE,
                         WORKSPACE_A, ACTOR));
 
-        RoleGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
 
         List<AuthorizationGrant> saved = savedRows();
         assertEquals(5 + 4, saved.size(), "five USER atoms at instance scope plus four editor atoms");
         assertEquals(5 + 4, result.created());
         assertEquals(0, result.deleted());
         for (AuthorizationGrant row : saved) {
-            assertEquals(GrantSources.ROLE, row.getSource());
+            assertEquals(GrantSources.PRESET, row.getSource());
             assertEquals("read", row.getReadState());
             assertEquals(1, row.getPermissions().size(), "one atom per row (round-2 P1-2)");
             AccessScope scope = row.getScopeId() == null
@@ -106,7 +106,7 @@ class RoleGrantMaterializerTest {
     @Test
     void superAdminInstanceBindingMaterializesEveryActionAtomAndNoCapabilityAtom() {
         stubRoles(INSTANCE_ADMIN_ROLE);
-        bindings(new AccessRoleBinding(INSTANCE_ADMIN_ROLE, "user", SUBJECT, AccessScope.INSTANCE,
+        bindings(new GrantPresetBinding(INSTANCE_ADMIN_ROLE, "user", SUBJECT, AccessScope.INSTANCE,
                 null, ACTOR));
 
         materializer.materializeSubject("user", SUBJECT, ACTOR, null);
@@ -132,13 +132,13 @@ class RoleGrantMaterializerTest {
     @Test
     void reconcilesStaleAtomsAndKeepsUnchangedRows() {
         stubRoles(USER_ROLE);
-        bindings(new AccessRoleBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
-        AuthorizationGrant kept = existingRow("role", AccessScope.instance(), "read");
-        AuthorizationGrant stale = existingRow("role", AccessScope.instance(), "CREATE_TEMPLATE");
-        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "role"))
+        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+        AuthorizationGrant kept = existingRow("preset", AccessScope.instance(), "read");
+        AuthorizationGrant stale = existingRow("preset", AccessScope.instance(), "CREATE_TEMPLATE");
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset"))
                 .thenReturn(List.of(kept, stale));
 
-        RoleGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
 
         List<AuthorizationGrant> deleted = deletedRows();
         assertEquals(1, deleted.size());
@@ -154,7 +154,7 @@ class RoleGrantMaterializerTest {
     @Test
     void rejectsAtomsThatCannotLiveInTheBindingScopeRound2P12() {
         stubRoles(ACCOUNT_ROLE);
-        bindings(new AccessRoleBinding(ACCOUNT_ROLE, "user", SUBJECT, AccessScope.WORKSPACE,
+        bindings(new GrantPresetBinding(ACCOUNT_ROLE, "user", SUBJECT, AccessScope.WORKSPACE,
                 WORKSPACE_A, ACTOR));
 
         CpApiException failure = assertThrows(CpApiException.class,
@@ -166,15 +166,15 @@ class RoleGrantMaterializerTest {
     @Test
     void writesNoAuditAndNoRowsWhenTheMaterializedSetIsUnchanged() {
         stubRoles(USER_ROLE);
-        bindings(new AccessRoleBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
         List<AuthorizationGrant> existing = new ArrayList<>();
         for (String atom : List.of("read", "write", "delete", "exec", "network")) {
-            existing.add(existingRow("role", AccessScope.instance(), atom));
+            existing.add(existingRow("preset", AccessScope.instance(), atom));
         }
-        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "role"))
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset"))
                 .thenReturn(existing);
 
-        RoleGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
 
         assertEquals(0, result.created());
         assertEquals(0, result.deleted());
@@ -187,11 +187,11 @@ class RoleGrantMaterializerTest {
     void removesRowsWhenTheSubjectLosesEveryBinding() {
         stubRoles(USER_ROLE);
         bindings();
-        AuthorizationGrant stale = existingRow("role", AccessScope.workspace(WORKSPACE_A), "read");
-        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "role"))
+        AuthorizationGrant stale = existingRow("preset", AccessScope.workspace(WORKSPACE_A), "read");
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset"))
                 .thenReturn(List.of(stale));
 
-        RoleGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
 
         assertEquals(0, result.created());
         assertEquals(1, result.deleted());
@@ -201,11 +201,11 @@ class RoleGrantMaterializerTest {
     @Test
     void neverTouchesTheFrozenAgentDefaultSource() {
         stubRoles(USER_ROLE);
-        bindings(new AccessRoleBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
 
         materializer.materializeSubject("user", SUBJECT, ACTOR, null);
 
-        verify(grantRepository).findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "role");
+        verify(grantRepository).findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset");
         verify(grantRepository, never()).findBySubjectTypeAndSubjectIdAndSource(anyString(), any(),
                 eq(GrantSources.AGENT_DEFAULT));
     }
@@ -213,10 +213,10 @@ class RoleGrantMaterializerTest {
     // ---------------------------------------------------------------- helpers
 
     private void stubRoles(UUID... roleIds) {
-        List<AccessRolePermission> permissions = new ArrayList<>();
+        List<GrantPresetAtom> permissions = new ArrayList<>();
         for (UUID roleId : roleIds) {
             for (String atom : atomsOf(roleId)) {
-                permissions.add(new AccessRolePermission(roleId, atom, resourceOf(atom)));
+                permissions.add(new GrantPresetAtom(roleId, atom, resourceOf(atom)));
             }
         }
         when(permissionRepository.findByIdRoleIdIn(anyCollection())).thenReturn(permissions);
@@ -258,9 +258,9 @@ class RoleGrantMaterializerTest {
         UUID lowSubject = UUID.fromString("00000000-0000-4000-8000-000000000001");
         UUID highSubject = UUID.fromString("00000000-0000-4000-8000-000000000002");
         stubRoles(USER_ROLE);
-        AccessRoleBinding lowBinding = new AccessRoleBinding(USER_ROLE, "user", lowSubject,
+        GrantPresetBinding lowBinding = new GrantPresetBinding(USER_ROLE, "user", lowSubject,
                 AccessScope.INSTANCE, null, ACTOR);
-        AccessRoleBinding highBinding = new AccessRoleBinding(USER_ROLE, "user", highSubject,
+        GrantPresetBinding highBinding = new GrantPresetBinding(USER_ROLE, "user", highSubject,
                 AccessScope.INSTANCE, null, ACTOR);
         // Deliberately "wrong" order: the higher id comes back from the role query first.
         when(bindingRepository.findByRoleId(USER_ROLE)).thenReturn(List.of(highBinding, lowBinding));
@@ -271,7 +271,7 @@ class RoleGrantMaterializerTest {
         when(userRepository.findByIdForUpdate(any())).thenAnswer(invocation ->
                 java.util.Optional.of(userWith(invocation.getArgument(0))));
 
-        materializer.materializeRole(USER_ROLE, ACTOR, null);
+        materializer.materializePreset(USER_ROLE, ACTOR, null);
 
         org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(userRepository);
         inOrder.verify(userRepository).findByIdForUpdate(lowSubject);
@@ -287,7 +287,7 @@ class RoleGrantMaterializerTest {
     @Test
     void invalidatesImmediatelyAndAgainAfterTheTransactionCompletes() {
         stubRoles(USER_ROLE);
-        bindings(new AccessRoleBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
 
         org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
         try {
@@ -312,7 +312,7 @@ class RoleGrantMaterializerTest {
         return user;
     }
 
-    private void bindings(AccessRoleBinding... rows) {
+    private void bindings(GrantPresetBinding... rows) {
         when(bindingRepository.findBySubjectTypeAndSubjectId("user", SUBJECT)).thenReturn(List.of(rows));
     }
 

@@ -16,7 +16,7 @@ import java.util.Map;
  * <p>The locale is resolved <b>explicitly</b> from the request ({@code ?locale=en-US}); the payload
  * carries a single string, never a {@code {zh, en}} pair, so the UI cannot grow a second source of
  * truth. Unknown locales fall back to {@code zh-CN}; unknown atoms fall back to the atom name (a new
- * atom must never render as an empty string — {@code RoleAdminApiIntegrationTest} asserts that).</p>
+ * atom must never render as an empty string — {@code GrantPresetAdminApiIntegrationTest} asserts that).</p>
  */
 public final class PermissionAtomLabels {
 

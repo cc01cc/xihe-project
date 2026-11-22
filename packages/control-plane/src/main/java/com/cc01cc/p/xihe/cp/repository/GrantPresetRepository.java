@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.repository;
 
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -12,11 +12,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface AccessRoleRepository extends JpaRepository<AccessRole, UUID> {
+public interface GrantPresetRepository extends JpaRepository<GrantPreset, UUID> {
 
-    Optional<AccessRole> findByName(String name);
+    Optional<GrantPreset> findByName(String name);
 
-    List<AccessRole> findByNameIn(Collection<String> names);
+    List<GrantPreset> findByNameIn(Collection<String> names);
 
     boolean existsByName(String name);
 
@@ -26,6 +26,6 @@ public interface AccessRoleRepository extends JpaRepository<AccessRole, UUID> {
      * {@code users} row locks.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select r from AccessRole r where r.id = :roleId")
-    Optional<AccessRole> findByIdForUpdate(@Param("roleId") UUID roleId);
+    @Query("select r from GrantPreset r where r.id = :roleId")
+    Optional<GrantPreset> findByIdForUpdate(@Param("roleId") UUID roleId);
 }

@@ -304,7 +304,7 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
         grant.setGranterId(UUID.fromString(userId));
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(UUID.fromString(userId));
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         grant.setPermissions(objectMapper.valueToTree(java.util.List.of(
                 Map.of("actionClass", ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "resource", "*"),
@@ -331,7 +331,7 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
         principalRead.setGranterId(UUID.fromString((String) ((Map<?, ?>) registrationUser).get("id")));
         principalRead.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
         principalRead.setSubjectId(UUID.fromString(principalId));
-        principalRead.setSource("role");
+        principalRead.setSource("preset");
         principalRead.setReadState("read");
         principalRead.setPermissions(objectMapper.valueToTree(
                 java.util.List.of(Map.of("actionClass", ToolFaceRegistry.ACTION_READ, "resource", "*"))));

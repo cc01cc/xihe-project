@@ -57,7 +57,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
  * case that goes red really does depend on an atom being granted, and such a class belongs on the
  * PostgreSQL lane ({@link com.cc01cc.p.xihe.cp.AbstractIntegrationTest}; WireMock-flavoured variant:
  * {@link AbstractWireMockPgTest}). What still works here:
- * capability atoms ({@code AuthzContext}, access_role_bindings / access_role_permissions) and
+ * capability atoms ({@code AuthzContext}, access_grant_preset_bindings / access_grant_preset_atoms) and
  * workspace roles ({@code workspace_members}) — both are JPA tables.
  */
 public abstract class AbstractWireMockTest {

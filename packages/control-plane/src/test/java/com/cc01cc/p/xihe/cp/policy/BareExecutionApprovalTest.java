@@ -307,7 +307,7 @@ class BareExecutionApprovalTest extends AbstractReusableIntegrationTest {
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
         grant.setSubjectId(principalId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setPermissions(capability);
         grantIds.add(grantRepository.save(grant).getId());
 

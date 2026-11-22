@@ -117,7 +117,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(3, count("org_units"), "V181 leaves exactly the three-unit tree");
         assertEquals(1, count("org_unit_members"), "only the seeded admin is placed before the content seed");
         assertEquals(181, appliedMigrationHead(), "V181 must already be applied in this lane");
-        int roleBindingsBefore = count("role_bindings");
+        int roleBindingsBefore = count("grant_preset_bindings");
         dumpReadings("baseline-before-content-seed");
 
         FirstRunContentSeeder first = seeder(FirstRunContentSeeder.MODE_TRUE);
@@ -140,7 +140,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 "the seed names no backend: WorkspaceService derives the direct_attach default");
         assertEquals(PathKey.lexical(workspaceRoot.toString()), workspace.getHostPath(),
                 "the stored host path is the lexical canonical form of the resolved root");
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM role_bindings b JOIN roles r ON r.id = b.role_id"
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM grant_preset_bindings b JOIN grant_presets r ON r.id = b.role_id"
                 + " WHERE b.subject_type = 'user' AND b.subject_id = ?::uuid"
                 + " AND b.scope_type = 'workspace' AND b.scope_id = ?::uuid AND r.name = 'WS_OWNER'",
                 Integer.class, adminId, workspace.getId().toString()),
@@ -181,7 +181,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                     orgUnitMembers.findUnitOf(FirstRunContentSeeder.AGENT_MEMBER_KIND, byName.get(worker).getId())
                             .orElseThrow(() -> new AssertionError(worker + " must sit in the execution unit")));
         }
-        int roleBindingsAfterFirst = count("role_bindings");
+        int roleBindingsAfterFirst = count("grant_preset_bindings");
         assertTrue(roleBindingsAfterFirst > roleBindingsBefore, "materialising subjects writes role bindings");
         dumpReadings("after-first-start");
 
@@ -194,7 +194,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(3, count("agent_principals"), "second start inserts no subject");
         assertEquals(3, count("org_units"), "second start inserts no org unit");
         assertEquals(4, count("org_unit_members"), "second start moves nobody");
-        assertEquals(roleBindingsAfterFirst, count("role_bindings"), "second start inserts no role binding");
+        assertEquals(roleBindingsAfterFirst, count("grant_preset_bindings"), "second start inserts no role binding");
         assertEquals(181, appliedMigrationHead(), "second start applies no migration");
         dumpReadings("after-second-start");
 
@@ -234,7 +234,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 + " agent_principals=" + count("agent_principals")
                 + " org_units=" + count("org_units")
                 + " org_unit_members=" + count("org_unit_members")
-                + " role_bindings=" + count("role_bindings")
+                + " grant_preset_bindings=" + count("grant_preset_bindings")
                 + " flyway_max_version=" + appliedMigrationHead());
     }
 

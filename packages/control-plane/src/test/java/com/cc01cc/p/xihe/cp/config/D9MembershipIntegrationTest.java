@@ -62,10 +62,10 @@ class D9MembershipIntegrationTest extends AbstractReusableIntegrationTest {
         adminToken = objectMapper.readTree(admin.getBody()).path("accessToken").asText();
         String adminId = objectMapper.readTree(admin.getBody()).path("user").path("id").asText();
         // PLAN-0610 W4b: an instance administrator is the ADMIN role binding (users.role is gone).
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type)"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type)"
                 + " SELECT gen_random_uuid(), id, 'user', CAST(? AS UUID), 'instance'"
-                + " FROM roles WHERE name = 'ADMIN'"
-                + " ON CONFLICT ON CONSTRAINT uq_role_bindings DO NOTHING", adminId);
+                + " FROM grant_presets WHERE name = 'ADMIN'"
+                + " ON CONFLICT ON CONSTRAINT uq_grant_preset_bindings DO NOTHING", adminId);
         jdbc.update("UPDATE instance_owner SET owner_user_id = CAST(? AS UUID), assigned_at = NOW()"
                 + " WHERE id = 1", adminId);
 

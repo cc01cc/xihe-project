@@ -323,7 +323,7 @@ class CredentialRevealIntegrationTest extends AbstractReusableIntegrationTest {
             direct.setSubjectId(userId);
             direct.setGranterType("user");
             direct.setGranterId(userId);
-            direct.setSource("role");
+            direct.setSource("preset");
             direct.setPermissions(newAtoms);
             grantRepository.save(direct);
             return;

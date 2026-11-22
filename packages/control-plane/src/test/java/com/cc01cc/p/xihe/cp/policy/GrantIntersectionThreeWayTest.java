@@ -2,18 +2,18 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -70,16 +70,16 @@ class GrantIntersectionThreeWayTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private GrantAuthorizationService grantAuthorizationService;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -102,14 +102,14 @@ class GrantIntersectionThreeWayTest extends AbstractReusableIntegrationTest {
         workspaceId = workspace.getId();
         // Real authority, real path: the operator must hold what it hands out, so the fixture promotes
         // it to the instance super administrator (the delegation the product itself expects).
-        bindInstanceSystemRole(owner.getId(), SystemAccessRoleCatalog.SUPER_ADMIN);
+        bindInstanceSystemRole(owner.getId(), SystemGrantPresetCatalog.SUPER_ADMIN);
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(userId, "ThreeWayAgent",
                 null, emptyTemplateSnapshot());
         principalId = principal.getId();
 
         // ① principal grant layer — a real instance-scope role binding, materialized.
-        AccessRole spawnRole = newRole("THREEWAY_SPAWN", List.of(SPAWN_AGENT));
+        GrantPreset spawnRole = newRole("THREEWAY_SPAWN", List.of(SPAWN_AGENT));
         bindRole(spawnRole.getId(), "agent_principal", principalId, AccessScope.instance());
 
         // ② workspace cap layer — the real write path (BL-287): `network` is deliberately left out
@@ -189,21 +189,21 @@ class GrantIntersectionThreeWayTest extends AbstractReusableIntegrationTest {
                 prefix + "-" + suffix + "@test.local", "hash", prefix, prefix + suffix));
     }
 
-    private AccessRole newRole(String prefix, List<String> atoms) {
+    private GrantPreset newRole(String prefix, List<String> atoms) {
         String name = prefix + "_" + UUID.randomUUID().toString().replace("-", "")
                 .substring(0, 8).toUpperCase();
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, null, false));
         for (String atom : atoms) {
             PermissionAtomCatalog.Atom ref = PermissionAtomCatalog.atom(atom);
             permissionRepository.saveAndFlush(
-                    new AccessRolePermission(role.getId(), ref.name(), ref.canonicalResource()));
+                    new GrantPresetAtom(role.getId(), ref.name(), ref.canonicalResource()));
         }
         return role;
     }
 
     private void bindRole(UUID roleId, String subjectType, UUID subjectId, AccessScope scope) {
-        bindingRepository.saveAndFlush(new AccessRoleBinding(roleId, subjectType, subjectId,
+        bindingRepository.saveAndFlush(new GrantPresetBinding(roleId, subjectType, subjectId,
                 scope.type(), scope.id(), ownerId));
         materializer.materializeSubject(subjectType, subjectId, ownerId, null);
     }

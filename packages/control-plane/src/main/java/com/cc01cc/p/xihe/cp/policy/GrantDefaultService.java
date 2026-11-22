@@ -4,15 +4,15 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthUserLockService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.service.SessionLockService;
@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
  *
  * <ul>
  *   <li>{@link #ensureUserDefault(User)} binds a freshly created account to the {@code USER}
- *       instance tier and lets {@link RoleGrantMaterializer} write the atom rows; an existing tier
+ *       instance tier and lets {@link PresetGrantMaterializer} write the atom rows; an existing tier
  *       binding is never rewritten here — since PLAN-0610 W4a a tier change is a binding write
  *       ({@code PUT /api/v1/bindings}) or an ownership transfer, never a column update;</li>
  *   <li>{@link #ensureAgentSessionDefault(Session)} keeps its frozen-snapshot semantics
@@ -53,7 +53,7 @@ import java.util.stream.Collectors;
  * </ul>
  *
  * <p>PLAN-0610 W4a removed the last {@code users.role} bridge: the column is not mapped any more,
- * so the instance tier is read from {@code role_bindings} only (V88 backfilled it, V89 drops the
+ * so the instance tier is read from {@code grant_preset_bindings} only (V88 backfilled it, V89 drops the
  * column).</p>
  */
 @Service
@@ -80,10 +80,10 @@ public class GrantDefaultService {
     private static final String READ_STATE_READ = "read";
 
     private final AuthorizationGrantRepository grantRepository;
-    private final AccessRoleRepository roleRepository;
-    private final AccessRoleBindingRepository bindingRepository;
+    private final GrantPresetRepository roleRepository;
+    private final GrantPresetBindingRepository bindingRepository;
     private final InstanceOwnerRepository instanceOwnerRepository;
-    private final RoleGrantMaterializer materializer;
+    private final PresetGrantMaterializer materializer;
     private final AuthUserLockService userLock;
     private final SessionLockService sessionLock;
     private final AuditLogger auditLogger;
@@ -91,10 +91,10 @@ public class GrantDefaultService {
     private final DbLockTimeout dbLockTimeout;
 
     public GrantDefaultService(AuthorizationGrantRepository grantRepository,
-                               AccessRoleRepository roleRepository,
-                               AccessRoleBindingRepository bindingRepository,
+                               GrantPresetRepository roleRepository,
+                               GrantPresetBindingRepository bindingRepository,
                                InstanceOwnerRepository instanceOwnerRepository,
-                               RoleGrantMaterializer materializer,
+                               PresetGrantMaterializer materializer,
                                AuthUserLockService userLock,
                                SessionLockService sessionLock,
                                AuditLogger auditLogger,
@@ -135,10 +135,10 @@ public class GrantDefaultService {
     @Transactional
     public void ensureInstanceTierBinding(User user) {
         requirePersistedUser(user);
-        Map<String, AccessRole> tierRoles = roleRepository
-                .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES).stream()
-                .collect(Collectors.toMap(AccessRole::getName, Function.identity()));
-        List<AccessRoleBinding> tierBindings = tierBindings(user.getId(), tierRoles);
+        Map<String, GrantPreset> tierRoles = roleRepository
+                .findByNameIn(SystemGrantPresetCatalog.INSTANCE_TIER_PRESETS).stream()
+                .collect(Collectors.toMap(GrantPreset::getName, Function.identity()));
+        List<GrantPresetBinding> tierBindings = tierBindings(user.getId(), tierRoles);
         if (!tierBindings.isEmpty()) {
             if (tierBindings.size() > 1) {
                 // One instance tier binding per user; drop duplicates left by earlier runs.
@@ -146,12 +146,12 @@ public class GrantDefaultService {
             }
             return;
         }
-        AccessRole defaultTier = tierRoles.get(SystemAccessRoleCatalog.USER);
+        GrantPreset defaultTier = tierRoles.get(SystemGrantPresetCatalog.USER);
         if (defaultTier == null) {
             throw new IllegalStateException("System role catalog is incomplete: "
-                    + SystemAccessRoleCatalog.USER + " is missing (V87 must have been applied)");
+                    + SystemGrantPresetCatalog.USER + " is missing (V87 must have been applied)");
         }
-        bindingRepository.save(new AccessRoleBinding(defaultTier.getId(), SUBJECT_USER, user.getId(),
+        bindingRepository.save(new GrantPresetBinding(defaultTier.getId(), SUBJECT_USER, user.getId(),
                 AccessScope.INSTANCE, null, user.getId()));
     }
 
@@ -187,7 +187,7 @@ public class GrantDefaultService {
     @Transactional
     public void ensureInstanceSuperAdmin(User user) {
         ensureInstanceSuperAdmin(user, AUDIT_SUPER_ADMIN_BINDING_SEEDED,
-                "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance");
+                "role=" + SystemGrantPresetCatalog.SUPER_ADMIN + " scope=instance");
     }
 
     /**
@@ -206,7 +206,7 @@ public class GrantDefaultService {
     public void ensureFirstAccountAdmin(User user) {
         requirePersistedUser(user);
         ensureInstanceSuperAdmin(user, AUDIT_INSTANCE_ADMIN_BOOTSTRAPPED,
-                "source=first_registration role=" + SystemAccessRoleCatalog.SUPER_ADMIN
+                "source=first_registration role=" + SystemGrantPresetCatalog.SUPER_ADMIN
                         + " scope=instance");
         ensureInstanceTierBinding(user);
         materializer.materializeSubject(SUBJECT_USER, user.getId(), user.getId(), null);
@@ -222,13 +222,13 @@ public class GrantDefaultService {
         dbLockTimeout.apply();
         User lockedUser = userLock.lockAndFind(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        AccessRole superAdmin = roleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+        GrantPreset superAdmin = roleRepository.findByName(SystemGrantPresetCatalog.SUPER_ADMIN)
                 .orElseThrow(() -> new IllegalStateException(
                         "System role SUPER_ADMIN is missing (V87 must have been applied)"));
-        Map<String, AccessRole> tierRoles = roleRepository
-                .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES).stream()
-                .collect(Collectors.toMap(AccessRole::getName, Function.identity()));
-        List<AccessRoleBinding> tierBindings = tierBindings(lockedUser.getId(), tierRoles);
+        Map<String, GrantPreset> tierRoles = roleRepository
+                .findByNameIn(SystemGrantPresetCatalog.INSTANCE_TIER_PRESETS).stream()
+                .collect(Collectors.toMap(GrantPreset::getName, Function.identity()));
+        List<GrantPresetBinding> tierBindings = tierBindings(lockedUser.getId(), tierRoles);
         boolean alreadySuperAdmin = tierBindings.stream()
                 .anyMatch(binding -> superAdmin.getId().equals(binding.getRoleId()));
         if (alreadySuperAdmin) {
@@ -255,7 +255,7 @@ public class GrantDefaultService {
             return;
         }
         bindingRepository.deleteAll(tierBindings);
-        bindingRepository.save(new AccessRoleBinding(superAdmin.getId(), SUBJECT_USER,
+        bindingRepository.save(new GrantPresetBinding(superAdmin.getId(), SUBJECT_USER,
                 lockedUser.getId(), AccessScope.INSTANCE, null, lockedUser.getId()));
         auditLogger.recordDurableChange(lockedUser.getId().toString(), null,
                 auditAction, "user", lockedUser.getId().toString(), auditDetail);
@@ -295,14 +295,14 @@ public class GrantDefaultService {
      * incoming one and leave the outgoing owner on the {@code ADMIN} tier, in the caller's
      * transaction (design §3.6, contract §4 「the previous owner stays ADMIN」).
      *
-     * <p>Why this lives here: {@code instance_owner} + {@code users} + {@code role_bindings} +
+     * <p>Why this lives here: {@code instance_owner} + {@code users} + {@code grant_preset_bindings} +
      * {@code grants} must move together, and this service already owns every write of the
      * instance tier binding ({@link #ensureInstanceSuperAdmin(User)},
      * {@link #ensureInstanceTierBinding(User)}). The caller
      * ({@code InstanceOwnershipService#transfer}) holds the {@code instance_owner} singleton lock
      * first, so the frozen lock order {@code instance_owner → users} is preserved: this method only
      * takes the two user row locks, in ascending id order (round-4 P1-1 ABBA rule), and then writes
-     * bindings, reconciles {@code source='role'} atoms and bumps both epochs.</p>
+     * bindings, reconciles {@code source='preset'} atoms and bumps both epochs.</p>
      *
      * <p>Guard: the post-state must still hold at least one ACTIVE super administrator (I5). The
      * incoming owner is ACTIVE (checked by the caller) so the count is 1 by construction; the
@@ -348,18 +348,18 @@ public class GrantDefaultService {
             userLock.lockAndFind(subjectId)
                     .orElseThrow(() -> new IllegalArgumentException("User not found: " + subjectId));
         }
-        AccessRole superAdmin = roleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+        GrantPreset superAdmin = roleRepository.findByName(SystemGrantPresetCatalog.SUPER_ADMIN)
                 .orElseThrow(() -> new IllegalStateException(
                         "System role SUPER_ADMIN is missing (V87 must have been applied)"));
-        AccessRole admin = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        GrantPreset admin = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow(() -> new IllegalStateException(
                         "System role ADMIN is missing (V87 must have been applied)"));
 
         boolean handover = fromUserId != null && !fromUserId.equals(toUserId);
         Set<UUID> tierRoleIds = roleRepository
-                .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES)
+                .findByNameIn(SystemGrantPresetCatalog.INSTANCE_TIER_PRESETS)
                 .stream()
-                .map(AccessRole::getId)
+                .map(GrantPreset::getId)
                 .collect(Collectors.toSet());
         if (handover) {
             replaceInstanceTierBinding(fromUserId, admin, tierRoleIds, actorUserId);
@@ -376,12 +376,12 @@ public class GrantDefaultService {
         if (fromUserId == null) {
             auditLogger.recordDurableChange(actorUserId == null ? null : actorUserId.toString(), null,
                     "authorization_instance_super_admin_assigned", "user", toUserId.toString(),
-                    "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance from=<none> to="
+                    "role=" + SystemGrantPresetCatalog.SUPER_ADMIN + " scope=instance from=<none> to="
                             + toUserId);
         } else {
             auditLogger.recordDurableChange(actorUserId == null ? null : actorUserId.toString(), null,
                     "authorization_instance_super_admin_transferred", "user", toUserId.toString(),
-                    "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance from=" + fromUserId
+                    "role=" + SystemGrantPresetCatalog.SUPER_ADMIN + " scope=instance from=" + fromUserId
                             + " to=" + toUserId);
         }
 
@@ -401,9 +401,9 @@ public class GrantDefaultService {
     }
 
     /** Replaces the subject's instance tier binding with {@code role} (one tier row per user). */
-    private void replaceInstanceTierBinding(UUID subjectId, AccessRole role, Set<UUID> tierRoleIds,
+    private void replaceInstanceTierBinding(UUID subjectId, GrantPreset role, Set<UUID> tierRoleIds,
                                             UUID actorUserId) {
-        List<AccessRoleBinding> existing = bindingRepository
+        List<GrantPresetBinding> existing = bindingRepository
                 .findBySubjectTypeAndSubjectIdAndScopeType(SUBJECT_USER, subjectId,
                         AccessScope.INSTANCE)
                 .stream()
@@ -411,9 +411,9 @@ public class GrantDefaultService {
                 .toList();
         bindingRepository.deleteAll(existing);
         // Hibernate flushes inserts before deletes inside one action queue, so the replacement row
-        // must not be queued while the old one is still pending (uq_role_bindings would fire).
+        // must not be queued while the old one is still pending (uq_grant_preset_bindings would fire).
         bindingRepository.flush();
-        bindingRepository.save(new AccessRoleBinding(role.getId(), SUBJECT_USER, subjectId,
+        bindingRepository.save(new GrantPresetBinding(role.getId(), SUBJECT_USER, subjectId,
                 AccessScope.INSTANCE, null, actorUserId));
     }
 
@@ -427,7 +427,7 @@ public class GrantDefaultService {
                 .orElse(true);
     }
 
-    private List<AccessRoleBinding> tierBindings(UUID userId, Map<String, AccessRole> tierRoles) {
+    private List<GrantPresetBinding> tierBindings(UUID userId, Map<String, GrantPreset> tierRoles) {
         return bindingRepository
                 .findBySubjectTypeAndSubjectIdAndScopeType(SUBJECT_USER, userId,
                         AccessScope.INSTANCE)
@@ -437,8 +437,8 @@ public class GrantDefaultService {
                 .toList();
     }
 
-    private static boolean isSuperAdmin(AccessRoleBinding binding, Map<String, AccessRole> tierRoles) {
-        AccessRole superAdmin = tierRoles.get(SystemAccessRoleCatalog.SUPER_ADMIN);
+    private static boolean isSuperAdmin(GrantPresetBinding binding, Map<String, GrantPreset> tierRoles) {
+        GrantPreset superAdmin = tierRoles.get(SystemGrantPresetCatalog.SUPER_ADMIN);
         return superAdmin != null && superAdmin.getId().equals(binding.getRoleId());
     }
 
@@ -465,11 +465,11 @@ public class GrantDefaultService {
                 lockedSession.getId(), SOURCE_AGENT_DEFAULT)) {
             return;
         }
-        ArrayNode permissions = instanceRoleAtoms(user.getId());
+        ArrayNode permissions = instancePresetAtoms(user.getId());
         if (permissions.isEmpty()) {
             ensureInstanceTierBinding(user);
             materializer.materializeSubject(SUBJECT_USER, user.getId(), user.getId(), null);
-            permissions = instanceRoleAtoms(user.getId());
+            permissions = instancePresetAtoms(user.getId());
         }
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());
@@ -525,11 +525,11 @@ public class GrantDefaultService {
         grantRepository.saveAndFlush(grant);
     }
 
-    /** Union of the user's instance-scope {@code source='role'} atoms, frozen into one array. */
-    private ArrayNode instanceRoleAtoms(UUID userId) {
+    /** Union of the user's instance-scope {@code source='preset'} atoms, frozen into one array. */
+    private ArrayNode instancePresetAtoms(UUID userId) {
         ArrayNode permissions = objectMapper.createArrayNode();
         List<AuthorizationGrant> rows = grantRepository.findScopedGrants(SUBJECT_USER, userId,
-                List.of(RoleGrantMaterializer.SOURCE_ROLE), null);
+                List.of(PresetGrantMaterializer.SOURCE_PRESET), null);
         java.util.Set<String> seen = new java.util.LinkedHashSet<>();
         for (AuthorizationGrant row : rows) {
             for (JsonNode atom : row.getPermissions()) {
@@ -571,10 +571,10 @@ public class GrantDefaultService {
 
     private Set<UUID> adminTierRoleIds() {
         return roleRepository
-                .findByNameIn(List.of(SystemAccessRoleCatalog.SUPER_ADMIN,
-                        SystemAccessRoleCatalog.ADMIN))
+                .findByNameIn(List.of(SystemGrantPresetCatalog.SUPER_ADMIN,
+                        SystemGrantPresetCatalog.ADMIN))
                 .stream()
-                .map(AccessRole::getId)
+                .map(GrantPreset::getId)
                 .collect(Collectors.toSet());
     }
 }

@@ -48,10 +48,10 @@ class ScheduledTaskMigrationIntegrationTest {
         // V89 dropped workspaces.owner_id: ownership is the WS_OWNER workspace-scope binding.
         execute("INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
                 + "'::uuid, 'sched-workspace')");
-        execute("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id)"
+        execute("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id)"
                 + " SELECT gen_random_uuid(), r.id, 'user', '" + userId
                 + "'::uuid, 'workspace', '" + workspaceId
-                + "'::uuid FROM roles r WHERE r.name = 'WS_OWNER'");
+                + "'::uuid FROM grant_presets r WHERE r.name = 'WS_OWNER'");
         execute("INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('" + sessionId
                 + "'::uuid, '" + workspaceId + "'::uuid, '" + userId + "'::uuid, 'sched-session')");
     }

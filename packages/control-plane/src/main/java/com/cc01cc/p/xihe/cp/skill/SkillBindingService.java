@@ -20,7 +20,7 @@ import java.util.UUID;
  *
  * <p><b>The axes are independent, and that is the whole point.</b> {@code (subject_type ×
  * scope_type)} gives four reachable tiers; the "instance-wide shared" fifth tier is out of v1
- * because {@code subject_id} is NOT NULL (same shape as {@code role_bindings}, V87:44). See
+ * because {@code subject_id} is NOT NULL (same shape as {@code grant_preset_bindings}, V87:44). See
  * {@link SkillBinding} for the 2×2 semantics table.</p>
  *
  * <p>Validation order matters for the error the caller sees, so it is fixed here: existence → shape →

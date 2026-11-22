@@ -6,7 +6,7 @@ import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.migration.AgentPrincipalScopeUpgradeFixture;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -124,12 +124,12 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
     }
 
     @Test
-    void createRejectsNonGrantableInstanceRoleAtomically() throws Exception {
+    void createRejectsNonGrantableInstancePresetAtomically() throws Exception {
         int principalsBefore = count("SELECT count(*) FROM agent_principals");
         int auditsBefore = count("SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_created'");
         Response rejected = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
                 "POST", "/api/v1/agent-principals", Map.of("name", "v19badrole",
-                        "roleIds", List.of(SystemAccessRoleCatalog.ADMIN_ID.toString())));
+                        "roleIds", List.of(SystemGrantPresetCatalog.ADMIN_ID.toString())));
         assertEquals(403, rejected.status(), rejected.body().toString());
         assertEquals("ROLE_NOT_GRANTABLE", rejected.body().path("code").asText());
         assertFalse(rejected.body().has("scope"), rejected.body().toString());
@@ -184,18 +184,18 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
     @Test
     void roleBindingTakesEffectAndForbiddenRoleIsRefused() throws Exception {
         String principalId = AgentPrincipalScopeUpgradeFixture.WORKSPACE_PRINCIPAL_ID.toString();
-        int bindingsBefore = count("SELECT count(*) FROM role_bindings WHERE subject_type ="
+        int bindingsBefore = count("SELECT count(*) FROM grant_preset_bindings WHERE subject_type ="
                 + " 'agent_principal' AND subject_id = CAST(? AS UUID)", principalId);
 
         Response bound = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
                 "POST", "/api/v1/agent-principals/" + principalId + "/roles",
-                Map.of("roleId", SystemAccessRoleCatalog.WS_EDITOR_ID.toString()));
+                Map.of("roleId", SystemGrantPresetCatalog.WS_EDITOR_ID.toString()));
         assertEquals(201, bound.status(), bound.body().toString());
         assertEquals("workspace", bound.body().path("scopeType").asText());
         assertEquals(AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
                 bound.body().path("scopeId").asText());
         assertFalse(bound.body().has("scope"), bound.body().toString());
-        assertEquals(bindingsBefore + 1, count("SELECT count(*) FROM role_bindings"
+        assertEquals(bindingsBefore + 1, count("SELECT count(*) FROM grant_preset_bindings"
                 + " WHERE subject_type = 'agent_principal' AND subject_id = CAST(? AS UUID)", principalId));
         assertTrue(count("SELECT count(*) FROM grants WHERE subject_type = 'agent_principal'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'workspace'"
@@ -206,14 +206,14 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                 + " 'agent_principal_role_bind' AND resource_type = 'role_binding' AND resource_id::text = ?",
                 bound.body().path("bindingId").asText()));
 
-        int afterAllow = count("SELECT count(*) FROM role_bindings WHERE subject_type ="
+        int afterAllow = count("SELECT count(*) FROM grant_preset_bindings WHERE subject_type ="
                 + " 'agent_principal' AND subject_id = CAST(? AS UUID)", principalId);
         Response forbidden = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
                 "POST", "/api/v1/agent-principals/" + principalId + "/roles",
-                Map.of("roleId", SystemAccessRoleCatalog.ADMIN_ID.toString()));
+                Map.of("roleId", SystemGrantPresetCatalog.ADMIN_ID.toString()));
         assertEquals(409, forbidden.status(), forbidden.body().toString());
         assertEquals("AGENT_PRINCIPAL_FORBIDDEN_ATOMS", forbidden.body().path("code").asText());
-        assertEquals(afterAllow, count("SELECT count(*) FROM role_bindings WHERE subject_type ="
+        assertEquals(afterAllow, count("SELECT count(*) FROM grant_preset_bindings WHERE subject_type ="
                 + " 'agent_principal' AND subject_id = CAST(? AS UUID)", principalId),
                 "a forbidden role must leave zero new rows");
     }

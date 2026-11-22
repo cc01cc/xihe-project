@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.controller;
 import com.cc01cc.p.xihe.cp.config.OrgUnitNameKeys;
 import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
-import com.cc01cc.p.xihe.cp.service.OrgUnitRoleBindingService;
+import com.cc01cc.p.xihe.cp.service.OrgUnitPresetBindingService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitWriteService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
@@ -57,11 +57,11 @@ public class OrgUnitController {
     private final OrgUnitReadService readService;
     private final OrgUnitWriteService writeService;
     private final OrgUnitMemberService memberService;
-    private final OrgUnitRoleBindingService roleBindingService;
+    private final OrgUnitPresetBindingService roleBindingService;
 
     public OrgUnitController(OrgUnitReadService readService, OrgUnitWriteService writeService,
                              OrgUnitMemberService memberService,
-                             OrgUnitRoleBindingService roleBindingService) {
+                             OrgUnitPresetBindingService roleBindingService) {
         this.readService = readService;
         this.writeService = writeService;
         this.memberService = memberService;

@@ -3,17 +3,17 @@ package com.cc01cc.p.xihe.cp.credentials;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
@@ -60,8 +60,8 @@ class InstanceCredentialControllerIntegrationTest extends AbstractReusableIntegr
     private static final String INSTANCE_CREDENTIALS = "/api/v1/instance/credentials";
 
     @Autowired private AuthzContext authzContext;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private CredentialRepository credentialRepository;
     @Autowired private CredentialService credentialService;
     @Autowired private AuthorizationGrantRepository grantRepository;
@@ -281,8 +281,8 @@ class InstanceCredentialControllerIntegrationTest extends AbstractReusableIntegr
     /** Registers a user over HTTP (real token) and binds ADMIN at instance scope. */
     private UUID registerInstanceAdmin(String prefix) {
         UUID userId = registerUserViaHttp(prefix);
-        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
-        AccessRoleBinding binding = new AccessRoleBinding(adminRole.getId(),
+        GrantPreset adminRole = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow();
+        GrantPresetBinding binding = new GrantPresetBinding(adminRole.getId(),
                 AuthzContext.SUBJECT_USER, userId, AccessScope.INSTANCE, null, userId);
         bindingRepository.saveAndFlush(binding);
         bindingIds.add(binding.getId());
@@ -345,7 +345,7 @@ class InstanceCredentialControllerIntegrationTest extends AbstractReusableIntegr
             row.setSubjectId(userId);
             row.setGranterType("user");
             row.setGranterId(userId);
-            row.setSource("role");
+            row.setSource("preset");
             row.setPermissions(newAtoms);
             grantRepository.save(row);
             return;

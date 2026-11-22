@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +45,7 @@ class GrantabilityGuardFailureSurfaceTest {
     private final AuthzContext authzContext = mock(AuthzContext.class);
     private final PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
     private final AuditLogger audit = mock(AuditLogger.class);
-    private final AccessRoleBindingRepository bindings = mock(AccessRoleBindingRepository.class);
+    private final GrantPresetBindingRepository bindings = mock(GrantPresetBindingRepository.class);
 
     private GrantabilityGuard guard;
 

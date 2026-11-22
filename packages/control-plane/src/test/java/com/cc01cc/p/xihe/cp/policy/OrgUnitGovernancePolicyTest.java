@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p><b>Evidence level, stated up front</b> (this is the whole point of the card): these tests
  * exercise the predicate and its two call shapes. They are <b>not</b> integration evidence —
- * {@code org_units} / {@code org_unit_role_bindings} /
+ * {@code org_units} / {@code org_unit_preset_bindings} /
  * {@code PUT /api/v1/org-units/{unitId}/role-bindings} do not exist yet ({@code M1-1} / {@code M1-9}
  * DDL and {@code M2-8c} wiring are still open), so "the row did not change" and "a directly
  * inserted row is filtered" are simulated at the collection level. The real-insert verification
@@ -164,7 +164,7 @@ class OrgUnitGovernancePolicyTest {
             assertTrue(PermissionAtomCatalog.allAtomNames().contains(atom), atom);
             assertTrue(PermissionAtomCatalog.isActionAtom(atom), atom + " must be an action atom");
             assertTrue(ToolFaceRegistry.builtinActionClasses().contains(atom),
-                    atom + " must be in the evaluator vocabulary (RoleGrantMaterializer throws otherwise)");
+                    atom + " must be in the evaluator vocabulary (PresetGrantMaterializer throws otherwise)");
             assertFalse(orgUnitAtomLabel(atom).isBlank(), atom + " needs a display label");
             // tasks.md:57 判据「进」: an agent principal is a grantee, never an org-unit administrator.
             assertTrue(PermissionAtomCatalog.agentPrincipalForbiddenAtoms().contains(atom),

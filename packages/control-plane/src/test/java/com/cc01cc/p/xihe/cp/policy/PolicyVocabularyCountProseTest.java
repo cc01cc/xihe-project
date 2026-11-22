@@ -81,19 +81,19 @@ class PolicyVocabularyCountProseTest {
     }
 
     @Test
-    @DisplayName("RoleController route javadoc states the computed totals")
+    @DisplayName("GrantPresetController route javadoc states the computed totals")
     void roleControllerJavadocMatchesComputedCount() throws IOException {
-        String src = read("src/main/java/com/cc01cc/p/xihe/cp/policy/RoleController.java");
+        String src = read("src/main/java/com/cc01cc/p/xihe/cp/policy/GrantPresetController.java");
         Matcher m = ROLE_CONTROLLER.matcher(src);
         assertThat(m.find()).as("javadoc must state 'N atoms (M action + K capability)'").isTrue();
         assertThat(m.group(1))
-                .as("RoleController total atom count")
+                .as("GrantPresetController total atom count")
                 .isEqualTo(String.valueOf(actionAtoms() + capabilityAtoms()));
         assertThat(m.group(2))
-                .as("RoleController action-atom count")
+                .as("GrantPresetController action-atom count")
                 .isEqualTo(String.valueOf(actionAtoms()));
         assertThat(m.group(3))
-                .as("RoleController capability-atom count")
+                .as("GrantPresetController capability-atom count")
                 .isEqualTo(String.valueOf(capabilityAtoms()));
     }
 

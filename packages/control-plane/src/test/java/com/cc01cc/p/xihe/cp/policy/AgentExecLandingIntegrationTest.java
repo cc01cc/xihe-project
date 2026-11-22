@@ -2,8 +2,8 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -11,8 +11,8 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -49,9 +49,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the cap moves - the old Session must stay denied.</p>
  *
  * <p>Fixture note: the two levels are written straight through the repositories plus
- * {@link RoleGrantMaterializer} (the same fixture technique as
+ * {@link PresetGrantMaterializer} (the same fixture technique as
  * {@code SetWorkspaceCapGateIntegrationTest}). The production order is "raise the cap, then bind",
- * because {@code AgentPrincipalRoleBindingService} refuses a role whose atoms exceed the cap
+ * because {@code AgentPrincipalPresetBindingService} refuses a role whose atoms exceed the cap
  * (BL-287 / ROLE_BINDING_EXCEEDS_CAP); that gate has its own coverage in
  * {@code SetWorkspaceCapGateIntegrationTest} and
  * {@code AgentPrincipalRoleBindingIntegrationTest}. This class pins the evaluation OUTCOME, which
@@ -65,12 +65,12 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentTemplateService agentTemplateService;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private SessionRepository sessionRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private GrantAuthorizationService grantAuthorizationService;
     @Autowired private GrantIntersectionEvaluator evaluator;
     @Autowired private ObjectMapper objectMapper;
@@ -88,7 +88,7 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
         Set<String> bindingAtoms = actionClasses(fixture.binding.getPermissionsSnapshot());
         Set<String> instanceAtoms = actionClasses(fixture.instanceAtoms);
 
-        assertTrue(bindingAtoms.containsAll(seedActionClasses(SystemAccessRoleCatalog.WS_EDITOR)),
+        assertTrue(bindingAtoms.containsAll(seedActionClasses(SystemGrantPresetCatalog.WS_EDITOR)),
                 "the inherited Workspace cap covers the whole WS_EDITOR seed: " + bindingAtoms);
         assertFalse(bindingAtoms.contains(EXEC),
                 "DSD-1500 R2 removed exec from the WS_EDITOR seed: " + bindingAtoms);
@@ -98,9 +98,9 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
                 "AGENT_USER must not confer exec any more: " + instanceAtoms);
         assertTrue(instanceAtoms.containsAll(List.of("read", "write", "delete")),
                 "AGENT_USER keeps the non-executing base set: " + instanceAtoms);
-        assertEquals(List.of(SystemAccessRoleCatalog.AGENT_USER), fixture.instanceRoleNames,
+        assertEquals(List.of(SystemGrantPresetCatalog.AGENT_USER), fixture.instanceRoleNames,
                 "the default instance role is still AGENT_USER");
-        assertEquals(List.of(SystemAccessRoleCatalog.WS_EDITOR), fixture.workspaceRoleNames,
+        assertEquals(List.of(SystemGrantPresetCatalog.WS_EDITOR), fixture.workspaceRoleNames,
                 "the default Workspace role is still WS_EDITOR");
     }
 
@@ -259,7 +259,7 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
     }
 
     private void bindRole(Fixture fixture, String scope, UUID scopeId) {
-        bindingRepository.save(new AccessRoleBinding(SystemAccessRoleCatalog.WS_RUNNER_ID,
+        bindingRepository.save(new GrantPresetBinding(SystemGrantPresetCatalog.WS_RUNNER_ID,
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, fixture.principalId, scope, scopeId,
                 fixture.owner.getId()));
         materializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
@@ -291,7 +291,7 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
     }
 
     private static Set<String> seedActionClasses(String roleName) {
-        return SystemAccessRoleCatalog.roleSeeds().stream()
+        return SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> roleName.equals(seed.name()))
                 .findFirst()
                 .map(seed -> {
@@ -321,13 +321,13 @@ class AgentExecLandingIntegrationTest extends AbstractReusableIntegrationTest {
     }
 
     private List<String> roleNames(UUID principalId, String scope) {
-        List<AccessRoleBinding> rows = bindingRepository
+        List<GrantPresetBinding> rows = bindingRepository
                 .findBySubjectTypeAndSubjectIdAndScopeType(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, scope);
         List<String> names = new ArrayList<>();
-        for (AccessRoleBinding row : rows) {
+        for (GrantPresetBinding row : rows) {
             names.add(accessRoleRepository.findById(row.getRoleId())
-                    .map(AccessRole::getName).orElse("?"));
+                    .map(GrantPreset::getName).orElse("?"));
         }
         names.sort(String::compareTo);
         return names;

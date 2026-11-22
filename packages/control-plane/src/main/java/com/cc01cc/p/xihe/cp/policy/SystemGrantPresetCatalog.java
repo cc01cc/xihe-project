@@ -1,9 +1,9 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,15 +19,15 @@ import java.util.UUID;
  * <p>V87 seeds these rows for PostgreSQL; this class is the same catalog expressed in code so a
  * schema built from the entities (the H2 test profile, where Flyway is disabled) is seeded too,
  * and so `scope_class` stays in {@link PermissionAtomCatalog} (round-2 P1). The two sides must
- * agree: {@code DynamicAccessRoleMigrationTest} asserts the migrated rows equal
- * {@link #roleSeeds()}, which turns any drift into a failing test instead of a silent split.</p>
+ * agree: {@code DynamicGrantPresetMigrationTest} asserts the migrated rows equal
+ * {@link #presetSeeds()}, which turns any drift into a failing test instead of a silent split.</p>
  *
  * <p>Ids are fixed constants shared with V87 so the bootstrap is idempotent and cross-checkable.</p>
  */
 @Component
-public class SystemAccessRoleCatalog {
+public class SystemGrantPresetCatalog {
 
-    private static final Logger logger = LoggerFactory.getLogger(SystemAccessRoleCatalog.class);
+    private static final Logger logger = LoggerFactory.getLogger(SystemGrantPresetCatalog.class);
 
     public static final UUID SUPER_ADMIN_ID = UUID.fromString("00000000-0000-4000-8000-000000000001");
     public static final UUID ADMIN_ID = UUID.fromString("00000000-0000-4000-8000-000000000002");
@@ -49,7 +49,7 @@ public class SystemAccessRoleCatalog {
     /**
      * DSD-1500 (Q-93) R3 "A": three preset roles so an agent can work without executing. They are
      * ordinary built-in roles with fixed ids (same id space as V87/V127), NOT a new binding tier:
-     * the scope of a role lives on the binding (see {@code AccessRole}), so the same role may be
+     * the scope of a role lives on the binding (see {@code GrantPreset}), so the same role may be
      * bound at instance scope (reach) and at workspace scope (cap reach) — exec needs both, because
      * {@code GrantIntersectionEvaluator.allows} intersects every level of the principal path.
      */
@@ -85,7 +85,7 @@ public class SystemAccessRoleCatalog {
     public static final String WS_RUNNER = "WS_RUNNER";
 
     /** The three instance-level system roles, used to keep one tier binding per user. */
-    public static final List<String> INSTANCE_TIER_ROLES = List.of(SUPER_ADMIN, ADMIN, USER);
+    public static final List<String> INSTANCE_TIER_PRESETS = List.of(SUPER_ADMIN, ADMIN, USER);
 
     public record AtomRef(String actionClass, String resourcePattern) {
 
@@ -97,7 +97,7 @@ public class SystemAccessRoleCatalog {
         }
     }
 
-    public record RoleSeed(UUID id, String name, String displayName, String description, List<AtomRef> atoms) {
+    public record PresetSeed(UUID id, String name, String displayName, String description, List<AtomRef> atoms) {
     }
 
     private static final List<AtomRef> CREDENTIAL_ATOMS = List.of(
@@ -177,22 +177,22 @@ public class SystemAccessRoleCatalog {
                     // privilege. A user row of this atom never leaves the user's own library.
                     AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS)));
 
-    private final AccessRoleRepository roleRepository;
-    private final AccessRolePermissionRepository permissionRepository;
+    private final GrantPresetRepository roleRepository;
+    private final GrantPresetAtomRepository permissionRepository;
 
-    public SystemAccessRoleCatalog(AccessRoleRepository roleRepository,
-                                   AccessRolePermissionRepository permissionRepository) {
+    public SystemGrantPresetCatalog(GrantPresetRepository roleRepository,
+                                   GrantPresetAtomRepository permissionRepository) {
         this.roleRepository = roleRepository;
         this.permissionRepository = permissionRepository;
     }
 
     /** The built-in catalog: 3 instance roles (SUPER_ADMIN/ADMIN/USER) + 3 workspace roles. */
-    public static List<RoleSeed> roleSeeds() {
+    public static List<PresetSeed> presetSeeds() {
         return List.of(
-                new RoleSeed(SUPER_ADMIN_ID, SUPER_ADMIN, "Super Administrator",
+                new PresetSeed(SUPER_ADMIN_ID, SUPER_ADMIN, "Super Administrator",
                         "Instance scope: every action atom plus every capability atom. Immutable.",
                         superAdminAtoms()),
-                new RoleSeed(ADMIN_ID, ADMIN, "Administrator",
+                new PresetSeed(ADMIN_ID, ADMIN, "Administrator",
                         "Instance scope: the user default set plus the three credential atoms, "
                                 + "instance:admin, workspace:admin, the PLAN-0651 management "
                                 + "atoms (agent principals, workspace members) and MANAGE_ROLES "
@@ -260,13 +260,13 @@ public class SystemAccessRoleCatalog {
                                         // the atom alone never widens someone else's session.
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
-                new RoleSeed(USER_ID, USER, "User",
+                new PresetSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
                                 + "own-agent create atom (PLAN-0750 M1) and the own-principal "
                                 + "memory atom.",
                         USER_DEFAULT_ATOMS),
-                new RoleSeed(WS_OWNER_ID, WS_OWNER, "Workspace Owner",
+                new PresetSeed(WS_OWNER_ID, WS_OWNER, "Workspace Owner",
                         "Workspace scope: editor actions plus workspace agent management "
                                 + "and workspace:admin.",
                         concat(List.of(
@@ -319,7 +319,7 @@ public class SystemAccessRoleCatalog {
                                         // actor to the session's creator.
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
-                new RoleSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
+                new PresetSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         // DSD-1500 (Q-93) R2: exec left the editor default as well — the intersection
                         // requires every level to hold an atom, so leaving exec here would keep the
                         // whole default stack executable (see AGENT_BASE_ATOMS).
@@ -357,7 +357,7 @@ public class SystemAccessRoleCatalog {
                                 // people's sessions is flagged to the lead in the delivery report.
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE))),
-                new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
+                new PresetSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
                                 // BL-349: WS_VIEWER is agent-bindable too; the self atom lives on the
@@ -371,7 +371,7 @@ public class SystemAccessRoleCatalog {
                 // Single atom on purpose: delegation grants nothing else (no MANAGE_* atoms, no
                 // instance capability), and it is never granted by default — a workspace owner or
                 // instance admin hands it out explicitly.
-                new RoleSeed(AGENT_DELEGATOR_ID, AGENT_DELEGATOR, "Agent Delegator",
+                new PresetSeed(AGENT_DELEGATOR_ID, AGENT_DELEGATOR, "Agent Delegator",
                         "Workspace scope: delegate by creating child Sessions/Runs inside the same "
                                 + "workspace. Intended for agent principals; bound explicitly.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT))),
@@ -382,7 +382,7 @@ public class SystemAccessRoleCatalog {
                 // Migration V127 rebinds legacy agent seed bindings (stack-1 measured 40) to it.
                 // DSD-1500 (Q-93) R2: the agent default is now BASE_ATOMS minus exec. The seed keeps
                 // the historical name/id (V127 rebinding stays valid) — only its atom set narrows.
-                new RoleSeed(AGENT_USER_ID, AGENT_USER, "Agent User (default)",
+                new PresetSeed(AGENT_USER_ID, AGENT_USER, "Agent User (default)",
                         "Instance scope: read/write/delete/network + PLUGIN_INVOKE — the agent "
                                 + "default base set (BL-312 removed CREATE_OWN_AGENT; DSD-1500 removed "
                                 + "exec).",
@@ -390,12 +390,12 @@ public class SystemAccessRoleCatalog {
                 // DSD-1500 (Q-93) R3: three presets that make "work without executing" expressible
                 // without hand-assembling temp grants. All three are ordinary built-in roles: their
                 // atoms are workspace-domain (no instance capability), so binding decides reach.
-                new RoleSeed(AGENT_READER_ID, AGENT_READER, "Agent Reader",
+                new PresetSeed(AGENT_READER_ID, AGENT_READER, "Agent Reader",
                         "Instance/workspace scope: read + workspace runtime — the read-only agent "
                                 + "preset (WS_VIEWER's counterpart for agent principals).",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))),
-                new RoleSeed(AGENT_WORKER_ID, AGENT_WORKER, "Agent Worker",
+                new PresetSeed(AGENT_WORKER_ID, AGENT_WORKER, "Agent Worker",
                         "Instance/workspace scope: read/write/delete — the read+write agent preset "
                                 + "with no exec (DSD-1500 R3).",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
@@ -405,7 +405,7 @@ public class SystemAccessRoleCatalog {
                 // never silently brings workspace administration along. Bind it at instance scope for
                 // reach AND let the workspace side hold exec (cap snapshot or the same role at
                 // workspace scope) — GrantIntersectionEvaluator requires every level to match.
-                new RoleSeed(WS_RUNNER_ID, WS_RUNNER, "Workspace Runner",
+                new PresetSeed(WS_RUNNER_ID, WS_RUNNER, "Workspace Runner",
                         "Instance/workspace scope: exec + workspace runtime — the explicit execution "
                                 + "preset (DSD-1500 R2/R3). Never granted by default.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
@@ -429,7 +429,7 @@ public class SystemAccessRoleCatalog {
     }
 
     public Optional<UUID> roleIdByName(String name) {
-        return roleRepository.findByName(name).map(AccessRole::getId);
+        return roleRepository.findByName(name).map(GrantPreset::getId);
     }
 
     /**
@@ -440,10 +440,10 @@ public class SystemAccessRoleCatalog {
     public void ensureSeeded() {
         int insertedRoles = 0;
         int insertedAtoms = 0;
-        for (RoleSeed seed : roleSeeds()) {
-            AccessRole role = roleRepository.findByName(seed.name()).orElse(null);
+        for (PresetSeed seed : presetSeeds()) {
+            GrantPreset role = roleRepository.findByName(seed.name()).orElse(null);
             if (role == null) {
-                role = roleRepository.save(new AccessRole(seed.id(), seed.name(), seed.displayName(),
+                role = roleRepository.save(new GrantPreset(seed.id(), seed.name(), seed.displayName(),
                         seed.description(), true));
                 insertedRoles++;
             }
@@ -453,7 +453,7 @@ public class SystemAccessRoleCatalog {
                     existing.add(row.actionClass() + "|" + row.resourcePattern()));
             for (AtomRef atom : seed.atoms()) {
                 if (existing.add(atom.actionClass() + "|" + atom.resourcePattern())) {
-                    permissionRepository.save(new AccessRolePermission(roleId,
+                    permissionRepository.save(new GrantPresetAtom(roleId,
                             atom.actionClass(), atom.resourcePattern()));
                     insertedAtoms++;
                 }

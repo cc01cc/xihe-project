@@ -3,14 +3,14 @@ package com.cc01cc.p.xihe.cp.skill;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -55,17 +55,17 @@ class SkillControllerContractTest extends AbstractReusableIntegrationTest {
 
     /** PLAN-0610: instance administration is a DB binding, so the fixture grants it, not a token. */
     @Autowired
-    private AccessRoleBindingRepository bindingRepository;
+    private GrantPresetBindingRepository bindingRepository;
 
     @Autowired
-    private AccessRoleRepository accessRoleRepository;
+    private GrantPresetRepository accessRoleRepository;
 
     @Autowired
     private AuthzContext authzContext;
 
     /** PLAN-0651 M3 T3.2: the N5 judgement reads materialized grants, not the capability cache. */
     @Autowired
-    private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
+    private com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer roleGrantMaterializer;
 
     private static final String[] SKILL_ROUTES = {
             "/api/v1/skills/import",
@@ -115,15 +115,15 @@ class SkillControllerContractTest extends AbstractReusableIntegrationTest {
         AuthResponse registered = registerAuth("0628-admin@test.com");
         UUID userId = UUID.fromString(registered.getUser().getId());
         // Instance administration is an
-        // AccessRoleBinding at instance scope, and the capability projection is cached per user, so
+        // GrantPresetBinding at instance scope, and the capability projection is cached per user, so
         // the grant is invisible until invalidation. (ensureInstanceSuperAdmin additionally requires
         // the instance-owner singleton, which a fresh DB does not have — hence the explicit binding.)
         UUID adminRoleId = accessRoleRepository
-                .findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow().getId();
-        bindingRepository.save(new AccessRoleBinding(adminRoleId, "user", userId,
+                .findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow().getId();
+        bindingRepository.save(new GrantPresetBinding(adminRoleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         // PLAN-0651 M3 T3.2 (A24–A29 → N5): authoring the binding row alone no longer authorizes —
-        // the atom judgement reads `source='role'` grants, exactly like the production write path
+        // the atom judgement reads `source='preset'` grants, exactly like the production write path
         // (BindingAdminService materializes). Materialize explicitly so the fixture keeps proving
         // "an instance administrator may import".
         roleGrantMaterializer.materializeSubject("user", userId, userId, null);

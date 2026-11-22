@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>R1</b> {@code chat_runs.agent_principal_id}: the run's responder, nullable for legacy
  *       runs, FK to {@code agent_principals} with {@code ON DELETE RESTRICT};</li>
  *   <li><b>R2</b> {@code session_participants}: polymorphic {@code (principal_kind, principal_id)}
- *       with <b>no</b> FK on the polymorphic side (the {@code role_bindings} precedent), one PRIMARY
+ *       with <b>no</b> FK on the polymorphic side (the {@code grant_preset_bindings} precedent), one PRIMARY
  *       per session (partial unique index), unique {@code order_index} per session (R4);</li>
  *   <li><b>R7</b> {@code session_participant_cursors}: read-only in 0623, backfilled to
  *       {@code MAX(context_events.sequence)} (history counts as read);</li>
@@ -64,7 +64,7 @@ class SessionParticipantsMigrationTest {
         connection = DriverManager.getConnection(url, postgres.username(), postgres.password());
         execute("INSERT INTO users (id, email, password_hash, username) VALUES ('" + USER_ID
                 + "', 'plan0623-participants@test.local', 'x', 'plan0623part')");
-        // V89 dropped workspaces.owner_id (ownership now lives in role_bindings), so the V91 shape
+        // V89 dropped workspaces.owner_id (ownership now lives in grant_preset_bindings), so the V91 shape
         // only needs id + name; storage_mode/execution_mode carry their defaults.
         execute("INSERT INTO workspaces (id, name) VALUES ('" + WORKSPACE_ID
                 + "', 'participants workspace')");
@@ -120,7 +120,7 @@ class SessionParticipantsMigrationTest {
                 "a deleted session takes its participant rows with it");
         assertTrue(foreignKeysOn("session_participants").stream()
                         .noneMatch(fk -> fk.contains("principal_id")),
-                "R2: the polymorphic side carries no FK (role_bindings precedent)");
+                "R2: the polymorphic side carries no FK (grant_preset_bindings precedent)");
     }
 
     @Test

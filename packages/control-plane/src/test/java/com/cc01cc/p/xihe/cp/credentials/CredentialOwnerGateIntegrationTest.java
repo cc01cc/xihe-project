@@ -3,8 +3,8 @@ package com.cc01cc.p.xihe.cp.credentials;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Credential;
@@ -14,9 +14,9 @@ import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -67,8 +67,8 @@ class CredentialOwnerGateIntegrationTest extends AbstractReusableIntegrationTest
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private CredentialService credentialService;
     @Autowired private AuthzContext authzContext;
-    @Autowired private AccessRoleRepository roleRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository roleRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private ObjectMapper objectMapper;
 
     private final List<Actor> actors = new ArrayList<>();
@@ -362,8 +362,8 @@ class CredentialOwnerGateIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     private void grantInstanceAdmin(Actor actor) {
-        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
-        AccessRoleBinding binding = new AccessRoleBinding(adminRole.getId(),
+        GrantPreset adminRole = roleRepository.findByName(SystemGrantPresetCatalog.ADMIN).orElseThrow();
+        GrantPresetBinding binding = new GrantPresetBinding(adminRole.getId(),
                 AuthzContext.SUBJECT_USER, actor.id(), AccessScope.INSTANCE, null, actor.id());
         bindingRepository.saveAndFlush(binding);
         accessBindingIds.add(binding.getId());
@@ -422,7 +422,7 @@ class CredentialOwnerGateIntegrationTest extends AbstractReusableIntegrationTest
             direct.setSubjectId(userId);
             direct.setGranterType("user");
             direct.setGranterId(userId);
-            direct.setSource("role");
+            direct.setSource("preset");
             direct.setPermissions(newAtoms);
             grantRepository.save(direct);
             return;

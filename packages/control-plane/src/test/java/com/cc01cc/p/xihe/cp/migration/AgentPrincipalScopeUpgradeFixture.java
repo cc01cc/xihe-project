@@ -1,7 +1,7 @@
 package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 
@@ -106,9 +106,9 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 + LEGACY_PRINCIPAL_ID + "', 'v19 legacy principal', '" + LEGACY_USER_ID + "')");
         // A pre-existing instance role for the legacy user: the same V89 seed shape the migration
         // test uses, so the account is a real actor after the replay.
-        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '"
-                + SystemAccessRoleCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
+                + SystemGrantPresetCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
                 + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
     }
 
@@ -176,11 +176,11 @@ public final class AgentPrincipalScopeUpgradeFixture {
                         + " {\"actionClass\": \"session:permission:configure\"}]");
         insertWorkspaceBinding(connection, INSTANCE_PRINCIPAL_ID, "[{\"actionClass\": \"write\"}]");
 
-        insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
+        insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
                 "instance", null);
         insertRoleBinding(connection, WORKSPACE_PRINCIPAL_ID, LEGACY_WORKSPACE_ROLE_ID,
                 "workspace", WORKSPACE_ID);
-        insertRoleBinding(connection, INSTANCE_PRINCIPAL_ID, SystemAccessRoleCatalog.USER_ID,
+        insertRoleBinding(connection, INSTANCE_PRINCIPAL_ID, SystemGrantPresetCatalog.USER_ID,
                 "instance", null);
 
         insertGrant(connection, PERSONAL_PRINCIPAL_ID, "read", "instance", null, "template");
@@ -216,14 +216,14 @@ public final class AgentPrincipalScopeUpgradeFixture {
      * TEAM_TASK_MANAGE is in the set for the identical reason.</p>
      */
     private static void seedLegacyWorkspaceRole(Connection connection) throws SQLException {
-        execute(connection, "INSERT INTO roles (id, name, display_name, description, is_system)"
+        execute(connection, "INSERT INTO grant_presets (id, name, display_name, description, is_system)"
                 + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', 'V19_LEGACY_WORKSPACE',"
                 + " 'V19 legacy workspace', 'fixture-only pre-upgrade workspace role', FALSE)");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE",
                 "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP", "TEAM_TASK_MANAGE",
                 "session:permission:configure"}) {
-            execute(connection, "INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+            execute(connection, "INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)"
                     + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', '" + atom + "', '*')");
         }
     }
@@ -274,7 +274,7 @@ public final class AgentPrincipalScopeUpgradeFixture {
         String ids = "'" + LEGACY_PRINCIPAL_ID + "', '" + PERSONAL_PRINCIPAL_ID + "', '"
                 + WORKSPACE_PRINCIPAL_ID + "', '" + INSTANCE_PRINCIPAL_ID + "'";
         execute(connection, "DELETE FROM workspace_agents WHERE principal_id IN (" + ids + ")");
-        execute(connection, "DELETE FROM role_bindings WHERE subject_type = 'agent_principal'"
+        execute(connection, "DELETE FROM grant_preset_bindings WHERE subject_type = 'agent_principal'"
                 + " AND subject_id IN (" + ids + ")");
         execute(connection, "DELETE FROM grants WHERE subject_type = 'agent_principal'"
                 + " AND subject_id IN (" + ids + ")");
@@ -289,7 +289,7 @@ public final class AgentPrincipalScopeUpgradeFixture {
 
     private static void insertRoleBinding(Connection connection, UUID principalId, UUID roleId,
             String scopeType, UUID scopeId) throws SQLException {
-        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by, is_seed) VALUES ('" + UUID.randomUUID() + "', '" + roleId
                 + "', 'agent_principal', '" + principalId + "', '" + scopeType + "', "
                 + literal(scopeId) + ", '" + LEGACY_USER_ID + "', FALSE)");

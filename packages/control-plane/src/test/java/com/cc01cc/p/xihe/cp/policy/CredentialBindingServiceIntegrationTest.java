@@ -351,7 +351,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractReusableIntegratio
     }
 
     /**
-     * PLAN-0610: user grants are materialized {@code source='role'} rows and a materialized row
+     * PLAN-0610: user grants are materialized {@code source='preset'} rows and a materialized row
      * carries exactly one atom. The fixture therefore seeds one row per atom (idempotently) — a
      * multi-atom row would be treated as malformed and rewritten by the materializer, which collides
      * with {@code uq_grants_role_atom} when the delete and the insert land in one flush.
@@ -363,7 +363,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractReusableIntegratio
             String resource = atom.path("resource").asText("*");
             boolean exists = grantRepository.findBySubjectTypeAndSubjectId(
                             GrantPrincipalPathResolver.USER, creatorId).stream()
-                    .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                    .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
                     .anyMatch(grant -> grant.getPermissions().size() == 1
                             && actionClass.equals(grant.getPermissions().get(0)
                                     .path("actionClass").asText())
@@ -378,7 +378,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractReusableIntegratio
             roleGrant.setSubjectId(creatorId);
             roleGrant.setGranterType("user");
             roleGrant.setGranterId(creatorId);
-            roleGrant.setSource(GrantSources.ROLE);
+            roleGrant.setSource(GrantSources.PRESET);
             roleGrant.setPermissions(objectMapper.createArrayNode().add(atom));
             grantRepository.save(roleGrant);
         }

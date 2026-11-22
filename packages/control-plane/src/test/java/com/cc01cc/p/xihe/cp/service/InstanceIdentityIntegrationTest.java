@@ -54,7 +54,7 @@ class InstanceIdentityIntegrationTest extends AbstractIntegrationTest {
     private InstanceIdentityService identity;
 
     @Autowired
-    private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
+    private com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer roleGrantMaterializer;
 
     @Autowired
     private InstanceIdentityInitializer initializer;
@@ -225,11 +225,11 @@ class InstanceIdentityIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void promote(String userId, String roleName) {
-        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+        jdbc.update("DELETE FROM grant_preset_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
-        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
-                        + " 'instance', NOW() FROM roles r WHERE r.name = ?",
+                        + " 'instance', NOW() FROM grant_presets r WHERE r.name = ?",
                 UUID.randomUUID().toString(), userId, roleName);
         roleGrantMaterializer.materializeSubject(
                 com.cc01cc.p.xihe.cp.policy.AuthzContext.SUBJECT_USER,

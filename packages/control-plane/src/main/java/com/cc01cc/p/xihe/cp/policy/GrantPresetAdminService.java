@@ -3,14 +3,14 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import org.slf4j.Logger;
@@ -42,7 +42,7 @@ import java.util.regex.Pattern;
  *       SYSTEM_ROLE_IMMUTABLE}); a role that still has bindings cannot be deleted ({@code 409
  *       ROLE_IN_USE}).</li>
  *   <li><b>Atom changes are materialized in the same transaction</b> through {@link
- *       RoleGrantMaterializer#materializeRole}, which reconciles every holder's {@code source='role'}
+ *       PresetGrantMaterializer#materializePreset}, which reconciles every holder's {@code source='preset'}
  *       rows, invalidates the capability cache twice (immediate + after completion) and bumps the
  *       epoch of each holder whose set actually changed (I4, R2-19/R2-20).</li>
  *   <li><b>Authorization is not decided here</b>: the endpoint carries
@@ -54,9 +54,9 @@ import java.util.regex.Pattern;
  * paths) → {@code roles} row → {@code users} rows (inside the materializer, ascending id order).</p>
  */
 @Service
-public class RoleAdminService {
+public class GrantPresetAdminService {
 
-    private static final Logger logger = LoggerFactory.getLogger(RoleAdminService.class);
+    private static final Logger logger = LoggerFactory.getLogger(GrantPresetAdminService.class);
 
     /**
      * BL-394: the database check constraint is the authority — V87
@@ -69,11 +69,11 @@ public class RoleAdminService {
     private static final Pattern ROLE_NAME = Pattern.compile("^[A-Z][A-Z0-9_]{1,63}$");
     private static final String RESOURCE_TYPE = "role";
 
-    private final AccessRoleRepository roles;
-    private final AccessRolePermissionRepository permissions;
-    private final AccessRoleBindingRepository bindings;
+    private final GrantPresetRepository roles;
+    private final GrantPresetAtomRepository permissions;
+    private final GrantPresetBindingRepository bindings;
     private final InstanceOwnerRepository owners;
-    private final RoleGrantMaterializer materializer;
+    private final PresetGrantMaterializer materializer;
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
     private final GrantabilityGuard grantability;
@@ -81,11 +81,11 @@ public class RoleAdminService {
     private final AgentPrincipalRepository principals;
     private final GrantResourcePattern grantResources;
 
-    public RoleAdminService(AccessRoleRepository roles,
-                            AccessRolePermissionRepository permissions,
-                            AccessRoleBindingRepository bindings,
+    public GrantPresetAdminService(GrantPresetRepository roles,
+                            GrantPresetAtomRepository permissions,
+                            GrantPresetBindingRepository bindings,
                             InstanceOwnerRepository owners,
-                            RoleGrantMaterializer materializer,
+                            PresetGrantMaterializer materializer,
                             AuditLogger audit,
                             DbLockTimeout dbLockTimeout,
                             GrantabilityGuard grantability,
@@ -107,46 +107,46 @@ public class RoleAdminService {
 
     /** Default-locale overload (callers that do not carry a request locale). */
     @Transactional(readOnly = true)
-    public RoleAdminViews.CatalogView catalog() {
+    public GrantPresetAdminViews.CatalogView catalog() {
         return catalog(null);
     }
 
     /** {@code GET /api/v1/roles/catalog}: every action atom + capability atom with scope class. */
     @Transactional(readOnly = true)
-    public RoleAdminViews.CatalogView catalog(String locale) {
-        List<RoleAdminViews.AtomView> atoms = new ArrayList<>();
+    public GrantPresetAdminViews.CatalogView catalog(String locale) {
+        List<GrantPresetAdminViews.AtomView> atoms = new ArrayList<>();
         // Order matters for the UI: action atoms first, then the capability atoms.
         for (String name : PermissionAtomCatalog.actionAtoms()) {
-            atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
+            atoms.add(GrantPresetAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
         }
         for (String name : PermissionAtomCatalog.capabilityAtoms()) {
-            atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
+            atoms.add(GrantPresetAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
         }
         // task-415 (RBAC P1-2): expose the seeded default grant sets next to the vocabulary, so the
         // page can show which built-in role a new atom lands in by default (and that instance:admin
         // is part of the fixed administrator set) instead of leaving that fact in the Java source.
-        List<RoleAdminViews.DefaultGrantView> defaultGrants = new ArrayList<>();
-        for (SystemAccessRoleCatalog.RoleSeed seed : SystemAccessRoleCatalog.roleSeeds()) {
-            defaultGrants.add(new RoleAdminViews.DefaultGrantView(seed.name(), seed.displayName(),
+        List<GrantPresetAdminViews.DefaultGrantView> defaultGrants = new ArrayList<>();
+        for (SystemGrantPresetCatalog.PresetSeed seed : SystemGrantPresetCatalog.presetSeeds()) {
+            defaultGrants.add(new GrantPresetAdminViews.DefaultGrantView(seed.name(), seed.displayName(),
                     seed.description(), seed.atoms().stream()
-                            .map(SystemAccessRoleCatalog.AtomRef::actionClass).distinct().toList()));
+                            .map(SystemGrantPresetCatalog.AtomRef::actionClass).distinct().toList()));
         }
-        return new RoleAdminViews.CatalogView(atoms,
+        return new GrantPresetAdminViews.CatalogView(atoms,
                 List.of(AccessScope.INSTANCE, AccessScope.WORKSPACE), defaultGrants);
     }
 
     /** {@code GET /api/v1/roles}: every definition, system roles first, then by name. */
     @Transactional(readOnly = true)
-    public List<RoleAdminViews.RoleView> list() {
-        Map<UUID, List<AccessRolePermission>> permissionsByRole = permissionsByRole();
-        List<AccessRole> all = roles.findAll();
+    public List<GrantPresetAdminViews.RoleView> list() {
+        Map<UUID, List<GrantPresetAtom>> permissionsByRole = permissionsByRole();
+        List<GrantPreset> all = roles.findAll();
         Map<UUID, Long> bindingCounts = new LinkedHashMap<>();
-        for (AccessRole role : all) {
+        for (GrantPreset role : all) {
             bindingCounts.put(role.getId(), bindings.countByRoleId(role.getId()));
         }
         return all.stream()
-                .sorted(Comparator.comparing(AccessRole::isSystem).reversed()
-                        .thenComparing(AccessRole::getName))
+                .sorted(Comparator.comparing(GrantPreset::isSystem).reversed()
+                        .thenComparing(GrantPreset::getName))
                 .map(role -> toView(role,
                         specsOf(permissionsByRole.getOrDefault(role.getId(), List.of())),
                         bindingCounts.getOrDefault(role.getId(), 0L)))
@@ -157,7 +157,7 @@ public class RoleAdminService {
      * PLAN-0667 addendum (Lead ruling 2026-11-05, real-stack gap 1): the role candidates a caller
      * who may manage an agent's bindings is allowed to see.
      *
-     * <p>Role <em>definitions</em> are instance-wide (see {@link com.cc01cc.p.xihe.cp.entity.AccessRole}:
+     * <p>Role <em>definitions</em> are instance-wide (see {@link com.cc01cc.p.xihe.cp.entity.GrantPreset}:
      * scope lives on the binding, not on the role), so "workspace roles" cannot be filtered by an
      * ownership column. What can be filtered — and what the UI actually needs — is <b>bindability</b>:
      * a role carrying any {@code agentPrincipalForbidden} atom can never be bound to an agent, so
@@ -165,18 +165,18 @@ public class RoleAdminService {
      * shape and ordering as {@link #list()} (system roles first, then name).</p>
      */
     @Transactional(readOnly = true)
-    public List<RoleAdminViews.RoleView> listAgentBindable() {
-        Map<UUID, List<AccessRolePermission>> permissionsByRole = permissionsByRole();
-        List<AccessRole> all = roles.findAll();
+    public List<GrantPresetAdminViews.RoleView> listAgentBindable() {
+        Map<UUID, List<GrantPresetAtom>> permissionsByRole = permissionsByRole();
+        List<GrantPreset> all = roles.findAll();
         Map<UUID, Long> bindingCounts = new LinkedHashMap<>();
-        for (AccessRole role : all) {
+        for (GrantPreset role : all) {
             bindingCounts.put(role.getId(), bindings.countByRoleId(role.getId()));
         }
         return all.stream()
                 .filter(role -> PermissionAtomCatalog.canBindToAgentPrincipal(actionClasses(
                         specsOf(permissionsByRole.getOrDefault(role.getId(), List.of())))))
-                .sorted(Comparator.comparing(AccessRole::isSystem).reversed()
-                        .thenComparing(AccessRole::getName))
+                .sorted(Comparator.comparing(GrantPreset::isSystem).reversed()
+                        .thenComparing(GrantPreset::getName))
                 .map(role -> toView(role,
                         specsOf(permissionsByRole.getOrDefault(role.getId(), List.of())),
                         bindingCounts.getOrDefault(role.getId(), 0L)))
@@ -185,7 +185,7 @@ public class RoleAdminService {
 
     /** {@code POST /api/v1/roles}: a custom role with an explicit atom set. */
     @Transactional
-    public RoleAdminViews.RoleView create(RoleAdminViews.RoleCreate request) {
+    public GrantPresetAdminViews.RoleView create(GrantPresetAdminViews.RoleCreate request) {
         dbLockTimeout.apply();
         lockInstanceMutex();
         String name = requireName(request == null ? null : request.name());
@@ -199,11 +199,11 @@ public class RoleAdminService {
         // the offending atoms; the cap gate (BL-287) stays a separate 409.
         grantability.assertGrantable(new LinkedHashSet<>(actionClasses(atoms)), null);
         String displayName = requireDisplayName(request.displayName(), name);
-        AccessRole role = new AccessRole(UUID.randomUUID(), name, displayName,
+        GrantPreset role = new GrantPreset(UUID.randomUUID(), name, displayName,
                 trimToNull(request.description()), false);
-        AccessRole saved = roles.save(role);
+        GrantPreset saved = roles.save(role);
         for (AtomSpec atom : atoms) {
-            permissions.save(new AccessRolePermission(saved.getId(), atom.actionClass(),
+            permissions.save(new GrantPresetAtom(saved.getId(), atom.actionClass(),
                     atom.resourcePattern()));
         }
         audit.recordDurableChange(actorId(), null, "access_role_created", RESOURCE_TYPE,
@@ -219,14 +219,14 @@ public class RoleAdminService {
      * {@code 409 SYSTEM_ROLE_IMMUTABLE}.
      */
     @Transactional
-    public RoleAdminViews.RoleView update(UUID roleId, RoleAdminViews.RoleUpdate request) {
+    public GrantPresetAdminViews.RoleView update(UUID roleId, GrantPresetAdminViews.PresetUpdate request) {
         if (request == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "A role update body is required");
         }
         dbLockTimeout.apply();
         lockInstanceMutex();
-        AccessRole role = roles.findByIdForUpdate(roleId)
+        GrantPreset role = roles.findByIdForUpdate(roleId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND",
                         "Role not found"));
         List<AtomSpec> currentAtoms = specsOf(permissions.findByIdRoleId(role.getId()));
@@ -240,7 +240,7 @@ public class RoleAdminService {
             }
             String displayName = requireDisplayName(request.displayName(), role.getName());
             role.setDisplayName(displayName);
-            AccessRole saved = roles.save(role);
+            GrantPreset saved = roles.save(role);
             audit.recordDurableChange(actorId(), null, "access_role_updated", RESOURCE_TYPE,
                     saved.getId().toString(), "name=" + saved.getName() + " displayName-only");
             return toView(saved, currentAtoms, bindings.countByRoleId(saved.getId()));
@@ -270,9 +270,9 @@ public class RoleAdminService {
             for (AtomSpec atom : currentAtoms) {
                 added.remove(atom.key());
             }
-            List<AccessRoleBinding> roleBindings = bindings.findByRoleId(roleId);
+            List<GrantPresetBinding> roleBindings = bindings.findByRoleId(roleId);
             // PLAN-0673 M1: the subset gate runs over EVERY binding scope of the role, not only
-            // agent bindings — materializeRole() re-materialises every holder (users included), so
+            // agent bindings — materializePreset() re-materialises every holder (users included), so
             // an atom the author holds only in workspace A must not land in workspace B or in the
             // instance through a user binding either. The agent-only filter below applies to the
             // forbidden/cap recheck, which is agent-specific.
@@ -280,11 +280,11 @@ public class RoleAdminService {
                     .map(binding -> AccessScope.WORKSPACE.equals(binding.getScopeType())
                             ? AccessScope.workspace(binding.getScopeId()) : AccessScope.instance())
                     .distinct().toList();
-            List<AccessRolePermission> prospective = effectiveAtoms.stream()
-                    .map(atom -> new AccessRolePermission(roleId, atom.actionClass(),
+            List<GrantPresetAtom> prospective = effectiveAtoms.stream()
+                    .map(atom -> new GrantPresetAtom(roleId, atom.actionClass(),
                             atom.resourcePattern()))
                     .toList();
-            List<AccessRolePermission> addedRows = prospective.stream()
+            List<GrantPresetAtom> addedRows = prospective.stream()
                     .filter(row -> added.contains(row.actionClass() + "@" + row.resourcePattern()))
                     .toList();
             if (!addedRows.isEmpty()) {
@@ -297,7 +297,7 @@ public class RoleAdminService {
             if (boundToAgent) {
                 agentAtomPolicy.assertAgentBindable(prospective);
             }
-            for (AccessRoleBinding binding : roleBindings) {
+            for (GrantPresetBinding binding : roleBindings) {
                 if (!GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(binding.getSubjectType())) {
                     continue;
                 }
@@ -307,13 +307,13 @@ public class RoleAdminService {
                 agentAtomPolicy.assertWithinCap(principal.getId(), prospective,
                         AccessScope.WORKSPACE.equals(binding.getScopeType()) ? binding.getScopeId() : null);
             }
-            AccessRole saved = roles.save(role);
+            GrantPreset saved = roles.save(role);
             replaceAtoms(saved.getId(), effectiveAtoms);
         } else {
             roles.save(role);
         }
-        AccessRole saved = role;
-        int materialized = materializer.materializeRole(saved.getId(), actorUuid(), null);
+        GrantPreset saved = role;
+        int materialized = materializer.materializePreset(saved.getId(), actorUuid(), null);
         audit.recordDurableChange(actorId(), null, "access_role_updated", RESOURCE_TYPE,
                 saved.getId().toString(), "name=" + saved.getName() + " atoms="
                         + describe(effectiveAtoms) + " holders=" + materialized);
@@ -327,7 +327,7 @@ public class RoleAdminService {
     public void delete(UUID roleId) {
         dbLockTimeout.apply();
         lockInstanceMutex();
-        AccessRole role = roles.findByIdForUpdate(roleId)
+        GrantPreset role = roles.findByIdForUpdate(roleId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND",
                         "Role not found"));
         if (role.isSystem()) {
@@ -348,9 +348,9 @@ public class RoleAdminService {
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private Map<UUID, List<AccessRolePermission>> permissionsByRole() {
-        Map<UUID, List<AccessRolePermission>> byRole = new LinkedHashMap<>();
-        for (AccessRolePermission permission : permissions.findAll()) {
+    private Map<UUID, List<GrantPresetAtom>> permissionsByRole() {
+        Map<UUID, List<GrantPresetAtom>> byRole = new LinkedHashMap<>();
+        for (GrantPresetAtom permission : permissions.findAll()) {
             byRole.computeIfAbsent(permission.roleId(), ignored -> new ArrayList<>())
                     .add(permission);
         }
@@ -360,7 +360,7 @@ public class RoleAdminService {
     /**
      * One atom of a role, with the resource pattern it is stored under.
      *
-     * <p>task-81: the pair has to travel together from the request to {@code role_permissions}. A
+     * <p>task-81: the pair has to travel together from the request to {@code grant_preset_atoms}. A
      * name-only carrier would silently write the canonical {@code *} and turn every narrowed atom
      * back into a wildcard — the exact state the C1 card exists to end.</p>
      */
@@ -371,7 +371,7 @@ public class RoleAdminService {
         }
     }
 
-    private static List<AtomSpec> specsOf(List<AccessRolePermission> rows) {
+    private static List<AtomSpec> specsOf(List<GrantPresetAtom> rows) {
         return rows.stream()
                 .map(row -> new AtomSpec(row.actionClass(), row.resourcePattern()))
                 .sorted(Comparator.comparing(AtomSpec::actionClass)
@@ -390,21 +390,21 @@ public class RoleAdminService {
     private void replaceAtoms(UUID roleId, List<AtomSpec> atoms) {
         permissions.deleteByIdRoleId(roleId);
         for (AtomSpec atom : atoms) {
-            permissions.save(new AccessRolePermission(roleId, atom.actionClass(),
+            permissions.save(new GrantPresetAtom(roleId, atom.actionClass(),
                     atom.resourcePattern()));
         }
     }
 
-    private RoleAdminViews.RoleView toView(AccessRole role, List<AtomSpec> atoms,
+    private GrantPresetAdminViews.RoleView toView(GrantPreset role, List<AtomSpec> atoms,
                                            long bindingCount) {
         // Stable order regardless of how the atoms were supplied: the UI diffs this list.
-        List<RoleAdminViews.AtomView> views = atoms.stream()
+        List<GrantPresetAdminViews.AtomView> views = atoms.stream()
                 .sorted(Comparator.comparing(AtomSpec::actionClass)
                         .thenComparing(AtomSpec::resourcePattern))
-                .map(atom -> RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(atom.actionClass()),
+                .map(atom -> GrantPresetAdminViews.AtomView.of(PermissionAtomCatalog.atom(atom.actionClass()),
                         atom.resourcePattern(), PermissionAtomLabels.DEFAULT_LOCALE))
                 .toList();
-        return new RoleAdminViews.RoleView(role.getId(), role.getName(), role.getDisplayName(),
+        return new GrantPresetAdminViews.RoleView(role.getId(), role.getName(), role.getDisplayName(),
                 role.getDescription(), role.isSystem(), views, bindingCount);
     }
 
@@ -450,16 +450,16 @@ public class RoleAdminService {
      * {@code atoms:["read"]} contract is byte-identical; an atom <b>with</b> a resource is resolved by
      * {@link GrantResourcePattern} (400 {@code INVALID_GRANT_RESOURCE} on any unsupported form, 403
      * when the caller may not administer the target workspace's bindings). One role holds one pattern
-     * per atom — {@code role_permissions}' primary key allows several rows, but two patterns for one
+     * per atom — {@code grant_preset_atoms}' primary key allows several rows, but two patterns for one
      * atom would make the editor's "what does this atom cover" answer ambiguous.</p>
      */
-    private List<AtomSpec> requireAtoms(List<RoleAdminViews.AtomInput> raw) {
+    private List<AtomSpec> requireAtoms(List<GrantPresetAdminViews.AtomInput> raw) {
         if (raw == null || raw.isEmpty()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_ATOMS",
                     "at least one permission atom is required");
         }
         LinkedHashMap<String, AtomSpec> atoms = new LinkedHashMap<>();
-        for (RoleAdminViews.AtomInput input : raw) {
+        for (GrantPresetAdminViews.AtomInput input : raw) {
             if (input == null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_ATOMS",
                         "atom entries must not be null");

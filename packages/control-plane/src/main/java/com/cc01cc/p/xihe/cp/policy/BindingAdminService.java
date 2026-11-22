@@ -4,15 +4,15 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -56,10 +56,10 @@ import java.util.UUID;
  *       ({@code 403 PRIVILEGE_ESCALATION}).</li>
  * </ol>
  *
- * <p>Every affected subject is re-materialized in the same transaction: {@code source='role'} atoms
+ * <p>Every affected subject is re-materialized in the same transaction: {@code source='preset'} atoms
  * are reconciled and the capability cache is invalidated immediately and after completion (R2-20).
  * An instance-tier change additionally moves the subject's epoch once through
- * {@link RoleGrantMaterializer#materializeSubjectWithEpochBump} (I4 — the access token carries the
+ * {@link PresetGrantMaterializer#materializeSubjectWithEpochBump} (I4 — the access token carries the
  * instance role claim); a workspace-tier change only materializes, because the token carries no
  * workspace role and bumping would log the subject out for a claim the token never had (W3-3).</p>
  *
@@ -75,25 +75,25 @@ public class BindingAdminService {
     private static final String SUBJECT_USER = AuthzContext.SUBJECT_USER;
     private static final String RESOURCE_TYPE = "role_binding";
 
-    private final AccessRoleRepository roles;
-    private final AccessRolePermissionRepository permissions;
-    private final AccessRoleBindingRepository bindings;
+    private final GrantPresetRepository roles;
+    private final GrantPresetAtomRepository permissions;
+    private final GrantPresetBindingRepository bindings;
     private final UserRepository users;
     private final WorkspaceRepository workspaces;
     private final InstanceOwnerRepository owners;
-    private final RoleGrantMaterializer materializer;
+    private final PresetGrantMaterializer materializer;
     private final RequesterAuthority requester;
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
     private final GrantabilityGuard grantability;
 
-    public BindingAdminService(AccessRoleRepository roles,
-                               AccessRolePermissionRepository permissions,
-                               AccessRoleBindingRepository bindings,
+    public BindingAdminService(GrantPresetRepository roles,
+                               GrantPresetAtomRepository permissions,
+                               GrantPresetBindingRepository bindings,
                                UserRepository users,
                                WorkspaceRepository workspaces,
                                InstanceOwnerRepository owners,
-                               RoleGrantMaterializer materializer,
+                               PresetGrantMaterializer materializer,
                                RequesterAuthority requester,
                                AuditLogger audit,
                                DbLockTimeout dbLockTimeout,
@@ -147,13 +147,13 @@ public class BindingAdminService {
 
     /** {@code GET /api/v1/bindings?scope=&scopeId=}: the complete binding set of one scope. */
     @Transactional(readOnly = true)
-    public RoleAdminViews.BindingSetView list(String scopeType, String scopeId) {
+    public GrantPresetAdminViews.BindingSetView list(String scopeType, String scopeId) {
         AccessScope scope = resolveScope(scopeType, scopeId);
         requester.requireManageRoles();
         if (!scope.isInstance()) {
             requester.requireWorkspaceBindingAuthority(scope.id());
         }
-        return new RoleAdminViews.BindingSetView(scope.type(), scope.id(),
+        return new GrantPresetAdminViews.BindingSetView(scope.type(), scope.id(),
                 viewOf(bindingsInScope(scope)));
     }
 
@@ -162,8 +162,8 @@ public class BindingAdminService {
      * {@code requested} and return the resulting set.
      */
     @Transactional
-    public RoleAdminViews.BindingSetView replace(String scopeType, String scopeId,
-                                                 List<RoleAdminViews.BindingInput> requested) {
+    public GrantPresetAdminViews.BindingSetView replace(String scopeType, String scopeId,
+                                                 List<GrantPresetAdminViews.BindingInput> requested) {
         dbLockTimeout.apply();
         AccessScope scope = resolveScope(scopeType, scopeId);
         requester.requireManageRoles();
@@ -174,13 +174,13 @@ public class BindingAdminService {
 
         Map<BindingKey, UUID> desired = validateAndCollect(requested);
 
-        List<AccessRoleBinding> existing = bindingsInScope(scope);
-        Map<BindingKey, AccessRoleBinding> existingByKey = new LinkedHashMap<>();
-        for (AccessRoleBinding binding : existing) {
+        List<GrantPresetBinding> existing = bindingsInScope(scope);
+        Map<BindingKey, GrantPresetBinding> existingByKey = new LinkedHashMap<>();
+        for (GrantPresetBinding binding : existing) {
             existingByKey.put(new BindingKey(binding.getSubjectId(), binding.getRoleId()), binding);
         }
 
-        List<AccessRoleBinding> toDelete = existing.stream()
+        List<GrantPresetBinding> toDelete = existing.stream()
                 .filter(binding -> !desired.containsKey(
                         new BindingKey(binding.getSubjectId(), binding.getRoleId())))
                 .toList();
@@ -189,9 +189,9 @@ public class BindingAdminService {
                 .toList();
 
         if (toDelete.isEmpty() && toInsert.isEmpty()) {
-            logger.info("[POLICY] event=role_bindings_unchanged scope={} scopeId={} count={}",
+            logger.info("[POLICY] event=grant_preset_bindings_unchanged scope={} scopeId={} count={}",
                     scope.type(), scope.id(), existing.size());
-            return new RoleAdminViews.BindingSetView(scope.type(), scope.id(),
+            return new GrantPresetAdminViews.BindingSetView(scope.type(), scope.id(),
                     viewOf(bindingsInScope(scope)));
         }
 
@@ -209,7 +209,7 @@ public class BindingAdminService {
 
         bindings.deleteAll(toDelete);
         for (Map.Entry<BindingKey, UUID> entry : toInsert) {
-            bindings.save(new AccessRoleBinding(entry.getValue(), SUBJECT_USER,
+            bindings.save(new GrantPresetBinding(entry.getValue(), SUBJECT_USER,
                     entry.getKey().subjectId(), scope.type(), scope.id(), actorUuid()));
         }
         bindings.flush();
@@ -229,14 +229,14 @@ public class BindingAdminService {
             }
         }
         String scopeIdValue = scope.isInstance() ? null : scope.id().toString();
-        audit.recordDurableChange(actorId(), scopeIdValue, "role_bindings_replaced", RESOURCE_TYPE,
+        audit.recordDurableChange(actorId(), scopeIdValue, "grant_preset_bindings_replaced", RESOURCE_TYPE,
                 scope.isInstance() ? "instance" : scope.id().toString(),
                 "scope=" + scope.type() + " added=" + toInsert.size() + " removed=" + toDelete.size()
                         + " subjects=" + orderedAffected.size());
-        logger.info("[POLICY] event=role_bindings_replaced scope={} scopeId={} added={} removed={}"
+        logger.info("[POLICY] event=grant_preset_bindings_replaced scope={} scopeId={} added={} removed={}"
                         + " subjects={}", scope.type(), scope.id(), toInsert.size(), toDelete.size(),
                 orderedAffected.size());
-        return new RoleAdminViews.BindingSetView(scope.type(), scope.id(),
+        return new GrantPresetAdminViews.BindingSetView(scope.type(), scope.id(),
                 viewOf(bindingsInScope(scope)));
     }
 
@@ -253,25 +253,25 @@ public class BindingAdminService {
      */
     private void requireScopeKeepsItsOwner(AccessScope scope) {
         if (scope.isInstance()) {
-            AccessRole superAdmin = roles.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
+            GrantPreset superAdmin = roles.findByName(SystemGrantPresetCatalog.SUPER_ADMIN)
                     .orElseThrow(() -> new IllegalStateException(
                             "System role SUPER_ADMIN is missing (V87 must have been applied)"));
             long holders = bindings.countActiveUserBindingsForRole(superAdmin.getId(),
                     UserStatus.ACTIVE);
             if (holders < 1) {
-                logger.warn("[POLICY] event=role_bindings_rejected reason=last_super_admin");
+                logger.warn("[POLICY] event=grant_preset_bindings_rejected reason=last_super_admin");
                 throw new CpApiException(HttpStatus.CONFLICT, "LAST_SUPER_ADMIN",
                         "The instance must keep at least one usable SUPER_ADMIN binding");
             }
             return;
         }
-        AccessRole workspaceOwner = roles.findByName(SystemAccessRoleCatalog.WS_OWNER)
+        GrantPreset workspaceOwner = roles.findByName(SystemGrantPresetCatalog.WS_OWNER)
                 .orElseThrow(() -> new IllegalStateException(
                         "System role WS_OWNER is missing (V87 must have been applied)"));
         long owners = bindings.countActiveUserBindingsForRoleInWorkspace(workspaceOwner.getId(),
                 scope.id(), UserStatus.ACTIVE);
         if (owners < 1) {
-            logger.warn("[POLICY] event=role_bindings_rejected reason=last_owner workspaceId={}",
+            logger.warn("[POLICY] event=grant_preset_bindings_rejected reason=last_owner workspaceId={}",
                     scope.id());
             throw new CpApiException(HttpStatus.CONFLICT, "LAST_OWNER",
                     "The workspace must keep at least one usable WS_OWNER binding");
@@ -292,7 +292,7 @@ public class BindingAdminService {
      * that reaches the table by any other route is still filtered at evaluation.
      *</p>
      *
-     * <p><b>Where the writer is.</b> {@code org_unit_role_bindings} is {@code M1-9}'s table and
+     * <p><b>Where the writer is.</b> {@code org_unit_preset_bindings} is {@code M1-9}'s table and
      * does not exist yet, so no code path in this repository can insert such a row today. This
      * gate is the mandatory first call for the writer that lands with it, and the reason it is
      * here — in the service that owns binding writes — is the same reason
@@ -312,14 +312,14 @@ public class BindingAdminService {
         }
         Set<UUID> distinct = new LinkedHashSet<>(roleIds);
         Map<UUID, List<String>> atomsByRole = new LinkedHashMap<>();
-        for (AccessRolePermission permission : permissions.findByIdRoleIdIn(distinct)) {
+        for (GrantPresetAtom permission : permissions.findByIdRoleIdIn(distinct)) {
             UUID roleId = permission.roleId();
             if (roleId != null) {
                 atomsByRole.computeIfAbsent(roleId, id -> new ArrayList<>()).add(permission.actionClass());
             }
         }
         Map<UUID, String> roleNameById = new LinkedHashMap<>();
-        for (AccessRole role : roles.findAllById(distinct)) {
+        for (GrantPreset role : roles.findAllById(distinct)) {
             roleNameById.put(role.getId(), role.getName());
         }
         for (UUID roleId : distinct) {
@@ -331,7 +331,7 @@ public class BindingAdminService {
             List<String> atoms = atomsByRole.getOrDefault(roleId, List.of());
             List<String> offending = OrgUnitGovernancePolicy.offendingAtoms(atoms);
             if (!offending.isEmpty()) {
-                logger.warn("[POLICY] event=org_unit_role_bindings_rejected"
+                logger.warn("[POLICY] event=org_unit_preset_bindings_rejected"
                                 + " reason=non_governance_role roleId={} roleName={} atoms={}",
                         roleId, roleName, String.join(",", offending));
             }
@@ -340,15 +340,15 @@ public class BindingAdminService {
     }
 
     /** Structural validation: subject/role existence, subject type, terminal subject state. */
-    private Map<BindingKey, UUID> validateAndCollect(List<RoleAdminViews.BindingInput> requested) {
+    private Map<BindingKey, UUID> validateAndCollect(List<GrantPresetAdminViews.BindingInput> requested) {
         if (requested == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "bindings must be an array (send [] to clear the scope)");
         }
         Map<BindingKey, UUID> desired = new LinkedHashMap<>();
         Map<UUID, User> userCache = new LinkedHashMap<>();
-        Map<UUID, AccessRole> roleCache = new LinkedHashMap<>();
-        for (RoleAdminViews.BindingInput input : requested) {
+        Map<UUID, GrantPreset> roleCache = new LinkedHashMap<>();
+        for (GrantPresetAdminViews.BindingInput input : requested) {
             if (input == null || input.subjectId() == null || input.roleId() == null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_BINDING",
                         "every binding requires subjectId and roleId");
@@ -357,7 +357,7 @@ public class BindingAdminService {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_BINDING",
                         "only user subjects can be bound through this API");
             }
-            AccessRole role = roleCache.computeIfAbsent(input.roleId(), roleId ->
+            GrantPreset role = roleCache.computeIfAbsent(input.roleId(), roleId ->
                     roles.findById(roleId).orElseThrow(() -> new CpApiException(
                             HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found: " + roleId)));
             User user = userCache.computeIfAbsent(input.subjectId(), userId ->
@@ -381,7 +381,7 @@ public class BindingAdminService {
         Set<UUID> distinctRoles = new LinkedHashSet<>(roleIds);
         Set<String> atoms = new LinkedHashSet<>();
         if (!distinctRoles.isEmpty()) {
-            for (AccessRolePermission permission : permissions.findByIdRoleIdIn(distinctRoles)) {
+            for (GrantPresetAtom permission : permissions.findByIdRoleIdIn(distinctRoles)) {
                 atoms.add(permission.actionClass());
             }
         }
@@ -396,30 +396,30 @@ public class BindingAdminService {
 
     // ── read helpers ────────────────────────────────────────────────────────
 
-    private List<AccessRoleBinding> bindingsInScope(AccessScope scope) {
-        List<AccessRoleBinding> rows = scope.isInstance()
+    private List<GrantPresetBinding> bindingsInScope(AccessScope scope) {
+        List<GrantPresetBinding> rows = scope.isInstance()
                 ? bindings.findBySubjectTypeAndScopeType(SUBJECT_USER, AccessScope.INSTANCE)
                 : bindings.findBySubjectTypeAndScopeTypeAndScopeId(SUBJECT_USER,
                 AccessScope.WORKSPACE, scope.id());
         return rows.stream()
-                .sorted(Comparator.comparing(AccessRoleBinding::getSubjectId)
-                        .thenComparing(AccessRoleBinding::getRoleId))
+                .sorted(Comparator.comparing(GrantPresetBinding::getSubjectId)
+                        .thenComparing(GrantPresetBinding::getRoleId))
                 .toList();
     }
 
-    private List<RoleAdminViews.BindingView> viewOf(List<AccessRoleBinding> rows) {
+    private List<GrantPresetAdminViews.BindingView> viewOf(List<GrantPresetBinding> rows) {
         if (rows.isEmpty()) {
             return List.of();
         }
         Set<UUID> roleIds = new LinkedHashSet<>();
         rows.forEach(binding -> roleIds.add(binding.getRoleId()));
         Map<UUID, String> roleNames = new LinkedHashMap<>();
-        for (AccessRole role : roles.findAllById(roleIds)) {
+        for (GrantPreset role : roles.findAllById(roleIds)) {
             roleNames.put(role.getId(), role.getName());
         }
-        List<RoleAdminViews.BindingView> views = new ArrayList<>(rows.size());
-        for (AccessRoleBinding binding : rows) {
-            views.add(new RoleAdminViews.BindingView(binding.getId(), binding.getSubjectType(),
+        List<GrantPresetAdminViews.BindingView> views = new ArrayList<>(rows.size());
+        for (GrantPresetBinding binding : rows) {
+            views.add(new GrantPresetAdminViews.BindingView(binding.getId(), binding.getSubjectType(),
                     binding.getSubjectId(), binding.getRoleId(),
                     roleNames.get(binding.getRoleId()), binding.getGrantedBy(),
                     binding.getGrantedAt()));
@@ -429,7 +429,7 @@ public class BindingAdminService {
 
     /**
      * The instance write mutex (same singleton row as {@code UserRoleService} /
-     * {@code InstanceOwnershipService} / {@code RoleAdminService}), so binding writes serialize with
+     * {@code InstanceOwnershipService} / {@code GrantPresetAdminService}), so binding writes serialize with
      * every other authorization write instead of deadlocking on {@code users} rows.
      */
     private void lockInstanceMutex() {

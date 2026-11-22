@@ -20,7 +20,7 @@ import java.util.UUID;
  * {@code name} may exist once in the instance library, once per workspace, and once per user (the
  * personal layer added by V156). The DB enforces it with {@code uq_skills_qualified_name UNIQUE
  * NULLS NOT DISTINCT (name, definition_scope_type, definition_scope_id, definition_scope_user_id)}
- * — the instance rows' NULL scope ids must collide, which is exactly the {@code role_bindings} trap
+ * — the instance rows' NULL scope ids must collide, which is exactly the {@code grant_preset_bindings} trap
  * from V87:53-55; and the fourth column is what keeps two users' same-named personal rows apart.</p>
  *
  * <p>Server-computed fields, never read from a request body (V99 discipline): {@link #bodyTokensEst},

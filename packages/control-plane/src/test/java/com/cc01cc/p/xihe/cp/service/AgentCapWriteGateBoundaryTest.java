@@ -3,9 +3,9 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -14,14 +14,14 @@ import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
-import com.cc01cc.p.xihe.cp.policy.RoleAdminService;
-import com.cc01cc.p.xihe.cp.policy.RoleAdminViews;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.GrantPresetAdminService;
+import com.cc01cc.p.xihe.cp.policy.GrantPresetAdminViews;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The M1 evidence recorded two gaps that the existing suites cannot express:</p>
  *
  * <ol>
- *   <li>{@code RoleAdminService.update} re-checks {@code assertWithinCap}/{@code assertAgentBindable}
+ *   <li>{@code GrantPresetAdminService.update} re-checks {@code assertWithinCap}/{@code assertAgentBindable}
  *       for <b>already bound</b> agent roles, but nothing exercised it: editing a role that an agent
  *       already holds must answer {@code 409 ROLE_BINDING_EXCEEDS_CAP} (and name the atom) instead of
  *       silently widening a binding whose effective set the cap keeps clipped;</li>
@@ -56,8 +56,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       guard precisely so this holds) and there was no explicit test for it.</li>
  * </ol>
  *
- * <p>Every refusal is also a zero-write assertion: the three tables ({@code role_permissions},
- * {@code role_bindings}, {@code grants}) keep their row counts and the agent's effective cap is
+ * <p>Every refusal is also a zero-write assertion: the three tables ({@code grant_preset_atoms},
+ * {@code grant_preset_bindings}, {@code grants}) keep their row counts and the agent's effective cap is
  * unchanged. Counter-example: deleting the {@code assertWithinCap} calls (or reordering them behind
  * the guard's bypass) turns these tests red — the refusal disappears or the atom lands in the role /
  * in the principal's grants.</p>
@@ -71,15 +71,15 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private AgentPrincipalService agentPrincipalService;
-    @Autowired private AgentPrincipalRoleBindingService agentRoleBindings;
+    @Autowired private AgentPrincipalPresetBindingService agentRoleBindings;
     @Autowired private GrantDefaultService grantDefaultService;
-    @Autowired private RoleAdminService roleAdmin;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetAdminService roleAdmin;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private RequesterAuthority requesterAuthority;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -110,16 +110,16 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
         actAs(owner);
         CpApiException denied = assertThrows(CpApiException.class, () -> roleAdmin.update(roleId,
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, WRITE))));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, WRITE))));
 
         assertEquals(HttpStatus.CONFLICT, denied.getStatus(), denied.getMessage());
         assertEquals("ROLE_BINDING_EXCEEDS_CAP", denied.getCode(), denied.getMessage());
         assertTrue(denied.getMessage().contains(WRITE),
                 "the refusal names the atom outside the cap: " + denied.getMessage());
 
-        assertEquals(permissionsBefore, permissionsOf(roleId), "role_permissions untouched");
+        assertEquals(permissionsBefore, permissionsOf(roleId), "grant_preset_atoms untouched");
         assertEquals(List.of(READ), atomsOf(roleId));
-        assertEquals(bindingsBefore, bindingsOfRole(roleId), "role_bindings untouched");
+        assertEquals(bindingsBefore, bindingsOfRole(roleId), "grant_preset_bindings untouched");
         assertEquals(grantsBefore, grantsOfPrincipal(principal.getId()), "grants untouched");
         assertFalse(String.valueOf(agentPrincipalService.resolveCapFor(principal.getId(),
                         workspace.getId())).contains(WRITE),
@@ -139,7 +139,7 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
         actAs(owner);
         roleAdmin.update(roleId,
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, WRITE)));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, WRITE)));
 
         assertEquals(List.of(READ, WRITE), atomsOf(roleId),
                 "without a workspace cap the same edit applies (cap is per workspace, not per principal)");
@@ -155,7 +155,7 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
     @Test
     void grantAnyAtomDoesNotBypassTheCapOnAnAgentRoleBinding() {
         User superAdmin = newUser("caproot");
-        bindInstanceSystemRole(superAdmin.getId(), SystemAccessRoleCatalog.SUPER_ADMIN);
+        bindInstanceSystemRole(superAdmin.getId(), SystemGrantPresetCatalog.SUPER_ADMIN);
         User owner = fixture();
         UUID overCapRole = createRole(CREATE_SCHEDULED_TASK);
         long bindingsBefore = bindingsOfRole(overCapRole);
@@ -194,7 +194,7 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
     @Test
     void grantAnyAtomDoesNotBypassTheCapWhenUpdatingAnAlreadyBoundAgentRole() {
         User superAdmin = newUser("caprootupd");
-        bindInstanceSystemRole(superAdmin.getId(), SystemAccessRoleCatalog.SUPER_ADMIN);
+        bindInstanceSystemRole(superAdmin.getId(), SystemGrantPresetCatalog.SUPER_ADMIN);
         User owner = fixture();
         UUID roleId = createRole(READ);
         bindRoleToPrincipal(roleId, owner.getId(), workspace.getId());
@@ -206,11 +206,11 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
         actAs(superAdmin);
         CpApiException denied = assertThrows(CpApiException.class, () -> roleAdmin.update(roleId,
-                new RoleAdminViews.RoleUpdate(null, null, null, List.of(READ, WRITE))));
+                new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(READ, WRITE))));
 
         assertEquals(HttpStatus.CONFLICT, denied.getStatus(), denied.getMessage());
         assertEquals("ROLE_BINDING_EXCEEDS_CAP", denied.getCode(), denied.getMessage());
-        assertEquals(permissionsBefore, permissionsOf(roleId), "role_permissions untouched");
+        assertEquals(permissionsBefore, permissionsOf(roleId), "grant_preset_atoms untouched");
         assertEquals(List.of(READ), atomsOf(roleId));
     }
 
@@ -224,8 +224,8 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
     @Test
     void grantAnyAtomDoesNotBypassTheForbiddenAtomGateOnAgentPrincipalCreation() {
         User superAdmin = newUser("caprootcreate");
-        bindInstanceSystemRole(superAdmin.getId(), SystemAccessRoleCatalog.SUPER_ADMIN);
-        UUID adminRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        bindInstanceSystemRole(superAdmin.getId(), SystemGrantPresetCatalog.SUPER_ADMIN);
+        UUID adminRoleId = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow().getId();
         long principalsBefore = principalRepository.count();
 
@@ -274,10 +274,10 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
     private UUID createRole(String... atoms) {
         String name = "CAPGATE_" + UUID.randomUUID().toString().replace("-", "")
                 .substring(0, 8).toUpperCase();
-        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+        GrantPreset role = accessRoleRepository.saveAndFlush(new GrantPreset(
                 UUID.randomUUID(), name, name, null, false));
         for (String atom : atoms) {
-            permissionRepository.saveAndFlush(new AccessRolePermission(
+            permissionRepository.saveAndFlush(new GrantPresetAtom(
                     role.getId(), atom, PermissionAtomCatalog.atom(atom).canonicalResource()));
         }
         return role.getId();
@@ -292,25 +292,25 @@ class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
     private void bindInstanceSystemRole(UUID userId, String roleName) {
         UUID roleId = accessRoleRepository.findByName(roleName).orElseThrow().getId();
-        bindingRepository.saveAndFlush(new AccessRoleBinding(roleId, "user", userId,
+        bindingRepository.saveAndFlush(new GrantPresetBinding(roleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
     }
 
     private long permissionsOf(UUID roleId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM role_permissions WHERE role_id = ?", Long.class, roleId);
+                "SELECT count(*) FROM grant_preset_atoms WHERE role_id = ?", Long.class, roleId);
     }
 
     private List<String> atomsOf(UUID roleId) {
         return jdbcTemplate.queryForList(
-                "SELECT action_class FROM role_permissions WHERE role_id = ? ORDER BY action_class",
+                "SELECT action_class FROM grant_preset_atoms WHERE role_id = ? ORDER BY action_class",
                 String.class, roleId);
     }
 
     private long bindingsOfRole(UUID roleId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM role_bindings WHERE role_id = ?", Long.class, roleId);
+                "SELECT count(*) FROM grant_preset_bindings WHERE role_id = ?", Long.class, roleId);
     }
 
     private long grantsOfPrincipal(UUID principalId) {

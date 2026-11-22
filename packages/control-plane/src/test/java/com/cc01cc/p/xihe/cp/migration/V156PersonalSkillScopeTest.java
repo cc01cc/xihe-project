@@ -165,17 +165,17 @@ class V156PersonalSkillScopeTest {
 
     @Test
     void thePersonalSkillAtomIsSeededForTheThreeInstanceRoles() throws SQLException {
-        assertEquals(3, count("SELECT count(*) FROM role_permissions "
+        assertEquals(3, count("SELECT count(*) FROM grant_preset_atoms "
                 + "WHERE action_class = 'MANAGE_PERSONAL_SKILLS'"),
                 "SUPER_ADMIN + ADMIN + USER must each carry the atom (D-1019)");
-        assertEquals(1, count("SELECT count(*) FROM role_permissions WHERE action_class = "
+        assertEquals(1, count("SELECT count(*) FROM grant_preset_atoms WHERE action_class = "
                 + "'MANAGE_PERSONAL_SKILLS' AND role_id = '00000000-0000-4000-8000-000000000003'"),
                 "the USER role (…0003) is what makes the atom a registration default");
     }
 
     @Test
     void noWorkspaceRoleCarriesThePersonalSkillAtom() throws SQLException {
-        assertEquals(0, count("SELECT count(*) FROM role_permissions rp JOIN roles r "
+        assertEquals(0, count("SELECT count(*) FROM grant_preset_atoms rp JOIN grant_presets r "
                 + "ON r.id = rp.role_id WHERE rp.action_class = 'MANAGE_PERSONAL_SKILLS' "
                 + "AND r.is_system = true AND r.name LIKE 'WS_%'"),
                 "the atom is instance-bindable only (decision #27): no workspace role may hold it");

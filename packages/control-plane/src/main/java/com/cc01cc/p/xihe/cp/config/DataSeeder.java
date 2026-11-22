@@ -65,7 +65,7 @@ public class DataSeeder implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final GrantDefaultService grantDefaultService;
     private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
-    private final com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog;
+    private final com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog systemGrantPresetCatalog;
     private final OrgUnitReadRepository orgUnits;
     private final OrgUnitMemberRepository orgUnitMembers;
     /**
@@ -95,7 +95,7 @@ public class DataSeeder implements CommandLineRunner {
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
                       GrantDefaultService grantDefaultService,
                       com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
-                      com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog,
+                      com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog systemGrantPresetCatalog,
                       OrgUnitReadRepository orgUnits, OrgUnitMemberRepository orgUnitMembers,
                       FirstRunContentSeeder contentSeeder,
                       @Value("${spring.datasource.url:}") String datasourceUrl,
@@ -104,7 +104,7 @@ public class DataSeeder implements CommandLineRunner {
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
         this.instanceOwnershipService = instanceOwnershipService;
-        this.systemAccessRoleCatalog = systemAccessRoleCatalog;
+        this.systemGrantPresetCatalog = systemGrantPresetCatalog;
         this.orgUnits = orgUnits;
         this.orgUnitMembers = orgUnitMembers;
         this.postgres = datasourceUrl != null
@@ -124,7 +124,7 @@ public class DataSeeder implements CommandLineRunner {
         // PLAN-0610 T1.2: the built-in access-role catalog. V87 seeds it on PostgreSQL; this call
         // makes the same catalog present on a schema built from the entities (H2 profile, Flyway
         // disabled) and is a no-op on an already migrated database.
-        systemAccessRoleCatalog.ensureSeeded();
+        systemGrantPresetCatalog.ensureSeeded();
         // task-172 (D-1532 ④): the seeded admin is an **opt-in convenience**, never the
         // first-run path. Seeding it unconditionally made hasAnyUser() true on an empty
         // database, so /onboarding could never be reached. With the switch off the instance

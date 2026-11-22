@@ -146,7 +146,7 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
 
     /** design #16: a maximal permission set — every vocabulary action class incl. the PLAN-0496 credential atoms. */
     private void grantMaximalRole() {
-        // PLAN-0610: registration already materializes the USER atoms as source='role' rows
+        // PLAN-0610: registration already materializes the USER atoms as source='preset' rows
         // (one row per atom, uq_grants_role_atom); add only the missing credential atoms.
         java.util.UUID subject = UUID.fromString(userId);
         java.util.Set<String> existing = new java.util.HashSet<>();
@@ -161,7 +161,7 @@ class CapabilityEnvelopeRefusalTest extends AbstractIntegrationTest {
             row.setId(UUID.randomUUID());
             row.setSubjectType("user");
             row.setSubjectId(subject);
-            row.setSource("role");
+            row.setSource("preset");
             row.setPermissions(atoms(actionClass));
             grantRepository.save(row);
         }

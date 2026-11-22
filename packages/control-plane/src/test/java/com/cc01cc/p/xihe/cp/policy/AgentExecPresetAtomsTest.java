@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * red run recorded in the evidence file.</p>
  *
  * <p>Why hard-coded instead of derived from the catalog: deriving the expectation from
- * {@code roleSeeds()} would compare the catalog with itself (the same reasoning as
+ * {@code presetSeeds()} would compare the catalog with itself (the same reasoning as
  * {@code DefaultSetAtomMatrixTest}). The table is the reviewed contract; the migration side of the
  * same contract is {@code DefaultSetMigrationParityTest} (Flyway-only database).</p>
  */
@@ -36,7 +36,7 @@ class AgentExecPresetAtomsTest {
     private static Map<String, Set<String>> expected() {
         Map<String, Set<String>> table = new LinkedHashMap<>();
         // R2: the default instance role — base set minus exec.
-        table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_USER, Set.of(
                 ToolFaceRegistry.ACTION_READ,
                 ToolFaceRegistry.ACTION_WRITE,
                 ToolFaceRegistry.ACTION_DELETE,
@@ -44,7 +44,7 @@ class AgentExecPresetAtomsTest {
                 ToolFaceRegistry.ACTION_PLUGIN_INVOKE,
                 ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE));
         // R2: the default workspace role — same removal, so the intersection cannot re-admit exec.
-        table.put(SystemAccessRoleCatalog.WS_EDITOR, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_EDITOR, Set.of(
                 ToolFaceRegistry.ACTION_READ,
                 ToolFaceRegistry.ACTION_WRITE,
                 ToolFaceRegistry.ACTION_DELETE,
@@ -57,14 +57,14 @@ class AgentExecPresetAtomsTest {
                 ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE,
                 ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE));
         // R3: the three presets.
-        table.put(SystemAccessRoleCatalog.AGENT_READER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_READER, Set.of(
                 ToolFaceRegistry.ACTION_READ,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
-        table.put(SystemAccessRoleCatalog.AGENT_WORKER, Set.of(
+        table.put(SystemGrantPresetCatalog.AGENT_WORKER, Set.of(
                 ToolFaceRegistry.ACTION_READ,
                 ToolFaceRegistry.ACTION_WRITE,
                 ToolFaceRegistry.ACTION_DELETE));
-        table.put(SystemAccessRoleCatalog.WS_RUNNER, Set.of(
+        table.put(SystemGrantPresetCatalog.WS_RUNNER, Set.of(
                 ToolFaceRegistry.ACTION_EXEC,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         return table;
@@ -72,18 +72,18 @@ class AgentExecPresetAtomsTest {
 
     /** The preset roles that may carry exec, by reviewed ruling — every other preset must not. */
     private static final Set<String> REVIEWED_EXEC_CARRIERS = Set.of(
-            SystemAccessRoleCatalog.SUPER_ADMIN,
-            SystemAccessRoleCatalog.ADMIN,
-            SystemAccessRoleCatalog.USER,
-            SystemAccessRoleCatalog.WS_OWNER,
-            SystemAccessRoleCatalog.WS_RUNNER);
+            SystemGrantPresetCatalog.SUPER_ADMIN,
+            SystemGrantPresetCatalog.ADMIN,
+            SystemGrantPresetCatalog.USER,
+            SystemGrantPresetCatalog.WS_OWNER,
+            SystemGrantPresetCatalog.WS_RUNNER);
 
     @Test
     void agentDefaultsCannotExecute() {
         // R2 in one assertion pair: the two levels of a fresh agent's principal path. A reviewer who
         // re-adds exec to either role gets this red with the role named, not "some matrix mismatch".
-        Set<String> instanceDefault = codeAtomsOf(SystemAccessRoleCatalog.AGENT_USER);
-        Set<String> workspaceDefault = codeAtomsOf(SystemAccessRoleCatalog.WS_EDITOR);
+        Set<String> instanceDefault = codeAtomsOf(SystemGrantPresetCatalog.AGENT_USER);
+        Set<String> workspaceDefault = codeAtomsOf(SystemGrantPresetCatalog.WS_EDITOR);
         assertFalse(instanceDefault.contains(ToolFaceRegistry.ACTION_EXEC),
                 "DSD-1500 R2: the agent default INSTANCE role (AGENT_USER) must not carry exec — "
                         + "exec there means default-stack host command execution (job_host_adapter.rs "
@@ -103,9 +103,9 @@ class AgentExecPresetAtomsTest {
     @Test
     void humansKeepTheirExecBecauseTheAgentSetIsASeparateList() {
         // The reason BASE_ATOMS was not edited: USER/ADMIN/SUPER_ADMIN inherit it.
-        for (String humanRole : List.of(SystemAccessRoleCatalog.USER,
-                SystemAccessRoleCatalog.ADMIN,
-                SystemAccessRoleCatalog.SUPER_ADMIN)) {
+        for (String humanRole : List.of(SystemGrantPresetCatalog.USER,
+                SystemGrantPresetCatalog.ADMIN,
+                SystemGrantPresetCatalog.SUPER_ADMIN)) {
             assertTrue(codeAtomsOf(humanRole).contains(ToolFaceRegistry.ACTION_EXEC),
                     "R2 removes exec from the AGENT default only — the human role must keep it: "
                             + humanRole);
@@ -115,8 +115,8 @@ class AgentExecPresetAtomsTest {
     @Test
     void onlyTheReviewedPresetsCarryExec() {
         Set<String> actual = new LinkedHashSet<>();
-        for (SystemAccessRoleCatalog.RoleSeed seed : SystemAccessRoleCatalog.roleSeeds()) {
-            for (SystemAccessRoleCatalog.AtomRef atom : seed.atoms()) {
+        for (SystemGrantPresetCatalog.PresetSeed seed : SystemGrantPresetCatalog.presetSeeds()) {
+            for (SystemGrantPresetCatalog.AtomRef atom : seed.atoms()) {
                 if (ToolFaceRegistry.ACTION_EXEC.equals(atom.actionClass())) {
                     actual.add(seed.name());
                 }
@@ -142,21 +142,21 @@ class AgentExecPresetAtomsTest {
     @Test
     void thePresetsHaveTheirOwnFixedIdsInTheV87Space() {
         assertEquals(UUID.fromString("00000000-0000-4000-8000-000000000009"),
-                SystemAccessRoleCatalog.AGENT_READER_ID);
+                SystemGrantPresetCatalog.AGENT_READER_ID);
         assertEquals(UUID.fromString("00000000-0000-4000-8000-000000000010"),
-                SystemAccessRoleCatalog.AGENT_WORKER_ID);
+                SystemGrantPresetCatalog.AGENT_WORKER_ID);
         assertEquals(UUID.fromString("00000000-0000-4000-8000-000000000011"),
-                SystemAccessRoleCatalog.WS_RUNNER_ID);
+                SystemGrantPresetCatalog.WS_RUNNER_ID);
         Set<UUID> ids = new LinkedHashSet<>();
-        SystemAccessRoleCatalog.roleSeeds().forEach(seed -> ids.add(seed.id()));
-        assertEquals(SystemAccessRoleCatalog.roleSeeds().size(), ids.size(),
+        SystemGrantPresetCatalog.presetSeeds().forEach(seed -> ids.add(seed.id()));
+        assertEquals(SystemGrantPresetCatalog.presetSeeds().size(), ids.size(),
                 "role ids stay unique — V179 inserts by id, a duplicate would collide on (id)");
     }
 
     /** The atoms a built-in role carries according to the code catalog (seed order preserved). */
     private static Set<String> codeAtomsOf(String roleName) {
         Set<String> atoms = new LinkedHashSet<>();
-        SystemAccessRoleCatalog.roleSeeds().stream()
+        SystemGrantPresetCatalog.presetSeeds().stream()
                 .filter(seed -> seed.name().equals(roleName))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("role seed missing: " + roleName))

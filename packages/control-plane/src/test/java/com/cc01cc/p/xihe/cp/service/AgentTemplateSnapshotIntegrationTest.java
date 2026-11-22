@@ -9,8 +9,8 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.ConfigAuditEntity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -25,10 +25,10 @@ import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -73,11 +73,11 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
 
-    @Autowired private AccessRoleRepository accessRoleRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
 
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
 
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ConfigJpaRepository configJpaRepository;
@@ -504,14 +504,14 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
      * {@code users.role} column no longer authorizes anything.
      */
     private void grantInstanceAdmin(UUID userId) {
-        AccessRole adminRole = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
+        GrantPreset adminRole = accessRoleRepository.findByName(SystemGrantPresetCatalog.ADMIN)
                 .orElseThrow();
         // One instance tier per subject: replace whatever binding exists (the fixture's accounts are
         // created directly, so this is normally empty) before materializing.
         bindingRepository.deleteAll(bindingRepository.findBySubjectTypeAndSubjectIdAndScopeType(
                 "user", userId, AccessScope.INSTANCE));
         bindingRepository.flush();
-        bindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userId,
+        bindingRepository.save(new GrantPresetBinding(adminRole.getId(), "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
     }
@@ -599,14 +599,14 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
     }
 
     /**
-     * One hand-written {@code source='role'} atom for the subject. PLAN-0610 W4a: the fixture's admin
+     * One hand-written {@code source='preset'} atom for the subject. PLAN-0610 W4a: the fixture's admin
      * now holds a real ADMIN binding whose materialization already writes the same atoms, and
      * {@code uq_grants_role_atom} is (subject, scope, atom) — so an atom that is already materialized is
      * left alone instead of failing with a duplicate key.
      */
     private void addUserGrant(UUID userId, String actionClass, String resource) throws Exception {
         boolean exists = grantRepository.findBySubjectTypeAndSubjectId("user", userId).stream()
-                .filter(row -> "role".equals(row.getSource()))
+                .filter(row -> "preset".equals(row.getSource()))
                 .anyMatch(row -> {
                     var atom = row.getPermissions().get(0);
                     return actionClass.equals(atom.path("actionClass").asText())
@@ -621,7 +621,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         grant.setGranterId(userId);
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(userId);
-        grant.setSource("role");
+        grant.setSource("preset");
         grant.setReadState("read");
         ObjectNode atom = objectMapper.createObjectNode();
         atom.put("actionClass", actionClass);

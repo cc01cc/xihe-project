@@ -2,18 +2,18 @@ package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
-import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -48,10 +48,10 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
 
     @Autowired private UserRepository userRepository;
     @Autowired private AgentPrincipalRepository principalRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private JdbcTemplate jdbcTemplate;
 
     private final List<UUID> principals = new ArrayList<>();
@@ -81,7 +81,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
     @Test
     void freshCatalogSeedsAreExactAndSiblingAgentRolesAreClean() {
         // Design change, not drift: PLAN-0691 T1.3 (V137) added PLUGIN_INVOKE to
-        // SystemAccessRoleCatalog.BASE_ATOMS (spec/authz-plugin-atoms.md B-4: invoking an
+        // SystemGrantPresetCatalog.BASE_ATOMS (spec/authz-plugin-atoms.md B-4: invoking an
         // already-bound BUILTIN plugin is part of the base set of every non-viewer role), so
         // AGENT_USER — whose seed *is* BASE_ATOMS — went from five atoms to six. The expectation
         // moves with the single source; the atom is seed data, not a role special case.
@@ -89,17 +89,17 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // a teammate is an agent principal, so claiming/completing board tasks is its base
         // capability), so AGENT_USER went 6 -> 7.
         // DSD-1500 (Q-93) R2 / V179 (2026-11-20) removed exec from the AGENT default stack: the
-        // agent seed is now BASE_ATOMS minus exec (SystemAccessRoleCatalog.AGENT_BASE_ATOMS), so
+        // agent seed is now BASE_ATOMS minus exec (SystemGrantPresetCatalog.AGENT_BASE_ATOMS), so
         // AGENT_USER went 7 -> 6 while the human USER default is untouched. This is the assertion
         // that makes "exec is back in the agent default" fail loudly instead of silently.
-        assertEquals(6, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
+        assertEquals(6, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).size(),
                 "AGENT_USER seeds exactly the six base atoms (V172 added TEAM_TASK_MANAGE: 6 -> 7;"
                         + " DSD-1500/V179 removed exec: 7 -> 6)");
-        assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
+        assertEquals(0, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).stream()
                         .filter(row -> ToolFaceRegistry.ACTION_EXEC.equals(row.getId().getActionClass()))
                         .count(),
                 "DSD-1500 R2: the agent default INSTANCE role must not carry exec");
-        assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
+        assertEquals(0, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).stream()
                         .filter(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())).count(),
                 "the agent-forbidden atom is never part of AGENT_USER");
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default:
@@ -111,18 +111,18 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // is 6 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS = 9. AGENT_USER stays at six:
         // all three extras are agent-principal-forbidden (PermissionAtomCatalog.java:96-139), which
         // is exactly why the two roles differ again.
-        assertEquals(10, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
+        assertEquals(10, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.USER_ID).size(),
                 "human USER keeps its registration atoms + the V129 SELF atom + the PLAN-0750 M1"
                         + " own-agent atom + the V156 personal-library atom + the V172 team-task atom"
                         + " (7 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS)");
-        assertTrue(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
+        assertTrue(permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.USER_ID).stream()
                         .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
                 "PLAN-0750 M1: creating one's own user-level principal is a registration capability"
                         + " again (new semantics: owner = actor, no Workspace binding)");
 
         // Sibling seeded agent roles: neither may carry an agent-principal-forbidden atom.
         for (String roleName : new String[] {"AGENT_SPAWNER", "AGENT_DELEGATOR"}) {
-            AccessRole role = accessRoleRepository.findByName(roleName).orElse(null);
+            GrantPreset role = accessRoleRepository.findByName(roleName).orElse(null);
             if (role == null) {
                 continue;
             }
@@ -140,7 +140,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         User granter = newHuman("v127-granter");
         int humanGrantsBefore = grantCountForUser(granter.getId());
 
-        UUID userRoleId = SystemAccessRoleCatalog.USER_ID;
+        UUID userRoleId = SystemGrantPresetCatalog.USER_ID;
         List<UUID> agentIds = new ArrayList<>();
         for (int i = 0; i < LEGACY_AGENT_SEEDS; i++) {
             AgentPrincipal agent = TestAgentPrincipals.newUserAgentPrincipal();
@@ -150,7 +150,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
             UUID agentId = principalRepository.saveAndFlush(agent).getId();
             principals.add(agentId);
             agentIds.add(agentId);
-            AccessRoleBinding legacySeed = new AccessRoleBinding(userRoleId, "agent_principal",
+            GrantPresetBinding legacySeed = new GrantPresetBinding(userRoleId, "agent_principal",
                     agentId, AccessScope.INSTANCE, null, granter.getId());
             legacySeed.setSeed(true);
             bindingRepository.save(legacySeed);
@@ -162,7 +162,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         }
 
         // The legacy shape is in place: seeds point at USER and the forbidden atom is materialized.
-        assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemAccessRoleCatalog.USER_ID),
+        assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemGrantPresetCatalog.USER_ID),
                 "legacy fixture: 40 agent USER seed bindings");
         assertEquals(LEGACY_AGENT_SEEDS, forbiddenGrantCount(agentIds),
                 "legacy fixture: CREATE_OWN_AGENT materialized for every USER-bound agent"
@@ -182,22 +182,22 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // seed in 2026-11), so replaying V179 here is what a real legacy database goes through on
         // its way to HEAD — without it this fixture would assert an atom set HEAD no longer seeds.
         runMigration("V179__dsd1500_agent_exec_retirement_and_presets.sql");
-        assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
+        assertEquals(0, permissionRepository.findByIdRoleId(SystemGrantPresetCatalog.AGENT_USER_ID).stream()
                         .filter(row -> ToolFaceRegistry.ACTION_EXEC.equals(row.getId().getActionClass()))
                         .count(),
                 "the replay of V179 leaves AGENT_USER without exec");
 
 
-        assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemAccessRoleCatalog.AGENT_USER_ID),
+        assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemGrantPresetCatalog.AGENT_USER_ID),
                 "40 → 40: every legacy seed is rebound to AGENT_USER");
-        assertEquals(0, seedBindingCount(SystemAccessRoleCatalog.USER_ID),
+        assertEquals(0, seedBindingCount(SystemGrantPresetCatalog.USER_ID),
                 "no agent seed keeps pointing at the human USER role");
         assertEquals(0, forbiddenGrantCount(agentIds),
                 "the agent-forbidden grant is stripped");
         for (UUID agentId : agentIds) {
             assertEquals(6, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                             + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                            + " AND source='role' AND scope_type='instance'", Integer.class,
+                            + " AND source='preset' AND scope_type='instance'", Integer.class,
                     agentId.toString()), "each agent materializes exactly AGENT_USER's six atoms"
                     + " (V172 added TEAM_TASK_MANAGE: 6 -> 7; DSD-1500 R2/V179 removed exec: 7 -> 6)");
         }
@@ -213,7 +213,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         }
 
         // Seed/granted_by/scope survive the in-place UPDATE (spot check one row).
-        AccessRoleBinding sample = bindingRepository.findBySubjectTypeAndSubjectId(
+        GrantPresetBinding sample = bindingRepository.findBySubjectTypeAndSubjectId(
                 "agent_principal", agentIds.get(0)).get(0);
         assertEquals("instance", sample.getScopeType());
         assertTrue(sample.isSeed(), "the seed flag survives the rebind");
@@ -229,6 +229,13 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
                 .getClassLoader()
                 .getResourceAsStream("db/migration/" + resource)
                 .readAllBytes(), StandardCharsets.UTF_8);
+        // The surrounding schema is at HEAD (V182 renamed the tables), while the replayed file is a
+        // historical migration that must not be edited. Translate its legacy vocabulary here so the
+        // upgrade fixture still exercises the same statements against the renamed schema.
+        sql = sql.replaceAll("(?i)\\b(from|join|into|update|table)\\s+roles\\b", "$1 grant_presets")
+                .replace("role_bindings", "grant_preset_bindings")
+                .replace("role_permissions", "grant_preset_atoms")
+                .replace("'role'", "'preset'");
         StringBuilder statement = new StringBuilder();
         for (String line : sql.split("\n")) {
             String trimmed = line.trim();
@@ -244,7 +251,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
     }
 
     private int seedBindingCount(UUID roleId) {
-        return jdbcTemplate.queryForObject("SELECT count(*) FROM role_bindings"
+        return jdbcTemplate.queryForObject("SELECT count(*) FROM grant_preset_bindings"
                 + " WHERE subject_type='agent_principal' AND is_seed AND scope_type='instance'"
                 + " AND role_id=CAST(? AS UUID)", Integer.class, roleId.toString());
     }
@@ -254,7 +261,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         for (UUID agentId : agentIds) {
             total += jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                     + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                    + " AND source='role' AND permissions @> "
+                    + " AND source='preset' AND permissions @> "
                     + "'[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb", Integer.class,
                     agentId.toString());
         }
@@ -270,7 +277,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
     private void insertLegacyForbiddenGrant(UUID agentId, UUID granterId) {
         Integer existing = jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                         + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                        + " AND source='role' AND permissions @> "
+                        + " AND source='preset' AND permissions @> "
                         + "'[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb",
                 Integer.class, agentId.toString());
         if (existing != null && existing > 0) {
@@ -280,7 +287,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
                         + " subject_id, permissions, source, scope_type, scope_id, read_state)"
                         + " VALUES (gen_random_uuid(), 'user', CAST(? AS UUID), 'agent_principal',"
                         + " CAST(? AS UUID), '[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb,"
-                        + " 'role', 'instance', NULL, 'read')",
+                        + " 'preset', 'instance', NULL, 'read')",
                 granterId.toString(), agentId.toString());
     }
 

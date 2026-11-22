@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.repository;
 
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -11,18 +11,18 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
-public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBinding, UUID> {
+public interface GrantPresetBindingRepository extends JpaRepository<GrantPresetBinding, UUID> {
 
-    List<AccessRoleBinding> findBySubjectTypeAndSubjectId(String subjectType, UUID subjectId);
+    List<GrantPresetBinding> findBySubjectTypeAndSubjectId(String subjectType, UUID subjectId);
 
-    List<AccessRoleBinding> findBySubjectTypeAndSubjectIdAndScopeType(String subjectType, UUID subjectId,
+    List<GrantPresetBinding> findBySubjectTypeAndSubjectIdAndScopeType(String subjectType, UUID subjectId,
                                                                      String scopeType);
 
     /** PLAN-0610 W3-2a: the instance-scope binding set of the admin API. */
-    List<AccessRoleBinding> findBySubjectTypeAndScopeType(String subjectType, String scopeType);
+    List<GrantPresetBinding> findBySubjectTypeAndScopeType(String subjectType, String scopeType);
 
     /** PLAN-0610 W3-2a: the workspace-scope binding set of one workspace. */
-    List<AccessRoleBinding> findBySubjectTypeAndScopeTypeAndScopeId(String subjectType,
+    List<GrantPresetBinding> findBySubjectTypeAndScopeTypeAndScopeId(String subjectType,
                                                                    String scopeType, UUID scopeId);
 
     /**
@@ -32,7 +32,7 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
      * pattern at the workspace-reach gate: that form materialised every
      * {@code agent_principal} binding of the workspace (O(all bindings of the instance)) to answer
      * a yes/no question, and the table has no index leading with {@code scope_type/scope_id}, so
-     * the planner could only use {@code idx_role_bindings_subject(subject_type, subject_id)} as an
+     * the planner could only use {@code idx_grant_preset_bindings_subject(subject_type, subject_id)} as an
      * equality prefix and discard the rest with a filter (measured: {@code rows=80},
      * {@code Rows Removed by Filter: 79}). The exists form is answered by the same index with a
      * 1-row table lookup and no collection allocation.
@@ -40,11 +40,11 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
     boolean existsBySubjectTypeAndSubjectIdAndScopeTypeAndScopeId(String subjectType, UUID subjectId,
                                                                  String scopeType, UUID scopeId);
 
-    List<AccessRoleBinding> findByRoleId(UUID roleId);
+    List<GrantPresetBinding> findByRoleId(UUID roleId);
 
     long countByRoleId(UUID roleId);
 
-    List<AccessRoleBinding> findByRoleIdIn(Collection<UUID> roleIds);
+    List<GrantPresetBinding> findByRoleIdIn(Collection<UUID> roleIds);
 
     /**
      * PLAN-0610 W1c (round-3 P1-3): how many <b>usable</b> user subjects hold this role at instance
@@ -56,7 +56,7 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
      * soft-deleted rows are excluded: such an account can never log in, so counting it would claim
      * "someone usable is still super admin" for an unusable row.</p>
      */
-    @Query("select count(b) from AccessRoleBinding b join User u on u.id = b.subjectId "
+    @Query("select count(b) from GrantPresetBinding b join User u on u.id = b.subjectId "
             + "where b.roleId = :roleId and b.scopeType = 'instance' "
             + "and b.subjectType = 'user' and u.status = :status and u.deletedAt is null")
     long countActiveUserBindingsForRole(@Param("roleId") UUID roleId,
@@ -66,7 +66,7 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
      * PLAN-0610 W4a: how many usable accounts hold one of these instance roles. Replaces the
      * {@code users.role} counter the last-admin guard used before the column stopped being mapped.
      */
-    @Query("select count(distinct b.subjectId) from AccessRoleBinding b join User u "
+    @Query("select count(distinct b.subjectId) from GrantPresetBinding b join User u "
             + "on u.id = b.subjectId where b.subjectType = 'user' and b.scopeType = 'instance' "
             + "and b.roleId in :roleIds and u.status = :status and u.deletedAt is null")
     long countActiveUsersWithInstanceRoles(@Param("roleIds") java.util.Collection<UUID> roleIds,
@@ -78,7 +78,7 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
      * binding API cannot leave a workspace without an owner (the member API already refuses to
      * remove or downgrade the last owner through {@code WorkspaceMemberService}).
      */
-    @Query("select count(b) from AccessRoleBinding b join User u on u.id = b.subjectId "
+    @Query("select count(b) from GrantPresetBinding b join User u on u.id = b.subjectId "
             + "where b.roleId = :roleId and b.scopeType = 'workspace' and b.scopeId = :scopeId "
             + "and b.subjectType = 'user' and u.status = :status and u.deletedAt is null")
     long countActiveUserBindingsForRoleInWorkspace(@Param("roleId") UUID roleId,
@@ -86,10 +86,10 @@ public interface AccessRoleBindingRepository extends JpaRepository<AccessRoleBin
                                                    @Param("status") UserStatus status);
 
     @Modifying
-    @Query("delete from AccessRoleBinding b where b.subjectType = :subjectType and b.subjectId = :subjectId")
+    @Query("delete from GrantPresetBinding b where b.subjectType = :subjectType and b.subjectId = :subjectId")
     void deleteBySubject(@Param("subjectType") String subjectType, @Param("subjectId") UUID subjectId);
 
     @Modifying
-    @Query("delete from AccessRoleBinding b where b.roleId = :roleId")
+    @Query("delete from GrantPresetBinding b where b.roleId = :roleId")
     void deleteByRoleId(@Param("roleId") UUID roleId);
 }

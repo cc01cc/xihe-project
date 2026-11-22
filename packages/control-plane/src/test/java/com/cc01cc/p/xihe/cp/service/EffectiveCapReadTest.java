@@ -82,20 +82,20 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
 
     @AfterEach
     void cleanFixtures() {
-        // task-57 fixture first: org_unit_members / org_unit_role_bindings hold RESTRICT FKs onto
+        // task-57 fixture first: org_unit_members / org_unit_preset_bindings hold RESTRICT FKs onto
         // org_units and roles, so the unit tree has to go before the role rows below.
         if (orgUnitId != null) {
             jdbcTemplate.update("DELETE FROM org_unit_members WHERE org_unit_id = ?", orgUnitId);
-            jdbcTemplate.update("DELETE FROM org_unit_role_bindings WHERE org_unit_id = ?", orgUnitId);
+            jdbcTemplate.update("DELETE FROM org_unit_preset_bindings WHERE org_unit_id = ?", orgUnitId);
             jdbcTemplate.update("DELETE FROM org_units WHERE id = ?", orgUnitId);
         }
         if (orgUnitRoleId != null) {
-            jdbcTemplate.update("DELETE FROM role_permissions WHERE role_id = ?", orgUnitRoleId);
-            jdbcTemplate.update("DELETE FROM roles WHERE id = ?", orgUnitRoleId);
+            jdbcTemplate.update("DELETE FROM grant_preset_atoms WHERE role_id = ?", orgUnitRoleId);
+            jdbcTemplate.update("DELETE FROM grant_presets WHERE id = ?", orgUnitRoleId);
         }
         if (workspaceRoleId != null) {
-            jdbcTemplate.update("DELETE FROM role_bindings WHERE role_id = ?", workspaceRoleId);
-            jdbcTemplate.update("DELETE FROM roles WHERE id = ?", workspaceRoleId);
+            jdbcTemplate.update("DELETE FROM grant_preset_bindings WHERE role_id = ?", workspaceRoleId);
+            jdbcTemplate.update("DELETE FROM grant_presets WHERE id = ?", workspaceRoleId);
         }
         if (workspaceId != null && principalId != null) {
             // 幂等：task-193 选项 0 的快照用例会主动删掉这条 binding 行（删行正是被测状态）。
@@ -449,11 +449,11 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
 
     private void bindWorkspaceScopedRoleToPrincipal() {
         workspaceRoleId = UUID.randomUUID();
-        jdbcTemplate.update("INSERT INTO roles (id, name, display_name, description, is_system)"
+        jdbcTemplate.update("INSERT INTO grant_presets (id, name, display_name, description, is_system)"
                         + " VALUES (?, ?, ?, ?, FALSE)",
                 workspaceRoleId, "TEST_ECR_" + workspaceRoleId.toString().substring(0, 8).toUpperCase(),
                 "Test workspace role", "test-only role for effective-cap role-binding source");
-        jdbcTemplate.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        jdbcTemplate.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " scope_id, granted_at) VALUES (gen_random_uuid(), ?, 'agent_principal', ?,"
                         + " 'workspace', ?, NOW())",
                 workspaceRoleId, principalId, workspaceId);
@@ -461,7 +461,7 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
 
     /**
      * task-57: one real org-unit governance chain — unit + membership + role carrying the governance
-     * atom + {@code org_unit_role_bindings} — so the production {@code JdbcOrgUnitGrantSource} feeds
+     * atom + {@code org_unit_preset_bindings} — so the production {@code JdbcOrgUnitGrantSource} feeds
      * the expander (which is the path that produced the 500).
      */
     private void bindOrgUnitGovernanceRole() {
@@ -473,13 +473,13 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
         jdbcTemplate.update("INSERT INTO org_unit_members (org_unit_id, member_kind, member_id)"
                 + " VALUES (?, 'agent_principal', ?)", orgUnitId, principalId);
         orgUnitRoleId = UUID.randomUUID();
-        jdbcTemplate.update("INSERT INTO roles (id, name, display_name, description, is_system)"
+        jdbcTemplate.update("INSERT INTO grant_presets (id, name, display_name, description, is_system)"
                         + " VALUES (?, ?, ?, ?, FALSE)",
                 orgUnitRoleId, "TEST_T57_" + orgUnitRoleId.toString().substring(0, 8).toUpperCase(),
                 "Org-unit governance role", "task-57 fixture");
-        jdbcTemplate.update("INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+        jdbcTemplate.update("INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)"
                 + " VALUES (?, ?, '*')", orgUnitRoleId, OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNITS);
-        jdbcTemplate.update("INSERT INTO org_unit_role_bindings (id, org_unit_id, role_id, granted_at)"
+        jdbcTemplate.update("INSERT INTO org_unit_preset_bindings (id, org_unit_id, role_id, granted_at)"
                 + " VALUES (gen_random_uuid(), ?, ?, NOW())", orgUnitId, orgUnitRoleId);
     }
 

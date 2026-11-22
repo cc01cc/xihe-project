@@ -43,10 +43,10 @@ public final class AgentPrincipalTestSupport {
         public AgentPrincipalService service() {
             // PLAN-0629（2026-11-04 裁定）：建 principal 总会解析默认实例角色并写角色绑定，
             // 纯 Mockito 测试必须提供角色目录桩（补齐新依赖，不是放宽校验）。
-            com.cc01cc.p.xihe.cp.repository.AccessRoleRepository roles =
-                    mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class);
-            com.cc01cc.p.xihe.cp.entity.AccessRole fixtureRole =
-                    new com.cc01cc.p.xihe.cp.entity.AccessRole(UUID.randomUUID(), "USER", "User",
+            com.cc01cc.p.xihe.cp.repository.GrantPresetRepository roles =
+                    mock(com.cc01cc.p.xihe.cp.repository.GrantPresetRepository.class);
+            com.cc01cc.p.xihe.cp.entity.GrantPreset fixtureRole =
+                    new com.cc01cc.p.xihe.cp.entity.GrantPreset(UUID.randomUUID(), "USER", "User",
                             "test fixture role", true);
             when(roles.findByName(any())).thenReturn(java.util.Optional.of(fixtureRole));
             when(roles.findById(any())).thenReturn(java.util.Optional.of(fixtureRole));
@@ -59,10 +59,10 @@ public final class AgentPrincipalTestSupport {
                     new ObjectMapper(), mock(AgentTemplateService.class),
                     mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class),
                     // PLAN-0629: role bindings are the permission source, not the scope field.
-                    mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
+                    mock(com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository.class),
                     roles,
-                    mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
-                    mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
+                    mock(com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository.class),
+                    mock(com.cc01cc.p.xihe.cp.policy.PresetGrantMaterializer.class),
                     // PLAN-0651 T1.4: default-deny fake — a test that needs the management atom
                     // must declare it (see DeclaredAtomAuthority's coverage contract).
                     new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority(),

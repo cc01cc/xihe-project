@@ -2,16 +2,16 @@ package com.cc01cc.p.xihe.cp.auth;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.BindingAdminService;
 import com.cc01cc.p.xihe.cp.policy.GrantabilityGuard;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
-import com.cc01cc.p.xihe.cp.policy.RoleAdminViews;
-import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.policy.GrantPresetAdminViews;
+import com.cc01cc.p.xihe.cp.policy.SystemGrantPresetCatalog;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * invariant while allowing a transfer-then-revoke flow.
  *
  * <p>The H2 lane is sufficient for the capability projection: {@code AuthzContext} reads
- * {@code role_bindings} + {@code role_permissions}, both JPA tables. The binding surface is called
+ * {@code grant_preset_bindings} + {@code grant_preset_atoms}, both JPA tables. The binding surface is called
  * with {@link RequesterAuthority} and {@link GrantabilityGuard} replaced, because action atoms need
  * the org-unit tables that only the PostgreSQL lane has; the guard under test here is the last-admin
  * invariant in {@link BindingAdminService}, not the MANAGE_ROLES gate.</p>
@@ -72,7 +72,7 @@ class FirstAccountAdminBootstrapIntegrationTest extends AbstractH2Test {
     private UserRepository users;
 
     @Autowired
-    private AccessRoleBindingRepository bindings;
+    private GrantPresetBindingRepository bindings;
 
     @Autowired
     private AuthorizationGrantRepository grants;
@@ -103,7 +103,7 @@ class FirstAccountAdminBootstrapIntegrationTest extends AbstractH2Test {
         assertEquals(first, instanceOwnershipService.current().ownerUserId(),
                 "provider-connection seeding needs the instance_owner pointer to be set");
         assertTrue(instanceBindings(first).stream()
-                        .anyMatch(binding -> SystemAccessRoleCatalog.SUPER_ADMIN_ID
+                        .anyMatch(binding -> SystemGrantPresetCatalog.SUPER_ADMIN_ID
                                 .equals(binding.getRoleId())),
                 "the capability comes from a role binding, not a users.role column");
 
@@ -126,7 +126,7 @@ class FirstAccountAdminBootstrapIntegrationTest extends AbstractH2Test {
                 "only the first account is bootstrapped; later registrations stay USER");
         assertFalse(authzContext.capabilitiesFor(second).isInstanceSuper());
         assertTrue(instanceBindings(second).stream()
-                        .anyMatch(binding -> SystemAccessRoleCatalog.USER_ID
+                        .anyMatch(binding -> SystemGrantPresetCatalog.USER_ID
                                 .equals(binding.getRoleId())),
                 "the second account still gets its normal USER tier");
     }
@@ -137,13 +137,13 @@ class FirstAccountAdminBootstrapIntegrationTest extends AbstractH2Test {
 
         CpApiException denied = assertThrows(CpApiException.class,
                 () -> replaceInstanceBindings(List.of(
-                        new RoleAdminViews.BindingInput(null, first,
-                                SystemAccessRoleCatalog.USER_ID))));
+                        new GrantPresetAdminViews.BindingInput(null, first,
+                                SystemGrantPresetCatalog.USER_ID))));
 
         assertEquals(HttpStatus.CONFLICT, denied.getStatus());
         assertEquals("LAST_SUPER_ADMIN", denied.getCode());
         assertTrue(instanceBindings(first).stream()
-                        .anyMatch(binding -> SystemAccessRoleCatalog.SUPER_ADMIN_ID
+                        .anyMatch(binding -> SystemGrantPresetCatalog.SUPER_ADMIN_ID
                                 .equals(binding.getRoleId())),
                 "the refused replacement must roll back and keep the administrator binding");
     }
@@ -154,20 +154,20 @@ class FirstAccountAdminBootstrapIntegrationTest extends AbstractH2Test {
         UUID second = register("second-user@test.com");
 
         replaceInstanceBindings(List.of(
-                new RoleAdminViews.BindingInput(null, first, SystemAccessRoleCatalog.ADMIN_ID),
-                new RoleAdminViews.BindingInput(null, second, SystemAccessRoleCatalog.USER_ID),
-                new RoleAdminViews.BindingInput(null, second,
-                        SystemAccessRoleCatalog.SUPER_ADMIN_ID)));
+                new GrantPresetAdminViews.BindingInput(null, first, SystemGrantPresetCatalog.ADMIN_ID),
+                new GrantPresetAdminViews.BindingInput(null, second, SystemGrantPresetCatalog.USER_ID),
+                new GrantPresetAdminViews.BindingInput(null, second,
+                        SystemGrantPresetCatalog.SUPER_ADMIN_ID)));
         assertTrue(authzContext.capabilitiesFor(first).isInstanceAdmin(),
                 "the original administrator is kept on ADMIN during the handover");
         assertTrue(authzContext.capabilitiesFor(second).isInstanceAdmin(),
                 "the delegated account now holds cap:instance:admin");
 
         replaceInstanceBindings(List.of(
-                new RoleAdminViews.BindingInput(null, first, SystemAccessRoleCatalog.USER_ID),
-                new RoleAdminViews.BindingInput(null, second, SystemAccessRoleCatalog.USER_ID),
-                new RoleAdminViews.BindingInput(null, second,
-                        SystemAccessRoleCatalog.SUPER_ADMIN_ID)));
+                new GrantPresetAdminViews.BindingInput(null, first, SystemGrantPresetCatalog.USER_ID),
+                new GrantPresetAdminViews.BindingInput(null, second, SystemGrantPresetCatalog.USER_ID),
+                new GrantPresetAdminViews.BindingInput(null, second,
+                        SystemGrantPresetCatalog.SUPER_ADMIN_ID)));
 
         assertFalse(authzContext.capabilitiesFor(first).isInstanceAdmin(),
                 "after the transfer the original administrator can be revoked");
@@ -186,12 +186,12 @@ class FirstAccountAdminBootstrapIntegrationTest extends AbstractH2Test {
         return UUID.fromString(user.get("id").toString());
     }
 
-    private List<AccessRoleBinding> instanceBindings(UUID userId) {
+    private List<GrantPresetBinding> instanceBindings(UUID userId) {
         return bindings.findBySubjectTypeAndSubjectIdAndScopeType(
                 AuthzContext.SUBJECT_USER, userId, "instance");
     }
 
-    private void replaceInstanceBindings(List<RoleAdminViews.BindingInput> desired) {
+    private void replaceInstanceBindings(List<GrantPresetAdminViews.BindingInput> desired) {
         bindingAdminService.replace("instance", null, desired);
     }
 }

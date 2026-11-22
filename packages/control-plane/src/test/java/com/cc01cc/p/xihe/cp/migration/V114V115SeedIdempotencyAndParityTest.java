@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       staying equal is not enough (a delete+insert would look identical), so the affected-row
  *       count of the second run is asserted to be 0.</li>
  *   <li><b>Parity</b> against a <b>hard-coded</b> expectation table — not against
- *       {@code SystemAccessRoleCatalog}, which would compare the code with itself. The failure
+ *       {@code SystemGrantPresetCatalog}, which would compare the code with itself. The failure
  *       message names the atom, the role and the direction ({@code code_has_db_lacks} /
  *       {@code db_has_code_lacks}).</li>
  *   <li><b>The parity check itself is not vacuous</b>: a deliberately tampered expectation must be
@@ -69,7 +69,7 @@ class V114V115SeedIdempotencyAndParityTest {
 
     @BeforeAll
     static void migrateToHead() throws SQLException {
-        // empty-db-required: 本类依赖「fresh Flyway-only 库无 role_bindings」前提（快照克隆带 SUPER_ADMIN binding）
+        // empty-db-required: 本类依赖「fresh Flyway-only 库无 grant_preset_bindings」前提（快照克隆带 SUPER_ADMIN binding）
         postgres = TestDatabaseProvider.emptyDatabase("plan0651_t2_2_b3");
         Flyway.configure()
                 .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
@@ -86,7 +86,7 @@ class V114V115SeedIdempotencyAndParityTest {
 
     @Test
     void reRunningTheSeedInsertsZeroRowsAndLeavesEveryCountUnchanged() throws Exception {
-        // A fresh Flyway-only database has no role_bindings, so a re-run would be vacuous for both
+        // A fresh Flyway-only database has no grant_preset_bindings, so a re-run would be vacuous for both
         // backfills (they would insert nothing on the FIRST run too). Seed one representative subject
         // per face — instance scope (ADMIN: V114 §2 + V115 §2a) and workspace scope (WS_OWNER:
         // V115 §2b) — so the first replay really inserts rows and the second replay is what the guard
@@ -98,7 +98,7 @@ class V114V115SeedIdempotencyAndParityTest {
         insertBinding(ADMIN_ID, subject, "instance", null);
         insertBinding(WS_OWNER_ID, subject, "workspace", workspace);
 
-        long rolePermissionsBefore = count("SELECT count(*) FROM role_permissions");
+        long rolePermissionsBefore = count("SELECT count(*) FROM grant_preset_atoms");
 
         int affectedOnFirstReplay = executeMigrationAgain("V114__plan0651_instance_face_atoms.sql")
                 + executeMigrationAgain("V115__plan0651_workspace_face_atoms.sql");
@@ -108,10 +108,10 @@ class V114V115SeedIdempotencyAndParityTest {
                         + " workspace-face atoms at instance scope (V115 §2a) + 5 at workspace scope"
                         + " (V115 §2b) = 13 rows on the first replay");
         assertEquals(8, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject
-                        + "' AND source = 'role' AND scope_type = 'instance'"),
+                        + "' AND source = 'preset' AND scope_type = 'instance'"),
                 "instance scope: N2/N3/N4 (V114) + N5–N9 (V115 §2a) = 8");
         assertEquals(5, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject
-                        + "' AND source = 'role' AND scope_type = 'workspace'"),
+                        + "' AND source = 'preset' AND scope_type = 'workspace'"),
                 "workspace scope: WS_OWNER's five atoms (V115 §2b) = 5");
         long grantsAfterFirstReplay = count("SELECT count(*) FROM grants");
 
@@ -123,8 +123,8 @@ class V114V115SeedIdempotencyAndParityTest {
                         + " what make the seed re-runnable; a non-zero count means one of them is"
                         + " missing (a delete+insert would also keep the totals equal, which is why"
                         + " the affected-row count, not the totals, is the assertion)");
-        assertEquals(rolePermissionsBefore, count("SELECT count(*) FROM role_permissions"),
-                "role_permissions row count must not move on a re-run");
+        assertEquals(rolePermissionsBefore, count("SELECT count(*) FROM grant_preset_atoms"),
+                "grant_preset_atoms row count must not move on a re-run");
         assertEquals(grantsAfterFirstReplay, count("SELECT count(*) FROM grants"),
                 "grants row count must not move on the second re-run (no duplicate materialization)");
     }
@@ -242,7 +242,7 @@ class V114V115SeedIdempotencyAndParityTest {
         UUID workspace = UUID.randomUUID();
         insertUser(subject);
         insertHostWorkspace(workspace, subject);
-        // uq_role_bindings forbids binding the SAME role twice, so the real overlap risk is two
+        // uq_grant_preset_bindings forbids binding the SAME role twice, so the real overlap risk is two
         // different roles granting the same atoms in one workspace: WS_OWNER (N5..N9) and WS_EDITOR
         // (N6, N7, N9) share three atoms. Without DISTINCT ON (subject_id, scope_id, atom) the real
         // §2b backfill would write 5 + 3 = 8 rows and duplicate the shared three.
@@ -273,7 +273,7 @@ class V114V115SeedIdempotencyAndParityTest {
         Set<String> atoms = new LinkedHashSet<>();
         try (Statement statement = connection.createStatement();
              ResultSet rows = statement.executeQuery(
-                     "SELECT action_class FROM role_permissions WHERE role_id = '" + roleId + "'")) {
+                     "SELECT action_class FROM grant_preset_atoms WHERE role_id = '" + roleId + "'")) {
             while (rows.next()) {
                 atoms.add(rows.getString(1));
             }
@@ -300,7 +300,7 @@ class V114V115SeedIdempotencyAndParityTest {
                 + "', 'b3-" + id + "@test.local', 'x', 'b3" + id.toString().substring(0, 8) + "')");
     }
 
-    /** role_bindings.scope_id has a FK to workspaces, so the dedupe fixture needs a real row. */
+    /** grant_preset_bindings.scope_id has a FK to workspaces, so the dedupe fixture needs a real row. */
     private static void insertHostWorkspace(UUID id, UUID creator) throws SQLException {
         // direct_attach requires a host_path (check constraint ck_workspaces_direct_attach_path).
         execute("INSERT INTO workspaces (id, name, storage_backend, storage_mode, host_path,"
@@ -311,7 +311,7 @@ class V114V115SeedIdempotencyAndParityTest {
 
     private static void insertBinding(UUID roleId, UUID subjectId, String scopeType, UUID scopeId)
             throws SQLException {
-        execute("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        execute("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '" + roleId
                 + "', 'user', '" + subjectId + "', '" + scopeType + "', "
                 + (scopeId == null ? "NULL" : "'" + scopeId + "'") + ", '" + subjectId + "')");

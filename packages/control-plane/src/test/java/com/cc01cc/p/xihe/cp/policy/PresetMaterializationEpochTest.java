@@ -1,13 +1,13 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
-import com.cc01cc.p.xihe.cp.entity.AccessRole;
-import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.GrantPreset;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
-import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -27,28 +27,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * that changed the bindings commits, and a role-permission edit must bump the epoch of every
  * affected user subject.
  *
- * <p>Before this fix {@code RoleGrantMaterializer} invalidated inside the transaction. A concurrent
+ * <p>Before this fix {@code PresetGrantMaterializer} invalidated inside the transaction. A concurrent
  * request could then re-fill the cache from the pre-commit state and the stale entry lived for the
  * whole TTL ({@code cp.capability-cache-ttl-ms}, 30s) — the opposite of the 「不超过一次 lookup」
- * contract {@link AuthzContext} documents. Separately, {@code materializeRole} (role permission
+ * contract {@link AuthzContext} documents. Separately, {@code materializePreset} (role permission
  * edit) bumped nothing, so an access token issued before the edit kept authenticating.</p>
  */
-class RoleMaterializationEpochTest extends AbstractH2Test {
+class PresetMaterializationEpochTest extends AbstractH2Test {
 
     @Autowired private UserRepository userRepository;
-    @Autowired private AccessRoleRepository accessRoleRepository;
-    @Autowired private AccessRolePermissionRepository permissionRepository;
-    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private GrantPresetRepository accessRoleRepository;
+    @Autowired private GrantPresetAtomRepository permissionRepository;
+    @Autowired private GrantPresetBindingRepository bindingRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
-    @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private PresetGrantMaterializer materializer;
     @Autowired private AuthzContext authzContext;
     @Autowired private PlatformTransactionManager transactionManager;
 
     @Test
     void capabilityCacheIsInvalidatedImmediatelyAndAgainAfterCompletion() {
         User user = user();
-        AccessRoleBinding binding = bindingRepository.save(new AccessRoleBinding(
-                roleId(SystemAccessRoleCatalog.SUPER_ADMIN), "user", user.getId(),
+        GrantPresetBinding binding = bindingRepository.save(new GrantPresetBinding(
+                roleId(SystemGrantPresetCatalog.SUPER_ADMIN), "user", user.getId(),
                 AccessScope.INSTANCE, null, user.getId()));
         materializer.materializeSubject("user", user.getId(), user.getId(), null);
         assertTrue(authzContext.isInstanceSuper(user.getId()), "warm the cache with the real state");
@@ -74,29 +74,29 @@ class RoleMaterializationEpochTest extends AbstractH2Test {
     void rolePermissionEditBumpsTheEpochOfAffectedUserSubjects() {
         User user = user();
         UUID roleId = UUID.randomUUID();
-        accessRoleRepository.save(new AccessRole(roleId, "EPOCH_TEST_" + roleId, "Epoch test",
+        accessRoleRepository.save(new GrantPreset(roleId, "EPOCH_TEST_" + roleId, "Epoch test",
                 "test-only role", false));
-        AccessRolePermission read = permissionRepository.save(new AccessRolePermission(roleId,
+        GrantPresetAtom read = permissionRepository.save(new GrantPresetAtom(roleId,
                 ToolFaceRegistry.ACTION_READ, PermissionAtomCatalog.WILDCARD));
-        bindingRepository.save(new AccessRoleBinding(roleId, "user", user.getId(),
+        bindingRepository.save(new GrantPresetBinding(roleId, "user", user.getId(),
                 AccessScope.WORKSPACE, UUID.randomUUID(), user.getId()));
         materializer.materializeSubject("user", user.getId(), user.getId(), null);
         int epoch = tokenVersion(user.getId());
         assertEquals(1, grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", user.getId(),
-                GrantSources.ROLE).size());
+                GrantSources.PRESET).size());
 
         // The role loses its only atom: the materialized row disappears and the epoch moves.
         permissionRepository.delete(read);
-        materializer.materializeRole(roleId, null, null);
+        materializer.materializePreset(roleId, null, null);
 
         assertTrue(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", user.getId(),
-                GrantSources.ROLE).isEmpty(), "the revoked atom is no longer materialized");
+                GrantSources.PRESET).isEmpty(), "the revoked atom is no longer materialized");
         assertEquals(epoch + 1, tokenVersion(user.getId()),
                 "a change produced by a role edit bumps users.token_version (I4 / V17)");
 
         // A no-op re-materialization must not log the user out.
         int afterBump = tokenVersion(user.getId());
-        materializer.materializeRole(roleId, null, null);
+        materializer.materializePreset(roleId, null, null);
         assertEquals(afterBump, tokenVersion(user.getId()),
                 "an unchanged materialization leaves the epoch alone");
     }
@@ -112,7 +112,7 @@ class RoleMaterializationEpochTest extends AbstractH2Test {
     }
 
     private UUID roleId(String name) {
-        List<AccessRole> roles = List.of(accessRoleRepository.findByName(name).orElseThrow());
+        List<GrantPreset> roles = List.of(accessRoleRepository.findByName(name).orElseThrow());
         return roles.get(0).getId();
     }
 }

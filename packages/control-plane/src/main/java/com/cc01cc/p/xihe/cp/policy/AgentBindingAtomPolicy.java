@@ -1,8 +1,8 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
-import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,9 +23,9 @@ import java.util.UUID;
  * <p>PLAN-0673 M1 (privilege escalation): two write paths must agree on the same rules —</p>
  *
  * <ol>
- *   <li><b>role definition update</b> ({@code RoleAdminService}) — a shared role bound in several
+ *   <li><b>role definition update</b> ({@code GrantPresetAdminService}) — a shared role bound in several
  *       scopes must not gain an atom in a scope its author cannot reach;</li>
- *   <li><b>agent role binding</b> ({@code AgentPrincipalRoleBindingService}) — forbidden atoms and
+ *   <li><b>agent role binding</b> ({@code AgentPrincipalPresetBindingService}) — forbidden atoms and
  *       the principal's workspace cap are independent hard gates.</li>
  * </ol>
  *
@@ -41,11 +41,11 @@ public class AgentBindingAtomPolicy {
 
     private static final Logger logger = LoggerFactory.getLogger(AgentBindingAtomPolicy.class);
 
-    private final AccessRolePermissionRepository permissions;
+    private final GrantPresetAtomRepository permissions;
     private final GrantabilityGuard grantability;
     private final CapResolver caps;
 
-    public AgentBindingAtomPolicy(AccessRolePermissionRepository permissions,
+    public AgentBindingAtomPolicy(GrantPresetAtomRepository permissions,
                                   GrantabilityGuard grantability,
                                   CapResolver caps) {
         this.permissions = permissions;
@@ -61,7 +61,7 @@ public class AgentBindingAtomPolicy {
      */
     public List<String> atomsOf(UUID roleId) {
         List<String> atoms = new ArrayList<>();
-        for (AccessRolePermission permission : permissions.findByIdRoleId(roleId)) {
+        for (GrantPresetAtom permission : permissions.findByIdRoleId(roleId)) {
             if (permission.actionClass() != null) {
                 atoms.add(permission.actionClass());
             }
@@ -70,8 +70,8 @@ public class AgentBindingAtomPolicy {
     }
 
     /** Validate the prospective permission rows (before they have replaced the persisted role). */
-    public void assertAgentBindable(Collection<AccessRolePermission> prospective) {
-        List<String> forbidden = prospective.stream().map(AccessRolePermission::actionClass)
+    public void assertAgentBindable(Collection<GrantPresetAtom> prospective) {
+        List<String> forbidden = prospective.stream().map(GrantPresetAtom::actionClass)
                 .filter(PermissionAtomCatalog.agentPrincipalForbiddenAtoms()::contains)
                 .distinct().sorted().toList();
         if (!forbidden.isEmpty()) {
@@ -82,7 +82,7 @@ public class AgentBindingAtomPolicy {
     }
 
     /** Validate a prospective permission set against a workspace cap. */
-    public void assertWithinCap(UUID principalId, Collection<AccessRolePermission> prospective,
+    public void assertWithinCap(UUID principalId, Collection<GrantPresetAtom> prospective,
                                 UUID workspaceId) {
         if (workspaceId == null) {
             return;
@@ -98,7 +98,7 @@ public class AgentBindingAtomPolicy {
             }
         }
         Set<String> exceeding = new LinkedHashSet<>();
-        prospective.stream().map(AccessRolePermission::actionClass).filter(java.util.Objects::nonNull)
+        prospective.stream().map(GrantPresetAtom::actionClass).filter(java.util.Objects::nonNull)
                 .filter(atom -> !capAtoms.contains(atom)).forEach(exceeding::add);
         if (!exceeding.isEmpty()) {
             throw new CpApiException(HttpStatus.CONFLICT, "ROLE_BINDING_EXCEEDS_CAP",
@@ -209,13 +209,13 @@ public class AgentBindingAtomPolicy {
      * {@code workspace:admin} in one workspace must not add it to an instance-bound role).</p>
      */
     public void assertAddedRowsGrantableInEveryBindingScope(
-            Collection<AccessRolePermission> added, Collection<AccessScope> scopes) {
+            Collection<GrantPresetAtom> added, Collection<AccessScope> scopes) {
         if (added == null || added.isEmpty()) {
             return;
         }
         Set<String> capabilityNames = new LinkedHashSet<>();
         Set<GrantIntersectionEvaluator.PermissionAtom> rows = new LinkedHashSet<>();
-        for (AccessRolePermission row : added) {
+        for (GrantPresetAtom row : added) {
             if (PermissionAtomCatalog.isCapabilityAtom(row.actionClass())) {
                 capabilityNames.add(row.actionClass());
             } else {

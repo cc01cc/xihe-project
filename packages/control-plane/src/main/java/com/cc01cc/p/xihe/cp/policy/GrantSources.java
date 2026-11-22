@@ -19,12 +19,12 @@ import java.util.List;
  */
 public final class GrantSources {
 
-    /** Legacy (pre-V87) user default set; converted to {@link #ROLE} by V88. */
+    /** Legacy (pre-V87) user default set; converted to {@link #PRESET} by V88/V182. */
     public static final String DEFAULT = "default";
     /** Legacy direct grant; user rows are retired by V88, agent rows become credential bindings. */
     public static final String DIRECT = "direct";
-    /** Materialized union of the subject's role bindings ({@link RoleGrantMaterializer}). */
-    public static final String ROLE = "role";
+    /** Materialized union of the subject's preset bindings ({@link PresetGrantMaterializer}). */
+    public static final String PRESET = "preset";
     /** Agent-principal spawn snapshot. */
     public static final String SPAWN = "spawn";
     /** Agent-principal template snapshot. */
@@ -47,7 +47,7 @@ public final class GrantSources {
      * task-124 / DSD-1509: the atoms of a live {@code session_temporary_grants} row. It is not in
      * {@link #EVALUATION_SOURCES} or {@link #WRITABLE_SOURCES} on purpose — this source never lives in
      * {@code grants} (the temporary token has its own table, see V180) and it must never be reconciled
-     * by {@link RoleGrantMaterializer}, which owns the standing sources. The constant exists so a
+     * by {@link PresetGrantMaterializer}, which owns the standing sources. The constant exists so a
      * decision explanation can attribute a matched atom to a temporary token instead of guessing.
      */
     public static final String SESSION_TEMP = "session_temp";
@@ -57,11 +57,11 @@ public final class GrantSources {
      * are absent by design — T1.6 deletes the direct branch instead of keeping a second mechanism.
      */
     public static final List<String> EVALUATION_SOURCES = List.of(
-            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
+            PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
     /** Sources the product code may write after V88 narrows the constraint. */
     public static final List<String> WRITABLE_SOURCES = List.of(
-            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
+            PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
     /**
      * task-87: the {@code org_unit} label of in-memory expanded rows ({@code OrgUnitGrantExpander}).
@@ -85,12 +85,12 @@ public final class GrantSources {
      * absent on purpose: it never lives in {@code grants} (V180 has its own table).
      */
     public static final List<String> PROVENANCE_SOURCES = List.of(
-            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING, ORG_UNIT);
+            PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING, ORG_UNIT);
 
     /**
      * task-87: normalise a stored/expanded {@code source} into a {@link #PROVENANCE_SOURCES} label.
      * Anything outside the vocabulary (including {@code null}) answers {@link #UNKNOWN} — never a
-     * default such as {@link #ROLE}: a wrong label is worse than an honest "unknown".
+     * default such as {@link #PRESET}: a wrong label is worse than an honest "unknown".
      */
     public static String provenanceSource(String raw) {
         return raw != null && PROVENANCE_SOURCES.contains(raw) ? raw : UNKNOWN;
