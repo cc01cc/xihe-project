@@ -5,6 +5,7 @@ import { useAgentStore } from "../agent";
 import { useChatStore } from "../../features/workspace/chat/stores/chat";
 import type { User } from "../../types";
 import type * as apiModule from "../../composables/api";
+import { i18n } from "../../i18n";
 
 vi.mock("../../composables/api", () => ({
     api: {
@@ -73,7 +74,30 @@ describe("useAuthStore", () => {
         const ok = await store.login("bad@test.com", "wrong");
         expect(ok).toBe(false);
         expect(store.isAuthenticated).toBe(false);
-        expect(store.error).toBe("Invalid credentials");
+        expect(store.error).toBe(i18n.global.t("authErrors.loginFailed"));
+        expect(store.error).not.toContain("Invalid credentials");
+        expect(store.lastError).toEqual({ code: "AUTH_UNKNOWN" });
+        expect(store.errorDetail).toBeNull();
+    });
+
+    it("login failure never leaks the backend English detail into the primary copy", async () => {
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.login).mockRejectedValue(
+            Object.assign(new Error("Invalid credentials"), {
+                problem: {
+                    code: "INVALID_CREDENTIALS",
+                    status: 401,
+                    detail: "Invalid credentials",
+                },
+            }),
+        );
+        const ok = await store.login("bad@test.com", "wrong");
+        expect(ok).toBe(false);
+        expect(store.error).toBe(i18n.global.t("authErrors.invalidCredentials"));
+        expect(store.error).not.toContain("Invalid credentials");
+        expect(store.lastError).toEqual({ code: "INVALID_CREDENTIALS" });
+        expect(store.errorDetail).toBe("Invalid credentials");
     });
 
     it("login failure keeps the 429 code and retry delay", async () => {
@@ -87,6 +111,8 @@ describe("useAuthStore", () => {
         );
         const ok = await store.login("a@test.com", "wrong");
         expect(ok).toBe(false);
+        expect(store.error).toBe(i18n.global.t("authErrors.rateLimited"));
+        expect(store.error).not.toContain("Too many login attempts");
         expect(store.lastError).toEqual({
             code: "AUTH_RATE_LIMITED",
             retryAfterSeconds: 12,
@@ -103,6 +129,26 @@ describe("useAuthStore", () => {
         const ok = await store.register("new@test.com", "pass", "New");
         expect(ok).toBe(true);
         expect(store.token).toBe("reg-token");
+    });
+
+    it("register failure localizes EMAIL_TAKEN and keeps the raw detail diagnostic-only", async () => {
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.register).mockRejectedValue(
+            Object.assign(new Error("Email already registered"), {
+                problem: {
+                    code: "EMAIL_TAKEN",
+                    status: 409,
+                    detail: "Email already registered",
+                },
+            }),
+        );
+        const ok = await store.register("taken@test.com", "pass", "Taken");
+        expect(ok).toBe(false);
+        expect(store.error).toBe(i18n.global.t("authErrors.emailTaken"));
+        expect(store.error).not.toContain("Email already registered");
+        expect(store.lastError).toEqual({ code: "EMAIL_TAKEN" });
+        expect(store.errorDetail).toBe("Email already registered");
     });
 
     it("logout clears all state", () => {

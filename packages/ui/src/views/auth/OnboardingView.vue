@@ -19,6 +19,10 @@ const email = ref(""),
     emailTouched = ref(false),
     passwordTouched = ref(false);
 
+/** task-758：错误码与原始 detail 分开渲染；detail 只进可展开区。 */
+const authErrorCode = computed(() => (errorMsg.value ? (auth.lastError?.code ?? null) : null));
+const authErrorDetail = computed(() => (errorMsg.value ? (auth.errorDetail ?? null) : null));
+
 /** Client-side mirror of the CP's email shape; the server stays the authority (400). */
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -53,7 +57,7 @@ async function handleSubmit() {
     if (ok) {
         router.push((route.query.redirect as string) || "/workbench");
     } else {
-        errorMsg.value = auth.error ?? t("onboarding.failed");
+        errorMsg.value = auth.error ?? t("authErrors.registerFailed");
     }
 }
 </script>
@@ -156,7 +160,31 @@ async function handleSubmit() {
                     {{ loading ? t("onboarding.creating") : t("onboarding.submit") }}
                 </button>
 
-                <p v-if="errorMsg" class="text-sm text-destructive text-center">{{ errorMsg }}</p>
+                <div
+                    v-if="errorMsg"
+                    data-testid="auth-error"
+                    class="text-sm text-destructive text-center"
+                >
+                    <p>
+                        {{ errorMsg
+                        }}<span
+                            v-if="authErrorCode"
+                            data-testid="auth-error-code"
+                            class="ml-1 text-xs opacity-80"
+                            >（{{ authErrorCode }}）</span
+                        >
+                    </p>
+                    <details
+                        v-if="authErrorDetail"
+                        data-testid="auth-error-detail"
+                        class="mt-1 text-left text-xs text-muted-foreground"
+                    >
+                        <summary class="cursor-pointer">
+                            {{ t("authErrors.technicalDetails") }}
+                        </summary>
+                        <pre class="mt-1 whitespace-pre-wrap break-all">{{ authErrorDetail }}</pre>
+                    </details>
+                </div>
             </form>
         </div>
     </main>

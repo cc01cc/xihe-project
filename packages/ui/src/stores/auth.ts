@@ -26,9 +26,27 @@ import { useAgentStore } from "./agent";
 import { usePolicyStore } from "./policy";
 import { useCheckpointStore } from "./checkpoint";
 import { EMPTY_USER_CAPABILITIES, type User, type UserCapabilities } from "../types";
+import { i18n } from "../i18n";
+import { problemDetailText } from "../lib/errorMessages";
 // PLAN-0546: SPA-route logout. router/index.ts does not import stores, so this is acyclic.
 import router from "../router";
 import { safeRedirect } from "../router/safeRedirect";
+
+/**
+ * task-758：认证面稳定错误码 → 本地化文案。**只在这里映射**，不改 `errorMessages.ts`
+ * 的共用 `problemDetailText`（task-755 会统一收口聊天面）。
+ */
+const AUTH_ERROR_KEYS: Record<string, string> = {
+    INVALID_CREDENTIALS: "authErrors.invalidCredentials",
+    AUTH_RATE_LIMITED: "authErrors.rateLimited",
+    USERNAME_INVALID: "authErrors.usernameInvalid",
+    USERNAME_TAKEN: "authErrors.usernameTaken",
+    EMAIL_TAKEN: "authErrors.emailTaken",
+    INVALID_REQUEST: "authErrors.invalidRequest",
+    VALIDATION_FAILED: "authErrors.invalidRequest",
+    FIRST_RUN_ACCOUNT_UNAVAILABLE: "authErrors.firstRunUnavailable",
+    FIRST_RUN_ACCOUNT_ALREADY_DISCLOSED: "authErrors.firstRunDisclosed",
+};
 
 export const useAuthStore = defineStore("auth", () => {
     // Authentication is the only state worth caching. Server is the canonical
@@ -56,6 +74,8 @@ export const useAuthStore = defineStore("auth", () => {
         workspace = ref<ApiWorkspace | null>(readWorkspace()),
         loading = ref(false),
         error = ref<string | null>(null),
+        /** task-758：仅诊断面（可展开区/日志）可见的后端原始 detail。 */
+        errorDetail = ref<string | null>(null),
         lastError = ref<{ code: string; retryAfterSeconds?: number } | null>(null);
 
     const isAuthenticated = computed(() => !!token.value),
@@ -364,6 +384,7 @@ export const useAuthStore = defineStore("auth", () => {
     async function login(identifier: string, password: string) {
         loading.value = true;
         error.value = null;
+        errorDetail.value = null;
         lastError.value = null;
         try {
             const res = await api.login(identifier, password);
@@ -374,10 +395,7 @@ export const useAuthStore = defineStore("auth", () => {
             clearSessionCaches();
             return true;
         } catch (e) {
-            const msg = e instanceof Error ? e.message : "Login failed";
-            logger.error("Login failed: " + msg);
-            error.value = msg;
-            lastError.value = errorDetails(e);
+            applyAuthError(e, "authErrors.loginFailed", "Login");
             return false;
         } finally {
             loading.value = false;
@@ -388,6 +406,7 @@ export const useAuthStore = defineStore("auth", () => {
     async function register(email: string, password: string, name: string, username?: string) {
         loading.value = true;
         error.value = null;
+        errorDetail.value = null;
         lastError.value = null;
         try {
             const res = await api.register(email, password, name, username);
@@ -398,27 +417,35 @@ export const useAuthStore = defineStore("auth", () => {
             clearSessionCaches();
             return true;
         } catch (e) {
-            const msg = e instanceof Error ? e.message : "Registration failed";
-            logger.error("Registration failed: " + msg);
-            error.value = msg;
-            lastError.value = errorDetails(e);
+            applyAuthError(e, "authErrors.registerFailed", "Registration");
             return false;
         } finally {
             loading.value = false;
         }
     }
 
-    /** PLAN-0558: keep the stable Problem code and Retry-After for localized UI copy. */
-    function errorDetails(
-        errorValue: unknown,
-    ): { code: string; retryAfterSeconds?: number } | null {
-        const problem = (errorValue as { problem?: { code?: string } } | null)?.problem;
-        if (!problem?.code) return null;
-        return {
-            code: problem.code,
-            retryAfterSeconds: (errorValue as { retryAfterSeconds?: number } | null)
-                ?.retryAfterSeconds,
-        };
+    /**
+     * task-758：把认证失败的 cause 拆成「本地化主文案 + 稳定码 + 诊断 detail」。
+     * 无 problem.code 时合成 `AUTH_HTTP_<status>` / `AUTH_UNKNOWN`，保证码恒非空。
+     */
+    function applyAuthError(cause: unknown, fallbackKey: string, action: string): void {
+        const problem = (
+            cause as {
+                problem?: { code?: unknown; status?: unknown; detail?: unknown };
+            } | null
+        )?.problem;
+        const rawCode = typeof problem?.code === "string" ? problem.code.trim() : "";
+        const status = typeof problem?.status === "number" ? problem.status : undefined;
+        const code = rawCode || (status ? `AUTH_HTTP_${status}` : "AUTH_UNKNOWN");
+        const key = AUTH_ERROR_KEYS[code];
+        const copy = code === "API_ERROR" || !key ? i18n.global.t(fallbackKey) : i18n.global.t(key);
+        const detail = problemDetailText(cause, "") || null;
+        const retryAfterSeconds = (cause as { retryAfterSeconds?: number } | null)
+            ?.retryAfterSeconds;
+        logger.error(`${action} failed [${code}] ${detail ?? copy}`);
+        error.value = copy;
+        errorDetail.value = detail;
+        lastError.value = retryAfterSeconds === undefined ? { code } : { code, retryAfterSeconds };
     }
 
     /**
@@ -489,6 +516,7 @@ export const useAuthStore = defineStore("auth", () => {
         user.value = null;
         workspace.value = null;
         error.value = null;
+        errorDetail.value = null;
         lastError.value = null;
         // PLAN-0651 T4.2: atom projection belongs to the signed-out subject.
         clearSelfPermissions();
@@ -684,6 +712,7 @@ export const useAuthStore = defineStore("auth", () => {
         workspace,
         loading,
         error,
+        errorDetail,
         lastError,
         isAuthenticated,
         userName,

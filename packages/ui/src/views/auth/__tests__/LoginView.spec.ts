@@ -6,6 +6,7 @@ const { authMock, pushMock, configMock, routeMock } = vi.hoisted(() => ({
     authMock: {
         login: vi.fn<(email: string, password: string) => Promise<boolean>>(),
         error: null as string | null,
+        errorDetail: null as string | null,
         lastError: null as { code: string; retryAfterSeconds?: number } | null,
         isAdmin: false,
     },
@@ -25,9 +26,11 @@ vi.mock("vue-i18n", () => ({
         t: (key: string, params?: Record<string, unknown>) =>
             key === "onboarding.firstRunEntry"
                 ? "查看首启管理员账号"
-                : params
-                  ? `${key} ${JSON.stringify(params)}`
-                  : key,
+                : key === "authErrors.technicalDetails"
+                  ? "技术详情"
+                  : params
+                    ? `${key} ${JSON.stringify(params)}`
+                    : key,
     }),
 }));
 
@@ -52,6 +55,7 @@ async function fillAndSubmit(wrapper: ReturnType<typeof mountView>) {
 beforeEach(() => {
     authMock.login.mockReset();
     authMock.error = null;
+    authMock.errorDetail = null;
     authMock.lastError = null;
     authMock.isAdmin = false;
     pushMock.mockReset();
@@ -130,5 +134,28 @@ describe("LoginView submission lock", () => {
 
         expect(wrapper.text()).toContain("login.rateLimitedSeconds");
         expect(wrapper.text()).toContain("12");
+    });
+
+    it("shows localized auth copy + code, and keeps the raw detail in the disclosure", async () => {
+        authMock.login.mockResolvedValue(false);
+        authMock.error = "邮箱/用户名或密码不正确";
+        authMock.lastError = { code: "INVALID_CREDENTIALS" };
+        authMock.errorDetail = "Invalid credentials";
+        const wrapper = mountView();
+
+        await fillAndSubmit(wrapper);
+        await flushPromises();
+
+        const alert = wrapper.get('[data-testid="auth-error"]');
+        expect(alert.get("p").text()).toContain("邮箱/用户名或密码不正确");
+        expect(alert.get('[data-testid="auth-error-code"]').text()).toContain(
+            "INVALID_CREDENTIALS",
+        );
+        // 英文原文不得出现在主文案，只能在技术详情里。
+        expect(alert.get("p").text()).not.toContain("Invalid credentials");
+        expect(alert.get('[data-testid="auth-error-detail"] pre').text()).toBe(
+            "Invalid credentials",
+        );
+        expect(alert.text()).not.toMatch(/\b(workspace|auth|settings|chat)\./);
     });
 });

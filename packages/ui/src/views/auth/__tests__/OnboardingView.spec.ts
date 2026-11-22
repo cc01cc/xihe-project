@@ -6,6 +6,8 @@ const { authMock, pushMock, routeMock } = vi.hoisted(() => ({
     authMock: {
         register: vi.fn<(email: string, password: string, name: string) => Promise<boolean>>(),
         error: null as string | null,
+        errorDetail: null as string | null,
+        lastError: null as { code: string; retryAfterSeconds?: number } | null,
     },
     pushMock: vi.fn<(location: unknown) => Promise<unknown>>(),
     routeMock: { query: {} as Record<string, string> },
@@ -18,7 +20,12 @@ vi.mock("vue-router", () => ({
 }));
 vi.mock("vue-i18n", () => ({
     useI18n: () => ({
-        t: (key: string) => (key === "onboarding.firstRunTitle" ? "首启管理员账号" : key),
+        t: (key: string) =>
+            key === "onboarding.firstRunTitle"
+                ? "首启管理员账号"
+                : key === "authErrors.technicalDetails"
+                  ? "技术详情"
+                  : key,
     }),
 }));
 
@@ -39,6 +46,8 @@ beforeEach(() => {
     authMock.register.mockReset();
     authMock.register.mockResolvedValue(true);
     authMock.error = null;
+    authMock.errorDetail = null;
+    authMock.lastError = null;
     pushMock.mockReset();
     routeMock.query = {};
 });
@@ -108,5 +117,28 @@ describe("OnboardingView validation (BL-151)", () => {
         await settle();
         expect(authMock.register).toHaveBeenCalledWith("a@test.com", "s3cret-pass", "");
         expect(pushMock).toHaveBeenCalled();
+    });
+
+    it("localizes register failure + code, keeping the raw detail in the disclosure", async () => {
+        authMock.register.mockResolvedValue(false);
+        authMock.error = "该邮箱已注册，请直接登录或使用其他邮箱";
+        authMock.lastError = { code: "EMAIL_TAKEN" };
+        authMock.errorDetail = "Email already registered";
+        const wrapper = mountView();
+        await settle();
+
+        await wrapper.find("#email").setValue("taken@test.com");
+        await wrapper.find("#password").setValue("s3cret-pass");
+        await wrapper.find("form").trigger("submit");
+        await settle();
+
+        const alert = wrapper.get('[data-testid="auth-error"]');
+        expect(alert.get("p").text()).toContain("该邮箱已注册");
+        expect(alert.get('[data-testid="auth-error-code"]').text()).toContain("EMAIL_TAKEN");
+        expect(alert.get("p").text()).not.toContain("Email already registered");
+        expect(alert.get('[data-testid="auth-error-detail"] pre').text()).toBe(
+            "Email already registered",
+        );
+        expect(alert.text()).not.toMatch(/\b(workspace|auth|settings|chat)\./);
     });
 });

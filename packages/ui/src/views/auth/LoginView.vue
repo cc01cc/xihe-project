@@ -20,6 +20,10 @@ const identifier = ref(""),
     phase = ref<"idle" | "submitting" | "entering">("idle"),
     busy = computed(() => phase.value !== "idle");
 
+/** task-758：错误码与原始 detail 分开渲染；detail 只进可展开区。 */
+const authErrorCode = computed(() => (errorMsg.value ? (auth.lastError?.code ?? null) : null));
+const authErrorDetail = computed(() => (errorMsg.value ? (auth.errorDetail ?? null) : null));
+
 function rateLimitMessage(): string | null {
     if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;
     const seconds = auth.lastError.retryAfterSeconds;
@@ -138,7 +142,31 @@ async function handleSubmit() {
                     }}
                 </button>
 
-                <p v-if="errorMsg" class="text-sm text-destructive text-center">{{ errorMsg }}</p>
+                <div
+                    v-if="errorMsg"
+                    data-testid="auth-error"
+                    class="text-sm text-destructive text-center"
+                >
+                    <p>
+                        {{ errorMsg
+                        }}<span
+                            v-if="authErrorCode"
+                            data-testid="auth-error-code"
+                            class="ml-1 text-xs opacity-80"
+                            >（{{ authErrorCode }}）</span
+                        >
+                    </p>
+                    <details
+                        v-if="authErrorDetail"
+                        data-testid="auth-error-detail"
+                        class="mt-1 text-left text-xs text-muted-foreground"
+                    >
+                        <summary class="cursor-pointer">
+                            {{ t("authErrors.technicalDetails") }}
+                        </summary>
+                        <pre class="mt-1 whitespace-pre-wrap break-all">{{ authErrorDetail }}</pre>
+                    </details>
+                </div>
 
                 <p class="text-sm text-center text-muted-foreground">
                     {{ t("login.noAccount") }}
