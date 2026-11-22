@@ -29,7 +29,7 @@ tags:
 
 ## 1. One-sentence conclusion: call it intersection-grant authorization, not a role-based permission system
 
-**Intersection-grant Authorization**: whether a tool call passes depends on whether **(action atom × resource prefix) are both explicitly granted on two axes, and every level of the subject's derivation chain holds that atom**. Default deny. A role is only the channel that materializes atoms into grants; evaluation never reads a role variable.
+**Intersection-grant Authorization**: whether a tool call passes depends on whether **(action atom × resource prefix) are both explicitly granted on two axes, and every level of the subject's derivation chain holds that atom**. Default deny. A grant preset is only the channel that materializes atoms into grants; evaluation never reads a grant-preset variable.
 
 An acceptance sentence: *given a principal, actionClass, and resource, the three intersect non-emptily, the resource prefix covers the real target, and every level of the subject derivation chain holds the atom — only then ALLOW; otherwise DENY.*
 
@@ -43,9 +43,9 @@ Three counterexamples (why it must not be read as a role-based permission system
 
 | Counterexample | Fact | Anchor |
 |---|---|---|
-| Changing a role does not change the authorization surface | A role only materializes atoms into `access_role_permissions`; the evaluation input is the two-field `PermissionAtom(actionClass, resource)`, and `parse` throws `Unknown permission atom field` on a third key | `policy/RoleGrantMaterializer.java:376-393`; `policy/GrantIntersectionEvaluator.java:36-52`, `:46-50` |
-| Capability atoms never enter grants | Platform/instance capability atoms are not grantable actions; materialization returns null and skips them | `policy/RoleGrantMaterializer.java:381-383`; `policy/PermissionAtomCatalog.java:414`, `:419` |
-| Composition is not "multi-role union amplification" | Multiple grants for one subject do union (source labels create no precedence), but after the union the decision still applies resource-prefix coverage and the **write-time** ceiling: a bound cap must not exceed the atom sets held by both the subject and the operator, otherwise 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:152-165`; `service/AgentPrincipalService.java:539-563` |
+| Changing a grant preset does not change the authorization surface | A grant preset only materializes atoms into `grant_preset_atoms`; the evaluation input is the two-field `PermissionAtom(actionClass, resource)`, and `parse` throws `Unknown permission atom field` on a third key | `policy/PresetGrantMaterializer.java:373-393`; `policy/GrantIntersectionEvaluator.java:36-52`, `:46-50` |
+| Capability atoms never enter grants | Platform/instance capability atoms are not grantable actions; materialization returns null and skips them | `policy/PresetGrantMaterializer.java:381-383`; `policy/PermissionAtomCatalog.java:414`, `:419` |
+| Composition is not "multi-preset union amplification" | Multiple grants for one subject do union (source labels create no precedence), but after the union the decision still applies resource-prefix coverage and the **write-time** ceiling: a bound cap must not exceed the atom sets held by both the subject and the operator, otherwise 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:152-165`; `service/AgentPrincipalService.java:539-563` |
 
 **Forbidden terms** (never use in writing or review): `RBAC`, `role-based permission system`, `scope intersection`. The last one is wrong because it treats grant scope as a matching axis: grant scope only limits the candidate set and write-time bindability, while the real intersection is `actionClass × resource`. The bare word "scope" is insufficient here; write **grant scope** or **visibility scope**, and treat a bare "scope" as a terminology defect. `RBAC` may appear only in the comparison table and source links (comparison context), never as a description of this model.
 
@@ -118,20 +118,20 @@ A decision has three parts, but **only two matching dimensions**:
 - Action classes with a tool-face entry: **7** — `read`, `write`, `exec`, `network`, `credential_use`, `spawn_agent`, `team_task_manage` (`policy/ToolFaceRegistry.java:280-296`). The `delete` action class exists, but no tool maps to it today and `WRITE_TOOLS` contains no delete tool (`policy/ToolFaceRegistry.java:193-195`, `:254`), so that atom is unreachable through the tool chain.
 - Resource families (the value shapes on the resource axis): `fs:` declaration keys (**the only path form that may be written to a grant**), `phys:` evaluation keys (expanded only at evaluation time), `credential:` (`credential:*` or `credential:<uuid>`), `skill:` (`skill:*` or `skill:<uuid>`), plus bare paths / URLs / `*`. The prefix constants for `credential:` and `skill:` are at `policy/ToolFaceRegistry.java:168-169` and `:176`; `fs:` / `phys:` are at `policy/ResourceIdentity.java:24-25`.
 
-Default action-atom counts for the eight built-in roles ([measured], same evidence):
+Default action-atom counts for the eight built-in grant presets ([measured], same evidence):
 
-| Role | Default action atoms | Category | Definition |
+| Grant preset | Default action atoms | Category | Definition |
 |---|---|---|---|
-| SUPER_ADMIN | 45 | Platform | `policy/SystemAccessRoleCatalog.java` |
+| SUPER_ADMIN | 45 | Platform | `policy/SystemGrantPresetCatalog.java` |
 | ADMIN | 32 | Platform | Same |
 | USER | 10 | Platform | Same |
 | WS_OWNER | 17 | Workspace | Same |
 | WS_EDITOR | 12 | Workspace | Same |
 | WS_VIEWER | 2 | Workspace | Same |
-| AGENT_DELEGATOR | 1 | Agent | `policy/SystemAccessRoleCatalog.java:374` |
-| AGENT_USER | 7 | Agent | `policy/SystemAccessRoleCatalog.java:385` |
+| AGENT_DELEGATOR | 1 | Agent | `policy/SystemGrantPresetCatalog.java:374` |
+| AGENT_USER | 7 | Agent | `policy/SystemGrantPresetCatalog.java:385` |
 
-- `ORG_LEADER` currently exists **only in code comments and the governance whitelist description; no seed has been written (M2-3)**. Do not present it as an available role or a bindable item in UI or documentation.
+- `ORG_LEADER` currently exists **only in code comments and the governance whitelist description; no seed has been written (M2-3)**. Do not present it as an available grant preset or a bindable item in UI or documentation.
 
 PEP coverage: only 7 of the 42 atoms (about 17%) have a tool-face entry; the Windows host channel has neither sandbox nor policy gate (`packages/runtime/src/job_host_adapter.rs:1-5`). The coverage list and gaps are in `internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`.
 
@@ -256,7 +256,7 @@ Counterfactual (what happens if the requirement is pushed back into a role model
 
 | Pitfall | Consequence | Status (2026-11-20) |
 |---|---|---|
-| 1 Judgement lives in the evaluator, not in roles | A reviewer who assumes "editing a role definition = changing the authorization surface" will miss the two things that really decide an allow: materialized `grants` rows with `source='role'`, and each level's snapshot on the subject derivation chain. Editing `grants` by hand around `RoleGrantMaterializer`, or changing a role without catching snapshots up, produces "the role changed but the authorization surface did not" | By design: role/binding edits go through `/api/v1/roles`, `/bindings`, and the materializer; snapshot catch-up is pitfall 4 |
+| 1 Judgement lives in the evaluator, not in grant presets | A reviewer who assumes "editing a grant-preset definition = changing the authorization surface" will miss the two things that really decide an allow: materialized `grants` rows with `source='preset'`, and each level's snapshot on the subject derivation chain. Editing `grants` by hand around `PresetGrantMaterializer`, or changing a grant preset without catching snapshots up, produces "the preset changed but the authorization surface did not" | By design: grant-preset/binding edits go through `/api/v1/presets`, `/bindings`, and the materializer; snapshot catch-up is pitfall 4 |
 | 2 No explicit deny | Cannot write an absolute "never allow"; today only HardGuard's hard-coded rules cover critical paths | By design |
 | 3 A denial cannot explain itself | A failed decision only logs WARN (`policy/GrantAuthorizationService.java:119-121`); there is no decision chain saying "which level lacks which atom" | explain is being built (task-110) |
 | 4 Three snapshots drift | `grants` rows, a binding's `permissionsSnapshot`, and a session's `agentPermissionsSnapshot` are three copies; changing a grant without catching snapshots up produces "changed but ineffective" or "revoked but still allowed" | Untouched |
@@ -272,7 +272,7 @@ Advantages (the positive reasons for the in-house choice, each checkable):
 - **Narrow, mechanically checkable judgement surface**: a decision's input is the `(principal, actionClass, resource)` triple, easy to cover with a golden baseline.
 - **Zero extra infrastructure**: no sidecar, no policy-distribution service; the decision and grants live in the same database and transaction boundary.
 - **Runs offline**: no external call in a decision; unit tests can cover the whole judgement surface without standing up a policy service first.
-- **Revocation at the source**: the `tv` epoch, role materialization, and the three snapshots all live in CP; revocation does not depend on a downstream propagation window.
+- **Revocation at the source**: the `tv` epoch, grant-preset materialization, and the three snapshots all live in CP; revocation does not depend on a downstream propagation window.
 - **Freedom to evolve**: adding an action atom only touches `PermissionAtomCatalog` and the classification rules; no policy-language migration and no engine-version change.
 
 ## 9. Migration thresholds and the three mechanisms
@@ -280,7 +280,7 @@ Advantages (the positive reasons for the in-house choice, each checkable):
 | Trigger | Threshold | Migration action |
 |---|---|---|
 | Grant rows | More than 2000 rows | Add explain and golden first, then evaluate an external engine |
-| Role count | More than 50 roles | Same |
+| Grant-preset count | More than 50 grant presets | Same |
 | Need a model-level proof | Any "no hole" claim must be formally proven | Introduce an engine such as Cedar / AVP |
 | A second non-tenant dimension appears | For example a time window or an approval-flow policy dimension | Rename the model (it is no longer a two-axis intersection) and re-evaluate the thresholds |
 
@@ -325,7 +325,7 @@ Why change the kernel for this instead of recomputing in the controller: recompu
 - **The subject is not selectable**: the subject comes from `TenantContext`'s current user, not a request field, so it is structurally impossible to explain someone else. The response can contain only grant rows on the caller's own path (id + source), never other people's grants, member lists, or resource details.
 - **Writes nothing**: no row, no cache (DSD-1497 M2-10a forbids evaluation-side caching), and the response body does not enter audit details (audit keeps only the requestId).
 - **grant scope**: `sessionId` is optional and places the request in that session's workspace context; it must be readable by the caller (otherwise 404 `SESSION_NOT_FOUND`, the same non-distinguishing 404 as other session-read faces, with no existence probe). Without it, the current workspace context is used.
-- **Tenant gate**: the surface itself is non-GET, but the write-gate classifier does not treat `/api/v1/authorization/**` as a workspace-write surface, so any role with a resolved workspace membership passes; a caller with no workspace context is stopped by the tenant gate with `403 WORKSPACE_FORBIDDEN`, consistent with other non-exempt routes.
+- **Tenant gate**: the surface itself is non-GET, but the write-gate classifier does not treat `/api/v1/authorization/**` as a workspace-write surface, so any grant preset with a resolved workspace membership passes; a caller with no workspace context is stopped by the tenant gate with `403 WORKSPACE_FORBIDDEN`, consistent with other non-exempt routes.
 
 ### 10.5 Source anchors
 

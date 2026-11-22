@@ -29,7 +29,7 @@ tags:
 
 ## 1. 一句话结论：它叫交集授权，别叫它「基于角色的权限系统」
 
-**交集授权（Intersection-grant Authorization）**：一次工具调用能否通过，取决于 **(动作原子 × 资源前缀) 两轴是否同时被显式授予，且主体派生链的每一级都持有该原子**；缺省拒。角色只是把原子物化进 grants 的通道，求值阶段不读角色变量。
+**交集授权（Intersection-grant Authorization）**：一次工具调用能否通过，取决于 **(动作原子 × 资源前缀) 两轴是否同时被显式授予，且主体派生链的每一级都持有该原子**；缺省拒。授权预设只是把原子物化进 grants 的通道，求值阶段不读授权预设变量。
 
 可当验收语用的判定句：*给定 principal、actionClass、resource，三者交集非空、资源前缀覆盖真实目标，且主体派生链每一级都持有该原子，才 ALLOW；否则 DENY。*
 
@@ -43,9 +43,9 @@ tags:
 
 | 反例 | 事实 | 锚点 |
 |---|---|---|
-| 改角色不改授权面 | 角色只把原子物化进 `access_role_permissions`；求值输入是 `PermissionAtom(actionClass, resource)` 两字段，`parse` 遇到第三个键直接抛 `Unknown permission atom field` | `policy/RoleGrantMaterializer.java:376-393`；`policy/GrantIntersectionEvaluator.java:36-52`、`:46-50` |
-| 能力原子根本不进 grants | 平台/实例级能力原子不是可授予动作，物化时返回 null 被跳过 | `policy/RoleGrantMaterializer.java:381-383`；`policy/PermissionAtomCatalog.java:414`、`:419` |
-| 组合语义不是「多角色并集放大」 | 同主体多条 grants 确实并集（`union`，来源标签不产生优先级），但并集之后还要过资源前缀覆盖与**写入期**上限：绑定 cap 不得超出主体与操作者各自已持原子的集合，否则 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:152-165`；`service/AgentPrincipalService.java:539-563` |
+| 改授权预设不改授权面 | 授权预设只把原子物化进 `grant_preset_atoms`；求值输入是 `PermissionAtom(actionClass, resource)` 两字段，`parse` 遇到第三个键直接抛 `Unknown permission atom field` | `policy/PresetGrantMaterializer.java:373-393`；`policy/GrantIntersectionEvaluator.java:36-52`、`:46-50` |
+| 能力原子根本不进 grants | 平台/实例级能力原子不是可授予动作，物化时返回 null 被跳过 | `policy/PresetGrantMaterializer.java:381-383`；`policy/PermissionAtomCatalog.java:414`、`:419` |
+| 组合语义不是「多授权预设并集放大」 | 同主体多条 grants 确实并集（`union`，来源标签不产生优先级），但并集之后还要过资源前缀覆盖与**写入期**上限：绑定 cap 不得超出主体与操作者各自已持原子的集合，否则 403 `AGENT_PERMISSION_SCOPE_EXCEEDED` | `policy/GrantIntersectionEvaluator.java:152-165`；`service/AgentPrincipalService.java:539-563` |
 
 **禁用词**（写作与评审一律不用）：`RBAC`、`基于角色的权限系统`、`作用域交集`。后者的错误在于把 grant scope 当成匹配轴：grant scope 只限定候选集与写入期可绑定性，真正求交的是 `actionClass × resource`。我仓的「作用域」一词本身也不足以自明，写作时必须写成 **grant scope** 或 **visibility scope**；裸用「scope / 作用域」视为术语缺陷。`RBAC` 只允许出现在「与成熟模型对比」表与来源链接里（对比语境），不得用来描述本模型。
 
@@ -118,20 +118,20 @@ tags:
 - 有工具面入口的动作类 **7 个**：`read`、`write`、`exec`、`network`、`credential_use`、`spawn_agent`、`team_task_manage`（`policy/ToolFaceRegistry.java:280-296`）。`delete` 动作类存在，但当前没有任何工具映射到它，`WRITE_TOOLS` 也不含删除工具（`policy/ToolFaceRegistry.java:193-195`、`:254`）——即该原子在工具链上不可达。
 - 资源族（资源轴的取值形态）：`fs:` 声明键（**唯一可写入 grant 的路径形态**）、`phys:` 求值键（只在求值期展开）、`credential:`（`credential:*` 或 `credential:<uuid>`）、`skill:`（`skill:*` 或 `skill:<uuid>`），以及裸路径 / URL / `*`。`credential:` 与 `skill:` 的前缀常量分别在 `policy/ToolFaceRegistry.java:168-169` 与 `:176`；`fs:` / `phys:` 在 `policy/ResourceIdentity.java:24-25`。
 
-8 个内置角色的默认动作原子数（[实测]，同一份证据）：
+8 个内置授权预设的默认动作原子数（[实测]，同一份证据）：
 
-| 角色 | 默认动作原子数 | 类别 | 定义处 |
+| 授权预设 | 默认动作原子数 | 类别 | 定义处 |
 |---|---|---|---|
-| SUPER_ADMIN | 45 | 平台 | `policy/SystemAccessRoleCatalog.java` |
+| SUPER_ADMIN | 45 | 平台 | `policy/SystemGrantPresetCatalog.java` |
 | ADMIN | 32 | 平台 | 同上 |
 | USER | 10 | 平台 | 同上 |
 | WS_OWNER | 17 | 工作区 | 同上 |
 | WS_EDITOR | 12 | 工作区 | 同上 |
 | WS_VIEWER | 2 | 工作区 | 同上 |
-| AGENT_DELEGATOR | 1 | 代理 | `policy/SystemAccessRoleCatalog.java:374` |
-| AGENT_USER | 7 | 代理 | `policy/SystemAccessRoleCatalog.java:385` |
+| AGENT_DELEGATOR | 1 | 代理 | `policy/SystemGrantPresetCatalog.java:374` |
+| AGENT_USER | 7 | 代理 | `policy/SystemGrantPresetCatalog.java:385` |
 
-- `ORG_LEADER` 当前**只有代码注释与治理白名单说明，迁移未落种子（M2-3）**；不得把它写成已可用角色，也不要在 UI/文档里当成可绑定项。
+- `ORG_LEADER` 当前**只有代码注释与治理白名单说明，迁移未落种子（M2-3）**；不得把它写成可用授权预设，也不要在 UI/文档里当成可绑定项。
 
 PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Windows host 通道既无 sandbox 也无 policy 门（`packages/runtime/src/job_host_adapter.rs:1-5`）。覆盖清单与缺口见 `internal/A03-xihe/evidence/2026-11-20-pep-coverage/README.md`。
 
@@ -256,7 +256,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 
 | 坑 | 后果 | 状态（2026-11-20） |
 |---|---|---|
-| 1 判据在求值器、不在角色 | 审查者若以为「改角色定义 = 改授权面」，会漏掉真正决定放行的两样东西：`grants` 里 `source='role'` 的物化行，与主体派生链每一级的快照；绕过 `RoleGrantMaterializer` 手改 `grants`，或只改角色而快照未追平，都会出现「改了角色不动授权面」 | 设计如此：改角色/绑定走 `/api/v1/roles`、`/bindings` 与物化器；快照追平见坑 4 |
+| 1 判据在求值器、不在授权预设 | 审查者若以为「改授权预设定义 = 改授权面」，会漏掉真正决定放行的两样东西：`grants` 里 `source='preset'` 的物化行，与主体派生链每一级的快照；绕过 `PresetGrantMaterializer` 手改 `grants`，或只改授权预设而快照未追平，都会出现「改了授权预设不动授权面」 | 设计如此：改授权预设/绑定走 `/api/v1/presets`、`/bindings` 与物化器；快照追平见坑 4 |
 | 2 无显式 Deny | 写不出「永远不许」的绝对禁令；目前只有 HardGuard 的硬编码规则兜住关键路径 | 设计如此 |
 | 3 拒了说不出理由 | 判定失败只有 WARN 日志（`policy/GrantAuthorizationService.java:119-121`），没有「哪一级缺哪个原子」的决策链 | explain 设计在办（task-110） |
 | 4 三源快照不同步 | grants 行、binding 的 `permissionsSnapshot`、session 的 `agentPermissionsSnapshot` 三处副本；改了 grant 不追平快照，就会出现「改了没生效」或「撤了还在」 | 未动 |
@@ -272,7 +272,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 - **判据面窄且可机械核**：一次判定的输入是 `(principal, actionClass, resource)` 三元组，容易铺 golden 基线。
 - **零额外基础设施**：不引 sidecar、不引策略分发服务；判定与 grants 在同一库同一事务边界内。
 - **离线可跑**：判定无外部调用，单测能覆盖全判据面，不需要先搭一个策略服务。
-- **撤权同源**：`tv` epoch、角色物化、快照三件都在 CP，撤销不依赖下游传播窗口。
+- **撤权同源**：`tv` epoch、授权预设物化、快照三件都在 CP，撤销不依赖下游传播窗口。
 - **演进自由**：新增动作原子只改 `PermissionAtomCatalog` 与分类规则，不必迁移策略语言或改引擎版本。
 
 ## 9. 换型阈值与三件机制
@@ -280,7 +280,7 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 | 触发条件 | 门槛 | 换型动作 |
 |---|---|---|
 | grants 行数 | 超过 2000 行 | 先补 explain 与 golden，再评估外部引擎 |
-| 角色数 | 超过 50 个角色 | 同上 |
+| 授权预设数 | 超过 50 个授权预设 | 同上 |
 | 需要模型级证明 | 任一条「无漏洞」要被形式化证明 | 引入 Cedar / AVP 一类引擎 |
 | 出现第二个非租户维度 | 例如按时间窗、按审批流的策略维度 | 重新定名（不再是两轴交集），并重评阈值 |
 
@@ -325,7 +325,7 @@ explain 不是第二套判据。`GrantIntersectionEvaluator` 里只有一个 `de
 - **主体不可选**：subject 取 `TenantContext` 的当前用户，不是请求字段 ⇒ 结构上无法解释他人，响应里也只可能出现调用者自己路径上的 grant 行（id + 来源），不含他人 grants、成员名单或资源细节。
 - **不写任何东西**：不落行、不缓存（DSD-1497 M2-10a 禁求值侧缓存）、响应体不进审计明细（审计只留 requestId）。
 - **grant scope**：`sessionId` 可选，用于把请求放进该会话的 workspace 上下文，且必须对该调用者可读（否则 404 `SESSION_NOT_FOUND`，与其他会话读面同样是「不区分」式 404，不做存在性探针）；不带则用当前 workspace 上下文。
-- **租户门**：面本身非 GET，但写门分类器不把 `/api/v1/authorization/**` 视为工作区写面 ⇒ 任何已解析出 workspace 成员身份的角色都过；没有 workspace 上下文的调用者会被租户门挡在 `403 WORKSPACE_FORBIDDEN`，与其它非豁免路由一致。
+- **租户门**：面本身非 GET，但写门分类器不把 `/api/v1/authorization/**` 视为工作区写面 ⇒ 任何已解析出 workspace 成员身份的授权预设都过；没有 workspace 上下文的调用者会被租户门挡在 `403 WORKSPACE_FORBIDDEN`，与其它非豁免路由一致。
 
 ### 10.5 源码锚点
 

@@ -72,13 +72,13 @@ updated: 2026-11-06
 
 | 冲突裸词 | 义项 | **正名（必须用这个）** | 禁止写法 | 备注 |
 |---|---|---|---|---|
-| **owner** | A. workspace **权限角色**（成员 owner/admin） | `workspace 角色 owner` 或 `角色=owner` | 裸 `owner` 指操作锁持有者 | 与 RBAC 一致 |
+| **owner** | A. workspace 内的成员授权档（owner/editor/viewer） | `workspace owner` 或 `grant preset=WS_OWNER` | 裸 `owner` 指操作锁持有者 | 与授权预设绑定一致 |
 | | B. 生命周期 **工作区操作锁持有者** | **`workspace operation lock holder`**（中文：**工作区生命周期操作锁持有者**） | 裸 `owner`、`active owner` 无操作锁上下文；`execution lease holder`（旧名） | PLAN-0474；Runtime materialization 与显式删除的进程内互斥 |
-| | C. **资源归属**（连接、工作区、会话挂在谁名下） | **`资源归属 owner`**（英文：*resource owner*；字段写 `owner_type` / `owner_id`） | 用裸 `owner` 指归属；把归属与「workspace 角色 owner」混用 | 连接归属 ≠ 成员角色；目标态 `owner_type` 可含 `AGENT`（见 §1.1） |
-| | D. **实例所有权**（这台实例归哪个 ADMIN 管，单例可转移） | **`实例 owner`**（英文：*instance owner*；表 `instance_owner`、字段 `owner_user_id`） | 裸 `owner`；`超级管理员` / `SUPER_ADMIN`（不存在此角色） | PLAN-0580；能力集合与所有权基数分开：owner **不是**第三种平台角色，仍是 `ADMIN` |
-| **tv** | access token epoch（签发时抄下的 `users.token_version`） | **`token 代次`**（英文：*access-token epoch*；claim 名固定 `tv`） | 与 JWT `iat`/`exp` 混用；把 `token_version` 说成「密码版本」 | PLAN-0580 §4.1；角色变更使其 +1，旧 token 下一次请求即 401 |
-| **role** | A. 平台身份 | **`平台角色`**（*platform role*，值 `ADMIN` / `USER`，来自 JWT `role` claim） | 裸 `role` 指 workspace 角色 | 判定入口 `@PreAuthorize`；见 §1.1 |
-| | B. workspace 内身份 | **`workspace 角色`**（值 `OWNER` / `MEMBER`；`ADMIN` / `VIEWER` 为悬空枚举值，未落库） | 裸 `role` 指平台角色 | 见 §1.1 与 backlog「身份与权限模型」 |
+| | C. **资源归属**（连接、工作区、会话挂在谁名下） | **`资源归属 owner`**（英文：*resource owner*；字段写 `owner_type` / `owner_id`） | 用裸 `owner` 指归属；把归属与 workspace 授权预设定档混用 | 连接归属 ≠ 成员授权；目标态 `owner_type` 可含 `AGENT`（见 §1.1） |
+| | D. **实例所有权**（这台实例归哪个 ADMIN 管，单例可转移） | **`实例 owner`**（英文：*instance owner*；表 `instance_owner`、字段 `owner_user_id`） | 裸 `owner`；`超级管理员` / `SUPER_ADMIN`（不存在此授权预设） | PLAN-0580；能力集合与所有权基数分开：owner **不是**第三种平台身份，仍是 `ADMIN` |
+| **tv** | access token epoch（签发时抄下的 `users.token_version`） | **`token 代次`**（英文：*access-token epoch*；claim 名固定 `tv`） | 与 JWT `iat`/`exp` 混用；把 `token_version` 说成「密码版本」 | PLAN-0580 §4.1；授权预设变更使其 +1，旧 token 下一次请求即 401 |
+| **grant preset / 授权预设** | A. 平台身份 | **`授权预设`**（*grant preset*；内置值 `ADMIN` / `USER`，来自 JWT `role` claim 的只是认证身份） | 裸 `role` / 「角色」指授权预设 | 判定入口 `@PreAuthorize`；见 §1.1 |
+| | B. workspace 内身份 | **`授权预设定档`**（内置 `WS_OWNER` / `WS_EDITOR` / `WS_VIEWER`） | 裸 `role` / 「角色」指授权预设 | 见 §1.1 与 backlog「身份与权限模型」 |
 | **L1 / L2 / L3** | 上下文注入槽 L0–L3 | **`context L1`**（中文：**上下文 L1 槽**） | 裸 `L1` | 0340 模型 |
 | | 诊断分层 L0/L1/L2 | **`diagnostic L0` / `diagnostic L1` / `diagnostic L2`**（中文：**诊断 L0/L1/L2**） | 裸 `L1` | 0342；L1 工具族后置 |
 | | checkpoint 恢复层 L1/L2/L3 | **`checkpoint L1`** 等（中文：**检查点 L1 层**） | 裸 `L1` | 0338 |
@@ -113,18 +113,18 @@ updated: 2026-11-06
 | **ChatRun** | 机读执行实体：一次执行 | **`ChatRun` / `run`**（内部/API/DB 一律用 `run`，不改名） | 把 `ChatRun`/`chat_runs` 改名 `round`；在 UI 主标题裸露 `Run` | PLAN-0674；**为什么叫 run**：`chat_runs` 自建库第一个迁移 `V1__init_schema.sql` 就在（初始设计命名，非后来附会）；一次执行含多次 LLM 调用、多次工具调用、多条消息、checkpoint、预算、租约，可从 `ambiguous`/`CP_RESTARTED` 源续跑为 **child run**（`docs/api/openapi.yaml:2304 continueChatRun`）；改名面 113 文件引用表 / 253 文件引用类 / 82 事件键，收益只是「名字顺」。用户可见说法见下一行 |
 | **回合 / turn** | 用户可见的一次完整交互（用户消息 → 系统给出可读结果） | **`回合`（英文 *turn*）** | 裸 `Run` 当回合；把 run 当回合（continuation / wake / follow-up / retry 时 1 回合可能跨多个 run）；另造「轮次」等同义词 | PLAN-0674；**为什么用「回合」**：这是用户感知的单位，与既有「本轮」先例一致；**映射与例外**：常见 **1 回合 = 1 run**，continuation / wake / follow-up / retry 时 **1 回合 ≠ 1 run**（可能跨多个 run）；`Run #id` 只作详情/hover 附注，不替代「回合」 |
 
-### 1.1 主体与角色（2026-09-17 增补）
+### 1.1 主体与授权预设（2026-09-17 增补）
 
-XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账户与角色权限），与开发者**协作**，**不绑定某个 user**。**协作 ≠ 委托**——「Agent 代表某 user 执行」不是目标模型；若确需受托，另立显式 *delegation* 概念。
+XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账户与授权预设），与开发者**协作**，**不绑定某个 user**。**协作 ≠ 委托**——「Agent 代表某 user 执行」不是目标模型；若确需受托，另立显式 *delegation* 概念。
 
 该段描述的是目标模型。当前 user-only schema 与独立 Agent principal 仍存在实现差距，认证、principal、授权、能力策略、审批和审计的统一契约见根级 `spec/security/`（PLAN-0386，当前为 proposed）。
 
 | 术语 | 正名 | 取值 / 说明 | 禁止写法 |
 |---|---|---|---|
-| 主体 | **principal** | `human`（开发者/用户）、`agent`（独立账户与角色）、`service`（CP/Agent/Runtime 内部管道，非协作者）；`system` = 平台自身触发，非可登录主体 | 把 Agent 说成「代表 user 的 actor」；用 `user` 泛指 principal |
-| 成员 | **membership** | `principal × workspace + 角色`；Agent 与开发者同为 workspace 成员。**实现层（2026-11-02 对账）**：没有独立成员表——载体是 `role_bindings`（`entity/AccessRoleBinding.java:13,25`，role × subject × scope，角色值 `WS_OWNER`/`WS_EDITOR`/`WS_VIEWER`）；`workspace_users` 已由 V89 删除，`policy/WorkspaceMembershipService.java:42,52` 只是角色投影 | 把成员表/字段永久写死为 `user_id`；也不要去找不存在的 `memberships` 表 |
-| 角色 | **平台角色 / workspace 角色** | 见 §1 `role` 两义 | 裸 `role` 不带域 |
-| 归属 | **资源归属 owner** | `(owner_type, owner_id)`；目标态可含 `AGENT` | 与「workspace 角色 owner」「工作区生命周期操作锁持有者」混用 |
+| 主体 | **principal** | `human`（开发者/用户）、`agent`（独立账户与授权预设）、`service`（CP/Agent/Runtime 内部管道，非协作者）；`system` = 平台自身触发，非可登录主体 | 把 Agent 说成「代表 user 的 actor」；用 `user` 泛指 principal |
+| 成员 | **membership** | `principal × workspace + 授权预设`；Agent 与开发者同为 workspace 成员。**实现层（2026-11-22 对账）**：没有独立成员表——载体是 `grant_preset_bindings`（`entity/GrantPresetBinding.java:25`，预设 × subject × scope，内置值 `WS_OWNER`/`WS_EDITOR`/`WS_VIEWER`）；`workspace_users` 已由 V89 删除，`policy/WorkspaceMembershipService.java:42,52` 只是授权预设投影 | 把成员表/字段永久写死为 `user_id`；也不要去找不存在的 `memberships` 表 |
+| 授权预设 | **授权预设 / grant preset** | 见 §1 `grant preset` 两义 | 裸 `role` / 「角色」不带域 |
+| 归属 | **资源归属 owner** | `(owner_type, owner_id)`；目标态可含 `AGENT` | 与 workspace 授权预设 owner、工作区生命周期操作锁持有者混用 |
 
 历史形态（不阻碍目标，但新代码不得加深）：`sessions.user_id`、`workspace_users.user_id`、`provider_connections.owner_id` 均为 user-only 形态；`ledger_operations.actor_type`（表名历史形态 `session_operations`，V33 改名）已含 `agent`（`V2`），方向一致。
 
@@ -138,24 +138,24 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | **智能体主体** | `agent principal`（表 `agent_principals`；CLI `xihe agent …`；body 字段 `agentPrincipalId`） | 独立的、可被授权的主体：有自己的 grants 与 cap，可绑到多个 Workspace、被多个 Session 使用，**不隶属某个 user**（`created_by_user_id` 只记铸造者） | 不要指「一次 spawn 出来的运行实例」、不要指「agent 模板（`agent-templates`）」、不要说成「代表某 user 的 actor」；也不要写成「Agent 账号 = user 账号的一种」（principal 类型是并列的 `agent`/`human`/`service`）；**主体被禁用/停用 ≠ 进程崩了**（见「智能体运行时」） |
 | **智能体运行时** | `agent runtime`（Python 包 `packages/agent`；日志模块名 `moduleAgent`） | 跑编排 / 工具调用的**进程组件** | **与「智能体主体」是两个词**：主体被禁用、被移出会话、授权失败，运行时进程都照常活着；反过来进程在 ≠ 主体可用。不要说「Agent 挂了」指主体被禁；不要用「重启智能体」指重新启用主体 |
 | **智能体管理** | `agent management`（UI 面 `agentManagement`，zh 文案「智能体管理」） | 管理某范围内 agent principal（创建/绑定/cap/禁用）的界面与 API 面 | 不是新能力：它是「智能体主体」的管理面；「管理」≠「代发」（管理权限是 `MANAGE_WORKSPACE_AGENTS`，代发是 `speakAs`，两者独立，D23-08） |
-| **用户主体** | `human principal`（表 `users`；JWT `role=USER\|ADMIN`；**代码侧无 `humanPrincipal` 类**——人类主体就是 JWT 认证的 `users` 行，主体类型由 `role_bindings.subject_type` 表达，见对账） | 有登录凭据的人类账号，是三类可授权主体之一 | 不要用它指「Workspace 成员」（那是 `membership`：principal × workspace）；不要以为 Agent 路径读 `user_id`（Agent 授权不看 `user_id`）；不要 grep 一个不存在的 `humanPrincipal` 类型 |
+| **用户主体** | `human principal`（表 `users`；JWT `role=USER\|ADMIN`；**代码侧无 `humanPrincipal` 类**——人类主体就是 JWT 认证的 `users` 行，主体类型由 `grant_preset_bindings.subject_type` 表达，见对账） | 有登录凭据的人类账号，是三类可授权主体之一 | 不要用它指「Workspace 成员」（那是 `membership`：principal × workspace）；不要以为 Agent 路径读 `user_id`（Agent 授权不看 `user_id`）；不要 grep 一个不存在的 `humanPrincipal` 类型 |
 | **服务主体** | `service principal`（canonical 能力 **`CAP_INTERNAL_SERVICE`**，`policy/CapabilityAuthorities.java:42-44`；`ROLE_INTERNAL_SERVICE` 是 **legacy 别名** `LEGACY_ROLE_INTERNAL_SERVICE`，同文件 `:47`、`:18-22` 注明 "compatibility authorities only"；入口 `/internal/v1/**`） | CP/Agent/Runtime 之间的内部管道身份：不是协作者、不可登录、不产生用户可见行为 | 不要指「Agent 主体」（Agent 走 principal grants ∩ binding cap）；不要把 service token 当「超级 user」；不要用它承载任何用户语义；**不要把 `ROLE_INTERNAL_SERVICE` 当 canonical**（那只是兼容层，新代码判 `CAP_INTERNAL_SERVICE`） |
-| **会话成员** | `session participant`（表 **`session_participants`**，`V92__session_participants.sql:50`；多态 `principalKind`(`HUMAN`/`AGENT`) + `principalId`，**无 FK**（沿用 `role_bindings` 先例） | 一个主体在某次会话里的参与关系：**同一 principal 可在不同会话有不同角色与策略**；一个会话可有多个 participant | 不要与 Workspace `membership`（principal × workspace）混用，也不要把「成员」当它的别名；**不要裸写 `participant`**（Mermaid 序列图关键字同名，属另一个语境）；不要指「Session owner」（`sessions.user_id` 只是归属/可见性） |
+| **会话成员** | `session participant`（表 **`session_participants`**，`V92__session_participants.sql:50`；多态 `principalKind`(`HUMAN`/`AGENT`) + `principalId`，**无 FK**（沿用 `grant_preset_bindings` 先例） | 一个主体在某次会话里的参与关系：**同一 principal 可在不同会话有不同授权预设与策略**；一个会话可有多个 participant | 不要与 Workspace `membership`（principal × workspace）混用，也不要把「成员」当它的别名；**不要裸写 `participant`**（Mermaid 序列图关键字同名，属另一个语境）；不要指「Session owner」（`sessions.user_id` 只是归属/可见性） |
 | **唤醒策略** | `wake policy`（字段 `wakePolicy`；枚举 **`ALL_MESSAGES`** / **`MENTION`**，默认 `MENTION`） | 该会话成员在**什么事件下被唤起**（每条消息 / 仅被 @ 时）；**看得见 ≠ 会被唤醒** | 不要用「可见性/权限」解释唤醒（那是 scope/membership/cap）；不要与**回应策略**互换；不要把它当「通知设置」；不要写 `ALL`/`EVERY` 等别名（枚举大小写与值固定） |
 | **回应策略** | `respond policy`（字段 `respondPolicy`；枚举 **`ALWAYS`** / **`WHEN_MENTIONED`** / **`JUDGE`** / **`MUTED`**，默认 `WHEN_MENTIONED`；`JUDGE` 为 0624 预留、`MUTED` 是 0623 静音开关） | 被唤醒后**是否/如何发言**（总是答 / 被点名才答 / 静音），与能力上限独立 | 不要指「能不能看到消息」（那是唤醒/可见性）；不要当成 cap 的一部分（**cap 决定允许什么，policy 决定主动做什么**）；不要写成「人格/persona」；不要自造 MENTIONED_ONLY 之类的值（枚举只有那四个） |
-| **守卫** | `guard agent`（代码标识以 CP 轨道定稿为准；本地写作 `guard_agent`） | **预制的 agent 主体**（system preset）：cap 只读、可发言，裁决**进入 approval 流程**，不是用户可编辑的人设 | 不要指既有的「路径守卫 / HardGuard L0 守卫条件 / 授权守卫」（§1 与 DEV-014 大量使用该义）；不要指 workspace 角色里的「守护者」；不要造「守护者 / 门卫 / 看门人」等同义词 |
+| **守卫** | `guard agent`（代码标识以 CP 轨道定稿为准；本地写作 `guard_agent`） | **预制的 agent 主体**（system preset）：cap 只读、可发言，裁决**进入 approval 流程**，不是用户可编辑的人设 | 不要指既有的「路径守卫 / HardGuard L0 守卫条件 / 授权守卫」（§1 与 DEV-014 大量使用该义）；不要指 workspace 授权预设里的「守护者」；不要造「守护者 / 门卫 / 看门人」等同义词 |
 | **主体共享范围** | `principal scope`（`agent_principals.scope`，值 **`PERSONAL` / `WORKSPACE` / `INSTANCE`**；**已删除**——D-174 2026-11-05 / V126 删列与两 CHECK，本条仅留作防混用） | 描述**"这是谁的主体、给谁用"**的三档归属标注；**不是** principal 自带的授权范围（BL-29「绑定式 scope」） | 不要写成「principal 自带 scope/权限范围」——有效范围来自**绑定**（`workspace_agents`）∩ grants；不要与 authorization scope、OAuth/provider scope 混用；不要新增第四档或别名（如 `PRIVATE`/`GLOBAL`）；**UI 文案必须与连接 scope 区分**——现有 `settings.providerHub.scopeUser: "User"` / `scopeWorkspace: "Workspace"`（`packages/ui/src/i18n/index.ts:2825-2827`）说的是**连接** scope，agent scope 若要上 UI 必须带 `agent` 限定（现写作「个人智能体 / 工作区智能体 / 实例智能体」，既满足限定又用正名），并另建 `agentScope*` 文案键与 testid，不得复用连接 scope 的键 |
 
 | **主对话主体** | `PRIMARY participant`（`role=PRIMARY`；部分唯一索引 `uq_session_participants_primary`，每会话**唯一**） | 会话里默认的对话对象：随会话创建**自动播种**（含游标），**不可移除、不可转让** | 不要与 `membership` 的 OWNER 混用（D23-02 明确会话角色永不用 OWNER）；不要说「会话所有者」；不要说「可以把 PRIMARY 转让给另一个参与者」 |
 | **普通成员 / 守卫** | `MEMBER` / `GUARD`（`role` 枚举，约束 `ck_session_participants_role`） | 0623 内两者**同面**：都可被 @、策略可改、可移除；GUARD 的**特有约束留 0625**（D23-24） | 不要在 0623 里声称 GUARD 有特殊权限或特殊能力；不要新增第四种会话角色（如 OWNER / OBSERVER） |
 | **参与者游标** | `participant cursor`（表 `session_participant_cursors`；`lastReadEventSeq` 是唯一存储事实；`mentionCount` 是**读时派生值**，PLAN-0660 T5.3/V112 已 drop 该列） | 服务端持有的已读位置：**指针不是计数器**（计数由 `context_events` 的 `wake_dispatch ∧ outcome=notify ∧ sequence > lastReadEventSeq` 聚合重算），客户端不累计；无游标行时 API 返回 `readCursor=null`；推进只能由该 HUMAN 本人 `PATCH …/cursor`（advance-only + clamp） | 不要把客户端本地已读当真相；不要用「未读条数」代替指针；不要在没有游标行时返回空对象（约定是 `null`）；**不要**再把 `mention_count` 当列或写入点 |
-| **软停用** | `soft disable`（`disabledAt`；`DELETE` 或 `PATCH` `disabled=true`） | 移除参与者**只置停用**：行、游标、审计都保留，`GET` 仍返回（带 `disabledAt`）；**不是硬删除**（D23-26） | 不要说「删除参与者/硬删」；不要假设删除后行消失；不要把它与 Workspace 成员移除混为一谈（那是 `role_bindings`） |
+| **软停用** | `soft disable`（`disabledAt`；`DELETE` 或 `PATCH` `disabled=true`） | 移除参与者**只置停用**：行、游标、审计都保留，`GET` 仍返回（带 `disabledAt`）；**不是硬删除**（D23-26） | 不要说「删除参与者/硬删」；不要假设删除后行消失；不要把它与 Workspace 成员移除混为一谈（那是 `grant_preset_bindings`） |
 | **显示名** | `displayName`（**读时派生、不落库**；无独立 `display_name` 列） | AGENT → `agent_principals.name`；HUMAN → 账号 `username`（V82 起 NOT NULL；PLAN-0684/D-183 后为**唯一**显示源，`name` 与 email 不再参与投影）；解析不出为 `null` ⇒ UI 显示「未知用户」 | **绝不要用 UUID 当人名**；不要把它当可编辑字段；不要回退到 `name` 或邮箱（单源 username，无兜底链） |
 | **以某参与者身份发言** | `speakAs`（`capabilities`）/ `asParticipantId`（请求）/ `selfOwned`（每行投影） | **代发 ≠ 提及**：代发是以某参与者身份**发出消息**，提及只是把话题指向他（插入 `@名字`）；管理员可加人但**不可代发**（D23-08）；`speakAs` = 至少一行 `selfOwned=true`（同一判定，前端不得自行判定） | 不要把「代发」写成「提及/艾特/转发」；不要以为 `manage`（管理参与者）权限含代发；不要用「切换发言人」指代它（那是 UI 动作，不是授权概念） |
 | **观察者视角** | observer view（`GET /api/v1/events` **未带** `asParticipantId`） | 收**全部**参与者的事件流；与之相对是「参与者视角」（只收该参与者） | 不要把多主体流当单主体渲染（D23-28）；不要把它当兼容层/降级路径（它是语义）；不要在观察者视角里伪造「当前发言人」 |
 | **run 级归属** | run-level attribution（`chat_runs.agent_principal_id`） | 每条 run 记录**本次回应者**（不是会话级属性）；未带 `asParticipantId` ⇒ PRIMARY 的主体；两者皆无 ⇒ `null` | 会话级主体列已由 V133 删除；不要与 `session_participants` PRIMARY（会话身份）或 `runs.agent_principal_id`（单次归属）混用；不要因 run 为空就回填成 PRIMARY |
 | **对话线** | conversation thread（表 `conversation_threads`；wire/UI 仍叫 thread） | 跨 session 延续的一段对话；`1 thread : N session`，session 仍是工作现场（文件/checkpoint/run 隔离） | 不要当消息表或群组概念；不要说「一个 session 必须/只能有一条线」（至多一条，存量可为 NULL） |
-| **通信作用域** | message scope（`conversation_threads.scope_type` ∈ `user` / `agent` / `workspace`，小写） | 一条对话线按哪一层**寻址**（谁可见/谁可写），**不是**授权 scope；MVP 只解析 user/agent，workspace 档 fail-closed | 不要与 `agent_principals.scope`（大写 PERSONAL/WORKSPACE/INSTANCE）、`role_bindings.scope_type`、`policy.AccessScope`（instance/workspace）混用 |
+| **通信作用域** | message scope（`conversation_threads.scope_type` ∈ `user` / `agent` / `workspace`，小写） | 一条对话线按哪一层**寻址**（谁可见/谁可写），**不是**授权 scope；MVP 只解析 user/agent，workspace 档 fail-closed | 不要与 `agent_principals.scope`（大写 PERSONAL/WORKSPACE/INSTANCE）、`grant_preset_bindings.scope_type`、`policy.AccessScope`（instance/workspace）混用 |
 **HUMAN 与 AGENT 的等价面（2026-11-17 用户裁定 `D-1780` / `D-1783`）**
 
 「实人与智能体等价」是**逐操作**判定的，不是一句全称判断：等价面 = 作为一个**被寻址的成员**（同一张表、同一套投递/游标/寻址）；不等价面 = 作为一个**能增殖的主体**（结构性地不对称）。下表每行给依据 `file:line`；第五行的不对称必须在操作面可见（落点 `task-130` / `task-134`，本条不展开）。
@@ -202,15 +202,15 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 
 | 术语（中文） | 英文 / 代码标识 | 一句话定义 | **反例：不要用它指什么** |
 |---|---|---|---|
-| **交集授权** | `Intersection-grant Authorization` | 一次判定要求 (动作原子 × 资源前缀) 两轴同时被显式授予、缺省拒；角色只是把原子物化进 grants 的通道 | 不要写 `RBAC`、`基于角色的权限系统`（改角色不改授权面）；不要写 `作用域交集`（作用域是 `scope_type` 的 instance / workspace 两档，与资源前缀无关） |
+| **交集授权** | `Intersection-grant Authorization` | 一次判定要求 (动作原子 × 资源前缀) 两轴同时被显式授予、缺省拒；授权预设只是把原子物化进 grants 的通道 | 不要写 `RBAC`、`基于角色的权限系统`（改授权预设不改授权面）；不要写 `作用域交集`（作用域是 `scope_type` 的 instance / workspace 两档，与资源前缀无关） |
 | **动作原子** | `PermissionAtom(actionClass, resource)` | 判据的最小单位，固定两字段；`resource` 是资源前缀（`*`、`credential:*` 或 `fs:` 声明键） | 不要与**能力原子**混用；不要把 `resource` 说成「作用域」 |
-| **能力原子** | 能力位（`instance:super`、`instance:admin`、`workspace:admin`） | 认证期由绑定解析成 authority 的能力位，**不物化进 grants**，也不是可授予动作 | 不要写进 `role_permissions`；不要当第三种「角色」 |
+| **能力原子** | 能力位（`instance:super`、`instance:admin`、`workspace:admin`） | 认证期由绑定解析成 authority 的能力位，**不物化进 grants**，也不是可授予动作 | 不要写进 `grant_preset_atoms`；不要当第三种「授权预设」 |
 | **写入期上限** | ceiling（绑定 cap ⊆ 主体已持原子 且 ⊆ 操作者已持原子） | 收窄发生在写绑定那一刻，求值期不再逐级求交 | 不要说成「求值期每一级都必须授予」（那只是 javadoc 的旧说法，实现是任一级命中即过） |
 
-四条分清（本词条同时回答「与 scope_type / 角色 / 能力原子怎么区分」）：
+四条分清（本词条同时回答「与 scope_type / 授权预设 / 能力原子怎么区分」）：
 
-- **与 `scope_type`**：`scope_type` 只有 `instance` / `workspace` 两档，落在 `role_bindings` 上且显式不继承；它与「资源前缀」是两回事，不可互称。
-- **与角色**：角色决定**原子集合**（`role_permissions`），不决定「哪些资源」；加角色不放大资源面，资源面只由 grant 的 `resource` 决定。
+- **与 `scope_type`**：`scope_type` 只有 `instance` / `workspace` 两档，落在 `grant_preset_bindings` 上且显式不继承；它与「资源前缀」是两回事，不可互称。
+- **与授权预设**：授权预设决定**原子集合**（`grant_preset_atoms`），不决定「哪些资源」；加授权预设不放大资源面，资源面只由 grant 的 `resource` 决定。
 - **与能力原子**：能力原子不进 grants、不参与工具面授权，只回答「这个主体是不是实例/工作区管理员」。
 - **出现场合**：`A03-xihe/spec/security/authorization.md`（契约）、`DEV-014-control-plane-architecture.md` §8e / §8e-2（架构）、`DEV-037-authorization-model.md`（判据本体与逐维对比），以及任务卡与 decision 记录里描述授权模型时。
 
@@ -245,7 +245,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 |---|---|---|
 | 单写者 ledger（0326） | ensure single-flight（M-3） | 账本单写 vs 实体只建一次 |
 | ensure single-flight | chat `409 CHAT_IN_PROGRESS` | 沙盒就绪 vs 会话并发 run 上限（PLAN-0645 起为 `maxConcurrentRunsPerSession`，默认 2，cap 满才 409；设回 1 恢复单飞） |
-| 工作区生命周期操作锁持有者 | **workspace operation lock holder** | `execution lease holder`（旧名）vs workspace 角色 owner；Runtime 互斥操作 vs RBAC 角色 |
+| 工作区生命周期操作锁持有者 | **workspace operation lock holder** | `execution lease holder`（旧名）vs workspace 授权预设 owner；Runtime 互斥操作 vs 授权预设 |
 | run resume | unpause | 会话恢复 vs 容器解除暂停 |
 | **durable job 续看** | **Workspace `unpause` / `run resume`** | 读既有 Job 输出（`job-output`，只读游标）vs 重新激活执行；禁止把续看说成恢复/unpause |
 | **job `interrupted`** | **run `ambiguous`** | Job 因 Runtime 重启判死且不重放 vs run 终态未定、待人工确认 |
@@ -272,7 +272,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 2026-09-30 增补（PLAN-0426） | 新增 `projection` 六义分义（A durable 记录 / B 可重建读模型 / C 响应视图 / D UI 本地视图 / E 映射 / F1 有界预览 / F2 安全摘要）；适用范围扩展至根级 `spec/`；裸 `projection`/「投影」叙述禁用，标识符与历史记录除外 |
 | 2026-10-10（PLAN-0474） | 将 Runtime 概念正名为“工作区生命周期操作锁 / workspace operation lock”，更新 zh-Hans/en 与 proposed Security/Workspace glossary；不改变授权语义 |
 | 2026-11-02 增补（PLAN-0622） | 新增 **§1.1a**：`agent principal` / `human principal` / `service principal` 三类主体细分、`session participant`（区别于 `membership`）、`wake policy` / `respond policy`（看得见 ≠ 会被唤醒）、`guard agent`（预制主体，与既有「路径守卫」义区分）、`principal scope` 三档（BL-29 绑定式 scope）；每条带反例。同步 `spec/agent/principal-workspace-binding.md`（scope 三档 + 三段授权）与 `spec/security/principal-workspace-scope.md`（`CREATE_OWN_AGENT` 原子） |
-| 2026-11-02 对账修正（PLAN-0622 M0.3，依据 `evidence/m0-3-term-reconcile.md`） | `service principal` canonical 改 `CAP_INTERNAL_SERVICE`、`ROLE_INTERNAL_SERVICE` 标 legacy 别名；`membership` 补实现注记（`role_bindings` / `workspace_users` 已删 V89 / `WorkspaceMembershipService` 仅投影）；`human principal` 注明代码侧无 `humanPrincipal` 类；`principal scope` 反例补"UI 文案与连接 scope 区分"（`scopeUser`/`scopeWorkspace` 已被连接 scope 占用） |
+| 2026-11-02 对账修正（PLAN-0622 M0.3，依据 `evidence/m0-3-term-reconcile.md`） | `service principal` canonical 改 `CAP_INTERNAL_SERVICE`、`ROLE_INTERNAL_SERVICE` 标 legacy 别名；`membership` 补实现注记（`grant_preset_bindings` / `workspace_users` 已删 V89 / `WorkspaceMembershipService` 仅投影）；`human principal` 注明代码侧无 `humanPrincipal` 类；`principal scope` 反例补"UI 文案与连接 scope 区分"（`scopeUser`/`scopeWorkspace` 已被连接 scope 占用） |
 | 2026-11-02 补录（PLAN-0623） | §1.1a 补 0623 词条：`PRIMARY participant` / `MEMBER`·`GUARD` / `participant cursor` / `soft disable` / `displayName` / `speakAs`·`asParticipantId`·`selfOwned` / observer view / run-level attribution（`chat_runs.agent_principal_id`）/ `participant source`；并回填既有三行的代码标识（`session_participants` 表、`wakePolicy` 枚举 `ALL_MESSAGES`/`MENTION`、`respondPolicy` 枚举 `ALWAYS`/`WHEN_MENTIONED`/`JUDGE`/`MUTED`，均以 `V92__session_participants.sql` 为准）。**未新增**「提及/@」「群聊」「发言者」「成员」「软删」等同义新词（理由见 §1.1a 各反例） |
 | 2026-11-02 正名（用户批准）：agent = 智能体 | §1.1a 顶部新增正名行 `agent = 智能体`（禁「代理」「AI 成员」）；「agent 主体」改「**智能体主体**」并补"主体停用 ≠ 进程崩"；新增「**智能体运行时**」（进程组件，与主体是两个词）与「**智能体管理**」（管理面，管理 ≠ 代发）；`principal scope` 反例的 UI 文案示例同步为「个人智能体 / 工作区智能体 / 实例智能体」；UI zh locale 描述性 "Agent" 全量 sweep 为「智能体」（`packages/ui/src/i18n/index.ts` zh 块 57 处；`AGENTS.md` 文件名、标识符、en 块不动） |
 | 2026-11-10 收口（PLAN-0750 M4 / task-226） | 术语一致性：`智能体主体 / agent principal` 与 M3 正名核对**一致**（两语均无需改动）；`principal scope` / 「主体共享范围」行标注**已删除**（D-174 2026-11-05 / V126 删列与两 CHECK），原句保留以继续承担「别与连接 scope 混用」的防错价值 |
