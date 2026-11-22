@@ -156,6 +156,7 @@ const i18n = createI18n({
                 dockTabOpen: "Open",
                 dockEmptyHint: "No panels are open yet. Use + above to pick one.",
                 containerEmpty: "No tabs in this container",
+                tabClose: globalCopy("workspace.tabClose"),
                 containerTabsLabelMain: globalCopy("workspace.containerTabsLabelMain"),
                 containerMain: globalCopy("workspace.containerMain"),
                 containerTabsLabelRight: globalCopy("workspace.containerTabsLabelRight"),

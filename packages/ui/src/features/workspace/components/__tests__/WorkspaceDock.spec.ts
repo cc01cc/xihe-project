@@ -12,6 +12,7 @@ const i18n = createI18n({
                 dockTabs: "Workbench panels",
                 dockOverflow: "More panels",
                 dockCloseTab: "Close this panel",
+                tabClose: "Close tab",
                 dockResize: "Resize the panel",
                 closePanel: "Close the auxiliary panel",
                 dockFocusExpand: "Expand panel",
