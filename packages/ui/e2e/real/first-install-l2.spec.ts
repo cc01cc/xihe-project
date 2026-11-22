@@ -14,7 +14,14 @@
  *
  * 判据（缺一不算）：
  *   users=1 / workspaces=1 / provider_connections=1 且 owner=instance_identity.instance_id；
- *   pendingModelIntent=false（CP 日志的 first_run_content_seeded 行）；
+ *   pendingModelIntent 按 D-1917 分两支，由 `GET /api/v1/provider-catalog` 里
+ *   **seed provider 那一条 catalog 事实**分流（禁止写死其中一支）：
+ *     A 支 catalog 声明了 model id ⇒ pendingModelIntent=false，且 intent 指向该 provider+model；
+ *     B 支 catalog 未声明任何 model id（如 ollama `modelDiscovery=remote-models`）
+ *       ⇒ pendingModelIntent=true 为正确行为，且必须同时抓到
+ *         `first_run_content_seeded ... pendingModelIntent=true` 日志行，且 subject 全部保持未绑定；
+ *   反例守卫：落入 subject 的 model id 必须是 catalog 声明过的 id，B 支必须保持未绑定（NULL）；
+ *   为把 pending 变 false 而写占位/假 model id ⇒ 判红（D-1917）。
  *   审计行 instance_admin_bootstrapped 存在且指向首账号；
  *   第二账号无 cap:instance:admin，且 provider_connections 不新增。
  */
@@ -116,6 +123,151 @@ function scanCpLogs(pattern: RegExp): { hits: number; lines: string[] } {
         }
     }
     return { hits: lines.length, lines };
+}
+
+type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
+interface JsonObject {
+    [key: string]: JsonValue;
+}
+
+/** `typeof x === "object"` also matches arrays; JSON object indexing needs the array case gone. */
+function isObjectRecord(value: JsonValue | undefined): value is JsonObject {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Mirror of `FirstRunSeedModelIntent.modelIds` (cp/config): a textual id, an array of ids/objects,
+ * or one object carrying `id` / `model` / `name`. Every tolerated position is read and the result is
+ * sorted, so the caller picks the same "first declared id" the seeder picks.
+ */
+function collectModelIds(node: JsonValue | undefined, ids: Set<string>): void {
+    if (node === undefined || node === null) return;
+    if (typeof node === "string") {
+        const trimmed = node.trim();
+        if (trimmed) ids.add(trimmed);
+        return;
+    }
+    if (Array.isArray(node)) {
+        for (const entry of node) collectModelIds(entry, ids);
+        return;
+    }
+    if (isObjectRecord(node)) {
+        for (const field of ["id", "model", "name"] as const) {
+            const value = node[field];
+            if (typeof value === "string" && value.trim()) {
+                ids.add(value.trim());
+                return;
+            }
+        }
+    }
+}
+
+/** The model ids the catalog declares for one provider, sorted (empty = catalog declared nothing). */
+function declaredModelIds(providers: JsonValue[], providerId: string): string[] {
+    const entry = providers.find(
+        (candidate): candidate is JsonObject =>
+            isObjectRecord(candidate) && candidate.id === providerId,
+    );
+    if (!entry) return [];
+    const ids = new Set<string>();
+    collectModelIds(entry["models"], ids);
+    collectModelIds(entry["defaultModel"], ids);
+    const pairs = Array.isArray(entry["supportedApiTypes"]) ? entry["supportedApiTypes"] : [];
+    for (const pair of pairs) {
+        if (!isObjectRecord(pair)) continue;
+        collectModelIds(pair["models"], ids);
+        collectModelIds(pair["defaultModel"], ids);
+    }
+    return [...ids].sort();
+}
+
+interface BranchFacts {
+    /** Provider id the seed wrote into `provider_connections`. */
+    seedProviderId: string;
+    /** Model ids the catalog declares for that provider (empty ⇒ catalog declared nothing). */
+    catalogDeclared: string[];
+    /** `pendingModelIntent` as read from the CP log line ("" when the flag is absent). */
+    observedPending: string;
+    /**
+     * Rows of `first_run_content_seeded ... pendingModelIntent=<value>`, keyed by value. The verdict
+     * reads only the entry for its own branch, so "the log line was caught with this branch's value"
+     * stays a real observation instead of a bare line count.
+     */
+    pendingLogHitsByValue: Record<"true" | "false", number>;
+    /** `[provider, model]` per seeded subject, coalesced to "" when the column is NULL. */
+    subjectModels: string[][];
+    /**
+     * Whether the provider-catalog read actually produced a provider list. A failed HTTP read must
+     * not degrade into "catalog declares nothing" (which would silently pick B 支), so it fails here.
+     */
+    catalogFactReadable: boolean;
+    /** Whether the `event=first_run_content_seeded` line was observed at all. */
+    seedLogSeen: boolean;
+}
+
+interface BranchVerdict {
+    branch: "A" | "B";
+    expectedPending: "false" | "true";
+    ok: boolean;
+    boundPairs: { provider: string; model: string }[];
+    unboundCount: number;
+    /** Model ids that reached a subject without being declared by the catalog (D-1917 反例). */
+    invented: string[];
+    failureReasons: string[];
+}
+
+/**
+ * D-1917: the two branches are chosen by the catalog fact, never hard-coded. A 支 requires the
+ * intent to point at the seeded provider plus a catalog-declared model; B 支 requires every subject
+ * to stay unbound *and* the pending log line plus the 待绑定 warning to be present. A placeholder or
+ * forged model id lands in `invented` and judges red.
+ */
+function evaluateModelIntentBranch(facts: BranchFacts): BranchVerdict {
+    const branch = facts.catalogDeclared.length > 0 ? "A" : "B";
+    const expectedPending = branch === "A" ? "false" : "true";
+    const boundPairs = facts.subjectModels
+        .map(([provider, model]) => ({ provider, model }))
+        .filter((pair) => pair.provider !== "" && pair.model !== "");
+    const unboundCount = facts.subjectModels.filter(
+        ([provider, model]) => provider === "" && model === "",
+    ).length;
+    const invented = [...new Set(boundPairs.map((pair) => pair.model))].filter(
+        (model) => facts.catalogDeclared.length === 0 || !facts.catalogDeclared.includes(model),
+    );
+    const failureReasons: string[] = [];
+    if (!facts.seedLogSeen) failureReasons.push("seed-log-missing");
+    // Fail-closed: an unreadable catalog means the branch itself is undetermined. Without this,
+    // a 401/500 on `/api/v1/provider-catalog` looks exactly like "no model declared" ⇒ B 支.
+    if (!facts.catalogFactReadable) failureReasons.push("catalog-fact-unreadable");
+    if (facts.observedPending !== expectedPending) failureReasons.push("pending-mismatch");
+    // Anti-vacuity: the seed always creates three subjects (Lead / WorkerA / WorkerB); an empty
+    // table would make both branches trivially true.
+    if (facts.subjectModels.length === 0) failureReasons.push("no-seeded-subjects");
+    if (facts.pendingLogHitsByValue[expectedPending] <= 0)
+        failureReasons.push("pending-log-line-missing");
+    if (branch === "A") {
+        if (!boundPairs.every((pair) => pair.provider === facts.seedProviderId)) {
+            failureReasons.push("intent-provider-mismatch");
+        }
+        if (!boundPairs.every((pair) => facts.catalogDeclared.includes(pair.model))) {
+            failureReasons.push("intent-model-not-declared");
+        }
+        if (boundPairs.length !== facts.subjectModels.length)
+            failureReasons.push("intent-not-bound");
+    } else {
+        if (unboundCount !== facts.subjectModels.length)
+            failureReasons.push("b-branch-subject-bound");
+    }
+    if (invented.length > 0) failureReasons.push("placeholder-model-id");
+    return {
+        branch,
+        expectedPending,
+        ok: failureReasons.length === 0,
+        boundPairs,
+        unboundCount,
+        invented,
+        failureReasons,
+    };
 }
 
 interface RegisterBody {
@@ -244,12 +396,55 @@ test.describe("task-733 first-install L2 — real PG onboarding @host", () => {
             (scan) => scan.hits > 0,
             BUDGET.short,
         );
+        // ---- D-1917 · pendingModelIntent 分两支 -------------------------------------------
+        // The branch is chosen by a catalog fact visible to this test, never hard-coded: the
+        // provider-catalog entry for the provider this install seeded. Declared model ids ⇒ A 支
+        // (false + intent points at provider+model); nothing declared ⇒ B 支 (true is correct and
+        // must be backed by the log line). Flipping the expected value to `true` would hide an A 支
+        // regression, so both branches carry their own observable evidence.
+        const seedProviderId = connection[2] ?? "";
+        const catalogResponse = await request.get(`${CP_URL}/api/v1/provider-catalog`, {
+            headers: { Authorization: `Bearer ${first.accessToken}` },
+            timeout: LONG_TIMEOUT_MS,
+        });
+        const catalogBody = (await catalogResponse.json().catch(() => null)) as {
+            providers?: JsonValue[];
+        } | null;
+        const catalogProviders = Array.isArray(catalogBody?.providers)
+            ? catalogBody!.providers!
+            : [];
+        // "Readable" = HTTP 200 with a non-empty provider list. A missing provider entry is *not* an
+        // error (the seeder resolves an unknown id to `Intent.pending()` too), but the read itself
+        // must have succeeded, otherwise the branch would be unknowable and must not default to B 支.
+        const catalogFactReadable = catalogResponse.ok() && catalogProviders.length > 0;
+        const catalogDeclared = declaredModelIds(catalogProviders, seedProviderId);
         const pending = seedLog.value.lines[0]?.match(/pendingModelIntent=(true|false)/)?.[1] ?? "";
+        const subjectModels = psql(
+            "SELECT coalesce(default_model_provider,''), coalesce(default_model_name,'') " +
+                "FROM agent_principals WHERE created_by_user_id = " +
+                `'${firstId}' ORDER BY name`,
+        );
+        const verdict = evaluateModelIntentBranch({
+            seedProviderId,
+            catalogDeclared,
+            observedPending: pending,
+            pendingLogHitsByValue: {
+                true: scanCpLogs(/event=first_run_content_seeded.*pendingModelIntent=true/).hits,
+                false: scanCpLogs(/event=first_run_content_seeded.*pendingModelIntent=false/).hits,
+            },
+            subjectModels,
+            catalogFactReadable,
+            seedLogSeen: seedLog.ok,
+        });
+        const warnHits = scanCpLogs(/model intent 待绑定/).hits;
+        const { branch, expectedPending, invented, boundPairs, unboundCount } = verdict;
         record(
-            "pendingModelIntent=false",
-            "CP log first_run_content_seeded carries pendingModelIntent=false",
-            `hits=${seedLog.value.hits} pending=${pending || "absent"} ${JSON.stringify(seedLog.value.lines).slice(0, 400)}`,
-            seedLog.ok && pending === "false" ? "PASS" : "FAIL",
+            `pendingModelIntent ${branch} 支（D-1917）`,
+            branch === "A"
+                ? `catalog declares [${catalogDeclared.join(", ")}] for provider=${seedProviderId} ⇒ pendingModelIntent=false 且 intent 指向 ${seedProviderId}+声明过的 model`
+                : `catalog declares no model id for provider=${seedProviderId} ⇒ pendingModelIntent=true 为正确行为，并附 first_run_content_seeded 日志行与未绑定 subject`,
+            `branch=${branch} catalog=${catalogResponse.status()} readable=${catalogFactReadable} hits=${seedLog.value.hits} pending=${pending || "absent"} expected=${expectedPending} declared=${JSON.stringify(catalogDeclared)} subjects=${JSON.stringify(subjectModels)} bound=${JSON.stringify(boundPairs)} unbound=${unboundCount} invented=${JSON.stringify(invented)} warnHits=${warnHits} failures=${JSON.stringify(verdict.failureReasons)} pendingLines=${JSON.stringify(seedLog.value.lines).slice(0, 400)}`,
+            verdict.ok ? "PASS" : "FAIL",
         );
 
         const second = await register(request, "seconduser");
@@ -285,6 +480,22 @@ test.describe("task-733 first-install L2 — real PG onboarding @host", () => {
                     stack: RUN_ID,
                     seedAdmin: SEED_ADMIN,
                     elapsedMs: Date.now() - began,
+                    modelIntent: {
+                        decision: "D-1917",
+                        branch,
+                        seedProviderId,
+                        catalogStatus: catalogResponse.status(),
+                        catalogFactReadable,
+                        catalogDeclared,
+                        expectedPending,
+                        observedPending: pending,
+                        subjectModels,
+                        boundPairs,
+                        unboundCount,
+                        pendingWarnHits: warnHits,
+                        invented,
+                        failureReasons: verdict.failureReasons,
+                    },
                     sql: {
                         counts: "SELECT count(*) FROM users / workspaces WHERE deleted_at IS NULL / provider_connections",
                         owner: "SELECT owner_type, owner_id, provider_id, connection_key FROM provider_connections",
