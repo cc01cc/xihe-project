@@ -1,156 +1,76 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "@playwright/test";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
-const HOST_ROOT = path.resolve(
-    process.cwd(),
-    "../../.tmp/e2e-host",
-    process.env.XIHE_E2E_RUN_ID ?? "unknown-run",
-);
+const ADMIN_IDENTIFIER = process.env.XIHE_E2E_ADMIN_IDENTIFIER ?? "admin@xihe.local";
 
-test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
+test.describe("@host PLAN-0470 MCP instance registry consumer", () => {
     test.setTimeout(TEST_TIMEOUT_MS);
 
-    test("workspace MCP config saves and reloads through the settings UI", async ({
+    test("workspace MCP deep link falls back to the instance registry", async ({
         page,
         request,
     }) => {
-        const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
-            data: {
-                email: `plan0470-mcp-${Date.now()}@test.com`,
-                password: process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword(),
-                name: "PLAN0470 MCP Config",
-            },
+        const adminPassword = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
+        expect(adminPassword, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe("");
+        const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
+            data: { identifier: ADMIN_IDENTIFIER, password: adminPassword },
         });
-        expect(registration.ok()).toBeTruthy();
-        const auth = (await registration.json()) as {
-            accessToken: string;
-            refreshToken: string;
-            workspaceId: string;
-        };
-        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
-        auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
-        const deleteDefault = await request.delete(
-            `${CP_URL}/api/v1/workspaces/${auth.workspaceId}`,
-            { headers: { Authorization: `Bearer ${auth.accessToken}` } },
-        );
-        expect(deleteDefault.ok()).toBeTruthy();
-
-        const hostPath = path.join(HOST_ROOT, `plan0470-mcp-config-${Date.now()}`);
-        mkdirSync(hostPath, { recursive: true });
-        const created = await request.post(`${CP_URL}/api/v1/workspaces`, {
-            headers: {
-                Authorization: `Bearer ${auth.accessToken}`,
-                "Content-Type": "application/json",
-                "Idempotency-Key": `plan0470-mcp-config-${Date.now()}`,
-            },
-            data: {
-                name: "PLAN-0470 MCP Config",
-                storageMode: "direct_attach",
-                hostPath,
-                executionMode: "windows-mxc",
-            },
-        });
-        expect(created.status()).toBe(201);
-        const workspace = (await created.json()) as { id: string };
-        // D-1432 / task-41：工作区 MCP 真页签已搬回工作区设置页；旧
-        // `/resources/mcp?layer=WORKSPACE` 现在只渲染资源区指路/回落，不再发 workspace 配置请求。
-        const mcpSettingsUrl = `/workspace/${workspace.id}/settings?tab=mcp`;
-        const refreshed = await request.post(`${CP_URL}/api/v1/auth/refresh`, {
-            data: { refreshToken: auth.refreshToken },
-        });
-        expect(refreshed.ok()).toBeTruthy();
-        const refreshedAuth = (await refreshed.json()) as {
-            accessToken: string;
-            workspaceId: string;
-        };
-        // PLAN-0614: registration no longer creates a workspace; create one explicitly.
-        refreshedAuth.workspaceId = await ensureWorkspace(request, refreshedAuth.accessToken);
-        expect(refreshedAuth.workspaceId).toBe(workspace.id);
+        expect(login.ok(), await login.text()).toBe(true);
+        const auth = (await login.json()) as { accessToken: string };
+        const workspaceId = await ensureWorkspace(request, auth.accessToken);
         await page.addInitScript(
-            ({ token, workspaceId }) => {
+            ({ token, wsId }) => {
                 localStorage.setItem("xihe-token", token);
-                localStorage.setItem("xihe-user", JSON.stringify({ workspaceId }));
+                localStorage.setItem("xihe-user", JSON.stringify({ workspaceId: wsId }));
                 localStorage.setItem(
                     "xihe-workspace",
-                    JSON.stringify({ id: workspaceId, name: "Default Workspace" }),
+                    JSON.stringify({ id: wsId, name: "Default Workspace" }),
                 );
             },
-            { token: refreshedAuth.accessToken, workspaceId: refreshedAuth.workspaceId },
+            { token: auth.accessToken, wsId: workspaceId },
         );
 
-        // 判据不变（加载 200 / 可编辑 / 保存 200 / 重载后仍在），入口按 D-1432 走设置页真页签。
-        const loadConfigResponse = page.waitForResponse(
-            (response) =>
-                response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
-                response.request().method() === "GET",
-            { timeout: LONG_TIMEOUT_MS },
-        );
-        await page.goto(mcpSettingsUrl, { waitUntil: "load" });
-        expect((await loadConfigResponse).status()).toBe(200);
-        const editor = page.getByTestId("mcp-config-textarea");
-        await expect(editor).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect.poll(() => editor.inputValue(), { timeout: LONG_TIMEOUT_MS }).not.toBe("");
-
-        const config = JSON.parse(await editor.inputValue()) as {
-            mcpServers: Record<string, unknown>;
-        };
-        const serverName = `plan0470-${Date.now()}`;
-        config.mcpServers[serverName] = {
-            command: "node",
-            args: ["--version"],
-        };
-        await editor.fill(JSON.stringify(config, null, 2));
-        const mcpPanel = editor.locator("xpath=../..");
-        const [saveResponse] = await Promise.all([
-            page.waitForResponse(
-                (response) =>
-                    response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
-                    response.request().method() === "PUT",
-            ),
-            mcpPanel.getByTestId("mcp-config-save").click(),
-        ]);
-        expect(saveResponse.status()).toBe(200);
-
-        const persisted = await request.get(
-            `${CP_URL}/api/v1/workspaces/${workspace.id}/mcp-config`,
-            {
-                headers: {
-                    Authorization: `Bearer ${refreshedAuth.accessToken}`,
-                    "X-Workspace-Id": workspace.id,
-                },
-            },
-        );
-        expect(persisted.ok()).toBeTruthy();
-        const body = (await persisted.json()) as {
-            mcpServers: Record<string, { command?: string; args?: string[] }>;
-        };
-        expect(body.mcpServers[serverName]).toEqual({ command: "node", args: ["--version"] });
-
-        await page.reload({ waitUntil: "load" });
-        const reloadedConfigResponse = page.waitForResponse(
-            (response) =>
-                response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
-                response.request().method() === "GET",
-            { timeout: LONG_TIMEOUT_MS },
-        );
-        await page.goto(mcpSettingsUrl, { waitUntil: "load" });
-        expect((await reloadedConfigResponse).status()).toBe(200);
-        const reloadedEditor = page.getByTestId("mcp-config-textarea");
-        await expect(reloadedEditor).toBeVisible();
-        const reloaded = JSON.parse(await reloadedEditor.inputValue()) as {
-            mcpServers: Record<string, { command?: string; args?: string[] }>;
-        };
-        expect(reloaded.mcpServers[serverName]).toEqual({ command: "node", args: ["--version"] });
-        await page.screenshot({
-            scale: "css",
-            path: test.info().outputPath("plan0470-mcp-config-reloaded.png"),
-            fullPage: true,
+        // task-145 / DSD-1511：MCP 的 WORKSPACE 层已迁到工作区设置，资源区只剩实例层。
+        // 深链 `?layer=WORKSPACE` 必须静默回落到实例注册表，且不再发工作区 mcp-config 请求。
+        const workspaceConfigRequests: string[] = [];
+        page.on("request", (req) => {
+            if (req.url().includes(`/api/v1/workspaces/${workspaceId}/mcp-config`)) {
+                workspaceConfigRequests.push(req.url());
+            }
         });
+
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+
+        const registry = page.getByTestId("instance-mcp-panel");
+        await expect(registry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(
+            page.getByRole("heading", { name: "实例 MCP 注册表", exact: true }),
+        ).toBeVisible();
+
+        // 可注册：实例管理员能看到稳定入口；打开表单证明注册面真的可达。
+        const createButton = page.getByTestId("instance-mcp-create");
+        await expect(createButton).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(createButton).toHaveAccessibleName("注册 MCP 服务");
+        await createButton.click();
+        const createDialog = page.getByTestId("instance-mcp-create-dialog");
+        await expect(createDialog).toBeVisible();
+        await expect(
+            createDialog.getByRole("heading", { name: "注册实例级 MCP 服务", exact: true }),
+        ).toBeVisible();
+        await expect(createDialog.getByTestId("instance-mcp-form-name")).toBeVisible();
+        await expect(createDialog.getByTestId("instance-mcp-form-transport")).toBeVisible();
+        await expect(createDialog.getByTestId("instance-mcp-form-url")).toBeVisible();
+        await createDialog.getByTestId("instance-mcp-create-cancel").click();
+        await expect(createDialog).toHaveCount(0);
+
+        // workspace 层入口不存在：无工作区配置编辑面、无 WORKSPACE 页签、无设置页 MCP 面板。
+        await expect(page.getByTestId("mcp-config-textarea")).toHaveCount(0);
+        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toHaveCount(0);
+        await expect(page.getByTestId("resource-layer-tabs")).toHaveCount(0);
+        await expect(page.getByTestId("ws-settings-mcp")).toHaveCount(0);
+        expect(workspaceConfigRequests).toEqual([]);
     });
 });
