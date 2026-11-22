@@ -1,0 +1,178 @@
+{
+    "version": 1,
+    "note": "task-763 template hardcoded-copy baseline: file:line@text-hash; every row needs reason + owner-task",
+    "entries": {
+        "src/components/settings/AgentWorkspaceBindingsPanel.vue:232@3b62291a0e": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/components/ui/sidebar/Sidebar.vue:48@2a174a65ad": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/ApprovalModal.vue:513@4d465158ed": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/ChatPanel.vue:1737@de32e20193": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/ChatPanel.vue:1811@2e201f3580": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/MessageList.vue:689@675cdf65d0": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/MessageSearch.vue:19@69f146b75b": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/PdfViewer.vue:131@4199fea1e4": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/PdfViewer.vue:132@09869157c7": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/PdfViewer.vue:184@af775d915a": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/chat/components/PdfViewer.vue:185@17f8f977aa": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/DiffViewer.vue:150@cda740be9c": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileContextMenu.vue:158@9615c8137b": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:128@736c95c32b": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:132@400ab969ed": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:143@2c2de38a54": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:152@2cd0f3be87": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:159@576d81bb06": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:64@fa3ecfb797": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileImportDialog.vue:79@d57a5bdaab": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileNodeMenu.vue:261@2451cdcb16": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/FileNodeMenu.vue:355@9ac108e506": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MarkdownEditor.vue:54@f6da93ed21": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MarkdownEditor.vue:62@217901c51a": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MarkdownEditor.vue:70@c3405f8c7d": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MarkdownEditor.vue:78@e6f04ffbaa": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MarkdownEditor.vue:86@305378ddd2": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MarkdownEditor.vue:94@aedd6814ff": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MobileChatSheet.vue:219@6bf6d3f3d6": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MobileChatSheet.vue:270@27d2a8cb3b": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MobileWorkspaceSheet.vue:36@39932f24fe": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/components/MobileWorkspaceSheet.vue:37@fcd206a65a": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/pages/WorkspaceView.vue:507@958ae76519": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/pages/WorkspaceView.vue:508@ce5f813d18": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/pages/WorkspaceView.vue:515@499a73be9c": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/features/workspace/pages/WorkspaceView.vue:518@ca444b55df": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/scheduledTasks/ScheduledTasksOverviewView.vue:40@62761cd01c": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/scheduledTasks/ScheduledTasksOverviewView.vue:41@3c88b1468c": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/scheduledTasks/ScheduledTasksOverviewView.vue:53@65a6152e2d": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/scheduledTasks/ScheduledTasksOverviewView.vue:54@d571a5e3c4": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/settings/KnowledgeBaseView.vue:155@088e7c2b09": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/settings/KnowledgeBaseView.vue:156@a8c81f93f2": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        },
+        "src/views/settings/KnowledgeBaseView.vue:158@20744aec67": {
+            "reason": "首轮存量硬编码冻结；由 task-757/759 及各面卡片迁移，禁止整目录豁免",
+            "owner-task": "task-763"
+        }
+    }
+}
