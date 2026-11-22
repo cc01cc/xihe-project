@@ -280,15 +280,15 @@ class GrantPresetDataBackfillMigrationTest {
         // MANAGE_WORKSPACE_AGENTS at instance scope (decision #27 made it scope_class=both).
         assertEquals(0, scalarInt("SELECT count(*) FROM grants WHERE source = 'role' "
                 + "AND scope_type = 'instance' AND subject_id = '" + plainUser + "'::uuid "
-                + "AND permissions -> 0 ->> 'actionClass' = 'MANAGE_WORKSPACE_AGENTS'"));
+                + "AND permissions -> 0 ->> 'actionClass' = 'action:MANAGE_WORKSPACE_AGENTS'"));
         assertEquals(1, scalarInt("SELECT count(*) FROM grants WHERE source = 'role' "
                 + "AND scope_type = 'instance' AND subject_id = '" + adminUser + "'::uuid "
-                + "AND permissions -> 0 ->> 'actionClass' = 'MANAGE_WORKSPACE_AGENTS'"));
+                + "AND permissions -> 0 ->> 'actionClass' = 'action:MANAGE_WORKSPACE_AGENTS'"));
         assertEquals(1, scalarInt("SELECT count(*) FROM grants WHERE source = 'role' AND scope_type = 'workspace' "
                 + "AND scope_id = '" + workspaceId + "'::uuid "
                 + "AND subject_id = '" + ownerUser + "'::uuid "
-                + "AND permissions -> 0 ->> 'actionClass' = 'MANAGE_WORKSPACE_AGENTS'"));
-        assertEquals(0, scalarInt("SELECT count(*) FROM grants WHERE permissions -> 0 ->> 'actionClass' LIKE '%:%'"),
+                + "AND permissions -> 0 ->> 'actionClass' = 'action:MANAGE_WORKSPACE_AGENTS'"));
+        assertEquals(0, scalarInt("SELECT count(*) FROM grants WHERE permissions -> 0 ->> 'actionClass' LIKE 'cap:%'"),
                 "capability atoms never reach grants (decision #23)");
     }
 

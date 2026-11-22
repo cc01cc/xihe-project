@@ -132,7 +132,10 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // instance-administrator set grows by one more literal — same reasoning as V157/V172
             // above: the seed is what the role holds, and dropping it here would assert a set the
             // code no longer builds (V178:44-55 also backfills it onto existing ADMIN bindings).
-            "session:permission:configure"));
+            "session:permission:configure",
+            // task-835 (approval contract §2.3, V183): ADMIN decides approvals. The grant carries
+            // the request-scoped sentinel, so it covers exactly the resource of the request.
+            "approve"));
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(
@@ -401,6 +404,10 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
                 if (ToolFaceRegistry.isCredentialActionClass(actionClass)) {
                     canonical = resource != null
                             && ToolFaceRegistry.isCanonicalCredentialResource(resource.asText());
+                } else if (ToolFaceRegistry.isApproveActionClass(actionClass)) {
+                    // task-835: approve is scoped to the request's own resource (never `*`).
+                    canonical = resource != null
+                            && ResourceNamespaces.isRequestResource(resource.asText());
                 } else {
                     canonical = resource == null || "*".equals(resource.asText());
                 }

@@ -140,6 +140,14 @@ class V114V115SeedIdempotencyAndParityTest {
         int affected = 0;
         // Strip comments BEFORE splitting on ';': the header prose contains semicolons, and a
         // comment line that does not start with "--" after a naive split becomes a syntax error.
+        // task-832 renamed the tables at V182; replaying the V114/V115 seed text on a head-migrated
+        // database must target the current names (this is a seed-idempotency check, not a schema
+        // history replay).
+        sql = sql.replace("role_permissions", "grant_preset_atoms")
+                .replace("role_bindings", "grant_preset_bindings")
+                .replace("JOIN roles ", "JOIN grant_presets ")
+                .replace(" roles r ", " grant_presets r ")
+                .replace("'role'", "'preset'");
         try (Statement statement = connection.createStatement()) {
             for (String raw : stripComments(sql).split(";")) {
                 String statementSql = raw.trim();
@@ -198,7 +206,10 @@ class V114V115SeedIdempotencyAndParityTest {
             Set<String> actual = dbAtomsOf(role.getKey());
             for (String atom : NEW_ATOMS) {
                 boolean expectedHeld = role.getValue().contains(atom);
-                boolean actualHeld = actual.contains(atom);
+                // task-835: the reviewed table is written in the face spelling; the persisted row
+                // carries the canonical `action:` name.
+                boolean actualHeld = actual.contains(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(atom));
                 if (expectedHeld && !actualHeld) {
                     differences.add("code_has_db_lacks: atom=" + atom + " role=" + role.getKey());
                 }

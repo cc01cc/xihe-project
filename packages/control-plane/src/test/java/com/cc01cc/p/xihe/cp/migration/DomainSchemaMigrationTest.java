@@ -1373,7 +1373,7 @@ class DomainSchemaMigrationTest {
                 // source='preset' rows, so the V64 rewrite is observed there after the full chain.
                 assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'preset' "
                         + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
-                        + "AND permissions @> '[{\"actionClass\":\"" + atom
+                        + "AND permissions @> '[{\"actionClass\":\"action:" + atom
                         + "\",\"resource\":\"credential:*\"}]'::jsonb"),
                         "the ADMIN default must carry " + atom + " after the V64 rewrite");
             }

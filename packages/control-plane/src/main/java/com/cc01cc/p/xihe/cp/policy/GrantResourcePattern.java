@@ -66,7 +66,17 @@ public class GrantResourcePattern {
     public String resolve(PermissionAtomCatalog.Atom atom, String requested) {
         String canonical = atom.canonicalResource();
         String raw = requested == null ? null : requested.trim();
-        if (raw == null || raw.isEmpty()) {
+        if (ResourceNamespaces.isRequestResource(canonical)) {
+            // task-835: approve is always about THIS request's resource. Neither a blank pattern
+            // (which would become the canonical default) nor `*` may be stored: either one turns a
+            // single approval grant into "approve anything".
+            if (raw == null || raw.isEmpty() || PermissionAtomCatalog.WILDCARD.equals(raw)
+                    || ResourceNamespaces.isRequestResource(raw)) {
+                throw invalid(atom.name(), raw,
+                        "approve is scoped to the resource of the request; a blank or '*' pattern"
+                                + " would approve every resource");
+            }
+        } else if (raw == null || raw.isEmpty()) {
             return canonical;
         }
         if (raw.equals(canonical)) {

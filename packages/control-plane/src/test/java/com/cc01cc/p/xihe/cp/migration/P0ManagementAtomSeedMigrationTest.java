@@ -116,7 +116,11 @@ class P0ManagementAtomSeedMigrationTest {
     void zeroGapValidationQueryReturnsNoRows() throws SQLException {
         String sql = "SELECT count(*) FROM grant_preset_bindings b "
                 + "JOIN grant_preset_atoms rp ON rp.role_id = b.role_id "
-                + "WHERE rp.action_class IN ('MANAGE_AGENT_PRINCIPALS','MANAGE_WORKSPACE_MEMBERS') "
+                + "WHERE rp.action_class IN ('action:MANAGE_AGENT_PRINCIPALS',"
+                + "'action:MANAGE_WORKSPACE_MEMBERS') "
+                // task-835: grant_preset_atoms carries the canonical spelling, so the reviewed
+                // management atoms are named canonically here; the comparison to the grant row stays
+                // one expression on both sides.
                 + "  AND NOT EXISTS (SELECT 1 FROM grants g "
                 + "                  WHERE g.subject_type='user' AND g.subject_id=b.subject_id "
                 + "                    AND g.source='preset' AND g.scope_type=b.scope_type "
@@ -147,24 +151,26 @@ class P0ManagementAtomSeedMigrationTest {
         assertEquals(0, scalar("SELECT count(*) FROM grant_preset_bindings b "
                         + "JOIN grant_presets r ON r.id = b.role_id AND r.is_system = FALSE "
                         + "WHERE EXISTS (SELECT 1 FROM grant_preset_atoms rp "
-                        + "              WHERE rp.role_id = r.id AND rp.action_class = 'instance:admin') "
+                        + "              WHERE rp.role_id = r.id AND rp.action_class = 'cap:instance:admin') "
                         + "  AND NOT EXISTS (SELECT 1 FROM grant_preset_atoms rp2 "
                         + "                  WHERE rp2.role_id = r.id "
-                        + "                    AND rp2.action_class = 'workspace:admin')"),
+                        + "                    AND rp2.action_class = 'cap:workspace:admin')"),
                 "a custom role carrying instance:admin alone would lose workspace administration "
                         + "after T1.2 — if this ever fires, stop and report the count to the Lead");
         assertEquals(1, scalar("SELECT count(*) FROM grant_preset_atoms WHERE role_id = '"
-                        + ADMIN_ID + "'::uuid AND action_class = 'workspace:admin'"),
+                        + ADMIN_ID + "'::uuid AND action_class = 'cap:workspace:admin'"),
                 "the built-in ADMIN role is unaffected: V111 seeds workspace:admin for it");
     }
 
     @Test
     void bothAtomsAreForbiddenToAgentPrincipals() {
         var forbidden = PermissionAtomCatalog.agentPrincipalForbiddenAtoms();
-        assertTrue(forbidden.contains(ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS));
-        assertTrue(forbidden.contains(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS));
+        // task-835: the forbidden set is canonical (action:…); compare canonical, not the bare
+        // tool-face constant — otherwise this gate silently asserts nothing.
+        assertTrue(forbidden.contains(canonicalAtom(ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS)));
+        assertTrue(forbidden.contains(canonicalAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)));
         assertFalse(PermissionAtomCatalog.canBindToAgentPrincipal(
-                java.util.List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)));
+                java.util.List.of(canonicalAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS))));
     }
 
     @Test
@@ -184,7 +190,8 @@ class P0ManagementAtomSeedMigrationTest {
         // (40 -> 41). The number is a tripwire for "someone added an atom without updating the
         // chain", so the chain documents the new step too. V178 (task-108 / D-1908 rev3) added
         // SESSION_PERMISSION_CONFIGURE (41 -> 42), the widening-only session tier atom.
-        assertEquals(42, PermissionAtomCatalog.actionAtoms().size(),
+        // task-835 (V183) added ACTION_APPROVE (42 -> 43), the approval-gate atom.
+        assertEquals(43, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
                         + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
                         + " removal = 32, plus the PLAN-0750 M1 restore = 33, plus PLAN-0766"
@@ -192,7 +199,7 @@ class P0ManagementAtomSeedMigrationTest {
                         + " plus V157 WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37, plus V162"
                         + " MANAGE_ORG_UNITS + MANAGE_ORG_UNIT_MEMBERS + READ_ORG_UNIT_MEMBERS = 40;"
                         + " plus V172 TEAM_TASK_MANAGE = 41; plus V178"
-                        + " SESSION_PERMISSION_CONFIGURE = 42;"
+                        + " SESSION_PERMISSION_CONFIGURE = 42; plus V183 ACTION_APPROVE = 43;"
                         + " the same arithmetic is frozen in"
                         + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());
@@ -207,13 +214,22 @@ class P0ManagementAtomSeedMigrationTest {
 
     private static int atomCount(UUID roleId, String actionClass) throws SQLException {
         return scalar("SELECT count(*) FROM grant_preset_atoms WHERE role_id = '" + roleId
-                + "'::uuid AND action_class = '" + actionClass + "'");
+                + "'::uuid AND action_class = '" + canonicalAtom(actionClass) + "'");
     }
 
     private static int grantCount(String actionClass) throws SQLException {
         return scalar("SELECT count(*) FROM grants WHERE subject_type = 'user' AND subject_id = '"
                 + LEGACY_USER_ID + "'::uuid AND source = 'preset' AND scope_type = 'instance'"
-                + " AND permissions->0->>'actionClass' = '" + actionClass + "'");
+                + " AND permissions->0->>'actionClass' = '" + canonicalAtom(actionClass) + "'");
+    }
+
+    /**
+     * task-835: the reviewed atoms are written with the face/catalog body here; the persisted row
+     * carries the canonical {@code action:} / {@code cap:} spelling. Resolving through the catalog
+     * keeps one truth on both sides instead of a second hand-written prefix list.
+     */
+    private static String canonicalAtom(String atom) {
+        return com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog.atom(atom).name();
     }
 
     private static int scalar(String sql) throws SQLException {

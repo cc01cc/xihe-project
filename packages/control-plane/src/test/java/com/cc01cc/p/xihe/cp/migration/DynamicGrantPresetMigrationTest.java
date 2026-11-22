@@ -118,7 +118,7 @@ class DynamicGrantPresetMigrationTest {
      */
     private static final List<RetiredSeed> RETIRED_V87_SEEDS = List.of(
             new RetiredSeed(SystemGrantPresetCatalog.WS_EDITOR_ID, SystemGrantPresetCatalog.WS_EDITOR,
-                    "exec@*",
+                    "action:exec@*",
                     "V179__dsd1500_agent_exec_retirement_and_presets.sql",
                     "bf5cb083d",
                     "DSD-1500 (Q-93) R2 withdrew exec from the editor default; V179 deletes the"
@@ -352,13 +352,13 @@ class DynamicGrantPresetMigrationTest {
         }
         // Capability atoms live in the role definition ...
         assertEquals(3, scalarInt("SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id "
-                + "WHERE r.name = 'SUPER_ADMIN' AND rp.action_class LIKE '%:%'"),
+                + "WHERE r.name = 'SUPER_ADMIN' AND rp.action_class LIKE 'cap:%'"),
                 "SUPER_ADMIN carries the three capability atoms");
         // ... but ADMIN only carries instance:admin, and USER none.
         assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id "
-                + "WHERE r.name = 'ADMIN' AND rp.action_class LIKE '%:%'"));
+                + "WHERE r.name = 'ADMIN' AND rp.action_class LIKE 'cap:%'"));
         assertEquals(0, scalarInt("SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id "
-                + "WHERE r.name = 'USER' AND rp.action_class LIKE '%:%'"));
+                + "WHERE r.name = 'USER' AND rp.action_class LIKE 'cap:%'"));
         // Workspace roles exist exactly as the three OpenAPI WorkspaceRole values that carry grants.
         assertEquals(0, scalarInt("SELECT count(*) FROM roles WHERE name IN ('WS_MANAGER', 'WS_MEMBER')"),
                 "round-2 P1-3 removes WS_MANAGER/WS_MEMBER; ADMIN/MEMBER canonicalize to WS_EDITOR");
@@ -419,21 +419,21 @@ class DynamicGrantPresetMigrationTest {
         // task-201: the exemption is per (role, atom). It must not turn into "WS_EDITOR may seed
         // anything", and it must not leak to another role that happens to ship no exec atom.
         Map<String, Set<String>> dbRows = Map.of(
-                "editor", Set.of("read@*", "exec@*", "network@*", "exec@x"),
-                "viewer", Set.of("exec@*"));
-        Set<String> editorKnown = Set.of("read@*");
+                "editor", Set.of("action:read@*", "action:exec@*", "action:network@*", "action:exec@x"),
+                "viewer", Set.of("action:exec@*"));
+        Set<String> editorKnown = Set.of("action:read@*");
         Set<String> editorUnexplained = unexplainedAtoms(
                 SystemGrantPresetCatalog.WS_EDITOR_ID, editorKnown, dbRows.get("editor"));
-        assertEquals(Set.of("network@*", "exec@x"), editorUnexplained,
+        assertEquals(Set.of("action:network@*", "action:exec@x"), editorUnexplained,
                 "only the exact retired atom is explained; a different action class or a scoped"
                         + " pattern is still a regression");
         Set<String> viewerUnexplained = unexplainedAtoms(
                 SystemGrantPresetCatalog.WS_VIEWER_ID, Set.of(), dbRows.get("viewer"));
-        assertEquals(Set.of("exec@*"), viewerUnexplained,
+        assertEquals(Set.of("action:exec@*"), viewerUnexplained,
                 "the exemption belongs to WS_EDITOR only; WS_VIEWER seeding exec is still a"
                         + " regression");
         assertTrue(unexplainedAtoms(SystemGrantPresetCatalog.WS_EDITOR_ID, editorKnown,
-                Set.of("read@*", "exec@*")).isEmpty(),
+                Set.of("action:read@*", "action:exec@*")).isEmpty(),
                 "the retired editor atom is explained when nothing else is off");
     }
 
@@ -477,7 +477,7 @@ class DynamicGrantPresetMigrationTest {
                 + "', '*')");
         try {
             Set<String> unexplained = unexplainedAtoms(SystemGrantPresetCatalog.WS_VIEWER_ID,
-                    Set.of("read@*"), v87AtomsOf(SystemGrantPresetCatalog.WS_VIEWER_ID));
+                    Set.of("action:read@*"), v87AtomsOf(SystemGrantPresetCatalog.WS_VIEWER_ID));
             assertEquals(Set.of(probe + "@*"), unexplained,
                     "a seed row with no retirement keeps the guard red");
         } finally {
@@ -485,7 +485,7 @@ class DynamicGrantPresetMigrationTest {
                     + SystemGrantPresetCatalog.WS_VIEWER_ID + "'::uuid AND action_class = '" + probe
                     + "'");
         }
-        assertTrue(unexplainedAtoms(SystemGrantPresetCatalog.WS_VIEWER_ID, Set.of("read@*"),
+        assertTrue(unexplainedAtoms(SystemGrantPresetCatalog.WS_VIEWER_ID, Set.of("action:read@*"),
                 v87AtomsOf(SystemGrantPresetCatalog.WS_VIEWER_ID)).isEmpty(),
                 "removing the probe restores green");
     }

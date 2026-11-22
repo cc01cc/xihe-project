@@ -152,10 +152,10 @@ class AgentPrincipalScopeMigrationTest {
 
         assertEquals(3, roleBindingsBefore, "fixture: one role binding per tier principal");
         assertEquals(roleBindingsBefore, scalarInt(connection,
-                        "SELECT count(*) FROM grant_preset_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")"),
-                "grant_preset_bindings rows are not deleted by V126");
+                        "SELECT count(*) FROM role_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")"),
+                "role_bindings rows are not deleted by V126");
         assertEquals(roleBindingSnapshotBefore, tierRoleBindingSnapshot(),
-                "grant_preset_bindings rows (role/scope/granted_by/is_seed) are byte-for-byte unchanged by V126");
+                "role_bindings rows (role/scope/granted_by/is_seed) are byte-for-byte unchanged by V126");
         assertRoleBindingSurvives(PERSONAL_BINDING_ID, SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
                 "instance", null);
         assertRoleBindingSurvives(WORKSPACE_BINDING_ID, SystemGrantPresetCatalog.AGENT_DELEGATOR_ID,
@@ -414,7 +414,9 @@ class AgentPrincipalScopeMigrationTest {
         // A V89-era instance tier binding: V91 backfilled its materialized CREATE_OWN_AGENT row
         // (removed again at head by V147, asserted above); at V91-time the backfill was required so
         // existing accounts would not keep the five-atom set until their next materialization.
-        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        // task-835/task-832 note: this fixture runs at the V89 target, before V182 renames the table;
+        // the historical name is the only one that exists on this connection.
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '"
                 + SystemGrantPresetCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
                 + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
@@ -497,7 +499,7 @@ class AgentPrincipalScopeMigrationTest {
         workspaceAgentsBefore = scalarInt(connection,
                 "SELECT count(*) FROM workspace_agents WHERE principal_id IN (" + TIER_PRINCIPALS + ")");
         roleBindingsBefore = scalarInt(connection,
-                "SELECT count(*) FROM grant_preset_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
+                "SELECT count(*) FROM role_bindings WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
         grantsBefore = scalarInt(connection,
                 "SELECT count(*) FROM grants WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
         workspaceBindingsBefore = tierWorkspaceBindingSnapshot();
@@ -530,11 +532,11 @@ class AgentPrincipalScopeMigrationTest {
             throws SQLException {
         try (Statement statement = connection.createStatement();
              ResultSet rows = statement.executeQuery("SELECT role_id::text, scope_type, scope_id,"
-                     + " granted_by::text, is_seed FROM grant_preset_bindings WHERE id = '" + id + "'")) {
+                     + " granted_by::text, is_seed FROM role_bindings WHERE id = '" + id + "'")) {
             assertTrue(rows.next(), "the role binding survives V126: " + id);
             assertEquals(roleId.toString(), rows.getString("role_id"));
             assertEquals(scopeType, rows.getString("scope_type"),
-                    "grant_preset_bindings.scope_type is not part of the tier removal");
+                "role_bindings.scope_type is not part of the tier removal");
             assertEquals(scopeId == null ? null : scopeId.toString(), rows.getString("scope_id"));
             assertEquals(LEGACY_USER_ID.toString(), rows.getString("granted_by"));
             assertFalse(rows.getBoolean("is_seed"), "the fixture binding was never a seed");
@@ -579,7 +581,7 @@ class AgentPrincipalScopeMigrationTest {
     private static String tierRoleBindingSnapshot() throws SQLException {
         return snapshot(connection, "SELECT id::text || '|' || role_id::text || '|' || scope_type || '|'"
                 + " || COALESCE(scope_id::text, '-') || '|' || COALESCE(granted_by::text, '-') || '|'"
-                + " || is_seed::text FROM grant_preset_bindings WHERE subject_id IN (" + TIER_PRINCIPALS
+                + " || is_seed::text FROM role_bindings WHERE subject_id IN (" + TIER_PRINCIPALS
                 + ") ORDER BY id");
     }
 
@@ -623,7 +625,8 @@ class AgentPrincipalScopeMigrationTest {
 
     private static void insertRoleBinding(UUID id, UUID principalId, UUID roleId, String scopeType,
             UUID scopeId) throws SQLException {
-        execute(connection, "INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type,"
+        // This helper only seeds the V125-era fixture, before V182 renames the table.
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by, is_seed) VALUES ('" + id + "', '" + roleId
                 + "', 'agent_principal', '" + principalId + "', " + literal(scopeType) + ", "
                 + literal(scopeId == null ? null : scopeId.toString()) + ", '" + LEGACY_USER_ID

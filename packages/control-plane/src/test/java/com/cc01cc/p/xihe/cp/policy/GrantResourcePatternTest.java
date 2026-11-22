@@ -98,6 +98,21 @@ class GrantResourcePatternTest {
                 .contains("credential:* or credential:<uuid>"));
     }
 
+    @Test
+    void approveNeverStoresAWildcardBecauseOneApprovalWouldCoverEveryResource() {
+        assertEquals(ResourceNamespaces.REQUEST_RESOURCE, atom("approve").canonicalResource(),
+                "task-835: approve's canonical resource is the request-scoped sentinel, not *");
+        assertTrue(refused(atom("approve"), null).getMessage().contains("approve is scoped"));
+        assertTrue(refused(atom("approve"), "  ").getMessage().contains("approve is scoped"));
+        assertTrue(refused(atom("approve"), "*").getMessage().contains("approve is scoped"));
+        assertTrue(refused(atom("approve"), ResourceNamespaces.REQUEST_RESOURCE).getMessage()
+                .contains("approve is scoped"),
+                "the sentinel is a seed/evaluation marker; an API must name a concrete resource");
+        assertEquals("fs:" + WORKSPACE_ID + "/runs/42",
+                patterns.resolve(atom("approve"), "fs:" + WORKSPACE_ID + "/runs/42"),
+                "a concrete request resource is the one storable approve pattern");
+    }
+
     private CpApiException refused(PermissionAtomCatalog.Atom atom, String resource) {
         CpApiException failure = assertThrows(CpApiException.class,
                 () -> patterns.resolve(atom, resource));

@@ -53,7 +53,7 @@ VALUES (gen_random_uuid(), 'instance', 'agent-templates', 'agent-templates', '{
       "id": "00000000-0000-4000-8000-0000000000a1",
       "name": "guard",
       "permissions": [
-        { "actionClass": "action:read", "resource": "*" }
+        { "actionClass": "read", "resource": "*" }
       ]
     }
   ],

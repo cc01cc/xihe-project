@@ -37,7 +37,7 @@ class PluginBindingAuthorizationTest {
     // card touched anything — V156 added its atom and did not update this one. The pre-existing red
     // is recorded separately from any regression this card could introduce.
     // task-188 MVP⑤ (V172): TEAM_TASK_MANAGE joined the vocabulary (40 -> 41).
-    private static final int ACTION_ATOM_COUNT = 42;
+    private static final int ACTION_ATOM_COUNT = 43;
 
     @Test
     void pluginAtomsJoinTheCatalogWithTheSpecifiedScopes() {

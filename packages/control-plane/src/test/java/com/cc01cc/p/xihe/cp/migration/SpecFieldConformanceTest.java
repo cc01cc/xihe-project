@@ -61,7 +61,7 @@ class SpecFieldConformanceTest extends AbstractReusableIntegrationTest {
         // binding-scoped hold), so the constraint of record is now six values — exactly
         // GrantSources.WRITABLE_SOURCES, compared element-wise by PluginBindingGrantSourceMigrationTest.
         // The retired `default`/`direct` values remain excluded: they are not evaluation sources.
-        assertEquals(Set.of("role", "spawn", "template", "credential_binding", "agent_default",
+        assertEquals(Set.of("preset", "spawn", "template", "credential_binding", "agent_default",
                         "plugin_binding"),
                 checkAllowedValues("ck_grants_source"),
                 "PLAN-0691 V139: GrantSources.WRITABLE_SOURCES — V88's five plus plugin_binding");

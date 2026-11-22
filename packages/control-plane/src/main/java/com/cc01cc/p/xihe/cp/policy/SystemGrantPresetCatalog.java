@@ -101,10 +101,10 @@ public class SystemGrantPresetCatalog {
             String canonical = PermissionAtomCatalog.isCapabilityAtom(actionClass)
                     ? AtomNames.capability(actionClass)
                     : AtomNames.action(actionClass);
-            return new AtomRef(canonical,
-                    ToolFaceRegistry.isCredentialActionClass(actionClass)
-                            ? ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD
-                            : PermissionAtomCatalog.WILDCARD);
+            // task-835: the canonical resource comes from the registry (credential:* for the
+            // credential family, `$request` for approve — never `*` for approve, or one approval
+            // would cover every resource).
+            return new AtomRef(canonical, ResourceNamespaces.canonicalResourceFor(actionClass));
         }
     }
 
@@ -270,7 +270,12 @@ public class SystemGrantPresetCatalog {
                                         // session's own creator (the endpoint checks sessions.user_id) —
                                         // the atom alone never widens someone else's session.
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
+                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE),
+                                        // task-835 (approval contract §2.3): ADMIN may decide pending
+                                        // approvals; the criterion is (action:approve, the request's
+                                        // resource), never "is the run owner". The seed row carries the
+                                        // request-scoped sentinel, not `*`.
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)))),
                 new PresetSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
@@ -329,7 +334,11 @@ public class SystemGrantPresetCatalog {
                                         // sessions in this workspace; the relaxation face still pins the
                                         // actor to the session's creator.
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE)))),
+                                                ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE),
+                                        // task-835 (approval contract §2.3): a workspace owner decides
+                                        // approvals for this workspace. Same request-scoped resource rule
+                                        // as ADMIN; grant scope already limits the candidate set.
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_APPROVE)))),
                 new PresetSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         // DSD-1500 (Q-93) R2: exec left the editor default as well — the intersection
                         // requires every level to hold an atom, so leaving exec here would keep the

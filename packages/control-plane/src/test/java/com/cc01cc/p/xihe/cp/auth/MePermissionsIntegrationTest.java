@@ -82,7 +82,7 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
         jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type)"
                 + " SELECT gen_random_uuid(), id, 'user', CAST(? AS UUID), 'instance'"
                 + " FROM grant_presets WHERE name = 'SUPER_ADMIN'"
-                + " ON CONFLICT ON CONSTRAINT uq_grant_preset_bindings DO NOTHING", userId);
+                + " ON CONFLICT DO NOTHING", userId);
         authzContext.invalidateAll();
 
         // PLAN-0614: registration no longer creates a workspace; the fixture creates one so the

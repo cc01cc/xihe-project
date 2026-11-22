@@ -116,7 +116,12 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, count("agent_principals"), "no agent subject before the content seed");
         assertEquals(3, count("org_units"), "V181 leaves exactly the three-unit tree");
         assertEquals(1, count("org_unit_members"), "only the seeded admin is placed before the content seed");
-        assertEquals(181, appliedMigrationHead(), "V181 must already be applied in this lane");
+        // task-835: read the migrated head instead of pinning a version. The lane runs at the
+        // current schema head (V182 renamed the preset tables; V183 added the approve atom), so a
+        // literal would go stale on every later migration while the V181 org-tree fact stays true.
+        assertTrue(appliedMigrationHead() >= 181,
+                "the V181 org tree must already be applied in this lane (head="
+                        + appliedMigrationHead() + ")");
         int roleBindingsBefore = count("grant_preset_bindings");
         dumpReadings("baseline-before-content-seed");
 

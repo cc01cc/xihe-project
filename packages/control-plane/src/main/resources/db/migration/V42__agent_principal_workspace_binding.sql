@@ -104,7 +104,7 @@ BEGIN
                   WHERE jsonb_typeof(atom) <> 'object'
                      OR atom - 'actionClass' - 'resource' <> '{}'::jsonb
                      OR jsonb_typeof(atom->'actionClass') IS DISTINCT FROM 'string'
-                     OR COALESCE(atom->>'actionClass', '') NOT IN ('action:read', 'action:write', 'action:delete', 'action:exec', 'action:network', 'credential')
+                     OR COALESCE(atom->>'actionClass', '') NOT IN ('read', 'write', 'delete', 'exec', 'network', 'credential')
                      OR (atom ? 'resource' AND jsonb_typeof(atom->'resource') <> 'string')
               )
           )

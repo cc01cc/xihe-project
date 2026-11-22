@@ -137,6 +137,9 @@ public final class PermissionAtomLabels {
                 "管理组织单元成员", "Manage org unit members");
         put(labels, ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS,
                 "查看组织单元成员", "View org unit members");
+        // task-835 (approval contract §2.3): deciding a pending approval for THIS request's resource.
+        put(labels, ToolFaceRegistry.ACTION_APPROVE,
+                "审批请求", "Approve requests");
         return labels;
     }
 

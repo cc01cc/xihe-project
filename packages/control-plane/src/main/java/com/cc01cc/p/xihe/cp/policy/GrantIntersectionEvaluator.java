@@ -16,6 +16,9 @@ public class GrantIntersectionEvaluator {
 
     private static final Set<String> ACTION_CLASSES = ToolFaceRegistry.builtinActionClasses();
 
+    /** task-835: the canonical approval atom (its grant resource is the request-scoped sentinel). */
+    private static final String APPROVE_ACTION = AtomNames.action(ToolFaceRegistry.ACTION_APPROVE);
+
     /** Reason tokens on {@link MissingLevel}; a closed vocabulary, safe to surface to a requester. */
     public static final String REASON_EMPTY_REQUEST = "empty-request";
     public static final String REASON_EMPTY_PRINCIPAL_PATH = "empty-principal-path";
@@ -337,7 +340,8 @@ public class GrantIntersectionEvaluator {
                         if (!canonicalAction.equals(AtomNames.action(AtomNames.bare(atom.actionClass())))) {
                             continue;
                         }
-                        if (!matchesResource(atom.resource(), resource, request.shape())) {
+                        if (!coversResource(canonicalAction, atom.resource(), resource,
+                                request.shape())) {
                             continue;
                         }
                         hit = true;
@@ -406,10 +410,27 @@ public class GrantIntersectionEvaluator {
             if (token == null || !actionClass.equals(AtomNames.action(AtomNames.bare(token.actionClass())))) {
                 continue;
             }
-            if (matchesResource(token.resource(), resource, shape)) {
+            if (coversResource(actionClass, token.resource(), resource, shape)) {
                 return token;
             }
         }
         return null;
+    }
+
+    /**
+     * task-835: a grant row for {@code action:approve} carries the request-scoped sentinel
+     * ({@link ResourceNamespaces#REQUEST_RESOURCE}) instead of {@code *}. It covers exactly the
+     * resource of the request being decided — nothing wider — and only for the approve action, so a
+     * stray sentinel on any other atom keeps the ordinary (fail-closed) matcher.
+     */
+    private boolean coversResource(String canonicalAction, String grantResource,
+                                   String requestResource, ToolShape shape) {
+        if (ResourceNamespaces.isRequestResource(grantResource)) {
+            return APPROVE_ACTION.equals(canonicalAction)
+                    && requestResource != null && !requestResource.isBlank()
+                    && !PermissionAtomCatalog.WILDCARD.equals(requestResource)
+                    && !ResourceNamespaces.isRequestResource(requestResource);
+        }
+        return matchesResource(grantResource, requestResource, shape);
     }
 }
