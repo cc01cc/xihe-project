@@ -657,6 +657,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     replaceWorkspaceRole(ownerUserId, workspaceA, "WS_OWNER");
     await openAgentsPanel(page, { workspaceId: workspaceA, timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("agent-principal-name").fill("CreatedButNotBindable");
+    // task-779 正向对照：同一次运行里权限恢复后，同一个按钮必须可点、禁用原因提示必须消失。
+    // 只断言「无权限 ⇒ disabled」是单向的——按钮若被写死 disabled 也能通过，所以两态都要钉。
+    await expect(page.getByTestId("agent-principal-create")).toBeEnabled({
+        timeout: LONG_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(0);
     const createOnlyResponsePromise = page.waitForResponse(
         (response) =>
             response.url().endsWith("/api/v1/agent-principals") &&
