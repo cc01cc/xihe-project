@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -61,6 +62,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 })
 class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTest {
 
+    static {
+        // task-752: this class owns the "empty instance" premise. A reusable class may have installed
+        // a JVM-level snapshotSource (startup seeds) earlier in the same fork; ignore it for this class
+        // so the database is cloned from the Flyway-only template instead of the seeded snapshot.
+        TestDatabaseProvider.beginTemplateOnlyIsolation();
+    }
+
     /** The runtime the direct-attach probe talks to; answers {@code available:true}. */
     private static final FirstRunSeedProbeStub PROBE =
             FirstRunSeedProbeStub.reportingAvailability(true, "windows-mxc");
@@ -84,7 +92,11 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
 
     @AfterAll
     static void stopProbe() {
-        PROBE.stop();
+        try {
+            PROBE.stop();
+        } finally {
+            TestDatabaseProvider.endTemplateOnlyIsolation();
+        }
     }
 
     @Autowired

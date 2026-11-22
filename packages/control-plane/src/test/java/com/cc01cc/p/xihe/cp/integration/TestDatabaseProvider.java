@@ -84,6 +84,13 @@ public final class TestDatabaseProvider {
     /** 非空时 {@link #migratedDatabase(String)} 改为从快照库克隆（{@link #emptyDatabase(String)} 不变）。 */
     private static volatile String snapshotSource;
 
+    /**
+     * task-752：本测试类声明「必须从无启动种子的模板库起步」时，在类生命周期内忽略 JVM 级
+     * {@link #snapshotSource}。由测试类静态初始化开启、{@code @AfterAll} 关闭；不依赖前置类
+     * 是否切过快照，也不改变该作用域外任何类的 {@link #migratedDatabase(String)} 语义。
+     */
+    private static volatile boolean templateOnlyIsolation;
+
     private TestDatabaseProvider() {
     }
 
@@ -140,7 +147,7 @@ public final class TestDatabaseProvider {
             ensureTemplate();
         }
         String databaseName = databaseName(label);
-        String templateDatabase = fromTemplate && snapshotSource != null
+        String templateDatabase = fromTemplate && !templateOnlyIsolation && snapshotSource != null
                 ? snapshotSource
                 : (fromTemplate ? TEMPLATE_DATABASE : null);
         createDatabase(databaseName, templateDatabase, false, label);
@@ -238,6 +245,16 @@ public final class TestDatabaseProvider {
     /** task-11 R-D：切换 {@link #migratedDatabase(String)} 的克隆源（由路由在快照完成后调用）。 */
     public static void useSnapshotSource(String databaseName) {
         snapshotSource = databaseName;
+    }
+
+    /** task-752：进入「本测试类只用迁移模板、不用启动快照」的作用域。 */
+    public static void beginTemplateOnlyIsolation() {
+        templateOnlyIsolation = true;
+    }
+
+    /** task-752：退出上述作用域（在测试类 {@code @AfterAll} 调用）。 */
+    public static void endTemplateOnlyIsolation() {
+        templateOnlyIsolation = false;
     }
 
     /**
