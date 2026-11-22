@@ -176,7 +176,11 @@ async function workspaceToolChat(
     return latestRunStatus(request, ctx);
 }
 
-async function writeWorkspaceContextPolicy(
+/**
+ * task-775：4 个模型域已退出工作区层（`settingsIa.ts:19` / PLAN-0766 T2.4），
+ * 工作区层写 `context-policy` 必须 400 + `DOMAIN_NOT_WORKSPACE_WRITABLE`。
+ */
+async function expectWorkspaceContextPolicyNotWritable(
     request: APIRequestContext,
     ctx: JourneyContext,
 ): Promise<void> {
@@ -193,14 +197,20 @@ async function writeWorkspaceContextPolicy(
             },
         },
     );
-    expect(response.status(), await response.text()).toBe(200);
+    const text = await response.text();
+    expect(
+        response.status(),
+        `工作区层写 context-policy 应 400 DOMAIN_NOT_WORKSPACE_WRITABLE；实际 ${response.status()}：${text}`,
+    ).toBe(400);
+    expect(text).toContain("DOMAIN_NOT_WORKSPACE_WRITABLE");
+    expect(text).toContain("context-policy");
 }
 
 // ── items ───────────────────────────────────────────────────────────────────
 test("@host capacity: maxShards mode keeps run config identical", async ({ request }) => {
     test.skip(MODE !== "config", "mode gate");
     const fixture = await newWorkspace(request, "cap-config");
-    await writeWorkspaceContextPolicy(request, fixture.ctx);
+    await expectWorkspaceContextPolicyNotWritable(request, fixture.ctx);
 
     const status = await workspaceToolChat(request, fixture, "cap-config");
     expect(status, "workspace-tool chat must not fail").not.toBe("failed");
@@ -210,9 +220,9 @@ test("@host capacity: maxShards mode keeps run config identical", async ({ reque
     ).filter((line) => line.includes("model=wire-model"));
     expect(resolved.length, "a run must log its resolved context policy").toBeGreaterThan(0);
     const line = resolved[resolved.length - 1];
-    expect(line, "workspace-layer values must win").toContain("source=config");
-    expect(line).toContain("maxInputTokens=98765");
-    expect(line).toContain("pruneWindowChars=4321");
+    // task-775：工作区层已不可写 ⇒ 解析到代码默认值（不再是 source=config 的 98765/4321）。
+    expect(line, "no workspace layer ⇒ code defaults").toContain("maxInputTokens=None");
+    expect(line).toContain("pruneWindowChars=80000");
 
     // The knob under test, echoed for the evidence table.
     console.log(`[capacity] maxShards=${process.env.XIHE_AGENT_MCP_MAX_SHARDS ?? "(default)"}`);

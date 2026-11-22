@@ -1,11 +1,14 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 // PLAN-0590 — Agent run-config isolation across two workspaces in one process.
 //
-// Target invariant (default mode): a chat run in workspace B resolves config from
-// B's own (workspace, user) identity, never from the workspace the Agent process
-// was booted with (`XIHE_WORKSPACE_ID`). The pre-change baseline is recorded by
-// running the same spec with XIHE_E2E_PLAN0590_BASELINE=1, which flips the B-side
-// assertions to the known cross-talk values (workspace A's layer).
+// Target invariant: a chat run in workspace B resolves config from B's own
+// (workspace, user) identity, never from the workspace the Agent process was
+// booted with (`XIHE_WORKSPACE_ID`).
+//
+// task-775 / PLAN-0766 T2.4: the four model domains (llm-provider, context-policy,
+// embedding, rag) left the workspace layer. The spec no longer seeds a workspace
+// layer; it asserts the PUT is refused (400 DOMAIN_NOT_WORKSPACE_WRITABLE) and
+// that both runs resolve the code defaults. The old baseline env is retired.
 //
 // The chat itself runs through the product composer (the UI owns the dispatch
 // shape); only the session SSE subscription stays in-page as a read-only probe.
@@ -35,13 +38,22 @@ import {
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS, REAL_PROVIDER_POLL_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
-/** A-only workspace-layer values; B's workspace layer stays empty. */
+/**
+ * 写入尝试用的值：4 个模型域已退出工作区层（`settingsIa.ts:19` / PLAN-0766 T2.4），
+ * 这些值只用于负向断言的 payload；它们不会再落到任何工作区层。
+ */
 const A_MAX_INPUT_TOKENS = 98765;
 const A_PRUNE_WINDOW_CHARS = 4321;
 /** Code defaults (`context_policy.py`), i.e. what B must resolve. */
 const CODE_DEFAULT_PRUNE_WINDOW_CHARS = 80000;
 
-const BASELINE = process.env.XIHE_E2E_PLAN0590_BASELINE === "1";
+/** 已退出工作区层的 4 个模型域（task-775 / PLAN-0766 T2.4）。 */
+const WORKSPACE_LAYER_EXITED_MODEL_DOMAINS = [
+    "llm-provider",
+    "context-policy",
+    "embedding",
+    "rag",
+] as const;
 const EVIDENCE_DIR = evidenceDir("plan-0590-config-isolation");
 
 interface AgentAuth {
@@ -175,12 +187,17 @@ async function provisionPlainChatPrincipal(
     return principalId;
 }
 
-async function writeWorkspaceContextPolicy(
+/**
+ * task-775：模型 4 域已退出工作区层，工作区层写入必须被 CP 以
+ * 400 `DOMAIN_NOT_WORKSPACE_WRITABLE: <domain>` 拒绝（`ConfigController.java:548-555`）。
+ */
+async function expectWorkspaceModelDomainNotWritable(
     request: APIRequestContext,
     ctx: JourneyContext,
+    domain: string,
 ): Promise<void> {
     const response = await request.put(
-        `${CP_URL}/api/v1/config/workspace/context-policy?workspaceId=${ctx.workspaceId}`,
+        `${CP_URL}/api/v1/config/workspace/${domain}?workspaceId=${ctx.workspaceId}`,
         {
             headers: ctx.headers,
             data: {
@@ -192,7 +209,13 @@ async function writeWorkspaceContextPolicy(
             },
         },
     );
-    expect(response.status(), await response.text()).toBe(200);
+    const text = await response.text();
+    expect(
+        response.status(),
+        `工作区层写 ${domain} 应 400 DOMAIN_NOT_WORKSPACE_WRITABLE；实际 ${response.status()}：${text}`,
+    ).toBe(400);
+    expect(text).toContain("DOMAIN_NOT_WORKSPACE_WRITABLE");
+    expect(text).toContain(domain);
 }
 
 async function expectEmptyWorkspaceLayer(
@@ -336,8 +359,10 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
             workspaceId: wsB.workspaceId,
         });
 
-        // Only A carries a workspace layer; B must never see it.
-        await writeWorkspaceContextPolicy(request, wsA);
+        // task-775：4 个模型域在工作区层不可写；逐域拿 400 + DOMAIN_NOT_WORKSPACE_WRITABLE。
+        for (const domain of WORKSPACE_LAYER_EXITED_MODEL_DOMAINS) {
+            await expectWorkspaceModelDomainNotWritable(request, wsA, domain);
+        }
         await expectEmptyWorkspaceLayer(request, wsB, "context-policy");
         await expectEmptyWorkspaceLayer(request, wsB, "agent-runtime");
 
@@ -376,7 +401,7 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
             JSON.stringify(
                 {
                     plan: "PLAN-0590",
-                    baseline: BASELINE,
+                    baseline: false,
                     runId: process.env.XIHE_E2E_RUN_ID ?? null,
                     workspaceA: wsA?.workspaceId ?? null,
                     workspaceB: wsB?.workspaceId ?? null,
@@ -397,7 +422,7 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         );
     });
 
-    test("workspace A run resolves A's workspace-layer context policy", async ({
+    test("workspace A run resolves code defaults after model domains left the workspace layer", async ({
         page,
         request,
     }, testInfo) => {
@@ -410,22 +435,15 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         });
 
         const policies = resolvedPolicies(readLogDelta(logFile, offset));
-        if (BASELINE) {
-            const observed = policies[policies.length - 1];
-            expect(observed, "A run must log a resolved context policy").toBeTruthy();
-            expect(observed.maxInputTokens).toBe(String(A_MAX_INPUT_TOKENS));
-            expect(observed.pruneWindowChars).toBe(A_PRUNE_WINDOW_CHARS);
-            expect(observed.workspaceId, "baseline: runs are not attributed").toBeNull();
-            return;
-        }
         expect(policies.length, "A run must log a resolved context policy").toBeGreaterThan(0);
         const scoped = policies.filter((entry) => entry.workspaceId === wsA.workspaceId);
         expect(
             scoped.length,
             `A run must log its workspace identity; lines=${JSON.stringify(policies.map((p) => p.line))}`,
         ).toBeGreaterThan(0);
-        expect(scoped[scoped.length - 1].maxInputTokens).toBe(String(A_MAX_INPUT_TOKENS));
-        expect(scoped[scoped.length - 1].pruneWindowChars).toBe(A_PRUNE_WINDOW_CHARS);
+        // task-775：context-policy 已退出工作区层，A 只能解析到代码默认值。
+        expect(scoped[scoped.length - 1].maxInputTokens).toBe("None");
+        expect(scoped[scoped.length - 1].pruneWindowChars).toBe(CODE_DEFAULT_PRUNE_WINDOW_CHARS);
     });
 
     test("workspace B run resolves B's own defaults, not A's workspace layer", async ({
@@ -443,16 +461,6 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         const policies = resolvedPolicies(readLogDelta(logFile, offset));
         expect(policies.length, "B run must log a resolved context policy").toBeGreaterThan(0);
         const scoped = policies.filter((entry) => entry.workspaceId === wsB.workspaceId);
-
-        if (BASELINE) {
-            // Pre-change evidence: the process snapshot (workspace A) is the base,
-            // so B inherits A's workspace layer even though B's layer is empty.
-            expect(scoped.length, "baseline: the Agent cannot attribute a run to B").toBe(0);
-            const observed = policies[policies.length - 1];
-            expect(observed.maxInputTokens).toBe(String(A_MAX_INPUT_TOKENS));
-            expect(observed.pruneWindowChars).toBe(A_PRUNE_WINDOW_CHARS);
-            return;
-        }
         expect(
             scoped.length,
             `B run must log workspaceId=${wsB.workspaceId}; lines=${JSON.stringify(policies.map((p) => p.line))}`,
