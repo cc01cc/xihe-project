@@ -628,13 +628,26 @@ export const useAuthStore = defineStore("auth", () => {
 
     let selectSequence = 0;
 
+    /**
+     * task-802：命中「同 id + 有 name/role」的缓存时可以立即返回（避免进入工作区的
+     * 首屏被网络阻塞），但**必须同时发起一次后台重读**。
+     *
+     * <p>早返回原先假定「同一个 workspace id ⇒ 投影没变」，而根投影会在会话期间变化
+     * （`POST /workspaces/{id}/roots`；run6/run7 实测 CP/Runtime 已 `roots=2`，UI 仍拿
+     * 加载时的单根对象 ⇒ `FileTreePanel` 永远走平铺分支，第二组根头不出现）。根可以由
+     * 别的客户端/API 声明，UI 不在那条响应的调用链上，所以进入工作区时只能以 CP 为准
+     * 重读一次；返回旧值只是为了不阻塞首屏，随后的写回让投影自行收敛（不靠刷新页面）。</p>
+     *
+     * <p>去重职责仍在 `loadWorkspaceOnce`：同一拍的并发进入（`hydrateWorkspace` +
+     * `selectWorkspace`）共享一个在途请求，不会因此多发一次。迟到响应也不会跨过更新一次
+     * 工作区切换（`sequence` 校验）。</p>
+     */
     async function selectWorkspace(workspaceId: string): Promise<ApiWorkspace> {
         const sequence = ++selectSequence;
-        if (
-            workspace.value?.id === workspaceId &&
-            (workspace.value.name || workspace.value.workspaceRole)
-        ) {
-            return workspace.value;
+        const cached = workspace.value;
+        if (cached?.id === workspaceId && (cached.name || cached.workspaceRole)) {
+            void refreshProjection(workspaceId, sequence);
+            return cached;
         }
         const previousId = workspace.value?.id;
         try {
@@ -658,6 +671,22 @@ export const useAuthStore = defineStore("auth", () => {
                 clearTabWorkspace();
             }
             throw cause;
+        }
+    }
+
+    /**
+     * task-802：把缓存命中的旧投影换成 CP 的最新视图。失败只记警告 —— 缓存本身可用，
+     * 后台收敛失败不该把用户已经进入的工作区打成错误态（下次进入会再试）。
+     */
+    async function refreshProjection(workspaceId: string, sequence: number): Promise<void> {
+        try {
+            const fresh = await loadWorkspaceOnce(workspaceId);
+            if (sequence !== selectSequence) return;
+            if (workspace.value?.id !== workspaceId) return;
+            workspace.value = fresh;
+            writeTabWorkspace(fresh);
+        } catch (cause) {
+            logger.warn("Failed to refresh the workspace projection", cause);
         }
     }
 
