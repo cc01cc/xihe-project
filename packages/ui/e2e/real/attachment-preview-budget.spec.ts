@@ -241,22 +241,22 @@ function resolveOneRoot(): string {
     );
 }
 
-const PLAN_EVIDENCE_SUFFIX = path.join(
-    "plans",
-    "PLAN-0683-XH-bl381-attachment-preview-budget",
-    "evidence",
-);
+// task-803：PLAN-0683 已归档到 plans/archive/，仓根旧路径不再存在；归档位优先，保留未归档回退。
+const PLAN_EVIDENCE_SUFFIXES = [
+    path.join("plans", "archive", "PLAN-0683-XH-bl381-attachment-preview-budget", "evidence"),
+    path.join("plans", "PLAN-0683-XH-bl381-attachment-preview-budget", "evidence"),
+];
 
 function resolveEvidenceDir(): string {
     const oneRoot = resolveOneRoot();
-    const directory = path.join(oneRoot, PLAN_EVIDENCE_SUFFIX);
-    if (!existsSync(directory)) {
-        throw new Error(
-            `[PLAN-0683] one workspace at ${oneRoot} has no ${PLAN_EVIDENCE_SUFFIX}/; ` +
-                "raw evidence must land in the PLAN",
-        );
+    for (const suffix of PLAN_EVIDENCE_SUFFIXES) {
+        const directory = path.join(oneRoot, suffix);
+        if (existsSync(directory)) return directory;
     }
-    return directory;
+    throw new Error(
+        `[PLAN-0683] one workspace at ${oneRoot} has no ${PLAN_EVIDENCE_SUFFIXES.join(" or ")}/; ` +
+            "raw evidence must land in the PLAN",
+    );
 }
 
 function runIdSlug(): string {

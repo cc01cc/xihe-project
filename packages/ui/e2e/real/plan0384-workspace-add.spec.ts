@@ -337,10 +337,10 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         await page.goto(`/workspace/${wsId}/environment`);
         const select = page.locator('[data-testid="workspace-execution-mode"]');
         await expect(select).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        // BL-547（task-175）：执行模式是 reka Select；选项文本 = 模式名本身。
-        await chooseRekaOption(page, select, "windows-host");
-        // BL-547（task-175）：reka Select 无原生 value —— 读触发器可见文本。
-        await expectRekaValue(select, "windows-host");
+        // task-803：选项文本已本地化（zh「Windows 宿主直跑」/ en「Windows host process」），
+        // 不能再用 wire 值 `windows-host` 当选项名，也不能再用它断言触发器文本。
+        await chooseRekaOption(page, select, /Windows 宿主直跑|Windows host process/);
+        await expectRekaValue(select, /Windows 宿主直跑|Windows host process/);
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "execution-mode-switch.png"),

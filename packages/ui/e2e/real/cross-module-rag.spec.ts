@@ -27,7 +27,9 @@ test.describe("@host Cross-Module — Knowledge Base RAG", () => {
         await expect(page.getByTestId("resources-knowledge-gap")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        await expect(page.getByRole("heading", { name: /知识库|Knowledge/i })).toBeVisible({
+        // task-803：缺口页同时有 h2 标题和 h3 FAQ 小标题，heading 正则 strict 命中 2 个；
+        // 用缺口标题 testid（KnowledgeResourceView.vue:46）钉住真正的页面标题。
+        await expect(page.getByTestId("resources-knowledge-gap-title")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
         expect(page.url()).toContain("/resources/knowledge");
