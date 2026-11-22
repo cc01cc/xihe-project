@@ -41,6 +41,40 @@ async function expandSessionSettings(page: Page): Promise<void> {
     });
 }
 
+/**
+ * task-807（task-786 定因）：session-config 页签的 id **按会话绑定**
+ * （`pane:right:session-config:<sid>`，产品侧见
+ * `packages/ui/src/features/workspace/lib/panelTabs.ts`）。fork 跳转只换了宿主会话，
+ * 右栏里仍是**源会话**的页签 —— run7 `session-branch:127` 就是这么读到
+ * `id="session-branch-<源会话>"`、值 `- 分支 617c28e1` 的。
+ *
+ * 不能复用 `expandSessionSettings`：它的幂等分支只要看到任意一份面板可见就只做芯片
+ * 选中校验，识别不出面板属于哪个 sid。这里按**目标 sid** 的完整页签 id 打开/聚焦；
+ * 页签在 overflow（条带上没有芯片）或右栏收起时，走中栏「+」的同一条产品入口 ——
+ * `openDockTab` 对已开 id 只聚焦、不开第二份。
+ */
+async function focusSessionConfigTab(page: Page, sessionId: string): Promise<void> {
+    const tabId = `pane:right:session-config:${sessionId}`;
+    const chip = page.getByTestId(`dock-tab-${tabId}`);
+    if ((await chip.count()) === 0) {
+        await page.getByTestId("workspace-container-plus-main").click();
+        const item = page.getByTestId("workspace-add-item-session-config");
+        await item.waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
+        await item.click();
+        await expect(item, "中栏「+」选中会话设置后浮层应关闭").toBeHidden({
+            timeout: LONG_TIMEOUT_MS,
+        });
+    } else if ((await chip.getAttribute("aria-selected")) !== "true") {
+        // 芯片只做选中，无 toggle 副作用。
+        await chip.click();
+    }
+    // 既有产品锚点（SessionContextPanel.vue 的分支选择器 id）：只认目标会话的面板。
+    // 用属性选择器而不是 `#id`：session id 理论上可含冒号（panelTabs 的解析也按整段收）。
+    await expect(
+        page.locator(`[data-testid="session-branch-select"][id="session-branch-${sessionId}"]`),
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+}
+
 test.describe("@host Session branch path", () => {
     let journey: JourneyContext,
         workspaceHeaders: Record<string, string>,
@@ -394,8 +428,14 @@ test.describe("@host Session branch path", () => {
             .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
 
         const childBranchId = await getRootBranchId(request, childId, workspaceHeaders);
+        // task-807（task-786）：fork 跳转后右栏仍是源会话的 session-config 页签，
+        // 必须先切到子会话自己的页签，断言才打在子会话面板上。
+        await focusSessionConfigTab(page, childId);
         const childBranchSelect = page.getByTestId("session-branch-select");
-        // BL-547（task-175）：reka Select —— 根分支选中态 = 「主路径」文本。
+        // 面板归属由既有的 `id="session-branch-<sid>"` 锚点证明：读到源会话面板时 id 是
+        // `session-branch-<source>`，expectRekaValue 会看到源会话选中的子分支 label。
+        await expect(childBranchSelect).toHaveAttribute("id", `session-branch-${childId}`);
+        // BL-547（task-175）：reka Select —— 子会话只有根分支，选中态 = 「主路径」文本。
         await expectRekaValue(childBranchSelect, /主路径|Main path/);
         const childMessagesResponse = await request.get(
             `${CP_URL}/api/v1/sessions/${childId}/messages?branchId=${childBranchId}`,
