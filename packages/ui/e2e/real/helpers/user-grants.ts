@@ -21,8 +21,15 @@ export function standardWorkspaceUserPermissions(workspaceId: string): Array<Gra
  * V88 narrowed `ck_grants_source` to the post-migration five values and the authorization gate now
  * reads the union of the subject's access-role bindings, so the fixture seeds the real model:
  *
- *   `roles` (one deterministic per-subject E2E role) + `role_permissions`
- *   + `role_bindings` (user subject, instance scope) + materialized `grants(source='role')`.
+ *   `grant_presets` (one deterministic per-subject E2E preset) + `grant_preset_atoms`
+ *   + `grant_preset_bindings` (user subject, instance scope) + materialized `grants(source='preset')`.
+ *
+ * task-832 / V182 renamed the five persistence surfaces (`roles`→`grant_presets`,
+ * `role_permissions`→`grant_preset_atoms`, `role_bindings`→`grant_preset_bindings`) and converted
+ * the materialized source value `'role'`→`'preset'`. The SQL below is raw psql, so it does not
+ * follow the Java rename: a stale table name here fails the whole beforeAll with
+ * `relation "roles" does not exist`. The constraint name `uq_role_bindings` is untouched by a
+ * table rename and must stay as-is.
  *
  * Materialized rows mirror `RoleGrantMaterializer`: one row per atom, `resource` omitted for a `*`
  * pattern, capability atoms never materialized. After each write the subject's role rows are
@@ -89,12 +96,12 @@ function runRoleSeedSql(userId: string, permissions: Array<GrantPermission>, mod
     ).replaceAll("'", "''");
     const permissionWrite =
         mode === "remove"
-            ? `DELETE FROM role_permissions
+            ? `DELETE FROM grant_preset_atoms
                WHERE role_id = v_role
                  AND action_class = '${escapeSql(permissions[0].actionClass)}'
                  AND resource_pattern = '${escapeSql(permissions[0].resource || "*")}';`
-            : `${mode === "replace" ? "DELETE FROM role_permissions WHERE role_id = v_role;" : ""}
-               INSERT INTO role_permissions (role_id, action_class, resource_pattern)
+            : `${mode === "replace" ? "DELETE FROM grant_preset_atoms WHERE role_id = v_role;" : ""}
+               INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)
                SELECT v_role, entry.action, entry.resource
                FROM jsonb_to_recordset('${permissionJson}'::jsonb) AS entry(action TEXT, resource TEXT)
                ON CONFLICT DO NOTHING;`;
@@ -103,7 +110,7 @@ DO $$
 DECLARE
     v_role UUID;
 BEGIN
-    INSERT INTO roles (id, name, display_name, description, is_system)
+    INSERT INTO grant_presets (id, name, display_name, description, is_system)
     VALUES (gen_random_uuid(), '${roleName}', 'E2E grant ${roleName.slice(-12)}',
             'E2E ceiling seed (PLAN-0610 W6/T6.1)', FALSE)
     ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
@@ -111,7 +118,7 @@ BEGIN
 
     ${permissionWrite}
 
-    INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type)
+    INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type)
     VALUES (gen_random_uuid(), v_role, 'user', '${user}'::uuid, 'instance')
     ON CONFLICT ON CONSTRAINT uq_role_bindings DO NOTHING;
 
@@ -119,7 +126,7 @@ BEGIN
     -- never leaves a stale atom behind. DISTINCT ON collapses atoms shared by two instance roles
     -- (e.g. the seeded E2E role and the registration USER role both granting read/write).
     DELETE FROM grants
-    WHERE subject_type = 'user' AND subject_id = '${user}'::uuid AND source = 'role';
+    WHERE subject_type = 'user' AND subject_id = '${user}'::uuid AND source = 'preset';
 
     INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions,
                         source, scope_type, scope_id, read_state)
@@ -134,9 +141,9 @@ BEGIN
                        THEN '{}'::jsonb
                        ELSE jsonb_build_object('resource', rp.resource_pattern) END
            ),
-           'role', b.scope_type, b.scope_id, 'read'
-    FROM role_bindings b
-    JOIN role_permissions rp ON rp.role_id = b.role_id
+           'preset', b.scope_type, b.scope_id, 'read'
+    FROM grant_preset_bindings b
+    JOIN grant_preset_atoms rp ON rp.role_id = b.role_id
     WHERE b.subject_type = 'user' AND b.subject_id = '${user}'::uuid
       -- task-123: exclude the three capability atoms by name. A plain action atom may carry a
       -- domain prefix (task-108: session:permission:configure), so the '%:%' shape no longer
@@ -159,7 +166,7 @@ END $$;`;
  * MANAGE_WORKSPACE_AGENTS" must first move that subject to a role that really lacks it — the
  * workspace creator receives `WS_OWNER` automatically. This helper deletes the subject's
  * workspace-tier binding for that workspace, inserts the requested one and recomputes the
- * materialized `source='role'` rows of the workspace scope (the materializer's output shape).
+ * materialized `source='preset'` rows of the workspace scope (the materializer's output shape).
  */
 export function replaceWorkspaceRole(
     userId: string,
@@ -182,21 +189,21 @@ DO $$
 DECLARE
     v_role UUID;
 BEGIN
-    SELECT id INTO v_role FROM roles WHERE name = '${role}';
+    SELECT id INTO v_role FROM grant_presets WHERE name = '${role}';
     IF v_role IS NULL THEN
         RAISE EXCEPTION 'workspace role % is missing', '${role}';
     END IF;
 
-    DELETE FROM role_bindings
+    DELETE FROM grant_preset_bindings
     WHERE subject_type = 'user' AND subject_id = '${user}'::uuid
       AND scope_type = 'workspace' AND scope_id = '${workspace}'::uuid;
 
-    INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id)
+    INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id)
     VALUES (gen_random_uuid(), v_role, 'user', '${user}'::uuid, 'workspace',
             '${workspace}'::uuid);
 
     DELETE FROM grants
-    WHERE subject_type = 'user' AND subject_id = '${user}'::uuid AND source = 'role'
+    WHERE subject_type = 'user' AND subject_id = '${user}'::uuid AND source = 'preset'
       AND scope_type = 'workspace' AND scope_id = '${workspace}'::uuid;
 
     INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions,
@@ -211,9 +218,9 @@ BEGIN
                        THEN '{}'::jsonb
                        ELSE jsonb_build_object('resource', rp.resource_pattern) END
            ),
-           'role', b.scope_type, b.scope_id, 'read'
-    FROM role_bindings b
-    JOIN role_permissions rp ON rp.role_id = b.role_id
+           'preset', b.scope_type, b.scope_id, 'read'
+    FROM grant_preset_bindings b
+    JOIN grant_preset_atoms rp ON rp.role_id = b.role_id
     WHERE b.subject_type = 'user' AND b.subject_id = '${user}'::uuid
       AND b.scope_type = 'workspace' AND b.scope_id = '${workspace}'::uuid
       -- task-123: same rule as runRoleSeedSql above — name the three capability atoms instead of
