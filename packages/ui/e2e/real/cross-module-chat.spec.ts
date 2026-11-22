@@ -13,6 +13,10 @@ const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
     SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN;
 if (!SERVICE_TOKEN) throw new Error("XIHE_CP_API_TOKEN must be set for real E2E");
+// Single source of truth for the logical MCP generation:
+// packages/runtime/src/mcp_protocol.rs (STATELESS_PROTOCOL_VERSION) and
+// McpProxyController.STATELESS_PROTOCOL_VERSION (Java) must both stay on this value.
+const MCP_STATELESS_PROTOCOL_VERSION = "2026-07-28";
 const FAKE_MCP_ACCESS_TOKEN = process.env.XIHE_FAKE_MCP_ACCESS_TOKEN;
 if (!FAKE_MCP_ACCESS_TOKEN) throw new Error("XIHE_FAKE_MCP_ACCESS_TOKEN must be set for real E2E");
 const fixtureHost = process.env.XIHE_E2E_PROFILE === "host" ? "127.0.0.1" : "host.docker.internal";
@@ -229,33 +233,42 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         expect(saveResp.status()).toBeLessThan(500);
     });
 
-    test("@host mcp initialize negotiates 2026 protocol via CP", async ({ page, request }) => {
+    test("@host mcp server/discover advertises the 2026 protocol via CP", async ({
+        page,
+        request,
+    }) => {
         const auth = await registerAuth(request, "mcp-session");
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), auth.accessToken);
 
-        // MCP 2026-07-28 discover lifecycle does not require a session-id.
-        const initResp = await request.post(`${CP_URL}/api/v1/mcp`, {
+        // The 2026-07-28 generation has no initialize handshake (SEP-2567): its
+        // lifecycle entry is server/discover, which needs per-request _meta.
+        const discoverResp = await request.post(`${CP_URL}/api/v1/mcp`, {
             headers: {
                 Authorization: `Bearer ${auth.accessToken}`,
                 "Content-Type": "application/json",
                 Accept: "application/json, text/event-stream",
-                "MCP-Protocol-Version": "2026-07-28",
+                "MCP-Protocol-Version": MCP_STATELESS_PROTOCOL_VERSION,
                 "X-Workspace-Id": auth.workspaceId,
             },
             data: {
                 jsonrpc: "2.0",
-                method: "initialize",
+                method: "server/discover",
                 id: 1,
                 params: {
-                    protocolVersion: "2026-07-28",
-                    capabilities: {},
-                    clientInfo: { name: "xihe-e2e", version: "0.1.0" },
+                    _meta: {
+                        "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
+                        "io.modelcontextprotocol/clientInfo": {
+                            name: "xihe-e2e",
+                            version: "0.1.0",
+                        },
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    },
                 },
             },
         });
-        expect(initResp.ok()).toBe(true);
+        expect(discoverResp.status()).toBe(200);
 
-        const responseText = await initResp.text();
+        const responseText = await discoverResp.text();
         const jsonText = responseText.startsWith("data:")
             ? responseText
                   .split("\n")
@@ -264,7 +277,11 @@ test.describe("Cross-Module — Full Chain Chat", () => {
                   .trim()
             : responseText;
         const body = JSON.parse(jsonText);
-        expect(body.result.protocolVersion).toBe("2026-07-28");
+        // Runtime's advertised list is newest-first and must agree with the
+        // generation CP stamps on the response header.
+        expect(discoverResp.headers()["mcp-protocol-version"]).toBe(MCP_STATELESS_PROTOCOL_VERSION);
+        expect(body.result.supportedVersions[0]).toBe(MCP_STATELESS_PROTOCOL_VERSION);
+        expect(body.result.supportedVersions.length).toBeGreaterThan(1);
     });
 
     test("remote MCP OAuth completes through UI click, browser redirect, callback, and re-auth", async ({
