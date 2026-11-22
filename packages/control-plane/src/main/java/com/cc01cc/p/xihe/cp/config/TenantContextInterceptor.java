@@ -151,7 +151,12 @@ public class TenantContextInterceptor implements HandlerInterceptor {
         if (WorkspaceWriteGuard.allows(role, requirement)) {
             return true;
         }
-        if (requirement == WorkspaceWriteGuard.Requirement.WRITE && "VIEWER".equals(role)) {
+        // task-859: no role-name literal here. A caller who may read but not write is the read-only
+        // case; that is exactly the VIEWER preset's atom set, expressed through the same table as
+        // the write decision instead of a second `"VIEWER".equals(role)` branch.
+        if (requirement == WorkspaceWriteGuard.Requirement.WRITE
+                && WorkspaceWriteGuard.allows(role, WorkspaceWriteGuard.Requirement.READ)
+                && !WorkspaceWriteGuard.atomsFor(role).isEmpty()) {
             return reject(response, HttpStatus.FORBIDDEN, "WORKSPACE_READ_ONLY",
                     "Viewer cannot modify this workspace");
         }
