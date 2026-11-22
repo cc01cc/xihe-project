@@ -348,6 +348,14 @@ if (authLane !== 'exempt' && authLane !== 'ratelimit') {
   throw new Error(`invalid --auth-lane value: ${authLane} (expected exempt|ratelimit)`)
 }
 const skipRuntime = process.argv.includes('--skip-runtime')
+// task-732 counterexample lane: start the Agent with an empty XIHE_CP_URL so both
+// conditional-face builders (team_task + handoff) take their documented gray seam and
+// grant nothing. XIHE_CP_PORT is passed too so `CP_URL`'s fallback still points at this
+// stack, keeping checkpoints / config / logical MCP wired; only the face gate is off.
+const unwireConditionalFaces = process.env.XIHE_E2E_AGENT_UNWIRE_FACES === '1'
+if (unwireConditionalFaces) {
+  console.log('[e2e-host] task-732 counterexample: Agent XIHE_CP_URL empty ⇒ conditional faces unwired')
+}
 
 // Supplementary real-provider sampling (PLAN-247, requires explicit user
 // approval per run). The key travels only via this env var into the CP Admin
@@ -3300,7 +3308,9 @@ async function main() {
           cwd: join(projectDir, 'packages', 'agent'),
           extraEnv: {
             XIHE_AGENT_PORT: agentPort,
-            XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
+            ...(unwireConditionalFaces
+              ? { XIHE_CP_URL: '', XIHE_CP_PORT: cpPort }
+              : { XIHE_CP_URL: `http://127.0.0.1:${cpPort}` }),
             // PLAN-0307 decision #21/#37 (BYOK): fake/real credentials travel
             // through the Agent env fallback, never through config layers.
             // PLAN-0650 B-1: provider / provider key / XIHE_API_BASE come from the
