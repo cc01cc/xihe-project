@@ -177,7 +177,7 @@ class InstanceAgentPrincipalControllerIntegrationTest extends AbstractReusableIn
         principalIds.add(principalId);
         assertTrue(view.path("ownerUserId").isNull(),
                 "create never writes an owner (the instance owns the row, not a user)");
-        assertTrue(view.path("roleIds").isArray(), "the written role bindings are echoed");
+        assertTrue(view.path("presetIds").isArray(), "the written preset bindings are echoed");
         assertFalse(created.body().contains("\"disabledAt\""),
                 "a fresh principal is active, and the create view does not carry disabledAt");
 

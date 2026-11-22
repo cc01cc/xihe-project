@@ -35,8 +35,8 @@ public final class AgentPrincipalWireView {
 
     private AgentPrincipalWireView() {}
 
-    /** {@code AgentPrincipalCreateView}: the create echo plus the roles actually written. */
-    public static Map<String, Object> createView(AgentPrincipal principal, List<UUID> roleIds,
+    /** {@code AgentPrincipalCreateView}: the create echo plus the presets actually written. */
+    public static Map<String, Object> createView(AgentPrincipal principal, List<UUID> presetIds,
             ObjectMapper objectMapper) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("principalId", principal.getId());
@@ -58,7 +58,7 @@ public final class AgentPrincipalWireView {
         // (null = off), so the caller learns immediately whether memory is on for the new subject.
         result.put("contextPolicy",
                 JacksonNodeExit.toDocument(objectMapper, principal.getContextPolicy()));
-        result.put("roleIds", roleIds);
+        result.put("presetIds", presetIds);
         return result;
     }
 

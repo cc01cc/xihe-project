@@ -30,7 +30,7 @@ const WORKSPACE_AGENT_ROW = {
     bound: true,
     disabled: false,
     permissionsSnapshot: [],
-    roleIds: [],
+    presetIds: [],
 };
 
 const INSTANCE_AGENT_ROW = {

@@ -124,7 +124,7 @@ function defaultPlan(): Plan {
             },
         },
         remove: { status: 204 },
-        roleBindings: { status: 200, body: { roleIds: [] } },
+        roleBindings: { status: 200, body: { presetIds: [] } },
     };
 }
 
@@ -216,10 +216,10 @@ async function stubOrgApi(page: Page): Promise<void> {
         const request = route.request();
         record(request.method(), request.url(), request.postData() ?? "");
         const body = request.postData() ?? "{}";
-        const roleIds = (JSON.parse(body) as { roleIds?: string[] }).roleIds ?? [];
+        const presetIds = (JSON.parse(body) as { presetIds?: string[] }).presetIds ?? [];
         // 基线与后续提交共用同一个回复工厂：成功后响应体就是新基线（契约里没有 GET 读面）。
         if (plan.roleBindings.status === 200) {
-            return route.fulfill(reply({ status: 200, body: { roleIds } }));
+            return route.fulfill(reply({ status: 200, body: { presetIds } }));
         }
         return route.fulfill(reply(plan.roleBindings));
     });
@@ -470,7 +470,7 @@ test.describe("task-136 组织写面（mock lane）", () => {
             .poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings").length)
             .toBe(1);
         expect(JSON.parse(wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings")[0].body)).toEqual({
-            roleIds: [],
+            presetIds: [],
         });
         await expect(page.getByTestId("org-write-role-baseline")).toBeVisible();
 
@@ -481,7 +481,7 @@ test.describe("task-136 组织写面（mock lane）", () => {
             .poll(() => wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings").length)
             .toBe(2);
         expect(JSON.parse(wrote("PUT", "/api/v1/org-units/ou-rd/role-bindings")[1].body)).toEqual({
-            roleIds: ["role-org"],
+            presetIds: ["role-org"],
         });
         await expect(page.getByTestId("org-write-role-bound-role-org")).toBeVisible();
     });

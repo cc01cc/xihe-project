@@ -24,9 +24,9 @@ import java.util.List;
  * authorization fact — the service re-checks {@code MANAGE_ROLES} and, for a workspace, that the
  * caller holds {@code MANAGE_WORKSPACE_AGENTS} <em>in that workspace</em>.</p>
  *
- * <p>Body shape: {@code {"bindings":[{"subjectId":"<uuid>","roleId":"<uuid>"}]}}; {@code
+ * <p>Body shape: {@code {"bindings":[{"subjectId":"<uuid>","presetId":"<uuid>"}]}}; {@code
  * subjectType} is optional and must be {@code user} when present (agent principals carry their own
- * {@code spawn}/{@code template} sources, not role bindings).</p>
+ * {@code spawn}/{@code template} sources, not preset bindings).</p>
  */
 @RestController
 @RequestMapping("/api/v1/bindings")

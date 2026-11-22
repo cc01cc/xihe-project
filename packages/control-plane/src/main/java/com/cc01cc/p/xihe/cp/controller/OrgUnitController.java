@@ -1,10 +1,12 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.OrgUnitNameKeys;
 import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitPresetBindingService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitWriteService;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -50,9 +52,6 @@ public class OrgUnitController {
 
     /** G1 body: `confirmAffected` is opt-in, and required only when the move affects workspaces. */
     public record MemberMoveBody(Boolean confirmAffected) {}
-
-    /** Whole-set write: the body is the complete role set, not a delta (see the contract). */
-    public record RoleBindingsBody(java.util.List<String> roleIds) {}
 
     private final OrgUnitReadService readService;
     private final OrgUnitWriteService writeService;
@@ -127,9 +126,25 @@ public class OrgUnitController {
 
     @PreAuthorize("isAuthenticated()")
     @PutMapping("/{unitId}/role-bindings")
-    public OrgUnitWireView.RoleBindings replaceRoleBindings(
-            @PathVariable String unitId, @RequestBody RoleBindingsBody body) {
-        return roleBindingService.replace(unitId, body.roleIds());
+    public OrgUnitWireView.PresetBindings replacePresetBindings(
+            @PathVariable String unitId, @RequestBody JsonNode body) {
+        // A record would let Jackson ignore an unknown `roleIds` key and land `presetIds=null`,
+        // which the service would then treat as "clear the set" — a silent permission change.
+        // Parse the key set explicitly so the retired name is a 400 at the wire edge.
+        if (body == null || !body.isObject() || body.size() != 1 || !body.has("presetIds")
+                || !body.get("presetIds").isArray()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "Body must contain only presetIds (an array of preset ids)");
+        }
+        java.util.List<String> presetIds = new java.util.ArrayList<>();
+        for (JsonNode element : body.get("presetIds")) {
+            if (!element.isTextual() || element.asText().isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "presetIds must be an array of preset ids");
+            }
+            presetIds.add(element.asText());
+        }
+        return roleBindingService.replace(unitId, presetIds);
     }
 
     @PreAuthorize("isAuthenticated()")

@@ -321,7 +321,7 @@ test("@host 0680-J3 角色轴仍单轴：只开技能轴，角色绑定面维持
     // 角色绑定面传 workspace 轴：按冻结文本 :109-111，角色轴不应因技能双轴而打开额外档位
     const roleBind = await request.post(
         `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${identity.workspaceId}`,
-        { headers, data: { roleId: crypto.randomUUID() } },
+        { headers, data: { presetId: crypto.randomUUID() } },
     );
     const text = await roleBind.text();
     // 不臆造新码：只断言「不因双轴而返回 201 成功」

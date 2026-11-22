@@ -144,7 +144,7 @@ test("@host BL-352 首绑闭环：顺序错 ⇒ 403；首绑 ⇒ 200；再绑系
     // 负例：② 之前先打 ③ ⇒ 403 FORBIDDEN（cap 求值第一步是"绑定前置"，所以不是 409）
     const earlyBind = await request.post(
         `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
-        { headers, data: { roleId: WS_VIEWER_ROLE_ID } },
+        { headers, data: { presetId: WS_VIEWER_ROLE_ID } },
     );
     const earlyBindText = await earlyBind.text();
     expect(
@@ -171,7 +171,7 @@ test("@host BL-352 首绑闭环：顺序错 ⇒ 403；首绑 ⇒ 200；再绑系
     // ③ 首绑之后再绑系统工作区角色 ⇒ 409 ROLE_BINDING_EXCEEDS_CAP（= BL-355 的存在性证明）
     const secondRole = await request.post(
         `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
-        { headers, data: { roleId: WS_VIEWER_ROLE_ID } },
+        { headers, data: { presetId: WS_VIEWER_ROLE_ID } },
     );
     const secondRoleText = await secondRole.text();
     expect(
@@ -212,7 +212,7 @@ test("@host BL-352 可选正向面：cap 覆盖 AGENT_BASE_ATOMS 后能否授予
 
     const grant = await request.post(
         `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
-        { headers, data: { roleId: AGENT_USER_ROLE_ID } },
+        { headers, data: { presetId: AGENT_USER_ROLE_ID } },
     );
     const grantText = await grant.text();
     expect(

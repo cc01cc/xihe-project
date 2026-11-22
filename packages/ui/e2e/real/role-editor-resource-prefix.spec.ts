@@ -61,7 +61,7 @@ type WorkspaceListBody =
     | { workspaces?: Array<{ id?: string; workspaceId?: string }> };
 
 interface BindingBody {
-    bindings?: Array<{ subjectType?: string; subjectId: string; roleId: string }>;
+    bindings?: Array<{ subjectType?: string; subjectId: string; presetId: string }>;
 }
 
 type Headers = Record<string, string>;
@@ -276,11 +276,11 @@ test.describe("task-126 role editor resource prefix (real stack)", () => {
         const original = (bindingsBody.bindings ?? []).map((binding) => ({
             subjectType: binding.subjectType ?? "user",
             subjectId: binding.subjectId,
-            roleId: binding.roleId,
+            presetId: binding.presetId,
         }));
         const appended = [
             ...original,
-            { subjectType: "user", subjectId: userId, roleId: granterRole.id },
+            { subjectType: "user", subjectId: userId, presetId: granterRole.id },
         ];
         const bind = await request.put(`${CP_URL}/api/v1/bindings?scope=instance`, {
             headers,

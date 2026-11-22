@@ -101,9 +101,9 @@ public class InstanceAgentPrincipalController {
             AgentPrincipalWireBody.CreateBody parsed = AgentPrincipalWireBody.parseCreate(body, objectMapper);
             AgentPrincipal created = instancePrincipals.create(actorUserId, parsed.name(),
                     parsed.templateId(), parsed.defaultModelProvider(), parsed.defaultModelName(),
-                    parsed.allowedModels(), parsed.hooks(), parsed.roleIds());
+                    parsed.allowedModels(), parsed.hooks(), parsed.presetIds());
             return noStore(ResponseEntity.status(HttpStatus.CREATED)
-                    .body(AgentPrincipalWireView.createView(created, parsed.roleIds(), objectMapper)));
+                    .body(AgentPrincipalWireView.createView(created, parsed.presetIds(), objectMapper)));
         } catch (CpApiException e) {
             return problem(e);
         }

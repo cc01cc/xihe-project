@@ -156,14 +156,14 @@ async function bindRole(
     const current = await request.get(`${CP_URL}/api/v1/bindings?scope=instance`, { headers });
     expect(current.ok(), await current.text()).toBe(true);
     const body = (await current.json()) as {
-        bindings?: Array<{ subjectType?: string; subjectId?: string; roleId?: string }>;
+        bindings?: Array<{ subjectType?: string; subjectId?: string; presetId?: string }>;
     };
     const bindings = (body.bindings ?? []).map((binding) => ({
         subjectType: binding.subjectType ?? "user",
         subjectId: binding.subjectId,
-        roleId: binding.roleId,
+        presetId: binding.presetId,
     }));
-    bindings.push({ subjectType: "user", subjectId: userId, roleId });
+    bindings.push({ subjectType: "user", subjectId: userId, presetId: roleId });
     const put = await request.put(`${CP_URL}/api/v1/bindings?scope=instance`, {
         headers,
         data: { bindings },

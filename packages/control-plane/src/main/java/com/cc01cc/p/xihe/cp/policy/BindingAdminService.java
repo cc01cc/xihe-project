@@ -351,7 +351,7 @@ public class BindingAdminService {
         for (GrantPresetAdminViews.BindingInput input : requested) {
             if (input == null || input.subjectId() == null || input.roleId() == null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_BINDING",
-                        "every binding requires subjectId and roleId");
+                        "every binding requires subjectId and presetId");
             }
             if (input.subjectType() != null && !SUBJECT_USER.equals(input.subjectType())) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_BINDING",

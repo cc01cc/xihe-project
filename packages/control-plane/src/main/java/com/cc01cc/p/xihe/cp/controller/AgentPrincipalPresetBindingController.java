@@ -47,7 +47,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/agent-principals/{principalId}/roles")
 public class AgentPrincipalPresetBindingController {
 
-    private static final Set<String> BIND_KEYS = Set.of("roleId");
+    private static final Set<String> BIND_KEYS = Set.of("presetId");
 
     private final AgentPrincipalPresetBindingService bindingService;
     private final AgentPrincipalBindingAuthority authority;
@@ -88,13 +88,13 @@ public class AgentPrincipalPresetBindingController {
             AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
             if (body == null || !BIND_KEYS.containsAll(body.keySet())) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "Body must contain only roleId");
+                        "Body must contain only presetId");
             }
-            UUID roleId = AgentPrincipalBindingAuthority.parseUuid(body.get("roleId"),
-                    "roleId must be a UUID");
+            UUID presetId = AgentPrincipalBindingAuthority.parseUuid(body.get("presetId"),
+                    "presetId must be a UUID");
             UUID actor = caller.actorUuid();
             AgentPrincipalPresetBindingService.AgentRoleBindingView binding = bindingService.bind(
-                    caller.principalId(), roleId, actor, caller.workspaceId(), caller.instanceTier(),
+                    caller.principalId(), presetId, actor, caller.workspaceId(), caller.instanceTier(),
                     workspace -> authority.canManageWorkspace(actor, workspace),
                     resolveLocale(locale, acceptLanguage));
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(binding));
@@ -136,7 +136,7 @@ public class AgentPrincipalPresetBindingController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("bindingId", view.bindingId());
         result.put("principalId", view.principalId());
-        result.put("roleId", view.roleId());
+        result.put("presetId", view.roleId());
         result.put("name", view.name());
         result.put("displayName", view.displayName());
         result.put("description", view.description());

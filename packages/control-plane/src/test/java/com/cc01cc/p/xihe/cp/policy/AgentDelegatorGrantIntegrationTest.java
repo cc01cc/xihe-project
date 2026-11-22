@@ -126,7 +126,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
     void superAdminRoleStillCannotBeBoundToAnAgentPrincipal() {
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
                 """
-                {"name":"AdminIshAgent","roleIds":["%s"]}"""
+                {"name":"AdminIshAgent","presetIds":["%s"]}"""
                         .formatted(SystemGrantPresetCatalog.SUPER_ADMIN_ID));
         assertEquals(HttpStatus.FORBIDDEN.value(), response.getStatusCode().value(),
                 "实例管理角色对 agent 主体仍然禁绑（2026-11-04 裁定）: " + response.getBody());
@@ -150,7 +150,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest
                 .reduce((left, right) -> left + "," + right).orElse("");
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
                 """
-                {"name":"%s","roleIds":[%s]}""".formatted(name, ids));
+                {"name":"%s","presetIds":[%s]}""".formatted(name, ids));
         assertEquals(HttpStatus.CREATED.value(), response.getStatusCode().value(),
                 "agent principal 创建失败: " + response.getBody());
         return String.valueOf(response.getBody().get("principalId"));

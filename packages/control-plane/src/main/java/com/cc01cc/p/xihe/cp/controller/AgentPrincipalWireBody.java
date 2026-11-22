@@ -30,7 +30,7 @@ public final class AgentPrincipalWireBody {
     /** {@code AgentPrincipalCreateRequest.additionalProperties:false} key set. */
     private static final Set<String> CREATE_KEYS = Set.of(
             "name", "templateId", "defaultModelProvider", "defaultModelName", "allowedModels",
-            "hooks", "roleIds");
+            "hooks", "presetIds");
 
     /**
      * {@code AgentPrincipalUpdateRequest.additionalProperties:false} key set.
@@ -44,7 +44,7 @@ public final class AgentPrincipalWireBody {
             "defaultModelProvider", "defaultModelName", "allowedModels");
 
     private static final String CREATE_SHAPE_DETAIL = "Body must contain name plus optional templateId, "
-            + "defaultModelProvider, defaultModelName, allowedModels, hooks and roleIds only";
+            + "defaultModelProvider, defaultModelName, allowedModels, hooks and presetIds only";
 
     private static final String DOCUMENT_SHAPE_DETAIL =
             "Body must contain hooks, contextPolicy, delegationPolicy (object or null) and/or "
@@ -54,7 +54,7 @@ public final class AgentPrincipalWireBody {
 
     /** The create body after shape validation; {@code name} is the only required member. */
     public record CreateBody(String name, String templateId, String defaultModelProvider,
-            String defaultModelName, JsonNode allowedModels, JsonNode hooks, List<UUID> roleIds) {}
+            String defaultModelName, JsonNode allowedModels, JsonNode hooks, List<UUID> presetIds) {}
 
     public static CreateBody parseCreate(Map<String, Object> body, ObjectMapper objectMapper) {
         if (body == null || body.isEmpty()
@@ -70,7 +70,7 @@ public final class AgentPrincipalWireBody {
             throw invalidRequest(CREATE_SHAPE_DETAIL);
         }
         String templateId = body.get("templateId") instanceof String value ? value : null;
-        List<UUID> roleIds = parseRoleIds(body.get("roleIds"));
+        List<UUID> presetIds = parsePresetIds(body.get("presetIds"));
         String defaultModelProvider = body.get("defaultModelProvider") instanceof String provider
                 ? provider : null;
         String defaultModelName = body.get("defaultModelName") instanceof String model ? model : null;
@@ -86,7 +86,7 @@ public final class AgentPrincipalWireBody {
         // here we only tree-ify the wire value (same split as the pre-task-179 controller).
         JsonNode hooks = body.get("hooks") == null ? null : objectMapper.valueToTree(body.get("hooks"));
         return new CreateBody(name, templateId, defaultModelProvider, defaultModelName, allowedModels,
-                hooks, roleIds);
+                hooks, presetIds);
     }
 
     public static AgentPrincipalService.PrincipalSettingsPatch parseDocuments(Map<String, Object> body,
@@ -126,26 +126,26 @@ public final class AgentPrincipalWireBody {
                 body.containsKey("allowedModels"));
     }
 
-    /** {@code roleIds} is a plain array of uuids; anything else is a 400 at the wire edge. */
-    private static List<UUID> parseRoleIds(Object raw) {
-        List<UUID> roleIds = new ArrayList<>();
+    /** {@code presetIds} is a plain array of uuids; anything else is a 400 at the wire edge. */
+    private static List<UUID> parsePresetIds(Object raw) {
+        List<UUID> presetIds = new ArrayList<>();
         if (raw == null) {
-            return roleIds;
+            return presetIds;
         }
-        if (!(raw instanceof List<?> rawRoleIds)) {
-            throw invalidRequest("roleIds must be an array of role ids");
+        if (!(raw instanceof List<?> rawPresetIds)) {
+            throw invalidRequest("presetIds must be an array of preset ids");
         }
-        for (Object element : rawRoleIds) {
-            if (!(element instanceof String roleIdText) || roleIdText.isBlank()) {
-                throw invalidRequest("roleIds must be an array of role ids");
+        for (Object element : rawPresetIds) {
+            if (!(element instanceof String presetIdText) || presetIdText.isBlank()) {
+                throw invalidRequest("presetIds must be an array of preset ids");
             }
             try {
-                roleIds.add(UUID.fromString(roleIdText));
+                presetIds.add(UUID.fromString(presetIdText));
             } catch (IllegalArgumentException notAUuid) {
-                throw invalidRequest("roleIds must be an array of role ids");
+                throw invalidRequest("presetIds must be an array of preset ids");
             }
         }
-        return roleIds;
+        return presetIds;
     }
 
     private static CpApiException invalidRequest(String detail) {

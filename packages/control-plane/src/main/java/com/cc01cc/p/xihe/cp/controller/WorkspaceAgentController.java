@@ -492,12 +492,12 @@ public class WorkspaceAgentController {
         result.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, view.contextPolicy()));
         // D27: `disabledAt` is projected as a boolean — the UI gates badges/buttons on it.
         result.put("disabled", view.disabled());
-        // BL-326 / BL-320 L2 (2026-11-05): `roleIds` is `required` in the published WorkspaceAgentView
-        // and the service record computes it (PLAN-0629: "the workspace-scoped roles that authorize
+        // BL-326 / BL-320 L2 (2026-11-05): `presetIds` is `required` in the published WorkspaceAgentView
+        // and the service record computes it (PLAN-0629: "the workspace-scoped presets that authorize
         // this row"), but this hand-written serializer never emitted it — `git log -S'roleIds'` on this
         // file shows no commit, i.e. the field was silently dropped since it was introduced. The UI's
         // AgentRoleBindingsSection is designed against it.
-        result.put("roleIds", view.roleIds());
+        result.put("presetIds", view.roleIds());
         // task-106: the create form pre-selects this row, and the same flag is the server-side fallback
         // when a Session arrives without an agentPrincipalId.
         result.put("isDefault", view.isDefault());

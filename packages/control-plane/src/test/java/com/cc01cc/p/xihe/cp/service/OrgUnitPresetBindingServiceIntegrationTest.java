@@ -106,11 +106,11 @@ class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest
         UUID secondRole = insertRole("ORG_AUDIT_" + suffix.toUpperCase(), "READ_ORG_UNIT_MEMBERS");
 
         int auditBefore = auditCount();
-        OrgUnitWireView.RoleBindings stored = service.replace(unitA.toString(),
+        OrgUnitWireView.PresetBindings stored = service.replace(unitA.toString(),
                 List.of(secondRole.toString(), governanceRole.toString()));
 
-        assertEquals(2, stored.roleIds().size());
-        List<String> asText = stored.roleIds().stream().map(UUID::toString).toList();
+        assertEquals(2, stored.presetIds().size());
+        List<String> asText = stored.presetIds().stream().map(UUID::toString).toList();
         assertEquals(asText.stream().sorted().toList(), asText,
                 "the stored set is ordered by role id (uuid byte order = hex-string order), so two"
                         + " reads of unchanged data are byte-identical");
@@ -124,8 +124,8 @@ class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest
         assertTrue(detail.contains("affectedWorkspaceIds"), "and the G1 affected field");
 
         // A second replace with an empty set clears the rows — a delta could not express this.
-        OrgUnitWireView.RoleBindings cleared = service.replace(unitA.toString(), List.of());
-        assertEquals(0, cleared.roleIds().size());
+        OrgUnitWireView.PresetBindings cleared = service.replace(unitA.toString(), List.of());
+        assertEquals(0, cleared.presetIds().size());
         assertEquals(0, bindingRows(unitA));
     }
 

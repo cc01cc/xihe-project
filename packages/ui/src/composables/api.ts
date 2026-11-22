@@ -314,6 +314,10 @@ export interface ApiOrgUnitMemberMoveResult {
  * 补 GET 已另立需求（见证据 README 的契约盲区），UI 不许假装读得到。</p>
  */
 export interface ApiOrgUnitRoleBindingList {
+    /**
+     * UI projection of wire `presetIds` (task-843): the HTTP contract speaks grant presets, the
+     * component-facing name stays `roleIds` so the org-members panel keeps one vocabulary.
+     */
     roleIds: string[];
 }
 
@@ -402,6 +406,7 @@ export interface ApiBindingRow {
     id: string;
     subjectType: string;
     subjectId: string;
+    /** UI projection of wire `presetId` (task-843); see `ApiPresetBindingWireRow`. */
     roleId: string;
     roleName: string;
     grantedBy: string | null;
@@ -418,6 +423,42 @@ export interface ApiBindingInput {
     subjectType?: string;
     subjectId: string;
     roleId: string;
+}
+
+/**
+ * The `GET/PUT /api/v1/bindings` wire shape. The frozen contract names the id `presetId`
+ * (task-836 / task-843); `ApiBindingRow` above is the UI projection and must not be sent as-is.
+ */
+interface ApiPresetBindingWireRow {
+    id: string;
+    subjectType: string;
+    subjectId: string;
+    presetId: string;
+    roleName: string;
+    grantedBy: string | null;
+    grantedAt: string | null;
+}
+
+interface ApiPresetBindingWireSet {
+    scopeType: string;
+    scopeId: string | null;
+    bindings: ApiPresetBindingWireRow[];
+}
+
+function toApiBindingSet(wire: ApiPresetBindingWireSet): ApiBindingSet {
+    return {
+        scopeType: wire.scopeType,
+        scopeId: wire.scopeId,
+        bindings: (wire.bindings ?? []).map((row) => ({
+            id: row.id,
+            subjectType: row.subjectType,
+            subjectId: row.subjectId,
+            roleId: row.presetId,
+            roleName: row.roleName,
+            grantedBy: row.grantedBy ?? null,
+            grantedAt: row.grantedAt ?? null,
+        })),
+    };
 }
 
 /** `GET /api/v1/users` row (admin directory; the `role` string is gone since W3-2b). */
@@ -4322,7 +4363,8 @@ export const api = {
         }
         return rows.flatMap((row) => {
             const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
-            const roleId = typeof row.roleId === "string" ? row.roleId : "";
+            // task-843: the wire key is `presetId`; `AgentRoleBinding.roleId` is the UI projection.
+            const roleId = typeof row.presetId === "string" ? row.presetId : "";
             const name =
                 typeof row.roleName === "string"
                     ? row.roleName
@@ -4365,7 +4407,7 @@ export const api = {
             ];
         });
     },
-    /** 绑定角色（body `{roleId}`；`workspaceId` 是授权上下文，2026-11-05 联调实测必需）。 */
+    /** 绑定角色（body `{presetId}`；`workspaceId` 是授权上下文，2026-11-05 联调实测必需）。 */
     async bindAgentRole(
         workspaceId: string | null | undefined,
         principalId: string,
@@ -4377,7 +4419,7 @@ export const api = {
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ roleId }),
+                body: JSON.stringify({ presetId: roleId }),
             },
         );
     },
@@ -4692,23 +4734,31 @@ export const api = {
         await request<void>(`/presets/${encodeURIComponent(presetId)}`, { method: "DELETE" });
     },
     /** `GET /bindings`: one scope's complete user binding set (no capability echo on the wire). */
-    getBindings(scope: ApiBindingScope, scopeId?: string | null): Promise<ApiBindingSet> {
+    async getBindings(scope: ApiBindingScope, scopeId?: string | null): Promise<ApiBindingSet> {
         const query = new URLSearchParams({ scope });
         if (scope === "workspace" && scopeId) query.set("scopeId", scopeId);
-        return request<ApiBindingSet>(`/bindings?${query.toString()}`);
+        const wire = await request<ApiPresetBindingWireSet>(`/bindings?${query.toString()}`);
+        return toApiBindingSet(wire);
     },
     /** `PUT /bindings`: full replacement — the body is the desired end state, not a delta. */
-    replaceBindings(
+    async replaceBindings(
         scope: ApiBindingScope,
         scopeId: string | null | undefined,
         bindings: ApiBindingInput[],
     ): Promise<ApiBindingSet> {
         const query = new URLSearchParams({ scope });
         if (scope === "workspace" && scopeId) query.set("scopeId", scopeId);
-        return request<ApiBindingSet>(`/bindings?${query.toString()}`, {
+        const wire = await request<ApiPresetBindingWireSet>(`/bindings?${query.toString()}`, {
             method: "PUT",
-            body: JSON.stringify({ bindings }),
+            body: JSON.stringify({
+                bindings: bindings.map((binding) => ({
+                    ...(binding.subjectType ? { subjectType: binding.subjectType } : {}),
+                    subjectId: binding.subjectId,
+                    presetId: binding.roleId,
+                })),
+            }),
         });
+        return toApiBindingSet(wire);
     },
     /** Admin user directory (`cap:instance:admin`); used to resolve binding subjects. */
     async listAdminUsers(query: string): Promise<ApiAdminUser[]> {
@@ -5905,17 +5955,18 @@ export const api = {
      *       唯一基线；调用方必须把「基线未知」如实显示，不许做勾完整集再保存的形态（Lead 2026-11-21 裁）。</li>
      *   <li>`409 ORG_SCOPE_ROLE_FORBIDDEN`：角色原子越出治理白名单
      *       （`OrgUnitGovernancePolicy.java:71-72`）——G1 实测 dev 目录 11 个角色 0 个命中。</li>
-     *   <li>`roleIds: []` 合法（G1 实测 200），且空集在 CP 侧算治理角色（`isGovernanceRole` empty⇒true）。</li>
+     *   <li>`presetIds: []` 合法（G1 实测 200），且空集在 CP 侧算治理角色（`isGovernanceRole` empty⇒true）。</li>
      * </ul>
      */
-    replaceOrgUnitRoleBindings(
+    async replaceOrgUnitRoleBindings(
         unitId: string,
         roleIds: string[],
     ): Promise<ApiOrgUnitRoleBindingList> {
-        return request<ApiOrgUnitRoleBindingList>(
+        const wire = await request<{ presetIds?: string[] }>(
             `/org-units/${encodeURIComponent(unitId)}/role-bindings`,
-            { method: "PUT", body: JSON.stringify({ roleIds }) },
+            { method: "PUT", body: JSON.stringify({ presetIds: roleIds }) },
         );
+        return { roleIds: Array.isArray(wire?.presetIds) ? wire.presetIds : [] };
     },
 
     async listWorkspaceMembers(wsId: string): Promise<ApiWorkspaceMember[]> {

@@ -140,18 +140,18 @@ class WorkspaceAgentControllerContractTest extends AbstractReusableIntegrationTe
         // BL-326（Lead 2026-11-05 裁定 ①）：`roleIds` 是契约必填，而序列化层长期漏发。断言不能只查
         // key 存在——present-but-always-empty 是另一种假绿，所以这里比对"该行真正的 workspace 作用域
         // 角色绑定"（fixture 显式绑了一个），并同时钉非空。
-        assertTrue(view.containsKey("roleIds"),
-                "PLAN-0629: roleIds is part of the workspace-agent row contract (BL-326: it was required "
+        assertTrue(view.containsKey("presetIds"),
+                "PLAN-0629: presetIds is part of the workspace-agent row contract (BL-326: it was required "
                         + "by openapi.yaml but never serialized)");
-        Object wireRoleIds = view.get("roleIds");
-        assertNotNull(wireRoleIds, "roleIds must be present as a list, not null");
+        Object wireRoleIds = view.get("presetIds");
+        assertNotNull(wireRoleIds, "presetIds must be present as a list, not null");
         java.util.Set<String> expectedRoleIds = new java.util.HashSet<>(jdbcTemplate.queryForList(
                 "SELECT role_id::text FROM grant_preset_bindings WHERE subject_type = 'agent_principal'"
                         + " AND subject_id = ?::uuid AND scope_type = 'workspace' AND scope_id = ?::uuid",
                 String.class, principalId, workspaceId));
         assertEquals(expectedRoleIds,
                 new java.util.HashSet<>((java.util.List<String>) wireRoleIds),
-                "roleIds must equal the workspace-scoped role bindings that authorize this row");
+                "presetIds must equal the workspace-scoped preset bindings that authorize this row");
         assertTrue(expectedRoleIds.contains(workspaceRoleId.toString()),
                 "fixture sanity: the bound workspace role must be one of them (non-empty by construction)");
         assertEquals(Boolean.TRUE, view.get("bound"), "D26: a bound row projects bound=true");

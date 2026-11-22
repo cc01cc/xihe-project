@@ -61,7 +61,7 @@ public class OrgUnitPresetBindingService {
     }
 
     @Transactional
-    public OrgUnitWireView.RoleBindings replace(String unitIdValue, List<String> roleIdValues) {
+    public OrgUnitWireView.PresetBindings replace(String unitIdValue, List<String> roleIdValues) {
         OrgUnitAccess.Scope scope = access.resolve(OrgUnitWriteService.MANAGE_ATOM);
         UUID unitId = OrgUnitAccess.parseUuid(unitIdValue, "INVALID_ORG_UNIT_ID");
         if (unitId == null) {
@@ -74,7 +74,7 @@ public class OrgUnitPresetBindingService {
 
         if (roleIdValues == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_IDS",
-                    "roleIds is required (an empty array clears the set)");
+                    "presetIds is required (an empty array clears the set)");
         }
         // Refuse before the first write: rows and audit count must both be untouched on 409.
         Set<UUID> requested = new LinkedHashSet<>();
@@ -82,7 +82,7 @@ public class OrgUnitPresetBindingService {
             UUID roleId = OrgUnitAccess.parseUuid(value, "INVALID_ROLE_ID");
             if (roleId == null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_ID",
-                        "roleIds entries must be UUIDs");
+                        "presetIds entries must be UUIDs");
             }
             requested.add(roleId);
         }
@@ -121,6 +121,6 @@ public class OrgUnitPresetBindingService {
         audit.recordDurableChange(access.currentActorId(), null, AUDIT_EVENT, "org_unit_role_binding",
                 unit.id().toString(), detail.toString());
 
-        return new OrgUnitWireView.RoleBindings(bindings.findRoleIds(unit.id()));
+        return new OrgUnitWireView.PresetBindings(bindings.findRoleIds(unit.id()));
     }
 }

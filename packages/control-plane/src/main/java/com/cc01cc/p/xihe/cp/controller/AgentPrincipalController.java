@@ -161,9 +161,9 @@ public class AgentPrincipalController {
             AgentPrincipal principal = agentPrincipalService.createPrincipalFromTemplate(
                     actorUserId, parsed.name(), parsed.templateId(), parsed.defaultModelProvider(),
                     parsed.defaultModelName(), parsed.allowedModels(), parsed.hooks(), null, null,
-                    parsed.roleIds());
+                    parsed.presetIds());
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(AgentPrincipalWireView.createView(principal, parsed.roleIds(), objectMapper));
+                    .body(AgentPrincipalWireView.createView(principal, parsed.presetIds(), objectMapper));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

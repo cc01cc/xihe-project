@@ -372,12 +372,12 @@ describe("改角色：只做逐条新增 / 单条解绑，服务端响应体就�
         expect(result.ok).toBe(false);
         expect(result.roleIds).toBeNull();
         expect(writes.problem.value?.code).toBe("ORG_SCOPE_ROLE_FORBIDDEN");
-        expect(JSON.parse(seen[0].body)).toEqual({ roleIds: ["ADMIN"] });
+        expect(JSON.parse(seen[0].body)).toEqual({ presetIds: ["ADMIN"] });
         expect(written).toEqual([]);
     });
 
-    it("成功时把响应体的 roleIds 当唯一基线交回（契约没有 GET 读面）", async () => {
-        mockApi(() => ({ status: 200, body: { roleIds: [] } }));
+    it("成功时把响应体的 presetIds 当唯一基线交回（契约没有 GET 读面）", async () => {
+        mockApi(() => ({ status: 200, body: { presetIds: [] } }));
         const { writes, written } = setup();
 
         await expect(writes.replaceRoleBindings("u-root", [])).resolves.toEqual({

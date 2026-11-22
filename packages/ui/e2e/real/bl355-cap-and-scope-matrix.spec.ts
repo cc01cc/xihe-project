@@ -133,7 +133,7 @@ test("@host BL-355 矩阵 A：绑三个系统工作区角色均 409（两个 cap
         );
         const bind = await request.post(
             `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${identity.workspaceId}`,
-            { headers, data: { roleId: role.id } },
+            { headers, data: { presetId: role.id } },
         );
         const text = await bind.text();
         const code = (JSON.parse(text) as { code?: string }).code ?? "";

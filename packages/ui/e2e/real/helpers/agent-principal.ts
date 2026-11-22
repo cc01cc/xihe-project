@@ -313,7 +313,7 @@ export async function provisionWorkspaceAgentPrincipal(
         data: {
             name,
             templateId,
-            ...(roleIds.length > 0 ? { roleIds } : {}),
+            ...(roleIds.length > 0 ? { presetIds: roleIds } : {}),
             // BL-343：D-174（`51d3fa95`）起 create 的 body 白名单不再收 `scope`
             // （"body 去 scope，旧值 400，无兼容分支"）；主体归属改由**工作区上下文**
             // （上面的 `X-Workspace-Id`）表达。这里既不送 `scope`，也不做"兼容旧值"分支——
