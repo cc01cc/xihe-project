@@ -168,4 +168,18 @@ class WorkspaceEnvironmentControllerTest {
         assertEquals("materializing", WorkspaceEnvironmentController.mapRuntimeState("creating"));
         assertEquals("ready", WorkspaceEnvironmentController.mapRuntimeState("ready"));
     }
+
+    /**
+     * task-787: after PLAN-0641 T7.5 the create path registers the direct_attach
+     * workspace with the Runtime, whose registry answers {@code ready} right away
+     * — {@code unbound -> Prepare} is no longer the post-create ladder. The
+     * {@code unbound} value is still the projection of "Runtime has no status"
+     * (404 / released), so it must keep mapping exactly there.
+     */
+    @Test
+    void unboundIsTheProjectionForReleasedOrMissingRuntimeStatus() {
+        assertEquals("unbound", WorkspaceEnvironmentController.mapRuntimeState("released"));
+        assertEquals("unbound", WorkspaceEnvironmentController.mapRuntimeState(""));
+        assertEquals("unbound", WorkspaceEnvironmentController.mapRuntimeState(null));
+    }
 }
