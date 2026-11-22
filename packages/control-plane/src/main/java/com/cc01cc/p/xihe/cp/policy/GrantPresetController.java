@@ -21,12 +21,12 @@ import java.util.UUID;
  * PLAN-0610 W3-2a: the access-role definition surface (design §3.5).
  *
  * <pre>
- * GET    /api/v1/roles/catalog      45 atoms (42 action + 3 capability) with scope_class
- * GET    /api/v1/roles              every definition (system roles first)
- * POST   /api/v1/roles              create a custom role
- * PATCH  /api/v1/roles/{roleId}     rename / re-describe / re-atom a custom role; system roles:
+ * GET    /api/v1/presets/catalog      45 atoms (42 action + 3 capability) with scope_class
+ * GET    /api/v1/presets              every definition (system presets first)
+ * POST   /api/v1/presets              create a custom preset
+ * PATCH  /api/v1/presets/{presetId}     rename / re-describe / re-atom a custom preset; system presets:
  *                                   display name only (409 SYSTEM_ROLE_IMMUTABLE)
- * DELETE /api/v1/roles/{roleId}     204; system role or still-bound role → 409
+ * DELETE /api/v1/presets/{presetId}     204; system preset or still-bound preset → 409
  * </pre>
  *
  * <p>The admin gate is {@code MANAGE_ROLES}. It is an <b>action atom</b>, so it cannot be an authority
@@ -37,7 +37,7 @@ import java.util.UUID;
  *
  * <p>PLAN-0667 addendum (Lead ruling 2026-11-05, real-stack gap 1): a caller who may <b>bind agents</b>
  * ({@code MANAGE_WORKSPACE_AGENTS} in the {@code workspaceId} context, or the instance-tier
- * {@code MANAGE_AGENT_PRINCIPALS}) can also {@code GET /roles} — but only the agent-bindable
+ * {@code MANAGE_AGENT_PRINCIPALS}) can also {@code GET /presets} — but only the agent-bindable
  * subset ({@link GrantPresetAdminService#listAgentBindable()}). Otherwise the 0667 binding picker had no
  * candidates for a workspace OWNER (the old gate answered 403). Callers holding {@code MANAGE_ROLES}
  * keep the full admin list, so the role settings panel is unchanged.</p>
@@ -46,7 +46,7 @@ import java.util.UUID;
  * and auditing live in {@link GrantPresetAdminService}.</p>
  */
 @RestController
-@RequestMapping("/api/v1/roles")
+@RequestMapping("/api/v1/presets")
 public class GrantPresetController {
 
     private static final String MANAGE_ROLES_GATE =
@@ -106,17 +106,17 @@ public class GrantPresetController {
         return ResponseEntity.status(HttpStatus.CREATED).body(roleAdminService.create(request));
     }
 
-    @PatchMapping("/{roleId}")
+    @PatchMapping("/{presetId}")
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public GrantPresetAdminViews.RoleView update(@PathVariable UUID roleId,
+    public GrantPresetAdminViews.RoleView update(@PathVariable UUID presetId,
                                           @RequestBody GrantPresetAdminViews.PresetUpdate request) {
-        return roleAdminService.update(roleId, request);
+        return roleAdminService.update(presetId, request);
     }
 
-    @DeleteMapping("/{roleId}")
+    @DeleteMapping("/{presetId}")
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public ResponseEntity<Void> delete(@PathVariable UUID roleId) {
-        roleAdminService.delete(roleId);
+    public ResponseEntity<Void> delete(@PathVariable UUID presetId) {
+        roleAdminService.delete(presetId);
         return ResponseEntity.noContent().build();
     }
 

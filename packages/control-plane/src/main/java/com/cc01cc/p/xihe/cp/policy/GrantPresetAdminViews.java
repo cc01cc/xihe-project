@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.databind.DatabindException;
@@ -56,7 +57,7 @@ public final class GrantPresetAdminViews {
     }
 
     /**
-     * {@code GET /api/v1/roles/catalog}: the atom vocabulary, the bindable scope types and the
+     * {@code GET /api/v1/presets/catalog}: the atom vocabulary, the bindable scope types and the
      * built-in default grant sets (task-415 / RBAC P1-2).
      */
     public record CatalogView(List<AtomView> atoms, List<String> scopes,
@@ -66,7 +67,7 @@ public final class GrantPresetAdminViews {
     /**
      * task-415 (RBAC P1-2): one built-in role's seeded default grant set, from
      * {@link SystemGrantPresetCatalog#presetSeeds()} — the code-level default, not the live DB rows
-     * ({@code GET /roles} lists the rows). This is what answers "who gets a new atom by default"
+     * ({@code GET /presets} lists the rows). This is what answers "who gets a new atom by default"
      * without reading code, the default-grant half of the permission-face rule.
      */
     public record DefaultGrantView(String roleName, String displayName, String description,
@@ -78,8 +79,13 @@ public final class GrantPresetAdminViews {
                            boolean system, List<AtomView> atoms, long bindingCount) {
     }
 
-    /** One binding row as the API shows it (role name resolved, subject type pinned to user). */
-    public record BindingView(UUID id, String subjectType, UUID subjectId, UUID roleId,
+    /**
+     * One binding row as the API shows it (preset name resolved, subject type pinned to user).
+     * The wire name is {@code presetId}; the Java component keeps its historical name so the
+     * binding service (outside this rename's write scope) still compiles.
+     */
+    public record BindingView(UUID id, String subjectType, UUID subjectId,
+                              @JsonProperty("presetId") UUID roleId,
                               String roleName, UUID grantedBy, Instant grantedAt) {
     }
 
@@ -88,7 +94,7 @@ public final class GrantPresetAdminViews {
     }
 
     /**
-     * {@code POST /api/v1/roles} body (controller-side record keeps the parsing trivial).
+     * {@code POST /api/v1/presets} body (controller-side record keeps the parsing trivial).
      *
      * <p>task-81 / DSD-1485: {@code atoms} accepts two forms per entry — the historical
      * {@code "read"} and {@code {"actionClass":"read","resource":"fs:<workspaceId>/src"}}. The
@@ -111,7 +117,7 @@ public final class GrantPresetAdminViews {
     }
 
     /**
-     * {@code PATCH /api/v1/roles/{roleId}} body; every field is optional (null = unchanged).
+     * {@code PATCH /api/v1/presets/{presetId}} body; every field is optional (null = unchanged).
      *
      * <p>{@code atoms} follows {@link RoleCreate} — the whole set is replaced, and a resource pattern
      * travels with its atom.</p>
@@ -126,8 +132,13 @@ public final class GrantPresetAdminViews {
         }
     }
 
-    /** One requested binding in a {@code PUT /api/v1/bindings} full replacement. */
-    public record BindingInput(String subjectType, UUID subjectId, UUID roleId) {
+    /**
+     * One requested binding in a {@code PUT /api/v1/bindings} full replacement. The wire name is
+     * {@code presetId}; the Java component keeps its historical name for the same in-scope reason
+     * as {@link BindingView}.
+     */
+    public record BindingInput(String subjectType, UUID subjectId,
+                               @JsonProperty("presetId") UUID roleId) {
     }
 
     /**

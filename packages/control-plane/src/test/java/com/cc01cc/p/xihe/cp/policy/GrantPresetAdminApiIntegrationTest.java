@@ -96,7 +96,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     void catalogExposesTheAtomVocabularyWithScopeClasses() throws Exception {
         String superToken = superAdmin("catalog-admin@test.com");
 
-        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/roles/catalog", null,
+        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/presets/catalog", null,
                 superToken);
         assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
         JsonNode body = objectMapper.readTree(response.getBody());
@@ -136,7 +136,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     void catalogProjectsTheAgentPrincipalForbiddenFlag() throws Exception {
         String superToken = superAdmin("catalog-forbidden@test.com");
 
-        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/roles/catalog", null, superToken);
+        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/presets/catalog", null, superToken);
         assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
         JsonNode atoms = objectMapper.readTree(response.getBody()).path("atoms");
         assertTrue(atoms.size() > 0, "the catalog is not empty");
@@ -182,7 +182,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     void catalogExposesTheBuiltInDefaultGrantSets() throws Exception {
         String superToken = superAdmin("catalog-defaults@test.com");
 
-        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/roles/catalog", null, superToken);
+        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/presets/catalog", null, superToken);
         assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
         JsonNode body = objectMapper.readTree(response.getBody());
         JsonNode defaults = body.path("defaultGrants");
@@ -222,6 +222,33 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         }
     }
 
+    // ── wire rename: /api/v1/roles is gone, not aliased ─────────────────────
+
+    @Test
+    void legacyRolesPathIsGoneWithoutAlias() throws Exception {
+        String superToken = superAdmin("legacy-path@test.com");
+
+        for (String path : List.of("/api/v1/roles", "/api/v1/roles/catalog",
+                "/api/v1/roles/" + UUID.randomUUID())) {
+            ResponseEntity<String> legacy = call(HttpMethod.GET, path, null, superToken);
+            assertEquals(HttpStatus.NOT_FOUND, legacy.getStatusCode(),
+                    "the old roles path must not alias the presets route: " + path);
+        }
+
+        ResponseEntity<String> legacyCreate = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "LEGACY_ALIAS", "atoms", List.of("read")), superToken);
+        assertEquals(HttpStatus.NOT_FOUND, legacyCreate.getStatusCode(),
+                "a mutation on the old path must be a 404, not a redirected write");
+
+        ResponseEntity<String> legacyPatch = call(HttpMethod.PATCH,
+                "/api/v1/roles/" + UUID.randomUUID(),
+                Map.of("displayName", "Legacy"), superToken);
+        assertEquals(HttpStatus.NOT_FOUND, legacyPatch.getStatusCode());
+
+        assertEquals(0, countRows("SELECT COUNT(*) FROM grant_presets WHERE name = 'LEGACY_ALIAS'"),
+                "the legacy POST must not have created a preset");
+    }
+
     private static JsonNode findAtom(JsonNode atoms, String name) {
         for (JsonNode atom : atoms) {
             if (name.equals(atom.path("name").asText())) {
@@ -237,7 +264,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     void customRolesAreCreatedEditedAndDeleted() throws Exception {
         String superToken = superAdmin("crud-admin@test.com");
 
-        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "AUDITOR", "displayName", "Auditor",
                         "description", "read only role", "atoms", List.of("read")), superToken);
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
@@ -246,22 +273,22 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         assertFalse(role.path("system").asBoolean());
         assertEquals(List.of("read"), texts(role.path("atoms")));
 
-        ResponseEntity<String> duplicate = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> duplicate = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "AUDITOR", "atoms", List.of("read")), superToken);
         assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode());
         assertTrue(duplicate.getBody().contains("ROLE_NAME_EXISTS"), duplicate.getBody());
 
-        ResponseEntity<String> unknownAtom = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> unknownAtom = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "BROKEN", "atoms", List.of("no_such_atom")), superToken);
         assertEquals(HttpStatus.BAD_REQUEST, unknownAtom.getStatusCode());
         assertTrue(unknownAtom.getBody().contains("UNKNOWN_ACTION_CLASS"), unknownAtom.getBody());
 
-        ResponseEntity<String> emptyAtoms = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> emptyAtoms = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "EMPTY", "atoms", List.of()), superToken);
         assertEquals(HttpStatus.BAD_REQUEST, emptyAtoms.getStatusCode());
         assertTrue(emptyAtoms.getBody().contains("INVALID_ROLE_ATOMS"), emptyAtoms.getBody());
 
-        ResponseEntity<String> patched = call(HttpMethod.PATCH, "/api/v1/roles/" + roleId,
+        ResponseEntity<String> patched = call(HttpMethod.PATCH, "/api/v1/presets/" + roleId,
                 Map.of("displayName", "Auditor (read-only)",
                         "atoms", List.of("read", "exec")), superToken);
         assertEquals(HttpStatus.OK, patched.getStatusCode(), patched.getBody());
@@ -269,7 +296,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         assertEquals("Auditor (read-only)", patchedBody.path("displayName").asText());
         assertEquals(List.of("exec", "read"), texts(patchedBody.path("atoms")));
 
-        ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/roles/" + roleId, null,
+        ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/presets/" + roleId, null,
                 superToken);
         assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), deleted.getBody());
         assertEquals(0, countRows("SELECT COUNT(*) FROM grant_preset_atoms WHERE role_id ="
@@ -295,7 +322,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                 "A", // shorter than the 2-char floor
                 "A".repeat(65)); // longer than the 64-char ceiling
         for (String name : rejected) {
-            ResponseEntity<String> refused = call(HttpMethod.POST, "/api/v1/roles",
+            ResponseEntity<String> refused = call(HttpMethod.POST, "/api/v1/presets",
                     Map.of("name", name, "atoms", List.of("read")), superToken);
             assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(),
                     name + " must be a field-level 400, not an INSERT failure: "
@@ -308,12 +335,12 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
 
         // Boundary names the constraint accepts both land and are usable (create → delete).
         for (String name : List.of("A2", "AUDITOR_2")) {
-            ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+            ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/presets",
                     Map.of("name", name, "displayName", name, "atoms", List.of("read")),
                     superToken);
             assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
             String roleId = objectMapper.readTree(created.getBody()).path("id").asText();
-            ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/roles/" + roleId,
+            ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/presets/" + roleId,
                     null, superToken);
             assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), deleted.getBody());
         }
@@ -324,23 +351,23 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         String superToken = superAdmin("system-admin@test.com");
         String adminRoleId = roleId("ADMIN");
 
-        ResponseEntity<String> renamed = call(HttpMethod.PATCH, "/api/v1/roles/" + adminRoleId,
+        ResponseEntity<String> renamed = call(HttpMethod.PATCH, "/api/v1/presets/" + adminRoleId,
                 Map.of("displayName", "Instance Administrator"), superToken);
         assertEquals(HttpStatus.OK, renamed.getStatusCode(), renamed.getBody());
         assertEquals("Instance Administrator",
                 objectMapper.readTree(renamed.getBody()).path("displayName").asText());
 
-        ResponseEntity<String> atoms = call(HttpMethod.PATCH, "/api/v1/roles/" + adminRoleId,
+        ResponseEntity<String> atoms = call(HttpMethod.PATCH, "/api/v1/presets/" + adminRoleId,
                 Map.of("atoms", List.of("read")), superToken);
         assertEquals(HttpStatus.CONFLICT, atoms.getStatusCode());
         assertTrue(atoms.getBody().contains("SYSTEM_ROLE_IMMUTABLE"), atoms.getBody());
 
-        ResponseEntity<String> renamedName = call(HttpMethod.PATCH, "/api/v1/roles/" + adminRoleId,
+        ResponseEntity<String> renamedName = call(HttpMethod.PATCH, "/api/v1/presets/" + adminRoleId,
                 Map.of("name", "SUPERVISOR"), superToken);
         assertEquals(HttpStatus.CONFLICT, renamedName.getStatusCode());
         assertTrue(renamedName.getBody().contains("SYSTEM_ROLE_IMMUTABLE"));
 
-        ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/roles/" + adminRoleId,
+        ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/presets/" + adminRoleId,
                 null, superToken);
         assertEquals(HttpStatus.CONFLICT, deleted.getStatusCode());
         assertTrue(deleted.getBody().contains("SYSTEM_ROLE_IMMUTABLE"));
@@ -357,7 +384,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
 
         assertEquals(HttpStatus.OK, appendInstanceBinding(superToken, subjectId, roleId).getStatusCode());
 
-        ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/roles/" + roleId, null,
+        ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/presets/" + roleId, null,
                 superToken);
         assertEquals(HttpStatus.CONFLICT, deleted.getStatusCode());
         assertTrue(deleted.getBody().contains("ROLE_IN_USE"), deleted.getBody());
@@ -366,7 +393,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         remaining.removeIf(binding -> binding.get("subjectId").equals(subjectId));
         putBindings(superToken, "instance", null, remaining);
         assertEquals(HttpStatus.NO_CONTENT,
-                call(HttpMethod.DELETE, "/api/v1/roles/" + roleId, null, superToken).getStatusCode());
+                call(HttpMethod.DELETE, "/api/v1/presets/" + roleId, null, superToken).getStatusCode());
     }
 
     // ── bindings ────────────────────────────────────────────────────────────
@@ -380,9 +407,9 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
 
         List<Map<String, String>> desired = new ArrayList<>(
                 workspaceBindings(superToken, workspaceId));
-        assertTrue(desired.stream().anyMatch(binding -> binding.get("roleId").equals(roleId("WS_OWNER"))),
+        assertTrue(desired.stream().anyMatch(binding -> binding.get("presetId").equals(roleId("WS_OWNER"))),
                 "the creator's WS_OWNER binding is part of the workspace set");
-        desired.add(Map.of("subjectId", subjectId, "roleId", viewerRoleId));
+        desired.add(Map.of("subjectId", subjectId, "presetId", viewerRoleId));
 
         ResponseEntity<String> first = putBindings(superToken, "workspace", workspaceId, desired);
         assertEquals(HttpStatus.OK, first.getStatusCode(), first.getBody());
@@ -435,7 +462,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         assertTrue(desired.stream().anyMatch(binding ->
                         binding.get("subjectId").equals(superId)),
                 "the caller's own SUPER_ADMIN binding is part of the full set");
-        desired.add(Map.of("subjectId", subjectId, "roleId", roleId));
+        desired.add(Map.of("subjectId", subjectId, "presetId", roleId));
 
         ResponseEntity<String> first = putBindings(superToken, "instance", null, desired);
         assertEquals(HttpStatus.OK, first.getStatusCode(), first.getBody());
@@ -458,7 +485,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         // Removing the extra binding again (keeping the super admin and the USER tier) is allowed.
         List<Map<String, String>> withoutExtra = new ArrayList<>(instanceBindings(superToken));
         withoutExtra.removeIf(binding -> binding.get("subjectId").equals(subjectId)
-                && binding.get("roleId").equals(roleId));
+                && binding.get("presetId").equals(roleId));
         ResponseEntity<String> removed = putBindings(superToken, "instance", null,
                 withoutExtra);
         assertEquals(HttpStatus.OK, removed.getStatusCode(), removed.getBody());
@@ -485,7 +512,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         String viewerRoleId = roleId("WS_VIEWER");
 
         List<Map<String, String>> set = new ArrayList<>(workspaceBindings(superToken, workspaceId));
-        set.add(Map.of("subjectId", subjectId, "roleId", viewerRoleId));
+        set.add(Map.of("subjectId", subjectId, "presetId", viewerRoleId));
         ResponseEntity<String> ok = putBindings(superToken, "workspace", workspaceId, set);
         assertEquals(HttpStatus.OK, ok.getStatusCode(), ok.getBody());
         assertEquals(workspaceId, objectMapper.readTree(ok.getBody()).path("scopeId").asText());
@@ -495,7 +522,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                 List.of("read", "MANAGE_ROLES"));
         List<Map<String, String>> mismatchSet = new ArrayList<>(set);
         mismatchSet.removeIf(binding -> binding.get("subjectId").equals(subjectId));
-        mismatchSet.add(Map.of("subjectId", subjectId, "roleId", instanceOnlyRoleId));
+        mismatchSet.add(Map.of("subjectId", subjectId, "presetId", instanceOnlyRoleId));
         ResponseEntity<String> mismatch = putBindings(superToken, "workspace", workspaceId,
                 mismatchSet);
         assertEquals(HttpStatus.BAD_REQUEST, mismatch.getStatusCode(), mismatch.getBody());
@@ -533,23 +560,23 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         String adminToken = login("gate-instance-admin@test.com");
         assertTrue(authzContext.isInstanceAdmin(UUID.fromString(adminId)));
 
-        for (String path : List.of("/api/v1/roles/catalog",
+        for (String path : List.of("/api/v1/presets/catalog",
                 "/api/v1/bindings?scope=instance")) {
             assertEquals(HttpStatus.OK,
                     call(HttpMethod.GET, path, null, adminToken).getStatusCode(),
                     "ADMIN holds MANAGE_ROLES since V125 (D-168): " + path);
         }
         assertEquals(HttpStatus.OK,
-                call(HttpMethod.GET, "/api/v1/roles", null, adminToken).getStatusCode());
+                call(HttpMethod.GET, "/api/v1/presets", null, adminToken).getStatusCode());
 
         // Positive (V3.1): within its own atom set (read is a USER-default atom) ADMIN may create.
-        assertEquals(HttpStatus.CREATED, call(HttpMethod.POST, "/api/v1/roles",
+        assertEquals(HttpStatus.CREATED, call(HttpMethod.POST, "/api/v1/presets",
                         Map.of("name", "ADMIN_MADE", "atoms", List.of("read")), adminToken)
                         .getStatusCode(),
                 "ADMIN may delegate atoms it holds");
 
         // Negative (V3.2 / M2+M3 core): GRANT_ANY_ATOM is SUPER_ADMIN-only ⇒ 403 + atom named.
-        ResponseEntity<String> escalated = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> escalated = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "ADMIN_ESCALATED", "atoms", List.of("GRANT_ANY_ATOM")), adminToken);
         assertEquals(HttpStatus.FORBIDDEN, escalated.getStatusCode(),
                 "ADMIN cannot grant the subset bypass it does not hold: " + escalated.getBody());
@@ -558,7 +585,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
 
         String plainToken = register("gate-plain@test.com");
         assertEquals(HttpStatus.FORBIDDEN,
-                call(HttpMethod.GET, "/api/v1/roles", null, plainToken).getStatusCode());
+                call(HttpMethod.GET, "/api/v1/presets", null, plainToken).getStatusCode());
 
         // A custom instance role carrying only MANAGE_ROLES + read passes the gate.
         String managerId = userIdOf(register("gate-role-manager@test.com"));
@@ -568,7 +595,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         grantInstanceRole(managerId, "ROLE_MANAGER");
         String managerToken = login("gate-role-manager@test.com");
         assertEquals(HttpStatus.OK,
-                call(HttpMethod.GET, "/api/v1/roles/catalog", null, managerToken).getStatusCode());
+                call(HttpMethod.GET, "/api/v1/presets/catalog", null, managerToken).getStatusCode());
     }
 
     /**
@@ -598,7 +625,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                 "the binding row really landed (not just a 2xx)");
         assertTrue(instanceBindings(adminToken).stream().anyMatch(pair ->
                                 subjectId.equals(pair.get("subjectId"))
-                                        && readerRoleId.equals(pair.get("roleId"))),
+                                        && readerRoleId.equals(pair.get("presetId"))),
                 "the instance binding set reports the new pair");
         assertTrue(grantRows(subjectId, "instance", null) >= 1,
                 "the subject's role atoms were materialized in the same transaction");
@@ -656,7 +683,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         String workspaceId = createWorkspace(superToken);
         String pattern = "fs:" + workspaceId + "/src";
 
-        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "PATH_READER", "displayName", "Path reader",
                         "atoms", List.of(Map.of("actionClass", "read", "resource", pattern))),
                 superToken);
@@ -670,7 +697,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                 "SELECT resource_pattern FROM grant_preset_atoms WHERE role_id = CAST(? AS UUID)",
                 String.class, roleId), "the pattern is a persisted row, not a view-only field");
 
-        ResponseEntity<String> listed = call(HttpMethod.GET, "/api/v1/roles", null, superToken);
+        ResponseEntity<String> listed = call(HttpMethod.GET, "/api/v1/presets", null, superToken);
         assertEquals(HttpStatus.OK, listed.getStatusCode(), listed.getBody());
         JsonNode listedRole = null;
         for (JsonNode candidate : objectMapper.readTree(listed.getBody())) {
@@ -683,7 +710,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                 "the list view reports the same stored pattern");
 
         String narrowed = "fs:" + workspaceId + "/src/api";
-        ResponseEntity<String> patched = call(HttpMethod.PATCH, "/api/v1/roles/" + roleId,
+        ResponseEntity<String> patched = call(HttpMethod.PATCH, "/api/v1/presets/" + roleId,
                 Map.of("atoms", List.of(Map.of("actionClass", "read", "resource", narrowed))),
                 superToken);
         assertEquals(HttpStatus.OK, patched.getStatusCode(), patched.getBody());
@@ -702,7 +729,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     void atomsWithoutAResourceKeepTheirCanonicalPattern() throws Exception {
         String superToken = superAdmin("res-default@test.com");
 
-        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "PLAIN_READER", "atoms", List.of("read", "exec")), superToken);
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
         JsonNode role = objectMapper.readTree(created.getBody());
@@ -750,7 +777,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         int seq = 0;
         for (Map.Entry<String, String> entry : invalid.entrySet()) {
             String name = "BAD_RES_" + seq++;
-            ResponseEntity<String> refused = call(HttpMethod.POST, "/api/v1/roles",
+            ResponseEntity<String> refused = call(HttpMethod.POST, "/api/v1/presets",
                     Map.of("name", name, "atoms",
                             List.of(Map.of("actionClass", "read", "resource", entry.getValue()))),
                     superToken);
@@ -760,7 +787,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                     entry.getKey() + ": " + refused.getBody());
         }
 
-        ResponseEntity<String> unknown = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> unknown = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "BAD_RES_UNKNOWN", "atoms", List.of(
                         Map.of("actionClass", "read",
                                 "resource", "fs:" + unknownWorkspace + "/src"))), superToken);
@@ -784,11 +811,11 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         grantInstanceRole(managerId, "RES_MANAGER");
 
         // Control first: the same caller can write a role, so the 403 below is about the path.
-        ResponseEntity<String> control = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> control = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "RES_MANAGER_OWN", "atoms", List.of("read")), managerToken);
         assertEquals(HttpStatus.CREATED, control.getStatusCode(), control.getBody());
 
-        ResponseEntity<String> attempt = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> attempt = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "RES_MANAGER_FOREIGN", "atoms", List.of(Map.of("actionClass", "read",
                         "resource", "fs:" + foreignWorkspace + "/src"))), managerToken);
         assertEquals(HttpStatus.FORBIDDEN, attempt.getStatusCode(), attempt.getBody());
@@ -806,7 +833,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         // instance-only 原子：路径收窄不了实例级权威。
         assertTrue(PermissionAtomCatalog.instanceOnlyAtoms().contains("MANAGE_ROLES"),
                 "MANAGE_ROLES is the instance-only atom this case pins");
-        ResponseEntity<String> instanceOnly = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> instanceOnly = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "BAD_SCOPE", "atoms", List.of(Map.of("actionClass", "MANAGE_ROLES",
                         "resource", pattern))), superToken);
         assertEquals(HttpStatus.BAD_REQUEST, instanceOnly.getStatusCode(), instanceOnly.getBody());
@@ -814,14 +841,14 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                 instanceOnly.getBody());
 
         // capability 原子：能力不是资源，带路径一律拒。
-        ResponseEntity<String> capability = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> capability = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "BAD_CAP", "atoms", List.of(Map.of("actionClass", "instance:admin",
                         "resource", pattern))), superToken);
         assertEquals(HttpStatus.BAD_REQUEST, capability.getStatusCode(), capability.getBody());
         assertTrue(capability.getBody().contains("INVALID_GRANT_RESOURCE"), capability.getBody());
 
         // 一个角色对同一原子只有一个 pattern。
-        ResponseEntity<String> duplicate = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> duplicate = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", "BAD_DUP", "atoms", List.of(
                         Map.of("actionClass", "read", "resource", pattern),
                         Map.of("actionClass", "read",
@@ -833,7 +860,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         // 对象形态里的拼写错误不能被静默忽略（否则 typo 会退化成 canonical 全授予）。
         String typoBody = "{\"name\":\"BAD_TYPO\",\"atoms\":[{\"actionClass\":\"read\","
                 + "\"action_class\":\"read\"}]}";
-        ResponseEntity<String> typo = call(HttpMethod.POST, "/api/v1/roles", typoBody, superToken);
+        ResponseEntity<String> typo = call(HttpMethod.POST, "/api/v1/presets", typoBody, superToken);
         assertEquals(HttpStatus.BAD_REQUEST, typo.getStatusCode(), typo.getBody());
         assertEquals(0, countRows("SELECT COUNT(*) FROM grant_presets WHERE name = 'BAD_TYPO'"),
                 "the typo must not create a role with a silently defaulted pattern");
@@ -849,7 +876,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     private String createRole(String token, String name, List<String> atoms) throws Exception {
-        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+        ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/presets",
                 Map.of("name", name, "displayName", name, "atoms", atoms), token);
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
         return objectMapper.readTree(created.getBody()).path("id").asText();
@@ -863,7 +890,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         List<Map<String, String>> pairs = new ArrayList<>();
         for (JsonNode binding : objectMapper.readTree(listed.getBody()).path("bindings")) {
             pairs.add(Map.of("subjectId", binding.path("subjectId").asText(),
-                    "roleId", binding.path("roleId").asText()));
+                    "presetId", binding.path("presetId").asText()));
         }
         return pairs;
     }
@@ -877,7 +904,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         List<Map<String, String>> pairs = new ArrayList<>();
         for (JsonNode binding : objectMapper.readTree(listed.getBody()).path("bindings")) {
             pairs.add(Map.of("subjectId", binding.path("subjectId").asText(),
-                    "roleId", binding.path("roleId").asText()));
+                    "presetId", binding.path("presetId").asText()));
         }
         return pairs;
     }
@@ -885,7 +912,7 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     private ResponseEntity<String> appendInstanceBinding(String token, String subjectId,
                                                          String roleId) throws Exception {
         List<Map<String, String>> desired = new ArrayList<>(instanceBindings(token));
-        desired.add(Map.of("subjectId", subjectId, "roleId", roleId));
+        desired.add(Map.of("subjectId", subjectId, "presetId", roleId));
         return putBindings(token, "instance", null, desired);
     }
 
