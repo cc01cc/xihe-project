@@ -1,12 +1,13 @@
 {
-  "version": 1,
-  "generatedBy": "task-110 (DSD-1497 ②决策表 golden 基线)",
+  "version": 2,
+  "generatedBy": "task-110 (DSD-1497 ②决策表 golden 基线) + task-834 (三源快照去重①②③：链上改一级/撤销/TTL 过期)",
   "source": "policy/GrantIntersectionEvaluator.java:98-121 交集求值 + PermissionAtomCatalog.requireScopeCompatible:438-445 scope 门 + PermissionAtom:18-34 capability/词汇表门",
   "fieldGuide": {
-    "row": "id / category / intent / gate / shape / levels / request / atom / scopeType / expect",
+    "row": "id / category / intent / gate / shape / levels / tokens / request / atom / scopeType / expect",
     "gate_intersection": "默认；levels 是从外到内的 principals（实例快照 → 工作区快照 → 会话快照），逐级取交集",
     "gate_scope": "断言 PermissionAtomCatalog.requireScopeCompatible(atom, scopeType) 是否放行绑定",
-    "gate_capability": "断言 capability 原子不能当 grant 原子（PermissionAtom 构造即抛）"
+    "gate_capability": "断言 capability 原子不能当 grant 原子（PermissionAtom 构造即抛）",
+    "tokens": "可选，仅 gate=intersection：会话临时令牌（session_temporary_grants 行）。liveAt(now) 为真才进入判定输入；expiresInSeconds 是相对本轮 now 的秒数（负数=已过期，0=边界），revoked=true 写 revokedAt。"
   },
   "scopes": {
     "ws-root": {
@@ -1639,6 +1640,620 @@
         ],
         "resources": [
           "credential:33333333-3333-4333-8333-333333333333"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "L01",
+      "category": "chain-level-change",
+      "intent": "起点：三源快照（grants 行 / binding / session）同持 read，三级交集放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "L02",
+      "category": "chain-level-change",
+      "intent": "撤销落在中间级（binding 快照改掉 read），外两级仍是旧副本也必须拦住——撤了不会还在",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "L03",
+      "category": "chain-level-change",
+      "intent": "改宽落在最内级（session 快照补上 read），无需三级同批重写即生效——改了就会生效",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "L04",
+      "category": "chain-level-change",
+      "intent": "撤销落在最外级（grants 行不再含 read），内两级留着旧副本救不回来——单级陈旧副本不构成放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "write",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "request": {
+        "tool": "read_file",
+        "actionClasses": [
+          "read"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "V01",
+      "category": "token-revocation",
+      "intent": "现状基线：三级都不含 exec，一枚 live 会话临时令牌是唯一显式例外，放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-live-1",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 300
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "V02",
+      "category": "token-revocation",
+      "intent": "同一枚令牌改为已撤销（revokedAt 有值）⇒ 不进判定输入 ⇒ 三级都不含 exec ⇒ 拒：撤销下一次判定即生效",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-revoked-1",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 300,
+          "revoked": true
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "V03",
+      "category": "token-revocation",
+      "intent": "撤销只撤回这条例外：三级本就同持 exec 时，即便令牌已撤销仍放行——防过度收窄",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-revoked-2",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 300,
+          "revoked": true
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "V04",
+      "category": "token-revocation",
+      "intent": "撤销的作用域精确到 (action,resource) 对：network 只被撤销令牌覆盖、exec 由 live 令牌覆盖，整请求按全对合取仍拒",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-revoked-3",
+          "actionClass": "network",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 300,
+          "revoked": true
+        },
+        {
+          "id": "tk-live-2",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 300
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "network",
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "X01",
+      "category": "token-expiry",
+      "intent": "TTL 已过期（expiresAt 早于 now）⇒ 不算 live ⇒ 三级不含 exec ⇒ 拒，且无需任何回收调度",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-expired-1",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": -60
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "X02",
+      "category": "token-expiry",
+      "intent": "反证：同一枚令牌只是未过期（expiresAt 晚于 now）就放行——证明 X01 的拒确实由过期这一格造成",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-live-3",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 60
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "allow"
+    },
+    {
+      "id": "X03",
+      "category": "token-expiry",
+      "intent": "边界钉子：expiresAt 恰等于 now ⇒ isAfter 为假 ⇒ 不 live ⇒ 拒（钉死严格晚于，防 off-by-one 放宽）",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "read",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-boundary-1",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": 0
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "id": "X04",
+      "category": "token-expiry",
+      "intent": "过期只撤回例外、不剥夺标准交集：令牌已过期但三级本就同持 exec ⇒ 仍放行",
+      "shape": "STRUCTURED",
+      "levels": [
+        {
+          "label": "agent-instance snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "*"
+            }
+          ]
+        },
+        {
+          "label": "workspace snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "notes/a.md"
+            }
+          ]
+        },
+        {
+          "label": "session snapshot",
+          "atoms": [
+            {
+              "actionClass": "exec",
+              "resource": "notes/a.md"
+            }
+          ]
+        }
+      ],
+      "tokens": [
+        {
+          "id": "tk-expired-2",
+          "actionClass": "exec",
+          "resource": "notes/a.md",
+          "expiresInSeconds": -1
+        }
+      ],
+      "request": {
+        "tool": "exec_command",
+        "actionClasses": [
+          "exec"
+        ],
+        "resources": [
+          "notes/a.md"
         ]
       },
       "expect": "allow"

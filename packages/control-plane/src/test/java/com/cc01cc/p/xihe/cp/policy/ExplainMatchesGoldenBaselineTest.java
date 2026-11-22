@@ -59,9 +59,14 @@ class ExplainMatchesGoldenBaselineTest {
             PolicyRequest request = policyRequest(row);
             List<Set<GrantIntersectionEvaluator.PermissionAtom>> path = principalPath(row, evaluator);
             List<GrantIntersectionEvaluator.PrincipalLevel> levels = labelledLevels(row, evaluator);
+            // task-834: the token rows are part of the decision input. Both faces must see the very
+            // same live-token list, otherwise a session-temporary grant would explain a decision the
+            // kernel never made with it.
+            List<GrantIntersectionEvaluator.GrantAtom> tokens = liveTokenAtoms(row, java.time.Instant.now());
 
-            boolean decided = evaluator.allows(request, path);
-            GrantIntersectionEvaluator.GrantExplanation explanation = evaluator.explain(request, levels);
+            boolean decided = evaluator.allows(request, path, tokens);
+            GrantIntersectionEvaluator.GrantExplanation explanation =
+                    evaluator.explain(request, levels, tokens);
             if ("allow".equals(expect)) {
                 explainedAllowed++;
             }
@@ -85,6 +90,14 @@ class ExplainMatchesGoldenBaselineTest {
                 if (explanation.matchedGrantRefs().isEmpty()) {
                     failures.add(id + " —— 已放行却没有可引用的命中行");
                 }
+                // task-834: a pair a live token covered must be attributed to that token, never to a
+                // level that does not hold the atom.
+                if (!tokens.isEmpty() && explanation.matchedGrantRefs().stream()
+                        .noneMatch(ref -> GrantIntersectionEvaluator.SESSION_TOKEN_LABEL
+                                .equals(ref.levelLabel()))) {
+                    failures.add(id + " —— live 令牌放行的行必须能在命中行里指到 "
+                            + GrantIntersectionEvaluator.SESSION_TOKEN_LABEL);
+                }
             } else {
                 if (explanation.missingAtom() == null) {
                     failures.add(id + " —— 被拒却没有 missingAtom");
@@ -96,8 +109,8 @@ class ExplainMatchesGoldenBaselineTest {
             }
         }
 
-        assertEquals(49, explained, "intersection 行数必须与基线一致（gate=intersection）");
-        assertEquals(27, explainedAllowed, "intersection 行的放行数必须与基线一致（59 行 30 放行 - scope 门 3 行）");
+        assertEquals(61, explained, "intersection 行数必须与基线一致（gate=intersection）");
+        assertEquals(33, explainedAllowed, "intersection 行的放行数必须与基线一致（71 行 36 放行 - scope 门 3 行）");
         assertTrue(failures.isEmpty(), "以下基线行 explain 与裁决不一致（" + failures.size() + " 行）:\n"
                 + String.join("\n", failures));
     }
@@ -172,9 +185,10 @@ class ExplainMatchesGoldenBaselineTest {
     }
 
     @Test
-    void theBaselineStillHasFiftyNineRows() throws Exception {
+    void theBaselineStillHasTheExpectedSeventyOneRows() throws Exception {
         JsonNode rows = baseline().withArray("rows");
-        assertEquals(59, rows.size(), "基线行数（task-110 交付时为 59）发生变化，需同步本测试的分布断言");
+        assertEquals(71, rows.size(),
+                "基线行数（task-110 交付 59，task-834 追加三源快照三组共 12 行 ⇒ 71）发生变化，需同步本测试的分布断言");
         int intersection = 0;
         int allow = 0;
         for (JsonNode row : rows) {
@@ -185,8 +199,8 @@ class ExplainMatchesGoldenBaselineTest {
                 }
             }
         }
-        assertEquals(49, intersection, "intersection 行数");
-        assertEquals(27, allow, "intersection 行的放行行数");
+        assertEquals(61, intersection, "intersection 行数");
+        assertEquals(33, allow, "intersection 行的放行行数");
     }
 
     private List<GrantIntersectionEvaluator.PrincipalLevel> labelledLevels(JsonNode row,
@@ -206,6 +220,44 @@ class ExplainMatchesGoldenBaselineTest {
             path.add(evaluator.parse(level.get("atoms")));
         }
         return path;
+    }
+
+    /**
+     * Same construction as {@code AuthzGoldenBaselineTest}: tokens become real
+     * {@link SessionTemporaryGrant} rows and liveness is decided by {@code liveAt(now)}, so this face
+     * cannot drift from the decision face.
+     */
+    private List<GrantIntersectionEvaluator.GrantAtom> liveTokenAtoms(JsonNode row, java.time.Instant now) {
+        JsonNode tokens = row.get("tokens");
+        if (tokens == null || !tokens.isArray() || tokens.isEmpty()) {
+            return List.of();
+        }
+        List<GrantIntersectionEvaluator.GrantAtom> atoms = new ArrayList<>();
+        for (JsonNode token : tokens) {
+            String id = token.path("id").asText();
+            boolean revoked = token.path("revoked").asBoolean(false);
+            SessionTemporaryGrant grant = new SessionTemporaryGrant(
+                    java.util.UUID.nameUUIDFromBytes(("token:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    java.util.UUID.nameUUIDFromBytes(("token-session:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    java.util.UUID.nameUUIDFromBytes(("token-workspace:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    java.util.UUID.nameUUIDFromBytes(("token-principal:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    List.of(new GrantIntersectionEvaluator.PermissionAtom(
+                            token.path("actionClass").asText(), token.path("resource").asText("*"))),
+                    java.util.UUID.nameUUIDFromBytes(("token-granter:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    now.minusSeconds(60),
+                    now.plusSeconds(token.path("expiresInSeconds").asLong(300)),
+                    revoked ? java.util.UUID.nameUUIDFromBytes(
+                            ("token-revoker:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8)) : null,
+                    revoked ? now : null);
+            if (!grant.liveAt(now)) {
+                continue;
+            }
+            for (GrantIntersectionEvaluator.PermissionAtom atom : grant.atoms()) {
+                atoms.add(new GrantIntersectionEvaluator.GrantAtom(atom.actionClass(), atom.resource(),
+                        grant.id().toString(), GrantSources.SESSION_TEMP));
+            }
+        }
+        return atoms;
     }
 
     private PolicyRequest policyRequest(JsonNode row) {

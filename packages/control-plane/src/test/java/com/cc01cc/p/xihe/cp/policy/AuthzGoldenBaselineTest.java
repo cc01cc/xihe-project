@@ -30,6 +30,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>三档判据来源：交集语义 {@code GrantIntersectionEvaluator.allows:98-121}；scope 门
  * {@code PermissionAtomCatalog.requireScopeCompatible:438-445}；capability/词汇表门
  * {@code GrantIntersectionEvaluator.PermissionAtom:18-34}（capability 原子不是 action 原子，构造即抛）。</p>
+ *
+ * <p>task-834 加了三组「三源快照」用例（{@code chain-level-change} / {@code token-revocation} /
+ * {@code token-expiry}）。它们带一个可选的 {@code tokens} 字段，表示会话临时令牌
+ * （{@code session_temporary_grants} 行）。本测试<b>不自己实现活性判定</b>：每行令牌都构造成真实的
+ * {@link SessionTemporaryGrant}，由它自己的 {@code liveAt(now)} 决定能否进入判定输入，再按
+ * {@link SessionTemporaryGrantStore#tokenAtoms} 的同一形态归因成 {@link GrantIntersectionEvaluator.GrantAtom}。
+ * 这是「撤销 / TTL 过期 ⇒ 下一次判定即生效」在纯单元层能钉住的部分；等价的 SQL 谓词
+ * （{@code revoked_at IS NULL AND expires_at > ?}）由 {@code SessionTemporaryGrantIntegrationTest}
+ * 在真实库上钉。</p>
  */
 class AuthzGoldenBaselineTest {
 
@@ -72,7 +81,9 @@ class AuthzGoldenBaselineTest {
 
         Set<String> required = new LinkedHashSet<>(List.of(
                 "single-level", "parent-chain", "fs-prefix", "empty-grants",
-                "snapshot-drift", "instance-only-scope", "capability-atom"));
+                "snapshot-drift", "instance-only-scope", "capability-atom",
+                // task-834：三源快照去重的三组验收用例（链上改一级 / 撤销 / TTL 过期），缺任一组即本卡未落地
+                "chain-level-change", "token-revocation", "token-expiry"));
         Set<String> seen = new LinkedHashSet<>();
         seen.addAll(allowByCategory.keySet());
         seen.addAll(denyByCategory.keySet());
@@ -155,7 +166,50 @@ class AuthzGoldenBaselineTest {
                 "user-1",
                 "workspace-1",
                 "session-1");
-        return evaluator.allows(policyRequest, principalPath) ? "allow" : "deny";
+        List<GrantIntersectionEvaluator.GrantAtom> tokens =
+                liveTokenAtoms(row, java.time.Instant.now());
+        return evaluator.allows(policyRequest, principalPath, tokens) ? "allow" : "deny";
+    }
+
+    /**
+     * The row's session temporary tokens that are <b>live</b>, shaped the way the decision path feeds
+     * the kernel. Liveness is {@link SessionTemporaryGrant#liveAt} — the same predicate the store's SQL
+     * applies — so a revoked or expired row never reaches the evaluator instead of being special-cased
+     * here.
+     */
+    private List<GrantIntersectionEvaluator.GrantAtom> liveTokenAtoms(JsonNode row, java.time.Instant now) {
+        JsonNode tokens = row.get("tokens");
+        if (tokens == null || !tokens.isArray() || tokens.isEmpty()) {
+            return List.of();
+        }
+        List<GrantIntersectionEvaluator.GrantAtom> atoms = new ArrayList<>();
+        for (JsonNode token : tokens) {
+            String id = token.path("id").asText();
+            assertFalse(id.isBlank(), "令牌行必须带 id（命中归因需要）: " + row.path("id").asText());
+            boolean revoked = token.path("revoked").asBoolean(false);
+            SessionTemporaryGrant grant = new SessionTemporaryGrant(
+                    uuid("token", id), uuid("token-session", id), uuid("token-workspace", id),
+                    uuid("token-principal", id),
+                    List.of(new GrantIntersectionEvaluator.PermissionAtom(
+                            token.path("actionClass").asText(), token.path("resource").asText("*"))),
+                    uuid("token-granter", id),
+                    now.minusSeconds(60),
+                    now.plusSeconds(token.path("expiresInSeconds").asLong(300)),
+                    revoked ? uuid("token-revoker", id) : null,
+                    revoked ? now : null);
+            if (!grant.liveAt(now)) {
+                continue;
+            }
+            for (GrantIntersectionEvaluator.PermissionAtom atom : grant.atoms()) {
+                atoms.add(new GrantIntersectionEvaluator.GrantAtom(atom.actionClass(), atom.resource(),
+                        grant.id().toString(), GrantSources.SESSION_TEMP));
+            }
+        }
+        return atoms;
+    }
+
+    private static java.util.UUID uuid(String kind, String id) {
+        return java.util.UUID.nameUUIDFromBytes((kind + ':' + id).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private GrantIntersectionEvaluator evaluatorWithScopes(JsonNode root) {
