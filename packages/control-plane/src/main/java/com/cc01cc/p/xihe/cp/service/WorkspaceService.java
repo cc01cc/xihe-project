@@ -89,6 +89,23 @@ public class WorkspaceService {
     private final AuditLogger auditLogger;
     private final AuthzContext authzContext;
     private final jakarta.persistence.EntityManager entityManager;
+    /**
+     * task-932 (D-1922 / 根源1): the default <b>set</b> a new workspace is born with lives in
+     * {@code agent-runtime.defaultParticipants}, read through the same chain the session roster uses
+     * ({@code workspace-default > user > instance}; the workspace layer cannot exist yet during its own
+     * create). A set is <b>materialized</b>, never read through at decision time.
+     */
+    private final com.cc01cc.p.xihe.cp.config.ConfigService configService;
+    /**
+     * task-932: {@code AgentPrincipalService} depends on this service, so a plain constructor
+     * parameter would cycle ({@code OAuthCredentialService} / {@code ApiRequestTemplateService} are the
+     * precedent for the {@link org.springframework.beans.factory.ObjectProvider} shape).
+     */
+    private final org.springframework.beans.factory.ObjectProvider<AgentPrincipalService> agentPrincipals;
+    /** task-932: the "already materialized here?" probe, so a re-run never overwrites a local row. */
+    private final com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository workspaceAgents;
+    /** task-932: see {@link #scheduleDefaultAgentMaterialization} — REQUIRES_NEW is mandatory there. */
+    private final org.springframework.transaction.support.TransactionTemplate defaultBindingTransaction;
 
     /** PLAN-0641 T2.3/T2.4: evict the nested-repos TTL cache when roots change. */
     @org.springframework.beans.factory.annotation.Autowired
@@ -110,7 +127,11 @@ public class WorkspaceService {
                             WorkspaceEventManager workspaceEventManager,
                             AuditLogger auditLogger,
                             AuthzContext authzContext,
-                            jakarta.persistence.EntityManager entityManager) {
+                            jakarta.persistence.EntityManager entityManager,
+                            com.cc01cc.p.xihe.cp.config.ConfigService configService,
+                            org.springframework.beans.factory.ObjectProvider<AgentPrincipalService> agentPrincipals,
+                            com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository workspaceAgents,
+                            org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.workspaceRepository = workspaceRepository;
         this.workspaceRootRepository = workspaceRootRepository;
         this.memberships = memberships;
@@ -124,6 +145,17 @@ public class WorkspaceService {
         this.auditLogger = auditLogger;
         this.authzContext = authzContext;
         this.entityManager = entityManager;
+        this.configService = configService;
+        this.agentPrincipals = agentPrincipals;
+        this.workspaceAgents = workspaceAgents;
+        // task-932: the materialization runs in an afterCommit callback, where the outer transaction is
+        // already committed but its resources are still bound to the thread. REQUIRED would "join" that
+        // finished transaction and fail exactly like the ChatRunRepository lease writes did
+        // (Hibernate: "no transaction is in progress"). REQUIRES_NEW suspends them and opens a real one.
+        this.defaultBindingTransaction =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        this.defaultBindingTransaction.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -554,6 +586,11 @@ public class WorkspaceService {
                 ? "{\"image\":\"" + image + "\",\"profile\":\"" + profile + "\"}"
                 : "{}";
         executionSpecService.createExecutionSpec(workspace.getId().toString(), initialSpec, ownerId, "create");
+        // task-932 (D-1922 / 根源1): a default SET is materialized, never read through at decision
+        // time. The rows this writes are the workspace's own truth from here on — removable and
+        // extendable per workspace — and a later edit to the upper default only affects workspaces
+        // created after it.
+        scheduleDefaultAgentMaterialization(workspace.getId(), ownerId);
         // PLAN-0641 T7.5 (BL-260)：事务提交后把 hostPath + roots 登记到 Runtime；
         // best-effort，失败不阻断 create（发现面/根操作会懒重试或全量重推）。
         Workspace registeredWorkspace = workspace;
@@ -564,6 +601,158 @@ public class WorkspaceService {
                 workspace.getId(), workspace.getName(), workspace.getStorageRef(),
                 storageMode, executionMode, profile, image, validatedRoots.size());
         return workspace;
+    }
+
+    /**
+     * task-932 (D-1922 / 根源1, user ruling 2026-11-24): materialize the <b>default agent set</b> of a
+     * just-created workspace into its own {@code workspace_agents} rows.
+     *
+     * <p>The default set is {@code agent-runtime.defaultParticipants} read through the same
+     * {@code workspace-default > user > instance} chain the workspace-less session roster uses
+     * ({@code WorkspacelessDefaultRoster}); the {@code workspace} layer cannot exist yet while its own
+     * workspace is being created. Only {@code AGENT} entries are relevant here — a workspace binding is
+     * by definition an agent principal.</p>
+     *
+     * <h2>Why after the commit, and why in a new transaction</h2>
+     * <p>The binding is written through {@code AgentPrincipalService#setWorkspaceCap}, whose gates are
+     * not satisfiable inside this transaction:</p>
+     * <ol>
+     *   <li>the actor must already hold {@code MANAGE_WORKSPACE_AGENTS} here, and that grant is the
+     *       {@code WS_OWNER} binding written seconds earlier by {@code memberships.assign}. The
+     *       authority read runs in a {@code REPEATABLE_READ} {@code REQUIRES_NEW} transaction, so it
+     *       cannot see an uncommitted row on the same thread — the check would 403 every create;</li>
+     *   <li>a refusal thrown by a participating {@code @Transactional} call would mark this creation
+     *       transaction rollback-only, and the caller's catch would then die at commit with
+     *       {@code UnexpectedRollbackException}. That is the exact trap the class javadoc of
+     *       {@code FirstRunContentSeeder} describes for the seed.</li>
+     * </ol>
+     * <p>After the commit both problems are gone: the owner binding is durable and visible, and a
+     * failure can no longer corrupt it. {@link #defaultBindingTransaction} still has to be
+     * {@code REQUIRES_NEW}, because in the afterCommit phase the outer transaction's resources are
+     * bound to the thread while the transaction itself is finished — a {@code REQUIRED} template joins
+     * it and Hibernate answers "no transaction is in progress" (same finding as the
+     * {@code ChatRunRepository} lease writes).</p>
+     *
+     * <p><b>Never blocks the create.</b> Every entry is guarded separately, the whole pass is caught,
+     * and the only observable outcome is a WARN line — the workspace exists either way.</p>
+     */
+    private void scheduleDefaultAgentMaterialization(UUID workspaceId, String ownerId) {
+        scheduleAfterCommit(() -> {
+            // The after-commit phase runs after the creator's request scope has been unwound
+            // (FirstRunContentSeeder clears TenantContext before the outer transaction commits),
+            // but AgentPrincipalService's gates and the durable-audit row assume "the acting user is
+            // the current user". Bind it for this callback only and restore whatever was there.
+            String previousUser = TenantContext.getUserId();
+            TenantContext.setUserId(ownerId);
+            try {
+                materializeDefaultAgents(workspaceId, ownerId);
+            } catch (RuntimeException failure) {
+                logger.warn("[LIFECYCLE] service=cp event=workspace_default_agents_materialization_failed"
+                                + " workspaceId={} failureType={} detail={}",
+                        workspaceId, failure.getClass().getSimpleName(), failure.getMessage());
+            } finally {
+                // Restore only the identity slot: clear() would also drop a caller's workspace/capability
+                // context when this pass runs inline (no active transaction).
+                TenantContext.setUserId(previousUser);
+            }
+        });
+    }
+
+    /**
+     * The materialization pass itself (see {@link #scheduleDefaultAgentMaterialization}). Reads the
+     * committed configuration and writes one {@code REQUIRES_NEW} transaction per entry, so a single
+     * refusal cannot undo the bindings that were written before it. Idempotent per binding row: an
+     * existing local row is <b>never</b> rewritten — after creation the local rows are the only source
+     * of truth (D-1922).
+     *
+     * <p>Public only so the task-932 test can drive the same pass twice (idempotency and the
+     * "upper default changed, existing workspace unchanged" reverse proof); production reaches it
+     * exclusively through the after-commit schedule of {@code createWorkspace}.</p>
+     *
+     * @return the number of binding rows written (0 when nothing is configured or everything landed)
+     */
+    public int materializeDefaultAgents(UUID workspaceId, String ownerId) {
+        AgentPrincipalService principalService = agentPrincipals.getIfAvailable();
+        if (principalService == null) {
+            logger.warn("[LIFECYCLE] service=cp event=workspace_default_agents_skipped workspaceId={}"
+                    + " reason=NO_AGENT_PRINCIPAL_SERVICE", workspaceId);
+            return 0;
+        }
+        String raw;
+        try {
+            raw = configService.resolve(WorkspacelessDefaultRoster.DOMAIN,
+                    WorkspacelessDefaultRoster.KEY, UUID.fromString(ownerId), null);
+        } catch (RuntimeException unreadable) {
+            logger.warn("[LIFECYCLE] service=cp event=workspace_default_agents_skipped workspaceId={}"
+                            + " reason=CONFIG_UNREADABLE failureType={}",
+                    workspaceId, unreadable.getClass().getSimpleName());
+            return 0;
+        }
+        if (raw == null || raw.isBlank()) {
+            return 0;
+        }
+        JsonNode parsed;
+        try {
+            parsed = objectMapper.readTree(raw);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalidJson) {
+            logger.warn("[LIFECYCLE] service=cp event=workspace_default_agents_skipped workspaceId={}"
+                    + " reason=INVALID_JSON", workspaceId);
+            return 0;
+        }
+        if (!parsed.isArray()) {
+            logger.warn("[LIFECYCLE] service=cp event=workspace_default_agents_skipped workspaceId={}"
+                    + " reason=NOT_AN_ARRAY", workspaceId);
+            return 0;
+        }
+        int created = 0;
+        for (JsonNode entry : parsed) {
+            String principalIdText = entry.path("principalId").asText("");
+            if (!com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_AGENT
+                    .equals(entry.path("principalKind").asText(""))) {
+                continue;
+            }
+            UUID principalId;
+            try {
+                principalId = UUID.fromString(principalIdText);
+            } catch (IllegalArgumentException malformed) {
+                logger.warn("[LIFECYCLE] service=cp event=workspace_default_agent_skipped workspaceId={}"
+                        + " principalId={} reason=MALFORMED_ID", workspaceId, principalIdText);
+                continue;
+            }
+            if (workspaceAgents.findById(new com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId(
+                    principalIdText, workspaceId.toString())).isPresent()) {
+                // Local row wins, always: the operator may have narrowed its cap or an earlier pass
+                // already wrote it. Re-deriving the baseline here would silently undo that edit.
+                continue;
+            }
+            try {
+                Boolean written = defaultBindingTransaction.execute(status -> {
+                    // "exists and not disabled" — the same second validation the resolution chain
+                    // applies, now moved to the WRITE side (D-1922 revision of D-1438).
+                    if (!principalService.isSessionAgentUsable(null, principalId)) {
+                        logger.warn("[LIFECYCLE] service=cp event=workspace_default_agent_skipped"
+                                + " workspaceId={} principalId={} reason=PRINCIPAL_MISSING_OR_DISABLED",
+                                workspaceId, principalId);
+                        return false;
+                    }
+                    // null permissions = "inherit the role baseline", i.e. cap_source='baseline' (D-1109).
+                    principalService.setWorkspaceCap(ownerId, workspaceId, principalId, null);
+                    return true;
+                });
+                if (Boolean.TRUE.equals(written)) {
+                    created++;
+                }
+            } catch (RuntimeException refused) {
+                logger.warn("[LIFECYCLE] service=cp event=workspace_default_agent_skipped workspaceId={}"
+                                + " principalId={} reason={} detail={}",
+                        workspaceId, principalId, refused.getClass().getSimpleName(), refused.getMessage());
+            }
+        }
+        if (created > 0) {
+            logger.info("[LIFECYCLE] service=cp event=workspace_default_agents_materialized workspaceId={}"
+                    + " rows={}", workspaceId, created);
+        }
+        return created;
     }
 
     /**

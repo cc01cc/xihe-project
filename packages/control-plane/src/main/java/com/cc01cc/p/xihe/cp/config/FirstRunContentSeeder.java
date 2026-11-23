@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.service.InstanceIdentityService;
 import com.cc01cc.p.xihe.cp.service.InstanceOwnershipService;
+import com.cc01cc.p.xihe.cp.service.WorkspacelessDefaultRoster;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -132,6 +134,15 @@ public class FirstRunContentSeeder {
 
     static final String SKIPPED_NON_EMPTY = "seed-content skipped (non-empty instance)";
 
+    /**
+     * task-932 (D-1922): the instance-layer key holding the <b>default agent set</b>. It is the same
+     * domain/key pair the workspace-less session roster reads ({@code WorkspacelessDefaultRoster}),
+     * deliberately not a third vocabulary — here the AGENT entries mean "the agents a NEW workspace is
+     * bound to", and the write is materialized per workspace, never read through at decision time.
+     */
+    static final String DEFAULT_SET_DOMAIN = WorkspacelessDefaultRoster.DOMAIN;
+    static final String DEFAULT_SET_KEY = WorkspacelessDefaultRoster.KEY;
+
     private final WorkspaceService workspaceService;
     private final WorkspaceRepository workspaces;
     private final ProviderConnectionService providerConnectionService;
@@ -145,6 +156,8 @@ public class FirstRunContentSeeder {
     private final Environment environment;
     /** task-18 J4: the only source of the subjects' model intent (never a literal model name). */
     private final ProviderCatalogService providerCatalog;
+    /** task-932: the writer of the instance-level default agent set. */
+    private final ConfigService configService;
 
     private final boolean postgres;
     private final String seedContent;
@@ -170,7 +183,8 @@ public class FirstRunContentSeeder {
                                  @Value("${spring.datasource.url:}") String datasourceUrl,
                                  @Value("${cp.bootstrap.seed-content:auto}") String seedContent,
                                  @Value("${cp.bootstrap.seed-workspace-root:}") String seedWorkspaceRoot,
-                                 ProviderCatalogService providerCatalog) {
+                                 ProviderCatalogService providerCatalog,
+                                 ConfigService configService) {
         this.workspaceService = workspaceService;
         this.workspaces = workspaces;
         this.providerConnectionService = providerConnectionService;
@@ -189,6 +203,7 @@ public class FirstRunContentSeeder {
                 && (datasourceUrl.startsWith("jdbc:postgresql:") || datasourceUrl.startsWith("jdbc:tc:postgresql:"));
         this.seedContent = seedContent;
         this.seedWorkspaceRoot = seedWorkspaceRoot;
+        this.configService = configService;
     }
 
     /** Warnings of the most recent {@link #seed(User)} call; empty when everything landed. */
@@ -229,8 +244,13 @@ public class FirstRunContentSeeder {
         TenantContext.setUserId(admin.getId().toString());
         try {
             ProviderConnection connection = seedConnection();
-            seedWorkspace(admin);
             seedSubjects(admin, connection);
+            // task-932 order matters: the default agent set NAMES the seeded subjects, so it can only be
+            // written after they exist, and the seeded workspace must be created after it so that the
+            // ordinary workspace-creation path materializes it. The seed deliberately does not write
+            // workspace_agents rows itself — one code path, one set of gates (D-1922).
+            seedDefaultAgentSet(admin);
+            seedWorkspace(admin);
         } finally {
             if (previousUser == null) {
                 TenantContext.clear();
@@ -396,6 +416,80 @@ public class FirstRunContentSeeder {
             }
             orgUnitMembers.place(AGENT_MEMBER_KIND, subject.getId(), unitId);
         }
+    }
+
+    /**
+     * task-932 (D-1922 / 根源1): seed the <b>instance-level default agent set</b> — the agents a
+     * workspace created from now on is bound to. The value is one {@code AGENT} entry per seeded
+     * subject, Lead first, so a fresh install does not start every workspace with zero bindings (the
+     * reported symptom was a new session answering 「此工作区尚未绑定智能体」).
+     *
+     * <p>This is a <b>template</b>, not an assignment: {@code WorkspaceService} copies it into each new
+     * workspace's own {@code workspace_agents} rows, and those rows are the only truth afterwards. The
+     * seeded Default workspace inherits it through the very same create path — this method deliberately
+     * writes no binding row itself, so there is one code path and one set of gates.</p>
+     *
+     * <h3>Why the two guards sit before the write</h3>
+     * <p>An env-locked or administrator-locked key makes {@code ConfigService.putLayer} throw
+     * {@code CONFIG_ENV_LOCKED} / {@code CONFIG_KEY_LOCKED}. Inside {@link DataSeeder}'s transaction a
+     * caught throw would still leave it marked rollback-only and turn the whole boot into an
+     * {@code UnexpectedRollbackException}, so the class rule applies: check before writing and warn,
+     * never catch afterwards.</p>
+     *
+     * <h3>Idempotency</h3>
+     * <p>Keyed on "the instance row for this key already exists" — an operator who edited the default
+     * set keeps their value, and a second start writes nothing. There is no backfill on purpose:
+     * materialization is forward-only (D-1922), and re-deriving the row could not repair an existing
+     * workspace either.</p>
+     */
+    private void seedDefaultAgentSet(User admin) {
+        if (configService.envOverridden(DEFAULT_SET_DOMAIN).containsKey(DEFAULT_SET_KEY)) {
+            warn("seed-content: skipped the default agent set -- " + DEFAULT_SET_DOMAIN + "." + DEFAULT_SET_KEY
+                    + " is env-locked, so the seed must not write an instance row it cannot own");
+            return;
+        }
+        if (configService.isAdminLocked(DEFAULT_SET_DOMAIN, DEFAULT_SET_KEY)) {
+            warn("seed-content: skipped the default agent set -- " + DEFAULT_SET_DOMAIN + "." + DEFAULT_SET_KEY
+                    + " is administrator-locked");
+            return;
+        }
+        if (!configService.layerEntries("instance", DEFAULT_SET_DOMAIN, null, null)
+                .getOrDefault(DEFAULT_SET_KEY, "").isBlank()) {
+            return;
+        }
+        List<String> ids = new ArrayList<>();
+        for (String name : seedSubjectNames()) {
+            for (AgentPrincipal subject : agentPrincipals.findByCreatedByUserId(admin.getId().toString())) {
+                if (name.equals(subject.getName())) {
+                    ids.add(subject.getId().toString());
+                    break;
+                }
+            }
+        }
+        if (ids.isEmpty()) {
+            warn("seed-content: skipped the default agent set -- no seeded subject was found to put in it");
+            return;
+        }
+        StringBuilder value = new StringBuilder("[");
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) {
+                value.append(',');
+            }
+            value.append("{\"principalKind\":\"AGENT\",\"principalId\":\"").append(ids.get(i)).append("\"}");
+        }
+        value.append(']');
+        configService.putLayer("instance", DEFAULT_SET_DOMAIN,
+                Map.of(DEFAULT_SET_KEY, value.toString()), "first-run-seed", null, null);
+        logger.info("seed-content: seeded the instance default agent set entries={} domain={}.{}",
+                ids.size(), DEFAULT_SET_DOMAIN, DEFAULT_SET_KEY);
+    }
+
+    /** The default set's order: Lead first, then the workers, exactly as {@link #seedSubjects} creates them. */
+    private static List<String> seedSubjectNames() {
+        List<String> names = new ArrayList<>();
+        names.add(LEAD_NAME);
+        names.addAll(WORKER_NAMES);
+        return List.copyOf(names);
     }
 
     /** @return the new subject, or {@code null} when a subject of that name already exists. */

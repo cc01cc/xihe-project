@@ -1985,17 +1985,24 @@ public class ConfigService {
      * kind are enforced here, on the same write path as {@link #validateBySchema}:
      *
      * <ul>
-     *   <li>an {@code AGENT} entry is accepted at the <b>user</b> layer only. Agent principals
-     *       carry no workspace column (V42:1-11; the workspace binding is the separate
-     *       {@code workspace_agents} table, V42:16-26), so an instance/workspace-default default
-     *       would name a single agent for <b>every</b> user's independent sessions;</li>
+     *   <li>an {@code AGENT} entry is accepted at <b>every layer that can carry the domain</b>
+     *       (task-932, D-1438 superseded). What is written here is a <b>default template</b>, not a
+     *       global assignment: a set is never read through at decision time, it is <b>materialized</b>
+     *       into the object being created — {@code WorkspaceService} copies it into that workspace's
+     *       own {@code workspace_agents} rows, {@code WorkspacelessDefaultRoster} copies it into that
+     *       session's own participant rows. Both snapshots are the local source of truth afterwards
+     *       (each can be removed or extended on that one object), and a later edit to the upper layer
+     *       never rewrites an existing workspace or session. The old "one agent would be named for
+     *       every user" objection assumed a read-through default; under materialization it does not
+     *       hold. The principal still has to exist and be enabled when the copy is taken — that is
+     *       checked by the creation path (skipped with a WARN), not here;</li>
      *   <li>a {@code HUMAN} entry may not default to {@code to}: TO accepts AGENT participants
      *       only (400 INVALID_REQUEST — PLAN-0665 Q3 / D-1438), so that default could never be
      *       honoured. {@code cc} / {@code mention_only} stay legal.</li>
      * </ul>
      *
      * <p>A stale or disabled principal is deliberately <b>not</b> rejected here: the creation path
-     * skips it with a WARN — a default must never block creating a session.</p>
+     * skips it with a WARN — a default must never block creating a session or a workspace.</p>
      */
     private void validateDefaultParticipants(String layer, Map<String, String> entries) {
         String raw = entries.get("defaultParticipants");
@@ -2011,15 +2018,9 @@ public class ConfigService {
         if (!parsed.isArray()) {
             throw new IllegalArgumentException("defaultParticipants must be a JSON array");
         }
-        boolean userLayer = "user".equals(layer);
         for (JsonNode entry : parsed) {
             String kind = entry.path("principalKind").asText("");
             String principalId = entry.path("principalId").asText("");
-            if (com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_AGENT.equals(kind) && !userLayer) {
-                throw new IllegalArgumentException(
-                        "defaultParticipants may name AGENT principals at the user layer only; "
-                                + "layer=" + layer + " principalId=" + principalId);
-            }
             if (com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_HUMAN.equals(kind)
                     && defaultsToTo(entry)) {
                 throw new IllegalArgumentException(

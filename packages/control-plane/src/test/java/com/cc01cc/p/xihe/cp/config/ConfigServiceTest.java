@@ -114,19 +114,21 @@ class ConfigServiceTest {
     }
 
     @Test
-    void defaultParticipants_agentEntryIsRefusedOutsideTheUserLayer() {
+    void defaultParticipants_agentEntryIsAcceptedAtInstanceAndWorkspaceDefaultLayers() {
+        // task-932 / D-1922 supersedes D-1438's "AGENT only at the user layer" refusal: what is
+        // written is a default *template*, materialized per workspace, not a global assignment.
+        // The write path must accept it at every layer that can carry the domain, and keep the
+        // value verbatim so the creation path can copy it.
         String value = String.format(AGENT_ENTRY, userA);
-        IllegalArgumentException onInstance = assertThrows(IllegalArgumentException.class,
-                () -> configService.putLayer("instance", "agent-runtime",
-                        Map.of("defaultParticipants", value), "admin", null, null));
-        assertTrue(onInstance.getMessage().contains("user layer only"), onInstance.getMessage());
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("defaultParticipants", value), "admin", null, null);
+        configService.putLayer("workspace-default", "agent-runtime",
+                Map.of("defaultParticipants", value), "admin", null, null);
 
-        IllegalArgumentException onWorkspaceDefault =
-                assertThrows(IllegalArgumentException.class,
-                        () -> configService.putLayer("workspace-default", "agent-runtime",
-                                Map.of("defaultParticipants", value), "admin", null, null));
-        assertTrue(onWorkspaceDefault.getMessage().contains("user layer only"),
-                onWorkspaceDefault.getMessage());
+        assertEquals(value, configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("defaultParticipants"), "instance layer keeps the AGENT entry verbatim");
+        assertEquals(value, configService.layerEntries("workspace-default", "agent-runtime", null, null)
+                .get("defaultParticipants"), "workspace-default layer keeps the AGENT entry verbatim");
     }
 
     @Test

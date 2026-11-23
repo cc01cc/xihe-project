@@ -88,6 +88,9 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
     private Environment environment;
     @Autowired
     private ProviderCatalogService providerCatalog;
+    /** task-932: the seeder now writes the instance default agent set through the real config face. */
+    @Autowired
+    private ConfigService configService;
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -139,7 +142,7 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
                 providerConnections, agentPrincipalService, agentPrincipals, orgUnits, orgUnitMembers,
                 instanceIdentity, instanceOwnership, environment,
                 "jdbc:postgresql://127.0.0.1:1/xihe-unused-only-for-the-postgres-predicate", mode,
-                workspaceRoot.toString(), providerCatalog);
+                workspaceRoot.toString(), providerCatalog, configService);
     }
 
     private int count(String table) {

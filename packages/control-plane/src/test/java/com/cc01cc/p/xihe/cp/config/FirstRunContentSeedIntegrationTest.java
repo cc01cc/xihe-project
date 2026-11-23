@@ -95,6 +95,9 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
     private Environment environment;
     @Autowired
     private ProviderCatalogService providerCatalog;
+    /** task-932: the seeder now writes the instance default agent set through the real config face. */
+    @Autowired
+    private com.cc01cc.p.xihe.cp.config.ConfigService configService;
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -190,6 +193,29 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         }
         int roleBindingsAfterFirst = count("grant_preset_bindings");
         assertTrue(roleBindingsAfterFirst > roleBindingsBefore, "materialising subjects writes role bindings");
+
+        // task-932 (D-1922 / 根源1): the default agent SET is materialized onto the seeded workspace
+        // through the ordinary create path (not written by the seed itself), so a fresh install no
+        // longer answers「此工作区尚未绑定智能体」 the first time a session is created there.
+        assertEquals(3, count("workspace_agents"),
+                "the seeded workspace must carry one baseline binding per seeded subject");
+        assertEquals(List.of(byName.get("Lead").getId().toString(),
+                        byName.get("WorkerA").getId().toString(),
+                        byName.get("WorkerB").getId().toString()).stream().sorted().toList(),
+                jdbc.queryForList("SELECT principal_id::text FROM workspace_agents WHERE workspace_id = ?::uuid"
+                                + " AND cap_source = 'baseline' ORDER BY 1", String.class,
+                        workspace.getId().toString()),
+                "every binding is baseline and every seeded subject is present");
+        String seededDefaultSet = configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("defaultParticipants");
+        assertNotNull(seededDefaultSet, "the instance default agent set must be seeded");
+        assertTrue(seededDefaultSet.contains(byName.get("Lead").getId().toString())
+                        && seededDefaultSet.contains(byName.get("WorkerA").getId().toString())
+                        && seededDefaultSet.contains(byName.get("WorkerB").getId().toString()),
+                "the default set names all three seeded subjects: " + seededDefaultSet);
+        assertTrue(seededDefaultSet.indexOf(byName.get("Lead").getId().toString())
+                        < seededDefaultSet.indexOf(byName.get("WorkerA").getId().toString()),
+                "Lead is listed first, matching the order seedSubjects creates them in");
         dumpReadings("after-first-start");
 
         // Second start: every write is keyed, so the reading must be identical row-for-row.
@@ -199,6 +225,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, count("workspaces"), "second start inserts no workspace");
         assertEquals(1, count("provider_connections"), "second start inserts no provider connection");
         assertEquals(3, count("agent_principals"), "second start inserts no subject");
+        assertEquals(3, count("workspace_agents"), "second start inserts no default binding");
         assertEquals(3, count("org_units"), "second start inserts no org unit");
         assertEquals(4, count("org_unit_members"), "second start moves nobody");
         assertEquals(roleBindingsAfterFirst, count("grant_preset_bindings"), "second start inserts no role binding");
@@ -227,6 +254,21 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 "a re-run must not move a placed subject back: place() is an upsert, so the guard is the"
                         + " findUnitOf(...).isPresent() check, not the INSERT's own semantics");
         assertEquals(4, count("org_unit_members"), "no extra placement row appeared");
+
+        // task-932 reverse proof on the seed path: changing the instance default AFTER the seeded
+        // workspace exists must leave its local rows untouched (materialization is forward-only).
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("defaultParticipants", "[{\"principalKind\":\"AGENT\",\"principalId\":\""
+                        + byName.get("WorkerA").getId() + "\"}]"), "admin", null, null);
+        seeder(FirstRunContentSeeder.MODE_TRUE).seed(admin);
+        assertEquals(3, count("workspace_agents"),
+                "an upper-layer default edit must never rewrite an existing workspace");
+        assertEquals(List.of(byName.get("Lead").getId().toString(),
+                        byName.get("WorkerA").getId().toString(),
+                        byName.get("WorkerB").getId().toString()).stream().sorted().toList(),
+                jdbc.queryForList("SELECT principal_id::text FROM workspace_agents WHERE workspace_id = ?::uuid"
+                                + " ORDER BY 1", String.class, workspace.getId().toString()),
+                "the three original bindings are still the only ones");
     }
 
     /**
@@ -252,7 +294,7 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 providerConnections, agentPrincipalService, agentPrincipals, orgUnits, orgUnitMembers,
                 instanceIdentity, instanceOwnership, environment,
                 "jdbc:postgresql://127.0.0.1:1/xihe-unused-only-for-the-postgres-predicate", mode,
-                workspaceRoot.toString(), providerCatalog);
+                workspaceRoot.toString(), providerCatalog, configService);
     }
 
     private int count(String table) {
