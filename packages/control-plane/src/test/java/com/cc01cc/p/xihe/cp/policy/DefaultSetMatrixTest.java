@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The contract is unchanged — {@code USER} = 注册最小集, {@code ADMIN} = 全 allow 的一个集
  * including the PLAN-0496 credential atoms — but the storage shape moved: the set is no longer one
- * {@code source='default'} row, it is the union of {@code source='preset'} rows (one row per atom,
+ * {@code source='default'} row, it is the union of {@code source='assigned'} rows (one row per atom,
  * V87 {@code uq_grants_role_atom}) produced by {@link PresetGrantMaterializer}. Capability atoms are
  * part of the role definition and are <b>not</b> materialized (design #23), which is why ADMIN's
  * action atoms (and not its capability atoms) appear in {@code grants}.</p>
@@ -376,7 +376,7 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
      */
     private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
-                        GrantSources.PRESET).stream()
+                        GrantSources.ASSIGNED).stream()
                 .filter(grant -> AccessScope.INSTANCE.equals(grant.getScopeType()))
                 .toList();
     }

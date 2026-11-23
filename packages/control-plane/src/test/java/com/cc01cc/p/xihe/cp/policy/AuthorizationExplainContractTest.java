@@ -105,11 +105,49 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
         assertEquals(1, matched.size(), response.getBody());
         assertEquals(grantId.toString(), matched.get(0).path("grantId").asText(),
                 "the referenced row must be the caller's own grant: " + response.getBody());
-        assertEquals(GrantSources.PRESET, matched.get(0).path("grantSource").asText(),
+        // task-933 / R39: the row that authorized is an IMPORT (`assigned`), not a live preset
+        // axis, and it cites no template (the helper row has no origin) — the explanation can
+        // never say "the preset authorized this".
+        assertEquals(GrantSources.ASSIGNED, matched.get(0).path("grantSource").asText(),
                 response.getBody());
+        assertTrue(matched.get(0).path("originPresetId").isNull(),
+                "an import with no attributed template cites no template: " + response.getBody());
         assertEquals(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
                         ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK),
                 matched.get(0).path("actionClass").asText(), response.getBody());
+    }
+
+    /**
+     * task-933 ④ (the explain must not lie about the preset): an {@code assigned} row imported
+     * from a template cites that template as PROVENANCE, while the authority stays with the row.
+     *
+     * <p>The template id here is a random UUID with no {@code grant_presets} row behind it —
+     * exactly the orphan case the V186 column deliberately leaves unchecked. If a preset row
+     * were required for the decision, this request would deny; it does not, so citing the
+     * template provably cannot mean the template authorized anything.</p>
+     */
+    @Test
+    void anImportedRowCitesItsTemplateAsProvenanceAndNotAsAuthority() {
+        AuthResponse caller = registerAuth("t933-import@test.com");
+        UUID userId = UUID.fromString(caller.getUser().getId());
+        UUID templateId = UUID.randomUUID();
+        grantInstanceAtom(userId, ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK, templateId);
+
+        ResponseEntity<String> response = post(caller.getAccessToken(), EXPLAIN,
+                Map.of("actionClass", ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK), null);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        JsonNode body = parse(response.getBody());
+        assertTrue(body.path("allowed").asBoolean(),
+                "an orphan template id must not change the decision (no FK, no filter): "
+                        + response.getBody());
+        JsonNode matched = body.path("matchedGrantRefs");
+        assertEquals(1, matched.size(), response.getBody());
+        assertEquals(GrantSources.ASSIGNED, matched.get(0).path("grantSource").asText(),
+                "the authority is the row, never its template: " + response.getBody());
+        assertEquals(templateId.toString(), matched.get(0).path("originPresetId").asText(),
+                "an assigned row cites the template its atom was imported from: "
+                        + response.getBody());
     }
 
     /** The negative half: nothing granted, and the answer still names the level and a reason. */
@@ -240,6 +278,11 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
     // ------------------------------------------------------------------ helpers
 
     private UUID grantInstanceAtom(UUID subjectId, String actionClass) {
+        return grantInstanceAtom(subjectId, actionClass, null);
+    }
+
+    /** task-933: {@code assigned} rows carry an optional template provenance (never a filter). */
+    private UUID grantInstanceAtom(UUID subjectId, String actionClass, UUID originPresetId) {
         ArrayNode permissions = objectMapper.createArrayNode();
         ObjectNode atom = objectMapper.createObjectNode();
         atom.put("actionClass", com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass));
@@ -248,7 +291,8 @@ class AuthorizationExplainContractTest extends AbstractReusableIntegrationTest {
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(subjectId);
-        grant.setSource(GrantSources.PRESET);
+        grant.setSource(GrantSources.ASSIGNED);
+        grant.setOriginPresetId(originPresetId);
         grant.setPermissions(permissions);
         return grantRepository.save(grant).getId();
     }

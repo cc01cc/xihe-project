@@ -23,8 +23,22 @@ public final class GrantSources {
     public static final String DEFAULT = "default";
     /** Legacy direct grant; user rows are retired by V88, agent rows become credential bindings. */
     public static final String DIRECT = "direct";
-    /** Materialized union of the subject's preset bindings ({@link PresetGrantMaterializer}). */
+    /**
+     * task-933 / R39 (D-1926): the materialized union of the subject's preset bindings.
+     * <b>No longer participates in a decision.</b> It is kept purely in the provenance vocabulary
+     * (same approach as {@link #SESSION_TEMP}): a historical row (V139/V182 era) whose {@code source}
+     * was not rewritten by V186 still has an explainable origin, while it never participates in the
+     * {@link #EVALUATION_SOURCES} filter or the DB constraint. New writes use {@link #ASSIGNED}.
+     */
     public static final String PRESET = "preset";
+    /**
+     * task-933 / R39 (D-1926): one imported preset atom, written by
+     * {@link PresetGrantMaterializer} on a binding change with {@link #PRESET} as its
+     * {@code originPresetId} (only for displaying and comparing/realigning — never participates in
+     * the evaluation). The subject can adjust it independently afterwards; changing a preset no
+     * longer rewrites these rows.
+     */
+    public static final String ASSIGNED = "assigned";
     /** Agent-principal spawn snapshot. */
     public static final String SPAWN = "spawn";
     /** Agent-principal template snapshot. */
@@ -57,11 +71,11 @@ public final class GrantSources {
      * are absent by design — T1.6 deletes the direct branch instead of keeping a second mechanism.
      */
     public static final List<String> EVALUATION_SOURCES = List.of(
-            PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
+            ASSIGNED, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
     /** Sources the product code may write after V88 narrows the constraint. */
     public static final List<String> WRITABLE_SOURCES = List.of(
-            PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
+            ASSIGNED, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
     /**
      * task-87: the {@code org_unit} label of in-memory expanded rows ({@code OrgUnitGrantExpander}).
@@ -80,12 +94,14 @@ public final class GrantSources {
     public static final String UNKNOWN = "unknown";
 
     /**
-     * task-87: the labels the grant-row provenance may carry — the six persisted values plus
+     * task-87 / task-933: the labels the grant-row provenance may carry — the six persisted values
+     * ({@code assigned} replaced {@code preset} since V186) plus
      * {@link #ORG_UNIT} (in-memory only) and {@link #UNKNOWN} (defensive). {@code session_temp} is
      * absent on purpose: it never lives in {@code grants} (V180 has its own table).
      */
     public static final List<String> PROVENANCE_SOURCES = List.of(
-            PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING, ORG_UNIT);
+            ASSIGNED, PRESET, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING,
+            ORG_UNIT);
 
     /**
      * task-87: normalise a stored/expanded {@code source} into a {@link #PROVENANCE_SOURCES} label.

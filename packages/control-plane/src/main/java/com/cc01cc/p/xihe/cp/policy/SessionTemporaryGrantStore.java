@@ -140,7 +140,9 @@ public class SessionTemporaryGrantStore {
             String grantId = row.id() == null ? null : row.id().toString();
             for (GrantIntersectionEvaluator.PermissionAtom atom : row.atoms()) {
                 atoms.add(new GrantIntersectionEvaluator.GrantAtom(
-                        atom.actionClass(), atom.resource(), grantId, GrantSources.SESSION_TEMP));
+                        // task-933: a session token has no preset template — the origin stays null
+                        atom.actionClass(), atom.resource(), grantId, GrantSources.SESSION_TEMP,
+                        null));
             }
         }
         return List.copyOf(atoms);

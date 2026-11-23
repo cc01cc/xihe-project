@@ -137,7 +137,7 @@ class CrossPrincipalCapIntersectionTest {
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
-        grant.setSource(GrantSources.PRESET);
+        grant.setSource(GrantSources.ASSIGNED);
         grant.setPermissions(permissions);
         return grant;
     }

@@ -83,7 +83,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
 
         List<AuthorizationGrant> roleRows = grantRepository
                 .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
-                        GrantSources.PRESET);
+                        GrantSources.ASSIGNED);
         // PLAN-0651 M2 T2.1 widened the default set (WS_EDITOR 4→7: +MANAGE_PROVIDER_CONNECTIONS,
         // +USE_WORKSPACE_RUNTIME, +MANAGE_WORKSPACE_POLICY). Derive from the code catalog instead of
         // a literal, so the next widening does not re-break an assertion that is about scope, not
@@ -159,7 +159,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
 
         List<AuthorizationGrant> rows = grantRepository
-                .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(), GrantSources.PRESET);
+                .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(), GrantSources.ASSIGNED);
         assertEquals(PermissionAtomCatalog.actionAtoms().size()
                         + SystemGrantPresetCatalog.mcpCeilingAtoms().size(), rows.size(),
                 "SUPER_ADMIN materializes its full action atom set plus the task-870 mcp:* "
@@ -181,7 +181,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         bindingRepository.delete(binding);
         materializer.materializeSubject("user", fixture.userId(), fixture.userId(), null);
         assertTrue(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
-                GrantSources.PRESET).isEmpty(), "losing the binding clears the materialized rows");
+                GrantSources.ASSIGNED).isEmpty(), "losing the binding clears the materialized rows");
         assertFalse(authzContext.isInstanceSuper(fixture.userId()),
                 "the materializer invalidates the capability cache for user subjects");
     }
@@ -201,7 +201,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         assertEquals("ROLE_SCOPE_MISMATCH", failure.getCode(),
                 "V14 / decision #27: instance-only atoms (instance:admin) in a workspace binding");
         assertTrue(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
-                GrantSources.PRESET).isEmpty(), "nothing is materialized when validation fails");
+                GrantSources.ASSIGNED).isEmpty(), "nothing is materialized when validation fails");
     }
 
     // ---------------------------------------------------------------- helpers

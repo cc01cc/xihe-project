@@ -314,7 +314,7 @@ class JdbcOrgUnitGrantSourceIntegrationTest extends AbstractIntegrationTest {
         grant.setGranterId(member);
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(member);
-        grant.setSource(GrantSources.PRESET);
+        grant.setSource(GrantSources.ASSIGNED);
         grant.setScopeType("instance");
         grant.setReadState("read");
         ArrayNode permissions = objectMapper.createArrayNode();

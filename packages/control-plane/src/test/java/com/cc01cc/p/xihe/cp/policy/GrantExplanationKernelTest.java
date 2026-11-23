@@ -248,7 +248,10 @@ class GrantExplanationKernelTest {
         // task-835: grant rows carry canonical atoms; fixtures follow the stored form.
         return new GrantIntersectionEvaluator.GrantAtom(
                 com.cc01cc.p.xihe.cp.policy.AtomNames.action(actionClass),
-                resource, grantId, grantSource);
+                resource, grantId, grantSource,
+                // task-933: the origin column is provenance only; these fixture rows are
+                // unattributed unless the fixture names an origin template.
+                null);
     }
 
     private static PolicyRequest request(List<String> actionClasses, List<String> resources, ToolShape shape) {

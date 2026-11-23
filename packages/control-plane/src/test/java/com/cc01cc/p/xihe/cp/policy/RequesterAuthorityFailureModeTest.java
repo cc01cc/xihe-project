@@ -159,7 +159,7 @@ class RequesterAuthorityFailureModeTest {
     void aHealthyStoreStillEvaluatesAndIsNotTurnedIntoA500() {
         // Build the fixture rows first: stubbing a mock (grant(...)) inside another when(...)
         // argument is an unfinished-stubbing error.
-        List<AuthorizationGrant> rows = List.of(grant("preset", ToolFaceRegistry.ACTION_MANAGE_ROLES));
+        List<AuthorizationGrant> rows = List.of(grant("assigned", ToolFaceRegistry.ACTION_MANAGE_ROLES));
         when(grants.findScopedGrants(any(), any(), any(), any())).thenReturn(rows);
         Set<GrantIntersectionEvaluator.PermissionAtom> atoms = Set.of(
                 new GrantIntersectionEvaluator.PermissionAtom(
@@ -173,7 +173,7 @@ class RequesterAuthorityFailureModeTest {
         assertTrue(authority.actionAtoms(SUBJECT, WORKSPACE)
                 .contains(com.cc01cc.p.xihe.cp.policy.AtomNames.action(
                         ToolFaceRegistry.ACTION_MANAGE_ROLES)));
-        assertEquals(Set.of("preset"),
+        assertEquals(Set.of("assigned"),
                 authority.atomSources(SUBJECT, ToolFaceRegistry.ACTION_MANAGE_ROLES, WORKSPACE));
         assertEquals(RequesterAuthority.AtomSourceStatus.PRESENT,
                 authority.atomSourceLookup(SUBJECT, ToolFaceRegistry.ACTION_MANAGE_ROLES, WORKSPACE)

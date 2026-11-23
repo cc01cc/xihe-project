@@ -111,6 +111,12 @@ public class AuthorizationExplainController {
             row.put("resource", match.resource());
             row.put("grantId", match.grantId());
             row.put("grantSource", match.grantSource());
+            // task-933 / R39: an `assigned` row cites the read-only template its atom was
+            // imported from — provenance for display and compare/realign ONLY. The preset did
+            // not authorize this atom (the row does); a preset content change never moves this
+            // field (the row keeps the origin id), so the explanation cannot claim otherwise.
+            // Every other source keeps it null.
+            row.put("originPresetId", match.originPresetId());
             matchedGrantRefs.add(row);
         }
         body.put("matchedGrantRefs", matchedGrantRefs);

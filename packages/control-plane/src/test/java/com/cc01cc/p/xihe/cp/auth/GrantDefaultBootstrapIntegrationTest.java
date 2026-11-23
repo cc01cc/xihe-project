@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>What changed versus PLAN-0470/PLAN-0580 and what is still frozen:</p>
  *
  * <ul>
- *   <li>the user set is materialized as one {@code source='preset'} row per atom (V87
+ *   <li>the user set is materialized as one {@code source='assigned'} row per atom (V87
  *       {@code uq_grants_role_atom}) instead of one {@code source='default'} row;</li>
  *   <li>the Session/principal default snapshot moved to {@code source='agent_default'} and is
  *       still written once, frozen, and never reconciled by the materializer (round-2 P1-1);</li>
@@ -504,7 +504,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
      */
     private List<AuthorizationGrant> roleRows(String subjectType, UUID subjectId) {
         return grantRepository.findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId,
-                        GrantSources.PRESET).stream()
+                        // task-933 / R39: the materialized set moved `preset` -> `assigned`
+                        // (V186 converted every persisted row; the CHECK retired `preset`).
+                        GrantSources.ASSIGNED).stream()
                 .filter(grant -> "instance".equals(grant.getScopeType()))
                 .toList();
     }

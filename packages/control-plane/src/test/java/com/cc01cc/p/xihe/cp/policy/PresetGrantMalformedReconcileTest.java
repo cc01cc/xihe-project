@@ -27,8 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * BL-313 / D-182: the materializer's malformed-row repair path must survive its own flush order.
  *
- * <p>A malformed `source='preset'` row (multiple atoms in one permissions array — produced by legacy
- * fixture SQL or manual damage, never by the product) violates {@code uq_grants_role_atom}'s
+ * <p>task-933: a malformed `source='assigned'` row with a NULL origin (multiple atoms in one
+ * permissions array — produced by legacy fixture SQL or manual damage, never by the product)
+ * violates {@code uq_grants_role_atom}'s
  * one-atom-per-row invariant. {@code reconcile} correctly puts such a row into {@code toDelete} and
  * rewrites the desired atoms, but before the flush fix Hibernate executed the INSERT before the
  * DELETE, so a rewritten atom colliding with the malformed row answered 23505 and the subject's
@@ -92,7 +93,11 @@ class PresetGrantMalformedReconcileTest extends AbstractReusableIntegrationTest 
                 subjectId, AccessScope.INSTANCE, null, granter.getId()));
 
         // The damage: one malformed multi-atom row — exactly the runner-DB shape
-        // ([network, SPAWN_AGENT@*], source='preset', instance scope).
+        // ([network, SPAWN_AGENT@*], source='assigned', NULL origin, instance scope).
+        // task-933: an assigned row is what the materializer owns now; a NULL origin pins it to
+        // the unattributed group, which survives a group rewrite ONLY while it parses as one
+        // atom — this one is malformed (two atoms) and the malformed-branch of reconcile
+        // deletes it exactly as before.
         ArrayNode multiAtom = objectMapper.createArrayNode();
         multiAtom.addObject().put("actionClass", "network");
         multiAtom.addObject().put("actionClass", "SPAWN_AGENT").put("resource", "*");
@@ -103,7 +108,7 @@ class PresetGrantMalformedReconcileTest extends AbstractReusableIntegrationTest 
         damaged.setGranterType("user");
         damaged.setGranterId(granter.getId());
         damaged.setPermissions(multiAtom);
-        damaged.setSource(PresetGrantMaterializer.SOURCE_PRESET);
+        damaged.setSource(PresetGrantMaterializer.SOURCE_ASSIGNED);
         damaged.setScopeType(AccessScope.INSTANCE);
         grantRepository.saveAndFlush(damaged);
 
@@ -119,7 +124,7 @@ class PresetGrantMalformedReconcileTest extends AbstractReusableIntegrationTest 
         assertEquals(0, countMultiAtom(subjectId), "the malformed row is gone after the repair");
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                         + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
-                        + " AND source='preset' AND permissions @> "
+                        + " AND source='assigned' AND permissions @> "
                         + "'[{\"actionClass\":\"action:network\"}]'::jsonb", Integer.class,
                 subjectId.toString()),
                 "the desired atom is materialized exactly once (no duplicate key)");

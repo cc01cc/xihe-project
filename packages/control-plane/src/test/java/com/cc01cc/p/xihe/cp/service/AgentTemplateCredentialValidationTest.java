@@ -163,7 +163,7 @@ class AgentTemplateCredentialValidationTest extends AbstractReusableIntegrationT
         grant.setSubjectId(writerId);
         grant.setGranterType("user");
         grant.setGranterId(writerId);
-        grant.setSource("preset");
+        grant.setSource("assigned");
         grant.setPermissions(parseJson("[{\"actionClass\":\"CREATE_TEMPLATE\"},"
                 + "{\"actionClass\":\"credential_use\",\"resource\":\"" + useResource + "\"}]"));
         grantRepository.save(grant);

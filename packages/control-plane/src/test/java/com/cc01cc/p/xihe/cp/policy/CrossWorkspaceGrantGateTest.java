@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Repro shape (from the implementation audit): one user is {@code WS_OWNER} in workspace A and
  * only {@code WS_VIEWER} in workspace B. The workspace-A binding materializes
  * {@code MANAGE_WORKSPACE_AGENTS} / {@code CREATE_SCHEDULED_TASK} (both are {@code
- * scope_class=both}) into {@code grants(source='preset')}. Because the gates read every grant row of
+ * scope_class=both}) into {@code grants(source='assigned')}. Because the gates read every grant row of
  * the subject, the workspace-A atom satisfied the gate for a workspace-B mutation, while the
  * membership gate was already scoped — the two halves of the decision disagreed.</p>
  *

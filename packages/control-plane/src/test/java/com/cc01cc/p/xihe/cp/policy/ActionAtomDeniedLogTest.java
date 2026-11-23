@@ -67,18 +67,18 @@ class ActionAtomDeniedLogTest {
 
     @Test
     void roleSourcedGrantIsNamedAsTheSource() {
-        AuthorizationGrant roleGrant = grant("preset", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+        AuthorizationGrant roleGrant = grant("assigned", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         when(grants.findScopedGrants(any(), any(), any(), any())).thenReturn(List.of(roleGrant));
 
         authority.logActionAtomDenied(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 UUID.randomUUID(), UUID.randomUUID());
 
-        assertEquals("preset", deniedFields().get("source"));
+        assertEquals("assigned", deniedFields().get("source"));
     }
 
     @Test
     void sourcesFromDistinctRowsAreJoined() {
-        AuthorizationGrant roleGrant = grant("preset", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+        AuthorizationGrant roleGrant = grant("assigned", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         AuthorizationGrant spawnGrant = grant("spawn", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         when(grants.findScopedGrants(any(), any(), any(), any()))
                 .thenReturn(List.of(roleGrant, spawnGrant));
@@ -86,7 +86,10 @@ class ActionAtomDeniedLogTest {
         authority.logActionAtomDenied(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 UUID.randomUUID(), UUID.randomUUID());
 
-        assertEquals("preset,spawn", deniedFields().get("source"));
+        // task-933: the materialized source is `assigned` now; the joined label is derived from the
+        // rows, so an edit here follows the fixture (it is not a relaxed assertion — the exact
+        // ordering and the second source are still pinned).
+        assertEquals("assigned,spawn", deniedFields().get("source"));
     }
 
     @Test

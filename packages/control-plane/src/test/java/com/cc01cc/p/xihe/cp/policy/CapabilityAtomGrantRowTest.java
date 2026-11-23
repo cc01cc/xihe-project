@@ -79,7 +79,7 @@ class CapabilityAtomGrantRowTest {
     private AuthorizationGrant grant(String permissionsJson) throws Exception {
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());
-        grant.setSource(GrantSources.PRESET);
+        grant.setSource(GrantSources.ASSIGNED);
         grant.setPermissions(mapper.readTree(permissionsJson));
         return grant;
     }

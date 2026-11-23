@@ -373,7 +373,7 @@ class L3RoutePrincipalMatrixTest extends AbstractReusableIntegrationTest {
     /**
      * The fixture's instance admin gets the real seeded preset binding and the real materializer
      * runs on it — capability atoms come from the binding projection, action atoms from the
-     * {@code source='preset'} rows. Hand-inserted atoms would prove a path the product never takes.
+     * {@code source='assigned'} rows. Hand-inserted atoms would prove a path the product never takes.
      */
     private void bindSuperAdmin(UUID subjectId) {
         jdbc.update("INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type)"

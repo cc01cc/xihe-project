@@ -297,7 +297,7 @@ class OrgUnitPresetBindingServiceIntegrationTest extends AbstractIntegrationTest
         grant.setGranterId(subjectId);
         grant.setSubjectType("user");
         grant.setSubjectId(subjectId);
-        grant.setSource("preset");
+        grant.setSource("assigned");
         grant.setReadState("read");
         ArrayNode permissions = objectMapper.createArrayNode();
         permissions.addObject().put("actionClass", atom).put("resource", "*");

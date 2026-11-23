@@ -2,23 +2,34 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
-import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
-import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
-import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetAtom;
+import com.cc01cc.p.xihe.cp.entity.GrantPresetBinding;
+import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetAtomRepository;
+import com.cc01cc.p.xihe.cp.repository.GrantPresetBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,34 +38,48 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * PLAN-0610 W1a T1.5: the role materializer.
+ * PLAN-0610 W1a T1.5: the preset materializer.
  *
- * <p>Pins the contract the evaluation query relies on: one {@code source='preset'} row per atom,
- * the binding scope copied onto the row, capability atoms filtered out (negative case, design
- * #23) and scope incompatibility rejected instead of dropped (decision #12).</p>
+ * <p>task-933 / R39 pins the shape the evaluation query relies on: importing a preset writes one
+ * {@code source='assigned'} row per atom, carrying the {@code origin_preset_id} of the import group
+ * that produced it, with the binding scope copied onto the row; capability atoms are filtered out
+ * (design #23) and an atom that cannot live in the binding scope is rejected rather than dropped
+ * (decision #12).</p>
+ *
+ * <p>Because a preset is now a READ-ONLY TEMPLATE, the identity of a reconciled row is
+ * {@code (scope, atom, importGroup)}: a rewrite never removes a row another still-bound group
+ * carries, and a NULL-origin row (manual work, or a legacy row V186 could not attribute) survives
+ * every group rewrite. {@code GrantSources.PRESET} is neither written nor evaluated any more — the
+ * retired axis must not be able to come back through a write.</p>
  */
 class PresetGrantMaterializerTest {
 
-    private static final UUID USER_ROLE = UUID.randomUUID();
-    private static final UUID WS_EDITOR_ROLE = UUID.randomUUID();
-    private static final UUID INSTANCE_ADMIN_ROLE = UUID.randomUUID();
-    private static final UUID ACCOUNT_ROLE = UUID.randomUUID();
+    private static final UUID USER_PRESET = UUID.randomUUID();
+    private static final UUID WS_EDITOR_PRESET = UUID.randomUUID();
+    private static final UUID ADMIN_PRESET = UUID.randomUUID();
+    private static final UUID ACCOUNT_PRESET = UUID.randomUUID();
+    private static final UUID EXTRA_PRESET = UUID.randomUUID();
 
     private static final UUID SUBJECT = UUID.randomUUID();
     private static final UUID ACTOR = UUID.randomUUID();
     private static final UUID WORKSPACE_A = UUID.randomUUID();
 
+    /** Per-preset atom sets; mutable so a case can model "the template's own set changed". */
+    private final Map<UUID, List<String>> presetAtoms = new HashMap<>();
+
     private GrantPresetBindingRepository bindingRepository;
     private GrantPresetAtomRepository permissionRepository;
     private AuthorizationGrantRepository grantRepository;
-    private com.cc01cc.p.xihe.cp.repository.UserRepository userRepository;
+    private UserRepository userRepository;
     private AuthzContext authzContext;
     private AuditLogger auditLogger;
     private PresetGrantMaterializer materializer;
@@ -64,7 +89,7 @@ class PresetGrantMaterializerTest {
         bindingRepository = mock(GrantPresetBindingRepository.class);
         permissionRepository = mock(GrantPresetAtomRepository.class);
         grantRepository = mock(AuthorizationGrantRepository.class);
-        userRepository = mock(com.cc01cc.p.xihe.cp.repository.UserRepository.class);
+        userRepository = mock(UserRepository.class);
         authzContext = mock(AuthzContext.class);
         auditLogger = mock(AuditLogger.class);
         materializer = new PresetGrantMaterializer(bindingRepository, permissionRepository,
@@ -72,31 +97,48 @@ class PresetGrantMaterializerTest {
                 auditLogger, new ObjectMapper());
         when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(anyString(), any(), anyString()))
                 .thenReturn(List.of());
+        // The epoch bump reads the row FOR UPDATE; unstubbed it answers null and the bump NPEs.
+        when(userRepository.findByIdForUpdate(any())).thenAnswer(invocation ->
+                Optional.of(userWith(invocation.getArgument(0))));
+        presetAtoms.put(USER_PRESET, new ArrayList<>(List.of("read", "write", "delete", "exec", "network")));
+        presetAtoms.put(WS_EDITOR_PRESET, new ArrayList<>(List.of("read", "write", "delete", "exec")));
+        presetAtoms.put(EXTRA_PRESET, new ArrayList<>(List.of("read", "CREATE_TEMPLATE")));
+        stubPresetAtoms();
     }
 
-    // ------------------------------------------------------------------ cases
+    // ------------------------------------------------------------------ import
 
     @Test
-    void materializesOneRowPerAtomPerScopeWithTheBindingScope() {
-        stubRoles(USER_ROLE, WS_EDITOR_ROLE);
-        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR),
-                new GrantPresetBinding(WS_EDITOR_ROLE, "user", SUBJECT, AccessScope.WORKSPACE,
-                        WORKSPACE_A, ACTOR));
+    void importsOneAssignedRowPerAtomCarryingItsImportGroup() {
+        GrantPresetBinding instance = instanceBinding(USER_PRESET);
+        GrantPresetBinding workspace = workspaceBinding(WS_EDITOR_PRESET, WORKSPACE_A);
+        bindingsOf(instance, workspace);
 
-        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result =
+                materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
 
         List<AuthorizationGrant> saved = savedRows();
-        assertEquals(5 + 4, saved.size(), "five USER atoms at instance scope plus four editor atoms");
+        assertEquals(5 + 4, saved.size(),
+                "five USER atoms at instance scope plus four editor atoms at workspace scope");
         assertEquals(5 + 4, result.created());
         assertEquals(0, result.deleted());
         for (AuthorizationGrant row : saved) {
-            assertEquals(GrantSources.PRESET, row.getSource());
+            // task-933 / R39: an imported atom is an `assigned` row — never the retired `preset`.
+            assertEquals(GrantSources.ASSIGNED, row.getSource());
+            assertNotNull(row.getOriginPresetId(), "an import always cites the preset it came from");
             assertEquals("read", row.getReadState());
             assertEquals(1, row.getPermissions().size(), "one atom per row (round-2 P1-2)");
-            AccessScope scope = row.getScopeId() == null
-                    ? AccessScope.instance()
-                    : AccessScope.workspace(row.getScopeId());
-            assertEquals(scope.isInstance() ? "instance" : "workspace", row.getScopeType());
+            assertEquals(row.getScopeId() == null ? AccessScope.INSTANCE : AccessScope.WORKSPACE,
+                    row.getScopeType());
+            // The origin id is the import group = the PRESET id (the column's own name, and what a
+            // display face can resolve). Two presets imported into one scope stay two rows because
+            // the V186 unique key carries the origin.
+            assertEquals(row.getScopeId() == null ? USER_PRESET : WS_EDITOR_PRESET,
+                    row.getOriginPresetId(),
+                    "each row cites the template its import group came from: "
+                            + "instance rows -> USER, workspace rows -> WS_EDITOR");
+            assertNotEquals(instance.getId(), row.getOriginPresetId(),
+                    "origin_preset_id is the preset, never the grant_preset_bindings row id");
         }
         assertEquals(5, saved.stream().filter(row -> row.getScopeId() == null).count());
         assertEquals(4, saved.stream().filter(row -> WORKSPACE_A.equals(row.getScopeId())).count());
@@ -104,219 +146,362 @@ class PresetGrantMaterializerTest {
     }
 
     @Test
-    void superAdminInstanceBindingMaterializesEveryActionAtomAndNoCapabilityAtom() {
-        stubRoles(INSTANCE_ADMIN_ROLE);
-        bindings(new GrantPresetBinding(INSTANCE_ADMIN_ROLE, "user", SUBJECT, AccessScope.INSTANCE,
-                null, ACTOR));
+    void anAdminShapedPresetMaterializesEveryActionAtomAndNoCapabilityAtom() {
+        List<String> atoms = new ArrayList<>(PermissionAtomCatalog.actionAtoms());
+        atoms.addAll(PermissionAtomCatalog.capabilityAtoms());
+        presetAtoms.put(ADMIN_PRESET, atoms);
+        stubPresetAtoms();
+        bindingsOf(instanceBinding(ADMIN_PRESET));
 
-        materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
 
         List<AuthorizationGrant> saved = savedRows();
         assertEquals(PermissionAtomCatalog.actionAtoms().size(), saved.size(),
-                "all action atoms are instance-bindable (decision #27; count frozen in SkillReadFaceTest); the 3 capability atoms "
-                        + "are resolved at authentication time");
-        List<String> writtenAtoms = new ArrayList<>();
-        saved.forEach(row -> writtenAtoms.add(row.getPermissions().get(0).get("actionClass").asText()));
-        assertEquals(new java.util.LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()),
-                new java.util.LinkedHashSet<>(writtenAtoms),
-                "exactly the action atoms, no capability atom");
+                "every action atom materializes; the three capability atoms are resolved at "
+                        + "authentication time and never reach grants (design #23)");
+        List<String> written = new ArrayList<>();
+        saved.forEach(row -> written.add(row.getPermissions().get(0).get("actionClass").asText()));
+        assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()),
+                new LinkedHashSet<>(written), "exactly the action atoms, in preset order");
         for (String capability : PermissionAtomCatalog.capabilityAtoms()) {
-            assertFalse(writtenAtoms.contains(capability),
-                    "capability atom must not reach grants: " + capability);
+            assertFalse(written.contains(capability), "capability atom must not reach grants: " + capability);
         }
-        // The negative case in the other direction: every written atom is a builtin action class,
-        // so GrantIntersectionEvaluator.PermissionAtom can never throw on these rows.
         assertTrue(ToolFaceRegistry.builtinActionClasses().stream()
-                        .map(com.cc01cc.p.xihe.cp.policy.AtomNames::action).toList()
-                        .containsAll(writtenAtoms),
+                        .map(AtomNames::action).toList().containsAll(written),
                 "written atoms are canonical action atoms of the built-in vocabulary");
     }
 
-    @Test
-    void reconcilesStaleAtomsAndKeepsUnchangedRows() {
-        stubRoles(USER_ROLE);
-        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
-        AuthorizationGrant kept = existingRow("preset", AccessScope.instance(), "read");
-        AuthorizationGrant stale = existingRow("preset", AccessScope.instance(), "CREATE_TEMPLATE");
-        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset"))
-                .thenReturn(List.of(kept, stale));
-
-        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
-
-        List<AuthorizationGrant> deleted = deletedRows();
-        assertEquals(1, deleted.size());
-        assertEquals("CREATE_TEMPLATE", deleted.get(0).getPermissions().get(0)
-                .get("actionClass").asText(), "atoms no longer granted must be removed");
-        List<AuthorizationGrant> saved = savedRows();
-        assertEquals(4, saved.size(), "write/delete/exec/network are created; read is kept as-is");
-        assertEquals(4, result.created());
-        assertEquals(1, result.deleted());
-        assertFalse(saved.contains(kept), "an unchanged atom keeps its existing row");
-    }
+    // ------------------------------------------------------------------ reconcile
 
     @Test
-    void rejectsAtomsThatCannotLiveInTheBindingScopeRound2P12() {
-        stubRoles(ACCOUNT_ROLE);
-        bindings(new GrantPresetBinding(ACCOUNT_ROLE, "user", SUBJECT, AccessScope.WORKSPACE,
-                WORKSPACE_A, ACTOR));
-
-        CpApiException failure = assertThrows(CpApiException.class,
-                () -> materializer.materializeSubject("user", SUBJECT, ACTOR, null));
-        assertEquals("ROLE_SCOPE_MISMATCH", failure.getCode());
-        verify(grantRepository, never()).saveAll(anyList());
-    }
-
-    @Test
-    void writesNoAuditAndNoRowsWhenTheMaterializedSetIsUnchanged() {
-        stubRoles(USER_ROLE);
-        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+    void anUnchangedImportWritesNothingAndAuditsNothing() {
+        GrantPresetBinding binding = instanceBinding(USER_PRESET);
+        bindingsOf(binding);
         List<AuthorizationGrant> existing = new ArrayList<>();
         for (String atom : List.of("read", "write", "delete", "exec", "network")) {
-            existing.add(existingRow("preset", AccessScope.instance(), atom));
+            // Rows exactly as an import of USER_PRESET would have written them: origin = preset id.
+            existing.add(existingRow(AccessScope.instance(), atom, USER_PRESET));
         }
-        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset"))
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, "assigned"))
                 .thenReturn(existing);
 
-        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result =
+                materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
 
         assertEquals(0, result.created());
         assertEquals(0, result.deleted());
+        assertFalse(result.changed(), "an idempotent re-import is not an authorization change");
         verify(grantRepository, never()).saveAll(anyList());
         verify(grantRepository, never()).deleteAll(anyList());
         verifyNoInteractions(auditLogger);
     }
 
+    /**
+     * task-933 / R39 per-group identity: the SAME atom under two import groups is two rows, and a
+     * rewrite only removes a row whose OWN group no longer carries it. {@code CREATE_TEMPLATE} is
+     * desired by EXTRA_PRESET (B2) and not by USER_PRESET (B1): B1's row goes, B2's row stays.
+     */
     @Test
-    void removesRowsWhenTheSubjectLosesEveryBinding() {
-        stubRoles(USER_ROLE);
-        bindings();
-        AuthorizationGrant stale = existingRow("preset", AccessScope.workspace(WORKSPACE_A), "read");
-        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset"))
-                .thenReturn(List.of(stale));
+    void aGroupRewriteRemovesOnlyItsOwnStaleRowAndNeverAnotherGroupsHolding() {
+        GrantPresetBinding b1 = instanceBinding(USER_PRESET);
+        GrantPresetBinding b2 = instanceBinding(EXTRA_PRESET);
+        bindingsOf(b1, b2);
+        AuthorizationGrant unchanged = existingRow(AccessScope.instance(), "read", USER_PRESET);
+        AuthorizationGrant staleInOwnGroup = existingRow(AccessScope.instance(), "CREATE_TEMPLATE", USER_PRESET);
+        AuthorizationGrant heldByOtherGroup = existingRow(AccessScope.instance(), "CREATE_TEMPLATE", EXTRA_PRESET);
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, "assigned"))
+                .thenReturn(List.of(unchanged, staleInOwnGroup, heldByOtherGroup));
 
-        PresetGrantMaterializer.Result result = materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result =
+                materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
 
-        assertEquals(0, result.created());
+        List<AuthorizationGrant> deleted = deletedRows();
+        assertEquals(List.of(staleInOwnGroup), deleted,
+                "only the row whose own import group dropped the atom is removed");
         assertEquals(1, result.deleted());
-        verify(grantRepository).deleteAll(List.of(stale));
+        assertFalse(deleted.contains(unchanged), "an unchanged atom keeps its existing row");
+        assertFalse(deleted.contains(heldByOtherGroup),
+                "another still-bound group's row is not this group's stale row to delete");
+        // B1 re-creates write/delete/exec/network; B2 needs read + CREATE_TEMPLATE and holds neither.
+        List<AuthorizationGrant> created = savedRows();
+        assertEquals(5, created.size(), "read under the second group, plus the four USER atoms it alone carries");
+        assertEquals(5, result.created());
+        assertTrue(created.stream().allMatch(row -> GrantSources.ASSIGNED.equals(row.getSource())));
+    }
+
+    /**
+     * task-933 / R39: an unattributed (NULL-origin) row is LOCAL work — a manual grant, or a legacy
+     * row V186 could not attribute to exactly one preset. No import group owns it, so no group
+     * rewrite may delete it; the subject keeps 「导入后每个主体可独立微调」.
+     */
+    @Test
+    void anUnattributedRowIsLocalWorkAndSurvivesEveryGroupRewrite() {
+        bindingsOf(instanceBinding(USER_PRESET));
+        AuthorizationGrant sameAtomLocally = existingRow(AccessScope.instance(), "read", null);
+        AuthorizationGrant extraAtomLocally = existingRow(AccessScope.instance(), "CREATE_TEMPLATE", null);
+        assertNull(sameAtomLocally.getOriginPresetId(), "the fixture is an unattributed row");
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, "assigned"))
+                .thenReturn(List.of(sameAtomLocally, extraAtomLocally));
+
+        PresetGrantMaterializer.Result result =
+                materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
+
+        assertEquals(0, result.deleted(),
+                "deleting an unattributed row here would wipe manual work the moment a preset is re-imported");
+        verify(grantRepository, never()).deleteAll(anyList());
+        // The five imported atoms are still written as their OWN rows: a NULL-origin row does not
+        // satisfy a group's desired atom (the V186 key carries origin_preset_id for exactly this).
+        assertEquals(5, result.created());
+        for (AuthorizationGrant row : savedRows()) {
+            assertNotNull(row.getOriginPresetId(), "an import always attributes its own group");
+        }
     }
 
     @Test
-    void neverTouchesTheFrozenAgentDefaultSource() {
-        stubRoles(USER_ROLE);
-        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+    void losingEveryBindingRemovesTheImportedRows() {
+        bindingsOf();
+        AuthorizationGrant orphanGroup = existingRow(AccessScope.workspace(WORKSPACE_A), "read",
+                UUID.randomUUID());
+        AuthorizationGrant localWork = existingRow(AccessScope.workspace(WORKSPACE_A), "read", null);
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, "assigned"))
+                .thenReturn(List.of(orphanGroup, localWork));
 
-        materializer.materializeSubject("user", SUBJECT, ACTOR, null);
+        PresetGrantMaterializer.Result result =
+                materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
 
-        verify(grantRepository).findBySubjectTypeAndSubjectIdAndSource("user", SUBJECT, "preset");
+        assertEquals(0, result.created());
+        assertEquals(1, result.deleted(), "unbinding revokes the template's rows, not the subject's own");
+        verify(grantRepository).deleteAll(List.of(orphanGroup));
+    }
+
+    @Test
+    void onlyTheAssignedSourceIsRead() {
+        bindingsOf(instanceBinding(USER_PRESET));
+
+        materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
+
+        verify(grantRepository).findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, "assigned");
+        verify(grantRepository, never()).findBySubjectTypeAndSubjectIdAndSource(anyString(), any(),
+                eq(GrantSources.PRESET));
         verify(grantRepository, never()).findBySubjectTypeAndSubjectIdAndSource(anyString(), any(),
                 eq(GrantSources.AGENT_DEFAULT));
     }
 
-    // ---------------------------------------------------------------- helpers
+    // ------------------------------------------------------------------ replay (重新对齐)
 
-    private void stubRoles(UUID... roleIds) {
-        List<GrantPresetAtom> permissions = new ArrayList<>();
-        for (UUID roleId : roleIds) {
-            for (String atom : atomsOf(roleId)) {
-                permissions.add(new GrantPresetAtom(roleId, atom, resourceOf(atom)));
-            }
-        }
-        when(permissionRepository.findByIdRoleIdIn(anyCollection())).thenReturn(permissions);
-    }
+    /**
+     * task-933 反证③: an explicit governance replay restores the preset set WITHIN the holder's own
+     * import group — an atom the holder deleted comes back, a locally added atom inside that group
+     * is removed by the realign — and every row still says {@code assigned}, never {@code preset}.
+     */
+    @Test
+    void aGovernanceReplayRealignsTheImportGroupAndStaysAssigned() {
+        GrantPresetBinding binding = instanceBinding(USER_PRESET);
+        when(bindingRepository.findByRoleId(USER_PRESET)).thenReturn(List.of(binding));
+        bindingsOf(binding);
+        AuthorizationGrant keptRead = existingRow(AccessScope.instance(), "read", USER_PRESET);
+        AuthorizationGrant keptWrite = existingRow(AccessScope.instance(), "write", USER_PRESET);
+        AuthorizationGrant keptDelete = existingRow(AccessScope.instance(), "delete", USER_PRESET);
+        AuthorizationGrant keptExec = existingRow(AccessScope.instance(), "exec", USER_PRESET);
+        AuthorizationGrant localAddition = existingRow(AccessScope.instance(), "CREATE_TEMPLATE", USER_PRESET);
+        when(grantRepository.findBySubjectTypeAndSubjectIdAndSource(SUBJECT_USER, SUBJECT, "assigned"))
+                .thenReturn(List.of(keptRead, keptWrite, keptDelete, keptExec,
+                        localAddition));
 
-    private static List<String> atomsOf(UUID roleId) {
-        if (roleId.equals(USER_ROLE)) {
-            return List.of("read", "write", "delete", "exec", "network");
-        }
-        if (roleId.equals(WS_EDITOR_ROLE)) {
-            return List.of("read", "write", "delete", "exec");
-        }
-        if (roleId.equals(INSTANCE_ADMIN_ROLE)) {
-            // SUPER_ADMIN-shaped role: the full action atom set plus the three capability atoms.
-            List<String> atoms = new ArrayList<>(PermissionAtomCatalog.actionAtoms());
-            atoms.addAll(PermissionAtomCatalog.capabilityAtoms());
-            return List.copyOf(atoms);
-        }
-        if (roleId.equals(ACCOUNT_ROLE)) {
-            return List.of(ToolFaceRegistry.ACTION_CREATE_ACCOUNT);
-        }
-        return List.of();
-    }
+        int holders = materializer.replayPresetToAll(USER_PRESET, ACTOR, null);
 
-    private static String resourceOf(String atom) {
-        return ToolFaceRegistry.isCredentialActionClass(atom)
-                ? ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD
-                : "*";
+        assertEquals(1, holders);
+        assertEquals(1, deletedRows().size(), "the realign drops the atom the holder added locally");
+        assertTrue(deletedRows().contains(localAddition));
+        List<AuthorizationGrant> created = savedRows();
+        assertEquals(1, created.size(), "`network` was deleted locally and the replay restores it");
+        assertEquals(AtomNames.action("network"),
+                created.get(0).getPermissions().get(0).get("actionClass").asText());
+        for (AuthorizationGrant row : created) {
+            assertEquals(GrantSources.ASSIGNED, row.getSource(),
+                    "a realigned row still says `assigned` — the retired axis cannot come back "
+                            + "through a write");
+            assertEquals(USER_PRESET, row.getOriginPresetId(), "the replay re-cites the template, not a binding row");
+        }
     }
 
     /**
+     * task-933 治理面「与预设对比」: the compare face reads the preset through exactly the
+     * projection a replay writes, so a comparison can never display a set the replay would not
+     * produce. Without this parity the 「看见本地改了哪些」 answer would be a second, drifting truth.
+     */
+    @Test
+    void theCompareProjectionMatchesWhatAReplayWouldWrite() {
+        GrantPresetBinding binding = instanceBinding(USER_PRESET);
+        bindingsOf(binding);
+        when(bindingRepository.findByRoleId(USER_PRESET)).thenReturn(List.of(binding));
+
+        assertEquals(materializer.desiredByScopeAndOrigin(List.of(binding)),
+                materializer.desiredPresetSet(USER_PRESET),
+                "subject view and preset view are the same projection");
+        Map<GrantIntersectionEvaluator.PermissionAtom, java.util.Set<UUID>> instanceAtoms =
+                materializer.desiredPresetSet(USER_PRESET).get(AccessScope.instance());
+        assertEquals(5, instanceAtoms.size(), "the five USER atoms, capability atoms filtered out");
+        assertTrue(instanceAtoms.values().stream().allMatch(groups -> groups.equals(java.util.Set.of(USER_PRESET))),
+                "every atom is attributed to the one import group that carried it");
+    }
+
+    // ------------------------------------------------------------------ scope guard
+
+    /**
+     * Decision #12: an instance-only atom bound at workspace scope is rejected, not silently
+     * dropped — a partial materialization would look like a successful import.
+     */
+    @Test
+    void rejectsAnAtomThatCannotLiveInTheBindingScope() {
+        presetAtoms.put(ACCOUNT_PRESET, new ArrayList<>(List.of(ToolFaceRegistry.ACTION_CREATE_ACCOUNT)));
+        stubPresetAtoms();
+        bindingsOf(workspaceBinding(ACCOUNT_PRESET, WORKSPACE_A));
+
+        CpApiException failure = assertThrows(CpApiException.class,
+                () -> materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null));
+
+        assertEquals("ROLE_SCOPE_MISMATCH", failure.getCode());
+        verify(grantRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void requiresASubject() {
+        assertThrows(IllegalArgumentException.class,
+                () -> materializer.materializeSubject(null, SUBJECT, ACTOR, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> materializer.materializeSubject(SUBJECT_USER, null, ACTOR, null));
+        assertThrows(IllegalArgumentException.class, () -> materializer.replayPresetToAll(null, ACTOR, null));
+        assertThrows(IllegalArgumentException.class, () -> materializer.desiredPresetSet(null));
+    }
+
+    // ------------------------------------------------------------------ epoch / cache
+
+    /**
      * PLAN-0610 W1c-2 (round-4 P1-1): the per-subject epoch bumps take {@code SELECT … FOR UPDATE}
-     * locks in <b>sorted subject-id order</b>, not in the order {@code findByRoleId} happened to
-     * return. Without the sort two concurrent role edits over intersecting holder sets could form an
-     * ABBA cycle and one of them would die with PostgreSQL {@code 40P01}.
+     * locks in <b>sorted subject-id order</b>, not the order {@code findByRoleId} returned. Without
+     * the sort two concurrent preset edits over intersecting holder sets could form an ABBA cycle
+     * and PostgreSQL would abort one with {@code 40P01}.
      */
     @Test
     void bumpsEpochsInSortedSubjectOrder() {
         UUID lowSubject = UUID.fromString("00000000-0000-4000-8000-000000000001");
         UUID highSubject = UUID.fromString("00000000-0000-4000-8000-000000000002");
-        stubRoles(USER_ROLE);
-        GrantPresetBinding lowBinding = new GrantPresetBinding(USER_ROLE, "user", lowSubject,
-                AccessScope.INSTANCE, null, ACTOR);
-        GrantPresetBinding highBinding = new GrantPresetBinding(USER_ROLE, "user", highSubject,
-                AccessScope.INSTANCE, null, ACTOR);
+        GrantPresetBinding lowBinding = binding(USER_PRESET, lowSubject, AccessScope.instance(), null);
+        GrantPresetBinding highBinding = binding(USER_PRESET, highSubject, AccessScope.instance(), null);
         // Deliberately "wrong" order: the higher id comes back from the role query first.
-        when(bindingRepository.findByRoleId(USER_ROLE)).thenReturn(List.of(highBinding, lowBinding));
-        when(bindingRepository.findBySubjectTypeAndSubjectId("user", lowSubject))
+        when(bindingRepository.findByRoleId(USER_PRESET)).thenReturn(List.of(highBinding, lowBinding));
+        when(bindingRepository.findBySubjectTypeAndSubjectId(SUBJECT_USER, lowSubject))
                 .thenReturn(List.of(lowBinding));
-        when(bindingRepository.findBySubjectTypeAndSubjectId("user", highSubject))
+        when(bindingRepository.findBySubjectTypeAndSubjectId(SUBJECT_USER, highSubject))
                 .thenReturn(List.of(highBinding));
         when(userRepository.findByIdForUpdate(any())).thenAnswer(invocation ->
-                java.util.Optional.of(userWith(invocation.getArgument(0))));
+                Optional.of(userWith(invocation.getArgument(0))));
 
-        materializer.materializePreset(USER_ROLE, ACTOR, null);
+        materializer.materializePreset(USER_PRESET, ACTOR, null);
 
-        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(userRepository);
-        inOrder.verify(userRepository).findByIdForUpdate(lowSubject);
-        inOrder.verify(userRepository).findByIdForUpdate(highSubject);
+        InOrder ordered = inOrder(userRepository);
+        ordered.verify(userRepository).findByIdForUpdate(lowSubject);
+        ordered.verify(userRepository).findByIdForUpdate(highSubject);
     }
 
     /**
      * PLAN-0610 W1c-2 (round-4 P1-2): invalidation happens <b>twice</b> — once inside the writing
-     * transaction (same-request readers such as W3's {@code /me/permissions}) and once after the
+     * transaction (same-request readers such as {@code /me/permissions}) and once after the
      * transaction completes (a concurrent reader may have re-filled the cache from the pre-commit
      * state in between).
      */
     @Test
     void invalidatesImmediatelyAndAgainAfterTheTransactionCompletes() {
-        stubRoles(USER_ROLE);
-        bindings(new GrantPresetBinding(USER_ROLE, "user", SUBJECT, AccessScope.INSTANCE, null, ACTOR));
+        bindingsOf(instanceBinding(USER_PRESET));
 
-        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.initSynchronization();
         try {
-            materializer.materializeSubject("user", SUBJECT, ACTOR, null);
-            verify(authzContext, org.mockito.Mockito.times(1)).invalidate(SUBJECT);
+            materializer.materializeSubject(SUBJECT_USER, SUBJECT, ACTOR, null);
+            verify(authzContext, times(1)).invalidate(SUBJECT);
 
-            org.springframework.transaction.support.TransactionSynchronizationManager
-                    .getSynchronizations()
-                    .forEach(sync -> sync.afterCompletion(
-                            org.springframework.transaction.support.TransactionSynchronization
-                                    .STATUS_COMMITTED));
-            verify(authzContext, org.mockito.Mockito.times(2)).invalidate(SUBJECT);
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+            verify(authzContext, times(2)).invalidate(SUBJECT);
         } finally {
-            org.springframework.transaction.support.TransactionSynchronizationManager
-                    .clearSynchronization();
+            TransactionSynchronizationManager.clearSynchronization();
         }
     }
 
-    private static com.cc01cc.p.xihe.cp.entity.User userWith(UUID userId) {
-        com.cc01cc.p.xihe.cp.entity.User user = new com.cc01cc.p.xihe.cp.entity.User("epoch-" + userId + "@test.local", "hash", "Epoch");
-        user.setId(userId);
-        return user;
+    // ---------------------------------------------------------------- helpers
+
+    private static final String SUBJECT_USER = AuthzContext.SUBJECT_USER;
+
+    /** Re-stubs the whole preset atom vocabulary from {@link #presetAtoms}. */
+    private void stubPresetAtoms() {
+        List<GrantPresetAtom> rows = new ArrayList<>();
+        for (Map.Entry<UUID, List<String>> preset : presetAtoms.entrySet()) {
+            for (String atom : preset.getValue()) {
+                rows.add(new GrantPresetAtom(preset.getKey(), canonicalAtom(atom), resourceOf(atom)));
+            }
+        }
+        when(permissionRepository.findByIdRoleIdIn(anyCollection())).thenReturn(rows);
     }
 
-    private void bindings(GrantPresetBinding... rows) {
-        when(bindingRepository.findBySubjectTypeAndSubjectId("user", SUBJECT)).thenReturn(List.of(rows));
+    /** Presets store the canonical spelling (task-835); capability atoms already carry `cap:`. */
+    private static String canonicalAtom(String atom) {
+        return AtomNames.isCapabilityFamily(atom) ? atom : AtomNames.action(atom);
+    }
+
+    private static String resourceOf(String atom) {
+        return ToolFaceRegistry.isCredentialActionClass(atom)
+                ? ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD
+                : PermissionAtomCatalog.WILDCARD;
+    }
+
+    private static GrantPresetBinding binding(UUID presetId, UUID subjectId, AccessScope scope,
+                                              UUID granter) {
+        GrantPresetBinding row = new GrantPresetBinding(presetId, SUBJECT_USER, subjectId,
+                scope.type(), scope.isInstance() ? null : scope.id(), granter);
+        row.setId(UUID.randomUUID());
+        return row;
+    }
+
+    private static GrantPresetBinding instanceBinding(UUID presetId) {
+        return binding(presetId, SUBJECT, AccessScope.instance(), ACTOR);
+    }
+
+    private static GrantPresetBinding workspaceBinding(UUID presetId, UUID workspaceId) {
+        return binding(presetId, SUBJECT, AccessScope.workspace(workspaceId), ACTOR);
+    }
+
+    private void bindingsOf(GrantPresetBinding... rows) {
+        when(bindingRepository.findBySubjectTypeAndSubjectId(SUBJECT_USER, SUBJECT))
+                .thenReturn(List.of(rows));
+    }
+
+    /** A persisted {@code assigned} row of this subject, with (or without) an import-group origin. */
+    private static AuthorizationGrant existingRow(AccessScope scope, String atom, UUID originPresetId) {
+        ObjectMapper mapper = new ObjectMapper();
+        AuthorizationGrant row = new AuthorizationGrant();
+        row.setId(UUID.randomUUID());
+        row.setSubjectType(SUBJECT_USER);
+        row.setSubjectId(SUBJECT);
+        row.setSource(GrantSources.ASSIGNED);
+        row.setOriginPresetId(originPresetId);
+        row.setScopeType(scope.type());
+        row.setScopeId(scope.isInstance() ? null : scope.id());
+        row.setReadState("read");
+        var permissions = mapper.createArrayNode();
+        var node = permissions.addObject();
+        node.put("actionClass", canonicalAtom(atom));
+        if (ToolFaceRegistry.isCredentialActionClass(atom)) {
+            node.put("resource", ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD);
+        }
+        row.setPermissions(permissions);
+        assertNull(row.getRoleName(), "role_name is reserved for config role display names");
+        return row;
+    }
+
+    private static User userWith(UUID userId) {
+        User user = new User("epoch-" + userId + "@test.local", "hash", "Epoch");
+        user.setId(userId);
+        return user;
     }
 
     @SuppressWarnings("unchecked")
@@ -336,21 +521,4 @@ class PresetGrantMaterializerTest {
         captor.getAllValues().forEach(values -> values.forEach(rows::add));
         return rows;
     }
-
-    private AuthorizationGrant existingRow(String source, AccessScope scope, String atom) {
-        AuthorizationGrant row = new AuthorizationGrant();
-        row.setId(UUID.randomUUID());
-        row.setSubjectType("user");
-        row.setSubjectId(SUBJECT);
-        row.setSource(source);
-        row.setScopeType(scope.type());
-        row.setScopeId(scope.isInstance() ? null : scope.id());
-        row.setReadState("read");
-        row.setPermissions(new ObjectMapper().createArrayNode().add(
-                new ObjectMapper().createObjectNode().put("actionClass", atom)));
-        assertNull(row.getRoleName(), "role_name is reserved for config role display names");
-        return row;
-    }
 }
-
-

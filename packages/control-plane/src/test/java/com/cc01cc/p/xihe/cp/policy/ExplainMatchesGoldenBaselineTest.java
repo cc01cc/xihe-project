@@ -170,7 +170,9 @@ class ExplainMatchesGoldenBaselineTest {
                     ToolShape.OPAQUE, "user-1", null, null);
             GrantIntersectionEvaluator.GrantExplanation explanation = evaluator.explain(request, List.of(
                     new GrantIntersectionEvaluator.PrincipalLevel("user-grants", List.of(
-                            new GrantIntersectionEvaluator.GrantAtom("read", "*", "grant-1", "role")))));
+                            // task-933: a non-import source carries no origin template
+                            new GrantIntersectionEvaluator.GrantAtom("read", "*", "grant-1",
+                                    "role", null)))));
             if (explanation.allowed()) {
                 failures.add(row.path("id").asText() + " —— capability 原子被 explain 放行");
             }
@@ -254,7 +256,7 @@ class ExplainMatchesGoldenBaselineTest {
             }
             for (GrantIntersectionEvaluator.PermissionAtom atom : grant.atoms()) {
                 atoms.add(new GrantIntersectionEvaluator.GrantAtom(atom.actionClass(), atom.resource(),
-                        grant.id().toString(), GrantSources.SESSION_TEMP));
+                        grant.id().toString(), GrantSources.SESSION_TEMP, null));
             }
         }
         return atoms;

@@ -161,7 +161,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         workspaceFixture.bindWorkspaceRole(ws.getId(), weak.getId(), WorkspaceRole.VIEWER);
         UUID principal = newPrincipal(host, "WeakP");
         jdbcTemplate.update("DELETE FROM grants WHERE subject_type='user' AND subject_id=?"
-                + " AND source IN ('default','preset')", weak.getId());
+                + " AND source IN ('default','assigned')", weak.getId());
         UUID manageOnly = roleWith("TEST_WEAK_MANAGE", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
         bindingRepository.save(new GrantPresetBinding(manageOnly, "user", weak.getId(),
                 AccessScope.INSTANCE, null, weak.getId()));
@@ -191,7 +191,7 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest
         Workspace ws = workspaceFixture.createOwnedWorkspace("BypassWs", bypass.getId().toString());
         UUID principal = newPrincipal(bypass, "BypassP");
         jdbcTemplate.update("DELETE FROM grants WHERE subject_type='user' AND subject_id=?"
-                + " AND source IN ('default','preset')", bypass.getId());
+                + " AND source IN ('default','assigned')", bypass.getId());
         UUID bypassRole = roleWith("TEST_BYPASS_ROLE", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 ToolFaceRegistry.ACTION_GRANT_ANY_ATOM);
         bindingRepository.save(new GrantPresetBinding(bypassRole, "user", bypass.getId(),

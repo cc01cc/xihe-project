@@ -286,14 +286,14 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
         // The resource must be carried when it is not the wildcard — a credential atom with a bare
         // '*' fails the evaluator closed, which would make every atom lookup empty.
         jdbc.update("DELETE FROM grants WHERE subject_type = 'user' AND subject_id = CAST(? AS UUID)"
-                + " AND source = 'preset' AND scope_type = 'instance'", userId);
+                + " AND source = 'assigned' AND scope_type = 'instance'", userId);
         jdbc.update("INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id,"
                         + " permissions, source, scope_type, read_state)"
                         + " SELECT gen_random_uuid(), 'user', CAST(? AS UUID), 'user',"
                         + " CAST(? AS UUID), jsonb_build_array(jsonb_build_object('actionClass',"
                         + " rp.action_class) || CASE WHEN rp.resource_pattern = '*' THEN '{}'::jsonb"
                         + " ELSE jsonb_build_object('resource', rp.resource_pattern) END),"
-                        + " 'preset', 'instance', 'read'"
+                        + " 'assigned', 'instance', 'read'"
                         + " FROM grant_preset_bindings b JOIN grant_preset_atoms rp ON rp.role_id = b.role_id"
                         + " WHERE b.subject_type = 'user' AND b.subject_id = CAST(? AS UUID)"
                 // task-835: exclude capability atoms by their `cap:` prefix. The old `'%:%'`
@@ -374,7 +374,7 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegration
 
     private int grantRows(String userId, String workspaceId) {
         return countRows("SELECT COUNT(*) FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID) AND source = 'preset'"
+                + " AND subject_id = CAST(? AS UUID) AND source = 'assigned'"
                 + " AND scope_type = 'workspace' AND scope_id = CAST(? AS UUID)",
                 userId, workspaceId);
     }

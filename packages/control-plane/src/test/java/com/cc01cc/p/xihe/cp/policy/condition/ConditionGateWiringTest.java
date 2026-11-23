@@ -132,7 +132,7 @@ class ConditionGateWiringTest {
     /** Real grant rows, attributed exactly as the production read does. */
     private List<PrincipalLevel> levels() {
         List<GrantAtom> atoms = evaluator.unionAttributed(List.of(
-                grant(CONDITIONED_GRANT_ID, "preset", "read", "*")));
+                grant(CONDITIONED_GRANT_ID, "assigned", "read", "*")));
         return List.of(new PrincipalLevel("level-0", atoms));
     }
 

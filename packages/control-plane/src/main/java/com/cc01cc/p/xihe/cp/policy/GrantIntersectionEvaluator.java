@@ -75,8 +75,14 @@ public class GrantIntersectionEvaluator {
      * deliberately drops the row (the decision only needs the atom); an explanation must be able to
      * cite which grant authorized, so the attributed twin carries {@code grantId}/{@code grantSource}.
      * Levels built from a bare atom set carry {@code null} identities and simply cite nothing.
+     *
+     * <p>task-933 / R39: an {@code assigned} row additionally carries the preset it was imported
+     * from ({@code originPresetId}) — display/compare/realign provenance only. It says where the
+     * row came from, never that the preset authorized anything: the <b>row</b> holds the atom,
+     * the preset is a read-only template. Every other source keeps it {@code null}.</p>
      */
-    public record GrantAtom(String actionClass, String resource, String grantId, String grantSource) {
+    public record GrantAtom(String actionClass, String resource, String grantId, String grantSource,
+                            String originPresetId) {
 
         public PermissionAtom toPermissionAtom() {
             return new PermissionAtom(actionClass, resource);
@@ -96,7 +102,7 @@ public class GrantIntersectionEvaluator {
             }
             List<GrantAtom> rows = new ArrayList<>(atoms.size());
             for (PermissionAtom atom : atoms) {
-                rows.add(new GrantAtom(atom.actionClass(), atom.resource(), null, null));
+                rows.add(new GrantAtom(atom.actionClass(), atom.resource(), null, null, null));
             }
             return new PrincipalLevel(label, rows);
         }
@@ -110,9 +116,16 @@ public class GrantIntersectionEvaluator {
      */
     public record MissingLevel(int level, String levelLabel, String actionClass, String resource, String reason) {}
 
-    /** One grant row that carried a requested atom on a level. */
+    /**
+     * One grant row that carried a requested atom on a level.
+     *
+     * <p>task-933 / R39: an {@code assigned} row additionally cites the preset it was imported
+     * from ({@code originPresetId}) — display/compare/realign provenance only. It never says the
+     * preset authorized the atom: the <b>row</b> holds it, the preset is a read-only template.
+     * Every other source (and a session token) keeps it {@code null}.</p>
+     */
     public record MatchedGrant(int level, String levelLabel, String actionClass, String resource,
-                               String grantId, String grantSource) {}
+                               String grantId, String grantSource, String originPresetId) {}
 
     /** What one level contributed: how many atoms it holds and whether it covered every requested pair. */
     public record EvaluatedLevel(int level, String label, int atomCount, boolean matched) {}
@@ -229,8 +242,14 @@ public class GrantIntersectionEvaluator {
             }
             String grantId = grant.getId() == null ? null : grant.getId().toString();
             String grantSource = grant.getSource();
+            // task-933: the origin id cites the template the row was imported from; every other
+            // source (and a manual/legacy NULL-origin row) cites nothing extra.
+            String originPresetId = GrantSources.ASSIGNED.equals(grantSource)
+                    && grant.getOriginPresetId() != null
+                            ? grant.getOriginPresetId().toString() : null;
             for (PermissionAtom atom : parseStored(grant.getPermissions())) {
-                result.add(new GrantAtom(atom.actionClass(), atom.resource(), grantId, grantSource));
+                result.add(new GrantAtom(atom.actionClass(), atom.resource(), grantId, grantSource,
+                        originPresetId));
             }
         }
         return List.copyOf(result);
@@ -391,8 +410,9 @@ public class GrantIntersectionEvaluator {
                         String key = "-1|" + canonicalAction + "|" + resource + "|"
                                 + sessionToken.grantId() + "|" + sessionToken.grantSource();
                         if (matchedKeys.add(key)) {
-                            matched.add(new MatchedGrant(-1, SESSION_TOKEN_LABEL, canonicalAction, resource,
-                                    sessionToken.grantId(), sessionToken.grantSource()));
+                            matched.add(new MatchedGrant(-1, SESSION_TOKEN_LABEL, canonicalAction,
+                                    resource, sessionToken.grantId(), sessionToken.grantSource(),
+                                    null));
                         }
                     }
                     continue;
@@ -423,10 +443,12 @@ public class GrantIntersectionEvaluator {
                         hit = true;
                         if (record) {
                             String key = index + "|" + canonicalAction + "|" + resource + "|"
-                                    + atom.grantId() + "|" + atom.grantSource();
+                                    + atom.grantId() + "|" + atom.grantSource() + "|"
+                                    + atom.originPresetId();
                             if (matchedKeys.add(key)) {
-                                matched.add(new MatchedGrant(index, labels[index], canonicalAction, resource,
-                                        atom.grantId(), atom.grantSource()));
+                                matched.add(new MatchedGrant(index, labels[index], canonicalAction,
+                                        resource, atom.grantId(), atom.grantSource(),
+                                        atom.originPresetId()));
                             }
                         }
                     }

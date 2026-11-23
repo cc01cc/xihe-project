@@ -192,9 +192,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                 parentRunId.toString(), rootSession.getId().toString(), userId, workspaceId.toString(),
                 "root-run", "root-hash", "provider", "model", "workspace", "running"));
 
-        addGrant("user", UUID.fromString(userId), "preset", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "assigned", null, null, atoms("read", "write"));
         UUID agentDefaultGrantId = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                principalId, "preset", null, null, atoms("read", "write"));
+                principalId, "assigned", null, null, atoms("read", "write"));
         assertTrue(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
                 rootSession.getId().toString(), userId, workspaceId.toString(), true),
                 "a member's own user grant permits a user-direct mutation");
@@ -245,7 +245,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                         "write", "src/main.java")),
                 "User grants cannot authorize an Agent when its stable principal has no grant");
         addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                principalId, "preset", null, null, atoms("read", "write"));
+                principalId, "assigned", null, null, atoms("read", "write"));
         setBindingCap(workspaceId, atomWithResource("write", "src/*"));
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         rootSession, "write", "src/main.java")));
@@ -289,7 +289,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                         unboundWorkspaceSession, "write", "src/main.java")),
                 "removing Workspace binding denies the next Agent action");
 
-        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "preset",
+        UUID malformedGrantId = addGrant("user", UUID.fromString(userId), "assigned",
                 "admin", UUID.randomUUID(), atoms("unknown-action"));
         assertFalse(policyEngine.allowsByGrant(PolicyContext.EMPTY, "write_file", writeBody,
                 rootSession.getId().toString(), userId, workspaceId.toString(), true),
@@ -342,9 +342,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "assigned", null, null,
                 atoms("read", "write"));
-        addGrant("user", UUID.fromString(userId), "preset", null, null, atoms("read", "write"));
+        addGrant("user", UUID.fromString(userId), "assigned", null, null, atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read", "write"));
 
         Session memberSession = saveAgentSession(workspaceId, userId, "Member agent", atoms("read", "write"));
@@ -407,11 +407,11 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
         // read@*/write@* 已由 ensureUserDefault 的 USER 角色物化（uq_grants_role_atom 唯一约束），无需再手插。
-        addGrant("user", UUID.fromString(userId), "preset", null, null,
+        addGrant("user", UUID.fromString(userId), "assigned", null, null,
                 atoms("MANAGE_WORKSPACE_AGENTS"));
         // BL-326/D22：`requireDisableAuthority` 只认 owner 或 MANAGE_AGENT_PRINCIPALS；0651 tier 移除后
         // workspace 作用域 principal 的 ownerUserId 为 null，所以"授权路径可用"必须由这个原子证明。
-        addGrant("user", UUID.fromString(userId), "preset", null, null,
+        addGrant("user", UUID.fromString(userId), "assigned", null, null,
                 atoms("MANAGE_AGENT_PRINCIPALS"));
 
         ObjectNode snapshot = objectMapper.createObjectNode();
@@ -435,7 +435,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         java.util.Set<String> grantedAtoms = new java.util.LinkedHashSet<>();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
+                .filter(grant -> GrantSources.ASSIGNED.equals(grant.getSource()))
                 .forEach(grant -> grant.getPermissions()
                         .forEach(atom -> grantedAtoms.add(atom.path("actionClass").asText())));
         assertEquals(expectedPresetAtoms, grantedAtoms,
@@ -478,7 +478,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         java.util.Set<String> roleAtomsAfterCap = new java.util.LinkedHashSet<>();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
+                .filter(grant -> GrantSources.ASSIGNED.equals(grant.getSource()))
                 .filter(grant -> !AccessScope.WORKSPACE.equals(grant.getScopeType()))
                 .forEach(grant -> grant.getPermissions()
                         .forEach(atom -> roleAtomsAfterCap.add(atom.path("actionClass").asText())));
@@ -921,7 +921,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
         bindPrincipal(workspaceId, atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "assigned", null, null,
                 atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC));
         prefixSessionId = saveAgentSession(workspaceId, userId, "Prefix agent",
                 atoms(ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_EXEC)).getId().toString();

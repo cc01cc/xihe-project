@@ -258,7 +258,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
 
     /**
      * W1c: the creator's ceiling is seeded the post-W1 way — a test-only role bound at instance scope
-     * and materialized into {@code grants(source='preset')}.
+     * and materialized into {@code grants(source='assigned')}.
      *
      * <p>The helper used to merge into a single {@code source='direct'} row. The authorization gates
      * no longer read that source ({@code GrantSources.EVALUATION_SOURCES} excludes the retired rows),
@@ -291,7 +291,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         com.fasterxml.jackson.databind.node.ArrayNode merged = objectMapper.createArrayNode();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.PRESET.equals(grant.getSource()))
+                .filter(grant -> GrantSources.ASSIGNED.equals(grant.getSource()))
                 .forEach(grant -> grant.getPermissions().forEach(merged::add));
         assertTrue(merged.size() > 0, "a created principal must carry its bound-role atoms");
         return merged;
@@ -304,7 +304,11 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         return snapshot;
     }
 
-    /** 直接写一条 source='preset' 的授权行：这是求值唯一认的权威源（legacy-only 行不算）。 */
+    /**
+     * 直接写一条 source='assigned' 的授权行：这是求值唯一认的权威源（legacy-only 行不算）。
+     * task-933 / R39：{@code preset} 已退出求值集（V186 把历史行全部转成 {@code assigned}），
+     * 所以这里写的是 {@code assigned} —— 写 {@code preset} 现在会被 ck_grants_source 拒。
+     */
     private void grantPresetAtom(UUID principalId, String permissionsJson) {
         com.cc01cc.p.xihe.cp.entity.AuthorizationGrant grant =
                 new com.cc01cc.p.xihe.cp.entity.AuthorizationGrant();
@@ -312,7 +316,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTe
         grant.setGranterId(creatorId);
         grant.setSubjectType("agent_principal");
         grant.setSubjectId(principalId);
-        grant.setSource(com.cc01cc.p.xihe.cp.policy.GrantSources.PRESET);
+        grant.setSource(com.cc01cc.p.xihe.cp.policy.GrantSources.ASSIGNED);
         grant.setReadState("read");
         grant.setPermissions(permissions(permissionsJson));
         grantRepository.saveAndFlush(grant);

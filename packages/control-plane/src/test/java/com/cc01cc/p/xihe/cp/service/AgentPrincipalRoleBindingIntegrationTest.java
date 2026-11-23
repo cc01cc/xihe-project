@@ -53,7 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * immediately, so this class asserts the two states plus the guard rails around them:
  *
  * <ol>
- *   <li>bind &rarr; effective <b>now</b> (the workspace's atoms appear as {@code source='preset'});</li>
+ *   <li>bind &rarr; effective <b>now</b> (the workspace's atoms appear as {@code source='assigned'});</li>
  *   <li>unbind &rarr; gone <b>now</b> (and the row disappears from the workspace list);</li>
  *   <li>an instance-administrator role cannot be bound to an agent principal at all;</li>
  *   <li>an unknown role id is refused with the same stable code (no existence leak);</li>
@@ -110,7 +110,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     @Test
     void bindTakesEffectImmediately() {
         AgentPrincipal principal = createPlainPrincipal("bindEffective");
-        assertEquals(0, roleGrants(principal.getId(), GrantSources.PRESET).size(),
+        assertEquals(0, roleGrants(principal.getId(), GrantSources.ASSIGNED).size(),
                 "a fresh principal has no workspace role grants");
 
         bindToWorkspace(principal.getId());
@@ -188,11 +188,11 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     void unbindRevokesImmediately() {
         AgentPrincipal principal = createPlainPrincipal("unbind");
         bindToWorkspace(principal.getId());
-        assertFalse(roleGrants(principal.getId(), GrantSources.PRESET).isEmpty());
+        assertFalse(roleGrants(principal.getId(), GrantSources.ASSIGNED).isEmpty());
 
         assertTrue(agentPrincipalService.unbindWorkspace(userId, workspaceId, principal.getId()));
 
-        assertEquals(0, roleGrants(principal.getId(), GrantSources.PRESET).size(),
+        assertEquals(0, roleGrants(principal.getId(), GrantSources.ASSIGNED).size(),
                 "unbinding must remove the workspace role grants in the same transaction");
         assertFalse(agentPrincipalService.listWorkspaceAgents(userId, workspaceId).stream()
                         .anyMatch(view -> principal.getId().equals(view.principalId())),
@@ -267,7 +267,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
         roleBindingRepository.deleteAll(roleBindingRepository
                 .findBySubjectTypeAndScopeTypeAndScopeId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, "workspace", workspaceId));
-        grantRepository.deleteAll(roleGrants(principal.getId(), GrantSources.PRESET));
+        grantRepository.deleteAll(roleGrants(principal.getId(), GrantSources.ASSIGNED));
         AuthorizationGrant legacy = new AuthorizationGrant();
         legacy.setId(UUID.randomUUID());
         legacy.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
@@ -524,7 +524,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrati
     }
 
     private List<String> roleAtomNames(UUID principalId) {
-        return roleGrants(principalId, GrantSources.PRESET).stream()
+        return roleGrants(principalId, GrantSources.ASSIGNED).stream()
                 .map(row -> row.getPermissions().path(0).path("actionClass").asText())
                 .toList();
     }

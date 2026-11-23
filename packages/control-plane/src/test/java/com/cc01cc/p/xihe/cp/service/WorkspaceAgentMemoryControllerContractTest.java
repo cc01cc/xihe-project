@@ -332,7 +332,7 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractReusableIntegra
         grant.setGranterId(userId);
         grant.setSubjectType("user");
         grant.setSubjectId(userId);
-        grant.setSource(GrantSources.PRESET);
+        grant.setSource(GrantSources.ASSIGNED);
         grant.setReadState("read");
         grant.setPermissions(objectMapper.readTree("[{\"actionClass\":\"" + actionClass
                 + "\",\"resource\":\"" + resource + "\"}]"));

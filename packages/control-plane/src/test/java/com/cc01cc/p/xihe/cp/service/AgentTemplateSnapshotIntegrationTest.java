@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
@@ -599,14 +600,15 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
     }
 
     /**
-     * One hand-written {@code source='preset'} atom for the subject. PLAN-0610 W4a: the fixture's admin
+     * One hand-written {@code source='assigned'} atom for the subject. PLAN-0610 W4a / task-933:
+     * the fixture's admin
      * now holds a real ADMIN binding whose materialization already writes the same atoms, and
      * {@code uq_grants_role_atom} is (subject, scope, atom) — so an atom that is already materialized is
      * left alone instead of failing with a duplicate key.
      */
     private void addUserGrant(UUID userId, String actionClass, String resource) throws Exception {
         boolean exists = grantRepository.findBySubjectTypeAndSubjectId("user", userId).stream()
-                .filter(row -> "preset".equals(row.getSource()))
+                .filter(row -> GrantSources.ASSIGNED.equals(row.getSource()))
                 .anyMatch(row -> {
                     var atom = row.getPermissions().get(0);
                     return actionClass.equals(atom.path("actionClass").asText())
@@ -621,7 +623,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTe
         grant.setGranterId(userId);
         grant.setSubjectType(GrantPrincipalPathResolver.USER);
         grant.setSubjectId(userId);
-        grant.setSource("preset");
+        grant.setSource(GrantSources.ASSIGNED);
         grant.setReadState("read");
         ObjectNode atom = objectMapper.createObjectNode();
         atom.put("actionClass", actionClass);

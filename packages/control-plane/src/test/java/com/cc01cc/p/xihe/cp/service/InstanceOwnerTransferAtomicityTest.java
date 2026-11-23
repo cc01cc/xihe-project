@@ -171,7 +171,7 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
 
     private List<String> atomRows(User user) {
         return jdbc.queryForList("SELECT permissions::text FROM grants WHERE subject_type = 'user'"
-                + " AND subject_id = CAST(? AS UUID) AND source = 'preset'"
+                + " AND subject_id = CAST(? AS UUID) AND source = 'assigned'"
                 + " ORDER BY permissions::text", String.class, user.getId());
     }
 

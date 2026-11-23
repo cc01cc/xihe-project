@@ -95,7 +95,7 @@ class CapabilityAtomSeedReadBoundaryTest {
                     "INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id,"
                             + " permissions, source, scope_type, scope_id, read_state)"
                             + " VALUES (gen_random_uuid(), NULL, NULL, 'user', ?,"
-                            + " CAST(? AS jsonb), 'preset', 'instance', NULL, 'read')")) {
+                            + " CAST(? AS jsonb), 'assigned', 'instance', NULL, 'read')")) {
                 insert.setObject(1, subject);
                 insert.setString(2, "[{\"actionClass\":\"cap:workspace:admin\"}]");
                 insert.executeUpdate();
@@ -111,7 +111,7 @@ class CapabilityAtomSeedReadBoundaryTest {
 
             AuthorizationGrant actionRow = new AuthorizationGrant();
             actionRow.setId(UUID.randomUUID());
-            actionRow.setSource(GrantSources.PRESET);
+            actionRow.setSource(GrantSources.ASSIGNED);
             actionRow.setPermissions(MAPPER.readTree("[{\"actionClass\":\"action:read\"}]"));
             Set<GrantIntersectionEvaluator.PermissionAtom> withCap =
                     EVALUATOR.union(List.of(actionRow, rows.get(0)));

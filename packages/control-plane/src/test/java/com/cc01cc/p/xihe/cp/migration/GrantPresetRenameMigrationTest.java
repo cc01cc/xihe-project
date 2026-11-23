@@ -30,6 +30,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * set, so a missed {@code source='role'} row becomes silently inert (deny) instead of failing.
  * This test therefore measures the rows before and after the migration and executes the rollback
  * script on the same real PostgreSQL instance.</p>
+ *
+ * <p><b>task-933: the migration under test is pinned to V182.</b> V186 converts {@code preset} →
+ * {@code assigned} and narrows the CHECK to a set without {@code preset}, so an unpinned
+ * "migrate to head" here would run past its own subject: the {@code preset} assertions would be
+ * false and the {@code role} re-insert would fail V186's CHECK instead of V182's. This file proves
+ * the V182 rename/rollback only; {@code PresetAsTemplateMigrationTest} owns V186.</p>
  */
 @Testcontainers
 class GrantPresetRenameMigrationTest {
@@ -65,12 +71,18 @@ class GrantPresetRenameMigrationTest {
                 + " ('role','spawn','template')"), "fixture: one row per source");
     }
 
-    private void assertUp() throws SQLException {
+    /** Migrates exactly one step (V182) so the assertions below describe V182's own state. */
+    private void migrateThroughV182() {
         Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("182"))
                 .load()
                 .migrate();
+    }
+
+    private void assertUp() throws SQLException {
+        migrateThroughV182();
 
         assertEquals(4, count("SELECT count(*) FROM information_schema.tables WHERE table_schema ="
                 + " 'public' AND table_name IN ('grant_presets', 'grant_preset_atoms',"

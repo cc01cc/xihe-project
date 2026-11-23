@@ -202,7 +202,9 @@ class AuthzGoldenBaselineTest {
             }
             for (GrantIntersectionEvaluator.PermissionAtom atom : grant.atoms()) {
                 atoms.add(new GrantIntersectionEvaluator.GrantAtom(atom.actionClass(), atom.resource(),
-                        grant.id().toString(), GrantSources.SESSION_TEMP));
+                        // task-933: the origin column is assigned-row provenance only; a session
+                        // token (like every non-import source) cites no template.
+                        grant.id().toString(), GrantSources.SESSION_TEMP, null));
             }
         }
         return atoms;

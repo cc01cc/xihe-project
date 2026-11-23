@@ -42,9 +42,12 @@ import java.util.regex.Pattern;
  *       SYSTEM_ROLE_IMMUTABLE}); a role that still has bindings cannot be deleted ({@code 409
  *       ROLE_IN_USE}).</li>
  *   <li><b>Atom changes are materialized in the same transaction</b> through {@link
- *       PresetGrantMaterializer#materializePreset}, which reconciles every holder's {@code source='preset'}
- *       rows, invalidates the capability cache twice (immediate + after completion) and bumps the
- *       epoch of each holder whose set actually changed (I4, R2-19/R2-20).</li>
+ *       PresetGrantMaterializer#materializePreset}</b> — an <b>explicit governance replay</b>
+ *       face only (the 「重新对齐」 button), NOT an edit hook: task-933 / R39 retired the old
+ *       automatic per-edit reconcile, because a preset is a READ-ONLY template (「改预设内容 ⇒
+ *       已导入主体权限不变」). Editing a preset's atoms therefore reconciles NOTHING here; a
+ *       holder's own rows (imported once via {@code source='assigned'} + {@code origin_preset_id})
+ *       are untouched by this call.</li>
  *   <li><b>Authorization is not decided here</b>: the endpoint carries
  *       {@code @PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_ROLES')")} — an action
  *       atom, so it is answered from the grant rows rather than from an authority (decision #23).</li>
@@ -313,12 +316,16 @@ public class GrantPresetAdminService {
             roles.save(role);
         }
         GrantPreset saved = role;
-        int materialized = materializer.materializePreset(saved.getId(), actorUuid(), null);
+        // task-933 / R39: the preset is a read-only template — an edit reconciles NOTHING (no
+        // automatic materializePreset pass over the holders; the governance-replay face is the
+        // 「重新对齐」 button's own call). The audit/measure line keeps counting HOLDERS, which is
+        // now purely descriptive (how many subjects imported this template), not a side effect.
+        long holders = bindings.countByRoleId(saved.getId());
         audit.recordDurableChange(actorId(), null, "access_role_updated", RESOURCE_TYPE,
                 saved.getId().toString(), "name=" + saved.getName() + " atoms="
-                        + describe(effectiveAtoms) + " holders=" + materialized);
-        logger.info("[POLICY] event=access_role_updated role={} atoms={} holders={}", saved.getId(),
-                effectiveAtoms.size(), materialized);
+                        + describe(effectiveAtoms) + " holders=" + holders);
+        logger.info("[POLICY] event=access_role_updated role={} atoms={} holders={} reconciled=false",
+                saved.getId(), effectiveAtoms.size(), holders);
         return toView(saved, effectiveAtoms, bindings.countByRoleId(saved.getId()));
     }
 

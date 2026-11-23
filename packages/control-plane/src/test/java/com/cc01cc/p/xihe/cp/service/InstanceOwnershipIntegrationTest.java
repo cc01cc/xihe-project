@@ -807,12 +807,12 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
 
     /**
      * PLAN-0610 W1a: the materialized set moved from one {@code source='default'} row to one
-     * {@code source='preset'} row per atom, and the Session snapshot lives under
+     * {@code source='assigned'} row per atom, and the Session snapshot lives under
      * {@code source='agent_default'}. The helper therefore aggregates the rows of whichever source
      * the subject type owns, in a stable order, so equal atom sets compare equal.
      */
     private String permissionsOf(String subjectType, UUID subjectId) {
-        String source = "agent".equals(subjectType) ? "agent_default" : "preset";
+        String source = "agent".equals(subjectType) ? "agent_default" : "assigned";
         List<String> rows = jdbc.queryForList("SELECT permissions::text FROM grants WHERE subject_type = ?"
                 + " AND subject_id = ? AND source = ? ORDER BY permissions::text",
                 String.class, subjectType, subjectId, source);
@@ -823,7 +823,7 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0610 W3-3: instance-tier atoms only — a personal workspace now adds workspace-scope
         // rows for the same subject, which the workspace tests count separately.
         return jdbc.queryForObject("SELECT COUNT(*) FROM grants WHERE subject_type = ?"
-                + " AND subject_id = ? AND source = 'preset' AND scope_type = 'instance'",
+                + " AND subject_id = ? AND source = 'assigned' AND scope_type = 'instance'",
                 Integer.class, subjectType, subjectId);
     }
 

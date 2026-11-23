@@ -144,7 +144,7 @@ class CapabilityAuthorityPipelineTest extends AbstractIntegrationTest {
                 "instance:admin covers every workspace (decision #15 / V12)");
 
         List<AuthorizationGrant> rows = grantRepository.findBySubjectTypeAndSubjectIdAndSource(
-                "user", admin.getId(), GrantSources.PRESET);
+                "user", admin.getId(), GrantSources.ASSIGNED);
         assertEquals(PermissionAtomCatalog.actionAtoms().size()
                         + SystemGrantPresetCatalog.mcpCeilingAtoms().size(), rows.size(),
                 "SUPER_ADMIN materializes every action atom plus the mcp:* ceiling rows "

@@ -193,14 +193,14 @@ class WorkspaceAgentCapSourceIntegrationTest extends AbstractReusableIntegration
         return headers;
     }
 
-    /** The materialized role grants of this subject in this workspace (source='preset'). */
+    /** The materialized role grants of this subject in this workspace (source='assigned'). */
     private Set<String> roleGrantAtoms(UUID principalId, UUID workspaceId) {
         // grants.permissions is a jsonb atom array (PresetGrantMaterializer.atomArray), not columns.
         return new HashSet<>(jdbcTemplate.queryForList(
                 "SELECT DISTINCT atom->>'actionClass' FROM grants g,"
                         + " jsonb_array_elements(g.permissions) AS atom"
                         + " WHERE g.subject_type='agent_principal'"
-                        + " AND g.subject_id=CAST(? AS UUID) AND g.source='preset'"
+                        + " AND g.subject_id=CAST(? AS UUID) AND g.source='assigned'"
                         + " AND (g.scope_type='instance' OR (g.scope_type='workspace'"
                         + " AND g.scope_id=CAST(? AS UUID)))",
                 String.class, principalId.toString(), workspaceId.toString()));

@@ -153,7 +153,7 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
                 assertFalse(source.path("grantId").asText().isBlank(),
                         "the durable grant row is addressable for audit: " + source);
                 assertEquals("instance", source.path("scopeType").asText());
-                if ("preset".equals(source.path("source").asText())) {
+                if ("assigned".equals(source.path("source").asText())) {
                     sawRoleSource = true;
                     assertFalse(source.path("roleName").asText().isBlank(),
                             "a role source names the bound role: " + source);
@@ -187,8 +187,9 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
         String actionClass = first.path("actionClass").asText();
         String resource = first.path("resource").asText();
 
-        // A second, non-role grant of the SAME atom. The materializer only reconciles source='preset'
-        // rows, so this template row survives it — exactly the "two sources, one atom" case.
+        // A second, non-role grant of the SAME atom. The materializer only reconciles
+        // source='assigned' rows (task-933/R39), so this template row survives it — exactly
+        // the "two sources, one atom" case.
         String permissions = "[{\"actionClass\":\"" + actionClass + "\",\"resource\":\"" + resource + "\"}]";
         jdbc.update("INSERT INTO grants (id, subject_type, subject_id, permissions, source,"
                 + " template_name, scope_type) VALUES (gen_random_uuid(), 'user', CAST(? AS UUID),"
@@ -212,7 +213,9 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
             boolean role = false;
             boolean template = false;
             for (JsonNode source : grouped.path("sources")) {
-                role |= "preset".equals(source.path("source").asText());
+                // task-933: the materialized row now says `assigned` (V186 converted every
+                // historical `preset` row); the audit label follows the same vocabulary.
+                role |= "assigned".equals(source.path("source").asText());
                 template |= "template".equals(source.path("source").asText());
             }
             assertTrue(role && template, "the audit distinguishes the two provenances: " + grouped);

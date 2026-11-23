@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.GrantExplanation;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.PrincipalLevel;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -181,6 +182,7 @@ class ConditionBaselineKernelTest {
     }
 
     private static GrantAtom atom(String actionClass, String grantId) {
-        return new GrantAtom(actionClass, "*", grantId, "preset");
+        // task-933: the origin column is provenance only; these kernel rows are unattributed.
+        return new GrantAtom(actionClass, "*", grantId, GrantSources.ASSIGNED, null);
     }
 }

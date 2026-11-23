@@ -525,11 +525,15 @@ public class GrantDefaultService {
         grantRepository.saveAndFlush(grant);
     }
 
-    /** Union of the user's instance-scope {@code source='preset'} atoms, frozen into one array. */
+    /**
+     * Union of the user's instance-scope {@code source='assigned'} atoms, frozen into one array.
+     * task-933 / R39: the import rows are {@code assigned} now (V186 converted the historical
+     * {@code preset} rows); reading the retired {@code preset} value would freeze nothing.
+     */
     private ArrayNode instancePresetAtoms(UUID userId) {
         ArrayNode permissions = objectMapper.createArrayNode();
         List<AuthorizationGrant> rows = grantRepository.findScopedGrants(SUBJECT_USER, userId,
-                List.of(PresetGrantMaterializer.SOURCE_PRESET), null);
+                List.of(GrantSources.ASSIGNED), null);
         java.util.Set<String> seen = new java.util.LinkedHashSet<>();
         for (AuthorizationGrant row : rows) {
             for (JsonNode atom : row.getPermissions()) {

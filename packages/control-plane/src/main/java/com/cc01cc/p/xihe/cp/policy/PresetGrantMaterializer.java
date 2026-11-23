@@ -30,12 +30,17 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * PLAN-0610 T1.5: materializes 「主体 × 作用域」 role bindings into {@code grants(source='preset')}.
+ * PLAN-0610 T1.5 / task-933 R39: materializes 「主体 × 作用域」 preset bindings into
+ * {@code grants(source='assigned')} rows carrying {@code origin_preset_id}.
  *
- * <p>Replaces {@code GrantDefaultService}'s hard-coded default sets: the atom set of a subject is
- * now the <b>union of the permissions of every role bound to it, per scope</b>, and the result is
- * written as one {@code grants} row per atom carrying the same {@code scope_type/scope_id} as the
- * binding (design #14). Evaluation then stays a one-hop read
+ * <p>Replaces {@code GrantDefaultService}'s hard-coded default sets. R39 (D-1926, user ruling
+ * 2026-11-23) demotes the preset to a <b>read-only template</b>: a binding imports the preset's
+ * atoms once and every subject may then fine-tune independently; editing a preset never rewrites
+ * its holders here (the old automatic {@code materializeSubject} pass on every binding change was
+ * exactly the binding R39 forbids — 「改预设内容 ⇒ 已导入主体权限不变」 is what
+ * {@code PresetAsTemplateTest} pins). The result is written as one {@code grants} row per atom
+ * carrying the same {@code scope_type/scope_id} as the binding plus the {@code origin_preset_id}
+ * it came from (design #14). Evaluation then stays a one-hop read
  * ({@code AuthorizationGrantRepository#findScopedGrants}).</p>
  *
  * <p>Invariants enforced here:</p>
@@ -49,10 +54,18 @@ import java.util.UUID;
  *   <li><b>Atom shape is validated</b> through
  *       {@link GrantIntersectionEvaluator.PermissionAtom}, so an unknown action class or a
  *       non-canonical credential resource fails closed instead of poisoning every evaluation.</li>
- *   <li><b>One row per atom</b> (round-2 P1-2), guarded by {@code uq_grants_role_atom}.</li>
- *   <li>Only {@code source='preset'} rows of this subject are reconciled — {@code spawn},
+ *   <li><b>One row per atom</b> (round-2 P1-2), guarded by {@code uq_grants_role_atom} (its V186
+ *       predicate reads {@code source='assigned'}).</li>
+ *   <li><b>Reconciliation is per import group</b> (task-933): a row is only deleted when its own
+ *       {@code origin_preset_id} group is still bound and no longer carries the atom. A row with a
+ *       {@code NULL} origin (manual / migration-unattributable legacy rows) is local work and is
+ *       never removed by a group rewrite — that is what keeps 「导入后每个主体可独立微调」true: a
+ *       later binding change cannot resurrect an atom the subject deleted, and cannot wipe one it
+ *       added.</li>
+ *   <li>Only {@code source='assigned'} rows of this subject are reconciled — {@code spawn},
  *       {@code template}, {@code credential_binding} and the frozen {@code agent_default}
- *       snapshot are owner-written and never touched (P1-1).</li>
+ *       snapshot are owner-written and never touched (P1-1). {@code source='preset'} rows are
+ *       historical (V186 converted every persisted one; the CHECK no longer accepts the value).</li>
  * </ul>
  *
  * <p>Single transaction: the binding write, the materialization and the caller's
@@ -65,9 +78,23 @@ public class PresetGrantMaterializer {
 
     private static final Logger logger = LoggerFactory.getLogger(PresetGrantMaterializer.class);
 
-    public static final String SOURCE_PRESET = "preset";
+    /**
+     * task-933: new writes carry {@link GrantSources#ASSIGNED}; the historical {@code preset}
+     * value ({@link GrantSources#PRESET}) stays in the provenance vocabulary only — nothing
+     * writes it anymore (V186 converted every persisted row), so the materializer exports the
+     * write value here and never the retired one.
+     */
+    public static final String SOURCE_ASSIGNED = GrantSources.ASSIGNED;
 
     private static final String READ_STATE_READ = "read";
+
+    /**
+     * task-933: sentinel key for the {@code NULL} origin group. {@code Map.entry} rejects null,
+     * and a group key may never collide with a real binding id — a random id generated once per
+     * class load cannot equal a persisted UUID (collision probability ~0, and a collision would
+     * only merge two import groups for one reconcile pass, never widen an authority).
+     */
+    private static final UUID UNATTRIBUTED_ORIGIN = new UUID(0L, -1L);
 
     /** Counts of one reconciliation run; a no-op run returns all zeros and writes no audit row. */
     public record Result(int created, int deleted, int scopes) {
@@ -104,7 +131,12 @@ public class PresetGrantMaterializer {
         this.objectMapper = objectMapper;
     }
 
-    /** Recomputes the subject's {@code source='preset'} rows for every bound scope. */
+    /**
+     * <b>Import hook</b> (task-933 / R39): applies every preset bound to the subject — once per
+     * preset, each carrying its {@code origin_preset_id} — and reconciles only those import groups.
+     * Editing a preset later does NOT come back through here (the automatic per-edit reconcile
+     * this card retired); {@link #materializePreset} is the explicit replay face.
+     */
     @Transactional
     public Result materializeSubject(String subjectType, UUID subjectId, UUID actorUserId,
                                      String auditWorkspaceId) {
@@ -114,15 +146,88 @@ public class PresetGrantMaterializer {
         List<GrantPresetBinding> bindings = bindingRepository
                 .findBySubjectTypeAndSubjectId(subjectType, subjectId);
 
+        Result result = reconcile(subjectType, subjectId,
+                desiredByScopeAndOrigin(bindings), actorUserId, auditWorkspaceId);
+        if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
+            invalidateNowAndAfterCompletion(subjectId);
+        }
+        return result;
+    }
+
+    /**
+     * task-933: the import-group desired set of one subject — {@code (scope, atom) -> the set of
+     * import-group ids that imported it}. Extracted from {@link #materializeSubject} so the
+     * 「与预设对比」 face reads exactly the set a replay would write, without touching the write
+     * path (pair it with {@link #desiredPresetSet}, which answers the same shape for the preset). An empty scope key is dropped:
+     * a scope with no desired atom has nothing to display against.
+     *
+     * <p>The import group is the <b>preset id</b>, not the {@code grant_preset_bindings} row id.
+     * V87's {@code uq_role_bindings} allows one binding per (role, subject, scope), so a preset id
+     * is already a unique group key per scope, and the two views then coincide. Choosing it is what
+     * makes {@code grants.origin_preset_id} mean what its name says: a display face can resolve the
+     * cited template, and an unbind/rebind of the same preset keeps attributing the same row
+     * instead of stranding it as unattributed local work (which would be a revoke the product
+     * silently never performs).</p>
+     */
+    public Map<AccessScope, Map<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>>>
+            desiredByScopeAndOrigin(List<GrantPresetBinding> bindings) {
         Set<UUID> roleIds = new LinkedHashSet<>();
-        Map<AccessScope, Set<UUID>> rolesByScope = new LinkedHashMap<>();
+        Map<AccessScope, Map<UUID, Set<UUID>>> grouped = new LinkedHashMap<>();
         for (GrantPresetBinding binding : bindings) {
             AccessScope scope = bindingScope(binding);
             roleIds.add(binding.getRoleId());
-            rolesByScope.computeIfAbsent(scope, ignored -> new LinkedHashSet<>())
+            grouped.computeIfAbsent(scope, ignored -> new LinkedHashMap<>())
+                    .computeIfAbsent(binding.getRoleId(), ignored -> new LinkedHashSet<>())
                     .add(binding.getRoleId());
         }
+        return desiredOf(roleIds, grouped);
+    }
 
+    /**
+     * task-933 ④ (治理面「与预设对比」): the preset's OWN desired set — {@code (scope, atom) ->
+     * the import-group (preset) ids that would import it}. Reading the preset's atoms through exactly the same
+     * {@link #materializableAtom} projection a replay uses, so a compare never displays a set the
+     * replay would not write. An orphaned scope key (a binding whose row is gone) is dropped.
+     */
+    public Map<AccessScope, Map<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>>>
+            desiredPresetSet(UUID presetId) {
+        if (presetId == null) {
+            throw new IllegalArgumentException("presetId is required");
+        }
+        Set<UUID> roleIds = new LinkedHashSet<>();
+        Map<AccessScope, Map<UUID, Set<UUID>>> grouped = new LinkedHashMap<>();
+        for (GrantPresetBinding binding : bindingRepository.findByRoleId(presetId)) {
+            roleIds.add(presetId);
+            grouped.computeIfAbsent(bindingScope(binding), ignored -> new LinkedHashMap<>())
+                    .computeIfAbsent(presetId, ignored -> new LinkedHashSet<>())
+                    .add(presetId);
+        }
+        return desiredOf(roleIds, grouped);
+    }
+
+    /**
+     * task-933 ③ (治理面「批量重放」): replay one preset onto EVERY subject bound to it, in one
+     * governance transaction. This is the explicit face the R39 retired the automatic hook for:
+     * a preset EDIT never calls it (「改预设内容 ⇒ 已导入主体权限不变」); only an operator does.
+     * Each holder realigns within its OWN import groups (the per-holder
+     * {@link #materializeSubject} pass behind {@link #materializePreset}).
+     */
+    @Transactional
+    public int replayPresetToAll(UUID presetId, UUID actorUserId, String auditWorkspaceId) {
+        if (presetId == null) {
+            throw new IllegalArgumentException("presetId is required");
+        }
+        return materializePreset(presetId, actorUserId, auditWorkspaceId);
+    }
+
+    /**
+     * The shared projection core: role ids + the {@code scope -> (roleId -> binding ids)} view
+     * of an import set, projected through {@link #materializableAtom} exactly like the write
+     * path. Both {@link #desiredByScopeAndOrigin} and {@link #desiredPresetSet} run through it
+     * so a compare can never disagree with a replay.
+     */
+    private Map<AccessScope, Map<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>>>
+            desiredOf(Set<UUID> roleIds, Map<AccessScope, Map<UUID, Set<UUID>>> grouped) {
         Map<UUID, List<GrantPresetAtom>> permissionsByRole = new HashMap<>();
         if (!roleIds.isEmpty()) {
             for (GrantPresetAtom permission : permissionRepository.findByIdRoleIdIn(roleIds)) {
@@ -131,26 +236,33 @@ public class PresetGrantMaterializer {
             }
         }
 
-        Map<AccessScope, Set<GrantIntersectionEvaluator.PermissionAtom>> desired = new LinkedHashMap<>();
-        for (Map.Entry<AccessScope, Set<UUID>> entry : rolesByScope.entrySet()) {
-            Set<GrantIntersectionEvaluator.PermissionAtom> atoms = new LinkedHashSet<>();
-            for (UUID roleId : entry.getValue()) {
-                for (GrantPresetAtom permission : permissionsByRole.getOrDefault(roleId, List.of())) {
+        // (atom, originGroupId) — the import group is part of the identity: the same atom imported
+        // from two presets stays two rows (per-group reconcile, V186 key) so one group's rewrite
+        // never deletes another group's local fine-tune.
+        Map<AccessScope, Map<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>>> desired =
+                new LinkedHashMap<>();
+        for (Map.Entry<AccessScope, Map<UUID, Set<UUID>>> entry : grouped.entrySet()) {
+            Map<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>> byAtom =
+                    new LinkedHashMap<>();
+            for (Map.Entry<UUID, Set<UUID>> group : entry.getValue().entrySet()) {
+                for (GrantPresetAtom permission
+                        : permissionsByRole.getOrDefault(group.getKey(), List.of())) {
                     GrantIntersectionEvaluator.PermissionAtom atom =
                             materializableAtom(permission, entry.getKey());
-                    if (atom != null) {
-                        atoms.add(atom);
+                    if (atom == null) {
+                        continue;
+                    }
+                    for (UUID groupId : group.getValue()) {
+                        byAtom.computeIfAbsent(atom, ignored -> new LinkedHashSet<>())
+                                .add(groupId);
                     }
                 }
             }
-            desired.put(entry.getKey(), atoms);
+            if (!byAtom.isEmpty()) {
+                desired.put(entry.getKey(), byAtom);
+            }
         }
-
-        Result result = reconcile(subjectType, subjectId, desired, actorUserId, auditWorkspaceId);
-        if (AuthzContext.SUBJECT_USER.equals(subjectType)) {
-            invalidateNowAndAfterCompletion(subjectId);
-        }
-        return result;
+        return desired;
     }
 
     /**
@@ -174,14 +286,17 @@ public class PresetGrantMaterializer {
     }
 
     /**
-     * Re-materializes every subject bound to one role (role permission change).
+     * Replays one preset onto every subject bound to it — an <b>explicit governance act</b>
+     * (the 「重新对齐」 face), not an edit hook.
      *
-     * <p>PLAN-0610 W1c (round-3 P1-2): a role edit changes what its holders may do, so every
-     * affected <b>user</b> subject also gets a {@code users.token_version} bump — the same epoch
-     * semantics {@code UserRoleService} uses for a tier change (I4). Without it an access token
-     * issued before the edit keeps authenticating for its remaining TTL even though the rows
-     * behind it changed. The bump happens only when the subject's materialized set actually
-     * changed, so a no-op re-materialization does not log anybody out.</p>
+     * <p>task-933 / R39: a preset edit no longer rewrites its holders automatically (the old
+     * per-edit reconcile was exactly the binding R39 forbids). Replaying is a deliberate act: it
+     * brings every holder back to the preset's current set <b>within each holder's own import
+     * groups</b> (the {@code materializeSubject} pass) — locally added atoms survive, atoms the
+     * holder deleted come back, and every
+     * touched <b>user</b> subject gets a {@code users.token_version} bump (I4) because a replay IS
+     * an authorization change. The bump happens only when the subject's set actually changed, so a
+     * no-op replay does not log anybody out.</p>
      */
     @Transactional
     public int materializePreset(UUID roleId, UUID actorUserId, String auditWorkspaceId) {
@@ -286,11 +401,11 @@ public class PresetGrantMaterializer {
         });
     }
 
-    /** Drops every {@code source='preset'} row of a subject (subject deletion / binding wipe). */
+    /** Drops every {@code source='assigned'} row of a subject (subject deletion / binding wipe). */
     @Transactional
     public int clearSubject(String subjectType, UUID subjectId) {
         List<AuthorizationGrant> existing = grantRepository
-                .findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId, SOURCE_PRESET);
+                .findBySubjectTypeAndSubjectIdAndSource(subjectType, subjectId, SOURCE_ASSIGNED);
         if (!existing.isEmpty()) {
             grantRepository.deleteAll(existing);
         }
@@ -300,14 +415,25 @@ public class PresetGrantMaterializer {
         return existing.size();
     }
 
+    /**
+     * Reconciles per <b>import group</b>: the identity of a reconciled row is
+     * {@code (scope, atom, originGroupId)}. A row only leaves the table when its own group is
+     * still bound and no longer carries the atom — an ungrouped {@code NULL}-origin row (manual,
+     * or a legacy row V186 could not attribute) is local work and survives every group rewrite,
+     * and one group's rewrite can never delete another group's fine-tune. That is the R39
+     * 「导入后每个主体可独立微调」 contract at the row level.
+     */
     private Result reconcile(String subjectType, UUID subjectId,
-                             Map<AccessScope, Set<GrantIntersectionEvaluator.PermissionAtom>> desired,
+                             Map<AccessScope,
+                                 Map<GrantIntersectionEvaluator.PermissionAtom,
+                                    Set<UUID>>> desired,
                              UUID actorUserId, String auditWorkspaceId) {
-        Map<AccessScope, Map<GrantIntersectionEvaluator.PermissionAtom, AuthorizationGrant>> existing =
-                new HashMap<>();
+        // (scope, atom, originGroupId) -> row
+        Map<AccessScope, Map<Map.Entry<GrantIntersectionEvaluator.PermissionAtom, UUID>,
+                AuthorizationGrant>> existing = new HashMap<>();
         List<AuthorizationGrant> malformed = new ArrayList<>();
         for (AuthorizationGrant grant : grantRepository.findBySubjectTypeAndSubjectIdAndSource(
-                subjectType, subjectId, SOURCE_PRESET)) {
+                subjectType, subjectId, SOURCE_ASSIGNED)) {
             AccessScope scope = grantScope(grant);
             // task-895: a capability-family row in `grants` cannot match a desired action atom; it
             // is dropped (and the row rewritten), never allowed to fail the whole reconciliation.
@@ -319,8 +445,17 @@ public class PresetGrantMaterializer {
                 malformed.add(grant);
                 continue;
             }
+            // task-933: an unattributed historical row (origin NULL — V186 backfills the id only
+            // when the (subject, scope, atom) matches exactly one preset) is pinned to the NULL
+            // group, which no desired set ever contains: it is local work and survives while its
+            // atom IS desired elsewhere (the re-import under the same origin would otherwise
+            // duplicate the uq_grants_role_atom key).
+            Map.Entry<GrantIntersectionEvaluator.PermissionAtom, UUID> key = Map.entry(
+                    atoms.iterator().next(),
+                    grant.getOriginPresetId() == null ? UNATTRIBUTED_ORIGIN
+                            : grant.getOriginPresetId());
             existing.computeIfAbsent(scope, ignored -> new HashMap<>())
-                    .put(atoms.iterator().next(), grant);
+                    .put(key, grant);
         }
 
         List<AuthorizationGrant> toDelete = new ArrayList<>(malformed);
@@ -329,19 +464,39 @@ public class PresetGrantMaterializer {
         scopes.addAll(desired.keySet());
         scopes.addAll(existing.keySet());
         for (AccessScope scope : scopes) {
-            Map<GrantIntersectionEvaluator.PermissionAtom, AuthorizationGrant> current =
+            Map<Map.Entry<GrantIntersectionEvaluator.PermissionAtom, UUID>, AuthorizationGrant> current =
                     existing.getOrDefault(scope, Map.of());
-            Set<GrantIntersectionEvaluator.PermissionAtom> wanted =
-                    desired.getOrDefault(scope, Set.of());
-            for (Map.Entry<GrantIntersectionEvaluator.PermissionAtom, AuthorizationGrant> row
+            Map<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>> wanted =
+                    desired.getOrDefault(scope, Map.of());
+            for (Map.Entry<Map.Entry<GrantIntersectionEvaluator.PermissionAtom, UUID>,
+                    AuthorizationGrant> row
                     : current.entrySet()) {
-                if (!wanted.contains(row.getKey())) {
+                // task-933: a NULL-origin row (manual / migration-unattributable) is LOCAL work —
+                // no import group ever owns it, so no group rewrite may delete it.
+                // The map key holds the UNATTRIBUTED_ORIGIN sentinel, never a literal null, so
+                // the guard MUST compare against the sentinel: a `!= null` test is always true and
+                // would let one group's rewrite wipe a manual grant (breaking 「导入后每个主体可
+                // 独立微调」 and re-adding it on the next import).
+                if (!UNATTRIBUTED_ORIGIN.equals(row.getKey().getValue())
+                        && !wanted.getOrDefault(row.getKey().getKey(), Set.of())
+                                .contains(row.getKey().getValue())) {
                     toDelete.add(row.getValue());
                 }
             }
-            for (GrantIntersectionEvaluator.PermissionAtom atom : wanted) {
-                if (!current.containsKey(atom)) {
-                    toCreate.add(newGrant(subjectType, subjectId, scope, atom, actorUserId));
+            for (Map.Entry<GrantIntersectionEvaluator.PermissionAtom, Set<UUID>> entry
+                    : wanted.entrySet()) {
+                // task-933 / V186: uq_grants_role_atom now carries origin_preset_id in its key,
+                // so the same atom under a SECOND import group is a DISTINCT row, not a 23505 —
+                // the create pass keys on the exact (atom, group) pair and nothing else. An
+                // atom another group holds therefore never blocks restoring this group's copy
+                // (「重新对齐恢复预设集合」), and one group's rewrite can never have deleted
+                // that other group's fine-tune (the delete pass above keeps it).
+                for (UUID originGroupId : entry.getValue()) {
+                    if (current.containsKey(Map.entry(entry.getKey(), originGroupId))) {
+                        continue;
+                    }
+                    toCreate.add(newGrant(subjectType, subjectId, scope, entry.getKey(),
+                            originGroupId, actorUserId));
                 }
             }
         }
@@ -399,7 +554,7 @@ public class PresetGrantMaterializer {
 
     private AuthorizationGrant newGrant(String subjectType, UUID subjectId, AccessScope scope,
                                         GrantIntersectionEvaluator.PermissionAtom atom,
-                                        UUID actorUserId) {
+                                        UUID originPresetId, UUID actorUserId) {
         AuthorizationGrant grant = new AuthorizationGrant();
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(subjectType);
@@ -408,7 +563,8 @@ public class PresetGrantMaterializer {
             grant.setGranterType(AuthzContext.SUBJECT_USER);
             grant.setGranterId(actorUserId);
         }
-        grant.setSource(SOURCE_PRESET);
+        grant.setSource(SOURCE_ASSIGNED);
+        grant.setOriginPresetId(originPresetId == UNATTRIBUTED_ORIGIN ? null : originPresetId);
         grant.setScopeType(scope.type());
         grant.setScopeId(scope.isInstance() ? null : scope.id());
         grant.setReadState(READ_STATE_READ);

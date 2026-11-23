@@ -181,7 +181,7 @@ class AgentCredentialAtomForbiddenTest extends AbstractReusableIntegrationTest {
             grant.setGranterId(creator.getId());
             grant.setSubjectType("agent_principal");
             grant.setSubjectId(saved.getId());
-            grant.setSource("preset");
+            grant.setSource("assigned");
             grant.setReadState("read");
             grant.setPermissions(objectMapper.readTree(
                     "[{\"actionClass\":\"" + actionClass + "\",\"resource\":\"*\"}]"));

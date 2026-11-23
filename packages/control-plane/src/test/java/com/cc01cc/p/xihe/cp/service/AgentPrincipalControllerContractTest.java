@@ -282,7 +282,7 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
 
     /**
      * W1c: the caller ceiling is seeded the post-W1 way — a test-only role bound at instance scope
-     * and materialized into {@code grants(source='preset')}.
+     * and materialized into {@code grants(source='assigned')}.
      *
      * <p>The previous helper wrote a {@code source='direct'} row, which the authorization gates no
      * longer read ({@code GrantSources.EVALUATION_SOURCES} excludes the retired sources). Keeping the

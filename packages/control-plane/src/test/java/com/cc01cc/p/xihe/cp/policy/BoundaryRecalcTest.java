@@ -113,7 +113,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
 
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "assigned", null, null,
                 atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read", "write", "SPAWN_AGENT"));
         Session session = saveAgentSession(workspaceId, userId, "Boundary recalc agent",
@@ -123,7 +123,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         assertFalse(gateAllowsSpawn(session, spawnBody),
                 "I4（仅工具调用边界重算）：主体默认权限集不含 SPAWN_AGENT 时，工具调用边界必须拒绝");
 
-        UUID appended = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset",
+        UUID appended = addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "assigned",
                 "user", UUID.fromString(userId), atoms("SPAWN_AGENT"));
         assertTrue(gateAllowsSpawn(session, spawnBody),
                 "I4（追加授权下一工具生效）：追加 direct grant 后的下一次工具调用必须放行");
@@ -149,7 +149,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principalId = agentPrincipalRepository.saveAndFlush(principal).getId();
 
-        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "preset", null, null,
+        addGrant(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "assigned", null, null,
                 atoms("read", "write"));
         bindPrincipal(workspaceId, atoms("read"));
         Session session = saveAgentSession(workspaceId, userId, "Boundary recalc cap agent",

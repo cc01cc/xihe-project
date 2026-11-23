@@ -364,6 +364,77 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     /**
+     * task-933 / R39 反证①（真实 PostgreSQL，服务写路径）：改预设内容 ⇒ 已导入主体的权限**不变**。
+     *
+     * <p>Pre-R39 {@code PATCH /api/v1/presets/{id}} ended with {@code materializePreset}, which
+     * rewrote every holder's rows — exactly the binding R39 forbids ("预设 = 只读模板、无约束力").
+     * The edit now only changes the template rows. Proof at this seam, not the unit mock: after a
+     * real edit that ADDS an atom, the holder's {@code assigned} rows are byte-identical (same
+     * count, same ids, same {@code origin_preset_id}), and the added atom is NOT held — because
+     * {@code grants}, not the preset, is the evaluation source.</p>
+     *
+     * <p>Then the explicit governance replay ({@code materializePreset}) is what an operator uses
+     * to realign: it brings the new atom in, and every touched row still says {@code assigned} —
+     * the retired axis can never come back through a write.</p>
+     */
+    @Test
+    void editingAPresetLeavesItsHoldersUntouchedUntilAnExplicitReplay() throws Exception {
+        String superToken = superAdmin("template-edit-admin@test.com");
+        String readerRoleId = createRole(superToken, "TEMPLATE_EDIT_PROBE", List.of("read"));
+        String subjectId = userIdOf(register("template-edit-subject@test.com"));
+        grantInstanceRole(subjectId, "USER");
+        assertEquals(HttpStatus.OK, appendInstanceBinding(superToken, subjectId, readerRoleId)
+                .getStatusCode());
+
+        List<String> rowsBefore = grantRowFingerprints(subjectId);
+        assertFalse(rowsBefore.isEmpty(), "the import wrote assigned rows to begin with");
+        assertTrue(rowsBefore.stream().allMatch(row -> row.contains("|assigned|")),
+                "every materialized row is `assigned` before the edit: " + rowsBefore);
+        assertFalse(requesterAuthority.holdsActionAtom(UUID.fromString(subjectId),
+                        ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
+                "the holder does not hold MANAGE_ROLES yet (the template does not carry it; USER never does either)");
+
+        // The template changes: exec is ADDED. Under R39 this must not touch a single holder row.
+        ResponseEntity<String> edited = call(HttpMethod.PATCH, "/api/v1/presets/" + readerRoleId,
+                Map.of("atoms", List.of("read", "MANAGE_ROLES")), superToken);
+        assertEquals(HttpStatus.OK, edited.getStatusCode(), edited.getBody());
+        assertTrue(texts(objectMapper.readTree(edited.getBody()).path("atoms"))
+                        .contains(AtomNames.action("exec")),
+                "the template itself really changed (otherwise this test proves nothing)");
+
+        assertEquals(rowsBefore, grantRowFingerprints(subjectId),
+                "R39: editing a read-only template rewrites NO holder row");
+        assertFalse(requesterAuthority.holdsActionAtom(UUID.fromString(subjectId),
+                        ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
+                "the holder's verdict is unchanged: the preset is not an evaluation axis");
+
+        // The explicit 「重新对齐」 face: a replay is what moves the holder, and it stays `assigned`.
+        materializer.replayPresetToAll(UUID.fromString(readerRoleId), UUID.fromString(userIdOf(superToken)),
+                null);
+        authzContext.invalidate(UUID.fromString(subjectId));
+
+        List<String> rowsAfterReplay = grantRowFingerprints(subjectId);
+        assertTrue(rowsAfterReplay.size() > rowsBefore.size(),
+                "the replay is what adds the atom, not the edit");
+        assertTrue(rowsAfterReplay.stream().allMatch(row -> row.contains("|assigned|")),
+                "a realigned row still says `assigned`, never the retired `preset`: " + rowsAfterReplay);
+        assertTrue(requesterAuthority.holdsActionAtom(UUID.fromString(subjectId),
+                        ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
+                "after an explicit replay the holder does hold the template's new atom");
+    }
+
+    /** {@code (id, source, origin_preset_id, atom)} of a subject's assigned rows, sorted. */
+    private List<String> grantRowFingerprints(String subjectId) {
+        return jdbc.queryForList("SELECT g.id || '|' || g.source || '|' "
+                        + "|| COALESCE(g.origin_preset_id::text, '-') || '|' "
+                        + "|| g.permissions #>> '{0,actionClass}' || '@' "
+                        + "|| COALESCE(g.permissions #>> '{0,resource}', '*') AS fp "
+                        + "FROM grants g WHERE g.subject_type = 'user'"
+                        + " AND g.subject_id = CAST(? AS UUID) AND g.source = 'assigned'"
+                        + " ORDER BY fp", String.class, subjectId);
+    }
+
+    /**
      * BL-394: the service pattern must be the V87 {@code ck_roles_name_format} pattern. Names the
      * old looser pattern accepted (lowercase, dot, hyphen, leading digit, wrong length) used to
      * reach the INSERT and answer 500 INTERNAL_ERROR; the service now refuses them as field-level
@@ -931,12 +1002,17 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     /**
      * task-895: the raw-SQL materialization shape used by the e2e grant helper — it copies
      * {@code grant_preset_atoms} without the capability filter the Java materializer applies.
+     *
+     * <p>task-933: the row must say {@code assigned}, not the retired {@code preset}. With
+     * {@code PRESET} out of {@link GrantSources#EVALUATION_SOURCES} (and out of V186's CHECK), a
+     * {@code preset} fixture is never read by the evaluator at all, so this case would pass
+     * vacuously instead of proving that a capability row is inert on the read path.</p>
      */
     private void insertCapabilityGrantRow(String subjectId) {
         jdbc.update("INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id,"
                         + " permissions, source, scope_type, scope_id, read_state)"
                         + " VALUES (gen_random_uuid(), NULL, NULL, 'user', CAST(? AS UUID),"
-                        + " CAST(? AS jsonb), 'preset', 'instance', NULL, 'read')",
+                        + " CAST(? AS jsonb), 'assigned', 'instance', NULL, 'read')",
                 subjectId, "[{\"actionClass\":\"cap:workspace:admin\"}]");
     }
 
@@ -988,14 +1064,20 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
         return putBindings(token, "instance", null, desired);
     }
 
-    /** Materialized role atoms of one scope (`scopeId` null = every workspace of that type). */
+    /**
+     * Materialized atoms of one scope (`scopeId` null = every workspace of that type).
+     *
+     * <p>task-933 / R39: {@code assigned} is the source a materialization writes now. Counting the
+     * retired {@code preset} would read an always-empty set — every assertion below would pass for
+     * the wrong reason (0 == 0).</p>
+     */
     private int grantRows(String subjectId, String scopeType, String scopeId) {
         return countRows("SELECT COUNT(*) FROM grants WHERE subject_id = CAST(? AS UUID)"
                         + " AND source = ? AND scope_type = ?"
                         + (scopeId == null ? "" : " AND scope_id = CAST(? AS UUID)"),
                 scopeId == null
-                        ? new Object[] {subjectId, "preset", scopeType}
-                        : new Object[] {subjectId, "preset", scopeType, scopeId});
+                        ? new Object[] {subjectId, GrantSources.ASSIGNED, scopeType}
+                        : new Object[] {subjectId, GrantSources.ASSIGNED, scopeType, scopeId});
     }
 
     /** Instance-scope binding rows of one subject (workspace memberships excluded). */

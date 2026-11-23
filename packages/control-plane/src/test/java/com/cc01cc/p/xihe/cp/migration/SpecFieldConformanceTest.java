@@ -61,10 +61,15 @@ class SpecFieldConformanceTest extends AbstractReusableIntegrationTest {
         // binding-scoped hold), so the constraint of record is now six values — exactly
         // GrantSources.WRITABLE_SOURCES, compared element-wise by PluginBindingGrantSourceMigrationTest.
         // The retired `default`/`direct` values remain excluded: they are not evaluation sources.
-        assertEquals(Set.of("preset", "spawn", "template", "credential_binding", "agent_default",
+        // task-933 / R39 (V186): `preset` left the constraint and `assigned` took its place — a
+        // materialized atom is now ONE import of a read-only template, so the persisted value
+        // changed too (leaving `preset` accepted while GrantSources drops it from evaluation is the
+        // split-half silent-DENY trap this assertion exists to catch). `preset` stays a provenance
+        // label only (GrantSources.PROVENANCE_SOURCES), which is why it must NOT appear here.
+        assertEquals(Set.of("assigned", "spawn", "template", "credential_binding", "agent_default",
                         "plugin_binding"),
                 checkAllowedValues("ck_grants_source"),
-                "PLAN-0691 V139: GrantSources.WRITABLE_SOURCES — V88's five plus plugin_binding");
+                "V186: GrantSources.WRITABLE_SOURCES — assigned replaced the retired preset");
 
         // PLAN-0610 V88: the V38/V65 legacy fences are dropped once their rows are converted; the
         // V87 per-source successors below are the constraints of record.

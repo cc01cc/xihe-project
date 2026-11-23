@@ -83,14 +83,14 @@ class PresetMaterializationEpochTest extends AbstractH2Test {
         materializer.materializeSubject("user", user.getId(), user.getId(), null);
         int epoch = tokenVersion(user.getId());
         assertEquals(1, grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", user.getId(),
-                GrantSources.PRESET).size());
+                GrantSources.ASSIGNED).size());
 
         // The role loses its only atom: the materialized row disappears and the epoch moves.
         permissionRepository.delete(read);
         materializer.materializePreset(roleId, null, null);
 
         assertTrue(grantRepository.findBySubjectTypeAndSubjectIdAndSource("user", user.getId(),
-                GrantSources.PRESET).isEmpty(), "the revoked atom is no longer materialized");
+                GrantSources.ASSIGNED).isEmpty(), "the revoked atom is no longer materialized");
         assertEquals(epoch + 1, tokenVersion(user.getId()),
                 "a change produced by a role edit bumps users.token_version (I4 / V17)");
 

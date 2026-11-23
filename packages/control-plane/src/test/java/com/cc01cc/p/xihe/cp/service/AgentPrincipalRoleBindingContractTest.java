@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The property that matters most is not "the row is written" but "the agent's capability changed
  * in the same transaction". That is why every write case also asserts the materialized
- * {@code grants(source='preset')} rows: a later or async materialization would pass a row-count test
+ * {@code grants(source='assigned')} rows: a later or async materialization would pass a row-count test
  * and still leave the agent unauthorized for its next session (the failure mode PLAN-0660 hit from
  * the other side).</p>
  */

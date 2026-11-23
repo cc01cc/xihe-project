@@ -46,7 +46,7 @@ public final class PresetAtomExpectations {
         return atoms;
     }
 
-    /** Number of {@code source='preset'} rows one binding of that role materializes. */
+    /** Number of {@code source='assigned'} rows one binding of that role materializes. */
     public static int materializedAtomCount(String roleName) {
         return materializedAtoms(roleName).size();
     }

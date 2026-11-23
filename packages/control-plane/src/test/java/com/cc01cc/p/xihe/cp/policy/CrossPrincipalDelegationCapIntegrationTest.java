@@ -261,7 +261,7 @@ class CrossPrincipalDelegationCapIntegrationTest extends AbstractReusableIntegra
         grant.setId(UUID.randomUUID());
         grant.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
         grant.setSubjectId(principal);
-        grant.setSource(GrantSources.PRESET);
+        grant.setSource(GrantSources.ASSIGNED);
         grant.setPermissions(permissions);
         grantIds.add(grantRepository.saveAndFlush(grant).getId());
     }
