@@ -41,8 +41,10 @@ const selectedKey = ref<string | null>(null);
  *   <li>每层补 <b>1px 引导线</b>（--border），落在**祖先缩进带的中点**
  *       （8 + i*24 + 12 ⇒ 20 / 44 / …），让「谁是谁的子节点」不再只靠文字起点差。</li>
  * </ul>
- * <p>引导线绝对定位在 label 内、pointer-events-none，行首底色与 chevron 列都不受影响
- * （与 task-33「缩进挂 label、不包容器」同一约束）。</p>
+ * <p>引导线绝对定位在行内、pointer-events-none，行首底色不受影响。</p>
+ *
+ * <p>task-922 B（用户截图）：缩进改挂在**整行**（`TreeItem` 的 paddingLeft），chevron 与文字
+ * 一起右移 —— task-33 只缩 label 时折叠箭头逐行对齐，用户读不出层级。行背景仍铺满整行。</p>
  */
 const INDENT_STEP = 24;
 const INDENT_BASE = 8;
@@ -54,7 +56,7 @@ const INDENT_BASE = 8;
 const indentOf = (level: number) => INDENT_BASE + (level - 1) * INDENT_STEP;
 /**
  * 引导线偏移（task-135）：第 level 层有 level - 1 条线，第 i 条（0 基）落在**第 i 层缩进带的中点**。
- * 8 + i*24 + 12 ⇒ level 2 = [20]，level 3 = [20, 44]，与 label 的 padding-left（8 / 32 / 56）同源同常量，
+ * 8 + i*24 + 12 ⇒ level 2 = [20]，level 3 = [20, 44]，与行 padding-left（8 / 32 / 56）同源同常量，
  * 模板里不出现 20/44 字面量（单测钉的就是这个同源关系）。
  */
 const guideLinesOf = (level: number) =>
@@ -267,12 +269,28 @@ function retryChildren(item: OrgTreeItem) {
                         v-slot="{ isExpanded, handleToggle, handleSelect }"
                         v-bind="fi.bind"
                         :data-testid="'org-tree-node-' + fi.value.key"
-                        class="flex min-h-8 w-full items-center gap-1 rounded-md px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 data-[selected]:bg-accent"
+                        class="relative flex min-h-8 w-full items-center gap-1 rounded-md px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 data-[selected]:bg-accent"
+                        :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                     >
+                        <!--
+                            task-922 B（用户截图：`默认组织` / `负责人组` / `执行组` 的箭头左缘同一 x）：
+                            缩进必须作用在**整行内容起点**（chevron 与文字一起右移）。task-33 只缩
+                            label、chevron 钉死在行首 ⇒ 最显眼的折叠箭头仍然逐行对齐，层级看不出来。
+                            内联 paddingLeft 覆盖 `px-2` 的左内距、保留右内距；背景仍铺满整行，
+                            hover/选中底色边界不动。公式：8 + (level - 1) * 24px。
+                        -->
+                        <!-- 引导线仍在第 i 层缩进带中点（8 + i*24 + 12）；绝对定位相对整行。 -->
+                        <span
+                            v-for="left in guideLinesOf(fi.level)"
+                            :key="left"
+                            aria-hidden="true"
+                            data-guide-line
+                            class="pointer-events-none absolute top-0 bottom-0 w-px bg-border"
+                            :style="{ left: left + 'px' }"
+                        />
                         <span
                             v-if="fi.value.key.endsWith(LOADING_SUFFIX)"
                             class="flex items-center gap-2 text-muted-foreground"
-                            :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                         >
                             <LoaderCircle class="size-4 animate-spin" />
                             {{ t("orgMembers.treeLoading") }}
@@ -280,7 +298,6 @@ function retryChildren(item: OrgTreeItem) {
                         <span
                             v-else-if="fi.value.key.endsWith(ERROR_SUFFIX)"
                             class="flex items-center gap-2"
-                            :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                         >
                             <span class="text-muted-foreground">{{
                                 t("orgMembers.treeError")
@@ -321,28 +338,12 @@ function retryChildren(item: OrgTreeItem) {
                             </button>
                             <!-- 与上面的 min-w-7 对齐（叶子行没有 chevron，但仍占同宽） -->
                             <span v-else class="min-w-7 shrink-0" />
-                            <!--
-                                task-33：正常行的层级缩进挂在 label 上（内联），**不包一层容器** ——
-                                行容器已有 \`px-2\`，包容器会让"整行 hover/选中底色"的起点（行首）
-                                与内容起点（缩进）脱开，视觉上就是"底色从行首开始、文字却缩进"。
-                                内联在 label 上则底色边界不变，只有文字位移；chevron 列同理不动。
-                            -->
                             <button
                                 type="button"
-                                class="relative min-w-0 flex-1 truncate text-left"
-                                :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
+                                class="min-w-0 flex-1 truncate text-left"
                                 :data-testid="'org-tree-label-' + fi.value.key"
                                 @click.stop="pick(fi.value, handleSelect)"
                             >
-                                <!-- task-135：每层一条 1px 引导线（祖先缩进带中点）。-->
-                                <span
-                                    v-for="left in guideLinesOf(fi.level)"
-                                    :key="left"
-                                    aria-hidden="true"
-                                    data-guide-line
-                                    class="pointer-events-none absolute top-0 bottom-0 w-px bg-border"
-                                    :style="{ left: left + 'px' }"
-                                />
                                 {{ fi.value.label }}
                             </button>
                         </template>

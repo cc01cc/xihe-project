@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../i18n";
+import { orgUnitNames } from "../composables/useOrgUnitTree";
 
 /**
  * PLAN-0773 M3（task-240）页面的机器判据：
@@ -116,6 +117,9 @@ beforeEach(() => {
     sessionStorage.clear();
     vi.restoreAllMocks();
     localStorage.setItem("xihe-token", "test-token");
+    // task-922 A：单元名注册表是模块级单例（跨路由复用是有意的）；单测之间必须清空，
+    // 否则前一个用例展开过的子单元会让"按需补名"的用例假绿（请求一次都没发也显示名字）。
+    orgUnitNames.value = new Map();
 });
 
 describe("OrgMembersView — 个人智能体主体落点（task-91）", () => {
@@ -182,12 +186,15 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
         expect(firstMembersCall).toContain("includeDescendants=true");
 
         // reka Switch 的 click 翻转属交互行为，jsdom 合成事件覆盖不到（同 MenuItem，见包
-        // AGENTS「Reka UI 交互陷阱」）⇒ 在组件边界直接发 update:checked，断言的是本页契约：
+        // AGENTS「Reka UI 交互陷阱」）⇒ 在组件边界直接发 update:modelValue，断言的是本页契约：
         // 开关翻转 ⇒ 重新请求且 URL 参数随之变化。
+        // task-922 A：reka 的 SwitchRoot 只认 modelValue/update:modelValue；此前绑
+        // `checked`/`update:checked` 落在 $attrs，真实浏览器里开关只翻自己的内部态、模型不动
+        // ⇒ 列值永远停在初始请求的结果。这里的事件名就是防该回归的契约。
         const switchComp = wrapper.findComponent(
             (await import("../../../components/ui/switch")).Switch,
         );
-        switchComp.vm.$emit("update:checked", false);
+        switchComp.vm.$emit("update:modelValue", false);
         await vi.waitFor(
             () => {
                 expect(calls.filter((c) => c.includes("/members"))).toHaveLength(2);
@@ -196,6 +203,36 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
         );
         const membersCalls = calls.filter((c) => c.includes("/members"));
         expect(membersCalls[1]).not.toContain("includeDescendants");
+        wrapper.unmount();
+    });
+
+    /**
+     * task-922 A：成员行只带 `orgUnitId`，而树是懒加载的 —— 子单元没展开过就不在
+     * `orgUnitNames` 里，列里会退回 UUID。判据：**不展开树**也要显示子单元名称，且为名字
+     * 补发的是 `parentId` 查询（不是猜 id、不是把 UUID 截短）。
+     */
+    it("未展开的子单元也显示名称：所在单元列不出现 UUID（task-922 A）", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+
+        // 只点标签选中根单元 —— 刻意不点 chevron，子单元 u-child 从未加载过。
+        await wrapper.get('[data-testid="org-tree-label-u-root"]').trigger("click");
+        await vi.waitFor(
+            () => {
+                expect(
+                    wrapper.get('[data-testid="org-member-unit-m-2"]').text(),
+                    "子单元名字必须由成员表的按需解析补齐",
+                ).toBe("平台组");
+            },
+            { timeout: 1000, interval: 20 },
+        );
+        expect(wrapper.get('[data-testid="org-member-unit-m-2"]').text()).not.toContain("u-child");
+        expect(calls).toContain("/api/v1/org-units?parentId=u-root");
+
+        // 再展开树（正常懒加载）列值不得跳变。
+        await wrapper.get('[data-testid="org-tree-toggle-u-root"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="org-member-unit-m-2"]').text()).toBe("平台组");
         wrapper.unmount();
     });
 
@@ -458,18 +495,24 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
 
     // task-135 J3：步长 16 → 24。真实数据只有深度 0/1 两档（默认组织 + task42probe），
     // 16px 的位移被行容器 px-2 与 28px chevron 列稀释掉，肉眼看不出缩进（用户截图报障）。
-    it("缩进随层级递增：8 / 32 / 56 px，相邻差 = 一个步长（24，判据 ≥20）", async () => {
+    // task-922 B：缩进从 label 改挂整行 —— 否则折叠箭头（层级最显眼的标志）逐行对齐。
+    it("缩进随层级递增：行 padding-left 8 / 32 / 56 px，label 不再二次缩进", async () => {
         mockFetch(deepHandler);
         const wrapper = await mountView();
         await expandAll(wrapper);
 
-        const leftOf = (key: string) =>
+        const rowOf = (key: string) =>
+            wrapper.get(`[data-testid="org-tree-node-${key}"]`).attributes("style") ?? "";
+        const labelOf = (key: string) =>
             wrapper.get(`[data-testid="org-tree-label-${key}"]`).attributes("style") ?? "";
 
-        // 缩进挂在 label 上（不包容器）：行容器已有 px-2，包容器会让 hover/选中底色与文字脱开。
-        expect(leftOf("d-root")).toContain("padding-left: 8px");
-        expect(leftOf("d-child")).toContain("padding-left: 32px");
-        expect(leftOf("d-grand")).toContain("padding-left: 56px");
+        // 缩进挂在整行：chevron 与文字一起右移；背景仍铺满整行（padding 不是 margin）。
+        expect(rowOf("d-root")).toContain("padding-left: 8px");
+        expect(rowOf("d-child")).toContain("padding-left: 32px");
+        expect(rowOf("d-grand")).toContain("padding-left: 56px");
+        expect(labelOf("d-root")).not.toContain("padding-left");
+        expect(labelOf("d-child")).not.toContain("padding-left");
+        expect(labelOf("d-grand")).not.toContain("padding-left");
         wrapper.unmount();
     });
 
@@ -483,7 +526,7 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
 
         const guidesOf = (key: string) =>
             wrapper
-                .get(`[data-testid="org-tree-label-${key}"]`)
+                .get(`[data-testid="org-tree-node-${key}"]`)
                 .findAll("[data-guide-line]")
                 .map((el) => el.attributes("style") ?? "");
 
@@ -496,7 +539,7 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         // 线是装饰：对 AT 隐藏、不吃指针，否则点标签被线吞掉、读屏会念无意义的 span。
         for (const key of ["d-child", "d-grand"]) {
             const lines = wrapper
-                .get(`[data-testid="org-tree-label-${key}"]`)
+                .get(`[data-testid="org-tree-node-${key}"]`)
                 .findAll("[data-guide-line]");
             for (const line of lines) {
                 expect(line.attributes("aria-hidden")).toBe("true");

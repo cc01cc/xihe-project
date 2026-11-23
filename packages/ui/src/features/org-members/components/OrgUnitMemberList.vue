@@ -12,6 +12,7 @@ import {
 import {
     classifyOrgTreeError,
     orgUnitNames,
+    resolveOrgUnitNames,
     type OrgTreeErrorKind,
 } from "../composables/useOrgUnitTree";
 import OrgMemberDetailSheet from "./OrgMemberDetailSheet.vue";
@@ -43,22 +44,36 @@ const members = ref<ApiOrgUnitMember[]>([]),
      */
     includeDescendants = ref(true);
 
+/** 并发读的落地守卫：unit / 开关快速切换时只让最后一次结果写进表格。 */
+let loadSeq = 0;
+
 async function load() {
     if (!props.unit) return;
+    const unit = props.unit;
+    const seq = ++loadSeq;
     loading.value = true;
     error.value = "";
     errorDetail.value = "";
     try {
-        members.value = await api.listOrgUnitMembers(props.unit.id, {
+        const rows = await api.listOrgUnitMembers(unit.id, {
             includeDescendants: includeDescendants.value,
         });
+        // task-922 A：读面只带 orgUnitId；未展开的单元不在树的注册表里 ⇒ 先把这些名字补齐，
+        // 再落表。否则「所在单元」列会显示 UUID（而切换开关并不会把树展开）。
+        await resolveOrgUnitNames(
+            unit,
+            rows.map((row) => row.orgUnitId),
+        );
+        if (seq !== loadSeq) return;
+        members.value = rows;
     } catch (cause) {
+        if (seq !== loadSeq) return;
         error.value = classifyOrgTreeError(cause);
         errorDetail.value =
             cause instanceof ApiError ? (cause.problem.detail ?? cause.message) : String(cause);
         members.value = [];
     } finally {
-        loading.value = false;
+        if (seq === loadSeq) loading.value = false;
     }
 }
 
@@ -75,11 +90,11 @@ watch(
 );
 
 /**
- * 成员行的「所在单元」解析：树节点注册表（加载过的单元都有名字）。
- * 没加载过的单元（读面子集）没有名字可解析 —— 诚实显示 id 本身，**不编造名字**。
+ * 成员行的「所在单元」解析：树节点注册表 + 本表按需补齐（`resolveOrgUnitNames`）。
+ * 真的解析不到时给 em dash —— **不把 UUID 当名字显示**（task-922 A 的判据）。
  */
 function unitDisplayName(id: string): string {
-    return orgUnitNames.value.get(id) ?? id;
+    return orgUnitNames.value.get(id) ?? "—";
 }
 
 /**
@@ -136,9 +151,9 @@ const errorDesc = computed(() =>
             >
                 {{ t("orgMembers.includeDescendants") }}
                 <Switch
-                    :checked="includeDescendants"
+                    :model-value="includeDescendants"
                     data-testid="org-member-descendants"
-                    @update:checked="includeDescendants = $event"
+                    @update:model-value="includeDescendants = $event"
                 />
             </label>
         </div>

@@ -19,6 +19,73 @@ export const ORG_TREE_EXPANDED_KEY = "xihe-org-tree-expanded";
  */
 export const orgUnitNames = ref<Map<string, string>>(new Map());
 
+/** 登记一个已知单元名（整体替换 Map 保持模板读取的响应性）。 */
+function rememberUnitName(unit: Pick<ApiOrgUnitNode, "id" | "name">): void {
+    if (orgUnitNames.value.get(unit.id) === unit.name) return;
+    orgUnitNames.value = new Map(orgUnitNames.value).set(unit.id, unit.name);
+}
+
+/**
+ * 同一父级的子层请求去重（只去**进行中**的重复：完成后即移除，写后重取仍会拿到新数据）。
+ * 树面板懒加载与成员表的名字解析可能同时要同一层，没有这张表就会发两份请求。
+ */
+const inflightChildren = new Map<string, Promise<ApiOrgUnitNode[]>>();
+
+function fetchChildren(parentId: string): Promise<ApiOrgUnitNode[]> {
+    const running = inflightChildren.get(parentId);
+    if (running) return running;
+    const request = api.listOrgUnits({ parentId }).finally(() => {
+        if (inflightChildren.get(parentId) === request) inflightChildren.delete(parentId);
+    });
+    inflightChildren.set(parentId, request);
+    return request;
+}
+
+/**
+ * task-922 A：把成员行引用的单元名补进注册表。
+ *
+ * <p>读面契约（openapi `OrgUnitMemberView`）只给 `orgUnitId`，不带单元名；而树是**懒加载**的，
+ * 未展开的单元从来没进过 `orgUnitNames` ⇒ 「所在单元」列会退回 UUID。这里只在**确有缺失**时，
+ * 从当前选中单元起按 `parentId` 一层层补齐（拿到的名字立即登记，找齐即停）；不动树面板状态，
+ * 也不做全树预取。失败静默（调用方保留 em dash 兜底，绝不把 UUID 当名字显示）。</p>
+ */
+export async function resolveOrgUnitNames(
+    root: Pick<ApiOrgUnitNode, "id" | "name" | "hasChildren">,
+    ids: Iterable<string>,
+): Promise<void> {
+    rememberUnitName(root);
+    const missing = new Set<string>();
+    for (const id of ids) {
+        if (id && !orgUnitNames.value.has(id)) missing.add(id);
+    }
+    if (!missing.size) return;
+
+    const queue: ApiOrgUnitNode[] = [];
+    const visited = new Set<string>();
+    /** 根只有 id/name/hasChildren；children 请求只需要 id。 */
+    let cursor: { id: string; hasChildren: boolean } = root;
+    while (cursor && missing.size) {
+        if (!cursor.hasChildren) break;
+        let children: ApiOrgUnitNode[];
+        try {
+            children = await fetchChildren(cursor.id);
+        } catch {
+            return;
+        }
+        for (const child of children) {
+            rememberUnitName(child);
+            missing.delete(child.id);
+            if (child.hasChildren && !visited.has(child.id)) {
+                visited.add(child.id);
+                queue.push(child);
+            }
+        }
+        const next = queue.shift();
+        if (!next) break;
+        cursor = next;
+    }
+}
+
 /** 404 / 403 / 其它 —— 404 与 403 是两种语义，文案不许混（卡面 ⑤）。 */
 export type OrgTreeErrorKind = "not-found" | "forbidden" | "other";
 
@@ -82,7 +149,7 @@ export function useOrgUnitTree() {
         expandedIds = ref<string[]>(readExpandedIds());
 
     function toItem(unit: ApiOrgUnitNode): OrgTreeItem {
-        orgUnitNames.value = new Map(orgUnitNames.value).set(unit.id, unit.name);
+        rememberUnitName(unit);
         return {
             key: unit.id,
             label: unit.name,
@@ -129,7 +196,7 @@ export function useOrgUnitTree() {
         item.childrenLoading = true;
         item.childrenError = "";
         try {
-            const units = await api.listOrgUnits({ parentId: id });
+            const units = await fetchChildren(id);
             item.children = units.map(toItem);
             item.childrenLoaded = true;
         } catch (cause) {
