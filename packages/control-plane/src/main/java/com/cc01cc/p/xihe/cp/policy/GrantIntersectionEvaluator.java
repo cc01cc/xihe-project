@@ -142,8 +142,34 @@ public class GrantIntersectionEvaluator {
         }
     }
 
-    /** Parses an array of {actionClass, resource?} atoms. Missing resource means wildcard. */
+    /**
+     * Parses an array of {actionClass, resource?} atoms. Missing resource means wildcard.
+     *
+     * <p>This is the <b>strict</b> entry point: an atom outside the action vocabulary fails closed
+     * with {@link IllegalArgumentException}. Use it for caller-supplied atom arrays, where a typo
+     * must be rejected rather than silently dropped.</p>
+     */
     public Set<PermissionAtom> parse(JsonNode permissions) {
+        return parse(permissions, false);
+    }
+
+    /**
+     * task-895: the <b>stored-row</b> entry point. Identical to {@link #parse(JsonNode)} except
+     * that capability-family atoms ({@link AtomNames#isCapabilityFamily(String)}) are skipped.
+     *
+     * <p>Why: a {@code grants.permissions} row is persisted data written by several paths (the
+     * materializer, raw SQL fixtures, legacy backfills). A capability atom in such a row is not an
+     * action and can never authorize one — {@code PresetGrantMaterializer} already refuses to write
+     * it, and {@code V88} asserts the table stays clear. If one shows up anyway, reading it as an
+     * unknown <i>action</i> class threw {@code Unknown actionClass: cap:...} and turned every
+     * evaluation on that subject into a 500. Skipping it is the fail-closed answer: the row confers
+     * nothing, and every other row still decides exactly as before.</p>
+     */
+    public Set<PermissionAtom> parseStored(JsonNode permissions) {
+        return parse(permissions, true);
+    }
+
+    private Set<PermissionAtom> parse(JsonNode permissions, boolean skipCapabilityFamily) {
         if (permissions == null || !permissions.isArray()) {
             throw new IllegalArgumentException("permissions must be an atom array");
         }
@@ -163,6 +189,9 @@ public class GrantIntersectionEvaluator {
                     || (resource != null && !resource.isTextual())) {
                 throw new IllegalArgumentException("permission atom requires string actionClass/resource fields");
             }
+            if (skipCapabilityFamily && AtomNames.isCapabilityFamily(actionClass.asText())) {
+                continue;
+            }
             atoms.add(new PermissionAtom(actionClass.asText(), resource == null ? "*" : resource.asText()));
         }
         return Set.copyOf(atoms);
@@ -178,7 +207,8 @@ public class GrantIntersectionEvaluator {
             if (grant == null) {
                 throw new IllegalArgumentException("grant must not be null");
             }
-            result.addAll(parse(grant.getPermissions()));
+            // task-895: stored rows may carry a capability-family atom; it is inert here.
+            result.addAll(parseStored(grant.getPermissions()));
         }
         return Set.copyOf(result);
     }
@@ -199,7 +229,7 @@ public class GrantIntersectionEvaluator {
             }
             String grantId = grant.getId() == null ? null : grant.getId().toString();
             String grantSource = grant.getSource();
-            for (PermissionAtom atom : parse(grant.getPermissions())) {
+            for (PermissionAtom atom : parseStored(grant.getPermissions())) {
                 result.add(new GrantAtom(atom.actionClass(), atom.resource(), grantId, grantSource));
             }
         }

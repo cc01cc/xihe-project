@@ -77,6 +77,29 @@ public final class AtomNames {
     }
 
     /**
+     * task-895: true when the atom belongs to the <b>capability family</b> ({@code cap:}), whether
+     * or not that exact atom is registered.
+     *
+     * <p>This is the <b>one</b> predicate every stored-row reader uses to keep capability atoms out
+     * of the action judgement ({@link GrantIntersectionEvaluator}'s grant read,
+     * {@link PresetGrantMaterializer}, {@link JdbcOrgUnitGrantSource}). Duplicating it at each call
+     * site is the known same-shape trap this repository has hit before: the copies drift and one of
+     * them starts letting a capability through.</p>
+     *
+     * <p>Prefix-based, not catalog-membership-based, on purpose. A grant row is persisted data; a
+     * malformed or legacy {@code cap:...} value must be <b>inert</b> (it grants nothing) instead of
+     * being read as an unknown <i>action</i> class and turning every request into a 500. Capability
+     * authority is resolved exclusively by {@code AuthzContext}; nothing in the grant table can
+     * confer it.</p>
+     */
+    public static boolean isCapabilityFamily(String atom) {
+        if (atom == null) {
+            return false;
+        }
+        return atom.trim().startsWith(CAPABILITY_PREFIX);
+    }
+
+    /**
      * Shapes an atom for a scope comparison: lowercase, family prefix kept. Only used for
      * diagnostic/legacy spellings; the vocabulary itself is case-sensitive.
      */

@@ -68,6 +68,9 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     @Autowired
     private PresetGrantMaterializer materializer;
 
+    @Autowired
+    private RequesterAuthority requesterAuthority;
+
     private RestTemplate api;
 
     @BeforeEach
@@ -91,6 +94,56 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     // ── catalog ─────────────────────────────────────────────────────────────
+
+    /**
+     * task-895: a persisted {@code cap:} row in {@code grants} must not turn the listing into a 500.
+     *
+     * <p>Reproduces the real shape: the e2e seed helper materializes bindings with raw SQL
+     * ({@code INSERT … SELECT FROM grant_preset_bindings JOIN grant_preset_atoms}), so a built-in
+     * preset's capability row lands in {@code grants}. Before the fix the {@code MANAGE_ROLES} gate
+     * read that row through {@code GrantIntersectionEvaluator.union → parse → new PermissionAtom}
+     * and threw {@code Unknown actionClass: cap:workspace:admin} ⇒ 500 for every subject holding
+     * one.</p>
+     *
+     * <p>Two readings: the admin still gets the full preset list (200, atom set intact), and a
+     * plain user's DENY verdict is unchanged — the cap row is inert, it grants nothing.</p>
+     */
+    @Test
+    void capabilityAtomRowInGrantsDoesNotBreakPresetListingOrWidenAuthority() throws Exception {
+        String superToken = superAdmin("cap-row-super@test.com");
+        String superId = userIdOf(superToken);
+        insertCapabilityGrantRow(superId);
+
+        ResponseEntity<String> listed = call(HttpMethod.GET, "/api/v1/presets", null, superToken);
+        assertEquals(HttpStatus.OK, listed.getStatusCode(), listed.getBody());
+
+        JsonNode superAdmin = null;
+        for (JsonNode preset : objectMapper.readTree(listed.getBody())) {
+            if (SystemGrantPresetCatalog.SUPER_ADMIN.equals(preset.path("name").asText())) {
+                superAdmin = preset;
+            }
+        }
+        assertNotNull(superAdmin, "the built-in SUPER_ADMIN preset must still be listed");
+        Set<String> atomNames = new LinkedHashSet<>();
+        superAdmin.path("atoms").forEach(atom -> atomNames.add(atom.path("name").asText()));
+        Set<String> expected = new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms());
+        expected.addAll(PermissionAtomCatalog.capabilityAtoms());
+        assertEquals(expected, atomNames,
+                "the returned preset atom set must be the catalog's action atoms plus capability atoms");
+
+        String plainToken = register("cap-row-plain@test.com");
+        String plainId = userIdOf(plainToken);
+        assertFalse(requesterAuthority.holdsActionAtom(UUID.fromString(plainId),
+                        ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
+                "a plain user does not hold MANAGE_ROLES");
+        insertCapabilityGrantRow(plainId);
+        assertFalse(requesterAuthority.holdsActionAtom(UUID.fromString(plainId),
+                        ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
+                "the inert cap row must not widen an action verdict");
+        ResponseEntity<String> denied = call(HttpMethod.GET, "/api/v1/presets", null, plainToken);
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
+                "a plain user gets 403 (denied by the action atom), never a 500 from the inert row");
+    }
 
     @Test
     void catalogExposesTheAtomVocabularyWithScopeClasses() throws Exception {
@@ -874,6 +927,18 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
     }
 
     // ── fixtures / helpers ──────────────────────────────────────────────────
+
+    /**
+     * task-895: the raw-SQL materialization shape used by the e2e grant helper — it copies
+     * {@code grant_preset_atoms} without the capability filter the Java materializer applies.
+     */
+    private void insertCapabilityGrantRow(String subjectId) {
+        jdbc.update("INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id,"
+                        + " permissions, source, scope_type, scope_id, read_state)"
+                        + " VALUES (gen_random_uuid(), NULL, NULL, 'user', CAST(? AS UUID),"
+                        + " CAST(? AS jsonb), 'preset', 'instance', NULL, 'read')",
+                subjectId, "[{\"actionClass\":\"cap:workspace:admin\"}]");
+    }
 
     private String superAdmin(String email) throws Exception {
         register(email);

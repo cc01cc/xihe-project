@@ -309,7 +309,10 @@ public class PresetGrantMaterializer {
         for (AuthorizationGrant grant : grantRepository.findBySubjectTypeAndSubjectIdAndSource(
                 subjectType, subjectId, SOURCE_PRESET)) {
             AccessScope scope = grantScope(grant);
-            Set<GrantIntersectionEvaluator.PermissionAtom> atoms = evaluator.parse(grant.getPermissions());
+            // task-895: a capability-family row in `grants` cannot match a desired action atom; it
+            // is dropped (and the row rewritten), never allowed to fail the whole reconciliation.
+            Set<GrantIntersectionEvaluator.PermissionAtom> atoms =
+                    evaluator.parseStored(grant.getPermissions());
             if (atoms.size() != 1) {
                 // A materialized row carries exactly one atom; anything else cannot be matched
                 // against the desired set, so it is dropped and rewritten.
@@ -377,7 +380,7 @@ public class PresetGrantMaterializer {
     private GrantIntersectionEvaluator.PermissionAtom materializableAtom(
             GrantPresetAtom permission, AccessScope scope) {
         String actionClass = permission.actionClass();
-        if (PermissionAtomCatalog.isCapabilityAtom(actionClass)) {
+        if (AtomNames.isCapabilityFamily(actionClass)) {
             return null;
         }
         if (!PermissionAtomCatalog.isActionAtom(actionClass)) {

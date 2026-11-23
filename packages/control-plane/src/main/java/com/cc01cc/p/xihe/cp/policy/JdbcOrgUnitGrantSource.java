@@ -123,6 +123,12 @@ public class JdbcOrgUnitGrantSource implements OrgUnitGrantSource {
                 // "all atoms") is what the expander then drops as a non-governance role.
                 continue;
             }
+            if (AtomNames.isCapabilityFamily(row.actionClass())) {
+                // task-895: capability atoms are never action authority (design #23). A built-in
+                // governance preset such as SUPER_ADMIN carries them, so an org-unit binding of one
+                // must not feed them into the evaluator — same predicate as the materializer.
+                continue;
+            }
             atoms.add(row.actionClass());
             String resource = materializedResource(row.actionClass(), row.resourcePattern());
             ObjectNode atom = objectMapper.createObjectNode();
