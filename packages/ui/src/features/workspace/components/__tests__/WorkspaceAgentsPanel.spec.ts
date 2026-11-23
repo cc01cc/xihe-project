@@ -95,15 +95,19 @@ const admin = { value: true };
  * 本 spec 不测判据轴，只测面板行为 ⇒ 三个都绑同一个 `admin` 开关，保持既有用例语义不变；
  * 判据轴本身由 authStore 单测与 18 处对照表（evidence/2026-11-13-a1-isadmin-cp-guard-matrix）负责。
  */
-vi.mock("../../../../stores/auth", () => ({
-    useAuthStore: () => ({
-        isAdmin: admin.value,
-        canReadInstanceContent: admin.value,
-        canManageWorkspacePolicy: admin.value,
-        canManageWorkspace: true,
-        user: { id: "99999999-9999-4999-8999-999999999999" },
-    }),
-}));
+vi.mock("../../../../stores/auth", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../stores/auth")>();
+    return {
+        ...actual,
+        useAuthStore: () => ({
+            isAdmin: admin.value,
+            canReadInstanceContent: admin.value,
+            canManageWorkspacePolicy: admin.value,
+            canManageWorkspace: true,
+            user: { id: "99999999-9999-4999-8999-999999999999" },
+        }),
+    };
+});
 
 /**
  * PLAN-0626 M3：面板没有 `open` 开关 —— 挂载即打开（dock 标签激活 / 移动端弹窗），
@@ -287,6 +291,17 @@ describe("WorkspaceAgentsPanel create gating (T5.1 default WORKSPACE)", () => {
         expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(false);
     });
 
+    it("keeps creation enabled for the canonical action:MANAGE_WORKSPACE_AGENTS (task-902)", async () => {
+        admin.value = false;
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY_PREFIXED);
+        const wrapper = await mountOpenedPanel();
+
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
+        const button = wrapper.find('[data-testid="agent-principal-create"]');
+        expect(button.attributes("disabled")).toBeUndefined();
+        expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(false);
+    });
+
     it("fails closed when the projection cannot be loaded, without inventing a permission", async () => {
         admin.value = false;
         apiMock.getSelfPermissions.mockRejectedValue(new ApiError("FORBIDDEN"));
@@ -339,6 +354,18 @@ const WORKSPACE_ONLY = {
             workspaceId: WORKSPACE_ID,
             workspaceAdmin: true,
             permissions: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID }],
+        },
+    ],
+};
+/** task-902: the same grant as it arrives from CP after task-835 (`action:` canonical name). */
+const WORKSPACE_ONLY_PREFIXED = {
+    ...WORKSPACE_ONLY,
+    workspaces: [
+        {
+            ...WORKSPACE_ONLY.workspaces[0],
+            permissions: [
+                { actionClass: "action:MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID },
+            ],
         },
     ],
 };

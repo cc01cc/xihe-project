@@ -9,6 +9,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
 import { Input } from "../ui/input";
 import { api, type AgentPrincipalSummary } from "../../composables/api";
+import { bareAtom } from "../../stores/auth";
 import { formatDate } from "../../lib/dateFormat";
 import { causeErrorToastText } from "../../lib/errorMessages";
 import { logger } from "../../lib/logger";
@@ -146,7 +147,9 @@ async function loadCapability() {
     capabilityState.value = "loading";
     try {
         const self = await api.getSelfPermissions();
-        instanceAtoms.value = (self.instancePermissions ?? []).map((atom) => atom.actionClass);
+        instanceAtoms.value = (self.instancePermissions ?? [])
+            .map((atom) => bareAtom(atom.actionClass))
+            .filter((value): value is string => value !== null);
         capabilityState.value = "ready";
     } catch {
         // fail-closed：原子读不到 ⇒ 不显示创建入口，但也不断言"你没权限"。

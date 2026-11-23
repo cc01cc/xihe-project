@@ -87,15 +87,19 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
     };
 });
 
-vi.mock("../../../../stores/auth", () => ({
-    useAuthStore: () => ({
-        isAdmin: true,
-        canReadInstanceContent: true,
-        canManageWorkspacePolicy: true,
-        canManageWorkspace: true,
-        user: { id: "99999999-9999-4999-8999-999999999999" },
-    }),
-}));
+vi.mock("../../../../stores/auth", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../stores/auth")>();
+    return {
+        ...actual,
+        useAuthStore: () => ({
+            isAdmin: true,
+            canReadInstanceContent: true,
+            canManageWorkspacePolicy: true,
+            canManageWorkspace: true,
+            user: { id: "99999999-9999-4999-8999-999999999999" },
+        }),
+    };
+});
 
 const WORKSPACE_MANAGE = {
     userId: "99999999-9999-4999-8999-999999999999",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useAuthStore } from "../../../stores/auth";
+import { bareAtom, useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
 import { mergeMemoryEnabled, readMemoryEnabled, readMemoryTypesMissing } from "./memoryPolicy";
 import { formatDateTime } from "../../../lib/dateFormat";
@@ -396,12 +396,16 @@ async function loadCreateCapability() {
     capabilityState.value = "loading";
     try {
         const self: SelfPermissionsView = await api.getSelfPermissions();
-        instanceAtoms.value = (self.instancePermissions ?? []).map((atom) => atom.actionClass);
+        instanceAtoms.value = (self.instancePermissions ?? [])
+            .map((atom) => bareAtom(atom.actionClass))
+            .filter((value): value is string => value !== null);
         // 实例 `*` 级原子同时覆盖所有工作区（管理员）。
         const workspace = (self.workspaces ?? []).find(
             (item) => item.workspaceId === props.workspaceId,
         );
-        const scoped = (workspace?.permissions ?? []).map((atom) => atom.actionClass),
+        const scoped = (workspace?.permissions ?? [])
+                .map((atom) => bareAtom(atom.actionClass))
+                .filter((value): value is string => value !== null),
             hasWildcard = (self.instancePermissions ?? []).some((atom) => atom.resource === "*");
         workspaceAtoms.value = scoped.length > 0 ? scoped : hasWildcard ? instanceAtoms.value : [];
         capabilityState.value = "ready";

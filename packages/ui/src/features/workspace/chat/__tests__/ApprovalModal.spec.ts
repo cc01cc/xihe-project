@@ -237,6 +237,28 @@ describe("ApprovalModal", () => {
         );
     });
 
+    /**
+     * task-902: `policy.actionClass` comes from CP and is canonical (`action:delete`).
+     * The delete tier gate must still fire; removing the normalization turns this red.
+     * `unclassified` is a UI sentinel, not a CP atom, so it must keep matching verbatim.
+     */
+    it("treats canonical action:delete as the delete tier gate (task-902)", () => {
+        const wrapper = mountModal({
+            approval: {
+                ...baseApproval,
+                policy: { ...policy, actionClass: "action:delete", shape: "structured" },
+            },
+            show: true,
+        });
+
+        expect(wrapper.find('[data-testid="approval-tier-gate-reason"]').text()).toContain(
+            "Delete actions only allow once",
+        );
+        expect(wrapper.find('[data-testid="approval-allow-session"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="approval-save-rule"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="approval-unclassified-notice"]').exists()).toBe(false);
+    });
+
     it("states explicitly when policy evidence is missing", () => {
         const wrapper = mountModal({ approval: baseApproval, show: true });
 

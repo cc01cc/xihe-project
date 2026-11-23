@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
-import { useAuthStore } from "../auth";
+import { bareAtom, useAuthStore } from "../auth";
 import { useAgentStore } from "../agent";
 import { useChatStore } from "../../features/workspace/chat/stores/chat";
 import type { User } from "../../types";
@@ -617,6 +617,37 @@ describe("useAuthStore self permission atoms (PLAN-0651 T4.2)", () => {
         // CP's `holdsActionAtom` is a set-contains over action classes (LayeredPolicyResolver's
         // resource matching belongs to `allowsForUser`, which this gate does not use).
         expect(store.canManageRoles).toBe(true);
+    });
+
+    /**
+     * task-902: CP's canonical spelling is `action:MANAGE_ROLES` (task-835). The store's
+     * comparison surface is the bare action class, so the read boundary must normalize.
+     * Removing the normalization makes the first assertion red.
+     */
+    it("normalizes canonical action: atoms and excludes cap: atoms (task-902)", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([
+                { actionClass: "action:MANAGE_ROLES", resource: "*" },
+                { actionClass: "cap:instance:admin", resource: "*" },
+            ]),
+        );
+
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(store.hasInstanceAtom("MANAGE_ROLES")).toBe(true);
+        expect(store.hasInstanceAtom("action:MANAGE_ROLES")).toBe(true);
+        expect(store.hasInstanceAtom("cap:instance:admin")).toBe(false);
+        expect(store.canManageRoles).toBe(true);
+    });
+
+    it("bareAtom keeps bare names, strips action:, and rejects cap: (task-902)", () => {
+        expect(bareAtom("action:MANAGE_ROLES")).toBe("MANAGE_ROLES");
+        expect(bareAtom("MANAGE_ROLES")).toBe("MANAGE_ROLES");
+        expect(bareAtom("cap:instance:admin")).toBeNull();
+        expect(bareAtom("")).toBeNull();
+        expect(bareAtom(undefined)).toBeNull();
     });
 
     it("shares one request between concurrent callers and caches the result", async () => {

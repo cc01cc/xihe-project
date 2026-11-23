@@ -48,6 +48,26 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
     FIRST_RUN_ACCOUNT_ALREADY_DISCLOSED: "authErrors.firstRunDisclosed",
 };
 
+/**
+ * task-902: CP speaks canonical atom names (`action:MANAGE_...`, `cap:...`), but the UI's
+ * call sites compare bare action classes. Normalize exactly once at this read boundary.
+ *
+ * - `action:` is stripped; a bare name is returned unchanged (legacy CP compatibility).
+ * - `cap:` is a capability gate, not an action atom, so it never participates in action
+ *   comparisons and normalizes to `null`.
+ */
+export function bareAtom(value: string | null | undefined): string | null {
+    if (typeof value !== "string" || value === "") return null;
+    if (value.startsWith("cap:")) return null;
+    return value.startsWith("action:") ? value.slice("action:".length) : value;
+}
+
+function bareAtoms(values: readonly string[]): Set<string> {
+    return new Set(
+        values.map((value) => bareAtom(value)).filter((value): value is string => value !== null),
+    );
+}
+
 export const useAuthStore = defineStore("auth", () => {
     // Authentication is the only state worth caching. Server is the canonical
     // source for workspace/session/messages; we never write business fields
@@ -132,11 +152,10 @@ export const useAuthStore = defineStore("auth", () => {
     let selfPermissionsRequest: Promise<boolean> | null = null;
     /** Instance-scope atom names; workspace-scope atoms live under `workspaces[].permissions` and
      * must never unlock an instance-scope surface. */
-    const instanceAtoms = computed<Set<string>>(
-        () =>
-            new Set(
-                (selfPermissions.value?.instancePermissions ?? []).map((atom) => atom.actionClass),
-            ),
+    const instanceAtoms = computed<Set<string>>(() =>
+        bareAtoms(
+            (selfPermissions.value?.instancePermissions ?? []).map((atom) => atom.actionClass),
+        ),
     );
 
     /**
@@ -145,7 +164,8 @@ export const useAuthStore = defineStore("auth", () => {
      * so the UI must ignore `resource` here or it would hide a tab CP would serve.
      */
     function hasInstanceAtom(actionClass: string): boolean {
-        return instanceAtoms.value.has(actionClass);
+        const bare = bareAtom(actionClass);
+        return bare !== null && instanceAtoms.value.has(bare);
     }
     const canManageRoles = computed(() => hasInstanceAtom(ATOM_MANAGE_ROLES));
 
@@ -236,12 +256,13 @@ export const useAuthStore = defineStore("auth", () => {
      */
     const workspaceAtoms = computed<Set<string>>(() => {
         const rows = workspaceProjection.value?.permissions ?? [];
-        return new Set(
+        return bareAtoms(
             rows.filter((a) => !a.resource || a.resource === "*").map((a) => a.actionClass),
         );
     });
     function hasWorkspaceAtom(actionClass: string): boolean {
-        return workspaceAtoms.value.has(actionClass);
+        const bare = bareAtom(actionClass);
+        return bare !== null && workspaceAtoms.value.has(bare);
     }
     /** 投影已读到**且**含当前工作区 —— 只有这时原子判据才算权威（task-420 三态同源）。 */
     const workspacePermissionsKnown = computed(

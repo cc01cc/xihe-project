@@ -5,7 +5,7 @@ import { getActivePinia } from "pinia";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { api } from "../../../../composables/api";
 import { presentCauseError } from "../../../../lib/errorMessages";
-import { useAuthStore } from "../../../../stores/auth";
+import { bareAtom, useAuthStore } from "../../../../stores/auth";
 import { logger } from "../../../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -164,7 +164,9 @@ const isStructuredPolicy = computed(() => props.approval?.policy?.shape === "str
 const isUnclassifiedPolicy = computed(() => props.approval?.policy?.actionClass === "unclassified");
 const policyShape = computed(() => props.approval?.policy?.shape);
 /** Delete action class is the one structured domain the server caps at `once`. */
-const isDeleteActionClass = computed(() => props.approval?.policy?.actionClass === "delete");
+const isDeleteActionClass = computed(
+    () => bareAtom(props.approval?.policy?.actionClass) === "delete",
+);
 
 /**
  * PLAN-0625 G（D25-04"守卫不执行"）：守卫建议是**审批的输入**，不是裁决。
