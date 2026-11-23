@@ -157,7 +157,29 @@ def get_int_env(name: str, default: int) -> int:
         raise RuntimeError(f"{name} must be an integer, got: {value}") from exc
 
 
-CP_URL = get_env("XIHE_CP_URL") or f"http://localhost:{get_int_env('XIHE_CP_PORT', 12631)}"
+def resolve_cp_url(env: "dict[str, str] | None" = None) -> str:
+    """Resolve the CP base URL with an explicit, testable precedence.
+
+    task-925: the stack launcher derives `XIHE_CP_URL` from the SAME stack's cp
+    port (stack-2 -> 12641), so the Agent must never fall back to stack-1's 12631
+    just because only `XIHE_CP_PORT` was injected. Precedence is:
+    `XIHE_CP_URL` > `XIHE_CP_PORT` > 12631 (stack-1 baseline).
+    """
+    source = os.environ if env is None else env
+    url = (source.get("XIHE_CP_URL") or "").strip()
+    if url:
+        return url
+    raw_port = (source.get("XIHE_CP_PORT") or "").strip()
+    if not raw_port:
+        return "http://localhost:12631"
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise RuntimeError(f"XIHE_CP_PORT must be an integer, got: {raw_port}") from exc
+    return f"http://localhost:{port}"
+
+
+CP_URL = resolve_cp_url()
 MCP_URL = f"{CP_URL}/api/v1/mcp"
 AGENT_HOST = get_env("XIHE_AGENT_HOST") or "0.0.0.0"
 AGENT_PORT = get_int_env("XIHE_AGENT_PORT", 12632)
@@ -555,6 +577,12 @@ def _derive_llm_ready(
     required_status: str = llm_domain["status"] if llm_domain else "unknown"
     if required_status in {"unreachable", "unauthorized", "invalid_response"}:
         return "unknown", None
+    # task-925 fake-green guard: a reachable CP that answers `source=default`
+    # supplied no business config. Reporting ready here would let CP gate chat on
+    # a provider/model that only exist as code defaults — the readiness answer
+    # must stay degraded until the domain is actually configured.
+    if llm_domain and llm_domain.get("source") in (None, "", "default"):
+        return "missing_credentials", None
     if not config.provider:
         # PLAN-0504 decision #10: no profile (and no explicit env identity) —
         # no implicit default. Readiness fails closed and maps to

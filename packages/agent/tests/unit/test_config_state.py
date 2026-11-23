@@ -29,6 +29,8 @@ from xihe_agent.config_state import (
     ConfigState,
     ConfigUnavailableError,
     ensure_config_ready,
+    note_refresh_result,
+    report_is_usable,
 )
 from xihe_agent.main import app
 
@@ -45,6 +47,27 @@ BAD_REPORT: dict[str, Any] = {
     "revision": "",
     "refreshed": False,
     "degraded": ["llm-provider"],
+}
+# task-925: a reachable CP that has nothing configured answers `ok` with every
+# domain still `source=default`. This is the fake-green shape the guard targets.
+DEFAULT_ONLY_REPORT: dict[str, Any] = {
+    "ok": True,
+    "domains": {
+        domain: {"status": "ok", "revision": "0:0", "source": "default"}
+        for domain in (
+            "llm-provider",
+            "context-policy",
+            "embedding",
+            "logging",
+            "agent-runtime",
+            "agent-profile",
+            "user-preference",
+            "rag",
+        )
+    },
+    "revision": "all-default",
+    "refreshed": True,
+    "degraded": [],
 }
 
 
@@ -221,6 +244,49 @@ def test_periodic_blip_does_not_demote_a_ready_process():
     assert config_state.get_state() is ConfigState.READY
     # A periodic refresh failing is not a state transition (it keeps the carried-over snapshot).
     assert config_state.get_state() is ConfigState.READY
+
+
+def test_all_default_report_is_never_usable():
+    """task-925: reachable CP + all-default domains must not count as loaded config."""
+    assert report_is_usable(OK_REPORT) is True
+    assert report_is_usable(DEFAULT_ONLY_REPORT) is False
+    assert report_is_usable(BAD_REPORT) is False
+
+
+def test_startup_load_counts_one_config_state_load():
+    """task-925: startup is a real load; `configStateLoads` must not stay 0."""
+    config_state.note_startup_result(OK_REPORT)
+    assert config_state.snapshot()["loads"] == 1
+
+    config_state.reset_for_tests()
+    config_state.note_startup_result(BAD_REPORT)
+    assert config_state.snapshot()["loads"] == 1, "a failed attempt is still an attempt"
+
+
+def test_periodic_refresh_promotes_pending_to_ready_after_cp_recovers():
+    """task-925 P0: startup lost the CP race; a later successful poll must heal READY."""
+    config_state.note_startup_result(BAD_REPORT)
+    assert config_state.get_state() is ConfigState.PENDING
+
+    note_refresh_result(OK_REPORT)
+    assert config_state.get_state() is ConfigState.READY
+    assert config_state.snapshot()["revision"] == "rev-123"
+    assert config_state.snapshot()["lastError"] is None
+    assert config_state.snapshot()["loads"] >= 1
+
+
+def test_periodic_refresh_all_default_does_not_promote():
+    """task-925: recovering the CP transport is not recovering the business config."""
+    config_state.note_startup_result(BAD_REPORT)
+    note_refresh_result(DEFAULT_ONLY_REPORT)
+    assert config_state.get_state() is ConfigState.PENDING
+
+
+def test_periodic_refresh_never_demotes_ready_and_keeps_revision_on_default():
+    config_state.note_startup_result(OK_REPORT)
+    config_state.note_refresh_result(DEFAULT_ONLY_REPORT)
+    assert config_state.get_state() is ConfigState.READY
+    assert config_state.snapshot()["revision"] == "rev-123", "last known good report wins"
 
 
 # ── PLAN-0632 收尾补强（2026-11-05）：把 D32-27 的两条验收口径量化 ────────────────────

@@ -161,7 +161,12 @@ async def _apply_cp_log_level() -> None:
 async def _poll_runtime_config() -> None:
     while True:
         try:
-            await reload_runtime_config(reason="periodic")
+            report = await reload_runtime_config(reason="periodic")
+            # task-925: a periodic refresh that succeeds after the startup attempt
+            # lost the CP race must be able to promote PENDING -> READY. Without this
+            # the process stayed pending forever (health showed loads=0, every domain
+            # source=default) even though CP had been answering for hours.
+            config_state.note_refresh_result(report)
         except Exception:
             logger.warning(
                 "[LIFECYCLE] service=agent event=config_refresh_failed reason=periodic",

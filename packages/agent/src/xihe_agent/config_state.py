@@ -41,7 +41,7 @@ from typing import Any
 
 from loguru import logger
 
-from xihe_agent.config_client import SyncReport
+from xihe_agent.config_client import REQUIRED_DOMAINS, SyncReport
 
 # Bounded deadline for one lazy load, including its own retry rounds. Startup costs ~2.65 s
 # (2 rounds x 0.8 s + backoff), so 5 s leaves room for a slow CP without letting a request hang.
@@ -108,6 +108,26 @@ def snapshot() -> dict[str, Any]:
     }
 
 
+def report_is_usable(report: SyncReport) -> bool:
+    """True only when the report proves CP actually supplied business config.
+
+    `sync()` can honestly answer `ok` while every domain is still `source=default`
+    (a CP that is reachable but has no instance config). Treating that as a load
+    would be the exact fake-green this module exists to prevent: the process would
+    look READY while the provider/model still came from code defaults. The required
+    domain's source is the discriminator, so an all-default report never promotes.
+    """
+    if not report.get("ok"):
+        return False
+    for domain in REQUIRED_DOMAINS:
+        entry = report.get("domains", {}).get(domain)
+        if not entry or entry.get("status") != "ok":
+            return False
+        if entry.get("source") in (None, "", "default"):
+            return False
+    return True
+
+
 def note_startup_result(report: SyncReport) -> None:
     """Record the one startup attempt: success -> READY, otherwise -> PENDING.
 
@@ -115,8 +135,9 @@ def note_startup_result(report: SyncReport) -> None:
     the first request that needs config should try once more. FAILED is reserved for a lazy load
     that actually ran and failed.
     """
-    global _state, _report, _ready_at, _last_error
-    if report.get("ok"):
+    global _state, _report, _ready_at, _last_error, _loads
+    _loads += 1
+    if report_is_usable(report):
         _state = ConfigState.READY
         _report = report
         _ready_at = time.time()
@@ -127,22 +148,60 @@ def note_startup_result(report: SyncReport) -> None:
         )
         return
     _state = ConfigState.PENDING
-    _last_error = "startup sync degraded"
+    _last_error = "startup sync degraded" if not report.get("ok") else "startup config is all default"
     logger.warning(
         "[CONFIG] service=agent event=config_state_change from=pending to=pending "
-        "reason=startup_sync_failed (first request will retry)"
+        "reason=startup_config_not_usable (first request will retry)"
     )
 
 
 def note_startup_exception(error: BaseException) -> None:
     """Startup raised instead of returning a report: same PENDING outcome, error recorded."""
-    global _state, _last_error
+    global _state, _last_error, _loads
+    _loads += 1
     _state = ConfigState.PENDING
     _last_error = type(error).__name__
     logger.warning(
         "[CONFIG] service=agent event=config_state_change from=pending to=pending "
         "reason=startup_exception error={} (first request will retry)",
         _last_error,
+    )
+
+
+def note_refresh_result(report: SyncReport) -> None:
+    """Reconcile a periodic refresh outcome into the readiness machine.
+
+    The periodic poll runs every 30 s. Without this hook a process whose startup
+    attempt lost the CP race stays `pending` forever even after the CP is up and
+    answering — exactly the 2026-11-24 P0 (`configStateLoads=0`, all domains
+    `source=default`). Promotion is deliberately one-way and gated on
+    `report_is_usable`: only a report that actually carries non-default business
+    config may move PENDING/FAILED -> READY. A refresh must never demote a READY
+    process (last known good keeps serving).
+    """
+    global _state, _report, _ready_at, _last_error
+    if not report.get("ok"):
+        return
+    if _state is ConfigState.READY:
+        if report_is_usable(report):
+            _report = report
+        return
+    if not report_is_usable(report):
+        logger.info(
+            "[CONFIG] service=agent event=config_refresh_ignored reason=all_default state={}",
+            _state.value,
+        )
+        return
+    previous = _state
+    _state = ConfigState.READY
+    _report = report
+    _ready_at = time.time()
+    _last_error = None
+    logger.info(
+        "[CONFIG] service=agent event=config_state_change from={} to=ready "
+        "reason=periodic_refresh revision={}",
+        previous.value,
+        report.get("revision") or "",
     )
 
 
