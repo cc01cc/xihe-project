@@ -10,6 +10,7 @@ import {
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { chooseFirstRekaOption } from "./helpers/reka-select";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 import { agentName } from "./helpers/agent-name";
@@ -80,11 +81,10 @@ async function createBoundAgent(
         headers,
     });
     expect(agentsResponse.status(), await agentsResponse.text()).toBe(200);
-    expect(
-        ((await agentsResponse.json()) as Array<{ principalId: string }>).map(
-            (agent) => agent.principalId,
-        ),
-    ).toContain(principalId);
+    // PLAN-0622 M1.2 冻结信封：GET /workspaces/{id}/agents 返回 `{agents:[…]}`（AgentPrincipalController
+    // 的 /agents 面），不再是裸数组；按信封取列表再比对。
+    const agentsBody = (await agentsResponse.json()) as { agents: Array<{ principalId: string }> };
+    expect(agentsBody.agents.map((agent) => agent.principalId)).toContain(principalId);
     return principalId;
 }
 
@@ -123,6 +123,10 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     const auth = await reg.json(),
         authToken: string = auth.accessToken,
         wsId = await ensureWorkspace(request, auth.accessToken);
+    // PLAN-0670 M2d（与 bl328 同一决定性修复）：UI「创建 agent 会话」要求该用户已有 READY 的
+    // provider 连接 + user 层 llm profile；缺了会在 `POST /workspaces/{id}/sessions` 报
+    // `No usable provider connection matches the profile`，chat-input 永远不出现。
+    await ensureFakeUserProvider(request, { accessToken: authToken, workspaceId: wsId });
     const authHeaders = {
         Authorization: `Bearer ${authToken}`,
         "Content-Type": "application/json",
