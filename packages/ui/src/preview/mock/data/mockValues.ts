@@ -65,13 +65,40 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
         ],
     },
     "agent-templates": {
-        roles: [
-            { id: "coder", name: "编码助手", instructions: "先读后写，改动最小化。" },
-            { id: "reviewer", name: "评审员", instructions: "只指出问题，不改代码。" },
+        // task-910：CP 配置键 `agent-templates.roles` → `presets`（task-903 重生成 schema-catalog），
+        // 本表必须同步；字段形态对齐 config-schemas/agent-templates.json $defs.preset。
+        presets: [
+            {
+                id: "6f1c0d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
+                name: "编码助手",
+                permissions: [
+                    { actionClass: "file_read", resource: "workspace-1" },
+                    { actionClass: "file_write", resource: "workspace-1" },
+                ],
+            },
+            {
+                id: "7a2d1e3f-4b5c-4d6e-9f0a-1b2c3d4e5f6a",
+                name: "评审员",
+                permissions: [{ actionClass: "file_read", resource: "workspace-1" }],
+            },
         ],
         templates: [
-            { id: "tpl-default", roleId: "coder", content: "默认任务模板（PLAN-0414）。" },
-            { id: "tpl-review", roleId: "reviewer", content: "变更评审模板。" },
+            {
+                id: "8b3e2f4a-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+                name: "默认任务模板",
+                description: "PLAN-0414 默认模板。",
+                systemPrompt: "先读后写，改动最小化。",
+                toolMode: "workspace",
+                presetId: "6f1c0d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
+            },
+            {
+                id: "9c4f3a5b-6d7e-4f8a-9b0c-1d2e3f4a5b6c",
+                name: "变更评审模板",
+                description: "变更评审用。",
+                systemPrompt: "只指出问题，不改代码。",
+                toolMode: "workspace",
+                presetId: "7a2d1e3f-4b5c-4d6e-9f0a-1b2c3d4e5f6a",
+            },
         ],
     },
     "approval-policy": {

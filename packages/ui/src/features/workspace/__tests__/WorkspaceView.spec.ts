@@ -329,7 +329,7 @@ beforeEach(() => {
                           name: "Stored template",
                           systemPrompt: "Frozen prompt",
                           toolMode: "workspace",
-                          roleId: "role-1",
+                          presetId: "preset-1",
                           provider: "openai",
                           model: "gpt-example",
                       },
@@ -688,7 +688,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("TemplateBacked");
         await setSelectValue(wrapper, '[data-testid="agent-principal-template"]', "template-1");
         expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain(
-            "role-1",
+            "preset-1",
         );
         expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain(
             "gpt-example",
