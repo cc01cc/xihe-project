@@ -36,7 +36,8 @@ import { aggregateExit, parseTaskExits } from "./validate-run.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * 门清单**数据**（37 个成员，2026-11-24 task-923 四门接入到 36、task-951 再接 `check:filetree-ia` 到 37；
+ * 门清单**数据**（47 个成员，2026-11-24 task-923 四门接入到 36、task-951 再接 `check:filetree-ia` 到 37、
+ * task-952 一次接进「9 个真孤儿门 + 审计器自身」到 47；
  * 成员数以 `--list` 为准，注释不做判据）。
  * task-124 起本清单是 lint 的**唯一**门集合来源
  * （[tasks.lint] 已改为 run 本文件），不再与 mise.toml depends 对账。
@@ -86,6 +87,20 @@ export const LINT_GATES = [
     "check:spawn-hide",
     "check:e2e-evidence-path",
     "check:doc-count-claims",
+    // task-952（2026-11-24）：`audit-gate-executors` 实测 trueOrphans=9 —— 这批门「卡 delivered、
+    // 门也在、但没有任何入口会执行它」。本批一次性接进聚合，并把**审计器自己也接进来**：
+    // 它此前只有 one 根的独立 task，没有任何聚合执行者，所以 D-985 那个根源类 12 天内又攒到 9 个。
+    // 判据与基线一律未改（唯一例外是审计器自己的退出码，卡面要求 2 明确授权，理由见其文件头）。
+    "check:route-registry",
+    "check:select-hygiene",
+    "check-session-shell",
+    "check-write-invalidate",
+    "check-spring-ctor",
+    "check-delivery-receipt",
+    "check:a11y-name-snapshot",
+    "check:e2e-agent-names",
+    "check:visual-await",
+    "check:gate-executors",
 ];
 
 /**

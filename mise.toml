@@ -561,9 +561,10 @@ alias = "check:config-schema"
 #   于是「跑了 30 个」与「跑完 30 个」在输出里分不清；聚合器逐门跑完、逐门报 exit 与计时，末尾给一张 30 行汇总表。
 # 验收判据两档（原 D-1881③，B 档计时已由 task-52 升回硬要求 2026-11-19 05:0x）：
 #   注（2026-11-21，task-69）：本段 30/30 是 **30 门时期的实测读数与当窗判据**，不改写；现行门数以
-#   `node scripts/lint-run.mjs --list` 为准 = **36**（2026-11-23 task-842 接进 `check:migration-immutability` 到 32；
-#   2026-11-24 task-923 一次接进四门 `check:form-validation` / `check:spawn-hide` / `check:e2e-evidence-path` /
-#   `check:doc-count-claims` ⇒ 32 → 36；本行是「现行门数」指针，不是当窗读数，历史读数一律不改写），
+#   `node scripts/lint-run.mjs --list` 为准 = **47**（2026-11-23 task-842 接进 `check:migration-immutability` 到 32；
+#   2026-11-24 task-923 一次接进四门 ⇒ 32 → 36；task-951 接 `check:filetree-ia` ⇒ 37；
+#   task-952 一次接进 9 个真孤儿门 + 审计器自身（10 个）⇒ 37 → 47；本行是「现行门数」指针，
+#   不是当窗读数，历史读数一律不改写），
 #   此后判据写作「N/N，N = --list 行数」。
 #   A 档 = `node scripts/lint-run.mjs`（exit 0 + 30/30 PASS + 逐门计时 30/30）；
 #   B 档 = `mise run lint`（exit 0 + 门集合逐名相同 30/30 + 墙钟与 A 档差 ≤10% + 慢门不被掐 + **逐门计时 30/30**）。
@@ -663,6 +664,77 @@ alias = "check:form-validation"
 run = "node packages/ui/scripts/check-filetree-ia.mjs"
 description = "File-panel information-architecture gate (task-939 delivered; registered by task-945): FT1 the files tab must not render the git-state block or consume git-status (the pending reading belongs to the Changes dock panel), FT2 no nested-repo declare cards above the tree, FT3 tree expansion must use aria-expanded (no ▼/▶ glyphs), FT4 the declare affordance must live inside the tree row, FT5 internal terms (Declare as root / Nested repo) must be zero on both locales and the owned keys must exist on both sides. Static only; `--selftest` replays eight counter-examples and must FAIL on each, `--ax <workspaceUrl>` adds the real-browser reading (tree visible height >= 60% of the panel, FT3/FT5 DOM evidence; password read from XIHE_ADMIN_PASSWORD_FILE or .local/dev/admin-password, never printed). Exit 0 PASS / 1 FAIL / 2 usage or environment. Current reading at registration (2026-11-24, main checkout): static PASS, selftest 8/8, exit 0 in ~0.6 s. Aggregation note: the `mise run lint` member line (LINT_GATES in scripts/lint-run.mjs) and the packages/ui `--gate` entry are outside task-945 write scopes — a follow-up card must add them."
 alias = "check:filetree-ia"
+
+# ============================================================================
+# 真孤儿门统一接线 + 审计器自身接成阻断门（task-952，2026-11-24；D-985 同族第 9 例）
+#
+# 接线前读数（`node scripts/audit-gate-executors.mjs --json`，one 根）：scanned=122 /
+# orphans=16 / registeredOrphans=7 / **trueOrphans=9** / exit 1。本批把 9 个真孤儿全部
+# 处置完（8 个接线 + 1 个改判后接线），并把审计器接进聚合，使「建门而未接线」无法再复发。
+# 姿态沿用 task-923/951：判据与基线一律不改（唯一例外是审计器自己的退出码，见 check:gate-executors）。
+# ⚠️ 已知残余（与 task-923 前三张门同型，另卡补薄包装）：`node ../internal/...` 与
+#   `dir = ".."` 两种跨仓挂法在 **A03 worktree 槽位**内不可达（`<slot>/../internal` 不存在、
+#   `<slot>/../scripts` 不存在）⇒ 槽位里跑聚合会红。主检出（lane 常态 cwd）实测均可跑。
+# ============================================================================
+
+[tasks."check:route-registry"]
+run = "node packages/ui/scripts/check-route-registry.mjs"
+description = "Navigation-registry gate (task-926 delivered; wired by task-952): every nav path in the module registry must exist in the Vue Router table and every router leaf must be reachable from the rail/sidebar registry — a dead link in a menu is a runtime 404 the unit tests never see. Static only, reads src/lib/globalModules.ts + src/router/index.ts. Exit 0 PASS / 1 dead link / 2 usage. Reading at wiring (2026-11-24, main checkout): PASS 23 navigation paths / 5 modules / 0 dead links, exit 0 in ~6.3 s. Wired three ways (same shape as check:filetree-ia): this standalone task, the LINT_GATES member, and the packages-ui `pnpm run lint --gate` entry."
+alias = "check:route-registry"
+
+[tasks."check:select-hygiene"]
+run = "node packages/ui/scripts/check-select-hygiene.mjs"
+description = "Select-control hygiene gate (task-926 delivered; wired by task-952): combobox/select triggers must carry the shared width/overflow treatment instead of ad-hoc classes (SH1-SH3); a dynamic :class cannot be judged statically and prints as NOTE. Static only. Reading at wiring (2026-11-24): PASS (exit 0) with 2 BASE SH3 rows and 1 NOTE (SessionTierSelect.vue:137 dynamic :class), ~0.3 s."
+alias = "check:select-hygiene"
+
+[tasks."check-session-shell"]
+run = "node packages/ui/scripts/check-session-shell.mjs"
+description = "Session-shell contract gate (task-934 delivered; wired by task-952): SS1-SS7 static position/ownership contract of the session shell (dock toggles, delegate/usage surfaces, tab ownership) — component tests cannot catch a block rendered into the wrong container. Static by default; `--ax <sessionUrl>` adds the real-browser AX/DOM reading (password read from XIHE_ADMIN_PASSWORD_FILE or .local/dev/admin-password, never printed). Reading at wiring (2026-11-24, main checkout): PASS (SS1-SS7) exit 0, ~0.06 s."
+alias = "check-session-shell"
+
+[tasks."check-write-invalidate"]
+run = "node packages/ui/scripts/check-write-invalidate.mjs"
+description = "Write-after-invalidate census gate (task-937 delivered; wired by task-952): an HTTP write call (api.<verb> / apiPost) must be followed by a read-face refresh token inside the same function — the root cause behind 'values only update after a full page reload'. Shrink-only baseline packages/ui/scripts/write-invalidate-baseline.json (a new unregistered write site => exit 1). Only method names that really exist in src/composables/api.ts count, so Dockview's own `api.addPanel` is not a false positive; src/composables/api.ts itself and __tests__ are excluded. `--selftest` 6 cases incl. the counter-example (adding the refresh makes the finding disappear). Reading at wiring (2026-11-24): 21 findings / 21 baseline entries => exit 0, ~0.2 s."
+alias = "check-write-invalidate"
+
+[tasks."check-spring-ctor"]
+run = "node scripts/check-spring-ctor-injection.mjs"
+description = "Spring constructor-injection gate (task-720 delivered; wired by task-952): a type declaring >=2 constructors without any @Autowired fails, because Spring falls back to 'no-arg or explicit annotation' and the bean cannot be instantiated (the incident is documented in the file header). Shrink-only baseline config/spring-ctor-baseline.json plus the same-line `// OK: <reason>` channel for classes the structural rule cannot judge (the gate explicitly does not decide whether a class is a Spring bean). Reading at wiring (2026-11-24): before files=733 hits=71 exempt=0 over=5 stale=4 => **exit 1** (the 5 OVER are exactly the cost of nobody running it); after the five `// OK:` lines (JPA @Entity/@Embeddable + a value enum inside a static guard, non-bean blind spot) files=733 hits=66 exempt=5 over=0 stale=4 => exit 0 in ~0.7 s. The 4 STALE entries are shrinkable via --write-baseline but config/spring-ctor-baseline.json is outside this card's write scopes, so it was NOT run (stale entries do not block; they only print)."
+alias = "check-spring-ctor"
+
+[tasks."check-delivery-receipt"]
+run = "node scripts/check-delivery-receipt.mjs"
+description = "Delivery-receipt contract gate (task-874 delivered; wired by task-952; body owned by task-885): every delivered card must carry a receipt whose head/commits/evidence resolve. A03 side keeps only this launcher (it locates the one root through `git rev-parse --git-common-dir` and exits 2 fail-closed when the body is missing — 'cannot read the cards' is never treated as green). Reading at wiring (2026-11-24): PASS delivered=293 receipted=169 lead_direct=2 baseline=158 debt_used=122 new=0 broken=0 stale=0 host_new=0 host_debt=36 => exit 0. Criteria untouched (task-885 is tightening the body in the same window; this card only adds the executor)."
+alias = "check-delivery-receipt"
+
+[tasks."check:a11y-name-snapshot"]
+run = "node ../internal/A03-xihe/scripts/check-a11y-name-snapshot.mjs --check"
+description = "Accessibility-name snapshot gate (wired by task-952): the a11y name baseline (8 faces / 664 entries / zh-CN + en-US) must stay self-consistent. Bare invocation exits 2 with 'missing --check' — the wiring therefore uses the `--check` form, not a call shape that is guaranteed red. Reading at wiring (2026-11-24, main checkout): `baseline faces=8 entries=664 locales=zh-CN,en-US` / `current snapshot not provided; baseline integrity only` / PASS exit 0."
+alias = "check:a11y-name-snapshot"
+
+[tasks."check:e2e-agent-names"]
+run = "node ../internal/A03-xihe/scripts/check-e2e-agent-names.mjs"
+description = "E2E agent-name gate (wired by task-952): agent names used across e2e specs must be valid and resolvable. Reading at wiring (2026-11-24): names=124 valid=124 invalid=0 unresolved=0 => exit 0."
+alias = "check:e2e-agent-names"
+
+[tasks."check:visual-await"]
+run = "node ../internal/A03-xihe/scripts/check-visual-await.mjs"
+description = "Visual-screenshot await gate (wired by task-952): no bare (un-awaited) expectPlatformScreenshot call sites — a floating promise makes the next assertion race the screenshot. Reading at wiring (2026-11-24): OK 无裸调用 expectPlatformScreenshot => exit 0."
+alias = "check:visual-await"
+
+[tasks."check:gate-executors"]
+# `dir = ".."` is not cosmetic: the auditor resolves its search face from the cwd
+# (`git rev-parse --show-toplevel`) and reads the owner registry at
+# `internal/A03-xihe/scripts/gate-owner-registry.json` relative to that face. Run from the
+# A03 tree it sees only A03 (measured: scanned=58 / trueOrphans=18 / registry unreadable =>
+# fail-closed) and silently drops the `internal/` face — a partial green, which is the exact
+# failure mode this card exists to kill. Run from the one root it audits the whole workspace
+# (scanned=122 / 17 git trees). Exit code judgement (task-952): 0 = no *unclaimed* orphan,
+# 1 = true orphan present, 2 = nothing scanned at all.
+dir = ".."
+run = "node scripts/audit-gate-executors.mjs"
+description = "The gate that gates the gates (2026-11-12 D-985~989; wired into an aggregate by task-952). Before this card it had a standalone one-root mise task but no aggregate executor, so the same root cause recurred nine times within twelve days (delivered cards whose gate nobody runs). Exit judgement changed by task-952 requirement 2: `trueOrphans === 0` => 0, otherwise 1, `scanned === 0` => 2 (nothing scanned is not safe). Registered orphans stay listed per row with their ownerCard and still count in `orphans` — only *unclaimed* orphans turn the aggregate red, otherwise the gate could never be wired anywhere. Positive and negative cases: --selftest cases ㉞-㊁ (registered-only => 0, unclaimed => 1, empty => 2, and the flip proof). Readings (one root, 2026-11-24): before scanned=122 orphans=16 registeredOrphans=7 trueOrphans=9 => exit 1; after trueOrphanCount=0 / orphans=7 (every row carries an ownerCard) => exit 0."
+alias = "check:gate-executors"
 
 [tasks."lint:agent"]
 run = "uv run ruff check && uv run mypy src/"

@@ -20,7 +20,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "grant_preset_atoms")
-public class GrantPresetAtom {
+public class GrantPresetAtom { // OK: JPA @Entity — the no-arg constructor is required by the persistence spec and the others are convenience builders; Spring never instantiates entities, so @Autowired does not apply here
 
     @EmbeddedId
     private GrantPresetAtomId id;

@@ -25,7 +25,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "grant_presets")
-public class GrantPreset {
+public class GrantPreset { // OK: JPA @Entity — the no-arg constructor is required by the persistence spec and the second is a convenience builder; Spring never instantiates entities, so @Autowired does not apply here
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")

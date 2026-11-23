@@ -9,7 +9,7 @@ import java.util.UUID;
 
 /** Composite key of {@code grant_preset_atoms}: one atom (action class + resource pattern) per role. */
 @Embeddable
-public class GrantPresetAtomId implements Serializable {
+public class GrantPresetAtomId implements Serializable { // OK: JPA @Embeddable composite key — the no-arg constructor is required by the persistence spec and the second is a convenience builder; Spring never instantiates embeddables, so @Autowired does not apply here
 
     @Column(name = "role_id", columnDefinition = "uuid")
     private UUID roleId;

@@ -196,6 +196,16 @@ mise run check:e2e-evidence-path # task-892/923: e2e screenshot/write targets mu
 mise run check:doc-count-claims  # task-898/923: DEV-038 resource-family counts must state their unit (registered N / §5 rows K) in zh+en against ResourceNamespaces.java; part of mise run lint
 mise run check:form-validation # task-927/923: controlled inputs in form containers must be wired to lib/formValidation (immediate validation, user ruling 2026-11-23); stock baseline 110 only shrinks; also wired into pnpm run lint; part of mise run lint
 mise run check:dev-i18n-drift # task-316: DEV docs zh/en id-set drift + PLAN/D registration lookup; report-only (not in validate)
+mise run check:gate-executors # task-186/952: the gate that gates the gates — audits every gate script for an executor across the workspace; true orphan (nobody claimed it) ⇒ exit 1, nothing scanned ⇒ exit 2, registered orphans print per row with ownerCard; runs from the ONE root via `dir = ".."`; part of mise run lint (wired by task-952)
+mise run check:route-registry # task-926/952: every rail/sidebar nav path must exist in the Vue Router table (a dead menu link is a runtime 404 unit tests never see); also wired into pnpm run lint; part of mise run lint
+mise run check:select-hygiene # task-926/952: combobox/select triggers must use the shared width/overflow treatment (SH1-SH3); dynamic :class prints as NOTE; also wired into pnpm run lint
+mise run check-session-shell  # task-934/952: session-shell position contract SS1-SS7 (block rendered into the wrong container is invisible to component tests); `--ax <sessionUrl>` adds the real-browser reading on demand; also wired into pnpm run lint
+mise run check-write-invalidate # task-937/952: an HTTP write call must be followed by a read-face refresh in the same function (root cause of "values only update after a full page reload"); shrink-only baseline; also wired into pnpm run lint
+mise run check-spring-ctor    # task-720/952: a type with >=2 constructors and no @Autowired is not instantiable by Spring; shrink-only baseline + same-line `// OK: <reason>` for the classes the structural rule cannot judge; part of mise run lint
+mise run check-delivery-receipt # task-874/952: every delivered card must carry a resolvable receipt (A03 side is a launcher; body owned by task-885); fail-closed exit 2 when the body is missing; part of mise run lint
+mise run check:a11y-name-snapshot # task-952: a11y-name baseline self-consistency (8 faces / 664 entries / zh-CN + en-US); wired with the `--check` form because a bare call exits 2 for missing argument; part of mise run lint
+mise run check:e2e-agent-names # task-952: e2e agent names must be registered and resolvable; part of mise run lint
+mise run check:visual-await   # task-952: no bare (un-awaited) expectPlatformScreenshot call sites — a floating promise races the next assertion; part of mise run lint
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
 

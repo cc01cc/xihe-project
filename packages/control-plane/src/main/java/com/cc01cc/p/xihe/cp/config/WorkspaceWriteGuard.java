@@ -27,7 +27,7 @@ import java.util.Set;
  */
 public final class WorkspaceWriteGuard {
 
-    public enum Requirement {
+    public enum Requirement { // OK: value enum inside a static guard (no Spring stereotype on WorkspaceWriteGuard); the two constructors encode the atom-less READ floor, Spring never instantiates it
         READ,
         WRITE(ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
         MANAGE(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
