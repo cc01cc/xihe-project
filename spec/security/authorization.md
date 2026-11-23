@@ -112,6 +112,7 @@
 - 绑定写入 **MUST** 执行提权校验：调用者必须自持其所授予的原子（只对**新增**绑定对判定），否则 `403 PRIVILEGE_ESCALATION`。
 - 错误码：`ROLE_SCOPE_MISMATCH` / `INVALID_GRANT_RESOURCE` / `PRIVILEGE_ESCALATION` / `SYSTEM_ROLE_IMMUTABLE` / `ROLE_IN_USE` / `LAST_SUPER_ADMIN` / `LAST_OWNER` / `CONCURRENT_MODIFICATION`；并发写冲突（`40P01`/`40001`）**MUST** 映射为 `409 CONCURRENT_MODIFICATION`（可重试），锁等待超时仍为 `503 OPERATION_LOCK_TIMEOUT`。
 - **两套"角色"分域**：本文的「访问角色」与 `agent-templates.roles[]` 的「Agent 角色（模板内）」不同名不同义，**MUST NOT** 混用。
+- **绑定 ≠ 组织归属**：把智能体主体绑到工作区（`workspace_agents`，落 `cap_source='baseline'`）只表达「该工作区可用该主体」，**不改变**该主体在组织树中的位置，也不等于成员（membership）成立。组织归属由 `agent_principals` 的单元归属（ltree）决定；候选读面（`GET /api/v1/workspaces/{id}/agents?includeBindable=true`）是「可绑定池 − 已绑集」，判据是 `MANAGE_WORKSPACE_AGENTS` 原子，缺原子整请求 403 且不泄名。
 
 ## 5. 实例所有权与 last-super-admin 不变式
 
