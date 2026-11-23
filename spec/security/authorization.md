@@ -96,7 +96,7 @@
 | `roles` | 全局权限目录（与作用域**无关**）：`SUPER_ADMIN`/`ADMIN`/`USER`（实例级）与 `WS_OWNER`/`WS_EDITOR`/`WS_VIEWER`（工作区级）与 `AGENT_DELEGATOR`/`AGENT_USER`（代理种子，`SystemAccessRoleCatalog.java:321`、`:330`），`is_system` 者不可删/不可改权限 |
 | `role_permissions` | 角色 → 原子（**42 动作原子 + 3 能力原子**，2026-11-20 枚举实测；旧文写「15」已过期）；原子目录的唯一来源是代码 `PermissionAtomCatalog` |
 | `role_bindings` | (角色, 主体, **grant scope**)：`scope_type ∈ {instance, workspace}`；**grant scope 在绑定上，不在角色上**；显式**不继承** |
-| `grants` | 带 grant scope 的有效原子物化表（`scope_type`/`scope_id`），仅由物化器写入 `source='role'`；资源列 **MUST NOT** 出现 `phys:` |
+| `grants` | 带 grant scope 的有效原子物化表（`scope_type`/`scope_id`）。来源为 `assigned`（预设**导入**一次的结果，V186 起；带 `origin_preset_id` 仅作展示/对比）、`spawn`、`template`、`credential_binding`、`agent_default`、`plugin_binding`；`preset`/`role` 是历史值，**只保留在 provenance 词表、不参与判定**；资源列 **MUST NOT** 出现 `phys:` |
 | 原子 `scope_class` | `instance`（仅实例级 grant scope 可绑：`instance:super`/`instance:admin`/`CREATE_ACCOUNT`/`MANAGE_ROLES`/`SPAWN_AGENT`/`CREATE_TEMPLATE`/`credential_*`）或 `both`（其余，含 `workspace:admin`） |
 
 - **能力原子不物化**：`instance:super`/`instance:admin`/`workspace:admin` 在认证期由绑定解析为 `cap:<atom>` authority，不写 `grants`。
