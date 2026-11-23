@@ -106,6 +106,7 @@ export function findProseTabIssues({ repoAbs, baseRef, files }) {
     const fenceMask = computeFenceMask(lines);
     const tracked = spawnSync("git", ["-C", repoAbs, "cat-file", "-e", `${baseRef}:${file}`], {
       encoding: "utf8",
+      windowsHide: true,
     }).status === 0;
     let addedLines;
     if (!tracked) {
@@ -114,7 +115,7 @@ export function findProseTabIssues({ repoAbs, baseRef, files }) {
       const diff = spawnSync(
         "git",
         ["-C", repoAbs, "diff", "--no-color", "--unified=0", baseRef, "--", file],
-        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true },
       );
       if (diff.status !== 0) {
         throw new Error(`git diff ${baseRef} -- ${file} 失败：${String(diff.stderr || "").trim()}`);
@@ -348,7 +349,10 @@ const ALLOWLIST = new Map();
  * @returns {Promise<number>} 实际回调的提交条数
  */
 async function forEachRangeEntry(span, onEntry) {
-  const child = spawn("git", ["log", span, "--pretty=format:%H%x1f%B%x1e"], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("git", ["log", span, "--pretty=format:%H%x1f%B%x1e"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   let stderr = "";

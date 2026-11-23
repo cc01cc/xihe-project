@@ -57,7 +57,7 @@ function collectVueFiles() {
     const out = execFileSync(
         "git",
         ["ls-files", "--cached", "--others", "--exclude-standard", "--", "src"],
-        { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true },
     );
     return out
         .split(/\r?\n/)

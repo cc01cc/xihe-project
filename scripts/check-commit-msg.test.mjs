@@ -181,6 +181,7 @@ test("`--prose-tabs`：围栏外新增 TAB 拒、围栏内放行、旧 TAB 不�
         spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=.git/no-hooks", ...args], {
             cwd: dir,
             encoding: "utf8",
+            windowsHide: true,
         });
     try {
         assert.equal(git("init", "-q", "-b", "main").status, 0);
