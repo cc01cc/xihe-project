@@ -36,7 +36,8 @@ import { aggregateExit, parseTaskExits } from "./validate-run.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * 门清单**数据**（32 个成员；顺序无执行语义）。task-124 起本清单是 lint 的**唯一**门集合来源
+ * 门清单**数据**（36 个成员，2026-11-24 task-923 四门接入后；成员数以 `--list` 为准，注释不做判据）。
+ * task-124 起本清单是 lint 的**唯一**门集合来源
  * （[tasks.lint] 已改为 run 本文件），不再与 mise.toml depends 对账。
  * 新增门只加一行 —— 与 validate-run.mjs 的 GATES 同惯例。
  * ⚠️ 有产物依赖的门**不得**加进来（方案档 §6 反例保护）：
@@ -56,6 +57,7 @@ export const LINT_GATES = [
     "check:ui-copy",
     "check:i18n-fixture-copies",
     "check:dev-i18n-drift",
+    "check:form-validation",
     "check:md-tables",
     "check:ports",
     "check:migrations",
@@ -75,6 +77,11 @@ export const LINT_GATES = [
     "check:a11y-refs",
     "check:trace",
     "check:decision-test-map",
+    // task-923（2026-11-24）：三张「门已交付、零执行者」的门接进聚合（判据与基线不动）。
+    // 门本体在 one 侧 internal/A03-xihe/scripts/，挂点见 mise.toml 的 task-923 接线批次。
+    "check:spawn-hide",
+    "check:e2e-evidence-path",
+    "check:doc-count-claims",
 ];
 
 /**
@@ -242,6 +249,9 @@ function main(argv) {
         stdio: ["ignore", "pipe", "pipe"],
         encoding: "utf8",
         maxBuffer: 256 * 1024 * 1024,
+        // task-923：接进 check:spawn-hide 后本门成为自己的受检站点。Windows 下缺省不抑制
+        // ⇒ 每次 mise run lint 都会闪一个新控制台并抢焦点（Node 24：`!!options.windowsHide`）。
+        windowsHide: true,
     });
     const elapsedMs = Date.now() - started;
     // spawnSync 自身失败（找不到 mise）⇒ 2，不冒充 0 通过（同 validate-run.mjs:61-62）。

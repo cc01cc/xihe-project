@@ -191,6 +191,10 @@ mise run check:mise-env       # task-131/273/313: XIHE_* vars used in properties
 mise run check:openapi:lint   # task-133/313: Redocly spec-level lint ($ref / operationId / unused); part of validate, errors-only (126 warnings don't block; errors baseline 0 since task-60)
 mise run check:docs-gates     # doc gates aggregate (docs-index + doc-bytes + md-tables); run from the ONE workspace root as the monitor's ⑧ question, not by validate
 mise run check:dialog-shape   # task-120/194: dialog/sheet panel shape scan (R1 requires overflow-y-auto; max-h alone insufficient); report-only, standalone — NOT in validate; first line prints "shape only does not prove reachability"; reachability criterion = dialog-reachability-sweep (on-demand instrument, registry D bucket)
+mise run check:spawn-hide     # task-890/923: child-process sites must suppress a new console (Node windowsHide / Rust CREATE_NO_WINDOW / PS -WindowStyle Hidden); baseline only shrinks, an unregistered site ⇒ exit 1, nothing scanned ⇒ exit 2; part of mise run lint
+mise run check:e2e-evidence-path # task-892/923: e2e screenshot/write targets must not depend on a machine path or on cwd (judged only at write-argument positions); baseline only shrinks; part of mise run lint
+mise run check:doc-count-claims  # task-898/923: DEV-038 resource-family counts must state their unit (registered N / §5 rows K) in zh+en against ResourceNamespaces.java; part of mise run lint
+mise run check:form-validation # task-927/923: controlled inputs in form containers must be wired to lib/formValidation (immediate validation, user ruling 2026-11-23); stock baseline 110 only shrinks; also wired into pnpm run lint; part of mise run lint
 mise run check:dev-i18n-drift # task-316: DEV docs zh/en id-set drift + PLAN/D registration lookup; report-only (not in validate)
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
