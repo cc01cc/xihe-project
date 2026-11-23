@@ -708,6 +708,25 @@ describe("AgentPrincipalDetailDrawer · 换页与关抽屉互不串（task-92）
         document.body.innerHTML = "";
     });
 
+    /**
+     * task-921（P0 回归）：抽屉是**常驻挂载**的（`open=false` 也在 setup 里注册守卫）。
+     * 无主体时若基线停在空串而工作副本是空快照，dirty 会恒真 ⇒ 守卫挂起导航、确认框又因为
+     * 抽屉未打开而不在 DOM 里 ⇒ 决策 Promise 永不 settle，整条全局导航失灵。
+     */
+    it("关闭态/无主体：离开守卫直接放行，不谎报草稿", async () => {
+        const wrapper = mountDrawer({ open: false, principal: null });
+        await flushPromises();
+
+        expect(guardHooks.leave.length, "抽屉始终注册 leave + update 两条守卫").toBe(2);
+        await expect(
+            guardHooks.leave[0]() as Promise<boolean>,
+            "没有主体就没有草稿 —— 离开必须放行",
+        ).resolves.toBe(true);
+        expect(maybe('[data-testid="settings-leave-confirm"]')).toBeNull();
+        wrapper.unmount();
+        document.body.innerHTML = "";
+    });
+
     it("关抽屉：只弹 apd-unsaved-confirm，settings-leave-confirm 不在场", async () => {
         const wrapper = mountDrawer();
         await flushPromises();

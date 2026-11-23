@@ -233,21 +233,25 @@ function snapshotModel(draft: ModelDraft): string {
 
 function resetDrafts() {
     const principal = props.principal;
-    if (!principal) return;
-    modelDraft.provider = principal.defaultModelProvider ?? "";
-    modelDraft.model = principal.defaultModelName ?? "";
+    // task-921：**不能因为「没有主体」就 early-return**。抽屉是常驻挂载的（`open=false` 时
+    // 仍在 setup 里注册路由离开守卫），若基线停在初值 `""` 而工作副本是空对象快照
+    // `["","",[]]`，`modelDirty` / `hooksDirty` 会恒为 true ⇒ 离开守卫以为有草稿、挂起导航，
+    // 而确认框只在 `DialogContent`（抽屉打开时）里渲染 ⇒ 决策 Promise 永不 settle，整条全局
+    // 导航在 /members 上全部失灵。无主体时就按「空主体」重置，工作副本与基线必须相等。
+    modelDraft.provider = principal?.defaultModelProvider ?? "";
+    modelDraft.model = principal?.defaultModelName ?? "";
     modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
-    modelDraft.allowedModels = (principal.allowedModels ?? []).map((entry) => ({
+    modelDraft.allowedModels = (principal?.allowedModels ?? []).map((entry) => ({
         provider: entry.provider,
         model: entry.model,
         connectionId: resolveConnectionId(entry.provider, entry.model),
     }));
     modelBaseline.value = snapshotModel(modelDraft);
-    delegationDraft.value = parseDelegationPolicy(principal.delegationPolicy);
+    delegationDraft.value = parseDelegationPolicy(principal?.delegationPolicy ?? null);
     delegationBaseline.value = { ...delegationDraft.value };
-    memoryEnabled.value = readMemoryEnabled(principal.contextPolicy);
+    memoryEnabled.value = readMemoryEnabled(principal?.contextPolicy ?? null);
     memoryBaseline.value = memoryEnabled.value;
-    advisors.value = parseAdvisors(principal.hooks);
+    advisors.value = parseAdvisors(principal?.hooks ?? null);
     advisorsBaseline.value = JSON.stringify(advisors.value);
     newAdvisorKind.value = ADVISOR_KINDS[0];
     newAdvisorCustomTag.value = "";
@@ -264,8 +268,10 @@ function resetDrafts() {
 watch(
     [() => props.open, () => props.principal?.principalId],
     () => {
+        // task-921：关闭态/无主体也要重置一次（见 resetDrafts 注释）——工作副本与基线必须
+        // 始终同源，否则 dirty 会在抽屉根本没打开时成立，离开守卫随之悬挂。
+        resetDrafts();
         if (props.open && props.principal) {
-            resetDrafts();
             loadRoles();
         }
     },
