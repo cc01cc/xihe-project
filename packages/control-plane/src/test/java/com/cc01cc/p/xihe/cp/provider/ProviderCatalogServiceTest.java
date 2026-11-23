@@ -1,10 +1,16 @@
 package com.cc01cc.p.xihe.cp.provider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.ByteArrayResource;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -18,8 +24,16 @@ class ProviderCatalogServiceTest {
             new ProviderCatalogService(objectMapper, new ApiInputTypeService(objectMapper));
 
     @Test
-    void loadsCuratedProviderDefinitions() {
-        assertEquals(23, catalog.list().size());
+    void loadsCuratedProviderDefinitions() throws IOException {
+        // task-963: never a literal count — task-944 added `opencode-go` and the old 23 reddened this
+        // test. The shipped document is the count SSOT, so the next catalog addition stays green here
+        // while the loader is still proven to serve every declared entry and invent none.
+        List<String> shipped = shippedProviderIds();
+        assertTrue(shipped.size() > 0, "the shipped catalog must declare at least one provider");
+        assertEquals(shipped.size(), catalog.list().size(),
+                "catalog.list() must serve every provider declared in provider-catalog/providers.json");
+        assertEquals(new HashSet<>(shipped), catalog.providerIds(),
+                "the catalog must expose exactly the ids the shipped document declares");
         assertEquals("deepseek", catalog.require("deepseek").path("id").asText());
         assertEquals("native-litellm", catalog.adapter("deepseek"));
         assertEquals("https://api.deepseek.com/v1", catalog.defaultBaseUrl("deepseek"));
@@ -76,6 +90,17 @@ class ProviderCatalogServiceTest {
     private ProviderCatalogService catalogWith(String json) {
         return new ProviderCatalogService(objectMapper, new ApiInputTypeService(objectMapper),
                 new ByteArrayResource(json.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** The shipped document is the only count SSOT; a literal number is what task-963 removes. */
+    private List<String> shippedProviderIds() throws IOException {
+        try (var in = new ClassPathResource("provider-catalog/providers.json").getInputStream()) {
+            JsonNode root = objectMapper.readTree(in);
+            assertTrue(root.isArray(), "provider-catalog/providers.json must be a JSON array");
+            List<String> ids = new ArrayList<>();
+            root.forEach(entry -> ids.add(entry.path("id").asText()));
+            return ids;
+        }
     }
 
     private static final String PROVIDER_HEAD =

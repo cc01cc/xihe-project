@@ -41,8 +41,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * task-148 / DSD-1513: the first-run <b>content</b> seed on a real PostgreSQL database — one default
- * workspace, one instance provider connection, three Agent subjects and their org-unit placement —
- * plus the idempotency reading the card demands: the second start inserts nothing.
+ * workspace, the declared instance-layer connection set, three Agent subjects and their org-unit
+ * placement — plus the idempotency reading the card demands: the second start inserts nothing.
+ *
+ * <p>task-963: the connection assertions are derived from
+ * {@link FirstRunContentSeeder#SEED_CONNECTIONS} (the product's declared first-run default set) and
+ * cross-checked against the provider catalog, never written as a literal provider-name array; the
+ * retired single-Ollama default is pinned as an <b>absence</b> instead.</p>
  *
  * <p>The class builds {@link FirstRunContentSeeder} by hand instead of flipping
  * {@code cp.bootstrap.seed-content} for the context: the gate is a constructor argument, so a hand-built
@@ -134,7 +139,17 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         assertEquals(List.of(), first.lastRunWarnings(), "a first start on a healthy instance warns about nothing");
 
         assertEquals(1, count("workspaces"), "exactly one default workspace");
-        assertEquals(1, count("provider_connections"), "exactly one instance provider connection");
+        // task-963: the expected set comes from the seeder's declared default set, so the next
+        // default-set adjustment does not redden this class (the old "1 connection / ollama" literals
+        // did exactly that after task-944).
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
+                "the first run creates exactly the declared instance-layer default set");
+        assertEquals(seedProviderIds(), instanceProviderIds(),
+                "the instance-layer connection set equals the declared first-run default set");
+        assertTrue(providerCatalog.providerIds().containsAll(seedProviderIds()),
+                "the seed set may only name providers the catalog declares; seed=" + seedProviderIds());
+        assertEquals(0, countWhere("provider_connections", "provider_id = 'ollama'"),
+                "a fresh install must not seed the retired single Ollama default");
         assertEquals(3, count("agent_principals"), "Lead + WorkerA + WorkerB");
         assertEquals(3, count("org_units"), "the content seed adds no org unit of its own");
         assertEquals(4, count("org_unit_members"), "the admin in the root plus the three subjects");
@@ -156,17 +171,31 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
                 Integer.class, adminId, workspace.getId().toString()),
                 "the seeded admin owns the seeded workspace");
 
-        ProviderConnection connection = providerConnections
-                .findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(ProviderConnection.OWNER_INSTANCE,
-                        instanceIdentity.ownerId(), FirstRunContentSeeder.PROVIDER_ID,
-                        FirstRunContentSeeder.CONNECTION_KEY)
-                .orElseThrow(() -> new AssertionError("the instance provider connection should be seeded"));
-        assertEquals(ProviderConnection.OWNER_INSTANCE, connection.getOwnerType());
-        assertEquals(instanceIdentity.ownerId(), connection.getOwnerId(), "scoped to the instance identity");
-        assertEquals(FirstRunContentSeeder.CONNECTION_LABEL, connection.getLabel());
-        assertNull(connection.getCredentialId(), "ollama needs no credential, and a forged READY would need one");
-        assertEquals(ProviderConnection.STATUS_UNVERIFIED, connection.getStatus(),
-                "the seed leaves an explicit terminal state instead of the create() in-flight VERIFYING");
+        // task-963: every declared entry must land with catalog-derived fields — a row may not name a
+        // provider, base URL, or API type pair the catalog does not declare.
+        for (FirstRunContentSeeder.SeedConnection spec : FirstRunContentSeeder.SEED_CONNECTIONS) {
+            ProviderConnection connection = providerConnections
+                    .findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(ProviderConnection.OWNER_INSTANCE,
+                            instanceIdentity.ownerId(), spec.providerId(), FirstRunContentSeeder.CONNECTION_KEY)
+                    .orElseThrow(() -> new AssertionError("the declared connection " + spec.providerId()
+                            + " must be seeded"));
+            assertEquals(ProviderConnection.OWNER_INSTANCE, connection.getOwnerType());
+            assertEquals(instanceIdentity.ownerId(), connection.getOwnerId(), "scoped to the instance identity");
+            assertEquals(spec.label(), connection.getLabel(), "the label comes from the declared seed entry");
+            assertEquals(ProviderConnection.STATUS_UNVERIFIED, connection.getStatus(),
+                    "the seed leaves an explicit terminal state instead of the create() in-flight VERIFYING");
+            assertNull(connection.getCredentialId(),
+                    "a credential-less seeded connection must stay " + ProviderConnection.STATUS_UNVERIFIED
+                            + "; a forged READY would need one");
+            assertEquals(providerCatalog.defaultBaseUrl(spec.providerId()), connection.getBaseUrl(),
+                    "the base URL is catalog-derived, never a seed literal");
+            ProviderCatalogService.ApiTypeRef type = providerCatalog.defaultApiType(spec.providerId());
+            assertEquals(type.apiTypeId(), connection.getApiTypeId(), "the API type pair is catalog-derived");
+            assertEquals(type.version(), connection.getApiTypeVersion(), "the API type pair is catalog-derived");
+            assertEquals(providerCatalog.supportedPair(spec.providerId(), type.apiTypeId(), type.version())
+                            .path("modelDiscovery").asText("remote-models"), connection.getModelDiscovery(),
+                    "model discovery is catalog-derived, never a seed literal");
+        }
 
         List<AgentPrincipal> subjects = agentPrincipals.findByCreatedByUserId(adminId);
         assertEquals(Set.of(FirstRunContentSeeder.LEAD_NAME, "WorkerA", "WorkerB"),
@@ -174,13 +203,21 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         Map<String, AgentPrincipal> byName = subjects.stream()
                 .collect(Collectors.toMap(AgentPrincipal::getName, subject -> subject));
         for (AgentPrincipal subject : subjects) {
-            // task-18 J4: the catalog declares no model id for ollama (modelDiscovery=remote-models),
-            // so the intent is left empty and reported as 待绑定 instead of a literal "llama3.2".
+            // task-18 J4 / task-963: the shipped catalog declares no model ids for the seeded providers
+            // (they are modelDiscovery=remote-models), so the intent stays empty and is reported as
+            // 待绑定 instead of a literal model name nothing can resolve.
             assertNull(subject.getDefaultModelProvider(),
                     "no catalog-resolvable model id => the provider is left empty too");
             assertNull(subject.getDefaultModelName(),
                     "the seed must never write a model name nothing in the catalog declares");
         }
+        // The 待绑定 expectation above is only honest while the catalog declares no model id for the
+        // provider the intent is taken from (the first entry of the seed set). Asserting it from the
+        // catalog keeps the premise visible instead of hiding it in a comment.
+        String intentProvider = FirstRunContentSeeder.SEED_CONNECTIONS.get(0).providerId();
+        assertTrue(FirstRunSeedModelIntent.modelIds(providerCatalog.require(intentProvider)).isEmpty(),
+                "the 待绑定 reading presumes the catalog declares no model id for " + intentProvider
+                        + "; update this class's model-intent expectation when that changes");
         assertTrue(first.lastModelIntentPending(),
                 "the run must report the 待绑定 state instead of silently claiming a model");
         assertEquals(FirstRunContentSeeder.LEADERS_UNIT_ID,
@@ -223,7 +260,8 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         second.seed(admin);
         assertEquals(List.of(), second.lastRunWarnings(), "a second start warns about nothing either");
         assertEquals(1, count("workspaces"), "second start inserts no workspace");
-        assertEquals(1, count("provider_connections"), "second start inserts no provider connection");
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
+                "second start inserts no provider connection");
         assertEquals(3, count("agent_principals"), "second start inserts no subject");
         assertEquals(3, count("workspace_agents"), "second start inserts no default binding");
         assertEquals(3, count("org_units"), "second start inserts no org unit");
@@ -237,7 +275,8 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
         FirstRunContentSeeder auto = seeder(FirstRunContentSeeder.MODE_AUTO);
         auto.seed(admin);
         assertEquals(1, count("workspaces"), "auto must not touch a non-empty instance");
-        assertEquals(1, count("provider_connections"), "auto must not touch a non-empty instance");
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
+                "auto must not touch a non-empty instance");
         assertEquals(3, count("agent_principals"), "auto must not touch a non-empty instance");
         assertEquals(4, count("org_unit_members"), "auto must not touch a non-empty instance");
 
@@ -299,6 +338,25 @@ class FirstRunContentSeedIntegrationTest extends AbstractIntegrationTest {
 
     private int count(String table) {
         Integer rows = jdbc.queryForObject("SELECT count(*) FROM " + table, Integer.class);
+        assertNotNull(rows, "count(*) must never be null for " + table);
+        return rows;
+    }
+
+    /** task-963: the declared first-run default set, not a literal provider-name array. */
+    private static Set<String> seedProviderIds() {
+        return FirstRunContentSeeder.SEED_CONNECTIONS.stream()
+                .map(FirstRunContentSeeder.SeedConnection::providerId)
+                .collect(Collectors.toSet());
+    }
+
+    /** Every instance-layer connection currently in the database, in the same key space as the seed set. */
+    private Set<String> instanceProviderIds() {
+        return jdbc.queryForList("SELECT provider_id FROM provider_connections WHERE owner_type = ?",
+                String.class, ProviderConnection.OWNER_INSTANCE).stream().collect(Collectors.toSet());
+    }
+
+    private int countWhere(String table, String predicate) {
+        Integer rows = jdbc.queryForObject("SELECT count(*) FROM " + table + " WHERE " + predicate, Integer.class);
         assertNotNull(rows, "count(*) must never be null for " + table);
         return rows;
     }

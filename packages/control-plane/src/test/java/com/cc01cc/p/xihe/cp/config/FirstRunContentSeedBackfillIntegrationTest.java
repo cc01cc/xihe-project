@@ -25,6 +25,8 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -110,7 +112,13 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
         degraded.seed(admin);
 
         assertEquals(0, count("workspaces"), "available=false must leave no workspace row behind");
-        assertEquals(1, count("provider_connections"), "the connection does not depend on the workspace");
+        // task-963: the expected count is the seeder's declared default set, never a literal.
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
+                "the declared connections do not depend on the workspace");
+        assertEquals(seedProviderIds(), instanceProviderIds(),
+                "the degraded run still writes exactly the declared first-run default set");
+        assertTrue(providerCatalog.providerIds().containsAll(seedProviderIds()),
+                "the seed set may only name providers the catalog declares; seed=" + seedProviderIds());
         assertEquals(3, count("agent_principals"), "the subjects do not depend on the workspace either");
         assertEquals(4, count("org_unit_members"), "the admin plus the three placed subjects");
         List<String> warnings = degraded.lastRunWarnings();
@@ -128,7 +136,10 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
         assertEquals(List.of(), healthy.lastRunWarnings(), "nothing is left to warn about");
 
         assertEquals(1, count("workspaces"), "the next start backfills the one missing group");
-        assertEquals(1, count("provider_connections"), "backfill does not duplicate the connection");
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
+                "backfill does not duplicate the connections");
+        assertEquals(seedProviderIds(), instanceProviderIds(),
+                "backfill leaves the instance connection set at the declared default set");
         assertEquals(3, count("agent_principals"), "backfill does not duplicate the subjects");
         assertEquals(3, count("org_units"), "backfill adds no org unit");
         assertEquals(4, count("org_unit_members"), "backfill does not move anybody");
@@ -149,5 +160,17 @@ class FirstRunContentSeedBackfillIntegrationTest extends AbstractIntegrationTest
         Integer rows = jdbc.queryForObject("SELECT count(*) FROM " + table, Integer.class);
         assertNotNull(rows, "count(*) must never be null for " + table);
         return rows;
+    }
+
+    /** task-963: the declared first-run default set, not a literal provider-name array. */
+    private static Set<String> seedProviderIds() {
+        return FirstRunContentSeeder.SEED_CONNECTIONS.stream()
+                .map(FirstRunContentSeeder.SeedConnection::providerId)
+                .collect(Collectors.toSet());
+    }
+
+    private Set<String> instanceProviderIds() {
+        return jdbc.queryForList("SELECT provider_id FROM provider_connections WHERE owner_type = ?",
+                String.class, "INSTANCE").stream().collect(Collectors.toSet());
     }
 }

@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
+import com.cc01cc.p.xihe.cp.provider.ProviderCatalogService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -48,9 +49,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>D-1912 (task-725) supersedes the old "fresh onboarding account is USER tier only" premise:
  * the first account now claims {@code instance_owner} and receives SUPER_ADMIN <b>before</b> the
- * first-run content trigger runs. The seeder's owner gate therefore passes and exactly one
- * instance-scoped, credential-less connection must be created; it stays {@code UNVERIFIED} and is
- * never claimed as a verified provider.</p>
+ * first-run content trigger runs. The seeder's owner gate therefore passes and the declared
+ * instance-layer default set must be created; every row stays credential-less and {@code UNVERIFIED}
+ * and is never claimed as a verified provider (task-963).</p>
  *
  * <p>The three readings J5 asks for are in one method, in the card's order: the full first install,
  * the second login/registration inserting nothing, and the catalog-empty model intent staying
@@ -111,6 +112,8 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
     private FirstRunContentSeedTrigger trigger;
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private ProviderCatalogService providerCatalog;
 
     @Test
     void onboardingRegistrationSeedsTheContentGroupOnceInTheShippedDefault() {
@@ -152,22 +155,31 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
                 "the onboarding account owns the workspace it got by default");
 
         // D-1912 (task-725): the first account claims instance_owner + SUPER_ADMIN on registration,
-        // so by the time the content trigger runs the owner gate passes. Exactly one instance-scoped
-        // connection is created, and it must remain credential-less / UNVERIFIED (no forged READY).
-        assertEquals(1, count("provider_connections"),
-                "the first account is the instance owner, so the seeded instance connection is created");
+        // so by the time the content trigger runs the owner gate passes. task-963: the expected count
+        // is the seeder's declared default set, not a literal; every row must remain credential-less /
+        // UNVERIFIED (no forged READY), and each provider must resolve in the catalog.
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
+                "the first account is the instance owner, so the declared instance default set is created");
         assertFalse(seeder.lastRunWarnings().stream().anyMatch(w -> w.contains("no owner yet")),
                 "the owner gate must not skip anymore under D-1912; got: " + seeder.lastRunWarnings());
-        Map<String, Object> seededConnection = jdbc.queryForMap(
+        List<Map<String, Object>> seededConnections = jdbc.queryForList(
                 "SELECT owner_type, provider_id, connection_key, status, credential_id"
-                        + " FROM provider_connections");
-        assertEquals(ProviderConnection.OWNER_INSTANCE, seededConnection.get("owner_type"));
-        assertEquals("ollama", seededConnection.get("provider_id"));
-        assertEquals("default", seededConnection.get("connection_key"));
-        assertEquals(ProviderConnection.STATUS_UNVERIFIED, seededConnection.get("status"),
-                "a credential-less seeded connection must stay UNVERIFIED, never READY");
-        assertNull(seededConnection.get("credential_id"),
-                "the seeded ollama connection carries no credential");
+                        + " FROM provider_connections ORDER BY provider_id");
+        assertEquals(seedProviderIds(), seededConnections.stream()
+                        .map(row -> (String) row.get("provider_id")).collect(Collectors.toSet()),
+                "the instance-layer connections equal the declared first-run default set");
+        assertEquals(0, seededConnections.stream().filter(row -> "ollama".equals(row.get("provider_id"))).count(),
+                "a fresh install must not seed the retired single Ollama default");
+        for (Map<String, Object> seededConnection : seededConnections) {
+            assertEquals(ProviderConnection.OWNER_INSTANCE, seededConnection.get("owner_type"));
+            assertEquals("default", seededConnection.get("connection_key"));
+            assertEquals(ProviderConnection.STATUS_UNVERIFIED, seededConnection.get("status"),
+                    "a credential-less seeded connection must stay UNVERIFIED, never READY");
+            assertNull(seededConnection.get("credential_id"),
+                    "the seeded " + seededConnection.get("provider_id") + " connection carries no credential");
+            assertTrue(providerCatalog.providerIds().contains((String) seededConnection.get("provider_id")),
+                    "every seeded provider must exist in the catalog, got: " + seededConnection.get("provider_id"));
+        }
 
         List<AgentPrincipal> subjects = agentPrincipals.findByCreatedByUserId(first.getId().toString());
         assertEquals(Set.of(FirstRunContentSeeder.LEAD_NAME, "WorkerA", "WorkerB"),
@@ -175,8 +187,8 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
                 "the three first-run subjects are created by the onboarding account");
         for (AgentPrincipal subject : subjects) {
             assertEquals(first.getId().toString(), subject.getCreatedByUserId());
-            // J4 / J5 reading 3: the catalog declares no model id (ollama is remote-models), so the
-            // intent must stay empty and be labelled 待绑定 — never the literal "llama3.2".
+            // J4 / J5 reading 3: the shipped catalog declares no model ids for the seeded providers
+            // (they are remote-models), so the intent must stay empty and be labelled 待绑定.
             assertNull(subject.getDefaultModelProvider(), "no catalog-resolvable model => provider empty");
             assertNull(subject.getDefaultModelName(), "no catalog-resolvable model => model empty");
         }
@@ -200,12 +212,17 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
         assertEquals(2, count("users"), "the second account exists");
         assertEquals(1, count("workspaces"), "a second account/login seeds no second workspace");
         assertEquals(3, count("agent_principals"), "and no second set of subjects");
-        assertEquals(1, count("provider_connections"),
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(), count("provider_connections"),
                 "a second account/login adds no second connection");
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM provider_connections"
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(),
+                jdbc.queryForObject("SELECT count(*) FROM provider_connections"
                         + " WHERE owner_type = 'INSTANCE' AND connection_key = 'default'",
                 Integer.class),
-                "there must be exactly one default instance connection, never a duplicate");
+                "there must be exactly the declared default instance connections, never a duplicate");
+        assertEquals(FirstRunContentSeeder.SEED_CONNECTIONS.size(),
+                jdbc.queryForObject("SELECT count(DISTINCT provider_id) FROM provider_connections"
+                        + " WHERE owner_type = 'INSTANCE' AND connection_key = 'default'", Integer.class),
+                "a provider may be seeded at most once under the default key");
         assertEquals(3, count("org_unit_members"), "nobody was moved by the repeat");
         assertFalse(trigger.retryPending(), "the first attempt succeeded, so no retry is owed");
         dumpReadings("after-second-account");
@@ -234,6 +251,13 @@ class FirstRunContentSeedOnboardingIntegrationTest extends AbstractIntegrationTe
         Integer rows = jdbc.queryForObject("SELECT count(*) FROM " + table, Integer.class);
         assertNotNull(rows, "count(*) must never be null for " + table);
         return rows;
+    }
+
+    /** task-963: the declared first-run default set, not a literal provider-name array. */
+    private static Set<String> seedProviderIds() {
+        return FirstRunContentSeeder.SEED_CONNECTIONS.stream()
+                .map(FirstRunContentSeeder.SeedConnection::providerId)
+                .collect(Collectors.toSet());
     }
 
     private void dumpReadings(String stage) {
