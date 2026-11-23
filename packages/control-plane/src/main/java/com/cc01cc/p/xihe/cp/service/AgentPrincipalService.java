@@ -845,6 +845,92 @@ public class AgentPrincipalService {
                     ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
             .thenComparing(view -> view.principalId().toString());
 
+    /**
+     * task-930 (user ruling 2026-11-24): "a workspace may only BIND members, never CREATE them — an
+     * agent created here is outside organisation management". This is the read face for that bind
+     * action: the principals a caller may pull into this workspace, i.e. the ones that are visible to
+     * the caller but are <b>not reachable</b> here yet.
+     *
+     * <p>Three rules, each sourced from an existing contract instead of a new one:</p>
+     * <ol>
+     *   <li><b>Gate</b> — the same atom + workspace scope the write face ({@link #setWorkspaceCap})
+     *       evaluates ({@code MANAGE_WORKSPACE_AGENTS}), checked <b>before</b> any principal row is
+     *       read so a caller without it learns nothing about which names exist (the L4
+     *       no-existence-oracle rule). It goes through the policy kernel
+     *       ({@code requireUserAction} → {@code RequesterAuthority}), never a role-name test.
+     *       Deliberately <b>not</b> {@code READ_ORG_UNIT_MEMBERS}: that atom is held only by
+     *       {@code SUPER_ADMIN}/{@code ORG_LEADER}, so a plain workspace owner would answer 403
+     *       (V162:44/61-64) and the surface would be dead exactly for the role that needs it.</li>
+     *   <li><b>Reach</b> — already reachable rows come from {@link #listWorkspaceAgents} itself
+     *       (bindings ∪ workspace-preset reach ∪ the caller's own legacy owner rows). Reusing it
+     *       keeps one visibility rule (a candidate can never also be a listed row, so the UI cannot
+     *       offer "bind" for something already bound).</li>
+     *   <li><b>Pool</b> — the personal view's visibility ({@link #listPrincipals} without a
+     *       workspace): a {@code MANAGE_AGENT_PRINCIPALS} holder sees every row, everyone else the
+     *       rows they created (G13=(a), which is also the BL-352 creator-first-bind channel).
+     *       INSTANCE-owned rows are already dropped there (task-173 / D-1540 ①) because the instance
+     *       prefix is their surface — offering them here would be "visible but every button 403s".</li>
+     * </ol>
+     *
+     * <p>{@code bindable}/{@code unbindableReason} project the refusals the write face already emits,
+     * with the same codes, so a row that reads bindable=false is the row the PUT would reject:
+     * {@code AGENT_PRINCIPAL_DISABLED} ({@code requireActivePrincipal}) and {@code
+     * AGENT_PRINCIPAL_OWNER_MISMATCH} ({@code requireBindingAuthority}). The other refusal ({@code
+     * GUARD_CAP_IMMUTABLE} from {@code requireMutableCap}) is unreachable here by construction: a
+     * preset guard is always INSTANCE-owned (V170 cross-axis CHECK) and INSTANCE rows never enter the
+     * pool. The row is still returned (marked, not hidden) so the UI can explain why instead of
+     * silently omitting a principal its operator just created.</p>
+     *
+     * <p>{@code isDefault} is derived from the stored workspace default, never hard-coded. It is
+     * structurally {@code false} here (a workspace default is by definition a bound row, and bound
+     * rows are excluded by the reach rule) — deriving it means a data drift would show up instead of
+     * being masked by a constant.</p>
+     */
+    @Transactional(readOnly = true)
+    public List<BindableCandidate> listBindableCandidates(String actorUserId, UUID workspaceId) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
+        requireWorkspaceMember(actorId, workspaceId);
+        // Before ANY repository read of a principal: a missing atom must not leak names.
+        requireWorkspaceAgentManagement(actorId, workspaceId);
+
+        Set<UUID> reachable = new LinkedHashSet<>();
+        listWorkspaceAgents(actorUserId, workspaceId)
+                .forEach(view -> reachable.add(view.principalId()));
+        List<AgentPrincipal> pool = agentPrincipalRepository.findAllById(
+                listPrincipals(actorUserId, null).stream()
+                        .map(AgentPrincipalView::principalId)
+                        .toList());
+        UUID workspaceDefault = workspaceDefaultAgentPrincipalId(workspaceId);
+        return pool.stream()
+                .filter(principal -> !reachable.contains(principal.getId()))
+                .map(principal -> bindableCandidate(actorId, principal, workspaceDefault))
+                .sorted(BINDABLE_CANDIDATE_ORDER)
+                .toList();
+    }
+
+    /** Same ordering rule as {@link #WORKSPACE_AGENT_LIST_ORDER} — both lists render in one panel. */
+    static final java.util.Comparator<BindableCandidate> BINDABLE_CANDIDATE_ORDER = java.util.Comparator
+            .comparing((BindableCandidate candidate) -> candidate.name() == null
+                    ? "" : candidate.name().toLowerCase(java.util.Locale.ROOT))
+            .thenComparing(candidate -> candidate.principalId().toString());
+
+    private BindableCandidate bindableCandidate(UUID actorId, AgentPrincipal principal, UUID workspaceDefault) {
+        boolean disabled = principal.getDisabledAt() != null;
+        // Only these two refusals are reachable: the pool can only hold USER-owned rows (INSTANCE rows
+        // are dropped by listPrincipals), and V170's cross-axis CHECK forbids a SYSTEM_PRESET origin on
+        // a USER-owned row — so requireMutableCap's GUARD_CAP_IMMUTABLE can never apply to a candidate.
+        String unbindableReason = disabled
+                ? "AGENT_PRINCIPAL_DISABLED"
+                : principal.getOwnerUserId() != null && !actorId.equals(principal.getOwnerUserId())
+                        ? "AGENT_PRINCIPAL_OWNER_MISMATCH"
+                        : null;
+        return new BindableCandidate(principal.getId(), principal.getName(), principal.getOwnership(),
+                disabled, principal.getId().equals(workspaceDefault),
+                unbindableReason == null, unbindableReason);
+    }
+
     private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap,
                                            List<UUID> roleIds) {
         return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
@@ -2230,6 +2316,25 @@ public class AgentPrincipalService {
                                      String capSource,
                                      // task-106: the workspace default for new sessions (V177).
                                      boolean isDefault) {}
+
+    /**
+     * task-930: one bindable-candidate row ({@link #listBindableCandidates}).
+     *
+     * <p>{@code ownership} is the stored {@code agent_principals.ownership} value ({@code USER} /
+     * {@code INSTANCE}) — the same vocabulary {@code GET /api/v1/agent-principals} uses. It is
+     * deliberately <b>not</b> named {@code scope}: PLAN-0629 retired the workspace-agent {@code scope}
+     * field because reach is produced by a preset binding, not by that column, and DEV-037 forbids
+     * bare "scope" (it now means one of two different things). INSTANCE-owned rows cannot appear
+     * here (the pool excludes them), so the value is {@code USER} by construction — declared as a
+     * projection rather than a constant so a future pool change stays honest.</p>
+     *
+     * <p>{@code disabled}/{@code bindable}/{@code unbindableReason}: a disabled principal is still
+     * listed (the operator just created it and needs to understand why the bind action is off), but
+     * {@code bindable=false} with the write face's own refusal code.</p>
+     */
+    public record BindableCandidate(UUID principalId, String name, String ownership,
+                                    boolean disabled, boolean isDefault,
+                                    boolean bindable, String unbindableReason) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }

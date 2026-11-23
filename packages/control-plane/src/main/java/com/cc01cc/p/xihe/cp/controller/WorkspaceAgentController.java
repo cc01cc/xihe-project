@@ -62,16 +62,46 @@ public class WorkspaceAgentController {
         this.auditLogger = auditLogger;
     }
 
+    /**
+     * task-930 (user ruling 2026-11-24): a workspace may only <b>bind</b> an existing principal,
+     * never create one ("an agent created inside a workspace escapes organisation management").
+     *
+     * <p>{@code includeBindable=true} adds {@code bindableCandidates} to the envelope: the principals
+     * the caller may pull into this workspace and that are not reachable here yet. It is an
+     * <b>additive</b> opt-in — called without the flag the response is byte-identical to the frozen
+     * {@code {agents:[…]}} contract, so every existing consumer (session pickers included) is
+     * untouched.</p>
+     *
+     * <p>Reading candidates demands the {@code MANAGE_WORKSPACE_AGENTS} atom in this workspace (the
+     * same gate the bind write face uses); a member without it answers 403 with no principal name in
+     * the body. Plain listing stays membership-gated, exactly as before.</p>
+     *
+     * <p>Binding is <b>not</b> a move: it makes the principal usable in this workspace and never
+     * changes its organisation membership — that stays owned by the organisation-members page
+     * (the user's "created members are outside organisation management" concern is answered by
+     * not creating anything here at all).</p>
+     */
     @PreAuthorize("isAuthenticated()")
     @GetMapping
-    public ResponseEntity<?> list(@PathVariable String workspaceId) {
+    public ResponseEntity<?> list(@PathVariable String workspaceId,
+                                  @RequestParam(value = "includeBindable", required = false)
+                                  Boolean includeBindable) {
         try {
+            String actor = requireActor();
+            UUID workspace = parseUuid(workspaceId);
             List<Map<String, Object>> views = agentPrincipalService.listWorkspaceAgents(
-                    requireActor(), parseUuid(workspaceId)).stream()
+                    actor, workspace).stream()
                     .map(this::toView).toList();
             // PLAN-0622 M1.2 frozen envelope: `{agents:[…]}` (was a bare array before).
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("agents", views);
+            // task-930: the second key exists only when the caller asked for it, so the frozen
+            // single-key envelope above keeps its exact shape for every unflagged call.
+            if (Boolean.TRUE.equals(includeBindable)) {
+                response.put("bindableCandidates", agentPrincipalService
+                        .listBindableCandidates(actor, workspace).stream()
+                        .map(this::toBindableCandidateView).toList());
+            }
             return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -501,6 +531,24 @@ public class WorkspaceAgentController {
         // task-106: the create form pre-selects this row, and the same flag is the server-side fallback
         // when a Session arrives without an agentPrincipalId.
         result.put("isDefault", view.isDefault());
+        return result;
+    }
+
+    /**
+     * task-930: explicit projection of a bindable candidate (same reason as {@link #toView} — a field
+     * added to the service record must never leak onto the wire without a contract change).
+     */
+    private Map<String, Object> toBindableCandidateView(AgentPrincipalService.BindableCandidate candidate) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("principalId", candidate.principalId());
+        result.put("name", candidate.name());
+        // `ownership` = stored USER/INSTANCE, the vocabulary AgentPrincipalView already publishes.
+        result.put("ownership", candidate.ownership());
+        result.put("disabled", candidate.disabled());
+        result.put("isDefault", candidate.isDefault());
+        result.put("bindable", candidate.bindable());
+        // null when bindable — the field is always present so a caller can switch on it.
+        result.put("unbindableReason", candidate.unbindableReason());
         return result;
     }
 
