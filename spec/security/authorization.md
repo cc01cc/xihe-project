@@ -107,7 +107,7 @@
 
 - 对缺少身份、缺少 grant scope、未知 action class、未知 resource 与未登记资源命名空间 **MUST** fail-closed；未分类工具 **MUST NOT** 继承 allow。
 - `ALLOW` 不等于 approval；approval 与 capability check **MUST** 保持独立 gate。
-- **写面只有两个**：`/api/v1/roles*`（角色 CRUD）与 `/api/v1/bindings`（grant scope 绑定全量替换），均要求 `MANAGE_ROLES` 动作原子；工作区级 grant scope 绑定**额外**要求该工作区 `MANAGE_WORKSPACE_AGENTS`。
+- **写面只有两个**：`/api/v1/presets*`（角色 CRUD）与 `/api/v1/bindings`（grant scope 绑定全量替换），均要求 `MANAGE_ROLES` 动作原子；工作区级 grant scope 绑定**额外**要求该工作区 `MANAGE_WORKSPACE_AGENTS`。
 - **MUST NOT** 存在逐主体直授（`source='direct'`）或 `/api/v1/principal-grants` 写面（已退役，`410 PRINCIPAL_GRANTS_RETIRED`）。
 - 绑定写入 **MUST** 执行提权校验：调用者必须自持其所授予的原子（只对**新增**绑定对判定），否则 `403 PRIVILEGE_ESCALATION`。
 - 错误码：`ROLE_SCOPE_MISMATCH` / `INVALID_GRANT_RESOURCE` / `PRIVILEGE_ESCALATION` / `SYSTEM_ROLE_IMMUTABLE` / `ROLE_IN_USE` / `LAST_SUPER_ADMIN` / `LAST_OWNER` / `CONCURRENT_MODIFICATION`；并发写冲突（`40P01`/`40001`）**MUST** 映射为 `409 CONCURRENT_MODIFICATION`（可重试），锁等待超时仍为 `503 OPERATION_LOCK_TIMEOUT`。

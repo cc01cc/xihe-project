@@ -68,7 +68,7 @@ flowchart LR
 > 现行实现事实以 CP 代码 + `docs/api/openapi.yaml` 为准。
 
 1. **端点归属**：绑定面挂在主体子资源下，与既有记忆面同一路径风格：
-   `GET/POST /api/v1/agent-principals/{principalId}/roles`、`DELETE …/roles/{bindingId}`；
+   `GET/POST /api/v1/agent-principals/{principalId}/presets`、`DELETE …/presets/{bindingId}`；
    `GET/POST /api/v1/agent-principals/{principalId}/skills`、`DELETE …/skills/{bindingId}`。
    **既有 user-only 的 `/api/v1/bindings` 保持不变**（不放开 `subjectType`），避免把 agent 语义混进用户绑定面。
 2. **谁能绑 + 绑定 scope 由服务端定**：`MANAGE_AGENT_PRINCIPALS`（N1，instance 层原子）**或**
@@ -79,7 +79,7 @@ flowchart LR
    （否则等于把授权语义交给客户端）。角色定义是 instance 级、本身不带 scope，故不存在"从角色行复制 scope"。
    **actor ≠ subject**：agent 不得给自己绑定（由 `MANAGE_*` 原子与"仅真人 principal 可作 actor"共同保证，禁止新增旁路）。
 2a. **候选读面**：能管理 agent 绑定的人 MUST 能读候选角色，但**候选仅含可绑定角色**——
-   含任一禁授原子的角色**不出现在候选中**（UI 零策略复制），复用既有 `GET /api/v1/roles`
+   含任一禁授原子的角色**不出现在候选中**（UI 零策略复制），复用既有 `GET /api/v1/presets`
    （不新增候选端点、不加 `bindable`/`reason` 字段）；持 `MANAGE_ROLES` 的管理员视图保持返回全量。
    **绑定 409 仍是兜底**：绕过 UI 直接调 API 绑定时，`AGENT_PRINCIPAL_FORBIDDEN_ATOMS` 照常拒绝。
    无授权上下文时 workspace 层调用者 403。
