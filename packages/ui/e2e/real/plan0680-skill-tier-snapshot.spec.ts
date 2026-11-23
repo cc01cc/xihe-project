@@ -29,8 +29,8 @@
  *      实证：`instance ⇒ instance admin`，否则 403 `SKILL_IMPORT_FORBIDDEN`）。
  *      **403 是正确产品行为，不是缺陷**；0680 的被测面是**绑定 / 快照 / 层级**，不是导入授权。
  *      因此本 spec 在**隔离库**落一行授权种子作为**夹具前置**：
- *      `role_bindings(SUPER_ADMIN, instance)` + **`grants`（`MANAGE_SKILL_LIBRARY`@`*`,
- *      `source=role`, instance）** —— 后者才是真正生效的物化授权（`RequesterAuthority`
+ *      `grant_preset_bindings(SUPER_ADMIN, instance)` + **`grants`（`MANAGE_SKILL_LIBRARY`@`*`,
+ *      `source=preset`, instance）** —— 后者才是真正生效的物化授权（`RequesterAuthority`
  *      读 `grants`，只写前者仍 403，`host-e2e` 坑表 §19），随后重新 `POST /auth/login` 取新 token。
  *      **为什么不是"绕过被测面"**：CP 无 role-binding/grant 的 HTTP 写面（openapi 仅
  *      `/api/v1/presets*` 只读目录）；`DataSeeder` 的 admin 依赖 `XIHE_DEV_ADMIN_PASSWORD`
@@ -115,7 +115,7 @@ async function newIdentity(request: APIRequestContext, label: string): Promise<I
 }
 
 /** `V87__dynamic_access_roles.sql:40-58` 的实例超管角色（照抄 `plan0678-skills-positive.spec.ts:50`）。 */
-const SUPER_ADMIN_ROLE_ID = "00000000-0000-4000-8000-000000000001";
+const SUPER_ADMIN_PRESET_ID = "00000000-0000-4000-8000-000000000001";
 
 /**
  * **【D-67 夹具前置】** 在隔离库把受测身份提到 instance admin，并重新登录取新 token。
@@ -125,7 +125,7 @@ const SUPER_ADMIN_ROLE_ID = "00000000-0000-4000-8000-000000000001";
  *   `XIHE_DEV_ADMIN_PASSWORD` ⇒ 没有正常路径可授。**403 本身是正确产品行为**
  *   （`SkillImportService:80-92`：`instance ⇒ instance admin`），0680 的被测面是
  *   **绑定 / 快照 / 层级**，不是导入授权。
- * - **为什么两行缺一不可**：`role_bindings` 只是角色绑定记录；`RequesterAuthority
+ * - **为什么两行缺一不可**：`grant_preset_bindings` 只是授权预设绑定记录；`RequesterAuthority
  *   .holdsActionAtom` 读的是**物化后的 `grants` 表**，只写前者仍会 403
  *   `SKILL_IMPORT_FORBIDDEN`（`host-e2e` 坑表 §19）。
  * - **安全边界（D-67 边界 1）**：库名**必须**以 `xihe_e2e` 前缀断言通过，否则直接 fail ——
@@ -145,8 +145,8 @@ async function escalateToInstanceAdmin(
 
     // ① 角色绑定记录（缺它则 ② 的语义无处挂靠）
     queryIsolatedPostgres(
-        `INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id, granted_by) ` +
-            `VALUES (gen_random_uuid(), '${SUPER_ADMIN_ROLE_ID}', 'user', '${identity.userId}', 'instance', NULL, NULL) ` +
+        `INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id, granted_by) ` +
+            `VALUES (gen_random_uuid(), '${SUPER_ADMIN_PRESET_ID}', 'user', '${identity.userId}', 'instance', NULL, NULL) ` +
             `ON CONFLICT DO NOTHING`,
     );
     // ② 真正生效的物化授权：instance 作用域的 MANAGE_SKILL_LIBRARY（JSON 形状见
@@ -154,7 +154,7 @@ async function escalateToInstanceAdmin(
     queryIsolatedPostgres(
         `INSERT INTO grants (id, subject_type, subject_id, permissions, source, scope_type, scope_id) ` +
             `VALUES (gen_random_uuid(), 'user', '${identity.userId}', ` +
-            `'[{"actionClass":"MANAGE_SKILL_LIBRARY","resource":"*"}]'::jsonb, 'role', 'instance', NULL)`,
+            `'[{"actionClass":"action:MANAGE_SKILL_LIBRARY","resource":"*"}]'::jsonb, 'preset', 'instance', NULL)`,
     );
     const granted = queryIsolatedPostgres(
         `SELECT count(*) FROM grants WHERE subject_id = '${identity.userId}'::uuid ` +

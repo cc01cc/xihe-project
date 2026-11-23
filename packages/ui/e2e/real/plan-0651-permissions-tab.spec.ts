@@ -27,7 +27,7 @@ const EVIDENCE = evidenceDir("plan-0651-t42-permissions-tab");
 // PLAN-0752：左栏换成层×域（`SettingsSidebar`）。运维/安全项在 task-171 补了 per-item testid
 // `settings-nav-ops-<id>`，域链接在 task-172 补了层限定 per-domain testid
 // `settings-nav-domain-<layer>-<domain>`（同名域跨层必须带层）⇒ 三个入口断言绑语义，不再按 URL 定位。
-const ROLES_TAB = '[data-testid="settings-nav-ops-roles"]';
+const ROLES_TAB = '[data-testid="settings-nav-ops-presets"]';
 const LOCKS_TAB = '[data-testid="settings-nav-ops-config-locks"]';
 // task-769：用户层模型配置组 id = `model-config`（settingsIa.ts:186；SettingsSidebar.vue:530）。
 const CONFIG_TAB = '[data-testid="settings-nav-domain-user-model-config"]';
@@ -179,7 +179,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         await loginThroughUi(page, ADMIN_EMAIL, ADMIN_PASSWORD);
         const body = await openSettings(page);
         console.log(`[plan-0651] admin instancePermissions=${instanceAtoms(body).join(",")}`);
-        expect(instanceAtoms(body)).toContain("MANAGE_ROLES");
+        expect(instanceAtoms(body)).toContain("action:MANAGE_ROLES");
         // task-242：实例层 ops 项在个人层落点下默认收起 ⇒ 先展开组，再断言（不改产品默认）。
         await openInstanceOps(page);
         // BL-392: this face has no atom yet, so the capability `isInstanceAdmin` still drives it.
@@ -196,7 +196,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         await loginThroughUi(page, user.email, user.password);
         const body = await openSettings(page);
         console.log(`[plan-0651] plain user instancePermissions=${instanceAtoms(body).join(",")}`);
-        expect(instanceAtoms(body)).not.toContain("MANAGE_ROLES");
+        expect(instanceAtoms(body)).not.toContain("action:MANAGE_ROLES");
         await expect(page.locator(ROLES_TAB)).toHaveCount(0);
         await expect(page.locator(LOCKS_TAB)).toHaveCount(0);
         await shoot(page, "plain-user-settings-nav");
@@ -219,7 +219,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
                 name: `PLAN0651_ATOM_ONLY_${Date.now().toString(36).slice(-5).toUpperCase()}`,
                 displayName: "PLAN-0651 atom only",
                 description: "MANAGE_ROLES without instance:admin — T4.2 negative control",
-                atoms: ["MANAGE_ROLES"],
+                atoms: ["action:MANAGE_ROLES"],
             },
         });
         expect(created.status(), await created.text()).toBe(201);
@@ -233,7 +233,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         console.log(
             `[plan-0651] atom-only instancePermissions=${instanceAtoms(body).join(",")} capabilities=${(body.instanceCapabilities ?? []).join(",")}`,
         );
-        expect(instanceAtoms(body)).toContain("MANAGE_ROLES");
+        expect(instanceAtoms(body)).toContain("action:MANAGE_ROLES");
         // task-242：先展开实例层组（同上），再断言 roles 可见 / config-locks 不可见。
         await openInstanceOps(page);
         // No `cap:instance:admin` ⇒ the capability-driven face must stay hidden (BL-392).

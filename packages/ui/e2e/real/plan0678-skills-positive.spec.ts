@@ -8,8 +8,8 @@
  * `AgentPrincipalSkillBindingService:39/110` 明确"workspace-private 技能定义不可绑，答 400
  * `SKILL_DEFINITION_OUT_OF_SCOPE`" ⇒ 工作区私有技能只能导入/列出，**不能进主体快照**。
  * 因此本 spec 在隔离库里给注册用户写**两行**（缺一不可，`host-e2e` 坑表 §19）：
- *   ① `role_bindings`（`SUPER_ADMIN`, instance）——只是角色绑定记录；
- *   ② **`grants`**（`MANAGE_SKILL_LIBRARY`@`*`, `source=role`, instance）——**真正生效的物化授权**：
+ *   ① `grant_preset_bindings`（`SUPER_ADMIN`, instance）——只是授权预设绑定记录；
+ *   ② **`grants`**（`MANAGE_SKILL_LIBRARY`@`*`, `source=preset`, instance）——**真正生效的物化授权**：
  *      `RequesterAuthority.holdsActionAtom` 读的是 `grants`，只写 ① 会 403 `SKILL_IMPORT_FORBIDDEN`。
  * 写完后**重新登录**，
  * 再用新 token 做 instance 导入。**这是"绕过 API 的提权"，仅对 `XIHE_E2E_PG_*` 指向的隔离库执行，
@@ -49,7 +49,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 /** chat run 终态（与 capacity/checkpoint 系列 spec 同一口径）。 */
 const TERMINAL = /^(succeeded|failed|cancelled|ambiguous)$/u;
 /** `V87__dynamic_access_roles.sql:40-58` 的实例超管角色。 */
-const SUPER_ADMIN_ROLE_ID = "00000000-0000-4000-8000-000000000001";
+const SUPER_ADMIN_PRESET_ID = "00000000-0000-4000-8000-000000000001";
 
 function queryIsolatedPostgres(sql: string): string {
     const container = process.env.XIHE_E2E_PG_CONTAINER,
@@ -172,18 +172,18 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
         queryIsolatedPostgres(`SELECT id FROM users WHERE email = '${email}' LIMIT 1`);
     expect(userId, `应能定位注册用户（注册响应 id 或按 identifier 查库）`).toMatch(UUID);
     queryIsolatedPostgres(
-        `INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id, granted_by) ` +
-            `VALUES (gen_random_uuid(), '${SUPER_ADMIN_ROLE_ID}', 'user', '${userId}', 'instance', NULL, NULL) ` +
+        `INSERT INTO grant_preset_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id, granted_by) ` +
+            `VALUES (gen_random_uuid(), '${SUPER_ADMIN_PRESET_ID}', 'user', '${userId}', 'instance', NULL, NULL) ` +
             `ON CONFLICT DO NOTHING`,
     );
     // 关键：`RequesterAuthority.holdsActionAtom` 读的是**物化后的 `grants` 表**
-    // （`RequesterAuthority` 依赖 `AuthorizationGrantRepository`），插 `role_bindings` 不会自动物化，
+    // （`RequesterAuthority` 依赖 `AuthorizationGrantRepository`），插 `grant_preset_bindings` 不会自动物化，
     // 所以还需要直接写一行 instance 作用域的 MANAGE_SKILL_LIBRARY grant
     //（JSON 形状 `{actionClass, resource}`，见 `GrantIntersectionEvaluator.PermissionAtom`）。
     queryIsolatedPostgres(
         `INSERT INTO grants (id, subject_type, subject_id, permissions, source, scope_type, scope_id) ` +
             `VALUES (gen_random_uuid(), 'user', '${userId}', ` +
-            `'[{"actionClass":"MANAGE_SKILL_LIBRARY","resource":"*"}]'::jsonb, 'role', 'instance', NULL)`,
+            `'[{"actionClass":"action:MANAGE_SKILL_LIBRARY","resource":"*"}]'::jsonb, 'preset', 'instance', NULL)`,
     );
     const granted = queryIsolatedPostgres(
         `SELECT count(*) FROM grants WHERE subject_id = '${userId}'::uuid ` +
