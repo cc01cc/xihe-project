@@ -1,6 +1,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../../../../composables/api";
+import { bareAtom } from "../../../../stores/auth";
 
 /**
  * PLAN-0655 T1.2 — delegation permission gate.
@@ -36,9 +37,14 @@ export function useDelegationPermission(workspaceId: () => string) {
         try {
             const self = await api.getSelfPermissions(),
                 workspace = self.workspaces?.find((row) => row.workspaceId === target),
-                hasAtom = (workspace?.permissions ?? []).some(
-                    (permission) => permission.actionClass === "SPAWN_AGENT",
-                );
+                // task-905: CP returns canonical `action:` names; normalize once at this read
+                // boundary into a Set (mirrors the auth store) instead of per-call-site compares.
+                atoms = new Set(
+                    (workspace?.permissions ?? [])
+                        .map((permission) => bareAtom(permission.actionClass))
+                        .filter((atom): atom is string => atom !== null),
+                ),
+                hasAtom = atoms.has("SPAWN_AGENT");
             canDelegate.value = hasAtom;
             reasonKey.value = hasAtom
                 ? "chat.delegation.buttonHint"
