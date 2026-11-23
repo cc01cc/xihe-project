@@ -428,7 +428,8 @@ public class AgentPrincipalService {
         }
         // LEGACY-ONLY（2026-11-04 裁定「role 行是唯一权威源」）：这里算出的 template 交集**不再落库**
         // —— createAgentPrincipalGrant 的 snapshot 写在 PLAN-0629 已删除，老库残留的
-        // template/agent_default 行只在"主体还没有 source='preset' 行"时作为回退被求值。
+        // template/agent_default 行只在"主体还没有 source='assigned' 行"时作为回退被求值
+        // （task-933 / R39 把物化行的写值从 preset 改为 assigned）。
         // 新增能力请走角色原子；反向契约见
         // AgentPrincipalCredentialBoundaryTest#legacySnapshotAtomDoesNotAuthorizeAWorkspaceCap。
         Set<GrantIntersectionEvaluator.PermissionAtom> effectivePermissions =
@@ -479,7 +480,7 @@ public class AgentPrincipalService {
         // exactly the ownership coupling the ruling removed. The old `createAgentPrincipalGrant`
         // snapshot write is intentionally gone; rows already in the database are left untouched
         // (deprecated, kept for rollback) and evaluation falls back to them only while a subject has
-        // no `source='preset'` rows yet.
+        // no `source='assigned'` rows yet.
         //
         // Accepted risk, on purpose: if the creator is demoted later, roles they granted keep working.
         // That is the point of the ruling — a role is an independent object; to revoke, edit the role
@@ -588,7 +589,7 @@ public class AgentPrincipalService {
 
         WorkspaceAgent savedBinding = workspaceAgentRepository.saveAndFlush(binding);
         // PLAN-0629: a binding materializes into a workspace role binding, so reachability has one
-        // source of truth. Idempotent; the existing materializer writes the `source='preset'` grants.
+        // source of truth. Idempotent; the existing materializer writes the `source='assigned'` grants.
         ensureWorkspaceRoleBinding(principalId, workspaceId, actorId);
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "MANAGE_WORKSPACE_AGENTS");
@@ -1424,11 +1425,19 @@ public class AgentPrincipalService {
     }
 
     /**
-     * PLAN-0629: the permission source is the bound roles. A subject that already materialized
-     * {@code source='preset'} rows is evaluated from those only; a legacy subject (no role rows yet,
-     * e.g. rows written before the migration) keeps the pre-ruling behaviour — the frozen
-     * {@code agent_default}/{@code template} snapshots — so nothing becomes unusable mid-upgrade and
-     * the change stays reversible.
+     * PLAN-0629: the permission source is the bound roles, materialized as the R39
+     * {@code source='assigned'} rows (task-933 / D-1926). A subject that already carries those
+     * rows is evaluated from them plus its active credential bindings only; a subject with
+     * neither (legacy subjects that only hold {@code spawn}/{@code template}/{@code agent_default}
+     * snapshots) keeps the pre-ruling behaviour — the full
+     * {@link GrantSources#EVALUATION_SOURCES} union — so nothing becomes unusable mid-upgrade.
+     *
+     * <p><b>task-946:</b> this branch used to read {@link GrantSources#PRESET}. After V186 no
+     * persisted row can carry that value (every historical row was converted and the CHECK no
+     * longer accepts it), so the branch could never fire and every subject silently fell through
+     * to the {@code EVALUATION_SOURCES} arm — a widening of the read face: legacy snapshot atoms
+     * stayed effective for subjects that must only see their assigned rows. The list is now R39's
+     * write value; {@code PRESET} stays in the provenance vocabulary only, never read here.</p>
      */
     private Set<GrantIntersectionEvaluator.PermissionAtom> principalEffectiveAtoms(UUID principalId,
                                                                                   UUID workspaceId) {
@@ -1445,7 +1454,7 @@ public class AgentPrincipalService {
     private AtomEvaluation principalEffectiveAtomsWithProvenance(UUID principalId, UUID workspaceId) {
         List<AuthorizationGrant> roleRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                List.of(GrantSources.PRESET, GrantSources.CREDENTIAL_BINDING), workspaceId);
+                List.of(GrantSources.ASSIGNED, GrantSources.CREDENTIAL_BINDING), workspaceId);
         java.util.Collection<AuthorizationGrant> expanded =
                 orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId);
         if (!roleRows.isEmpty()) {
@@ -1466,8 +1475,9 @@ public class AgentPrincipalService {
      *
      * <p>Three sources, unioned:</p>
      * <ol>
-     *   <li>the materialized {@code source='preset'} grants for this subject in this workspace
-     *       (PLAN-0629 read path — reach is a role binding);</li>
+     *   <li>the materialized {@code source='assigned'} grants for this subject in this workspace
+     *       (PLAN-0629 read path — reach is a role binding; task-933 / R39 renamed the write
+     *       value from the retired {@code preset} to {@code assigned});</li>
      *   <li>{@code source='credential_binding'} grants (PLAN-0494 active mechanism) — leaving them
      *       out would let this frozen cap silently drop a credential atom at evaluation time;</li>
      *   <li>when no workspace role binding exists yet, the atoms {@code ensureWorkspaceRoleBinding}
@@ -1491,7 +1501,7 @@ public class AgentPrincipalService {
         Set<GrantIntersectionEvaluator.PermissionAtom> baseline = new LinkedHashSet<>(
                 evaluator.union(grantRepository.findScopedGrants(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                        List.of(GrantSources.PRESET, GrantSources.CREDENTIAL_BINDING), workspaceId)));
+                        List.of(GrantSources.ASSIGNED, GrantSources.CREDENTIAL_BINDING), workspaceId)));
         if (workspaceRoleIds(principalId, workspaceId).isEmpty()) {
             GrantPreset defaultRole = requireRole(DEFAULT_AGENT_WORKSPACE_ROLE);
             for (String name : roleAtomNames(defaultRole.getId())) {
@@ -1519,7 +1529,7 @@ public class AgentPrincipalService {
 
     /**
      * PLAN-0629: binding a role is what grants access. The role binding is written first and the
-     * existing {@link PresetGrantMaterializer} then materializes `source='preset'` grants, so the runtime
+     * existing {@link PresetGrantMaterializer} then materializes `source='assigned'` grants, so the runtime
      * path and the V107 backfill produce the same rows — one materialization implementation, not two.
      */
     private void ensureWorkspaceRoleBinding(UUID principalId, UUID workspaceId, UUID actorId) {
