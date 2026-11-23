@@ -42,6 +42,20 @@
     "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": false, "visionPartial": false }
   },
   {
+    "id": "opencode-go",
+    "displayName": "OpenCode Go",
+    "category": "recommended",
+    "description": "OpenCode Go 订阅的模型网关（opencode.ai/inference/go），按 OpenAI 兼容方式接入；真实调用需要 x-opencode-session 头，当前传输层尚未发送（见 provider-catalog/README.md）。",
+    "adapter": "openai-compatible",
+    "litellmProvider": "openai",
+    "defaultBaseUrl": "https://opencode.ai/inference/go/openai/v1",
+    "modelDiscovery": "remote-models",
+    "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
+    "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
+    "credential": { "type": "api-key", "required": true, "placeholder": "oc_sk_..." },
+    "supports": { "customBaseUrl": true, "streaming": true, "tools": false, "vision": false, "toolsPartial": false, "visionPartial": false }
+  },
+  {
     "id": "xiaomi",
     "displayName": "小米 MiMo",
     "category": "recommended",

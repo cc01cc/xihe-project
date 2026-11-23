@@ -180,12 +180,23 @@ public class ApiRequestTemplateService {
                 // PLAN-0632 G-0: a built-in id now carries more than one immutable revision, so the
                 // "already present?" test must be per (id, version). Dedupe by id alone would hide the
                 // newer seed from the editor as soon as any client round-trips an older revision.
-                boolean exists = false;
-                for (JsonNode item : templates) {
-                    exists |= item.path("id").equals(builtin.path("id"))
-                            && item.path("version").asInt() == builtin.path("version").asInt();
+                //
+                // task-944: built-ins are code-owned projections. A stored copy with the same
+                // (id, version) is replaced by the code revision, so a seed rename/description
+                // change reaches an existing database without a migration and without a stale
+                // display name in front of the user.
+                int kept = -1;
+                for (int i = 0; i < templates.size(); i++) {
+                    JsonNode item = templates.get(i);
+                    if (item.path("id").equals(builtin.path("id"))
+                            && item.path("version").asInt() == builtin.path("version").asInt()) {
+                        kept = i;
+                        break;
+                    }
                 }
-                if (!exists) {
+                if (kept >= 0) {
+                    templates.set(kept, builtin);
+                } else {
                     templates.add(builtin);
                 }
             }
@@ -347,6 +358,8 @@ public class ApiRequestTemplateService {
         for (JsonNode value : next) {
             uuid(value.path("id").asText());
             for (JsonNode builtin : builtins()) {
+                // Built-in revisions stay byte-frozen for writers (task-944 requirement 3: the
+                // built-in row is read-only; renaming it is a seed change, not a user edit).
                 if (builtin.path("id").equals(value.path("id")) && !builtin.equals(value)) {
                     throw conflict("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Built-in templates are immutable");
                 }
@@ -372,7 +385,7 @@ public class ApiRequestTemplateService {
                 throw invalid("API Type validation failed; retain the source as a draft");
             }
             JsonNode old = previous.get(key);
-            if (old != null && old.path("status").asText().equals("published") && !old.equals(value)) {
+            if (old != null && old.path("status").asText().equals("published") && !samePublishedRevision(old, value)) {
                 throw conflict("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Published revisions cannot change");
             }
         }
@@ -1035,6 +1048,62 @@ public class ApiRequestTemplateService {
     }
 
     /**
+     * task-944: display-only fields of a built-in revision. The request shape and body stay frozen;
+     * the human-readable name/description belong to the code seed, so renaming the seed must not
+     * turn every later save on an existing database into a 409.
+     */
+    private static final Set<String> BUILTIN_DISPLAY_FIELDS = Set.of("name", "description");
+
+    /** A stored copy rebuilt without display-only fields, with the body canonicalised as JSON. */
+    private JsonNode builtinComparable(JsonNode value) {
+        if (!(value instanceof ObjectNode node)) {
+            return value;
+        }
+        ObjectNode copy = node.deepCopy();
+        for (String field : BUILTIN_DISPLAY_FIELDS) {
+            copy.remove(field);
+        }
+        JsonNode body = copy.get("bodySource");
+        if (body != null && body.isTextual()) {
+            copy.put("bodySource", canonicalJson(body.asText()));
+        }
+        return copy;
+    }
+
+    /** {@code true} when {@code value} is the same built-in revision (display fields ignored). */
+    private boolean sameBuiltinRevision(JsonNode builtin, JsonNode value) {
+        return builtin.path("id").asText().equals(value.path("id").asText())
+                && builtin.path("version").asInt() == value.path("version").asInt()
+                && builtinComparable(builtin).equals(builtinComparable(value));
+    }
+
+    /**
+     * A published revision is immutable, except that a stored built-in copy may carry the display
+     * fields of an older seed: those are code-owned, so a rename is not a revision change.
+     */
+    private boolean samePublishedRevision(JsonNode old, JsonNode value) {
+        if (old.equals(value)) {
+            return true;
+        }
+        for (JsonNode builtin : builtins()) {
+            if (builtin.path("id").asText().equals(old.path("id").asText())
+                    && builtin.path("version").asInt() == old.path("version").asInt()) {
+                return sameBuiltinRevision(builtin, old) && sameBuiltinRevision(builtin, value);
+            }
+        }
+        return false;
+    }
+
+    /** Whitespace-insensitive JSON text; unparsable text falls back to the raw string. */
+    private String canonicalJson(String text) {
+        try {
+            return write(json.readTree(text));
+        } catch (JsonProcessingException | IllegalArgumentException unparsable) {
+            return text;
+        }
+    }
+
+    /**
      * PLAN-0632 Gate G-0: one built-in seed per (chat apiType, revision). Revision 1 is FROZEN
      * byte-for-byte — it is what every Session/connection pinned before G-0 resolves to, so changing
      * it in place would silently rewrite a published revision (and break
@@ -1051,10 +1120,39 @@ public class ApiRequestTemplateService {
             }
             String id = type.get("apiTypeId").toString();
             int version = ((Number) type.get("version")).intValue();
-            result.add(builtin(id, version, 1, id + " default", legacyBody(id)));
-            result.add(builtin(id, version, 2, id + " default v2", contextBody(id)));
+            result.add(builtin(id, version, 1, builtinDisplayName(id) + BUILTIN_NAME_SUFFIX, legacyBody(id)));
+            result.add(builtin(id, version, 2, builtinDisplayName(id) + BUILTIN_NAME_SUFFIX, contextBody(id)));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * task-944: human-readable names for the built-in seeds. The previous value was
+     * {@code "<apiTypeId> default v2"}, i.e. the wire identifier spliced into a user-facing label.
+     *
+     * <p>The labels match the English API-Type names the UI already shows
+     * ({@code packages/ui/src/lib/apiTypeLabels.ts} + the {@code settings.apiType*} keys), so the
+     * seed stays readable in both locales until the template panel localizes built-in rows — the
+     * zh side of that display name is a UI change outside this card's write scope (see the
+     * task-944 receipt blockers).</p>
+     *
+     * <p>The name deliberately carries <b>no</b> revision token. Both consumers append the version
+     * themselves — the template list renders {@code name} + {@code v{version}}
+     * ({@code ContextTemplatesPanel.vue:378-381}) and {@code templateLabel} (DSD-1508 ③) appends
+     * {@code vN} unless the name already ends with one — so a name that also said "v2" would read
+     * "… Built-in v2 v2". Revisions of one built-in id share the display name and are told apart by
+     * the version chip; the list already collapses to the newest revision per id.
+     */
+    private static final String BUILTIN_NAME_SUFFIX = " · Built-in";
+
+    private static final Map<String, String> BUILTIN_DISPLAY_NAMES = Map.of(
+            "openai-chat-completions", "OpenAI Chat Completions",
+            "anthropic-messages", "Anthropic Messages",
+            "mimo-responses", "MiMo Responses",
+            "dashscope-generation", "DashScope Text Generation");
+
+    private static String builtinDisplayName(String apiTypeId) {
+        return BUILTIN_DISPLAY_NAMES.getOrDefault(apiTypeId, apiTypeId);
     }
 
     /** Revision 1 (frozen): the pre-G-0 seed, no context-block slots. */
@@ -1088,7 +1186,8 @@ public class ApiRequestTemplateService {
 
     private ObjectNode builtin(String id, int apiTypeVersion, int revision, String name, String body) {
         return json.createObjectNode().put("id", builtinId(id, apiTypeVersion).toString()).put("version", revision)
-                .put("name", name).put("description", "Built-in API Request Template")
+                .put("name", name)
+                .put("description", "Built-in API Request Template (read-only). Copy it to create your own editable template.")
                 .put("apiTypeId", id).put("apiTypeVersion", apiTypeVersion).put("bodySource", body).put("status", "published");
     }
 

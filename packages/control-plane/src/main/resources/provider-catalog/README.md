@@ -56,6 +56,19 @@ mergeable, and vendor marketing or model names are never evidence.
 | `xiaomi` / `openai-chat-completions@1` | `true` | PLAN-0372 D5-B frozen evidence: `packages/ui/e2e/real/real-tool-roundtrip.spec.ts` (write_file round-trip over the OpenAI-compatible MiMo connection) | confirmed (0372, 2026-09-19) |
 | single-apiType providers | inherited from provider-level `supports.tools` | `plans/PLAN-0591-XH-provider-tool-capability/evidence/m0-capability-matrix.md` (per-provider initial values) | provisional (`待定`) — no apiType-level evidence yet |
 | `dashscope-qwen` / `dashscope-multimodal-embedding@1` | `false` | non-chat route by definition (`operation=embedding`); see `spec/protocol/provider-api-types.md` | confirmed |
+| `opencode-go` / `openai-chat-completions@1` | `false` | No vendor tool-use evidence. `internal/A03-xihe/evidence/2026-11-24-firstrun-llm-defaults/README.md` §2.2: official base URLs are `https://opencode.ai/inference/go` + `/openai/v1/chat/completions` (docs, 2026-11-24); `POST …/openai/v1/chat/completions` without a key returns 400 `MissingSessionID`, i.e. Go **requires** the `x-opencode-session` header (§2.2) | provisional (`待定`) |
+
+## OpenCode Go transport constraint (task-944, 2026-11-24)
+
+Go is an OpenAI-compatible **gateway**, but it refuses unrouted requests: `POST
+https://opencode.ai/inference/go/openai/v1/chat/completions` answers `400
+MissingSessionID` unless the caller sends `x-opencode-session`. XH's request
+templates forbid client-supplied transport fields (`headers` is a
+`RUNTIME_FIELD_CONFLICT`, `ApiRequestValidator.java:87-90`), so the instance
+connection seeded for Go is a **credential-first placeholder**: it is created
+`UNVERIFIED` with no key and the UI shows 「未配置」. Real chat through Go needs
+the session header added by the transport layer — tracked as a blocker in the
+task-944 receipt, not implemented here.
 
 ## Review / flip triggers
 

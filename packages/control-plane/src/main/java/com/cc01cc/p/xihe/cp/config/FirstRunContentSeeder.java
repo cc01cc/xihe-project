@@ -34,8 +34,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * DSD-1513 / task-148: the first-run <b>content</b> seed — one default Workspace, one instance
- * provider connection and three Agent subjects (Lead / WorkerA / WorkerB).
+ * DSD-1513 / task-148: the first-run <b>content</b> seed — one default Workspace, two instance
+ * provider connections (task-944: DeepSeek + OpenCode Go, both credential-free until an operator
+ * binds a key) and three Agent subjects (Lead / WorkerA / WorkerB).
  *
  * <h2>Two product-path callers (task-18)</h2>
  * <p>{@link DataSeeder} runs it right after the <em>seeded</em> admin exists
@@ -62,9 +63,11 @@ import java.util.UUID;
  *       lookup {@code findByCreateIdempotencyKeyAndDeletedAtIsNull} runs first, and
  *       {@link WorkspaceService#createWorkspace} is itself idempotent on that key, so a restart (or a
  *       crash between insert and commit) converges instead of duplicating.</li>
- *   <li><b>Provider connection</b> — the natural unique key
- *       {@code (owner_type=INSTANCE, owner_id=<instance identity>, provider_id="ollama", connection_key="default")},
- *       which is also the uniqueness the provider face enforces ({@code KeyConflictException}).</li>
+ *   <li><b>Provider connections</b> — the natural unique key
+ *       {@code (owner_type=INSTANCE, owner_id=<instance identity>, provider_id=<deepseek|opencode-go>, connection_key="default")},
+ *       which is also the uniqueness the provider face enforces ({@code KeyConflictException}).
+ *       Existing databases keep whatever connections they already have: the seed never deletes or
+ *       rewrites a row (task-944: dropping the old Ollama default is a fresh-install fact only).</li>
  *   <li><b>Agent subjects</b> — the subject name is not unique in the schema, so the key is
  *       "created by the seed admin and carries one of the three seed names"; the lookup is
  *       {@code findByCreatedByUserId(admin)} plus a name compare, and an existing row is left alone
@@ -100,9 +103,35 @@ public class FirstRunContentSeeder {
     static final UUID LEADERS_UNIT_ID = UUID.fromString("00000000-0000-4000-8000-0000000000e2");
     static final UUID EXECUTION_UNIT_ID = UUID.fromString("00000000-0000-4000-8000-0000000000e3");
 
+    /**
+     * task-944: the two instance-layer defaults a fresh install ships with. Both are OpenAI
+     * compatible and are seeded <b>without a credential</b> (the operator binds one later), which is
+     * why the rows are written {@code UNVERIFIED} instead of {@code VERIFYING}/{@code READY}.
+     *
+     * <p>{@code connection_key} stays {@code default} for both: the natural unique key is
+     * {@code (owner, provider_id, connection_key)}, so two providers can share the key without
+     * colliding.</p>
+     */
+    record SeedConnection(String providerId, String label) {
+    }
+
+    static final List<SeedConnection> SEED_CONNECTIONS = List.of(
+            new SeedConnection("deepseek", "DeepSeek"),
+            new SeedConnection("opencode-go", "OpenCode Go"));
+
+    /**
+     * Legacy (pre-task-944): the single Ollama default this seeder used to create. The seed no longer
+     * reads these two constants — they exist only so {@code FirstRunContentSeedIntegrationTest} keeps
+     * compiling until that test is updated to the two-connection reading (task-944 write scope does
+     * not include {@code src/test/java}). Delete both together with that test change.
+     */
+    @Deprecated(forRemoval = true)
     static final String PROVIDER_ID = "ollama";
-    static final String CONNECTION_KEY = "default";
+    /** Legacy display label of the seeded Ollama connection; see {@link #PROVIDER_ID}. */
+    @Deprecated(forRemoval = true)
     static final String CONNECTION_LABEL = "Ollama (local)";
+
+    static final String CONNECTION_KEY = "default";
 
     /**
      * task-18 J4: the greppable "待绑定" marker. It is a log/diagnostic fact, not a
@@ -243,7 +272,7 @@ public class FirstRunContentSeeder {
         String previousUser = TenantContext.getUserId();
         TenantContext.setUserId(admin.getId().toString());
         try {
-            ProviderConnection connection = seedConnection();
+            ProviderConnection connection = seedConnections();
             seedSubjects(admin, connection);
             // task-932 order matters: the default agent set NAMES the seeded subjects, so it can only be
             // written after they exist, and the seeded workspace must be created after it so that the
@@ -258,7 +287,8 @@ public class FirstRunContentSeeder {
                 TenantContext.setUserId(previousUser);
             }
         }
-        logger.info("seed-content: first-run content seeded (workspace, provider connection, subjects={}) warnings={}",
+        logger.info("seed-content: first-run content seeded (workspace, provider connections={}, subjects={}) warnings={}",
+                SEED_CONNECTIONS.size(),
                 WORKER_NAMES.size() + 1, lastRunWarnings.size());
     }
 
@@ -289,10 +319,23 @@ public class FirstRunContentSeeder {
     }
 
     /**
-     * One instance-scoped {@code ollama} connection with no credential: ollama needs none, and a
-     * credential-less connection reported as READY would be a forged verification state.
+     * task-944: seed the two instance-scoped defaults (DeepSeek + OpenCode Go), both with an empty
+     * credential, and return the first one for the subjects' model intent.
+     *
+     * <h3>Why the rows are built here instead of through {@link ProviderConnectionService#create}</h3>
+     * <p>{@code create()} refuses a keyless connection whenever the catalog entry says
+     * {@code credential.required=true} ("Provider requires an API key",
+     * {@code ProviderConnectionService.java:224-226}). Both seeded providers need a key eventually,
+     * but the product state this card asks for is exactly「凭据为空、显示未配置」, so a seed-only
+     * bypass is required. Adding that seam to the service is wider than this card's write scope; the
+     * debt is recorded in the task-944 receipt.</p>
+     *
+     * <p>The field values come from the provider catalog (never literals): api type pair, default
+     * base URL and model-discovery mode are all catalog-owned, so a catalog change cannot drift the
+     * seed silently. The terminal state is {@code UNVERIFIED} because no real probe ran — a
+     * credential-less {@code READY} would be a forged verification state.</p>
      */
-    private ProviderConnection seedConnection() {
+    private ProviderConnection seedConnections() {
         String ownerId;
         try {
             ownerId = instanceIdentity.ownerId();
@@ -304,34 +347,67 @@ public class FirstRunContentSeeder {
             ownerId = instanceIdentity.ownerId();
         }
         if (instanceOwnership.current().ownerUserId() == null) {
-            warn("seed-content: skipped the seeded provider connection -- the instance has no owner yet,"
+            warn("seed-content: skipped the seeded provider connections -- the instance has no owner yet,"
                     + " and an instance-scoped connection cannot be attributed");
             return null;
         }
+        ProviderConnection primary = null;
+        for (SeedConnection spec : SEED_CONNECTIONS) {
+            ProviderConnection connection = seedConnection(spec, ownerId);
+            if (primary == null) {
+                primary = connection;
+            }
+        }
+        return primary;
+    }
+
+    /** One keyed instance connection; returns the existing row untouched when a restart finds it. */
+    private ProviderConnection seedConnection(SeedConnection spec, String ownerId) {
         Optional<ProviderConnection> existing = providerConnections
                 .findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
-                        ProviderConnection.OWNER_INSTANCE, ownerId, PROVIDER_ID, CONNECTION_KEY);
+                        ProviderConnection.OWNER_INSTANCE, ownerId, spec.providerId(), CONNECTION_KEY);
         if (existing.isPresent()) {
             return existing.get();
         }
-        ProviderConnection created = providerConnectionService.create(new ProviderConnectionService.ConnectionInput(
-                PROVIDER_ID, CONNECTION_LABEL, ProviderConnection.OWNER_INSTANCE,
-                null, null, null, null, Boolean.TRUE, CONNECTION_KEY));
-        if (!ProviderConnection.STATUS_VERIFYING.equals(created.getStatus())) {
-            throw new IllegalStateException("ProviderConnectionService.create() is expected to leave a new"
-                    + " connection VERIFYING (the live-probe in-flight state); got " + created.getStatus());
+        if (!providerCatalog.requiresCredential(spec.providerId())) {
+            // A provider that does not need a key can go through the ordinary face: same validation
+            // (base-URL suffix, label/catalog pair) and the same CREATED audit row.
+            ProviderConnection created = providerConnectionService.create(new ProviderConnectionService.ConnectionInput(
+                    spec.providerId(), spec.label(), ProviderConnection.OWNER_INSTANCE,
+                    null, null, null, null, Boolean.TRUE, CONNECTION_KEY));
+            created.setStatus(ProviderConnection.STATUS_UNVERIFIED);
+            providerConnections.saveAndFlush(created);
+            logger.info("seed-content: seeded the instance provider connection provider={} key={} status={}",
+                    spec.providerId(), CONNECTION_KEY, created.getStatus());
+            return created;
         }
-        // Explicit terminal state, not a fallback: create() hands back VERIFYING because a live probe
-        // was about to run, and the seed connection has no real provider to probe (no key either), so
-        // the honest state is UNVERIFIED until an operator runs verify().
+        ProviderCatalogService.ApiTypeRef type = providerCatalog.defaultApiType(spec.providerId());
+        String baseUrl = providerCatalog.defaultBaseUrl(spec.providerId());
+        String modelDiscovery = providerCatalog
+                .supportedPair(spec.providerId(), type.apiTypeId(), type.version())
+                .path("modelDiscovery").asText("remote-models");
+        ProviderConnection created = new ProviderConnection();
+        created.setId(UUID.randomUUID());
+        created.setOwnerType(ProviderConnection.OWNER_INSTANCE);
+        created.setOwnerId(ownerId);
+        created.setProviderId(spec.providerId());
+        created.setConnectionKey(CONNECTION_KEY);
+        created.setApiTypeId(type.apiTypeId());
+        created.setApiTypeVersion(type.version());
+        created.setLabel(spec.label());
+        created.setBaseUrl(baseUrl);
+        // Explicitly no credential: the operator binds one through the provider face afterwards.
+        created.setCredentialId(null);
+        created.setEnabled(true);
+        created.setModelDiscovery(modelDiscovery);
         created.setStatus(ProviderConnection.STATUS_UNVERIFIED);
         providerConnections.saveAndFlush(created);
         if (!ProviderConnection.STATUS_UNVERIFIED.equals(created.getStatus())) {
             throw new IllegalStateException("the seeded provider connection must stay UNVERIFIED, got "
                     + created.getStatus());
         }
-        logger.info("seed-content: seeded the instance provider connection provider={} key={} status={}",
-                PROVIDER_ID, CONNECTION_KEY, created.getStatus());
+        logger.info("seed-content: seeded the instance provider connection provider={} key={} baseUrl={} status={}",
+                spec.providerId(), CONNECTION_KEY, baseUrl, created.getStatus());
         return created;
     }
 
@@ -516,7 +592,9 @@ public class FirstRunContentSeeder {
      * {@code null}: the principal API refuses provider-without-model.
      */
     private FirstRunSeedModelIntent.Intent modelIntent(ProviderConnection connection) {
-        String providerId = connection == null ? PROVIDER_ID : connection.getProviderId();
+        String providerId = connection == null
+                ? SEED_CONNECTIONS.get(0).providerId()
+                : connection.getProviderId();
         try {
             return FirstRunSeedModelIntent.fromCatalog(providerCatalog, providerId);
         } catch (IllegalArgumentException unknownProvider) {
