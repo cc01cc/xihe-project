@@ -273,8 +273,11 @@ class ContextReuseBucketingTest {
         // 「白名单 = 88 ⇒ was 89」/「per-class 类数 = 88 ⇒ was 89」/「173 ⇒ was 174」。判据与派生逻辑一字未改。
         // task-756（run4 记账门）：config/FirstRunContentSeedOnboardingIntegrationTest 属 per-class ⇒
         // per-class 104→105、合计 195→196，reusable 不变（先由本轮守卫实读触发，再写常量）。
-        assertEquals(91, reusable, "reusable 桶 = 91（实测读数：85 task-23 后基线 + 本轮实读补差 6；其中 TeamTaskCreatePersistenceTest 为 task-188 新增）");
-        assertEquals(196, classes.size(), "196 = 105 per-class + 91 reusable（task-756 实测，含 task-202 的新抽象基类）");
+        // D-1922 守卫波（8149b5fc2）：新增 policy/guard/L3RoutePrincipalMatrixTest 与
+        // L4DenyExplainabilityGuardTest，两者都 extends AbstractReusableIntegrationTest 且无
+        // context-key 注解 ⇒ reusable 91→93、合计 196→198。判据一字未改，只更新守卫实读常量。
+        assertEquals(93, reusable, "reusable 桶 = 93（实测读数：91 基线 + L3/L4 守卫两类的实读补差）");
+        assertEquals(198, classes.size(), "198 = 105 per-class + 93 reusable（含 task-202 的新抽象基类）");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {

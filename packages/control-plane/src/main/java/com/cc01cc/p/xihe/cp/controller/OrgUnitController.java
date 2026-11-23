@@ -6,7 +6,7 @@ import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitPresetBindingService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitWriteService;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

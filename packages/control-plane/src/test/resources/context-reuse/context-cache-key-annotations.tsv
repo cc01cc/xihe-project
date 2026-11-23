@@ -87,6 +87,7 @@
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/AgentSummarizeIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/ApprovalAgentIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/ContextTemplateIntegrationTest.java	property-variant
+@DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/DirectAttachProbeRetryIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/McpToolMapRebuildIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/RuntimeFileIntegrationTest.java	property-variant
 @DynamicPropertySource	com/cc01cc/p/xihe/cp/crossmodule/RuntimeMcpIntegrationTest.java	property-variant

@@ -259,6 +259,8 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
         assertEquals(ADMIN_MATRIX, adminAtoms,
                 "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 credential "
                         + "atoms and the PLAN-0651 management atoms (agent principals/members)");
+        assertMcpCeiling("user", userUuid);
+        assertApproveSentinel("user", userUuid);
         assertCanonicalAtoms("user", userUuid);
         assertFalse(adminAtoms.contains(AtomNames.action("SPAWN_AGENT")),
                 "spec §2.1: SPAWN_AGENT stays out of the ADMIN set");
@@ -409,12 +411,63 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
                     canonical = resource != null
                             && ResourceNamespaces.isRequestResource(resource.asText());
                 } else {
-                    canonical = resource == null || "*".equals(resource.asText());
+                    // task-870 / D-1921: a registered namespace may carry its `ns:*` ceiling
+                    // (mcp:*, skill:*); anything else must stay the bare wildcard.
+                    canonical = resource == null || "*".equals(resource.asText())
+                            || isRegisteredCeiling(resource.asText());
                 }
                 assertTrue(canonical,
                         "atom carries a canonical resource (spec §3.1 / PLAN-0496 #2): " + atom);
             }
         }
+    }
+
+    /** True for `ns:*` where `ns` is a registered, grantable namespace (mcp, skill, …). */
+    private static boolean isRegisteredCeiling(String resource) {
+        String namespace = ResourceNamespaces.namespaceOf(resource);
+        return namespace != null
+                && ResourceNamespaces.WILDCARD.equals(ResourceNamespaces.valueOf(resource))
+                && ResourceNamespaces.grantabilityOf(resource)
+                        == ResourceNamespaces.Grantability.GRANTABLE;
+    }
+
+    /** task-870 / V184: the ADMIN set carries every `mcp:*` ceiling atom from the code catalog. */
+    private void assertMcpCeiling(String subjectType, UUID subjectId) {
+        Set<String> expected = new LinkedHashSet<>();
+        for (SystemGrantPresetCatalog.AtomRef atom : SystemGrantPresetCatalog.mcpCeilingAtoms()) {
+            expected.add(atom.actionClass() + " @" + atom.resourcePattern());
+        }
+        Set<String> actual = materializedAtomPairs(subjectType, subjectId);
+        assertTrue(actual.containsAll(expected),
+                "V184 mcp:* ceiling atoms are part of the ADMIN seed: missing "
+                        + difference(expected, actual));
+    }
+
+    /** task-835 / V183: approve is seeded with the request-scoped sentinel, never `*`. */
+    private void assertApproveSentinel(String subjectType, UUID subjectId) {
+        Set<String> actual = materializedAtomPairs(subjectType, subjectId);
+        String approve = AtomNames.action("approve") + " @"
+                + ResourceNamespaces.REQUEST_RESOURCE;
+        assertTrue(actual.contains(approve),
+                "V183 approve atom is request-scoped (`$request`), not `*`: " + actual);
+    }
+
+    private Set<String> materializedAtomPairs(String subjectType, UUID subjectId) {
+        Set<String> pairs = new LinkedHashSet<>();
+        for (AuthorizationGrant grant : roleRows(subjectType, subjectId)) {
+            for (JsonNode atom : grant.getPermissions()) {
+                JsonNode resource = atom.get("resource");
+                pairs.add(atom.get("actionClass").asText()
+                        + (resource == null ? "" : " @" + resource.asText()));
+            }
+        }
+        return pairs;
+    }
+
+    private static Set<String> difference(Set<String> expected, Set<String> actual) {
+        Set<String> missing = new LinkedHashSet<>(expected);
+        missing.removeAll(actual);
+        return missing;
     }
 
     /** Every evaluation source of the subject, used by the canonical-atom assertion. */

@@ -569,14 +569,14 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         AgentTemplateService.ResolvedTemplate userTemplate = agentTemplateService.resolveForCreation(
                 userId, workspaceId.toString(), userTemplateId);
         assertEquals("user", userTemplate.sourceLayer());
-        assertEquals("User role", userTemplate.snapshot().path("roleName").asText());
+        assertEquals("User role", userTemplate.snapshot().path("presetName").asText());
         assertEquals("user prompt v1", userTemplate.snapshot().path("systemPrompt").asText());
         assertEquals("openai", userTemplate.snapshot().path("provider").asText());
         assertEquals("test-model", userTemplate.snapshot().path("model").asText());
         AgentTemplateService.ResolvedTemplate workspaceTemplate = agentTemplateService.resolveForCreation(
                 userId, workspaceId.toString(), workspaceTemplateId);
         assertEquals("workspace", workspaceTemplate.sourceLayer());
-        assertEquals("Workspace role", workspaceTemplate.snapshot().path("roleName").asText());
+        assertEquals("Workspace role", workspaceTemplate.snapshot().path("presetName").asText());
         assertThrows(CpApiException.class, () -> agentTemplateService.resolveForCreation(
                         userId, workspaceId.toString(), instanceTemplateId),
                 "non-admin users cannot enumerate or select instance templates");
@@ -619,10 +619,10 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         configJpaRepository.saveAndFlush(updatedUserRoles);
         AgentTemplateService.ResolvedTemplate changedRole = agentTemplateService.resolveForCreation(
                 userId, workspaceId.toString(), userTemplateId);
-        assertEquals("Updated user role", changedRole.snapshot().path("roleName").asText());
+        assertEquals("Updated user role", changedRole.snapshot().path("presetName").asText());
         assertEquals(atoms("read"), changedRole.snapshot().path("permissions"));
         assertEquals("User role", agentPrincipalRepository.findById(principalId).orElseThrow()
-                        .getTemplateSnapshot().path("roleName").asText(),
+                        .getTemplateSnapshot().path("presetName").asText(),
                 "existing principal role snapshots must not follow later role config changes");
         updatedUserRoles.setConfigValue(roleConfig(userRoleId, "User role", atoms("read", "write")).toString());
         configJpaRepository.saveAndFlush(updatedUserRoles);
