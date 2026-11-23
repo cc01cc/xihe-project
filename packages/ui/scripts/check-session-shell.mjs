@@ -234,7 +234,7 @@ async function runAx(sessionUrl) {
         "C:/Program Files/Google/Chrome Beta/Application/chrome.exe";
     const passwordFile =
         process.env.XIHE_ADMIN_PASSWORD_FILE ??
-        path.resolve(HERE, "../../.local/dev/admin-password");
+        path.resolve(HERE, "../../../.local/dev/admin-password");
     const password = readFileSync(passwordFile, "utf8").trim();
     const origin = new URL(sessionUrl).origin;
     const browser = await chromium.launch({ executablePath: chrome, headless: true });
@@ -276,7 +276,14 @@ async function runAx(sessionUrl) {
                 titleVisible: title
                     ? (() => {
                           const rect = title.getBoundingClientRect();
-                          return rect.width > 0 && rect.height > 0;
+                          const style = getComputedStyle(title);
+                          // sr-only = 1×1 + clip；1px 以上且未 visibility:hidden 才算可见。
+                          return (
+                              rect.width > 1 &&
+                              rect.height > 1 &&
+                              style.visibility !== "hidden" &&
+                              style.display !== "none"
+                          );
                       })()
                     : null,
                 titleText: title?.textContent?.trim() ?? null,
