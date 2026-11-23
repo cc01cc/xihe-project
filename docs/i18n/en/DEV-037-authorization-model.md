@@ -375,7 +375,11 @@ Advantages (the positive reasons for the in-house choice, each checkable):
 | Grant rows | More than 2000 rows | Add explain and golden first, then evaluate an external engine |
 | Grant-preset count | More than 50 grant presets | Same |
 | Need a model-level proof | Any "no hole" claim must be formally proven | Introduce an engine such as Cedar / AVP |
-| A second non-tenant dimension appears | For example a time window or an approval-flow policy dimension | Rename the model (it is no longer a two-axis intersection) and re-evaluate the thresholds |
+| A second matching axis that participates in `(actionClass × resource)` evaluation appears | Not a post-condition such as a time window or an approval flow; those are covered by the next row | Rename the model (it is no longer a two-axis intersection) and re-evaluate the thresholds |
+| Post-conditions (narrowing only; not part of matching) | Condition operators including time windows, and `action:approve` dual-axis hits | **Do not rename**. Approval is not a judgement axis: `approvalVerdict` in `policy/PolicyEngine.java:240-258` runs after the grants decision and reads only the action class, so `ASK` is an output modality; `action:approve` remains one action atom and adds no evaluation axis. |
+| Quantitative sentinel | More than **12** condition keys, or more than **2** levels of condition nesting on a single grant, or a condition that needs to read a second subject's attributes | Do not rename, but **re-evaluate whether the two-axis model is still sufficient** |
+
+Conditions in §2.2 / §4.1 narrow only and do not participate in matching; approval in §4.2 remains an `(action:approve, resource)` dual-axis hit. Both belong to the post-condition row above, neither is a second matching axis, and neither declares a model change. The "MVP target ten-step chain" in §4.3 describes the full execution order over the same judgement axis; it is not a migration declaration.
 
 | Mechanism | Purpose | Status (2026-11-20) |
 |---|---|---|
