@@ -33,6 +33,12 @@ public class ToolFaceRegistry {
     public static final String ACTION_CREATE_TEMPLATE = "CREATE_TEMPLATE";
     public static final String ACTION_MANAGE_WORKSPACE_AGENTS = "MANAGE_WORKSPACE_AGENTS";
     public static final String ACTION_SPAWN_AGENT = "SPAWN_AGENT";
+    /**
+     * task-935 / D-1935: the clone atom — may this principal derive a second instance of itself.
+     * Agent presets carry it by default; human presets do not. Reusing the same child inside one
+     * parent session does not consume it.
+     */
+    public static final String ACTION_CLONE = "clone";
     // PLAN-0489 T1.4 (0486 #9/#10): scheduled-task create and non-creator disposition
     // are independent opt-in action classes, default deny like CREATE_ACCOUNT above.
     public static final String ACTION_CREATE_SCHEDULED_TASK = "CREATE_SCHEDULED_TASK";
@@ -430,7 +436,11 @@ public class ToolFaceRegistry {
                 ACTION_SESSION_PERMISSION_CONFIGURE,
                 // task-835 (approval contract §2.3): approval authority is an atom, so the
                 // vocabulary must know it before any evaluator can ask (action:approve, resource).
-                ACTION_APPROVE);
+                ACTION_APPROVE,
+                // task-935 / D-1935: clone authority is an atom, and Materializer validates through
+                // this set; it is not attached to any tool face (spawn_agent is the face, clone is
+                // an AND-ed condition on the self-spawn case).
+                ACTION_CLONE);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

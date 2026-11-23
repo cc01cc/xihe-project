@@ -25,20 +25,20 @@ tags:
 
 | Layer | Current count | Function in judgement | Does evaluation read it? | Source of truth |
 |---|---|---|---|---|
-| Action atom | 42 | Unit of judgement (`actionClass × resource`) | Yes, intersected per level | `policy/PermissionAtomCatalog.java` |
+| Action atom | 44 | Unit of judgement (`actionClass × resource`) | Yes, intersected per level | `policy/PermissionAtomCatalog.java` |
 | Capability atom | 3 | Entry gate (management-plane admission) | Yes, but outside the intersection | `policy/PermissionAtomCatalog.java`, `policy/AuthzContext.java` |
 | Grant preset | 11 (8 base + 3 execution presets) | Materialization package (writes atoms into grants) | **No** | `policy/SystemGrantPresetCatalog.java` |
-| Resource family | 5 registered namespaces (plus the bare form, see §5) | Second axis (the prefix-matched target) | Yes, for prefix coverage | `policy/ResourceIdentity.java`, `policy/ToolFaceRegistry.java` |
+| Resource family | 6 registered namespaces (plus the bare form, see §5) | Second axis (the prefix-matched target) | Yes, for prefix coverage | `policy/ResourceIdentity.java`, `policy/ToolFaceRegistry.java` |
 
 In one sentence: **evaluation reads action atoms, capability atoms (entry gate) and resources; grant presets are materialized into grants rows only at write time.**
 
-## 2. Action atoms (42)
+## 2. Action atoms (44)
 
-**What it is**: the smallest unit of authorization judgement, in code `PermissionAtom(actionClass, resource)`. The 42 action atoms are a closed set named in `PermissionAtomCatalog.ACTION_ATOM_NAMES`; each atom also carries a `scopeClass`: `instance` means bindable in the instance scope only, `both` means bindable in both the instance and workspace scopes. That class is derived from `INSTANCE_ONLY_ATOMS` (16 atoms); there is no separate `ActionScope` type.
+**What it is**: the smallest unit of authorization judgement, in code `PermissionAtom(actionClass, resource)`. The 44 action atoms are a closed set named in `PermissionAtomCatalog.ACTION_ATOM_NAMES`; each atom also carries a `scopeClass`: `instance` means bindable in the instance scope only, `both` means bindable in both the instance and workspace scopes. That class is derived from `INSTANCE_ONLY_ATOMS` (16 atoms); there is no separate `ActionScope` type.
 
 **Where to read**:
 
-- Atom list: `ACTION_ATOM_NAMES` in `policy/PermissionAtomCatalog.java` (42 today, [source]).
+- Atom list: `ACTION_ATOM_NAMES` in `policy/PermissionAtomCatalog.java` (44 today, [source]).
 - Scope class: `INSTANCE_ONLY_ATOMS` in the same file; anything absent is `both`.
 - Canonical resource: `PermissionAtomCatalog.actionResource`; defaults to `*`, credential action classes use `credential:*`.
 - Tool-face to action-class mapping: `policy/ToolFaceRegistry.java`.
@@ -89,7 +89,7 @@ The first 8 are the base built-in presets; the last 3 were added by DSD-1500 to 
 
 ## 5. Resource families
 
-**What it is**: resources are the second axis of judgement, canonically a prefix-matchable "namespace + value" string. There are 5 registered namespaces plus the bare form, six rows in total:
+**What it is**: resources are the second axis of judgement, canonically a prefix-matchable "namespace + value" string. There are 6 registered namespaces plus the bare form, seven rows in total:
 
 | Resource family | Shape | May enter grants | How evaluation uses it |
 |---|---|---|---|
@@ -98,6 +98,7 @@ The first 8 are the base built-in presets; the last 3 were added by DSD-1500 to 
 | Credential | `credential:<uuid>` / `credential:*` | Yes | Credential use requires a concrete uuid |
 | Skill | `skill:<uuid>` / `skill:*` | Yes | Skill faces match by prefix |
 | MCP server | `mcp:<canonicalServerId>` / `mcp:*` | Yes | A gateway call is evaluated together with the object resource; `*` does not cover `mcp:` |
+| Agent unit | `agent-unit:<ltree path>` (`/` segments) | **No** (`EVALUATION_ONLY`) | The spawn judgement appends the caller's own unit subtree; the `tree` matcher covers descendants |
 | Bare shape | bare path / URL / `*` | `*` only | Handed to the layered matcher |
 
 **Where to read**: `policy/ResourceNamespaces.java` is the single registry of namespaces, matchers and canonicalizers (created by task-830, extended with `mcp:` by task-870); `policy/ResourceIdentity.java` parses `fs:` / `phys:`; `PermissionAtomCatalog.actionResource` supplies the default `*` and the credential-class `credential:*`. Registration and matcher rules are in [DEV-037](DEV-037-authorization-model.md) §5.1; the `mcp:` channel-gate semantics are in §5.5.

@@ -203,7 +203,10 @@ public class SystemGrantPresetCatalog {
             AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_NETWORK),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE),
-            AtomRef.wildcard(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE));
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_TEAM_TASK_MANAGE),
+            // task-935 / D-1935: an agent may derive a second instance of itself by default;
+            // human presets deliberately do not carry this atom.
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_CLONE));
 
     /**
      * The registration default set. PLAN-0750 M1 (G1 = (1a), user ruling 2026-11-10) restores the
@@ -437,7 +440,8 @@ public class SystemGrantPresetCatalog {
                 new PresetSeed(AGENT_DELEGATOR_ID, AGENT_DELEGATOR, "Agent Delegator",
                         "Workspace scope: delegate by creating child Sessions/Runs inside the same "
                                 + "workspace. Intended for agent principals; bound explicitly.",
-                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT))),
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_CLONE))),
                 // D-174 (user ruling 2026-11-05): the agent's default INSTANCE role — the base set.
                 // Originally "human USER minus CREATE_OWN_AGENT" (agent-principal-forbidden);
                 // BL-312 (2026-11-09) removed that atom from the vocabulary entirely, so the two
@@ -457,13 +461,15 @@ public class SystemGrantPresetCatalog {
                         "Instance/workspace scope: read + workspace runtime — the read-only agent "
                                 + "preset (WS_VIEWER's counterpart for agent principals).",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_CLONE))),
                 new PresetSeed(AGENT_WORKER_ID, AGENT_WORKER, "Agent Worker",
                         "Instance/workspace scope: read/write/delete — the read+write agent preset "
                                 + "with no exec (DSD-1500 R3).",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_WRITE),
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE))),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_CLONE))),
                 // Exec carrier: deliberately JUST exec + the runtime channel, so granting execution
                 // never silently brings workspace administration along. Bind it at instance scope for
                 // reach AND let the workspace side hold exec (cap snapshot or the same role at

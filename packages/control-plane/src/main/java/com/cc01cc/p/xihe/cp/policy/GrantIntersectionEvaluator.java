@@ -276,6 +276,16 @@ public class GrantIntersectionEvaluator {
         if (physical != null) {
             return physical;
         }
+        // task-935 / D-1935: a registered namespace's declared matcher is the rule (same contract
+        // ToolFaceRegistry.resourceCovers already states). Without this line the evaluator would
+        // fall through to literal glob matching, so a TREE grant (`agent-unit:root/team`) would not
+        // cover its descendants and the spawn hierarchy would only ever match itself.
+        ResourceNamespaces.Matcher matcher = ResourceNamespaces.matcherOf(grantResource);
+        if (matcher != null && java.util.Objects.equals(
+                ResourceNamespaces.namespaceOf(grantResource),
+                ResourceNamespaces.namespaceOf(requestResource))) {
+            return ResourceNamespaces.matches(matcher, grantResource, requestResource);
+        }
         return LayeredPolicyResolver.matches(grantResource, requestResource, shape);
     }
 

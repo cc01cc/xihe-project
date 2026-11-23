@@ -240,7 +240,10 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_SESSION_PERMISSION_CONFIGURE,
             // task-835 (approval contract §2.3): approval authority is an atom. Its canonical
             // resource is the request-scoped sentinel, not `*` — see ResourceNamespaces. 42 + 1 = 43.
-            ToolFaceRegistry.ACTION_APPROVE);
+            ToolFaceRegistry.ACTION_APPROVE,
+            // task-935 / D-1935: may this principal derive a second instance of itself (spawn).
+            // 43 + 1 = 44 action atoms. Agent presets carry it by default; human presets do not.
+            ToolFaceRegistry.ACTION_CLONE);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);

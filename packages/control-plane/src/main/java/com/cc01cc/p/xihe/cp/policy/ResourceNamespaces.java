@@ -24,9 +24,12 @@ import java.util.stream.Collectors;
  *   <li>{@link Matcher#PREFIX} — equal value or a slash-segment prefix ({@code fs:ws/a} covers
  *       {@code fs:ws/a/b}). This is why the legacy single-segment {@code fs:<workspaceId>} covers the
  *       whole workspace.</li>
- *   <li>{@link Matcher#TREE} — reserved for a hierarchical family (an org-unit ltree, say). It is a
- *       declared type here, but <b>no {@code org:} namespace is registered</b>: visibility scope
- *       stays in conditions, not in the resource axis (DEV-037 §2).</li>
+ *   <li>{@link Matcher#TREE} — hierarchical coverage. {@code agent-unit:} was registered by
+ *       task-935 for the spawn hierarchy: it is the <b>agent's own unit subtree</b>, never the
+ *       visibility scope. The visibility namespace {@code org:} stays unregistered (DEV-037 §2):
+ *       "which units may I see" is conditions, "which unit may this spawn target" is the resource
+ *       axis. Registering {@code agent-unit} instead of {@code org} keeps those two questions
+ *       apart.</li>
  * </ul>
  *
  * <p><b>Grantability</b> is separate from the matcher. {@code phys:} is evaluation-only (the
@@ -72,8 +75,17 @@ public final class ResourceNamespaces {
     public static final String WORKSPACE_CONTEXT = "workspace";
     public static final String SESSION_CONTEXT = "session";
 
-    /** Reserved hierarchical namespace name; deliberately <b>not</b> registered (DEV-037 §2). */
+    /** Visibility-scope namespace name; deliberately <b>not</b> registered (DEV-037 §2). */
     public static final String ORG_TREE = "org";
+
+    /**
+     * task-935: the spawn-hierarchy namespace. Value is an org-unit ltree path written with
+     * {@code /} separators (the {@link Matcher#TREE} boundary), e.g. {@code agent-unit:root/team}.
+     * The pattern is the caller's own unit subtree; a target under a sibling is outside it.
+     * Evaluation-only: it is derived from {@code org_unit_members} at request time and never
+     * persisted as a grant.
+     */
+    public static final String AGENT_UNIT = "agent-unit";
 
     public static final String WILDCARD = "*";
     /**
@@ -90,6 +102,7 @@ public final class ResourceNamespaces {
     public static final String SKILL_PREFIX = SKILL + ":";
     public static final String MCP_PREFIX = MCP + ":";
     public static final String MCP_WILDCARD = MCP_PREFIX + WILDCARD;
+    public static final String AGENT_UNIT_PREFIX = AGENT_UNIT + ":";
 
     /**
      * The CP-owned gateway ids. They are not MCP servers a user can grant: they address the
@@ -117,6 +130,7 @@ public final class ResourceNamespaces {
         register(namespaces, CREDENTIAL, Matcher.EXACT, Grantability.GRANTABLE);
         register(namespaces, SKILL, Matcher.PREFIX, Grantability.GRANTABLE);
         register(namespaces, MCP, Matcher.EXACT, Grantability.GRANTABLE);
+        register(namespaces, AGENT_UNIT, Matcher.TREE, Grantability.EVALUATION_ONLY);
         return Collections.unmodifiableMap(namespaces);
     }
 
@@ -219,6 +233,18 @@ public final class ResourceNamespaces {
     /** True when {@code resource} is in the MCP gateway namespace. */
     public static boolean isMcpResource(String resource) {
         return MCP.equals(namespaceOf(resource));
+    }
+
+    /**
+     * task-935: the spawn hierarchy resource for one org-unit ltree path. The stored ltree uses
+     * {@code .} as its separator; the resource axis uses {@code /} so {@link Matcher#TREE} can
+     * cover descendants on segment boundaries. A blank path yields {@code null} (nothing to append).
+     */
+    public static String agentUnitResource(String ltreePath) {
+        if (ltreePath == null || ltreePath.isBlank()) {
+            return null;
+        }
+        return AGENT_UNIT_PREFIX + ltreePath.trim().replace('.', '/');
     }
 
     /**

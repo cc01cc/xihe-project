@@ -40,7 +40,7 @@ class SkillReadFaceTest {
     // the tripwire, not the authority — the authority is ToolFaceRegistry itself.
     // 41 through V172 (TEAM_TASK_MANAGE) + V178 (task-108: SESSION_PERMISSION_CONFIGURE) = 42,
     // + task-835 approval atom (V183) = 43.
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 43;
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 44;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {

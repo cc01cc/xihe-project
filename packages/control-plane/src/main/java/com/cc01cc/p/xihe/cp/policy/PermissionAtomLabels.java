@@ -61,6 +61,7 @@ public final class PermissionAtomLabels {
         put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 "管理智能体（工作区）", "Manage agents (workspace)");
         put(labels, ToolFaceRegistry.ACTION_SPAWN_AGENT, "委派子智能体", "Delegate child agent");
+        put(labels, ToolFaceRegistry.ACTION_CLONE, "分身", "Clone self");
         put(labels, ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK,
                 "创建定时任务", "Create scheduled task");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,

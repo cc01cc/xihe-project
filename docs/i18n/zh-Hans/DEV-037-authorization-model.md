@@ -194,22 +194,24 @@ tags:
 
 ## 5. 资源与原子目录
 
-- 原子目录：**42 个动作原子 + 3 个能力原子**（`policy/PermissionAtomCatalog.java`；[实测] 枚举计数见 `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`）。
+- 原子目录：**44 个动作原子 + 3 个能力原子**（`policy/PermissionAtomCatalog.java`；task-935 新增 `action:clone`）。
 - 有工具面入口的动作类 **7 个**：`read`、`write`、`exec`、`network`、`credential_use`、`spawn_agent`、`team_task_manage`（`policy/ToolFaceRegistry.java:280-296`）。`delete` 动作类存在，但当前没有任何工具映射到它，`WRITE_TOOLS` 也不含删除工具（`policy/ToolFaceRegistry.java:193-195`、`:254`）——即该原子在工具链上不可达。
 - 资源族（资源轴的取值形态）：`fs:` 声明键（**唯一可写入 grant 的路径形态**）、`phys:` 求值键（只在求值期展开）、`credential:`（`credential:*` 或 `credential:<uuid>`）、`skill:`（`skill:*` 或 `skill:<uuid>`）、`mcp:`（`mcp:*` 或 `mcp:<canonicalServerId>`，见 §5.5），以及裸路径 / URL / `*`。命名空间与 matcher 统一由 `policy/ResourceNamespaces.java` 注册；`fs:` / `phys:` 的解析仍在 `policy/ResourceIdentity.java`。
 
-8 个内置授权预设的默认动作原子数（[实测]，同一份证据）：
+内置授权预设的默认动作原子数（[实测]；task-935 的 `action:clone` 只进 Agent 预设）：
 
 | 授权预设 | 默认动作原子数 | 类别 | 定义处 |
 |---|---|---|---|
-| SUPER_ADMIN | 45 | 平台 | `policy/SystemGrantPresetCatalog.java` |
+| SUPER_ADMIN | 46 | 平台 | `policy/SystemGrantPresetCatalog.java` |
 | ADMIN | 32 | 平台 | 同上 |
 | USER | 10 | 平台 | 同上 |
 | WS_OWNER | 17 | 工作区 | 同上 |
 | WS_EDITOR | 12 | 工作区 | 同上 |
 | WS_VIEWER | 2 | 工作区 | 同上 |
-| AGENT_DELEGATOR | 1 | 代理 | `policy/SystemGrantPresetCatalog.java:374` |
-| AGENT_USER | 7 | 代理 | `policy/SystemGrantPresetCatalog.java:385` |
+| AGENT_DELEGATOR | 2 | 代理 | `policy/SystemGrantPresetCatalog.java` |
+| AGENT_USER | 8 | 代理 | `policy/SystemGrantPresetCatalog.java` |
+
+- `AGENT_READER` / `AGENT_WORKER` 也各带 `action:clone`：分身默认允许是**智能体预设**的性质，不按读写能力区分。
 
 - `ORG_LEADER` 当前**只有代码注释与治理白名单说明，迁移未落种子（M2-3）**；不得把它写成可用授权预设，也不要在 UI/文档里当成可绑定项。
 
@@ -247,7 +249,15 @@ PEP 覆盖面：42 个原子里只有 7 个（约 17%）有工具面入口；Win
 
 组织树是 **visibility scope**（`OrgUnitAccess.Scope`，ltree 路径），永久留在 conditions / context 面：它回答「能看见哪些组织单元」，不回答「能对哪个对象做哪个动作」。把它塞进资源轴会同时破坏两件事：404 语义（非成员必须得到「不存在」而不是「无权限」）与查询范围语义（读取面按 ltree `<@` 过滤，而不是逐行做资源前缀匹配）。
 
-资源注册表**预留 `tree` matcher 类型**，但当前不注册 `org:` 命名空间。将来若确实需要把组织单元升级成资源，只加一行注册（namespace + `tree` matcher + canonicalizer），不改表、不改解析器、不改求值器。
+资源注册表**不注册 `org:` 命名空间**：可见范围仍是 conditions / context。task-935 注册的是另一个命名空间 `agent-unit:`（`tree` matcher、`EVALUATION_ONLY`），值形如 `agent-unit:root/team`，回答的是「这次 spawn 的目标是否在调用方自己的单元子树内」。它由 `org_unit_members` 在求值时派生，不写入 grant；`org:` 与 `agent-unit:` 并列出现不是笔误：前者回答「能看见哪些单元」，后者回答「能在哪个单元内派生」。
+
+### 5.6 委派层级：`action:spawn × agent-unit:<子树>`
+
+- 层级**只来自组织树**：`org_unit_members`（成员归属）+ `org_units.path`（ltree 路径），不读角色名、不读身份字段。
+- 判据**只来自权限系统**：`AgentSpawnAuthorizationService.gate` 通过 `PolicyEngine.allowsByGrant` 的 8 参重载追加调用方 agent 自身所在单元的子树的 `agent-unit:<path>`；禁止另写 `if (isDescendant)`。
+- `tree` matcher 按 `/` 分段覆盖后代（与 ltree 的 `.` 分隔在资源签名处做一次投影），所以 `agent-unit:root/team` 覆盖 `agent-unit:root/team/child`，不覆盖 `agent-unit:root/other`。
+- **分身**由 `action:clone` 控制：Agent 预设默认含，人类预设默认不含；同一主会话内复用已有子实例不需要 clone，只有派生第 2 个实例才需要。
+- `send message` / TO / CC / `team_task_*` 是同会话通知或任务板动作，**不进入** spawn 判据。
 
 ### 5.5 `mcp:` 是通道闸，不是被作用对象
 

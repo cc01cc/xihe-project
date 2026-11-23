@@ -25,20 +25,20 @@ tags:
 
 | 层 | 当前数量 | 判据职责 | 求值期是否读 | 权威来源 |
 |---|---|---|---|---|
-| 动作原子 | 42 | 判据单位（`actionClass × resource`） | 读，逐级求交 | `policy/PermissionAtomCatalog.java` |
+| 动作原子 | 44 | 判据单位（`actionClass × resource`） | 读，逐级求交 | `policy/PermissionAtomCatalog.java` |
 | 能力原子 | 3 | 入口闸（管理面准入） | 读，但不进交集 | `policy/PermissionAtomCatalog.java`、`policy/AuthzContext.java` |
 | 授权预设 | 11（8 个基础 + 3 个执行档） | 物化包（把原子写进 grants） | **不读** | `policy/SystemGrantPresetCatalog.java` |
-| 资源族 | 5 个已登记命名空间（另有裸形态，见 §5） | 第二轴（前缀匹配的目标） | 读，做前缀覆盖 | `policy/ResourceIdentity.java`、`policy/ToolFaceRegistry.java` |
+| 资源族 | 6 个已登记命名空间（另有裸形态，见 §5） | 第二轴（前缀匹配的目标） | 读，做前缀覆盖 | `policy/ResourceIdentity.java`、`policy/ToolFaceRegistry.java` |
 
 一句话：**求值只读动作原子、能力原子（入口闸）与资源；授权预设只在写入期被物化成 grants 行。**
 
-## 2. 动作原子（42）
+## 2. 动作原子（44）
 
-**是什么**：授权判据的最小单位，代码形态是 `PermissionAtom(actionClass, resource)`。42 个动作原子是闭集，名字定义在 `PermissionAtomCatalog.ACTION_ATOM_NAMES`；每个原子还带一个 `scopeClass`：`instance` 表示只能绑在实例档，`both` 表示实例档与工作区档都可绑。该类别由 `INSTANCE_ONLY_ATOMS`（16 个）派生，不另设 `ActionScope` 类型。
+**是什么**：授权判据的最小单位，代码形态是 `PermissionAtom(actionClass, resource)`。44 个动作原子是闭集，名字定义在 `PermissionAtomCatalog.ACTION_ATOM_NAMES`；每个原子还带一个 `scopeClass`：`instance` 表示只能绑在实例档，`both` 表示实例档与工作区档都可绑。该类别由 `INSTANCE_ONLY_ATOMS`（16 个）派生，不另设 `ActionScope` 类型。
 
 **从哪读**：
 
-- 原子清单：`policy/PermissionAtomCatalog.java` 的 `ACTION_ATOM_NAMES`（当前 42 个，[源码]）。
+- 原子清单：`policy/PermissionAtomCatalog.java` 的 `ACTION_ATOM_NAMES`（当前 44 个，[源码]）。
 - scope 类别：同文件 `INSTANCE_ONLY_ATOMS`；不在名单内即 `both`。
 - canonical resource：`PermissionAtomCatalog.actionResource`；默认 `*`，凭证类动作是 `credential:*`。
 - 工具面到动作类的映射：`policy/ToolFaceRegistry.java`。
@@ -89,7 +89,7 @@ tags:
 
 ## 5. 资源族
 
-**是什么**：资源是判据的第二轴，规范形态是「命名空间 + 值」的可前缀匹配串。当前有 5 个命名空间 + 裸形态，共 6 行：
+**是什么**：资源是判据的第二轴，规范形态是「命名空间 + 值」的可前缀匹配串。当前有 6 个命名空间 + 裸形态，共 7 行：
 
 | 资源族 | 形态 | 能进 grants | 求值期怎么用 |
 |---|---|---|---|
@@ -98,6 +98,7 @@ tags:
 | 凭证 | `credential:<uuid>` / `credential:*` | 能 | 使用凭证必须具体 uuid |
 | 技能 | `skill:<uuid>` / `skill:*` | 能 | 技能面按前缀匹配 |
 | MCP server | `mcp:<canonicalServerId>` / `mcp:*` | 能 | 网关调用与对象资源同时求值；`*` 不覆盖 `mcp:` |
+| 智能体单元 | `agent-unit:<ltree path>`（`/` 分段） | **不能**（`EVALUATION_ONLY`） | spawn 判据追加调用方自身单元子树；`tree` matcher 覆盖后代 |
 | 裸形态 | 裸路径 / URL / `*` | `*` 能 | 交分层匹配器 |
 
 **从哪读**：`policy/ResourceNamespaces.java` 是命名空间、matcher 与 canonicalizer 的单一注册表（task-830 建、task-870 增 `mcp:`）；`policy/ResourceIdentity.java` 解析 `fs:` / `phys:`；`PermissionAtomCatalog.actionResource` 给默认 `*` 与凭证类 `credential:*`。登记与 matcher 口径见 [DEV-037](DEV-037-authorization-model.md) §5.1，`mcp:` 的通道闸语义见 §5.5。

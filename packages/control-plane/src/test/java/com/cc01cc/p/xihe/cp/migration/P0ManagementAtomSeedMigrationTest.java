@@ -191,7 +191,8 @@ class P0ManagementAtomSeedMigrationTest {
         // chain", so the chain documents the new step too. V178 (task-108 / D-1908 rev3) added
         // SESSION_PERMISSION_CONFIGURE (41 -> 42), the widening-only session tier atom.
         // task-835 (V183) added ACTION_APPROVE (42 -> 43), the approval-gate atom.
-        assertEquals(43, PermissionAtomCatalog.actionAtoms().size(),
+        // task-935 (V187) added ACTION_CLONE (43 -> 44), the agent self-derivation atom.
+        assertEquals(44, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
                         + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
                         + " removal = 32, plus the PLAN-0750 M1 restore = 33, plus PLAN-0766"
@@ -200,6 +201,7 @@ class P0ManagementAtomSeedMigrationTest {
                         + " MANAGE_ORG_UNITS + MANAGE_ORG_UNIT_MEMBERS + READ_ORG_UNIT_MEMBERS = 40;"
                         + " plus V172 TEAM_TASK_MANAGE = 41; plus V178"
                         + " SESSION_PERMISSION_CONFIGURE = 42; plus V183 ACTION_APPROVE = 43;"
+                        + " plus V187 ACTION_CLONE = 44;"
                         + " the same arithmetic is frozen in"
                         + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());

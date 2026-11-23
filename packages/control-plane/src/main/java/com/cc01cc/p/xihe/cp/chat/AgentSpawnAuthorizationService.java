@@ -8,16 +8,23 @@ import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
+import com.cc01cc.p.xihe.cp.policy.ResourceNamespaces;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.Face;
+import com.cc01cc.p.xihe.cp.repository.OrgUnitMemberRepository;
+import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.Optional;
 
 /**
  * Applies the normal CP grant and approval gate to spawn.
@@ -38,17 +45,31 @@ public class AgentSpawnAuthorizationService {
     private final DelegationBudgetService delegationBudget;
     /** PLAN-0651 T1.5 (proposal B): emits the canonical {@code action_atom_denied} deny stream. */
     private final RequesterAuthority requesterAuthority;
+    private final OrgUnitMemberRepository orgUnitMembers;
+    private final OrgUnitReadRepository orgUnits;
 
     public AgentSpawnAuthorizationService(PolicyEngine policy, ApprovalService approvals,
                                           SseEmitterManager sseManager, AuditLogger audit,
                                           DelegationBudgetService delegationBudget,
                                           RequesterAuthority requesterAuthority) {
+        this(policy, approvals, sseManager, audit, delegationBudget, requesterAuthority, null, null);
+    }
+
+    @Autowired
+    public AgentSpawnAuthorizationService(PolicyEngine policy, ApprovalService approvals,
+                                          SseEmitterManager sseManager, AuditLogger audit,
+                                          DelegationBudgetService delegationBudget,
+                                          RequesterAuthority requesterAuthority,
+                                          OrgUnitMemberRepository orgUnitMembers,
+                                          OrgUnitReadRepository orgUnits) {
         this.policy = policy;
         this.approvals = approvals;
         this.sseManager = sseManager;
         this.audit = audit;
         this.delegationBudget = delegationBudget;
         this.requesterAuthority = requesterAuthority;
+        this.orgUnitMembers = orgUnitMembers;
+        this.orgUnits = orgUnits;
     }
 
     /**
@@ -74,8 +95,15 @@ public class AgentSpawnAuthorizationService {
         String tool = ChatSubmissionService.SPAWN_TOOL_NAME;
         PolicyContext context = policy.loadContext(
                 invocation.userId(), invocation.workspaceId(), invocation.parentSessionId());
-        if (!policy.allowsByGrant(context, tool, invocation.authorizationBody(), invocation.parentSessionId(),
-                invocation.userId(), invocation.workspaceId(), userOnly)) {
+        List<String> hierarchy = spawnHierarchyResources(invocation, userOnly);
+        boolean allowed = hierarchy.isEmpty()
+                ? policy.allowsByGrant(context, tool, invocation.authorizationBody(),
+                        invocation.parentSessionId(), invocation.userId(), invocation.workspaceId(),
+                        userOnly)
+                : policy.allowsByGrant(context, tool, invocation.authorizationBody(),
+                        invocation.parentSessionId(), invocation.userId(), invocation.workspaceId(),
+                        userOnly, hierarchy);
+        if (!allowed) {
             // PLAN-0651 T1.5 (proposal B): the spawn-face denial joins the canonical
             // action_atom_denied stream. The evaluated subject is the caller's user on the human
             // delegation channel and the calling agent principal on the MCP channel; a path
@@ -115,6 +143,41 @@ public class AgentSpawnAuthorizationService {
                 verdict, face, context, reusedSessionGrant ? Boolean.TRUE : null).orElse(null);
         return GateResult.allowed(new ChatSubmissionService.SpawnAuthorization(
                 invocation.authorizationBody(), consumeApprovalId, policySummary));
+    }
+
+    /**
+     * task-935 / D-1935: the spawn hierarchy is a resource on the normal grant axis, never a
+     * separate descendant check. The appended resource is the caller agent's own unit subtree
+     * ({@code agent-unit:<ltree>}); {@link ResourceNamespaces.Matcher#TREE} then decides coverage
+     * exactly like {@code mcp:} does for the gateway channel. Notification tools (TO/CC,
+     * {@code team_task_*}) never enter this gate at all.
+     *
+     * <p>The human delegation channel is left without this resource in this card: its target
+     * selection is task-961, and adding the caller's own subtree there would judge the wrong
+     * subject. An agent with no unit row gets no hierarchy resource (the existing grant path still
+     * applies); the target-selection half owns the target's subtree.</p>
+     */
+    private List<String> spawnHierarchyResources(ChatSubmissionService.SpawnInvocation invocation,
+                                                 boolean userOnly) {
+        if (userOnly || orgUnitMembers == null || orgUnits == null
+                || invocation.principalId() == null || invocation.principalId().isBlank()) {
+            return List.of();
+        }
+        UUID principalId;
+        try {
+            principalId = UUID.fromString(invocation.principalId().trim());
+        } catch (IllegalArgumentException notUuid) {
+            return List.of();
+        }
+        Optional<UUID> unitId = orgUnitMembers.findUnitOf("agent_principal", principalId);
+        if (unitId.isEmpty()) {
+            return List.of();
+        }
+        String path = orgUnits.findUnit(unitId.get())
+                .map(OrgUnitReadRepository.UnitRow::path)
+                .orElse(null);
+        String resource = ResourceNamespaces.agentUnitResource(path);
+        return resource == null ? List.of() : List.of(resource);
     }
 
     private GateResult createPendingApproval(ChatSubmissionService.SpawnInvocation invocation) {

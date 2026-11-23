@@ -155,6 +155,33 @@ class DefaultSetAtomMatrixTest {
     }
 
     @Test
+    void cloneIsAgentOnlyByDefault() {
+        // task-935 / D-1935: deriving a second instance of an agent is allowed by default;
+        // a human account's default sets do not carry it. SUPER_ADMIN is the mirror obligation
+        // (every catalog atom, DefaultSetMigrationParityTest), not a human default.
+        String clone = com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_CLONE);
+        for (String agentRole : List.of(SystemGrantPresetCatalog.AGENT_DELEGATOR,
+                SystemGrantPresetCatalog.AGENT_USER,
+                SystemGrantPresetCatalog.AGENT_READER,
+                SystemGrantPresetCatalog.AGENT_WORKER)) {
+            assertTrue(codeAtomsOf(agentRole).contains(clone),
+                    "agent preset must carry clone by default: " + agentRole);
+        }
+        for (String humanRole : List.of(SystemGrantPresetCatalog.USER,
+                SystemGrantPresetCatalog.ADMIN,
+                SystemGrantPresetCatalog.WS_OWNER,
+                SystemGrantPresetCatalog.WS_EDITOR,
+                SystemGrantPresetCatalog.WS_VIEWER,
+                SystemGrantPresetCatalog.WS_RUNNER,
+                SystemGrantPresetCatalog.ORG_LEADER)) {
+            assertFalse(codeAtomsOf(humanRole).contains(clone),
+                    "human/workspace preset must not carry clone by default: " + humanRole);
+        }
+        assertTrue(codeAtomsOf(SystemGrantPresetCatalog.SUPER_ADMIN).contains(clone),
+                "SUPER_ADMIN mirrors every action atom");
+    }
+
+    @Test
     void onlyTheInstanceAndManagementFacesAreForbiddenToAgentPrincipals() {
         // PLAN-0651 M2 (Lead ruling 2026-11-05): forbidden = instance-domain administration plus the
         // workspace management faces (16 atoms). N5–N9 are workspace capabilities the owner hands

@@ -194,22 +194,24 @@ Only two things differ from §3: step 7 adds "condition", and step 8 "approval" 
 
 ## 5. Resources and the atom catalog
 
-- Atom catalog: **42 action atoms + 3 capability atoms** (`policy/PermissionAtomCatalog.java`; the [measured] enumeration count is in `internal/A03-xihe/evidence/2026-11-20-permission-atom-matrix/README.md`).
+- Atom catalog: **44 action atoms + 3 capability atoms** (`policy/PermissionAtomCatalog.java`; task-935 adds `action:clone`).
 - Action classes with a tool-face entry: **7** — `read`, `write`, `exec`, `network`, `credential_use`, `spawn_agent`, `team_task_manage` (`policy/ToolFaceRegistry.java:280-296`). The `delete` action class exists, but no tool maps to it today and `WRITE_TOOLS` contains no delete tool (`policy/ToolFaceRegistry.java:193-195`, `:254`), so that atom is unreachable through the tool chain.
 - Resource families (the value shapes on the resource axis): `fs:` declaration keys (**the only path form that may be written to a grant**), `phys:` evaluation keys (expanded only at evaluation time), `credential:` (`credential:*` or `credential:<uuid>`), `skill:` (`skill:*` or `skill:<uuid>`), `mcp:` (`mcp:*` or `mcp:<canonicalServerId>`, see §5.5), plus bare paths / URLs / `*`. Namespaces and matchers are registered once in `policy/ResourceNamespaces.java`; `fs:` / `phys:` parsing stays in `policy/ResourceIdentity.java`.
 
-Default action-atom counts for the eight built-in grant presets ([measured], same evidence):
+Default action-atom counts for the built-in grant presets ([measured]; task-935's `action:clone` is agent-only):
 
 | Grant preset | Default action atoms | Category | Definition |
 |---|---|---|---|
-| SUPER_ADMIN | 45 | Platform | `policy/SystemGrantPresetCatalog.java` |
+| SUPER_ADMIN | 46 | Platform | `policy/SystemGrantPresetCatalog.java` |
 | ADMIN | 32 | Platform | Same |
 | USER | 10 | Platform | Same |
 | WS_OWNER | 17 | Workspace | Same |
 | WS_EDITOR | 12 | Workspace | Same |
 | WS_VIEWER | 2 | Workspace | Same |
-| AGENT_DELEGATOR | 1 | Agent | `policy/SystemGrantPresetCatalog.java:374` |
-| AGENT_USER | 7 | Agent | `policy/SystemGrantPresetCatalog.java:385` |
+| AGENT_DELEGATOR | 2 | Agent | `policy/SystemGrantPresetCatalog.java` |
+| AGENT_USER | 8 | Agent | `policy/SystemGrantPresetCatalog.java` |
+
+- `AGENT_READER` / `AGENT_WORKER` also carry `action:clone`: "cloning is allowed by default" is a property of the **agent presets**, not of their read/write capability.
 
 - `ORG_LEADER` currently exists **only in code comments and the governance whitelist description; no seed has been written (M2-3)**. Do not present it as an available grant preset or a bindable item in UI or documentation.
 
@@ -247,7 +249,15 @@ The distinction is "which credentials may be managed" versus "which single crede
 
 The org tree is **visibility scope** (`OrgUnitAccess.Scope`, an ltree path) and permanently stays in conditions / context: it answers "which org units may be seen", not "which object may receive which action". Putting it on the resource axis would break two things at once: 404 semantics (a non-member must be told "does not exist", not "not permitted") and query-scope semantics (the read face filters by ltree `<@`, rather than doing per-row resource-prefix matching).
 
-The resource registry **reserves a `tree` matcher type**, but does not register an `org:` namespace today. If org units ever need to become resources, add one registry row (namespace + `tree` matcher + canonicalizer); no table change, no parser change, no evaluator change.
+The resource registry **does not register an `org:` namespace**: visibility scope stays in conditions / context. task-935 registers a different namespace, `agent-unit:` (`tree` matcher, `EVALUATION_ONLY`), with values such as `agent-unit:root/team`. It answers "is this spawn target inside the caller's own unit subtree". It is derived from `org_unit_members` at evaluation time and is never written to a grant; seeing both is not a typo: `org:` answers "which units may I see", `agent-unit:` answers "inside which unit may I derive".
+
+### 5.6 Delegation hierarchy: `action:spawn × agent-unit:<subtree>`
+
+- The hierarchy comes **only from the org tree**: `org_unit_members` (membership) plus `org_units.path` (the ltree path); it never reads a role name or an identity field.
+- The judgement comes **only from the permission system**: `AgentSpawnAuthorizationService.gate` appends the caller agent's own unit subtree as `agent-unit:<path>` through `PolicyEngine.allowsByGrant`'s 8-argument overload; a separate `if (isDescendant)` is forbidden.
+- The `tree` matcher covers descendants on `/` boundaries (the ltree `.` separator is projected once when building the resource), so `agent-unit:root/team` covers `agent-unit:root/team/child` and not `agent-unit:root/other`.
+- **Cloning** is controlled by `action:clone`: agent presets carry it by default, human presets do not. Reusing an existing child inside one parent session does not need clone; only deriving a second instance does.
+- `send message` / TO / CC / `team_task_*` are same-session notifications or board work and **never enter** the spawn judgement.
 
 ### 5.5 `mcp:` is a channel gate, not the object being acted on
 
