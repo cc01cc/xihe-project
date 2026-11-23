@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import type { Component } from "vue";
+import { ref, type Component } from "vue";
+import { useI18n } from "vue-i18n";
 import {
+    ChevronRight,
     Database,
     File,
     FileCode2,
@@ -8,6 +10,7 @@ import {
     FileText,
     Folder,
     FolderOpen,
+    GitBranch,
     Image,
     Settings2,
     Table2,
@@ -15,18 +18,50 @@ import {
 } from "@lucide/vue";
 import { isEmptyDirectoryNode, isDotfileName, useWorkspaceStore } from "../stores/workspace";
 import type { FileNode } from "../../../types";
+import type { ApiNestedRepoItem } from "../../../composables/api";
 import TreeItem from "../../../components/ui/tree/TreeItem.vue";
 import FileNodeMenu from "./FileNodeMenu.vue";
 
-const props = defineProps<{
-    nodes: FileNode[];
-    level: number;
-    searchQuery?: string;
-    /** PLAN-0639 M2: owning declared root of this tree slice (multi-root grouping). */
-    rootId?: string;
+/**
+ * task-939（R76）: the undeclared-nested-repo declaration is a **one-off action on the
+ * tree node itself**, not a full-width card list above the tree. The discovery list
+ * is fetched by `FileTreePanel` (the panel owns the workspace id + the refresh
+ * lifecycle) and handed down here; this component only renders the badge and the
+ * inline two-step confirm, and emits the path back up.
+ */
+const props = withDefaults(
+    defineProps<{
+        nodes: FileNode[];
+        level: number;
+        searchQuery?: string;
+        /** PLAN-0639 M2: owning declared root of this tree slice (multi-root grouping). */
+        rootId?: string;
+        /** Unexpired discovery list (`GET …/nested-repos`); only undeclared entries matter. */
+        nestedRepos?: ApiNestedRepoItem[];
+        /** False greys the inline entry (declare gate closed or a read-only workspace). */
+        nestedRepoCanDeclare?: boolean;
+        /** A declaration is in flight; every inline entry is disabled meanwhile. */
+        nestedRepoDeclaring?: boolean;
+    }>(),
+    {
+        searchQuery: "",
+        rootId: undefined,
+        nestedRepos: () => [],
+        nestedRepoCanDeclare: false,
+        nestedRepoDeclaring: false,
+    },
+);
+
+const emit = defineEmits<{
+    /** The two-step confirm was accepted; the panel performs the POST + refresh. */
+    "declare-nested-repo": [path: string];
 }>();
 
+const { t } = useI18n();
+
 const ws = useWorkspaceStore();
+/** task-939: which nested-repo node currently shows its inline confirm step. */
+const confirmingNestedRepo = ref<string | null>(null);
 
 function getIcon(node: FileNode, isExpanded: boolean): Component {
     if (node.type === "directory") return isExpanded ? FolderOpen : Folder;
@@ -117,6 +152,57 @@ function isEmptyDir(node: FileNode): boolean {
     return isEmptyDirectoryNode(node);
 }
 
+/**
+ * task-939（R76）: the discovery entry that belongs to this node, if any.
+ *
+ * <p>Match is by the exact workspace-relative path (`repo.path === node.path`) —
+ * B12 already establishes that path, not the display name, is the identity. A path
+ * whose directory is not rendered (collapsed ancestor) simply shows nothing here;
+ * expanding the tree reveals it. Declared repos are filtered out by the panel.</p>
+ */
+function repoFor(node: FileNode): ApiNestedRepoItem | undefined {
+    if (node.type !== "directory") return undefined;
+    return props.nestedRepos.find((repo) => repo.path === node.path && !repo.declared);
+}
+
+function repoTypeLabel(repo?: ApiNestedRepoItem): string {
+    return repo ? t(`workspace.nestedRepoType_${repo.type}`) : "";
+}
+
+/**
+ * Positive allowlist (PLAN-0641 T4.4): only a real nested repo / linked worktree can
+ * become an independent root. Submodule is the user's own nesting declaration, symlink
+ * stays classification-only, bare is warn-only in v1.
+ */
+function isDeclarableRepo(repo?: ApiNestedRepoItem): boolean {
+    return repo?.type === "nested" || repo?.type === "gitdir";
+}
+
+function declareDisabled(repo?: ApiNestedRepoItem): boolean {
+    return !repo || !props.nestedRepoCanDeclare || props.nestedRepoDeclaring;
+}
+
+function repoPathFor(node: FileNode): string {
+    return repoFor(node)?.path ?? "";
+}
+
+/** B1: the first click only opens the inline confirm step; the POST waits for it. */
+function startDeclare(repo?: ApiNestedRepoItem): void {
+    if (declareDisabled(repo)) return;
+    confirmingNestedRepo.value = repo?.path ?? null;
+}
+
+function cancelDeclare(): void {
+    confirmingNestedRepo.value = null;
+}
+
+function confirmDeclare(repo?: ApiNestedRepoItem): void {
+    if (!repo || props.nestedRepoDeclaring) return;
+    // 保留确认态：失败时用户要能原地重试（B1 的「失败不停在成功路径上」判据）。
+    // 成功时面板重新发现、该 repo 从列表消失 ⇒ 整块入口自然不再渲染。
+    emit("declare-nested-repo", repo.path);
+}
+
 function escapeHtml(s: string): string {
     return s
         .replace(/&/g, "&amp;")
@@ -143,40 +229,119 @@ function highlightName(name: string, query?: string): string {
                 :level="level"
                 @select="handleSelect(node)"
             >
+                <!--
+                    task-939（R76）: the row is one flex line — the row button (min-w-0 flex-1)
+                    plus the nested-repo affordance. `FileNodeMenu` wraps the **whole row** so
+                    right-click keeps working on the badge/entry too (its trigger is `as-child`,
+                    so this div is the element that receives the vendor trigger props).
+                -->
                 <FileNodeMenu :node="node">
-                    <button
-                        class="flex w-full items-center gap-1 py-1 text-sm rounded hover:bg-accent/50 transition-colors select-none text-left"
-                        :data-dotfile="isDotfile(node) ? 'true' : undefined"
-                        :data-empty-dir="isEmptyDir(node) ? 'true' : undefined"
-                        :data-active="isActive(node) ? 'true' : undefined"
-                        :aria-current="isActive(node) ? 'true' : undefined"
-                        :class="{
-                            'bg-accent text-accent-foreground': isActive(node),
-                            'opacity-60': isEmptyDir(node),
-                        }"
-                        :style="{ paddingLeft: `${level * 16 + 8}px` }"
-                    >
-                        <span class="w-4 shrink-0 text-xs text-muted-foreground">
-                            {{ node.type === "directory" ? (isExpanded ? "▼" : "▶") : "" }}
-                        </span>
-                        <component
-                            :is="getIcon(node, isExpanded)"
-                            class="size-3.5 shrink-0 text-muted-foreground"
-                            aria-hidden="true"
-                        />
-                        <span
-                            v-if="!searchQuery"
-                            class="truncate flex-1 ml-1"
-                            :class="{ 'text-muted-foreground': isDotfile(node) }"
-                            >{{ node.name }}</span
+                    <div class="flex items-center gap-1">
+                        <button
+                            class="flex min-w-0 flex-1 items-center gap-1 py-1 text-sm rounded hover:bg-accent/50 transition-colors select-none text-left"
+                            :data-dotfile="isDotfile(node) ? 'true' : undefined"
+                            :data-empty-dir="isEmptyDir(node) ? 'true' : undefined"
+                            :data-active="isActive(node) ? 'true' : undefined"
+                            :aria-current="isActive(node) ? 'true' : undefined"
+                            :aria-expanded="node.type === 'directory' ? isExpanded : undefined"
+                            :class="{
+                                'bg-accent text-accent-foreground': isActive(node),
+                                'opacity-60': isEmptyDir(node),
+                            }"
+                            :style="{ paddingLeft: `${level * 16 + 8}px` }"
                         >
-                        <span
-                            v-else
-                            class="truncate flex-1 ml-1"
-                            :class="{ 'text-muted-foreground': isDotfile(node) }"
-                            v-html="highlightName(node.name, searchQuery)"
-                        />
-                    </button>
+                            <!--
+                                task-939（R76）: the expander used to be the literal `▼`/`▶`
+                                glyph, so the treeitem's accessible name was "▶ src" — screen
+                                readers announced a triangle instead of "collapsed". It is now
+                                an icon (aria-hidden) plus the `aria-expanded` state on the row
+                                button, which is what the a11y tree is supposed to carry.
+                            -->
+                            <span class="flex w-4 shrink-0 items-center justify-center">
+                                <ChevronRight
+                                    v-if="node.type === 'directory'"
+                                    class="size-3.5 shrink-0 text-muted-foreground transition-transform"
+                                    :class="isExpanded ? 'rotate-90' : ''"
+                                    aria-hidden="true"
+                                />
+                            </span>
+                            <component
+                                :is="getIcon(node, isExpanded)"
+                                class="size-3.5 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                            />
+                            <span
+                                v-if="!searchQuery"
+                                class="truncate flex-1 ml-1"
+                                :class="{ 'text-muted-foreground': isDotfile(node) }"
+                                >{{ node.name }}</span
+                            >
+                            <span
+                                v-else
+                                class="truncate flex-1 ml-1"
+                                :class="{ 'text-muted-foreground': isDotfile(node) }"
+                                v-html="highlightName(node.name, searchQuery)"
+                            />
+                        </button>
+                        <!--
+                            task-939（R76）: undeclared nested repo ⇒ one tree-row affordance
+                            (badge + inline two-step declare). It never becomes a block above
+                            the tree, and a declared repo simply stops carrying this badge.
+                        -->
+                        <template v-if="repoFor(node)">
+                            <span
+                                data-testid="nested-repo-type"
+                                :title="repoTypeLabel(repoFor(node))"
+                                class="shrink-0 items-center rounded bg-amber-500/10 px-1 text-xs text-amber-800 dark:text-amber-200"
+                            >
+                                <GitBranch class="mr-0.5 inline size-3" aria-hidden="true" />{{
+                                    repoTypeLabel(repoFor(node))
+                                }}
+                            </span>
+                            <div
+                                v-if="
+                                    isDeclarableRepo(repoFor(node)) &&
+                                    confirmingNestedRepo === repoPathFor(node)
+                                "
+                                data-testid="nested-repo-confirm"
+                                class="flex shrink-0 items-center gap-1"
+                            >
+                                <button
+                                    type="button"
+                                    class="rounded px-1.5 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
+                                    data-testid="nested-repo-declare-confirm"
+                                    :title="t('workspace.nestedRepoDeclareConfirm')"
+                                    :disabled="nestedRepoDeclaring"
+                                    @click="confirmDeclare(repoFor(node))"
+                                >
+                                    {{ t("workspace.nestedRepoDeclareYes") }}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent"
+                                    data-testid="nested-repo-declare-cancel"
+                                    @click="cancelDeclare"
+                                >
+                                    {{ t("workspace.nestedRepoDeclareCancel") }}
+                                </button>
+                            </div>
+                            <button
+                                v-else-if="isDeclarableRepo(repoFor(node))"
+                                type="button"
+                                class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
+                                data-testid="nested-repo-declare"
+                                :disabled="declareDisabled(repoFor(node))"
+                                :title="
+                                    nestedRepoCanDeclare
+                                        ? t('workspace.nestedRepoDeclareConfirm')
+                                        : t('workspace.viewerReadOnly')
+                                "
+                                @click="startDeclare(repoFor(node))"
+                            >
+                                {{ t("workspace.nestedRepoDeclare") }}
+                            </button>
+                        </template>
+                    </div>
                 </FileNodeMenu>
                 <TreeNodeList
                     v-if="isExpanded && node.children && node.children.length > 0"
@@ -184,6 +349,10 @@ function highlightName(name: string, query?: string): string {
                     :level="level + 1"
                     :search-query="searchQuery"
                     :root-id="rootId"
+                    :nested-repos="nestedRepos"
+                    :nested-repo-can-declare="nestedRepoCanDeclare"
+                    :nested-repo-declaring="nestedRepoDeclaring"
+                    @declare-nested-repo="(path: string) => emit('declare-nested-repo', path)"
                 />
             </TreeItem>
         </li>

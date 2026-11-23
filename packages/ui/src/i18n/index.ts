@@ -663,9 +663,8 @@ const messages = {
                 "每账号同时持有 1 个活动工作区 · 物理目录由系统按 hostRoot/workspaceId 派生，宿主机可直接访问",
             // D-1777/D-1778：目录树的面板身份（右栏容器），树不再有自己的容器行。
             panelFiles: "文件",
-            gitReadfaceTitle: "仓库状态（待提交）",
-            gitReadfaceHeadHint: "HEAD 见变更面板/checkpoint timeline",
-            gitReadfaceNoRepo: "当前工作区不是 Git 仓库",
+            // task-939（R76）: 待提交读面只在「变更」面板（`diffPending*`），文件面板不再镜像它；
+            // 本键仍被 `useWorkspaceGitReadState` 的错误呈现引用。
             gitReadfaceLoadFailed: "仓库状态加载失败",
             // task-550 / Q-i 第二半（用户裁定）：会话头常显。**两半都要在** ——
             // 只写「无文件系统授权限制」会让人以为完全没有边界，而 host 模式下 cwd 仍受 grants 约束
@@ -830,20 +829,20 @@ const messages = {
             // PLAN-0639 M2: multi-root file tree groups (design §5 candidate ①).
             rootGroupFallback: "根 {position}",
             rootEmpty: "该根暂无文件",
-            // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
-            nestedReposTitle: "未声明的嵌套 Git 仓库",
-            nestedRepoDeclare: "声明为根",
-            nestedRepoDeclareYes: "确认声明",
+            // PLAN-0641 T2.5 / task-939（R76）: nested git repos — user-facing copy only;
+            // no internal vocabulary ("嵌套仓 / 声明为根 / 根") on screen.
+            nestedRepoDeclare: "纳入快照",
+            nestedRepoDeclareYes: "确认纳入",
             nestedRepoDeclareCancel: "取消",
-            nestedRepoDeclareConfirm: "声明后该目录将作为独立根参与快照与回滚。",
-            nestedRepoDeclared: "已声明为独立根",
-            nestedRepoDeclareFailed: "声明失败，请稍后重试",
-            nestedRepoDeclareErrorRootInUse: "工作区有运行中的对话，等它结束后再声明",
-            nestedRepoDeclareErrorConflict: "该路径已经是根",
-            nestedRepoDeclareErrorOverlap: "该路径与已有根部分重叠，请调整",
-            nestedReposCostHint: "根数量较多：每个根都有独立的影子库与快照成本。",
-            nestedRepoType_nested: "嵌套仓",
-            nestedRepoType_gitdir: "worktree 指针",
+            nestedRepoDeclareConfirm: "纳入后，这个目录会单独参与快照与回滚。",
+            nestedRepoDeclared: "已纳入快照",
+            nestedRepoDeclareFailed: "纳入失败，请稍后重试",
+            nestedRepoDeclareErrorRootInUse: "工作区有运行中的对话，结束后再纳入",
+            nestedRepoDeclareErrorConflict: "这个目录已经单独纳入过",
+            nestedRepoDeclareErrorOverlap: "这个目录与已纳入的目录部分重叠，请调整",
+            nestedReposCostHint: "纳入的目录较多：每个目录都有独立的快照成本。",
+            nestedRepoType_nested: "独立 Git 仓库",
+            nestedRepoType_gitdir: "关联工作副本",
             nestedRepoType_submodule: "子模块",
             nestedRepoType_bare: "裸仓库",
             nestedRepoType_symlink: "符号链接",
@@ -5133,9 +5132,8 @@ const messages = {
                 "One active workspace per account · the host directory is derived from hostRoot/workspaceId and is directly reachable on the host",
             // D-1777/D-1778: the directory tree's panel identity inside the right container.
             panelFiles: "Files",
-            gitReadfaceTitle: "Repository status (pending commit)",
-            gitReadfaceHeadHint: "HEAD: see Changes panel / checkpoint timeline",
-            gitReadfaceNoRepo: "Current workspace is not a Git repository",
+            // task-939（R76）: the pending-commit read face lives in the Changes panel only
+            // (`diffPending*`); this key is still used by `useWorkspaceGitReadState`'s error copy.
             gitReadfaceLoadFailed: "Failed to load repository status",
             // task-550: session-header annotation; both halves are mandatory (see zh comment).
             // task-7 (2026-11-15, Lead ruled option A): the old parenthetical "workspace path
@@ -5315,23 +5313,23 @@ const messages = {
             fileOpReasonBinary: "That is a binary file; the editor cannot open it as text.",
             fileOpReasonOther: "The server rejected this operation; see the code below.",
             fileOpReasonUnknown: "The reason for the failure is not known.",
-            // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
-            nestedReposTitle: "Undeclared nested git repositories",
-            nestedRepoDeclare: "Declare as root",
+            // PLAN-0641 T2.5 / task-939（R76）: nested git repos — user-facing copy only;
+            // no internal vocabulary ("nested repo / declare as root / root") on screen.
+            nestedRepoDeclare: "Include in snapshots",
             nestedRepoDeclareYes: "Confirm",
             nestedRepoDeclareCancel: "Cancel",
             nestedRepoDeclareConfirm:
-                "After declaring, this directory participates in snapshots and rollback as an independent root.",
-            nestedRepoDeclared: "Declared as an independent root",
-            nestedRepoDeclareFailed: "Declaration failed, try again later",
-            nestedRepoDeclareErrorRootInUse: "A chat run is in progress; declare after it finishes",
-            nestedRepoDeclareErrorConflict: "That path is already a root",
+                "After that, this folder takes part in snapshots and rollback on its own.",
+            nestedRepoDeclared: "Included in snapshots",
+            nestedRepoDeclareFailed: "Could not include it in snapshots; try again later",
+            nestedRepoDeclareErrorRootInUse:
+                "A chat run is in progress; include it after it finishes",
+            nestedRepoDeclareErrorConflict: "This folder is already included on its own",
             nestedRepoDeclareErrorOverlap:
-                "That path partially overlaps an existing root; adjust it",
-            nestedReposCostHint:
-                "Many roots: each root adds an independent shadow repo and snapshot cost.",
-            nestedRepoType_nested: "Nested repo",
-            nestedRepoType_gitdir: "Linked worktree",
+                "This folder partially overlaps one that is already included; adjust it",
+            nestedReposCostHint: "Many included folders: each one adds its own snapshot cost.",
+            nestedRepoType_nested: "Standalone Git repository",
+            nestedRepoType_gitdir: "Linked working copy",
             nestedRepoType_submodule: "Submodule",
             nestedRepoType_bare: "Bare repo",
             nestedRepoType_symlink: "Symlink",

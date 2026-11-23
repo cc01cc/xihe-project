@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { isHiddenTreeEntry, isRuntimeArtifactDir, useWorkspaceStore } from "../stores/workspace";
 import type { FileNode } from "../../../types";
+import type { ApiNestedRepoItem } from "../../../composables/api";
 import Tree from "../../../components/ui/tree/Tree.vue";
 import TreeNodeList from "./TreeNodeList.vue";
 
@@ -15,13 +16,28 @@ const props = withDefaults(
          */
         nodes?: FileNode[];
         rootId?: string;
+        /**
+         * task-939（R76）: undeclared nested git repos, handed down so the tree row
+         * itself carries the "include in snapshots" affordance (never a block above
+         * the tree). This component only forwards it to `TreeNodeList`.
+         */
+        nestedRepos?: ApiNestedRepoItem[];
+        nestedRepoCanDeclare?: boolean;
+        nestedRepoDeclaring?: boolean;
     }>(),
     {
         searchQuery: "",
         nodes: undefined,
         rootId: undefined,
+        nestedRepos: () => [],
+        nestedRepoCanDeclare: false,
+        nestedRepoDeclaring: false,
     },
 );
+
+const emit = defineEmits<{
+    "declare-nested-repo": [path: string];
+}>();
 
 const ws = useWorkspaceStore();
 
@@ -141,6 +157,10 @@ const searchExpanded = computed(() => {
             :level="0"
             :search-query="searchQuery"
             :root-id="rootId"
+            :nested-repos="nestedRepos"
+            :nested-repo-can-declare="nestedRepoCanDeclare"
+            :nested-repo-declaring="nestedRepoDeclaring"
+            @declare-nested-repo="(path: string) => emit('declare-nested-repo', path)"
         />
     </Tree>
 </template>

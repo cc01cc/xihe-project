@@ -7,7 +7,6 @@ import {
     Folder,
     FolderOpen,
     FolderPlus,
-    GitBranch,
     LoaderCircle,
     PanelLeftClose,
     RefreshCw,
@@ -30,13 +29,6 @@ import { useAuthStore } from "../../../stores/auth";
 import { readTabWorkspaceId } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import FileTree from "./FileTree.vue";
-import { useWorkspaceGitReadState } from "../composables/useWorkspaceGitReadState";
-// task-78：诊断面的 technicalDetail 收进 vendor Collapsible（默认折叠、为空不渲染空壳）。
-import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
-} from "../../../components/ui/collapsible";
 
 /**
  * PLAN-0582 S3a: the file tree moved inside the workbench's left column, so it
@@ -63,21 +55,15 @@ const searchQuery = ref(""),
     creatingFile = ref(false),
     newFileName = ref("");
 
-/** PLAN-0641 T2.5: discovery list + the inline two-step confirm (B1: prompt then confirm). */
+/**
+ * PLAN-0641 T2.5 / task-939（R76）: the discovery list stays here (this component owns
+ * the workspace id + the refresh lifecycle), but the declaration affordance is a
+ * **tree-row action** now — `TreeNodeList` renders the badge and the inline two-step
+ * confirm, and emits the path back up (B1: prompt, then confirm ⇒ then the POST).
+ */
 const nestedRepos = ref<ApiNestedRepoItem[]>([]),
-    confirmingNestedRepo = ref<string | null>(null),
     declaringNestedRepo = ref(false);
 const workspaceName = computed(() => auth.workspace?.name ?? t("sidebar.workspace"));
-
-/**
- * task-36 / RSI 缺口1：树面板自己就有只读仓库状态，不必先打开 dock 的「变更」tab。
- * 只做派生展示，权威数据仍是共享的 git-status GET（与 MCP git_status 同源）。
- */
-const gitRead = useWorkspaceGitReadState(
-    () => readTabWorkspaceId() ?? auth.currentWorkspaceId ?? null,
-    (key) => t(key),
-);
-const gitEntries = computed(() => gitRead.status.value?.entries.slice(0, 5) ?? []);
 
 /**
  * task-365 E（D-1220 邻域）：**当前打开文件的路径**从 workbench 顶部工具栏搬进本面板头。
@@ -119,20 +105,6 @@ async function loadNestedRepos() {
     }
 }
 
-function nestedRepoTypeLabel(kind: ApiNestedRepoItem["type"]): string {
-    return t(`workspace.nestedRepoType_${kind}`);
-}
-
-/**
- * PLAN-0641 T4.4 (positive allowlist): only a real nested repo / linked worktree can be
- * declared as an independent root. Submodule is the user's own nesting declaration and
- * is never offered (design §6.3 row 4, B6=(a)); symlink stays classification-only
- * (design:108 "不进入本机制", contract F4); bare is warn-only in v1 (B6=(a), §6.1).
- */
-function isDeclarableNestedRepo(repo: ApiNestedRepoItem): boolean {
-    return repo.type === "nested" || repo.type === "gitdir";
-}
-
 /** PLAN-0641 M2 T3.1: localized declaration failure — never the raw CP detail. */
 function nestedRepoDeclareError(code: string | null): string {
     switch (code) {
@@ -147,13 +119,18 @@ function nestedRepoDeclareError(code: string | null): string {
     }
 }
 
-async function confirmDeclareNestedRepo(repo: ApiNestedRepoItem) {
+/**
+ * task-939（R76）: the tree row already did the two-step confirm, so this only has to
+ * validate the path against the live discovery list (a stale row must not POST) and
+ * perform the same root CRUD + refresh the card used to do.
+ */
+async function declareNestedRepo(path: string) {
     const id = readTabWorkspaceId() ?? auth.currentWorkspaceId;
     if (!id || !canDeclareNestedRepo.value || declaringNestedRepo.value) return;
+    if (!nestedRepos.value.some((repo) => repo.path === path && !repo.declared)) return;
     declaringNestedRepo.value = true;
     try {
-        await api.addWorkspaceRoot(id, { path: repo.path });
-        confirmingNestedRepo.value = null;
+        await api.addWorkspaceRoot(id, { path });
         // Tree + discovery refresh, and the workspace view so the new root group and
         // its B12 path label appear without a manual reload (T3.1).
         await Promise.all([ws.refreshTree(), loadNestedRepos(), auth.refreshWorkspace()]);
@@ -375,105 +352,13 @@ function upload() {
             </button>
         </div>
 
-        <!-- task-36: read-state probe on the file-tree panel itself (no second state source). -->
-        <div
-            data-testid="workspace-git-readface"
-            class="shrink-0 border-b border-border px-2 py-1.5 text-xs"
-        >
-            <p data-testid="workspace-git-readface-head-hint" class="text-muted-foreground">
-                {{ t("workspace.gitReadfaceTitle") }} · {{ t("workspace.gitReadfaceHeadHint") }}
-            </p>
-            <p
-                v-if="gitRead.loading.value"
-                data-testid="workspace-git-readface-loading"
-                class="text-muted-foreground"
-            >
-                {{ t("workspace.diffPendingLoading") }}
-            </p>
-            <!--
-                task-78：本块是**诊断面**（持久在屏的树面板错误条），按 AGENTS.md 错误面契约：
-                copy（role="alert"）+ 折叠的 technicalDetail，**错误码也进同一个折叠区**（区内 label + 可选中 code）。
-                Lead 裁 ②（总账 §十四 `fc327a318`，`task-64`）把「可见可复制」改成**展开后可复制**：码收进折叠区，折叠态不渲染该节点。
-                为什么必须有码：见下两行 —— 兜底文案要求用户提供错误码。
-                改前只渲染 `copy`，而 copy 的兜底句（errors 域的 unknownCode 键）正是
-                "…并提供**错误码**" ⇒ 文案要求用户做一件界面没提供的事。composable 早已给出整份 ErrorPresentation
-                （useWorkspaceGitReadState.ts:21），这里只是模板没用 ⇒ 不改数据流。
-            -->
-            <div
-                v-else-if="gitRead.error.value"
-                data-testid="workspace-git-readface-error"
-                class="space-y-1"
-            >
-                <p
-                    data-testid="workspace-git-readface-error-copy"
-                    class="text-destructive"
-                    role="alert"
-                >
-                    {{ gitRead.error.value.copy }}
-                </p>
-                <Collapsible v-if="gitRead.error.value.code || gitRead.error.value.technicalDetail">
-                    <CollapsibleTrigger as-child>
-                        <button
-                            type="button"
-                            data-testid="workspace-git-readface-error-detail-toggle"
-                            class="rounded text-muted-foreground underline underline-offset-2"
-                        >
-                            {{ t("errors.technicalDetail") }}
-                        </button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                        <p
-                            v-if="gitRead.error.value.code"
-                            data-testid="workspace-git-readface-error-code"
-                            class="mt-1 text-muted-foreground"
-                        >
-                            {{ t("errors.errorCodeLabel") }}
-                            <code
-                                class="select-all rounded border bg-muted/40 px-1 py-0.5 font-mono text-[11px] text-foreground"
-                                data-testid="workspace-git-readface-error-code-value"
-                                >{{ gitRead.error.value.code }}</code
-                            >
-                        </p>
-                        <pre
-                            v-if="gitRead.error.value.technicalDetail"
-                            data-testid="workspace-git-readface-error-detail-body"
-                            class="mt-1 max-h-32 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all text-muted-foreground"
-                            >{{ gitRead.error.value.technicalDetail }}</pre>
-                    </CollapsibleContent>
-                </Collapsible>
-                <button
-                    type="button"
-                    data-testid="workspace-git-readface-error-retry"
-                    class="rounded border px-1.5 py-0.5 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    @click="gitRead.reload()"
-                >
-                    {{ t("workspace.retry") }}
-                </button>
-            </div>
-            <p
-                v-else-if="gitRead.status.value && !gitRead.status.value.isRepository"
-                data-testid="workspace-git-readface-no-repo"
-                class="text-muted-foreground"
-            >
-                {{ t("workspace.gitReadfaceNoRepo") }}
-            </p>
-            <template v-else-if="gitRead.status.value">
-                <p data-testid="workspace-git-readface-count" class="font-medium">
-                    {{ gitRead.status.value.entries.length }}
-                    {{ t("workspace.diffPendingCountUnit") }}
-                </p>
-                <ul
-                    v-if="gitEntries.length > 0"
-                    data-testid="workspace-git-readface-entries"
-                    class="mt-0.5 space-y-0.5 font-mono"
-                >
-                    <li v-for="entry in gitEntries" :key="`${entry.status}:${entry.path}`">
-                        {{ entry.status }} {{ entry.path }}
-                    </li>
-                </ul>
-            </template>
-        </div>
-
+        <!--
+            task-939（R76 / 用户 2026-11-24 实拍批注）: the file panel is **only the file
+            tree**. The pending-commit read face lives in the dock's 「变更」 panel
+            (`WorkspaceChangesPanel` 的「待提交」tab) — same shared git-status GET, no
+            second state source; it used to be mirrored here because "不必切面板" was
+            read as "put git status inside the file tree".
+        -->
         <!-- task-365 E：当前文件路径（只读；无文件时整行不渲染）。 -->
         <div
             v-if="activeFilePath"
@@ -581,87 +466,12 @@ function upload() {
         </div>
 
         <!--
-          PLAN-0641 T2.5: undeclared nested git repos discovered by the Runtime probe
-          (contract F2). Advisory only — the tree below keeps working when discovery is
-          empty or unavailable. B12: the whole workspace-relative path is the label;
-          rootId, not the display name, is the key.
+            task-939（R76）: undeclared nested git repos discovered by the Runtime probe
+            (contract F2) no longer occupy a card list above the tree. The declarable
+            ones carry a badge + inline "include in snapshots" entry **on their tree row**
+            (`TreeNodeList`), so the panel stays a file tree. Advisory only: an empty or
+            unavailable discovery list must never break the tree.
         -->
-        <div
-            v-if="undeclaredNestedRepos.length > 0"
-            data-testid="nested-repos-panel"
-            class="shrink-0 border-b border-border px-2 py-1.5"
-        >
-            <p
-                class="flex items-center gap-1 text-xs font-semibold text-amber-800 dark:text-amber-200"
-            >
-                <GitBranch class="size-3" aria-hidden="true" />
-                {{ t("workspace.nestedReposTitle") }}
-            </p>
-            <ul class="mt-1 space-y-1">
-                <li
-                    v-for="repo in undeclaredNestedRepos"
-                    :key="repo.path"
-                    class="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-xs"
-                    data-testid="nested-repo-row"
-                >
-                    <div class="flex min-w-0 items-center gap-1">
-                        <span
-                            class="truncate font-mono text-foreground"
-                            data-testid="nested-repo-path"
-                            :title="repo.path"
-                            >{{ repo.path }}</span
-                        >
-                        <span
-                            class="shrink-0 rounded bg-card px-1 text-xs text-muted-foreground"
-                            data-testid="nested-repo-type"
-                            >{{ nestedRepoTypeLabel(repo.type) }}</span
-                        >
-                    </div>
-                    <div
-                        v-if="confirmingNestedRepo === repo.path"
-                        class="mt-1 flex items-center gap-1"
-                        data-testid="nested-repo-confirm"
-                    >
-                        <span class="min-w-0 flex-1 text-xs text-muted-foreground">
-                            {{ t("workspace.nestedRepoDeclareConfirm") }}
-                        </span>
-                        <button
-                            type="button"
-                            class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
-                            data-testid="nested-repo-declare-confirm"
-                            :disabled="declaringNestedRepo"
-                            @click="confirmDeclareNestedRepo(repo)"
-                        >
-                            {{ t("workspace.nestedRepoDeclareYes") }}
-                        </button>
-                        <button
-                            type="button"
-                            class="shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent"
-                            data-testid="nested-repo-declare-cancel"
-                            @click="confirmingNestedRepo = null"
-                        >
-                            {{ t("workspace.nestedRepoDeclareCancel") }}
-                        </button>
-                    </div>
-                    <button
-                        v-else-if="isDeclarableNestedRepo(repo)"
-                        type="button"
-                        class="mt-1 rounded px-1.5 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
-                        data-testid="nested-repo-declare"
-                        :disabled="!canDeclareNestedRepo || declaringNestedRepo"
-                        :title="
-                            canDeclareNestedRepo
-                                ? t('workspace.nestedRepoDeclare')
-                                : t('workspace.viewerReadOnly')
-                        "
-                        @click="confirmingNestedRepo = repo.path"
-                    >
-                        {{ t("workspace.nestedRepoDeclare") }}
-                    </button>
-                </li>
-            </ul>
-        </div>
-
         <div
             v-if="ws.loading"
             data-testid="workspace-tree-loading"
@@ -802,19 +612,33 @@ function upload() {
                     <FileTree
                         v-else-if="group.isPrimary"
                         :search-query="filteredTree?.query ?? ''"
+                        :nested-repos="undeclaredNestedRepos"
+                        :nested-repo-can-declare="canDeclareNestedRepo"
+                        :nested-repo-declaring="declaringNestedRepo"
+                        @declare-nested-repo="declareNestedRepo"
                     />
                     <FileTree
                         v-else
                         :nodes="group.state.nodes"
                         :root-id="group.root.id"
                         :search-query="filteredTree?.query ?? ''"
+                        :nested-repos="undeclaredNestedRepos"
+                        :nested-repo-can-declare="canDeclareNestedRepo"
+                        :nested-repo-declaring="declaringNestedRepo"
+                        @declare-nested-repo="declareNestedRepo"
                     />
                 </div>
             </section>
         </div>
 
         <div v-else class="flex-1 overflow-y-auto py-1 px-1">
-            <FileTree :search-query="filteredTree?.query ?? ''" />
+            <FileTree
+                :search-query="filteredTree?.query ?? ''"
+                :nested-repos="undeclaredNestedRepos"
+                :nested-repo-can-declare="canDeclareNestedRepo"
+                :nested-repo-declaring="declaringNestedRepo"
+                @declare-nested-repo="declareNestedRepo"
+            />
         </div>
     </div>
 </template>
