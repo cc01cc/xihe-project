@@ -43,6 +43,17 @@ public class AuthorizationGrant {
     @Column(name = "role_name", columnDefinition = "TEXT")
     private String roleName;
 
+    /**
+     * task-933 / R39 (V186): the preset this row was imported from. Display and
+     * &quot;compare / realign&quot; only — it never participates in a decision. Rows whose
+     * {@code source} is not {@code assigned} keep it NULL (V186 backfills it only for a
+     * unique preset match); {@code originPresetId} carries no constraint on purpose, an
+     * orphaned id must not break the read face (same in-memory-only discipline as
+     * {@code OrgUnitGrantExpander.SOURCE} staying out of {@code grants}).
+     */
+    @Column(name = "origin_preset_id", columnDefinition = "uuid")
+    private UUID originPresetId;
+
     @Column(name = "template_name", columnDefinition = "TEXT")
     private String templateName;
 
@@ -98,6 +109,9 @@ public class AuthorizationGrant {
 
     public String getRoleName() { return roleName; }
     public void setRoleName(String roleName) { this.roleName = roleName; }
+
+    public UUID getOriginPresetId() { return originPresetId; }
+    public void setOriginPresetId(UUID originPresetId) { this.originPresetId = originPresetId; }
 
     public String getTemplateName() { return templateName; }
     public void setTemplateName(String templateName) { this.templateName = templateName; }
