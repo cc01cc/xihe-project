@@ -3,7 +3,15 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle, Plus, RotateCcw, X } from "@lucide/vue";
-import { api, ApiError, type AgentModelRef, type AgentRoleBinding } from "../../composables/api";
+import {
+    api,
+    ApiError,
+    request,
+    type AgentModelRef,
+    type AgentPrincipalUpdateBody,
+    type AgentPrincipalUpdateView,
+    type AgentRoleBinding,
+} from "../../composables/api";
 import { presentCauseError, type ErrorPresentation } from "../../lib/errorMessages";
 // task-92（缺口二，抽屉段）：换页时的整页草稿守卫；与 widget 内 `unsavedConfirmOpen` 共用同一 dirty 真源。
 import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
@@ -11,7 +19,6 @@ import { formatDate } from "../../lib/dateFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Input } from "../ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import {
     AlertDialog,
@@ -49,13 +56,17 @@ import {
  * task-191：三个层（user / workspace / instance）共用的 **agent 主体详情抽屉**。
  *
  * <p>宿主（AgentPrincipalsPanel / WorkspaceAgentsPanel / InstanceAgentsPanel）把各自列表行
- * 归一化成 {@link AgentPrincipalDetail} 传入；写分区（模型 / 委派预算 / 记忆 / 钩子）走
- * 同一个通用 {@code api.updateAgentPrincipal} PATCH，**每个分区只带自己的键**（absent =
- * 不触碰），响应 echo 持久化文档后以响应回填本地与宿主行。</p>
+ * 归一化成 {@link AgentPrincipalDetail} 传入；写分区（模型 / 委派预算 / 记忆 / 钩子）按
+ * ownership 选门（{@link patchInstancePrincipalDocuments} 或用户前缀），
+ * **每个分区只带自己的键**（absent = 不触碰），响应 echo 持久化文档后以响应回填本地与宿主行。</p>
  *
  * <ul>
  *   <li>persona 只读（Q1 裁定：templateId 不在 PATCH body，创建时钉住不可换）；</li>
- *   <li>instance 层整体只读（Q2 裁定：instance PATCH wire 与契约不符且无消费方，不动它）；</li>
+ *   <li><b>可写分区由宿主给（{@link editableSections}），`readonly` 只是宿主层的短路开关</b>。
+ *       旧的「instance 层整体只读」（task-191 Q2）已由 <b>D-1941 作废</b>（task-955：用户
+ *       2026-11-24 要求「智能体配置要能配」）⇒ 实例面板现在给 model/delegation/hooks；</li>
+ *   <li>INSTANCE 所有者的行**只能**写 `/api/v1/instance/agent-principals/{id}`（见
+ *       {@link patchInstancePrincipalDocuments}），user 前缀会被 CP 拒（`AGENT_PRINCIPAL_INSTANCE_OWNED`）；</li>
  *   <li>授权不做客户端判定 —— CP 403（GUARD_* / AGENT_PRINCIPAL_OWNER_MISMATCH）经错误面</li>
  *   <li>映射为可操作文案；S1 无新原子。</li>
  * </ul>
@@ -87,7 +98,7 @@ const props = withDefaults(
         principal: AgentPrincipalDetail | null;
         /** 角色读面的授权上下文（workspace 层传当前工作区；user/instance 层传 null）。 */
         workspaceId?: string | null;
-        /** instance 层 = 整体只读（Q2）。 */
+        /** 宿主层整体只读短路（instance 层自 D-1941 起不再使用；写分区走 {@link editableSections}）。 */
         readonly?: boolean;
         /** 宿主没有自己的 disable 入口时才渲染危险区（workspace/instance 面板已有，避免双入口）。 */
         showDanger?: boolean;
@@ -95,10 +106,19 @@ const props = withDefaults(
          * 本层可写分区。默认四区全可写（user 层：列表视图 = AgentPrincipalView 全字段）。
          * workspace 层只给 hooks：model/delegation 现值不在 WorkspaceAgentView 上（Java record
          * 实测无此字段），memory 开关已由宿主面板拥有 —— 不在抽屉里开第二个入口。
+         * instance 层给 model / delegation / hooks（D-1941；memory 同样由宿主面持有，不开第二入口）。
          */
         editableSections?: AgentPrincipalDetailSection[];
         /** 该层列表投影**不携带**现值的分区（显示为「到用户层配置」，而不是渲染假默认值）。 */
         unknownSections?: AgentPrincipalDetailSection[];
+        /**
+         * 钩子 advisor 的**已注册 kind** 集合（快照源：CP `HookAdvisorRegistry` 注入的
+         * `HookAdvisor` bean，今天只有 `GuardHookAdvisor.KIND`）。R37 判据：下拉只渲染这一组，
+         * 不自造选项；CP 注册新 advisor 时宿主注入新集合（默认值就是当前 CP 快照）。
+         */
+        advisorKinds?: string[];
+        /** 钩子 `on` 的**白名单**集合（快照源：CP `HookAdvisorRegistry.ALLOWED_ACTION_CLASSES`）。 */
+        advisorEvents?: string[];
     }>(),
     {
         workspaceId: null,
@@ -107,6 +127,10 @@ const props = withDefaults(
         editableSections: () =>
             ["model", "delegation", "memory", "hooks"] as AgentPrincipalDetailSection[],
         unknownSections: () => [] as AgentPrincipalDetailSection[],
+        // 快照只能写字面量：`defineProps` 的默认值会被 hoist 到模块外层，不能引用 setup 里的局部常量
+        // （vue 编译期硬约束，BaseModal 那类双 script 块才解决）。这两个字面量就是上面注释里的 CP 快照。
+        advisorKinds: () => ["guard"] as string[],
+        advisorEvents: () => ["approval.ask"] as string[],
     },
 );
 
@@ -171,15 +195,15 @@ const memoryBaseline = ref(false);
 const advisors = ref<HookAdvisorDraft[]>([]);
 const advisorsBaseline = ref("");
 // 枚举族字段（§17.5）的取值一律来自 CP 契约，不自造下拉项：
-// kind 今天只有 GuardHookAdvisor.KIND（唯一注册的 advisor），on 白名单只有
-// HookAdvisorRegistry.ALLOWED_ACTION_CLASSES 里的 approval.ask。未登记的 kind 走显式「自定义」分支。
-const ADVISOR_KINDS = ["guard"] as const;
-const ADVISOR_EVENTS = ["approval.ask"] as const;
-const CUSTOM_ADVISOR_KIND = "__custom__";
-const newAdvisorKind = ref<string>(ADVISOR_KINDS[0]);
-const newAdvisorCustomTag = ref("");
-const newAdvisorEvent = ref<string>(ADVISOR_EVENTS[0]);
-const newAdvisorKindIsCustom = computed(() => newAdvisorKind.value === CUSTOM_ADVISOR_KIND);
+// kind/on 的候选集是**集合**（props.advisorKinds / advisorEvents，默认见上方能力面快照），
+// 渲染项 == 传入集合 ⇒ CP 注册新 advisor 时界面自动跟着长，用例不写死具体 kind 名字（R37）。
+// 未注册的 kind **不再提供入口**：CP `HookAdvisorRegistry` 接受它但 `advisorsFor` 不返回任何
+// advisor（只在日志里 warn "configured but currently inert"）⇒ 那是一条存得下、永不触发的订阅，
+// 正是「互斥选项语义与能力面不符」（同 R53 族），故原「自定义…」分支与自由输入框一并撤掉。
+const advisorKindOptions = computed<readonly string[]>(() => props.advisorKinds);
+const advisorEventOptions = computed<readonly string[]>(() => props.advisorEvents);
+const newAdvisorKind = ref<string>(props.advisorKinds[0] ?? "");
+const newAdvisorEvent = ref<string>(props.advisorEvents[0] ?? "");
 const memoryRetryTarget = ref<boolean | null>(null);
 
 const roles = ref<AgentRoleBinding[] | null>(null);
@@ -253,9 +277,8 @@ function resetDrafts() {
     memoryBaseline.value = memoryEnabled.value;
     advisors.value = parseAdvisors(principal?.hooks ?? null);
     advisorsBaseline.value = JSON.stringify(advisors.value);
-    newAdvisorKind.value = ADVISOR_KINDS[0];
-    newAdvisorCustomTag.value = "";
-    newAdvisorEvent.value = ADVISOR_EVENTS[0];
+    newAdvisorKind.value = advisorKindOptions.value[0] ?? "";
+    newAdvisorEvent.value = advisorEventOptions.value[0] ?? "";
     memoryRetryTarget.value = null;
     sectionErrors.model = null;
     sectionErrors.delegation = null;
@@ -542,6 +565,43 @@ function principalGuard(principalId: string): boolean {
     return props.open && props.principal?.principalId === principalId;
 }
 
+/**
+ * 实例层写门（task-955 / D-1941）：为什么不能一律用 {@code api.updateAgentPrincipal} ——
+ * 它对 INSTANCE 所有者的行会先撞 CP 的 workspace-context 门，再被
+ * `AGENT_PRINCIPAL_INSTANCE_OWNED` 403。实例主体的唯一写门是
+ * `PATCH /api/v1/instance/agent-principals/{principalId}`（openapi `:1185`、
+ * `InstanceAgentPrincipalController.java:113`）。两条门共用同一个 body 形状
+ * （`AgentPrincipalUpdateRequest`：absent = 不触碰、显式 null = 清除）与同一个响应形状
+ * （`AgentPrincipalUpdateView`），所以只切换路径，不复制第二套分区语义。
+ *
+ * <p>两个调用点保持分开（每个保存函数里各写一扇门），不用「选函数」的间接层：
+ * `scripts/check-write-invalidate.mjs` 按 `api.<写动词>*` 的**字面调用点**对账，间接层会让
+ * 既有基线读数静默消失。</p>
+ */
+async function patchInstancePrincipalDocuments(
+    principalId: string,
+    body: AgentPrincipalUpdateBody,
+): Promise<AgentPrincipalUpdateView> {
+    // 与 api.updateAgentPrincipal 同一口径：`undefined` 键不进 payload（absent = 不触碰）。
+    const payload: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(body)) {
+        if (value !== undefined) payload[key] = value;
+    }
+    return request<AgentPrincipalUpdateView>(
+        `/instance/agent-principals/${encodeURIComponent(principalId)}`,
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
+}
+
+/** 该主体是否走实例写门（`ownership` 是 CP 的存储列，决定唯一写前缀）。 */
+function usesInstanceWriteDoor(): boolean {
+    return props.principal?.ownership === "INSTANCE";
+}
+
 async function saveModel() {
     const principalId = props.principal?.principalId;
     if (!principalId || modelSaveBlocked.value) return;
@@ -556,13 +616,16 @@ async function saveModel() {
             provider: entry.provider.trim(),
             model: entry.model.trim(),
         }));
-        const view = await api.updateAgentPrincipal(principalId, {
+        const body: AgentPrincipalUpdateBody = {
             ...(provider !== baseline[0] ? { defaultModelProvider: provider || null } : {}),
             ...(model !== baseline[1] ? { defaultModelName: model || null } : {}),
             ...(JSON.stringify(wireAllowedModels) !== JSON.stringify(baseline[2])
                 ? { allowedModels: wireAllowedModels.length ? wireAllowedModels : null }
                 : {}),
-        });
+        };
+        const view = usesInstanceWriteDoor()
+            ? await patchInstancePrincipalDocuments(principalId, body)
+            : await api.updateAgentPrincipal(principalId, body);
         // 守卫：等待期间可能已关闭抽屉/切换主体 —— 不回填就能把旧抽屉复活（vue skill 硬约束）。
         if (!principalGuard(principalId)) return;
         modelDraft.provider = view.defaultModelProvider ?? "";
@@ -609,9 +672,12 @@ async function saveDelegation() {
     delegationSaving.value = true;
     sectionErrors.delegation = null;
     try {
-        const view = await api.updateAgentPrincipal(principalId, {
+        const body: AgentPrincipalUpdateBody = {
             delegationPolicy: buildDelegationPolicy(delegationDraft.value),
-        });
+        };
+        const view = usesInstanceWriteDoor()
+            ? await patchInstancePrincipalDocuments(principalId, body)
+            : await api.updateAgentPrincipal(principalId, body);
         if (!principalGuard(principalId)) return;
         delegationDraft.value = parseDelegationPolicy(view.delegationPolicy);
         delegationBaseline.value = { ...delegationDraft.value };
@@ -639,7 +705,10 @@ async function commitMemory() {
     try {
         // PATCH 是整对象替换 ⇒ 必须与现值合并后发送（memoryPolicy.mergeMemoryEnabled 是唯一口径）。
         const merged = mergeMemoryEnabled(props.principal?.contextPolicy ?? null, attempted);
-        const view = await api.updateAgentPrincipal(principalId, { contextPolicy: merged });
+        const body: AgentPrincipalUpdateBody = { contextPolicy: merged };
+        const view = usesInstanceWriteDoor()
+            ? await patchInstancePrincipalDocuments(principalId, body)
+            : await api.updateAgentPrincipal(principalId, body);
         if (!principalGuard(principalId)) return;
         memoryBaseline.value = attempted;
         memoryRetryTarget.value = null;
@@ -669,14 +738,11 @@ watch(memoryEnabled, () => {
 });
 
 function addAdvisor() {
-    const kind = newAdvisorKindIsCustom.value
-        ? newAdvisorCustomTag.value.trim()
-        : newAdvisorKind.value.trim();
+    const kind = newAdvisorKind.value.trim();
     if (!kind) return;
     advisors.value = [...advisors.value, { kind, on: [newAdvisorEvent.value] }];
-    newAdvisorKind.value = ADVISOR_KINDS[0];
-    newAdvisorCustomTag.value = "";
-    newAdvisorEvent.value = ADVISOR_EVENTS[0];
+    newAdvisorKind.value = advisorKindOptions.value[0] ?? "";
+    newAdvisorEvent.value = advisorEventOptions.value[0] ?? "";
 }
 
 /** 白名单今天只有一个 action，单值选择器与契约（on 是数组）等价 —— 落 wire 仍是数组。 */
@@ -696,9 +762,12 @@ async function saveHooks() {
     hooksSaving.value = true;
     sectionErrors.hooks = null;
     try {
-        const view = await api.updateAgentPrincipal(principalId, {
+        const body: AgentPrincipalUpdateBody = {
             hooks: advisors.value.length ? { advisors: advisors.value } : null,
-        });
+        };
+        const view = usesInstanceWriteDoor()
+            ? await patchInstancePrincipalDocuments(principalId, body)
+            : await api.updateAgentPrincipal(principalId, body);
         if (!principalGuard(principalId)) return;
         advisors.value = parseAdvisors(view.hooks);
         advisorsBaseline.value = JSON.stringify(advisors.value);
@@ -1041,9 +1110,10 @@ function discardAndClose() {
                     </div>
                 </section>
 
-                <!-- 钩子订阅（可写）。kind 与 on 都是**枚举族字段**（§17.5）——取值来自 CP 契约
-                     HookAdvisorRegistry：kind 今天只有 guard，on 白名单只有 approval.ask；
-                     未登记的 kind 走显式「自定义」分支，不自造下拉项。 -->
+                <!-- 钩子订阅（可写）。kind 与 on 都是**枚举族字段**（§17.5）——候选集来自 CP 契约
+                     （HookAdvisorRegistry 注册的 advisor / ALLOWED_ACTION_CLASSES 白名单），
+                     由 props.advisorKinds / advisorEvents 注入。未注册 kind 不提供入口：那是一类
+                     存得下、永不触发的订阅（同 R53 族「可选项掩盖能力面缺失」）。 -->
                 <section data-testid="apd-hooks" class="space-y-2" :data-dirty="hooksDirty">
                     <h3 class="text-sm font-medium text-muted-foreground">
                         {{ t(K + "sectionHooks") }}
@@ -1060,7 +1130,7 @@ function discardAndClose() {
                             <span class="font-medium">{{ advisor.kind }}</span>
                             <Select
                                 v-if="canEdit('hooks')"
-                                :model-value="advisor.on[0] ?? ADVISOR_EVENTS[0]"
+                                :model-value="advisor.on[0] ?? advisorEventOptions[0]"
                                 :disabled="hooksSaving"
                                 @update:model-value="
                                     (value: unknown) => setAdvisorEvent(index, String(value))
@@ -1075,7 +1145,7 @@ function discardAndClose() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem
-                                        v-for="action in ADVISOR_EVENTS"
+                                        v-for="action in advisorEventOptions"
                                         :key="action"
                                         :value="action"
                                     >
@@ -1110,27 +1180,14 @@ function discardAndClose() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem
-                                        v-for="kind in ADVISOR_KINDS"
+                                        v-for="kind in advisorKindOptions"
                                         :key="kind"
                                         :value="kind"
                                     >
                                         {{ kind }}
                                     </SelectItem>
-                                    <SelectItem :value="CUSTOM_ADVISOR_KIND">
-                                        {{ t(K + "hooksKindCustom") }}
-                                    </SelectItem>
                                 </SelectContent>
                             </Select>
-                            <Input
-                                v-if="newAdvisorKindIsCustom"
-                                v-model="newAdvisorCustomTag"
-                                class="h-8 w-48"
-                                data-testid="apd-hooks-custom-tag"
-                                :placeholder="t(K + 'hooksCustomPlaceholder')"
-                                :disabled="hooksSaving"
-                                autocomplete="off"
-                                @keyup.enter="addAdvisor"
-                            />
                             <Select v-model="newAdvisorEvent" :disabled="hooksSaving">
                                 <SelectTrigger
                                     class="h-8 w-40"
@@ -1141,7 +1198,7 @@ function discardAndClose() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem
-                                        v-for="action in ADVISOR_EVENTS"
+                                        v-for="action in advisorEventOptions"
                                         :key="action"
                                         :value="action"
                                     >

@@ -157,7 +157,13 @@ const editTarget = ref<InstanceAgent | null>(null);
 /** task-402：技能面目标（与编辑/删除同一形态：一个 ref 表达「选中了哪一行」）。 */
 const skillsTarget = ref<InstanceAgent | null>(null);
 
-// ---- 主体详情（task-191 Q2：instance 层只读 —— 详情抽屉不暴露任何写分区） ----------------
+// ---- 主体详情（D-1941 作废 task-191 Q2「instance 层只读」；写分区见抽屉传参） ----------------
+//
+// task-955：用户 2026-11-24 要求「智能体配置要能配」⇒ 实例层详情抽屉开放 model / delegation /
+// hooks 三区。写动作走 `PATCH /api/v1/instance/agent-principals/{id}`
+// （InstanceAgentPrincipalController.java:113；抽屉内按 ownership 选前缀，见
+// `AgentPrincipalDetailDrawer.patchPrincipalDocuments`）。memory 仍归宿主面持有 ——
+// 不在此开第二个写入口，所以 editableSections 里没有 memory。
 const detailTarget = ref<InstanceAgent | null>(null);
 const detailOpen = ref(false);
 
@@ -183,6 +189,34 @@ const detailPrincipal = computed<AgentPrincipalDetail | null>(() => {
 function openDetail(agent: InstanceAgent): void {
     detailTarget.value = agent;
     detailOpen.value = true;
+}
+
+/**
+ * 抽屉分区保存的回执就地并入行数据（task-955；写后失效口径同 task-937：不整表重拉、
+ * 不要求刷新）。抽屉 echo 的是持久化值，所以这里只覆盖它显式给出的键。
+ */
+function onDetailChanged(patch: Partial<AgentPrincipalDetail> & { principalId: string }): void {
+    const index = agents.value.findIndex((agent) => agent.id === patch.principalId);
+    if (index < 0) return;
+    const row = agents.value[index]!;
+    const merged: InstanceAgent = {
+        ...row,
+        // 行投影的字段名是 modelProvider/modelName，抽屉 patch 用的是契约名 defaultModel*。
+        modelProvider:
+            patch.defaultModelProvider === undefined
+                ? row.modelProvider
+                : patch.defaultModelProvider,
+        modelName: patch.defaultModelName === undefined ? row.modelName : patch.defaultModelName,
+        allowedModels: normalizeModelWhitelist(
+            patch.allowedModels === undefined ? row.allowedModels : patch.allowedModels,
+        ),
+        hooks: patch.hooks === undefined ? row.hooks : patch.hooks,
+        contextPolicy: patch.contextPolicy === undefined ? row.contextPolicy : patch.contextPolicy,
+        delegationPolicy:
+            patch.delegationPolicy === undefined ? row.delegationPolicy : patch.delegationPolicy,
+    };
+    agents.value[index] = merged;
+    if (detailTarget.value?.id === patch.principalId) detailTarget.value = merged;
 }
 const editBinding = ref<AgentModelBindingDraft>(emptyBinding());
 const editClear = ref(false);
@@ -831,7 +865,7 @@ async function confirmDelete(): Promise<void> {
         v-model:open="detailOpen"
         :principal="detailPrincipal"
         :workspace-id="null"
-        readonly
-        :editable-sections="[]"
+        :editable-sections="['model', 'delegation', 'hooks']"
+        @changed="onDetailChanged"
     />
 </template>

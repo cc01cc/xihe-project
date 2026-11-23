@@ -8,7 +8,12 @@ import AgentPrincipalDetailDrawer, {
     type AgentPrincipalDetail,
 } from "../AgentPrincipalDetailDrawer.vue";
 import { Select } from "../../ui/select";
-import { selectModelValue, setSelectValue } from "../../../test-utils/select";
+import {
+    openSelect,
+    selectItemValuesFor,
+    selectModelValue,
+    setSelectValue,
+} from "../../../test-utils/select";
 
 /**
  * task-138：模型段改成「连接 → 模型」三级选择（复用 AgentModelBindingFields），
@@ -399,25 +404,39 @@ describe("AgentPrincipalDetailDrawer", () => {
         expect(body.hooks).toBeNull();
     });
 
-    it("钩子类型：枚举选择器（不裸文本），自定义分支才出现输入框（task-151 ②）", async () => {
+    /**
+     * R37（task-955）：钩子 kind/on 下拉只渲染**注册表可用集**（props.advisorKinds /
+     * advisorEvents，默认取 CP 契约快照）。断言比较的是「渲染项 == 注入集合」而不是某个
+     * 写死的 kind 名字 —— CP 注册新 advisor 时把集合变长，下面的断言自然通过。
+     * 旧的「自定义…」自由输入已撤：未注册 kind 存得下但永不触发，属「可选项掩盖能力面缺失」。
+     */
+    it("R37：钩子 kind/事件下拉项 == 注入的注册表集合（无未注册入口）", async () => {
         const wrapper = mountDrawer();
         await flushPromises();
 
-        // CP 今天只注册了 guard（GuardHookAdvisor.KIND），事件白名单只有 approval.ask。
-        expect(selectModelValue(wrapper as never, '[data-testid="apd-hooks-kind"]')).toBe("guard");
-        expect(selectModelValue(wrapper as never, '[data-testid="apd-hooks-new-event"]')).toBe(
-            "approval.ask",
+        const kinds = wrapper.props("advisorKinds") as string[];
+        const events = wrapper.props("advisorEvents") as string[];
+        await openSelect(wrapper as never, '[data-testid="apd-hooks-kind"]');
+        expect(selectItemValuesFor(wrapper as never, '[data-testid="apd-hooks-kind"]')).toEqual(
+            kinds,
         );
+        await openSelect(wrapper as never, '[data-testid="apd-hooks-new-event"]');
+        expect(
+            selectItemValuesFor(wrapper as never, '[data-testid="apd-hooks-new-event"]'),
+        ).toEqual(events);
+        // 未注册 kind 的自由输入入口必须消失（不是靠禁用假装）。
         expect(maybe('[data-testid="apd-hooks-custom-tag"]')).toBeNull();
+        wrapper.unmount();
 
-        await pick(wrapper, "apd-hooks-kind", "__custom__");
-        expect(maybe('[data-testid="apd-hooks-custom-tag"]')).not.toBeNull();
-        await setName("apd-hooks-custom-tag", "my-guard");
-        await click("apd-hooks-add");
-
-        expect(q('[data-testid="apd-hooks"]').textContent).toContain("my-guard");
-        // 新增行也带事件选择器（数组 on 的单值形态），落 wire 仍是 {kind, on:[…]}。
-        expect(maybe('[data-testid="apd-hooks-event-1"]')).not.toBeNull();
+        // 反证标准：注册表新增一个 kind ⇒ 同一个断言（渲染项 == 集合）自然通过。
+        const grown = [...kinds, kinds[0] + "-future"];
+        const grownWrapper = mountDrawer({ advisorKinds: grown });
+        await flushPromises();
+        await openSelect(grownWrapper as never, '[data-testid="apd-hooks-kind"]');
+        expect(
+            selectItemValuesFor(grownWrapper as never, '[data-testid="apd-hooks-kind"]'),
+        ).toEqual(grown);
+        grownWrapper.unmount();
     });
 
     it("工作区角色：列表读到但为空 ⇒ apd-roles-none，且不是 404 的 apd-roles-empty（task-219）", async () => {
@@ -495,7 +514,7 @@ describe("AgentPrincipalDetailDrawer", () => {
         expect(maybe('[data-testid="apd-model-error-detail-toggle"]')).not.toBeNull();
     });
 
-    it("只读档（instance 层 Q2）：不给保存键、输入全部 disabled", async () => {
+    it("宿主 readonly 短路：不给保存键、输入全部 disabled（task-191 Q2 已由 D-1941 作废，本用例只钉组件开关）", async () => {
         const wrapper = mountDrawer({ readonly: true, editableSections: [] });
         await flushPromises();
 

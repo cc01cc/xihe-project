@@ -12,6 +12,7 @@ import { listProviderCatalog } from "../../../services/providerConnectionService
 import { Select } from "../../ui/select";
 import { Checkbox } from "../../ui/checkbox";
 import { i18n } from "../../../i18n";
+import { findSelectRoot, setSelectValue } from "../../../test-utils/select";
 import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import InstanceAgentsPanel from "../InstanceAgentsPanel.vue";
 import InstanceAgentSkillsDialog from "../../resources/InstanceAgentSkillsDialog.vue";
@@ -101,9 +102,16 @@ const skillReads = vi.hoisted(() => ({
     getSkills: vi.fn<() => Promise<unknown[]>>(),
 }));
 
+/**
+ * task-955：实例层抽屉的分区写面走 `PATCH /api/v1/instance/agent-principals/{id}`
+ * （`request` 直连），这里把它接成可断言的替身。`api.*` 仍取真实现（既有用例继续
+ * `vi.spyOn(api, …)`），只换 `request` 这一个出口。
+ */
+const instancePatch = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
+
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
-    return { ...actual, api: { ...actual.api, ...skillReads } };
+    return { ...actual, request: instancePatch, api: { ...actual.api, ...skillReads } };
 });
 
 const mockedList = vi.mocked(listInstanceAgents);
@@ -151,6 +159,8 @@ function mountPanel() {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    // task-955：实例层抽屉的 PATCH 替身；每个用例自己给回执，默认无实现（不该被误调）。
+    instancePatch.mockReset();
     document.body.innerHTML = "";
     authState.isAdmin = true;
     authState.isAuthenticated = true;
@@ -1099,32 +1109,121 @@ describe("InstanceAgentsPanel · task-431 白名单三态比对", () => {
         expect(updateInstanceAgent).not.toHaveBeenCalled();
         wrapper.unmount();
     });
+});
 
-    it("task-191：行内「详情」打开只读抽屉（instance 层不给任何保存键）", async () => {
-        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
-        const wrapper = mountPanel();
-        await flushPromises();
+/**
+ * task-955 / D-1941：实例层详情抽屉从「整体只读」（task-191 Q2，已作废）改为开放
+ * model / delegation / hooks 三区；写动作走实例前缀，回执就地回显（task-937 口径：
+ * 不整表重拉、不要求刷新）。memory 仍归宿主面 —— 抽屉里不出现第二个写入口。
+ */
+describe("InstanceAgentsPanel · task-955 实例层详情写分区（D-1941）", () => {
+    type PanelWrapper = ReturnType<typeof mountPanel>;
 
+    async function openDetail(wrapper: PanelWrapper): Promise<void> {
         await wrapper.get('[data-testid="instance-agent-details-agent-1"]').trigger("click");
         await flushPromises();
-
         // 抽屉 Teleport 到 body —— 从 document 取，别让空 wrapper 静默通过。
         const title = document.body.querySelector('[data-testid="agent-principal-detail-title"]');
         expect(title?.textContent).toContain("代码评审助手");
-        // Q2：instance 层只读 —— 保存键一个都不许有。
-        expect(document.body.querySelector('[data-testid="apd-model-save"]')).toBeNull();
-        expect(document.body.querySelector('[data-testid="apd-delegation-save"]')).toBeNull();
-        expect(document.body.querySelector('[data-testid="apd-memory-save"]')).toBeNull();
-        expect(document.body.querySelector('[data-testid="apd-hooks-save"]')).toBeNull();
-        // 但现值照实显示（委派预算来自列表投影，不是「未知分区」）。
-        expect(document.body.querySelector('[data-testid="apd-delegation-unknown"]')).toBeNull();
+    }
+
+    function bodyNode<T extends HTMLElement>(testid: string): T {
+        const node = document.body.querySelector<T>(`[data-testid="${testid}"]`);
+        if (!node) throw new Error("missing body node: " + testid);
+        return node;
+    }
+
+    it("三区可写；memory 保持宿主面（开关禁用、无保存键）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openDetail(wrapper);
+
+        // 统一提交点是三区可写的结构判据（task-34：分区保存键已删）。
+        expect(document.body.querySelector('[data-testid="apd-save-all"]')).not.toBeNull();
+        for (const testid of ["apd-model-save", "apd-delegation-save", "apd-hooks-save"]) {
+            expect(document.body.querySelector(`[data-testid="${testid}"]`)).toBeNull();
+        }
+
+        // 三段真的可交互（不是只读档）：模型/钩子选择器与委派输入都未禁用。
         expect(
-            (
-                document.body.querySelector(
-                    '[data-testid="delegation-policy-max-count"]',
-                ) as HTMLInputElement | null
-            )?.value,
-        ).toBe("8");
+            findSelectRoot(wrapper as never, '[data-testid="apd-model-binding-provider"]')!.props(
+                "disabled",
+            ),
+        ).toBe(false);
+        expect(
+            findSelectRoot(wrapper as never, '[data-testid="apd-hooks-kind"]')!.props("disabled"),
+        ).toBe(false);
+        expect(bodyNode<HTMLInputElement>("delegation-policy-max-count").disabled).toBe(false);
+
+        // memory 归宿主面持有：不开放写入口，开关保持禁用。
+        expect(bodyNode<HTMLButtonElement>("apd-memory-switch").disabled).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("保存走实例前缀，且行与抽屉就地回显新值（不重拉列表）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        instancePatch.mockResolvedValue({
+            principalId: "agent-1",
+            defaultModelProvider: "openai",
+            defaultModelName: "gpt-5.1",
+            allowedModels: null,
+            hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
+            contextPolicy: null,
+            delegationPolicy: null,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openDetail(wrapper);
+
+        // 模型：provider → 连接 → 模型（与抽屉自己的三段选择同口径）。
+        await setSelectValue(
+            wrapper as never,
+            '[data-testid="apd-model-binding-provider"]',
+            "openai",
+        );
+        await setSelectValue(
+            wrapper as never,
+            '[data-testid="apd-model-binding-connection"]',
+            "conn-openai-chat",
+        );
+        await setSelectValue(
+            wrapper as never,
+            '[data-testid="apd-model-binding-model-name"]',
+            "gpt-5.1",
+        );
+        await flushPromises();
+
+        // 钩子：新增一条已注册 kind 的订阅。
+        bodyNode<HTMLButtonElement>("apd-hooks-add").click();
+        await flushPromises();
+
+        bodyNode<HTMLButtonElement>("apd-save-all").click();
+        await flushPromises();
+        await flushPromises();
+
+        // 写门是实例前缀（user 前缀对 INSTANCE 行 403 AGENT_PRINCIPAL_INSTANCE_OWNED）。
+        const calls = instancePatch.mock.calls as unknown as Array<[string, RequestInit]>;
+        expect(calls.map((call) => call[0])).toEqual([
+            "/instance/agent-principals/agent-1",
+            "/instance/agent-principals/agent-1",
+        ]);
+        const bodies = calls.map((call) => JSON.parse(String(call[1].body)));
+        expect(bodies).toEqual([
+            { defaultModelProvider: "openai", defaultModelName: "gpt-5.1" },
+            { hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] } },
+        ]);
+
+        // 读面回显：行内模型列与抽屉模型段都拿到了持久化值，且**没有重拉列表**。
+        expect(wrapper.get('[data-testid="instance-agent-row-agent-1"]').text()).toContain(
+            "openai / gpt-5.1",
+        );
+        expect(
+            findSelectRoot(wrapper as never, '[data-testid="apd-model-binding-provider"]')!.props(
+                "modelValue",
+            ),
+        ).toBe("openai");
+        expect(mockedList).toHaveBeenCalledTimes(1);
         wrapper.unmount();
     });
 });
