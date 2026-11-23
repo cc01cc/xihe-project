@@ -16,7 +16,13 @@ const forwarded = useForwardProps(delegatedProps);
     <ComboboxTrigger
         data-slot="combobox-trigger"
         v-bind="forwarded"
-        :class="cn('[&_svg:not([class*=size-])]:size-4', props.class)"
+        :class="
+            cn(
+                // task-926：触发器基座自带「可收缩 + 内容省略」，调用点无需逐个补 min-w-0（showcase 由 SearchableCombobox 的 w-full 覆写）。
+                'min-w-0 max-w-full overflow-hidden [&_svg:not([class*=size-])]:size-4',
+                props.class,
+            )
+        "
         tabindex="0"
     >
         <slot />

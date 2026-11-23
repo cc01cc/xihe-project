@@ -12,7 +12,8 @@ defineOptions({
 const props = withDefaults(
     defineProps<PopoverContentProps & { class?: HTMLAttributes["class"] }>(),
     {
-        align: "center",
+        // task-926：与 Select / Combobox / DropdownMenu 统一为 align=start（从触发器右下方向右展开，而不是居中或向左对齐）。
+        align: "start",
         sideOffset: 4,
     },
 );
