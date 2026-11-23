@@ -493,6 +493,33 @@ const router = createRouter({
         },
         {
             /**
+             * task-934（R4）：全局导航「自动化任务」的**顶层落点**。
+             *
+             * <p>为什么此前点不动：`lib/globalModules.ts` 的 `SCHEDULED_TASKS_PATH` 一直是
+             * `/scheduled-tasks`，但本文件只注册了工作区子路由 `workspace-scheduled-tasks`
+             * （`/workspace/:id/scheduled-tasks`）⇒ `/scheduled-tasks` 落到文件末尾的
+             * `/:pathMatch(.*)* → /workbench`，再被 tab 上下文守卫恢复回原会话页
+             * （**URL 逐字不变、无报错**，入口是死的）。</p>
+             *
+             * <p>与 `/members` 同形（实例级面、无工作区上下文、直挂 `ModuleStage`）；
+             * 页面根自己声明滚动（`check-ui-route-scroll.mjs` 的判据）。**不**复用
+             * `/workspace/:id/scheduled-tasks`：那是另一个面（工作区作用域），需要 workspaceId，
+             * 两个面不互相挂载（`globalModules.spec.ts` 的存在性断言）。</p>
+             *
+             * <p><b>为什么这里写路径字面量、不 import `SCHEDULED_TASKS_PATH`</b>：
+             * `internal/A03-xihe/scripts/check-ui-route-scroll.mjs` 是**静态**扫描（它只认字面量，
+             * 认不出常量引用），改成本常量会让它看不见这条顶层页（`/members` 同理）。所以
+             * 「与模块表同源」不靠共享变量，而靠**程序判据**：`scripts/check-route-registry.mjs`
+             * 与 `lib/__tests__/globalModules.spec.ts` 逐项 `router.resolve()`，任一侧改名而未同步
+             * 另一侧即 FAIL。</p>
+             */
+            path: "/scheduled-tasks",
+            name: "scheduled-tasks-overview",
+            component: () => import("../views/scheduledTasks/ScheduledTasksOverviewView.vue"),
+            meta: { requiresAuth: true },
+        },
+        {
+            /**
              * PLAN-0772 M2（design.md 目标 1 + 决策 10）：资源面独立成**第三个顶层入口**。**
              *
              * <p>旧资源入口（原先挂在 `/settings/**` 下的凭据 / MCP / 技能 / 智能体 / 知识库）

@@ -84,9 +84,14 @@ export const ORG_MEMBERS_PATH = "/members";
  * 来源 task-10）。所以它和工作台 / 组织成员同一类：一条全局路由、二级菜单只有「回到本页」一项。</p>
  *
  * <p><b>与 `WORKBENCH_CONTAINER_PREFIX` 同一口径</b>：本文件只持有**这一个**字面量，不持有页面段；
- * 路由表里的 `/scheduled-tasks` 与该常量同源。容器内的 `/workspace/:id/scheduled-tasks` 是**另一个面**
- * （工作区作用域，本来就有），两者不互相挂载 —— 与「组织成员 `/members` vs 容器 `/workspace/:id/members`」
- * 是同一条既有裁定。</p>
+ * 容器内的 `/workspace/:id/scheduled-tasks` 是**另一个面**（工作区作用域，本来就有），两者
+ * 不互相挂载 —— 与「组织成员 `/members` vs 容器 `/workspace/:id/members`」是同一条既有裁定。</p>
+ *
+ * <p><b>「路由真的存在」这件事不由本注释保证</b>（task-934 的真实事故）：注释曾声称
+ * 「路由表里的 `/scheduled-tasks` 与该常量同源」，而路由表当时根本没有这条记录 ⇒ 全局导航的
+ * 「自动化任务」是死链（点击后 URL 逐字不变）。能用程序约束的规范不留在注释里：现在由
+ * `packages/ui/scripts/check-route-registry.mjs`（普查门，任一模块路径 resolve 不到命名路由即
+ * FAIL）与 `lib/__tests__/globalModules.spec.ts`（逐项 `router.resolve()` 断言）共同钉住。</p>
  */
 export const SCHEDULED_TASKS_PATH = "/scheduled-tasks";
 

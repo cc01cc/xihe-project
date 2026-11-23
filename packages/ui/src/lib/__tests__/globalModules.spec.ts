@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../i18n";
+import router from "../../router";
 import {
     GLOBAL_MODULES,
     globalModule,
@@ -17,6 +18,24 @@ import {
     resourcePath,
     settingsDomainPath,
 } from "../settingsIa";
+
+/**
+ * task-934（R4）：**全局模块的每个路径都必须是「活路由」**。
+ *
+ * <p>为什么原来测不出来：本文件此前只断言「模块的 path 等于 `SCHEDULED_TASKS_PATH`」——
+ * 即**常量自洽**。常量与模块表当然永远一致（都是同一个人写的），于是路由表里根本没有
+ * `/scheduled-tasks` 这条记录时，测试照样全绿；真实效果是点全局导航「自动化任务」
+ * URL 逐字不变（落到 `/:pathMatch(.*)* → /workbench`，再被 tab 上下文守卫恢复回原会话页，
+ * 全程无报错）。判据必须是**路由表**，不是常量：把 path 交给 `router.resolve()`，
+ * 命中的必须是一条**已注册的命名路由**，而不是兜底/redirect 记录。</p>
+ *
+ * <p>「命中兜底也算绿」是这类断言最常见的假绿形态：`/:pathMatch(.*)*` 对任意路径都会
+ * `matched.length > 0`，只有断言 `name` 与 `matched` 的记录形态才能分辨。这里同时判三件：
+ * ① `resolved.name` 非空；② 命中的末条记录带同名 `name`（兜底记录没有 name）；
+ * ③ `resolved.path` 等于请求路径（redirect 记录会把 path 换成目标）。
+ * 同一判据另有一道独立的普查门 `packages/ui/scripts/check-route-registry.mjs`
+ * （不依赖 vitest，可直接接 lint 聚合），两者读的是同一个 `GLOBAL_MODULES`。</p>
+ */
 
 /**
  * task-189 / D-896：二级菜单内容**必须由 SSOT 派生**（手写清单 = 缺陷）。
@@ -100,6 +119,47 @@ describe("globalModules：菜单内容由 SSOT 派生", () => {
                 expect(translated, `${locale} 缺 ${key}`).not.toBe(key);
             }
         }
+    });
+});
+
+describe("globalModules：每个可点击路径都在路由表里（task-934 / R4）", () => {
+    /** 全局导航真正会 `router.push()` 的路径：模块落地页 + 每个二级项。 */
+    function clickablePaths(): readonly { module: string; path: string }[] {
+        return GLOBAL_MODULES.flatMap((module) => [
+            { module: module.id, path: module.path },
+            ...module.items.map((item) => ({ module: module.id, path: item.path })),
+        ]);
+    }
+
+    /**
+     * 判「死链」的三条：① 没有 name；② 命中的末条记录不是命名记录（兜底 `/:pathMatch(.*)*`
+     * 就是这种）；③ 打开会 redirect 到别处（`resolved.path` 被换成目标）。
+     * 三者任一成立即视为「不在路由表」，与 `scripts/check-route-registry.mjs` 同口径。
+     */
+    function isDeadLink(requestPath: string): boolean {
+        const resolved = router.resolve(requestPath);
+        const last = resolved.matched.at(-1);
+        return (
+            !resolved.name ||
+            last?.name !== resolved.name ||
+            last?.redirect !== undefined ||
+            resolved.path !== requestPath
+        );
+    }
+
+    it("逐项 resolve 到已注册的命名路由（不是兜底/redirect 记录）", () => {
+        const dead = clickablePaths()
+            .filter((entry) => isDeadLink(entry.path))
+            .map((entry) => `${entry.module}: ${entry.path}`);
+        expect(dead).toEqual([]);
+    });
+
+    it("反向自检：未注册的路径必须被判死（否则上一条判据可能恒真）", () => {
+        expect(isDeadLink("/__task-934-unregistered-probe__")).toBe(true);
+        // 正向对照：同一判据对真实存在的项必须判活。
+        expect(isDeadLink(WORKBENCH_PATH)).toBe(false);
+        expect(isDeadLink(ORG_MEMBERS_PATH)).toBe(false);
+        expect(isDeadLink(SCHEDULED_TASKS_PATH)).toBe(false);
     });
 });
 
