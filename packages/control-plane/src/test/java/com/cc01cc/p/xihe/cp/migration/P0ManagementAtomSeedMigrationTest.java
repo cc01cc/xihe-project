@@ -121,9 +121,12 @@ class P0ManagementAtomSeedMigrationTest {
                 // task-835: grant_preset_atoms carries the canonical spelling, so the reviewed
                 // management atoms are named canonically here; the comparison to the grant row stays
                 // one expression on both sides.
+                // task-967: V186 (task-933 / R39) converted the materialized source value from
+                // "preset" to "assigned"; the check keeps the same intent (every bound preset atom
+                // has a corresponding grant row), it just names the post-V186 spelling.
                 + "  AND NOT EXISTS (SELECT 1 FROM grants g "
                 + "                  WHERE g.subject_type='user' AND g.subject_id=b.subject_id "
-                + "                    AND g.source='preset' AND g.scope_type=b.scope_type "
+                + "                    AND g.source='assigned' AND g.scope_type=b.scope_type "
                 + "                    AND coalesce(g.scope_id,"
                 + "'00000000-0000-0000-0000-000000000000'::uuid)"
                 + "                      = coalesce(b.scope_id,"
@@ -221,7 +224,8 @@ class P0ManagementAtomSeedMigrationTest {
 
     private static int grantCount(String actionClass) throws SQLException {
         return scalar("SELECT count(*) FROM grants WHERE subject_type = 'user' AND subject_id = '"
-                + LEGACY_USER_ID + "'::uuid AND source = 'preset' AND scope_type = 'instance'"
+                // task-967: V186 converts materialized rows to source='assigned' (R39/D-1936).
+                + LEGACY_USER_ID + "'::uuid AND source = 'assigned' AND scope_type = 'instance'"
                 + " AND permissions->0->>'actionClass' = '" + canonicalAtom(actionClass) + "'");
     }
 
