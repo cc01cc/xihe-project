@@ -220,6 +220,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         url: string;
         resourceType: string;
         status: number;
+        problemCode: string | null;
+        problemDetail: string | null;
         requestId: string | null;
         correlationHeaders: Record<string, string>;
         observedAt: string;
@@ -270,13 +272,27 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             url = `${safeUrl.origin}${safeUrl.pathname}`;
         const capture = response
             .allHeaders()
-            .then((responseHeaders) => {
+            .then(async (responseHeaders) => {
                 const requestHeaders = browserRequest.headers();
+                let problemCode: string | null = null,
+                    problemDetail: string | null = null;
+                try {
+                    const payload = JSON.parse(await response.text()) as {
+                        code?: unknown;
+                        detail?: unknown;
+                    };
+                    if (typeof payload.code === "string") problemCode = payload.code;
+                    if (typeof payload.detail === "string") problemDetail = payload.detail;
+                } catch {
+                    // Non-JSON error body (e.g. a proxy HTML page) keeps both fields null.
+                }
                 browserHttpFailures.push({
                     method: browserRequest.method(),
                     url,
                     resourceType: browserRequest.resourceType(),
                     status: response.status(),
+                    problemCode,
+                    problemDetail,
                     requestId: responseHeaders["x-request-id"] ?? null,
                     correlationHeaders: Object.fromEntries(
                         [
@@ -299,6 +315,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     url,
                     resourceType: browserRequest.resourceType(),
                     status: response.status(),
+                    problemCode: null,
+                    problemDetail: null,
                     requestId: null,
                     correlationHeaders: {},
                     observedAt: new Date().toISOString(),
@@ -1074,34 +1092,78 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         await Promise.allSettled(httpFailureCaptures);
         expect(browserChatRequests).toContain("POST");
         /**
-         * 噪声白名单（全文件唯一登记项）：父会话删除后子会话 `delegation-usage` 的 fail-closed 409。
-         * 依据＝CP 设计行为 `DelegationBudgetService.treeBroken()`（DelegationBudgetService.java:425-429；
-         * CP 日志 `event=delegation_tree_broken reason=ancestor_missing`）+ UI `SessionList.vue:106-119`
-         * 已 catch+warn（不抛错、不渲染预算 chip）。这是**预期失败**，
-         * **不是**"忽略所有 409"：只有 `GET /api/v1/sessions/<本次 childSessionId>/delegation-usage`
-         * 且 status=409 这一条匹配，任何其它失败一律判红（父删后 `team-tasks` 409 归 task-909）。
+         * 契约（全文件唯一登记项，**不是豁免**）：父会话删除后，子会话的团队板与委派预算视图
+         * 都按设计 fail-closed，回一条 409：
+         * - `GET /api/v1/sessions/<本次 childSessionId>/team-tasks`
+         *   ⇒ 409 `TEAM_TASK_TREE_BROKEN`，detail 以 `ancestor_missing: spawn ancestor session …` 开头
+         *   （CP `TeamTaskService.boardOf()` 捕获 `DelegationChainWalker.AncestorMissingException`）；
+         * - `GET /api/v1/sessions/<本次 childSessionId>/delegation-usage`
+         *   ⇒ 409 `DELEGATION_POLICY_INVALID`，detail 为 `Delegation ancestor is missing: …`
+         *   （CP `DelegationBudgetService.treeBroken()`）。
+         * 这是**契约**（父删后子会话团队板 fail-closed），不是把缺陷洗成夹具噪声：白名单按
+         * `method + 精确 pathname + status + problem.code + problem.detail` 五要素逐条匹配，
+         * **禁止** `status === 409` 或 `code` 单条件放行；任何其它失败一律判红。
+         * 失效条件：若将来产品改语义 (a)（父删后子会话团队板回退为自己当根 / 团队板仍可用），
+         * 后端不再返回这两条 409 ⇒ **此过滤器必须删除**，并把断言改成「200 + 团队板可读」。
+         * 详见 task-909 与 `internal/A03-xihe/docs/backlog` BL-642。
          */
+        const childTeamTasksPath = `/api/v1/sessions/${childSessionId}/team-tasks`;
+        const expectedParentDeleteFailClosed: Array<{
+            method: string;
+            pathname: string;
+            status: number;
+            code: string;
+            detail: RegExp;
+        }> = [
+            {
+                method: "GET",
+                pathname: childTeamTasksPath,
+                status: 409,
+                code: "TEAM_TASK_TREE_BROKEN",
+                detail: /ancestor_missing/i,
+            },
+            {
+                method: "GET",
+                pathname: childDelegationUsagePath,
+                status: 409,
+                code: "DELEGATION_POLICY_INVALID",
+                detail: /ancestor_missing|ancestor is missing/i,
+            },
+        ];
         const isExpectedDelegationUsageAfterParentDelete = (failure: {
             method: string;
             url: string;
             status: number;
-        }): boolean =>
-            failure.method === "GET" &&
-            failure.status === 409 &&
-            new URL(failure.url).pathname === childDelegationUsagePath;
+            problemCode: string | null;
+            problemDetail: string | null;
+        }): boolean => {
+            const pathname = new URL(failure.url).pathname;
+            return expectedParentDeleteFailClosed.some(
+                (expected) =>
+                    failure.method === expected.method &&
+                    pathname === expected.pathname &&
+                    failure.status === expected.status &&
+                    failure.problemCode === expected.code &&
+                    expected.detail.test(failure.problemDetail ?? ""),
+            );
+        };
         const expectedHttpFailures = browserHttpFailures.filter(
             isExpectedDelegationUsageAfterParentDelete,
         );
         expect(
-            expectedHttpFailures.length,
-            "the fail-closed delegation-usage 409 must still be observed (else the whitelist is stale)",
-        ).toBeGreaterThanOrEqual(1);
+            [
+                ...new Set(expectedHttpFailures.map((failure) => new URL(failure.url).pathname)),
+            ].sort(),
+            "both fail-closed 409s must still be observed (else the whitelist is stale)",
+        ).toEqual([childDelegationUsagePath, childTeamTasksPath].sort());
         const unexpectedHttpFailures = browserHttpFailures.filter(
             (failure) => !isExpectedDelegationUsageAfterParentDelete(failure),
         );
         expect(unexpectedHttpFailures, JSON.stringify(unexpectedHttpFailures, null, 2)).toEqual([]);
         const isExpectedConsoleError = (event: (typeof consoleErrorEvents)[number]): boolean =>
-            event.sourceUrl.endsWith(childDelegationUsagePath) && /409/.test(event.text);
+            expectedParentDeleteFailClosed.some((expected) =>
+                event.sourceUrl.endsWith(expected.pathname),
+            ) && /409/.test(event.text);
         const unexpectedConsoleErrors = consoleErrorEvents
             .filter((event) => !isExpectedConsoleError(event))
             .map((event) => event.text);
