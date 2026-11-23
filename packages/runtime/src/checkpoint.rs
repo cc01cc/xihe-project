@@ -865,11 +865,21 @@ impl ShadowGit {
     /// P3 T2.5: synchronous `git --version` probe used by the sync self
     /// startup gate to degrade shadow validation when git is absent.
     pub fn git_binary_available(&self) -> bool {
-        std::process::Command::new(&self.git_binary)
+        let mut command = std::process::Command::new(&self.git_binary);
+        command
             .arg("--version")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // task-890: same `CREATE_NO_WINDOW` (`0x0800_0000`) that
+            // `process_guard::hide_console_window` applies; without it the
+            // probe flashes a console window and steals focus.
+            command.creation_flags(0x0800_0000);
+        }
+        command
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -3756,6 +3766,12 @@ impl ShadowGit {
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         command.kill_on_drop(true);
+        #[cfg(windows)]
+        {
+            // task-890: no console window for host Git (same flag as
+            // `process_guard::hide_console_window`).
+            command.creation_flags(0x0800_0000);
+        }
         let child = command.spawn().map_err(|error| {
             CheckpointError::GitUnavailable(format!(
                 "failed to spawn git ({}): {error}",
@@ -3806,6 +3822,12 @@ impl ShadowGit {
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         command.kill_on_drop(true);
+        #[cfg(windows)]
+        {
+            // task-890: no console window for host Git (same flag as
+            // `process_guard::hide_console_window`).
+            command.creation_flags(0x0800_0000);
+        }
         let mut child = command.spawn().map_err(|error| {
             CheckpointError::GitUnavailable(format!(
                 "failed to spawn git ({}): {error}",

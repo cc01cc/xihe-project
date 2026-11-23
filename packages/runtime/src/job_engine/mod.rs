@@ -1081,12 +1081,21 @@ fn taskkill_tree(entry: &Arc<JobEntry>) {
     let Some(pid) = pid else {
         return;
     };
-    let result = Command::new("taskkill")
+    let mut command = Command::new("taskkill");
+    command
         .args(["/T", "/F", "/PID", &pid.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // task-890: the cleanup path must not flash a console window either.
+        // Only CREATE_NO_WINDOW — JOB_CREATION_FLAGS also suspends the child,
+        // which would stop taskkill from ever running.
+        command.creation_flags(sys::CREATE_NO_WINDOW_FLAG);
+    }
+    let result = command.status();
     match result {
         Ok(status) if status.success() => {}
         Ok(status) => tracing::warn!(

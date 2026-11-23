@@ -372,10 +372,19 @@ fn validate_done(
         return Ok(());
     }
     if let Some(shadow) = options.shadow_git_dirs.get(&record.root_id) {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        command
             .arg("--git-dir")
             .arg(shadow)
-            .args(["rev-parse", &format!("{git_ref}^{{tree}}")])
+            .args(["rev-parse", &format!("{git_ref}^{{tree}}")]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // task-890: no console window for the git probe (same flag as
+            // `process_guard::hide_console_window`).
+            command.creation_flags(0x0800_0000);
+        }
+        let output = command
             .output()
             .map_err(|error| format!("git validation spawn failed: {error}"))?;
         if !output.status.success() {
