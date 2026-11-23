@@ -36,7 +36,8 @@ import { aggregateExit, parseTaskExits } from "./validate-run.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * 门清单**数据**（36 个成员，2026-11-24 task-923 四门接入后；成员数以 `--list` 为准，注释不做判据）。
+ * 门清单**数据**（37 个成员，2026-11-24 task-923 四门接入到 36、task-951 再接 `check:filetree-ia` 到 37；
+ * 成员数以 `--list` 为准，注释不做判据）。
  * task-124 起本清单是 lint 的**唯一**门集合来源
  * （[tasks.lint] 已改为 run 本文件），不再与 mise.toml depends 对账。
  * 新增门只加一行 —— 与 validate-run.mjs 的 GATES 同惯例。
@@ -58,6 +59,9 @@ export const LINT_GATES = [
     "check:i18n-fixture-copies",
     "check:dev-i18n-drift",
     "check:form-validation",
+    // task-951（2026-11-24）：task-939 交付、task-945 只登记了独立 mise task，聚合成员位与
+    // packages/ui 的 --gate 入口都在 945 写域外 ⇒ 本卡补上，判据与基线不动。
+    "check:filetree-ia",
     "check:md-tables",
     "check:ports",
     "check:migrations",
