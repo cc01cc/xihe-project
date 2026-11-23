@@ -394,13 +394,15 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
                         ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
                 "the holder does not hold MANAGE_ROLES yet (the template does not carry it; USER never does either)");
 
-        // The template changes: exec is ADDED. Under R39 this must not touch a single holder row.
+        // The template changes: MANAGE_ROLES is ADDED. Under R39 this must not touch a single
+        // holder row.
         ResponseEntity<String> edited = call(HttpMethod.PATCH, "/api/v1/presets/" + readerRoleId,
                 Map.of("atoms", List.of("read", "MANAGE_ROLES")), superToken);
         assertEquals(HttpStatus.OK, edited.getStatusCode(), edited.getBody());
         assertTrue(texts(objectMapper.readTree(edited.getBody()).path("atoms"))
-                        .contains(AtomNames.action("exec")),
-                "the template itself really changed (otherwise this test proves nothing)");
+                        .contains(AtomNames.action("MANAGE_ROLES")),
+                "the template itself really changed (otherwise this test proves nothing): "
+                        + edited.getBody());
 
         assertEquals(rowsBefore, grantRowFingerprints(subjectId),
                 "R39: editing a read-only template rewrites NO holder row");
@@ -425,9 +427,11 @@ class GrantPresetAdminApiIntegrationTest extends AbstractReusableIntegrationTest
 
     /** {@code (id, source, origin_preset_id, atom)} of a subject's assigned rows, sorted. */
     private List<String> grantRowFingerprints(String subjectId) {
+        // `#>>` must be parenthesised: `||` binds tighter than `#>>` here, so the unparenthesised
+        // form asks for `text #>> unknown` and PostgreSQL rejects it (measured).
         return jdbc.queryForList("SELECT g.id || '|' || g.source || '|' "
                         + "|| COALESCE(g.origin_preset_id::text, '-') || '|' "
-                        + "|| g.permissions #>> '{0,actionClass}' || '@' "
+                        + "|| (g.permissions #>> '{0,actionClass}') || '@' "
                         + "|| COALESCE(g.permissions #>> '{0,resource}', '*') AS fp "
                         + "FROM grants g WHERE g.subject_type = 'user'"
                         + " AND g.subject_id = CAST(? AS UUID) AND g.source = 'assigned'"
