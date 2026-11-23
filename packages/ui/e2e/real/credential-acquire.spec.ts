@@ -31,6 +31,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { seedUserGrant } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
 import { LONG_TIMEOUT_MS } from "../timeouts";
@@ -243,7 +244,7 @@ test("@host credential acquisition — manual ask, delivery, memory-only value",
     const principalId = await provisionCredentialAgent(request, {
         workspaceId: wsId,
         headers: authHeaders,
-        name: `Credential Acquire ${Date.now()}`,
+        name: agentName("CredentialAcquire", Date.now()),
         credentialId,
     });
 

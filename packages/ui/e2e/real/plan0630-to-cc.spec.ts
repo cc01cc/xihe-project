@@ -14,6 +14,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
+import { agentName } from "./helpers/agent-name";
 import { workspaceSessionPath } from "../../src/lib/routes";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
@@ -269,8 +270,8 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
 
         // Space-free display names: MentionParser tokenises `@name` on whitespace boundaries, so a
         // principal literally named "… Agent B" is NOT resolvable as `@… Agent B`.
-        const principalA = await createBoundPrincipal("PLAN0630-AgentA"),
-            principalB = await createBoundPrincipal("PLAN0630-AgentB");
+        const principalA = await createBoundPrincipal(agentName("PLAN0630AgentA")),
+            principalB = await createBoundPrincipal(agentName("PLAN0630AgentB"));
 
         const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers,
