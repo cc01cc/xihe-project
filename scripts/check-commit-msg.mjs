@@ -50,7 +50,7 @@ const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u;
  * 围栏外的正文/表格行含 TAB ⇒ 拒绝。
  */
 export function computeFenceMask(lines) {
-  const mask = new Array(lines.length).fill(false);
+  const mask = Array.from({ length: lines.length }, () => false);
   let fence = null;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];

@@ -133,7 +133,6 @@ function scanText(displayPath, rawText, options = {}) {
             spans
                 .filter((span) => span.start <= index && index <= span.end)
                 .sort((a, b) => b.start - a.start)[0] ?? null;
-        const start = owner ? owner.start : 0;
         const end = owner ? owner.end : text.length;
         const after = text.slice(index, end);
         if (REFRESH.test(after)) continue;

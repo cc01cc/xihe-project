@@ -229,10 +229,15 @@ export function selftest() {
             expected: 1,
         },
     ];
-    const results = cases.map((testCase) => ({
-        ...testCase,
-        failures: classify(entries, testCase.resolveFn),
-    }));
+    // 逐个用例只保留下游真正读取的三个字段（name/expected/failures）；
+    // 不用 `{ ...testCase, failures }` 的展开式改写（oxc(no-map-spread)）。
+    const results = cases.map((testCase) => {
+        return {
+            name: testCase.name,
+            expected: testCase.expected,
+            failures: classify(entries, testCase.resolveFn),
+        };
+    });
     const failed = results.filter((result) => result.failures.length !== result.expected);
     const lines = results.map(
         (result) =>
