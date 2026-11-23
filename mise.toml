@@ -648,6 +648,22 @@ run = "node packages/ui/scripts/check-form-validation.mjs"
 description = "Form instant-validation census gate (task-927 delivered; wired by task-923): controlled inputs (Input/Textarea/Select bound with v-model) inside a form container must be wired to the shared validator packages/ui/src/lib/formValidation — an unwired site is a finding (user 2026-11-23: every form input must validate immediately, not only on submit). Stock is a shrink-only baseline in internal/A03-xihe/evidence/2026-11-24-form-validation/baseline.json: a new unwired input ⇒ exit 1; --write-baseline refreshes but REFUSES to grow; a baseline entry that disappeared prints NOTE (never silently rewritten); usage or environment failure ⇒ exit 2. Same file is wired into `pnpm run lint` in packages/ui. Selftest: node packages/ui/scripts/check-form-validation.mjs --selftest. Current reading at wiring (2026-11-24): files=224 controlled=110 violations=110 baseline=110 => exit 0. Cost ~0.45 s."
 alias = "check:form-validation"
 
+[tasks."check:filetree-ia"]
+# task-939 交付门本体（`packages/ui/scripts/check-filetree-ia.mjs`，FT1–FT5 静态判据 +
+# `--selftest` 八组反证 + `--ax` 真浏览器读数）；task-945 登记执行面。
+# 判据（全部是「块挂在错误的容器里」这类跨文件位置契约，组件单测测不出）：
+#   FT1 文件页签不得回滚仓库状态块（`workspace-git-readface*` / `useWorkspaceGitReadState`）；
+#   FT2 不得回滚嵌套仓声明卡片（`nested-repos-panel` / `nested-repo-row`）；
+#   FT3 树行展开必须是 `aria-expanded`，不得退回 `▼/▶` 字形；
+#   FT4 声明入口必须在树行内；FT5 内部术语（声明为根 / 嵌套仓 …）中英两侧零出屏、独占键同批。
+# ⚠️ 执行面现状：`mise run lint` 的门清单是 `scripts/lint-run.mjs` 的 LINT_GATES（task-124 起唯一
+# 来源），该文件不在 task-945 的写域 ⇒ 聚合成员位与 `pnpm run lint` 的 `--gate` 入口都留给后续卡
+# 补一行；本任务先给**独立执行者**（`mise run check:filetree-ia`），owner 已登记进
+# `internal/A03-xihe/scripts/gate-owner-registry.json`，未接线前不得当成「已在 lint 里守」。
+run = "node packages/ui/scripts/check-filetree-ia.mjs"
+description = "File-panel information-architecture gate (task-939 delivered; registered by task-945): FT1 the files tab must not render the git-state block or consume git-status (the pending reading belongs to the Changes dock panel), FT2 no nested-repo declare cards above the tree, FT3 tree expansion must use aria-expanded (no ▼/▶ glyphs), FT4 the declare affordance must live inside the tree row, FT5 internal terms (Declare as root / Nested repo) must be zero on both locales and the owned keys must exist on both sides. Static only; `--selftest` replays eight counter-examples and must FAIL on each, `--ax <workspaceUrl>` adds the real-browser reading (tree visible height >= 60% of the panel, FT3/FT5 DOM evidence; password read from XIHE_ADMIN_PASSWORD_FILE or .local/dev/admin-password, never printed). Exit 0 PASS / 1 FAIL / 2 usage or environment. Current reading at registration (2026-11-24, main checkout): static PASS, selftest 8/8, exit 0 in ~0.6 s. Aggregation note: the `mise run lint` member line (LINT_GATES in scripts/lint-run.mjs) and the packages/ui `--gate` entry are outside task-945 write scopes — a follow-up card must add them."
+alias = "check:filetree-ia"
+
 [tasks."lint:agent"]
 run = "uv run ruff check && uv run mypy src/"
 description = "Run Agent lint (ruff + mypy)"

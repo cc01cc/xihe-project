@@ -1,8 +1,8 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
-// PLAN-0343 U1/V6: run-terminal usage line in the session header.
+// PLAN-0343 U1/V6: run-terminal usage line — task-936 moved it to the bottom status bar.
 // Flow: register → workspace page → deterministic write_file chat (approve) →
-// run reaches done → the header usage line must show tokens, a mapped cost
-// (or 未映射) and a source badge. DOM + screenshot + console evidence.
+// run reaches done → the status-bar usage reading must show tokens, a mapped cost
+// (or 未定价) and a source badge. DOM + screenshot + console evidence.
 import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import {
@@ -33,7 +33,7 @@ function queryIsolatedPostgres(sql: string): string {
     ).trim();
 }
 
-test.describe("@host PLAN-0343 — usage line in session header", () => {
+test.describe("@host PLAN-0343 — usage line in the bottom status bar", () => {
     test.describe.configure({ mode: "serial" });
 
     let ctx: { authToken: string; workspaceId: string; headers: Record<string, string> };
@@ -90,13 +90,13 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
         // once per run, before done).
         await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
 
-        // The usage line: tokens · cost/未映射 · source badge (workspace
-        // conversation header renders a div, not a <header> element).
-        const usageLine = page
-            .locator('[data-testid="workspace-conversation"]')
-            .filter({ hasText: /in \d+ · out \d+/ })
-            .first();
-        await expect(usageLine, "workspace usage line must appear after done").toBeVisible({
+        // The usage line: tokens · cost · source badge. task-936（收 task-941）把这份读数从会话头
+        // 搬到**底部状态栏**；`workspace-conversation` 里已经没有它，`check-session-shell` SS4 还钉着
+        // 「头部不得回潮」⇒ 旧定位在 develop 上是空的（本用例因此是存量红点）。
+        // 断言口径**不变**：一轮 run 结束后仍要同时看到 tokens · 费用 · 计费来源，只是搜索面换到
+        // `workspace-status-usage`（状态栏里承载三段的那一个节点）。
+        const usageLine = page.getByTestId("workspace-status-usage");
+        await expect(usageLine, "status-bar usage line must appear after done").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
 
@@ -113,7 +113,13 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
         // source badge: 真实计费 | 估算 | 用量兜底（原 real/estimated/fallback 三个内部标记）
         expect(lineText).toMatch(/真实计费|估算|用量兜底/);
 
-        await page.screenshot({ scale: "css", path: "usage-line-header.png", fullPage: false });
+        // task-945：读数已经不在会话头 ⇒ 证据文件名同步改掉，并落到 Playwright 的持久目录
+        // （相对 cwd 的 `usage-line-header.png` 是旧的 E_EVIDENCE_NOT_PERSISTED 落点）。
+        await page.screenshot({
+            scale: "css",
+            path: test.info().outputPath("usage-line-statusbar.png"),
+            fullPage: false,
+        });
 
         // Usage persistence is owned by the ContextEvent for the terminal ChatRun.
         const auditRes = await request.get(
