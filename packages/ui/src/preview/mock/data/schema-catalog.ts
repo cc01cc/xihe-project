@@ -177,7 +177,7 @@ const CATALOG_JSON = `{
     ],
     "agent-templates": [
         {
-            "key": "roles",
+            "key": "presets",
             "type": "json"
         },
         {

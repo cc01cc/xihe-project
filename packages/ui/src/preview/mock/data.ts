@@ -65,7 +65,9 @@ const ICONS: Record<string, typeof Wrench> = {
     monitoring: Gauge,
     data: Database,
     "config-locks": LockKeyhole,
-    roles: ShieldCheck,
+    // task-901：安全组的 `roles` 页改名 `presets`（`settingsIa.ts:719`）；
+    // 元数据键必须同批跟，否则 `missingNavMeta` 会把新页记成「无图标」。
+    presets: ShieldCheck,
     // task-96：平台智能体的新家（`instanceOpsGroups()` 的安全组）；不加这一条 `missingNavMeta` 会红。
     "agent-principals": Bot,
     audit: ScrollText,
@@ -98,7 +100,8 @@ const LABELS: Record<string, string> = {
     monitoring: "监控",
     data: "数据管理",
     "config-locks": "配置锁定",
-    roles: "角色与权限",
+    // 标签与页面 h1 一致（`settings.presetsTitle` = 「授权预设与绑定」）。
+    presets: "授权预设与绑定",
     "agent-principals": "平台智能体",
     audit: "审计日志",
     // 标签必须与页面 h1 一致（DSD-1490「导航命名 = 定语+导航」）：页面标题是

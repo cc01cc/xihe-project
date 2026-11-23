@@ -100,11 +100,13 @@ describe("AgentTemplatesPanel credential ceiling (PLAN-0498 T2.1)", () => {
         expect(mockedApi.precheckCredentialAtoms).toHaveBeenCalledTimes(1);
         const save = wrapper.emitted("save")?.at(-1)?.[0] as Record<string, string>;
         expect(save).toBeTruthy();
-        const roles = JSON.parse(save.roles) as Array<{
+        // task-901：配置项 wire key 由 `roles` 改成 `presets`
+        // （组件 `AgentTemplatesPanel.vue:197-204` 的 persist 只 emit `presets`/`templates`）。
+        const presets = JSON.parse(save.presets) as Array<{
             name: string;
             permissions: Array<{ actionClass: string; resource: string }>;
         }>;
-        expect(roles[0]).toMatchObject({
+        expect(presets[0]).toMatchObject({
             name: "Reader",
             permissions: [
                 { actionClass: "credential_use", resource: `credential:${CREDENTIAL_ID}` },
