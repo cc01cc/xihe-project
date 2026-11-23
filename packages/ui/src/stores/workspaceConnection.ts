@@ -1,5 +1,28 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import { useChatStore } from "../features/workspace/chat/stores/chat";
+import { useSessionStore } from "./session";
+
+/**
+ * 计费来源/费用的 wire 值 → i18n key（task-941）。
+ *
+ * <p><b>为什么映射表放在本 store 而不是组件里</b>：卡片要求「状态由本 store 提供、组件内不得
+ * 硬编码文案」。表里只有**键**（文案本身仍全部来自 `src/i18n`），所以组件只做 `t(key)`，
+ * 判据与 key 的唯一落点是这里；将来 CP 加新的 `source`/`costNote` 值只改这两张表。</p>
+ *
+ * <p>`source` 三值与 `ChatRunUsage.source`（`types/index.ts`）逐字对齐；`costNote` 是 CP
+ * `UsageCostMapper` 的英文原值，不进用户可见文案，只用于选键。</p>
+ */
+export const USAGE_SOURCE_I18N_KEYS: Record<string, string> = {
+    real: "workspace.usageSourceReal",
+    estimated: "workspace.usageSourceEstimated",
+    fallback: "workspace.usageSourceFallback",
+};
+export const USAGE_COST_NOTE_I18N_KEYS: Record<string, string> = {
+    "no token counts": "workspace.usageCostNoteNoTokenCounts",
+    "model not in pricing config": "workspace.usageCostNoteNoPricing",
+    "no pricing entry": "workspace.usageCostNoteNoPricing",
+};
 
 /**
  * 工作区**连接读数**（task-160 / S2a；`D-1527` ①）。
@@ -22,7 +45,13 @@ import { ref } from "vue";
  * <p><b>用量为什么也在这里</b>：`usageInput/usageOutput` 同样是页面级读数（`WorkspaceView` 的
  * `lastUsage` 派生），状态栏上移后没有 props 来源；若不发布，聊天页那条「本次 run 用量」会消失
  * （可见回归）。所以与连接态同一通道发布，语义仍是一条：**页面读数 → 壳层展示**。</p>
+ *
+ * <p><b>task-941 追加：费用/计费来源走「同一快照的只读派生」，不新增 writer。</b>
+ * `usageCost/usageSource` 从 `chatStore.getSessionLastUsage(当前会话)` 就地派生（见
+ * `usageDetail` 的注释）—— 那份快照的唯一 writer 是 SSE `usage` 事件落库，所以本条不破
+ * 「每个读数只有一个 writer」的判据；`publishUsage` 仍然只由 `WorkspaceView` 调用。</p>
  */
+
 export const useWorkspaceConnectionStore = defineStore("workspaceConnection", () => {
     /**
      * **本页有没有订阅文件事件**（task-81 P1-1）。
@@ -49,6 +78,45 @@ export const useWorkspaceConnectionStore = defineStore("workspaceConnection", ()
     const usageInput = ref<number | null>(null);
     /** 本次 run 的输出 tokens（无 run 时 `null`）。 */
     const usageOutput = ref<number | null>(null);
+
+    /**
+     * 计费读数的唯一事实源（task-941）：`chatStore.getSessionLastUsage(当前会话)`。
+     *
+     * <p><b>为什么这里不发布、而是就地派生</b>：`sessionLastUsage` 已经是 chat store 里的
+     * per-session 全局快照（唯一 writer = SSE `usage` 事件落库，`SSEStream.vue#onUsage`）。
+     * 卡片给本卡的写域不含页面（`WorkspaceView.vue` 仍只发布 in/out），若再引入第二个
+     * `publishUsage*` writer 就会与既有发布互闪、并让「谁的读数算当前」失去判据 —— 所以
+     * 费用/来源走**同一快照的只读派生**，与 `publishUsage` 的 in/out 同源（同一条
+     * `ChatRunUsage`），不会在两处之间分叉。</p>
+     *
+     * <p>渲染侧仍以 `usageInput`（页面发布）为「本次 run 有读数」的开关：本守卫保证
+     * 非聊天页（页面已 `reset()`）不会出现「只有费用/来源、没有 token」的半截读数。</p>
+     */
+    const sessionStore = useSessionStore();
+    const chatStore = useChatStore();
+    const usageDetail = computed(() => {
+        const sessionId = sessionStore.currentSessionId;
+        if (!sessionId) return null;
+        return chatStore.getSessionLastUsage(sessionId);
+    });
+    /** `ChatRunUsage.source` 原值（real/estimated/fallback；无读数为 `null`）。 */
+    const usageSource = computed(() => usageDetail.value?.source ?? null);
+    /** 该来源对应的 i18n key；未登记的 wire 值返回 `null`（组件回落显示原值）。 */
+    const usageSourceKey = computed(() =>
+        usageSource.value ? (USAGE_SOURCE_I18N_KEYS[usageSource.value] ?? null) : null,
+    );
+    /** 费用（`null` = CP 没有定价或没有 token 计数；`0` 是有效读数）。 */
+    const usageCost = computed(() => usageDetail.value?.cost ?? null);
+    const usageCostSource = computed(() => usageDetail.value?.costSource ?? null);
+    const usageCostNote = computed(() => usageDetail.value?.costNote ?? null);
+    /** 费用不可用时的说明 key（按 CP `costNote` 原值选；未登记回落通用句）。 */
+    const usageCostNoteKey = computed(() => {
+        if (usageCost.value != null) return null;
+        const note = usageCostNote.value;
+        return (
+            (note ? USAGE_COST_NOTE_I18N_KEYS[note] : undefined) ?? "workspace.usageCostNoteUnknown"
+        );
+    });
 
     /** 页面侧发布连接读数（唯一 writer = `useWorkspaceSSE` 的 watch）。 */
     function publishConnection(next: {
@@ -94,6 +162,12 @@ export const useWorkspaceConnectionStore = defineStore("workspaceConnection", ()
         error,
         usageInput,
         usageOutput,
+        usageSource,
+        usageSourceKey,
+        usageCost,
+        usageCostSource,
+        usageCostNote,
+        usageCostNoteKey,
         publishConnection,
         publishUsage,
         reset,

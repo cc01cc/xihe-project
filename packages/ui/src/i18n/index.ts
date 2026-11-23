@@ -1868,7 +1868,10 @@ const messages = {
             stop: "停止生成",
             // task-135：composer 第 3 层元信息行（轮/步/tok-s、token 用量、缓存命中）。
             composerMeta: {
-                model: "模型 · 路由",
+                // task-941（R68）：chip 是「谁来作答」的那一个模型，不是收件人维度。
+                model: "主智能体模型",
+                // task-941（R68）：TO/CC 与模型正交 —— 收件人决定谁读，不改变谁作答。
+                modelPrimaryHint: "本会话由该模型作答；TO/CC 决定谁来读，不改变模型。",
                 modelUnbound: "未绑定模型",
                 // task-133（DSD-1507 ④）：未绑定 chip 是警示态且可点，这两句进 title / aria-label。
                 modelUnboundHint: "发送前需绑定 provider 连接（点此打开模型设置）",
@@ -6354,7 +6357,11 @@ const messages = {
             stop: "Stop generating",
             // task-135: composer layer 3 meta row (rounds/steps/tok-s, token usage, cache hit).
             composerMeta: {
-                model: "Model · route",
+                // task-941 (R68): this chip names the model that answers — not the recipients.
+                model: "Primary agent model",
+                // task-941 (R68): TO/CC are orthogonal — recipients decide who reads, not who answers.
+                modelPrimaryHint:
+                    "This session is answered by this model; TO/CC decide who reads it, not which model answers.",
                 modelUnbound: "No model bound",
                 // task-133 (DSD-1507 ④): the unbound chip is a warning state and is clickable.
                 modelUnboundHint:

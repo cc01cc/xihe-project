@@ -226,28 +226,21 @@ test.describe("Chat", () => {
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111/session/usage-session");
         await page.getByTestId("chat-input").fill("show usage");
         await page.getByTestId("chat-input").press("Enter");
-        // task-327：同一串 wire 文案现在同屏出现两处 —— 会话列头部的 run-terminal 用量行
-        // （`WorkspaceView.vue:491-518`：tokens · cost · source）和 task-312 新落地的底部状态栏
-        // （`WorkspaceStatusBar.vue:123-131`：`workspace.statusBarUsage`，**只有 tokens**）。
-        // 页面级 getByText 因此失去唯一性（strict mode violation），故收窄到会话列。
-        //
-        // 收窄方向是**更严**不是更松：断言原文一字未改，只是把搜索面从整页缩到
-        // `workspace-conversation` 子树 ⇒ 「会话内用量行不渲染」仍然必红，「状态栏不渲染」
-        // 则不会让本用例红（本用例的意图在会话内那处：cost 与 source 徽标只在那里存在）。
-        // 真栈车道的同一断言早就是这个写法，见 `e2e/real/usage-line.spec.ts:95-109`。
-        const usageLine = page.getByTestId("workspace-conversation");
-        await expect(usageLine.getByText("in 120 · out 30")).toBeVisible({
+        // task-941（收 task-936 的 blocker）：用量读数自 task-936 起**只在底部状态栏**渲染 ——
+        // 会话头的 `workspace-usage-cost/source` 与 in/out 已整段移除（`check-session-shell` SS4
+        // 钉着「头部不得回潮」）。旧的 `workspace-conversation` 定位因此在 develop 上是空的
+        // （改前基线红在这里）。断言口径不变（「一轮 run 后能看到 tokens · cost · 来源」），
+        // 只把搜索面换到状态栏节点；wire 原值仍留在 `data-*` 上供排障。
+        const statusBar = page.getByTestId("workspace-status-bar");
+        await expect(statusBar.getByText("in 120 · out 30")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        await expect(usageLine.getByText("$0.012")).toBeVisible();
-        // task-16 跟改（2026-11-20）：用量行的来源徽标渲染的是 **i18n 文案**，不是 wire 原值 ——
-        // `WorkspaceView.vue:82-86` 的 `USAGE_SOURCE_KEY`（real → `workspace.usageSourceReal`）经
-        // `:112-117` 的 `usageSourceLabel` 映射后渲染（zh「真实计费」/ en "Real billing"）。
-        // 改前失败消息：`expect(usageLine.getByText("real", { exact: true })).toBeVisible:
-        // element(s) not found`（断言的是从未存在过的字面值）。
-        // 改后两个方向都不放松：wire 原值仍在 DOM 上（`:data-source="usageSource"`，`:659`），
-        // 文案则从语言包取（`copyForKey`，不抄副本 —— 见 `e2e/helpers/select.ts` 头注释 task-210）。
-        const sourceBadge = usageLine.getByTestId("workspace-usage-source");
+        await expect(statusBar.getByTestId("workspace-status-usage-cost")).toHaveText("$0.012");
+        // 来源徽标渲染的是 **i18n 文案**，不是 wire 原值（task-16 跟改；映射表现在在
+        // `stores/workspaceConnection.ts` 的 `USAGE_SOURCE_I18N_KEYS`）。两个方向都不放松：
+        // `data-source` 仍是 wire 原值（real），可见文本从语言包取
+        // （`copyForKey`，不抄副本 —— 见 `e2e/helpers/select.ts` 头注释 task-210）。
+        const sourceBadge = statusBar.getByTestId("workspace-status-usage-source");
         await expect(sourceBadge).toHaveAttribute("data-source", "real");
         const realCopy = copyForKey("workspace.usageSourceReal");
         expect(

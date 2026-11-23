@@ -922,7 +922,7 @@ const composerModelChip = computed(() => {
             title: t("chat.composerMeta.modelSourceResolving"),
             ariaLabel: t("chat.composerMeta.modelSourceResolving"),
             className:
-                "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
+                "hidden min-w-0 max-w-96 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
         };
     }
 
@@ -939,7 +939,7 @@ const composerModelChip = computed(() => {
             title: `${unknownLabel} · ${hint} ${t("chat.composerMeta.modelChangeHint")}`,
             ariaLabel: `${unknownLabel}. ${hint} ${t("chat.composerMeta.modelChangeHint")}`,
             className:
-                "hidden min-w-0 max-w-56 items-center truncate rounded-md border border-dashed border-muted-foreground/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
+                "hidden min-w-0 max-w-96 items-center truncate rounded-md border border-dashed border-muted-foreground/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
         };
     }
 
@@ -949,21 +949,28 @@ const composerModelChip = computed(() => {
         const outOfCatalog = resolved.inDiscoveredList === false;
         const parts = [label, sourceLabel];
         if (outOfCatalog) parts.push(t("chat.composerMeta.modelOutOfCatalogBadge"));
+        /**
+         * task-941（R68）：chip 的**标签**从「模型 · 路由」改成「主智能体模型」，并说明与
+         * TO/CC 正交 —— 用户原话是看不出 `deepseek · deepseek-flash · 会话覆盖` 指谁：
+         * 这里是**作答的主智能体模型**；TO/CC 只决定谁读这条消息，不改变作答模型。
+         */
+        const chipLabel = `${t("chat.composerMeta.model")}：${parts.join(" · ")}`;
         const title = [
             t("chat.composerMeta.modelSourceHint", { source: sourceLabel, model: label }),
+            t("chat.composerMeta.modelPrimaryHint"),
             outOfCatalog ? t("chat.composerMeta.modelOutOfCatalogHint") : "",
         ]
             .filter(Boolean)
             .join(" ");
         return {
-            label: parts.join(" · "),
+            label: chipLabel,
             bound: true,
             source: resolved.source,
             inCatalog: resolved.inDiscoveredList,
             title,
-            ariaLabel: `${t("chat.composerMeta.model")}: ${parts.join(" · ")}. ${t("chat.composerMeta.modelChangeHint")}`,
+            ariaLabel: `${chipLabel}。${t("chat.composerMeta.modelPrimaryHint")} ${t("chat.composerMeta.modelChangeHint")}`,
             className:
-                "hidden min-w-0 max-w-56 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
+                "hidden min-w-0 max-w-96 items-center truncate rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground sm:inline-flex hover:bg-muted",
         };
     }
 
@@ -975,7 +982,7 @@ const composerModelChip = computed(() => {
         title: `${t("chat.composerMeta.modelSourceHint", { source: sourceLabel, model: t("chat.composerMeta.modelUnbound") })} ${t("chat.composerMeta.modelUnboundHint")}`,
         ariaLabel: `${t("chat.composerMeta.modelUnbound")}. ${t("chat.composerMeta.modelUnboundHint")}`,
         className:
-            "hidden min-w-0 max-w-56 items-center truncate rounded-md border border-dashed border-amber-500/60 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 sm:inline-flex hover:bg-amber-500/20 dark:text-amber-300",
+            "hidden min-w-0 max-w-96 items-center truncate rounded-md border border-dashed border-amber-500/60 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 sm:inline-flex hover:bg-amber-500/20 dark:text-amber-300",
     };
 });
 

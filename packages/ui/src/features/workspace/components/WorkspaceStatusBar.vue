@@ -135,6 +135,33 @@ const dotClass = computed(() => {
 
 /** 有 run 才显示用量；`0` 也是有效读数（不能因为 0 就隐藏）。 */
 const showUsage = computed(() => typeof connection.usageInput === "number");
+
+/**
+ * 计费来源与费用（task-941 从 `WorkspaceView` 会话头搬来，wire 值来自
+ * `workspaceConnection` store 对 `chatStore.getSessionLastUsage` 的只读派生）。
+ *
+ * <p>**文案全部来自 i18n**（`workspace.usageSource*` / `workspace.usageCostUnmapped` /
+ * `workspace.usageCostNote*`），本组件只做 `t(key)`：wire 原值 → key 的映射表在
+ * `stores/workspaceConnection.ts`（`USAGE_SOURCE_I18N_KEYS` / `USAGE_COST_NOTE_I18N_KEYS`），
+ * 所以「改文案」永远只改语言包、不在模板里写死。</p>
+ *
+ * <p>`cost` 语义沿用 CP `UsageCostMapper`：`null` = 没有定价或没有 token 计数。两者用不同
+ * 文案区分 —— `fallback`（这一轮根本没有 token 计数）显示破折号（「没有这个读数」），
+ * 其余显示「未定价」（「有数但没定价」）。凭空写 `$0` 会把「没有定价」说成「这次免费」。</p>
+ */
+const usageSourceLabel = computed(() => {
+    const key = connection.usageSourceKey;
+    return key ? t(key) : (connection.usageSource ?? "");
+});
+const usageCostText = computed(() => {
+    if (connection.usageCost != null) return `$${connection.usageCost}`;
+    return connection.usageSource === "fallback" ? "—" : t("workspace.usageCostUnmapped");
+});
+const usageCostTitle = computed(() =>
+    connection.usageCost != null
+        ? ""
+        : t(connection.usageCostNoteKey ?? "workspace.usageCostNoteUnknown"),
+);
 </script>
 
 <template>
@@ -238,6 +265,26 @@ const showUsage = computed(() => typeof connection.usageInput === "number");
                     output: connection.usageOutput ?? 0,
                 })
             }}</span>
+            <!--
+                task-941：费用（`$x` / 「未定价」/「—」）与计费来源（真实计费/估算/用量兜底）。
+                `data-cost-source` / `data-cost-note` / `data-source` 保留 wire 原值供排障，
+                可见文本一律走 i18n（判据见上方 script 注释）。
+            -->
+            <span
+                data-testid="workspace-status-usage-cost"
+                :data-cost-source="connection.usageCostSource ?? ''"
+                :data-cost-note="connection.usageCostNote ?? ''"
+                :title="usageCostTitle || undefined"
+                class="shrink-0"
+                >{{ usageCostText }}</span
+            >
+            <span
+                v-if="connection.usageSource"
+                data-testid="workspace-status-usage-source"
+                :data-source="connection.usageSource"
+                class="shrink-0"
+                >{{ usageSourceLabel }}</span
+            >
         </span>
     </div>
 </template>

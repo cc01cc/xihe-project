@@ -131,7 +131,9 @@ const messages = {
             input: { ccLabel: "抄送", ccEmptyHint: "未添加抄送对象" },
             delegation: { reasonUnknown: "未知原因", button: "委派" },
             composerMeta: {
-                model: "模型 · 路由",
+                // task-941（R68）：chip 标签改「主智能体模型」，夹具跟产品走（不抄副本）。
+                model: sourceI18n.global.t("chat.composerMeta.model"),
+                modelPrimaryHint: sourceI18n.global.t("chat.composerMeta.modelPrimaryHint"),
                 modelUnbound: sourceI18n.global.t("chat.composerMeta.modelUnbound"),
                 modelUnboundHint: "发送前需绑定 provider 连接（点此打开模型设置）",
                 modelChangeHint: sourceI18n.global.t("chat.composerMeta.modelChangeHint"),
@@ -304,11 +306,13 @@ describe("task-140 模型 chip：来源三态化，清单只做角标", () => {
         const wrapper = mountInputArea();
         const chip = wrapper.find(CHIP);
         expect(chip.exists()).toBe(true);
-        expect(chip.text()).toBe("openai · gpt-5 · 会话覆盖");
+        expect(chip.text()).toBe("主智能体模型：openai · gpt-5 · 会话覆盖");
         expect(chip.attributes("data-bound")).toBe("true");
         expect(chip.attributes("data-source")).toBe("session");
         expect(chip.attributes("data-in-catalog")).toBe("true");
-        expect(chip.attributes("title")).toBe("来源：会话覆盖 · openai · gpt-5");
+        expect(chip.attributes("title")).toBe(
+            "来源：会话覆盖 · openai · gpt-5 本会话由该模型作答；TO/CC 决定谁来读，不改变模型。",
+        );
         expect(chip.attributes("aria-label")).toContain("openai · gpt-5 · 会话覆盖");
         expect(chip.classes()).not.toContain("border-dashed");
         await chip.trigger("click");
@@ -324,7 +328,9 @@ describe("task-140 模型 chip：来源三态化，清单只做角标", () => {
         });
         const wrapper = mountInputArea();
         const chip = wrapper.find(CHIP);
-        expect(chip.text()).toBe("anthropic · claude-experimental · 会话覆盖 · 本地清单未发现");
+        expect(chip.text()).toBe(
+            "主智能体模型：anthropic · claude-experimental · 会话覆盖 · 本地清单未发现",
+        );
         expect(chip.attributes("data-bound")).toBe("true");
         expect(chip.attributes("data-in-catalog")).toBe("false");
         // J3：清单外不得变成不可发送 —— 警示态 class 与 disabled 都不许出现。
@@ -341,7 +347,9 @@ describe("task-140 模型 chip：来源三态化，清单只做角标", () => {
             inDiscoveredList: true,
         });
         const wrapper = mountInputArea();
-        expect(wrapper.find(CHIP).text()).toBe("deepseek · deepseek-flash · 主体默认");
+        expect(wrapper.find(CHIP).text()).toBe(
+            "主智能体模型：deepseek · deepseek-flash · 主体默认",
+        );
         expect(wrapper.find(CHIP).attributes("data-source")).toBe("agent-principal");
 
         readySource({
@@ -352,7 +360,9 @@ describe("task-140 模型 chip：来源三态化，清单只做角标", () => {
         });
         // 替身是普通对象（非响应式），换来源后重新挂载一次即可重新求值 computed。
         const profileWrapper = mountInputArea();
-        expect(profileWrapper.find(CHIP).text()).toBe("google · gemini-2.0-flash · 全局配置");
+        expect(profileWrapper.find(CHIP).text()).toBe(
+            "主智能体模型：google · gemini-2.0-flash · 全局配置",
+        );
         expect(profileWrapper.find(CHIP).attributes("data-source")).toBe("llm-profile");
         expect(profileWrapper.find(CHIP).attributes("data-in-catalog")).toBe("unknown");
     });
