@@ -18,10 +18,17 @@ import java.util.UUID;
  *
  * <p><b>Why two queries and not one per unit.</b> A member has exactly one membership row
  * ({@code V164} primary key {@code (member_kind, member_id)}), so the chain is resolved by
- * <b>ltree ancestry</b> ({@code chain.path @> own.path}) rather than by walking parents: one query
- * for the chain, one for the bindings on it. Neither query loops over its own result, so the read
- * cost stays constant as the tree deepens — the N+1 shape this method exists to avoid would be
- * "for each ancestor, ask for its bindings".</p>
+ * <b>one recursive walk</b> up {@code org_units.parent_id}: one query for the chain, one for the
+ * bindings on it. Neither query loops over its own result in the client, and the server walks only
+ * the handful of ancestors.</p>
+ *
+ * <p><b>Why not ltree ({@code chain.path @> own.path}).</b> task-911: this read now runs on the
+ * workspace create path, and the crossmodule HTTP lane is H2 (no {@code ltree}, and the table
+ * family has no JPA entity). A {@code WITH RECURSIVE} walk over {@code parent_id} is the same
+ * relation in one statement on both PostgreSQL and H2, so the authorization read is exercised
+ * instead of throwing {@code BadSqlGrammarException} (which surfaced as HTTP 500
+ * {@code POLICY_EVALUATION_FAILED}, not a deny). ltree stays where it is used for ordering and
+ * subtree writes; this port only needs self+ancestors.</p>
  *
  * <p><b>Direction is load-bearing.</b> In ltree {@code B <@ A} means "B is a descendant-or-self of
  * A", so the chain of {@code a.b.c} is {@code {a, a.b, a.b.c}} and {@code a.b} never inherits
@@ -64,34 +71,44 @@ public class OrgUnitGrantRowsRepository {
             rs.getString("role_name"), rs.getString("action_class"), rs.getString("resource_pattern"));
 
     /**
+     * The ancestor walk shared by both reads: start at the member's own unit and climb
+     * {@code org_units.parent_id}. {@code CAST(path AS VARCHAR)} keeps {@code path} a plain string
+     * on PostgreSQL (ltree has a text output) and on H2 (the shim column is VARCHAR); the
+     * recursive chain has the same rows as the ltree ancestor test, root last in the recursion and
+     * root first in the final ordering.
+     */
+    private static final String MEMBER_CHAIN_CTE =
+            "WITH RECURSIVE chain (id, parent_id, path, depth) AS ("
+                    + " SELECT own.id, own.parent_id, CAST(own.path AS VARCHAR), own.depth"
+                    + " FROM org_unit_members m"
+                    + " JOIN org_units own ON own.id = m.org_unit_id"
+                    + " WHERE m.member_kind = ? AND m.member_id = ?"
+                    + " UNION ALL"
+                    + " SELECT parent.id, parent.parent_id, CAST(parent.path AS VARCHAR), parent.depth"
+                    + " FROM chain c"
+                    + " JOIN org_units parent ON parent.id = c.parent_id)";
+
+    /**
      * The member's unit plus every ancestor, root first. Empty when the member has no membership
      * row — a legal answer, not a failure (the port documents it).
      */
     private static final String MEMBER_UNIT_CHAIN =
-            "SELECT chain.id AS id, chain.path::text AS path, chain.depth AS depth"
-                    + " FROM org_unit_members m"
-                    + " JOIN org_units own ON own.id = m.org_unit_id"
-                    + " JOIN org_units chain ON chain.path @> own.path"
-                    + " WHERE m.member_kind = ? AND m.member_id = ?"
-                    + " ORDER BY chain.depth";
+            MEMBER_CHAIN_CTE + " SELECT id, path, depth FROM chain ORDER BY depth";
 
     /**
      * The bindings that sit on the member's chain, each joined with its role name and the role's
-     * atoms. The IN-subquery is the same chain expression as {@link #MEMBER_UNIT_CHAIN}; it is
+     * atoms. The IN-subquery is the same recursive chain as {@link #MEMBER_UNIT_CHAIN}; it is
      * written out instead of taking ids as a parameter so the read stays one statement (an id list
      * would make the statement's shape depend on tree depth).
      */
     private static final String BINDINGS_ON_MEMBER_CHAIN =
-            "SELECT b.org_unit_id AS org_unit_id, b.role_id AS role_id, r.name AS role_name,"
+            MEMBER_CHAIN_CTE
+                    + " SELECT b.org_unit_id AS org_unit_id, b.role_id AS role_id, r.name AS role_name,"
                     + " rp.action_class AS action_class, rp.resource_pattern AS resource_pattern"
                     + " FROM org_unit_preset_bindings b"
                     + " JOIN grant_presets r ON r.id = b.role_id"
                     + " LEFT JOIN grant_preset_atoms rp ON rp.role_id = b.role_id"
-                    + " WHERE b.org_unit_id IN ("
-                    + "   SELECT chain.id FROM org_unit_members m"
-                    + "   JOIN org_units own ON own.id = m.org_unit_id"
-                    + "   JOIN org_units chain ON chain.path @> own.path"
-                    + "   WHERE m.member_kind = ? AND m.member_id = ?)"
+                    + " WHERE b.org_unit_id IN (SELECT id FROM chain)"
                     + " ORDER BY b.org_unit_id, r.name, rp.action_class";
 
     private final JdbcTemplate jdbc;

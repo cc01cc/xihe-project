@@ -44,13 +44,13 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
  *
  * <p>Why: every action-atom evaluation is joined with the org-unit read —
  * {@code RequesterAuthority.holdsActionAtom} → {@code actionAtoms} →
- * {@code JdbcOrgUnitGrantSource.rowsFor} → {@code OrgUnitGrantRowsRepository.memberUnitChain}
- * (native ltree SQL). The {@code org_units} family (V162–V167) has no JPA entity and this lane runs
- * {@code ddl-auto=create-drop} with Flyway off ({@code spring.flyway.enabled}), so those tables do not
- * exist: the SQL throws. Since task-25 ({@code b2b062543}) that throw is no longer swallowed into
- * {@code Set.of()}: an unreadable grant store now surfaces as HTTP 500
- * {@code POLICY_EVALUATION_FAILED} (fail-closed <b>and</b> identifiable — task-213,
- * {@code RequesterAuthority.evaluationUnavailable}).
+ * {@code JdbcOrgUnitGrantSource.rowsFor} → {@code OrgUnitGrantRowsRepository.memberUnitChain}.
+ * Since task-911 those tables exist here through {@code h2-schema.sql}'s shim and the read is
+ * portable, so it no longer throws; but no fixture in this lane writes an
+ * {@code org_unit_members} row, so the chain is empty and the org-unit source contributes no
+ * atoms. (Before task-911 the same emptiness surfaced as HTTP 500
+ * {@code POLICY_EVALUATION_FAILED}, not as a deny — task-213,
+ * {@code RequesterAuthority.evaluationUnavailable}.)
  *
  * <p>Consequences: ① a green "expected deny" here is <b>not</b> evidence (with empty atoms everybody
  * is denied); ② a red "expected allow" is still meaningful — the failure is one-sided, so an allow

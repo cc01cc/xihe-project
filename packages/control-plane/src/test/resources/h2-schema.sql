@@ -44,3 +44,49 @@ CREATE TABLE IF NOT EXISTS plugin_index_declarations (
     CONSTRAINT ck_plugin_index_declarations_state CHECK (state IN ('pending', 'applied', 'failed')),
     CONSTRAINT ck_plugin_index_declarations_fields CHECK (CARDINALITY(fields) BETWEEN 1 AND 4)
 );
+
+-- task-911: the org-unit family (V162–V167) also has no JPA entity, so create-drop cannot build it.
+-- Since d9964ffc7 the workspace HTTP authorization read evaluates the org-unit grant source, so every
+-- `POST /api/v1/workspaces` on this lane answered 500 (`Table "org_unit_members" not found`).
+-- The read SQL is portable (`WITH RECURSIVE` over `parent_id`, see OrgUnitGrantRowsRepository), so
+-- only the SHAPES are shimmed here: no ltree column, no cycle trigger, no seed rows, no subtree
+-- writes. `path` is VARCHAR holding the same dotted text PostgreSQL stores as an ltree; columns
+-- that the two grant reads join are exactly the ones V163/V164/V166 define.
+-- Like the two tables above, every statement MUST stay `CREATE TABLE IF NOT EXISTS`.
+
+CREATE TABLE IF NOT EXISTS org_units (
+    id UUID NOT NULL,
+    parent_id UUID,
+    name VARCHAR(120) NOT NULL,
+    path VARCHAR NOT NULL,
+    depth INT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT pk_org_units PRIMARY KEY (id),
+    CONSTRAINT uq_org_units_path UNIQUE (path),
+    CONSTRAINT fk_org_units_parent FOREIGN KEY (parent_id) REFERENCES org_units (id)
+);
+
+CREATE TABLE IF NOT EXISTS org_unit_members (
+    org_unit_id UUID NOT NULL,
+    member_kind VARCHAR(16) NOT NULL,
+    member_id UUID NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT pk_org_unit_members PRIMARY KEY (member_kind, member_id),
+    CONSTRAINT fk_org_unit_members_unit FOREIGN KEY (org_unit_id) REFERENCES org_units (id),
+    CONSTRAINT ck_org_unit_members_kind CHECK (member_kind IN ('human', 'agent_principal'))
+);
+
+CREATE TABLE IF NOT EXISTS org_unit_preset_bindings (
+    id UUID NOT NULL,
+    org_unit_id UUID NOT NULL,
+    role_id UUID NOT NULL,
+    granted_by UUID,
+    granted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT pk_org_unit_preset_bindings PRIMARY KEY (id),
+    CONSTRAINT uq_org_unit_preset_bindings UNIQUE (org_unit_id, role_id),
+    -- Deliberately no FK to grant_presets: that table is an Hibernate entity, and `create-drop`
+    -- dropping it would then need to cascade through a shim table that outlives every context.
+    -- The read only joins the columns; referential integrity for role_id stays a PostgreSQL fact.
+    CONSTRAINT fk_org_unit_preset_bindings_unit FOREIGN KEY (org_unit_id) REFERENCES org_units (id)
+);
