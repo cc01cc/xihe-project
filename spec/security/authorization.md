@@ -36,6 +36,10 @@
 - **`credential:*` 语义**：`credential:*` 只用于凭证**管理面**（`credential_manage` 等原子的 canonical resource），**MUST NOT** 被解释成「可使用全部凭证」的授权。使用请求 **MUST** 携带具体 `credential:<uuid>`；**判定请求的 resource** 为 `credential:*` 且 actionClass 为 `credential_use` 时 **MUST** 拒绝（`policy/ToolFaceRegistry.java:423-445`、`policy/PolicyRequest.java:28-37`）；grant 侧的宽行只是 ceiling 写法，**MUST NOT** 让请求跳过具体 uuid。
 - **组织树**：`OrgUnitAccess.Scope`（ltree 路径）永久留在 conditions / visibility scope 面，**MUST NOT** 进入资源轴。资源注册表 **MAY** 预留 `tree` matcher 类型，但当前 **MUST NOT** 注册 `org:` 命名空间。理由：组织树回答「能看见哪些数据」，不是「能对哪个对象做哪个动作」；进资源轴会同时破坏 404 语义与「读取面按 ltree `<@` 过滤」的查询范围语义。将来确实要把某个单元当授权对象时，只加一行注册（`org:` + `tree` matcher + canonicalizer），不改表、不改解析器、不改求值器。
 
+- **`agent-unit:` 是求值期派生的层级键，不是 `org:`（task-935 / D-1935）**：委派层级判据需要「这次 spawn 的目标是否落在调用方自己的单元子树内」，它注册为**独立命名空间** `agent-unit:`（`Matcher.TREE` + `Grantability.EVALUATION_ONLY`），值形如 `agent-unit:root/team`，由 `org_unit_members` 在求值时派生，**MUST NOT** 写入 `grants` 表、**MUST NOT** 接受 API 提交（与 `phys:` 同型）。`org:` 仍按上一条 **MUST NOT** 注册：两者并列不是笔误 —— `org:` 回答「能看见哪些单元」（visibility scope），`agent-unit:` 回答「能在哪个单元内派生」（action × resource）。层级判据 **MUST** 只经 `PolicyRequest.resources` 追加（`PolicyEngine.allowsByGrant` 的 `additionalResources` 形参，只追加不替换）进入求值，**MUST NOT** 另写 `if (isDescendant)` 之类旁路判断。`tree` matcher 按 `/` 分段覆盖后代，故 `agent-unit:root/team` 覆盖 `agent-unit:root/team/child`、不覆盖 `agent-unit:root/other`。
+
+- **分身由动作原子 `action:clone` 控制（task-935）**：Agent 预设默认含、人类预设默认不含（人类账户不允许分身，智能体允许）。同一主会话内复用已有子实例 **MUST NOT** 要求 `clone`；只有派生第 2 个实例才要求。`spawn_agent` 未显式指定目标时语义即「分身」，因此自 spawn 路径 **MUST** 求值 `action:clone × agent-unit:<调用方子树>`。
+
 **新增资源类别 playbook**：注册表加一行（namespace + matcher + canonicalizer）→ 提取器加一个 key → 校验器接受该前缀 → 单测 / golden 加用例 → 文档登记一行。**MUST NOT** 因此改表、改求值器或做迁移；真正的成本在确定 canonical 形态（什么算同一个资源），不在代码。
 
 ### 2.2 条件（condition）契约
