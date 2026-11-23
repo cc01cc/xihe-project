@@ -365,6 +365,84 @@ describe("SessionList delegation tree (PLAN-0655 T1.5)", () => {
 });
 
 /**
+ * task-906：真栈读数里「`aria-current="page"` 落在 XIHE-E2E-SPAWN…」并不是子会话抢高亮 ——
+ * 父会话建出来叫「未命名会话」，CP 按 `D-1866`/`SessionTitleDeriver` 从首条用户消息派生标题，
+ * 子会话又继承父标题 ⇒ 父行与子行的可见标题**逐字相同**，光看标题分不出哪一行是高亮行。
+ *
+ * <p>本组钉的是组件侧的判据：高亮只认 `sessionStore.currentSessionId` 这一处
+ * （`rowProps` 与 `v-else` 分支同源），子行即使与父行同名也不得抢。若哪天有人把「最近活动」
+ * 或父子关系塞进高亮判定，这两条立即红。</p>
+ */
+describe("SessionList aria-current 只认当前会话（task-906）", () => {
+    const PARENT = "66666666-6666-4666-8666-666666666666";
+    const CHILD = "77777777-7777-4777-8777-777777777777";
+    const OTHER = "88888888-8888-4888-8888-888888888888";
+
+    function row(
+        id: string,
+        title: string,
+        extra: { kind?: string | null; spawnedFromSessionId?: string | null } = {},
+    ) {
+        return {
+            id,
+            title,
+            createdAt: "2026-11-23T00:00:00Z",
+            updatedAt: "2026-11-23T00:00:00Z",
+            workspaceId: WORKSPACE_ID,
+            kind: extra.kind ?? null,
+            spawnedFromSessionId: extra.spawnedFromSessionId ?? null,
+            context: { agents: [] },
+        };
+    }
+
+    it("选中父会话时，`aria-current` 只出现在父行（子行标题不同）", () => {
+        setActivePinia(createPinia());
+        const sessionStore = useSessionStore();
+        sessionStore.sessions = [
+            row(PARENT, "父会话"),
+            row(CHILD, "子会话", { kind: "SPAWN", spawnedFromSessionId: PARENT }),
+            row(OTHER, "无关会话"),
+        ];
+        sessionStore.selectSession(PARENT);
+
+        const wrapper = mount(SessionList, {
+            global: { plugins: [i18n], stubs: { Teleport: true } },
+        });
+
+        const current = wrapper.findAll('[data-testid="session-item"][aria-current="page"]');
+        expect(current).toHaveLength(1);
+        expect(current[0]!.attributes("aria-label")).toBe("父会话");
+
+        const child = wrapper.findAll('[data-testid="session-item"]')[1]!;
+        expect(child.attributes("aria-label")).toBe("子会话");
+        expect(child.attributes("aria-current")).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("父行与子行同名（CP 派生标题的真实形态）时，高亮仍只落在父行", () => {
+        setActivePinia(createPinia());
+        const sessionStore = useSessionStore();
+        const derivedTitle = "XIHE-E2E-SPAWN spawn-mwsmiw9k";
+        sessionStore.sessions = [
+            row(PARENT, derivedTitle),
+            row(CHILD, derivedTitle, { kind: "SPAWN", spawnedFromSessionId: PARENT }),
+        ];
+        sessionStore.selectSession(PARENT);
+
+        const wrapper = mount(SessionList, {
+            global: { plugins: [i18n], stubs: { Teleport: true } },
+        });
+        const rows = wrapper.findAll('[data-testid="session-item"]');
+        expect(rows).toHaveLength(2);
+        // 行序 = 父行 + 其子行（`rowsFor` 的不变量）；同名时只能靠位置区分。
+        expect(rows[0]!.attributes("aria-current")).toBe("page");
+        expect(rows[1]!.attributes("aria-current")).toBeUndefined();
+        expect(rows[1]!.attributes("style") ?? "").toContain("padding-left: 2rem");
+        wrapper.unmount();
+    });
+});
+
+/**
  * task-152 / `D-1221` ④：独立会话（L3）的可排序能力 —— 卡面判据 1/4/6 的组件侧。
  *
  * <p>只钉三件事：① `sortable` 默认关时**不产生任何新 DOM**（判据 1 的形态：L2 零变化）；
