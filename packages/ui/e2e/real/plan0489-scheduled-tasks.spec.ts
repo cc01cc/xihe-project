@@ -43,14 +43,42 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         delayTaskId = "",
         rerunTaskId = "",
         removeTaskId = "",
-        pageErrors: string[] = [];
+        pageErrors: string[] = [],
+        // BL-335 契约：同一用户的第 9 条 user-channel（GET /api/v1/user-events）SSE 会被 CP
+        // 以 429 USER_CHANNEL_FULL 拒绝，壳级横幅随之常驻。本 spec 是 serial 单用户 9 用例
+        // （beforeAll 只注册一个 journey 用户），最后一条必然撞上限一次；这里只记录**实测到的**
+        // CP 429 响应，供 afterEach 精确核销对应的一条 console 条目。
+        userChannelLimitHits = 0;
 
     test.beforeEach(async ({ page }) => {
         pageErrors = collectPageErrors(page);
+        userChannelLimitHits = 0;
+        page.on("response", (response) => {
+            if (response.status() === 429 && response.url().includes("/api/v1/user-events")) {
+                userChannelLimitHits += 1;
+            }
+        });
     });
 
-    test.afterEach(async () => {
-        expect(actionableErrors(pageErrors), pageErrors.join("\n")).toEqual([]);
+    test.afterEach(async ({ page }) => {
+        const hits = userChannelLimitHits;
+        if (hits > 0) {
+            // 契约不是豁免：429 出现时，壳级横幅必须处在 limit 态（SseSubscriberLimitNotice）。
+            await expect(
+                page.locator('[data-testid="sse-subscriber-limit-notice"]'),
+            ).toHaveAttribute("data-state", "limit", { timeout: LONG_TIMEOUT_MS });
+        }
+        // 只核销「与实测 user-events 429 条数相等」的 console 429 条目；多一条、少一条，或任何
+        // 其它 console error 仍然判红（不做裸 429 放行）。
+        let remainingHits = hits;
+        const remaining = actionableErrors(pageErrors).filter((entry) => {
+            if (remainingHits > 0 && /429/.test(entry) && /Too Many Requests/i.test(entry)) {
+                remainingHits -= 1;
+                return false;
+            }
+            return true;
+        });
+        expect(remaining, pageErrors.join("\n")).toEqual([]);
     });
 
     // ── 夹具：隔离 PG（host runner 提供 XIHE_E2E_PG_*，缺失即失败，不 skip 掩盖拓扑缺失） ──
