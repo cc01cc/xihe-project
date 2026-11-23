@@ -155,10 +155,10 @@ function createSpawnCapabilityRole(): string {
     // 用 CTE + 顶层 SELECT 取回 id：`psql -c "INSERT … RETURNING id"` 除结果行外还会打印
     // 命令标签 `INSERT 0 1`，`requireUuid` 会因此拿到两行而失败（spawn12 实测）。顶层是
     // SELECT 时标签不再输出，`ON CONFLICT DO UPDATE` 走到更新分支也能拿回同一 id。
-    const roleId = requireUuid(
+    const presetId = requireUuid(
         queryIsolatedPostgres(`
     WITH upserted AS (
-      INSERT INTO roles (id, name, display_name, description, is_system)
+      INSERT INTO grant_presets (id, name, display_name, description, is_system)
       VALUES (gen_random_uuid(), 'E2E_SPAWN_${suffix}', 'E2E spawn ${suffix}',
               'E2E fixture: single SPAWN_AGENT atom (BL-314)', FALSE)
       ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
@@ -167,31 +167,31 @@ function createSpawnCapabilityRole(): string {
   `),
     );
     queryIsolatedPostgres(`
-    INSERT INTO role_permissions (role_id, action_class, resource_pattern)
-    VALUES ('${roleId}'::uuid, 'SPAWN_AGENT', '*')
+    INSERT INTO grant_preset_atoms (role_id, action_class, resource_pattern)
+    VALUES ('${presetId}'::uuid, 'SPAWN_AGENT', '*')
     ON CONFLICT DO NOTHING
   `);
-    return roleId;
+    return presetId;
 }
 
 /**
- * setWorkspaceCap/重算之后：SPAWN_AGENT 必须仍以"单原子 + source=role + role_binding 背书"存在。
+ * setWorkspaceCap/重算之后：SPAWN_AGENT 必须仍以"单原子 + source=preset + preset_binding 背书"存在。
  *
- * 资源维度注意：`RoleGrantMaterializer` 对 `resource_pattern = '*'` 会**省略** `resource` 键，canonical
- * 形态是 `{"actionClass":"SPAWN_AGENT"}`（同 `helpers/user-grants.ts` 的播种说明）。所以这里不能要求
+ * 资源维度注意：`PresetGrantMaterializer` 对 `resource_pattern = '*'` 会**省略** `resource` 键，canonical
+ * 形态是 `{"actionClass":"action:SPAWN_AGENT"}`（task-835 起原子带 `action:` 前缀）。所以这里不能要求
  * `resource:"*"` —— spawn12 实测该行确实存在，却因多要求一个键而被判 0 行。
  */
-function assertSpawnGrantSurvivedCapPut(principalId: string, roleId: string): void {
+function assertSpawnGrantSurvivedCapPut(principalId: string, presetId: string): void {
     const rows = scalarCount(`
     SELECT count(*) FROM grants g
     WHERE g.subject_type = 'agent_principal' AND g.subject_id = '${principalId}'::uuid
-      AND g.source = 'role'
-      AND g.permissions @> '[{"actionClass":"SPAWN_AGENT"}]'::jsonb
+      AND g.source = 'preset'
+      AND g.permissions @> '[{"actionClass":"action:SPAWN_AGENT"}]'::jsonb
       AND jsonb_array_length(g.permissions) = 1
       AND EXISTS (
-        SELECT 1 FROM role_bindings b
+        SELECT 1 FROM grant_preset_bindings b
         WHERE b.subject_type = 'agent_principal' AND b.subject_id = g.subject_id
-          AND b.role_id = '${roleId}'::uuid)
+          AND b.role_id = '${presetId}'::uuid)
   `);
     if (rows !== 1) {
         throw new Error(

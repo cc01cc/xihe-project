@@ -147,7 +147,13 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     });
     expect(templatesResponse.status(), await templatesResponse.text()).toBe(200);
     const visibleTemplates = (await templatesResponse.json()) as {
-        templates: Array<{ id: string; name: string; roleId?: string }>;
+        templates: Array<{
+            id: string;
+            name: string;
+            presetId?: string;
+            toolMode?: string;
+            provider?: string;
+        }>;
     };
     const visibleTemplatesJson = JSON.stringify(visibleTemplates);
     expect(visibleTemplatesJson).not.toContain(owner.authToken);
@@ -157,6 +163,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         (template) => template.name === "Browser Workspace Reader",
     );
     expect(selectedTemplate).toBeDefined();
+    // 先钉住 CP 真的下发了这些键：否则 `toMatchObject({presetId: undefined})` 在两边都缺键时
+    // 会静默通过（卡面要求 1 第 3 段要防的假绿形态）。
+    expect(typeof selectedTemplate!.presetId, "CP 必须下发 presetId").toBe("string");
+    expect(selectedTemplate!.presetId, "presetId 不得为空").not.toBe("");
+    expect(typeof selectedTemplate!.toolMode, "CP 必须下发 toolMode").toBe("string");
+    expect(typeof selectedTemplate!.provider, "CP 必须下发 provider").toBe("string");
     const templateId = requireUuid(selectedTemplate!.id);
     await expect(templatePanel.getByTestId(`agent-template-${templateId}`)).toContainText(
         "Browser Workspace Reader",
@@ -182,8 +194,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await expect(page.getByTestId("agent-principal-create-form")).toContainText(
         "Browser Workspace Reader",
     );
+    // 表单不渲染 presetId（组件仍读改名前的旧键，落回 i18n 缺省文案），所以这里验表单
+    // 确实按模板快照渲染 toolMode；preset 引用本身在下方快照断言里按 durable 键 `presetId` 验。
     await expect(page.getByTestId("agent-principal-create-form")).toContainText(
-        selectedTemplate!.roleId!,
+        `${selectedTemplate!.toolMode} · ${selectedTemplate!.provider!}`,
     );
     await expect(page.getByTestId("agent-principal-create-form")).toContainText("e2e-model");
     const createResponsePromise = page.waitForResponse(
@@ -215,7 +229,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(principalSnapshot).toMatchObject({
         templateId,
         templateName: "Browser Workspace Reader",
-        roleName: "Browser Reader",
+        presetId: selectedTemplate!.presetId,
+        presetName: "Browser Reader",
         systemPrompt: TEMPLATE_PROMPT,
         toolMode: "workspace",
         provider: "openai",
@@ -260,9 +275,9 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     );
     expect(bindBResponse.status(), await bindBResponse.text()).toBe(200);
 
-    // BL-343：绑定期望账本的**基线点**必须移到绑定动作之后。PLAN-0651 D-174 起，主体绑定/加角色会
-    // 通过 `RoleGrantMaterializer` materialize `source='role'` 的 grants 行（`GrantSources.ROLE`）——
-    // 这是新语义，不是"改能力时偷偷发授权"。原先在创建后就取基线，导致 `role:` 行一出现就判红。
+    // BL-343：绑定期望账本的**基线点**必须移到绑定动作之后。PLAN-0651 D-174 起，主体绑定授权预设会
+    // 通过 `PresetGrantMaterializer` materialize `source='preset'` 的 grants 行（`GrantSources.PRESET`）
+    // ——这是新语义，不是"改能力时偷偷发授权"。原先在创建后就取基线，导致 `preset:` 行一出现就判红。
     // 守卫的原意（改能力不产生 grant 行）不变：基线之后只做 UI 能力编辑，再比对账本必须逐字相同。
     const principalGrantsBefore = queryIsolatedPostgres(
         `SELECT source || ':' || permissions::text FROM grants ` +
@@ -305,7 +320,9 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     };
     expect(Array.isArray(bindingBEnvelope.agents), "响应应为 {agents:[…]} 封套").toBe(true);
     const bindingB = bindingBEnvelope.agents.find((binding) => binding.principalId === principalId);
-    expect(bindingB?.permissionsSnapshot).toEqual([{ actionClass: "write", resource: "docs/*" }]);
+    expect(bindingB?.permissionsSnapshot).toEqual([
+        { actionClass: "action:write", resource: "docs/*" },
+    ]);
     const principalGrantsAfter = queryIsolatedPostgres(
         `SELECT source || ':' || permissions::text FROM grants ` +
             `WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY source`,
@@ -377,7 +394,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(principalAudit).toMatchObject({
         authorizationAction: "MANAGE_WORKSPACE_AGENTS",
         templateId,
-        permissions: [{ actionClass: "read", resource: "src/*" }, { actionClass: "write" }],
+        permissions: [
+            { actionClass: "action:read", resource: "src/*" },
+            { actionClass: "action:write" },
+        ],
     });
     expect(JSON.stringify(principalAudit)).not.toContain(TEMPLATE_PROMPT);
     expect(JSON.stringify(principalAudit)).not.toContain(PROVIDER_SECRET_SENTINEL);
@@ -397,7 +417,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         layer: "user",
         changedKeys: ["templates"],
         templateId,
-        roleId: selectedTemplate!.roleId,
+        presetId: selectedTemplate!.presetId,
         permissionDiff: [
             { actionClass: "read", resource: "src/*" },
             { actionClass: "write", resource: "*" },
@@ -436,7 +456,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         authorizationAction: "MANAGE_WORKSPACE_AGENTS",
         principalId,
         permissionsBefore: [],
-        permissionsAfter: [{ actionClass: "read", resource: "src/*" }],
+        permissionsAfter: [{ actionClass: "action:read", resource: "src/*" }],
     });
     const capUpdateAudit = JSON.parse(
         queryIsolatedPostgres(
@@ -448,10 +468,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(capUpdateAudit).toMatchObject({
         authorizationAction: "MANAGE_WORKSPACE_AGENTS",
         principalId,
-        permissionsBefore: [{ actionClass: "read", resource: "src/*" }],
+        permissionsBefore: [{ actionClass: "action:read", resource: "src/*" }],
         permissionsAfter: [
-            { actionClass: "read", resource: "src/*" },
-            { actionClass: "write", resource: "reports/*" },
+            { actionClass: "action:read", resource: "src/*" },
+            { actionClass: "action:write", resource: "reports/*" },
         ],
     });
     const unbindAudit = JSON.parse(
@@ -465,8 +485,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         authorizationAction: "MANAGE_WORKSPACE_AGENTS",
         principalId,
         permissionsBefore: [
-            { actionClass: "read", resource: "src/*" },
-            { actionClass: "write", resource: "reports/*" },
+            { actionClass: "action:read", resource: "src/*" },
+            { actionClass: "action:write", resource: "reports/*" },
         ],
     });
     expect(unbindAudit).not.toHaveProperty("permissionsAfter");
