@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -91,10 +92,22 @@ class PresetUpdateScopeEscalationTest extends AbstractReusableIntegrationTest {
         roleAdmin.update(role.getId(), new GrantPresetAdminViews.PresetUpdate(null, null, null, List.of(
                 ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)));
 
+        // task-933 / R39: the positive control is about the ESCALATION GATE, not about propagation.
+        // A preset is a read-only template now, so an accepted edit changes the template rows and
+        // NOTHING else — the holder keeps exactly what it imported.
+        assertFalse(grantRows(holder.getId(), workspaceB.getId()).contains(
+                        com.cc01cc.p.xihe.cp.policy.AtomNames.action(
+                                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)),
+                "R39: a preset edit does not propagate to holders (that reconcile path was retired)");
+
+        // The 「重新对齐」 face is the only thing that moves a holder, and it must still work once
+        // the gate allowed the edit (otherwise the denial cases above would pass for the wrong
+        // reason: 'nothing ever materializes').
+        materializer.replayPresetToAll(role.getId(), author.getId(), null);
         assertTrue(grantRows(holder.getId(), workspaceB.getId()).contains(
                         com.cc01cc.p.xihe.cp.policy.AtomNames.action(
                                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME)),
-                "the holder in workspace B must gain the atom once the author holds it in both scopes");
+                "an explicit replay realigns the holder — the gate is not 'deny everything'");
         assertTrue(workspaceA != null);
     }
 

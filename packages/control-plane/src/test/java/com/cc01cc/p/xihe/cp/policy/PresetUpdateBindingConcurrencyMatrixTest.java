@@ -154,8 +154,11 @@ class PresetUpdateBindingConcurrencyMatrixTest extends AbstractIntegrationTest {
             assertEquals(Set.of(), Set.copyOf(
                             grantAtoms(holderB.getId(), AccessScope.WORKSPACE, workspaceB.getId())),
                     "the refused bind writes no grants row");
-            assertTrue(grantAtoms(holderA.getId(), AccessScope.WORKSPACE, workspaceA.getId()).contains(UWR),
-                    "the existing A-scoped holder gains the atom (the update won legitimately)");
+            // task-933 / R39: an accepted edit only changes the template. It does NOT reconcile
+            // holders, so even the A-scoped holder (whose scope the author legitimately controls)
+            // keeps exactly what it imported. An explicit replay is the only thing that moves it.
+            assertFalse(grantAtoms(holderA.getId(), AccessScope.WORKSPACE, workspaceA.getId()).contains(UWR),
+                    "R39: the winning update changes the template only, never a holder's rows");
         } else {
             assertEquals(List.of(READ), roleAtoms,
                     "the refused update writes nothing to grant_preset_atoms");

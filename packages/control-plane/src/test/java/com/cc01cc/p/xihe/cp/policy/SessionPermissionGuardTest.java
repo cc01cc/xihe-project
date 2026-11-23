@@ -115,7 +115,8 @@ class SessionPermissionGuardTest {
             assertTrue(detail.contains("reason=" + reason), detail);
         }
         if ("assigned".equals(sources)) {
-            assertTrue(detail.contains("atomSources=preset"), detail);
+            // task-933: the materialized source is `assigned` now, so the audit line must say so.
+            assertTrue(detail.contains("atomSources=assigned"), detail);
         } else {
             assertTrue(detail.contains("atomSources=-"), detail);
         }
