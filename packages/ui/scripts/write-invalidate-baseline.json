@@ -1,0 +1,28 @@
+{
+    "gate": "check-write-invalidate",
+    "task": "task-937",
+    "note": "存量基线，只减不增；新增写调用必须同函数内带读面刷新",
+    "entries": {
+        "src/components/settings/AgentPrincipalDetailDrawer.vue|saveModel|api.updateAgentPrincipal": 1,
+        "src/components/settings/AgentPrincipalDetailDrawer.vue|saveDelegation|api.updateAgentPrincipal": 1,
+        "src/components/settings/AgentPrincipalDetailDrawer.vue|commitMemory|api.updateAgentPrincipal": 1,
+        "src/components/settings/AgentPrincipalDetailDrawer.vue|saveHooks|api.updateAgentPrincipal": 1,
+        "src/features/org-members/composables/useOrgUnitWrites.ts|useOrgUnitWrites|api.removeOrgUnitMember": 1,
+        "src/features/org-members/composables/useOrgUnitWrites.ts|useOrgUnitWrites|api.createOrgUnit": 1,
+        "src/features/org-members/composables/useOrgUnitWrites.ts|useOrgUnitWrites|api.renameOrgUnit": 1,
+        "src/features/org-members/composables/useOrgUnitWrites.ts|useOrgUnitWrites|api.moveOrgUnit": 1,
+        "src/features/workspace/chat/components/ChatPanel.vue|handleDeleteMessage|api.deleteMessage": 1,
+        "src/features/workspace/chat/components/ToolCallCard.vue|submitJobCancel|api.cancelJob": 1,
+        "src/features/workspace/chat/composables/useGuidance.ts|useGuidance|api.submitChatRunGuidance": 1,
+        "src/features/workspace/components/WorkspaceAgentsPanel.vue|toggleMemoryEnabled|api.updateAgentPrincipalContextPolicy": 1,
+        "src/features/workspace/components/WorkspaceCreateDialog.vue|handleCreate|api.createWorkspace": 1,
+        "src/features/workspace/components/WorkspaceMcpPanel.vue|authorizeRemoteServer|api.startOAuthSession": 1,
+        "src/features/workspace/components/WorkspaceMcpPanel.vue|saveMcpConfig|api.saveMcpConfig": 1,
+        "src/features/workspace/components/WorkspaceSourceImportDialog.vue|startImport|api.startWorkspaceImport": 1,
+        "src/features/workspace/components/WorkspaceSourceImportDialog.vue|cancelImport|api.cancelWorkspaceImport": 1,
+        "src/features/workspace/pages/WorkspaceSettingsView.vue|handleSave|api.updateWorkspace": 1,
+        "src/features/workspace/pages/WorkspaceSettingsView.vue|handleDelete|api.deleteWorkspace": 1,
+        "src/stores/knowledge.ts|upload|apiPost": 1,
+        "src/stores/knowledge.ts|search|apiPost": 1
+    }
+}

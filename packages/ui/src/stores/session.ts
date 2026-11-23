@@ -70,6 +70,20 @@ export const useSessionStore = defineStore("session", () => {
         createPromise: Promise<Session> | null = null,
         storeGeneration = 0;
 
+    /**
+     * task-937 / R74：写后失效的**统一信号**。
+     *
+     * <p>约定：创建/改名/删除/发送等写动作成功后，读面必须**在同一次动作内**重读，禁止
+     * 「只在 mount 或列表为空时读一次」的短路。写动作的收尾由调用方推进这个版本号；
+     * 侧栏等读面 watch 它并强制重读（`WorkspaceSessionGroups.vue` 的 `readRevision` watcher）。
+     * 定向读回（`applySessionRecord`）也推进它 —— 那条路径是「写动作之后把 durable 事实带回来」，
+     * 对读面来说与写动作同义。</p>
+     */
+    const readRevision = ref(0),
+        invalidateReadViews = (): void => {
+            readRevision.value += 1;
+        };
+
     // Cross-view state that is intentionally not persisted via localStorage.
     // PLAN-030 will implement the backend session-scoped attachment store.
     const attachments = ref<Record<string, AttachmentFile[]>>({});
@@ -186,8 +200,8 @@ export const useSessionStore = defineStore("session", () => {
      *    静默归一化复制成两份（`task-42` §4 已记过同一形态）。</p>
      */
     const sessionsByWorkspace = ref<Record<string, Session[]>>({});
-    async function loadWorkspaceSessions(workspaceId: string): Promise<Session[]> {
-        if (workspaceId in sessionsByWorkspace.value)
+    async function loadWorkspaceSessions(workspaceId: string, force = false): Promise<Session[]> {
+        if (!force && workspaceId in sessionsByWorkspace.value)
             return sessionsByWorkspace.value[workspaceId]!;
         const page = await api.getSessions(workspaceId);
         sessionsByWorkspace.value = {
@@ -222,6 +236,7 @@ export const useSessionStore = defineStore("session", () => {
             ...workspacelessSessions.value.filter((item) => item.id !== session.id),
         ];
         workspacelessLoaded.value = true;
+        invalidateReadViews();
         return session;
     }
 
@@ -249,6 +264,7 @@ export const useSessionStore = defineStore("session", () => {
     function applySessionRecord(record: ApiSession): Session {
         const session = toSession(record);
         upsertSession(session);
+        invalidateReadViews();
         return session;
     }
 
@@ -256,6 +272,30 @@ export const useSessionStore = defineStore("session", () => {
         const index = sessions.value.findIndex((item) => item.id === session.id);
         if (index >= 0) sessions.value.splice(index, 1, session);
         else sessions.value.unshift(session);
+        // task-937：派生字段（标题/成员/委派血缘）在**所有**已读投影里同步，不能只改 live 投影。
+        // 别组快照若已缓存，不在这里替换就会一直停在旧标题，直到用户展开-折叠或整页刷新。
+        if (session.workspaceId) {
+            const cached = sessionsByWorkspace.value[session.workspaceId];
+            if (cached) {
+                const cachedIndex = cached.findIndex((item) => item.id === session.id);
+                sessionsByWorkspace.value = {
+                    ...sessionsByWorkspace.value,
+                    [session.workspaceId]:
+                        cachedIndex >= 0
+                            ? cached.map((item, i) => (i === cachedIndex ? session : item))
+                            : [session, ...cached],
+                };
+            }
+        } else {
+            const standaloneIndex = workspacelessSessions.value.findIndex(
+                (item) => item.id === session.id,
+            );
+            if (standaloneIndex >= 0) {
+                workspacelessSessions.value = workspacelessSessions.value.map((item, i) =>
+                    i === standaloneIndex ? session : item,
+                );
+            }
+        }
     }
 
     /**
@@ -280,6 +320,7 @@ export const useSessionStore = defineStore("session", () => {
             const response = await api.createSession(agentPrincipalId, title),
                 session = toSession(response);
             upsertSession(session);
+            invalidateReadViews();
             currentSessionId.value = session.id;
             error.value = null;
             return session;
@@ -310,11 +351,24 @@ export const useSessionStore = defineStore("session", () => {
                 currentSessionId.value = sessions.value[0]?.id ?? null;
             }
         }
+        // task-937：别组快照与独立会话投影也要同步删除，否则分组里会留一条幽灵行。
+        for (const [workspaceId, cached] of Object.entries(sessionsByWorkspace.value)) {
+            if (!cached.some((session) => session.id === id)) continue;
+            sessionsByWorkspace.value = {
+                ...sessionsByWorkspace.value,
+                [workspaceId]: cached.filter((session) => session.id !== id),
+            };
+        }
+        workspacelessSessions.value = workspacelessSessions.value.filter(
+            (session) => session.id !== id,
+        );
+        invalidateReadViews();
     }
 
     async function updateSession(id: string, patch: SessionBindingPatch): Promise<Session> {
         const updated = toSession(await api.updateSession(id, patch));
         upsertSession(updated);
+        invalidateReadViews();
         return updated;
     }
 
@@ -396,6 +450,8 @@ export const useSessionStore = defineStore("session", () => {
         currentAgentIds,
         filteredSessions,
         groupedSessions,
+        readRevision,
+        invalidateReadViews,
         loadSessions,
         sessionsByWorkspace,
         loadWorkspaceSessions,

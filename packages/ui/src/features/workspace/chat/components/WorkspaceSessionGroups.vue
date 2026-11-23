@@ -231,20 +231,25 @@ async function loadWorkspaces(): Promise<void> {
 
 /**
  * 拉某组会话。**命中缓存 ⇒ 0 请求**（「折叠再展开不重拉」的判据落在这个 early return）。
- * 当前组优先用 live 投影：只有在它还是空的时候才补一次 `loadSessions()`。
+ *
+ * <p>task-937 / R74：默认路径保留缓存短路，但**读面不再把「列表非空」当成「不必重读」**——
+ * 写动作（创建/改名/删除/发送）成功后 `sessionStore.readRevision` 会推进，`force = true`
+ * 越过两处短路重读一次。派生字段（标题/成员）因此同动作内更新，不需要整页刷新。</p>
  */
-async function ensureGroup(workspaceId: string): Promise<void> {
+async function ensureGroup(workspaceId: string, force = false): Promise<void> {
     if (failedGroups.value[workspaceId] || loadingGroups.value[workspaceId]) return;
-    if (isCurrentGroup(workspaceId)) {
-        if (sessionStore.sessions.length > 0) return;
-    } else if (workspaceId in sessionStore.sessionsByWorkspace) {
-        return;
+    if (!force) {
+        if (isCurrentGroup(workspaceId)) {
+            if (sessionStore.sessions.length > 0) return;
+        } else if (workspaceId in sessionStore.sessionsByWorkspace) {
+            return;
+        }
     }
     loadingGroups.value = { ...loadingGroups.value, [workspaceId]: true };
     groupRequests.value = [...groupRequests.value, workspaceId];
     try {
         if (isCurrentGroup(workspaceId)) await sessionStore.loadSessions();
-        else await sessionStore.loadWorkspaceSessions(workspaceId);
+        else await sessionStore.loadWorkspaceSessions(workspaceId, force);
     } catch (cause) {
         failedGroups.value = {
             ...failedGroups.value,
@@ -318,9 +323,40 @@ watch(
     (workspaceId) => {
         if (!workspaceId) return;
         if (!isExpanded(workspaceId)) expanded.value = [...expanded.value, workspaceId];
+        // task-937 / R74：新建工作区成功后 `auth.workspace` 先切成新 id、列表却还是旧的
+        // （创建动作只写了表单 store）。这里把「当前工作区不在列表里」当作写后失效信号，
+        // 同动作内重读列表 —— 侧栏不再需要整页刷新才出现新工作区。
+        if (!listLoading.value && !workspaces.value.some((item) => item.id === workspaceId)) {
+            void loadWorkspaces();
+        }
         void ensureGroup(workspaceId);
     },
     { immediate: true },
+);
+
+/**
+ * task-937 / R74：写后失效的统一订阅点。
+ *
+ * <p>`sessionStore.readRevision` 由写动作或写后定向读回推进（见 `stores/session.ts` 的
+ * `invalidateReadViews`）。这里**强制**重读当前组与独立会话投影，绕开 `ensureGroup` 的
+ * 「非空即不读」缓存短路；别组仍按展开态懒加载，缓存命中不重拉（D-1206 判据②不变）。</p>
+ */
+watch(
+    () => sessionStore.readRevision,
+    () => {
+        const workspaceId = currentWorkspaceId.value;
+        if (workspaceId && isExpanded(workspaceId)) void ensureGroup(workspaceId, true);
+        if (standaloneExpanded.value) {
+            void sessionStore.loadWorkspacelessSessions(true).catch((cause: unknown) => {
+                standaloneError.value = causeErrorToastText(
+                    t,
+                    cause,
+                    t("sidebar.standaloneFailed"),
+                );
+                logger.error("Reload standalone sessions after write failed", cause);
+            });
+        }
+    },
 );
 
 onMounted(async () => {
