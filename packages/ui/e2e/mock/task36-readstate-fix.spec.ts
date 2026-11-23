@@ -79,6 +79,21 @@ test.describe("task-36 RSI read-state fix (mock lane)", () => {
         console.log("[task36 probe]", JSON.stringify(probe));
         expect(probe.treeitems).toBeGreaterThan(0);
         expect(probe.gitReadfaceVisible).toBe(true);
+        // 截图稳定门（task-924）：挂载后导航/右栏有 300ms 布局过渡
+        // （`components/sidebar/Sidebar.vue:275` 的 `transition-[flex-grow] duration-300`）。
+        // 断言常在过渡结束前完成，直接截图会把中间帧写进证据（实测与稳定帧差 1.68%，
+        // 欢迎块横向偏 29px），同代码连续两次跑也可能不同。等所有**有限次**动画结束再截；
+        // 无限循环动画（spinner 等）不参与，否则永远等不到。
+        await page.evaluate(async () => {
+            const finite = document.getAnimations().filter((animation) => {
+                const iterations = animation.effect?.getTiming().iterations;
+                return iterations !== Infinity;
+            });
+            await Promise.all(finite.map((animation) => animation.finished.catch(() => null)));
+            await new Promise<void>((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+            );
+        });
         await page.screenshot({
             path: test.info().outputPath("task36-readstate-mock.png"),
         });
