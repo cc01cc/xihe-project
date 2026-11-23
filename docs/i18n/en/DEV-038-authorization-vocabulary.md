@@ -28,7 +28,7 @@ tags:
 | Action atom | 42 | Unit of judgement (`actionClass × resource`) | Yes, intersected per level | `policy/PermissionAtomCatalog.java` |
 | Capability atom | 3 | Entry gate (management-plane admission) | Yes, but outside the intersection | `policy/PermissionAtomCatalog.java`, `policy/AuthzContext.java` |
 | Grant preset | 11 (8 base + 3 execution presets) | Materialization package (writes atoms into grants) | **No** | `policy/SystemGrantPresetCatalog.java` |
-| Resource family | 5 shapes | Second axis (the prefix-matched target) | Yes, for prefix coverage | `policy/ResourceIdentity.java`, `policy/ToolFaceRegistry.java` |
+| Resource family | 5 registered namespaces (plus the bare form, see §5) | Second axis (the prefix-matched target) | Yes, for prefix coverage | `policy/ResourceIdentity.java`, `policy/ToolFaceRegistry.java` |
 
 In one sentence: **evaluation reads action atoms, capability atoms (entry gate) and resources; grant presets are materialized into grants rows only at write time.**
 
@@ -89,7 +89,7 @@ The first 8 are the base built-in presets; the last 3 were added by DSD-1500 to 
 
 ## 5. Resource families
 
-**What it is**: resources are the second axis of judgement, canonically a prefix-matchable "namespace + value" string. There are six shapes today:
+**What it is**: resources are the second axis of judgement, canonically a prefix-matchable "namespace + value" string. There are 5 registered namespaces plus the bare form, six rows in total:
 
 | Resource family | Shape | May enter grants | How evaluation uses it |
 |---|---|---|---|

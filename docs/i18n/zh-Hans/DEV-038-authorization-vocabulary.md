@@ -28,7 +28,7 @@ tags:
 | 动作原子 | 42 | 判据单位（`actionClass × resource`） | 读，逐级求交 | `policy/PermissionAtomCatalog.java` |
 | 能力原子 | 3 | 入口闸（管理面准入） | 读，但不进交集 | `policy/PermissionAtomCatalog.java`、`policy/AuthzContext.java` |
 | 授权预设 | 11（8 个基础 + 3 个执行档） | 物化包（把原子写进 grants） | **不读** | `policy/SystemGrantPresetCatalog.java` |
-| 资源族 | 5 类形态 | 第二轴（前缀匹配的目标） | 读，做前缀覆盖 | `policy/ResourceIdentity.java`、`policy/ToolFaceRegistry.java` |
+| 资源族 | 5 个已登记命名空间（另有裸形态，见 §5） | 第二轴（前缀匹配的目标） | 读，做前缀覆盖 | `policy/ResourceIdentity.java`、`policy/ToolFaceRegistry.java` |
 
 一句话：**求值只读动作原子、能力原子（入口闸）与资源；授权预设只在写入期被物化成 grants 行。**
 
@@ -89,7 +89,7 @@ tags:
 
 ## 5. 资源族
 
-**是什么**：资源是判据的第二轴，规范形态是「命名空间 + 值」的可前缀匹配串。当前有六类形态：
+**是什么**：资源是判据的第二轴，规范形态是「命名空间 + 值」的可前缀匹配串。当前有 5 个命名空间 + 裸形态，共 6 行：
 
 | 资源族 | 形态 | 能进 grants | 求值期怎么用 |
 |---|---|---|---|
