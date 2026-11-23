@@ -315,9 +315,11 @@ test.describe("Chat approval flow", () => {
 
         const dialog = page.locator('[data-testid="modal-content"]');
         await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await expect(dialog.locator('[data-testid="approval-retry-warning"]')).toContainText(
-            "retry",
-        );
+        // task-897：断言从**同一 i18n key** 求值（copyOf → copyForKey），不再钉死英文子串。
+        // mock 面默认跑 zh-CN，而同型单测在 `ApprovalModal.spec.ts` 里显式 pin 到 en（见 README）。
+        const retryWarning = dialog.locator('[data-testid="approval-retry-warning"]');
+        await expect(retryWarning).toHaveAttribute("role", "alert");
+        await expect(retryWarning).toHaveText(copyOf("chat.approvalDispatchUnknown"));
         expect(calls).toHaveLength(0);
 
         await dialog.locator('[data-testid="approval-approve"]').click();
