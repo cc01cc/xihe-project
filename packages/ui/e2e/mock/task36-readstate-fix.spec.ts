@@ -80,7 +80,7 @@ test.describe("task-36 RSI read-state fix (mock lane)", () => {
         expect(probe.treeitems).toBeGreaterThan(0);
         expect(probe.gitReadfaceVisible).toBe(true);
         await page.screenshot({
-            path: "internal/A03-xihe/evidence/2026-11-17-rsi-readstate-fix/task36-readstate-mock.png",
+            path: test.info().outputPath("task36-readstate-mock.png"),
         });
     });
 });
