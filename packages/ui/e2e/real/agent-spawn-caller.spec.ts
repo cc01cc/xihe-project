@@ -492,7 +492,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     expect(sessionResponse.status(), await sessionResponse.text()).toBe(201);
     const createdParent = (await sessionResponse.json()) as { id: string; title?: string };
     const parentSessionId = requireUuid(createdParent.id);
-    const parentSessionTitle =
+    const parentSessionInitialTitle =
         createdParent.title ??
         queryIsolatedPostgres(`SELECT title FROM sessions WHERE id = '${parentSessionId}'::uuid`);
     await expect(page).toHaveURL(workspaceSessionPath(workspaceId, parentSessionId));
@@ -957,9 +957,31 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             contentType: "application/json",
         });
 
+        // D-1866: CP's `SessionTitleDeriver` rewrites the title from the first user message,
+        // so the title captured at creation time is stale by now. Read the derived title back
+        // by session id (the same `sessions.title` the sidebar renders) instead of pinning a
+        // literal, then locate the parent row by that derived title and assert it is the row
+        // carrying `aria-current` — the child must not steal the highlight.
+        await expect
+            .poll(
+                () =>
+                    queryIsolatedPostgres(
+                        `SELECT title FROM sessions WHERE id = '${parentSessionId}'::uuid`,
+                    ),
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
+            )
+            .not.toBe(parentSessionInitialTitle);
+        const derivedParentTitle = queryIsolatedPostgres(
+            `SELECT title FROM sessions WHERE id = '${parentSessionId}'::uuid`,
+        );
+        // The spawned child's task reuses the parent message, so both derivations can be the
+        // same string (`XIHE-E2E-SPAWN …`); the title cannot tell the two rows apart. The
+        // current-workspace list also renders rows without the standalone list's
+        // `data-session-id` wrapper (plan-0507), so the unique `aria-current` row is the
+        // identity check here (one resolved element, see the 896 reading).
         const parentSessionItem = page.locator('[data-testid="session-item"][aria-current="page"]');
         await expect(parentSessionItem).toBeVisible();
-        await expect(parentSessionItem).toContainText(parentSessionTitle);
+        await expect(parentSessionItem).toContainText(derivedParentTitle);
         await parentSessionItem.click({ button: "right" });
         await page.getByTestId("session-item-delete").click();
         const deleteWarning = page.getByTestId("session-delete-warning");
@@ -1055,10 +1077,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
          * 噪声白名单（全文件唯一登记项）：父会话删除后子会话 `delegation-usage` 的 fail-closed 409。
          * 依据＝CP 设计行为 `DelegationBudgetService.treeBroken()`（DelegationBudgetService.java:425-429；
          * CP 日志 `event=delegation_tree_broken reason=ancestor_missing`）+ UI `SessionList.vue:106-119`
-         * 已 catch 并降级（不渲染 budget chip、不抛未捕获错误）。
-         * **不是**"忽略所有 409"、也不是"忽略 /delegation-usage"：只有
-         * `GET /api/v1/sessions/<本次 childSessionId>/delegation-usage` 且 status=409 这一条匹配，
-         * 任何其它失败一律判红。
+         * 已 catch+warn（不抛错、不渲染预算 chip）。这是**预期失败**，
+         * **不是**"忽略所有 409"：只有 `GET /api/v1/sessions/<本次 childSessionId>/delegation-usage`
+         * 且 status=409 这一条匹配，任何其它失败一律判红（父删后 `team-tasks` 409 归 task-909）。
          */
         const isExpectedDelegationUsageAfterParentDelete = (failure: {
             method: string;
