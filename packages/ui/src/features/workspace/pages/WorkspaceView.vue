@@ -13,7 +13,7 @@ import { logger } from "../../../lib/logger";
 import { causeErrorToastText } from "../../../lib/errorMessages";
 import { clearTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
-import { FolderTree } from "@lucide/vue";
+import { FolderTree, PanelRightClose, PanelRightOpen } from "@lucide/vue";
 import { useMediaQuery } from "@vueuse/core";
 import WorkspaceWorkbench from "../components/WorkspaceWorkbench.vue";
 import WorkspaceCreateDialog from "../components/WorkspaceCreateDialog.vue";
@@ -53,7 +53,6 @@ const lastUsage = computed(() =>
 );
 const usageInput = computed(() => lastUsage.value?.inputTokens);
 const usageOutput = computed(() => lastUsage.value?.outputTokens);
-const usageSource = computed(() => lastUsage.value?.source);
 
 /**
  * task-160 / `D-1527` ①：底部状态栏搬到壳层后，**用量**也和连接态一样是页面级读数，
@@ -67,59 +66,17 @@ watch(
     },
     { immediate: true },
 );
-/**
- * task-52 / batch-02（P1）：用量行里的 `未映射` 与 `real` 曾是**裸字面量**。
- *
- * <p>现象（截图 `.tmp/xh/b02-10-chat-full.png`）：中文界面底部读出
- * `in 3591 · out 8 未映射 real` —— 前两段是英文 wire 值。而`未映射`本身是
- * **设计行为**（CP `UsageCostMapper.withCost` 在没有 token 计数或模型不在定价表时
- * 返回 `cost=null` + `costSource="unmapped"`），不是缺陷；因此这里**只改文案**，
- * 不动 CP、也不凭空写出 `$0`（那会把"没有定价"说成"这次免费"）。</p>
- *
- * <p>口径沿用 `WorkspaceEnvironmentView` 的枚举处理先例（task-59 / D-1442）：
- * **可见文本走 i18n，wire 原值只进 `title`** —— 人看人话、排障看属性，两边都不丢。</p>
- */
-const USAGE_SOURCE_KEY: Record<string, string> = {
-    real: "workspace.usageSourceReal",
-    estimated: "workspace.usageSourceEstimated",
-    fallback: "workspace.usageSourceFallback",
-};
-
-/** CP `costNote` 的原值是英文（`UsageCostMapper`），映射层放在前端，不改后端。 */
-const USAGE_COST_NOTE_KEY: Record<string, string> = {
-    "no token counts": "workspace.usageCostNoteNoTokenCounts",
-    "model not in pricing config": "workspace.usageCostNoteNoPricing",
-    "no pricing entry": "workspace.usageCostNoteNoPricing",
-};
-
-const usageCost = computed(() => {
-    const usage = lastUsage.value;
-    if (!usage) return null;
-    if (usage.cost == null) {
-        // `fallback` = 这一轮根本没有 token 计数（CP 明说 `no token counts`）⇒ 用破折号而不是
-        // 「未映射」：前者是「没有这个读数」，后者是「有数但没定价」，两件事不该同一个词。
-        return usage.source === "fallback" ? "—" : t("workspace.usageCostUnmapped");
-    }
-    return `$${usage.cost}`;
-});
-const usageCostTitle = computed(() => {
-    const usage = lastUsage.value;
-    if (!usage || usage.cost != null) return "";
-    const mapped = usage.costNote ? USAGE_COST_NOTE_KEY[usage.costNote] : undefined;
-    // 未登记的新 note 回落通用句，原值仍留在下方 `usage-cost-raw` 属性里可查。
-    return t(mapped ?? "workspace.usageCostNoteUnknown");
-});
-const usageSourceLabel = computed(() => {
-    const source = usageSource.value;
-    if (!source) return "";
-    const key = USAGE_SOURCE_KEY[source];
-    return key ? t(key) : source;
-});
 
 const routeWorkspaceId = computed(() => {
     const value = route.params.workspaceId as string | undefined;
     return value && value !== "new" ? value : "";
 });
+/**
+ * task-936（R67）：只有会话路由才由本页顶栏承载右栏开关。
+ * 工作区首页（name=`workspace`）仍由 `WorkspaceWorkbench` 的容器页签行承担，
+ * 否则同一屏会出现两颗（2026-11-24 真浏览器实测 root 页 2 颗）。
+ */
+const onSessionRoute = computed(() => route.name === "workspace-session");
 
 const showCreateDialog = ref(false),
     showAgentManagementDialog = ref(false);
@@ -212,6 +169,16 @@ function handleParticipantMention(name: string): void {
  * （vitest 与真实 e2e 都按它钉），改名的收益只是好读，代价是一圈消费点漂移。</p>
  */
 const workbenchRef = ref<InstanceType<typeof WorkspaceWorkbench> | null>(null);
+/**
+ * task-936（R67）：会话页顶栏的右栏开关。
+ *
+ * <p>状态只由 `WorkspaceWorkbench` 持有（`layout.dockCollapsed` 的单一 writer），这里经
+ * `defineExpose` 读同一份；**不复制**第二个 ref，也不落第二把 localStorage 键。</p>
+ */
+const workbenchDockOpen = computed(() => workbenchRef.value?.dockOpen ?? false);
+function toggleWorkbenchDock(): void {
+    workbenchRef.value?.toggleDock();
+}
 
 function handleOpenContextPanel(): void {
     workbenchRef.value?.openSessionConfigTab(sessionId.value);
@@ -568,18 +535,27 @@ watch(isMobileViewport, (mobile) => {
                         「只限启动目录」提示（session-sandbox-enforcement）都搬到下面底部状态栏
                         （WorkspaceStatusBar：连接态沿用同一条派生链 useWorkspaceEventStatus，
                         沙箱读数只在 windows-host 无 FS 限制时占位）。用户原话（2026-11-20）：
-                        「毫无意义、状态应在底部」。**不要把它们加回本行** —— 会话头子节点上限 3
-                        （标题 / 只读徽标 / 用量），加回即超额。
+                        「毫无意义、状态应在底部」。
+
+                        task-936（R66/R67/R69）：这条行的职责再收敛一次 ——
+                        ① 标题只保留 `sr-only` 版本（可见标题唯一归属容器页签行，避免同名两处）；
+                        ② token/费用/来源整段下沉到底部状态栏（`WorkspaceStatusBar` 已渲染 in/out），
+                        本行不再承载任何计量；
+                        ③ 右栏开合开关从「主栏容器页签行」迁到这里（会话页顶栏右侧），
+                        状态仍由 `WorkspaceWorkbench` 单一持有（`defineExpose` 暴露，不复制第二份）。
                     -->
                     <div
                         class="h-8 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"
                     >
-                        <!-- S3a (review P1-2): the workspace name lives in the panel head
-                           and the file-tree head only; this row is session-scoped. -->
+                        <!--
+                            S3a (review P1-2): 工作区名只在面板头与文件树头出现；本行是会话级。
+                            task-936：可见标题已由容器页签行承担，这里保留 `sr-only` 标题作为
+                            会话页的可访问标题（e2e 也以它作稳定锚点），视觉上不再重复。
+                        -->
                         <span
                             data-testid="workspace-session-title"
-                            class="min-w-0 max-w-72 truncate font-medium text-foreground/80"
+                            class="sr-only"
                             :data-workspace-id="auth.workspace?.id"
                             :data-role="auth.workspaceRole"
                             :data-can-write="String(auth.canWriteWorkspace)"
@@ -593,39 +569,36 @@ watch(isMobileViewport, (mobile) => {
                         >
                             {{ t("workspace.viewerReadOnly") }}
                         </span>
-                        <!-- PLAN-0343: run-terminal usage line (tokens · cost/unmapped · source badge) -->
-                        <div
-                            v-if="lastUsage && usageInput !== undefined"
-                            class="ml-auto flex items-center gap-2 tabular-nums"
+                        <!--
+                            task-936（R67）：会话页顶栏唯一的右栏开合开关。
+                            `aria-pressed` 与容器页签行同源（`WorkspaceWorkbench#dockOpen`），
+                            容器行那颗在本路由不渲染（见 WorkspaceWorkbench），所以同一屏只有一颗。
+                        -->
+                        <button
+                            v-if="sessionId && onSessionRoute"
+                            type="button"
+                            data-testid="workspace-dock-toggle"
+                            class="ml-auto inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            :aria-pressed="workbenchDockOpen"
+                            :aria-label="
+                                workbenchDockOpen
+                                    ? t('workspace.dockToggleClose')
+                                    : t('workspace.dockToggleOpen')
+                            "
+                            :title="
+                                workbenchDockOpen
+                                    ? t('workspace.dockToggleClose')
+                                    : t('workspace.dockToggleOpen')
+                            "
+                            @click="toggleWorkbenchDock"
                         >
-                            <span>in {{ usageInput }} · out {{ usageOutput ?? 0 }}</span>
-                            <span
-                                data-testid="workspace-usage-cost"
-                                :data-cost-source="lastUsage.costSource ?? ''"
-                                :data-cost-note="lastUsage.costNote ?? ''"
-                                :title="usageCostTitle"
-                                :class="
-                                    lastUsage.cost == null && usageCost !== '—'
-                                        ? 'text-amber-500'
-                                        : ''
-                                "
-                            >
-                                {{ usageCost }}
-                            </span>
-                            <span
-                                v-if="usageSource"
-                                data-testid="workspace-usage-source"
-                                :data-source="usageSource"
-                                class="rounded border px-1 py-0.5 text-xs leading-none"
-                                :class="
-                                    usageSource === 'real'
-                                        ? 'border-emerald-500/40 text-emerald-600'
-                                        : 'border-amber-500/40 text-amber-600'
-                                "
-                            >
-                                {{ usageSourceLabel }}
-                            </span>
-                        </div>
+                            <PanelRightClose
+                                v-if="workbenchDockOpen"
+                                class="size-3.5"
+                                aria-hidden="true"
+                            />
+                            <PanelRightOpen v-else class="size-3.5" aria-hidden="true" />
+                        </button>
                     </div>
                     <!-- PLAN-0622 D27：工作区没有「可用」agent 时必须说明**真实原因**，
                          不能一律说"尚未绑定"（用户会去重复绑定一个已经绑好的 agent）。 -->

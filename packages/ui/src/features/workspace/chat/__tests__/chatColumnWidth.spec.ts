@@ -137,17 +137,14 @@ describe("chat column width（D-1910 / task-130）", () => {
         });
     }
 
-    it("MessageItem 气泡：lg 走 --chat-bubble-max，md 仍是 75%（两档未合并）", () => {
+    it("MessageItem 气泡：统一 85% 上限（task-936 R73，不再随断点收窄）", () => {
         const source = readSource(MESSAGE_ITEM);
-        const using = classesUsingToken(source, BUBBLE);
-        expect(using.length, `MessageItem 气泡容器没有消费 max-w-(${BUBBLE})`).toBe(1);
-
-        const value = using[0] as string;
-        expect(value, "气泡上限必须挂在 lg 断点上").toContain(`lg:max-w-(${BUBBLE})`);
-        expect(value, "md 档必须仍是 75% 上限（两档不得合并成同一档）").toContain("md:max-w-[75%]");
-        // 反向：token 一旦不带断点前缀，就等于把两档合并了。
-        expect(value, "lg 的 token 不得同时以无断点形态出现（否则等于两档合并）").not.toMatch(
-            /(^|\s)max-w-\(--chat-bubble-max\)/,
+        // 用户口径：Agent/他人气泡必须能占会话宽 80%+，左右不再「对半分」。
+        expect(source, "气泡必须带 85% 上限").toContain("max-w-[85%]");
+        // 反向：旧的两档收窄（md 75% / lg 44em）不得残留，否则宽屏又被压窄。
+        expect(source, "md 档 75% 已作废").not.toContain("md:max-w-[75%]");
+        expect(source, "lg 档 --chat-bubble-max 已作废").not.toContain(
+            "lg:max-w-(--chat-bubble-max)",
         );
 
         for (const legacy of LEGACY_WIDTHS) {

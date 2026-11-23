@@ -796,87 +796,32 @@ it("explains that the bound agents are disabled instead of claiming nothing is b
 });
 
 /**
- * task-52 / batch-02 ①（P1，`D-1703`）：用量行**渲染出来的那段话**不能是内部标记。
+ * task-936（R69）：会话头**不再**承载 token/费用/来源计量。
  *
- * <p>前面的 `i18n/__tests__/usageCopyRules.spec.ts` 扫 locale 树，钉的是「文案库里没有 wire 词」；
- * 这条钉**页面真的把它渲染成人话**：CP 的 `costSource="unmapped"` / `source="real"` 原值
- * 只准进 `:data-cost-source` / `:data-source`（排障用），可见文本必须是译文。</p>
+ * <p>task-52 的三条文案用例随节点一起退役 —— 用量已下沉到底部状态栏
+ * （`WorkspaceStatusBar` 的 `workspace-status-usage`，in/out 已在渲染）。
+ * 费用与计费来源仍需 `WorkspaceStatusBar.vue` + `stores/workspaceConnection.ts`
+ * 扩写域（本卡不在写域，回执 blockers 已列）。</p>
  *
- * <p>承重点（变异）：把 `usageCost` 那行改回字面量 `"未映射"` / 把徽标改回 `{{ usage.source }}`
- * ⇒ 本用例红（可见文本里出现 `unmapped`/`real`）。**只断言可见文本，不断言 data-* 属性为空** ——
- * wire 原值留在属性里是有意设计（人看人话、排障看属性）。</p>
+ * <p>本用例钉住「旧节点不许回潮」：标题行一旦再挂 `workspace-usage-*`，本卡的门与这条断言同时红。</p>
  */
-describe("WorkspaceView usage line copy (task-52 ①)", () => {
-    async function mountWithUsage(usage: {
-        inputTokens?: number;
-        outputTokens?: number;
-        source?: "real" | "estimated" | "fallback";
-        cost?: number | null;
-        costSource?: "price_table" | "provider_reported" | "unmapped";
-        costNote?: string | null;
-    }): Promise<VueWrapper> {
+describe("会话头不再承载用量（task-936 R69）", () => {
+    it("头部没有 token/费用/来源节点", async () => {
         useSessionStore().currentSessionId = SESSION_A;
-        useChatStore().setSessionLastUsage(SESSION_A, usage);
+        useChatStore().setSessionLastUsage(SESSION_A, {
+            inputTokens: 1206,
+            outputTokens: 28,
+            source: "real",
+            cost: null,
+            costSource: "unmapped",
+            costNote: "no token counts",
+        });
         const wrapper = mountView();
         await settle();
         await flushPromises();
-        return wrapper;
-    }
 
-    it("renders the un-priced case as readable copy, not the wire marker", async () => {
-        const wrapper = await mountWithUsage({
-            inputTokens: 3591,
-            outputTokens: 8,
-            source: "real",
-            cost: null,
-            costSource: "unmapped",
-            costNote: "no token counts",
-        });
-
-        const cost = wrapper.get('[data-testid="workspace-usage-cost"]');
-        // 本地夹具（locale=en）已登记 usageCostUnmapped ⇒ 可见文本是译文。
-        expect(cost.text()).toBe("Not priced");
-        expect(cost.text()).not.toMatch(/unmapped/i);
-        // wire 原值仍在属性里（排障面没丢）。
-        expect(cost.attributes("data-cost-source")).toBe("unmapped");
-        expect(cost.attributes("data-cost-note")).toBe("no token counts");
-        // 悬停说明把 CP 的英文 costNote 翻成人话，而不是原样透出。
-        expect(cost.attributes("title")).toBe("no token counts");
-    });
-
-    it("renders the source badge as a localized label, not the raw enum", async () => {
-        const wrapper = await mountWithUsage({
-            inputTokens: 3591,
-            outputTokens: 8,
-            source: "real",
-            cost: 0.12,
-            costSource: "price_table",
-            costNote: null,
-        });
-
-        const badge = wrapper.get('[data-testid="workspace-usage-source"]');
-        expect(badge.text()).toBe("Real billing");
-        expect(badge.text()).not.toBe("real");
-        expect(badge.attributes("data-source")).toBe("real");
-    });
-
-    it("keeps the em dash for the fallback source (no token counts reported)", async () => {
-        // **必须给 inputTokens**：用量行整行是 `v-if="lastUsage && usageInput !== undefined"`，
-        // 不给 token 数这一行根本不渲染（第一版用例就是这么红的 —— `get()` 找不到节点）。
-        // 但「有 token 数、却没有费用」正是 fallback 的真实形态：CP 只能数出 token，报不出钱。
-        const wrapper = await mountWithUsage({
-            inputTokens: 120,
-            outputTokens: 0,
-            source: "fallback",
-            cost: null,
-            costSource: "unmapped",
-            costNote: "no token counts",
-        });
-
-        // fallback = 这一轮根本没有 token 计数 ⇒「—」是「没有这个读数」，不是「未定价」。
-        // 两者混成同一个词，就是 D-1703 说的「用户读不懂」的另一半。
-        const cost = wrapper.get('[data-testid="workspace-usage-cost"]');
-        expect(cost.text()).toBe("—");
+        expect(wrapper.find('[data-testid="workspace-usage-cost"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-usage-source"]').exists()).toBe(false);
     });
 });
 
@@ -1018,16 +963,23 @@ describe("会话头身份行（task-134 / DSD-1507 ①）", () => {
         expect(wrapper.find('[data-testid="session-sandbox-enforcement"]').exists()).toBe(false);
     });
 
-    it("头部子节点 ≤3（标题 / 只读徽标 / 用量）", async () => {
+    it("头部子节点 ≤3（标题（sr-only）/ 只读徽标 / 右栏开关）", async () => {
         const wrapper = await mountWithSession();
         const header = wrapper.get('[data-testid="workspace-session-title"]').element.parentElement;
         expect(header).not.toBeNull();
         const children = Array.from((header as HTMLElement).children).filter(
             (node) => node.nodeType === 1,
         );
-        // 夹具里 canWriteWorkspace 为真 ⇒ 只读徽标不渲染，正常态就是 2（标题 + 用量）。
+        // 夹具里 canWriteWorkspace 为真 ⇒ 只读徽标不渲染，正常态就是 2（标题 + 右栏开关）。
         expect(children.length).toBeLessThanOrEqual(3);
-        // 用量读数仍在头部（e2e/mock/chat.spec.ts 的 workspace-usage-source 依赖它在同一行）。
-        expect(wrapper.find('[data-testid="workspace-usage-cost"]').exists()).toBe(true);
+        // R66：可见标题唯一归属容器页签行 —— 会话头标题只在可访问树里。
+        expect(wrapper.get('[data-testid="workspace-session-title"]').classes()).toContain(
+            "sr-only",
+        );
+        // R67：会话头右侧是唯一右栏开关，语义为 button + aria-pressed。
+        const toggle = wrapper.get('[data-testid="workspace-dock-toggle"]');
+        expect(toggle.element.tagName).toBe("BUTTON");
+        expect(toggle.attributes("aria-pressed")).toBe("false");
+        expect(toggle.attributes("aria-label")).toBeTruthy();
     });
 });

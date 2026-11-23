@@ -429,10 +429,11 @@ describe("task-58 bg-primary 按钮的前景用 primary-foreground（防同色�
         ).toBe(false);
     }
 
-    it("委派按钮（InputArea.vue:891）：bg-primary 配 text-primary-foreground", () => {
+    it("task-936（R71）：composer 发送区不再出现委派按钮", () => {
         const wrapper = mountInputArea();
-        const delegate = wrapper.get('[data-testid="chat-delegate-button"]');
-        assertPrimaryForegroundOnly(delegate.classes(), "chat-delegate-button");
+        expect(wrapper.find('[data-testid="chat-delegate-button"]').exists()).toBe(false);
+        // 发送区的主 CTA 只剩唯一一颗发送键（R72）。
+        expect(wrapper.findAll('[data-testid="chat-send-button"]')).toHaveLength(1);
         wrapper.unmount();
     });
 

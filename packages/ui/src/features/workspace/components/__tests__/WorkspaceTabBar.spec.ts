@@ -71,6 +71,18 @@ beforeEach(() => {
 });
 
 describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () => {
+    it("会话路由仍渲染页签行（task-936：组件保持挂载，标题唯一性由会话头让位保证）", async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+        // 行仍在（它是 openTabs 的唯一 writer + 新会话 pin 数据源，不可卸载）。
+        expect(wrapper.find('[data-testid="workspace-tab-bar"]').exists()).toBe(true);
+        // 标题只在这一行可见 —— 会话头改 sr-only 后不再出现第二个可见同名节点。
+        // 未载入会话标题时用通用标签（夹具 i18n 的 tabChatFallback）。
+        expect(wrapper.get('[data-testid="workspace-tab-session-session-1"]').text()).toContain(
+            "Chat",
+        );
+    });
+
     it("shows only the pinned session tab on a chat route (task-365 D)", async () => {
         const wrapper = mountBar();
         await flushPromises();

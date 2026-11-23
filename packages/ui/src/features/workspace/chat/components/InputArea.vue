@@ -1115,7 +1115,9 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         // task-30 ②：独立会话（workspace-less）连委派也没有通道 —— CP 对 as/to/cc/附件一律
         // `WORKSPACE_LESS_FEATURE_FORBIDDEN`，而这里原先只判了队列模式 ⇒ 提示条写着「仅纯对话」、
         // 旁边还摆着一个点了必失败的委派按钮。口径与 F-A / task-555 一致：**移除 + 可见原因**。
-        visible: !workspaceLess.value && !props.queueMode,
+        // task-936（R71）：委派是能力入口，缺 `SPAWN_AGENT` 时禁用会让人以为「坏了」；
+        // composer 发送区不再承载它。保留动作定义与对话框供右侧面板复用，但入口不渲染。
+        visible: false,
     },
     {
         // task-133（DSD-1508 ②）：权限三档 chip 进工具条。
@@ -1124,8 +1126,9 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         // 所以**不做档位/可见性收窄**：任何档位、任何会话都渲染这颗 chip。
         // 紧凑形态（compact）由 SessionTierSelect 自己处理：行内 28px 高、提示文案进 sr-only，
         // 不新增行高（task-9 定死的 36px 工具条预算），也不抢 model chip 的位置。
+        // task-936（R70）：模式（权限档位）与附件/工具同侧 —— 左工具组，不再挂右侧。
         key: "tier",
-        position: "right",
+        position: "left",
         component: markRaw(SessionTierSelect),
         props: { sessionId: props.sessionId, compact: true },
     },
@@ -1133,8 +1136,9 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         // task-133（DSD-1507 ④）：模型·路由 chip —— 由只读 div 改成按钮。
         // 未绑定是警示态（虚线 + amber），点开去用户层 llm-provider 域；已绑定是中性态，
         // 点开同样去那一页核对（「我在用哪个模型/这条路对不对」需要可查，只读灰字查不到）。
+        // task-936（R72）：右侧只留唯一发送键 ⇒ 模型 chip 归左工具组（R68 的命名/说明归后续卡）。
         key: "model",
-        position: "right",
+        position: "left",
         component: "button",
         props: {
             type: "button",

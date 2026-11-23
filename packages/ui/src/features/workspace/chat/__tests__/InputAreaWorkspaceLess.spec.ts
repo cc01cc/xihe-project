@@ -247,8 +247,8 @@ describe("task-555 独立会话的附件入口", () => {
  * 附件三件套（图片 / 附件 / 截屏）与委派**保持负例**。所以表从「一张负例表」改为「每格显式声明期望」的
  * 对照表 —— 否则「全表正例」会让它变成**恒真断言**（表还在，判别力没了）。</p>
  *
- * <p>当前 7 行 × 2 会话类型 = **14 格**，其中负例 **4 格**（图片 / 附件 / 截屏 / 委派 在独立会话下），
- * 正例 10 格；下面的自检用例把这个分布也钉住。</p>
+ * <p>当前 7 行 × 2 会话类型 = **14 格**，其中负例 **7 格**（委派与代发入口两种会话皆无；
+ * 图片 / 附件 / 截屏 在独立会话下），正例 7 格；下面的自检用例把这个分布也钉住。</p>
  */
 type CapabilityProbe = {
     /** 能力名（用户语言，与 hint 文案的措辞对齐）。 */
@@ -285,9 +285,10 @@ const CAPABILITY_PROBES: CapabilityProbe[] = [
     },
     // —— 保持负例：委派（会让工具能力被间接使用）与附件三件套（CP 仍 400）——
     {
-        capability: "委派",
+        // task-936（R71）：委派入口从 composer 移除，两种会话都不再渲染。
+        capability: "委派（task-936 已从 composer 移除）",
         probe: '[data-testid="chat-delegate-button"]',
-        workspace: "present",
+        workspace: "absent",
         workspaceLess: "absent",
     },
     {
@@ -346,7 +347,7 @@ describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期�
         wrapper.unmount();
     });
 
-    it("表本身有判别力：14 格里负例恰好 6 格（删光负例 ⇒ 本用例红）", () => {
+    it("表本身有判别力：14 格里负例恰好 7 格（删光负例 ⇒ 本用例红）", () => {
         const cells = CAPABILITY_PROBES.flatMap((row) => [
             { session: "workspace" as const, expected: row.workspace },
             { session: "workspaceLess" as const, expected: row.workspaceLess },
@@ -356,15 +357,18 @@ describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期�
         expect(
             negatives,
             "负例格数变了：要么有人把「仍不支持」的能力放开，要么把表格改成了恒真断言",
-        ).toHaveLength(6);
+        ).toHaveLength(7);
         // 恒真防护升级（task-55 / D-1882③）：负例现在**跨两种会话**，原判据「负例只出现在独立会话列」
         // 会直接把这次合法翻转判红，而放宽成「数量对就行」又会退化成恒真断言。
-        // 改法 = 按行归属点名：整行两格皆 absent 的**只许是**代发入口那一行。
+        // 改法 = 按行归属点名：整行两格皆 absent 的只许是「刻意移除」的两行（代发入口、委派）。
         const bothAbsent = CAPABILITY_PROBES.filter(
             (row) => row.workspace === "absent" && row.workspaceLess === "absent",
         ).map((row) => row.capability);
-        expect(bothAbsent).toEqual(["代发身份入口（task-55 已移除，只留 wire）"]);
-        expect(negatives.filter((cell) => cell.session === "workspace")).toHaveLength(1);
+        expect(bothAbsent).toEqual([
+            "代发身份入口（task-55 已移除，只留 wire）",
+            "委派（task-936 已从 composer 移除）",
+        ]);
+        expect(negatives.filter((cell) => cell.session === "workspace")).toHaveLength(2);
         expect(negatives.filter((cell) => cell.session === "workspaceLess")).toHaveLength(5);
     });
 });

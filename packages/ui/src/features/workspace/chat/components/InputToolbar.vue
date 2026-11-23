@@ -36,6 +36,8 @@ function isVisible(action: ToolbarAction): boolean {
             <template v-for="action in leftActions" :key="action.key">
                 <component :is="action.component" v-bind="action.props">
                     <component :is="action.icon" v-if="action.icon" class="size-3.5" />
+                    <!-- task-936（R72）：模型 chip 移到左工具组后仍要显示文本标签。 -->
+                    <span v-if="action.label" class="truncate">{{ action.label }}</span>
                 </component>
             </template>
         </div>

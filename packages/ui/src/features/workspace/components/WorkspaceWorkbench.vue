@@ -836,6 +836,12 @@ function setActiveDockTab(id: string): void {
  * 静默 return 是**有意的**：在手机上强行改桌面布局会把用户的页签集合写坏。</p>
  */
 const route = useRoute();
+/**
+ * task-936（R67）：会话页的右栏开关已上移到 `WorkspaceView` 的会话头（顶栏右侧）。
+ * 这里按**路由 name** 让位（不匹配 sessionId 段），保证同一屏只有一颗开关。
+ * 其它工作区页（无会话头）仍由本行的开合图标承担。
+ */
+const onSessionRoute = computed(() => route.name === "workspace-session");
 const deepLinkAgentId = computed<string | null>(() => {
     const value = route.query.agent;
     return typeof value === "string" && value.length > 0 ? value : null;
@@ -994,7 +1000,11 @@ function openSessionConfigTab(sessionId: string | null): void {
  * The page calls this through a template ref — the same shape it already uses in the
  * opposite direction (`ChatPanel` exposes `insertMention`).
  */
-defineExpose({ openDockTab, openSessionConfigTab });
+/**
+ * task-936（R67）：会话页顶栏的右栏开关由 `WorkspaceView` 渲染，状态仍由本组件持有。
+ * 只暴露读写入口，**不**另建 store/ref —— 同一屏只能有一个状态源。
+ */
+defineExpose({ openDockTab, openSessionConfigTab, dockOpen, toggleDock });
 </script>
 
 <template>
@@ -1237,6 +1247,7 @@ defineExpose({ openDockTab, openSessionConfigTab });
                                     活在这行才可能「折叠后还能打开」。
                                 -->
                                 <button
+                                    v-if="!onSessionRoute"
                                     type="button"
                                     data-testid="workspace-dock-toggle"
                                     class="inline-flex min-h-7 min-w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
