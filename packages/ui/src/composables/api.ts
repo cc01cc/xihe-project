@@ -1146,7 +1146,8 @@ export interface AgentTemplateSummary {
     toolMode: "none" | "workspace";
     provider?: string;
     model?: string;
-    roleId?: string;
+    /** task-901：CP 模板下发只写 `presetId`（`roleId` 是已退役键），UI 不得再读旧键。 */
+    presetId?: string;
 }
 
 export interface AgentTemplateLayerResponse {

@@ -191,6 +191,17 @@ function templateChoiceLabel(): string {
     const item = templates.value.find((candidate) => candidate.template.id === templateId.value);
     return item ? `${item.template.name} · ${item.layer}` : t("workspace.defaultAgentTemplate");
 }
+
+/**
+ * task-901：模板的预设标识只从 wire 字段 `presetId` 读；CP 不下发 `presetName`，
+ * 因此拿不到可读名字时直接显示 id 本身，不再用「默认模板」掩盖真实取值。
+ */
+function templatePresetLabel(): string {
+    const presetId = templates.value.find((item) => item.template.id === templateId.value)?.template
+        .presetId;
+    return presetId?.trim() ? presetId : t("settings.notSet");
+}
+
 const selectedRoleId = ref("");
 const selectedSkillId = ref("");
 const rbacBusy = ref(false);
@@ -1521,10 +1532,7 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                     </SelectContent>
                 </Select>
                 <span v-if="templateId" class="block text-xs text-muted-foreground">
-                    {{
-                        templates.find((item) => item.template.id === templateId)?.template
-                            .roleId ?? t("workspace.defaultAgentTemplate")
-                    }}
+                    {{ templatePresetLabel() }}
                     ·
                     {{
                         templates.find((item) => item.template.id === templateId)?.template.toolMode

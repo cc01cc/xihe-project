@@ -2718,3 +2718,37 @@ describe("WorkspaceAgentsPanel task-134 委派的子会话（workspace 级权威
         ).toBe(i18n.global.t("workspace.agentDelegatedArchived"));
     });
 });
+
+// task-901：CP 下发的模板只带 `presetId`（`roleId` 已是退役键），UI 再读 `roleId` 会恒为
+// undefined，让「预设」这一行永远显示默认模板文案。这里钉住 wire 真相与渲染值。
+describe("WorkspaceAgentsPanel agent template preset wire key (task-901)", () => {
+    it("shows the template's preset id instead of the default-template copy", async () => {
+        apiMock.getAgentTemplates.mockResolvedValue({
+            layer: "workspace",
+            workspaceId: WORKSPACE_ID,
+            templates: [
+                {
+                    id: "template-1",
+                    name: "Reviewer",
+                    systemPrompt: "review",
+                    toolMode: "workspace",
+                    provider: "openai",
+                    model: "gpt-4o-mini",
+                    presetId: "preset-p-1",
+                },
+            ],
+        });
+        const wrapper = await mountOpenedPanel();
+
+        await setSelectValue(wrapper, '[data-testid="agent-principal-template"]', "template-1");
+        await flushPromises();
+
+        const templateLabel = wrapper
+            .findAll("label")
+            .find((label) => label.find('[data-testid="agent-principal-template"]').exists());
+        expect(templateLabel).toBeDefined();
+        const hint = templateLabel!.findAll("span").at(-1)!;
+        expect(hint.text()).toContain("preset-p-1");
+        expect(hint.text()).not.toContain(i18n.global.t("workspace.defaultAgentTemplate"));
+    });
+});
