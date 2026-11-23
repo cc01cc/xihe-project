@@ -28,8 +28,9 @@
  *  - 非 merge 提交：subject 或 body 必须出现 `PLAN-\d{4}` / `BL-\d{3}` / `D-\d{3}`
  *  - 历史提交豁免：默认只校验 `--since`（默认 `1dd57056`）之后的提交；`--file` 模式不豁免
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { join } from "node:path";
 
 const TYPES = new Set(["feat", "fix", "docs", "test", "chore", "refactor", "perf", "build", "ci", "style", "revert"]);
 const SUBJECT_MAX = 72;
@@ -38,6 +39,101 @@ const BODY_MAX = 100;
 const DEFAULT_SINCE = "1dd57056";
 // oxlint-disable-next-line no-misleading-character-class -- U+FE0F（变体选择符）必须留在字符类里：这条正则的用途就是拦首行 emoji，去掉它会让 ✅ / ⚠️ 这类「基字符 + VS16」序列漏检
 const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u;
+
+/**
+ * 正文 TAB 门（task-877）：只判「本次新增/修改的 Markdown 行」。
+ *
+ * 事故：PowerShell here-string 把反引号当转义符，`` `task-858 `` 被吃成 TAB + `ask-858`。
+ * 同一根因已三次出现，所以把它变成可执行门，而不是继续写提醒。
+ *
+ * 判据：代码围栏（``` / ~~~）**内部**的 TAB 放行（制表符缩进在代码块里合法）；
+ * 围栏外的正文/表格行含 TAB ⇒ 拒绝。
+ */
+export function computeFenceMask(lines) {
+  const mask = new Array(lines.length).fill(false);
+  let fence = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!fence) {
+      const open = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (open) {
+        fence = { char: open[1][0], len: open[1].length };
+        mask[i] = true;
+      }
+      continue;
+    }
+    mask[i] = true;
+    const close = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+    if (close && close[1][0] === fence.char && close[1].length >= fence.len) {
+      fence = null;
+    }
+  }
+  return mask;
+}
+
+/** 解析 `git diff -U0` 的新文件行号（只取新增行）。 */
+export function parseAddedLineNumbers(diffText) {
+  const added = [];
+  let newLine = 0;
+  for (const line of diffText.split("\n")) {
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
+      newLine = Number(hunk[1]) - 1;
+      continue;
+    }
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) {
+      newLine += 1;
+      added.push(newLine);
+    } else if (line.startsWith(" ")) {
+      newLine += 1;
+    }
+  }
+  return added;
+}
+
+/**
+ * @returns {Array<{file: string, line: number, text: string}>} 围栏外新增行中的 TAB
+ */
+export function findProseTabIssues({ repoAbs, baseRef, files }) {
+  const issues = [];
+  for (const file of files) {
+    if (!/\.md$/iu.test(file)) continue;
+    const abs = join(repoAbs, file);
+    if (!fs.existsSync(abs)) continue;
+    const content = fs.readFileSync(abs, "utf8");
+    const lines = content.split(/\r?\n/u);
+    const fenceMask = computeFenceMask(lines);
+    const tracked = spawnSync("git", ["-C", repoAbs, "cat-file", "-e", `${baseRef}:${file}`], {
+      encoding: "utf8",
+    }).status === 0;
+    let addedLines;
+    if (!tracked) {
+      addedLines = lines.map((_, index) => index + 1);
+    } else {
+      const diff = spawnSync(
+        "git",
+        ["-C", repoAbs, "diff", "--no-color", "--unified=0", baseRef, "--", file],
+        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+      );
+      if (diff.status !== 0) {
+        throw new Error(`git diff ${baseRef} -- ${file} 失败：${String(diff.stderr || "").trim()}`);
+      }
+      addedLines = parseAddedLineNumbers(String(diff.stdout ?? ""));
+    }
+    for (const lineNumber of addedLines) {
+      if (fenceMask[lineNumber - 1]) continue;
+      const text = lines[lineNumber - 1] ?? "";
+      if (!text.includes("\t")) continue;
+      issues.push({
+        file,
+        line: lineNumber,
+        text: text.replaceAll("\t", "→").slice(0, 160),
+      });
+    }
+  }
+  return issues;
+}
 const EMPTY_WORD = /^(更新|修改|调整|优化|处理|完善|整理)/;
 
 /** 显示宽度：CJK / 全角 / 韩文 / 假名 记 2 列 */
@@ -134,17 +230,34 @@ const BOOLEAN_FLAGS = new Map([
   ["--report-only", "reportOnly"],
   ["--stats", "stats"],
   ["--enforce", "enforce"],
+  ["--prose-tabs", "proseTabs"],
 ]);
 const VALUE_FLAGS = new Map([
   ["--file", "file"],
   ["--range", "range"],
   ["--since", "since"],
+  ["--repo", "repo"],
+  ["--base", "base"],
+  ["--path", "path"],
 ]);
 const USAGE =
-  "用法: node scripts/check-commit-msg.mjs [--file <路径>] [--range <a..b>] [--since <sha>] [--json] [--stats] [--report-only | --enforce]";
+  "用法: node scripts/check-commit-msg.mjs [--file <路径>] [--range <a..b>] [--since <sha>] [--json] [--stats] [--report-only | --enforce]\n" +
+  "      node scripts/check-commit-msg.mjs --prose-tabs --repo <仓路径> --base <sha> --path <md> [--path <md>] [--json]";
 
 function parseArgs(argv) {
-  const opts = { json: false, reportOnly: false, stats: false, enforce: false, file: undefined, range: undefined, since: undefined };
+  const opts = {
+    json: false,
+    reportOnly: false,
+    stats: false,
+    enforce: false,
+    proseTabs: false,
+    file: undefined,
+    range: undefined,
+    since: undefined,
+    repo: undefined,
+    base: undefined,
+    paths: [],
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const boolKey = BOOLEAN_FLAGS.get(arg);
@@ -158,7 +271,8 @@ function parseArgs(argv) {
       if (value === undefined || value.startsWith("--")) {
         return { error: `参数缺值: ${arg}` };
       }
-      opts[valKey] = value;
+      if (valKey === "path") opts.paths.push(value);
+      else opts[valKey] = value;
       i++;
       continue;
     }
@@ -176,8 +290,31 @@ if (parsed.error) {
   console.error(USAGE);
   process.exit(2);
 }
-const { json, reportOnly, stats, file, range, enforce } = parsed.opts;
+const { json, reportOnly, stats, file, range, enforce, proseTabs, repo, base, paths } = parsed.opts;
 const since = parsed.opts.since ?? DEFAULT_SINCE;
+
+if (proseTabs) {
+  if (!repo || !base || paths.length === 0) {
+    console.error("--prose-tabs 需要 --repo <仓路径> --base <sha> 且至少一个 --path");
+    console.error(USAGE);
+    process.exit(2);
+  }
+  let issues = [];
+  try {
+    issues = findProseTabIssues({ repoAbs: repo, baseRef: base, files: paths });
+  } catch (error) {
+    console.error(`prose-tabs 扫描失败：${error instanceof Error ? error.message : String(error)}`);
+    process.exit(2);
+  }
+  if (json) {
+    console.log(JSON.stringify({ mode: "prose-tabs", checked: paths.length, issues }, null, 2));
+  } else if (issues.length) {
+    for (const issue of issues) {
+      console.error(`${issue.file}:${issue.line}: ${issue.text}`);
+    }
+  }
+  process.exit(issues.length ? 1 : 0);
+}
 
 // 显式历史豁免白名单（每条必须带 reason）：用于"合入时才发现违规、且已进 develop 不可改写"的既成事实。
 // 禁止批量塞历史提交；新增条目须在台账留痕。

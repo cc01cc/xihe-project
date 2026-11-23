@@ -27,7 +27,7 @@ const SCRIPT = fileURLToPath(new URL("./check-commit-msg.mjs", import.meta.url))
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const USAGE_PREFIX = "用法: node scripts/check-commit-msg.mjs";
 /** 改后 usage 行必须列全的合法参数（新增参数时同批改这里，逼着文档与解析器同步）。 */
-const LEGAL_FLAGS = ["--file", "--range", "--since", "--json", "--stats", "--report-only", "--enforce"];
+const LEGAL_FLAGS = ["--file", "--range", "--since", "--json", "--stats", "--report-only", "--enforce", "--prose-tabs", "--repo", "--base", "--path"];
 
 function run(args, cwd = REPO_ROOT) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: "utf8" });
@@ -100,7 +100,9 @@ test("互斥组合 `--report-only --enforce` ⇒ exit 2（改前 report-only 静
 
 test("usage 行列全全部合法参数（新增参数必须同批更新文档与解析器）", () => {
     const r = run(["--nope"]);
-    const usage = r.stderr.split(/\r?\n/).find((line) => line.startsWith(USAGE_PREFIX));
+    const lines = r.stderr.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.startsWith(USAGE_PREFIX));
+    const usage = start >= 0 ? lines.slice(start).join("\n") : "";
     assert.ok(usage, "stderr 里没有 usage 行");
     for (const flag of LEGAL_FLAGS) {
         assert.ok(usage.includes(flag), `usage 行漏了 ${flag}：${usage}`);
@@ -168,6 +170,45 @@ test("`--range` 真的生效：`--stats` 的 span 等于所给区间，违规数
         assert.equal(bogus.code, 2, bogus.stdout + bogus.stderr);
         assert.match(bogus.stderr, /^git log .* 失败：/m);
         assert.equal(bogus.stdout, "");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("`--prose-tabs`：围栏外新增 TAB 拒、围栏内放行、旧 TAB 不误伤", () => {
+    const dir = mkdtempSync(join(tmpdir(), "xh-commit-msg-prose-"));
+    const git = (...args) =>
+        spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=.git/no-hooks", ...args], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+    try {
+        assert.equal(git("init", "-q", "-b", "main").status, 0);
+        writeFileSync(join(dir, "a.md"), "# a\n\n旧行\t带 TAB\n");
+        assert.equal(git("add", "a.md").status, 0);
+        assert.equal(git("commit", "-q", "-m", "base").status, 0);
+        const base = git("rev-parse", "HEAD").stdout.trim();
+
+        // 旧 TAB 不在新增行 ⇒ 放行
+        writeFileSync(join(dir, "a.md"), "# a\n\n旧行\t带 TAB\n新增干净行\n");
+        const clean = run(["--prose-tabs", "--repo", dir, "--base", base, "--path", "a.md", "--json"], dir);
+        assert.equal(clean.code, 0, clean.stdout + clean.stderr);
+        assert.deepEqual(JSON.parse(clean.stdout).issues, []);
+
+        // 新增正文行含 TAB ⇒ 拒且带 文件:行
+        writeFileSync(join(dir, "a.md"), "# a\n\n旧行\t带 TAB\n新增干净行\n\t事故行\n");
+        const red = run(["--prose-tabs", "--repo", dir, "--base", base, "--path", "a.md", "--json"], dir);
+        assert.equal(red.code, 1, red.stdout + red.stderr);
+        const issues = JSON.parse(red.stdout).issues;
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0].file, "a.md");
+        assert.equal(issues[0].line, 5);
+
+        // 围栏内 TAB ⇒ 放行
+        writeFileSync(join(dir, "a.md"), "# a\n\n旧行\t带 TAB\n新增干净行\n```java\n\tint x = 1;\n```\n");
+        const fenced = run(["--prose-tabs", "--repo", dir, "--base", base, "--path", "a.md", "--json"], dir);
+        assert.equal(fenced.code, 0, fenced.stdout + fenced.stderr);
+        assert.deepEqual(JSON.parse(fenced.stdout).issues, []);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
