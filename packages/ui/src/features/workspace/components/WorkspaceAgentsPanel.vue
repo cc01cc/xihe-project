@@ -898,9 +898,13 @@ async function loadTemplates() {
 }
 
 function actionLabel(actionClass: string): string {
-    const key = `workspace.agentAction${actionClass[0]?.toUpperCase()}${actionClass.slice(1)}`;
+    // task-904: tolerate canonical `action:` names even if a caller bypasses the read boundary.
+    // `cap:` is not an action atom, so it has no localized action label.
+    const bare = bareAtom(actionClass);
+    if (!bare) return actionClass;
+    const key = `workspace.agentAction${bare[0]?.toUpperCase()}${bare.slice(1)}`;
     const label = t(key);
-    return label === key ? actionClass : label;
+    return label === key ? bare : label;
 }
 
 function hasPermission(actionClass: string): boolean {
@@ -1193,7 +1197,12 @@ async function bindCreatedPrincipal() {
 function startEditing(agent: WorkspaceAgentBinding) {
     if (canManageWorkspaceAgents.value !== true) return;
     editingPrincipalId.value = agent.principalId;
-    permissions.value = agent.permissionsSnapshot.map((permission) => ({ ...permission }));
+    // task-904: CP stores/returns canonical `action:` names; the editor compares bare names.
+    // Filter `cap:` rows: this surface edits action permissions only.
+    permissions.value = agent.permissionsSnapshot.flatMap((permission) => {
+        const actionClass = bareAtom(permission.actionClass);
+        return actionClass === null ? [] : [{ ...permission, actionClass }];
+    });
     // 47A：回显以 CP 记的 `capSource` 为准（`baseline` ⇒ 继承态）；更早的响应没有该字段时按显式处理。
     capMode.value = agent.capSource === "baseline" ? "inherit" : "explicit";
     error.value = "";

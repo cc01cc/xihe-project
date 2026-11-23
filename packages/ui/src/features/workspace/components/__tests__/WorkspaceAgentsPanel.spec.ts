@@ -815,6 +815,11 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
         bound: true,
         disabled: false,
     };
+    /** task-904: CP materializes canonical `action:` names in the frozen snapshot. */
+    const prefixedCapAgent = {
+        ...capAgent,
+        permissionsSnapshot: [{ actionClass: "action:read", resource: "src/*" }],
+    };
     const editCap = () =>
         wrapper?.get(`[data-testid="workspace-agent-edit-cap-${capAgent.principalId}"]`);
     const saveCap = () =>
@@ -883,6 +888,93 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
         // 显式态下勾选框在 DOM 里，且可以全部不勾。
         expect(wrapper.find(`[data-testid="agent-cap-write"]`).exists()).toBe(true);
         await saveCap().trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            capAgent.principalId,
+            [],
+        );
+    });
+
+    /**
+     * task-904: one un-normalized read boundary caused four user-visible failures.
+     * Each symptom is pinned by its own measured quantity so a partial fix cannot hide
+     * behind the others.
+     */
+    async function mountPrefixedCapAgent() {
+        apiMock.getWorkspaceAgents.mockResolvedValue([prefixedCapAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        return mountOpenedPanel();
+    }
+
+    async function openPrefixedCapEditor() {
+        const mounted = await mountPrefixedCapAgent();
+        await mounted
+            .get(`[data-testid="workspace-agent-edit-cap-${prefixedCapAgent.principalId}"]`)
+            .trigger("click");
+        await flushPromises();
+        return mounted;
+    }
+
+    it("renders the localized action label, not the canonical action:read string (task-904)", async () => {
+        const mounted = await mountPrefixedCapAgent();
+        const cap = mounted
+            .get(`[data-testid="workspace-agent-${prefixedCapAgent.principalId}"]`)
+            .get('[data-testid="workspace-agent-cap"]');
+        expect(cap.text()).toContain(i18n.global.t("workspace.agentActionRead"));
+        expect(cap.text()).not.toContain("action:read");
+    });
+
+    it("checks the action checkbox from the canonical action:read snapshot (task-904)", async () => {
+        const mounted = await openPrefixedCapEditor();
+        const box = mounted.get('[data-testid="agent-cap-read"]');
+        expect((box.element as HTMLInputElement).checked).toBe(true);
+    });
+
+    it("shows the stored resource for the canonical action:read snapshot (task-904)", async () => {
+        const mounted = await openPrefixedCapEditor();
+        expect(
+            (mounted.get('[data-testid="agent-resource-read"]').element as HTMLInputElement).value,
+        ).toBe("src/*");
+    });
+
+    it("does not duplicate the atom when toggling the canonical action:read snapshot (task-904)", async () => {
+        const mounted = await openPrefixedCapEditor();
+        const box = mounted.get('[data-testid="agent-cap-read"]');
+        await box.setValue(false);
+        await box.setValue(true);
+        await mounted
+            .get(`[data-testid="workspace-agent-save-cap-${prefixedCapAgent.principalId}"]`)
+            .trigger("click");
+        await flushPromises();
+
+        const saved = apiMock.updateWorkspaceAgentCap.mock.calls[0]?.[2] as
+            | { actionClass: string; resource: string }[]
+            | undefined;
+        expect(saved?.filter((permission) => permission.actionClass === "read")).toHaveLength(1);
+        expect(saved?.some((permission) => permission.actionClass === "action:read")).toBe(false);
+    });
+
+    it("filters cap: rows out of the action editor (task-904)", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([
+            {
+                ...capAgent,
+                permissionsSnapshot: [{ actionClass: "cap:workspace:admin", resource: "*" }],
+            },
+        ]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        const mounted = await mountOpenedPanel();
+
+        await mounted
+            .get(`[data-testid="workspace-agent-edit-cap-${capAgent.principalId}"]`)
+            .trigger("click");
+        await flushPromises();
+        await mounted
+            .get(`[data-testid="workspace-agent-save-cap-${capAgent.principalId}"]`)
+            .trigger("click");
         await flushPromises();
 
         expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
