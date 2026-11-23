@@ -33,7 +33,7 @@ import { parse } from "vue/compiler-sfc";
 const ROOT = resolve(import.meta.dirname, "..");
 const DEFAULT_BASELINE = resolve(
     ROOT,
-    "../../../internal/A03-xihe/evidence/2026-11-24-task-927/baseline.json",
+    "../../../internal/A03-xihe/evidence/2026-11-24-form-validation/baseline.json",
 );
 const FORM_CONTAINERS = new Set([
     "form",
