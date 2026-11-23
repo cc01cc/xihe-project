@@ -10,7 +10,7 @@ import { useChatStore } from "../chat/stores/chat";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../../composables/api";
 import { useWorkspaceSSE } from "../composables/useWorkspaceSSE";
 import { logger } from "../../../lib/logger";
-import { causeErrorToastText } from "../../../lib/errorMessages";
+import { causeErrorToastText, problemDetailText } from "../../../lib/errorMessages";
 import { clearTabWorkspace } from "../../../lib/workspaceContext";
 import { toast } from "vue-sonner";
 import { FolderTree, PanelRightClose, PanelRightOpen } from "@lucide/vue";
@@ -147,6 +147,11 @@ const routeSessionId = computed(() => (route.params.sessionId as string | undefi
  */
 /** D27：空选择的原因（"none-bound" 未绑定 / "all-disabled" 已绑定但全被禁用）。 */
 const agentUnavailableReason = ref<"" | "none-bound" | "all-disabled">("");
+/**
+ * task-928：CP 对「解析不出可用默认智能体」的 400 带一句**可操作**文案（改默认的端点与配置键）。
+ * 它是唯一能解释「为什么连默认值都进不去」的信息源 ⇒ 原样上屏，不吞、不改写成「尚未绑定」。
+ */
+const agentSessionNotice = ref("");
 
 const boundWorkspaceAgents = computed(() =>
     workspaceAgents.value.filter((agent) => agent.bound === true && agent.disabled !== true),
@@ -303,7 +308,10 @@ async function submitAgentSession(
     } catch (cause) {
         const status = cause instanceof ApiError ? cause.problem.status : undefined;
         if (fallbackOnMissingDefault && status === 400) {
-            // 默认值失效（被取消/被禁用/CP 尚未落库）⇒ 回到手动选择，不算失败。
+            // 默认值失效（被取消/被禁用/尚无默认）⇒ 回到手动选择，不算失败。
+            // task-928：但**服务端那句可操作文案必须上屏** —— 「尚未绑定」是本地猜测，
+            // CP 的文案才是用户能执行的下一步（改默认 / 配置默认主体）。
+            agentSessionNotice.value = problemDetailText(cause, "");
             logger.warn("Workspace default Agent rejected; falling back to the picker", cause);
             return { id: null, missingDefault: true };
         }
@@ -334,31 +342,32 @@ async function createSessionForWorkspace() {
     try {
         await auth.selectWorkspace(workspaceId.value);
         workspaceAgents.value = await api.getWorkspaceAgents(workspaceId.value);
-        // PLAN-0622 D26/D27：列表是三类并集；未绑定 → CP 403 not bound，已禁用 → CP 409。
-        // 两者都不可选，但**原因不同**，对用户必须分开说（错误归因会让人去重复绑定）。
-        if (boundWorkspaceAgents.value.length === 0) {
-            const anyBound = workspaceAgents.value.some((agent) => agent.bound === true);
-            agentUnavailableReason.value = anyBound ? "all-disabled" : "none-bound";
-            toast.error(t(anyBound ? "workspace.noEnabledAgent" : "workspace.noBoundAgent"));
-            return null;
-        }
-        agentUnavailableReason.value = "";
-        // task-116（方案 A）：有默认智能体就直接建会话，省掉一步选择；标记只认服务端列表
-        // （`isDefault`），不做本地缓存/乐观默认 —— 取消默认后下一次新建自然回到选择框。
-        const defaultAgent = boundWorkspaceAgents.value.find((agent) => agent.isDefault === true);
-        if (defaultAgent) {
-            const result = await submitAgentSession(defaultAgent.principalId, true);
-            if (!result.missingDefault) return result.id;
-        }
-        selectedAgentPrincipalId.value = "";
-        showAgentSelection.value = true;
-        return null;
     } catch (cause) {
+        // 列表**读失败** ≠ 没有绑定：403/网络失败必须说「读不到」，不能伪装成「尚未绑定」。
         const message = causeErrorToastText(t, cause, t("workspace.agentsLoadFailed"));
         logger.error("Load Workspace Agents failed", cause);
         toast.error(message);
         return null;
     }
+    agentUnavailableReason.value = "";
+    agentSessionNotice.value = "";
+    // task-116（方案 A）：本地有默认智能体就带上它，省掉一步选择；标记只认服务端列表
+    // （`isDefault`），不做本地缓存/乐观默认。
+    const defaultAgent = boundWorkspaceAgents.value.find((agent) => agent.isDefault === true);
+    // task-928（用户裁定）：前端**不得**本地判空后 return —— 默认链由 CP 解析
+    // （env > 管理员锁定 > workspace-default-binding > workspace > workspace-default > user > instance）。
+    // 本地没有默认时传空串，让 CP 决定；解析不出时 CP 的 400 文案直接上屏。
+    const result = await submitAgentSession(defaultAgent?.principalId ?? "", true);
+    if (!result.missingDefault && result.id) return result.id;
+    if (!result.missingDefault) return null;
+    // 回退到手动选择：原因按列表**事实**分两类，且只在 CP 说「没有可用默认」后才说 ——
+    // 这不是前端短路，是服务端结论的呈现。
+    agentUnavailableReason.value = workspaceAgents.value.some((agent) => agent.bound === true)
+        ? "all-disabled"
+        : "none-bound";
+    selectedAgentPrincipalId.value = "";
+    showAgentSelection.value = true;
+    return null;
 }
 
 async function confirmCreateAgentSession() {
@@ -623,6 +632,14 @@ watch(isMobileViewport, (mobile) => {
                             {{ t("workspace.openAgentManagement") }}
                         </button>
                     </div>
+                    <!-- task-928：CP 解析不出可用默认时的可操作文案（原样上屏，不改写）。 -->
+                    <div
+                        v-if="agentSessionNotice"
+                        class="mx-4 mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700"
+                        data-testid="workspace-agent-session-notice"
+                    >
+                        {{ agentSessionNotice }}
+                    </div>
                     <ChatPanel
                         v-if="sessionId"
                         ref="chatPanelRef"
@@ -697,7 +714,26 @@ watch(isMobileViewport, (mobile) => {
                 <label for="workspace-agent-principal" class="block text-sm text-foreground">
                     {{ t("workspace.chooseAgentLabel") }}
                 </label>
-                <Select v-model="selectedAgentPrincipalId">
+                <!-- task-928：没有可选的已绑定主体时给明确空态（不是死路：右侧有打开管理入口）。 -->
+                <div
+                    v-if="boundWorkspaceAgents.length === 0"
+                    data-testid="workspace-agent-picker-empty"
+                    class="space-y-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground"
+                >
+                    <p>{{ t("workspace.chooseAgentEmpty") }}</p>
+                    <button
+                        type="button"
+                        class="rounded border border-amber-500/50 px-2 py-0.5 text-amber-700"
+                        data-testid="workspace-agent-picker-manage"
+                        @click="
+                            showAgentSelection = false;
+                            handleOpenAgentsPanel();
+                        "
+                    >
+                        {{ t("workspace.openAgentManagement") }}
+                    </button>
+                </div>
+                <Select v-else v-model="selectedAgentPrincipalId">
                     <SelectTrigger
                         id="workspace-agent-principal"
                         data-testid="workspace-agent-principal-select"

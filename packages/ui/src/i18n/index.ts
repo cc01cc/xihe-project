@@ -933,6 +933,8 @@ const messages = {
             chooseAgentTitle: "选择智能体",
             chooseAgentLabel: "此工作区由哪个智能体处理？",
             chooseAgentPlaceholder: "选择已绑定的智能体",
+            chooseAgentEmpty:
+                "此工作区还没有可选的智能体：先绑定一个主体，或在上层设置默认智能体。",
             noBoundAgent: "此工作区尚未绑定智能体",
             noEnabledAgent: "已绑定的智能体已被禁用，请在智能体管理中启用或绑定新的智能体",
             openAgentManagement: "打开智能体管理",
@@ -942,7 +944,19 @@ const messages = {
             activeAgent: "当前智能体",
             agentUnbound: "未绑定智能体",
             agentManagementDescription:
-                "创建智能体主体，并管理其在此工作区的工作区角色。创建与绑定分别授权。",
+                "从组织内已创建的智能体主体中绑定到本工作区。主体创建与组织归属在「设置 → 智能体主体」管理，此处不创建主体。",
+            agentCandidatesTitle: "可绑定的智能体主体",
+            agentCandidatesHint: "只列出你可见、且尚未绑定到本工作区的主体。",
+            agentCandidatesCreateLink: "到「智能体主体」创建",
+            agentCandidatesLoading: "正在读取可绑定候选…",
+            agentCandidatesForbidden: "缺少管理本工作区智能体的权限，无法读取可绑定候选。",
+            agentCandidatesFailed: "可绑定候选加载失败",
+            agentCandidatesEmpty:
+                "现在没有可绑定的主体。先到「智能体主体」创建，或解除它在其他工作区的绑定后再回来。",
+            agentCandidateDisabled: "已禁用，不能绑定",
+            agentCandidateUnbindable: "当前不能绑定",
+            agentCapExceedsActor:
+                "已勾选的权限超出你自己持有的授权范围，请取消超出的项或让管理员提升你的授权。",
             createAgentPrincipal: "创建智能体",
             agentCreatePermissionNote:
                 "需要 MANAGE_WORKSPACE_AGENTS；创建默认进入当前工作区。无权限时请联系管理员在「设置 → 授权预设与绑定」授予含该原子的授权预设。",
@@ -962,7 +976,7 @@ const messages = {
             agentPendingRecoveryUnavailable:
                 "无法在本浏览器保存待绑定引用；请保持当前页面打开，或重新创建主体。",
             agentCapNote:
-                "选择工作区角色（WS_VIEWER 只读 / WS_EDITOR 读写）。默认不授予工具权限；权限仍受角色绑定与操作者授权约束。",
+                "工作区上限有两种状态：跟随角色基线（默认，不额外授予工具权限）或显式指定权限；显式指定的集合不得超出你自己持有的授权。",
             bindAgent: "绑定到此工作区",
             boundAgents: "已绑定智能体",
             refreshAgents: "刷新",
@@ -5398,6 +5412,8 @@ const messages = {
             chooseAgentTitle: "Choose an Agent",
             chooseAgentLabel: "Which Agent should handle this Workspace chat?",
             chooseAgentPlaceholder: "Select a bound Agent",
+            chooseAgentEmpty:
+                "This Workspace has no selectable Agent yet: bind a principal, or set an upper-level default Agent.",
             noBoundAgent: "No Agent is bound to this Workspace",
             noEnabledAgent:
                 "The bound Agents are disabled. Enable one or bind a new Agent in Agent management.",
@@ -5408,7 +5424,21 @@ const messages = {
             activeAgent: "Active Agent",
             agentUnbound: "No Agent bound",
             agentManagementDescription:
-                "Create Agent principals and manage their workspace role in this Workspace. Creation and binding require separate grants.",
+                "Bind an existing Agent principal into this Workspace. Create principals and manage their organisation membership on Settings → Agent Principals; this surface never creates one.",
+            agentCandidatesTitle: "Bindable Agent principals",
+            agentCandidatesHint:
+                "Lists only principals you can see that are not bound to this Workspace yet.",
+            agentCandidatesCreateLink: "Create on Agent Principals",
+            agentCandidatesLoading: "Loading bindable candidates…",
+            agentCandidatesForbidden:
+                "You do not have permission to manage this Workspace's Agents, so bindable candidates cannot be read.",
+            agentCandidatesFailed: "Failed to load bindable candidates",
+            agentCandidatesEmpty:
+                "No principal can be bound right now. Create one on Agent Principals, or unbind it from another Workspace first.",
+            agentCandidateDisabled: "Disabled — cannot be bound",
+            agentCandidateUnbindable: "Not bindable right now",
+            agentCapExceedsActor:
+                "The checked permissions exceed the grants you hold. Remove them or ask an administrator to widen your grants.",
             createAgentPrincipal: "Create Agent",
             agentCreatePermissionNote:
                 "Requires MANAGE_WORKSPACE_AGENTS; creation targets the current workspace. Without it, ask an administrator to grant a preset carrying that atom under Settings → Grant presets & bindings.",
@@ -5428,7 +5458,7 @@ const messages = {
             agentPendingRecoveryUnavailable:
                 "This browser could not store the pending reference. Keep this page open, or create the principal again.",
             agentCapNote:
-                "Choose the workspace role (WS_VIEWER read-only / WS_EDITOR read/write). No tool permissions are granted by default; principal and operator grants still apply.",
+                "A Workspace cap has two states: follow the preset baseline (the default, no extra tool grants) or an explicit set. The explicit set may not exceed the grants you hold yourself.",
             bindAgent: "Bind to this Workspace",
             boundAgents: "Bound Agents",
             refreshAgents: "Refresh",

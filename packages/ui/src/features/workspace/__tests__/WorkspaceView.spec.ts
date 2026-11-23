@@ -15,6 +15,11 @@ import { openSelect, selectItemValues, setSelectValue } from "../../../test-util
 // 的是 `i18n.global`（store 没有组件实例），本文件下方那个局部 `createI18n` 不参与求值。
 import { i18n as globalI18n } from "../../../i18n";
 
+/** task-928：候选读面是模块级 `request`（不是 `api.*`），必须单独 mock。 */
+const requestMock = vi.hoisted(() =>
+    vi.fn<(path: string, options?: RequestInit) => Promise<unknown>>(),
+);
+
 vi.mock("vue-router", () => ({
     createRouter: () => ({
         push: vi.fn<() => void>(),
@@ -45,6 +50,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
+        request: requestMock,
         api: {
             ...actual.api,
             getSessions: vi.fn<typeof apiModule.api.getSessions>(),
@@ -114,6 +120,17 @@ const i18n = createI18n({
                 chooseAgentTitle: "Choose an Agent",
                 chooseAgentLabel: "Choose Agent",
                 chooseAgentPlaceholder: "Select Agent",
+                chooseAgentEmpty: globalCopy("workspace.chooseAgentEmpty"),
+                agentCandidatesTitle: globalCopy("workspace.agentCandidatesTitle"),
+                agentCandidatesHint: globalCopy("workspace.agentCandidatesHint"),
+                agentCandidatesCreateLink: globalCopy("workspace.agentCandidatesCreateLink"),
+                agentCandidatesLoading: globalCopy("workspace.agentCandidatesLoading"),
+                agentCandidatesForbidden: globalCopy("workspace.agentCandidatesForbidden"),
+                agentCandidatesFailed: globalCopy("workspace.agentCandidatesFailed"),
+                agentCandidatesEmpty: globalCopy("workspace.agentCandidatesEmpty"),
+                agentCandidateDisabled: globalCopy("workspace.agentCandidateDisabled"),
+                agentCandidateUnbindable: globalCopy("workspace.agentCandidateUnbindable"),
+                agentCapExceedsActor: globalCopy("workspace.agentCapExceedsActor"),
                 noBoundAgent: "No bound Agent",
                 noEnabledAgent: "The bound Agents are disabled",
                 openAgentManagement: "Open Agent management",
@@ -306,6 +323,8 @@ beforeEach(() => {
         ],
     });
     mockedApi.getWorkspaceAgents.mockResolvedValue([]);
+    requestMock.mockReset();
+    requestMock.mockResolvedValue({ agents: [], bindableCandidates: [] });
     mockedApi.getSelfPermissions.mockResolvedValue({
         userId: "user-1",
         instanceCapabilities: [],
@@ -569,7 +588,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         });
     });
 
-    it("keeps the workspace usable without auto-creating a session", async () => {
+    it("does not auto-create a session on mount and lets CP resolve the default chain", async () => {
         mockedApi.getSessions.mockResolvedValue({ sessions: [] });
         mockedApi.getWorkspaceAgents.mockResolvedValue([
             {
@@ -598,34 +617,18 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
 
         await flushPromises();
         expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(false);
+        // 挂载不等于建会话。
+        expect(mockedApi.createSession).not.toHaveBeenCalled();
 
         await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
         await flushPromises();
-        expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="workspace-agent-principal-select"]').exists()).toBe(
-            true,
-        );
-        await setSelectValue(
-            wrapper,
-            '[data-testid="workspace-agent-principal-select"]',
-            "agent-1",
-        );
-        await wrapper.find('[data-testid="workspace-create-agent-session"]').trigger("click");
-        await flushPromises();
+        // task-928：列表里没有默认行 ⇒ 不再本地判空 return，而是发一个**空白 agent id**，
+        // 由 CP 的默认链（env > 锁定 > workspace-default-binding > workspace > user > instance）决定。
         expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true);
-        // D-1167 ④（task-365 F）：工具栏的「当前智能体」chip 整体删除 —— 会话身份在创建时已经
-        // 由 `POST /sessions` 的 `agentPrincipalId` 请求参数钉住（下一行断言），workbench chrome
-        // 不再复述它；无对象的断言 = 「该元素不存在」。
-        expect(wrapper.find('[data-testid="workspace-active-agent"]').exists()).toBe(false);
-        // task-52 / batch-02 ②：默认标题从前端硬编码 `"New Chat"` 改为 i18n 键
-        // `workspace.sessionDefaultTitle`（`stores/session.ts#createSession` 的默认参数）。
-        //
-        // 期望值取**真实全局 i18n**（`src/i18n`）而不是本文件那套局部 `messages`：store 是
-        // setup 之外的单例，它读的是 `i18n.global`，局部实例在这里不参与求值 —— 写死局部
-        // 夹具的值会让这条断言永远测不到产品取值路径（正是 `check-i18n-fixture-copies` 记的假绿形态）。
-        // 承重点：把 store 改回硬编码 `"New Chat"` ⇒ 本行红（实收 `"New Chat"`）。
+        // 期望标题取**真实全局 i18n**（`src/i18n`）而不是本文件那套局部 `messages`：store 是
+        // setup 之外的单例，它读的是 `i18n.global`。
         expect(mockedApi.createSession).toHaveBeenCalledWith(
-            "agent-1",
+            "",
             globalI18n.global.t("workspace.sessionDefaultTitle"),
         );
     });
@@ -669,9 +672,8 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         expect(mockedApi.getWorkspaceAgents).toHaveBeenCalledWith("workspace-1");
     });
 
-    it("creates a principal from the selected persisted template snapshot", async () => {
-        // task-174 A1（`D-1538`）：工具栏 `Bot` 入口已退役，智能体面板改由 dock 页签 /
-        // 成员页「智能体」tab 打开 ⇒ 这里直接以布局预置打开该面板（原本靠点工具栏图标）。
+    it("opens the workspace Agent panel with no creation entry (bind-only)", async () => {
+        // task-174 A1（`D-1538`）：智能体面板由 dock 页签打开（工具栏入口已退役）。
         localStorage.setItem(
             "xihe-layout-ws:workspace-1",
             JSON.stringify({
@@ -683,36 +685,12 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         );
         const wrapper = mountView();
         await flushPromises();
-        // 2026-11-04 五裁（主体名规范）：名字只允许字母/中文/数字且不能以数字开头 ——
-        // 原 "Template-backed" 带连字符，现在会被实时校验拦下（createBlocked ⇒ submit 不发）。
-        await wrapper.find('[data-testid="agent-principal-name"]').setValue("TemplateBacked");
-        await setSelectValue(wrapper, '[data-testid="agent-principal-template"]', "template-1");
-        expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain(
-            "preset-1",
-        );
-        expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain(
-            "gpt-example",
-        );
-        await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
-        await flushPromises();
 
-        // PLAN-0622：创建改用对象入参（携带 scope/模型意图）；本用例只断言模板字段原样透传。
-        expect(mockedApi.createAgentPrincipal).toHaveBeenCalledWith(
-            expect.objectContaining({
-                name: "TemplateBacked",
-                templateId: "template-1",
-            }),
-        );
-        expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain(
-            "principal-created",
-        );
-        expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain(
-            "Stored template",
-        );
-        expect(
-            (wrapper.find('[data-testid="agent-principal-create"]').element as HTMLButtonElement)
-                .disabled,
-        ).toBe(true);
+        // task-928（用户裁定 2026-11-24）：工作区**只绑不建** ⇒ 面板里没有创建表单，
+        // 只有可绑定候选区（主体创建入口在组织侧）。
+        expect(wrapper.find('[data-testid="agent-principal-create-form"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="agent-bindable-candidates"]').exists()).toBe(true);
+        expect(mockedApi.createAgentPrincipal).not.toHaveBeenCalled();
     });
 });
 
@@ -752,6 +730,15 @@ it("lists only bound and enabled agents in the session selector", async () => {
             disabled: true,
         },
     ]);
+    // task-928：本地没有默认时前端**仍发请求**（空白 agent id 交 CP 解析链）；
+    // CP 答「没有可用默认」⇒ 400 ⇒ 回退手动选择。
+    mockedApi.createSession.mockRejectedValue(
+        new ApiError({
+            code: "INVALID_REQUEST",
+            detail: "no usable default agent was resolved",
+            status: 400,
+        }),
+    );
     const wrapper = mountView();
     await flushPromises();
     await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
@@ -781,6 +768,13 @@ it("explains that the bound agents are disabled instead of claiming nothing is b
             disabled: true,
         },
     ]);
+    mockedApi.createSession.mockRejectedValue(
+        new ApiError({
+            code: "INVALID_REQUEST",
+            detail: "no usable default agent was resolved",
+            status: 400,
+        }),
+    );
     const wrapper = mountView();
     await flushPromises();
     await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
