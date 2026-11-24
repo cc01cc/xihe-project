@@ -13,6 +13,7 @@ import {
     type AgentRoleBinding,
 } from "../../composables/api";
 import { presentCauseError, type ErrorPresentation } from "../../lib/errorMessages";
+import { validateField } from "../../lib/formValidation";
 // task-92（缺口二，抽屉段）：换页时的整页草稿守卫；与 widget 内 `unsavedConfirmOpen` 共用同一 dirty 真源。
 import { useDraftLeaveGuard } from "../../composables/useDraftLeaveGuard";
 import { formatDate } from "../../lib/dateFormat";
@@ -30,6 +31,7 @@ import {
     AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import AgentModelBindingFields, {
     type AgentModelBindingDraft,
 } from "./AgentModelBindingFields.vue";
@@ -61,7 +63,8 @@ import {
  * **每个分区只带自己的键**（absent = 不触碰），响应 echo 持久化文档后以响应回填本地与宿主行。</p>
  *
  * <ul>
- *   <li>persona 只读（Q1 裁定：templateId 不在 PATCH body，创建时钉住不可换）；</li>
+ *   <li>persona 自 task-974（R35，用户 2026-11-24 裁定）起可改：PATCH 只替换
+ *       {@code template_snapshot.systemPrompt}，模板 id 与其余快照键不动；</li>
  *   <li><b>可写分区由宿主给（{@link editableSections}），`readonly` 只是宿主层的短路开关</b>。
  *       旧的「instance 层整体只读」（task-191 Q2）已由 <b>D-1941 作废</b>（task-955：用户
  *       2026-11-24 要求「智能体配置要能配」）⇒ 实例面板现在给 model/delegation/hooks；</li>
@@ -73,7 +76,7 @@ import {
  */
 
 /** 抽屉里可写/可见的分区标识。 */
-export type AgentPrincipalDetailSection = "model" | "delegation" | "memory" | "hooks";
+export type AgentPrincipalDetailSection = "persona" | "model" | "delegation" | "memory" | "hooks";
 
 /** 宿主行归一化形状：三个列表视图（AgentPrincipalView / WorkspaceAgentView / instance 投影）的交集。 */
 export interface AgentPrincipalDetail {
@@ -94,6 +97,8 @@ export interface AgentPrincipalDetail {
     hooks: Record<string, unknown> | null;
     contextPolicy: Record<string, unknown> | null;
     delegationPolicy: Record<string, unknown> | null;
+    /** task-974 / R35: the editable persona; null = unset/cleared. */
+    systemPrompt?: string | null;
 }
 
 const props = withDefaults(
@@ -185,6 +190,8 @@ const modelDraft = reactive<ModelDraft>({
     model: "",
 });
 const modelBaseline = ref("");
+const personaDraft = ref("");
+const personaBaseline = ref("");
 const delegationDraft = ref<DelegationPolicyValue>({ maxCount: null, maxDepth: null });
 const delegationBaseline = ref<DelegationPolicyValue>({ maxCount: null, maxDepth: null });
 const memoryEnabled = ref(false);
@@ -208,17 +215,19 @@ const rolesError = ref<ErrorPresentation | null>(null);
 const rolesLoading = ref(false);
 
 const sectionErrors = reactive<{
+    persona: ErrorPresentation | null;
     model: ErrorPresentation | null;
     delegation: ErrorPresentation | null;
     memory: ErrorPresentation | null;
     hooks: ErrorPresentation | null;
-}>({ model: null, delegation: null, memory: null, hooks: null });
+}>({ persona: null, model: null, delegation: null, memory: null, hooks: null });
 
 const disableConfirmOpen = ref(false);
 const disabling = ref(false);
 const disableError = ref<ErrorPresentation | null>(null);
 
 const modelSaving = ref(false);
+const personaSaving = ref(false);
 const delegationSaving = ref(false);
 const memorySaving = ref(false);
 const hooksSaving = ref(false);
@@ -256,6 +265,8 @@ function resetDrafts() {
     modelDraft.model = principal?.defaultModelName ?? "";
     modelDraft.connectionId = resolveConnectionId(modelDraft.provider, modelDraft.model);
     modelBaseline.value = snapshotModel(modelDraft);
+    personaDraft.value = principal?.systemPrompt ?? "";
+    personaBaseline.value = personaDraft.value;
     delegationDraft.value = parseDelegationPolicy(principal?.delegationPolicy ?? null);
     delegationBaseline.value = { ...delegationDraft.value };
     memoryEnabled.value = readMemoryEnabled(principal?.contextPolicy ?? null);
@@ -265,6 +276,7 @@ function resetDrafts() {
     newAdvisorKind.value = advisorKindOptions.value[0] ?? "";
     newAdvisorEvent.value = advisorEventOptions.value[0] ?? "";
     memoryRetryTarget.value = null;
+    sectionErrors.persona = null;
     sectionErrors.model = null;
     sectionErrors.delegation = null;
     sectionErrors.memory = null;
@@ -338,6 +350,17 @@ const modelDirty = computed(() => snapshotModel(modelDraft) !== modelBaseline.va
 const modelValid = computed(() => !bothOrNeitherError.value);
 const modelSaveBlocked = computed(
     () => props.readonly || !modelDirty.value || !modelValid.value || modelSaving.value,
+);
+
+/** task-974: CP bounds the persona at 65536 chars; mirror it so the form fails fast. */
+const PERSONA_MAX_LENGTH = 65_536;
+const personaValidation = computed(() =>
+    validateField("principal.systemPrompt", personaDraft.value),
+);
+const personaDirty = computed(() => personaDraft.value !== personaBaseline.value);
+const personaValid = computed(() => personaValidation.value.valid);
+const personaSaveBlocked = computed(
+    () => props.readonly || !personaDirty.value || !personaValid.value || personaSaving.value,
 );
 
 /** 当前 provider 名下的可用 chat 连接（诊断徽标口径，和建会话时后端现查的那组同源）。 */
@@ -436,6 +459,7 @@ const hooksSaveBlocked = computed(() => props.readonly || !hooksDirty.value || h
  */
 const pendingSectionCount = computed(() => {
     let count = 0;
+    if (personaDirty.value && personaValid.value) count += 1;
     if (modelDirty.value && modelValid.value) count += 1;
     if (delegationDirty.value && delegationValid.value) count += 1;
     if (hooksDirty.value) count += 1;
@@ -443,7 +467,7 @@ const pendingSectionCount = computed(() => {
 });
 
 const groupSaving = computed(
-    () => modelSaving.value || delegationSaving.value || hooksSaving.value,
+    () => personaSaving.value || modelSaving.value || delegationSaving.value || hooksSaving.value,
 );
 
 const groupSaveBlocked = computed(
@@ -452,13 +476,16 @@ const groupSaveBlocked = computed(
 
 /** 顺序提交：三段共用同一 view 回填，串行避免后一段拿旧 view 覆盖前一段；每段错误各自落位。 */
 async function saveDirtySections(): Promise<void> {
+    if (personaDirty.value && personaValid.value) await savePersona();
     if (modelDirty.value && modelValid.value) await saveModel();
     if (delegationDirty.value && delegationValid.value) await saveDelegation();
     if (hooksDirty.value) await saveHooks();
 }
 
 // task-151 / task-172 §17.4：开关类即时写不算 dirty；表单类（模型 / 委派 / 钩子）有草稿才算。
-const unsavedDraft = computed(() => modelDirty.value || delegationDirty.value || hooksDirty.value);
+const unsavedDraft = computed(
+    () => personaDirty.value || modelDirty.value || delegationDirty.value || hooksDirty.value,
+);
 
 /**
  * task-92（缺口二，抽屉段）：**路由级**离开守卫。
@@ -557,6 +584,40 @@ async function patchInstancePrincipalDocuments(
 /** 该主体是否走实例写门（`ownership` 是 CP 的存储列，决定唯一写前缀）。 */
 function usesInstanceWriteDoor(): boolean {
     return props.principal?.ownership === "INSTANCE";
+}
+
+/**
+ * task-974 / R35: the persona is the ONE snapshot key this write may touch. An empty box
+ * (whitespace-only counts) is an explicit null = clear; the CP service still validates the
+ * length and refuses preset guards.
+ */
+async function savePersona() {
+    const principalId = props.principal?.principalId;
+    if (!principalId || personaSaveBlocked.value) return;
+    personaSaving.value = true;
+    sectionErrors.persona = null;
+    try {
+        const body: AgentPrincipalUpdateBody = {
+            systemPrompt: personaDraft.value.trim() === "" ? null : personaDraft.value,
+        };
+        // Persona is exposed only on the instance panel (editableSections), and the instance
+        // prefix is the only writable door for INSTANCE-owned rows. A USER row therefore never
+        // reaches this save; the guard fails closed instead of writing through the user door.
+        if (!usesInstanceWriteDoor()) return;
+        const view = await patchInstancePrincipalDocuments(principalId, body);
+        // Guards mirror every other section: a late response must not revive a closed drawer.
+        if (!principalGuard(principalId)) return;
+        personaDraft.value = view.systemPrompt ?? "";
+        personaBaseline.value = personaDraft.value;
+        emit("changed", { principalId, systemPrompt: view.systemPrompt });
+        toast.success(t(K + "personaSaved"));
+    } catch (cause) {
+        if (principalGuard(principalId)) {
+            sectionErrors.persona = sectionError(cause, t(K + "saveFailed"));
+        }
+    } finally {
+        personaSaving.value = false;
+    }
 }
 
 async function saveModel() {
@@ -814,7 +875,7 @@ function discardAndClose() {
 
                     <!-- task-151 ④：人设并入身份组（form-contract F4 只允许 6 个顶级语义组），
                          仍是只读（Q1：templateId 创建时钉住）。 -->
-                    <div class="space-y-1" data-testid="apd-persona">
+                    <div class="space-y-1" data-testid="apd-persona" :data-dirty="personaDirty">
                         <p class="text-sm font-medium text-muted-foreground">
                             {{ t(K + "sectionPersona") }}
                         </p>
@@ -825,8 +886,56 @@ function discardAndClose() {
                                     : t(K + "personaFallback")
                             }}
                         </p>
+                        <!-- task-974 / R35: only hosts that opt into the "persona" section
+                             (today: the instance panel) get the editor; templateId stays frozen. -->
+                        <Textarea
+                            v-if="canEdit('persona')"
+                            v-model="personaDraft"
+                            data-form-field="principal.systemPrompt"
+                            data-testid="apd-persona-input"
+                            rows="6"
+                            :maxlength="PERSONA_MAX_LENGTH"
+                            :disabled="personaSaving"
+                            :placeholder="t(K + 'personaPlaceholder')"
+                        />
+                        <p
+                            v-if="!personaValid"
+                            class="text-xs text-destructive"
+                            role="alert"
+                            data-testid="apd-persona-too-long"
+                        >
+                            {{ t(K + "personaTooLong", { max: PERSONA_MAX_LENGTH }) }}
+                        </p>
+                        <span
+                            v-if="canEdit('persona') && personaDirty"
+                            class="text-xs text-amber-600 dark:text-amber-400"
+                            data-testid="apd-persona-unsaved"
+                        >
+                            {{ t(K + "unsaved") }}
+                        </span>
+                        <div v-if="sectionErrors.persona" class="space-y-2">
+                            <ErrorBlock
+                                :presentation="sectionErrors.persona"
+                                testid="apd-persona-error"
+                            />
+                            <Button
+                                v-if="canEdit('persona')"
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                data-testid="apd-persona-retry"
+                                :disabled="personaSaving"
+                                @click="savePersona"
+                            >
+                                {{ t(K + "retry") }}
+                            </Button>
+                        </div>
                         <p class="text-xs leading-5 text-muted-foreground">
-                            {{ t(K + "personaFrozenNote") }}
+                            {{
+                                canEdit("persona")
+                                    ? t(K + "personaEditHint")
+                                    : t(K + "personaFrozenNote")
+                            }}
                         </p>
                     </div>
                 </section>

@@ -58,6 +58,9 @@ public final class AgentPrincipalWireView {
         // (null = off), so the caller learns immediately whether memory is on for the new subject.
         result.put("contextPolicy",
                 JacksonNodeExit.toDocument(objectMapper, principal.getContextPolicy()));
+        // task-974 / R35: the persisted persona of the frozen snapshot (null = unset/cleared).
+        result.put("systemPrompt", principal.getTemplateSnapshot().path("systemPrompt").isTextual()
+                ? principal.getTemplateSnapshot().path("systemPrompt").asText() : null);
         result.put("presetIds", presetIds);
         return result;
     }
@@ -81,6 +84,9 @@ public final class AgentPrincipalWireView {
         result.put("hooks", JacksonNodeExit.toDocument(objectMapper, view.hooks()));
         // PLAN-0629 M1 (D29-21): the subject's memory policy is part of the principal view.
         result.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, view.contextPolicy()));
+        // task-974 / R35: only the persona key is projected; the rest of the frozen snapshot stays
+        // CP-owned and is deliberately not exposed.
+        result.put("systemPrompt", view.systemPrompt());
         return result;
     }
 
@@ -97,6 +103,7 @@ public final class AgentPrincipalWireView {
         result.put("defaultModelProvider", stored.defaultModelProvider());
         result.put("defaultModelName", stored.defaultModelName());
         result.put("allowedModels", JacksonNodeExit.toDocument(objectMapper, stored.allowedModels()));
+        result.put("systemPrompt", stored.systemPrompt());
         return result;
     }
 }

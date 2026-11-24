@@ -41,14 +41,17 @@ public final class AgentPrincipalWireBody {
      * The authority is unchanged — each face keeps its own gate.</p>
      */
     private static final Set<String> DOCUMENT_KEYS = Set.of("hooks", "contextPolicy", "delegationPolicy",
-            "defaultModelProvider", "defaultModelName", "allowedModels");
+            "defaultModelProvider", "defaultModelName", "allowedModels",
+            // task-974 / R35 (user ruling 2026-11-24): the persona becomes writable after creation.
+            "systemPrompt");
 
     private static final String CREATE_SHAPE_DETAIL = "Body must contain name plus optional templateId, "
             + "defaultModelProvider, defaultModelName, allowedModels, hooks and presetIds only";
 
     private static final String DOCUMENT_SHAPE_DETAIL =
             "Body must contain hooks, contextPolicy, delegationPolicy (object or null) and/or "
-                    + "defaultModelProvider, defaultModelName (string or null), allowedModels (array or null)";
+                    + "defaultModelProvider, defaultModelName (string or null), allowedModels (array or null), "
+                    + "systemPrompt (string or null)";
 
     private AgentPrincipalWireBody() {}
 
@@ -96,7 +99,9 @@ public final class AgentPrincipalWireBody {
                 || (body.containsKey("defaultModelProvider") && body.get("defaultModelProvider") != null
                 && !(body.get("defaultModelProvider") instanceof String))
                 || (body.containsKey("defaultModelName") && body.get("defaultModelName") != null
-                && !(body.get("defaultModelName") instanceof String))) {
+                && !(body.get("defaultModelName") instanceof String))
+                || (body.containsKey("systemPrompt") && body.get("systemPrompt") != null
+                && !(body.get("systemPrompt") instanceof String))) {
             throw invalidRequest(DOCUMENT_SHAPE_DETAIL);
         }
         // task-413: same split as create — the wire edge only tree-ifies, the model-intent rule
@@ -123,7 +128,11 @@ public final class AgentPrincipalWireBody {
                 body.get("defaultModelName") instanceof String model ? model : null,
                 body.containsKey("defaultModelName"),
                 allowedModels,
-                body.containsKey("allowedModels"));
+                body.containsKey("allowedModels"),
+                // task-974: shape only here; the bounded length and the preset-guard refusal live in
+                // the service's single write-side gate.
+                body.get("systemPrompt") instanceof String systemPrompt ? systemPrompt : null,
+                body.containsKey("systemPrompt"));
     }
 
     /** {@code presetIds} is a plain array of uuids; anything else is a 400 at the wire edge. */

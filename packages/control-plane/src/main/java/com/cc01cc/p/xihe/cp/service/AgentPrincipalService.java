@@ -41,6 +41,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1066,7 +1069,8 @@ public class AgentPrincipalService {
                 principal.getAllowedModels() == null ? null : principal.getAllowedModels().deepCopy(),
                 principal.getDisabledAt(),
                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
-                principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy());
+                principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy(),
+                optionalText(principal.getTemplateSnapshot(), "systemPrompt"));
     }
 
     /**
@@ -1981,6 +1985,10 @@ public class AgentPrincipalService {
                 ? ContextPolicyValidator.validate(patch.contextPolicy()) : null;
         JsonNode checkedDelegation = patch.delegationPolicyPresent()
                 ? DelegationPolicyValidator.validate(patch.delegationPolicy()) : null;
+        // task-974 / R35: the persona is a plain string (or an explicit null clear); the wire edge
+        // already refused non-strings, and a bounded length keeps an unbounded blob off the jsonb.
+        String checkedSystemPrompt = patch.systemPromptPresent()
+                ? normalizeSystemPrompt(patch.systemPrompt()) : null;
         // task-413: the allow-list shape is a body-shape rule, so it is validated here (before the
         // lookup) exactly like the documents. The both-or-neither rule needs the STORED halves, so it
         // runs after the lookup on the merged pair — one rule function, no second copy.
@@ -2023,6 +2031,9 @@ public class AgentPrincipalService {
         if (modelIntentPresent) {
             requireMutableModelIntent(principal);
         }
+        if (patch.systemPromptPresent()) {
+            requireMutableSystemPrompt(principal);
+        }
         requireDisableAuthority(actorId, principal);
         if (patch.hooksPresent()) {
             principal.setHooks(checkedHooks);
@@ -2054,6 +2065,12 @@ public class AgentPrincipalService {
             if (patch.allowedModelsPresent()) {
                 principal.setAllowedModels(checkedAllowedModels);
             }
+        }
+        if (patch.systemPromptPresent()) {
+            // Only ONE snapshot key changes; every other key (templateId, permissions, hooks…)
+            // survives byte-for-byte because the document is copied, not rebuilt.
+            principal.setTemplateSnapshot(
+                    snapshotWithSystemPrompt(principal.getTemplateSnapshot(), checkedSystemPrompt));
         }
         agentPrincipalRepository.saveAndFlush(principal);
         if (patch.hooksPresent()) {
@@ -2087,9 +2104,22 @@ public class AgentPrincipalService {
                     "agent_principal_model_intent_updated", "agent_principal", principalId.toString(),
                     detail.toString());
         }
+        if (patch.systemPromptPresent()) {
+            ObjectNode detail = objectMapper.createObjectNode();
+            // Audit carries the size and a hash, never the body: the persona may hold sensitive
+            // operator copy and the audit log is a different read surface.
+            detail.put("systemPromptLength",
+                    checkedSystemPrompt == null ? 0 : checkedSystemPrompt.length());
+            detail.put("systemPromptSha256", sha256Of(checkedSystemPrompt));
+            detail.put("systemPromptCleared", checkedSystemPrompt == null);
+            auditLogger.recordDurableChange(actorId.toString(), null,
+                    "agent_principal_system_prompt_updated", "agent_principal", principalId.toString(),
+                    detail.toString());
+        }
         return new PrincipalSettings(principal.getHooks(), principal.getContextPolicy(),
                 principal.getDelegationPolicy(), principal.getDefaultModelProvider(),
-                principal.getDefaultModelName(), principal.getAllowedModels());
+                principal.getDefaultModelName(), principal.getAllowedModels(),
+                optionalText(principal.getTemplateSnapshot(), "systemPrompt"));
     }
 
     /**
@@ -2101,6 +2131,63 @@ public class AgentPrincipalService {
         return value == null || value.isBlank() ? null : value;
     }
 
+    /** task-974 / R35: the persona is a bounded plain-text document in the frozen snapshot. */
+    private static final int SYSTEM_PROMPT_MAX_LENGTH = 65_536;
+
+    private static String normalizeSystemPrompt(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        if (value.length() > SYSTEM_PROMPT_MAX_LENGTH) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
+                    "systemPrompt must be at most " + SYSTEM_PROMPT_MAX_LENGTH + " characters");
+        }
+        return value;
+    }
+
+    /**
+     * task-974: replace only {@code template_snapshot.systemPrompt}; the rest of the frozen snapshot
+     * is copied verbatim. The snapshot is jsonb and Hibernate does not dirty-check a tree mutated in
+     * place, so a fresh copy is handed to the entity setter instead of mutating the stored node.
+     */
+    private ObjectNode snapshotWithSystemPrompt(JsonNode snapshot, String systemPrompt) {
+        ObjectNode updated = snapshot != null && snapshot.isObject()
+                ? ((ObjectNode) snapshot).deepCopy() : objectMapper.createObjectNode();
+        if (systemPrompt == null) {
+            updated.putNull("systemPrompt");
+        } else {
+            updated.put("systemPrompt", systemPrompt);
+        }
+        return updated;
+    }
+
+    /** D25-03 ground: a preset guard's persona is a system asset like its hooks and cap. */
+    private void requireMutableSystemPrompt(AgentPrincipal principal) {
+        if (AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "GUARD_SYSTEM_PROMPT_IMMUTABLE",
+                    "A preset guard's persona is fixed; it comes from the template, not the API");
+        }
+    }
+
+    /** Audit evidence for the persona write: hash only, never the body. */
+    private static String sha256Of(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte part : digest) {
+                hex.append(Character.forDigit((part >> 4) & 0xF, 16));
+                hex.append(Character.forDigit(part & 0xF, 16));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is a required JVM algorithm", e);
+        }
+    }
+
     /**
      * One PATCH's parsed documents. The presence flags exist because a present-but-null document means
      * "clear the column" while an absent one means "leave it alone" — {@code JsonNode} alone cannot say both.
@@ -2110,14 +2197,17 @@ public class AgentPrincipalService {
                                          JsonNode delegationPolicy, boolean delegationPolicyPresent,
                                          String defaultModelProvider, boolean defaultModelProviderPresent,
                                          String defaultModelName, boolean defaultModelNamePresent,
-                                         JsonNode allowedModels, boolean allowedModelsPresent) {
+                                         JsonNode allowedModels, boolean allowedModelsPresent,
+                                         // task-974 / R35: present+null clears the persona, absent keeps it.
+                                         String systemPrompt, boolean systemPromptPresent) {
 
         /** Documents-only patch (the pre-task-413 shape): every model-intent key is absent. */
         public PrincipalSettingsPatch(JsonNode hooks, boolean hooksPresent,
                                       JsonNode contextPolicy, boolean contextPolicyPresent,
                                       JsonNode delegationPolicy, boolean delegationPolicyPresent) {
             this(hooks, hooksPresent, contextPolicy, contextPolicyPresent, delegationPolicy,
-                    delegationPolicyPresent, null, false, null, false, null, false);
+                    delegationPolicyPresent, null, false, null, false, null, false,
+                    null, false);
         }
     }
 
@@ -2127,7 +2217,7 @@ public class AgentPrincipalService {
      */
     public record PrincipalSettings(JsonNode hooks, JsonNode contextPolicy, JsonNode delegationPolicy,
                                     String defaultModelProvider, String defaultModelName,
-                                    JsonNode allowedModels) {}
+                                    JsonNode allowedModels, String systemPrompt) {}
 
     /** D25-14: a preset guard's hook subscriptions are fixed at the write side, like its cap. */
     private void requireMutableHooks(AgentPrincipal principal) {
@@ -2338,7 +2428,11 @@ public class AgentPrincipalService {
                                      // the UI no longer renders or submits it. The column/field is
                                      // scheduled for deletion by a follow-up card — do not add new writers.
                                      JsonNode allowedModels, Instant disabledAt, JsonNode hooks,
-                                     JsonNode contextPolicy) {}
+                                     JsonNode contextPolicy,
+                                     // task-974 / R35 (user ruling 2026-11-24): the editable persona
+                                     // lives in template_snapshot.systemPrompt; the read face exposes
+                                     // only that key, never the CP-owned snapshot keys beside it.
+                                     String systemPrompt) {}
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,

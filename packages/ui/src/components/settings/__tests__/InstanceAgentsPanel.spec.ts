@@ -135,6 +135,8 @@ function agent(
         hooks: null,
         contextPolicy: null,
         delegationPolicy: { maxCount: 8, maxDepth: 3 },
+        // task-974 / R35: the persona is part of the row projection now.
+        systemPrompt: null,
     };
 }
 
@@ -1223,6 +1225,48 @@ describe("InstanceAgentsPanel · task-955 实例层详情写分区（D-1941）",
                 "modelValue",
             ),
         ).toBe("openai");
+        expect(mockedList).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+
+    /**
+     * task-974 / R35（用户 2026-11-24 裁定：人设必须可改）：实例面板给编辑入口，
+     * 保存只带 {@code systemPrompt} 一个键（不整份覆盖快照），回执就地回填行与抽屉。
+     */
+    it("人设：可编辑；保存只发 systemPrompt 并就地回显", async () => {
+        mockedList.mockResolvedValue({
+            agents: [{ ...storedAgent(), systemPrompt: "旧人设" }],
+            count: 1,
+        });
+        instancePatch.mockResolvedValue({
+            principalId: "agent-1",
+            defaultModelProvider: null,
+            defaultModelName: null,
+            allowedModels: null,
+            hooks: null,
+            contextPolicy: null,
+            delegationPolicy: null,
+            systemPrompt: "新人设",
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openDetail(wrapper);
+
+        const input = bodyNode<HTMLTextAreaElement>("apd-persona-input");
+        expect(input.value).toBe("旧人设");
+        input.value = "新人设";
+        input.dispatchEvent(new Event("input"));
+        await flushPromises();
+
+        bodyNode<HTMLButtonElement>("apd-save-all").click();
+        await flushPromises();
+        await flushPromises();
+
+        const calls = instancePatch.mock.calls as unknown as Array<[string, RequestInit]>;
+        expect(calls.map((call) => call[0])).toEqual(["/instance/agent-principals/agent-1"]);
+        expect(JSON.parse(String(calls[0]![1].body))).toEqual({ systemPrompt: "新人设" });
+        // 回显：输入框回到持久化值，且列表没有被重拉。
+        expect(bodyNode<HTMLTextAreaElement>("apd-persona-input").value).toBe("新人设");
         expect(mockedList).toHaveBeenCalledTimes(1);
         wrapper.unmount();
     });

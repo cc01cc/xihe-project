@@ -183,6 +183,8 @@ const detailPrincipal = computed<AgentPrincipalDetail | null>(() => {
         hooks: agent.hooks ?? null,
         contextPolicy: agent.contextPolicy ?? null,
         delegationPolicy: agent.delegationPolicy ?? null,
+        // task-974 / R35: the persona is editable on this panel only (see editable-sections).
+        systemPrompt: agent.systemPrompt ?? null,
     };
 });
 
@@ -214,6 +216,7 @@ function onDetailChanged(patch: Partial<AgentPrincipalDetail> & { principalId: s
         contextPolicy: patch.contextPolicy === undefined ? row.contextPolicy : patch.contextPolicy,
         delegationPolicy:
             patch.delegationPolicy === undefined ? row.delegationPolicy : patch.delegationPolicy,
+        systemPrompt: patch.systemPrompt === undefined ? row.systemPrompt : patch.systemPrompt,
     };
     agents.value[index] = merged;
     if (detailTarget.value?.id === patch.principalId) detailTarget.value = merged;
@@ -865,7 +868,7 @@ async function confirmDelete(): Promise<void> {
         v-model:open="detailOpen"
         :principal="detailPrincipal"
         :workspace-id="null"
-        :editable-sections="['model', 'delegation', 'hooks']"
+        :editable-sections="['persona', 'model', 'delegation', 'hooks']"
         @changed="onDetailChanged"
     />
 </template>

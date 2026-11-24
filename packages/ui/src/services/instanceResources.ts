@@ -318,6 +318,8 @@ export interface InstanceAgent {
     hooks: Record<string, unknown> | null;
     contextPolicy: Record<string, unknown> | null;
     delegationPolicy: Record<string, unknown> | null;
+    /** task-974 / R35: the editable persona (AgentPrincipalView.systemPrompt). */
+    systemPrompt: string | null;
 }
 
 export interface InstanceAgentListResponse {
@@ -358,6 +360,7 @@ function normalizeAgent(value: unknown): InstanceAgent {
         hooks: asJsonRecord(raw.hooks),
         contextPolicy: asJsonRecord(raw.contextPolicy),
         delegationPolicy: asJsonRecord(raw.delegationPolicy),
+        systemPrompt: nullableStr(raw.systemPrompt),
         states: {
             name: wireStateOf(raw, ["name", "displayName"]),
             template: wireStateOf(raw, ["templateName"]),
@@ -401,6 +404,8 @@ export interface InstanceAgentUpdateRequest {
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     allowedModels?: Array<{ provider: string; model: string }> | null;
+    /** task-974 / R35: absent keeps the persona, null clears it. */
+    systemPrompt?: string | null;
 }
 
 /** PATCH 回的是 `AgentPrincipalUpdateView`（回读存量），**不是**整行智能体。 */
@@ -409,6 +414,7 @@ export interface InstanceAgentUpdateView {
     defaultModelProvider: string | null;
     defaultModelName: string | null;
     allowedModels: Array<{ provider: string; model: string }> | null;
+    systemPrompt: string | null;
 }
 
 function normalizeUpdateView(value: unknown): InstanceAgentUpdateView {
@@ -419,6 +425,7 @@ function normalizeUpdateView(value: unknown): InstanceAgentUpdateView {
         defaultModelName: nullableStr(raw.defaultModelName),
         // 与列表行同一套归一（task-431）：两个面读同一投影，规范化不许有第二份。
         allowedModels: normalizeModelWhitelist(raw.allowedModels),
+        systemPrompt: nullableStr(raw.systemPrompt),
     };
 }
 

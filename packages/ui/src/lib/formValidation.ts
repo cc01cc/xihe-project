@@ -24,6 +24,7 @@ export type FormFieldRuleId =
     | "workspaceForm.rootPath"
     | "workspaceForm.description"
     | "principal.name"
+    | "principal.systemPrompt"
     | "username";
 
 export type FieldIssueCode =
@@ -208,6 +209,20 @@ export const FORM_FIELD_RULES: Record<FormFieldRuleId, FieldRuleSpec> = {
         hint: {
             zh: "允许：英文字母 / 中文汉字 / 数字，且不能以数字开头",
             en: "Allowed: letters / Chinese characters / digits, not starting with a digit",
+        },
+    },
+    /**
+     * task-974 / R35: the editable persona. Optional and free-form; the only hard constraint is
+     * the CP-side bound (65536 characters), mirrored here so the form fails fast instead of 400ing.
+     */
+    "principal.systemPrompt": {
+        id: "principal.systemPrompt",
+        required: false,
+        trim: false,
+        maxLength: 65_536,
+        maxLengthUnit: "code-point",
+        messages: {
+            "max-length": "agentPrincipalDetail.personaTooLong",
         },
     },
     username: {

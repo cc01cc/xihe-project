@@ -21,6 +21,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -193,6 +194,112 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractReusableIntegrationTes
         Map<String, Object> row = personalPrincipalRow(principalId);
         assertEquals(plainJson(allowJson), row.get("allowedModels"),
                 "GET /agent-principals projects the allow-list for the edit comparison: " + row);
+    }
+
+    // --- task-974 / R35: the persona becomes writable after creation ---------------------------
+
+    @Test
+    void patchStoresThePersonaAndPreservesEveryOtherSnapshotKey() {
+        fixture();
+        UUID principalId = createPrincipal("PersonaAgent");
+        JsonNode before = principalRepository.findById(principalId).orElseThrow()
+                .getTemplateSnapshot().deepCopy();
+        String prompt = "你是羲和，负责评审代码并给出可执行的修复建议。";
+
+        ResponseEntity<Map> response = patch(principalId, body("systemPrompt", prompt), globalToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(prompt, response.getBody().get("systemPrompt"),
+                "the PATCH echo is the persisted persona: " + response.getBody());
+
+        JsonNode snapshot = principalRepository.findById(principalId).orElseThrow()
+                .getTemplateSnapshot();
+        assertEquals(prompt, snapshot.path("systemPrompt").asText(),
+                "the persona lives in template_snapshot.systemPrompt");
+        ObjectNode expected = before.deepCopy();
+        expected.put("systemPrompt", prompt);
+        assertEquals(expected, snapshot,
+                "only the persona key may change; every other snapshot key is preserved verbatim");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM agent_principals WHERE id = CAST(? AS UUID) "
+                        + "AND template_snapshot::jsonb ->> 'systemPrompt' = ?",
+                Integer.class, principalId.toString(), prompt),
+                "the value must be in the jsonb column, not merely in the persistence context");
+
+        Map<String, Object> row = personalPrincipalRow(principalId);
+        assertEquals(prompt, row.get("systemPrompt"),
+                "GET /agent-principals only projects the persona key: " + row);
+    }
+
+    @Test
+    void patchClearsThePersonaWithAnExplicitNull() {
+        fixture();
+        UUID principalId = createPrincipal("PersonaClearAgent");
+        assertEquals(HttpStatus.OK, patch(principalId, body("systemPrompt", "旧人设"), globalToken())
+                .getStatusCode());
+
+        ResponseEntity<Map> response = patch(principalId, body("systemPrompt", null), globalToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertNull(response.getBody().get("systemPrompt"), "null clears the persona");
+        JsonNode snapshot = principalRepository.findById(principalId).orElseThrow()
+                .getTemplateSnapshot();
+        assertTrue(snapshot.path("systemPrompt").isNull(),
+                "a clear keeps the key present-but-null instead of erasing other snapshot structure");
+        assertNull(personalPrincipalRow(principalId).get("systemPrompt"));
+    }
+
+    @Test
+    void personaAuditRecordsLengthAndHashButNeverTheBody() {
+        fixture();
+        UUID principalId = createPrincipal("PersonaAuditAgent");
+        String prompt = "SENSITIVE-MARKER persona body";
+
+        assertEquals(HttpStatus.OK, patch(principalId, body("systemPrompt", prompt), globalToken())
+                .getStatusCode());
+
+        assertEquals(1, auditCount(principalId, "agent_principal_system_prompt_updated"));
+        String detail = jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_logs WHERE action = 'agent_principal_system_prompt_updated' "
+                        + "AND CAST(resource_id AS VARCHAR) = ?",
+                String.class, principalId.toString());
+        assertNotNull(detail);
+        assertTrue(detail.contains("\"systemPromptLength\":" + prompt.length()), detail);
+        assertTrue(detail.contains("systemPromptSha256"), detail);
+        assertFalse(detail.contains(prompt),
+                "the audit must never store the persona body: " + detail);
+    }
+
+    @Test
+    void personaTakesEffectOnTheNextRunAndTheCapturedRunKeepsItsPrompt() {
+        fixture();
+        UUID principalId = createPrincipal("PersonaRunAgent");
+        // "In flight": the dispatch already resolved its prompt; a later write cannot rewrite it.
+        String inFlight = agentPrincipalService.resolveSystemInstructionsForRun(principalId.toString());
+        assertNotNull(inFlight, "the default template supplies a baseline persona");
+        assertEquals(HttpStatus.OK, patch(principalId, body("systemPrompt", "第一版"), globalToken())
+                .getStatusCode());
+        assertFalse("第一版".equals(inFlight),
+                "the prompt already handed to an in-flight run is a plain string, not a live view");
+        assertEquals("第一版", agentPrincipalService.resolveSystemInstructionsForRun(
+                principalId.toString()), "the next dispatch reads the new snapshot");
+        assertEquals(HttpStatus.OK, patch(principalId, body("systemPrompt", "第二版"), globalToken())
+                .getStatusCode());
+        assertEquals("第二版", agentPrincipalService.resolveSystemInstructionsForRun(
+                principalId.toString()), "each dispatch re-reads the snapshot (no caching)");
+    }
+
+    @Test
+    void patchRejectsNonStringPersonaAndPresetGuards() {
+        fixture();
+        UUID principalId = createPrincipal("PersonaShapeAgent");
+        assertBadRequest(principalId, body("systemPrompt", List.of("not-a-string")),
+                "a non-string persona is a wire-shape 400");
+
+        UUID guardId = seedPresetGuard("PersonaGuard");
+        ResponseEntity<Map> response = patch(guardId, body("systemPrompt", "x"), globalToken());
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("GUARD_SYSTEM_PROMPT_IMMUTABLE", response.getBody().get("code"));
     }
 
     @Test
