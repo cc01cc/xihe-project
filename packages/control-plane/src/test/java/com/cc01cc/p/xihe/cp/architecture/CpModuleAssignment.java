@@ -40,6 +40,18 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Workspace")) {
             return "workspace";
         }
+        // task-999 (task-992 follow-up): the product-managed MXC installer provisions the workspace
+        // execution backend. Its only readers in CP resolve to the workspace slice as well —
+        // `WorkspaceController` exposes the install/override endpoints and
+        // `WorkspaceBackendPolicy` reads the installed manifest to choose mxc vs host mode. The
+        // Runtime side consumes the same directory from a separate process/package, so keeping the
+        // installer with its deciding consumer avoids a slice of its own for one type. Its only
+        // cross-slice dependency is `cp.config` (`CpApiException`), an edge the workspace baseline
+        // already whitelists, so this registration adds no new owner edge. Leaving it unassigned
+        // made the whole architecture import abort at `ownerOf` (task-990 L2, 2026-11-24).
+        if (name.equals("MxcManagedInstallService")) {
+            return "workspace";
+        }
         // PLAN-0641 T5.1: the legacy-slice declaration boundary is a pure helper of the workspace/root
         // slice (workspace_roots.created_at vs run_checkpoints.captured_at). Without this assignment
         // ArchUnit's import throws before any rule runs — the whole class was dead (BL-370, L2 2026-11-06).
@@ -107,6 +119,16 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("GrantPreset") || name.startsWith("GrantPresetAdmin") || name.startsWith("GrantPresetController")
                 || name.startsWith("PresetGrantMaterializer") || name.startsWith("SystemGrantPreset")
                 || name.startsWith("MePermissions")) {
+            return "policy";
+        }
+        // task-999 (task-996 follow-up): the preset-governance compare/realign face is the next
+        // member of the dynamic-RBAC family registered just above — its service and view records
+        // already live in `cp.policy` and resolve through the top-level package, but the HTTP
+        // entry sits in the mixed `controller` package and matched no prefix, so the architecture
+        // import aborted on it right after the MXC installer above was registered (task-990 L2).
+        // Its only cross-slice dependencies are `cp.config` (CpApiException/TenantContext/
+        // ProblemDetailsHandler), an edge the policy baseline already carries; no new owner edge.
+        if (name.startsWith("PresetGovernance")) {
             return "policy";
         }
         if (name.equals("MemberView")) {
