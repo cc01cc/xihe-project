@@ -5689,12 +5689,13 @@ export const api = {
         return { success: true };
     },
     getMcpConfig(wsId: string) {
-        return request<{ mcpServers?: string | Record<string, unknown> }>(
-            `/workspaces/${encodeURIComponent(wsId)}/mcp-config`,
-            {
-                headers: workspaceHeaders(wsId),
-            },
-        );
+        // task-984: `canonicalIds` maps the raw mcp-config key to the canonical `mcp:` grant id.
+        return request<{
+            mcpServers?: string | Record<string, unknown>;
+            canonicalIds?: Record<string, string>;
+        }>(`/workspaces/${encodeURIComponent(wsId)}/mcp-config`, {
+            headers: workspaceHeaders(wsId),
+        });
     },
     async getCurrentWorkspace(): Promise<ApiWorkspace> {
         return normalizeWorkspaceResponse(await request<unknown>("/workspaces/current"));

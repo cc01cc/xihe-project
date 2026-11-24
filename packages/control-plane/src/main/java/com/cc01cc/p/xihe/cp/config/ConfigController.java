@@ -1033,9 +1033,16 @@ public class ConfigController {
     private ResponseEntity<Map<String, Object>> getMixedMcpConfig(String wsId) {
         try {
             Map<String, Object> servers = new LinkedHashMap<>();
+            // task-984: the canonical grant-resource id per raw server name. Clients must not
+            // rebuild `mcp:<rawName>` themselves — GrantResourcePattern only accepts the
+            // canonical shape, so a raw key with capitals/spaces would be refused on write.
+            Map<String, Object> canonicalIds = new LinkedHashMap<>();
             for (McpProxyCatalogService.StdioConfigView row :
                     mcpProxyCatalogService.listStdioConfigs(wsId)) {
                 servers.put(row.name(), objectMapper.convertValue(row.config(), Object.class));
+                if (row.canonicalId() != null) {
+                    canonicalIds.put(row.name(), row.canonicalId());
+                }
             }
             for (McpProxyCatalogService.RemoteServerConfigView row :
                     mcpProxyCatalogService.listEnabledRemoteConfigs(wsId)) {
@@ -1055,9 +1062,13 @@ public class ConfigController {
                     value.put("oauth", oauth);
                 }
                 servers.putIfAbsent(row.name(), value);
+                if (row.canonicalId() != null) {
+                    canonicalIds.putIfAbsent(row.name(), row.canonicalId());
+                }
             }
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("mcpServers", servers);
+            response.put("canonicalIds", canonicalIds);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to read MCP config for workspace {}", wsId, e);

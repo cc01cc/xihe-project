@@ -78,7 +78,8 @@ public class McpProxyCatalogService {
     public List<StdioConfigView> listStdioConfigs(String workspaceId) {
         return stdioServers.findByWorkspaceIdOrderByNameAsc(workspaceId).stream()
                 .map(server -> new StdioConfigView(
-                        server.getName(), server.getConfig(), server.getUpdatedAt()))
+                        server.getName(), server.getConfig(), server.getUpdatedAt(),
+                        canonicalId(server.getName())))
                 .toList();
     }
 
@@ -107,7 +108,18 @@ public class McpProxyCatalogService {
     private static RemoteServerConfigView toRemoteServerConfigView(McpServer server) {
         return new RemoteServerConfigView(server.getName(), server.getEndpoint(),
                 server.getOauthClientId(), server.getOauthAuthorizationEndpoint(),
-                server.getOauthTokenEndpoint(), server.getOauthRedirectUri(), server.getOauthScope());
+                server.getOauthTokenEndpoint(), server.getOauthRedirectUri(), server.getOauthScope(),
+                canonicalId(server.getName()));
+    }
+
+    /**
+     * task-984: the canonical grant-resource id of a server name, computed by the one
+     * registry that owns the {@code mcp:} namespace. The read face must hand it out so
+     * clients never rebuild {@code mcp:<rawName>} themselves — a raw name that is not in
+     * canonical shape is refused by {@code GrantResourcePattern} on write.
+     */
+    private static String canonicalId(String serverName) {
+        return com.cc01cc.p.xihe.cp.policy.ResourceNamespaces.canonicalMcpServerId(serverName);
     }
 
     /**
@@ -228,7 +240,8 @@ public class McpProxyCatalogService {
     public record StdioServerView(String name, boolean enabled) {
     }
 
-    public record StdioConfigView(String name, JsonNode config, Instant updatedAt) {
+    /** {@code canonicalId} is read-only metadata (task-984); the stored server id is unchanged. */
+    public record StdioConfigView(String name, JsonNode config, Instant updatedAt, String canonicalId) {
     }
 
     /**
@@ -239,7 +252,7 @@ public class McpProxyCatalogService {
     public record RemoteServerConfigView(String name, String endpoint,
                                           String oauthClientId, String oauthAuthorizationEndpoint,
                                           String oauthTokenEndpoint, String oauthRedirectUri,
-                                          String oauthScope) {
+                                          String oauthScope, String canonicalId) {
     }
 
     /** PLAN-0759: PUT input for one remote entry; oauth fields all nullable. */

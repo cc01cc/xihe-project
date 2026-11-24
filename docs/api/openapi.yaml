@@ -4485,6 +4485,18 @@ paths:
                          - $ref: '#/components/schemas/RemoteMcpServerEntry'
                          - type: object
                            description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+                   canonicalIds:
+                     type: object
+                     description: >-
+                       task-984: the canonical grant-resource id per raw mcpServers key
+                       (`ResourceNamespaces.canonicalMcpServerId`, the `mcp:` namespace owner).
+                       Clients MUST build the `mcp:<id>` grant resource from this map and never
+                       from the raw key: a key outside the canonical shape (capitals, spaces,
+                       non-ASCII) is refused by the grant write face as
+                       `the server id is not canonical`. Read-only metadata — the stored server
+                       id is unchanged, and PUT ignores this field.
+                     additionalProperties:
+                       type: string
      put:
        tags: [mcp]
        operationId: putMcpConfig

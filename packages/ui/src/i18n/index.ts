@@ -1043,6 +1043,7 @@ const messages = {
             agentMcpGrantTitle: "本工作区 MCP 访问",
             agentMcpGrantHint:
                 "勾选 = 给你自己持有的网关动作补上 mcp:serverId 形式的通道授权；工具调用还受动作勾选的对象资源约束（两边都命中才放行）。",
+            agentMcpCanonicalMissing: "缺少规范 id，不能授予：请先在 MCP 配置里改用规范名称",
             agentPresetImportTitle: "从访问预设导入",
             agentPresetImportHint:
                 "预设只是模板：导入的是它当前的授权原子，之后可逐项删除或改资源，预设本身没有约束力。",
@@ -4315,6 +4316,16 @@ const messages = {
             unsavedConfirmDesc: "关闭抽屉会丢弃这些改动。",
             unsavedKeep: "继续编辑",
             unsavedDiscard: "丢弃并关闭",
+            // task-994: instance-scope execution reach (WS_RUNNER). Two-level authorization:
+            // this switch grants the instance reach only; each workspace still evaluates its cap.
+            sectionExec: "执行权限",
+            execHint:
+                "允许该智能体在会话中执行命令（文件读写以外的运行能力）。执行是两级授权：这里授予实例层运行通道，工作区仍按各自的权限快照生效。",
+            execToggleLabel: "允许执行命令",
+            execEnabled: "已开启执行权限",
+            execDisabled: "已关闭执行权限",
+            execFailed: "执行权限变更失败，请重试",
+            execRequiresAtom: "需要 MANAGE_AGENT_PRINCIPALS 才能修改执行权限",
             sectionDelegation: "委派预算",
             delegation: {
                 maxCount: "最大委派会话数",
@@ -5569,6 +5580,8 @@ const messages = {
             agentMcpGrantTitle: "Workspace MCP access",
             agentMcpGrantHint:
                 "Checking a server adds mcp:serverId channel grants for the gateway actions you hold; a tool call also needs the object resource on the same action (both must match).",
+            agentMcpCanonicalMissing:
+                "No canonical id — cannot grant. Rename the server to a canonical name in the MCP config first",
             agentPresetImportTitle: "Import from an access preset",
             agentPresetImportHint:
                 "A preset is only a template: importing copies its current atoms, and every row stays editable afterwards — the preset itself imposes nothing.",
@@ -8948,6 +8961,16 @@ const messages = {
             unsavedConfirmDesc: "Closing the drawer discards them.",
             unsavedKeep: "Keep editing",
             unsavedDiscard: "Discard and close",
+            // task-994: instance-scope execution reach (WS_RUNNER). Two-level authorization:
+            // this switch grants the instance reach only; each workspace still evaluates its cap.
+            sectionExec: "Execution",
+            execHint:
+                "Lets this agent run commands in sessions. Execution is authorized at two levels: this grants the instance runtime channel, and each workspace still applies its own snapshot.",
+            execToggleLabel: "Allow command execution",
+            execEnabled: "Execution enabled",
+            execDisabled: "Execution disabled",
+            execFailed: "Failed to change execution permission, please retry",
+            execRequiresAtom: "MANAGE_AGENT_PRINCIPALS is required to change execution permission",
             sectionDelegation: "Delegation budget",
             delegation: {
                 maxCount: "Max delegated sessions",

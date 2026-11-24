@@ -428,6 +428,51 @@ class ConfigControllerTest extends AbstractIntegrationTest {
         assertEquals("https://example.com/mcp", ((Map<?, ?>) servers.get("remote1")).get("url"));
     }
 
+    /**
+     * task-984: the read face must hand out the canonical grant id per raw key, because a raw
+     * key outside the canonical shape is refused by the grant write face. The stored key is
+     * untouched (no rename), and a key that is already canonical maps to itself.
+     */
+    @Test
+    void mcpConfig_returnsCanonicalIdsWithoutRenamingStoredKeys() {
+        String token = userToken();
+        String workspaceId = workspaceIdFor(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> putBody = Map.of("mcpServers", Map.of(
+            "My Server", Map.of("command", "npx", "args", List.of("mine")),
+            "plain", Map.of("command", "npx", "args", List.of("plain"))));
+        ResponseEntity<Map> put = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+        assertEquals(HttpStatus.OK, put.getStatusCode());
+
+        ResponseEntity<Map> get = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
+            new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, get.getStatusCode());
+
+        Map<?, ?> servers = (Map<?, ?>) get.getBody().get("mcpServers");
+        // The raw key is the resource identity: canonicalisation must not rewrite the store.
+        assertTrue(servers.containsKey("My Server"));
+        assertTrue(servers.containsKey("plain"));
+
+        Map<?, ?> canonicalIds = (Map<?, ?>) get.getBody().get("canonicalIds");
+        assertNotNull(canonicalIds);
+        String canonical = (String) canonicalIds.get("My Server");
+        assertNotNull(canonical);
+        assertEquals(
+            com.cc01cc.p.xihe.cp.policy.ResourceNamespaces.canonicalMcpServerId("My Server"),
+            canonical);
+        assertTrue(canonical.matches("^my-server~[0-9a-f]{8}$"),
+            "lossy reduction must carry an 8-hex suffix, got " + canonical);
+        assertEquals(
+            "mcp:" + canonical,
+            com.cc01cc.p.xihe.cp.policy.ResourceNamespaces.mcpServerResource("My Server"));
+        assertEquals("plain", canonicalIds.get("plain"));
+    }
+
     @Test
     void mcpConfig_roundTripsRemoteOauthBlock() {
         String token = userToken();

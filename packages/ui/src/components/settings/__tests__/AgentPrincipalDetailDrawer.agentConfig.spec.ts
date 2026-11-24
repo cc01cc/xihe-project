@@ -275,6 +275,7 @@ describe("R38 · 工作区维度（MCP + 访问预设）", () => {
         ]);
         apiMock.getMcpConfig.mockResolvedValue({
             mcpServers: { filesystem: { command: "npx", args: ["-y", "server-filesystem"] } },
+            canonicalIds: { filesystem: "filesystem" },
         });
         await mountPanel();
 
@@ -297,6 +298,67 @@ describe("R38 · 工作区维度（MCP + 访问预设）", () => {
                     permission.actionClass === "write" && permission.resource === "mcp:filesystem",
             ),
         ).toBe(true);
+    });
+
+    it("非规范 key：展示原 key，授权行用读面给出的 canonical id", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([
+            boundAgent([
+                { actionClass: "read", resource: "*" },
+                { actionClass: "write", resource: "*" },
+            ]),
+        ]);
+        apiMock.getMcpConfig.mockResolvedValue({
+            mcpServers: { "My Server": { command: "npx", args: ["-y", "server-mine"] } },
+            canonicalIds: { "My Server": "my-server~deadbeef" },
+        });
+        await mountPanel();
+
+        expect(maybeTestid("workspace-agent-mcp-server-My Server")).toBeTruthy();
+        await click(`workspace-agent-edit-cap-${PRINCIPAL_ID}`);
+
+        const checkbox = testid("agent-mcp-grant-My Server") as HTMLInputElement;
+        expect(checkbox.disabled).toBe(false);
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event("change"));
+        await flushPromises();
+
+        await click(`workspace-agent-save-cap-${PRINCIPAL_ID}`);
+        const payload = apiMock.updateWorkspaceAgentCap.mock.calls[0]?.[2] as Array<
+            Record<string, string>
+        >;
+        // 反证点：把 UI 改回 `mcp:<raw>`，这里会拿到 `mcp:My Server` 而不是 canonical id。
+        expect(
+            payload.some(
+                (permission) =>
+                    permission.actionClass === "write" &&
+                    permission.resource === "mcp:my-server~deadbeef",
+            ),
+        ).toBe(true);
+        expect(payload.some((permission) => permission.resource === "mcp:My Server")).toBe(false);
+    });
+
+    it("缺 canonicalId 时禁用勾选并给出原因（不静默回退原始 key）", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([boundAgent([])]);
+        apiMock.getMcpConfig.mockResolvedValue({
+            mcpServers: { "My Server": { command: "npx", args: ["-y", "server-mine"] } },
+        });
+        await mountPanel();
+
+        await click(`workspace-agent-edit-cap-${PRINCIPAL_ID}`);
+        const checkbox = testid("agent-mcp-grant-My Server") as HTMLInputElement;
+        expect(checkbox.disabled).toBe(true);
+        expect(maybeTestid("agent-mcp-grant-unavailable-My Server")).toBeTruthy();
+
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event("change"));
+        await flushPromises();
+        await click(`workspace-agent-save-cap-${PRINCIPAL_ID}`);
+        const payload = apiMock.updateWorkspaceAgentCap.mock.calls[0]?.[2] as Array<
+            Record<string, string>
+        >;
+        expect(payload.some((permission) => String(permission.resource).startsWith("mcp:"))).toBe(
+            false,
+        );
     });
 
     it("访问预设只是模板：导入的是原子草稿，导入后仍可逐项编辑", async () => {

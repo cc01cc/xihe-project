@@ -203,7 +203,17 @@ let rbacGeneration = 0;
  * （task-153 C1=B 已裁定「工作区绑定面不进抽屉」）。读面只要求成员身份，写授权仍在
  * 权限原子层（`read × mcp:&lt;serverId&gt;` 是 D-1921 的网关门）；本区不复制判定。</p>
  */
-const mcpServers = ref<string[]>([]);
+/**
+ * task-984：**读面给出的规范 id 是唯一可写值**。原始 key 只用于展示 —— 之前这里把 key 直接
+ * 拼成 `mcp:<raw>`，遇到大写/空格/非 ASCII 时被 CP 的 `GrantResourcePattern` 以 400
+ * 「the server id is not canonical」拒掉。缺 `canonicalId` 的行一律不可勾选（不静默回退原文）。
+ */
+interface McpServerOption {
+    name: string;
+    canonicalId: string | null;
+}
+
+const mcpServers = ref<McpServerOption[]>([]);
 const mcpState = ref<"idle" | "loading" | "ready" | "failed">("idle");
 const mcpError = ref("");
 let mcpGeneration = 0;
@@ -219,13 +229,20 @@ function gatewayActionsHeldByActor(): string[] {
     );
 }
 
-function mcpResource(serverId: string): string {
-    return `mcp:${serverId}`;
+function mcpResource(server: McpServerOption): string | null {
+    return server.canonicalId ? `mcp:${server.canonicalId}` : null;
 }
 
-function hasMcpGrant(serverId: string): boolean {
-    const resource = mcpResource(serverId);
-    return permissions.value.some((permission) => permission.resource === resource);
+function isMcpServerSelectable(server: McpServerOption): boolean {
+    return server.canonicalId !== null;
+}
+
+function hasMcpGrant(server: McpServerOption): boolean {
+    const resource = mcpResource(server);
+    return (
+        resource !== null &&
+        permissions.value.some((permission) => permission.resource === resource)
+    );
 }
 
 /**
@@ -233,8 +250,9 @@ function hasMcpGrant(serverId: string): boolean {
  * 授权。对象资源仍由下面那组动作勾选单独约束（D-1921 的 AND 门：`action × object` 与
  * `action × mcp:<id>` 必须同时命中）。操作者没持有的动作不会替它授出去。
  */
-function toggleMcpGrant(serverId: string, checked: boolean): void {
-    const resource = mcpResource(serverId);
+function toggleMcpGrant(server: McpServerOption, checked: boolean): void {
+    const resource = mcpResource(server);
+    if (resource === null) return;
     const withoutServer = permissions.value.filter(
         (permission) => permission.resource !== resource,
     );
@@ -299,9 +317,21 @@ async function loadMcpServers() {
             const parsed: unknown = servers.trim() === "" ? {} : JSON.parse(servers);
             servers = isPlainObject(parsed) ? (parsed as Record<string, unknown>) : {};
         }
+        const canonicalIds = isPlainObject(doc.canonicalIds) ? doc.canonicalIds : {};
         mcpServers.value =
             servers && typeof servers === "object" && !Array.isArray(servers)
-                ? Object.keys(servers).filter((name) => name.trim() !== "")
+                ? Object.keys(servers)
+                      .filter((name) => name.trim() !== "")
+                      .map((name) => {
+                          const canonical = canonicalIds[name];
+                          return {
+                              name,
+                              canonicalId:
+                                  typeof canonical === "string" && canonical.trim() !== ""
+                                      ? canonical
+                                      : null,
+                          };
+                      })
                 : [];
         mcpState.value = "ready";
     } catch (cause) {
@@ -1835,11 +1865,11 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             <template v-else>
                                 <span
                                     v-for="server in mcpServers"
-                                    :key="server"
+                                    :key="server.name"
                                     class="rounded border px-1.5 py-0.5 text-muted-foreground"
-                                    :data-testid="`workspace-agent-mcp-server-${server}`"
+                                    :data-testid="`workspace-agent-mcp-server-${server.name}`"
                                 >
-                                    {{ server }}
+                                    {{ server.name }}
                                 </span>
                             </template>
                             <router-link
@@ -2154,14 +2184,17 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                             <ul v-else class="space-y-1.5" data-testid="agent-mcp-config-list">
                                 <li
                                     v-for="server in mcpServers"
-                                    :key="server"
+                                    :key="server.name"
                                     class="flex items-center gap-2 text-sm"
                                 >
                                     <input
                                         type="checkbox"
                                         :checked="hasMcpGrant(server)"
-                                        :disabled="capabilityState !== 'ready'"
-                                        :data-testid="`agent-mcp-grant-${server}`"
+                                        :disabled="
+                                            capabilityState !== 'ready' ||
+                                            !isMcpServerSelectable(server)
+                                        "
+                                        :data-testid="`agent-mcp-grant-${server.name}`"
                                         @change="
                                             toggleMcpGrant(
                                                 server,
@@ -2169,7 +2202,14 @@ function onPrincipalDetailChanged(patch: Partial<AgentPrincipalDetail> & { princ
                                             )
                                         "
                                     />
-                                    <span class="font-mono text-xs">{{ server }}</span>
+                                    <span class="font-mono text-xs">{{ server.name }}</span>
+                                    <span
+                                        v-if="!isMcpServerSelectable(server)"
+                                        class="text-xs text-destructive"
+                                        :data-testid="`agent-mcp-grant-unavailable-${server.name}`"
+                                    >
+                                        {{ t("workspace.agentMcpCanonicalMissing") }}
+                                    </span>
                                 </li>
                             </ul>
                         </div>
