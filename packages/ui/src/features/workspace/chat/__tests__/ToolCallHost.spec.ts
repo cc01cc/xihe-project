@@ -608,3 +608,89 @@ describe("ToolCallHost shared contract", () => {
         expect(wrapper.find('[data-testid="tool-card-toggle"]').exists()).toBe(true);
     });
 });
+
+describe("ToolCallHost browser face (task-993)", () => {
+    it("routes browser_snapshot to the browser card and renders the bounded text", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "browser_snapshot",
+                arguments: "{}",
+                status: "completed",
+                result: JSON.stringify({
+                    url: "http://127.0.0.1:12640/",
+                    title: "Xihe",
+                    text: '# Xihe\nr1 button "Send"\n--- text ---\nidle',
+                    truncated: true,
+                    refs: 3,
+                }),
+            }),
+        );
+
+        expect(wrapper.find('[data-tool-card="browser"]').exists()).toBe(true);
+        await expand(wrapper);
+        const pre = wrapper.find('[data-testid="browser-snapshot-text"]');
+        expect(pre.text()).toContain("r1 button");
+        expect(pre.text()).toContain("idle");
+        expect(wrapper.text()).toContain("http://127.0.0.1:12640/");
+    });
+
+    it("renders the screenshot preview and artifact reference", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "browser_take_screenshot",
+                arguments: "{}",
+                status: "completed",
+                result: JSON.stringify({
+                    artifactPath: "C:/ws/.xihe/browser-artifacts/browser-1.png",
+                    relativePath: ".xihe/browser-artifacts/browser-1.png",
+                    bytes: 4096,
+                    previewDataUrl: "data:image/jpeg;base64,AAAA",
+                }),
+            }),
+        );
+
+        expect(wrapper.find('[data-tool-card="browser"]').exists()).toBe(true);
+        await expand(wrapper);
+        const img = wrapper.find('[data-testid="browser-shot"] img');
+        expect(img.exists()).toBe(true);
+        expect(img.attributes("src")).toContain("data:image/jpeg;base64,");
+        expect(wrapper.find('[data-testid="browser-shot"]').text()).toContain(
+            ".xihe/browser-artifacts/browser-1.png",
+        );
+    });
+
+    it("never places a non-image preview into an img src", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "browser_take_screenshot",
+                arguments: "{}",
+                status: "completed",
+                result: JSON.stringify({
+                    relativePath: ".xihe/browser-artifacts/browser-2.png",
+                    bytes: 10,
+                    previewDataUrl: "javascript:alert(1)",
+                }),
+            }),
+        );
+
+        await expand(wrapper);
+        expect(wrapper.find('[data-testid="browser-shot"] img').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="browser-shot"]').text()).toContain(
+            ".xihe/browser-artifacts/browser-2.png",
+        );
+    });
+
+    it("keeps unlisted browser_* names on the generic fallback card", () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "browser_evaluate",
+                arguments: JSON.stringify({ expression: "document.cookie" }),
+                status: "completed",
+                result: "ok",
+            }),
+        );
+
+        expect(wrapper.find('[data-tool-card="browser"]').exists()).toBe(false);
+        expect(wrapper.findComponent(ToolCallCard).exists()).toBe(true);
+    });
+});

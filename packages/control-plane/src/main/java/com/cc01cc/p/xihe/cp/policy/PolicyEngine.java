@@ -394,6 +394,15 @@ public class PolicyEngine {
         PolicyVerdict verdict = approvalVerdict(face, context, effectiveMode, modeLayer,
                 request.resources());
 
+        // task-993 (verdict-989 option B): browser control is interactive, not a read. It must
+        // never inherit an automatic allow — not from the ask list, and not from `auto` mode's
+        // "allowed_by" bypass. Rebuild the verdict as a plain ASK so the approval writer cannot
+        // materialize a session/saved rule from this call either.
+        if (ToolFaceRegistry.isBrowserTool(toolName) && verdict.effect() != PolicyEffect.DENY) {
+            verdict = PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, effectiveMode,
+                    "browser control always requires approval", request.resources());
+        }
+
         // PLAN-0627 D27-20 (Q2 = C′): path-conditional tier for protected files, expressed
         // with the existing vocabulary instead of a new enum:
         //   deny  -> owned upstream by the grant gate + hard guard (this branch never denies);

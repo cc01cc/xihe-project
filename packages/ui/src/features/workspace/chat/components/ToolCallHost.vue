@@ -21,6 +21,7 @@ import PatchToolCard, {
     type PatchResultView,
 } from "./PatchToolCard.vue";
 import ReadToolCard, { type ReadCardView } from "./ReadToolCard.vue";
+import BrowserToolCard, { type BrowserCardView } from "./BrowserToolCard.vue";
 import ToolCallCard from "./ToolCallCard.vue";
 
 const props = defineProps<{ toolCall: ToolCall; actor?: ProcessRowActor }>();
@@ -32,7 +33,35 @@ const JOB_TOOL_NAMES = [
     "cancel_background_process",
 ];
 
-type Route = "command" | "patch" | "read" | "fallback";
+type Route = "command" | "patch" | "read" | "browser" | "fallback";
+
+// task-993: only these four names reach the browser card; every other browser_* name
+// (evaluate / run_code_unsafe / cookies / tabs / routes / upload) stays on the generic
+// fallback card so an unexpected server-side expansion remains visible, never silently styled.
+function browserViewKind(name: string): BrowserCardView["kind"] | null {
+    switch (name) {
+        case "browser_navigate":
+            return "navigate";
+        case "browser_snapshot":
+            return "snapshot";
+        case "browser_click":
+            return "click";
+        case "browser_take_screenshot":
+            return "screenshot";
+        default:
+            return null;
+    }
+}
+
+function stringField(body: Record<string, unknown> | null, key: string): string {
+    const value = body?.[key];
+    return typeof value === "string" ? value : "";
+}
+
+function numberField(body: Record<string, unknown> | null, key: string): number | null {
+    const value = body?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 function parseJsonObject(raw: unknown): Record<string, unknown> | null {
     if (typeof raw !== "string") return null;
@@ -276,6 +305,29 @@ const commandView = computed(() => parseCommandView(props.toolCall));
 const patchView = computed(() => parsePatchView(props.toolCall));
 const readView = computed(() => parseReadView(props.toolCall));
 
+function parseBrowserView(toolCall: ToolCall): BrowserCardView | null {
+    const kind = browserViewKind(toolCall.name);
+    if (!kind) return null;
+    const args = parseJsonObject(toolCall.arguments);
+    const result = parseJsonObject(toolCall.result);
+    const previewRaw = stringField(result, "previewDataUrl");
+    return {
+        kind,
+        url: stringField(result, "url") || stringField(args, "url"),
+        title: stringField(result, "title"),
+        target: stringField(result, "target") || stringField(args, "target"),
+        text: stringField(result, "text"),
+        truncated: result?.truncated === true,
+        refs: numberField(result, "refs"),
+        // Only a well-formed data URL is ever placed in an <img src>.
+        previewDataUrl: previewRaw.startsWith("data:image/jpeg;base64,") ? previewRaw : "",
+        artifactPath: stringField(result, "relativePath") || stringField(result, "artifactPath"),
+        bytes: numberField(result, "bytes"),
+    };
+}
+
+const browserView = computed(() => parseBrowserView(props.toolCall));
+
 const route = computed<Route>(() => {
     // Single fallback decision point: unknown/untyped names, job surfaces and
     // reserved states all converge here; the dedicated cards never re-check fallback.
@@ -288,6 +340,11 @@ const route = computed<Route>(() => {
         case "read_file":
         case "read_file_range":
             return readView.value ? "read" : "fallback";
+        case "browser_navigate":
+        case "browser_snapshot":
+        case "browser_click":
+        case "browser_take_screenshot":
+            return browserView.value ? "browser" : "fallback";
         default:
             return "fallback";
     }
@@ -329,6 +386,14 @@ const EMPTY_READ_VIEW: ReadCardView = {
         :tool-call="toolCall"
         :actor="actor"
         :view="readView ?? EMPTY_READ_VIEW"
+        @approve="emit('approve', $event)"
+        @reject="emit('reject', $event)"
+    />
+    <BrowserToolCard
+        v-else-if="route === 'browser' && browserView"
+        :tool-call="toolCall"
+        :actor="actor"
+        :view="browserView"
         @approve="emit('approve', $event)"
         @reject="emit('reject', $event)"
     />

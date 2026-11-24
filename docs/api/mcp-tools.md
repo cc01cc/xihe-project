@@ -130,6 +130,24 @@ serialization difference, not a schema difference.
 |---|---|---|---|
 | `web_fetch` | Fetch a URL; returns text or markdown | **url**, format, timeout | outbound HTTP (allowlist / private-network guarded by the CP policy and the Runtime host connector) |
 
+### 3.5 Browser (face `network` / `STRUCTURED`, ASK-only)
+
+task-993 (verdict-989 option B): a four-tool slice of native browser control. Everything else
+(`browser_evaluate`, `browser_run_code_unsafe`, cookies, tabs, routes, uploads) is **not
+registered**, so the model cannot reach it. All four tools reuse the `network` atom for the
+grant gate, but `PolicyEngine` pins every call to a plain ASK — never auto-allowed, never
+materializable into a session/saved rule, regardless of mode.
+
+| Tool | What it does | Parameters | Side effect |
+|---|---|---|---|
+| `browser_navigate` | Open an http/https page in headless system Edge/Chrome; returns final url + title | **url** | outbound HTTP(S); host process (not inside MXC — not isolated by default) |
+| `browser_snapshot` | Bounded (8 000 char) text outline with clickable refs `r1…rN`; page text is untrusted input | — | none |
+| `browser_click` | Click a snapshot ref or a CSS selector | **target** | may navigate; refs are invalidated by navigation |
+| `browser_take_screenshot` | PNG under the workspace `.xihe/browser-artifacts/` + small JPEG preview | — | writes one artifact file |
+
+Origin control is an **instance-level** allowlist (`XIHE_BROWSER_ALLOWED_ORIGINS`, comma-separated
+origins); an empty list blocks every navigation. `file:`/`about:`/`chrome:` are always rejected.
+
 ## 4. CP-owned tools (service face only, +6)
 
 Registered in `McpProxyController.populateSystemTools` (`:601`, the `internalService()` gate block at

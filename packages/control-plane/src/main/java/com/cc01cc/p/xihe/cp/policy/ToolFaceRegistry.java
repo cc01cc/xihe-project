@@ -240,6 +240,29 @@ public class ToolFaceRegistry {
     private static final Set<String> NETWORK_TOOLS = Set.of("web_fetch");
 
     /**
+     * task-993 (verdict-989 option B): the four Runtime-native browser tools.
+     *
+     * <p>They consume the existing {@code network} atom — browsing IS outbound network access,
+     * and inventing a dedicated {@code action:browser} atom would require a new catalog entry,
+     * Flyway seed rows and label plumbing before the surface could even be granted. That upgrade
+     * is tracked as a follow-up; the security property here does not depend on it because
+     * {@link PolicyEngine} pins every browser call to a plain ASK that no mode can bypass
+     * (see {@code PolicyEngine#evaluateVerdict}).</p>
+     */
+    private static final Set<String> BROWSER_TOOLS = Set.of(
+            "browser_navigate", "browser_snapshot", "browser_click", "browser_take_screenshot");
+
+    /** True for the browser-control face. Used by the policy ask floor and contract tests. */
+    public static boolean isBrowserTool(String toolName) {
+        return toolName != null && BROWSER_TOOLS.contains(toolName);
+    }
+
+    /** The complete browser surface census (must stay at exactly four entries). */
+    public static Set<String> browserTools() {
+        return BROWSER_TOOLS;
+    }
+
+    /**
      * PLAN-0627 D27-20 (Q2 = C′): file names whose mutation is always approval-gated,
      * whatever the session mode is. Agents read these files as project conventions, so a
      * silent rewrite would let a run rewrite its own rules.
@@ -304,6 +327,7 @@ public class ToolFaceRegistry {
         WRITE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_WRITE, ToolShape.STRUCTURED)));
         DELETE_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_DELETE, ToolShape.STRUCTURED)));
         NETWORK_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
+        BROWSER_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_NETWORK, ToolShape.STRUCTURED)));
         EXEC_TOOLS.forEach(tool -> builder.put(tool, new Face(ACTION_EXEC, ToolShape.INTERPRETER)));
         builder.put("spawn_agent", new Face(ACTION_SPAWN_AGENT, ToolShape.STRUCTURED));
         // task-188 MVP⑤ S2: the four CP-owned team-task board tools. All map to the single

@@ -94,6 +94,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 scraper = "0.27.0"
 html2md = "0.2.15"
 
+# === NEW: browser tool face (task-993, verdict-989 option B) ===
+# Mature async CDP client; system Edge/Chrome is reused, no browser engine is bundled.
+chromiumoxide = "0.9.1"
+
 # === NEW: XH Channel over WebSocket (PLAN-245; optional control plane) ===
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
