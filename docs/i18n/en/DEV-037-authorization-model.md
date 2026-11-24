@@ -76,6 +76,13 @@ Workspace, org unit, and session are **context**. They answer "where does this r
 
 Context **MAY** be read by conditions (§4.1), but **MUST NOT** become a third matching axis. The cost of pushing the org unit onto the resource axis is in §5.4.
 
+### 2.2 Canonical names and display names: one atom, two vocabularies
+
+- **Canonical names belong to the contract side.** The `action:<class>` / `cap:<...>` spellings, and the upper-case capability atoms such as `MANAGE_WORKSPACE_MCP`, are what the API contract, audit records, stored rows, and permission-atom evaluation use. They are an implementation vocabulary, and a review must be able to trace a decision back to these exact strings.
+- **The UI always shows a display name.** Every surface that renders an atom goes through `atomDisplayLabel` (or an equivalent localization function): registered atoms get their localized label, and unregistered atoms collapse to "Other permission". **Never** fall back to the bare canonical string — task-949 removed exactly that `return bare` path, because printing `action:xxx` to a user is the same family of defect as treating an implementation constraint as product design.
+- **One exception: hook subscription `on`.** `advisors[].on` is an open action class, not a permission atom. Recognized values are localized; the rest (for example `approval.ask`) stay as written, because translating them would hide which tool action is subscribed. Canonical prefixes and upper-case atoms on the snapshot surface still go through `atomDisplayLabel`.
+- **Enforced, not remembered.** task-949 landed the static gate `check:atom-display` (`packages/ui/scripts/check-atom-display.mjs`, a member of `mise run lint`): a template that interpolates `.actionClass` without a localizer fails, and the existing surfaces are pinned in `packages/ui/scripts/atom-display-baseline.json`. **The baseline may only shrink** — migrating a surface requires deleting its baseline entry in the same change.
+
 ## 3. The nine-step evaluation chain
 
 <svg viewBox="0 0 660 400" width="100%" role="img">

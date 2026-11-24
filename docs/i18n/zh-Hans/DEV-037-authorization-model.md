@@ -76,6 +76,13 @@ tags:
 
 上下文 **MAY** 被条件读取（§4.1），但 **MUST NOT** 被当作第三匹配轴。把组织单元塞进资源轴的代价见 §5.4。
 
+### 2.2 canonical 名与展示名：一个原子，两套词汇
+
+- **canonical 名只属于契约侧**：`action:<动作类>` / `cap:<…>` 这类拼写，以及 `MANAGE_WORKSPACE_MCP` 之类的大写能力原子，用在 API 契约、审计记录、存储行与权限原子求值里。它们是实现词汇，评审必须能把一次判定回查到这些确切字符串。
+- **界面上屏一律是展示名**：每一处渲染原子的面板都走 `atomDisplayLabel`（或同等的本地化函数）：已登记的原子给本地化名，未登记的原子收敛为「其他权限」。**绝不回落裸名**——task-949 删掉的正是 `actionLabel` 里那句 `return bare`，因为把 `action:xxx` 直接印给用户，与「把实现约束当产品设计」是同一族缺陷。
+- **唯一例外是 hook 订阅的 `on`**：`advisors[].on` 属开放动作类，不是权限原子。认识的值走本地化，其余（例如 `approval.ask`）保持原样，硬翻译反而看不出订阅的是哪个工具动作。快照面上的 canonical 前缀与大写原子仍一律走 `atomDisplayLabel`。
+- **靠门禁固化，不靠记性**：task-949 落地静态门 `check:atom-display`（`packages/ui/scripts/check-atom-display.mjs`，是 `mise run lint` 的成员）：模板里出现未包本地化函数的 `.actionClass` 插值即失败，存量面钉在 `packages/ui/scripts/atom-display-baseline.json`。**基线只减不增**——迁移某个面时必须在同一批变更里删掉它的基线条目。
+
 ## 3. 求值链九步
 
 <svg viewBox="0 0 660 400" width="100%" role="img">
