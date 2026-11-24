@@ -521,6 +521,37 @@ public class AgentPrincipalService {
     @Transactional
     public WorkspaceAgent setWorkspaceCap(String actorUserId, UUID workspaceId, UUID principalId,
                                           JsonNode requestedPermissions) {
+        return upsertWorkspaceCap(actorUserId, workspaceId, principalId, requestedPermissions, true);
+    }
+
+    /**
+     * task-1015 / D-1935 follow-up: the workspace default roster is materialized by the system on
+     * workspace creation, not bound by a human.
+     *
+     * <p>Reusing {@link #setWorkspaceCap} would drag the owner-only rule
+     * ({@code AGENT_PRINCIPAL_OWNER_MISMATCH}) into a path where the creator never "binds" anything:
+     * a non-owner creator therefore lost every instance/workspace default agent. This entry point keeps
+     * everything else identical (management gate, active workspace, mutable cap, principal ceiling,
+     * {@code cap_source='baseline'}) and changes exactly two things:</p>
+     * <ol>
+     *   <li>no owner-only binding rule — the write is attributed to {@code source=default-materialize};</li>
+     *   <li>a visibility precondition instead: a principal whose row belongs to another user is
+     *       invisible to the creator, so it is skipped (returns {@code null}) rather than bound.</li>
+     * </ol>
+     *
+     * <p>The manual binding surface is untouched: {@link #setWorkspaceCap} still refuses with the
+     * same 403 (see {@code DefaultAgentOwnerBoundaryIntegrationTest}).</p>
+     *
+     * @return the written binding, or {@code null} when the creator cannot see the principal
+     */
+    @Transactional
+    public WorkspaceAgent materializeDefaultWorkspaceAgent(String actorUserId, UUID workspaceId,
+                                                          UUID principalId) {
+        return upsertWorkspaceCap(actorUserId, workspaceId, principalId, null, false);
+    }
+
+    private WorkspaceAgent upsertWorkspaceCap(String actorUserId, UUID workspaceId, UUID principalId,
+                                              JsonNode requestedPermissions, boolean ownerOnlyBinding) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         // D-180 锁序：mutex 先于默认角色行锁与 binding/principal 写入（同 create）。
@@ -534,7 +565,11 @@ public class AgentPrincipalService {
         // resolveCapFor stays the single entry, untouched.
         requireMutableCap(principal);
         requireWorkspaceAgentManagement(actorId, workspaceId);
-        requireBindingAuthority(actorId, principal);
+        if (ownerOnlyBinding) {
+            requireBindingAuthority(actorId, principal);
+        } else if (!isVisibleToCreator(actorId, principal)) {
+            return null;
+        }
 
         boolean inheritsBaseline = requestedPermissions == null;
         String capSource = inheritsBaseline
@@ -572,10 +607,19 @@ public class AgentPrincipalService {
         // do, so the caller-subset rule (D-160) cannot demand it from a human actor — otherwise no
         // owner could ever raise an inherited cap. The principal side above still enforces the
         // agent's own ceiling, and every other atom stays subject to the actor check.
-        Set<GrantIntersectionEvaluator.PermissionAtom> actorComparable = new LinkedHashSet<>(cap);
-        String cloneAtom = com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_CLONE);
-        actorComparable.removeIf(atom -> cloneAtom.equals(atom.actionClass()));
-        List<String> overActor = exceeding(actorComparable, actorPermissions);
+        //
+        // task-1015: the default-materialize path is a SYSTEM write of the upper layer's roster, not
+        // the creator granting someone atoms it holds. Keeping the D-160 caller-subset rule there made
+        // every non-owner creator lose its defaults to agent-only baseline atoms (observed:
+        // action:network@*), so only the principal ceiling is evaluated on that path. The manual face
+        // below still enforces both ceilings.
+        List<String> overActor = List.of();
+        if (ownerOnlyBinding) {
+            Set<GrantIntersectionEvaluator.PermissionAtom> actorComparable = new LinkedHashSet<>(cap);
+            String cloneAtom = com.cc01cc.p.xihe.cp.policy.AtomNames.action(ToolFaceRegistry.ACTION_CLONE);
+            actorComparable.removeIf(atom -> cloneAtom.equals(atom.actionClass()));
+            overActor = exceeding(actorComparable, actorPermissions);
+        }
         if (!overPrincipal.isEmpty() || !overActor.isEmpty()) {
             // D-160 ③: the refusal names the exceeding atoms per side, in the 409 naming style
             // (atom@resource) — the grantor must already hold every atom it raises the cap to.
@@ -608,7 +652,11 @@ public class AgentPrincipalService {
         // source of truth. Idempotent; the existing materializer writes the `source='assigned'` grants.
         ensureWorkspaceRoleBinding(principalId, workspaceId, actorId);
         ObjectNode detail = objectMapper.createObjectNode();
-        detail.put("authorizationAction", "MANAGE_WORKSPACE_AGENTS");
+        detail.put("authorizationAction",
+                ownerOnlyBinding ? "MANAGE_WORKSPACE_AGENTS" : DEFAULT_MATERIALIZE_SOURCE);
+        if (!ownerOnlyBinding) {
+            detail.put("source", DEFAULT_MATERIALIZE_SOURCE);
+        }
         detail.put("principalId", principalId.toString());
         detail.put("capSource", capSource);
         if (previousSource != null) {
@@ -1888,6 +1936,21 @@ public class AgentPrincipalService {
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
                     "An owned agent principal may only be bound by its owner");
         }
+    }
+
+    /** task-1015: durable-audit marker for the system-materialized workspace default roster. */
+    static final String DEFAULT_MATERIALIZE_SOURCE = "default-materialize";
+
+    /**
+     * task-1015: "the creator can see/use it" without dragging the bind rule in.
+     *
+     * <p>A principal with no owner is shared (instance/workspace scope) and therefore visible to any
+     * authorized creator. An owned principal is visible only to its owner — the same predicate the
+     * manual surface enforces, expressed as a skip here because a default that the creator cannot see
+     * must never become reachable through workspace creation.</p>
+     */
+    private boolean isVisibleToCreator(UUID actorId, AgentPrincipal principal) {
+        return principal.getOwnerUserId() == null || actorId.equals(principal.getOwnerUserId());
     }
 
     /**

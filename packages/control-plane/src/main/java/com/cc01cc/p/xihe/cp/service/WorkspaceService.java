@@ -737,8 +737,17 @@ public class WorkspaceService {
                                 workspaceId, principalId);
                         return false;
                     }
-                    // null permissions = "inherit the role baseline", i.e. cap_source='baseline' (D-1109).
-                    principalService.setWorkspaceCap(ownerId, workspaceId, principalId, null);
+                    // task-1015: default materialization is a SYSTEM write, not a human bind.
+                    // It still validates existence/visibility, but never reuses the owner-only
+                    // binding rule (which silently dropped every default for non-owner creators).
+                    com.cc01cc.p.xihe.cp.entity.WorkspaceAgent materialized =
+                            principalService.materializeDefaultWorkspaceAgent(ownerId, workspaceId, principalId);
+                    if (materialized == null) {
+                        logger.warn("[LIFECYCLE] service=cp event=workspace_default_agent_skipped"
+                                + " workspaceId={} principalId={} reason=CREATOR_CANNOT_SEE_PRINCIPAL",
+                                workspaceId, principalId);
+                        return false;
+                    }
                     return true;
                 });
                 if (Boolean.TRUE.equals(written)) {
